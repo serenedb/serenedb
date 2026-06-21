@@ -22,15 +22,19 @@
 #include "table.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/str_cat.h>
 
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
+#include <duckdb/parser/expression/columnref_expression.hpp>
+#include <duckdb/parser/expression/operator_expression.hpp>
 #include <memory>
 #include <utility>
 
 #include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "basics/serializer.h"
+#include "catalog/column_expr.h"
 #include "catalog/persistence/table.h"
 
 namespace sdb::catalog {
@@ -54,8 +58,10 @@ Table::Table(ObjectId schema_id, ObjectId id, std::string_view name,
     _engine{engine},
     _unique_constraints{std::move(unique_constraints)},
     _foreign_keys{std::move(foreign_keys)} {
+  _column_index.reserve(_columns.size());
   for (auto& col : _columns) {
     col.SetParentId(_id);
+    _column_index.emplace(col.GetId(), &col);
   }
   for (auto& c : _check_constraints) {
     c.SetParentId(_id);
@@ -149,6 +155,76 @@ Result Table::DropCheckConstraint(std::shared_ptr<Table>& result,
   new_table->_check_constraints.erase(
     new_table->_check_constraints.begin() +
     std::distance(_check_constraints.begin(), it));
+  result = std::move(new_table);
+  return {};
+}
+
+Result Table::SetNotNull(std::shared_ptr<Table>& result,
+                         std::string_view column_name) const {
+  auto col = absl::c_find_if(
+    _columns, [&](const Column& c) { return c.GetName() == column_name; });
+  if (col == _columns.end()) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  // Idempotent: SET NOT NULL on an already-NOT NULL column is a no-op.
+  for (const auto& c : _check_constraints) {
+    auto idx = c.IsNotNull(_columns);
+    if (idx && _columns[*idx].GetId() == col->GetId()) {
+      result = basics::downCast<Table>(Clone());
+      return {};
+    }
+  }
+  auto name = absl::StrCat(GetName(), "_", column_name, "_not_null");
+  for (size_t counter = 1; absl::c_any_of(
+         _check_constraints,
+         [&](const CheckConstraint& c) { return c.GetName() == name; });
+       ++counter) {
+    name = absl::StrCat(GetName(), "_", column_name, "_not_null", counter);
+  }
+  auto col_ref =
+    duckdb::make_uniq<duckdb::ColumnRefExpression>(std::string{column_name});
+  auto is_not_null = duckdb::make_uniq<duckdb::OperatorExpression>(
+    duckdb::ExpressionType::OPERATOR_IS_NOT_NULL, std::move(col_ref));
+  auto new_table = basics::downCast<Table>(Clone());
+  new_table->_check_constraints.emplace_back(
+    new_table->GetId(), NextId(), name,
+    std::make_shared<ColumnExpr>(std::move(is_not_null)));
+  result = std::move(new_table);
+  return {};
+}
+
+Result Table::DropNotNull(std::shared_ptr<Table>& result,
+                          std::string_view column_name) const {
+  auto col = absl::c_find_if(
+    _columns, [&](const Column& c) { return c.GetName() == column_name; });
+  if (col == _columns.end()) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  auto new_table = basics::downCast<Table>(Clone());
+  std::erase_if(new_table->_check_constraints, [&](const CheckConstraint& c) {
+    auto idx = c.IsNotNull(new_table->_columns);
+    return idx && new_table->_columns[*idx].GetId() == col->GetId();
+  });
+  result = std::move(new_table);
+  return {};
+}
+
+Result Table::SetDefault(std::shared_ptr<Table>& result,
+                         std::string_view column_name,
+                         std::shared_ptr<ColumnExpr> expr) const {
+  auto it = absl::c_find_if(
+    _columns, [&](const Column& c) { return c.GetName() == column_name; });
+  if (it == _columns.end()) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  // A generated column stores its generated expression in `expr`; setting a
+  // default would clobber it.
+  if (it->IsGenerated()) {
+    return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH};
+  }
+  auto new_table = basics::downCast<Table>(Clone());
+  new_table->_columns[std::distance(_columns.begin(), it)].expr =
+    std::move(expr);
   result = std::move(new_table);
   return {};
 }

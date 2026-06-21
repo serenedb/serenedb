@@ -1,0 +1,73 @@
+statement ok
+CREATE TABLE pudge(a integer, b integer);
+
+statement ok
+INSERT INTO pudge VALUES (1, 1);
+
+# SET NOT NULL is mirrored to the store column, which then rejects nulls.
+statement ok
+ALTER TABLE pudge ALTER COLUMN b SET NOT NULL;
+
+statement error
+INSERT INTO pudge VALUES (2, NULL);
+
+query
+SELECT * FROM pudge ORDER BY a;
+----
+a	b
+1	1
+
+# SET NOT NULL on an already-not-null column is a no-op.
+statement ok
+ALTER TABLE pudge ALTER COLUMN b SET NOT NULL;
+
+# DROP NOT NULL lifts the constraint and nulls are allowed again.
+statement ok
+ALTER TABLE pudge ALTER COLUMN b DROP NOT NULL;
+
+statement ok
+INSERT INTO pudge VALUES (3, NULL);
+
+query
+SELECT * FROM pudge ORDER BY a;
+----
+a	b
+1	1
+3	NULL
+
+statement ok
+DROP TABLE pudge;
+
+
+# SET NOT NULL fails if the column already contains nulls.
+statement ok
+CREATE TABLE invoker(a integer, b integer);
+
+statement ok
+INSERT INTO invoker VALUES (1, NULL);
+
+statement error
+ALTER TABLE invoker ALTER COLUMN b SET NOT NULL;
+
+statement ok
+DROP TABLE invoker;
+
+
+# SET / DROP NOT NULL on a missing column reports the column, not a crash.
+statement ok
+CREATE TABLE tinker(a integer);
+
+statement error
+ALTER TABLE tinker ALTER COLUMN nope SET NOT NULL;
+----
+db error: ERROR: column "nope" of relation "tinker" does not exist
+
+
+statement error
+ALTER TABLE tinker ALTER COLUMN nope DROP NOT NULL;
+----
+db error: ERROR: column "nope" of relation "tinker" does not exist
+
+
+statement ok
+DROP TABLE tinker;

@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include "basics/containers/flat_hash_map.h"
 #include "catalog/object.h"
 #include "catalog/table_options.h"
 
@@ -49,6 +50,21 @@ class Table final : public Object {
 
   const auto& Columns() const noexcept { return _columns; }
   const auto& PKColumns() const noexcept { return _pk_columns; }
+
+  // O(1) id -> column lookup (built once at construction). Use these instead of
+  // a linear scan over Columns(); a scan nested in a per-key/per-index loop is
+  // O(#keys * #columns) and must not appear on wide tables.
+  const Column* ColumnById(Column::Id id) const noexcept {
+    auto it = _column_index.find(id);
+    return it == _column_index.end() ? nullptr : it->second;
+  }
+  // 0-based position of `id`, or Columns().size() (== "not present") otherwise.
+  size_t ColumnPosById(Column::Id id) const noexcept {
+    auto it = _column_index.find(id);
+    return it == _column_index.end()
+             ? _columns.size()
+             : static_cast<size_t>(it->second - _columns.data());
+  }
   const auto& CheckConstraints() const noexcept { return _check_constraints; }
   TableEngine GetEngine() const noexcept { return _engine; }
   const auto& UniqueConstraints() const noexcept { return _unique_constraints; }
@@ -61,6 +77,14 @@ class Table final : public Object {
                           std::string_view new_name) const;
   Result DropCheckConstraint(std::shared_ptr<Table>& result,
                              std::string_view constraint_name) const;
+  Result SetNotNull(std::shared_ptr<Table>& result,
+                    std::string_view column_name) const;
+  Result DropNotNull(std::shared_ptr<Table>& result,
+                     std::string_view column_name) const;
+  // expr == nullptr drops the default; otherwise sets it.
+  Result SetDefault(std::shared_ptr<Table>& result,
+                    std::string_view column_name,
+                    std::shared_ptr<ColumnExpr> expr) const;
   std::shared_ptr<Table> DropCheckConstraint(ObjectId constraint_id) const;
   std::shared_ptr<Table> DropColumnDefault(Column::Id column_id) const;
   std::shared_ptr<Table> DropColumn(Column::Id column_id) const;
@@ -74,6 +98,10 @@ class Table final : public Object {
 
  private:
   std::vector<Column> _columns;
+  // id -> &_columns[i]; derived once at construction. Stable for the object's
+  // lifetime -- _columns is never reallocated after construction (immutable
+  // Table; Clone builds a fresh one).
+  containers::FlatHashMap<Column::Id, const Column*> _column_index;
   std::vector<Column::Id> _pk_columns;
   std::vector<CheckConstraint> _check_constraints;
   ObjectId _generated_pk_seq_id;

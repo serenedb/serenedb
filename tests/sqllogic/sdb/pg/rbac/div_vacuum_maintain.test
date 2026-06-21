@@ -118,6 +118,23 @@ statement ok
 VACUUM (recompute_stats_table) vac_mop;
 
 
+# A NONEXISTENT relation is a hard error (PG: a missing VACUUM target errors,
+# even though a no-privilege target only warns + skips). Asymmetry is PG-faithful.
+connection default
+statement error
+VACUUM (recompute_stats_table) vac_nonesuch;
+----
+db error: ERROR: relation "vac_nonesuch" does not exist<slt:ignore>
+
+
+# A nonexistent SCHEMA target likewise errors.
+connection default
+statement error
+VACUUM (recompute_stats_schema) vac_no_schema;
+----
+db error: ERROR: schema "vac_no_schema" does not exist<slt:ignore>
+
+
 statement ok
 DROP TABLE vac_mop;
 

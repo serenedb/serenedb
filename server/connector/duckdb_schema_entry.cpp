@@ -481,9 +481,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
   bool if_not_exists =
     info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
 
+  auto& context = transaction.GetContext();
   Result create_result;
   if (index_type == catalog::ObjectType::InvertedIndex) {
-    auto& context = transaction.GetContext();
     auto find_with = [&](std::string_view key) -> const duckdb::Value* {
       auto it = info.options.find(key);
       return it != info.options.end() ? &it->second : nullptr;

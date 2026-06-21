@@ -129,13 +129,19 @@ duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
   auto& sdb_ctx = GetSereneDBContext(context);
   auto fp = ResolveViewFastPath(context, *_sdb_view);
-  if (fp && fp->catalog_ref) {
+  if (fp) {
     // Index-as-table over a view's fast path bypasses the view binder; enforce
     // SELECT on the base table like the table-backed entries do.
     auto snapshot = sdb_ctx.EnsureCatalogSnapshot();
-    if (auto base =
-          snapshot->GetRelation(catalog::NoAccessCheck(), sdb_ctx.GetDatabaseId(),
-                                fp->catalog_ref->schema, fp->catalog_ref->table)) {
+    std::shared_ptr<catalog::Object> base;
+    if (fp->base_table_id) {
+      base = snapshot->GetObject<catalog::Table>(*fp->base_table_id);
+    } else if (fp->catalog_ref) {
+      base =
+        snapshot->GetRelation(catalog::NoAccessCheck(), sdb_ctx.GetDatabaseId(),
+                              fp->catalog_ref->schema, fp->catalog_ref->table);
+    }
+    if (base) {
       snapshot->RequireAccess(sdb_ctx.GetRoleId(), *base,
                               catalog::AclMode::Select);
     }

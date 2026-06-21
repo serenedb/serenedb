@@ -676,6 +676,12 @@ void GrantObjectColumns(ConnectionContext& ctx, catalog::ObjectType type,
                       ERR_MSG("role \"", opts.granted_by, "\" does not exist"));
     }
     granted_by_id = gb->GetId();
+    if (!is_superuser && !auth::ComputeMembershipClosure(*snapshot, current_id)
+                            .contains(granted_by_id)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+        ERR_MSG("must be member of role \"", opts.granted_by, "\""));
+    }
   }
 
   const auto roles = auth::ComputeEffectiveRoles(*snapshot, current_id);

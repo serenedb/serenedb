@@ -41,7 +41,6 @@
 #include <duckdb/parser/statement/select_statement.hpp>
 #include <duckdb/parser/tableref/basetableref.hpp>
 #include <duckdb/parser/tableref/table_function_ref.hpp>
-#include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/tableref/bound_at_clause.hpp>
 
 #include "catalog/store/store.h"
@@ -308,6 +307,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
                         .table = catalog::StoreTableName(
                           entry.ParentCatalog().GetName(),
                           entry.ParentSchema().name, entry.name)};
+      out.base_table_id = sdb_table->GetId();
       out.pk_spec = catalog::PkSpec::DuckDBRowId;
       out.projection_columns = std::move(projection_columns);
       return out;

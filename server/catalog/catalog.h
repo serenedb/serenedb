@@ -23,12 +23,9 @@
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 
-#include <atomic>
 #include <expected>
-#include <functional>
 #include <memory>
 #include <shared_mutex>
-#include <span>
 #include <vector>
 
 #include "auth/role_closure.h"
@@ -58,10 +55,6 @@
 #include "catalog/user_type.h"
 #include "catalog/view.h"
 #include "connector/duckdb_entry_cache.h"
-
-namespace duckdb {
-struct CatalogTransaction;
-}  // namespace duckdb
 
 namespace sdb::catalog {
 
@@ -116,19 +109,15 @@ struct AccessContext {
   AclMode need = AclMode::NoRights;
 };
 
+AccessContext RequireAccess(duckdb::ClientContext& context, AclMode need);
+
 inline AccessContext RequireAccess(ObjectId role, AclMode need) {
   return {role, need};
 }
 
-inline AccessContext RequireOwnership(ObjectId role) { return {role}; }
-
-// Ownership AccessContext for the role driving `transaction` / `context`
-// (resolved from the session context). Throws duckdb::InternalException if no
-// session context is present -- an internal path must never reach a check.
-AccessContext RequireOwnership(duckdb::CatalogTransaction transaction);
 AccessContext RequireOwnership(duckdb::ClientContext& context);
 
-inline AccessContext RequireCreate(ObjectId role) { return {role}; }
+inline AccessContext RequireOwnership(ObjectId role) { return {role}; }
 
 inline AccessContext NoAccessCheck() { return {id::kRootUser}; }
 
@@ -153,25 +142,6 @@ struct Snapshot {
   // Throw "permission denied for <type> <name>" unless `role` holds `need` on
   // `object`. `need == NoRights` is a no-op.
   void RequireAccess(ObjectId role, const Object& object, AclMode need) const;
-
-  // Column-level (PG ExecCheckOneRelPerms): `need` on `table` satisfied
-  // table-wide, else per-column on every column in `columns`; empty `columns`
-  // means SELECT-on-any-one-column. Throws "permission denied for table
-  // <name>".
-  void RequireColumnAccess(ObjectId role, const Table& table, AclMode need,
-                           std::span<const Column* const> columns) const;
-
-  // Single-column convenience: `need` on `table` satisfied table-wide or on
-  // `column`. Throws "permission denied for table <name>".
-  void RequireColumnAccess(ObjectId role, const Table& table, AclMode need,
-                           const Column& column) const;
-
-  // By logical (DuckDB) column index: maps `logical_index` to the i-th
-  // user-visible catalog column (skipping the internal generated-PK column,
-  // which is not part of the DuckDB column model) and enforces `need` on it.
-  // Out-of-range indices are ignored. Used by the binder's per-column read hook.
-  void RequireColumnAccess(ObjectId role, const Table& table, AclMode need,
-                           uint64_t logical_index) const;
 
   void RequireOwnership(ObjectId role, const Object& object) const;
 
@@ -432,6 +402,11 @@ struct Snapshot {
   mutable connector::DuckDBEntryCache _duckdb_cache;
   mutable auth::RoleClosureCache _role_closure_cache;
   bool _in_load = true;
+  uint64_t _version = 0;
+
+ public:
+  uint64_t Version() const noexcept { return _version; }
+  void StampVersion() noexcept;
 };
 
 using IndexFactory =
@@ -510,24 +485,14 @@ class Catalog final {
                      std::string_view name, ChangeCallback<Table> callback);
   Result ChangeRole(std::string_view name, ChangeCallback<Role> callback);
 
-  // ALTER ... OWNER TO: restamp the object's (and, for a table, its owned
-  // sequences') owner and rewrite its ACL (drop the old owner's implicit
-  // self-grant, rewrite grantor old->new).
   Result ChangeOwner(ObjectId database_id, std::string_view schema,
                      std::string_view name, ObjectType type,
                      ObjectId new_owner);
 
-  // GRANT/REVOKE: mutate the object's effective ACL (NULL/empty -> acldefault)
-  // under the catalog lock and persist the result.
   Result ChangeAcl(ObjectId database_id, std::string_view schema,
                    std::string_view name, ObjectType type,
                    absl::FunctionRef<void(catalog::Acl&)> mutate);
 
-  // Column-level GRANT/REVOKE: mutate the per-column ACL of `column` on the
-  // table (db, schema, table_name). The column ACL is stored raw (NOT expanded
-  // to acldefault -- columns have no implicit default grant), so an empty acl
-  // means "no column-level privileges". Throws if the table or column is
-  // missing.
   Result ChangeColumnAcl(ObjectId database_id, std::string_view schema,
                          std::string_view table_name, std::string_view column,
                          absl::FunctionRef<void(catalog::Acl&)> mutate);

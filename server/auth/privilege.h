@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <memory>
-
 #include "auth/acl.h"
 #include "catalog/catalog.h"
 #include "catalog/object.h"

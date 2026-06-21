@@ -21,7 +21,6 @@
 #include "connector/duckdb_client_state.h"
 
 #include <duckdb/catalog/catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -29,25 +28,29 @@
 #include <duckdb/main/prepared_statement_data.hpp>
 #include <utility>
 
+#include "auth/role_closure.h"
 #include "basics/assert.h"
 #include "basics/containers/trivial_map.h"
 #include "basics/debugging.h"
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
 #include "catalog/database.h"
-#include "catalog/role.h"
 #include "catalog/store/store.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_physical_progress.h"
+#include "connector/duckdb_table_entry.h"
 #include "pg/connection_context.h"
 #include "pg/copy_messages_queue.h"
 #include "pg/errcodes.h"
 #include "pg/progress_tracker.h"
 #include "pg/sql_exception_macro.h"
-#include "pg/sql_utils.h"
 
 namespace sdb::connector {
 namespace {
+
+bool IsSuperuserOnlySystemRelation(const std::string& name) {
+  return name == "pg_authid" || name == "pg_shadow";
+}
 
 std::unique_ptr<pg::ProgressReporter> MakeProgressReporter(
   ObjectId datid, const duckdb::PreparedStatementData& prepared) {
@@ -267,6 +270,10 @@ duckdb::RebindQueryInfo SereneDBClientState::OnExecutePrepared(
   return current_rebind;
 }
 
+void SereneDBClientState::QueryBegin(duckdb::ClientContext& context) {
+  _access.Clear();
+}
+
 void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {
   if (auto* queue = _connection_ctx->GetCopyQueue()) {
     queue->CloseListening();
@@ -275,7 +282,33 @@ void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {
   copy_stdin_open_count = 0;
   copy_stdin_done = false;
   progress.reset();
+  _access.Clear();
   _connection_ctx->OnNewStatement();
+}
+
+void SereneDBClientState::RecordReadRelation(duckdb::ClientContext& context,
+                                             uint64_t table_index,
+                                             duckdb::CatalogEntry& entry,
+                                             bool inside_view) {
+  _access.BeginStatement(context.transaction.GetActiveQuery());
+  if (auto* facade = dynamic_cast<SereneDBTableEntry*>(&entry)) {
+    auto& rel = _access.ForTable(table_index);
+    rel.table = facade->GetSereneDBTable();
+    rel.table_read = true;
+    rel.inside_view = inside_view;
+    return;
+  }
+  if (!inside_view && IsSuperuserOnlySystemRelation(entry.name)) {
+    const auto& closure =
+      _connection_ctx->EnsureCatalogSnapshot()->EffectiveRoleClosure(
+        _connection_ctx->GetRoleId());
+    if (!closure.is_superuser) {
+      const char* kind =
+        entry.type == duckdb::CatalogType::VIEW_ENTRY ? "view" : "table";
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                      ERR_MSG("permission denied for ", kind, " ", entry.name));
+    }
+  }
 }
 
 ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context) {

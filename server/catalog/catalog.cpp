@@ -28,16 +28,11 @@
 
 #include <algorithm>
 #include <atomic>
-#include <chrono>
 #include <duckdb/common/exception/parser_exception.hpp>
-#include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
-#include <duckdb/function/scalar_macro_function.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/parser.hpp>
-#include <iostream>
-#include <iterator>
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <ranges>
@@ -72,7 +67,6 @@
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
 #include "basics/system-compiler.h"
-#include "catalog/catalog.h"
 #include "catalog/column_expr.h"
 #include "catalog/database.h"
 #include "catalog/drop_task.h"
@@ -120,6 +114,8 @@ AccessContext RequireOwnership(duckdb::ClientContext& context) {
 
 namespace {
 
+std::atomic<uint64_t> g_catalog_version{1};
+
 Result Apply(
   auto& snapshot, std::shared_mutex& snapshot_mutex, auto&& f,
   std::function<void(const std::shared_ptr<Snapshot>&)> rollback = {}) {
@@ -130,6 +126,7 @@ Result Apply(
     }
     return r;
   }
+  clone->StampVersion();
   std::shared_ptr<const Snapshot> clone_const = std::move(clone);
   {
     std::unique_lock guard{snapshot_mutex};
@@ -139,6 +136,10 @@ Result Apply(
 }
 
 }  // namespace
+
+void Snapshot::StampVersion() noexcept {
+  _version = g_catalog_version.fetch_add(1, std::memory_order_relaxed) + 1;
+}
 
 Snapshot::Snapshot() = default;
 Snapshot::~Snapshot() = default;
@@ -150,6 +151,7 @@ std::shared_ptr<Snapshot> Snapshot::Clone() const {
   result->_objects = _objects;
   result->_deps = _deps;
   result->_in_load = _in_load;
+  result->_version = _version;
   // New snapshot starts with empty DuckDB cache (lazily populated)
   return result;
 }
@@ -998,37 +1000,6 @@ void Snapshot::RequireAccess(ObjectId role, const Object& object,
     ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
     ERR_MSG("permission denied for ", pg::ToPgObjectTypeName(object.GetType()),
             " ", object.GetName()));
-}
-
-void Snapshot::RequireColumnAccess(
-  ObjectId role, const Table& table, AclMode need,
-  std::span<const Column* const> columns) const {
-  if (auth::HasColumnPrivilege(*this, role, table, need, columns)) {
-    return;
-  }
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                  ERR_MSG("permission denied for table ", table.GetName()));
-}
-
-void Snapshot::RequireColumnAccess(ObjectId role, const Table& table,
-                                   AclMode need, const Column& column) const {
-  const Column* one[] = {&column};
-  RequireColumnAccess(role, table, need, one);
-}
-
-void Snapshot::RequireColumnAccess(ObjectId role, const Table& table,
-                                   AclMode need, uint64_t logical_index) const {
-  uint64_t visible = 0;
-  for (const auto& col : table.Columns()) {
-    if (col.GetId() == Column::kGeneratedPKId) {
-      continue;
-    }
-    if (visible == logical_index) {
-      RequireColumnAccess(role, table, need, col);
-      return;
-    }
-    ++visible;
-  }
 }
 
 void Snapshot::RequireOwnership(ObjectId role, const Object& object) const {

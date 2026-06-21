@@ -168,6 +168,9 @@ class CatalogStore {
     void DropStoreCheck(std::string table, std::string expr);
     void DropStoreNotNull(std::string table, std::string column);
     void AddStoreNotNull(std::string table, std::string column);
+    // Adds the CHECK constraint with this expression text; the store verifies
+    // it against existing rows (mirrors DropStoreCheck).
+    void AddStoreCheck(std::string table, std::string expr);
     void CreateStoreIndex(StoreIndexDef def);
     void DropStoreIndex(ObjectId index_id);
 
@@ -190,6 +193,7 @@ class CatalogStore {
       DropStoreCheck,
       DropStoreNotNull,
       AddStoreNotNull,
+      AddStoreCheck,
       CreateStoreIndex,
       DropStoreIndex,
     };

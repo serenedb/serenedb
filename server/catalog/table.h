@@ -85,6 +85,9 @@ class Table final : public Object {
   Result SetDefault(std::shared_ptr<Table>& result,
                     std::string_view column_name,
                     std::shared_ptr<ColumnExpr> expr) const;
+  // Appends a CHECK constraint; the name is uniquified against existing ones.
+  Result AddCheckConstraint(std::shared_ptr<Table>& result, std::string name,
+                            std::shared_ptr<ColumnExpr> expr) const;
   std::shared_ptr<Table> DropCheckConstraint(ObjectId constraint_id) const;
   std::shared_ptr<Table> DropColumnDefault(Column::Id column_id) const;
   std::shared_ptr<Table> DropColumn(Column::Id column_id) const;

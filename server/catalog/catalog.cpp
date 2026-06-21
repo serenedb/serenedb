@@ -35,6 +35,7 @@
 #include <duckdb/function/scalar_macro_function.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
+#include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <iostream>
 #include <iterator>
@@ -2721,6 +2722,25 @@ Result Catalog::ChangeTable(ObjectId database_id, std::string_view schema,
               const auto& col = updated->Columns()[*idx];
               if (col.GetId() != Column::kGeneratedPKId) {
                 ctx.AddStoreNotNull(store_name, col.GetName());
+              }
+            } else if (nc.expr && nc.expr->HasExpr()) {
+              // Function calls bind against the store connection's catalog, so
+              // such checks stay facade-side (as at CREATE time); plain checks
+              // mirror to the store, which verifies them against existing rows.
+              bool has_function = false;
+              auto scan = [&](this auto& self,
+                              const duckdb::ParsedExpression& e) -> void {
+                if (e.GetExpressionClass() ==
+                    duckdb::ExpressionClass::FUNCTION) {
+                  has_function = true;
+                  return;
+                }
+                duckdb::ParsedExpressionIterator::EnumerateChildren(
+                  e, [&](const duckdb::ParsedExpression& child) { self(child); });
+              };
+              scan(nc.expr->GetExpr());
+              if (!has_function) {
+                ctx.AddStoreCheck(store_name, nc.expr->GetExpr().ToString());
               }
             }
           }

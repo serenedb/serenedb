@@ -75,6 +75,34 @@ namespace {
 // Extracts column names from `[a, b, c]` -- the only accepted shape. Anything
 // else (row, single ref, string) throws.
 
+// The single column a CHECK expression references, or empty if it references
+// zero or multiple distinct columns. Drives PostgreSQL-style auto naming
+// (<table>_<col>_check vs <table>_check), shared by CREATE TABLE and
+// ALTER TABLE ADD CONSTRAINT.
+std::string FindConstraintColumn(const duckdb::ParsedExpression& root) {
+  std::string result;
+  bool multiple = false;
+  std::function<void(const duckdb::ParsedExpression&)> visit;
+  visit = [&](const duckdb::ParsedExpression& expr) {
+    if (multiple) {
+      return;
+    }
+    if (expr.GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {
+      auto& name = expr.Cast<duckdb::ColumnRefExpression>().GetColumnName();
+      if (result.empty()) {
+        result = name;
+      } else if (result != name) {
+        multiple = true;
+      }
+      return;
+    }
+    duckdb::ParsedExpressionIterator::EnumerateChildren(
+      expr, [&](const duckdb::ParsedExpression& child) { visit(child); });
+  };
+  visit(root);
+  return multiple ? std::string{} : result;
+}
+
 }  // namespace
 
 ObjectId SereneDBSchemaEntry::GetDatabaseId() const {
@@ -169,31 +197,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
         return candidate;
       }
     }
-  };
-
-  auto find_constraint_column =
-    [](const duckdb::ParsedExpression& root) -> std::string {
-    std::string result;
-    bool multiple = false;
-    std::function<void(const duckdb::ParsedExpression&)> visit;
-    visit = [&](const duckdb::ParsedExpression& expr) {
-      if (multiple) {
-        return;
-      }
-      if (expr.GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {
-        auto& name = expr.Cast<duckdb::ColumnRefExpression>().GetColumnName();
-        if (result.empty()) {
-          result = name;
-        } else if (result != name) {
-          multiple = true;
-        }
-        return;
-      }
-      duckdb::ParsedExpressionIterator::EnumerateChildren(
-        expr, [&](const duckdb::ParsedExpression& child) { visit(child); });
-    };
-    visit(root);
-    return multiple ? std::string{} : result;
   };
 
   // Dedup against duplicate NOT NULL adds; grows on demand because the
@@ -325,7 +328,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
         if (!check.constraint_name.empty()) {
           name = check.constraint_name;
         } else {
-          auto col = find_constraint_column(*check.expression);
+          auto col = FindConstraintColumn(*check.expression);
           name = choose_constraint_name(table_info.table, col, "check");
         }
         options.check_constraints.push_back(catalog::CheckConstraint{
@@ -1073,6 +1076,41 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
           ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
           ERR_MSG("cannot set a default on generated column \"",
                   default_info.column_name, "\""));
+      }
+      if (!r.ok()) {
+        SDB_THROW(std::move(r));
+      }
+      return;
+    }
+
+    case duckdb::AlterTableType::ADD_CONSTRAINT: {
+      auto& add_info = table_info.Cast<duckdb::AddConstraintInfo>();
+      if (add_info.constraint->type != duckdb::ConstraintType::CHECK) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("ALTER TABLE ADD CONSTRAINT supports only CHECK constraints"));
+      }
+      auto& check = add_info.constraint->Cast<duckdb::CheckConstraint>();
+      std::string cname = check.constraint_name;
+      if (cname.empty()) {
+        // PostgreSQL-style auto name, matching the CREATE TABLE path.
+        auto col = FindConstraintColumn(*check.expression);
+        cname = col.empty() ? absl::StrCat(table_name, "_check")
+                            : absl::StrCat(table_name, "_", col, "_check");
+      }
+      auto expr = std::make_shared<ColumnExpr>(check.expression->Copy());
+      Result r = catalog_impl.ChangeTable(
+        db, name, table_name,
+        [&](const catalog::Table& table,
+            std::shared_ptr<catalog::Table>& updated) {
+          return table.AddCheckConstraint(updated, std::move(cname),
+                                          std::move(expr));
+        });
+
+      if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+          ERR_MSG("relation \"", table_name, "\" does not exist"));
       }
       if (!r.ok()) {
         SDB_THROW(std::move(r));

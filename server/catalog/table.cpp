@@ -229,6 +229,22 @@ Result Table::SetDefault(std::shared_ptr<Table>& result,
   return {};
 }
 
+Result Table::AddCheckConstraint(std::shared_ptr<Table>& result,
+                                 std::string name,
+                                 std::shared_ptr<ColumnExpr> expr) const {
+  for (size_t counter = 1; absl::c_any_of(
+         _check_constraints,
+         [&](const CheckConstraint& c) { return c.GetName() == name; });
+       ++counter) {
+    name = absl::StrCat(name, counter);
+  }
+  auto new_table = basics::downCast<Table>(Clone());
+  new_table->_check_constraints.emplace_back(new_table->GetId(), NextId(), name,
+                                             std::move(expr));
+  result = std::move(new_table);
+  return {};
+}
+
 std::shared_ptr<Object> Table::Clone() const {
   auto cloned = std::make_shared<Table>(
     GetParentId(), GetId(), GetName(), _columns, _pk_columns,

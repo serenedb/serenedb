@@ -412,6 +412,13 @@ void CatalogStore::WriteContext::AddStoreNotNull(std::string table,
                       .name_a = std::move(column)});
 }
 
+void CatalogStore::WriteContext::AddStoreCheck(std::string table,
+                                               std::string expr) {
+  _entries.push_back({.op = Op::AddStoreCheck,
+                      .store_table = {.name = std::move(table)},
+                      .name_a = std::move(expr)});
+}
+
 void CatalogStore::WriteContext::CreateStoreIndex(StoreIndexDef def) {
   _entries.push_back(
     {.op = Op::CreateStoreIndex, .store_index = std::move(def)});
@@ -639,6 +646,16 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
             absl::StrCat("ALTER TABLE \"", kStoreAlias, "\".main.",
                          QuotedIdent(entry.store_table.name), " ALTER COLUMN ",
                          QuotedIdent(entry.name_a), " SET NOT NULL"));
+          if (res->HasError()) {
+            return {ERROR_INTERNAL, res->GetError()};
+          }
+          break;
+        }
+        case WriteContext::Op::AddStoreCheck: {
+          auto res = _conn->Query(
+            absl::StrCat("ALTER TABLE \"", kStoreAlias, "\".main.",
+                         QuotedIdent(entry.store_table.name), " ADD CHECK (",
+                         entry.name_a, ")"));
           if (res->HasError()) {
             return {ERROR_INTERNAL, res->GetError()};
           }

@@ -59,11 +59,9 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
         std::vector<int16_t> conkey;
         conkey.reserve(pk_columns.size());
         for (auto pk_id : pk_columns) {
-          for (size_t i = 0; i < columns.size(); ++i) {
-            if (columns[i].GetId() == pk_id) {
-              conkey.push_back(static_cast<int16_t>(i + 1));
-              break;
-            }
+          const auto pos = table->ColumnPosById(pk_id);
+          if (pos < columns.size()) {
+            conkey.push_back(static_cast<int16_t>(pos + 1));
           }
         }
 

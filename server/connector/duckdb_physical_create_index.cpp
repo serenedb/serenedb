@@ -248,12 +248,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         throw duckdb::CatalogException("column \"%s\" not found in table",
                                        col_name);
       }
-      idx_columns.emplace_back(catalog::CreateIndexColumn{
-        .catalog_column = cat_col,
-        .name = cat_col->GetName(),
-        .opclass = std::move(opclass),
-        .opclass_options = std::move(opclass_options),
-      });
+      idx_columns.emplace_back(cat_col->GetName(), cat_col, std::nullopt,
+                               std::move(opclass), std::move(opclass_options));
       continue;
     }
 
@@ -271,14 +267,14 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     }
     auto return_type = normalized->GetReturnType();
     auto& indexed_column = idx_columns.emplace_back(
-      nullptr, "", std::move(opclass),
+      "", nullptr,
       catalog::ExpressionData{
         .serialized_expr = std::move(serialized),
         .dependent_columns = std::move(dependent_columns),
         .return_type = std::move(return_type),
         .pretty_printed = expr->ToString(),
       },
-      std::move(opclass_options));
+      std::move(opclass), std::move(opclass_options));
     indexed_column.name = indexed_column.indexed_expr->pretty_printed;
   }
 

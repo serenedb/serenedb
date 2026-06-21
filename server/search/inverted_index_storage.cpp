@@ -206,9 +206,9 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
         .row_group_size = index.GetOptions().row_group_size,
       };
     }
-    const auto* features = index.FindSyntheticFeatures(id);
-    SDB_ASSERT(features, "column callback for unknown column: ", id);
-    SDB_ASSERT(!features->HasFeatures(irs::IndexFeatures::Norm),
+    const auto lookup = index.LookupField(id);
+    SDB_ASSERT(lookup.entry, "column callback for unknown column: ", id);
+    SDB_ASSERT(!lookup.entry->features.HasFeatures(irs::IndexFeatures::Norm),
                "norm-role synthetic id must not reach column callback: ", id);
     return {
       .skip_validity = true,

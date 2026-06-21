@@ -66,7 +66,13 @@ class SecondaryIndex;
 class InvertedIndex;
 
 struct CreateTableOperationOptions {
-  bool create_with_tombstone = false;
+  // A valid id puts CreateTable in CTAS mode: the entry is created with this
+  // pre-allocated id, tombstoned, and WITHOUT a backing store table (the data
+  // side creates the store table itself, under its own transaction). CTAS
+  // pre-allocates the id at plan time so the store table name is known to the
+  // insert operator. An invalid (default) id creates a regular, immediately
+  // visible table with a freshly allocated id and its store table.
+  ObjectId table_id;
 };
 
 struct CreateIndexOperationOptions {

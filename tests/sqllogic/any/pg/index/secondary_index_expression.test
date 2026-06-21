@@ -1,0 +1,127 @@
+hash-threshold 100
+
+
+# Expression (functional) secondary indexes -- issue #830.
+# PostgreSQL and DuckDB both support CREATE INDEX over an expression; SereneDB
+# rejected it on the plain/ART path with a misleading "column does not exist".
+# Inverted indexes already supported expressions; these cases cover the
+# secondary (ART) path running against both engines.
+
+
+statement ok
+CREATE TABLE vedernikoff_expr (j INTEGER, k INTEGER, tag VARCHAR);
+
+
+statement ok
+INSERT INTO vedernikoff_expr VALUES
+  (1, 10, 'alpha'),
+  (2, 20, 'beta'),
+  (3, 30, 'gamma'),
+  (4, 5, 'delta');
+
+
+statement ok
+CREATE INDEX vedernikoff_expr_sum_idx ON vedernikoff_expr ((j + k));
+
+
+statement ok
+CREATE INDEX vedernikoff_expr_abs_idx ON vedernikoff_expr (abs(j));
+
+
+# Mixed column + expression composite key.
+statement ok
+CREATE INDEX vedernikoff_expr_mix_idx ON vedernikoff_expr (k, (j + k));
+
+
+query
+SELECT j, k FROM vedernikoff_expr WHERE (j + k) = 22 ORDER BY j;
+----
+j	k
+2	20
+
+
+query
+SELECT j, k FROM vedernikoff_expr WHERE abs(j) = 3;
+----
+j	k
+3	30
+
+
+query
+SELECT j, k FROM vedernikoff_expr WHERE (j + k) = 99;
+----
+j	k
+
+
+# DML maintenance: the store ART updates on insert/update/delete.
+statement ok
+INSERT INTO vedernikoff_expr VALUES (5, 17, 'epsilon');
+
+
+query
+SELECT j, k FROM vedernikoff_expr WHERE (j + k) = 22 ORDER BY j;
+----
+j	k
+2	20
+5	17
+
+
+statement ok
+UPDATE vedernikoff_expr SET k = 100 WHERE j = 2;
+
+
+query
+SELECT j, k FROM vedernikoff_expr WHERE (j + k) = 22 ORDER BY j;
+----
+j	k
+5	17
+
+
+statement ok
+DELETE FROM vedernikoff_expr WHERE j = 5;
+
+
+query
+SELECT j, k FROM vedernikoff_expr WHERE (j + k) = 22;
+----
+j	k
+
+
+statement ok
+DROP TABLE vedernikoff_expr;
+
+
+# Unique expression index enforces uniqueness on the computed key.
+statement ok
+CREATE TABLE babsky_expr_unique (a INTEGER, b INTEGER);
+
+
+statement ok
+INSERT INTO babsky_expr_unique VALUES (1, 10), (2, 20);
+
+
+statement ok
+CREATE UNIQUE INDEX babsky_expr_unique_idx ON babsky_expr_unique ((a * 100 + b));
+
+
+# (3, 0) computes to 300 -- distinct, allowed.
+statement ok
+INSERT INTO babsky_expr_unique VALUES (3, 0);
+
+
+# (1, 10) recomputes to 110, duplicating the first row -- rejected.
+statement error
+INSERT INTO babsky_expr_unique VALUES (1, 10);
+
+
+query
+SELECT a, b FROM babsky_expr_unique ORDER BY a;
+----
+a	b
+1	10
+2	20
+3	0
+
+
+statement ok
+DROP TABLE babsky_expr_unique;

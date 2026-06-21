@@ -40,6 +40,8 @@ struct InvertedIndexOptions {
   std::optional<ScorerOptions> topk_scorer;
 };
 
+// Shared expression payload for a computed index key. Each index kind persists
+// its own key layout; only this leaf is common.
 struct ExpressionData {
   std::string serialized_expr;
   std::vector<Column::Id> dependent_columns;

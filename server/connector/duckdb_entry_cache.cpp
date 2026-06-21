@@ -264,11 +264,9 @@ TableInfoAndIndices BuildTableInfoAndIndices(
   containers::FlatHashSet<size_t> idx_set;
   for (auto& index : indexes) {
     for (auto col_id : index->GetReferencedColumnIds()) {
-      for (size_t i = 0; i < cols.size(); ++i) {
-        if (cols[i].GetId() == col_id) {
-          idx_set.insert(i);
-          break;
-        }
+      const auto pos = table.ColumnPosById(col_id);
+      if (pos < cols.size()) {
+        idx_set.insert(pos);
       }
     }
   }
@@ -313,7 +311,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
       info->columns.AddColumn(
         duckdb::ColumnDefinition(vinfo.names[i], vinfo.types[i]));
     }
-    auto col_ids = index.GetColumnIds();
+    const auto& col_ids = index.GetColumnIds();
     std::vector<size_t> indexed_col_indices(col_ids.begin(), col_ids.end());
     if (index.GetType() == catalog::ObjectType::InvertedIndex) {
       auto inverted_index_ptr =

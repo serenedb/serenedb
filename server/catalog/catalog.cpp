@@ -587,15 +587,12 @@ void Snapshot::ModifyInvertedIndexDependencies(const InvertedIndex& index,
                                                EdgeAction action) {
   auto database_id = GetDatabaseId(index);
   auto schema_id = index.GetParentId();
-  for (const auto& entry : index.GetEntries()) {
-    const auto* expr = entry.second.GetExpressionData();
-    if (!expr) {
-      continue;
-    }
-    SDB_ASSERT(!expr->pretty_printed.empty());
+  for (const auto& key : index.ExpressionKeys()) {
+    const auto& expr = key.data;
+    SDB_ASSERT(!expr.pretty_printed.empty());
     duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> parsed;
     try {
-      parsed = duckdb::Parser::ParseExpressionList(expr->pretty_printed);
+      parsed = duckdb::Parser::ParseExpressionList(expr.pretty_printed);
     } catch (const duckdb::ParserException&) {
       continue;
     }
@@ -1184,7 +1181,7 @@ DropPlan Snapshot::ComputeDropPlan(ObjectId seed) const {
     for (auto idx_id : td->indexes) {
       auto idx = GetObject<Index>(idx_id);
       SDB_ASSERT(idx);
-      if (absl::c_contains(idx->GetColumnIds(), col_id)) {
+      if (idx->HasColumn(col_id)) {
         result.push_back(idx_id);
       }
     }
@@ -1209,7 +1206,7 @@ DropPlan Snapshot::ComputeColumnDropPlan(ObjectId table_id,
   if (auto td = GetDependency<TableDependency>(table_id)) {
     for (auto idx_id : td->indexes) {
       auto idx = GetObject<Index>(idx_id);
-      if (idx && absl::c_contains(idx->GetColumnIds(), col_id)) {
+      if (idx && idx->HasColumn(col_id)) {
         plan.index_drops.push_back(idx_id);
       }
     }
@@ -1844,6 +1841,12 @@ Result Catalog::CreateSecondaryIndex(
     return std::move(resolved).error();
   }
   for (auto& c : columns) {
+    if (c.IsIndexedExpression()) {
+      // Expression keys carry their own bound payload (dependent columns +
+      // serialized expr); they have no base column to resolve by name. The
+      // store-side ART builds/maintains them natively from the rendered SQL.
+      continue;
+    }
     auto it = absl::c_find_if(resolved->columns, [&](const Column& col) {
       return col.GetName() == c.name;
     });
@@ -2126,9 +2129,11 @@ Result Catalog::CreateTable(ObjectId database_id, std::string_view schema,
                                                     std::move(args)));
   };
 
+  // A caller-provided id means CTAS mode: created tombstoned, no store table.
+  const bool with_tombstone = operation_options.table_id.id() != 0;
   // Columns come in with whatever owner_table_id callers set (unused);
   // Table's constructor stamps the real id on each.
-  auto table_id = NextId();
+  auto table_id = with_tombstone ? operation_options.table_id : NextId();
 
   std::vector<std::shared_ptr<Sequence>> sequences;
   sequences.reserve(sequence_specs.size() + 1);
@@ -2168,7 +2173,7 @@ Result Catalog::CreateTable(ObjectId database_id, std::string_view schema,
     std::move(options.pk_columns), std::move(options.check_constraints),
     generated_pk_seq_id, options.engine, std::move(options.unique_constraints),
     std::move(options.foreign_keys));
-  if (operation_options.create_with_tombstone) {
+  if (with_tombstone) {
     table->SetTombstoned(true);
   }
 
@@ -2212,7 +2217,7 @@ Result Catalog::CreateTable(ObjectId database_id, std::string_view schema,
         store_table->foreign_keys.push_back(std::move(out));
       }
     }
-    if (operation_options.create_with_tombstone) {
+    if (with_tombstone) {
       // Not-yet-committed (CTAS) tables live under the dropped name; commit
       // renames to the public name (RemoveTombstone), failure drops by id.
       store_table->name = DroppedStoreTableName(table->GetId());
@@ -2233,7 +2238,7 @@ Result Catalog::CreateTable(ObjectId database_id, std::string_view schema,
           return r;
         }
       }
-      if (operation_options.create_with_tombstone) {
+      if (with_tombstone) {
         r = _engine->WriteTombstone(*schema_id, table->GetId());
         if (!r.ok()) {
           return r;
@@ -2252,7 +2257,7 @@ Result Catalog::CreateTable(ObjectId database_id, std::string_view schema,
                             catalog::SerializeObject(*seq, stream));
           ctx.PutSequence(seq->GetId(), seq->Options().Seed());
         }
-        if (store_table) {
+        if (store_table && !with_tombstone) {
           ctx.CreateStoreTable(std::move(*store_table));
         }
       });
@@ -2703,6 +2708,22 @@ Result Catalog::ChangeTable(ObjectId database_id, std::string_view schema,
               ctx.DropStoreCheck(store_name, oc.expr->GetExpr().ToString());
             }
           }
+          // Newly added NOT NULL constraints -> SET NOT NULL on the store
+          // column (queued after the column add above, so it already exists).
+          for (const auto& nc : updated->CheckConstraints()) {
+            bool existed = std::ranges::any_of(
+              table->CheckConstraints(),
+              [&](const auto& oc) { return oc.GetId() == nc.GetId(); });
+            if (existed) {
+              continue;
+            }
+            if (auto idx = nc.IsNotNull(updated->Columns())) {
+              const auto& col = updated->Columns()[*idx];
+              if (col.GetId() != Column::kGeneratedPKId) {
+                ctx.AddStoreNotNull(store_name, col.GetName());
+              }
+            }
+          }
         });
       });
     });
@@ -2947,7 +2968,7 @@ Result Catalog::ChangeColumnType(ObjectId database_id, std::string_view schema,
   if (auto td = _snapshot->GetDependency<TableDependency>(*table_id)) {
     for (auto idx_id : td->indexes) {
       auto idx = _snapshot->GetObject<Index>(idx_id);
-      if (idx && absl::c_contains(idx->GetColumnIds(), col_id)) {
+      if (idx && idx->HasColumn(col_id)) {
         return Result{ERROR_BAD_PARAMETER,
                       "cannot alter type of column \"",
                       column,

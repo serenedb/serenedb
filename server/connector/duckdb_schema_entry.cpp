@@ -22,15 +22,11 @@
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/constants.hpp>
-#include <duckdb/common/string_util.hpp>
 #include <duckdb/parser/constraints/check_constraint.hpp>
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
-#include <duckdb/parser/expression/cast_expression.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
-#include <duckdb/parser/expression/constant_expression.hpp>
-#include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/expression/operator_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_scalar_function_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
@@ -43,9 +39,7 @@
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
-#include <iostream>
 
-#include "app/app_server.h"
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
 #include "catalog/catalog.h"
@@ -91,9 +85,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::LookupEntry(
       entry_type == duckdb::CatalogType::SCALAR_FUNCTION_ENTRY ||
       entry_type == duckdb::CatalogType::AGGREGATE_FUNCTION_ENTRY;
     if (is_function_entry && name != StaticStrings::kPgCatalogSchema) {
-      snapshot->GetFunction(
-        catalog::RequireAccess(conn_ctx.GetRoleId(), catalog::AclMode::Execute),
-        GetDatabaseId(), name, lookup_info.GetEntryName());
+      snapshot->GetFunction(catalog::RequireAccess(transaction.GetContext(),
+                                                   catalog::AclMode::Execute),
+                            GetDatabaseId(), name, lookup_info.GetEntryName());
     }
     return result;
   }
@@ -406,12 +400,12 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
   catalog::CreateTableOperationOptions op_options;
 
   // Creator owns the table (and its generated serial/PK sequences).
-  const ObjectId role{
-    GetSereneDBContext(transaction.GetContext()).GetRoleId()};
+  const ObjectId role{GetSereneDBContext(transaction.GetContext()).GetRoleId()};
   options.owner = role;
 
-  auto r = catalog_impl.CreateTable(catalog::RequireCreate(role), database_id,
-                                    name, std::move(options), op_options);
+  auto r =
+    catalog_impl.CreateTable(catalog::RequireOwnership(role), database_id, name,
+                             std::move(options), op_options);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (if_not_exists) {
       return nullptr;
@@ -516,14 +510,14 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
       options.topk_scorer = catalog::ParseScorerExpression(context, value);
     }
     create_result = catalog_impl.CreateInvertedIndex(
-      catalog::RequireOwnership(transaction), context, database_id, name,
+      catalog::RequireOwnership(context), context, database_id, name,
       sdb_table->GetName(), info.index_name, std::move(idx_columns),
       std::move(options),
       /*operation_options=*/{});
   } else {
     bool unique = (info.constraint_type == duckdb::IndexConstraintType::UNIQUE);
     create_result = catalog_impl.CreateSecondaryIndex(
-      catalog::RequireOwnership(transaction), database_id, name,
+      catalog::RequireOwnership(context), database_id, name,
       sdb_table->GetName(), info.index_name, std::move(idx_columns), unique,
       /*operation_options=*/{});
   }
@@ -559,8 +553,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
   duckdb::CatalogTransaction transaction, duckdb::CreateFunctionInfo& info) {
-  const ObjectId role{
-    GetSereneDBContext(transaction.GetContext()).GetRoleId()};
+  const ObjectId role{GetSereneDBContext(transaction.GetContext()).GetRoleId()};
   auto& catalog_impl = catalog::GetCatalog();
   auto database_id = GetDatabaseId();
 
@@ -610,7 +603,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
     // Always replace=true for the catalog layer since we're replacing
     // the whole PgSqlFunction with the merged version. CreateFunction
     // preserves the prior owner on replace (PG semantics).
-    auto r = catalog_impl.CreateFunction(catalog::RequireCreate(role),
+    auto r = catalog_impl.CreateFunction(catalog::RequireOwnership(role),
                                          database_id, name, function, true);
     if (!r.ok()) {
       SDB_THROW(std::move(r));
@@ -621,7 +614,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
   // No existing function -- create new.
   auto function = std::make_shared<catalog::PgSqlFunction>(
     role, ObjectId{}, ObjectId{}, info.name, std::move(new_macro_info));
-  auto r = catalog_impl.CreateFunction(catalog::RequireCreate(role),
+  auto r = catalog_impl.CreateFunction(catalog::RequireOwnership(role),
                                        database_id, name, function, false);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {
@@ -637,8 +630,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateView(
   duckdb::CatalogTransaction transaction, duckdb::CreateViewInfo& info) {
-  const ObjectId role{
-    GetSereneDBContext(transaction.GetContext()).GetRoleId()};
+  const ObjectId role{GetSereneDBContext(transaction.GetContext()).GetRoleId()};
   auto& catalog_impl = catalog::GetCatalog();
   auto database_id = GetDatabaseId();
 
@@ -652,7 +644,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateView(
     info.on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
   // CreateView preserves the prior owner on replace (PG: CREATE OR REPLACE
   // keeps the original owner).
-  auto r = catalog_impl.CreateView(catalog::RequireCreate(role), database_id,
+  auto r = catalog_impl.CreateView(catalog::RequireOwnership(role), database_id,
                                    name, view, replace);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {
@@ -692,8 +684,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateSequence(
                     ERR_MSG("sequence START is out of range [MIN, MAX]"));
   }
 
-  const ObjectId role{
-    GetSereneDBContext(transaction.GetContext()).GetRoleId()};
+  const ObjectId role{GetSereneDBContext(transaction.GetContext()).GetRoleId()};
   catalog::SequenceOptions options;
   options.name = info.name;
   options.start_value = static_cast<uint64_t>(info.start_value);
@@ -710,8 +701,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateSequence(
                                                       std::move(options));
 
   auto& catalog_impl = catalog::GetCatalog();
-  auto r = catalog_impl.CreateSequence(
-    catalog::RequireCreate(role), database_id, name, sequence, if_not_exists);
+  auto r =
+    catalog_impl.CreateSequence(catalog::RequireOwnership(role), database_id,
+                                name, sequence, if_not_exists);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
                     ERR_MSG("relation \"", info.name, "\" already exists"));
@@ -759,11 +751,10 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateType(
   auto type_info =
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateTypeInfo>(
       info.Copy());
-  const ObjectId role{
-    GetSereneDBContext(transaction.GetContext()).GetRoleId()};
+  const ObjectId role{GetSereneDBContext(transaction.GetContext()).GetRoleId()};
   auto type = std::make_shared<catalog::PgSqlType>(
     role, ObjectId{}, ObjectId{}, info.name, std::move(type_info));
-  auto r = catalog_impl.CreateType(catalog::RequireCreate(role), database_id,
+  auto r = catalog_impl.CreateType(catalog::RequireOwnership(role), database_id,
                                    name, type);
 
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {

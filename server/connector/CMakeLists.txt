@@ -13,6 +13,7 @@ add_library(
     search_filter_printer.cpp
     duckdb_ann_filter.cpp
     duckdb_client_state.cpp
+    duckdb_access_check.cpp
     duckdb_catalog.cpp
     duckdb_entry_cache.cpp
     duckdb_schema_entry.cpp

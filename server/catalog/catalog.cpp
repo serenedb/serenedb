@@ -95,7 +95,6 @@
 #include "catalog/view.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_entry_cache.h"
-#include "folly/Function.h"
 #include "general_server/scheduler.h"
 #include "general_server/scheduler_feature.h"
 #include "general_server/state.h"
@@ -110,9 +109,9 @@
 
 namespace sdb::catalog {
 
-AccessContext RequireOwnership(duckdb::CatalogTransaction transaction) {
-  return RequireOwnership(
-    connector::GetSereneDBContext(transaction.GetContext()).GetRoleId());
+AccessContext RequireAccess(duckdb::ClientContext& context, AclMode need) {
+  return RequireAccess(connector::GetSereneDBContext(context).GetRoleId(),
+                       need);
 }
 
 AccessContext RequireOwnership(duckdb::ClientContext& context) {

@@ -128,9 +128,8 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   catalog::CreateTableOperationOptions op_options;
   op_options.create_with_tombstone = true;
 
-  const ObjectId role_id{GetSereneDBContext(context).GetRoleId()};
   auto r =
-    catalog_impl.CreateTable(catalog::RequireCreate(role_id), database_id,
+    catalog_impl.CreateTable(catalog::RequireOwnership(context), database_id,
                              _schema.name, std::move(options), op_options);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (if_not_exists) {

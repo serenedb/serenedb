@@ -20,10 +20,8 @@
 
 #include "connector/functions/sequence.h"
 
-#include <duckdb/common/exception.hpp>
 #include <duckdb/common/vector_operations/binary_executor.hpp>
 #include <duckdb/common/vector_operations/ternary_executor.hpp>
-#include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
@@ -60,9 +58,8 @@ std::shared_ptr<catalog::Sequence> ResolveSequence(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                     ERR_MSG("schema \"", schema_name, "\" does not exist"));
   }
-  auto seq =
-    snapshot->GetSequence(catalog::RequireAccess(conn_ctx.GetRoleId(), need),
-                          database_id, schema->GetId(), qname.name);
+  auto seq = snapshot->GetSequence(catalog::RequireAccess(context, need),
+                                   database_id, schema->GetId(), qname.name);
   if (!seq) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("relation \"", qualified, "\" does not exist"));

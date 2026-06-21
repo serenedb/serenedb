@@ -96,12 +96,21 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
       // Check constraints
       for (const auto& check : table->CheckConstraints()) {
         conname_storage.emplace_back(check.GetName());
+        // PostgreSQL exposes a NOT NULL constraint as contype 'n' with the
+        // column in conkey, even though serenedb stores it as an
+        // OPERATOR_IS_NOT_NULL check.
+        auto not_null_col = check.IsNotNull(table->Columns());
         conkey_storage.emplace_back();
+        if (not_null_col) {
+          conkey_storage.back().push_back(
+            static_cast<int16_t>(*not_null_col + 1));
+        }
         values.push_back({
           .oid = check.GetId().id(),
           .conname = conname_storage.back(),
           .connamespace = schema->GetId().id(),
-          .contype = PgConstraint::Contype::Check,
+          .contype = not_null_col ? PgConstraint::Contype::NotNull
+                                  : PgConstraint::Contype::Check,
           .condeferrable = false,
           .condeferred = false,
           .conenforced = true,

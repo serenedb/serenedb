@@ -707,11 +707,27 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
 
   const auto on_conflict_action = op.on_conflict_info.action_type;
 
-  const bool parallel_streaming_insert =
-    plan &&
-    !duckdb::PhysicalPlanGenerator::PreserveInsertionOrder(context, *plan) &&
-    !op.return_chunk && on_conflict_action == duckdb::OnConflictAction::THROW &&
-    duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads() > 1;
+  // Mirror duckdb's own DuckCatalog::PlanInsert branch selection (see
+  // PlanCreateTableAs above): a partitionable, order-preserving load uses
+  // PhysicalBatchInsert, which flushes and compresses row groups optimistically
+  // across worker threads -- a serial PhysicalInsert is many times slower.
+  const auto num_threads =
+    duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads();
+  bool parallel_streaming_insert =
+    plan && !duckdb::PhysicalPlanGenerator::PreserveInsertionOrder(context, *plan);
+  bool use_batch_index =
+    plan && duckdb::PhysicalPlanGenerator::UseBatchIndex(context, *plan);
+  if (op.return_chunk) {
+    parallel_streaming_insert = false;
+    use_batch_index = false;
+  }
+  if (on_conflict_action != duckdb::OnConflictAction::THROW) {
+    use_batch_index = false;
+  }
+  if (on_conflict_action == duckdb::OnConflictAction::UPDATE) {
+    parallel_streaming_insert = false;
+  }
+
   auto store_constraints =
     duckdb::Binder::BindConstraints(context, store_entry.GetConstraints(),
                                     store_entry.name, store_entry.GetColumns());
@@ -723,16 +739,25 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
       store_constraints.push_back(std::move(constraint));
     }
   }
-  auto& insert = planner.Make<duckdb::PhysicalInsert>(
-    op.types, store_entry, std::move(store_constraints),
-    std::move(op.expressions), std::move(op.on_conflict_info.set_columns),
-    std::move(op.on_conflict_info.set_types), op.estimated_cardinality,
-    op.return_chunk, parallel_streaming_insert, on_conflict_action,
-    std::move(op.on_conflict_info.on_conflict_condition),
-    std::move(op.on_conflict_info.do_update_condition),
-    std::move(op.on_conflict_info.on_conflict_filter),
-    std::move(op.on_conflict_info.columns_to_fetch),
-    op.on_conflict_info.update_is_del_and_insert);
+
+  auto& insert = [&]() -> duckdb::PhysicalOperator& {
+    if (use_batch_index && !parallel_streaming_insert) {
+      return planner.Make<duckdb::PhysicalBatchInsert>(
+        op.types, store_entry, std::move(store_constraints),
+        op.estimated_cardinality);
+    }
+    return planner.Make<duckdb::PhysicalInsert>(
+      op.types, store_entry, std::move(store_constraints),
+      std::move(op.expressions), std::move(op.on_conflict_info.set_columns),
+      std::move(op.on_conflict_info.set_types), op.estimated_cardinality,
+      op.return_chunk, parallel_streaming_insert && num_threads > 1,
+      on_conflict_action,
+      std::move(op.on_conflict_info.on_conflict_condition),
+      std::move(op.on_conflict_info.do_update_condition),
+      std::move(op.on_conflict_info.on_conflict_filter),
+      std::move(op.on_conflict_info.columns_to_fetch),
+      op.on_conflict_info.update_is_del_and_insert);
+  }();
   if (plan) {
     insert.children.push_back(*plan);
   }

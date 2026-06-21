@@ -20,56 +20,87 @@
 
 #include "connector/duckdb_physical_ctas.h"
 
-#include <duckdb/main/appender.hpp>
-#include <duckdb/main/connection.hpp>
-#include <duckdb/main/database.hpp>
-#include <duckdb/parser/parsed_data/create_table_info.hpp>
+#include <atomic>
+#include <duckdb/common/enums/database_modification_type.hpp>
+#include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/database_manager.hpp>
+#include <duckdb/transaction/duck_transaction.hpp>
+#include <duckdb/transaction/meta_transaction.hpp>
+#include <duckdb/transaction/transaction_manager.hpp>
 
 #include "basics/assert.h"
 #include "basics/debugging.h"
 #include "catalog/catalog.h"
 #include "catalog/store/store.h"
-#include "catalog/table.h"
-#include "catalog/table_options.h"
-#include "connector/duckdb_client_state.h"
-#include "connector/duckdb_schema_entry.h"
-#include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {
 
-struct CTASGlobalState final : public duckdb::GlobalSinkState {
-  ObjectId database_id;
-  std::string database_name;
-  std::string schema_name;
-  std::string table_name;
-  // Appends ride a dedicated connection: the store table was created on
-  // the catalog-store connection mid-statement, so it is invisible to (and
-  // would write-write conflict with) the user transaction. The table only
-  // becomes user-visible at the RemoveTombstone rename, so rows committed
-  // through this connection appear atomically.
-  std::unique_ptr<duckdb::Connection> store_conn;
-  std::unique_ptr<duckdb::Appender> appender;
-  duckdb::idx_t insert_count = 0;
-  bool finalized = false;
+// Wraps the nested PhysicalInsert's sink state and owns the second __sdb_store
+// transaction the whole load runs under. The destructor is the abort/error
+// safety net: if Finalize never ran, it pops the scoped override, rolls back
+// the second transaction, and drops the tombstoned catalog table.
+struct CTASGlobalSinkState final : public duckdb::GlobalSinkState {
+  CTASGlobalSinkState(duckdb::MetaTransaction& meta,
+                      duckdb::AttachedDatabase& store_db, ObjectId database_id,
+                      std::string database_name, std::string schema_name,
+                      std::string table_name)
+    : meta(meta),
+      store_db(store_db),
+      database_id(database_id),
+      database_name(std::move(database_name)),
+      schema_name(std::move(schema_name)),
+      table_name(std::move(table_name)) {}
 
-  ~CTASGlobalState() final {
-    try {
-      appender.reset();
-      store_conn.reset();
-    } catch (...) {
-    }
-    if (!finalized && !table_name.empty()) {
+  // Pipeline::TryGetMaxThreads queries the sink's global state to size the
+  // load. Forward so a wrapped PhysicalBatchInsert scales its memory budget by
+  // thread count instead of staying pinned at the single-thread minimum.
+  duckdb::idx_t MaxThreads(duckdb::idx_t source_max_threads) override {
+    return insert_gstate ? insert_gstate->MaxThreads(source_max_threads)
+                         : source_max_threads;
+  }
+
+  ~CTASGlobalSinkState() final {
+    if (override_pushed) {
       try {
-        auto& catalog = catalog::GetCatalog();
-        std::ignore =
-          catalog.DropTable(database_name, schema_name, table_name, true);
+        meta.PopTransactionOverride(store_db);
+      } catch (...) {
+      }
+      override_pushed = false;
+    }
+    if (second_txn && !committed) {
+      try {
+        store_db.GetTransactionManager().RollbackTransaction(*second_txn);
+      } catch (...) {
+      }
+    }
+    if (table_created && !finalized) {
+      try {
+        std::ignore = catalog::GetCatalog().DropTable(
+          database_name, schema_name, table_name, true);
       } catch (...) {
       }
     }
   }
+
+  duckdb::MetaTransaction& meta;
+  duckdb::AttachedDatabase& store_db;
+  // Valid until committed/rolled back; the manager destroys it afterwards.
+  duckdb::optional_ptr<duckdb::DuckTransaction> second_txn;
+  ObjectId database_id;
+  std::string database_name;
+  std::string schema_name;
+  std::string table_name;
+  duckdb::unique_ptr<duckdb::GlobalSinkState> insert_gstate;
+  bool table_created = false;
+  bool override_pushed = false;
+  bool committed = false;
+  bool finalized = false;
+  // Summed in Sink (operator-agnostic: the nested batch/insert global-state
+  // types are unrelated and BatchInsertGlobalState is not header-visible). A
+  // CTAS into a fresh store table never drops rows, so the chunk-size sum is
+  // the exact inserted count.
+  std::atomic<duckdb::idx_t> insert_count{0};
 };
 
 struct CTASSourceState final : public duckdb::GlobalSourceState {
@@ -79,127 +110,129 @@ struct CTASSourceState final : public duckdb::GlobalSourceState {
 }  // namespace
 
 SereneDBPhysicalCTAS::SereneDBPhysicalCTAS(
-  duckdb::PhysicalPlan& plan,
-  duckdb::unique_ptr<duckdb::BoundCreateTableInfo> info,
-  duckdb::SchemaCatalogEntry& schema, duckdb::idx_t estimated_cardinality)
+  duckdb::PhysicalPlan& plan, duckdb::PhysicalOperator& insert,
+  ObjectId database_id, std::string database_name, std::string schema_name,
+  catalog::CreateTableOptions options, ObjectId table_id,
+  duckdb::idx_t estimated_cardinality)
   : duckdb::PhysicalOperator(
       plan, duckdb::PhysicalOperatorType::CREATE_TABLE_AS,
       {duckdb::LogicalType::BIGINT}, estimated_cardinality),
-    _info(std::move(info)),
-    _schema(schema) {}
+    _insert(insert),
+    _database_id(database_id),
+    _database_name(std::move(database_name)),
+    _schema_name(std::move(schema_name)),
+    _options(std::move(options)),
+    _table_id(table_id) {}
 
 duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
-  auto& schema_entry = _schema.Cast<SereneDBSchemaEntry>();
-  auto database_id = schema_entry.GetDatabaseId();
-
-  auto& create_info = _info->Base();
-  auto& table_info = create_info.Cast<duckdb::CreateTableInfo>();
-
-  if (!table_info.options.empty()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("unrecognized parameter \"",
-                            table_info.options.begin()->first, "\""));
-  }
-
-  catalog::CreateTableOptions options;
-  options.name = table_info.table;
-
-  for (auto& col : table_info.columns.Logical()) {
-    catalog::Column sdb_col{{}, catalog::NextId(), col.Name(), col.Type()};
-    if (col.Generated()) {
-      sdb_col.generated_type = catalog::Column::GeneratedType::kStored;
-      sdb_col.expr =
-        std::make_shared<ColumnExpr>(col.GeneratedExpression().Copy());
-    } else if (col.HasDefaultValue()) {
-      sdb_col.expr = std::make_shared<ColumnExpr>(col.DefaultValue().Copy());
-    }
-    options.columns.push_back(std::move(sdb_col));
-  }
-
-  // CTAS has no PK/UNIQUE constraints -- pkColumns stays empty, so the
-  // Table constructor wires up a generated PK sequence.
-
+  // Create the facade catalog entry (tombstoned, no store table) here -- at
+  // execution, once -- with the pre-allocated id so the store table name the
+  // insert operator already encoded matches.
   auto& catalog_impl = catalog::GetCatalog();
-
-  bool if_not_exists =
-    create_info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
+  // A valid table id puts CreateTable in CTAS mode: tombstoned, no store table.
   catalog::CreateTableOperationOptions op_options;
-  op_options.create_with_tombstone = true;
-
-  auto r = catalog_impl.CreateTable(database_id, _schema.name,
-                                    std::move(options), op_options);
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-    if (if_not_exists) {
-      return nullptr;
-    }
-    throw duckdb::CatalogException("relation \"%s\" already exists",
-                                   table_info.table);
-  }
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
+  op_options.table_id = _table_id;
+  auto create_result =
+    catalog_impl.CreateTable(_database_id, _schema_name, _options, op_options);
+  if (!create_result.ok()) {
+    SDB_THROW(std::move(create_result));
   }
 
-  auto snapshot = catalog_impl.GetCatalogSnapshot();
-  auto catalog_table = snapshot->GetTable(database_id, _schema.name,
-                                          std::string{table_info.table});
-  SDB_ASSERT(catalog_table);
-  auto database = snapshot->GetDatabase(database_id);
-  SDB_ASSERT(database);
+  auto& store_db = *duckdb::DatabaseManager::Get(context).GetDatabase(
+    context, std::string{catalog::kStoreDatabaseName});
+  auto& meta = duckdb::MetaTransaction::Get(context);
+  auto state = duckdb::make_uniq<CTASGlobalSinkState>(
+    meta, store_db, _database_id, _database_name, _schema_name, _options.name);
+  state->table_created = true;
 
-  auto state = duckdb::make_uniq<CTASGlobalState>();
-  state->database_id = database_id;
-  state->database_name = database->GetName();
-  state->schema_name = _schema.name;
-  state->table_name = table_info.table;
+  auto& second_txn = store_db.GetTransactionManager()
+                       .StartTransaction(context)
+                       .Cast<duckdb::DuckTransaction>();
+  second_txn.SetReadWrite();
+  second_txn.active_query = meta.GetActiveQuery();
+  state->second_txn = &second_txn;
 
-  // The store table keeps its tombstone name until RemoveTombstone renames
-  // it on success.
-  state->store_conn = std::make_unique<duckdb::Connection>(*context.db);
-  state->appender = std::make_unique<duckdb::Appender>(
-    *state->store_conn, std::string{catalog::kStoreDatabaseName}, "main",
-    catalog::DroppedStoreTableName(catalog_table->GetId()));
-
-  auto& conn_ctx = GetSereneDBContext(context);
-  conn_ctx.DropCatalogSnapshot();
-
+  // Route the store-table create + insert onto the second transaction for the
+  // life of the pipeline. Pushed before the nested sink state is built, so the
+  // CTAS-variant insert creates the store table under the second transaction.
+  meta.PushTransactionOverride(store_db, second_txn);
+  state->override_pushed = true;
+  // Mark __sdb_store as the modified database so creating the store catalog
+  // entry passes DuckSchemaEntry's modified-database check. The facade catalog
+  // forwards its writes, so it never occupies the single-writable-db slot.
+  meta.ModifyDatabase(store_db,
+                      duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY |
+                        duckdb::DatabaseModificationType::INSERT_DATA);
+  state->insert_gstate = _insert.GetGlobalSinkState(context);
   return state;
+}
+
+duckdb::unique_ptr<duckdb::LocalSinkState>
+SereneDBPhysicalCTAS::GetLocalSinkState(
+  duckdb::ExecutionContext& context) const {
+  return _insert.GetLocalSinkState(context);
 }
 
 duckdb::SinkResultType SereneDBPhysicalCTAS::Sink(
   duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
   duckdb::OperatorSinkInput& input) const {
-  auto& gstate = input.global_state.Cast<CTASGlobalState>();
-  if (!gstate.appender || chunk.size() == 0) {
-    return duckdb::SinkResultType::NEED_MORE_INPUT;
-  }
-  gstate.appender->AppendDataChunk(chunk);
-  gstate.insert_count += chunk.size();
-  return duckdb::SinkResultType::NEED_MORE_INPUT;
+  auto& gstate = input.global_state.Cast<CTASGlobalSinkState>();
+  gstate.insert_count.fetch_add(chunk.size(), std::memory_order_relaxed);
+  duckdb::OperatorSinkInput insert_input{
+    *gstate.insert_gstate, input.local_state, input.interrupt_state};
+  return _insert.Sink(context, chunk, insert_input);
+}
+
+duckdb::SinkNextBatchType SereneDBPhysicalCTAS::NextBatch(
+  duckdb::ExecutionContext& context,
+  duckdb::OperatorSinkNextBatchInput& input) const {
+  auto& gstate = input.global_state.Cast<CTASGlobalSinkState>();
+  duckdb::OperatorSinkNextBatchInput insert_input{
+    *gstate.insert_gstate, input.local_state, input.interrupt_state};
+  return _insert.NextBatch(context, insert_input);
+}
+
+duckdb::SinkCombineResultType SereneDBPhysicalCTAS::Combine(
+  duckdb::ExecutionContext& context,
+  duckdb::OperatorSinkCombineInput& input) const {
+  auto& gstate = input.global_state.Cast<CTASGlobalSinkState>();
+  duckdb::OperatorSinkCombineInput insert_input{
+    *gstate.insert_gstate, input.local_state, input.interrupt_state};
+  return _insert.Combine(context, insert_input);
 }
 
 duckdb::SinkFinalizeType SereneDBPhysicalCTAS::Finalize(
-  duckdb::Pipeline&, duckdb::Event&, duckdb::ClientContext&,
+  duckdb::Pipeline& pipeline, duckdb::Event& event,
+  duckdb::ClientContext& context,
   duckdb::OperatorSinkFinalizeInput& input) const {
-  auto& gstate = input.global_state.Cast<CTASGlobalState>();
-  if (gstate.appender) {
-    gstate.appender->Close();
-    gstate.appender.reset();
-    gstate.store_conn.reset();
-  }
-  // Rows are durable in the store but the table is still tombstone-named;
-  // recovery must drop it. Name kept from the SST-ingest era.
+  auto& gstate = input.global_state.Cast<CTASGlobalSinkState>();
+  duckdb::OperatorSinkFinalizeInput insert_input{*gstate.insert_gstate,
+                                                 input.interrupt_state};
+  auto result = _insert.Finalize(pipeline, event, context, insert_input);
+
+  // Rows are staged in the second transaction but the catalog table is still
+  // tombstone-named; a crash here must drop it on recovery.
   SDB_IF_FAILURE("crash_sst_sink_after_ingest") { SDB_IMMEDIATE_ABORT(); }
+
+  gstate.meta.PopTransactionOverride(gstate.store_db);
+  gstate.override_pushed = false;
+  auto err = gstate.store_db.GetTransactionManager().CommitTransaction(
+    context, *gstate.second_txn);
+  if (err.HasError()) {
+    err.Throw("Failed to commit CREATE TABLE AS data transaction");
+  }
+  gstate.committed = true;
+
   SDB_IF_FAILURE("crash_before_remove_tombstone") { SDB_IMMEDIATE_ABORT(); }
-  auto& catalog = catalog::GetCatalog();
-  auto r = catalog.RemoveTombstone(gstate.database_id, gstate.schema_name,
-                                   gstate.table_name);
+  auto r = catalog::GetCatalog().RemoveTombstone(
+    gstate.database_id, gstate.schema_name, gstate.table_name);
   if (!r.ok()) {
     throw duckdb::InternalException("Failed to remove tombstone: %s",
                                     std::string{r.errorMessage()});
   }
   gstate.finalized = true;
-  return duckdb::SinkFinalizeType::READY;
+  return result;
 }
 
 duckdb::unique_ptr<duckdb::GlobalSourceState>
@@ -217,7 +250,8 @@ duckdb::SourceResultType SereneDBPhysicalCTAS::GetDataInternal(
   src.done = true;
   duckdb::idx_t count = 0;
   if (sink_state) {
-    count = sink_state->Cast<CTASGlobalState>().insert_count;
+    count = sink_state->Cast<CTASGlobalSinkState>().insert_count.load(
+      std::memory_order_relaxed);
   }
   chunk.SetCardinality(1);
   chunk.SetValue(0, 0, duckdb::Value::BIGINT(static_cast<int64_t>(count)));

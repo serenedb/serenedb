@@ -26,6 +26,7 @@
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/execution/operator/order/physical_order.hpp>
+#include <duckdb/execution/operator/persistent/physical_batch_insert.hpp>
 #include <duckdb/execution/operator/persistent/physical_delete.hpp>
 #include <duckdb/execution/operator/persistent/physical_insert.hpp>
 #include <duckdb/execution/operator/persistent/physical_merge_into.hpp>
@@ -62,6 +63,9 @@
 #include "catalog/catalog.h"
 #include "catalog/pk_spec.h"
 #include "catalog/schema.h"
+#include "catalog/store/store.h"
+#include "catalog/table.h"
+#include "catalog/table_options.h"
 #include "catalog/view.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_entry_cache.h"
@@ -479,9 +483,77 @@ void SereneDBCatalog::DropSchema(duckdb::ClientContext& context,
 duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalCreateTable& op, duckdb::PhysicalOperator& plan) {
-  // CTAS always gets a generated PK (monotonic), no sort needed.
-  auto& ctas = planner.Make<SereneDBPhysicalCTAS>(std::move(op.info), op.schema,
-                                                  op.estimated_cardinality);
+  auto& schema_entry = op.schema.Cast<SereneDBSchemaEntry>();
+  auto database_id = schema_entry.GetDatabaseId();
+  auto& table_info = op.info->Base();
+
+  if (!table_info.options.empty()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("unrecognized parameter \"",
+                            table_info.options.begin()->first, "\""));
+  }
+
+  // Planning is side-effect free (it can run more than once per statement, e.g.
+  // on rebind): pre-allocate the table id and build the operators only; the
+  // catalog entry is created at execution. The pre-allocated id names the store
+  // table so the CTAS-variant insert can encode it now.
+  const std::string facade_table_name = table_info.table;
+  const auto table_id = catalog::NextId();
+
+  catalog::CreateTableOptions options;
+  options.name = facade_table_name;
+  for (auto& col : table_info.columns.Logical()) {
+    catalog::Column sdb_col{{}, catalog::NextId(), col.Name(), col.Type()};
+    if (col.Generated()) {
+      sdb_col.generated_type = catalog::Column::GeneratedType::kStored;
+      sdb_col.expr =
+        std::make_shared<ColumnExpr>(col.GeneratedExpression().Copy());
+    } else if (col.HasDefaultValue()) {
+      sdb_col.expr = std::make_shared<ColumnExpr>(col.DefaultValue().Copy());
+    }
+    options.columns.push_back(std::move(sdb_col));
+  }
+
+  // Retarget the bound create-table info at the hidden store table: the
+  // CTAS-variant PhysicalInsert creates it (under the second transaction)
+  // and the columns are already bound, so no rebind is needed.
+  table_info.catalog = std::string{catalog::kStoreDatabaseName};
+  table_info.schema = "main";
+  table_info.table = catalog::DroppedStoreTableName(table_id);
+  table_info.on_conflict = duckdb::OnCreateConflict::ERROR_ON_CONFLICT;
+  table_info.query.reset();
+
+  auto& store_schema = duckdb::Catalog::GetSchema(
+    context, std::string{catalog::kStoreDatabaseName}, "main");
+  auto store_info = duckdb::make_uniq<duckdb::BoundCreateTableInfo>(
+    store_schema, std::move(op.info->base));
+
+  // Mirror duckdb's own DuckCatalog::PlanCreateTableAs branch selection: a
+  // partitionable, order-preserving load uses PhysicalBatchInsert, which
+  // flushes and compresses row groups optimistically across worker threads
+  // during the sink. Wrapping only PhysicalInsert forced the serial commit-time
+  // flush and made CTAS from a parallel source ~7x slower than native.
+  const bool parallel_streaming_insert =
+    !duckdb::PhysicalPlanGenerator::PreserveInsertionOrder(context, plan);
+  const bool use_batch_index =
+    duckdb::PhysicalPlanGenerator::UseBatchIndex(context, plan);
+  const auto num_threads =
+    duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads();
+
+  auto& insert = [&]() -> duckdb::PhysicalOperator& {
+    if (!parallel_streaming_insert && use_batch_index) {
+      return planner.Make<duckdb::PhysicalBatchInsert>(
+        op, store_schema, std::move(store_info), op.estimated_cardinality);
+    }
+    const bool parallel = parallel_streaming_insert && num_threads > 1;
+    return planner.Make<duckdb::PhysicalInsert>(
+      op, store_schema, std::move(store_info), op.estimated_cardinality,
+      parallel);
+  }();
+
+  auto& ctas = planner.Make<SereneDBPhysicalCTAS>(
+    insert, database_id, GetName(), op.schema.name, std::move(options),
+    table_id, op.estimated_cardinality);
   ctas.children.push_back(plan);
   return ctas;
 }

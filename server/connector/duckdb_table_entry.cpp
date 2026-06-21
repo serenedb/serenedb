@@ -81,6 +81,10 @@ SereneDBTableEntry::SereneDBTableEntry(
 
 duckdb::unique_ptr<duckdb::BaseStatistics> SereneDBTableEntry::GetStatistics(
   duckdb::ClientContext& context, duckdb::column_t column_id) {
+  SDB_ASSERT(false,
+             "facade GetStatistics is unreachable: scans read column stats via "
+             "the store-delegated TableScanStatistics, not this entry; if this "
+             "fires, delegate to ResolveStoreEntry(context).GetStatistics");
   return nullptr;
 }
 
@@ -128,49 +132,19 @@ duckdb::vector<duckdb::column_t> SereneDBTableEntry::BuildRowIdColumns(
   const catalog::Table& table, const std::vector<size_t>& indexed_col_indices) {
   duckdb::vector<duckdb::column_t> result;
   const auto& pk_col_ids = table.PKColumns();
-  const auto& columns = table.Columns();
 
-  // Collect unique column indices: PK columns + indexed columns
-  containers::FlatHashSet<size_t> needed;
+  // PK positions (O(1) per id), in PK order; then indexed positions not already
+  // covered by the PK set.
+  containers::FlatHashSet<size_t> pk_positions;
+  pk_positions.reserve(pk_col_ids.size());
   for (auto pk_id : pk_col_ids) {
-    for (size_t i = 0; i < columns.size(); ++i) {
-      if (columns[i].GetId() == pk_id) {
-        needed.insert(i);
-        break;
-      }
+    const auto pos = table.ColumnPosById(pk_id);
+    if (pos < table.Columns().size() && pk_positions.insert(pos).second) {
+      result.push_back(duckdb::VIRTUAL_COLUMN_START + pos);
     }
   }
   for (auto idx : indexed_col_indices) {
-    needed.insert(idx);
-  }
-
-  // Register as virtual columns in stable order (PK first, then indexed)
-  for (auto pk_id : pk_col_ids) {
-    for (size_t i = 0; i < columns.size(); ++i) {
-      if (columns[i].GetId() == pk_id) {
-        result.push_back(duckdb::VIRTUAL_COLUMN_START + i);
-        break;
-      }
-    }
-  }
-  for (auto idx : indexed_col_indices) {
-    if (!needed.contains(idx)) {
-      continue;  // already added as PK
-    }
-    // Only add if not already in the PK set
-    bool is_pk = false;
-    for (auto pk_id : pk_col_ids) {
-      for (size_t i = 0; i < columns.size(); ++i) {
-        if (columns[i].GetId() == pk_id && i == idx) {
-          is_pk = true;
-          break;
-        }
-      }
-      if (is_pk) {
-        break;
-      }
-    }
-    if (!is_pk) {
+    if (!pk_positions.contains(idx)) {
       result.push_back(duckdb::VIRTUAL_COLUMN_START + idx);
     }
   }
@@ -189,13 +163,11 @@ duckdb::virtual_column_map_t SereneDBTableEntry::BuildVirtualColumns(
 
   // PK columns
   for (auto pk_id : pk_col_ids) {
-    for (size_t i = 0; i < columns.size(); ++i) {
-      if (columns[i].GetId() == pk_id) {
-        result.insert({duckdb::VIRTUAL_COLUMN_START + i,
-                       duckdb::TableColumn(std::string{columns[i].GetName()},
-                                           columns[i].type)});
-        break;
-      }
+    const auto pos = table.ColumnPosById(pk_id);
+    if (pos < columns.size()) {
+      result.insert({duckdb::VIRTUAL_COLUMN_START + pos,
+                     duckdb::TableColumn(std::string{columns[pos].GetName()},
+                                         columns[pos].type)});
     }
   }
 
@@ -241,13 +213,10 @@ duckdb::TableStorageInfo SereneDBTableEntry::BuildStorageInfo(
     idx_info.is_primary = true;
     idx_info.is_foreign = false;
     // Map PK column IDs to column indices in the table
-    const auto& columns = table.Columns();
     for (auto pk_id : pk_col_ids) {
-      for (size_t i = 0; i < columns.size(); ++i) {
-        if (columns[i].GetId() == pk_id) {
-          idx_info.column_set.insert(i);
-          break;
-        }
+      const auto pos = table.ColumnPosById(pk_id);
+      if (pos < table.Columns().size()) {
+        idx_info.column_set.insert(pos);
       }
     }
     info.index_info.push_back(std::move(idx_info));

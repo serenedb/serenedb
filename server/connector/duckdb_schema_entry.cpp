@@ -426,9 +426,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
   auto& sdb_table_entry = RequireBaseTable(table);
   auto sdb_table = sdb_table_entry.GetSereneDBTable();
 
-  // CREATE INDEX requires ownership of the target table -- enforced inside the
-  // catalog mutation (CreateSecondaryIndex/CreateInvertedIndex), which throws
-  // "must be owner of table <name>" directly on a non-owner.
   auto& catalog_impl = catalog::GetCatalog();
   auto database_id = GetDatabaseId();
 
@@ -444,8 +441,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
   } else if (idx_type_str == "inverted") {
     index_type = catalog::ObjectType::InvertedIndex;
   } else {
-    throw duckdb::CatalogException("access method \"%s\" does not exist",
-                                   info.index_type);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+      ERR_MSG("access method \"", info.index_type, "\" does not exist"));
   }
 
   // Build CreateIndexColumn vector from DuckDB info.

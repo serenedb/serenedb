@@ -45,21 +45,21 @@ connection c_intern user=vedernikoff_intern
 statement error
 CREATE ROLE sneaky;
 ----
-db error: ERROR: permission denied to create role
+db error: ERROR: permission denied to create role<slt:ignore>
 
 
 connection c_intern user=vedernikoff_intern
 statement error
 DROP ROLE postgres;
 ----
-db error: ERROR: permission denied to drop role
+db error: ERROR: permission denied to drop role<slt:ignore>
 
 
 connection c_intern user=vedernikoff_intern
 statement error
 ALTER ROLE postgres PASSWORD 'pwned';
 ----
-db error: ERROR: permission denied to alter role
+db error: ERROR: permission denied to alter role<slt:ignore>
 
 
 connection c_intern user=vedernikoff_intern

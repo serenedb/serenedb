@@ -148,3 +148,31 @@ SELECT
 ----
 has_table_privilege	has_table_privilege	has_table_privilege	has_table_privilege
 t	t	t	t
+
+
+# Teardown: these roles use un-prefixed names (vedernikoff, auditors, ...) shared
+# with no other file, but the plain `vedernikoff` collides with xcat_edge_quoted_
+# role's case-sensitivity probe if left behind. Drop everything so the suite stays
+# isolated (the table must go first -- its grants are dependencies of the roles).
+statement ok
+DROP TABLE IF EXISTS mop_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS juniors;
+
+
+statement ok
+DROP ROLE IF EXISTS analysts;
+
+
+statement ok
+DROP ROLE IF EXISTS readers;
+
+
+statement ok
+DROP ROLE IF EXISTS auditors;

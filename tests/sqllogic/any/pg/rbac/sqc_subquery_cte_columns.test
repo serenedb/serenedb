@@ -1,0 +1,214 @@
+# Column-level SELECT enforcement reached THROUGH subqueries, CTEs, derived
+# tables, LATERAL, and scalar subqueries. PG (parse-analyze) and SereneDB
+# (pre-optimize plan walk) both charge SELECT on EVERY referenced column and
+# relation, regardless of whether the optimizer later prunes it -- a ungranted
+# column anywhere in the statement refuses the whole read with
+# "permission denied for table <t>". A read touching only granted sources
+# succeeds.
+#
+# Fixtures: sqc_alpha(id, av, secret), sqc_beta(id, bv). Role sqc_vedernikoff
+# holds ONLY SELECT (id, av) ON sqc_alpha -- nothing on sqc_alpha.secret,
+# nothing on sqc_beta. Validated against PostgreSQL 19 byte-for-byte.
+
+statement ok
+DROP TABLE IF EXISTS sqc_alpha;
+
+
+statement ok
+DROP TABLE IF EXISTS sqc_beta;
+
+
+statement ok
+DROP ROLE IF EXISTS sqc_vedernikoff;
+
+
+statement ok
+CREATE TABLE sqc_alpha (id int, av int, secret int);
+
+
+statement ok
+CREATE TABLE sqc_beta (id int, bv int);
+
+
+statement ok
+INSERT INTO sqc_alpha VALUES (1, 10, 100), (2, 20, 200);
+
+
+statement ok
+INSERT INTO sqc_beta VALUES (1, 5), (2, 6);
+
+
+statement ok
+CREATE ROLE sqc_vedernikoff LOGIN PASSWORD 'pw';
+
+
+# Only (id, av) on sqc_alpha; secret and all of sqc_beta stay ungranted.
+statement ok
+GRANT SELECT (id, av) ON sqc_alpha TO sqc_vedernikoff;
+
+
+# === CASE 1: scalar subquery in the SELECT list ===
+
+# References ungranted sqc_alpha.secret -> refused on sqc_alpha.
+connection c1 user=sqc_vedernikoff
+statement error
+SELECT (SELECT secret FROM sqc_alpha LIMIT 1);
+----
+db error: ERROR: permission denied for table sqc_alpha<slt:ignore>
+
+
+# References granted sqc_alpha.av -> allowed.
+connection c1b user=sqc_vedernikoff
+query
+SELECT (SELECT av FROM sqc_alpha LIMIT 1) AS sv;
+----
+sv
+10
+
+
+# === CASE 2: subquery in WHERE over ungranted sqc_beta ===
+
+# IN (subquery) reads sqc_beta -> refused on sqc_beta.
+connection c2a user=sqc_vedernikoff
+statement error
+SELECT id FROM sqc_alpha WHERE id IN (SELECT id FROM sqc_beta);
+----
+db error: ERROR: permission denied for table sqc_beta<slt:ignore>
+
+
+# EXISTS (subquery) reads sqc_beta -> refused on sqc_beta.
+connection c2b user=sqc_vedernikoff
+statement error
+SELECT id FROM sqc_alpha WHERE EXISTS (SELECT 1 FROM sqc_beta WHERE sqc_beta.id = sqc_alpha.id);
+----
+db error: ERROR: permission denied for table sqc_beta<slt:ignore>
+
+
+# = ANY (subquery) reads sqc_beta -> refused on sqc_beta.
+connection c2c user=sqc_vedernikoff
+statement error
+SELECT id FROM sqc_alpha WHERE id = ANY (SELECT id FROM sqc_beta);
+----
+db error: ERROR: permission denied for table sqc_beta<slt:ignore>
+
+
+# === CASE 3: correlated subquery on an ungranted column ===
+
+# Correlated subquery references ungranted sqc_alpha.secret -> refused on sqc_alpha.
+connection c3 user=sqc_vedernikoff
+statement error
+SELECT a.id FROM sqc_alpha a WHERE a.av > (SELECT b.secret FROM sqc_alpha b WHERE b.id = a.id);
+----
+db error: ERROR: permission denied for table sqc_alpha<slt:ignore>
+
+
+# === CASE 4: CTEs ===
+
+# CTE projects secret; outer query uses only av. PG/SereneDB charge the
+# referenced column even though it is pruned -> refused on sqc_alpha.
+connection c4a user=sqc_vedernikoff
+statement error
+WITH w AS (SELECT av, secret FROM sqc_alpha) SELECT av FROM w;
+----
+db error: ERROR: permission denied for table sqc_alpha<slt:ignore>
+
+
+# CTE projects only av -> allowed.
+connection c4b user=sqc_vedernikoff
+query
+WITH w AS (SELECT av FROM sqc_alpha) SELECT av FROM w ORDER BY av;
+----
+av
+10
+20
+
+
+# === CASE 5: derived tables (subquery in FROM) ===
+
+# Derived table reads only av -> allowed.
+connection c5a user=sqc_vedernikoff
+query
+SELECT s.av FROM (SELECT av FROM sqc_alpha) s ORDER BY s.av;
+----
+av
+10
+20
+
+
+# Derived table reads ungranted secret -> refused on sqc_alpha.
+connection c5b user=sqc_vedernikoff
+statement error
+SELECT s.secret FROM (SELECT secret FROM sqc_alpha) s;
+----
+db error: ERROR: permission denied for table sqc_alpha<slt:ignore>
+
+
+# === CASE 6: LATERAL ===
+
+# LATERAL subquery reads ungranted sqc_beta -> refused on sqc_beta.
+connection c6a user=sqc_vedernikoff
+statement error
+SELECT a.id FROM sqc_alpha a, LATERAL (SELECT bv FROM sqc_beta b WHERE b.id = a.id) lj;
+----
+db error: ERROR: permission denied for table sqc_beta<slt:ignore>
+
+
+# LATERAL subquery references ungranted sqc_alpha.secret -> refused on sqc_alpha.
+connection c6b user=sqc_vedernikoff
+statement error
+SELECT a.id, lj.s FROM sqc_alpha a, LATERAL (SELECT a.secret AS s) lj;
+----
+db error: ERROR: permission denied for table sqc_alpha<slt:ignore>
+
+
+# === CASE 7: nested CTE (CTE referencing another CTE) ===
+
+# inner_cte reads ungranted sqc_beta; outer_cte reads inner_cte -> refused on sqc_beta.
+connection c7 user=sqc_vedernikoff
+statement error
+WITH inner_cte AS (SELECT id FROM sqc_beta), outer_cte AS (SELECT id FROM inner_cte) SELECT id FROM outer_cte;
+----
+db error: ERROR: permission denied for table sqc_beta<slt:ignore>
+
+
+# === CASE 8: positive controls + SELECT * pruning trap ===
+
+# Plain projection of a granted column -> allowed.
+connection c8a user=sqc_vedernikoff
+query
+SELECT av FROM sqc_alpha ORDER BY av;
+----
+av
+10
+20
+
+
+# Derived table does SELECT * (charges ALL columns incl. ungranted secret),
+# even though the outer query projects only id, av -> refused on sqc_alpha.
+connection c8b user=sqc_vedernikoff
+statement error
+SELECT id, av FROM (SELECT * FROM sqc_alpha) s ORDER BY id;
+----
+db error: ERROR: permission denied for table sqc_alpha<slt:ignore>
+
+
+# Derived table names only granted columns -> allowed.
+connection c8c user=sqc_vedernikoff
+query
+SELECT id, av FROM (SELECT id, av FROM sqc_alpha) s ORDER BY id;
+----
+id	av
+1	10
+2	20
+
+
+statement ok
+DROP TABLE sqc_alpha;
+
+
+statement ok
+DROP TABLE sqc_beta;
+
+
+statement ok
+DROP ROLE sqc_vedernikoff;

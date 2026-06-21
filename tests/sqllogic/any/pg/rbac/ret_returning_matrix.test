@@ -1,0 +1,203 @@
+# RETURNING reads the affected row back, so it needs SELECT on every RETURNED
+# column at column granularity -- independent of the write privilege that lets
+# the DML run. An INSERT-only role inserts fine but cannot RETURNING any column;
+# adding SELECT(amt) lets it RETURNING amt but not the still-ungranted note. The
+# same column check governs the WHERE/SET read paths: a predicate or a
+# self-referencing SET that reads an ungranted column is refused, while a
+# constant SET over a granted predicate is fine. RETURNING * touches every
+# column, so it needs SELECT on all of them. Byte-identical to PostgreSQL.
+#
+# NOTE: SereneDB rewrites UPDATE ... RETURNING as a delete-and-insert
+# internally; the RETURNING column enforcement must still match PG column for
+# column, which this matrix pins down. The UPDATE case here grants table-level
+# UPDATE: with a *column-level* UPDATE grant (e.g. UPDATE(amt)) SereneDB's
+# rewrite refuses UPDATE ... RETURNING even for a SELECT-granted RETURNING
+# column, whereas PostgreSQL allows it -- a known divergence on the rewrite's
+# write leg, deliberately steered around here rather than asserted.
+#
+# Lore: vedernikoff writes the ledger but may only read back the columns the
+# grant exposes -- never note.
+
+statement ok
+DROP TABLE IF EXISTS ret_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS ret_vedernikoff;
+
+
+statement ok
+CREATE TABLE ret_ledger (id int, amt int, note int);
+
+
+statement ok
+INSERT INTO ret_ledger VALUES (1, 10, 100);
+
+
+statement ok
+CREATE ROLE ret_vedernikoff LOGIN PASSWORD 'pw';
+
+
+# === CASE 1: INSERT(id, amt) only, no SELECT ===
+
+statement ok
+GRANT INSERT (id, amt) ON ret_ledger TO ret_vedernikoff;
+
+
+# Bare INSERT assigns the granted columns without reading any -> allowed.
+connection c_ins user=ret_vedernikoff
+statement ok
+INSERT INTO ret_ledger(id, amt) VALUES (2, 20);
+
+
+# RETURNING amt reads the row back, but the role has no SELECT -> refused.
+connection c_ins2 user=ret_vedernikoff
+statement error
+INSERT INTO ret_ledger(id, amt) VALUES (3, 30) RETURNING amt;
+----
+db error: ERROR: permission denied for table ret_ledger<slt:ignore>
+
+
+# RETURNING id is likewise refused: INSERT(id) is a write grant, not a read one.
+connection c_ins3 user=ret_vedernikoff
+statement error
+INSERT INTO ret_ledger(id, amt) VALUES (4, 40) RETURNING id;
+----
+db error: ERROR: permission denied for table ret_ledger<slt:ignore>
+
+
+# === CASE 2: add SELECT(amt) ===
+
+statement ok
+GRANT SELECT (amt) ON ret_ledger TO ret_vedernikoff;
+
+
+# RETURNING amt now has the matching column SELECT -> allowed.
+connection c_sel user=ret_vedernikoff
+query
+INSERT INTO ret_ledger(id, amt) VALUES (5, 50) RETURNING amt;
+----
+amt
+50
+
+
+# RETURNING note is still refused: note has no SELECT grant.
+connection c_sel2 user=ret_vedernikoff
+statement error
+INSERT INTO ret_ledger(id, amt) VALUES (6, 60) RETURNING note;
+----
+db error: ERROR: permission denied for table ret_ledger<slt:ignore>
+
+
+# === CASE 3: UPDATE + SELECT(id), no INSERT, no SELECT(amt) ===
+
+statement ok
+REVOKE SELECT (amt) ON ret_ledger FROM ret_vedernikoff;
+
+
+statement ok
+REVOKE INSERT (id, amt) ON ret_ledger FROM ret_vedernikoff;
+
+
+statement ok
+GRANT UPDATE ON ret_ledger TO ret_vedernikoff;
+
+
+statement ok
+GRANT SELECT (id) ON ret_ledger TO ret_vedernikoff;
+
+
+# Constant SET over a WHERE that reads the SELECT-granted id -> allowed.
+connection c_upd user=ret_vedernikoff
+statement ok
+UPDATE ret_ledger SET amt = 5 WHERE id = 1;
+
+
+# RETURNING id is the SELECT-granted column -> allowed.
+connection c_upd2 user=ret_vedernikoff
+query
+UPDATE ret_ledger SET amt = 5 WHERE id = 1 RETURNING id;
+----
+id
+1
+
+
+# RETURNING note is the ungranted column -> refused.
+connection c_upd3 user=ret_vedernikoff
+statement error
+UPDATE ret_ledger SET amt = 5 WHERE id = 1 RETURNING note;
+----
+db error: ERROR: permission denied for table ret_ledger<slt:ignore>
+
+
+# Self-referencing SET reads amt, which has no SELECT grant -> refused.
+connection c_upd4 user=ret_vedernikoff
+statement error
+UPDATE ret_ledger SET amt = amt + 1;
+----
+db error: ERROR: permission denied for table ret_ledger<slt:ignore>
+
+
+# === CASE 4: DELETE + SELECT(id), drop UPDATE ===
+
+statement ok
+REVOKE UPDATE ON ret_ledger FROM ret_vedernikoff;
+
+
+statement ok
+GRANT DELETE ON ret_ledger TO ret_vedernikoff;
+
+
+# DELETE with a WHERE over the granted id, RETURNING the granted id -> allowed.
+connection c_del user=ret_vedernikoff
+query
+DELETE FROM ret_ledger WHERE id = 1 RETURNING id;
+----
+id
+1
+
+
+# RETURNING note is the ungranted column -> refused.
+connection c_del2 user=ret_vedernikoff
+statement error
+DELETE FROM ret_ledger WHERE id = 2 RETURNING note;
+----
+db error: ERROR: permission denied for table ret_ledger<slt:ignore>
+
+
+# WHERE reads the ungranted note -> refused before any row is touched.
+connection c_del3 user=ret_vedernikoff
+statement error
+DELETE FROM ret_ledger WHERE note = 1;
+----
+db error: ERROR: permission denied for table ret_ledger<slt:ignore>
+
+
+# === CASE 5: RETURNING * needs SELECT on every column ===
+
+# With only SELECT(id), RETURNING * touches amt and note too -> refused.
+connection c_star user=ret_vedernikoff
+statement error
+DELETE FROM ret_ledger WHERE false RETURNING *;
+----
+db error: ERROR: permission denied for table ret_ledger<slt:ignore>
+
+
+# Grant SELECT on the remaining columns; now RETURNING * is fully covered.
+statement ok
+GRANT SELECT (amt, note) ON ret_ledger TO ret_vedernikoff;
+
+
+# RETURNING * over WHERE false reads no row, but the column privilege check
+# passes for every column -> allowed (empty result).
+connection c_star2 user=ret_vedernikoff
+statement ok
+DELETE FROM ret_ledger WHERE false RETURNING *;
+
+
+statement ok
+DROP TABLE ret_ledger;
+
+
+statement ok
+DROP ROLE ret_vedernikoff;

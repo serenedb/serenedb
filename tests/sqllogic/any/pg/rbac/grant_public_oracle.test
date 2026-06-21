@@ -3,7 +3,7 @@
 # GRANT ... TO PUBLIC. Every assertion is byte-identical on PostgreSQL 19 and
 # serenedb.
 #
-# Lore: dgm_clickclack table; dgm_vedernikoff a regular role that benefits from
+# Lore: dgm_clickclack table; gpo_vedernikoff a regular role that benefits from
 # the PUBLIC grant. Idempotent + self-clean.
 
 statement ok
@@ -11,7 +11,7 @@ DROP TABLE IF EXISTS dgm_clickclack;
 
 
 statement ok
-DROP ROLE IF EXISTS dgm_vedernikoff;
+DROP ROLE IF EXISTS gpo_vedernikoff;
 
 
 statement ok
@@ -19,7 +19,7 @@ CREATE TABLE dgm_clickclack (id int);
 
 
 statement ok
-CREATE ROLE dgm_vedernikoff;
+CREATE ROLE gpo_vedernikoff;
 
 
 # On an owner-only table, the PUBLIC pseudo-role holds no SELECT.
@@ -44,7 +44,7 @@ t
 
 # ...and a regular role passes the oracle via the PUBLIC ACL.
 query
-SELECT has_table_privilege('dgm_vedernikoff', 'dgm_clickclack', 'SELECT') AS via_public;
+SELECT has_table_privilege('gpo_vedernikoff', 'dgm_clickclack', 'SELECT') AS via_public;
 ----
 via_public
 t
@@ -57,7 +57,7 @@ REVOKE SELECT ON dgm_clickclack FROM PUBLIC;
 
 query
 SELECT has_table_privilege('public', 'dgm_clickclack', 'SELECT')          AS pub_sel,
-       has_table_privilege('dgm_vedernikoff', 'dgm_clickclack', 'SELECT') AS via_public;
+       has_table_privilege('gpo_vedernikoff', 'dgm_clickclack', 'SELECT') AS via_public;
 ----
 pub_sel	via_public
 f	f
@@ -69,4 +69,4 @@ DROP TABLE dgm_clickclack;
 
 
 statement ok
-DROP ROLE dgm_vedernikoff;
+DROP ROLE gpo_vedernikoff;

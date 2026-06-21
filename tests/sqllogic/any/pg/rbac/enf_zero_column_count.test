@@ -1,0 +1,174 @@
+# Zero-column reads still require a SELECT privilege on the relation. A query
+# that projects no column of a table -- count(*), SELECT 1 FROM t, EXISTS, a
+# count(*) WHERE false -- must be refused with `permission denied for table <t>`
+# when the role holds no grant on it, exactly like a column-reading SELECT.
+# Conversely, ANY SELECT grant (column-level or table-level) makes the same
+# count(*) succeed: PostgreSQL checks the relation, not whether a column is
+# touched (ExecCheckOneRelPerms). MySQL/MariaDB/ClickHouse/CockroachDB agree.
+#
+# B2 / case C8 regression target: count(*) (and the other zero-column forms)
+# on an ungranted table is WRONGLY ALLOWED today -- the no-grant assertions
+# below encode the post-fix behavior and fail against the unfixed build.
+# Case C7 (granted -> allowed) already holds today.
+#
+# Lore: vedernikoff is the restricted reader; zc_pa is the granted table
+# (clickclack/mop columns), zc_pb the ungranted one (iceberg/payload).
+
+statement ok
+DROP TABLE IF EXISTS zc_pa;
+
+
+statement ok
+DROP TABLE IF EXISTS zc_pb;
+
+
+statement ok
+DROP ROLE IF EXISTS zc_vedernikoff;
+
+
+statement ok
+CREATE TABLE zc_pa (clickclack int, mop int);
+
+
+statement ok
+CREATE TABLE zc_pb (iceberg int, payload int);
+
+
+statement ok
+INSERT INTO zc_pa VALUES (1, 10), (2, 20), (3, 30);
+
+
+statement ok
+INSERT INTO zc_pb VALUES (1, 100), (2, 200);
+
+
+statement ok
+CREATE ROLE zc_vedernikoff LOGIN PASSWORD 'pw';
+
+
+# === C8: no grant on zc_pb -> every zero-column read is refused ===
+
+# C8 core (B2 regression target): count(*) projects no column but still reads
+# the relation -> needs SELECT, which is absent.
+connection c_ved user=zc_vedernikoff
+statement error
+SELECT count(*) FROM zc_pb;
+----
+db error: ERROR: permission denied for table zc_pb<slt:ignore>
+
+
+# SELECT 1 FROM t reads no column of t but still scans it -> refused.
+connection c_ved2 user=zc_vedernikoff
+statement error
+SELECT 1 FROM zc_pb;
+----
+db error: ERROR: permission denied for table zc_pb<slt:ignore>
+
+
+# A constant-false predicate still reads the relation -> refused.
+connection c_ved3 user=zc_vedernikoff
+statement error
+SELECT count(*) FROM zc_pb WHERE false;
+----
+db error: ERROR: permission denied for table zc_pb<slt:ignore>
+
+
+# EXISTS over an ungranted relation is the same zero-column read -> refused.
+connection c_ved4 user=zc_vedernikoff
+statement error
+SELECT EXISTS(SELECT 1 FROM zc_pb);
+----
+db error: ERROR: permission denied for table zc_pb<slt:ignore>
+
+
+# === C7: a column-level SELECT grant on zc_pa is enough for count(*) ===
+
+# serenedb records column grants but has_table_privilege stays false; the
+# column privilege is what is held, so probe that (PG-identical here).
+connection default
+statement ok
+GRANT SELECT (clickclack) ON zc_pa TO zc_vedernikoff;
+
+
+
+query
+SELECT has_column_privilege('zc_vedernikoff', 'zc_pa', 'clickclack', 'SELECT') AS sel;
+----
+sel
+t
+
+
+# count(*) touches no column, but the column-level grant authorizes reading
+# the relation -> allowed.
+connection c_ved5 user=zc_vedernikoff
+query
+SELECT count(*) AS n FROM zc_pa;
+----
+n
+3
+
+
+# === C7: a table-level SELECT grant on zc_pa is also enough ===
+
+connection default
+statement ok
+REVOKE SELECT (clickclack) ON zc_pa FROM zc_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON zc_pa TO zc_vedernikoff;
+
+
+
+query
+SELECT has_table_privilege('zc_vedernikoff', 'zc_pa', 'SELECT') AS sel;
+----
+sel
+t
+
+
+connection c_ved6 user=zc_vedernikoff
+query
+SELECT count(*) AS n FROM zc_pa;
+----
+n
+3
+
+
+# === REVOKE flips count(*) from allowed back to refused ===
+
+# Drop the only grant; the same count(*) must now be refused (B2 regression
+# target: it is still wrongly allowed today).
+connection default
+statement ok
+REVOKE SELECT ON zc_pa FROM zc_vedernikoff;
+
+
+
+query
+SELECT has_table_privilege('zc_vedernikoff', 'zc_pa', 'SELECT') AS sel;
+----
+sel
+f
+
+
+connection c_ved7 user=zc_vedernikoff
+statement error
+SELECT count(*) FROM zc_pa;
+----
+db error: ERROR: permission denied for table zc_pa<slt:ignore>
+
+
+# ---- cleanup ----
+
+connection default
+statement ok
+DROP TABLE zc_pa;
+
+
+statement ok
+DROP TABLE zc_pb;
+
+
+statement ok
+DROP ROLE zc_vedernikoff;

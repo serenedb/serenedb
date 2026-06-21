@@ -1,0 +1,174 @@
+# Set operations (UNION / INTERSECT / EXCEPT, with and without ALL) are a
+# column-read path: every leg's projected columns are checked at column
+# granularity, exactly like a bare SELECT. A role holding SELECT only on the
+# granted columns of each table may combine those columns across the set op,
+# but the moment any leg projects an ungranted column the whole statement is
+# refused with `permission denied for table <t>` -- naming the table whose
+# column was touched. Nested set ops are no escape hatch: an ungranted column
+# reached anywhere in the tree is still refused. Byte-identical to PostgreSQL.
+#
+# Lore: vedernikoff may union the iceberg's public columns but cannot smuggle
+# so_alpha.secret or so_beta.hidden out through a set-operation leg.
+
+statement ok
+DROP TABLE IF EXISTS so_alpha;
+
+
+statement ok
+DROP TABLE IF EXISTS so_beta;
+
+
+statement ok
+DROP ROLE IF EXISTS so_vedernikoff;
+
+
+statement ok
+CREATE TABLE so_alpha (id int, av int, secret int);
+
+
+statement ok
+CREATE TABLE so_beta (id int, bv int, hidden int);
+
+
+statement ok
+INSERT INTO so_alpha VALUES (1, 10, 100), (2, 20, 200);
+
+
+statement ok
+INSERT INTO so_beta VALUES (1, 11, 111), (3, 33, 333);
+
+
+statement ok
+CREATE ROLE so_vedernikoff LOGIN PASSWORD 'pw';
+
+
+# Column SELECT on the public columns of each table only; secret and hidden
+# stay unreadable.
+statement ok
+GRANT SELECT (id, av) ON so_alpha TO so_vedernikoff;
+
+
+statement ok
+GRANT SELECT (id, bv) ON so_beta TO so_vedernikoff;
+
+
+# === UNION ===
+
+# Both legs project granted columns -> allowed.
+connection c_union user=so_vedernikoff
+query
+SELECT av FROM so_alpha UNION SELECT bv FROM so_beta ORDER BY 1;
+----
+av
+10
+11
+20
+33
+
+
+# Left leg projects so_alpha.secret (ungranted) -> refused.
+connection c_union2 user=so_vedernikoff
+statement error
+SELECT secret FROM so_alpha UNION SELECT bv FROM so_beta;
+----
+db error: ERROR: permission denied for table so_alpha<slt:ignore>
+
+
+# Right leg projects so_beta.hidden (ungranted) -> refused.
+connection c_union3 user=so_vedernikoff
+statement error
+SELECT av FROM so_alpha UNION SELECT hidden FROM so_beta;
+----
+db error: ERROR: permission denied for table so_beta<slt:ignore>
+
+
+# === INTERSECT ===
+
+# Both legs granted -> allowed (no common value, so empty).
+connection c_int user=so_vedernikoff
+query
+SELECT av FROM so_alpha INTERSECT SELECT bv FROM so_beta ORDER BY 1;
+----
+av
+
+
+# Left leg projects the ungranted secret -> refused.
+connection c_int2 user=so_vedernikoff
+statement error
+SELECT secret FROM so_alpha INTERSECT SELECT bv FROM so_beta;
+----
+db error: ERROR: permission denied for table so_alpha<slt:ignore>
+
+
+# === EXCEPT ===
+
+# Both legs granted -> allowed (so_alpha.av minus so_beta.bv).
+connection c_exc user=so_vedernikoff
+query
+SELECT av FROM so_alpha EXCEPT SELECT bv FROM so_beta ORDER BY 1;
+----
+av
+10
+20
+
+
+# Right leg projects the ungranted hidden -> refused.
+connection c_exc2 user=so_vedernikoff
+statement error
+SELECT av FROM so_alpha EXCEPT SELECT hidden FROM so_beta;
+----
+db error: ERROR: permission denied for table so_beta<slt:ignore>
+
+
+# === UNION ALL ===
+
+# Positive: both legs granted, ALL keeps duplicates -> allowed.
+connection c_uall user=so_vedernikoff
+query
+SELECT av FROM so_alpha UNION ALL SELECT bv FROM so_beta ORDER BY 1;
+----
+av
+10
+11
+20
+33
+
+
+# ALL does not relax the column check: ungranted left leg -> refused.
+connection c_uall2 user=so_vedernikoff
+statement error
+SELECT secret FROM so_alpha UNION ALL SELECT bv FROM so_beta;
+----
+db error: ERROR: permission denied for table so_alpha<slt:ignore>
+
+
+# === nested set ops ===
+
+# (A UNION B) INTERSECT C where C projects the ungranted secret -> refused,
+# even though the inner UNION is entirely granted.
+connection c_nest user=so_vedernikoff
+statement error
+(SELECT av FROM so_alpha UNION SELECT bv FROM so_beta) INTERSECT SELECT secret FROM so_alpha;
+----
+db error: ERROR: permission denied for table so_alpha<slt:ignore>
+
+
+# Same nested shape with every leg granted -> allowed (empty: no av/bv equals
+# an id of {1,2}).
+connection c_nest2 user=so_vedernikoff
+query
+(SELECT av FROM so_alpha UNION SELECT bv FROM so_beta) INTERSECT SELECT id FROM so_alpha ORDER BY 1;
+----
+av
+
+
+statement ok
+DROP TABLE so_alpha;
+
+
+statement ok
+DROP TABLE so_beta;
+
+
+statement ok
+DROP ROLE so_vedernikoff;

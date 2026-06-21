@@ -1,0 +1,93 @@
+# A server-side prepared statement is re-checked for privileges on every
+# EXECUTE, not just at PREPARE time: DuckDB rebinds on each execute, so the
+# privilege check rides along. The same prepared statement therefore tracks
+# live GRANT/REVOKE without being re-prepared. Byte-for-byte identical to
+# PostgreSQL. Regression guard for the explicit OnExecutePrepared enforcement.
+#
+# Lore: vedernikoff prepares a read once; the MOP grants and revokes the SELECT
+# underneath him from a separate admin session while his statement stays put.
+
+statement ok
+DROP TABLE IF EXISTS mop_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS ved_reader;
+
+
+statement ok
+CREATE TABLE mop_ledger (clickclack int, iceberg int);
+
+
+statement ok
+INSERT INTO mop_ledger VALUES (1, 10), (2, 20), (3, 30);
+
+
+statement ok
+CREATE ROLE ved_reader LOGIN PASSWORD 'pw';
+
+
+statement ok
+GRANT SELECT ON mop_ledger TO ved_reader;
+
+
+# The role prepares the read while it holds SELECT. The prepared statement
+# lives on this connection for the rest of the test; the named connection is
+# reused (cached), so later EXECUTEs hit the same session without re-preparing.
+
+connection c_ved user=ved_reader
+statement ok
+PREPARE p_ved AS SELECT clickclack FROM mop_ledger ORDER BY clickclack;
+
+
+# EXECUTE with the grant present -> allowed.
+connection c_ved user=ved_reader
+query
+EXECUTE p_ved;
+----
+clickclack
+1
+2
+3
+
+
+# Admin (the default connection) revokes SELECT out from under the prepared
+# statement. No re-prepare happens on the role side.
+connection default
+statement ok
+REVOKE SELECT ON mop_ledger FROM ved_reader;
+
+
+# Same prepared statement, re-checked on EXECUTE -> denied.
+connection c_ved user=ved_reader
+statement error
+EXECUTE p_ved;
+----
+db error: ERROR: permission denied for table mop_ledger<slt:ignore>
+
+
+# Admin re-grants SELECT.
+connection default
+statement ok
+GRANT SELECT ON mop_ledger TO ved_reader;
+
+
+# The same prepared statement works again without being re-prepared.
+connection c_ved user=ved_reader
+query
+EXECUTE p_ved;
+----
+clickclack
+1
+2
+3
+
+
+# Cleanup.
+connection default
+statement ok
+DROP TABLE mop_ledger;
+
+
+statement ok
+DROP ROLE ved_reader;

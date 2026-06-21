@@ -20,7 +20,7 @@ DROP TABLE IF EXISTS htp_iceberg;
 
 
 statement ok
-DROP ROLE IF EXISTS htp_vedernikoff;
+DROP ROLE IF EXISTS hta_vedernikoff;
 
 
 statement ok
@@ -28,17 +28,17 @@ CREATE TABLE htp_iceberg (id int, mop text);
 
 
 statement ok
-CREATE ROLE htp_vedernikoff;
+CREATE ROLE hta_vedernikoff;
 
 
 # SELECT carries the grant option; INSERT is granted plain. This asymmetry lets
 # the 'WITH GRANT OPTION' form distinguish the two underneath every overload.
 statement ok
-GRANT SELECT ON htp_iceberg TO htp_vedernikoff WITH GRANT OPTION;
+GRANT SELECT ON htp_iceberg TO hta_vedernikoff WITH GRANT OPTION;
 
 
 statement ok
-GRANT INSERT ON htp_iceberg TO htp_vedernikoff;
+GRANT INSERT ON htp_iceberg TO hta_vedernikoff;
 
 
 # ============================================================================
@@ -47,9 +47,9 @@ GRANT INSERT ON htp_iceberg TO htp_vedernikoff;
 # ============================================================================
 
 query
-SELECT has_table_privilege('htp_vedernikoff','htp_iceberg','SELECT') AS sel,
-       has_table_privilege('htp_vedernikoff','htp_iceberg','INSERT') AS ins,
-       has_table_privilege('htp_vedernikoff','htp_iceberg','UPDATE') AS upd;
+SELECT has_table_privilege('hta_vedernikoff','htp_iceberg','SELECT') AS sel,
+       has_table_privilege('hta_vedernikoff','htp_iceberg','INSERT') AS ins,
+       has_table_privilege('hta_vedernikoff','htp_iceberg','UPDATE') AS upd;
 ----
 sel	ins	upd
 t	t	f
@@ -62,11 +62,11 @@ t	t	f
 
 query
 SELECT
-  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_vedernikoff'),
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='hta_vedernikoff'),
                       (SELECT oid FROM pg_class WHERE relname='htp_iceberg'), 'SELECT') AS sel,
-  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_vedernikoff'),
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='hta_vedernikoff'),
                       (SELECT oid FROM pg_class WHERE relname='htp_iceberg'), 'INSERT') AS ins,
-  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_vedernikoff'),
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='hta_vedernikoff'),
                       (SELECT oid FROM pg_class WHERE relname='htp_iceberg'), 'UPDATE') AS upd;
 ----
 sel	ins	upd
@@ -79,11 +79,11 @@ t	t	f
 
 query
 SELECT
-  has_table_privilege('htp_vedernikoff',
+  has_table_privilege('hta_vedernikoff',
                       (SELECT oid FROM pg_class WHERE relname='htp_iceberg'), 'SELECT') AS sel,
-  has_table_privilege('htp_vedernikoff',
+  has_table_privilege('hta_vedernikoff',
                       (SELECT oid FROM pg_class WHERE relname='htp_iceberg'), 'INSERT') AS ins,
-  has_table_privilege('htp_vedernikoff',
+  has_table_privilege('hta_vedernikoff',
                       (SELECT oid FROM pg_class WHERE relname='htp_iceberg'), 'UPDATE') AS upd;
 ----
 sel	ins	upd
@@ -96,11 +96,11 @@ t	t	f
 
 query
 SELECT
-  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_vedernikoff'),
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='hta_vedernikoff'),
                       'htp_iceberg', 'SELECT') AS sel,
-  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_vedernikoff'),
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='hta_vedernikoff'),
                       'htp_iceberg', 'INSERT') AS ins,
-  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_vedernikoff'),
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='hta_vedernikoff'),
                       'htp_iceberg', 'UPDATE') AS upd;
 ----
 sel	ins	upd
@@ -115,15 +115,15 @@ t	t	f
 
 query
 SELECT
-  (has_table_privilege('htp_vedernikoff','htp_iceberg','SELECT')
-   = has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_vedernikoff'),
+  (has_table_privilege('hta_vedernikoff','htp_iceberg','SELECT')
+   = has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='hta_vedernikoff'),
                          (SELECT oid FROM pg_class WHERE relname='htp_iceberg'), 'SELECT')) AS nn_oo,
-  (has_table_privilege('htp_vedernikoff',
+  (has_table_privilege('hta_vedernikoff',
                        (SELECT oid FROM pg_class WHERE relname='htp_iceberg'), 'SELECT')
-   = has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_vedernikoff'),
+   = has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='hta_vedernikoff'),
                          'htp_iceberg', 'SELECT')) AS no_on,
-  (has_table_privilege('htp_vedernikoff','htp_iceberg','UPDATE')
-   = has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_vedernikoff'),
+  (has_table_privilege('hta_vedernikoff','htp_iceberg','UPDATE')
+   = has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='hta_vedernikoff'),
                          (SELECT oid FROM pg_class WHERE relname='htp_iceberg'), 'UPDATE')) AS upd_agree;
 ----
 nn_oo	no_on	upd_agree
@@ -137,8 +137,8 @@ t	t	t
 
 # SELECT held => 'SELECT, UPDATE' true; UPDATE+DELETE both absent => false.
 query
-SELECT has_table_privilege('htp_vedernikoff','htp_iceberg','SELECT, UPDATE') AS sel_or_upd,
-       has_table_privilege('htp_vedernikoff','htp_iceberg','UPDATE, DELETE') AS upd_or_del;
+SELECT has_table_privilege('hta_vedernikoff','htp_iceberg','SELECT, UPDATE') AS sel_or_upd,
+       has_table_privilege('hta_vedernikoff','htp_iceberg','UPDATE, DELETE') AS upd_or_del;
 ----
 sel_or_upd	upd_or_del
 t	f
@@ -146,8 +146,8 @@ t	f
 
 # No spaces vs. spaces around the comma are equivalent; SELECT,INSERT both held.
 query
-SELECT has_table_privilege('htp_vedernikoff','htp_iceberg','SELECT,INSERT')  AS tight,
-       has_table_privilege('htp_vedernikoff','htp_iceberg','INSERT , UPDATE') AS loose;
+SELECT has_table_privilege('hta_vedernikoff','htp_iceberg','SELECT,INSERT')  AS tight,
+       has_table_privilege('hta_vedernikoff','htp_iceberg','INSERT , UPDATE') AS loose;
 ----
 tight	loose
 t	t
@@ -160,8 +160,8 @@ t	t
 # ============================================================================
 
 query
-SELECT has_table_privilege('htp_vedernikoff','htp_iceberg','SELECT WITH GRANT OPTION') AS sel_wgo,
-       has_table_privilege('htp_vedernikoff','htp_iceberg','INSERT WITH GRANT OPTION') AS ins_wgo;
+SELECT has_table_privilege('hta_vedernikoff','htp_iceberg','SELECT WITH GRANT OPTION') AS sel_wgo,
+       has_table_privilege('hta_vedernikoff','htp_iceberg','INSERT WITH GRANT OPTION') AS ins_wgo;
 ----
 sel_wgo	ins_wgo
 t	f
@@ -170,10 +170,10 @@ t	f
 # The WITH GRANT OPTION suffix also resolves through the oid overload identically.
 query
 SELECT
-  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_vedernikoff'),
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='hta_vedernikoff'),
                       (SELECT oid FROM pg_class WHERE relname='htp_iceberg'),
                       'SELECT WITH GRANT OPTION') AS sel_wgo_oid,
-  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_vedernikoff'),
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='hta_vedernikoff'),
                       (SELECT oid FROM pg_class WHERE relname='htp_iceberg'),
                       'INSERT WITH GRANT OPTION') AS ins_wgo_oid;
 ----
@@ -185,7 +185,7 @@ t	f
 # GRANT OPTION' is true because SELECT (the second member) carries the option,
 # even though INSERT does not.
 query
-SELECT has_table_privilege('htp_vedernikoff','htp_iceberg',
+SELECT has_table_privilege('hta_vedernikoff','htp_iceberg',
                            'INSERT WITH GRANT OPTION, SELECT WITH GRANT OPTION') AS any_wgo;
 ----
 any_wgo
@@ -197,9 +197,9 @@ t
 # ============================================================================
 
 query
-SELECT has_table_privilege('htp_vedernikoff','htp_iceberg','select') AS lower_sel,
-       has_table_privilege('htp_vedernikoff','htp_iceberg','Insert') AS mixed_ins,
-       has_table_privilege('htp_vedernikoff','htp_iceberg','UpDaTe') AS mixed_upd;
+SELECT has_table_privilege('hta_vedernikoff','htp_iceberg','select') AS lower_sel,
+       has_table_privilege('hta_vedernikoff','htp_iceberg','Insert') AS mixed_ins,
+       has_table_privilege('hta_vedernikoff','htp_iceberg','UpDaTe') AS mixed_upd;
 ----
 lower_sel	mixed_ins	mixed_upd
 t	t	f
@@ -212,28 +212,28 @@ t	t	f
 # ============================================================================
 
 statement ok
-REVOKE SELECT ON htp_iceberg FROM htp_vedernikoff;
+REVOKE SELECT ON htp_iceberg FROM hta_vedernikoff;
 
 
 query
-SELECT has_table_privilege('htp_vedernikoff','htp_iceberg','SELECT') AS sel,
-       has_table_privilege('htp_vedernikoff','htp_iceberg','SELECT WITH GRANT OPTION') AS sel_wgo;
+SELECT has_table_privilege('hta_vedernikoff','htp_iceberg','SELECT') AS sel,
+       has_table_privilege('hta_vedernikoff','htp_iceberg','SELECT WITH GRANT OPTION') AS sel_wgo;
 ----
 sel	sel_wgo
 f	f
 
 
 statement ok
-GRANT SELECT ON htp_iceberg TO htp_vedernikoff;
+GRANT SELECT ON htp_iceberg TO hta_vedernikoff;
 
 
 # SELECT held again, but now WITHOUT the grant option -- the WGO form is f while
 # the plain form (and the oid overload of it) is t.
 query
-SELECT has_table_privilege('htp_vedernikoff','htp_iceberg','SELECT') AS sel,
-       has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_vedernikoff'),
+SELECT has_table_privilege('hta_vedernikoff','htp_iceberg','SELECT') AS sel,
+       has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='hta_vedernikoff'),
                            'htp_iceberg','SELECT') AS sel_oid,
-       has_table_privilege('htp_vedernikoff','htp_iceberg','SELECT WITH GRANT OPTION') AS sel_wgo;
+       has_table_privilege('hta_vedernikoff','htp_iceberg','SELECT WITH GRANT OPTION') AS sel_wgo;
 ----
 sel	sel_oid	sel_wgo
 t	t	f
@@ -264,4 +264,4 @@ DROP TABLE htp_iceberg;
 
 
 statement ok
-DROP ROLE htp_vedernikoff;
+DROP ROLE hta_vedernikoff;

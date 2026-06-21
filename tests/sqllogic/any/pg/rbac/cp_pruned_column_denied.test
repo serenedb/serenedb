@@ -1,0 +1,123 @@
+# Column-level SELECT enforcement is "strict camp": a column REFERENCED anywhere
+# in the resolved query requires SELECT privilege EVEN IF the optimizer would
+# later prune it. PostgreSQL charges pg_attribute.attacl on every column the
+# parse/rewrite tree mentions (markVarForSelectPriv), before the planner ever
+# runs -- so a column that is projected inside a subquery/CTE and then dropped,
+# expanded by SELECT *, or only touched by a foldable WHERE predicate, still
+# refuses the whole read with "permission denied for table <t>". Verified
+# byte-identical on PostgreSQL 17/19 and SereneDB on 2026-06-21.
+#
+# Role prn_vedernikoff is granted SELECT (id, av) ON prn_iceberg only -- the
+# secret column is ungranted, and there is no grant at all on prn_mop.
+#
+# Lore: vedernikoff gets a column-scoped grant on the iceberg table; av is the
+# accessible measure, secret the one he was never granted.
+
+statement ok
+DROP TABLE IF EXISTS prn_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS prn_vedernikoff;
+
+
+statement ok
+CREATE TABLE prn_iceberg (id int, av int, secret int);
+
+
+statement ok
+INSERT INTO prn_iceberg VALUES (1, 10, 100), (2, 20, 200);
+
+
+statement ok
+CREATE ROLE prn_vedernikoff LOGIN PASSWORD 'pw';
+
+
+# SELECT on (id, av) only -- secret stays ungranted.
+statement ok
+GRANT SELECT (id, av) ON prn_iceberg TO prn_vedernikoff;
+
+
+# === Positive controls: reads touching only granted columns succeed ===
+
+# A single granted column.
+connection c_ved user=prn_vedernikoff
+query
+SELECT av FROM prn_iceberg ORDER BY av;
+----
+av
+10
+20
+
+
+# Both granted columns.
+connection c_ved2 user=prn_vedernikoff
+query
+SELECT id, av FROM prn_iceberg ORDER BY id;
+----
+id	av
+1	10
+2	20
+
+
+# count(*) reads no specific column; the grant on (id, av) suffices (C7).
+connection c_ved3 user=prn_vedernikoff
+query
+SELECT count(*) AS n FROM prn_iceberg;
+----
+n
+2
+
+
+# Direct reference to the ungranted column -> refused.
+connection c_ved4 user=prn_vedernikoff
+statement error
+SELECT secret FROM prn_iceberg;
+----
+db error: ERROR: permission denied for table prn_iceberg<slt:ignore>
+
+
+# === C1: secret projected in a subquery, then PRUNED by the outer SELECT ===
+# The optimizer would drop secret (only av survives the outer projection), but
+# it is referenced in the subquery target list -> refused.
+connection c_ved5 user=prn_vedernikoff
+statement error
+SELECT av FROM (SELECT av, secret FROM prn_iceberg) s;
+----
+db error: ERROR: permission denied for table prn_iceberg<slt:ignore>
+
+
+# === C2: SELECT * inside a subquery expands to secret, then pruned ===
+# The wildcard expands to (id, av, secret); the outer query keeps only av, but
+# secret was referenced by the expansion -> refused.
+connection c_ved6 user=prn_vedernikoff
+statement error
+SELECT s.av FROM (SELECT * FROM prn_iceberg) s;
+----
+db error: ERROR: permission denied for table prn_iceberg<slt:ignore>
+
+
+# === C3: secret projected in a CTE, then pruned by the outer SELECT ===
+connection c_ved7 user=prn_vedernikoff
+statement error
+WITH c AS (SELECT av, secret FROM prn_iceberg) SELECT av FROM c;
+----
+db error: ERROR: permission denied for table prn_iceberg<slt:ignore>
+
+
+# === C6: secret referenced ONLY in a foldable WHERE predicate ===
+# `secret != secret` is constant-false and the optimizer could fold it away
+# entirely, but secret is referenced -> refused.
+connection c_ved8 user=prn_vedernikoff
+statement error
+SELECT av FROM prn_iceberg WHERE secret != secret;
+----
+db error: ERROR: permission denied for table prn_iceberg<slt:ignore>
+
+
+statement ok
+DROP TABLE prn_iceberg;
+
+
+statement ok
+DROP ROLE prn_vedernikoff;

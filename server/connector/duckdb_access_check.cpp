@@ -28,7 +28,6 @@
 #include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
-
 namespace {
 
 const catalog::Table& Current(const catalog::Snapshot& snapshot,
@@ -64,6 +63,8 @@ void RequireColumn(const catalog::Snapshot& snapshot, ObjectId role,
     }
     ++visible;
   }
+  RequireColumns(snapshot, role, table, need,
+                 std::span<const catalog::Column* const>{});
 }
 
 }  // namespace

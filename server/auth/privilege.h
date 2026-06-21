@@ -20,8 +20,10 @@
 
 #pragma once
 
+#include <span>
+
 #include "auth/acl.h"
-#include "catalog/catalog.h"
+#include "catalog/fwd.h"
 #include "catalog/object.h"
 
 namespace sdb::auth {

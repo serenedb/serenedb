@@ -29,7 +29,8 @@
 namespace sdb::auth {
 namespace {
 
-RoleClosure Compute(const catalog::Snapshot& snapshot, ObjectId role) {
+RoleClosure ComputeRoleClosure(const catalog::Snapshot& snapshot,
+                               ObjectId role) {
   RoleClosure out;
   if (!role.isSet()) {
     return out;
@@ -66,7 +67,7 @@ const RoleClosure& RoleClosureCache::Get(const catalog::Snapshot& snapshot,
   absl::WriterMutexLock lock{&_mu};
   auto it = _by_role.find(role);
   if (it == _by_role.end()) {
-    it = _by_role.emplace(role, Compute(snapshot, role)).first;
+    it = _by_role.emplace(role, ComputeRoleClosure(snapshot, role)).first;
   }
   return it->second;
 }

@@ -29,12 +29,14 @@
 #include "catalog/object.h"
 
 namespace sdb {
+
 class ConnectionContext;
 namespace catalog {
+
 class Table;
 }
-}  // namespace sdb
 
+}  // namespace sdb
 namespace sdb::connector {
 
 struct RelationAccess {
@@ -51,7 +53,9 @@ struct RelationAccess {
 
 class AccessRecord {
  public:
-  RelationAccess& ForTable(uint64_t table_index) { return _by_table[table_index]; }
+  RelationAccess& ForTable(uint64_t table_index) {
+    return _by_table[table_index];
+  }
 
   void Clear() { _by_table.clear(); }
 
@@ -62,7 +66,8 @@ class AccessRecord {
     }
   }
 
-  void MarkWriteTarget(uint64_t table_index, std::shared_ptr<catalog::Table> table,
+  void MarkWriteTarget(uint64_t table_index,
+                       std::shared_ptr<catalog::Table> table,
                        catalog::AclMode action,
                        const std::vector<uint64_t>& write_columns = {});
 

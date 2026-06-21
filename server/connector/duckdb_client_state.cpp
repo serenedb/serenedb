@@ -44,6 +44,7 @@
 #include "pg/errcodes.h"
 #include "pg/progress_tracker.h"
 #include "pg/sql_exception_macro.h"
+#include "pg/sql_utils.h"
 
 namespace sdb::connector {
 namespace {
@@ -303,10 +304,10 @@ void SereneDBClientState::RecordReadRelation(duckdb::ClientContext& context,
       _connection_ctx->EnsureCatalogSnapshot()->EffectiveRoleClosure(
         _connection_ctx->GetRoleId());
     if (!closure.is_superuser) {
-      const char* kind =
-        entry.type == duckdb::CatalogType::VIEW_ENTRY ? "view" : "table";
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                      ERR_MSG("permission denied for ", kind, " ", entry.name));
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+        ERR_MSG("permission denied for ", pg::ToPgObjectTypeName(entry.type),
+                " ", entry.name));
     }
   }
 }

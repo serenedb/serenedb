@@ -243,9 +243,6 @@ catalog::RoleOption SetBit(catalog::RoleOption options, catalog::RoleOption bit,
   return options;
 }
 
-}  // namespace
-namespace {
-
 bool IsSelfPasswordOnly(const AlterRoleOptions& opts) {
   return opts.set_password && opts.login == -1 && opts.superuser == -1 &&
          opts.createdb == -1 && opts.createrole == -1 && opts.inherit == -1 &&

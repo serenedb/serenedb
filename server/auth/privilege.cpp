@@ -21,10 +21,11 @@
 #include "auth/privilege.h"
 
 #include <algorithm>
-#include <deque>
 #include <span>
+#include <vector>
 
 #include "auth/role_closure.h"
+#include "catalog/catalog.h"
 #include "catalog/role.h"
 #include "catalog/table.h"
 
@@ -57,10 +58,10 @@ RoleIdSet ComputeClosure(const catalog::Snapshot& snapshot, ObjectId role,
     return out;
   }
   out.insert(role);
-  std::deque<ObjectId> queue{role};
-  while (!queue.empty()) {
-    auto cur = queue.front();
-    queue.pop_front();
+  std::vector<ObjectId> work{role};
+  while (!work.empty()) {
+    auto cur = work.back();
+    work.pop_back();
     auto obj = snapshot.GetObject<catalog::Role>(cur);
     if (!obj) {
       continue;
@@ -74,7 +75,7 @@ RoleIdSet ComputeClosure(const catalog::Snapshot& snapshot, ObjectId role,
         continue;
       }
       out.insert(edge.role);
-      queue.push_back(edge.role);
+      work.push_back(edge.role);
     }
   }
   return out;

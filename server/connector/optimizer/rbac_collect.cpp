@@ -32,13 +32,13 @@
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <optional>
 
+#include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "catalog/table.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_entry.h"
 
 namespace sdb::optimizer {
-
 namespace {
 
 void CollectReadColumns(duckdb::LogicalGet& get,
@@ -228,10 +228,7 @@ void CollectAndEnforce(duckdb::OptimizerExtensionInput& input,
     return;
   }
   auto& access = state->Access();
-  struct Clearer {
-    connector::AccessRecord& a;
-    ~Clearer() { a.Clear(); }
-  } clearer{access};
+  absl::Cleanup clear_access = [&] { access.Clear(); };
   GetMap gets;
   BuildGetMap(*plan, gets);
   Walk(*plan, access);

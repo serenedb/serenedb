@@ -1,0 +1,318 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geo_s2_dict(template = 'geojson',
+    coding = 's2point');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geo_src_dict(template = 'geojson',
+    coding = 'source');
+
+
+# ============================================================================
+# geopoint analyzer  --  JSON-only geo class
+# ----------------------------------------------------------------------------
+# Fourth geo class alongside geo_s2_dict / geo_src_dict / geojson_shape: the
+# geopoint analyzer reads coordinates from configured JSON keys (latitude /
+# longitude). Acceptance is JSON-only -- GEOMETRY columns are explicitly
+# rejected (geopoint's JSON-path config is meaningless on WKB), and any
+# non-JSON / non-GEOMETRY scalar (VARCHAR, BLOB, INTEGER) trips the generic
+# geo-analyzer column-type check in ValidateTokenizerVsColumn.
+# ============================================================================
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geopoint_dict(template = 'geopoint', latitude = 'lat', longitude = 'lng');
+
+statement ok
+CREATE TABLE g4_j(pk INTEGER PRIMARY KEY, j JSON);
+
+statement ok
+CREATE INDEX g4_j_col_geo_st ON g4_j USING inverted(pk, j geopoint_dict) INCLUDE (j);
+
+statement ok
+CREATE INDEX g4_j_expr_geo_ns ON g4_j USING inverted(pk, (j) geopoint_dict);
+
+statement ok
+INSERT INTO g4_j VALUES
+    (1, '{"name":"a","lat":55.703900,"lng":37.615895}'),
+    (2, '{"name":"b","lat":55.704831,"lng":37.616297}');
+
+statement ok
+VACUUM (REFRESH_TABLE) g4_j;
+
+query
+SELECT count(*) FROM g4_j_col_geo_st;
+----
+count
+2
+
+query
+SELECT pk FROM g4_j_col_geo_st
+WHERE j <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
+ORDER BY pk;
+----
+pk
+1
+2
+
+query
+SELECT pk FROM g4_j_expr_geo_ns
+WHERE j <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
+ORDER BY pk;
+----
+pk
+1
+2
+
+# GEOMETRY column with geopoint: rejected with the JSON-only error.
+statement ok
+CREATE TABLE g4_g(pk INTEGER PRIMARY KEY, g GEOMETRY('OGC:CRS84'));
+
+statement error
+CREATE INDEX g4_reject_geo_g ON g4_g USING inverted(pk, g geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'g' is GEOMETRY but the analyzer is geopoint; geopoint's latitude/longitude paths are JSON-only -- use a geojson analyzer for GEOMETRY columns
+
+
+# Non-JSON / non-GEOMETRY scalars: generic geo-analyzer column-type rejection.
+statement ok
+CREATE TABLE g4_reject(pk INTEGER PRIMARY KEY, v VARCHAR, b BLOB, i INTEGER);
+
+statement error
+CREATE INDEX g4_reject_geo_v ON g4_reject USING inverted(pk, v geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'v' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+statement error
+CREATE INDEX g4_reject_geo_b ON g4_reject USING inverted(pk, b geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'b' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+statement error
+CREATE INDEX g4_reject_geo_i ON g4_reject USING inverted(pk, i geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'i' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# ============================================================================
+# g12 -- geopoint analyzer: cells omitted by g4
+# ----------------------------------------------------------------------------
+# g4 covered geopoint on JSON scalar (col, expr) + the three primary
+# rejections (GEOMETRY scalar, VARCHAR, BLOB, INTEGER). Cells still missing:
+#   (a) JSON scalar + INCLUDE(col)              -- accept (mirrors g4 explicitly)
+#   (b) JSON-returning expression + INCLUDE     -- accept (sidecar on tag)
+#   (c) LIST<JSON>                              -- reject (falls through
+#       IsJSONType() in ValidateTokenizerVsColumn; LIST itself is not JSON)
+#   (d) ARRAY<JSON, 2>                          -- reject (same reason)
+#   (e) LIST<GEOMETRY>                          -- reject EARLY in
+#       term_dict::Validate (LIST<GEOMETRY> child trips the
+#       `child == GEOMETRY` short-circuit before the geo-analyzer validator
+#       sees the type) -- same wording as m_gl_geo_list / m_gl_kw_list.
+#   (f) VARCHAR (non-JSON)                      -- reject, generic geo error
+#   (g) BLOB scalar                             -- reject, generic geo error
+#   (h) INTEGER scalar                          -- reject, generic geo error
+#   (i) GEOMETRY scalar (CRS84)                 -- reject, geopoint-specific
+#                                                  "JSON-only" message
+# Probe lane mirrors g4_j_col_geo_st: `<->` distance to a GeoJSON Point
+# literal (ts_within / ts_distance are not exposed as standalone functions;
+# the `<->` operator is the established geopoint accept-verification path).
+# geopoint_dict is reused from line 1979 -- not redeclared.
+# ============================================================================
+
+# ---- (a) JSON scalar column WITH INCLUDE on the same JSON column ----------
+statement ok
+CREATE TABLE g12_j(pk INTEGER PRIMARY KEY, j JSON, tag VARCHAR);
+
+statement ok
+CREATE INDEX g12_j_col_geo_st ON g12_j USING inverted(pk, j geopoint_dict) INCLUDE (j);
+
+# ---- (b) JSON-returning expression `((j))` WITH INCLUDE on a sidecar col --
+statement ok
+CREATE INDEX g12_j_expr_geo_st ON g12_j USING inverted(pk, ((j)) geopoint_dict) INCLUDE (tag);
+
+statement ok
+INSERT INTO g12_j VALUES
+    (1, '{"name":"a","lat":55.703900,"lng":37.615895}', 'north'),
+    (2, '{"name":"b","lat":55.704831,"lng":37.616297}', 'south');
+
+statement ok
+VACUUM (REFRESH_TABLE) g12_j;
+
+query
+SELECT count(*) FROM g12_j_col_geo_st;
+----
+count
+2
+
+query
+SELECT pk, tag FROM g12_j_col_geo_st
+WHERE j <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
+ORDER BY pk;
+----
+pk	tag
+1	north
+2	south
+
+query
+SELECT pk, tag FROM g12_j_expr_geo_st
+WHERE j <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
+ORDER BY pk;
+----
+pk	tag
+1	north
+2	south
+
+
+# ---- (c) LIST<JSON>: rejected (geo branch only matches scalar JSON) -------
+statement ok
+CREATE TABLE g12_jl(pk INTEGER PRIMARY KEY, jl JSON[]);
+
+statement error
+CREATE INDEX g12_reject_geo_jl ON g12_jl USING inverted(pk, jl geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'jl' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# ---- (d) ARRAY<JSON, 2>: rejected (same reason) ---------------------------
+statement ok
+CREATE TABLE g12_ja(pk INTEGER PRIMARY KEY, ja JSON[2]);
+
+statement error
+CREATE INDEX g12_reject_geo_ja ON g12_ja USING inverted(pk, ja geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'ja' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# ---- (e) LIST<GEOMETRY>: rejected EARLY by term_dict::Validate -----------
+statement ok
+CREATE TABLE g12_gl(pk INTEGER PRIMARY KEY, gl GEOMETRY('OGC:CRS84')[]);
+
+statement error
+CREATE INDEX g12_reject_geo_gl ON g12_gl USING inverted(pk, gl geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'gl' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
+
+
+# ---- (f/g/h/i) Mixed-scalar rejections in a single anchor table -----------
+statement ok
+CREATE TABLE g12_reject(pk INTEGER PRIMARY KEY, v VARCHAR, b BLOB, i INTEGER, g GEOMETRY('OGC:CRS84'));
+
+statement error
+CREATE INDEX g12_reject_geo_v ON g12_reject USING inverted(pk, v geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'v' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+statement error
+CREATE INDEX g12_reject_geo_b ON g12_reject USING inverted(pk, b geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'b' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+statement error
+CREATE INDEX g12_reject_geo_i ON g12_reject USING inverted(pk, i geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'i' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+statement error
+CREATE INDEX g12_reject_geo_g ON g12_reject USING inverted(pk, g geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'g' is GEOMETRY but the analyzer is geopoint; geopoint's latitude/longitude paths are JSON-only -- use a geojson analyzer for GEOMETRY columns
+
+
+# ============================================================================
+# g18 -- Geo non-CRS84 rejection for geo_src_dict and geopoint_dict
+#
+# ValidateTokenizerVsColumn (server/catalog/index.cpp) runs ValidateGeometryCRS84
+# *first* inside the GEOMETRY branch, before the geopoint-on-GEOMETRY check.
+# So for geopoint_dict on a GEOMETRY column the JSON-only error is only
+# reachable when the CRS already passes CRS84 validation -- g4 already pins
+# that case on a valid GEOMETRY('OGC:CRS84') column. Here we pin the two CRS84
+# rejection branches:
+#   no CRS attached          -> "GEOMETRY type has no CRS attached..."
+#   recognized but non-CRS84 -> "GEOMETRY type has invalid CRS '...'"
+# for both geo_src_dict (a/b) and geopoint_dict (c1/c2). DuckDB's BindGeometryType
+# rejects unrecognized short CRS identifiers at type creation, so the only SQL
+# path to a recognized-but-non-CRS84 GEOMETRY type is a full WKT2 definition;
+# the Pseudo-Mercator WKT2 below resolves to identifier 'DUCKDB:1337'.
+# ============================================================================
+
+statement ok
+CREATE TABLE g18_t(pk INTEGER PRIMARY KEY,
+                   g_nocrs GEOMETRY,
+                   g_badcrs GEOMETRY('GEOGCRS["WGS 84 (CRS84)",ENSEMBLE["World Geodetic System 1984 ensemble",MEMBER["World Geodetic System 1984 (Transit)"],ELLIPSOID["WGS 84",6378137,298.257223563,LENGTHUNIT["metre",1]],ENSEMBLEACCURACY[2.0]],PRIMEM["Greenwich",0,ANGLEUNIT["degree",0.0174532925199433]],CS[ellipsoidal,2],AXIS["geodetic longitude (Lon)",east,ORDER[1],ANGLEUNIT["degree",0.0174532925199433]],AXIS["geodetic latitude (Lat)",north,ORDER[2],ANGLEUNIT["degree",0.0174532925199433]],USAGE[SCOPE["Not known."],AREA["World."],BBOX[-90,-180,90,180]],ID["DUCKDB","1337"]]'));
+
+
+# (a) GEOMETRY without OGC:CRS84 + geo_src_dict -> CRS84 validator (no CRS).
+statement error
+CREATE INDEX g18_src_nocrs ON g18_t USING inverted(pk, g_nocrs geo_src_dict);
+----
+db error: ERROR: Failed to create index: Column 'g_nocrs': GEOMETRY type has no CRS attached; declare it with ::GEOMETRY('OGC:CRS84')
+
+
+# (b) GEOMETRY with recognized non-CRS84 (Pseudo-Mercator, DUCKDB:1337) +
+# geo_src_dict -> CRS84 validator (invalid CRS).
+statement error
+CREATE INDEX g18_src_badcrs ON g18_t USING inverted(pk, g_badcrs geo_src_dict);
+----
+db error: ERROR: Failed to create index: Column 'g_badcrs': GEOMETRY type has invalid CRS 'DUCKDB:1337'; only CRS84 is supported (EPSG:4326, OGC:CRS84, 4326)
+
+
+# (c1) GEOMETRY without OGC:CRS84 + geopoint_dict -> CRS84 validator fires
+# *before* the geopoint-on-GEOMETRY JSON-only check, so the "no CRS attached"
+# error is what surfaces. (g4 covers the JSON-only message on valid CRS84.)
+statement error
+CREATE INDEX g18_gp_nocrs ON g18_t USING inverted(pk, g_nocrs geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'g_nocrs': GEOMETRY type has no CRS attached; declare it with ::GEOMETRY('OGC:CRS84')
+
+
+# (c2) GEOMETRY with recognized non-CRS84 + geopoint_dict -> same precedence:
+# CRS84 validator rejects first with "invalid CRS", before the JSON-only
+# message can be reached.
+statement error
+CREATE INDEX g18_gp_badcrs ON g18_t USING inverted(pk, g_badcrs geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'g_badcrs': GEOMETRY type has invalid CRS 'DUCKDB:1337'; only CRS84 is supported (EPSG:4326, OGC:CRS84, 4326)
+
+
+# --- teardown ---------------------------------------------------------------
+
+statement ok
+DROP TABLE g4_j;
+
+statement ok
+DROP TABLE g4_g;
+
+statement ok
+DROP TABLE g4_reject;
+
+statement ok
+DROP TABLE g12_j;
+
+statement ok
+DROP TABLE g12_jl;
+
+statement ok
+DROP TABLE g12_ja;
+
+statement ok
+DROP TABLE g12_gl;
+
+statement ok
+DROP TABLE g12_reject;
+
+statement ok
+DROP TABLE g18_t;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY geo_s2_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY geo_src_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY geopoint_dict;

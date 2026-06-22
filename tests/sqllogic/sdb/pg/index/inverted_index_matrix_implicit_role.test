@@ -1,0 +1,396 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY kw_dict(template = 'keyword');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geo_s2_dict(template = 'geojson',
+    coding = 's2point');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geo_src_dict(template = 'geojson',
+    coding = 'source');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geopoint_dict(template = 'geopoint', latitude = 'lat', longitude = 'lng');
+
+
+# ============================================================================
+# Implicit role (no opclass) -- column listed in the indexed position with
+# no opclass attached. term_dict::Validate (inverted_index.cpp) accepts
+# every String-kind scalar (VARCHAR / BLOB / JSON-alias-VARCHAR / GEOMETRY)
+# and any LIST / ARRAY of supported elements, but special-cases LIST or
+# ARRAY of GEOMETRY as unsupported (line 262). Verifies each accepted
+# index with a @@ probe (or count(*) when ts_* rejects the type); rejected
+# cases use the implicit validator regex.
+#
+# Note: under the implicit role FillEntryFromTokenizer is never invoked,
+# so HasJsonLeafFields() stays false and the sink routes JSON columns
+# through WriteScalarBatch<VARCHAR>. JSON values are indexed as raw text
+# (quotes and all), unlike the kw_dict path in m_j_prim.
+# ============================================================================
+
+statement ok
+CREATE TABLE g7_j(pk INTEGER PRIMARY KEY, j JSON);
+
+statement ok
+CREATE INDEX g7_j_imp ON g7_j USING inverted(pk, j);
+
+statement ok
+INSERT INTO g7_j VALUES (1, '"alpha"'), (2, '"beta"'), (3, '42');
+
+statement ok
+VACUUM (REFRESH_TABLE) g7_j;
+
+query
+SELECT pk FROM g7_j_imp WHERE j @@ ts_like('"alpha"') ORDER BY pk;
+----
+pk
+1
+
+
+statement ok
+CREATE TABLE g7_b(pk INTEGER PRIMARY KEY, b BLOB);
+
+statement ok
+CREATE INDEX g7_b_imp ON g7_b USING inverted(pk, b);
+
+statement ok
+INSERT INTO g7_b VALUES
+    (1, '\\x68656c6c6f'::BLOB),
+    (2, '\\xdeadbeef'::BLOB);
+
+statement ok
+VACUUM (REFRESH_TABLE) g7_b;
+
+query
+SELECT pk FROM g7_b_imp WHERE b @@ ts_like('\\xdeadbeef'::BLOB) ORDER BY pk;
+----
+pk
+2
+
+
+# GEOMETRY scalar with no opclass: rejected by the term_dict (implicit)
+# validator. GEOMETRY indexing requires a geo opclass (geo_s2_dict /
+# geo_src_dict / geopoint_dict) -- raw WKB bytes have no usable index codec
+# without the geo analyzer attached.
+statement ok
+CREATE TABLE g7_g(pk INTEGER PRIMARY KEY, g GEOMETRY('OGC:CRS84'));
+
+statement error
+CREATE INDEX g7_g_imp ON g7_g USING inverted(pk, g);
+----
+db error: ERROR: Failed to create index: Column 'g' has unsupported type GEOMETRY('OGC:CRS84') and can not be indexed
+
+
+statement ok
+CREATE TABLE g7_vl(pk INTEGER PRIMARY KEY, vs VARCHAR[]);
+
+statement ok
+CREATE INDEX g7_vl_imp ON g7_vl USING inverted(pk, vs);
+
+statement ok
+INSERT INTO g7_vl VALUES (1, ['alpha', 'beta']), (2, ['gamma']);
+
+statement ok
+VACUUM (REFRESH_TABLE) g7_vl;
+
+query
+SELECT pk FROM g7_vl_imp WHERE vs @@ ts_like('beta') ORDER BY pk;
+----
+pk
+1
+
+
+statement ok
+CREATE TABLE g7_bl(pk INTEGER PRIMARY KEY, bs BLOB[]);
+
+statement ok
+CREATE INDEX g7_bl_imp ON g7_bl USING inverted(pk, bs);
+
+statement ok
+INSERT INTO g7_bl VALUES
+    (1, ['hello'::BLOB, 'world'::BLOB]),
+    (2, ['deadbeef'::BLOB]);
+
+statement ok
+VACUUM (REFRESH_TABLE) g7_bl;
+
+query
+SELECT pk FROM g7_bl_imp WHERE bs @@ ts_like('hello'::BLOB) ORDER BY pk;
+----
+pk
+1
+
+
+statement ok
+CREATE TABLE g7_jl(pk INTEGER PRIMARY KEY, js JSON[]);
+
+statement ok
+CREATE INDEX g7_jl_imp ON g7_jl USING inverted(pk, js);
+
+statement ok
+INSERT INTO g7_jl VALUES
+    (1, ARRAY['"alpha"'::JSON, '"beta"'::JSON]),
+    (2, ARRAY['"gamma"'::JSON]);
+
+statement ok
+VACUUM (REFRESH_TABLE) g7_jl;
+
+query
+SELECT pk FROM g7_jl_imp WHERE js @@ ts_like('"beta"') ORDER BY pk;
+----
+pk
+1
+
+
+statement ok
+CREATE TABLE g7_va(pk INTEGER PRIMARY KEY, va VARCHAR[3]);
+
+statement ok
+CREATE INDEX g7_va_imp ON g7_va USING inverted(pk, va);
+
+statement ok
+INSERT INTO g7_va VALUES
+    (1, ['alpha', 'beta', 'gamma']),
+    (2, ['delta', 'epsilon', 'zeta']);
+
+statement ok
+VACUUM (REFRESH_TABLE) g7_va;
+
+query
+SELECT pk FROM g7_va_imp WHERE va @@ ts_like('epsilon') ORDER BY pk;
+----
+pk
+2
+
+
+statement ok
+CREATE TABLE g7_ba(pk INTEGER PRIMARY KEY, ba BLOB[3]);
+
+statement ok
+CREATE INDEX g7_ba_imp ON g7_ba USING inverted(pk, ba);
+
+statement ok
+INSERT INTO g7_ba VALUES
+    (1, ['aaa'::BLOB, 'bbb'::BLOB, 'ccc'::BLOB]),
+    (2, ['ddd'::BLOB, 'eee'::BLOB, 'fff'::BLOB]);
+
+statement ok
+VACUUM (REFRESH_TABLE) g7_ba;
+
+query
+SELECT pk FROM g7_ba_imp WHERE ba @@ ts_like('eee'::BLOB) ORDER BY pk;
+----
+pk
+2
+
+
+# LIST<GEOMETRY> and ARRAY<GEOMETRY> rejected by the explicit special-case
+# in term_dict::Validate (inverted_index.cpp:262), even though scalar
+# GEOMETRY classifies as String-kind and is accepted on its own.
+
+statement ok
+CREATE TABLE g7_gl(pk INTEGER PRIMARY KEY,
+                   gs GEOMETRY('OGC:CRS84')[],
+                   ga GEOMETRY('OGC:CRS84')[3]);
+
+statement error
+CREATE INDEX g7_gl_imp ON g7_gl USING inverted(pk, gs);
+----
+db error: ERROR: Failed to create index: Column 'gs' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
+
+
+statement error
+CREATE INDEX g7_ga_imp ON g7_gl USING inverted(pk, ga);
+----
+db error: ERROR: Failed to create index: Column 'ga' has unsupported type GEOMETRY('OGC:CRS84')[3] and can not be indexed
+
+
+## ============================================================================
+## Section 8.  Nested containers — term_dict::Validate recurses one level only.
+##
+##   LIST<LIST<T>>  and  ARRAY<ARRAY<T>>  are rejected on the implicit
+##   (no-opclass) path regardless of the leaf element type.  We cover:
+##     (a) INTEGER[][]     — LIST of LIST  (variable x variable)
+##     (b) VARCHAR[][]     — LIST of LIST  (variable x variable, string leaf)
+##     (c) INTEGER[3][3]   — ARRAY of ARRAY (fixed x fixed)
+##
+##   A sibling flat INTEGER[] column on the same table is indexed
+##   successfully to anchor that the rejection is specific to nesting,
+##   not to the table or to LIST/ARRAY in general.
+## ============================================================================
+
+statement ok
+CREATE TABLE g8_nested(pk INTEGER PRIMARY KEY,
+                       ill INTEGER[][],
+                       vll VARCHAR[][],
+                       iaa INTEGER[3][3],
+                       flat INTEGER[]);
+
+# (a) INTEGER[][] — implicit (no opclass) rejected: nested LIST.
+statement error
+CREATE INDEX g8_ill_imp ON g8_nested USING inverted(pk, ill);
+----
+db error: ERROR: Failed to create index: Column 'ill' has unsupported type INTEGER[][] and can not be indexed
+
+
+# (b) VARCHAR[][] — implicit (no opclass) rejected: nested LIST, string leaf.
+statement error
+CREATE INDEX g8_vll_imp ON g8_nested USING inverted(pk, vll);
+----
+db error: ERROR: Failed to create index: Column 'vll' has unsupported type VARCHAR[][] and can not be indexed
+
+
+# (c) INTEGER[3][3] — implicit (no opclass) rejected: nested ARRAY.
+statement error
+CREATE INDEX g8_iaa_imp ON g8_nested USING inverted(pk, iaa);
+----
+db error: ERROR: Failed to create index: Column 'iaa' has unsupported type INTEGER[3][3] and can not be indexed
+
+
+# Sanity anchor: flat INTEGER[] on the same table indexes fine.
+statement ok
+CREATE INDEX g8_flat_imp ON g8_nested USING inverted(pk, flat);
+
+statement ok
+INSERT INTO g8_nested VALUES
+    (1, [[1,2],[3]],         [['a','b'],['c']],         [[1,2,3],[4,5,6],[7,8,9]],         [10, 20, 30]),
+    (2, [[4],[5,6,7]],       [['d'],['e','f','g']],     [[9,8,7],[6,5,4],[3,2,1]],         [40, 50]),
+    (3, [[8,9],[10,11,12]],  [['h','i'],['j','k','l']], [[0,0,0],[1,1,1],[2,2,2]],         [60]);
+
+statement ok
+VACUUM (REFRESH_TABLE) g8_nested;
+
+query
+SELECT pk FROM g8_flat_imp WHERE flat = 40 ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM g8_flat_imp WHERE flat = 60 ORDER BY pk;
+----
+pk
+3
+
+statement ok
+CREATE TABLE g9_smv(pk INTEGER PRIMARY KEY,
+                    text_anchor VARCHAR,
+                    s STRUCT(a INTEGER, b VARCHAR),
+                    m MAP(VARCHAR, INTEGER),
+                    vr VARIANT);
+
+# (a) STRUCT(a INTEGER, b VARCHAR) as INCLUDE-only: accepted.
+# (b) MAP(VARCHAR, INTEGER)        as INCLUDE-only: accepted.
+# (c) VARIANT                      as INCLUDE-only: accepted (DuckDB syntax permits).
+# All three ride alongside a VARCHAR/kw_dict anchor so the sidecar gets a real
+# indexed column to attach to.
+statement ok
+CREATE INDEX g9_smv_inc ON g9_smv USING inverted(pk, text_anchor kw_dict)
+    INCLUDE (s, m, vr);
+
+statement ok
+INSERT INTO g9_smv VALUES
+    (1, 'alpha', ROW(10, 'x'),  MAP {'k1': 1, 'k2': 2}, 42::VARIANT),
+    (2, 'beta',  ROW(20, 'y'),  MAP {'k3': 3},          'hello'::VARIANT);
+
+statement ok
+VACUUM (REFRESH_TABLE) g9_smv;
+
+# Round-trip: anchor served by the index, STRUCT/MAP/VARIANT served by the
+# INCLUDE sidecar.
+query
+SELECT pk, s.a, s.b FROM g9_smv_inc WHERE text_anchor @@ ts_like('alpha') ORDER BY pk;
+----
+pk	a	b
+1	10	x
+
+query
+SELECT pk, m['k3'] FROM g9_smv_inc WHERE text_anchor @@ ts_like('beta') ORDER BY pk;
+----
+pk	m
+2	3
+
+query
+SELECT count(*) FROM g9_smv_inc;
+----
+count
+2
+
+# (d) STRUCT column with kw_dict (text tokenizer): rejected by
+# term_dict::Validate (STRUCT classifies as Unsupported); the
+# tokenizer-vs-column check never runs.
+statement error
+CREATE INDEX g9_smv_kw_s ON g9_smv USING inverted(pk, s kw_dict);
+----
+db error: ERROR: Failed to create index: Column 's' has unsupported type STRUCT(a INTEGER, b VARCHAR) and can not be indexed
+
+
+# (f) MAP column with kw_dict (text tokenizer): same path as (d).
+statement error
+CREATE INDEX g9_smv_kw_m ON g9_smv USING inverted(pk, m kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'm' has unsupported type MAP(VARCHAR, INTEGER) and can not be indexed
+
+
+# (e) STRUCT in indexed-list with NO opclass (implicit term_dict path): rejected.
+statement error
+CREATE INDEX g9_smv_imp_s ON g9_smv USING inverted(pk, s);
+----
+db error: ERROR: Failed to create index: Column 's' has unsupported type STRUCT(a INTEGER, b VARCHAR) and can not be indexed
+
+
+# (g) MAP in indexed-list with NO opclass (implicit term_dict path): rejected.
+statement error
+CREATE INDEX g9_smv_imp_m ON g9_smv USING inverted(pk, m);
+----
+db error: ERROR: Failed to create index: Column 'm' has unsupported type MAP(VARCHAR, INTEGER) and can not be indexed
+
+
+# --- teardown ---------------------------------------------------------------
+
+statement ok
+DROP TABLE g7_j;
+
+statement ok
+DROP TABLE g7_b;
+
+statement ok
+DROP TABLE g7_g;
+
+statement ok
+DROP TABLE g7_vl;
+
+statement ok
+DROP TABLE g7_bl;
+
+statement ok
+DROP TABLE g7_jl;
+
+statement ok
+DROP TABLE g7_va;
+
+statement ok
+DROP TABLE g7_ba;
+
+statement ok
+DROP TABLE g7_gl;
+
+statement ok
+DROP TABLE g8_nested;
+
+statement ok
+DROP TABLE g9_smv;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY kw_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY geo_s2_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY geo_src_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY geopoint_dict;

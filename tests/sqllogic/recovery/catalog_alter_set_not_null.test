@@ -1,0 +1,76 @@
+control substitution on
+
+# A NOT NULL added via ALTER COLUMN SET NOT NULL must survive a crash/restart:
+# the catalog persists it as a check constraint and the store column keeps
+# rejecting nulls after recovery.
+
+statement ok
+CREATE TABLE pudge(a integer, b integer);
+
+statement ok
+INSERT INTO pudge VALUES (1, 100);
+
+statement ok
+ALTER TABLE pudge ALTER COLUMN b SET NOT NULL;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT a, b FROM pudge ORDER BY a;
+----
+a	b
+1	100
+
+# The NOT NULL constraint still enforces after restart.
+connection after_crash
+statement error
+INSERT INTO pudge VALUES (2, NULL);
+
+connection after_crash
+statement ok
+INSERT INTO pudge VALUES (2, 200);
+
+connection after_crash
+query
+SELECT a, b FROM pudge ORDER BY a;
+----
+a	b
+1	100
+2	200
+
+# DROP NOT NULL likewise persists: nulls are allowed after the next restart.
+connection after_crash
+statement ok
+ALTER TABLE pudge ALTER COLUMN b DROP NOT NULL;
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash2
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+INSERT INTO pudge VALUES (3, NULL);
+
+connection after_crash2
+query
+SELECT a, b FROM pudge ORDER BY a;
+----
+a	b
+1	100
+2	200
+3	NULL
+
+connection after_crash2
+statement ok
+DROP TABLE pudge;

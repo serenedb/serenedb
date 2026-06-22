@@ -45,7 +45,10 @@ struct HNSWColumnConfig {
   irs::HNSWMetric metric = irs::HNSWMetric::L2Sqr;
 };
 
-struct ColumnSerialized {
+// Persisted per-field iresearch config, keyed by field_id in InvertedIndexData.
+// Carries no key identity (column/expression) -- that lives in the columns +
+// expressions key arrays.
+struct EntryConfigSerialized {
   ObjectId text_dictionary = ObjectId::none();
   bool store_values = false;
   bool indexed_term_dict = false;
@@ -62,29 +65,22 @@ struct ColumnSerialized {
   irs::field_id numeric_field_id = irs::field_limits::invalid();
 };
 
-struct ExpressionSerialized {
-  std::string serialized_expr;
-  std::string pretty_printed;
-  std::vector<Column::Id> dependent_columns;
-  duckdb::LogicalType return_type;
-  irs::field_id synthetic_column = irs::field_limits::invalid();
-  ObjectId text_dictionary = ObjectId::none();
+// One expression key: its payload plus the iresearch field_id allocated for it
+// (an expression has no natural column id). One self-contained unit -- no array
+// kept parallel to a separate field-id vector.
+struct ExpressionKey {
+  ExpressionData data;
   irs::field_id field_id = irs::field_limits::invalid();
-  uint32_t norm_row_group_size = 0;
-  search::Features features;
-  irs::field_id null_field_id = irs::field_limits::invalid();
-  irs::field_id bool_field_id = irs::field_limits::invalid();
-  irs::field_id numeric_field_id = irs::field_limits::invalid();
 };
-
-using ColumnSerializedMap =
-  containers::NodeHashMap<Column::Id, ColumnSerialized>;
 
 struct InvertedIndexData {
   std::string name;
-  std::vector<Column::Id> column_ids;
-  ColumnSerializedMap columns;
-  std::vector<ExpressionSerialized> expressions;
+  // Plain-column keys (de-duped). Each column key's field_id is its column id,
+  // so no separate field_id is stored. Order is not load-bearing for inverted.
+  std::vector<Column::Id> columns;
+  std::vector<ExpressionKey> expression_keys;
+  // Per-field iresearch config keyed by field_id.
+  containers::NodeHashMap<irs::field_id, EntryConfigSerialized> entries;
   InvertedIndexOptions options;
 };
 

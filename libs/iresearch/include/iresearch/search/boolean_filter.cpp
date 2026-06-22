@@ -141,6 +141,8 @@ QueryBuilder::ptr Exclusion::PrepareSegment(const SubReader& segment,
 
   std::vector<QueryBuilder::ptr> excludes;
   const auto exclude_filters = GetExcludes();
+  SDB_ASSERT(absl::c_all_of(exclude_filters,
+                            [](const auto& excl) { return excl != nullptr; }));
   excludes.reserve(exclude_filters.size());
   size_t idx = 1;
   for (const auto& filter : exclude_filters) {
@@ -149,6 +151,8 @@ QueryBuilder::ptr Exclusion::PrepareSegment(const SubReader& segment,
     child.collector = compound ? &compound->Child(idx++) : nullptr;
     excludes.emplace_back(filter->PrepareSegment(segment, child));
   }
+  SDB_ASSERT(
+    absl::c_all_of(excludes, [](const auto& excl) { return excl != nullptr; }));
   return memory::make_tracked<ExclusionQuery>(
     ctx.memory, segment, std::move(include), std::move(excludes));
 }

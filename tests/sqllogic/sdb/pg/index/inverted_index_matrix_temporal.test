@@ -1,0 +1,228 @@
+control substitution on
+
+# ============================================================================
+# DATE / TIMESTAMP scalar
+# ============================================================================
+
+statement ok
+CREATE TABLE m_t(pk INTEGER PRIMARY KEY, d DATE, ts TIMESTAMP);
+
+statement ok
+CREATE INDEX m_t_date_col_st ON m_t USING inverted(pk, d)  INCLUDE (d);
+
+statement ok
+CREATE INDEX m_t_ts_col_ns   ON m_t USING inverted(pk, ts);
+
+statement ok
+CREATE INDEX m_t_date_expr_ns ON m_t USING inverted(pk, (d + INTERVAL '1 day'));
+
+statement ok
+CREATE INDEX m_t_ts_expr_ns   ON m_t USING inverted(pk, (ts + INTERVAL '1 hour'));
+
+statement ok
+INSERT INTO m_t VALUES
+    (1, DATE '2024-01-01', TIMESTAMP '2024-01-01 00:00:00'),
+    (2, DATE '2024-06-15', TIMESTAMP '2024-06-15 12:00:00');
+
+statement ok
+VACUUM (REFRESH_TABLE) m_t;
+
+query
+SELECT count(*) FROM m_t_date_col_st;
+----
+count
+2
+
+query
+SELECT count(*) FROM m_t_ts_col_ns;
+----
+count
+2
+
+query
+SELECT count(*) FROM m_t_date_expr_ns;
+----
+count
+2
+
+query
+SELECT count(*) FROM m_t_ts_expr_ns;
+----
+count
+2
+
+# Drive DATE / TIMESTAMP via @@ on the term_dict path, both column and
+# expression sources.
+query
+SELECT pk FROM m_t_date_col_st
+WHERE d @@ ts_between(DATE '2024-03-01', DATE '2024-12-31', true, true) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_t_ts_col_ns
+WHERE ts @@ ts_between(TIMESTAMP '2024-03-01', TIMESTAMP '2024-12-31', true, true) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_t_date_expr_ns
+WHERE (d + INTERVAL '1 day') @@ ts_between(DATE '2024-03-01', DATE '2024-12-31', true, true) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_t_ts_expr_ns
+WHERE (ts + INTERVAL '1 hour') @@ ts_between(TIMESTAMP '2024-03-01', TIMESTAMP '2024-12-31', true, true) ORDER BY pk;
+----
+pk
+2
+
+
+# ============================================================================
+# Width fan-out — TINYINT (i8) and SMALLINT (i16) join the I32/I64 family but
+# share the same encoder; flush a sign-extension regression with their own
+# rows.  UTINYINT / USMALLINT / UINTEGER / HUGEINT / UUID / DECIMAL / TIME /
+# TIMESTAMP_MS / TIMESTAMP_NS / INTERVAL are catalog-accepted but rocksdb
+# refuses to serialize them today, so they're left out.
+# ============================================================================
+
+statement ok
+CREATE TABLE m_narrow(pk INTEGER PRIMARY KEY, t8 TINYINT, t16 SMALLINT);
+
+statement ok
+CREATE INDEX m_narrow_t8  ON m_narrow USING inverted(pk, t8) INCLUDE (t8);
+
+statement ok
+CREATE INDEX m_narrow_t16 ON m_narrow USING inverted(pk, t16);
+
+statement ok
+INSERT INTO m_narrow VALUES (1, -10::TINYINT, -100::SMALLINT), (2, 10::TINYINT, 100::SMALLINT);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_narrow;
+
+query
+SELECT pk FROM m_narrow_t8 WHERE t8 @@ ts_between(-50::TINYINT, -5::TINYINT, true, true);
+----
+pk
+1
+
+query
+SELECT pk FROM m_narrow_t16 WHERE t16 @@ ts_between(-200::SMALLINT, 50::SMALLINT, true, true);
+----
+pk
+1
+
+
+# ============================================================================
+# FLOAT scalar (NumericF32) — every other numeric kind has scalar coverage.
+# ============================================================================
+
+statement ok
+CREATE TABLE m_f(pk INTEGER PRIMARY KEY, n FLOAT);
+
+statement ok
+CREATE INDEX m_f_col_st ON m_f USING inverted(pk, n) INCLUDE (n);
+
+statement ok
+CREATE INDEX m_f_expr_ns ON m_f USING inverted(pk, (n * 2.0::FLOAT));
+
+statement ok
+INSERT INTO m_f VALUES (1, 1.5::FLOAT), (2, 2.5::FLOAT), (3, -0.5::FLOAT);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_f;
+
+query
+SELECT pk FROM m_f_col_st WHERE n @@ ts_between(2.0::FLOAT, 3.0::FLOAT, true, true);
+----
+pk
+2
+
+query
+SELECT pk FROM m_f_expr_ns WHERE n * 2.0::FLOAT @@ ts_between(4.0::FLOAT, 6.0::FLOAT, true, true);
+----
+pk
+2
+
+
+# ============================================================================
+# TIMESTAMP WITH TIME ZONE — distinct logical type from TIMESTAMP.
+# ============================================================================
+
+statement ok
+CREATE TABLE m_tz(pk INTEGER PRIMARY KEY, ts TIMESTAMPTZ);
+
+statement ok
+CREATE INDEX m_tz_col_ns ON m_tz USING inverted(pk, ts);
+
+statement ok
+INSERT INTO m_tz VALUES
+    (1, TIMESTAMPTZ '2024-01-01 00:00:00+00'),
+    (2, TIMESTAMPTZ '2024-06-15 12:00:00+00');
+
+statement ok
+VACUUM (REFRESH_TABLE) m_tz;
+
+query
+SELECT pk FROM m_tz_col_ns WHERE ts @@ ts_between(TIMESTAMPTZ '2024-03-01 00:00:00+00', TIMESTAMPTZ '2024-12-31 00:00:00+00', true, true);
+----
+pk
+2
+
+
+# ============================================================================
+# DATE list / array — DATE classifies as NumericI32 so its list / array goes
+# through the implicit numeric tokenizer.
+# ============================================================================
+
+statement ok
+CREATE TABLE m_dla(pk INTEGER PRIMARY KEY, ds DATE[], da DATE[3]);
+
+statement ok
+CREATE INDEX m_dla_ds ON m_dla USING inverted(pk, ds);
+
+statement ok
+CREATE INDEX m_dla_da ON m_dla USING inverted(pk, da);
+
+statement ok
+INSERT INTO m_dla VALUES
+    (1, [DATE '2024-01-01', DATE '2024-06-15'], [DATE '2024-01-01', DATE '2024-06-15', DATE '2024-12-31']),
+    (2, [DATE '2025-01-01'],                    [DATE '2025-01-01', DATE '2025-06-15', DATE '2025-12-31']);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_dla;
+
+query
+SELECT pk FROM m_dla_ds WHERE ds @@ ts_between(DATE '2024-01-01', DATE '2024-12-31', true, true);
+----
+pk
+1
+
+query
+SELECT pk FROM m_dla_da WHERE da @@ ts_between(DATE '2025-03-01', DATE '2025-08-01', true, true);
+----
+pk
+2
+
+
+# --- teardown ---------------------------------------------------------------
+
+statement ok
+DROP TABLE m_t;
+
+statement ok
+DROP TABLE m_narrow;
+
+statement ok
+DROP TABLE m_f;
+
+statement ok
+DROP TABLE m_tz;
+
+statement ok
+DROP TABLE m_dla;

@@ -104,3 +104,34 @@ a
 
 statement ok
 DROP TABLE merge_idx;
+
+# WHEN NOT MATCHED INSERT must compute a STORED generated column from the final
+# assembled values, not from raw merge-input positions. Omitting b (which g
+# depends on) must still give g = a + b(default 7), not a + c.
+statement ok
+CREATE TABLE merge_gen(a INTEGER, b INTEGER DEFAULT 7, g INTEGER GENERATED ALWAYS AS (a + b) STORED, c INTEGER);
+
+statement ok
+CREATE TABLE merge_gen_src(a INTEGER, c INTEGER);
+
+statement count 2
+INSERT INTO merge_gen_src VALUES (10, 99), (20, 88);
+
+statement ok
+MERGE INTO merge_gen t
+USING merge_gen_src s
+ON t.a = s.a
+WHEN NOT MATCHED THEN INSERT (a, c) VALUES (s.a, s.c);
+
+query
+SELECT a, b, g, c FROM merge_gen ORDER BY a;
+----
+a	b	g	c
+10	7	17	99
+20	7	27	88
+
+statement ok
+DROP TABLE merge_gen;
+
+statement ok
+DROP TABLE merge_gen_src;

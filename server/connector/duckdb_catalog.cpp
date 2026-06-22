@@ -24,6 +24,7 @@
 
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/execution/operator/order/physical_order.hpp>
 #include <duckdb/execution/operator/persistent/physical_batch_insert.hpp>
@@ -560,66 +561,6 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
 
 namespace {
 
-// Defaults / generated-column projection for INSERT.
-//
-// Two passes so gen-col exprs can resolve their BoundRef(dep.storage_oid)
-// leaves against a storage-ordered chunk:
-//   Pass 1 (storage-oid order):
-//     gen col      -> NULL placeholder
-//     user-omitted -> bound_defaults[storage_idx]  (BoundRef-free)
-//     user-set     -> BoundRef(mapped_index) into the user input chunk
-//   Pass 2 (same layout):
-//     gen col      -> bound_defaults[storage_idx]  (refs resolve vs pass 1)
-//     other        -> BoundRef(storage_idx) passthrough
-duckdb::PhysicalOperator& ResolveDefaultsWithGenerated(
-  duckdb::PhysicalPlanGenerator& planner, duckdb::LogicalInsert& op,
-  duckdb::PhysicalOperator& child) {
-  SDB_ASSERT(!op.column_index_map.empty());
-
-  duckdb::vector<duckdb::LogicalType> types;
-  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> pass1_exprs;
-  bool has_stored_generated = false;
-  for (auto& col : op.table.GetColumns().Physical()) {
-    types.push_back(col.Type());
-    if (col.Category() == duckdb::TableColumnType::GENERATED_STORED) {
-      has_stored_generated = true;
-      pass1_exprs.push_back(duckdb::make_uniq<duckdb::BoundConstantExpression>(
-        duckdb::Value(col.Type())));
-      continue;
-    }
-    auto mapped_index = op.column_index_map[col.Physical()];
-    if (mapped_index == duckdb::DConstants::INVALID_INDEX) {
-      auto storage_idx = col.StorageOid();
-      pass1_exprs.push_back(std::move(op.bound_defaults[storage_idx]));
-    } else {
-      pass1_exprs.push_back(duckdb::make_uniq<duckdb::BoundReferenceExpression>(
-        col.Type(), mapped_index));
-    }
-  }
-  auto& pass1 = planner.Make<duckdb::PhysicalProjection>(
-    types, std::move(pass1_exprs), child.estimated_cardinality);
-  pass1.children.push_back(child);
-
-  if (!has_stored_generated) {
-    return pass1;
-  }
-
-  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> pass2_exprs;
-  for (auto& col : op.table.GetColumns().Physical()) {
-    auto storage_idx = col.StorageOid();
-    if (col.Category() == duckdb::TableColumnType::GENERATED_STORED) {
-      pass2_exprs.push_back(std::move(op.bound_defaults[storage_idx]));
-    } else {
-      pass2_exprs.push_back(duckdb::make_uniq<duckdb::BoundReferenceExpression>(
-        col.Type(), storage_idx));
-    }
-  }
-  auto& pass2 = planner.Make<duckdb::PhysicalProjection>(
-    std::move(types), std::move(pass2_exprs), pass1.estimated_cardinality);
-  pass2.children.push_back(pass1);
-  return pass2;
-}
-
 std::vector<duckdb::idx_t> ComputeKeptViewPositions(
   const duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>>&
     parsed_index_exprs,
@@ -694,241 +635,78 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   auto& store_entry =
     table_entry.ResolveStoreEntry(context).Cast<duckdb::DuckTableEntry>();
 
-  // Two-pass projection: see ResolveDefaultsWithGenerated comment for why
-  // we don't reuse upstream's single-pass ResolveDefaultsProjection here.
-  if (!op.column_index_map.empty() && plan) {
-    plan = &ResolveDefaultsWithGenerated(planner, op, *plan);
-  }
-
-  if (plan) {
-    plan = &planner.Make<SereneDBPhysicalProgress>(
-      *plan, table_entry.GetSereneDBTable()->GetId());
-  }
-
-  const auto on_conflict_action = op.on_conflict_info.action_type;
-
-  // Mirror duckdb's own DuckCatalog::PlanInsert branch selection (see
-  // PlanCreateTableAs above): a partitionable, order-preserving load uses
-  // PhysicalBatchInsert, which flushes and compresses row groups optimistically
-  // across worker threads -- a serial PhysicalInsert is many times slower.
-  const auto num_threads =
-    duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads();
-  bool parallel_streaming_insert =
-    plan && !duckdb::PhysicalPlanGenerator::PreserveInsertionOrder(context, *plan);
-  bool use_batch_index =
-    plan && duckdb::PhysicalPlanGenerator::UseBatchIndex(context, *plan);
-  if (op.return_chunk) {
-    parallel_streaming_insert = false;
-    use_batch_index = false;
-  }
-  if (on_conflict_action != duckdb::OnConflictAction::THROW) {
-    use_batch_index = false;
-  }
-  if (on_conflict_action == duckdb::OnConflictAction::UPDATE) {
-    parallel_streaming_insert = false;
-  }
-
+  // Retarget constraints onto the store mirror. Facade-bound CHECK constraints
+  // can reference facade-only functions (bound with macros expanded); the store
+  // mirror demotes those, so they ride along from here. Column layouts match by
+  // construction. The batch-vs-streaming branch and the store DuckTableEntry
+  // target (via GetStorageTableEntry) are handled by upstream PlanInsert.
   auto store_constraints =
     duckdb::Binder::BindConstraints(context, store_entry.GetConstraints(),
                                     store_entry.name, store_entry.GetColumns());
-  // Facade-bound CHECK constraints can reference facade-only functions
-  // (bound with macros expanded); the store mirror demotes those, so they
-  // ride the insert from here. Column layouts match by construction.
   for (auto& constraint : op.bound_constraints) {
     if (constraint->type == duckdb::ConstraintType::CHECK) {
       store_constraints.push_back(std::move(constraint));
     }
   }
+  op.bound_constraints = std::move(store_constraints);
 
-  auto& insert = [&]() -> duckdb::PhysicalOperator& {
-    if (use_batch_index && !parallel_streaming_insert) {
-      return planner.Make<duckdb::PhysicalBatchInsert>(
-        op.types, store_entry, std::move(store_constraints),
-        op.estimated_cardinality);
-    }
-    return planner.Make<duckdb::PhysicalInsert>(
-      op.types, store_entry, std::move(store_constraints),
-      std::move(op.expressions), std::move(op.on_conflict_info.set_columns),
-      std::move(op.on_conflict_info.set_types), op.estimated_cardinality,
-      op.return_chunk, parallel_streaming_insert && num_threads > 1,
-      on_conflict_action,
-      std::move(op.on_conflict_info.on_conflict_condition),
-      std::move(op.on_conflict_info.do_update_condition),
-      std::move(op.on_conflict_info.on_conflict_filter),
-      std::move(op.on_conflict_info.columns_to_fetch),
-      op.on_conflict_info.update_is_del_and_insert);
-  }();
-  if (plan) {
-    insert.children.push_back(*plan);
+  // Resolve defaults/generated columns (the shared upstream two-pass) BELOW the
+  // progress wrapper, then clear the map so the delegated PlanInsert does not
+  // project a second time.
+  if (plan && !op.column_index_map.empty()) {
+    plan = &planner.ResolveDefaultsProjection(op, *plan);
+    op.column_index_map.clear();
   }
-  return insert;
+  if (plan) {
+    plan = &planner.Make<SereneDBPhysicalProgress>(
+      *plan, table_entry.GetSereneDBTable()->GetId());
+  }
+
+  return store_entry.ParentCatalog().Cast<duckdb::DuckCatalog>().PlanInsert(
+    context, planner, op, plan);
 }
 
 duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalDelete& op, duckdb::PhysicalOperator& plan) {
-  auto& table_entry = RequireBaseTable(op.table);
-  auto& store_entry =
-    table_entry.ResolveStoreEntry(context).Cast<duckdb::DuckTableEntry>();
-
-  auto& bound_ref = op.expressions[0]->Cast<duckdb::BoundReferenceExpression>();
-  auto store_constraints =
+  auto& store_entry = RequireBaseTable(op.table)
+                        .ResolveStoreEntry(context)
+                        .Cast<duckdb::DuckTableEntry>();
+  op.bound_constraints =
     duckdb::Binder::BindConstraints(context, store_entry.GetConstraints(),
                                     store_entry.name, store_entry.GetColumns());
-  auto& del = planner.Make<duckdb::PhysicalDelete>(
-    op.types, store_entry, store_entry.GetStorage(),
-    std::move(store_constraints), bound_ref.index, op.estimated_cardinality,
-    op.return_chunk, std::move(op.return_columns));
-  del.children.push_back(plan);
-  return del;
+  return store_entry.ParentCatalog().Cast<duckdb::DuckCatalog>().PlanDelete(
+    context, planner, op, plan);
 }
 
 duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalUpdate& op, duckdb::PhysicalOperator& plan) {
-  auto& table_entry = RequireBaseTable(op.table);
-  auto& store_entry =
-    table_entry.ResolveStoreEntry(context).Cast<duckdb::DuckTableEntry>();
-
-  auto store_constraints =
+  auto& store_entry = RequireBaseTable(op.table)
+                        .ResolveStoreEntry(context)
+                        .Cast<duckdb::DuckTableEntry>();
+  op.bound_constraints =
     duckdb::Binder::BindConstraints(context, store_entry.GetConstraints(),
                                     store_entry.name, store_entry.GetColumns());
-  auto& update = planner.Make<duckdb::PhysicalUpdate>(
-    op.types, store_entry, store_entry.GetStorage(), op.columns,
-    std::move(op.expressions), std::move(op.bound_defaults),
-    std::move(store_constraints), op.estimated_cardinality, op.return_chunk);
-  auto& cast_update = update.Cast<duckdb::PhysicalUpdate>();
-  cast_update.update_is_del_and_insert = op.update_is_del_and_insert;
-  cast_update.children.push_back(plan);
-  return update;
+  return store_entry.ParentCatalog().Cast<duckdb::DuckCatalog>().PlanUpdate(
+    context, planner, op, plan);
 }
-
-namespace {
-
-duckdb::unique_ptr<duckdb::MergeIntoOperator> PlanStoreMergeIntoAction(
-  duckdb::ClientContext& context, duckdb::LogicalMergeInto& op,
-  duckdb::PhysicalPlanGenerator& planner, duckdb::BoundMergeIntoAction& action,
-  duckdb::DuckTableEntry& store_entry) {
-  auto result = duckdb::make_uniq<duckdb::MergeIntoOperator>();
-
-  result->action_type = action.action_type;
-  result->condition = std::move(action.condition);
-  auto bound_constraints =
-    duckdb::Binder::BindConstraints(context, store_entry.GetConstraints(),
-                                    store_entry.name, store_entry.GetColumns());
-  auto return_types = op.types;
-  if (op.return_chunk) {
-    // For RETURNING the last column is the merge_action, added by the merge
-    // operator itself.
-    return_types.pop_back();
-  }
-
-  auto cardinality = op.EstimateCardinality(context);
-  switch (action.action_type) {
-    case duckdb::MergeActionType::MERGE_UPDATE: {
-      duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> defaults;
-      for (auto& def : op.bound_defaults) {
-        defaults.push_back(def->Copy());
-      }
-      result->op = planner.Make<duckdb::PhysicalUpdate>(
-        std::move(return_types), store_entry, store_entry.GetStorage(),
-        std::move(action.columns), std::move(action.expressions),
-        std::move(defaults), std::move(bound_constraints), cardinality,
-        op.return_chunk);
-      auto& cast_update = result->op->Cast<duckdb::PhysicalUpdate>();
-      cast_update.update_is_del_and_insert = action.update_is_del_and_insert;
-      break;
-    }
-    case duckdb::MergeActionType::MERGE_DELETE: {
-      duckdb::vector<duckdb::idx_t> return_columns = op.delete_return_columns;
-      result->op = planner.Make<duckdb::PhysicalDelete>(
-        std::move(return_types), store_entry, store_entry.GetStorage(),
-        std::move(bound_constraints), op.row_id_start, cardinality,
-        op.return_chunk, std::move(return_columns));
-      break;
-    }
-    case duckdb::MergeActionType::MERGE_INSERT: {
-      duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> set_expressions;
-      duckdb::vector<duckdb::PhysicalIndex> set_columns;
-      duckdb::vector<duckdb::LogicalType> set_types;
-      duckdb::unordered_set<duckdb::column_t> on_conflict_filter;
-      duckdb::vector<duckdb::column_t> columns_to_fetch;
-
-      result->op = planner.Make<duckdb::PhysicalInsert>(
-        std::move(return_types), store_entry, std::move(bound_constraints),
-        std::move(set_expressions), std::move(set_columns),
-        std::move(set_types), cardinality, op.return_chunk, !op.return_chunk,
-        duckdb::OnConflictAction::THROW, nullptr, nullptr,
-        std::move(on_conflict_filter), std::move(columns_to_fetch), false);
-      // Transform expressions map merge-join output -> table columns.
-      if (!action.column_index_map.empty()) {
-        duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> new_exprs;
-        for (auto& col : op.table.GetColumns().Physical()) {
-          auto storage_idx = col.StorageOid();
-          auto mapped = action.column_index_map[col.Physical()];
-          if (mapped == duckdb::DConstants::INVALID_INDEX) {
-            new_exprs.push_back(op.bound_defaults[storage_idx]->Copy());
-          } else {
-            new_exprs.push_back(std::move(action.expressions[mapped]));
-          }
-        }
-        action.expressions = std::move(new_exprs);
-      }
-      result->expressions = std::move(action.expressions);
-      break;
-    }
-    case duckdb::MergeActionType::MERGE_ERROR:
-      result->expressions = std::move(action.expressions);
-      break;
-    case duckdb::MergeActionType::MERGE_DO_NOTHING:
-      break;
-    default:
-      SDB_THROW(ERROR_BAD_PARAMETER,
-                "Unsupported MERGE INTO action type for SereneDB");
-  }
-  return result;
-}
-
-}  // namespace
 
 duckdb::PhysicalOperator& SereneDBCatalog::PlanMergeInto(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalMergeInto& op, duckdb::PhysicalOperator& plan) {
-  // DuckDB routes INSERT ON CONFLICT through MergeInto as well; this is a
-  // near-copy of DuckCatalog::PlanMergeInto targeting the store table.
-  auto& table_entry = RequireBaseTable(op.table);
-  auto& store_entry =
-    table_entry.ResolveStoreEntry(context).Cast<duckdb::DuckTableEntry>();
-
-  std::map<duckdb::MergeActionCondition,
-           duckdb::vector<duckdb::unique_ptr<duckdb::MergeIntoOperator>>>
-    actions;
-
-  duckdb::idx_t append_count = 0;
-  for (auto& [condition, action_list] : op.actions) {
-    duckdb::vector<duckdb::unique_ptr<duckdb::MergeIntoOperator>>
-      planned_actions;
-    for (auto& action : action_list) {
-      if (action->action_type == duckdb::MergeActionType::MERGE_INSERT) {
-        ++append_count;
-      }
-      if (action->action_type == duckdb::MergeActionType::MERGE_UPDATE &&
-          action->update_is_del_and_insert) {
-        ++append_count;
-      }
-      planned_actions.push_back(
-        PlanStoreMergeIntoAction(context, op, planner, *action, store_entry));
-    }
-    actions.emplace(condition, std::move(planned_actions));
-  }
-
-  const bool parallel = append_count <= 1 && !op.return_chunk;
-
-  auto& merge = planner.Make<duckdb::PhysicalMergeInto>(
-    op.types, std::move(actions), op.row_id_start, op.source_marker, parallel,
-    op.return_chunk);
-  merge.children.push_back(plan);
-  return merge;
+  // DuckDB routes INSERT ON CONFLICT through MergeInto as well. Retarget the
+  // constraints onto the store mirror and delegate; upstream
+  // DuckCatalog::PlanMergeInto builds each action against the store
+  // DuckTableEntry via TableCatalogEntry::GetStorageTableEntry.
+  auto& store_entry = RequireBaseTable(op.table)
+                        .ResolveStoreEntry(context)
+                        .Cast<duckdb::DuckTableEntry>();
+  op.bound_constraints =
+    duckdb::Binder::BindConstraints(context, store_entry.GetConstraints(),
+                                    store_entry.name, store_entry.GetColumns());
+  return store_entry.ParentCatalog().Cast<duckdb::DuckCatalog>().PlanMergeInto(
+    context, planner, op, plan);
 }
 
 duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(

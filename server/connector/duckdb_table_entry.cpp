@@ -21,6 +21,7 @@
 #include "connector/duckdb_table_entry.h"
 
 #include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/function/table/table_scan.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/constraints/bound_check_constraint.hpp>
@@ -119,6 +120,11 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
 duckdb::Catalog& SereneDBTableEntry::GetStorageCatalog(
   duckdb::ClientContext& context) {
   return ResolveStoreEntry(context).ParentCatalog();
+}
+
+duckdb::DuckTableEntry& SereneDBTableEntry::GetStorageTableEntry(
+  duckdb::ClientContext& context) {
+  return ResolveStoreEntry(context).Cast<duckdb::DuckTableEntry>();
 }
 
 duckdb::virtual_column_map_t SereneDBTableEntry::GetVirtualColumns() const {

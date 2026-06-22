@@ -261,7 +261,8 @@ void MaterializeNode(const ColumnReader& reader, MaterializeState& state,
 }
 
 void CastExtractInto(duckdb::ClientContext& context, duckdb::Vector& src,
-                     duckdb::Vector& dst, size_t run, duckdb::idx_t dst_offset);
+                     duckdb::Vector& dst, size_t run, duckdb::idx_t dst_offset,
+                     VectorPool& scratch);
 
 template<typename DocIds>
 void MaterializeExtractLeaf(const ColumnReader& leaf,
@@ -277,7 +278,8 @@ void MaterializeExtractLeaf(const ColumnReader& leaf,
   auto scratch = leaf_state.scratch.Acquire(leaf.Type());
   MaterializeNode(leaf, leaf_state, rows, *scratch, /*output_start=*/0,
                   /*may_use_entire=*/true);
-  CastExtractInto(context, *scratch, out_vec, rows.size(), out_offset);
+  CastExtractInto(context, *scratch, out_vec, rows.size(), out_offset,
+                  leaf_state.scratch);
 }
 
 template<typename DocIds>
@@ -360,8 +362,13 @@ void MaterializeVariantExtractNode(
                             slice.count, *non_shredded, 0, state.scratch);
       duckdb::VariantUtils::VariantExtract(*non_shredded, components,
                                            *extracted, count);
-      CastExtractInto(context, *extracted, out_vec, slice.count,
-                      output_start + slice.out_offset);
+      if (out_vec.GetType().id() == duckdb::LogicalTypeId::VARIANT) {
+        duckdb::VectorOperations::Copy(*extracted, out_vec, slice.count, 0,
+                                       output_start + slice.out_offset);
+      } else {
+        CastExtractInto(context, *extracted, out_vec, slice.count,
+                        output_start + slice.out_offset, state.scratch);
+      }
     });
 }
 

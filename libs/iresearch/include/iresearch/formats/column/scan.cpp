@@ -50,8 +50,6 @@ std::unique_ptr<MaterializeState> MakeMaterializeState(
           MakeMaterializeState(reader.StructField(fi), ctx));
       }
     } break;
-    case duckdb::LogicalTypeId::VARIANT:
-      break;
     default:
       break;
   }
@@ -164,16 +162,12 @@ MaterializeState::ExtractLeafSlot& EnsureExtractLeaf(
 }
 
 void CastExtractInto(duckdb::ClientContext& context, duckdb::Vector& src,
-                     duckdb::Vector& dst, size_t run,
-                     duckdb::idx_t dst_offset) {
-  const auto count = static_cast<duckdb::idx_t>(run);
-  if (src.GetType() == dst.GetType()) {
-    duckdb::VectorOperations::Copy(src, dst, count, 0, dst_offset);
-    return;
-  }
-  duckdb::Vector casted{dst.GetType(), count};
-  duckdb::VectorOperations::Cast(context, src, casted, count);
-  duckdb::VectorOperations::Copy(casted, dst, count, 0, dst_offset);
+                     duckdb::Vector& dst, size_t count,
+                     duckdb::idx_t dst_offset, VectorPool& scratch) {
+  SDB_ASSERT(src.GetType() != dst.GetType());
+  auto casted = scratch.Acquire(dst.GetType());
+  duckdb::VectorOperations::Cast(context, src, *casted, count);
+  duckdb::VectorOperations::Copy(*casted, dst, count, 0, dst_offset);
 }
 
 }  // namespace irs

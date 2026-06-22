@@ -35,10 +35,10 @@ namespace irs {
 
 struct OptimizeContext {
   bool scored = false;
-  std::span<const irs::field_id> analyzed_fields;
+  sdb::containers::FlatHashSet<irs::field_id> analyzed_fields;
 
   bool HasAnalyzer(irs::field_id field) const noexcept {
-    return absl::c_contains(analyzed_fields, field);
+    return analyzed_fields.contains(field);
   }
 };
 

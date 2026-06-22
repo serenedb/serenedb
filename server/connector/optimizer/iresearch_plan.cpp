@@ -786,9 +786,11 @@ bool TryClaimSearchFilter(
   const auto table_index = get.table_index;
   const auto relation_id = index.GetRelationId();
 
+  containers::FlatHashSet<irs::field_id> analyzed_fields;
+
   const auto make_info = [&](auto field_id, const auto* info,
                              duckdb::LogicalType type) {
-    return connector::SearchColumnInfo{
+    connector::SearchColumnInfo column_info{
       .field_id = field_id,
       .null_field_id =
         info ? info->null_field_id : irs::field_limits::invalid(),
@@ -799,6 +801,11 @@ bool TryClaimSearchFilter(
       .logical_type = std::move(type),
       .tokenizer = index.GetTokenizer(snapshot, field_id),
     };
+    if (column_info.tokenizer.analyzer->type() !=
+        irs::Type<irs::StringTokenizer>::id()) {
+      analyzed_fields.insert(field_id);
+    }
+    return column_info;
   };
 
   connector::ColumnGetter getter =
@@ -855,14 +862,8 @@ bool TryClaimSearchFilter(
   }
 
   irs::Filter::ptr root = std::move(root_and);
-  absl::InlinedVector<irs::field_id, 8> analyzed_fields;
-  for (const auto& [field_id, entry] : index.GetEntries()) {
-    if (entry.HasTextDictionary()) {
-      analyzed_fields.push_back(field_id);
-    }
-  }
   irs::Optimize(root, {.scored = scan.text_scorer.has_value(),
-                       .analyzed_fields = analyzed_fields});
+                       .analyzed_fields = std::move(analyzed_fields)});
 
   std::shared_ptr<irs::Filter> stored;
   if (scan.vector_scorer) {

@@ -35,6 +35,7 @@
 #include <duckdb/parser/expression/operator_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_scalar_function_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
+#include <duckdb/parser/parsed_data/comment_on_column_info.hpp>
 #include <duckdb/parser/parsed_data/create_function_info.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
@@ -868,6 +869,69 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       catalog_impl.RenameView(db, name, info.name, rename_info.new_view_name);
     HandleRenameRelationError(std::move(r), info.name,
                               rename_info.new_view_name, "view");
+    return;
+  }
+
+  // COMMENT ON TABLE/COLUMN are top-level AlterTypes (not inside ALTER_TABLE),
+  // so intercept them before the ALTER_TABLE guard. Both route through
+  // ChangeTable copy-on-write; the comment surfaces in duckdb_tables()/
+  // duckdb_columns(). NULL clears the comment (empty string).
+  if (info.type == duckdb::AlterType::SET_COMMENT) {
+    auto& comment_info = info.Cast<duckdb::SetCommentInfo>();
+    std::string comment =
+      comment_info.comment_value.IsNull()
+        ? std::string{}
+        : comment_info.comment_value.DefaultCastAs(duckdb::LogicalType::VARCHAR)
+            .GetValue<std::string>();
+    Result r = catalog_impl.ChangeTable(
+      db, name, info.name,
+      [&](const catalog::Table& table,
+          std::shared_ptr<catalog::Table>& updated) {
+        return table.SetComment(updated, comment);
+      });
+    if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
+      if (info.if_not_found != duckdb::OnEntryNotFound::RETURN_NULL) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                        ERR_MSG("relation \"", info.name, "\" does not exist"));
+      }
+      return;
+    }
+    if (!r.ok()) {
+      SDB_THROW(std::move(r));
+    }
+    return;
+  }
+
+  if (info.type == duckdb::AlterType::SET_COLUMN_COMMENT) {
+    auto& comment_info = info.Cast<duckdb::SetColumnCommentInfo>();
+    std::string comment =
+      comment_info.comment_value.IsNull()
+        ? std::string{}
+        : comment_info.comment_value.DefaultCastAs(duckdb::LogicalType::VARCHAR)
+            .GetValue<std::string>();
+    Result r = catalog_impl.ChangeTable(
+      db, name, info.name,
+      [&](const catalog::Table& table,
+          std::shared_ptr<catalog::Table>& updated) {
+        return table.SetColumnComment(updated, comment_info.column_name,
+                                      comment);
+      });
+    if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
+      if (info.if_not_found != duckdb::OnEntryNotFound::RETURN_NULL) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                        ERR_MSG("relation \"", info.name, "\" does not exist"));
+      }
+      return;
+    }
+    if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+        ERR_MSG("column \"", comment_info.column_name, "\" of relation \"",
+                info.name, "\" does not exist"));
+    }
+    if (!r.ok()) {
+      SDB_THROW(std::move(r));
+    }
     return;
   }
 

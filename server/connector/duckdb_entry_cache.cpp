@@ -208,6 +208,11 @@ TableInfoAndIndices BuildTableInfoAndIndices(
   out.info = duckdb::make_uniq<duckdb::CreateTableInfo>();
   out.info->table = name;
   out.info->schema = schema_name;
+  // Surface the table-level comment (empty == none) so duckdb_tables().comment
+  // reflects COMMENT ON TABLE.
+  if (!table.Comment().empty()) {
+    out.info->comment = duckdb::Value(std::string{table.Comment()});
+  }
 
   for (const auto& col : table.Columns()) {
     // Skip internal generated PK column -- it's not part of the user-visible
@@ -217,6 +222,9 @@ TableInfoAndIndices BuildTableInfoAndIndices(
       continue;
     }
     auto cd = duckdb::ColumnDefinition(std::string{col.GetName()}, col.type);
+    if (!col.comment.empty()) {
+      cd.SetComment(duckdb::Value(col.comment));
+    }
     if (col.IsGenerated() && col.expr && col.expr->HasExpr()) {
       cd.SetGeneratedExpression(
         col.expr->GetExpr().Copy(),

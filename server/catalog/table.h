@@ -106,6 +106,15 @@ class Table final : public Object {
   Result ChangeColumnType(std::shared_ptr<Table>& result,
                           std::string_view column_name,
                           duckdb::LogicalType new_type) const;
+  // Sets the table-level comment (empty string clears it).
+  Result SetComment(std::shared_ptr<Table>& result,
+                    std::string_view comment) const;
+  // Sets a column's comment (empty clears). ERROR_SERVER_ILLEGAL_NAME if the
+  // column does not exist.
+  Result SetColumnComment(std::shared_ptr<Table>& result,
+                          std::string_view column_name,
+                          std::string_view comment) const;
+  std::string_view Comment() const noexcept { return _comment; }
 
  private:
   std::vector<Column> _columns;
@@ -119,6 +128,7 @@ class Table final : public Object {
   TableEngine _engine = TableEngine::Transactional;
   std::vector<std::vector<Column::Id>> _unique_constraints;
   std::vector<TableForeignKey> _foreign_keys;
+  std::string _comment;
 };
 
 }  // namespace sdb::catalog

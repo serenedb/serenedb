@@ -72,11 +72,13 @@ std::shared_ptr<Table> Table::Deserialize(duckdb::Deserializer& src,
                                           ReadContext ctx) {
   TableData data;
   basics::ReadTuple(src, data);
-  return std::make_shared<Table>(
+  auto table = std::make_shared<Table>(
     ctx.schema_id, ctx.id, data.name, std::move(data.columns),
     std::move(data.pk_columns), std::move(data.check_constraints),
     data.generated_pk_seq_id, data.engine, std::move(data.unique_constraints),
     std::move(data.foreign_keys));
+  table->_comment = std::move(data.comment);
+  return table;
 }
 
 void Table::Serialize(duckdb::Serializer& sink) const {
@@ -89,6 +91,7 @@ void Table::Serialize(duckdb::Serializer& sink) const {
     .engine = _engine,
     .unique_constraints = _unique_constraints,
     .foreign_keys = _foreign_keys,
+    .comment = _comment,
   };
   basics::WriteTuple(sink, data);
 }
@@ -229,6 +232,29 @@ Result Table::SetDefault(std::shared_ptr<Table>& result,
   return {};
 }
 
+Result Table::SetComment(std::shared_ptr<Table>& result,
+                         std::string_view comment) const {
+  auto new_table = basics::downCast<Table>(Clone());
+  new_table->_comment = std::string{comment};
+  result = std::move(new_table);
+  return {};
+}
+
+Result Table::SetColumnComment(std::shared_ptr<Table>& result,
+                               std::string_view column_name,
+                               std::string_view comment) const {
+  auto it = absl::c_find_if(
+    _columns, [&](const Column& c) { return c.GetName() == column_name; });
+  if (it == _columns.end()) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  auto new_table = basics::downCast<Table>(Clone());
+  new_table->_columns[std::distance(_columns.begin(), it)].comment =
+    std::string{comment};
+  result = std::move(new_table);
+  return {};
+}
+
 Result Table::AddCheckConstraint(std::shared_ptr<Table>& result,
                                  std::string name,
                                  std::shared_ptr<ColumnExpr> expr) const {
@@ -290,6 +316,7 @@ std::shared_ptr<Object> Table::Clone() const {
     _check_constraints, _generated_pk_seq_id, _engine, _unique_constraints,
     _foreign_keys);
   cloned->SetTombstoned(Tombstoned());
+  cloned->_comment = _comment;
   return cloned;
 }
 

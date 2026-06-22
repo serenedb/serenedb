@@ -11,7 +11,7 @@ INSERT INTO dbsize_t SELECT i, i FROM generate_series(1, 1000) t(i);
 
 
 statement ok
-CHECKPOINT;
+FORCE CHECKPOINT;
 
 
 query

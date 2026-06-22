@@ -171,3 +171,32 @@ COMMIT;
 
 statement ok
 DROP TABLE t2;
+
+# ON CONFLICT targeting a UNIQUE (non-PK) column: the conflict target must bind
+# to the unique constraint's index, not only to the primary key.
+statement ok
+CREATE TABLE t3 (a INT, b INT UNIQUE);
+
+statement count 1
+INSERT INTO t3 VALUES (1, 10);
+
+statement ok
+INSERT INTO t3 VALUES (2, 10) ON CONFLICT (b) DO NOTHING;
+
+query
+SELECT a, b FROM t3 ORDER BY b;
+----
+a	b
+1	10
+
+statement ok
+INSERT INTO t3 VALUES (3, 10) ON CONFLICT (b) DO UPDATE SET a = 99;
+
+query
+SELECT a, b FROM t3 ORDER BY b;
+----
+a	b
+99	10
+
+statement ok
+DROP TABLE t3;

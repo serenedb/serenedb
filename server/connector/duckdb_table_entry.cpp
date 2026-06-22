@@ -228,6 +228,23 @@ duckdb::TableStorageInfo SereneDBTableEntry::BuildStorageInfo(
     info.index_info.push_back(std::move(idx_info));
   }
 
+  // Report UNIQUE constraints as unique indexes too, so the binder can resolve
+  // ON CONFLICT (unique_col) against them (enforcement already happens; without
+  // this the conflict target binds only to the PK).
+  for (const auto& unique_col_ids : table.UniqueConstraints()) {
+    duckdb::IndexInfo idx_info;
+    idx_info.is_unique = true;
+    idx_info.is_primary = false;
+    idx_info.is_foreign = false;
+    for (auto col_id : unique_col_ids) {
+      const auto pos = table.ColumnPosById(col_id);
+      if (pos < table.Columns().size()) {
+        idx_info.column_set.insert(pos);
+      }
+    }
+    info.index_info.push_back(std::move(idx_info));
+  }
+
   return info;
 }
 

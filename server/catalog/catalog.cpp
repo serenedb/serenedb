@@ -124,8 +124,8 @@ Result Apply(
   return {};
 }
 
-// Re-render a stored expression-index `pretty_printed` (valid SQL baked with the
-// column names at CREATE INDEX time) after a RENAME COLUMN: re-parse it and
+// Re-render a stored expression-index `pretty_printed` (valid SQL baked with
+// the column names at CREATE INDEX time) after a RENAME COLUMN: re-parse it and
 // remap only ColumnRefExpression leaves whose trailing name changed. The bound
 // serialized_expr (column-id keyed) is unaffected; only the display text is
 // stale. Returns nullopt on parse failure (caller keeps the old text).
@@ -2726,7 +2726,8 @@ Result Catalog::ChangeTable(ObjectId database_id, std::string_view schema,
                 // CREATE INDEX time; re-render against the renamed columns so
                 // the store recreate SQL binds, and persist the refreshed text.
                 if (idx->GetType() == ObjectType::SecondaryIndex) {
-                  const auto& sec = basics::downCast<const SecondaryIndex>(*idx);
+                  const auto& sec =
+                    basics::downCast<const SecondaryIndex>(*idx);
                   if (!sec.Expressions().empty()) {
                     auto exprs = sec.Expressions();
                     bool changed = false;
@@ -2804,9 +2805,9 @@ Result Catalog::ChangeTable(ObjectId database_id, std::string_view schema,
           }
           // Newly added UNIQUE constraints -> ADD UNIQUE on the store table.
           for (const auto& uc : updated->UniqueConstraints()) {
-            bool existed = std::ranges::any_of(
-              table->UniqueConstraints(),
-              [&](const auto& oc) { return oc == uc; });
+            bool existed =
+              std::ranges::any_of(table->UniqueConstraints(),
+                                  [&](const auto& oc) { return oc == uc; });
             if (existed) {
               continue;
             }
@@ -2852,7 +2853,8 @@ Result Catalog::ChangeTable(ObjectId database_id, std::string_view schema,
                   return;
                 }
                 duckdb::ParsedExpressionIterator::EnumerateChildren(
-                  e, [&](const duckdb::ParsedExpression& child) { self(child); });
+                  e,
+                  [&](const duckdb::ParsedExpression& child) { self(child); });
               };
               scan(nc.expr->GetExpr());
               if (!has_function) {
@@ -3259,38 +3261,39 @@ Result Catalog::DropIndexById(ObjectId database_id, ObjectId index_id,
 
 Result Catalog::DropIndexByIdLocked(ObjectId database_id, ObjectId index_id,
                                     bool cascade) {
-  return Apply(
-    _snapshot, _snapshot_mutex, [&](std::shared_ptr<Snapshot>& clone) {
-      SDB_ASSERT(clone);
-      auto obj = clone->GetObject(index_id);
-      if (!obj) {
-        return Result{ERROR_SERVER_ILLEGAL_NAME};
-      }
-      if (!IsIndex(obj->GetType())) {
-        return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
-                      pg::ToPgObjectTypeName(obj->GetType())};
-      }
-      auto index = basics::downCast<Index>(std::move(obj));
-      const auto schema_id = index->GetParentId();
-      // Store-side index drop is synchronous: UNIQUE enforcement must stop
-      // when DROP INDEX commits, not when the async sweep runs.
-      if (auto r = _engine->Write([&](auto& ctx) {
-            ctx.WriteTombstone(index->GetRelationId(), index_id);
-            ctx.DropStoreIndex(index_id);
-          });
-          !r.ok()) {
-        return r;
-      }
+  return Apply(_snapshot, _snapshot_mutex,
+               [&](std::shared_ptr<Snapshot>& clone) {
+                 SDB_ASSERT(clone);
+                 auto obj = clone->GetObject(index_id);
+                 if (!obj) {
+                   return Result{ERROR_SERVER_ILLEGAL_NAME};
+                 }
+                 if (!IsIndex(obj->GetType())) {
+                   return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
+                                 pg::ToPgObjectTypeName(obj->GetType())};
+                 }
+                 auto index = basics::downCast<Index>(std::move(obj));
+                 const auto schema_id = index->GetParentId();
+                 // Store-side index drop is synchronous: UNIQUE enforcement
+                 // must stop when DROP INDEX commits, not when the async sweep
+                 // runs.
+                 if (auto r = _engine->Write([&](auto& ctx) {
+                       ctx.WriteTombstone(index->GetRelationId(), index_id);
+                       ctx.DropStoreIndex(index_id);
+                     });
+                     !r.ok()) {
+                   return r;
+                 }
 
-      // Check that SereneDB won't open this index after reboot
-      SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
+                 // Check that SereneDB won't open this index after reboot
+                 SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
 
-      auto task = clone->CreateIndexDrop(database_id, schema_id,
-                                         index->GetRelationId(), index, true);
-      clone->UnregisterObject(index, schema_id);
-      DropTask::Schedule(std::move(task)).Detach();
-      return Result{};
-    });
+                 auto task = clone->CreateIndexDrop(
+                   database_id, schema_id, index->GetRelationId(), index, true);
+                 clone->UnregisterObject(index, schema_id);
+                 DropTask::Schedule(std::move(task)).Detach();
+                 return Result{};
+               });
 }
 
 Result Catalog::DropView(std::string_view database, std::string_view schema,

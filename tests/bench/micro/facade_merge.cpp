@@ -5,15 +5,14 @@
 // raw duckdb::Connection, which does NOT install the per-session
 // SereneDBClientState transaction hooks -- so this also strips that layer.
 
+#include <absl/flags/declare.h>
+#include <absl/flags/flag.h>
 #include <benchmark/benchmark.h>
 
 #include <filesystem>
 #include <future>
 #include <optional>
 #include <string>
-
-#include <absl/flags/declare.h>
-#include <absl/flags/flag.h>
 
 #include "basics/duckdb_engine.h"
 #include "catalog/catalog.h"
@@ -54,7 +53,8 @@ struct Harness {
   std::optional<sdb::SchedulerFeature> scheduler;
   std::optional<sdb::search::SearchEngine> search;
   duckdb::unique_ptr<duckdb::Connection> conn;
-  std::shared_ptr<sdb::ConnectionContext> conn_ctx;  // keeps session state alive
+  std::shared_ptr<sdb::ConnectionContext>
+    conn_ctx;  // keeps session state alive
 
   Harness() {
     const auto dir =
@@ -91,7 +91,8 @@ struct Harness {
     conn->context->session_user = "postgres";
 
     Run("ATTACH '" + dir + "/native.db' AS ddb;");
-    // Facade table lives in the serenedb 'postgres' catalog (data in __sdb_store).
+    // Facade table lives in the serenedb 'postgres' catalog (data in
+    // __sdb_store).
     Run("CREATE TABLE postgres.public.f3 (id BIGINT, v BIGINT);");
     // Native table lives in a plain attached duckdb file.
     Run("CREATE TABLE ddb.n3 (id BIGINT, v BIGINT);");
@@ -163,9 +164,7 @@ void RunMergeOnFolly(benchmark::State& state, std::string_view table) {
 void BmFacadeMerge(benchmark::State& state) {
   RunMergeBench(state, "postgres.public.f3");
 }
-void BmNativeMerge(benchmark::State& state) {
-  RunMergeBench(state, "ddb.n3");
-}
+void BmNativeMerge(benchmark::State& state) { RunMergeBench(state, "ddb.n3"); }
 void BmFacadeMergeFolly(benchmark::State& state) {
   RunMergeOnFolly(state, "postgres.public.f3");
 }

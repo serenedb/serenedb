@@ -139,8 +139,8 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   if (_on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT) {
     auto snapshot = catalog_impl.GetCatalogSnapshot();
     if (snapshot->GetTable(_database_id, _schema_name, _options.name)) {
-      auto drop_result = catalog_impl.DropTable(_database_name, _schema_name,
-                                                _options.name, /*cascade=*/true);
+      auto drop_result = catalog_impl.DropTable(
+        _database_name, _schema_name, _options.name, /*cascade=*/true);
       if (!drop_result.ok()) {
         SDB_THROW(std::move(drop_result));
       }

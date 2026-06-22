@@ -196,10 +196,11 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
   // outlives the object passed here (a DROP COLUMN drops + recreates the store
   // index, freeing the original), so resolve the live index by id each time
   // rather than capturing the constructor's reference.
-  writer_options.column_options = [this](irs::field_id id) -> irs::ColumnOptions {
-    auto index_ptr =
-      catalog::GetCatalog().GetCatalogSnapshot()->GetObject<catalog::InvertedIndex>(
-        _index_id);
+  writer_options.column_options =
+    [this](irs::field_id id) -> irs::ColumnOptions {
+    auto index_ptr = catalog::GetCatalog()
+                       .GetCatalogSnapshot()
+                       ->GetObject<catalog::InvertedIndex>(_index_id);
     SDB_ASSERT(index_ptr, "column callback: inverted index ", _index_id,
                " not found");
     const auto& index = *index_ptr;
@@ -229,9 +230,9 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
   };
   writer_options.norm_column_options =
     [this](irs::field_id id) -> irs::NormColumnOptions {
-    auto index_ptr =
-      catalog::GetCatalog().GetCatalogSnapshot()->GetObject<catalog::InvertedIndex>(
-        _index_id);
+    auto index_ptr = catalog::GetCatalog()
+                       .GetCatalogSnapshot()
+                       ->GetObject<catalog::InvertedIndex>(_index_id);
     SDB_ASSERT(index_ptr, "norm callback: inverted index ", _index_id,
                " not found");
     const auto* entry = index_ptr->FindEntry(id);

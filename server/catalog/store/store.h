@@ -174,7 +174,8 @@ class CatalogStore {
     // Adds a PRIMARY KEY (recreates storage, validates existing rows: no
     // duplicates, no nulls). `columns` are store-table column names in key
     // order.
-    void AddStorePrimaryKey(std::string table, std::vector<std::string> columns);
+    void AddStorePrimaryKey(std::string table,
+                            std::vector<std::string> columns);
     // Adds a UNIQUE constraint over `columns` (recreate + existing-row dup
     // validation).
     void AddStoreUnique(std::string table, std::vector<std::string> columns);

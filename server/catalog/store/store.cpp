@@ -428,9 +428,10 @@ void CatalogStore::WriteContext::AddStorePrimaryKey(
 
 void CatalogStore::WriteContext::AddStoreUnique(
   std::string table, std::vector<std::string> columns) {
-  _entries.push_back({.op = Op::AddStoreUnique,
-                      .store_table = {.name = std::move(table),
-                                      .unique_constraints = {std::move(columns)}}});
+  _entries.push_back(
+    {.op = Op::AddStoreUnique,
+     .store_table = {.name = std::move(table),
+                     .unique_constraints = {std::move(columns)}}});
 }
 
 void CatalogStore::WriteContext::CreateStoreIndex(StoreIndexDef def) {
@@ -666,10 +667,10 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
           break;
         }
         case WriteContext::Op::AddStoreCheck: {
-          auto res = _conn->Query(
-            absl::StrCat("ALTER TABLE \"", kStoreAlias, "\".main.",
-                         QuotedIdent(entry.store_table.name), " ADD CHECK (",
-                         entry.name_a, ")"));
+          auto res =
+            _conn->Query(absl::StrCat("ALTER TABLE \"", kStoreAlias, "\".main.",
+                                      QuotedIdent(entry.store_table.name),
+                                      " ADD CHECK (", entry.name_a, ")"));
           if (res->HasError()) {
             return {ERROR_INTERNAL, res->GetError()};
           }
@@ -683,10 +684,10 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
             }
             cols += QuotedIdent(c);
           }
-          auto res = _conn->Query(
-            absl::StrCat("ALTER TABLE \"", kStoreAlias, "\".main.",
-                         QuotedIdent(entry.store_table.name),
-                         " ADD PRIMARY KEY (", cols, ")"));
+          auto res =
+            _conn->Query(absl::StrCat("ALTER TABLE \"", kStoreAlias, "\".main.",
+                                      QuotedIdent(entry.store_table.name),
+                                      " ADD PRIMARY KEY (", cols, ")"));
           if (res->HasError()) {
             return {ERROR_INTERNAL, res->GetError()};
           }
@@ -700,10 +701,9 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
             }
             cols += QuotedIdent(c);
           }
-          auto res = _conn->Query(
-            absl::StrCat("ALTER TABLE \"", kStoreAlias, "\".main.",
-                         QuotedIdent(entry.store_table.name), " ADD UNIQUE (",
-                         cols, ")"));
+          auto res = _conn->Query(absl::StrCat(
+            "ALTER TABLE \"", kStoreAlias, "\".main.",
+            QuotedIdent(entry.store_table.name), " ADD UNIQUE (", cols, ")"));
           if (res->HasError()) {
             return {ERROR_INTERNAL, res->GetError()};
           }

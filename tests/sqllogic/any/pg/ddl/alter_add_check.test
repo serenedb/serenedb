@@ -1,0 +1,92 @@
+# ALTER TABLE ... ADD CHECK validates existing rows and enforces future inserts,
+# matching PostgreSQL. The CHECK failure text differs between engines (serenedb
+# surfaces the underlying engine error), so those records split onlyif/skipif.
+
+
+statement ok
+CREATE TABLE morphling(a integer, b integer);
+
+
+statement ok
+INSERT INTO morphling VALUES (5, 5);
+
+
+# Existing row a=5 violates a<3, so ADD CHECK is rejected and nothing is added.
+onlyif serenedb
+statement error
+ALTER TABLE morphling ADD CHECK (a < 3);
+
+
+skipif serenedb
+statement error
+ALTER TABLE morphling ADD CHECK (a < 3);
+----
+db error: ERROR: check constraint "morphling_a_check" of relation "morphling" is violated by some row
+
+
+# The rejected check left no trace: a row that would violate a<3 still inserts.
+statement ok
+INSERT INTO morphling VALUES (6, 6);
+
+
+statement ok
+DELETE FROM morphling WHERE a = 6;
+
+
+# Existing rows satisfy a>0, so the check is added with the PostgreSQL auto name.
+statement ok
+ALTER TABLE morphling ADD CHECK (a > 0);
+
+
+query
+SELECT conname, contype FROM pg_constraint WHERE conrelid = 'morphling'::regclass AND contype = 'c' ORDER BY conname;
+----
+conname	contype
+morphling_a_check	c
+
+
+# The new check rejects a future violator.
+onlyif serenedb
+statement error
+INSERT INTO morphling VALUES (-1, 1);
+
+
+skipif serenedb
+statement error
+INSERT INTO morphling VALUES (-1, 1);
+----
+db error: ERROR: new row for relation "morphling" violates check constraint "morphling_a_check"
+DETAIL: Failing row contains (-1, 1).
+
+
+# Dropping the check by its auto name lets the violator through.
+statement ok
+ALTER TABLE morphling DROP CONSTRAINT morphling_a_check;
+
+
+statement ok
+INSERT INTO morphling VALUES (-1, 1);
+
+
+query
+SELECT a, b FROM morphling ORDER BY a;
+----
+a	b
+-1	1
+5	5
+
+
+# A named CHECK keeps its name.
+statement ok
+ALTER TABLE morphling ADD CONSTRAINT morphling_b_pos CHECK (b > 0);
+
+
+query
+SELECT conname FROM pg_constraint WHERE conrelid = 'morphling'::regclass AND contype = 'c' ORDER BY conname;
+----
+conname
+morphling_b_pos
+
+
+statement ok
+DROP TABLE morphling;

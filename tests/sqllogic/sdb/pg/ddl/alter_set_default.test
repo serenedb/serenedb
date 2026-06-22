@@ -1,0 +1,79 @@
+# ALTER COLUMN SET/DROP DEFAULT updates the catalog column expression, which the
+# facade applies on INSERT (no store-side mirror needed). DROP DEFAULT arrives as
+# SET_DEFAULT with a null expression.
+
+
+statement ok
+CREATE TABLE pudge(a INTEGER, b INTEGER);
+
+
+statement ok
+INSERT INTO pudge(a) VALUES (1);
+
+
+statement ok
+ALTER TABLE pudge ALTER COLUMN b SET DEFAULT 42;
+
+
+statement ok
+INSERT INTO pudge(a) VALUES (2);
+
+
+query
+SELECT a, b FROM pudge ORDER BY a;
+----
+a	b
+1	NULL
+2	42
+
+
+statement ok
+ALTER TABLE pudge ALTER COLUMN b SET DEFAULT 99;
+
+
+statement ok
+INSERT INTO pudge(a) VALUES (3);
+
+
+statement ok
+ALTER TABLE pudge ALTER COLUMN b DROP DEFAULT;
+
+
+statement ok
+INSERT INTO pudge(a) VALUES (4);
+
+
+query
+SELECT a, b FROM pudge ORDER BY a;
+----
+a	b
+1	NULL
+2	42
+3	99
+4	NULL
+
+
+statement error
+ALTER TABLE pudge ALTER COLUMN nope SET DEFAULT 1;
+----
+db error: ERROR: column "nope" of relation "pudge" does not exist
+
+
+statement ok
+DROP TABLE pudge;
+
+
+# A generated column keeps its generated expression in the same slot, so setting
+# a default on it is rejected rather than clobbering the expression.
+statement ok
+CREATE TABLE invoker(a INTEGER, g INTEGER GENERATED ALWAYS AS (a * 2) STORED);
+
+
+statement error
+ALTER TABLE invoker ALTER COLUMN g SET DEFAULT 5;
+----
+db error: ERROR: cannot set a default on generated column "g"
+
+
+statement ok
+DROP TABLE invoker;

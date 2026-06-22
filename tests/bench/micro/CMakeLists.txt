@@ -29,6 +29,7 @@ add_bench(path_hierarchy_tokenizer)
 add_bench(regexp_vs_wildcard)
 add_bench(filter_prepare)
 add_bench(consecutive_run_length)
+add_bench(facade_merge)
 
 target_include_directories(
     serenedb-bench-micro-regexp_vs_wildcard

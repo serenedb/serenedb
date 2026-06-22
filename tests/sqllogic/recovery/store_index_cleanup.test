@@ -1,0 +1,125 @@
+# Facade tables keep their row data -- and their index structures -- in the
+# hidden store database (__sdb_store), not in the facade catalog. Each index
+# (secondary or inverted) has exactly one matching store-side index there.
+# Creating, dropping, failing to create, and dropping the table must all leave
+# __sdb_store with no orphan store-side index or table.
+
+# --- secondary index ---
+statement ok
+CREATE TABLE sic_sec (a INT, b INT);
+
+
+statement ok
+INSERT INTO sic_sec VALUES (1, 10), (2, 20);
+
+
+statement ok
+CREATE INDEX sic_sec_idx ON sic_sec (a);
+
+
+query
+SELECT count(*) AS n FROM duckdb_indexes() WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_sec';
+----
+n
+1
+
+
+statement ok
+DROP INDEX sic_sec_idx;
+
+
+query
+SELECT count(*) AS n FROM duckdb_indexes() WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_sec';
+----
+n
+0
+
+
+# --- inverted index ---
+statement ok
+CREATE TEXT SEARCH DICTIONARY sic_kw (template = 'keyword');
+
+
+statement ok
+CREATE TABLE sic_inv (pk INT, txt TEXT);
+
+
+statement ok
+INSERT INTO sic_inv VALUES (1, 'hello world'), (2, 'foo bar');
+
+
+statement ok
+CREATE INDEX sic_inv_idx ON sic_inv USING inverted (txt sic_kw);
+
+
+query
+SELECT count(*) AS n FROM duckdb_indexes() WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_inv';
+----
+n
+1
+
+
+statement ok
+DROP INDEX sic_inv_idx;
+
+
+query
+SELECT count(*) AS n FROM duckdb_indexes() WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_inv';
+----
+n
+0
+
+
+# --- a failed CREATE UNIQUE INDEX leaves no orphan store index ---
+statement ok
+CREATE TABLE sic_dup (a INT);
+
+
+statement ok
+INSERT INTO sic_dup VALUES (1), (1);
+
+
+statement error
+CREATE UNIQUE INDEX sic_dup_idx ON sic_dup (a);
+
+
+query
+SELECT count(*) AS n FROM duckdb_indexes() WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_dup';
+----
+n
+0
+
+
+# --- DROP TABLE removes the store table and every index on it ---
+statement ok
+CREATE INDEX sic_inv_idx2 ON sic_inv USING inverted (txt sic_kw);
+
+
+statement ok
+DROP TABLE sic_inv;
+
+
+query
+SELECT count(*) AS n FROM duckdb_tables() WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_inv';
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM duckdb_indexes() WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_inv';
+----
+n
+0
+
+
+statement ok
+DROP TABLE sic_sec;
+
+
+statement ok
+DROP TABLE sic_dup;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY sic_kw;

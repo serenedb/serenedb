@@ -113,7 +113,7 @@ SereneDBPhysicalCTAS::SereneDBPhysicalCTAS(
   duckdb::PhysicalPlan& plan, duckdb::PhysicalOperator& insert,
   ObjectId database_id, std::string database_name, std::string schema_name,
   catalog::CreateTableOptions options, ObjectId table_id,
-  duckdb::idx_t estimated_cardinality)
+  duckdb::OnCreateConflict on_conflict, duckdb::idx_t estimated_cardinality)
   : duckdb::PhysicalOperator(
       plan, duckdb::PhysicalOperatorType::CREATE_TABLE_AS,
       {duckdb::LogicalType::BIGINT}, estimated_cardinality),
@@ -122,7 +122,8 @@ SereneDBPhysicalCTAS::SereneDBPhysicalCTAS(
     _database_name(std::move(database_name)),
     _schema_name(std::move(schema_name)),
     _options(std::move(options)),
-    _table_id(table_id) {}
+    _table_id(table_id),
+    _on_conflict(on_conflict) {}
 
 duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
@@ -130,6 +131,21 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   // execution, once -- with the pre-allocated id so the store table name the
   // insert operator already encoded matches.
   auto& catalog_impl = catalog::GetCatalog();
+  // CREATE OR REPLACE TABLE AS: drop the pre-existing table (cascade) before
+  // creating the tombstoned replacement. The drop commits first, so a crash
+  // before Finalize leaves the old table dropped (tombstone resolves on
+  // recovery) and the new table tombstoned/invisible -- the same recovery
+  // contract as a fresh CTAS. Done at execution (once), not plan time.
+  if (_on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT) {
+    auto snapshot = catalog_impl.GetCatalogSnapshot();
+    if (snapshot->GetTable(_database_id, _schema_name, _options.name)) {
+      auto drop_result = catalog_impl.DropTable(_database_name, _schema_name,
+                                                _options.name, /*cascade=*/true);
+      if (!drop_result.ok()) {
+        SDB_THROW(std::move(drop_result));
+      }
+    }
+  }
   // A valid table id puts CreateTable in CTAS mode: tombstoned, no store table.
   catalog::CreateTableOperationOptions op_options;
   op_options.table_id = _table_id;

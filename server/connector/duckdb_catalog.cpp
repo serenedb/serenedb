@@ -501,6 +501,11 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   // table so the CTAS-variant insert can encode it now.
   const std::string facade_table_name = table_info.table;
   const auto table_id = catalog::NextId();
+  // Capture before the store-table retarget below overwrites on_conflict to
+  // ERROR_ON_CONFLICT. For CREATE OR REPLACE TABLE AS this is
+  // REPLACE_ON_CONFLICT; the CTAS operator drops the pre-existing table at
+  // execution.
+  const auto on_conflict = table_info.on_conflict;
 
   catalog::CreateTableOptions options;
   options.name = facade_table_name;
@@ -555,7 +560,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
 
   auto& ctas = planner.Make<SereneDBPhysicalCTAS>(
     insert, database_id, GetName(), op.schema.name, std::move(options),
-    table_id, op.estimated_cardinality);
+    table_id, on_conflict, op.estimated_cardinality);
   ctas.children.push_back(plan);
   return ctas;
 }

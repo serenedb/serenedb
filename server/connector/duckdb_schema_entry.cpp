@@ -405,7 +405,24 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
 
   bool if_not_exists =
     create_info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
+  bool replace =
+    create_info.on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
   catalog::CreateTableOperationOptions op_options;
+
+  // CREATE OR REPLACE TABLE (non-AS): drop the pre-existing table (cascade)
+  // then create the new one, mirroring native duckdb's REPLACE_ON_CONFLICT.
+  // Only a real Table is dropped; a name held by a view/other relation falls
+  // through to the duplicate-name path below.
+  if (replace) {
+    auto snapshot = catalog_impl.GetCatalogSnapshot();
+    if (snapshot->GetTable(database_id, name, table_info.table)) {
+      auto drop_result = catalog_impl.DropTable(
+        catalog.GetName(), name, table_info.table, /*cascade=*/true);
+      if (!drop_result.ok()) {
+        SDB_THROW(std::move(drop_result));
+      }
+    }
+  }
 
   auto r =
     catalog_impl.CreateTable(database_id, name, std::move(options), op_options);

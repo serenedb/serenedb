@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <duckdb/common/enums/on_create_conflict.hpp>
 #include <duckdb/execution/operator/persistent/physical_insert.hpp>
 #include <duckdb/execution/physical_operator.hpp>
 #include <string>
@@ -43,6 +44,7 @@ class SereneDBPhysicalCTAS final : public duckdb::PhysicalOperator {
                        duckdb::PhysicalOperator& insert, ObjectId database_id,
                        std::string database_name, std::string schema_name,
                        catalog::CreateTableOptions options, ObjectId table_id,
+                       duckdb::OnCreateConflict on_conflict,
                        duckdb::idx_t estimated_cardinality);
 
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
@@ -93,6 +95,11 @@ class SereneDBPhysicalCTAS final : public duckdb::PhysicalOperator {
   // The facade table is created at execution (once) with this pre-allocated id.
   catalog::CreateTableOptions _options;
   ObjectId _table_id;
+  // REPLACE_ON_CONFLICT for CREATE OR REPLACE TABLE AS: at execution the
+  // pre-existing table of this name is dropped (cascade) before the tombstoned
+  // replacement is created. Captured at plan time because PlanCreateTableAs
+  // rewrites table_info.on_conflict to ERROR_ON_CONFLICT for the store insert.
+  duckdb::OnCreateConflict _on_conflict;
 };
 
 }  // namespace sdb::connector

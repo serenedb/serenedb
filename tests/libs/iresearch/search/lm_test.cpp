@@ -22,6 +22,7 @@
 #include <limits>
 #include <map>
 
+#include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -212,17 +213,10 @@ std::map<irs::doc_id_t, irs::score_t> RunQuery(irs::IndexReader& index,
     irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
   MaxMemoryCounter counter;
-  auto prepared = filter.prepare({
-    .index = index,
-    .memory = counter,
-    .scorer = &scorer,
-  });
+  tests::PreparedFilter prepared{filter, index, &scorer, counter};
 
   irs::ColumnArgsFetcher fetcher;
-  auto docs = prepared->execute({
-    .segment = segment,
-    .scorer = &scorer,
-  });
+  auto docs = prepared.Execute(0);
   auto score = docs->PrepareScore({
     .scorer = &scorer,
     .segment = &segment,

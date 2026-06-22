@@ -56,7 +56,10 @@ class MixedBooleanFilter final : public FilterWithType<MixedBooleanFilter>,
     return HasNoClauses(*RequiredSlot()) && HasNoClauses(*OptionalSlot());
   }
 
-  Query::ptr prepare(const PrepareContext& ctx) const final;
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
+
+  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 
   std::span<Filter::ptr> GetChildren() final { return _filters; }
 

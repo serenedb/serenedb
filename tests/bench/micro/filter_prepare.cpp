@@ -22,6 +22,8 @@
 #include <benchmark/benchmark.h>
 
 #include <array>
+#include <atomic>
+#include <duckdb/main/database.hpp>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -29,6 +31,7 @@
 #include <system_error>
 #include <vector>
 
+#include "basics/duckdb_engine.h"
 #include "iresearch/analysis/segmentation_tokenizer.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
 #include "iresearch/formats/formats.hpp"
@@ -162,7 +165,8 @@ class FilterPrepareFixture : public benchmark::Fixture {
   std::vector<std::string> _term_pool;
 };
 
-template<typename Filter, void (*Configure)(Filter&), bool Boosted = false>
+template<typename Filter, void (*Configure)(Filter&), bool Scored = false,
+         bool Boosted = false>
 class FilterPrepareFixtureT : public FilterPrepareFixture {
  public:
   void SetUp(const ::benchmark::State& state) override {
@@ -173,7 +177,7 @@ class FilterPrepareFixtureT : public FilterPrepareFixture {
       filter->boost(kBoostValue);
     }
     _filter = std::move(filter);
-    irs::Optimize(_filter);
+    irs::Optimize(_filter, {.scored = Scored});
   }
 
  protected:
@@ -192,7 +196,20 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
   std::filesystem::create_directories(_dir_path);
   _dir = std::make_unique<irs::MMapDirectory>(_dir_path);
 
-  auto writer = irs::IndexWriter::Make(*_dir, _codec, irs::kOmCreate);
+  auto* db = &sdb::DuckDBEngine::Instance().instance();
+  irs::IndexWriterOptions writer_opts;
+  writer_opts.db = db;
+  writer_opts.reader_options.db = db;
+  writer_opts.column_options = [](irs::field_id) -> irs::ColumnOptions {
+    return {};
+  };
+  writer_opts.norm_column_options =
+    [next = std::make_shared<std::atomic<irs::field_id>>(0)](
+      irs::field_id) -> irs::NormColumnOptions {
+    return {.id = next->fetch_add(1, std::memory_order_relaxed)};
+  };
+  auto writer =
+    irs::IndexWriter::Make(*_dir, _codec, irs::kOmCreate, writer_opts);
 
   KeywordField kw_field{.id = kKwFieldId};
   TextField body_field{.id = kBodyFieldId};
@@ -214,7 +231,8 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
     writer->RefreshCommit();
   }
 
-  _reader = irs::DirectoryReader{*_dir, _codec};
+  _reader =
+    irs::DirectoryReader{*_dir, _codec, irs::IndexReaderOptions{.db = db}};
 }
 
 void ApplyArgs(benchmark::internal::Benchmark* b) {
@@ -324,6 +342,20 @@ void SetUpNot(irs::Exclusion& n) {
   inner.mutable_options()->term = AsBytes("term_0042");
 }
 
+void RunPrepare(const irs::Filter::ptr& filter,
+                const irs::DirectoryReader& reader, const irs::Scorer* scorer) {
+  auto collector = filter->MakeCollector(scorer);
+  std::vector<irs::QueryBuilder::ptr> queries;
+  queries.reserve(reader.size());
+  for (const auto& sub : reader) {
+    auto q = filter->PrepareSegment(sub, {.collector = collector.get()});
+    queries.emplace_back(std::move(q));
+  }
+  auto stats = collector->Finish(irs::IResourceManager::gNoop);
+  benchmark::DoNotOptimize(stats);
+  benchmark::DoNotOptimize(queries);
+}
+
 }  // namespace
 
 #define DEFINE_FILTER_VARIANTS(Tag, Filter, Setup)                             \
@@ -331,41 +363,37 @@ void SetUpNot(irs::Exclusion& n) {
                               Setup)                                           \
   (benchmark::State & s) {                                                     \
     for (auto _ : s) {                                                         \
-      auto q = _filter->prepare({.index = _reader});                           \
-      benchmark::DoNotOptimize(q);                                             \
+      RunPrepare(_filter, _reader, nullptr);                                   \
     }                                                                          \
   }                                                                            \
   BENCHMARK_REGISTER_F(FilterPrepareFixtureT, Tag##_NoScorer)                  \
     ->Name("FilterPrepareFixture/" #Tag "_NoScorer")                           \
     ->Apply(ApplyArgs);                                                        \
   BENCHMARK_TEMPLATE_DEFINE_F(FilterPrepareFixtureT, Tag##_Bm25, Filter,       \
-                              Setup)                                           \
+                              Setup, true)                                     \
   (benchmark::State & s) {                                                     \
     for (auto _ : s) {                                                         \
-      auto q = _filter->prepare({.index = _reader, .scorer = &_bm25});         \
-      benchmark::DoNotOptimize(q);                                             \
+      RunPrepare(_filter, _reader, &_bm25);                                    \
     }                                                                          \
   }                                                                            \
   BENCHMARK_REGISTER_F(FilterPrepareFixtureT, Tag##_Bm25)                      \
     ->Name("FilterPrepareFixture/" #Tag "_Bm25")                               \
     ->Apply(ApplyArgs);                                                        \
   BENCHMARK_TEMPLATE_DEFINE_F(FilterPrepareFixtureT, Tag##_Tfidf, Filter,      \
-                              Setup)                                           \
+                              Setup, true)                                     \
   (benchmark::State & s) {                                                     \
     for (auto _ : s) {                                                         \
-      auto q = _filter->prepare({.index = _reader, .scorer = &_tfidf});        \
-      benchmark::DoNotOptimize(q);                                             \
+      RunPrepare(_filter, _reader, &_tfidf);                                   \
     }                                                                          \
   }                                                                            \
   BENCHMARK_REGISTER_F(FilterPrepareFixtureT, Tag##_Tfidf)                     \
     ->Name("FilterPrepareFixture/" #Tag "_Tfidf")                              \
     ->Apply(ApplyArgs);                                                        \
   BENCHMARK_TEMPLATE_DEFINE_F(FilterPrepareFixtureT, Tag##_Bm25_Boost, Filter, \
-                              Setup, true)                                     \
+                              Setup, true, true)                               \
   (benchmark::State & s) {                                                     \
     for (auto _ : s) {                                                         \
-      auto q = _filter->prepare({.index = _reader, .scorer = &_bm25});         \
-      benchmark::DoNotOptimize(q);                                             \
+      RunPrepare(_filter, _reader, &_bm25);                                    \
     }                                                                          \
   }                                                                            \
   BENCHMARK_REGISTER_F(FilterPrepareFixtureT, Tag##_Bm25_Boost)                \
@@ -394,6 +422,7 @@ DEFINE_FILTER_VARIANTS(Not, irs::Exclusion, SetUpNot);
 
 int main(int argc, char** argv) {
   irs::formats::Init();
+  sdb::DuckDBEngine::Instance().Initialize();
 
   benchmark::Initialize(&argc, argv);
   if (benchmark::ReportUnrecognizedArguments(argc, argv)) {
@@ -401,5 +430,7 @@ int main(int argc, char** argv) {
   }
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
+
+  sdb::DuckDBEngine::Instance().Shutdown();
   return 0;
 }

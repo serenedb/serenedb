@@ -393,3 +393,122 @@ QUERY PLAN
 │                                             │
 │                    ~1 row                   │
 └─────────────────────────────────────────────┘
+
+
+statement ok
+CREATE TABLE fo_rng_mt (id INTEGER PRIMARY KEY, s VARCHAR, n INTEGER);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY fo_low_en(
+    template = 'text', locale = 'en_US.UTF-8', case = 'none',
+    stemming = false, accent = false, frequency = true, position = true
+);
+
+statement ok
+CREATE INDEX fo_rng_mt_idx ON fo_rng_mt USING inverted(id, s fo_low_en, n);
+
+statement ok
+INSERT INTO fo_rng_mt VALUES
+  (1, 'alpha gamma', 1),
+  (2, 'beta beta',  2),
+  (3, 'gamma alpha', 3),
+  (4, 'delta', 4);
+
+statement ok
+VACUUM (REFRESH_TABLE) fo_rng_mt;
+
+
+query
+EXPLAIN SELECT id FROM fo_rng_mt_idx WHERE s @@ ts_gt('alpha') AND s @@ ts_lt('gamma');
+----
+QUERY PLAN
+┌─────────────────────────────────────────────┐
+│                IRESEARCH_SCAN               │
+│    ──────────────────────────────────────   │
+│             Index: fo_rng_mt_idx            │
+│                Lookup: table                │
+│                                             │
+│                   Filter:                   │
+│ ┌──────────────────────────────────────────┐│
+│ │┌───────────────────┐                     ││
+│ ││        AND        ├──────────┐          ││
+│ │└─────────┬─────────┘          │          ││
+│ │┌─────────┴─────────┐┌─────────┴─────────┐││
+│ ││       Range       ││       Range       │││
+│ ││    ────────────   ││    ────────────   │││
+│ ││  s(string) >alpha ││  s(string) <gamma │││
+│ │└───────────────────┘└───────────────────┘││
+│ └──────────────────────────────────────────┘│
+│                                             │
+│               Projections: id               │
+│                                             │
+│                    ~1 row                   │
+└─────────────────────────────────────────────┘
+
+query
+SELECT id FROM fo_rng_mt_idx WHERE s @@ ts_gt('alpha') AND s @@ ts_lt('gamma') ORDER BY id;
+----
+id
+1
+2
+3
+4
+
+query
+SELECT id FROM fo_rng_mt_idx WHERE s @@ ts_gt('beta') AND s @@ ts_lt('beto') ORDER BY id;
+----
+id
+1
+3
+
+
+statement ok
+CREATE TABLE fo_rng_mix (id INTEGER PRIMARY KEY, k VARCHAR, a VARCHAR);
+
+statement ok
+CREATE INDEX fo_rng_mix_idx ON fo_rng_mix USING inverted(id, k, a fo_low_en);
+
+statement ok
+INSERT INTO fo_rng_mix VALUES
+  (1, 'beta', 'alpha gamma'),
+  (2, 'zeta', 'alpha gamma'),
+  (3, 'beta', 'delta'),
+  (4, 'beta', 'zeta');
+
+statement ok
+VACUUM (REFRESH_TABLE) fo_rng_mix;
+
+query
+EXPLAIN SELECT id FROM fo_rng_mix_idx WHERE k @@ ts_gt('alpha') AND k @@ ts_lt('gamma') AND a @@ ts_gt('alpha') AND a @@ ts_lt('gamma');
+----
+QUERY PLAN
+┌─────────────────────────────────────────────────────────────────┐
+│                          IRESEARCH_SCAN                         │
+│    ──────────────────────────────────────────────────────────   │
+│                      Index: fo_rng_mix_idx                      │
+│                          Lookup: table                          │
+│                                                                 │
+│                             Filter:                             │
+│┌───────────────────────────────────────────────────────────────┐│
+││┌───────────────────┐                                          ││
+│││        AND        ├──────────┬────────────────────┐          ││
+││└─────────┬─────────┘          │                    │          ││
+││┌─────────┴─────────┐┌─────────┴─────────┐┌─────────┴─────────┐││
+│││       Range       ││       Range       ││       Range       │││
+│││    ────────────   ││    ────────────   ││    ────────────   │││
+│││ k(string) >alpha, ││  a(string) <gamma ││  a(string) >alpha │││
+│││       <gamma      ││                   ││                   │││
+││└───────────────────┘└───────────────────┘└───────────────────┘││
+│└───────────────────────────────────────────────────────────────┘│
+│                                                                 │
+│                         Projections: id                         │
+│                                                                 │
+│                              ~1 row                             │
+└─────────────────────────────────────────────────────────────────┘
+
+query
+SELECT id FROM fo_rng_mix_idx WHERE k @@ ts_gt('alpha') AND k @@ ts_lt('gamma') AND a @@ ts_gt('alpha') AND a @@ ts_lt('gamma') ORDER BY id;
+----
+id
+1
+3

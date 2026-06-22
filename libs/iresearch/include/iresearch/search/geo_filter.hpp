@@ -23,10 +23,6 @@
 
 #include <s2/s2region_term_indexer.h>
 
-#ifdef SDB_DEV
-#include <atomic>
-#endif
-
 #include "basics/assert.h"
 #include "geo/coding.h"
 #include "geo/shape_container.h"
@@ -90,21 +86,10 @@ struct GeoFilterOptions : GeoFilterOptionsBase {
 
 class GeoFilter final : public FilterWithField<GeoFilterOptions> {
  public:
-  Query::ptr prepare(const PrepareContext& ctx) const final;
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
 
-#ifdef SDB_DEV
- private:
-  // Tracks whether prepare() has already been called on this instance.
-  // GeoFilter::prepare moves shape state into the returned Query, so a
-  // second prepare on the same filter would silently produce an empty
-  // query. The optimizer used to drive this misuse via an eager prepare
-  // (iresearch_plan.cpp) followed by a scorer-aware re-prepare from
-  // duckdb_search_full_scan.cpp; both paths now collapse to a single
-  // execution-time prepare. The flag stays as a regression guard so any
-  // future caller that re-introduces the second prepare surfaces here
-  // instead of silently returning zero rows.
-  mutable std::atomic<bool> _prepared{false};
-#endif
+  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 };
 
 class GeoDistanceFilter;
@@ -123,7 +108,10 @@ struct GeoDistanceFilterOptions : GeoFilterOptionsBase {
 class GeoDistanceFilter final
   : public FilterWithField<GeoDistanceFilterOptions> {
  public:
-  Query::ptr prepare(const PrepareContext& ctx) const final;
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
+
+  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 };
 
 }  // namespace irs

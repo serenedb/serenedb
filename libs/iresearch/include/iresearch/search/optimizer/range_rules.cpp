@@ -122,7 +122,7 @@ Filter::ptr MergeRangeBounds(const Range& lo, const Range& hi,
 }
 
 template<typename Range>
-bool MergeComplementaryRanges(And& node) {
+bool MergeComplementaryRanges(And& node, const OptimizeContext& ctx) {
   auto& children = node.mutable_filters();
   const auto is_range = [](const Filter::ptr& child) {
     return child->type() == Type<Range>::id();
@@ -143,6 +143,9 @@ bool MergeComplementaryRanges(And& node) {
       }
       auto& hi = sdb::basics::downCast<Range>(*children[j]);
       if (!IsMaxOnly(hi) || hi.field_id() != lo.field_id()) {
+        continue;
+      }
+      if (ctx.HasAnalyzer(lo.field_id())) {
         continue;
       }
       children[i] = MergeRangeBounds(lo, hi, node.merge_type());
@@ -216,8 +219,9 @@ bool AndRangeMergeRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
   if (node.size() < 2) {
     return false;
   }
-  const bool merged_range = MergeComplementaryRanges<ByRange>(node);
-  const bool merged_granular = MergeComplementaryRanges<ByGranularRange>(node);
+  const bool merged_range = MergeComplementaryRanges<ByRange>(node, ctx);
+  const bool merged_granular =
+    MergeComplementaryRanges<ByGranularRange>(node, ctx);
   return merged_range || merged_granular;
 }
 

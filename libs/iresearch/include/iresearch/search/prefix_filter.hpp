@@ -31,9 +31,6 @@ class ByPrefix;
 struct FilterVisitor;
 
 struct ByPrefixFilterOptions {
-  //////////////////////////////////////////////////////////////////////////////
-  /// @brief search prefix
-  //////////////////////////////////////////////////////////////////////////////
   bstring term;
 
   bool operator==(const ByPrefixFilterOptions& rhs) const noexcept {
@@ -41,17 +38,10 @@ struct ByPrefixFilterOptions {
   }
 };
 
-////////////////////////////////////////////////////////////////////////////////
-/// @struct ByPrefixOptions
-/// @brief options for prefix filter
-////////////////////////////////////////////////////////////////////////////////
 struct ByPrefixOptions : ByPrefixFilterOptions {
   using FilterType = ByPrefix;
   using filter_options = ByPrefixFilterOptions;
 
-  //////////////////////////////////////////////////////////////////////////////
-  /// @brief the maximum number of most frequent terms to consider for scoring
-  //////////////////////////////////////////////////////////////////////////////
   size_t scored_terms_limit{1024};
 
   bool operator==(const ByPrefixOptions& rhs) const noexcept {
@@ -60,24 +50,20 @@ struct ByPrefixOptions : ByPrefixFilterOptions {
   }
 };
 
-////////////////////////////////////////////////////////////////////////////////
-/// @class by_prefix
-/// @brief user-side prefix filter
-////////////////////////////////////////////////////////////////////////////////
 class ByPrefix : public FilterWithField<ByPrefixOptions> {
  public:
-  static Query::ptr prepare(const PrepareContext& ctx, irs::field_id id,
-                            bytes_view prefix, size_t scored_terms_limit);
-
   static void visit(const SubReader& segment, const TermReader& reader,
                     bytes_view prefix, FilterVisitor& visitor);
 
-  Query::ptr prepare(const PrepareContext& ctx) const final {
-    auto sub_ctx = ctx;
-    sub_ctx.boost *= Boost();
-    return prepare(sub_ctx, field_id(), options().term,
-                   options().scored_terms_limit);
-  }
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
+  static QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                          const PrepareContext& ctx,
+                                          const irs::field_id field,
+                                          const bytes_view prefix,
+                                          size_t scored_terms_limit);
+
+  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 };
 
 }  // namespace irs

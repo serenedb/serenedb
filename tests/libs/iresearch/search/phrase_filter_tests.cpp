@@ -40,13 +40,6 @@ inline constexpr irs::field_id kName = tests::FieldIdFor("name");
 inline constexpr irs::field_id kPhraseAnl = tests::FieldIdFor("phrase_anl");
 inline constexpr irs::field_id kPhrase = tests::FieldIdFor("phrase");
 
-template<typename F>
-auto PrepareOptimized(const F& filter, const irs::PrepareContext& ctx) {
-  irs::Filter::ptr f = std::make_unique<F>(filter);
-  irs::Optimize(f);
-  return f->prepare(ctx);
-}
-
 auto StoreName() {
   return [](irs::IndexWriter::Document& doc, const tests::Document& src) {
     const auto* name =
@@ -55,6 +48,13 @@ auto StoreName() {
       irs::tests::StoreFieldAt(*doc.GetColWriter(), kName, doc.DocId(), *name);
     }
   };
+}
+
+irs::Filter::ptr Lower(std::unique_ptr<irs::ByPhrase> q,
+                       const irs::Scorer* scorer = nullptr) {
+  irs::Filter::ptr f = std::move(q);
+  irs::Optimize(f, {.scored = scorer != nullptr});
+  return f;
 }
 
 }  // namespace
@@ -105,10 +105,9 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   {
     irs::ByPhrase q;
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
-    auto sub = rdr.begin();
+    tests::PreparedFilter prepared{q, rdr};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
@@ -119,10 +118,9 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     irs::ByPhrase q;
     *q.mutable_field_id() = kPhraseAnl;
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
-    auto sub = rdr.begin();
+    tests::PreparedFilter prepared{q, rdr};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
@@ -135,17 +133,17 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -204,17 +202,17 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     q.mutable_options()->push_back<irs::ByPrefixOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fo"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -298,23 +296,23 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
 
   // wildcard_filter "fo%"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    q.mutable_options()->push_back<irs::ByWildcardOptions>() =
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    q->mutable_options()->push_back<irs::ByWildcardOptions>() =
       irs::ByWildcardOptions{
         irs::ViewCast<irs::byte_type>(std::string_view("fo%"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -398,23 +396,23 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
 
   // wildcard_filter "%ox"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    q.mutable_options()->push_back<irs::ByWildcardOptions>() =
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    q->mutable_options()->push_back<irs::ByWildcardOptions>() =
       irs::ByWildcardOptions{
         irs::ViewCast<irs::byte_type>(std::string_view("%ox"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -468,23 +466,23 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
 
   // wildcard_filter "f%x"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    q.mutable_options()->push_back<irs::ByWildcardOptions>() =
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    q->mutable_options()->push_back<irs::ByWildcardOptions>() =
       irs::ByWildcardOptions{
         irs::ViewCast<irs::byte_type>(std::string_view("_ox"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -538,23 +536,23 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
 
   // wildcard_filter "f_x"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    q.mutable_options()->push_back<irs::ByWildcardOptions>() =
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    q->mutable_options()->push_back<irs::ByWildcardOptions>() =
       irs::ByWildcardOptions{
         irs::ViewCast<irs::byte_type>(std::string_view("f_x"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -608,23 +606,23 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
 
   // wildcard_filter "fo_"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    q.mutable_options()->push_back<irs::ByWildcardOptions>() =
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    q->mutable_options()->push_back<irs::ByWildcardOptions>() =
       irs::ByWildcardOptions{
         irs::ViewCast<irs::byte_type>(std::string_view("fo_"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -678,23 +676,23 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
 
   // wildcard_filter "fox"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    q.mutable_options()->push_back<irs::ByWildcardOptions>() =
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    q->mutable_options()->push_back<irs::ByWildcardOptions>() =
       irs::ByWildcardOptions{
         irs::ViewCast<irs::byte_type>(std::string_view("fox"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -748,23 +746,23 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
 
   // levenshtein_filter "fox" max_distance = 0
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& lt = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& lt = q->mutable_options()->push_back<irs::ByEditDistanceOptions>();
     lt.max_distance = 0;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -818,23 +816,23 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
 
   // levenshtein_filter "fol"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& lt = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& lt = q->mutable_options()->push_back<irs::ByEditDistanceOptions>();
     lt.max_distance = 1;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("fol"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -893,17 +891,17 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto& st = q.mutable_options()->push_back<irs::ByTermsOptions>();
     st.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("fox")));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -963,17 +961,17 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     st.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("fox")));
     st.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("that")));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -1045,17 +1043,17 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     rt.range.min_type = irs::BoundType::Inclusive;
     rt.range.max_type = irs::BoundType::Inclusive;
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -1082,17 +1080,17 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     rt.range.min_type = irs::BoundType::Exclusive;
     rt.range.max_type = irs::BoundType::Inclusive;
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->value()));
 
     ASSERT_FALSE(docs->next());
@@ -1109,17 +1107,17 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     rt.range.min_type = irs::BoundType::Inclusive;
     rt.range.max_type = irs::BoundType::Exclusive;
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->value()));
 
     ASSERT_FALSE(docs->next());
@@ -1136,17 +1134,17 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     rt.range.min_type = irs::BoundType::Exclusive;
     rt.range.max_type = irs::BoundType::Exclusive;
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->value()));
 
     ASSERT_FALSE(docs->next());
@@ -1163,17 +1161,17 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     rt.range.min_type = irs::BoundType::Inclusive;
     rt.range.max_type = irs::BoundType::Inclusive;
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -1220,17 +1218,17 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     rt.range.min_type = irs::BoundType::Exclusive;
     rt.range.max_type = irs::BoundType::Inclusive;
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -1272,17 +1270,17 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     rt.range.min_type = irs::BoundType::Inclusive;
     rt.range.max_type = irs::BoundType::Exclusive;
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -1319,17 +1317,17 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     rt.range.min_type = irs::BoundType::Exclusive;
     rt.range.max_type = irs::BoundType::Exclusive;
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -1359,19 +1357,19 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     // check single word phrase optimization
-    ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
+    ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.Query(0)));
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -1391,20 +1389,20 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto& pt = q.mutable_options()->push_back<irs::ByPrefixOptions>();
     pt.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     // check single word phrase optimization
     ASSERT_NE(nullptr,
-              dynamic_cast<const irs::MultiTermQuery*>(prepared.get()));
+              dynamic_cast<const irs::MultiTermQuery*>(prepared.Query(0)));
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -1429,26 +1427,26 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // search "fo%" on field without positions
   // which is ok for first word in phrase
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhrase;
-    auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhrase;
+    auto& wt = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("fo%"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     // check single word phrase optimization
     ASSERT_NE(nullptr,
-              dynamic_cast<const irs::MultiTermQuery*>(prepared.get()));
+              dynamic_cast<const irs::MultiTermQuery*>(prepared.Query(0)));
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -1473,26 +1471,26 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // search "f_x%" on field without positions
   // which is ok for first word in phrase
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhrase;
-    auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhrase;
+    auto& wt = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("f_x%"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     // check single word phrase optimization
     ASSERT_NE(nullptr,
-              dynamic_cast<const irs::MultiTermQuery*>(prepared.get()));
+              dynamic_cast<const irs::MultiTermQuery*>(prepared.Query(0)));
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -1517,27 +1515,27 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // search "fxo" on field without positions
   // which is ok for single word phrases
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhrase;
-    auto& lt = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhrase;
+    auto& lt = q->mutable_options()->push_back<irs::ByEditDistanceOptions>();
     lt.max_distance = 1;
     lt.with_transpositions = true;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("fxo"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     // check single word phrase optimization
     ASSERT_NE(nullptr,
-              dynamic_cast<const irs::MultiTermQuery*>(prepared.get()));
+              dynamic_cast<const irs::MultiTermQuery*>(prepared.Query(0)));
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -1560,20 +1558,20 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     rt.range.min_type = irs::BoundType::Inclusive;
     rt.range.max_type = irs::BoundType::Inclusive;
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     // check single word phrase optimization
     ASSERT_NE(nullptr,
-              dynamic_cast<const irs::MultiTermQuery*>(prepared.get()));
+              dynamic_cast<const irs::MultiTermQuery*>(prepared.Query(0)));
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -1599,19 +1597,19 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
       ->push_back<irs::ByTermOptions>(std::numeric_limits<size_t>::max())
       .term = irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     // check single word phrase optimization
-    ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
+    ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.Query(0)));
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -1672,20 +1670,20 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
       std::numeric_limits<size_t>::max());
     pt.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     // check single word phrase optimization
     ASSERT_NE(nullptr,
-              dynamic_cast<const irs::MultiTermQuery*>(prepared.get()));
+              dynamic_cast<const irs::MultiTermQuery*>(prepared.Query(0)));
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -1770,27 +1768,27 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // wildcard_filter "fo%" with phrase offset
   // which does not matter
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>(
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& wt = q->mutable_options()->push_back<irs::ByWildcardOptions>(
       std::numeric_limits<size_t>::max());
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("fo%"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     // check single word phrase optimization
     ASSERT_NE(nullptr,
-              dynamic_cast<const irs::MultiTermQuery*>(prepared.get()));
+              dynamic_cast<const irs::MultiTermQuery*>(prepared.Query(0)));
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -1875,27 +1873,27 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // wildcard_filter "f%x" with phrase offset
   // which does not matter
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>(
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& wt = q->mutable_options()->push_back<irs::ByWildcardOptions>(
       std::numeric_limits<size_t>::max());
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("f%x"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     // check single word phrase optimization
     ASSERT_NE(nullptr,
-              dynamic_cast<const irs::MultiTermQuery*>(prepared.get()));
+              dynamic_cast<const irs::MultiTermQuery*>(prepared.Query(0)));
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -1950,27 +1948,27 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // wildcard_filter "f%x" with phrase offset
   // which does not matter
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& lt = q.mutable_options()->push_back<irs::ByEditDistanceOptions>(
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& lt = q->mutable_options()->push_back<irs::ByEditDistanceOptions>(
       std::numeric_limits<size_t>::max());
     lt.max_distance = 1;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("fkx"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     // check single word phrase optimization
     ASSERT_NE(nullptr,
-              dynamic_cast<const irs::MultiTermQuery*>(prepared.get()));
+              dynamic_cast<const irs::MultiTermQuery*>(prepared.Query(0)));
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -2034,20 +2032,20 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     rt.range.min_type = irs::BoundType::Inclusive;
     rt.range.max_type = irs::BoundType::Inclusive;
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     // check single word phrase optimization
     ASSERT_NE(nullptr,
-              dynamic_cast<const irs::MultiTermQuery*>(prepared.get()));
+              dynamic_cast<const irs::MultiTermQuery*>(prepared.Query(0)));
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -2098,17 +2096,17 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -2142,17 +2140,17 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -2182,27 +2180,27 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
   // "qui% brown fox"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& wt = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("qui%"))};
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -2232,25 +2230,25 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
   // "q%ck brown fox"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& wt = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("q%ck"))};
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -2275,27 +2273,27 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
   // "quick brown fox" simple term max_distance = 0
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& lt = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& lt = q->mutable_options()->push_back<irs::ByEditDistanceOptions>();
     lt.max_distance = 0;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("quick"));
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -2320,25 +2318,25 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
   // "quck brown fox"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& lt = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& lt = q->mutable_options()->push_back<irs::ByEditDistanceOptions>();
     lt.max_distance = 1;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("quck"));
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -2375,17 +2373,17 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("x2"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -2408,15 +2406,15 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -2446,27 +2444,27 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
   // "quick bro% fox"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
-    auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto& wt = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("bro%"))};
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -2496,25 +2494,25 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
   // "quick b%w_ fox"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
-    auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto& wt = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("b%w_"))};
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -2539,27 +2537,27 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
   // "quick brkln fox"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
-    auto& lt = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
+    auto& lt = q->mutable_options()->push_back<irs::ByEditDistanceOptions>();
     lt.max_distance = 2;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("brkln"));
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -2596,17 +2594,17 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("x2"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -2629,17 +2627,17 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto& pt = q.mutable_options()->push_back<irs::ByPrefixOptions>();
     pt.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -2669,27 +2667,27 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
   // "quick brown fo%"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
-    auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto& wt = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("fo%"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -2719,25 +2717,25 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
   // "quick brown f_x"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
-    auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto& wt = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("f_x"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -2762,28 +2760,28 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
   // "quick brown fxo"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
-    auto& lt = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
+    auto& lt = q->mutable_options()->push_back<irs::ByEditDistanceOptions>();
     lt.max_distance = 1;
     lt.with_transpositions = true;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("fxo"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -2820,17 +2818,17 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     rt.range.min_type = irs::BoundType::Inclusive;
     rt.range.max_type = irs::BoundType::Inclusive;
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -2853,15 +2851,15 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -2901,28 +2899,28 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
   // "qui% bro% fox"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& wt1 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& wt1 = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt1 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("qui%"))};
-    auto& wt2 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto& wt2 = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt2 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("bro%"))};
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -2962,26 +2960,26 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
   // "qui% b%o__ fox"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& wt1 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& wt1 = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt1 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("qui%"))};
-    auto& wt2 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto& wt2 = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt2 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("b%o__"))};
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -3011,28 +3009,28 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
   // "qui bro fox"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& lt1 = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& lt1 = q->mutable_options()->push_back<irs::ByEditDistanceOptions>();
     lt1.max_distance = 2;
     lt1.term = irs::ViewCast<irs::byte_type>(std::string_view("qui"));
-    auto& lt2 = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
+    auto& lt2 = q->mutable_options()->push_back<irs::ByEditDistanceOptions>();
     lt2.max_distance = 1;
     lt2.term = irs::ViewCast<irs::byte_type>(std::string_view("brow"));
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -3077,15 +3075,15 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("x2"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -3108,17 +3106,17 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto& pt2 = q.mutable_options()->push_back<irs::ByPrefixOptions>();
     pt2.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -3158,28 +3156,28 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
   // "qui% brown fo%"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& wt1 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& wt1 = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt1 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("qui%"))};
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
-    auto& wt2 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto& wt2 = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt2 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("fo%"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -3219,26 +3217,26 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
   // "q_i% brown f%x"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& wt1 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& wt1 = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt1 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("q_i%"))};
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
-    auto& wt2 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto& wt2 = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt2 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("f%x"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -3283,17 +3281,17 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     rt2.range.min_type = irs::BoundType::Inclusive;
     rt2.range.max_type = irs::BoundType::Inclusive;
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -3307,27 +3305,27 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
   // "qoick br__nn fix"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& lt1 = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& lt1 = q->mutable_options()->push_back<irs::ByEditDistanceOptions>();
     lt1.max_distance = 1;
     lt1.term = irs::ViewCast<irs::byte_type>(std::string_view("qoick"));
-    auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto& wt = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("br__n"))};
-    auto& lt2 = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
+    auto& lt2 = q->mutable_options()->push_back<irs::ByEditDistanceOptions>();
     lt2.max_distance = 1;
     lt2.term = irs::ViewCast<irs::byte_type>(std::string_view("fix"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -3361,15 +3359,15 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto& pt2 = q.mutable_options()->push_back<irs::ByPrefixOptions>();
     pt2.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -3409,26 +3407,26 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
   // "quick bro% fo%"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
-    auto& wt1 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto& wt1 = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt1 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("bro%"))};
-    auto& wt2 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto& wt2 = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt2 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("fo%"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -3468,26 +3466,26 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
   // "quick b_o% f_%"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
-    auto& wt1 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto& wt1 = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt1 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("b_o%"))};
-    auto& wt2 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto& wt2 = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt2 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("f_%"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -3542,15 +3540,15 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     rt2.range.min_type = irs::BoundType::Inclusive;
     rt2.range.max_type = irs::BoundType::Inclusive;
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -3573,15 +3571,15 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     pt2.term = irs::ViewCast<irs::byte_type>(std::string_view("bro"));
     pt3.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -3641,17 +3639,20 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
   // "qui% bro% fo%"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& wt1 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    auto& wt2 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    auto& wt3 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt1 = irs::ByWildcardOptions{
-      irs::ViewCast<irs::byte_type>(std::string_view("qui%"))};
-    wt2 = irs::ByWildcardOptions{
-      irs::ViewCast<irs::byte_type>(std::string_view("bro%"))};
-    wt3 = irs::ByWildcardOptions{
-      irs::ViewCast<irs::byte_type>(std::string_view("fo%"))};
+    auto make_q = [] {
+      auto q = std::make_unique<irs::ByPhrase>();
+      *q->mutable_field_id() = kPhraseAnl;
+      auto& wt1 = q->mutable_options()->push_back<irs::ByWildcardOptions>();
+      auto& wt2 = q->mutable_options()->push_back<irs::ByWildcardOptions>();
+      auto& wt3 = q->mutable_options()->push_back<irs::ByWildcardOptions>();
+      wt1 = irs::ByWildcardOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view("qui%"))};
+      wt2 = irs::ByWildcardOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view("bro%"))};
+      wt3 = irs::ByWildcardOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view("fo%"))};
+      return q;
+    };
     size_t finish_count = 0;
     uint64_t finish_docs_with_field = 0;
     uint64_t finish_docs_with_term = 0;
@@ -3675,10 +3676,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
       *score = it->value();
     };
 
-    auto prepared = PrepareOptimized(q, {
-                                          .index = rdr,
-                                          .scorer = &sort,
-                                        });
+    tests::PreparedFilter prepared{*Lower(make_q(), &sort), rdr, &sort};
     ASSERT_EQ(6, finish_count);
     ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
     ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
@@ -3690,24 +3688,19 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     // no order passed - no frequency
     {
-      auto docs = prepared->execute({.segment = *sub});
+      tests::PreparedFilter unscored{*Lower(make_q()), rdr};
+      auto docs = unscored.Execute(0);
       ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
       ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     }
 
-    auto docs = prepared->execute({
-      .segment = *sub,
-      .scorer = &sort,
-    });
+    auto docs = prepared.Execute(0);
     it = docs.get();
     auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
     ASSERT_TRUE(freq);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({
-      .segment = *sub,
-      .scorer = &sort,
-    });
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -3817,11 +3810,11 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
   // "q%ic_ br_wn _%x"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& wt1 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    auto& wt2 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    auto& wt3 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& wt1 = q->mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto& wt2 = q->mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto& wt3 = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt1 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("q%ic_"))};
     wt2 = irs::ByWildcardOptions{
@@ -3829,16 +3822,16 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     wt3 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("_%x"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -3876,15 +3869,15 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto& st3 = q.mutable_options()->push_back<irs::ByTermsOptions>();
     st3.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("fox")));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -3942,15 +3935,15 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     rt3.range.min_type = irs::BoundType::Inclusive;
     rt3.range.max_type = irs::BoundType::Inclusive;
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -3994,10 +3987,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
       *score = it->value();
     };
 
-    auto prepared = PrepareOptimized(q, {
-                                          .index = rdr,
-                                          .scorer = &sort,
-                                        });
+    tests::PreparedFilter prepared{q, rdr, &sort};
     ASSERT_EQ(3, finish_count);
     ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
     ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
@@ -4005,7 +3995,8 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     // no order passed - no frequency
     {
-      auto docs = prepared->execute({.segment = *sub});
+      tests::PreparedFilter unscored{q, rdr};
+      auto docs = unscored.Execute(0);
       ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
       ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     }
@@ -4013,18 +4004,12 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({
-      .segment = *sub,
-      .scorer = &sort,
-    });
+    auto docs = prepared.Execute(0);
     auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
     ASSERT_TRUE(freq);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({
-      .segment = *sub,
-      .scorer = &sort,
-    });
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
     it = docs.get();
 
@@ -4085,15 +4070,15 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(1).term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -4120,15 +4105,15 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(1).term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -4150,23 +4135,23 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
   // "f_x ... quick"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& wt = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("f_x"))};
-    q.mutable_options()->push_back<irs::ByTermOptions>(1).term =
+    q->mutable_options()->push_back<irs::ByTermOptions>(1).term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -4186,23 +4171,23 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
   // "fpx ... quick"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& lt = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& lt = q->mutable_options()->push_back<irs::ByEditDistanceOptions>();
     lt.max_distance = 1;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("fpx"));
-    q.mutable_options()->push_back<irs::ByTermOptions>(1).term =
+    q->mutable_options()->push_back<irs::ByTermOptions>(1).term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -4229,15 +4214,15 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto& pt = q.mutable_options()->push_back<irs::ByPrefixOptions>(1);
     pt.term = irs::ViewCast<irs::byte_type>(std::string_view("qui"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -4257,23 +4242,23 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
   // "fox ... qui%ck"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
-    auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>(1);
+    auto& wt = q->mutable_options()->push_back<irs::ByWildcardOptions>(1);
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("qui%ck"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -4300,15 +4285,15 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     pt1.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
     pt2.term = irs::ViewCast<irs::byte_type>(std::string_view("qui"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -4328,24 +4313,24 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
   // "f%x ... qui%ck"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& wt1 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    auto& wt2 = q.mutable_options()->push_back<irs::ByWildcardOptions>(1);
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& wt1 = q->mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto& wt2 = q->mutable_options()->push_back<irs::ByWildcardOptions>(1);
     wt1 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("f%x"))};
     wt2 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("qui%ck"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -4365,26 +4350,26 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
   // "fx ... quik"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& lt1 = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
-    auto& lt2 = q.mutable_options()->push_back<irs::ByEditDistanceOptions>(1);
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& lt1 = q->mutable_options()->push_back<irs::ByEditDistanceOptions>();
+    auto& lt2 = q->mutable_options()->push_back<irs::ByEditDistanceOptions>(1);
     lt1.max_distance = 1;
     lt1.term = irs::ViewCast<irs::byte_type>(std::string_view("fx"));
     lt2.max_distance = 1;
     lt2.term = irs::ViewCast<irs::byte_type>(std::string_view("quik"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::get<irs::FreqBlockAttr>(*docs));
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -4404,10 +4389,10 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
   // "fx ... quik"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& lt1 = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
-    auto& lt2 = q.mutable_options()->push_back<irs::ByEditDistanceOptions>(1);
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& lt1 = q->mutable_options()->push_back<irs::ByEditDistanceOptions>();
+    auto& lt2 = q->mutable_options()->push_back<irs::ByEditDistanceOptions>(1);
     lt1.max_distance = 1;
     lt1.term = irs::ViewCast<irs::byte_type>(std::string_view("fx"));
     lt2.max_distance = 1;
@@ -4415,27 +4400,20 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     auto scorer = irs::BM25::Make(irs::BM25::Options{.b = 0.0f});
 
-    auto prepared = PrepareOptimized(q, {.index = rdr, .scorer = scorer.get()});
+    tests::PreparedFilter prepared{*Lower(std::move(q), scorer.get()), rdr,
+                                   scorer.get()};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({
-      .segment = *sub,
-      .scorer = scorer.get(),
-
-    });
+    auto docs = prepared.Execute(0);
     auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
     ASSERT_TRUE(freq);
     auto* boost = irs::get<irs::BoostBlockAttr>(*docs);
     ASSERT_TRUE(boost);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({
-      .segment = *sub,
-      .scorer = scorer.get(),
-
-    });
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -4481,26 +4459,18 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     auto scorer = irs::BM25::Make(irs::BM25::Options{.b = 0.0f});
 
-    auto prepared = PrepareOptimized(q, {.index = rdr, .scorer = scorer.get()});
+    tests::PreparedFilter prepared{q, rdr, scorer.get()};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({
-      .segment = *sub,
-      .scorer = scorer.get(),
-
-    });
+    auto docs = prepared.Execute(0);
     auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
     ASSERT_TRUE(freq);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({
-      .segment = *sub,
-      .scorer = scorer.get(),
-
-    });
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -4546,27 +4516,19 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     auto scorer = irs::BM25::Make(irs::BM25::Options{.b = 0.0f});
 
-    auto prepared = PrepareOptimized(q, {.index = rdr, .scorer = scorer.get()});
+    tests::PreparedFilter prepared{q, rdr, scorer.get()};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({
-      .segment = *sub,
-      .scorer = scorer.get(),
-
-    });
+    auto docs = prepared.Execute(0);
     auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
     ASSERT_TRUE(freq);
     auto* boost = irs::get<irs::BoostBlockAttr>(*docs);
     ASSERT_TRUE(boost);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({
-      .segment = *sub,
-      .scorer = scorer.get(),
-
-    });
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -4650,26 +4612,18 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     auto scorer = irs::BM25::Make(irs::BM25::Options{.b = 0.0f});
 
-    auto prepared = PrepareOptimized(q, {.index = rdr, .scorer = scorer.get()});
+    tests::PreparedFilter prepared{q, rdr, scorer.get()};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({
-      .segment = *sub,
-      .scorer = scorer.get(),
-
-    });
+    auto docs = prepared.Execute(0);
     auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
     ASSERT_TRUE(freq);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({
-      .segment = *sub,
-      .scorer = scorer.get(),
-
-    });
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -4797,27 +4751,19 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     auto scorer = irs::BM25::Make(irs::BM25::Options{.b = 0.0f});
 
-    auto prepared = PrepareOptimized(q, {.index = rdr, .scorer = scorer.get()});
+    tests::PreparedFilter prepared{q, rdr, scorer.get()};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({
-      .segment = *sub,
-      .scorer = scorer.get(),
-
-    });
+    auto docs = prepared.Execute(0);
     auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
     ASSERT_TRUE(freq);
     auto* boost = irs::get<irs::BoostBlockAttr>(*docs);
     ASSERT_TRUE(boost);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({
-      .segment = *sub,
-      .scorer = scorer.get(),
-
-    });
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -4967,12 +4913,12 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
   // test disjunctions (unary, basic, small, disjunction)
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& wt1 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    auto& wt2 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    auto& pt1 = q.mutable_options()->push_back<irs::ByPrefixOptions>();
-    auto& pt2 = q.mutable_options()->push_back<irs::ByPrefixOptions>();
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& wt1 = q->mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto& wt2 = q->mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto& pt1 = q->mutable_options()->push_back<irs::ByPrefixOptions>();
+    auto& pt2 = q->mutable_options()->push_back<irs::ByPrefixOptions>();
     wt1 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("%las"))};
     wt2 = irs::ByWildcardOptions{
@@ -4982,26 +4928,19 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     auto scorer = irs::BM25::Make(irs::BM25::Options{.b = 0.0f});
 
-    auto prepared = PrepareOptimized(q, {.index = rdr, .scorer = scorer.get()});
+    tests::PreparedFilter prepared{*Lower(std::move(q), scorer.get()), rdr,
+                                   scorer.get()};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({
-      .segment = *sub,
-      .scorer = scorer.get(),
-
-    });
+    auto docs = prepared.Execute(0);
     auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
     ASSERT_TRUE(freq);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({
-      .segment = *sub,
-      .scorer = scorer.get(),
-
-    });
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -5031,15 +4970,15 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(1).term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -5068,15 +5007,15 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(0).term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -5100,15 +5039,15 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     pt1.term = irs::ViewCast<irs::byte_type>(std::string_view("fox"));
     pt2.term = irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -5132,15 +5071,15 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(1).term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -5161,24 +5100,24 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // "f_x ... quick" with phrase offset
   // which is does not matter
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>(
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& wt = q->mutable_options()->push_back<irs::ByWildcardOptions>(
       std::numeric_limits<size_t>::max());
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("f_x"))};
-    q.mutable_options()->push_back<irs::ByTermOptions>(1).term =
+    q->mutable_options()->push_back<irs::ByTermOptions>(1).term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -5207,15 +5146,15 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto& pt = q.mutable_options()->push_back<irs::ByPrefixOptions>(1);
     pt.term = irs::ViewCast<irs::byte_type>(std::string_view("qui"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -5236,24 +5175,24 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // "fox ... qui%k" with phrase offset
   // which is does not matter
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    q.mutable_options()
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    q->mutable_options()
       ->push_back<irs::ByTermOptions>(std::numeric_limits<size_t>::max())
       .term = irs::ViewCast<irs::byte_type>(std::string_view("fox"));
-    auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>(1);
+    auto& wt = q->mutable_options()->push_back<irs::ByWildcardOptions>(1);
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("qui%k"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -5282,15 +5221,15 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     pt1.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
     pt2.term = irs::ViewCast<irs::byte_type>(std::string_view("qui"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -5311,25 +5250,25 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // "fo% ... qui%" with phrase offset
   // which is does not matter
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& wt1 = q.mutable_options()->push_back<irs::ByWildcardOptions>(
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& wt1 = q->mutable_options()->push_back<irs::ByWildcardOptions>(
       std::numeric_limits<size_t>::max());
-    auto& wt2 = q.mutable_options()->push_back<irs::ByWildcardOptions>(1);
+    auto& wt2 = q->mutable_options()->push_back<irs::ByWildcardOptions>(1);
     wt1 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("fo%"))};
     wt2 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("qui%"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -5350,25 +5289,25 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // "fo% ... quik" with phrase offset
   // which is does not matter
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>(
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& wt = q->mutable_options()->push_back<irs::ByWildcardOptions>(
       std::numeric_limits<size_t>::max());
-    auto& lt = q.mutable_options()->push_back<irs::ByEditDistanceOptions>(1);
+    auto& lt = q->mutable_options()->push_back<irs::ByEditDistanceOptions>(1);
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("fo%"))};
     lt.max_distance = 1;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("quik"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -5395,10 +5334,9 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(10).term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
 
-    auto sub = rdr.begin();
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
@@ -5413,10 +5351,9 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto& pt = q.mutable_options()->push_back<irs::ByPrefixOptions>(10);
     pt.term = irs::ViewCast<irs::byte_type>(std::string_view("qui"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
 
-    auto sub = rdr.begin();
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
@@ -5424,18 +5361,17 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
   // "fox ... ... ... ... ... ... ... ... ... ... qu_ck"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
-    auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>(10);
+    auto& wt = q->mutable_options()->push_back<irs::ByWildcardOptions>(10);
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("qu_ck"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
 
-    auto sub = rdr.begin();
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
@@ -5443,18 +5379,17 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
   // "fox ... ... ... ... ... ... ... ... ... ... quc"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
-    auto& lt = q.mutable_options()->push_back<irs::ByEditDistanceOptions>(10);
+    auto& lt = q->mutable_options()->push_back<irs::ByEditDistanceOptions>(10);
     lt.max_distance = 2;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("quc"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
 
-    auto sub = rdr.begin();
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
@@ -5469,15 +5404,15 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(1).term =
       irs::ViewCast<irs::byte_type>(std::string_view("eye"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -5511,14 +5446,14 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("forward"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -5533,39 +5468,39 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
   // "as in % past we ___ looking forward"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& lt = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& lt = q->mutable_options()->push_back<irs::ByEditDistanceOptions>();
     lt.max_distance = 2;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("ass"));
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("in"));
-    auto& wt1 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto& wt1 = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt1 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("%"))};
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("past"));
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("we"));
-    auto& wt2 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto& wt2 = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt2 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("___"))};
-    auto& st = q.mutable_options()->push_back<irs::ByTermsOptions>();
+    auto& st = q->mutable_options()->push_back<irs::ByTermsOptions>();
     st.terms.emplace(
       irs::ViewCast<irs::byte_type>(std::string_view("looking")));
     st.terms.emplace(
       irs::ViewCast<irs::byte_type>(std::string_view("searching")));
-    auto& pt = q.mutable_options()->push_back<irs::ByPrefixOptions>();
+    auto& pt = q->mutable_options()->push_back<irs::ByPrefixOptions>();
     pt.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -5607,27 +5542,18 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
       *score = it->value();
     };
 
-    auto prepared = PrepareOptimized(q, {
-                                          .index = rdr,
-                                          .scorer = &sort,
-                                        });
+    tests::PreparedFilter prepared{q, rdr, &sort};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({
-      .segment = *sub,
-      .scorer = &sort,
-    });
+    auto docs = prepared.Execute(0);
     it = docs.get();
     auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
     ASSERT_TRUE(freq);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({
-      .segment = *sub,
-      .scorer = &sort,
-    });
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
     auto score = it->PrepareScore({
       .scorer = &sort,
@@ -5654,24 +5580,24 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
   // "as in the p_st we are look* forward" with order
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("as"));
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("in"));
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("the"));
-    auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto& wt = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("p_st"))};
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("we"));
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("are"));
-    auto& pt = q.mutable_options()->push_back<irs::ByPrefixOptions>();
+    auto& pt = q->mutable_options()->push_back<irs::ByPrefixOptions>();
     pt.term = irs::ViewCast<irs::byte_type>(std::string_view("look"));
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("forward"));
 
     tests::sort::CustomSort sort;
@@ -5682,27 +5608,18 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
       *score = it->value();
     };
 
-    auto prepared = PrepareOptimized(q, {
-                                          .index = rdr,
-                                          .scorer = &sort,
-                                        });
+    tests::PreparedFilter prepared{*Lower(std::move(q), &sort), rdr, &sort};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({
-      .segment = *sub,
-      .scorer = &sort,
-    });
+    auto docs = prepared.Execute(0);
     it = docs.get();
     auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
     ASSERT_TRUE(freq);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({
-      .segment = *sub,
-      .scorer = &sort,
-    });
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
     auto score = docs->PrepareScore({
       .scorer = &sort,
@@ -5736,15 +5653,15 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -5778,28 +5695,19 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
       *score = it->value();
     };
 
-    auto prepared = PrepareOptimized(q, {
-                                          .index = rdr,
-                                          .scorer = &sort,
-                                        });
+    tests::PreparedFilter prepared{q, rdr, &sort};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({
-      .segment = *sub,
-      .scorer = &sort,
-    });
+    auto docs = prepared.Execute(0);
     it = docs.get();
     auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
     ASSERT_TRUE(freq);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({
-      .segment = *sub,
-      .scorer = &sort,
-    });
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -5819,21 +5727,21 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
   // wildcard_filter "zo\\_%"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& wt = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("zo\\_%"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -5847,21 +5755,21 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
   // wildcard_filter "\\_oo"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& wt = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("\\_oo"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -5875,21 +5783,21 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
   // wildcard_filter "z\\_o"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    auto& wt = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("z\\_o"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -5903,23 +5811,23 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
   // wildcard_filter "elephant giraff\\_%"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("elephant"));
-    auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto& wt = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("giraff\\_%"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -5933,23 +5841,23 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
   // wildcard_filter "elephant \\_iraffe"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("elephant"));
-    auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto& wt = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("\\_iraffe"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -5963,23 +5871,23 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
   // wildcard_filter "elephant gira\\_fe"
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("elephant"));
-    auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    auto& wt = q->mutable_options()->push_back<irs::ByWildcardOptions>();
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("gira\\_fe"))};
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -6013,15 +5921,15 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(2, 3).term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -6065,15 +5973,15 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(2, 3).term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -6113,10 +6021,9 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(1, 3).term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
 
-    auto sub = rdr.begin();
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
 
     ASSERT_FALSE(docs->next());
@@ -6137,15 +6044,15 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(2, 3).term =
       irs::ViewCast<irs::byte_type>(std::string_view("dog"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -6187,44 +6094,28 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
       *score = it->value();
     };
     auto sub = rdr.begin();
-    auto prepared = PrepareOptimized(q, {
-                                          .index = rdr,
-                                          .scorer = &sort,
-                                        });
+    tests::PreparedFilter prepared{q, rdr, &sort};
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
     tests::sort::FrequencyScore freq_score;
-    auto disj_prepared = disjunction.prepare({
-      .index = rdr,
-      .scorer = &freq_score,
-    });
-    auto disj_docs = disj_prepared->execute({
-      .segment = *sub,
-      .scorer = &freq_score,
-
-    });
+    tests::PreparedFilter disj_prepared{disjunction, rdr, &freq_score};
+    auto disj_docs = disj_prepared.Execute(0);
     auto disj_score = disj_docs->PrepareScore({
       .scorer = &freq_score,
       .segment = &*sub,
     });
     irs::score_t score_val;
 
-    auto docs = prepared->execute({
-      .segment = *sub,
-      .scorer = &sort,
-    });
+    auto docs = prepared.Execute(0);
     it = docs.get();
 
     auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
     ASSERT_TRUE(freq);
     ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({
-      .segment = *sub,
-      .scorer = &sort,
-    });
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -6325,15 +6216,15 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("to"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -6354,15 +6245,15 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     auto& wt = q.mutable_options()->push_back<irs::ByPrefixOptions>(3, 4);
     wt.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
 
-    auto prepared = PrepareOptimized(q, {.index = rdr});
+    tests::PreparedFilter prepared{q, rdr};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
 
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub});
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -6439,35 +6330,22 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
       *score = it->value();
     };
 
-    auto prepared = PrepareOptimized(q, {
-                                          .index = rdr,
-                                          .scorer = &sort,
-                                        });
+    tests::PreparedFilter prepared{q, rdr, &sort};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     it = docs.get();
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({
-      .segment = *sub,
-      .scorer = &sort,
-    });
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
     auto* freq_seek = irs::get<irs::FreqBlockAttr>(*docs_seek);
     ASSERT_TRUE(freq_seek);
 
     tests::sort::FrequencyScore freq_score;
-    auto disj_prepared = disjunction.prepare({
-      .index = rdr,
-      .scorer = &freq_score,
-    });
-    auto disj_docs = disj_prepared->execute({
-      .segment = *sub,
-      .scorer = &freq_score,
-
-    });
+    tests::PreparedFilter disj_prepared{disjunction, rdr, &freq_score};
+    auto disj_docs = disj_prepared.Execute(0);
     auto disj_score = disj_docs->PrepareScore({
       .scorer = &freq_score,
       .segment = &*sub,
@@ -6563,35 +6441,22 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
       *score = it->value();
     };
 
-    auto prepared = PrepareOptimized(q, {
-                                          .index = rdr,
-                                          .scorer = &sort,
-                                        });
+    tests::PreparedFilter prepared{q, rdr, &sort};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     it = docs.get();
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({
-      .segment = *sub,
-      .scorer = &sort,
-    });
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
     auto* freq_seek = irs::get<irs::FreqBlockAttr>(*docs_seek);
     ASSERT_TRUE(freq_seek);
 
     tests::sort::FrequencyScore freq_score;
-    auto disj_prepared = disjunction.prepare({
-      .index = rdr,
-      .scorer = &freq_score,
-    });
-    auto disj_docs = disj_prepared->execute({
-      .segment = *sub,
-      .scorer = &freq_score,
-
-    });
+    tests::PreparedFilter disj_prepared{disjunction, rdr, &freq_score};
+    auto disj_docs = disj_prepared.Execute(0);
     auto disj_score = disj_docs->PrepareScore({
       .scorer = &freq_score,
       .segment = &*sub,
@@ -6687,35 +6552,22 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
       *score = it->value();
     };
 
-    auto prepared = PrepareOptimized(q, {
-                                          .index = rdr,
-                                          .scorer = &sort,
-                                        });
+    tests::PreparedFilter prepared{q, rdr, &sort};
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
-    auto docs = prepared->execute({.segment = *sub});
+    auto docs = prepared.Execute(0);
     it = docs.get();
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({
-      .segment = *sub,
-      .scorer = &sort,
-    });
+    auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
     auto* freq_seek = irs::get<irs::FreqBlockAttr>(*docs_seek);
     ASSERT_TRUE(freq_seek);
 
     tests::sort::FrequencyScore freq_score;
-    auto disj_prepared = disjunction.prepare({
-      .index = rdr,
-      .scorer = &freq_score,
-    });
-    auto disj_docs = disj_prepared->execute({
-      .segment = *sub,
-      .scorer = &freq_score,
-
-    });
+    tests::PreparedFilter disj_prepared{disjunction, rdr, &freq_score};
+    auto disj_docs = disj_prepared.Execute(0);
     auto disj_score = disj_docs->PrepareScore({
       .scorer = &freq_score,
       .segment = &*sub,
@@ -6788,8 +6640,8 @@ TEST(by_phrase_test, boost) {
     irs::ByPhrase q;
     *q.mutable_field_id() = 1;
 
-    auto prepared = PrepareOptimized(q, {.index = irs::SubReader::empty()});
-    ASSERT_EQ(irs::kNoBoost, prepared->Boost());
+    tests::PreparedFilter prepared{q, irs::SubReader::empty()};
+    ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
 
   // single term
@@ -6799,8 +6651,8 @@ TEST(by_phrase_test, boost) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
-    auto prepared = PrepareOptimized(q, {.index = irs::SubReader::empty()});
-    ASSERT_EQ(irs::kNoBoost, prepared->Boost());
+    tests::PreparedFilter prepared{q, irs::SubReader::empty()};
+    ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
 
   // multiple terms
@@ -6812,8 +6664,8 @@ TEST(by_phrase_test, boost) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
 
-    auto prepared = PrepareOptimized(q, {.index = irs::SubReader::empty()});
-    ASSERT_EQ(irs::kNoBoost, prepared->Boost());
+    tests::PreparedFilter prepared{q, irs::SubReader::empty()};
+    ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
 
   // with boost
@@ -6827,8 +6679,8 @@ TEST(by_phrase_test, boost) {
       *q.mutable_field_id() = 1;
       q.boost(boost);
 
-      auto prepared = PrepareOptimized(q, {.index = irs::SubReader::empty()});
-      ASSERT_EQ(irs::kNoBoost, prepared->Boost());
+      tests::PreparedFilter prepared{q, irs::SubReader::empty()};
+      ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
     }
 
     // single term
@@ -6839,11 +6691,9 @@ TEST(by_phrase_test, boost) {
         irs::ViewCast<irs::byte_type>(std::string_view("quick"));
       q.boost(boost);
 
-      auto prepared = PrepareOptimized(q, {
-                                            .index = irs::SubReader::empty(),
-                                            .memory = counter,
-                                          });
-      ASSERT_EQ(boost, prepared->Boost());
+      tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
+                                     counter};
+      ASSERT_EQ(boost, prepared.Query(0)->Boost());
     }
     EXPECT_EQ(counter.current, 0);
     EXPECT_GT(counter.max, 0);
@@ -6859,8 +6709,8 @@ TEST(by_phrase_test, boost) {
         irs::ViewCast<irs::byte_type>(std::string_view("brown"));
       q.boost(boost);
 
-      auto prepared = PrepareOptimized(q, {.index = irs::SubReader::empty()});
-      ASSERT_EQ(boost, prepared->Boost());
+      tests::PreparedFilter prepared{q, irs::SubReader::empty()};
+      ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
     }
 
     // prefix, wildcard, levenshtein, set, range
@@ -6885,8 +6735,8 @@ TEST(by_phrase_test, boost) {
       rt.range.min_type = irs::BoundType::Inclusive;
       rt.range.max_type = irs::BoundType::Inclusive;
 
-      auto prepared = PrepareOptimized(q, {.index = irs::SubReader::empty()});
-      ASSERT_EQ(boost, prepared->Boost());
+      tests::PreparedFilter prepared{q, irs::SubReader::empty()};
+      ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
     }
   }
 }
@@ -7210,11 +7060,11 @@ TEST_P(PhraseFilterTestCase, regexp_part_syntax) {
   }
   auto rdr = open_reader();
 
-  auto execute = [&](const irs::ByPhrase& q) {
+  auto execute = [&](std::unique_ptr<irs::ByPhrase> q) {
     std::vector<irs::doc_id_t> out;
-    auto prepared = PrepareOptimized(q, {.index = rdr});
-    for (auto& sub : rdr) {
-      auto docs = prepared->execute({.segment = sub});
+    tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
+    for (size_t i = 0, end = prepared.size(); i < end; ++i) {
+      auto docs = prepared.Execute(i);
       while (docs->next()) {
         out.push_back(docs->value());
       }
@@ -7224,50 +7074,50 @@ TEST_P(PhraseFilterTestCase, regexp_part_syntax) {
 
   // "quick [br]+own" in Perl equals plain phrase "quick brown"
   {
-    irs::ByPhrase ref;
-    *ref.mutable_field_id() = kPhraseAnl;
-    ref.mutable_options()->push_back<irs::ByTermOptions>().term =
+    auto ref = std::make_unique<irs::ByPhrase>();
+    *ref->mutable_field_id() = kPhraseAnl;
+    ref->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
-    ref.mutable_options()->push_back<irs::ByTermOptions>().term =
+    ref->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
-    auto expected = execute(ref);
+    auto expected = execute(std::move(ref));
     ASSERT_FALSE(expected.empty());
 
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
-    q.mutable_options()->push_back<irs::ByRegexpOptions>() =
+    q->mutable_options()->push_back<irs::ByRegexpOptions>() =
       irs::ByRegexpOptions{
         irs::ViewCast<irs::byte_type>(std::string_view("[br]+own"))};
-    ASSERT_EQ(expected, execute(q));
+    ASSERT_EQ(expected, execute(std::move(q)));
   }
 
   // "quick \w+" in POSIX matches nothing - \w+ is a parse error
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
-    q.mutable_options()->push_back<irs::ByRegexpOptions>() =
+    q->mutable_options()->push_back<irs::ByRegexpOptions>() =
       irs::ByRegexpOptions{
         irs::ViewCast<irs::byte_type>(std::string_view("\\w+")),
         irs::RegexpSyntax::PosixEre};
 
-    ASSERT_TRUE(execute(q).empty());
+    ASSERT_TRUE(execute(std::move(q)).empty());
   }
 
   // sanity: same "quick \w+" in Perl matches something
   {
-    irs::ByPhrase q;
-    *q.mutable_field_id() = kPhraseAnl;
-    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+    auto q = std::make_unique<irs::ByPhrase>();
+    *q->mutable_field_id() = kPhraseAnl;
+    q->mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
-    q.mutable_options()->push_back<irs::ByRegexpOptions>() =
+    q->mutable_options()->push_back<irs::ByRegexpOptions>() =
       irs::ByRegexpOptions{
         irs::ViewCast<irs::byte_type>(std::string_view("\\w+"))};
 
-    ASSERT_FALSE(execute(q).empty());
+    ASSERT_FALSE(execute(std::move(q)).empty());
   }
 }
 
@@ -7287,18 +7137,29 @@ TEST_P(PhraseFilterTestCase, sequential_negation_regression) {
   }
   auto rdr = open_reader();
 
-  irs::ByPhrase phrase;
-  *phrase.mutable_field_id() = kPhraseAnl;
-  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
-    irs::ViewCast<irs::byte_type>(std::string_view("quick"));
-  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
-    irs::ViewCast<irs::byte_type>(std::string_view("brown"));
+  auto make_phrase = [] {
+    auto phrase = std::make_unique<irs::ByPhrase>();
+    *phrase->mutable_field_id() = kPhraseAnl;
+    phrase->mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("quick"));
+    phrase->mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("brown"));
+    return phrase;
+  };
+
+  auto make_not_phrase = [&] {
+    auto not_phrase = std::make_unique<irs::Exclusion>();
+    not_phrase->exclude(make_phrase());
+    irs::Filter::ptr f = std::move(not_phrase);
+    irs::Optimize(f, {});
+    return f;
+  };
 
   auto collect = [&](const irs::Filter& filter) {
     std::vector<irs::doc_id_t> out;
-    auto prepared = filter.prepare({.index = rdr});
-    for (const auto& sub : rdr) {
-      auto docs = prepared->execute({.segment = sub});
+    tests::PreparedFilter prepared{filter, rdr};
+    for (size_t i = 0, end = prepared.size(); i < end; ++i) {
+      auto docs = prepared.Execute(i);
       while (docs->next()) {
         out.push_back(docs->value());
       }
@@ -7306,12 +7167,10 @@ TEST_P(PhraseFilterTestCase, sequential_negation_regression) {
     return out;
   };
 
-  const auto phrase_hits = collect(phrase);
+  const auto phrase_hits = collect(*Lower(make_phrase()));
   ASSERT_FALSE(phrase_hits.empty());
 
-  irs::Exclusion not_phrase;
-  not_phrase.exclude<irs::ByPhrase>() = phrase;
-  const auto not_hits = collect(not_phrase);
+  const auto not_hits = collect(*make_not_phrase());
 
   // Complement must be non-empty and disjoint from the positive hits.
   ASSERT_FALSE(not_hits.empty());
@@ -7321,9 +7180,9 @@ TEST_P(PhraseFilterTestCase, sequential_negation_regression) {
 
   // Drive seek() across positive hits too -- that's the path that
   // surfaced the crash from the SQL side via Exclusion::converge.
-  auto prepared = not_phrase.prepare({.index = rdr});
-  for (const auto& sub : rdr) {
-    auto docs = prepared->execute({.segment = sub});
+  tests::PreparedFilter prepared{*make_not_phrase(), rdr};
+  for (size_t i = 0, end = prepared.size(); i < end; ++i) {
+    auto docs = prepared.Execute(i);
     for (auto doc : phrase_hits) {
       const auto target = doc + 1;
       const auto landed = docs->seek(target);

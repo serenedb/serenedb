@@ -44,6 +44,7 @@
 
 #include "auth/acl.h"
 #include "auth/privilege.h"
+#include "auth/role_closure.h"
 #include "basics/build.h"
 #include "basics/down_cast.h"
 #include "basics/exceptions.h"
@@ -322,12 +323,12 @@ int64_t GetRelationForkSize(duckdb::ClientContext& context,
                             std::string_view fork, bool table_only = false) {
   auto rel = snapshot.GetObject(ObjectId{oid});
   if (!rel) {
-    throw duckdb::CatalogException("relation with OID %llu does not exist",
-                                   oid);
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation with OID ", oid, " does not exist"));
   }
   if (table_only && rel->GetType() != catalog::ObjectType::Table) {
-    throw duckdb::CatalogException("\"%s\" is not a table",
-                                   std::string{rel->GetName()});
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+                    ERR_MSG("\"", rel->GetName(), "\" is not a table"));
   }
   if (fork != "main") {
     return 0;
@@ -371,8 +372,8 @@ void PgDatabaseSizeNameFunction(duckdb::DataChunk& args,
       std::string_view db_name{input.GetData(), input.GetSize()};
       auto database = snapshot->GetDatabase(db_name);
       if (!database) {
-        throw duckdb::CatalogException("database \"%s\" does not exist",
-                                       std::string{db_name});
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
+                        ERR_MSG("database \"", db_name, "\" does not exist"));
       }
       return StoreDatabaseSize(context, *snapshot, database->GetId());
     });
@@ -398,8 +399,8 @@ void PgDatabaseSizeOidFunction(duckdb::DataChunk& args,
         database = snapshot->GetDatabase(conn_ctx.GetDatabaseId());
       }
       if (!database) {
-        throw duckdb::CatalogException("database with OID %lld does not exist",
-                                       oid);
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
+                        ERR_MSG("database with OID ", oid, " does not exist"));
       }
       return StoreDatabaseSize(context, *snapshot, database->GetId());
     });
@@ -419,8 +420,8 @@ void PgSchemaSizeNameFunction(duckdb::DataChunk& args,
       std::string_view schema_name{input.GetData(), input.GetSize()};
       auto schema = snapshot->GetSchema(database_id, schema_name);
       if (!schema) {
-        throw duckdb::CatalogException("schema \"%s\" does not exist",
-                                       std::string{schema_name});
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
+                        ERR_MSG("schema \"", schema_name, "\" does not exist"));
       }
       return StoreSchemaSize(context, *snapshot, database_id, schema_name);
     });
@@ -439,8 +440,8 @@ void PgSchemaSizeOidFunction(duckdb::DataChunk& args,
       auto schema = snapshot->GetObject<catalog::Schema>(
         ObjectId{static_cast<uint64_t>(oid)});
       if (!schema) {
-        throw duckdb::CatalogException("schema with OID %lld does not exist",
-                                       oid);
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
+                        ERR_MSG("schema with OID ", oid, " does not exist"));
       }
       return StoreSchemaSize(context, *snapshot, schema->GetParentId(),
                              schema->GetName());

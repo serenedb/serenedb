@@ -135,8 +135,9 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
     if (if_not_exists) {
       return nullptr;
     }
-    throw duckdb::CatalogException("relation \"%s\" already exists",
-                                   table_info.table);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+      ERR_MSG("relation \"", table_info.table, "\" already exists"));
   }
   if (!r.ok()) {
     SDB_THROW(std::move(r));

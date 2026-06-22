@@ -1,0 +1,271 @@
+# DROP ROLE must refuse while the role owns a user-defined TYPE (composite or
+# enum), exactly like PostgreSQL -- otherwise the role's id lingers in pg_type
+# as a dangling owner. Dropping becomes possible once the ownership dependency
+# is removed: DROP TYPE, or ALTER TYPE ... OWNER TO another role. A mere GRANT
+# USAGE ON TYPE is a privilege dependency (not ownership) but it blocks DROP
+# ROLE just the same until revoked.
+#
+# All assertions were validated against a live PostgreSQL 19 oracle.
+
+
+statement ok
+DROP TABLE IF EXISTS dot_babsky;
+
+
+statement ok
+DROP TYPE IF EXISTS dot_clickclack CASCADE;
+
+
+statement ok
+DROP TYPE IF EXISTS dot_iceberg CASCADE;
+
+
+statement ok
+DROP TYPE IF EXISTS dot_mop CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS dot_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS dot_kostya;
+
+
+statement ok
+CREATE ROLE dot_vedernikoff;
+
+
+statement ok
+CREATE ROLE dot_kostya;
+
+
+# --- Composite type owned by the role blocks DROP ROLE. ---
+statement ok
+CREATE TYPE dot_clickclack AS (a int, b text);
+
+
+statement ok
+ALTER TYPE dot_clickclack OWNER TO dot_vedernikoff;
+
+
+# PG: 2BP01, "cannot be dropped because some objects depend on it"; DETAIL is
+# "owner of type dot_clickclack" -> swallowed.
+statement error
+DROP ROLE dot_vedernikoff;
+----
+db error: ERROR: role "dot_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Drop the type -> ownership dependency gone -> DROP ROLE succeeds.
+statement ok
+DROP TYPE dot_clickclack;
+
+
+statement ok
+DROP ROLE dot_vedernikoff;
+
+
+# --- Enum type owned by the role blocks DROP ROLE. ---
+statement ok
+CREATE ROLE dot_vedernikoff;
+
+
+statement ok
+CREATE TYPE dot_iceberg AS ENUM ('ice', 'berg', 'melt');
+
+
+statement ok
+ALTER TYPE dot_iceberg OWNER TO dot_vedernikoff;
+
+
+statement error
+DROP ROLE dot_vedernikoff;
+----
+db error: ERROR: role "dot_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Reassign ownership to another role -> dependency gone for vedernikoff -> ok.
+statement ok
+ALTER TYPE dot_iceberg OWNER TO dot_kostya;
+
+
+statement ok
+DROP ROLE dot_vedernikoff;
+
+
+# --- ALTER TYPE ... OWNER TO moves ownership away -> DROP ROLE succeeds. ---
+statement ok
+CREATE ROLE dot_vedernikoff;
+
+
+statement ok
+ALTER TYPE dot_iceberg OWNER TO dot_vedernikoff;
+
+
+statement error
+DROP ROLE dot_vedernikoff;
+----
+db error: ERROR: role "dot_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+ALTER TYPE dot_iceberg OWNER TO dot_kostya;
+
+
+statement ok
+DROP ROLE dot_vedernikoff;
+
+
+# --- DROP TYPE removes the owned type itself -> DROP ROLE succeeds. ---
+statement ok
+CREATE ROLE dot_vedernikoff;
+
+
+statement ok
+ALTER TYPE dot_iceberg OWNER TO dot_vedernikoff;
+
+
+statement ok
+DROP TYPE dot_iceberg;
+
+
+statement ok
+DROP ROLE dot_vedernikoff;
+
+
+# --- Role owning TWO types: refused until BOTH are removed. ---
+statement ok
+DROP TYPE IF EXISTS dot_iceberg CASCADE;
+
+
+statement ok
+CREATE ROLE dot_vedernikoff;
+
+
+statement ok
+CREATE TYPE dot_clickclack AS (a int, b text);
+
+
+statement ok
+CREATE TYPE dot_iceberg AS ENUM ('ice', 'berg');
+
+
+statement ok
+ALTER TYPE dot_clickclack OWNER TO dot_vedernikoff;
+
+
+statement ok
+ALTER TYPE dot_iceberg OWNER TO dot_vedernikoff;
+
+
+# Both types depend on the role; DETAIL lists both -> swallowed.
+statement error
+DROP ROLE dot_vedernikoff;
+----
+db error: ERROR: role "dot_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Drop one type: still refused because the other type is still owned.
+statement ok
+DROP TYPE dot_clickclack;
+
+
+statement error
+DROP ROLE dot_vedernikoff;
+----
+db error: ERROR: role "dot_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Drop the last owned type -> dependency fully cleared -> DROP ROLE succeeds.
+statement ok
+DROP TYPE dot_iceberg;
+
+
+statement ok
+DROP ROLE dot_vedernikoff;
+
+
+# --- GRANT USAGE ON TYPE is a privilege dependency: it also blocks DROP ROLE
+# (DETAIL "privileges for type dot_mop"), and REVOKE clears it. ---
+statement ok
+CREATE ROLE dot_vedernikoff;
+
+
+statement ok
+CREATE TYPE dot_mop AS (x int);
+
+
+statement ok
+ALTER TYPE dot_mop OWNER TO dot_vedernikoff;
+
+
+statement ok
+GRANT USAGE ON TYPE dot_mop TO dot_kostya;
+
+
+statement error
+DROP ROLE dot_kostya;
+----
+db error: ERROR: role "dot_kostya" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE USAGE ON TYPE dot_mop FROM dot_kostya;
+
+
+statement ok
+DROP ROLE dot_kostya;
+
+
+# --- Owned type that is in use by a table column: DROP ROLE refused; the plain
+# DROP TYPE is itself refused (column depends on it) and needs CASCADE. ---
+statement ok
+CREATE TABLE dot_babsky (id int, payload dot_mop);
+
+
+statement error
+DROP ROLE dot_vedernikoff;
+----
+db error: ERROR: role "dot_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Plain DROP TYPE fails: the table column depends on the type.
+statement error
+DROP TYPE dot_mop;
+----
+db error: ERROR: cannot drop type dot_mop because other objects depend on it<slt:ignore>
+
+
+# CASCADE drops the dependent column, then the type, clearing the ownership dep.
+statement ok
+DROP TYPE dot_mop CASCADE;
+
+
+statement ok
+DROP ROLE dot_vedernikoff;
+
+
+# --- Cleanup. ---
+statement ok
+DROP TABLE IF EXISTS dot_babsky;
+
+
+statement ok
+DROP TYPE IF EXISTS dot_clickclack CASCADE;
+
+
+statement ok
+DROP TYPE IF EXISTS dot_iceberg CASCADE;
+
+
+statement ok
+DROP TYPE IF EXISTS dot_mop CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS dot_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS dot_kostya;

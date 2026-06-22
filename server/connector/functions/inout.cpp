@@ -32,8 +32,10 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
+#include "pg/errcodes.h"
 #include "pg/pg_types.h"
 #include "pg/serialize.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {
@@ -226,7 +228,8 @@ bool PgVarcharToRegnamespaceCast(duckdb::Vector& source, duckdb::Vector& result,
     source, result, count, [&](std::string_view name) -> int64_t {
       auto oid = pg::RegnamespaceIn(conn_ctx, name);
       if (oid == pg::kInvalidOid) {
-        throw duckdb::CatalogException("namespace \"%s\" does not exist", name);
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
+                        ERR_MSG("namespace \"", name, "\" does not exist"));
       }
       return oid;
     });
@@ -249,7 +252,8 @@ bool PgVarcharToRegclassCast(duckdb::Vector& source, duckdb::Vector& result,
     source, result, count, [&](std::string_view name) -> int64_t {
       auto oid = pg::RegclassIn(conn_ctx, name);
       if (oid == pg::kInvalidOid) {
-        throw duckdb::CatalogException("relation \"%s\" does not exist", name);
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                        ERR_MSG("relation \"", name, "\" does not exist"));
       }
       return oid;
     });
@@ -269,7 +273,8 @@ bool PgVarcharToRegtypeCast(duckdb::Vector& source, duckdb::Vector& result,
     source, result, count, [](std::string_view name) -> int64_t {
       auto oid = pg::RegtypeIn(name);
       if (oid == pg::kInvalidOid) {
-        throw duckdb::CatalogException("type \"%s\" does not exist", name);
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                        ERR_MSG("type \"", name, "\" does not exist"));
       }
       return oid;
     });

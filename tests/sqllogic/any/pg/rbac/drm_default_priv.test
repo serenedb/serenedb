@@ -1,0 +1,250 @@
+# DROP ROLE must refuse while a role appears in an ALTER DEFAULT PRIVILEGES
+# entry, exactly like PostgreSQL. A role can be referenced two ways:
+#   * as the GRANTEE        -> pg_default_acl.defaclacl lists the role
+#   * as the FOR ROLE owner -> pg_default_acl.defaclrole is the role
+# Either reference is a dependency: PG raises 2BP01 ("cannot be dropped because
+# some objects depend on it"). The DETAIL distinguishes "privileges for default
+# privileges ..." (grantee) from "owner of default privileges ..." (FOR ROLE
+# owner), and differs in wording across engines -> ignored with <slt:ignore>.
+#
+# Removing the reference unblocks the drop:
+#   * grantee  -> ALTER DEFAULT PRIVILEGES REVOKE ... FROM <role>
+#   * owner    -> REVOKE every grantee out of the owner's entry (the entry then
+#                 collapses), or DROP the schema the entry is scoped to
+#                 (IN SCHEMA), or -- if the owner is also the sole grantee --
+#                 DROP ROLE itself clears the self-owned entry and succeeds.
+#
+# Fixture prefix: ddp_ (drm_default_priv).
+
+
+statement ok
+DROP SCHEMA IF EXISTS ddp_mop CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS ddp_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS ddp_clickclack;
+
+
+statement ok
+CREATE ROLE ddp_vedernikoff;
+
+
+statement ok
+CREATE ROLE ddp_clickclack;
+
+
+# ===========================================================================
+# Part 1 -- role as GRANTEE of a global (no FOR ROLE) default-priv entry.
+# The entry is owned by the current superuser; ddp_vedernikoff is the grantee.
+# ===========================================================================
+
+statement ok
+ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO ddp_vedernikoff;
+
+
+# The grantee is now referenced by a pg_default_acl row -> DROP refused.
+statement error
+DROP ROLE ddp_vedernikoff;
+----
+db error: ERROR: role "ddp_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Revoke the default privilege -> dependency gone -> drop succeeds.
+statement ok
+ALTER DEFAULT PRIVILEGES REVOKE SELECT ON TABLES FROM ddp_vedernikoff;
+
+
+statement ok
+DROP ROLE ddp_vedernikoff;
+
+
+statement ok
+CREATE ROLE ddp_vedernikoff;
+
+
+# ===========================================================================
+# Part 2 -- grantee across several object classes in one entry. Each class is a
+# separate dependency; all must be revoked before the grantee drops.
+# ===========================================================================
+
+statement ok
+ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO ddp_vedernikoff;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES GRANT USAGE ON SEQUENCES TO ddp_vedernikoff;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO ddp_vedernikoff;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES GRANT USAGE ON TYPES TO ddp_vedernikoff;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES GRANT USAGE ON SCHEMAS TO ddp_vedernikoff;
+
+
+# Any one of the five entries is enough to refuse the drop.
+statement error
+DROP ROLE ddp_vedernikoff;
+----
+db error: ERROR: role "ddp_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Revoke four of five: still one entry left -> still refused.
+statement ok
+ALTER DEFAULT PRIVILEGES REVOKE SELECT ON TABLES FROM ddp_vedernikoff;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES REVOKE USAGE ON SEQUENCES FROM ddp_vedernikoff;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM ddp_vedernikoff;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES REVOKE USAGE ON TYPES FROM ddp_vedernikoff;
+
+
+statement error
+DROP ROLE ddp_vedernikoff;
+----
+db error: ERROR: role "ddp_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Revoke the last (SCHEMAS) -> no entries reference the grantee -> drop ok.
+statement ok
+ALTER DEFAULT PRIVILEGES REVOKE USAGE ON SCHEMAS FROM ddp_vedernikoff;
+
+
+statement ok
+DROP ROLE ddp_vedernikoff;
+
+
+statement ok
+CREATE ROLE ddp_vedernikoff;
+
+
+# ===========================================================================
+# Part 3 -- role as the FOR ROLE owner of a default-priv entry. The owner is a
+# distinct dependency from the grantee. Entry: FOR ROLE ddp_clickclack grants
+# to ddp_vedernikoff -> clickclack is owner, vedernikoff is grantee.
+# ===========================================================================
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE ddp_clickclack GRANT SELECT ON TABLES TO ddp_vedernikoff;
+
+
+# Dropping the FOR ROLE owner is refused (owner dependency).
+statement error
+DROP ROLE ddp_clickclack;
+----
+db error: ERROR: role "ddp_clickclack" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Dropping the grantee is independently refused (grantee dependency).
+statement error
+DROP ROLE ddp_vedernikoff;
+----
+db error: ERROR: role "ddp_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Revoke the grantee out: the owner's entry collapses (only the implicit owner
+# self-grant remained), so BOTH roles now drop cleanly.
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE ddp_clickclack REVOKE SELECT ON TABLES FROM ddp_vedernikoff;
+
+
+statement ok
+DROP ROLE ddp_vedernikoff;
+
+
+statement ok
+DROP ROLE ddp_clickclack;
+
+
+statement ok
+CREATE ROLE ddp_vedernikoff;
+
+
+statement ok
+CREATE ROLE ddp_clickclack;
+
+
+# ===========================================================================
+# Part 4 -- self-owned entry: FOR ROLE X granting to X. The only reference is
+# the role itself; PG's DROP ROLE clears its own default-priv entry, so the
+# drop SUCCEEDS without any explicit REVOKE.
+# ===========================================================================
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE ddp_clickclack GRANT SELECT ON TABLES TO ddp_clickclack;
+
+
+statement ok
+DROP ROLE ddp_clickclack;
+
+
+statement ok
+CREATE ROLE ddp_clickclack;
+
+
+# ===========================================================================
+# Part 5 -- IN SCHEMA-scoped entry. The default-priv row is tied to a schema;
+# while it exists the grantee is a dependency. Revoking it -- with the same
+# IN SCHEMA scope -- clears the dependency, after which the schema and the
+# grantee both drop cleanly. (The REVOKE must precede DROP SCHEMA: once the
+# schema is gone there is no scope left to address the scoped entry through.)
+# ===========================================================================
+
+statement ok
+CREATE SCHEMA ddp_mop;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES IN SCHEMA ddp_mop GRANT SELECT ON TABLES TO ddp_vedernikoff;
+
+
+# While the schema-scoped entry exists, the grantee cannot be dropped.
+statement error
+DROP ROLE ddp_vedernikoff;
+----
+db error: ERROR: role "ddp_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Revoke the scoped entry -> grantee dependency gone.
+statement ok
+ALTER DEFAULT PRIVILEGES IN SCHEMA ddp_mop REVOKE SELECT ON TABLES FROM ddp_vedernikoff;
+
+
+statement ok
+DROP SCHEMA ddp_mop CASCADE;
+
+
+statement ok
+DROP ROLE ddp_vedernikoff;
+
+
+# ===========================================================================
+# Cleanup.
+# ===========================================================================
+
+statement ok
+DROP ROLE IF EXISTS ddp_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS ddp_clickclack;
+
+
+statement ok
+DROP SCHEMA IF EXISTS ddp_mop CASCADE;

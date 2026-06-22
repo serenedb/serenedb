@@ -36,6 +36,7 @@
 #include "app/app_server.h"
 #include "auth/acl.h"
 #include "auth/privilege.h"
+#include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/table.h"
 #include "pg/errcodes.h"

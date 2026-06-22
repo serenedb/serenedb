@@ -1,0 +1,236 @@
+# DROP ROLE must refuse while the role owns a VIEW (or holds privileges on one),
+# exactly like PostgreSQL -- a view's relowner is a hard dependency on the role,
+# just like table ownership. The drop becomes possible once the dependency is
+# removed: DROP VIEW, ALTER VIEW ... OWNER TO another role, or REVOKE for a mere
+# grantee. This file also covers a view stacked on another view (RESTRICT refuses
+# the base-view drop while the dependent view exists; CASCADE removes both), and
+# the cross-owner case where the base view and the dependent view belong to
+# different roles -- each owner's DROP ROLE is refused independently.
+#
+# Fixture prefix: dov_  (drm_owner_view).
+
+
+# ---------------------------------------------------------------------------
+# Idempotent setup
+# ---------------------------------------------------------------------------
+
+statement ok
+DROP VIEW IF EXISTS dov_mop_v2 CASCADE;
+
+
+statement ok
+DROP VIEW IF EXISTS dov_mop_v1 CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS dov_iceberg CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS dov_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS dov_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS dov_kostya;
+
+
+statement ok
+CREATE TABLE dov_iceberg (id int, payload text);
+
+
+statement ok
+CREATE ROLE dov_vedernikoff;
+
+
+statement ok
+CREATE ROLE dov_clickclack;
+
+
+statement ok
+CREATE ROLE dov_kostya;
+
+
+statement ok
+CREATE VIEW dov_mop_v1 AS SELECT id FROM dov_iceberg;
+
+
+# A role with no dependency drops cleanly (kostya owns nothing yet).
+statement ok
+DROP ROLE dov_kostya;
+
+
+statement ok
+CREATE ROLE dov_kostya;
+
+
+# ---------------------------------------------------------------------------
+# Single view: owner role cannot be dropped while it owns the view
+# ---------------------------------------------------------------------------
+
+# Hand the view to vedernikoff -> it becomes the owner -> a hard dependency.
+statement ok
+ALTER VIEW dov_mop_v1 OWNER TO dov_vedernikoff;
+
+
+# DROP ROLE is refused while vedernikoff owns the view (PG: 2BP01, DETAIL
+# "owner of view dov_mop_v1"). DETAIL wording differs across engines -> ignore.
+statement error
+DROP ROLE dov_vedernikoff;
+----
+db error: ERROR: role "dov_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# A *grantee* of the view (not its owner) is also pinned by the dependency:
+# kostya holds SELECT on the view -> DROP ROLE kostya is refused.
+statement ok
+GRANT SELECT ON dov_mop_v1 TO dov_kostya;
+
+
+statement error
+DROP ROLE dov_kostya;
+----
+db error: ERROR: role "dov_kostya" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Revoke the grant -> dependency gone -> kostya drops.
+statement ok
+REVOKE SELECT ON dov_mop_v1 FROM dov_kostya;
+
+
+statement ok
+DROP ROLE dov_kostya;
+
+
+# Move ownership off vedernikoff (onto clickclack) -> vedernikoff drops.
+statement ok
+ALTER VIEW dov_mop_v1 OWNER TO dov_clickclack;
+
+
+statement ok
+DROP ROLE dov_vedernikoff;
+
+
+# clickclack now owns the view -> its DROP ROLE is refused in turn.
+statement error
+DROP ROLE dov_clickclack;
+----
+db error: ERROR: role "dov_clickclack" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# DROP VIEW removes the dependency -> clickclack drops.
+statement ok
+DROP VIEW dov_mop_v1;
+
+
+statement ok
+DROP ROLE dov_clickclack;
+
+
+# ---------------------------------------------------------------------------
+# View over view: RESTRICT vs CASCADE, and cross-owner pinning
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE ROLE dov_vedernikoff;
+
+
+statement ok
+CREATE ROLE dov_clickclack;
+
+
+statement ok
+CREATE VIEW dov_mop_v1 AS SELECT id FROM dov_iceberg;
+
+
+statement ok
+CREATE VIEW dov_mop_v2 AS SELECT id FROM dov_mop_v1;
+
+
+# Both views owned by vedernikoff.
+statement ok
+ALTER VIEW dov_mop_v1 OWNER TO dov_vedernikoff;
+
+
+statement ok
+ALTER VIEW dov_mop_v2 OWNER TO dov_vedernikoff;
+
+
+# DROP ROLE refused -- vedernikoff owns both views (PG DETAIL lists both).
+statement error
+DROP ROLE dov_vedernikoff;
+----
+db error: ERROR: role "dov_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# DROP VIEW v1 RESTRICT is refused because v2 (a view) depends on it. This is an
+# object-vs-object dependency, independent of role ownership. DETAIL/HINT vary.
+statement error
+DROP VIEW dov_mop_v1 RESTRICT;
+----
+db error: ERROR: cannot drop view dov_mop_v1 because other objects depend on it<slt:ignore>
+
+
+# Cross-owner: hand the dependent view v2 to clickclack. Now v1 belongs to
+# vedernikoff and v2 belongs to clickclack -- each owner is pinned by its view.
+statement ok
+ALTER VIEW dov_mop_v2 OWNER TO dov_clickclack;
+
+
+# clickclack owns the dependent view -> DROP ROLE refused.
+statement error
+DROP ROLE dov_clickclack;
+----
+db error: ERROR: role "dov_clickclack" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# vedernikoff still owns the base view -> DROP ROLE refused.
+statement error
+DROP ROLE dov_vedernikoff;
+----
+db error: ERROR: role "dov_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# DROP VIEW v1 CASCADE drops the dependent v2 too, clearing both ownerships.
+statement ok
+DROP VIEW dov_mop_v1 CASCADE;
+
+
+# With every view gone, both owners drop.
+statement ok
+DROP ROLE dov_vedernikoff;
+
+
+statement ok
+DROP ROLE dov_clickclack;
+
+
+# ---------------------------------------------------------------------------
+# Cleanup
+# ---------------------------------------------------------------------------
+
+statement ok
+DROP VIEW IF EXISTS dov_mop_v2 CASCADE;
+
+
+statement ok
+DROP VIEW IF EXISTS dov_mop_v1 CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS dov_iceberg CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS dov_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS dov_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS dov_kostya;

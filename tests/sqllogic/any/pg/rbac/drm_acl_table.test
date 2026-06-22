@@ -1,0 +1,425 @@
+# DROP ROLE must refuse while the role is the GRANTEE of a privilege on a TABLE
+# it does NOT own, exactly like PostgreSQL (2BP01, "cannot be dropped because
+# some objects depend on it"). The grant records the role's id in the table ACL;
+# dropping the role would leave an un-revokable ghost grant. The drop becomes
+# possible once every grant to the role is removed -- by REVOKE of each
+# individual privilege, by REVOKE ALL, or by dropping the table itself.
+#
+# The grantee here is always a role distinct from the table owner (the table is
+# owned by the superuser that creates it). DETAIL wording differs across engines
+# (PG says "privileges for table ...", serenedb says "N object(s) ... depend on
+# role ...") so it is swallowed with <slt:ignore>.
+#
+# Column-level grants (GRANT SELECT (col) ...) are deliberately NOT covered:
+# real PG refuses DROP ROLE while a column grant exists, but serenedb does not
+# track the column ACL as a role dependency and lets the drop through. That is a
+# known divergence, so the column case is omitted rather than asserted here.
+
+statement ok
+DROP TABLE IF EXISTS dat_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS dat_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS dat_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS dat_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS dat_babsky;
+
+
+statement ok
+CREATE TABLE dat_iceberg (id int);
+
+
+statement ok
+CREATE ROLE dat_vedernikoff;
+
+
+# ---- SELECT: grant blocks DROP ROLE, REVOKE frees it ----
+statement ok
+GRANT SELECT ON dat_iceberg TO dat_vedernikoff;
+
+
+statement error
+DROP ROLE dat_vedernikoff;
+----
+db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE SELECT ON dat_iceberg FROM dat_vedernikoff;
+
+
+statement ok
+DROP ROLE dat_vedernikoff;
+
+
+# ---- INSERT ----
+statement ok
+CREATE ROLE dat_vedernikoff;
+
+
+statement ok
+GRANT INSERT ON dat_iceberg TO dat_vedernikoff;
+
+
+statement error
+DROP ROLE dat_vedernikoff;
+----
+db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE INSERT ON dat_iceberg FROM dat_vedernikoff;
+
+
+statement ok
+DROP ROLE dat_vedernikoff;
+
+
+# ---- UPDATE ----
+statement ok
+CREATE ROLE dat_vedernikoff;
+
+
+statement ok
+GRANT UPDATE ON dat_iceberg TO dat_vedernikoff;
+
+
+statement error
+DROP ROLE dat_vedernikoff;
+----
+db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE UPDATE ON dat_iceberg FROM dat_vedernikoff;
+
+
+statement ok
+DROP ROLE dat_vedernikoff;
+
+
+# ---- DELETE ----
+statement ok
+CREATE ROLE dat_vedernikoff;
+
+
+statement ok
+GRANT DELETE ON dat_iceberg TO dat_vedernikoff;
+
+
+statement error
+DROP ROLE dat_vedernikoff;
+----
+db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE DELETE ON dat_iceberg FROM dat_vedernikoff;
+
+
+statement ok
+DROP ROLE dat_vedernikoff;
+
+
+# ---- TRUNCATE ----
+statement ok
+CREATE ROLE dat_vedernikoff;
+
+
+statement ok
+GRANT TRUNCATE ON dat_iceberg TO dat_vedernikoff;
+
+
+statement error
+DROP ROLE dat_vedernikoff;
+----
+db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE TRUNCATE ON dat_iceberg FROM dat_vedernikoff;
+
+
+statement ok
+DROP ROLE dat_vedernikoff;
+
+
+# ---- REFERENCES ----
+statement ok
+CREATE ROLE dat_vedernikoff;
+
+
+statement ok
+GRANT REFERENCES ON dat_iceberg TO dat_vedernikoff;
+
+
+statement error
+DROP ROLE dat_vedernikoff;
+----
+db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE REFERENCES ON dat_iceberg FROM dat_vedernikoff;
+
+
+statement ok
+DROP ROLE dat_vedernikoff;
+
+
+# ---- TRIGGER ----
+statement ok
+CREATE ROLE dat_vedernikoff;
+
+
+statement ok
+GRANT TRIGGER ON dat_iceberg TO dat_vedernikoff;
+
+
+statement error
+DROP ROLE dat_vedernikoff;
+----
+db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE TRIGGER ON dat_iceberg FROM dat_vedernikoff;
+
+
+statement ok
+DROP ROLE dat_vedernikoff;
+
+
+# ---- ALL: one grant of every privilege, REVOKE ALL frees it ----
+statement ok
+CREATE ROLE dat_vedernikoff;
+
+
+statement ok
+GRANT ALL ON dat_iceberg TO dat_vedernikoff;
+
+
+statement error
+DROP ROLE dat_vedernikoff;
+----
+db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE ALL ON dat_iceberg FROM dat_vedernikoff;
+
+
+statement ok
+DROP ROLE dat_vedernikoff;
+
+
+# ---- WITH GRANT OPTION: still just one dependency; plain REVOKE frees it ----
+statement ok
+CREATE ROLE dat_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON dat_iceberg TO dat_vedernikoff WITH GRANT OPTION;
+
+
+statement error
+DROP ROLE dat_vedernikoff;
+----
+db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE SELECT ON dat_iceberg FROM dat_vedernikoff;
+
+
+statement ok
+DROP ROLE dat_vedernikoff;
+
+
+# ---- Multiple privileges: a PARTIAL revoke still leaves a dependency ----
+statement ok
+CREATE ROLE dat_vedernikoff;
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE ON dat_iceberg TO dat_vedernikoff;
+
+
+statement error
+DROP ROLE dat_vedernikoff;
+----
+db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Revoke just SELECT -- INSERT and UPDATE remain, so still refused.
+statement ok
+REVOKE SELECT ON dat_iceberg FROM dat_vedernikoff;
+
+
+statement error
+DROP ROLE dat_vedernikoff;
+----
+db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Revoke INSERT too -- UPDATE still remains, still refused.
+statement ok
+REVOKE INSERT ON dat_iceberg FROM dat_vedernikoff;
+
+
+statement error
+DROP ROLE dat_vedernikoff;
+----
+db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# REVOKE ALL sweeps the remaining UPDATE -- now the drop succeeds.
+statement ok
+REVOKE ALL ON dat_iceberg FROM dat_vedernikoff;
+
+
+statement ok
+DROP ROLE dat_vedernikoff;
+
+
+# ---- Multiple privileges revoked in a single statement frees the role ----
+statement ok
+CREATE ROLE dat_kostya;
+
+
+statement ok
+GRANT SELECT, INSERT ON dat_iceberg TO dat_kostya;
+
+
+statement error
+DROP ROLE dat_kostya;
+----
+db error: ERROR: role "dat_kostya" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE SELECT, INSERT ON dat_iceberg FROM dat_kostya;
+
+
+statement ok
+DROP ROLE dat_kostya;
+
+
+# ---- Two distinct grantees: each is an independent dependency ----
+statement ok
+CREATE ROLE dat_vedernikoff;
+
+
+statement ok
+CREATE ROLE dat_clickclack;
+
+
+statement ok
+GRANT SELECT ON dat_iceberg TO dat_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON dat_iceberg TO dat_clickclack;
+
+
+statement error
+DROP ROLE dat_vedernikoff;
+----
+db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Revoking vedernikoff's grant frees only vedernikoff.
+statement ok
+REVOKE SELECT ON dat_iceberg FROM dat_vedernikoff;
+
+
+statement ok
+DROP ROLE dat_vedernikoff;
+
+
+# clickclack's grant is untouched, so clickclack is still refused.
+statement error
+DROP ROLE dat_clickclack;
+----
+db error: ERROR: role "dat_clickclack" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE SELECT ON dat_iceberg FROM dat_clickclack;
+
+
+statement ok
+DROP ROLE dat_clickclack;
+
+
+# ---- GRANT to PUBLIC is not a dependency on any particular role ----
+statement ok
+CREATE ROLE dat_babsky;
+
+
+statement ok
+GRANT SELECT ON dat_iceberg TO PUBLIC;
+
+
+# babsky holds no grant of its own, so it drops cleanly despite the PUBLIC grant.
+statement ok
+DROP ROLE dat_babsky;
+
+
+statement ok
+REVOKE SELECT ON dat_iceberg FROM PUBLIC;
+
+
+# ---- Removing the dependency object-side: DROP TABLE frees the grantee ----
+statement ok
+CREATE ROLE dat_kostya;
+
+
+statement ok
+GRANT INSERT ON dat_iceberg TO dat_kostya;
+
+
+statement error
+DROP ROLE dat_kostya;
+----
+db error: ERROR: role "dat_kostya" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Dropping the table drops the ACL with it, removing the dependency.
+statement ok
+DROP TABLE dat_iceberg;
+
+
+statement ok
+DROP ROLE dat_kostya;
+
+
+# ---- Cleanup ----
+statement ok
+DROP TABLE IF EXISTS dat_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS dat_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS dat_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS dat_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS dat_babsky;

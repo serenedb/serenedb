@@ -245,8 +245,9 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       auto col_name = col_ref.GetColumnName();
       const auto* cat_col = resolve_column(col_name);
       if (!cat_col) {
-        throw duckdb::CatalogException("column \"%s\" not found in table",
-                                       col_name);
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+          ERR_MSG("column \"", col_name, "\" not found in table"));
       }
       idx_columns.emplace_back(catalog::CreateIndexColumn{
         .catalog_column = cat_col,
@@ -266,8 +267,10 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     std::string serialized = SerializeBoundExpression(*normalized);
     auto dependent_columns = CollectDependentColumns(*normalized);
     if (dependent_columns.empty()) {
-      throw duckdb::CatalogException(
-        "indexed expression must reference at least one base table column");
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_TABLE_DEFINITION),
+        ERR_MSG(
+          "indexed expression must reference at least one base table column"));
     }
     auto return_type = normalized->GetReturnType();
     auto& indexed_column = idx_columns.emplace_back(
@@ -335,8 +338,9 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     return state;
   }
   if (!create_result.ok()) {
-    throw duckdb::CatalogException("Failed to create index: %s",
-                                   create_result.errorMessage());
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INTERNAL_ERROR),
+      ERR_MSG("Failed to create index: ", create_result.errorMessage()));
   }
 
   state->created = true;

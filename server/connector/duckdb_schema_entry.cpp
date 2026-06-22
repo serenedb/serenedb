@@ -40,6 +40,7 @@
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
 
+#include "auth/privilege.h"
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
 #include "catalog/catalog.h"
@@ -291,8 +292,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
                 return col.GetName() == col_name;
               });
               if (it == options.columns.end()) {
-                throw duckdb::CatalogException(
-                  "column \"%s\" named in key does not exist", col_name);
+                THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                                ERR_MSG("column \"", col_name,
+                                        "\" named in key does not exist"));
               }
               cols.push_back(it->GetId());
             }
@@ -310,8 +312,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
               return col.GetName() == pk_name;
             });
             if (it == options.columns.end()) {
-              throw duckdb::CatalogException(
-                "column \"%s\" named in key does not exist", pk_name);
+              THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                              ERR_MSG("column \"", pk_name,
+                                      "\" named in key does not exist"));
             }
             append_pk(it->GetId());
           }
@@ -346,8 +349,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
             return col.GetName() == col_name;
           });
           if (it == options.columns.end()) {
-            throw duckdb::CatalogException(
-              "column \"%s\" named in foreign key does not exist", col_name);
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                            ERR_MSG("column \"", col_name,
+                                    "\" named in foreign key does not exist"));
           }
           out.columns.push_back(it->GetId());
         }
@@ -368,20 +372,32 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
             fk.info.schema.empty() ? name : fk.info.schema, fk.info.table);
           if (!referenced ||
               referenced->GetType() != catalog::ObjectType::Table) {
-            throw duckdb::CatalogException(
-              "referenced table \"%s\" does not exist", fk.info.table);
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                            ERR_MSG("referenced table \"", fk.info.table,
+                                    "\" does not exist"));
           }
           auto& ref_table = basics::downCast<catalog::Table>(*referenced);
           out.referenced_table = ref_table.GetId();
+          std::vector<const catalog::Column*> ref_cols;
           for (auto& col_name : fk.pk_columns) {
             auto it = absl::c_find_if(
               ref_table.Columns(),
               [&](const auto& col) { return col.GetName() == col_name; });
             if (it == ref_table.Columns().end()) {
-              throw duckdb::CatalogException(
-                "column \"%s\" named in foreign key does not exist", col_name);
+              THROW_SQL_ERROR(
+                ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                ERR_MSG("column \"", col_name,
+                        "\" named in foreign key does not exist"));
             }
             out.referenced_columns.push_back(it->GetId());
+            ref_cols.push_back(&*it);
+          }
+          if (!auth::HasColumnPrivilege(*snapshot, conn_ctx.GetRoleId(),
+                                        ref_table, catalog::AclMode::References,
+                                        ref_cols)) {
+            THROW_SQL_ERROR(
+              ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+              ERR_MSG("permission denied for table ", ref_table.GetName()));
           }
         }
         options.foreign_keys.push_back(std::move(out));
@@ -410,8 +426,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     if (if_not_exists) {
       return nullptr;
     }
-    throw duckdb::CatalogException("relation \"%s\" already exists",
-                                   table_info.table);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+      ERR_MSG("relation \"", table_info.table, "\" already exists"));
   }
   if (!r.ok()) {
     SDB_THROW(std::move(r));
@@ -466,13 +483,15 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
         }
       }
       if (!cat_col) {
-        throw duckdb::CatalogException("column \"%s\" not found in table",
-                                       col_name);
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+          ERR_MSG("column \"", col_name, "\" not found in table"));
       }
       idx_columns.emplace_back(cat_col, cat_col->GetName());
     } else {
-      throw duckdb::CatalogException(
-        "Expression-based index columns are not supported");
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("Expression-based index columns are not supported"));
     }
   }
 
@@ -524,8 +543,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
     if (if_not_exists) {
       return nullptr;
     }
-    throw duckdb::CatalogException("relation \"%s\" already exists",
-                                   info.index_name);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+      ERR_MSG("relation \"", info.index_name, "\" already exists"));
   }
   if (!create_result.ok()) {
     SDB_THROW(std::move(create_result));
@@ -589,8 +609,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
       }
       if (!replace) {
         // Plain CREATE FUNCTION: duplicate signature is an error.
-        throw duckdb::CatalogException(
-          "function \"%s\" already exists with same argument types", info.name);
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_FUNCTION),
+                        ERR_MSG("function \"", info.name,
+                                "\" already exists with same argument types"));
       }
       // CREATE OR REPLACE: swap in the new overload.
       *existing_overload = new_macro->Copy();
@@ -618,7 +639,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
     if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {
       return nullptr;
     }
-    throw duckdb::CatalogException("relation \"%s\" already exists", info.name);
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+                    ERR_MSG("relation \"", info.name, "\" already exists"));
   }
   if (!r.ok()) {
     SDB_THROW(std::move(r));
@@ -649,10 +671,12 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateView(
       return nullptr;
     }
     if (replace) {
-      throw duckdb::CatalogException("\"%s\" is not a view", info.view_name);
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+                      ERR_MSG("\"", info.view_name, "\" is not a view"));
     }
-    throw duckdb::CatalogException("relation \"%s\" already exists",
-                                   info.view_name);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+      ERR_MSG("relation \"", info.view_name, "\" already exists"));
   }
   if (!r.ok()) {
     SDB_THROW(std::move(r));

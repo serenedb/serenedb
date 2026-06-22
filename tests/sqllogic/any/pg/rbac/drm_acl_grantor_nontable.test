@@ -1,0 +1,284 @@
+# DROP ROLE must refuse while a role is the GRANTOR of a privilege, for
+# non-table objects and for column ACLs. drm_grantor covers only table-level
+# grantor; drm_acl_column covers only the column grantee. The grantor of a
+# column / sequence / schema / type grant is recorded as a dependency too, and
+# both the grantor and the dependent grantee are pinned until the grant is torn
+# down.
+#
+# Each grant is built with WITH GRANT OPTION on the grantor then re-granted to
+# the grantee GRANTED BY the grantor (no SET ROLE), matching drm_grantor.
+#
+# Lore: vedernikoff is the grantor; clickclack is the dependent grantee.
+
+
+# ---- Idempotent setup: tear down every fixture first. ----
+
+statement ok
+DROP TABLE IF EXISTS dag_iceberg CASCADE;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS dag_seq CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS dag_sch CASCADE;
+
+
+statement ok
+DROP TYPE IF EXISTS dag_ty CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS dag_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS dag_clickclack;
+
+
+statement ok
+CREATE ROLE dag_vedernikoff;
+
+
+statement ok
+CREATE ROLE dag_clickclack;
+
+
+# =====================================================================
+# Case 1: COLUMN grant grantor. The grantor of a column privilege is a
+# dependency; so is the dependent grantee. REVOKE ALL (col) ... CASCADE
+# tears down both grants and frees both roles.
+# =====================================================================
+
+statement ok
+CREATE TABLE dag_iceberg (a int, b int);
+
+
+statement ok
+GRANT SELECT (a) ON dag_iceberg TO dag_vedernikoff WITH GRANT OPTION;
+
+
+statement ok
+GRANT SELECT (a) ON dag_iceberg TO dag_clickclack GRANTED BY dag_vedernikoff;
+
+
+# The column ACL records the grantee=read-from-grantor edge.
+query
+SELECT attacl IS NOT NULL FROM pg_attribute WHERE attrelid = 'dag_iceberg'::regclass AND attname = 'a';
+----
+?column?
+t
+
+
+# The grantor cannot be dropped while it is the grantor of the column grant.
+statement error
+DROP ROLE dag_vedernikoff;
+----
+db error: ERROR: role "dag_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# The dependent grantee is independently pinned by the same ACL row.
+statement error
+DROP ROLE dag_clickclack;
+----
+db error: ERROR: role "dag_clickclack" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Tear down the whole column ACL (the grantor's base grant AND the dependent
+# grant) with REVOKE ALL ... CASCADE; both roles then drop.
+statement ok
+REVOKE ALL (a) ON dag_iceberg FROM dag_vedernikoff CASCADE;
+
+
+statement ok
+DROP ROLE dag_vedernikoff;
+
+
+statement ok
+DROP ROLE dag_clickclack;
+
+
+statement ok
+DROP TABLE dag_iceberg;
+
+
+# =====================================================================
+# Case 2: SEQUENCE grant grantor.
+# =====================================================================
+
+statement ok
+CREATE ROLE dag_vedernikoff;
+
+
+statement ok
+CREATE ROLE dag_clickclack;
+
+
+statement ok
+CREATE SEQUENCE dag_seq;
+
+
+statement ok
+GRANT USAGE ON SEQUENCE dag_seq TO dag_vedernikoff WITH GRANT OPTION;
+
+
+statement ok
+GRANT USAGE ON SEQUENCE dag_seq TO dag_clickclack GRANTED BY dag_vedernikoff;
+
+
+statement error
+DROP ROLE dag_vedernikoff;
+----
+db error: ERROR: role "dag_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE USAGE ON SEQUENCE dag_seq FROM dag_vedernikoff CASCADE;
+
+
+statement ok
+DROP ROLE dag_vedernikoff;
+
+
+statement ok
+DROP ROLE dag_clickclack;
+
+
+statement ok
+DROP SEQUENCE dag_seq;
+
+
+# =====================================================================
+# Case 3: SCHEMA grant grantor.
+# =====================================================================
+
+statement ok
+CREATE ROLE dag_vedernikoff;
+
+
+statement ok
+CREATE ROLE dag_clickclack;
+
+
+statement ok
+CREATE SCHEMA dag_sch;
+
+
+statement ok
+GRANT USAGE ON SCHEMA dag_sch TO dag_vedernikoff WITH GRANT OPTION;
+
+
+statement ok
+GRANT USAGE ON SCHEMA dag_sch TO dag_clickclack GRANTED BY dag_vedernikoff;
+
+
+statement error
+DROP ROLE dag_vedernikoff;
+----
+db error: ERROR: role "dag_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE USAGE ON SCHEMA dag_sch FROM dag_vedernikoff CASCADE;
+
+
+statement ok
+DROP ROLE dag_vedernikoff;
+
+
+statement ok
+DROP ROLE dag_clickclack;
+
+
+statement ok
+DROP SCHEMA dag_sch;
+
+
+# =====================================================================
+# Case 4: TYPE grant grantor.
+# =====================================================================
+
+statement ok
+CREATE ROLE dag_vedernikoff;
+
+
+statement ok
+CREATE ROLE dag_clickclack;
+
+
+statement ok
+CREATE TYPE dag_ty AS (a int);
+
+
+statement ok
+GRANT USAGE ON TYPE dag_ty TO dag_vedernikoff WITH GRANT OPTION;
+
+
+statement ok
+GRANT USAGE ON TYPE dag_ty TO dag_clickclack GRANTED BY dag_vedernikoff;
+
+
+statement error
+DROP ROLE dag_vedernikoff;
+----
+db error: ERROR: role "dag_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE USAGE ON TYPE dag_ty FROM dag_vedernikoff CASCADE;
+
+
+statement ok
+DROP ROLE dag_vedernikoff;
+
+
+statement ok
+DROP ROLE dag_clickclack;
+
+
+statement ok
+DROP TYPE dag_ty;
+
+
+# =====================================================================
+# Case 5: dropping the object the grant lives on removes the whole ACL,
+# so the grantor role becomes droppable without an explicit REVOKE.
+# =====================================================================
+
+statement ok
+CREATE ROLE dag_vedernikoff;
+
+
+statement ok
+CREATE ROLE dag_clickclack;
+
+
+statement ok
+CREATE SEQUENCE dag_seq;
+
+
+statement ok
+GRANT USAGE ON SEQUENCE dag_seq TO dag_vedernikoff WITH GRANT OPTION;
+
+
+statement ok
+GRANT USAGE ON SEQUENCE dag_seq TO dag_clickclack GRANTED BY dag_vedernikoff;
+
+
+statement error
+DROP ROLE dag_vedernikoff;
+----
+db error: ERROR: role "dag_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+DROP SEQUENCE dag_seq;
+
+
+statement ok
+DROP ROLE dag_vedernikoff;
+
+
+statement ok
+DROP ROLE dag_clickclack;

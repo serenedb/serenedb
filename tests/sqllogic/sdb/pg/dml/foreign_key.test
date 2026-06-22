@@ -137,3 +137,26 @@ id	parent
 
 statement ok
 DROP TABLE fk_self;
+
+# A FOREIGN KEY may reference a UNIQUE (non-PK) column, not only the PRIMARY KEY
+# (matches PG and native duckdb).
+statement ok
+CREATE TABLE fk_u_parent (id INTEGER UNIQUE, j VARCHAR);
+
+statement ok
+INSERT INTO fk_u_parent VALUES (1, 'a');
+
+statement ok
+CREATE TABLE fk_u_child (id INTEGER PRIMARY KEY, pid INTEGER, FOREIGN KEY (pid) REFERENCES fk_u_parent (id));
+
+statement error
+INSERT INTO fk_u_child VALUES (10, 999);
+
+statement ok
+INSERT INTO fk_u_child VALUES (11, 1);
+
+statement ok
+DROP TABLE fk_u_child;
+
+statement ok
+DROP TABLE fk_u_parent;

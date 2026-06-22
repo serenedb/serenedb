@@ -245,6 +245,26 @@ TableInfoAndIndices BuildTableInfoAndIndices(
       duckdb::make_uniq<duckdb::UniqueConstraint>(std::move(pk_names), true));
   }
 
+  // Non-PK UNIQUE constraints -- surface them so the binder can resolve a
+  // FOREIGN KEY that references a UNIQUE (non-PK) column and ON CONFLICT can
+  // target it, matching a native duckdb table.
+  for (const auto& unique_col_ids : table.UniqueConstraints()) {
+    duckdb::vector<duckdb::string> unique_names;
+    for (auto uid : unique_col_ids) {
+      for (const auto& col : table.Columns()) {
+        if (col.GetId() == uid) {
+          unique_names.emplace_back(col.GetName());
+          break;
+        }
+      }
+    }
+    if (!unique_names.empty()) {
+      out.info->constraints.push_back(
+        duckdb::make_uniq<duckdb::UniqueConstraint>(std::move(unique_names),
+                                                    false));
+    }
+  }
+
   // CHECK and NOT NULL constraints.
   for (const auto& check : table.CheckConstraints()) {
     if (auto idx = check.IsNotNull(table.Columns())) {

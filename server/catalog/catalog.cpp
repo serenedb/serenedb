@@ -3132,21 +3132,35 @@ Result Catalog::DropIndex(std::string_view database, std::string_view schema,
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
 
+  return DropIndexByIdLocked(*database_id, *index_id, cascade);
+}
+
+Result Catalog::DropIndexById(ObjectId database_id, ObjectId index_id,
+                              bool cascade) {
+  absl::MutexLock lock{&_mutex};
+  return DropIndexByIdLocked(database_id, index_id, cascade);
+}
+
+Result Catalog::DropIndexByIdLocked(ObjectId database_id, ObjectId index_id,
+                                    bool cascade) {
   return Apply(
     _snapshot, _snapshot_mutex, [&](std::shared_ptr<Snapshot>& clone) {
       SDB_ASSERT(clone);
-      auto obj = clone->GetObject(*index_id);
-      SDB_ASSERT(obj);
+      auto obj = clone->GetObject(index_id);
+      if (!obj) {
+        return Result{ERROR_SERVER_ILLEGAL_NAME};
+      }
       if (!IsIndex(obj->GetType())) {
         return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
                       pg::ToPgObjectTypeName(obj->GetType())};
       }
       auto index = basics::downCast<Index>(std::move(obj));
+      const auto schema_id = index->GetParentId();
       // Store-side index drop is synchronous: UNIQUE enforcement must stop
       // when DROP INDEX commits, not when the async sweep runs.
       if (auto r = _engine->Write([&](auto& ctx) {
-            ctx.WriteTombstone(index->GetRelationId(), *index_id);
-            ctx.DropStoreIndex(*index_id);
+            ctx.WriteTombstone(index->GetRelationId(), index_id);
+            ctx.DropStoreIndex(index_id);
           });
           !r.ok()) {
         return r;
@@ -3155,9 +3169,9 @@ Result Catalog::DropIndex(std::string_view database, std::string_view schema,
       // Check that SereneDB won't open this index after reboot
       SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
 
-      auto task = clone->CreateIndexDrop(*database_id, *schema_id,
+      auto task = clone->CreateIndexDrop(database_id, schema_id,
                                          index->GetRelationId(), index, true);
-      clone->UnregisterObject(index, *schema_id);
+      clone->UnregisterObject(index, schema_id);
       DropTask::Schedule(std::move(task)).Detach();
       return Result{};
     });

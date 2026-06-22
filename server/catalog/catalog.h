@@ -434,6 +434,10 @@ class Catalog final {
                    std::string_view name, bool cascade);
   Result DropIndex(std::string_view database, std::string_view schema,
                    std::string_view name, bool cascade);
+  // Drop an index by its stable ObjectId rather than by name. Used by the
+  // CREATE INDEX failure path, where a concurrent rename could otherwise make a
+  // by-name lookup resolve to (and drop) the wrong index.
+  Result DropIndexById(ObjectId database_id, ObjectId index_id, bool cascade);
   Result DropTableColumn(ObjectId database_id, std::string_view schema,
                          std::string_view table, std::string_view column,
                          bool if_exists);
@@ -451,6 +455,10 @@ class Catalog final {
  private:
   Result CreateIndexImpl(std::string_view schema, std::shared_ptr<Index> index,
                          CreateIndexOperationOptions operation_options);
+
+  // Shared core of DropIndex / DropIndexById; assumes `_mutex` is held.
+  Result DropIndexByIdLocked(ObjectId database_id, ObjectId index_id,
+                             bool cascade);
 
   template<typename T>
   Result RenameObjectImpl(ObjectId database_id, std::string_view schema,

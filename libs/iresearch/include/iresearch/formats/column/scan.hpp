@@ -68,7 +68,12 @@ struct MaterializeState {
   struct ExtractLeafSlot {
     const ColumnReader* leaf = nullptr;
     std::unique_ptr<MaterializeState> state;
-    bool resolved = false;
+
+    bool IsResolved() const noexcept { return leaf != nullptr; }
+
+    bool IsValid() const noexcept {
+      return static_cast<bool>(leaf) == static_cast<bool>(state);
+    }
   };
 
   ColumnReader::RangeScan data_scan;
@@ -343,7 +348,8 @@ void MaterializeVariantExtractNode(
     reader, state, doc_ids, [&](const VariantRgSlice& slice) {
       auto& slot = EnsureExtractLeaf(state, slice.rg_index, slice.rg_reader,
                                      path, rg_count);
-      if (slot.leaf != nullptr) {
+      SDB_ASSERT(slot.IsValid());
+      if (slot.IsResolved()) {
         MaterializeExtractLeaf(
           *slot.leaf, *slot.state, IotaRange{slice.rg_offset, slice.count},
           scan_type, out_vec, output_start + slice.out_offset, context);

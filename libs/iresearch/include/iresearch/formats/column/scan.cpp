@@ -149,14 +149,14 @@ MaterializeState::ExtractLeafSlot& EnsureExtractLeaf(
     state.extract_leaf_slots.resize(rg_count);
   }
   auto& slot = state.extract_leaf_slots[rg];
-  if (!slot.resolved) {
-    slot.resolved = true;
+  if (!slot.IsResolved()) {
     if (rg_reader.shred_state != VariantShredState::Unshredded) {
       slot.leaf = ResolveShreddedLeaf(*rg_reader.shredded, path);
     }
     if (slot.leaf != nullptr) {
       slot.state = MakeMaterializeState(*slot.leaf, *state.ctx);
     }
+    SDB_ASSERT(slot.IsValid());
   }
   return slot;
 }

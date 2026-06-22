@@ -25,6 +25,7 @@
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/types/vector_cache.hpp>
+#include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/storage/data_pointer.hpp>
 
 #include "iresearch/types.hpp"
@@ -42,7 +43,13 @@ struct FooterColumnEntry;
 
 struct Chunk {
   duckdb::Vector data;
-  size_t count;
+
+  Chunk(duckdb::Vector data, size_t count) : data{std::move(data)} {
+    SetCount(count);
+  }
+
+  size_t Count() const { return data.size(); }
+  void SetCount(size_t count) { duckdb::FlatVector::SetSize(data, count); }
 };
 
 class ColumnWriter final {
@@ -64,8 +71,9 @@ class ColumnWriter final {
   void PushInStaging(uint64_t row, Fill&& fill) {
     PadNullsTo(row);
     auto& back = OpenChunk();
-    fill(back.data, back.count);
-    ++back.count;
+    const auto n = back.Count();
+    fill(back.data, n);
+    back.SetCount(n + 1);
     ++_data_ctx.filled;
     MaybeFlushRowGroup();
   }

@@ -93,7 +93,7 @@ void ColumnWriter::PadNullsTo(uint64_t target_row) {
   while (gap > 0) {
     auto& chunk = OpenChunk();
     const duckdb::idx_t room =
-      duckdb::FlatVector::GetCapacity(chunk.data) - chunk.count;
+      duckdb::FlatVector::GetCapacity(chunk.data) - chunk.Count();
     const duckdb::idx_t to_boundary =
       static_cast<duckdb::idx_t>(_row_group_size - _data_ctx.filled);
     const auto take = static_cast<duckdb::idx_t>(
@@ -101,9 +101,9 @@ void ColumnWriter::PadNullsTo(uint64_t target_row) {
     auto& validity = duckdb::FlatVector::ValidityMutable(chunk.data);
     validity.EnsureWritable();
     for (duckdb::idx_t i = 0; i < take; ++i) {
-      validity.SetInvalid(chunk.count + i);
+      validity.SetInvalid(chunk.Count() + i);
     }
-    chunk.count += take;
+    chunk.SetCount(chunk.Count() + take);
     _data_ctx.filled += take;
     gap -= take;
     MaybeFlushRowGroup();
@@ -122,13 +122,13 @@ void ColumnWriter::Append(uint64_t start_row, const duckdb::Vector& vec,
   while (src < count) {
     auto& chunk = OpenChunk();
     const duckdb::idx_t room =
-      duckdb::FlatVector::GetCapacity(chunk.data) - chunk.count;
+      duckdb::FlatVector::GetCapacity(chunk.data) - chunk.Count();
     const duckdb::idx_t to_boundary = _row_group_size - _data_ctx.filled;
     const duckdb::idx_t take =
       std::min(count - src, std::min<duckdb::idx_t>(room, to_boundary));
     duckdb::VectorOperations::Copy(vec, chunk.data, src + take, src,
-                                   chunk.count);
-    chunk.count += take;
+                                   chunk.Count());
+    chunk.SetCount(chunk.Count() + take);
     _data_ctx.filled += take;
     src += take;
     MaybeFlushRowGroup();
@@ -148,13 +148,13 @@ void ColumnWriter::Append(uint64_t start_row, const duckdb::Vector& vec,
   while (src < count) {
     auto& chunk = OpenChunk();
     const duckdb::idx_t room =
-      duckdb::FlatVector::GetCapacity(chunk.data) - chunk.count;
+      duckdb::FlatVector::GetCapacity(chunk.data) - chunk.Count();
     const duckdb::idx_t to_boundary = _row_group_size - _data_ctx.filled;
     const duckdb::idx_t take =
       std::min(count - src, std::min<duckdb::idx_t>(room, to_boundary));
     duckdb::VectorOperations::Copy(vec, chunk.data, sel, src + take, src,
-                                   chunk.count);
-    chunk.count += take;
+                                   chunk.Count());
+    chunk.SetCount(chunk.Count() + take);
     _data_ctx.filled += take;
     src += take;
     MaybeFlushRowGroup();
@@ -242,8 +242,7 @@ PickedCodec PickCodec(WriteContext& write_ctx,
   }
 
   for (auto& chunk : chunks) {
-    SDB_ASSERT(chunk.count <= STANDARD_VECTOR_SIZE);
-    duckdb::FlatVector::SetSize(chunk.data, chunk.count);
+    SDB_ASSERT(chunk.Count() <= STANDARD_VECTOR_SIZE);
     for (size_t i = 0; i < candidates.size(); ++i) {
       if (states[i] && !candidates[i].get().analyze(*states[i], chunk.data)) {
         states[i].reset();
@@ -286,9 +285,8 @@ void CompressColumn(WriteContext& write_ctx,
   if (codec_type.id() == duckdb::LogicalTypeId::VALIDITY) {
     uint64_t valid = 0;
     for (auto& chunk : chunks) {
-      duckdb::UnifiedVectorFormat fmt;
-      chunk.data.ToUnifiedFormat(chunk.count, fmt);
-      valid += fmt.validity.CountValid(chunk.count);
+      valid +=
+        duckdb::FlatVector::Validity(chunk.data).CountValid(chunk.Count());
     }
     if (valid == row_count) {
       duckdb::DataPointer dp{duckdb::BaseStatistics::CreateEmpty(codec_type)};
@@ -367,8 +365,7 @@ void CompressColumn(WriteContext& write_ctx,
     picked.function->init_compression(ckp, std::move(picked.state));
 
   for (auto& chunk : chunks) {
-    SDB_ASSERT(chunk.count <= STANDARD_VECTOR_SIZE);
-    duckdb::FlatVector::SetSize(chunk.data, chunk.count);
+    SDB_ASSERT(chunk.Count() <= STANDARD_VECTOR_SIZE);
     picked.function->compress(*comp_state, chunk.data);
   }
   picked.function->compress_finalize(*comp_state);
@@ -382,12 +379,11 @@ bool VariantShreddingEnabled(int64_t minimum_size, uint64_t row_count) {
 }
 
 bool NoSpilledRows(duckdb::Vector& untyped_value_index, uint64_t row_count) {
-  duckdb::UnifiedVectorFormat fmt;
-  untyped_value_index.ToUnifiedFormat(row_count, fmt);
-  const auto* indices = duckdb::UnifiedVectorFormat::GetData<uint32_t>(fmt);
+  const auto* indices =
+    duckdb::FlatVector::GetData<uint32_t>(untyped_value_index);
+  const auto& validity = duckdb::FlatVector::Validity(untyped_value_index);
   for (uint64_t row = 0; row < row_count; ++row) {
-    const auto idx = fmt.sel->get_index(row);
-    if (fmt.validity.RowIsValid(idx) && indices[idx] > 0) {
+    if (validity.RowIsValid(row) && indices[row] > 0) {
       return false;
     }
   }
@@ -396,7 +392,7 @@ bool NoSpilledRows(duckdb::Vector& untyped_value_index, uint64_t row_count) {
 
 bool NoSpilledRows(ChunkSpan chunks) {
   for (auto& chunk : chunks) {
-    if (!NoSpilledRows(chunk.data, chunk.count)) {
+    if (!NoSpilledRows(chunk.data, chunk.Count())) {
       return false;
     }
   }
@@ -425,7 +421,7 @@ std::vector<Chunk> StructChildChunks(ChunkSpan chunks, size_t child_index) {
   out.reserve(chunks.size());
   for (auto& chunk : chunks) {
     auto& entries = duckdb::StructVector::GetEntries(chunk.data);
-    out.emplace_back(duckdb::Vector::Ref(entries[child_index]), chunk.count);
+    out.emplace_back(duckdb::Vector::Ref(entries[child_index]), chunk.Count());
   }
   return out;
 }
@@ -486,7 +482,7 @@ void FlushNode(WriteContext& write_ctx, const duckdb::LogicalType& type,
       for (auto& chunk : chunks) {
         PushSlicedChunks(child_chunks,
                          duckdb::ArrayVector::GetChildMutable(chunk.data),
-                         chunk.count * array_size);
+                         chunk.Count() * array_size);
       }
       FlushNode(write_ctx, duckdb::ArrayType::GetChildType(type), child_chunks,
                 row_count * array_size, row_start * array_size,
@@ -510,7 +506,7 @@ void FlushNode(WriteContext& write_ctx, const duckdb::LogicalType& type,
           duckdb::FlatVector::GetData<duckdb::list_entry_t>(chunk.data);
         const auto& parent_validity = duckdb::FlatVector::Validity(chunk.data);
         uint64_t chunk_elems = 0;
-        for (duckdb::idx_t i = 0; i < chunk.count; ++i) {
+        for (duckdb::idx_t i = 0; i < chunk.Count(); ++i) {
           if (parent_validity.RowIsValid(i)) {
             running += entries[i].length;
             chunk_elems += entries[i].length;
@@ -559,7 +555,7 @@ void FlushNode(WriteContext& write_ctx, const duckdb::LogicalType& type,
         } else {
           duckdb::VariantShreddingStats stats;
           for (auto& chunk : chunks) {
-            stats.Update(chunk.data, chunk.count);
+            stats.Update(chunk.data, chunk.Count());
           }
           shredded_type = stats.GetShreddedType();
         }
@@ -591,18 +587,17 @@ void FlushNode(WriteContext& write_ctx, const duckdb::LogicalType& type,
       uint64_t unshredded_valid = 0;
       for (auto& chunk : chunks) {
         auto& shredded_out =
-          shredded_hold.emplace_back(shredded_type, chunk.count);
+          shredded_hold.emplace_back(shredded_type, chunk.Count());
         duckdb::VariantColumnData::ShredVariantData(chunk.data, shredded_out,
-                                                    chunk.count);
+                                                    chunk.Count());
         auto& shred_entries = duckdb::StructVector::GetEntries(shredded_out);
         SDB_ASSERT(shred_entries.size() == 2);
-        duckdb::UnifiedVectorFormat unshredded_fmt;
-        shred_entries[0].ToUnifiedFormat(chunk.count, unshredded_fmt);
-        unshredded_valid += unshredded_fmt.validity.CountValid(chunk.count);
+        unshredded_valid += duckdb::FlatVector::Validity(shred_entries[0])
+                              .CountValid(chunk.Count());
         unshredded_chunks.emplace_back(duckdb::Vector::Ref(shred_entries[0]),
-                                       chunk.count);
+                                       chunk.Count());
         shredded_chunks.emplace_back(duckdb::Vector::Ref(shred_entries[1]),
-                                     chunk.count);
+                                     chunk.Count());
       }
 
       layout.shred_state = unshredded_valid == 0 ? VariantShredState::Full
@@ -656,34 +651,33 @@ void FlushNode(WriteContext& write_ctx, const duckdb::LogicalType& type,
 }  // namespace
 
 Chunk& ColumnWriter::OpenChunk() {
-  auto& dc = _data_ctx;
-  if (dc.used_chunks != 0) {
-    auto& cur = dc.chunks[dc.used_chunks - 1];
+  if (_data_ctx.used_chunks != 0) {
+    auto& cur = _data_ctx.chunks[_data_ctx.used_chunks - 1];
     if (cur.data.GetVectorType() == duckdb::VectorType::FLAT_VECTOR &&
-        cur.count < duckdb::FlatVector::GetCapacity(cur.data)) {
+        cur.Count() < duckdb::FlatVector::GetCapacity(cur.data)) {
       return cur;
     }
   }
-  const size_t cap = dc.next_capacity;
-  dc.next_capacity =
-    std::min<size_t>(dc.next_capacity * 2, STANDARD_VECTOR_SIZE);
-  const size_t idx = dc.used_chunks++;
-  if (idx < dc.chunks.size()) {
-    auto& slot = dc.chunks[idx];
-    if (slot.data.GetVectorType() != duckdb::VectorType::FLAT_VECTOR ||
-        duckdb::FlatVector::GetCapacity(slot.data) != cap) {
+  const size_t cap = _data_ctx.next_capacity;
+  _data_ctx.next_capacity =
+    std::min<size_t>(_data_ctx.next_capacity * 2, STANDARD_VECTOR_SIZE);
+  const size_t idx = _data_ctx.used_chunks++;
+  if (idx < _data_ctx.chunks.size()) {
+    auto& slot = _data_ctx.chunks[idx];
+    if (duckdb::FlatVector::GetCapacity(slot.data) != cap) {
       auto& alloc = duckdb::Allocator::Get(_write_ctx->Database());
-      dc.chunk_caches[idx] = duckdb::VectorCache(alloc, _type, cap);
+      _data_ctx.chunk_caches[idx] = duckdb::VectorCache(alloc, _type, cap);
     }
-    slot.data.ResetFromCache(dc.chunk_caches[idx]);
+    slot.data.ResetFromCache(_data_ctx.chunk_caches[idx]);
     duckdb::FlatVector::ValidityMutable(slot.data).Reset(cap);
-    slot.count = 0;
+    slot.SetCount(0);
     return slot;
   }
   auto& alloc = duckdb::Allocator::Get(_write_ctx->Database());
-  dc.chunk_caches.emplace_back(alloc, _type, cap);
-  dc.chunks.emplace_back(duckdb::Vector(dc.chunk_caches.back()), 0);
-  return dc.chunks.back();
+  _data_ctx.chunk_caches.emplace_back(alloc, _type, cap);
+  _data_ctx.chunks.emplace_back(duckdb::Vector(_data_ctx.chunk_caches.back()),
+                                0);
+  return _data_ctx.chunks.back();
 }
 
 void ColumnWriter::MaybeFlushRowGroup() {
@@ -696,18 +690,13 @@ void ColumnWriter::FlushChunks(uint64_t count) {
   if (_data_ctx.used_chunks == 0) {
     return;
   }
-  std::vector<Chunk> group;
-  group.reserve(_data_ctx.used_chunks);
-  for (size_t k = 0; k < _data_ctx.used_chunks; ++k) {
-    auto& chunk = _data_ctx.chunks[k];
-    group.emplace_back(duckdb::Vector::Ref(chunk.data), chunk.count);
-  }
+  const ChunkSpan group{_data_ctx.chunks.data(), _data_ctx.used_chunks};
 
   if (_hyperloglog) {
+    duckdb::Vector hashes{duckdb::LogicalType::HASH, STANDARD_VECTOR_SIZE};
     for (auto& chunk : group) {
-      duckdb::FlatVector::SetSize(chunk.data, chunk.count);
-      duckdb::Vector hashes{duckdb::LogicalType::HASH, chunk.count};
-      duckdb::VectorOperations::Hash(chunk.data, hashes, chunk.count);
+      duckdb::VectorOperations::Hash(chunk.data, hashes, chunk.Count());
+      duckdb::FlatVector::SetSize(hashes, chunk.Count());
       _entry->root.hyperloglog->Update(chunk.data, hashes);
     }
   }

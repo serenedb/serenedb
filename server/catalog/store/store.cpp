@@ -173,7 +173,7 @@ std::optional<StoreIndexDef> MakeStoreIndexDef(std::string_view database,
     const auto& secondary = basics::downCast<const SecondaryIndex>(index);
     def.unique = secondary.IsUnique();
     auto push_key = [&](std::string rendered) {
-      if (std::ranges::find(def.keys, rendered) == def.keys.end()) {
+      if (!absl::c_contains(def.keys, rendered)) {
         def.keys.push_back(std::move(rendered));
       }
     };
@@ -199,7 +199,7 @@ std::optional<StoreIndexDef> MakeStoreIndexDef(std::string_view database,
       if (!col || !art_indexable(col->type)) {
         return std::nullopt;
       }
-      push_key(QuotedIdent(std::string{col->GetName()}));
+      push_key(QuotedIdent(col->GetName()));
     }
     if (def.keys.empty()) {
       return std::nullopt;

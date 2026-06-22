@@ -38,6 +38,14 @@ constexpr uint64_t kNullMask = MaskFromNulls({
   GetIndex(&PgConstraint::conexclop),
 });
 
+// FOREIGN KEY rows additionally populate confkey (the referenced columns), so
+// clear its NULL bit for them.
+constexpr uint64_t kFkNullMask =
+  kNullMask & ~(uint64_t{1} << GetIndex(&PgConstraint::confkey));
+// FKs carry no stored ObjectId; synthesize a constraint OID. Bit 61 keeps it
+// clear of raw ObjectIds and the bit-62 synthetic PK index OIDs.
+constexpr uint64_t kSyntheticFkBit = uint64_t{1} << 61;
+
 }  // namespace
 
 template<>
@@ -47,6 +55,7 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
   std::vector<PgConstraint> values;
   std::deque<std::string> conname_storage;
   std::vector<std::vector<int16_t>> conkey_storage;
+  std::vector<std::vector<int16_t>> confkey_storage;
 
   for (const auto& schema : catalog->GetSchemas(GetDatabaseId())) {
     for (const auto& table :
@@ -130,13 +139,75 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
           .conkey = conkey_storage.back(),
         });
       }
+
+      // Foreign key constraints (contype 'f'). A native duckdb table surfaces
+      // these in pg_constraint; the facade must too.
+      const auto& fks = table->ForeignKeys();
+      for (size_t fk_idx = 0; fk_idx < fks.size(); ++fk_idx) {
+        const auto& fk = fks[fk_idx];
+        // referenced_table unset == self-referencing -> this table.
+        auto ref_obj = catalog->GetObject<catalog::Table>(fk.referenced_table);
+        const catalog::Table& ref = ref_obj ? *ref_obj : *table;
+
+        std::vector<int16_t> conkey;
+        conkey.reserve(fk.columns.size());
+        std::string first_col;
+        for (auto col_id : fk.columns) {
+          const auto pos = table->ColumnPosById(col_id);
+          if (pos < columns.size()) {
+            conkey.push_back(static_cast<int16_t>(pos + 1));
+            if (first_col.empty()) {
+              first_col = std::string{columns[pos].GetName()};
+            }
+          }
+        }
+        std::vector<int16_t> confkey;
+        confkey.reserve(fk.referenced_columns.size());
+        for (auto col_id : fk.referenced_columns) {
+          const auto pos = ref.ColumnPosById(col_id);
+          if (pos < ref.Columns().size()) {
+            confkey.push_back(static_cast<int16_t>(pos + 1));
+          }
+        }
+
+        conname_storage.push_back(std::string{table->GetName()} + "_" +
+                                  first_col + "_fkey");
+        conkey_storage.push_back(std::move(conkey));
+        confkey_storage.push_back(std::move(confkey));
+        values.push_back({
+          .oid = kSyntheticFkBit | (table->GetId().id() * 256 + fk_idx),
+          .conname = conname_storage.back(),
+          .connamespace = schema->GetId().id(),
+          .contype = PgConstraint::Contype::ForeignKey,
+          .condeferrable = false,
+          .condeferred = false,
+          .conenforced = true,
+          .convalidated = true,
+          .conrelid = table->GetId().id(),
+          .contypid = 0,
+          .conindid = 0,
+          .conparentid = 0,
+          .confrelid = ref.GetId().id(),
+          .confupdtype = PgConstraint::Confchgtype::NoAction,
+          .confdeltype = PgConstraint::Confchgtype::NoAction,
+          .confmatchtype = PgConstraint::Confmatchtype::Simple,
+          .conislocal = true,
+          .coninhcount = 0,
+          .connoinherit = false,
+          .conperiod = false,
+          .conkey = conkey_storage.back(),
+          .confkey = confkey_storage.back(),
+        });
+      }
     }
   }
 
   auto result = CreateColumns<PgConstraint>(values.size());
 
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row);
+    // FK rows carry confkey and so need its NULL bit cleared.
+    const auto mask = values[row].confkey.empty() ? kNullMask : kFkNullMask;
+    WriteData(result, values[row], mask, row);
   }
 
   return {std::move(result), values.size()};

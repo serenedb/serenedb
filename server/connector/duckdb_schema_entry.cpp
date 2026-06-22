@@ -338,7 +338,14 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
       }
       case duckdb::ConstraintType::FOREIGN_KEY: {
         auto& fk = constraint->Cast<duckdb::ForeignKeyConstraint>();
-        if (fk.info.type != duckdb::ForeignKeyType::FK_TYPE_FOREIGN_KEY_TABLE) {
+        // FK_TYPE_PRIMARY_KEY_TABLE is the reciprocal entry on the referenced
+        // table -- skip it (the FK is mirrored from the referencing side). A
+        // self-referencing FK is FK_TYPE_SELF_REFERENCE_TABLE and must be kept,
+        // else it is silently unenforced (the self_reference branch below
+        // builds it).
+        if (fk.info.type != duckdb::ForeignKeyType::FK_TYPE_FOREIGN_KEY_TABLE &&
+            fk.info.type !=
+              duckdb::ForeignKeyType::FK_TYPE_SELF_REFERENCE_TABLE) {
           break;
         }
         catalog::TableForeignKey out;

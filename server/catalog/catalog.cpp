@@ -33,6 +33,7 @@
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/function/scalar_macro_function.hpp>
+#include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
@@ -121,6 +122,40 @@ Result Apply(
     snapshot = std::move(clone_const);
   }
   return {};
+}
+
+// Re-render a stored expression-index `pretty_printed` (valid SQL baked with the
+// column names at CREATE INDEX time) after a RENAME COLUMN: re-parse it and
+// remap only ColumnRefExpression leaves whose trailing name changed. The bound
+// serialized_expr (column-id keyed) is unaffected; only the display text is
+// stale. Returns nullopt on parse failure (caller keeps the old text).
+std::optional<std::string> RerenderPrettyAfterRename(
+  std::string_view pretty,
+  const containers::FlatHashMap<std::string, std::string>& renames) {
+  duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> parsed;
+  try {
+    parsed = duckdb::Parser::ParseExpressionList(std::string{pretty});
+  } catch (const duckdb::ParserException&) {
+    return std::nullopt;
+  }
+  if (parsed.size() != 1 || !parsed[0]) {
+    return std::nullopt;
+  }
+  auto rewrite = [&](this auto& self, duckdb::ParsedExpression& e) -> void {
+    if (e.GetExpressionClass() == duckdb::ExpressionClass::COLUMN_REF) {
+      auto& cref = e.Cast<duckdb::ColumnRefExpression>();
+      if (!cref.column_names.empty()) {
+        auto it = renames.find(cref.column_names.back());
+        if (it != renames.end()) {
+          cref.column_names.back() = it->second;
+        }
+      }
+    }
+    duckdb::ParsedExpressionIterator::EnumerateChildren(
+      e, [&](duckdb::ParsedExpression& child) { self(child); });
+  };
+  rewrite(*parsed[0]);
+  return parsed[0]->ToString();
 }
 
 }  // namespace
@@ -2636,6 +2671,7 @@ Result Catalog::ChangeTable(ObjectId database_id, std::string_view schema,
             return;
           }
           bool renamed_columns = false;
+          containers::FlatHashMap<std::string, std::string> renames;
           for (const auto& old_col : table->Columns()) {
             if (old_col.GetId() == Column::kGeneratedPKId) {
               continue;
@@ -2647,6 +2683,8 @@ Result Catalog::ChangeTable(ObjectId database_id, std::string_view schema,
                 it->GetName() != old_col.GetName()) {
               ctx.RenameStoreColumn(store_name, std::string{old_col.GetName()},
                                     std::string{it->GetName()});
+              renames.emplace(std::string{old_col.GetName()},
+                              std::string{it->GetName()});
               renamed_columns = true;
             }
           }
@@ -2683,6 +2721,42 @@ Result Catalog::ChangeTable(ObjectId database_id, std::string_view schema,
                 auto idx = _snapshot->GetObject<Index>(idx_id);
                 if (!idx) {
                   continue;
+                }
+                // Expression keys bake column NAMES into pretty_printed at
+                // CREATE INDEX time; re-render against the renamed columns so
+                // the store recreate SQL binds, and persist the refreshed text.
+                if (idx->GetType() == ObjectType::SecondaryIndex) {
+                  const auto& sec = basics::downCast<const SecondaryIndex>(*idx);
+                  if (!sec.Expressions().empty()) {
+                    auto exprs = sec.Expressions();
+                    bool changed = false;
+                    for (auto& e : exprs) {
+                      if (auto pretty = RerenderPrettyAfterRename(
+                            e.pretty_printed, renames)) {
+                        if (*pretty != e.pretty_printed) {
+                          e.pretty_printed = std::move(*pretty);
+                          changed = true;
+                        }
+                      }
+                    }
+                    if (changed) {
+                      auto new_idx = std::make_shared<SecondaryIndex>(
+                        sec.GetDatabaseId(), sec.GetParentId(), sec.GetId(),
+                        sec.GetRelationId(), std::string{sec.GetName()},
+                        sec.Columns(), std::move(exprs), sec.IsUnique());
+                      if (auto r = clone->ReplaceObject<ResolveType::Relation>(
+                            *schema_id, new_idx->GetName(), new_idx);
+                          !r.ok()) {
+                        return;
+                      }
+                      duckdb::MemoryStream idx_stream;
+                      ctx.PutDefinition(
+                        new_idx->GetRelationId(), ObjectType::SecondaryIndex,
+                        new_idx->GetId(),
+                        catalog::SerializeObject(*new_idx, idx_stream));
+                      idx = new_idx;
+                    }
+                  }
                 }
                 if (auto def = MakeStoreIndexDef(database->GetName(),
                                                  schema_obj->GetName(),

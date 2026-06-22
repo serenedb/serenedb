@@ -125,3 +125,44 @@ a	b
 
 statement ok
 DROP TABLE babsky_expr_unique;
+
+
+# A single-column expression index must survive RENAME COLUMN of a dependency
+# column -- the store recreate must re-render the stale baked column name.
+statement ok
+CREATE TABLE strugatsky_rename (j INTEGER, k INTEGER);
+
+
+statement ok
+INSERT INTO strugatsky_rename VALUES (1, 10), (2, 20), (3, 30);
+
+
+statement ok
+CREATE INDEX strugatsky_rename_sum_idx ON strugatsky_rename ((j + k));
+
+
+statement ok
+ALTER TABLE strugatsky_rename RENAME COLUMN j TO jj;
+
+
+query
+SELECT jj, k FROM strugatsky_rename WHERE (jj + k) = 11 ORDER BY jj;
+----
+jj	k
+1	10
+
+
+# A fresh insert is still indexed/queryable after the rename.
+statement ok
+INSERT INTO strugatsky_rename VALUES (5, 50);
+
+
+query
+SELECT jj, k FROM strugatsky_rename WHERE (jj + k) = 55 ORDER BY jj;
+----
+jj	k
+5	50
+
+
+statement ok
+DROP TABLE strugatsky_rename;

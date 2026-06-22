@@ -171,6 +171,13 @@ class CatalogStore {
     // Adds the CHECK constraint with this expression text; the store verifies
     // it against existing rows (mirrors DropStoreCheck).
     void AddStoreCheck(std::string table, std::string expr);
+    // Adds a PRIMARY KEY (recreates storage, validates existing rows: no
+    // duplicates, no nulls). `columns` are store-table column names in key
+    // order.
+    void AddStorePrimaryKey(std::string table, std::vector<std::string> columns);
+    // Adds a UNIQUE constraint over `columns` (recreate + existing-row dup
+    // validation).
+    void AddStoreUnique(std::string table, std::vector<std::string> columns);
     void CreateStoreIndex(StoreIndexDef def);
     void DropStoreIndex(ObjectId index_id);
 
@@ -194,6 +201,8 @@ class CatalogStore {
       DropStoreNotNull,
       AddStoreNotNull,
       AddStoreCheck,
+      AddStorePrimaryKey,
+      AddStoreUnique,
       CreateStoreIndex,
       DropStoreIndex,
     };

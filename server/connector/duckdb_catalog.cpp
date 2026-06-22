@@ -56,6 +56,7 @@
 #include <duckdb/planner/operator/logical_insert.hpp>
 #include <duckdb/planner/operator/logical_merge_into.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
+#include <duckdb/planner/operator/logical_simple.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/storage/database_size.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
@@ -713,6 +714,26 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanMergeInto(
                                     store_entry.name, store_entry.GetColumns());
   return store_entry.ParentCatalog().Cast<duckdb::DuckCatalog>().PlanMergeInto(
     context, planner, op, plan);
+}
+
+duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindAlterAddIndex(
+  duckdb::Binder& binder, duckdb::TableCatalogEntry& table_entry,
+  duckdb::unique_ptr<duckdb::LogicalOperator> plan,
+  duckdb::unique_ptr<duckdb::CreateIndexInfo> create_info,
+  duckdb::unique_ptr<duckdb::AlterTableInfo> alter_info) {
+  // Only ADD PRIMARY KEY reaches here (the binder routes IsAddPrimaryKey here;
+  // the base Catalog::BindAlterAddIndex throws). Native duck_catalog would
+  // build an ART index over a table scan; the facade instead enforces the PK on
+  // the store table, so discard the scan plan and synthesized CreateIndexInfo
+  // and re-route the original ADD PRIMARY KEY through the normal ALTER path ->
+  // PhysicalAlter -> SereneDBSchemaEntry::Alter ADD_CONSTRAINT, which handles a
+  // PRIMARY KEY the same as a non-PK UNIQUE add.
+  (void)binder;
+  (void)table_entry;
+  (void)plan;
+  (void)create_info;
+  return duckdb::make_uniq<duckdb::LogicalSimple>(
+    duckdb::LogicalOperatorType::LOGICAL_ALTER, std::move(alter_info));
 }
 
 duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(

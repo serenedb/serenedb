@@ -88,6 +88,14 @@ class Table final : public Object {
   // Appends a CHECK constraint; the name is uniquified against existing ones.
   Result AddCheckConstraint(std::shared_ptr<Table>& result, std::string name,
                             std::shared_ptr<ColumnExpr> expr) const;
+  // Sets the primary key to `pk_columns` (by id) and adds the implied NOT NULL
+  // for each key column. Errors ERROR_SERVER_DUPLICATE_NAME if a PK already
+  // exists (a table can have only one).
+  Result AddPrimaryKey(std::shared_ptr<Table>& result,
+                       std::vector<Column::Id> pk_columns) const;
+  // Appends a UNIQUE constraint over `columns` (by id).
+  Result AddUniqueConstraint(std::shared_ptr<Table>& result,
+                             std::vector<Column::Id> columns) const;
   std::shared_ptr<Table> DropCheckConstraint(ObjectId constraint_id) const;
   std::shared_ptr<Table> DropColumnDefault(Column::Id column_id) const;
   std::shared_ptr<Table> DropColumn(Column::Id column_id) const;

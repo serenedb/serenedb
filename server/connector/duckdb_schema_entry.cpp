@@ -1109,10 +1109,49 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
 
     case duckdb::AlterTableType::ADD_CONSTRAINT: {
       auto& add_info = table_info.Cast<duckdb::AddConstraintInfo>();
+      // ADD PRIMARY KEY (re-routed here from BindAlterAddIndex) and ADD UNIQUE:
+      // map the constraint columns to catalog ids and add the PK/UNIQUE to the
+      // catalog Table; the store recreate (catalog.cpp) validates existing rows.
+      if (add_info.constraint->type == duckdb::ConstraintType::UNIQUE) {
+        auto& unique = add_info.constraint->Cast<duckdb::UniqueConstraint>();
+        const bool is_pk = unique.IsPrimaryKey();
+        Result r = catalog_impl.ChangeTable(
+          db, name, table_name,
+          [&](const catalog::Table& table,
+              std::shared_ptr<catalog::Table>& updated) -> Result {
+            std::vector<catalog::Column::Id> ids;
+            if (unique.HasIndex()) {
+              auto idx = unique.GetIndex().index;
+              if (idx >= table.Columns().size()) {
+                return Result{ERROR_SERVER_ILLEGAL_NAME};
+              }
+              ids.push_back(table.Columns()[idx].GetId());
+            } else {
+              for (const auto& cn : unique.GetColumnNames()) {
+                auto it = std::ranges::find_if(
+                  table.Columns(),
+                  [&](const auto& c) { return c.GetName() == cn; });
+                if (it == table.Columns().end()) {
+                  return Result{ERROR_SERVER_ILLEGAL_NAME};
+                }
+                ids.push_back(it->GetId());
+              }
+            }
+            if (is_pk) {
+              return table.AddPrimaryKey(updated, std::move(ids));
+            }
+            return table.AddUniqueConstraint(updated, std::move(ids));
+          });
+        if (!r.ok()) {
+          SDB_THROW(std::move(r));
+        }
+        return;
+      }
       if (add_info.constraint->type != duckdb::ConstraintType::CHECK) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-          ERR_MSG("ALTER TABLE ADD CONSTRAINT supports only CHECK constraints"));
+          ERR_MSG("ALTER TABLE ADD CONSTRAINT supports only CHECK, UNIQUE, and "
+                  "PRIMARY KEY constraints"));
       }
       auto& check = add_info.constraint->Cast<duckdb::CheckConstraint>();
       std::string cname = check.constraint_name;

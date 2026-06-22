@@ -419,6 +419,20 @@ void CatalogStore::WriteContext::AddStoreCheck(std::string table,
                       .name_a = std::move(expr)});
 }
 
+void CatalogStore::WriteContext::AddStorePrimaryKey(
+  std::string table, std::vector<std::string> columns) {
+  _entries.push_back({.op = Op::AddStorePrimaryKey,
+                      .store_table = {.name = std::move(table),
+                                      .pk_columns = std::move(columns)}});
+}
+
+void CatalogStore::WriteContext::AddStoreUnique(
+  std::string table, std::vector<std::string> columns) {
+  _entries.push_back({.op = Op::AddStoreUnique,
+                      .store_table = {.name = std::move(table),
+                                      .unique_constraints = {std::move(columns)}}});
+}
+
 void CatalogStore::WriteContext::CreateStoreIndex(StoreIndexDef def) {
   _entries.push_back(
     {.op = Op::CreateStoreIndex, .store_index = std::move(def)});
@@ -656,6 +670,40 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
             absl::StrCat("ALTER TABLE \"", kStoreAlias, "\".main.",
                          QuotedIdent(entry.store_table.name), " ADD CHECK (",
                          entry.name_a, ")"));
+          if (res->HasError()) {
+            return {ERROR_INTERNAL, res->GetError()};
+          }
+          break;
+        }
+        case WriteContext::Op::AddStorePrimaryKey: {
+          std::string cols;
+          for (const auto& c : entry.store_table.pk_columns) {
+            if (!cols.empty()) {
+              cols += ", ";
+            }
+            cols += QuotedIdent(c);
+          }
+          auto res = _conn->Query(
+            absl::StrCat("ALTER TABLE \"", kStoreAlias, "\".main.",
+                         QuotedIdent(entry.store_table.name),
+                         " ADD PRIMARY KEY (", cols, ")"));
+          if (res->HasError()) {
+            return {ERROR_INTERNAL, res->GetError()};
+          }
+          break;
+        }
+        case WriteContext::Op::AddStoreUnique: {
+          std::string cols;
+          for (const auto& c : entry.store_table.unique_constraints.front()) {
+            if (!cols.empty()) {
+              cols += ", ";
+            }
+            cols += QuotedIdent(c);
+          }
+          auto res = _conn->Query(
+            absl::StrCat("ALTER TABLE \"", kStoreAlias, "\".main.",
+                         QuotedIdent(entry.store_table.name), " ADD UNIQUE (",
+                         cols, ")"));
           if (res->HasError()) {
             return {ERROR_INTERNAL, res->GetError()};
           }

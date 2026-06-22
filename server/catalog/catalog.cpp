@@ -2783,6 +2783,48 @@ Result Catalog::ChangeTable(ObjectId database_id, std::string_view schema,
               ctx.DropStoreCheck(store_name, oc.expr->GetExpr().ToString());
             }
           }
+          // Newly added PRIMARY KEY -> ADD PRIMARY KEY on the store table; it
+          // recreates storage, validates existing rows (no duplicates/nulls).
+          // The implied NOT NULL CHECKs flow through the loop below.
+          if (table->PKColumns().empty() && !updated->PKColumns().empty()) {
+            std::vector<std::string> pk_names;
+            pk_names.reserve(updated->PKColumns().size());
+            bool ok = true;
+            for (auto id : updated->PKColumns()) {
+              const auto* col = updated->ColumnById(id);
+              if (!col || col->type.IsNested()) {
+                ok = false;
+                break;
+              }
+              pk_names.emplace_back(col->GetName());
+            }
+            if (ok) {
+              ctx.AddStorePrimaryKey(store_name, std::move(pk_names));
+            }
+          }
+          // Newly added UNIQUE constraints -> ADD UNIQUE on the store table.
+          for (const auto& uc : updated->UniqueConstraints()) {
+            bool existed = std::ranges::any_of(
+              table->UniqueConstraints(),
+              [&](const auto& oc) { return oc == uc; });
+            if (existed) {
+              continue;
+            }
+            std::vector<std::string> names;
+            names.reserve(uc.size());
+            bool ok = true;
+            for (auto id : uc) {
+              const auto* col = updated->ColumnById(id);
+              if (!col || col->type.IsNested()) {
+                ok = false;
+                break;
+              }
+              names.emplace_back(col->GetName());
+            }
+            if (ok) {
+              ctx.AddStoreUnique(store_name, std::move(names));
+            }
+          }
           // Newly added NOT NULL constraints -> SET NOT NULL on the store
           // column (queued after the column add above, so it already exists).
           for (const auto& nc : updated->CheckConstraints()) {

@@ -245,6 +245,45 @@ Result Table::AddCheckConstraint(std::shared_ptr<Table>& result,
   return {};
 }
 
+Result Table::AddPrimaryKey(std::shared_ptr<Table>& result,
+                            std::vector<Column::Id> pk_columns) const {
+  if (!_pk_columns.empty()) {
+    return Result{ERROR_SERVER_DUPLICATE_NAME};
+  }
+  for (auto col_id : pk_columns) {
+    if (!ColumnById(col_id)) {
+      return Result{ERROR_SERVER_ILLEGAL_NAME};
+    }
+  }
+  auto new_table = basics::downCast<Table>(Clone());
+  new_table->_pk_columns = std::move(pk_columns);
+  // A PK implies NOT NULL on each key column. Reuse SetNotNull so the implied
+  // not-null CHECKs match the CREATE-TABLE-with-PK path exactly.
+  for (auto col_id : new_table->_pk_columns) {
+    const auto* col = new_table->ColumnById(col_id);
+    std::shared_ptr<Table> tmp;
+    if (auto r = new_table->SetNotNull(tmp, col->GetName()); !r.ok()) {
+      return r;
+    }
+    new_table = basics::downCast<Table>(std::move(tmp));
+  }
+  result = std::move(new_table);
+  return {};
+}
+
+Result Table::AddUniqueConstraint(std::shared_ptr<Table>& result,
+                                  std::vector<Column::Id> columns) const {
+  for (auto col_id : columns) {
+    if (!ColumnById(col_id)) {
+      return Result{ERROR_SERVER_ILLEGAL_NAME};
+    }
+  }
+  auto new_table = basics::downCast<Table>(Clone());
+  new_table->_unique_constraints.push_back(std::move(columns));
+  result = std::move(new_table);
+  return {};
+}
+
 std::shared_ptr<Object> Table::Clone() const {
   auto cloned = std::make_shared<Table>(
     GetParentId(), GetId(), GetName(), _columns, _pk_columns,

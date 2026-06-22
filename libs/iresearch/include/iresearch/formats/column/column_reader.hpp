@@ -88,7 +88,7 @@ class ColumnReader final {
     uint64_t row_count = 0;
     VariantShredState shred_state = VariantShredState::Unshredded;
     std::unique_ptr<ColumnReader> unshredded;
-    std::unique_ptr<ColumnReader> shredded_node;
+    std::unique_ptr<ColumnReader> shredded;
   };
 
   ColumnReader(field_id id, duckdb::LogicalType type,

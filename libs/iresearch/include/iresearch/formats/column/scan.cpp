@@ -27,10 +27,8 @@
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/function/scalar/variant_utils.hpp>
 #include <memory>
-#include <string>
 
 #include "basics/assert.h"
-#include "basics/log.h"
 
 namespace irs {
 
@@ -72,64 +70,37 @@ MaterializeState::VariantRgState& EnsureVariantRgState(
       MakeMaterializeState(*row_group_reader.unshredded, *state.ctx);
     if (row_group_reader.shred_state != VariantShredState::Unshredded) {
       slot.shredded =
-        MakeMaterializeState(*row_group_reader.shredded_node, *state.ctx);
+        MakeMaterializeState(*row_group_reader.shredded, *state.ctx);
     }
   }
   return slot;
 }
 
-const duckdb::ValidityMask* ScanVariantValidity(MaterializeState& state,
-                                                const ColumnReader& reader,
-                                                uint64_t first_doc,
-                                                duckdb::idx_t count,
-                                                duckdb::Vector& holder) {
-  if (!reader.HasValidity()) {
-    return nullptr;
-  }
-  state.validity_scan.Scan(first_doc, count, holder, 0);
-  return &duckdb::FlatVector::Validity(holder);
-}
-
 void ReconstructVariantRun(
   MaterializeState::VariantRgState& rgstate,
   const ColumnReader::VariantRgReader& row_group_reader, uint64_t local_start,
-  size_t run, const duckdb::ValidityMask* parent_validity,
-  duckdb::Vector& out_variant, duckdb::idx_t out_off) {
-  const auto apply_nulls = [&](duckdb::Vector& target,
-                               duckdb::idx_t target_off) {
-    if (!parent_validity || parent_validity->AllValid()) {
-      return;
-    }
-    auto& dst = duckdb::FlatVector::ValidityMutable(target);
-    for (size_t k = 0; k < run; ++k) {
-      if (!parent_validity->RowIsValid(k)) {
-        dst.SetInvalid(target_off + k);
-      }
-    }
-  };
+  size_t run, duckdb::Vector& out_variant, duckdb::idx_t out_off,
+  VectorPool& scratch) {
   if (row_group_reader.shred_state == VariantShredState::Unshredded) {
     MaterializeNode(*row_group_reader.unshredded, *rgstate.unshredded,
                     IotaRange{local_start, run}, out_variant, out_off);
-    apply_nulls(out_variant, out_off);
     return;
   }
   duckdb::child_list_t<duckdb::LogicalType> children;
   children.emplace_back("unshredded", row_group_reader.unshredded->Type());
-  children.emplace_back("shredded", row_group_reader.shredded_node->Type());
-  duckdb::Vector intermediate{duckdb::LogicalType::STRUCT(children), run};
+  children.emplace_back("shredded", row_group_reader.shredded->Type());
+  auto intermediate_lease =
+    scratch.Acquire(duckdb::LogicalType::STRUCT(children));
+  auto& intermediate = *intermediate_lease;
   auto& entries = duckdb::StructVector::GetEntries(intermediate);
   MaterializeNode(*row_group_reader.unshredded, *rgstate.unshredded,
                   IotaRange{local_start, run}, entries[0], /*output_start=*/0);
-  MaterializeNode(*row_group_reader.shredded_node, *rgstate.shredded,
+  MaterializeNode(*row_group_reader.shredded, *rgstate.shredded,
                   IotaRange{local_start, run}, entries[1], /*output_start=*/0);
-  apply_nulls(intermediate, 0);
-  // UnshredVariantData rebuilds its output from scratch at offset 0, so it
-  // can't write at out_off into a shared, accumulating out_variant. Always
-  // unshred into a fresh run-sized temp and copy it into place.
-  duckdb::Vector unshredded{out_variant.GetType(),
-                            static_cast<duckdb::idx_t>(run)};
-  duckdb::VariantUtils::UnshredVariantData(intermediate, unshredded, run);
-  duckdb::VectorOperations::Copy(unshredded, out_variant, run, 0, out_off);
+
+  auto unshredded = scratch.Acquire(out_variant.GetType());
+  duckdb::VariantUtils::UnshredVariantData(intermediate, *unshredded, run);
+  duckdb::VectorOperations::Copy(*unshredded, out_variant, run, 0, out_off);
 }
 
 size_t FindStructFieldIndex(const duckdb::LogicalType& struct_type,
@@ -183,7 +154,7 @@ MaterializeState::ExtractLeafSlot& EnsureExtractLeaf(
   if (!slot.resolved) {
     slot.resolved = true;
     if (rg_reader.shred_state != VariantShredState::Unshredded) {
-      slot.leaf = ResolveShreddedLeaf(*rg_reader.shredded_node, path);
+      slot.leaf = ResolveShreddedLeaf(*rg_reader.shredded, path);
     }
     if (slot.leaf != nullptr) {
       slot.state = MakeMaterializeState(*slot.leaf, *state.ctx);

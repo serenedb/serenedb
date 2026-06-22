@@ -77,7 +77,7 @@ std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
         row_group.unshredded = MakeColumnReader(
           field_limits::invalid(), std::move(*variant_layout.unshredded));
         if (variant_layout.shred_state != VariantShredState::Unshredded) {
-          row_group.shredded_node = MakeColumnReader(
+          row_group.shredded = MakeColumnReader(
             field_limits::invalid(), std::move(*variant_layout.shredded_node));
         }
       }
@@ -259,7 +259,7 @@ ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
     SDB_ASSERT(rg.unshredded);
     SDB_ASSERT(rg.unshredded->RowCount() == rg.row_count);
     SDB_ASSERT(rg.shred_state == VariantShredState::Unshredded ||
-               rg.shredded_node->RowCount() == rg.row_count);
+               rg.shredded->RowCount() == rg.row_count);
     _data_offsets.push_back(total);
     total += rg.row_count;
   }

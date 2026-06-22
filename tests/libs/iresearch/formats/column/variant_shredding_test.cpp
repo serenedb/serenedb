@@ -531,11 +531,9 @@ TEST_F(IRSVariantShreddingTest, ExtractCleanFieldFastPathInPartialRowGroup) {
       continue;
     }
     checked_partial = true;
-    EXPECT_NE(irs::ResolveShreddedLeaf(*rg_reader.shredded_node, path_b),
-              nullptr)
+    EXPECT_NE(irs::ResolveShreddedLeaf(*rg_reader.shredded, path_b), nullptr)
       << "clean sibling 'b' should fast-path in a Partial row group, rg=" << rg;
-    EXPECT_EQ(irs::ResolveShreddedLeaf(*rg_reader.shredded_node, path_a),
-              nullptr)
+    EXPECT_EQ(irs::ResolveShreddedLeaf(*rg_reader.shredded, path_a), nullptr)
       << "spilled field 'a' must fall back, rg=" << rg;
   }
   ASSERT_TRUE(checked_partial) << "expected at least one Partial row group";

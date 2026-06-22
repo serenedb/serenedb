@@ -301,11 +301,9 @@ TEST(by_prefix_test, boost) {
   {
     irs::ByPrefix q = MakeFilter(kField, "term");
 
-    auto prepared = q.prepare({
-      .index = irs::SubReader::empty(),
-      .memory = counter,
-    });
-    ASSERT_EQ(irs::kNoBoost, prepared->Boost());
+    tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
+                                   counter};
+    ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
   EXPECT_EQ(counter.current, 0);
   EXPECT_GT(counter.max, 0);
@@ -317,11 +315,9 @@ TEST(by_prefix_test, boost) {
     irs::ByPrefix q = MakeFilter(kField, "term");
     q.boost(boost);
 
-    auto prepared = q.prepare({
-      .index = irs::SubReader::empty(),
-      .memory = counter,
-    });
-    ASSERT_EQ(boost, prepared->Boost());
+    tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
+                                   counter};
+    ASSERT_EQ(boost, prepared.Query(0)->Boost());
   }
   EXPECT_EQ(counter.current, 0);
   EXPECT_GT(counter.max, 0);
@@ -427,8 +423,9 @@ TEST_P(PrefixFilterTestCase, by_prefix_order_partial_field_stats) {
     ASSERT_EQ(expected_docs_with_field, field->docs_with_field);
   };
 
-  auto q = MakeFilter(kPrefixId, "").prepare({.index = rdr, .scorer = &scorer});
-  ASSERT_NE(nullptr, q);
+  const auto filter = MakeFilter(kPrefixId, "");
+  tests::PreparedFilter prepared{filter, rdr, &scorer};
+  ASSERT_NE(nullptr, prepared.Query(0));
 
   ASSERT_GT(finish_count, 1u);       // multiple scored terms
   ASSERT_NE(nullptr, shared_field);  // field stats were collected
@@ -466,6 +463,37 @@ TEST_P(PrefixFilterTestCase, by_prefix_order_multiple_terms_score) {
 
   irs::Scorer::ptr scorer{std::make_unique<tests::sort::FrequencySort>()};
   CheckQuery(MakeFilter(kNameId, "a"), std::span{&scorer, 1}, expected, rdr);
+}
+
+TEST_P(PrefixFilterTestCase, by_prefix_no_collector) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader();
+
+  const irs::ByPrefix q = MakeFilter(kPrefixId, "ab");
+
+  const auto collect = [&](tests::PreparedFilter::CollectMode mode) {
+    tests::PreparedFilter prepared{
+      q, rdr, nullptr, irs::IResourceManager::gNoop, nullptr, mode};
+    Docs docs;
+    for (size_t i = 0, n = prepared.size(); i < n; ++i) {
+      auto it = prepared.Execute(i);
+      while (it->next()) {
+        docs.push_back(it->value());
+      }
+    }
+    return docs;
+  };
+
+  const auto with_collector =
+    collect(tests::PreparedFilter::CollectMode::Single);
+  const auto without_collector =
+    collect(tests::PreparedFilter::CollectMode::NoCollector);
+  ASSERT_FALSE(without_collector.empty());
+  ASSERT_EQ(with_collector, without_collector);
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();

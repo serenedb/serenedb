@@ -24,35 +24,35 @@
 
 #include "iresearch/search/filter.hpp"
 #include "iresearch/search/states/multiterm_state.hpp"
-#include "iresearch/search/states_cache.hpp"
 
 namespace irs {
 
 // Compiled query suitable for filters with non adjacent set of terms.
-class MultiTermQuery : public Filter::Query {
+class MultiTermQuery : public QueryBuilder {
  public:
-  using States = StatesCache<MultiTermState>;
   // TODO(mbkkt) block_pool<byte>
   using Stats = ManagedVector<bstring>;
 
-  explicit MultiTermQuery(States&& states, Stats&& stats, score_t boost,
-                          ScoreMergeType merge_type, size_t min_match)
-    : _states{std::move(states)},
-      _stats{std::move(stats)},
+  explicit MultiTermQuery(const SubReader& segment, IResourceManager& memory,
+                          score_t boost, ScoreMergeType merge_type,
+                          size_t min_match)
+    : QueryBuilder{segment},
+      _state{memory},
       _boost{boost},
       _merge_type{merge_type},
       _min_match{min_match} {}
 
-  DocIterator::ptr execute(const ExecutionContext& ctx) const final;
+  MultiTermState& State() noexcept { return _state; }
 
-  void visit(const SubReader& segment, PreparedStateVisitor& visitor,
-             score_t boost) const final;
+  DocIterator::ptr Execute(const ExecutionContext& ctx,
+                           const StatsBuffer& stats) const final;
+
+  void Visit(PreparedStateVisitor& visitor, score_t boost) const final;
 
   score_t Boost() const noexcept final { return _boost; }
 
  private:
-  States _states;
-  Stats _stats;
+  MultiTermState _state;
   score_t _boost;
   ScoreMergeType _merge_type;
   size_t _min_match;

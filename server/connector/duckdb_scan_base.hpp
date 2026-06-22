@@ -113,6 +113,9 @@ struct CommonScanGlobalState : public duckdb::GlobalTableFunctionState {
 struct CommonScanLocalState : public duckdb::LocalTableFunctionState {
   bool segments_exhausted = false;
 
+  irs::PrepareCollector* prepare_collector = nullptr;
+  bool prepared = false;
+
   std::vector<std::unique_ptr<ColumnstoreMaterializer>> cs_materializers;
 };
 
@@ -221,8 +224,8 @@ void WriteVirtualColumns(CommonScanGlobalState& gstate,
   }
 }
 
-template<typename Lstate, typename View>
-void WriteChunkOffsets(Lstate& lstate, const irs::Filter::Query& query,
+template<typename Lstate, typename Gstate, typename View>
+void WriteChunkOffsets(Lstate& lstate, const Gstate& g,
                        const irs::IndexReader& reader, const View& view,
                        duckdb::DataChunk& output, duckdb::idx_t output_start) {
   for (const auto& entry : lstate.offsets_entries) {
@@ -243,7 +246,9 @@ void WriteChunkOffsets(Lstate& lstate, const irs::Filter::Query& query,
       }
       cached_seg = &reader[seg_idx];
       OffsetsCollector visitor{lstate.offsets_entries};
-      query.visit(*cached_seg, visitor, irs::kNoBoost);
+      const auto& seg_query = g.queries[seg_idx];
+      SDB_ASSERT(seg_query);
+      seg_query->Visit(visitor, irs::kNoBoost);
       lstate.offsets_prepped_seg = seg_idx;
     }
     for (auto& entry : lstate.offsets_entries) {
@@ -335,8 +340,7 @@ duckdb::idx_t MaterializeChunk(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
   }
   if constexpr (requires { l.offsets_entries; }) {
     if (!l.offsets_entries.empty()) {
-      SDB_ASSERT(g.query);
-      WriteChunkOffsets(l, *g.query, *g.reader, view, output, output_start);
+      WriteChunkOffsets(l, g, *g.reader, view, output, output_start);
     }
   }
 
@@ -363,6 +367,32 @@ duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
                    [&](auto& pk) { return PrimaryKeysSize(pk) == collected; }},
     l.pk_batch));
   return l.index_source->Materialize(ctx, l.pk_batch, 0, collected, output);
+}
+
+template<typename Gstate, typename Lstate>
+void PreparePhase(duckdb::ClientContext& ctx, Gstate& g, Lstate& l) {
+  for (;;) {
+    const auto seg = g.prepare_segment.fetch_add(1, std::memory_order_relaxed);
+    if (seg >= g.total_segments) {
+      break;
+    }
+    SDB_ASSERT((*g.reader)[seg].live_docs_count() != 0);
+    l.OnSegmentPrepare(ctx, (*g.reader)[seg], seg, g);
+    if (g.prepare_count.fetch_add(1, std::memory_order_acq_rel) + 1 ==
+        g.total_segments) {
+      const uint32_t used = g.collector_slots.load(std::memory_order_relaxed);
+      auto& merged = *g.collectors[0];
+      merged.MergeAll([&](irs::PrepareCollector::MergeSink sink) {
+        for (uint32_t i = 1; i < used; ++i) {
+          sink(*g.collectors[i]);
+        }
+      });
+      g.stats.emplace(merged.Finish(irs::IResourceManager::gNoop));
+      g.prepare_finished.Notify();
+      return;
+    }
+  }
+  g.prepare_finished.WaitForNotification();
 }
 
 template<typename Gstate, typename Lstate>

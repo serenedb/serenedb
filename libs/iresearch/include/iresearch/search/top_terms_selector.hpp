@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include <unordered_map>
+#include <algorithm>
 #include <vector>
 
 #include "basics/noncopyable.hpp"
@@ -31,8 +31,8 @@
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/scorer.hpp"
+#include "iresearch/search/top_k_heap.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
-#include "iresearch/utils/hash_utils.hpp"
 
 namespace irs {
 
@@ -44,8 +44,8 @@ struct TopTerm {
   TopTerm(const bytes_view& term, U&& key)
     : term(term.data(), term.size()), key(std::forward<U>(key)) {}
 
-  template<typename CollectorState>
-  void emplace(const CollectorState& /*state*/) {
+  template<typename SelectorState>
+  void emplace(const SelectorState& /*state*/) {
     // NOOP
   }
 
@@ -87,8 +87,8 @@ struct TopTermState : TopTerm<T> {
   TopTermState(const bytes_view& term, U&& key)
     : TopTerm<T>(term, std::forward<U>(key)) {}
 
-  template<typename CollectorState>
-  void emplace(const CollectorState& state) {
+  template<typename SelectorState>
+  void emplace(const SelectorState& state) {
     SDB_ASSERT(state.segment && state.docs_count && state.field);
 
     const auto* segment = state.segment;
@@ -121,7 +121,7 @@ struct TopTermState : TopTerm<T> {
 
 template<typename State,
          typename Comparer = TopTermComparer<typename State::key_type>>
-class TopTermsCollector : private util::Noncopyable {
+class TopTermsSelector : private util::Noncopyable {
  public:
   using state_type = State;
   static_assert(std::is_nothrow_move_assignable_v<state_type>);
@@ -130,11 +130,8 @@ class TopTermsCollector : private util::Noncopyable {
 
   // We disallow 0 size collectors for consistency since we're not
   // interested in this use case and don't want to burden "collect(...)"
-  explicit TopTermsCollector(size_t size, const Comparer& comp = {})
-    : _comparer{comp}, _size{std::max(size_t(1), size)} {
-    _heap.reserve(size);
-    _terms.reserve(size);  // ensure all iterators remain valid
-  }
+  explicit TopTermsSelector(size_t size, const Comparer& comp = {})
+    : _comparer{comp}, _heap{std::max(size_t(1), size), comp} {}
 
   // Prepare scorer for terms collecting
   // `segment` segment reader for the current term
@@ -166,78 +163,26 @@ class TopTermsCollector : private util::Noncopyable {
   void Visit(const key_type& key) {
     const auto term = *_state.term;
 
-    if (_left) {
-      hashed_bytes_view hashed_term{term};
-      const auto res = _terms.try_emplace(hashed_term, hashed_term, key);
-
-      if (res.second) {
-        auto& old_key = const_cast<hashed_bytes_view&>(res.first->first);
-        auto& value = res.first->second;
-        hashed_bytes_view new_key{value.term, old_key.Hash()};
-        SDB_ASSERT(old_key == new_key);
-        old_key = new_key;
-        _heap.emplace_back(res.first);
-
-        if (!--_left) {
-          make_heap();
-        }
-      }
-
-      res.first->second.emplace(_state);
-
+    if (_heap.Full() && !_comparer(_heap.Min(), key, term)) {
       return;
     }
 
-    const auto min = _heap.front();
-    const auto& min_state = min->second;
-
-    if (!_comparer(min_state, key, term)) {
-      // nothing to do
-      return;
-    }
-
-    const auto hashed_term = hashed_bytes_view{term};
-    const auto it = _terms.find(hashed_term);
-
-    if (it == _terms.end()) {
-      // update min entry
-      pop();
-
-      auto node = _terms.extract(min);
-      SDB_ASSERT(!node.empty());
-      node.mapped() = state_type{term, key};
-      node.key() = hashed_bytes_view{node.mapped().term, hashed_term.Hash()};
-      auto res = _terms.insert(std::move(node));
-      SDB_ASSERT(res.inserted);
-      SDB_ASSERT(res.node.empty());
-
-      _heap.back() = res.position;
-      push();
-
-      res.position->second.emplace(_state);
-    } else {
-      SDB_ASSERT(it->second.key == key);
-      // update existing entry
-      it->second.emplace(_state);
-    }
+    state_type state{term, key};
+    state.emplace(_state);
+    _heap.Push(std::move(state));
   }
 
   // FIXME rename
   template<typename Visitor>
   void Visit(const Visitor& visitor) noexcept {
-    for (auto& entry : _terms) {
-      visitor(entry.second);
+    for (auto& entry : _heap.Finalize()) {
+      visitor(entry);
     }
   }
 
  private:
-  // We don't use absl hash table implementation as it doesn't guarantee
-  // rehashing won't happen even if enough buckets are reserve()ed
-  using states_map_t =
-    std::unordered_map<hashed_bytes_view, state_type, HashedStrHash>;
-
   // Collector state
-  struct CollectorState {
+  struct SelectorState {
     const SubReader* segment{};
     const TermReader* field{};
     const SeekTermIterator* terms{};
@@ -245,30 +190,9 @@ class TopTermsCollector : private util::Noncopyable {
     const uint32_t* docs_count{};
   };
 
-  void make_heap() noexcept {
-    absl::c_make_heap(_heap, [&](const auto lhs, const auto rhs) noexcept {
-      return _comparer(rhs->second, lhs->second);
-    });
-  }
-
-  void push() noexcept {
-    absl::c_push_heap(_heap, [&](const auto lhs, const auto rhs) noexcept {
-      return _comparer(rhs->second, lhs->second);
-    });
-  }
-
-  void pop() noexcept {
-    absl::c_pop_heap(_heap, [&](const auto lhs, const auto rhs) noexcept {
-      return _comparer(rhs->second, lhs->second);
-    });
-  }
-
   [[no_unique_address]] comparer_type _comparer;
-  CollectorState _state;
-  std::vector<typename states_map_t::iterator> _heap;
-  states_map_t _terms;
-  size_t _size;
-  size_t _left{_size};
+  SelectorState _state;
+  TopKHeap<state_type, comparer_type> _heap;
 };
 
 }  // namespace irs

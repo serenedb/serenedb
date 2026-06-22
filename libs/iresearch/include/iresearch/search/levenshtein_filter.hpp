@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <memory>
+
 #include "filter.hpp"
 #include "iresearch/utils/automaton.hpp"
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
@@ -33,6 +35,7 @@ namespace irs {
 class ByEditDistance;
 class LevenshteinAutomatonFilter;
 struct FilterVisitor;
+struct CompiledAcceptor;
 
 struct ByEditDistanceAllOptions {
   //////////////////////////////////////////////////////////////////////////////
@@ -121,14 +124,15 @@ class ByEditDistance final : public FilterWithField<ByEditDistanceOptions> {
  public:
   static field_visitor visitor(const ByEditDistanceAllOptions& options);
 
-  Query::ptr prepare(const PrepareContext& ctx) const final;
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
 };
 
 struct LevenshteinAutomatonOptions {
   using FilterType = LevenshteinAutomatonFilter;
 
   bstring target;
-  automaton acceptor;
+  std::shared_ptr<const CompiledAcceptor> compiled;
   uint32_t utf8_target_size{1};
   byte_type no_distance{1};
   size_t max_terms{};
@@ -146,12 +150,16 @@ struct LevenshteinAutomatonOptions {
 class LevenshteinAutomatonFilter final
   : public FilterWithField<LevenshteinAutomatonOptions> {
  public:
-  static Query::ptr prepare(const PrepareContext& ctx, irs::field_id id,
-                            const LevenshteinAutomatonOptions& options);
+  static QueryBuilder::ptr PrepareSegment(
+    const SubReader& segment, const PrepareContext& ctx, irs::field_id id,
+    const LevenshteinAutomatonOptions& options, score_t boost);
 
   static field_visitor visitor(const LevenshteinAutomatonOptions& options);
 
-  Query::ptr prepare(const PrepareContext& ctx) const final;
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
+
+  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 };
 
 Filter::ptr LowerLevenshtein(irs::field_id id,

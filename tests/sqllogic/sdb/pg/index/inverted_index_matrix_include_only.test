@@ -1,0 +1,440 @@
+control substitution on
+
+# ============================================================================
+# g14 -- INCLUDE-only with EXPRESSION source.
+#
+# g6 covered column-named INCLUDE sources across every accepted scalar type.
+# This block pins what happens when the INCLUDE list element is a
+# parenthesized expression rather than a bare column identifier.
+#
+# Grammar: CreateIndex's IncludeClause is
+#     IncludeClause  <- 'INCLUDE' Parens(List(IncludedColumn))
+#     IncludedColumn <- ColId IndexOpclass?
+# (third_party/duckdb/src/parser/peg/grammar/statements/create_index.gram).
+# An IncludedColumn is a bare identifier with an optional opclass -- no
+# Parens, no Expr. Every expression form below therefore fails at parse
+# time with the same token-level error pointing at the leading '(' that
+# opens the would-be expression. The error never reaches the catalog
+# binder, so there is no "tokenizer" / "unsupported type" wording -- only
+# the syntactic rejection.
+# ============================================================================
+
+statement ok
+CREATE TABLE g14_t(pk INTEGER PRIMARY KEY,
+                   v  VARCHAR,
+                   n  INTEGER,
+                   d  DATE,
+                   ts TIMESTAMP,
+                   bo BOOLEAN,
+                   f  FLOAT,
+                   j  JSON,
+                   g  GEOMETRY('OGC:CRS84'));
+
+# (a) VARCHAR expression -- upper(v)
+statement error
+CREATE INDEX g14_inc_expr_v ON g14_t USING inverted(pk) INCLUDE ((upper(v)));
+----
+db error: ERROR: syntax error at or near "("
+
+
+# (b) INTEGER expression -- n * 2
+statement error
+CREATE INDEX g14_inc_expr_n ON g14_t USING inverted(pk) INCLUDE ((n * 2));
+----
+db error: ERROR: syntax error at or near "("
+
+
+# (c) DATE expression -- d + INTERVAL '1 day'
+statement error
+CREATE INDEX g14_inc_expr_d ON g14_t USING inverted(pk)
+    INCLUDE ((d + INTERVAL '1 day'));
+----
+db error: ERROR: syntax error at or near "("
+
+
+# (d) TIMESTAMP expression -- ts + INTERVAL '1 hour'
+statement error
+CREATE INDEX g14_inc_expr_ts ON g14_t USING inverted(pk)
+    INCLUDE ((ts + INTERVAL '1 hour'));
+----
+db error: ERROR: syntax error at or near "("
+
+
+# (e) BOOLEAN expression -- NOT bo
+statement error
+CREATE INDEX g14_inc_expr_bo ON g14_t USING inverted(pk) INCLUDE ((NOT bo));
+----
+db error: ERROR: syntax error at or near "("
+
+
+# (f) FLOAT expression -- f * 1.0::FLOAT (constant-fold-resistant cast)
+statement error
+CREATE INDEX g14_inc_expr_f ON g14_t USING inverted(pk)
+    INCLUDE ((f * 1.0::FLOAT));
+----
+db error: ERROR: syntax error at or near "("
+
+
+# (g) JSON-extract expression -- j->>'type'
+statement error
+CREATE INDEX g14_inc_expr_j ON g14_t USING inverted(pk) INCLUDE ((j->>'type'));
+----
+db error: ERROR: syntax error at or near "("
+
+
+# (h) GEOMETRY-identity expression -- (g). Even a trivial parenthesized
+# identity is rejected by the IncludedColumn grammar (no Parens
+# alternative), confirming the rejection is syntactic and independent of
+# the inner expression's shape or type.
+statement error
+CREATE INDEX g14_inc_expr_g ON g14_t USING inverted(pk) INCLUDE ((g));
+----
+db error: ERROR: syntax error at or near "("
+
+
+# ============================================================================
+# g22 -- INCLUDE_ONLY column-scalar coverage for missing types.
+#
+# included::Validate (server/catalog/inverted_index.cpp:282-333) accepts a
+# wide whitelist that g6 sampled but did not exhaust. This block pins
+# INCLUDE-only acceptance for the remaining accepted leaves and the
+# container shapes that g7 / g9 didn't put in INCLUDE position:
+#
+#   direct table (g22_t):
+#     - BIT
+#     - ENUM (user-defined)
+#     - VARCHAR[]      LIST<VARCHAR>
+#     - INTEGER[]      LIST<INTEGER>
+#     - VARCHAR[3]     ARRAY<VARCHAR,3>
+#     - INTEGER[3]     ARRAY<INTEGER,3>
+#     - GEOMETRY('OGC:CRS84')[3]   ARRAY<GEOMETRY,3>
+#     - LIST<MAP(VARCHAR,INTEGER)>
+#     - LIST<STRUCT(a INTEGER)>
+#     - LIST<VARIANT>
+#
+#   view-backed (g22_v_unsup) -- rocksdb refuses to serialize these as
+#   live-table columns, but a parquet-fed view bypasses that and the index
+#   still accepts them on the INCLUDE side:
+#     - UBIGINT
+#     - UHUGEINT
+#     - TIME
+#     - TIME_NS
+#     - TIME_TZ
+#
+# Each cell is one CREATE INDEX ... USING inverted INCLUDE (col) on a
+# pk-only indexed position (the canonical INCLUDE-only spelling, mirroring
+# m_pk_only / m_unsup_inc). 2 rows are inserted; count(*) verifies the
+# index materialized.
+# ============================================================================
+
+statement ok
+CREATE TYPE g22_enum_t AS ENUM ('x','y','z');
+
+statement ok
+CREATE TABLE g22_t(pk INTEGER PRIMARY KEY,
+                   vl VARCHAR[],
+                   il INTEGER[],
+                   va VARCHAR[3],
+                   ia INTEGER[3],
+                   ga GEOMETRY('OGC:CRS84')[3],
+                   lm MAP(VARCHAR, INTEGER)[],
+                   ls STRUCT(a INTEGER)[],
+                   lv VARIANT[]);
+
+# BIT and ENUM scalars are rocksdb-incompatible; INCLUDE-only coverage for
+# them lives in g16 (implicit-rejection block) and m_unsup-style view-backed
+# follow-ups elsewhere. Skipping direct-table INCLUDE-only here.
+
+statement ok
+CREATE INDEX g22_inc_vl ON g22_t USING inverted INCLUDE (vl);
+
+statement ok
+CREATE INDEX g22_inc_il ON g22_t USING inverted INCLUDE (il);
+
+statement ok
+CREATE INDEX g22_inc_va ON g22_t USING inverted INCLUDE (va);
+
+statement ok
+CREATE INDEX g22_inc_ia ON g22_t USING inverted INCLUDE (ia);
+
+statement ok
+CREATE INDEX g22_inc_ga ON g22_t USING inverted INCLUDE (ga);
+
+statement ok
+CREATE INDEX g22_inc_lm ON g22_t USING inverted INCLUDE (lm);
+
+statement ok
+CREATE INDEX g22_inc_ls ON g22_t USING inverted INCLUDE (ls);
+
+statement ok
+CREATE INDEX g22_inc_lv ON g22_t USING inverted INCLUDE (lv);
+
+statement ok
+INSERT INTO g22_t VALUES
+    (1, ['alpha','beta'], [10, 20],
+        ['p','q','r'], [1, 2, 3],
+        ['POINT(0 0)'::GEOMETRY('OGC:CRS84'),
+         'POINT(1 1)'::GEOMETRY('OGC:CRS84'),
+         'POINT(2 2)'::GEOMETRY('OGC:CRS84')],
+        [MAP {'k1': 1}, MAP {'k2': 2}],
+        [ROW(10)::STRUCT(a INTEGER), ROW(20)::STRUCT(a INTEGER)],
+        [42::VARIANT, 'hello'::VARIANT]),
+    (2, ['gamma'], [30],
+        ['s','t','u'], [4, 5, 6],
+        ['POINT(3 3)'::GEOMETRY('OGC:CRS84'),
+         'POINT(4 4)'::GEOMETRY('OGC:CRS84'),
+         'POINT(5 5)'::GEOMETRY('OGC:CRS84')],
+        [MAP {'k3': 3}],
+        [ROW(30)::STRUCT(a INTEGER)],
+        ['world'::VARIANT]);
+
+statement ok
+VACUUM (REFRESH_TABLE) g22_t;
+
+query
+SELECT count(*) FROM g22_inc_vl;
+----
+count
+2
+
+query
+SELECT count(*) FROM g22_inc_il;
+----
+count
+2
+
+query
+SELECT count(*) FROM g22_inc_va;
+----
+count
+2
+
+query
+SELECT count(*) FROM g22_inc_ia;
+----
+count
+2
+
+query
+SELECT count(*) FROM g22_inc_ga;
+----
+count
+2
+
+query
+SELECT count(*) FROM g22_inc_lm;
+----
+count
+2
+
+query
+SELECT count(*) FROM g22_inc_ls;
+----
+count
+2
+
+query
+SELECT count(*) FROM g22_inc_lv;
+----
+count
+2
+
+# View-backed sidecar for rocksdb-incompatible types accepted by
+# included::Validate but not by the rocksdb columnstore: UBIGINT, UHUGEINT,
+# TIME, TIME_NS, TIME_TZ. Same parquet-fed-view trick m_unsup / g6_v_unsup
+# use to land these values in a column the inverted index can read.
+statement count 2
+COPY (SELECT * FROM (VALUES
+  (1, 1000000000000::UBIGINT,
+      1234567890123456789::UHUGEINT,
+      TIME '00:00:00',
+      TIME_NS '00:00:00',
+      TIMETZ '00:00:00+00'),
+  (2, 9000000000000::UBIGINT,
+      9876543210987654321::UHUGEINT,
+      TIME '12:34:56',
+      TIME_NS '12:34:56',
+      TIMETZ '12:34:56+00')
+) AS t(pk, ub, uh, tt, tn, ttz))
+TO '${__TEST_DIR__}/sdb_g22_unsup.parquet' (FORMAT parquet);
+
+statement ok
+CREATE VIEW g22_v_unsup AS SELECT * FROM read_parquet('${__TEST_DIR__}/sdb_g22_unsup.parquet');
+
+statement ok
+CREATE INDEX g22_inc_ub ON g22_v_unsup USING inverted INCLUDE (ub);
+
+statement ok
+CREATE INDEX g22_inc_uh ON g22_v_unsup USING inverted INCLUDE (uh);
+
+statement ok
+CREATE INDEX g22_inc_tt ON g22_v_unsup USING inverted INCLUDE (tt);
+
+statement ok
+CREATE INDEX g22_inc_tn ON g22_v_unsup USING inverted INCLUDE (tn);
+
+statement ok
+CREATE INDEX g22_inc_ttz ON g22_v_unsup USING inverted INCLUDE (ttz);
+
+query
+SELECT count(*) FROM g22_inc_ub;
+----
+count
+2
+
+query
+SELECT count(*) FROM g22_inc_uh;
+----
+count
+2
+
+query
+SELECT count(*) FROM g22_inc_tt;
+----
+count
+2
+
+query
+SELECT count(*) FROM g22_inc_tn;
+----
+count
+2
+
+query
+SELECT count(*) FROM g22_inc_ttz;
+----
+count
+2
+
+
+# ============================================================================
+# g16: implicit-rejection (no opclass) for the unsupported-leaf types g5
+#      didn't cover -- UBIGINT, UHUGEINT, BIT, ENUM, VARIANT -- plus LIST
+#      and ARRAY whose child is itself an unsupported leaf (HUGEINT, DECIMAL,
+#      INTERVAL, UUID). All paths land on term_dict::Validate's unsupported()
+#      branch (server/catalog/inverted_index.cpp:251-255 / 264-265 / 270-271),
+#      which produces the verbatim "has unsupported type X and can not be
+#      indexed" message. BIGNUM is omitted: the inventory provides no
+#      reachability recipe, so we don't gamble on CREATE TABLE accepting it.
+# ============================================================================
+
+statement ok
+CREATE TYPE g16_enum_t AS ENUM ('alpha', 'beta', 'gamma');
+
+
+statement ok
+CREATE TABLE g16_t(pk INTEGER PRIMARY KEY,
+                   ub UBIGINT,
+                   uh UHUGEINT,
+                   bi BIT,
+                   en g16_enum_t,
+                   vr VARIANT,
+                   lh HUGEINT[],
+                   ld DECIMAL(10,2)[],
+                   li INTERVAL[],
+                   lu UUID[],
+                   ah HUGEINT[2],
+                   ad DECIMAL(10,2)[2]);
+
+
+# (a) implicit (no opclass) on UBIGINT: term_dict classifies UBIGINT as
+#     Unsupported (Classify default arm), so Validate rejects.
+statement error
+CREATE INDEX g16_imp_ub ON g16_t USING inverted(pk, ub);
+----
+db error: ERROR: Failed to create index: Column 'ub' has unsupported type UBIGINT and can not be indexed
+
+
+# (b) implicit (no opclass) on UHUGEINT: 128-bit unsigned, Unsupported.
+statement error
+CREATE INDEX g16_imp_uh ON g16_t USING inverted(pk, uh);
+----
+db error: ERROR: Failed to create index: Column 'uh' has unsupported type UHUGEINT and can not be indexed
+
+
+# (c) implicit (no opclass) on BIT: bitstring is Unsupported.
+statement error
+CREATE INDEX g16_imp_bi ON g16_t USING inverted(pk, bi);
+----
+db error: ERROR: Failed to create index: Column 'bi' has unsupported type BIT and can not be indexed
+
+
+# (d) implicit (no opclass) on ENUM: the type's alias (from CREATE TYPE) is
+#     what ToString surfaces, so the error names the user-visible type name.
+statement error
+CREATE INDEX g16_imp_en ON g16_t USING inverted(pk, en);
+----
+db error: ERROR: Failed to create index: Column 'en' has unsupported type g16_enum_t and can not be indexed
+
+
+# (e) implicit (no opclass) on VARIANT: STRUCT-backed catch-all type, Unsupported.
+statement error
+CREATE INDEX g16_imp_vr ON g16_t USING inverted(pk, vr);
+----
+db error: ERROR: Failed to create index: Column 'vr' has unsupported type VARIANT and can not be indexed
+
+
+# (f) implicit (no opclass) on LIST<HUGEINT>: container path in Validate
+#     inspects the child kind; HUGEINT is Unsupported, so the list is rejected
+#     with the rendered "<child>[]" type string.
+statement error
+CREATE INDEX g16_imp_lh ON g16_t USING inverted(pk, lh);
+----
+db error: ERROR: Failed to create index: Column 'lh' has unsupported type HUGEINT[] and can not be indexed
+
+
+# (g) implicit (no opclass) on LIST<DECIMAL(10,2)>: same container path.
+statement error
+CREATE INDEX g16_imp_ld ON g16_t USING inverted(pk, ld);
+----
+db error: ERROR: Failed to create index: Column 'ld' has unsupported type DECIMAL(10,2)[] and can not be indexed
+
+
+# (h) implicit (no opclass) on LIST<INTERVAL>.
+statement error
+CREATE INDEX g16_imp_li ON g16_t USING inverted(pk, li);
+----
+db error: ERROR: Failed to create index: Column 'li' has unsupported type INTERVAL[] and can not be indexed
+
+
+# (i) implicit (no opclass) on LIST<UUID>.
+statement error
+CREATE INDEX g16_imp_lu ON g16_t USING inverted(pk, lu);
+----
+db error: ERROR: Failed to create index: Column 'lu' has unsupported type UUID[] and can not be indexed
+
+
+# (j) implicit (no opclass) on ARRAY<HUGEINT,2>: the container branch renders
+#     fixed-size arrays as "<child>[N]" (types.cpp:474).
+statement error
+CREATE INDEX g16_imp_ah ON g16_t USING inverted(pk, ah);
+----
+db error: ERROR: Failed to create index: Column 'ah' has unsupported type HUGEINT[2] and can not be indexed
+
+
+# (k) implicit (no opclass) on ARRAY<DECIMAL(10,2),2>: same array path.
+statement error
+CREATE INDEX g16_imp_ad ON g16_t USING inverted(pk, ad);
+----
+db error: ERROR: Failed to create index: Column 'ad' has unsupported type DECIMAL(10,2)[2] and can not be indexed
+
+
+# --- teardown ---------------------------------------------------------------
+
+statement ok
+DROP TABLE g14_t;
+
+statement ok
+DROP TABLE g22_t;
+
+statement ok
+DROP TABLE g16_t;
+
+statement ok
+DROP VIEW g22_v_unsup CASCADE;
+
+statement ok
+DROP TYPE g22_enum_t;
+
+statement ok
+DROP TYPE g16_enum_t;

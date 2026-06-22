@@ -1,0 +1,496 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY kw_dict(template = 'keyword');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ng_dict(template = 'ngram', mingram = 2,
+    maxgram = 3, preserveoriginal = false, frequency = true, position = true);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY any_text_dict(template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false, accent = false, frequency = true, position = true);
+
+
+# ============================================================================
+# g15 -- Text-tokenizer rejection coverage across the full unusual-type matrix.
+#
+# Every type the AREA lists is declared as a column of one table g15_t, and
+# every (column, text-tokenizer) pair is exercised with a single
+# statement-error block. The two-stage validator in
+# server/catalog/index.cpp:ValidateInvertedIndexColumns runs in this order:
+#
+#   (1) term_dict::Validate (line 399) -- rejects types that Classify (in
+#       server/catalog/inverted_index.h:64) maps to Kind::Unsupported.
+#       Wording: "has unsupported type X and can not be indexed".
+#       For this block: UBIGINT, HUGEINT, UHUGEINT, DECIMAL(10,2), INTERVAL,
+#       UUID, STRUCT(a INTEGER), MAP(VARCHAR, INTEGER), VARIANT.
+#
+#   (2) ValidateTokenizerVsColumn (line 704) -- rejects types that are
+#       Supported by term_dict but are not VARCHAR / BLOB / LIST / ARRAY of
+#       VARCHAR / BLOB; the keyword / ngram / text analyzers can only consume
+#       string-shaped bytes. Wording:
+#       "uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of
+#        VARCHAR/BLOB (got X)".
+#       For this block: TIME, TIME_NS, TIME WITH TIME ZONE,
+#       TIMESTAMP_MS, TIMESTAMP_NS, TIMESTAMP WITH TIME ZONE,
+#       TINYINT, SMALLINT, UTINYINT, USMALLINT, UINTEGER, FLOAT,
+#       GEOMETRY('OGC:CRS84').
+#
+# kw_dict / ng_dict / any_text_dict are already declared at the top of this
+# file (lines 28, 31-32, 1583) -- not redeclared.
+#
+# No rows are inserted: the entire block tests CREATE INDEX rejection, so
+# rocksdb-incompatible types (UTINYINT / USMALLINT / UINTEGER / TIME
+# variants / TIMESTAMP_MS / TIMESTAMP_NS / TIMESTAMPTZ) can sit in a regular
+# table without ever reaching the storage path.
+# ============================================================================
+
+statement ok
+CREATE TABLE g15_t(pk    INTEGER PRIMARY KEY,
+                   u64   UBIGINT,
+                   h     HUGEINT,
+                   uh    UHUGEINT,
+                   d     DECIMAL(10,2),
+                   iv    INTERVAL,
+                   uu    UUID,
+                   st    STRUCT(a INTEGER),
+                   mp    MAP(VARCHAR, INTEGER),
+                   vr    VARIANT,
+                   tt    TIME,
+                   ttns  TIME_NS,
+                   tttz  TIMETZ,
+                   tsms  TIMESTAMP_MS,
+                   tsns  TIMESTAMP_NS,
+                   tstz  TIMESTAMPTZ,
+                   t8    TINYINT,
+                   t16   SMALLINT,
+                   u8    UTINYINT,
+                   u16   USMALLINT,
+                   u32   UINTEGER,
+                   f     FLOAT,
+                   g     GEOMETRY('OGC:CRS84'));
+
+# ----------------------------------------------------------------------------
+# kw_dict (keyword tokenizer)
+# ----------------------------------------------------------------------------
+
+# Unsupported-set rejections: term_dict::Validate fails first.
+statement error
+CREATE INDEX g15_kw_u64 ON g15_t USING inverted(pk, u64 kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'u64' has unsupported type UBIGINT and can not be indexed
+
+
+statement error
+CREATE INDEX g15_kw_h ON g15_t USING inverted(pk, h kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'h' has unsupported type HUGEINT and can not be indexed
+
+
+statement error
+CREATE INDEX g15_kw_uh ON g15_t USING inverted(pk, uh kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'uh' has unsupported type UHUGEINT and can not be indexed
+
+
+statement error
+CREATE INDEX g15_kw_d ON g15_t USING inverted(pk, d kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'd' has unsupported type DECIMAL(10,2) and can not be indexed
+
+
+statement error
+CREATE INDEX g15_kw_iv ON g15_t USING inverted(pk, iv kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'iv' has unsupported type INTERVAL and can not be indexed
+
+
+statement error
+CREATE INDEX g15_kw_uu ON g15_t USING inverted(pk, uu kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'uu' has unsupported type UUID and can not be indexed
+
+
+statement error
+CREATE INDEX g15_kw_st ON g15_t USING inverted(pk, st kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'st' has unsupported type STRUCT(a INTEGER) and can not be indexed
+
+
+statement error
+CREATE INDEX g15_kw_mp ON g15_t USING inverted(pk, mp kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'mp' has unsupported type MAP(VARCHAR, INTEGER) and can not be indexed
+
+
+statement error
+CREATE INDEX g15_kw_vr ON g15_t USING inverted(pk, vr kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'vr' has unsupported type VARIANT and can not be indexed
+
+
+# Tokenizer-vs-column rejections: term_dict::Validate passes; the analyzer
+# check fires next.
+statement error
+CREATE INDEX g15_kw_tt ON g15_t USING inverted(pk, tt kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'tt' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIME)
+
+
+statement error
+CREATE INDEX g15_kw_ttns ON g15_t USING inverted(pk, ttns kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'ttns' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIME_NS)
+
+
+statement error
+CREATE INDEX g15_kw_tttz ON g15_t USING inverted(pk, tttz kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'tttz' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIME WITH TIME ZONE)
+
+
+statement error
+CREATE INDEX g15_kw_tsms ON g15_t USING inverted(pk, tsms kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'tsms' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIMESTAMP_MS)
+
+
+statement error
+CREATE INDEX g15_kw_tsns ON g15_t USING inverted(pk, tsns kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'tsns' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIMESTAMP_NS)
+
+
+statement error
+CREATE INDEX g15_kw_tstz ON g15_t USING inverted(pk, tstz kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'tstz' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIMESTAMP WITH TIME ZONE)
+
+
+statement error
+CREATE INDEX g15_kw_t8 ON g15_t USING inverted(pk, t8 kw_dict);
+----
+db error: ERROR: Failed to create index: Column 't8' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TINYINT)
+
+
+statement error
+CREATE INDEX g15_kw_t16 ON g15_t USING inverted(pk, t16 kw_dict);
+----
+db error: ERROR: Failed to create index: Column 't16' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got SMALLINT)
+
+
+statement error
+CREATE INDEX g15_kw_u8 ON g15_t USING inverted(pk, u8 kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'u8' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got UTINYINT)
+
+
+statement error
+CREATE INDEX g15_kw_u16 ON g15_t USING inverted(pk, u16 kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'u16' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got USMALLINT)
+
+
+statement error
+CREATE INDEX g15_kw_u32 ON g15_t USING inverted(pk, u32 kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'u32' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got UINTEGER)
+
+
+statement error
+CREATE INDEX g15_kw_f ON g15_t USING inverted(pk, f kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'f' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got FLOAT)
+
+
+statement error
+CREATE INDEX g15_kw_g ON g15_t USING inverted(pk, g kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
+
+
+# ----------------------------------------------------------------------------
+# ng_dict (n-gram tokenizer)
+# ----------------------------------------------------------------------------
+
+statement error
+CREATE INDEX g15_ng_u64 ON g15_t USING inverted(pk, u64 ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'u64' has unsupported type UBIGINT and can not be indexed
+
+
+statement error
+CREATE INDEX g15_ng_h ON g15_t USING inverted(pk, h ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'h' has unsupported type HUGEINT and can not be indexed
+
+
+statement error
+CREATE INDEX g15_ng_uh ON g15_t USING inverted(pk, uh ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'uh' has unsupported type UHUGEINT and can not be indexed
+
+
+statement error
+CREATE INDEX g15_ng_d ON g15_t USING inverted(pk, d ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'd' has unsupported type DECIMAL(10,2) and can not be indexed
+
+
+statement error
+CREATE INDEX g15_ng_iv ON g15_t USING inverted(pk, iv ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'iv' has unsupported type INTERVAL and can not be indexed
+
+
+statement error
+CREATE INDEX g15_ng_uu ON g15_t USING inverted(pk, uu ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'uu' has unsupported type UUID and can not be indexed
+
+
+statement error
+CREATE INDEX g15_ng_st ON g15_t USING inverted(pk, st ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'st' has unsupported type STRUCT(a INTEGER) and can not be indexed
+
+
+statement error
+CREATE INDEX g15_ng_mp ON g15_t USING inverted(pk, mp ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'mp' has unsupported type MAP(VARCHAR, INTEGER) and can not be indexed
+
+
+statement error
+CREATE INDEX g15_ng_vr ON g15_t USING inverted(pk, vr ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'vr' has unsupported type VARIANT and can not be indexed
+
+
+statement error
+CREATE INDEX g15_ng_tt ON g15_t USING inverted(pk, tt ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'tt' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIME)
+
+
+statement error
+CREATE INDEX g15_ng_ttns ON g15_t USING inverted(pk, ttns ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'ttns' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIME_NS)
+
+
+statement error
+CREATE INDEX g15_ng_tttz ON g15_t USING inverted(pk, tttz ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'tttz' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIME WITH TIME ZONE)
+
+
+statement error
+CREATE INDEX g15_ng_tsms ON g15_t USING inverted(pk, tsms ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'tsms' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIMESTAMP_MS)
+
+
+statement error
+CREATE INDEX g15_ng_tsns ON g15_t USING inverted(pk, tsns ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'tsns' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIMESTAMP_NS)
+
+
+statement error
+CREATE INDEX g15_ng_tstz ON g15_t USING inverted(pk, tstz ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'tstz' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIMESTAMP WITH TIME ZONE)
+
+
+statement error
+CREATE INDEX g15_ng_t8 ON g15_t USING inverted(pk, t8 ng_dict);
+----
+db error: ERROR: Failed to create index: Column 't8' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TINYINT)
+
+
+statement error
+CREATE INDEX g15_ng_t16 ON g15_t USING inverted(pk, t16 ng_dict);
+----
+db error: ERROR: Failed to create index: Column 't16' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got SMALLINT)
+
+
+statement error
+CREATE INDEX g15_ng_u8 ON g15_t USING inverted(pk, u8 ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'u8' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got UTINYINT)
+
+
+statement error
+CREATE INDEX g15_ng_u16 ON g15_t USING inverted(pk, u16 ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'u16' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got USMALLINT)
+
+
+statement error
+CREATE INDEX g15_ng_u32 ON g15_t USING inverted(pk, u32 ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'u32' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got UINTEGER)
+
+
+statement error
+CREATE INDEX g15_ng_f ON g15_t USING inverted(pk, f ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'f' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got FLOAT)
+
+
+statement error
+CREATE INDEX g15_ng_g ON g15_t USING inverted(pk, g ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
+
+
+# ----------------------------------------------------------------------------
+# any_text_dict (template = 'text' analyzer)
+# ----------------------------------------------------------------------------
+
+statement error
+CREATE INDEX g15_at_u64 ON g15_t USING inverted(pk, u64 any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'u64' has unsupported type UBIGINT and can not be indexed
+
+
+statement error
+CREATE INDEX g15_at_h ON g15_t USING inverted(pk, h any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'h' has unsupported type HUGEINT and can not be indexed
+
+
+statement error
+CREATE INDEX g15_at_uh ON g15_t USING inverted(pk, uh any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'uh' has unsupported type UHUGEINT and can not be indexed
+
+
+statement error
+CREATE INDEX g15_at_d ON g15_t USING inverted(pk, d any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'd' has unsupported type DECIMAL(10,2) and can not be indexed
+
+
+statement error
+CREATE INDEX g15_at_iv ON g15_t USING inverted(pk, iv any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'iv' has unsupported type INTERVAL and can not be indexed
+
+
+statement error
+CREATE INDEX g15_at_uu ON g15_t USING inverted(pk, uu any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'uu' has unsupported type UUID and can not be indexed
+
+
+statement error
+CREATE INDEX g15_at_st ON g15_t USING inverted(pk, st any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'st' has unsupported type STRUCT(a INTEGER) and can not be indexed
+
+
+statement error
+CREATE INDEX g15_at_mp ON g15_t USING inverted(pk, mp any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'mp' has unsupported type MAP(VARCHAR, INTEGER) and can not be indexed
+
+
+statement error
+CREATE INDEX g15_at_vr ON g15_t USING inverted(pk, vr any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'vr' has unsupported type VARIANT and can not be indexed
+
+
+statement error
+CREATE INDEX g15_at_tt ON g15_t USING inverted(pk, tt any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'tt' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIME)
+
+
+statement error
+CREATE INDEX g15_at_ttns ON g15_t USING inverted(pk, ttns any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'ttns' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIME_NS)
+
+
+statement error
+CREATE INDEX g15_at_tttz ON g15_t USING inverted(pk, tttz any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'tttz' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIME WITH TIME ZONE)
+
+
+statement error
+CREATE INDEX g15_at_tsms ON g15_t USING inverted(pk, tsms any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'tsms' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIMESTAMP_MS)
+
+
+statement error
+CREATE INDEX g15_at_tsns ON g15_t USING inverted(pk, tsns any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'tsns' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIMESTAMP_NS)
+
+
+statement error
+CREATE INDEX g15_at_tstz ON g15_t USING inverted(pk, tstz any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'tstz' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIMESTAMP WITH TIME ZONE)
+
+
+statement error
+CREATE INDEX g15_at_t8 ON g15_t USING inverted(pk, t8 any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 't8' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TINYINT)
+
+
+statement error
+CREATE INDEX g15_at_t16 ON g15_t USING inverted(pk, t16 any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 't16' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got SMALLINT)
+
+
+statement error
+CREATE INDEX g15_at_u8 ON g15_t USING inverted(pk, u8 any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'u8' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got UTINYINT)
+
+
+statement error
+CREATE INDEX g15_at_u16 ON g15_t USING inverted(pk, u16 any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'u16' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got USMALLINT)
+
+
+statement error
+CREATE INDEX g15_at_u32 ON g15_t USING inverted(pk, u32 any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'u32' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got UINTEGER)
+
+
+statement error
+CREATE INDEX g15_at_f ON g15_t USING inverted(pk, f any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'f' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got FLOAT)
+
+
+statement error
+CREATE INDEX g15_at_g ON g15_t USING inverted(pk, g any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
+
+
+# --- teardown ---------------------------------------------------------------
+
+statement ok
+DROP TABLE g15_t;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY kw_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ng_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY any_text_dict;

@@ -1,0 +1,390 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY kw_dict(template = 'keyword');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geo_src_dict(template = 'geojson',
+    coding = 'source');
+
+
+# ============================================================================
+# g11 -- Expression source + INCLUDE(tag): mirror g3 for the cells g3 omitted.
+# Wrapper expressions are identity-equivalent so the query side stays
+# straightforward; INCLUDE(tag) flips store_values on for a sibling column
+# without changing the indexed expression. Rocksdb-incompatible scalars
+# (TIMESTAMPTZ, UTINYINT/USMALLINT/UINTEGER, TIME, TIMESTAMP_MS,
+# TIMESTAMP_NS) are reached via parquet-backed views.
+# ============================================================================
+
+# (a) TIMESTAMPTZ scalar via expression -- view-backed.
+# DuckDB has no `+(TIMESTAMPTZ, INTERVAL)` overload, so use a `coalesce`
+# identity wrapper instead of the arithmetic shape used for plain TIMESTAMP.
+statement count 2
+COPY (SELECT * FROM (VALUES
+  (1, TIMESTAMPTZ '2024-01-01 00:00:00+00', 'a'),
+  (2, TIMESTAMPTZ '2024-06-15 12:00:00+00', 'b')
+) AS t(pk, ts_tz, tag))
+TO '${__TEST_DIR__}/sdb_g11_tz.parquet' (FORMAT parquet);
+
+statement ok
+CREATE VIEW g11_a_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/sdb_g11_tz.parquet');
+
+statement ok
+CREATE INDEX g11_a_expr_st ON g11_a_v USING inverted(pk, (coalesce(ts_tz, NULL::TIMESTAMPTZ))) INCLUDE (tag);
+
+query
+SELECT pk FROM g11_a_expr_st
+WHERE coalesce(ts_tz, NULL::TIMESTAMPTZ) @@ ts_between(TIMESTAMPTZ '2024-03-01 00:00:00+00', TIMESTAMPTZ '2024-12-31 00:00:00+00', true, true) ORDER BY pk;
+----
+pk
+2
+
+
+# (b) TINYINT scalar via expression.
+statement ok
+CREATE TABLE g11_b(pk INTEGER PRIMARY KEY, t8 TINYINT, tag VARCHAR);
+
+statement ok
+CREATE INDEX g11_b_expr_st ON g11_b USING inverted(pk, (t8 * 2::TINYINT)) INCLUDE (tag);
+
+statement ok
+INSERT INTO g11_b VALUES (1, -10::TINYINT, 'a'), (2, 10::TINYINT, 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) g11_b;
+
+query
+SELECT pk FROM g11_b_expr_st WHERE t8 * 2::TINYINT @@ ts_between(15::TINYINT, 50::TINYINT, true, true) ORDER BY pk;
+----
+pk
+2
+
+
+# (c) SMALLINT scalar via expression.
+statement ok
+CREATE TABLE g11_c(pk INTEGER PRIMARY KEY, t16 SMALLINT, tag VARCHAR);
+
+statement ok
+CREATE INDEX g11_c_expr_st ON g11_c USING inverted(pk, (t16 * 2::SMALLINT)) INCLUDE (tag);
+
+statement ok
+INSERT INTO g11_c VALUES (1, -100::SMALLINT, 'a'), (2, 100::SMALLINT, 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) g11_c;
+
+query
+SELECT pk FROM g11_c_expr_st WHERE t16 * 2::SMALLINT @@ ts_between(150::SMALLINT, 250::SMALLINT, true, true) ORDER BY pk;
+----
+pk
+2
+
+
+# (d) UTINYINT / USMALLINT / UINTEGER scalar via expression -- view-backed.
+statement count 2
+COPY (SELECT * FROM (VALUES
+  (1, 5::UTINYINT,   500::USMALLINT,   5000::UINTEGER,       'a'),
+  (2, 250::UTINYINT, 60000::USMALLINT, 4000000000::UINTEGER, 'b')
+) AS t(pk, u8, u16, u32, tag))
+TO '${__TEST_DIR__}/sdb_g11_unsigned.parquet' (FORMAT parquet);
+
+statement ok
+CREATE VIEW g11_d_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/sdb_g11_unsigned.parquet');
+
+statement ok
+CREATE INDEX g11_d_u8_expr_st  ON g11_d_v USING inverted(pk, (u8  + 1::UTINYINT))  INCLUDE (tag);
+
+statement ok
+CREATE INDEX g11_d_u16_expr_st ON g11_d_v USING inverted(pk, (u16 + 1::USMALLINT)) INCLUDE (tag);
+
+statement ok
+CREATE INDEX g11_d_u32_expr_st ON g11_d_v USING inverted(pk, (u32 + 1::UINTEGER))  INCLUDE (tag);
+
+query
+SELECT pk FROM g11_d_u8_expr_st  WHERE u8  + 1::UTINYINT  @@ ts_between(100::UTINYINT,  255::UTINYINT,  true, true) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM g11_d_u16_expr_st WHERE u16 + 1::USMALLINT @@ ts_between(50000::USMALLINT, 65535::USMALLINT, true, true) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM g11_d_u32_expr_st WHERE u32 + 1::UINTEGER  @@ ts_between(1000::UINTEGER, 10000::UINTEGER, true, true) ORDER BY pk;
+----
+pk
+1
+
+
+# (e) TIME / TIMESTAMP_MS / TIMESTAMP_NS scalar via expression -- view-backed.
+statement count 2
+COPY (SELECT * FROM (VALUES
+  (1, TIME '01:23:45',
+      TIMESTAMP_MS '2024-01-01 00:00:00',
+      TIMESTAMP_NS '2024-01-01 00:00:00',
+      'a'),
+  (2, TIME '23:00:00',
+      TIMESTAMP_MS '2024-06-15 12:00:00',
+      TIMESTAMP_NS '2024-06-15 12:00:00',
+      'b')
+) AS t(pk, tt, ts_ms, ts_ns, tag))
+TO '${__TEST_DIR__}/sdb_g11_temporal.parquet' (FORMAT parquet);
+
+statement ok
+CREATE VIEW g11_e_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/sdb_g11_temporal.parquet');
+
+statement ok
+CREATE INDEX g11_e_tt_expr_st    ON g11_e_v USING inverted(pk, (tt    + INTERVAL '1 second')) INCLUDE (tag);
+
+statement ok
+CREATE INDEX g11_e_ts_ms_expr_st ON g11_e_v USING inverted(pk, (ts_ms + INTERVAL '1 hour'))   INCLUDE (tag);
+
+statement ok
+CREATE INDEX g11_e_ts_ns_expr_st ON g11_e_v USING inverted(pk, (ts_ns + INTERVAL '1 hour'))   INCLUDE (tag);
+
+query
+SELECT pk FROM g11_e_tt_expr_st
+WHERE tt + INTERVAL '1 second' @@ ts_between(TIME '00:00:00', TIME '12:00:00', true, true) ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM g11_e_ts_ms_expr_st
+WHERE ts_ms + INTERVAL '1 hour' @@ ts_between(TIMESTAMP_MS '2024-03-01', TIMESTAMP_MS '2024-12-31', true, true) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM g11_e_ts_ns_expr_st
+WHERE ts_ns + INTERVAL '1 hour' @@ ts_between(TIMESTAMP_NS '2024-03-01', TIMESTAMP_NS '2024-12-31', true, true) ORDER BY pk;
+----
+pk
+2
+
+
+# (f) BOOLEAN scalar via expression WITH INCLUDE(tag).
+statement ok
+CREATE TABLE g11_f(pk INTEGER PRIMARY KEY, x BOOLEAN, tag VARCHAR);
+
+statement ok
+CREATE INDEX g11_f_expr_st ON g11_f USING inverted(pk, (NOT x)) INCLUDE (tag);
+
+statement ok
+INSERT INTO g11_f VALUES (1, true, 'a'), (2, false, 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) g11_f;
+
+query
+SELECT pk FROM g11_f_expr_st WHERE NOT x = true ORDER BY pk;
+----
+pk
+2
+
+
+# (g) BOOLEAN list via expression: identity-wrap a BOOLEAN[].
+statement ok
+CREATE TABLE g11_g(pk INTEGER PRIMARY KEY, bl BOOLEAN[], tag VARCHAR);
+
+statement ok
+CREATE INDEX g11_g_expr_st ON g11_g USING inverted(pk, ((bl))) INCLUDE (tag);
+
+statement ok
+INSERT INTO g11_g VALUES
+    (1, [true,  false, true],  'a'),
+    (2, [false, false, false], 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) g11_g;
+
+query
+SELECT pk FROM g11_g_expr_st WHERE true = ANY((bl)) ORDER BY pk;
+----
+pk
+1
+
+
+# (h) DATE list via expression: identity-wrap a DATE[].
+statement ok
+CREATE TABLE g11_h(pk INTEGER PRIMARY KEY, dl DATE[], tag VARCHAR);
+
+statement ok
+CREATE INDEX g11_h_expr_st ON g11_h USING inverted(pk, ((dl))) INCLUDE (tag);
+
+statement ok
+INSERT INTO g11_h VALUES
+    (1, [DATE '2024-01-01', DATE '2024-06-15'], 'a'),
+    (2, [DATE '2025-01-01'],                    'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) g11_h;
+
+query
+SELECT pk FROM g11_h_expr_st WHERE (dl) @@ ts_between(DATE '2024-01-01', DATE '2024-12-31', true, true) ORDER BY pk;
+----
+pk
+1
+
+
+# (i) INTEGER list via expression: identity-wrap an INTEGER[].
+statement ok
+CREATE TABLE g11_i(pk INTEGER PRIMARY KEY, il INTEGER[], tag VARCHAR);
+
+statement ok
+CREATE INDEX g11_i_expr_st ON g11_i USING inverted(pk, ((il))) INCLUDE (tag);
+
+statement ok
+INSERT INTO g11_i VALUES
+    (1, [10, 20, 30], 'a'),
+    (2, [40, 50],     'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) g11_i;
+
+query
+SELECT pk FROM g11_i_expr_st WHERE (il) @@ ts_between(15, 25, true, true) ORDER BY pk;
+----
+pk
+1
+
+
+# (j) BIGINT list via expression: identity-wrap a BIGINT[].
+statement ok
+CREATE TABLE g11_j(pk INTEGER PRIMARY KEY, ll BIGINT[], tag VARCHAR);
+
+statement ok
+CREATE INDEX g11_j_expr_st ON g11_j USING inverted(pk, ((ll))) INCLUDE (tag);
+
+statement ok
+INSERT INTO g11_j VALUES
+    (1, [100::BIGINT, 200::BIGINT], 'a'),
+    (2, [400::BIGINT],              'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) g11_j;
+
+query
+SELECT pk FROM g11_j_expr_st WHERE (ll) @@ ts_between(150::BIGINT, 250::BIGINT, true, true) ORDER BY pk;
+----
+pk
+1
+
+
+# (k) DOUBLE list via expression: identity-wrap a DOUBLE[].
+statement ok
+CREATE TABLE g11_k(pk INTEGER PRIMARY KEY, dbl DOUBLE[], tag VARCHAR);
+
+statement ok
+CREATE INDEX g11_k_expr_st ON g11_k USING inverted(pk, ((dbl))) INCLUDE (tag);
+
+statement ok
+INSERT INTO g11_k VALUES
+    (1, [1.5, 2.5], 'a'),
+    (2, [4.5],      'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) g11_k;
+
+query
+SELECT pk FROM g11_k_expr_st WHERE (dbl) @@ ts_between(2.0::DOUBLE, 3.0::DOUBLE, true, true) ORDER BY pk;
+----
+pk
+1
+
+
+# (l) JSON ->>'a' kw_dict via expression WITH INCLUDE(tag).
+statement ok
+CREATE TABLE g11_l(pk INTEGER PRIMARY KEY, j JSON, tag VARCHAR);
+
+statement ok
+CREATE INDEX g11_l_expr_st ON g11_l USING inverted(pk, (j->>'type') kw_dict) INCLUDE (tag);
+
+statement ok
+INSERT INTO g11_l VALUES
+    (1, '{"type":"Point","coordinates":[0.0, 0.0]}',           'a'),
+    (2, '{"type":"LineString","coordinates":[[0,0],[1,1]]}',   'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) g11_l;
+
+query
+SELECT pk FROM g11_l_expr_st WHERE j->>'type' @@ ts_like('Point') ORDER BY pk;
+----
+pk
+1
+
+
+# (m) GEOMETRY geo_src_dict via expression WITH INCLUDE(tag).
+statement ok
+CREATE TABLE g11_m(pk INTEGER PRIMARY KEY, g GEOMETRY('OGC:CRS84'), tag VARCHAR);
+
+statement ok
+CREATE INDEX g11_m_expr_st ON g11_m USING inverted(pk, (g) geo_src_dict) INCLUDE (tag);
+
+statement ok
+INSERT INTO g11_m VALUES
+    (1, 'POINT(0 0)'::GEOMETRY('OGC:CRS84'),   'a'),
+    (2, 'POINT(10 20)'::GEOMETRY('OGC:CRS84'), 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) g11_m;
+
+query
+SELECT count(*) FROM g11_m_expr_st;
+----
+count
+2
+
+
+# --- teardown ---------------------------------------------------------------
+
+statement ok
+DROP TABLE g11_b;
+
+statement ok
+DROP TABLE g11_c;
+
+statement ok
+DROP TABLE g11_f;
+
+statement ok
+DROP TABLE g11_g;
+
+statement ok
+DROP TABLE g11_h;
+
+statement ok
+DROP TABLE g11_i;
+
+statement ok
+DROP TABLE g11_j;
+
+statement ok
+DROP TABLE g11_k;
+
+statement ok
+DROP TABLE g11_l;
+
+statement ok
+DROP TABLE g11_m;
+
+statement ok
+DROP VIEW g11_a_v CASCADE;
+
+statement ok
+DROP VIEW g11_d_v CASCADE;
+
+statement ok
+DROP VIEW g11_e_v CASCADE;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY kw_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY geo_src_dict;

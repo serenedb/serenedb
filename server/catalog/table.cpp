@@ -68,6 +68,14 @@ Table::Table(ObjectId schema_id, ObjectId id, std::string_view name,
   }
 }
 
+void Table::RebuildColumnIndex() {
+  _column_index.clear();
+  _column_index.reserve(_columns.size());
+  for (auto& col : _columns) {
+    _column_index.emplace(col.GetId(), &col);
+  }
+}
+
 std::shared_ptr<Table> Table::Deserialize(duckdb::Deserializer& src,
                                           ReadContext ctx) {
   TableData data;
@@ -346,6 +354,7 @@ std::shared_ptr<Table> Table::DropColumn(Column::Id column_id) const {
   std::erase_if(cloned->_foreign_keys, [&](const TableForeignKey& fk) {
     return absl::c_contains(fk.columns, column_id);
   });
+  cloned->RebuildColumnIndex();
   return cloned;
 }
 
@@ -362,6 +371,7 @@ Result Table::AddColumn(std::shared_ptr<Table>& result, Column column,
   auto new_table = basics::downCast<Table>(Clone());
   column.SetParentId(new_table->GetId());
   new_table->_columns.push_back(std::move(column));
+  new_table->RebuildColumnIndex();
   result = std::move(new_table);
   return {};
 }

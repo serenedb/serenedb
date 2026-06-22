@@ -117,10 +117,17 @@ class Table final : public Object {
   std::string_view Comment() const noexcept { return _comment; }
 
  private:
+  // Rebuilds _column_index from _columns. Mutators that change the size or
+  // layout of _columns (DropColumn/AddColumn) must call this afterwards: the
+  // map holds pointers into _columns, which a push_back (realloc) or erase
+  // (shift) invalidates.
+  void RebuildColumnIndex();
+
   std::vector<Column> _columns;
-  // id -> &_columns[i]; derived once at construction. Stable for the object's
-  // lifetime -- _columns is never reallocated after construction (immutable
-  // Table; Clone builds a fresh one).
+  // id -> &_columns[i]. Derived at construction and refreshed by
+  // RebuildColumnIndex() after any structural mutation; pointers stay valid
+  // because _columns is otherwise only edited in place (never resized) post
+  // construction.
   containers::FlatHashMap<Column::Id, const Column*> _column_index;
   std::vector<Column::Id> _pk_columns;
   std::vector<CheckConstraint> _check_constraints;

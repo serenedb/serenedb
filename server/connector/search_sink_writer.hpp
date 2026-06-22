@@ -64,22 +64,22 @@ inline TokenizerProvider MakeTokenizerProvider(
 
 inline std::vector<IndexedExpression> MakeIndexedExpressions(
   const catalog::InvertedIndex& index, duckdb::ClientContext& client_context) {
+  const auto& expression_keys = index.ExpressionKeys();
   std::vector<IndexedExpression> entries;
-  entries.reserve(index.GetEntries().size());
-  for (const auto& [field_id, entry] : index.GetEntries()) {
-    const auto* expr = entry.GetExpressionData();
-    if (!expr) {
-      continue;
-    }
-    SDB_ASSERT(!expr->serialized_expr.empty());
-    SDB_ASSERT(!expr->dependent_columns.empty());
+  entries.reserve(expression_keys.size());
+  for (const auto& key : expression_keys) {
+    const auto& expr = key.data;
+    const auto field_id = key.field_id;
+    SDB_ASSERT(!expr.serialized_expr.empty());
+    SDB_ASSERT(!expr.dependent_columns.empty());
     SDB_ASSERT(irs::field_limits::valid(field_id));
     auto bound =
-      DeserializeBoundExpression(expr->serialized_expr, client_context);
-    const bool is_geojson = expr->return_type.IsJSONType() &&
-                            irs::field_limits::valid(entry.synthetic_column);
-    entries.emplace_back(std::move(bound), expr->serialized_expr,
-                         expr->dependent_columns, field_id, is_geojson);
+      DeserializeBoundExpression(expr.serialized_expr, client_context);
+    const auto* entry = index.FindEntry(field_id);
+    const bool is_geojson = expr.return_type.IsJSONType() && entry &&
+                            irs::field_limits::valid(entry->synthetic_column);
+    entries.emplace_back(std::move(bound), expr.serialized_expr,
+                         expr.dependent_columns, field_id, is_geojson);
   }
   return entries;
 }

@@ -1,0 +1,89 @@
+# CREATE TABLE AS in SereneDB is a separate atomic operation, not transactional
+# with the surrounding statement: its SELECT reads only COMMITTED data, and its
+# result commits independently (survives a ROLLBACK). This diverges from
+# PostgreSQL (whose DDL is transactional), so the test is serenedb-only.
+
+statement ok
+CREATE TABLE vedernikoff_src (id INTEGER, v TEXT);
+
+statement ok
+INSERT INTO vedernikoff_src VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+
+# CTAS does not observe the user's open/uncommitted writes.
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO vedernikoff_src VALUES (99, 'z');
+
+statement ok
+CREATE TABLE clickclack_iso AS SELECT * FROM vedernikoff_src;
+
+statement ok
+COMMIT;
+
+# The committed INSERT is now visible in the source...
+query
+SELECT count(*) FROM vedernikoff_src;
+----
+count
+4
+
+# ...but the CTAS snapshot excluded the (then-uncommitted) row.
+query
+SELECT count(*) FROM clickclack_iso ORDER BY 1;
+----
+count
+3
+
+query
+SELECT id FROM clickclack_iso WHERE id = 99;
+----
+id
+
+
+# DDL is atomic, not transactional: a CTAS inside a transaction survives ROLLBACK.
+statement ok
+BEGIN;
+
+statement ok
+CREATE TABLE babsky_rb AS SELECT * FROM vedernikoff_src WHERE id < 10;
+
+statement ok
+ROLLBACK;
+
+query
+SELECT count(*) FROM babsky_rb;
+----
+count
+3
+
+
+# The new table is a normal table: DML works on it (rowid-keyed).
+statement ok
+INSERT INTO clickclack_iso VALUES (4, 'd');
+
+statement ok
+UPDATE clickclack_iso SET v = 'X' WHERE id = 1;
+
+statement ok
+DELETE FROM clickclack_iso WHERE id = 2;
+
+query
+SELECT id, v FROM clickclack_iso ORDER BY id;
+----
+id	v
+1	X
+3	c
+4	d
+
+
+statement ok
+DROP TABLE vedernikoff_src;
+
+statement ok
+DROP TABLE clickclack_iso;
+
+statement ok
+DROP TABLE babsky_rb;

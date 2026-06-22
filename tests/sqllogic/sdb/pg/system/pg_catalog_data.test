@@ -378,8 +378,8 @@ query
 SELECT conname, contype FROM pg_catalog.pg_constraint WHERE conrelid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = 'pg_cat_t1') ORDER BY conname
 ----
 conname	contype
-pg_cat_t1_id_not_null	c
-pg_cat_t1_name_not_null	c
+pg_cat_t1_id_not_null	n
+pg_cat_t1_name_not_null	n
 pg_cat_t1_pkey	p
 
 
@@ -387,7 +387,7 @@ query
 SELECT conname, contype FROM pg_catalog.pg_constraint WHERE conrelid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = 'pg_cat_t2') ORDER BY conname
 ----
 conname	contype
-pg_cat_t2_a_not_null	c
+pg_cat_t2_a_not_null	n
 pg_cat_t2_pkey	p
 
 
@@ -696,10 +696,10 @@ query
 SELECT con.conname, c.relname, con.contype FROM pg_catalog.pg_constraint con JOIN pg_catalog.pg_class c ON con.conrelid = c.oid WHERE c.relname IN ('pg_cat_t1', 'pg_cat_t2') ORDER BY c.relname, con.conname
 ----
 conname	relname	contype
-pg_cat_t1_id_not_null	pg_cat_t1	c
-pg_cat_t1_name_not_null	pg_cat_t1	c
+pg_cat_t1_id_not_null	pg_cat_t1	n
+pg_cat_t1_name_not_null	pg_cat_t1	n
 pg_cat_t1_pkey	pg_cat_t1	p
-pg_cat_t2_a_not_null	pg_cat_t2	c
+pg_cat_t2_a_not_null	pg_cat_t2	n
 pg_cat_t2_pkey	pg_cat_t2	p
 
 

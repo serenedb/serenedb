@@ -1,0 +1,62 @@
+# COMMENT ON TABLE / COLUMN persists in the catalog and surfaces in
+# duckdb_tables()/duckdb_columns(), matching a native duckdb table. IS NULL
+# clears the comment. (duckdb_tables/columns are serenedb/duckdb catalog
+# functions, not PG, so this is an sdb-subtree test.)
+
+statement ok
+CREATE TABLE cmt_t (a INTEGER, b VARCHAR);
+
+
+statement ok
+COMMENT ON TABLE cmt_t IS 'my table';
+
+
+query
+SELECT comment FROM duckdb_tables() WHERE table_name = 'cmt_t';
+----
+comment
+my table
+
+
+statement ok
+COMMENT ON COLUMN cmt_t.a IS 'col a note';
+
+
+query
+SELECT comment FROM duckdb_columns() WHERE table_name = 'cmt_t' AND column_name = 'a';
+----
+comment
+col a note
+
+
+# IS NULL clears the comment
+statement ok
+COMMENT ON COLUMN cmt_t.a IS NULL;
+
+
+query
+SELECT comment FROM duckdb_columns() WHERE table_name = 'cmt_t' AND column_name = 'a';
+----
+comment
+NULL
+
+
+# comment on a non-existent column errors
+statement error
+COMMENT ON COLUMN cmt_t.nope IS 'x';
+
+
+# the table comment survives an unrelated ALTER
+statement ok
+ALTER TABLE cmt_t RENAME COLUMN b TO bb;
+
+
+query
+SELECT comment FROM duckdb_tables() WHERE table_name = 'cmt_t';
+----
+comment
+my table
+
+
+statement ok
+DROP TABLE cmt_t;

@@ -101,7 +101,7 @@ class Object {
 
   ObjectId GetParentId() const noexcept { return _parent_id; }
   ObjectType GetType() const noexcept { return _type; }
-  std::string_view GetName() const noexcept { return _name; }
+  const auto& GetName() const noexcept { return _name; }
   ObjectId GetId() const noexcept { return _id; }
 
   bool Tombstoned() const noexcept {

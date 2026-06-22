@@ -1,0 +1,165 @@
+control substitution on
+
+# ============================================================================
+# Indexes with no user-indexed columns -- only the implicit PK-blob field
+# (added by every inverted index so DELETE-from-index can locate rows).
+# `USING inverted INCLUDE (...)` is the canonical syntax for this.
+# ============================================================================
+
+statement ok
+CREATE TABLE m_pk_only(pk INTEGER PRIMARY KEY, v VARCHAR, n INTEGER);
+
+statement ok
+CREATE INDEX m_pk_only_one  ON m_pk_only USING inverted INCLUDE (v);
+
+statement ok
+CREATE INDEX m_pk_only_many ON m_pk_only USING inverted INCLUDE (v, n);
+
+statement ok
+INSERT INTO m_pk_only VALUES (1, 'alpha', 10), (2, 'beta', 20), (3, 'gamma', 30);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_pk_only;
+
+query
+SELECT count(*) FROM m_pk_only_one;
+----
+count
+3
+
+query
+SELECT pk, v FROM m_pk_only_one ORDER BY pk;
+----
+pk	v
+1	alpha
+2	beta
+3	gamma
+
+query
+SELECT pk, v, n FROM m_pk_only_many ORDER BY pk;
+----
+pk	v	n
+1	alpha	10
+2	beta	20
+3	gamma	30
+
+
+# ============================================================================
+# Types whose ROCKSDB row serializer refuses but which the catalog accepts
+# via term_dict (or via INCLUDE). Reached through a parquet-backed view so
+# the row store is bypassed entirely:
+#   UTINYINT, USMALLINT, UINTEGER  -- catalog NumericI32 / NumericI64 family
+#   TIME, TIME_NS, TIME_TZ, TIMESTAMP_MS, TIMESTAMP_NS, TIMESTAMP_TZ
+#                                  -- catalog NumericI64 family (temporal)
+#   UUID, DECIMAL, INTERVAL, HUGEINT
+#                                  -- term_dict rejects -> INCLUDE-only
+# ============================================================================
+
+statement count 2
+COPY (SELECT * FROM (VALUES
+  (1, 5::UTINYINT,   500::USMALLINT,   5000::UINTEGER,
+      TIME '01:23:45',
+      TIMESTAMP_MS '2024-01-01 00:00:00',
+      TIMESTAMP_NS '2024-01-01 00:00:00',
+      TIMESTAMPTZ  '2024-01-01 00:00:00+00',
+      'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::UUID,
+      12.34::DECIMAL(10,2),
+      INTERVAL 5 DAY,
+      100::HUGEINT),
+  (2, 250::UTINYINT, 60000::USMALLINT, 4000000000::UINTEGER,
+      TIME '23:00:00',
+      TIMESTAMP_MS '2024-06-15 12:00:00',
+      TIMESTAMP_NS '2024-06-15 12:00:00',
+      TIMESTAMPTZ  '2024-06-15 12:00:00+00',
+      'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22'::UUID,
+      56.78::DECIMAL(10,2),
+      INTERVAL 10 DAY,
+      200::HUGEINT)
+) AS t(pk, u8, u16, u32, tt, ts_ms, ts_ns, ts_tz, u, d, iv, h))
+TO '${__TEST_DIR__}/sdb_matrix_unsup.parquet' (FORMAT parquet);
+
+statement ok
+CREATE VIEW m_unsup AS SELECT * FROM read_parquet('${__TEST_DIR__}/sdb_matrix_unsup.parquet');
+
+statement ok
+CREATE INDEX m_unsup_u8    ON m_unsup USING inverted(pk, u8);
+
+statement ok
+CREATE INDEX m_unsup_u16   ON m_unsup USING inverted(pk, u16);
+
+statement ok
+CREATE INDEX m_unsup_u32   ON m_unsup USING inverted(pk, u32);
+
+statement ok
+CREATE INDEX m_unsup_tt    ON m_unsup USING inverted(pk, tt);
+
+statement ok
+CREATE INDEX m_unsup_ts_ms ON m_unsup USING inverted(pk, ts_ms);
+
+statement ok
+CREATE INDEX m_unsup_ts_ns ON m_unsup USING inverted(pk, ts_ns);
+
+statement ok
+CREATE INDEX m_unsup_ts_tz ON m_unsup USING inverted(pk, ts_tz);
+
+# INCLUDE-only sidecar for term_dict-rejected types (UUID / DECIMAL / INTERVAL
+# / HUGEINT are accepted by the included opclass but not by term_dict).
+statement ok
+CREATE INDEX m_unsup_inc ON m_unsup USING inverted INCLUDE (u, d, iv, h);
+
+query
+SELECT pk FROM m_unsup_u8 WHERE u8 @@ ts_between(100::UTINYINT, 255::UTINYINT, true, true);
+----
+pk
+2
+
+query
+SELECT pk FROM m_unsup_u16 WHERE u16 @@ ts_between(50000::USMALLINT, 65535::USMALLINT, true, true);
+----
+pk
+2
+
+query
+SELECT pk FROM m_unsup_u32 WHERE u32 @@ ts_between(1000::UINTEGER, 10000::UINTEGER, true, true);
+----
+pk
+1
+
+query
+SELECT pk FROM m_unsup_tt WHERE tt @@ ts_between(TIME '00:00:00', TIME '12:00:00', true, true);
+----
+pk
+1
+
+query
+SELECT pk FROM m_unsup_ts_ms WHERE ts_ms @@ ts_between(TIMESTAMP_MS '2024-03-01', TIMESTAMP_MS '2024-12-31', true, true);
+----
+pk
+2
+
+query
+SELECT pk FROM m_unsup_ts_ns WHERE ts_ns @@ ts_between(TIMESTAMP_NS '2024-03-01', TIMESTAMP_NS '2024-12-31', true, true);
+----
+pk
+2
+
+query
+SELECT pk FROM m_unsup_ts_tz WHERE ts_tz @@ ts_between(TIMESTAMPTZ '2024-03-01 00:00:00+00', TIMESTAMPTZ '2024-12-31 00:00:00+00', true, true);
+----
+pk
+2
+
+query
+SELECT count(*) FROM m_unsup_inc;
+----
+count
+2
+
+
+# --- teardown ---------------------------------------------------------------
+
+statement ok
+DROP TABLE m_pk_only;
+
+statement ok
+DROP VIEW m_unsup CASCADE;

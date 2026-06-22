@@ -21,6 +21,7 @@
 #include "connector/duckdb_schema_entry.h"
 
 #include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/common/constants.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/parser/constraints/check_constraint.hpp>
@@ -1231,6 +1232,75 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
           ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
           ERR_MSG("column \"", remove_info.removed_column, "\" of relation \"",
                   table_name, "\" does not exist"));
+      }
+      if (!r.ok()) {
+        SDB_THROW(std::move(r));
+      }
+      return;
+    }
+
+    case duckdb::AlterTableType::ADD_FIELD:
+    case duckdb::AlterTableType::REMOVE_FIELD:
+    case duckdb::AlterTableType::RENAME_FIELD: {
+      // Nested-STRUCT field DDL. Native DuckTableEntry turns each of these into
+      // an ALTER COLUMN TYPE with a remap_struct(...) USING cast; reuse
+      // duckdb's exact by-name remap (a positional/plain type cast silently
+      // mis-maps renamed/dropped fields). We already support ALTER COLUMN TYPE
+      // USING end-to-end, so route through it.
+      const duckdb::vector<duckdb::string>* column_path = nullptr;
+      if (table_info.alter_table_type == duckdb::AlterTableType::ADD_FIELD) {
+        column_path = &table_info.Cast<duckdb::AddFieldInfo>().column_path;
+      } else if (table_info.alter_table_type ==
+                 duckdb::AlterTableType::REMOVE_FIELD) {
+        column_path = &table_info.Cast<duckdb::RemoveFieldInfo>().column_path;
+      } else {
+        column_path = &table_info.Cast<duckdb::RenameFieldInfo>().column_path;
+      }
+      const std::string& root_column = (*column_path)[0];
+
+      auto fld_snapshot = catalog_impl.GetCatalogSnapshot();
+      auto table_obj = fld_snapshot->GetTable(db, name, table_name);
+      if (!table_obj) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                        ERR_MSG("relation \"", table_name, "\" does not exist"));
+      }
+      auto col_it = absl::c_find_if(
+        table_obj->Columns(),
+        [&](const catalog::Column& c) { return c.GetName() == root_column; });
+      if (col_it == table_obj->Columns().end()) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+          ERR_MSG("column \"", root_column, "\" of relation \"", table_name,
+                  "\" does not exist"));
+      }
+
+      duckdb::StructFieldRemap remap;
+      try {
+        if (table_info.alter_table_type == duckdb::AlterTableType::ADD_FIELD) {
+          auto& add_field = table_info.Cast<duckdb::AddFieldInfo>();
+          remap = duckdb::BuildAddFieldRemap(col_it->type, root_column,
+                                             add_field.column_path,
+                                             add_field.new_field);
+        } else if (table_info.alter_table_type ==
+                   duckdb::AlterTableType::REMOVE_FIELD) {
+          remap = duckdb::BuildRemoveFieldRemap(col_it->type, *column_path);
+        } else {
+          remap = duckdb::BuildRenameFieldRemap(
+            col_it->type, *column_path,
+            table_info.Cast<duckdb::RenameFieldInfo>().new_name);
+        }
+      } catch (const std::exception& ex) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                        ERR_MSG(ex.what()));
+      }
+
+      std::string field_using_sql = remap.remap_expression->ToString();
+      Result r = catalog_impl.ChangeColumnType(db, name, table_name, root_column,
+                                               std::move(remap.new_type),
+                                               std::move(field_using_sql));
+      if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                        ERR_MSG("relation \"", table_name, "\" does not exist"));
       }
       if (!r.ok()) {
         SDB_THROW(std::move(r));

@@ -80,6 +80,11 @@ class LimitedSampleSelector : private util::Noncopyable {
     _heap.Merge(std::move(other._heap));
   }
 
+  void MergeUnsafe(LimitedSampleSelector&& other) {
+    SDB_ASSERT(_heap.Capacity() == other._heap.Capacity());
+    _heap.PushUnsafe(std::move(other._heap));
+  }
+
   // Finish collecting: assign stat offsets to the surviving (scored) terms and
   // evaluate their shared stats. Term/field statistics are accumulated into the
   // caller-owned collectors.
@@ -212,6 +217,14 @@ class LimitedTermsCollector final : public FieldPrepareCollector {
     auto& rhs = sdb::basics::downCast<LimitedTermsCollector>(other);
     _limited.Merge(std::move(rhs._limited));
     FieldPrepareCollector::Merge(std::move(rhs));
+  }
+
+  void MergeAll(MergeVisitor visit) final {
+    visit([this](PrepareCollector& other) {
+      auto& rhs = sdb::basics::downCast<LimitedTermsCollector>(other);
+      FieldCollector::Merge(_field, rhs._field);
+      _limited.MergeUnsafe(std::move(rhs._limited));
+    });
   }
 
   StatsBuffer Finish(IResourceManager& memory) final {

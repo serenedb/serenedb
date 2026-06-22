@@ -74,8 +74,16 @@ PreparedFilter::PreparedFilter(const irs::Filter& filter,
     if (_perseg.empty()) {
       _perseg.emplace_back(filter.MakeCollector(scorer));
     }
-    for (size_t i = 1, n = _perseg.size(); i < n; ++i) {
-      _perseg.front()->Merge(std::move(*_perseg[i]));
+    if (mode == CollectMode::MergeAll) {
+      _perseg.front()->MergeAll([this](irs::PrepareCollector::MergeSink sink) {
+        for (size_t i = 1, n = _perseg.size(); i < n; ++i) {
+          sink(*_perseg[i]);
+        }
+      });
+    } else {
+      for (size_t i = 1, n = _perseg.size(); i < n; ++i) {
+        _perseg.front()->Merge(std::move(*_perseg[i]));
+      }
     }
     _stats.emplace(_perseg.front()->Finish(memory));
   }

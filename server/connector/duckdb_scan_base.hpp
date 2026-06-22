@@ -373,9 +373,11 @@ void PreparePhase(duckdb::ClientContext& ctx, Gstate& g, Lstate& l) {
         g.total_segments) {
       const uint32_t used = g.collector_slots.load(std::memory_order_relaxed);
       auto& merged = *g.collectors[0];
-      for (uint32_t i = 1; i < used; ++i) {
-        merged.Merge(std::move(*g.collectors[i]));
-      }
+      merged.MergeAll([&](irs::PrepareCollector::MergeSink sink) {
+        for (uint32_t i = 1; i < used; ++i) {
+          sink(*g.collectors[i]);
+        }
+      });
       g.stats.emplace(merged.Finish(irs::IResourceManager::gNoop));
       g.prepare_finished.Notify();
       return;

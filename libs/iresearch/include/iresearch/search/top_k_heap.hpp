@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <functional>
+#include <iterator>
 #include <utility>
 #include <vector>
 
@@ -74,6 +75,16 @@ class TopKHeap : private util::Noncopyable {
     for (auto& item : other._items) {
       Push(std::move(item));
     }
+    other.Clear();
+  }
+
+  void PushUnsafe(TopKHeap&& other) {
+    if (_capacity == 0) {
+      other.Clear();
+      return;
+    }
+    _items.insert(_items.end(), std::make_move_iterator(other._items.begin()),
+                  std::make_move_iterator(other._items.end()));
     other.Clear();
   }
 

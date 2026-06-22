@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include <memory>
 #include <span>
 #include <vector>
@@ -99,9 +101,16 @@ class PrepareCollector {
  public:
   using ptr = std::unique_ptr<PrepareCollector>;
 
+  using MergeSink = absl::FunctionRef<void(PrepareCollector&)>;
+  using MergeVisitor = absl::FunctionRef<void(MergeSink)>;
+
   virtual ~PrepareCollector() = default;
 
   virtual void Merge(PrepareCollector&& other) = 0;
+
+  virtual void MergeAll(MergeVisitor visit) {
+    visit([this](PrepareCollector& other) { Merge(std::move(other)); });
+  }
 
   virtual StatsBuffer Finish(IResourceManager& memory) = 0;
 
@@ -194,6 +203,8 @@ class CompoundCollector final : public PrepareCollector {
   auto Size() const noexcept { return _children.size(); }
 
   void Merge(PrepareCollector&& other) final;
+
+  void MergeAll(MergeVisitor visit) final;
 
   StatsBuffer Finish(IResourceManager& memory) final;
 

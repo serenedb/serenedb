@@ -342,7 +342,7 @@ struct FrequencyScore : public irs::ScorerBase<FrequencyScore, StatsT> {
 
 class PreparedFilter {
  public:
-  enum class CollectMode { Single, Merge, NoCollector };
+  enum class CollectMode { Single, Merge, MergeAll, NoCollector };
 
   PreparedFilter(const irs::Filter& filter, const irs::IndexReader& index,
                  const irs::Scorer* scorer = nullptr,

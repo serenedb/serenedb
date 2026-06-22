@@ -18,6 +18,9 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <algorithm>
+#include <vector>
+
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/doc_generator.hpp"
@@ -102,20 +105,28 @@ irs::ByRange MakeRange(std::string_view field, std::string_view min,
   return q;
 }
 
-void AssertStatsEqual(const irs::StatsBuffer& lhs,
-                      const irs::StatsBuffer& rhs) {
+void AssertStatsEqual(const irs::StatsBuffer& lhs, const irs::StatsBuffer& rhs,
+                      bool ordered_stats = true) {
   ASSERT_EQ(lhs.HasScorer(), rhs.HasScorer());
 
   const auto& l = lhs.GetAllStats();
   const auto& r = rhs.GetAllStats();
   ASSERT_EQ(l.size(), r.size());
-  for (size_t i = 0, n = l.size(); i < n; ++i) {
-    ASSERT_EQ(l[i], r[i]);
+  if (ordered_stats) {
+    for (size_t i = 0, n = l.size(); i < n; ++i) {
+      ASSERT_EQ(l[i], r[i]);
+    }
+  } else {
+    std::vector<irs::bstring> l_sorted{l.begin(), l.end()};
+    std::vector<irs::bstring> r_sorted{r.begin(), r.end()};
+    std::sort(l_sorted.begin(), l_sorted.end());
+    std::sort(r_sorted.begin(), r_sorted.end());
+    ASSERT_EQ(l_sorted, r_sorted);
   }
 
   ASSERT_EQ(lhs.ChildCount(), rhs.ChildCount());
   for (size_t i = 0, n = lhs.ChildCount(); i < n; ++i) {
-    AssertStatsEqual(lhs.Child(i), rhs.Child(i));
+    AssertStatsEqual(lhs.Child(i), rhs.Child(i), ordered_stats);
   }
 }
 
@@ -147,6 +158,31 @@ void CollectSegment(const tests::PreparedFilter& prepared, size_t i,
   }
 }
 
+void AssertSameAsSingle(const tests::PreparedFilter& single,
+                        const tests::PreparedFilter& other,
+                        const irs::IndexReader& index, bool ordered_stats) {
+  ASSERT_EQ(single.size(), other.size());
+  ASSERT_EQ(index.size(), single.size());
+  ASSERT_NO_FATAL_FAILURE(
+    AssertStatsEqual(single.Stats(), other.Stats(), ordered_stats));
+
+  for (size_t i = 0; const auto& sub : index) {
+    ScoredDocs single_docs;
+    ScoredDocs other_docs;
+    irs::CostAttr::Type single_cost = 0;
+    irs::CostAttr::Type other_cost = 0;
+
+    ASSERT_NO_FATAL_FAILURE(
+      CollectSegment(single, i, sub, single_docs, single_cost));
+    ASSERT_NO_FATAL_FAILURE(
+      CollectSegment(other, i, sub, other_docs, other_cost));
+
+    ASSERT_EQ(single_docs, other_docs);
+    ASSERT_EQ(single_cost, other_cost);
+    ++i;
+  }
+}
+
 void AssertMergeConsistent(const irs::Filter& filter,
                            const irs::IndexReader& index,
                            const irs::Scorer* scorer) {
@@ -154,25 +190,19 @@ void AssertMergeConsistent(const irs::Filter& filter,
     filter, index, scorer, irs::IResourceManager::gNoop, nullptr, Mode::Single};
   tests::PreparedFilter merged{
     filter, index, scorer, irs::IResourceManager::gNoop, nullptr, Mode::Merge};
+  tests::PreparedFilter merged_all{filter,  index,
+                                   scorer,  irs::IResourceManager::gNoop,
+                                   nullptr, Mode::MergeAll};
 
-  ASSERT_EQ(single.size(), merged.size());
-  ASSERT_EQ(index.size(), single.size());
-  ASSERT_NO_FATAL_FAILURE(AssertStatsEqual(single.Stats(), merged.Stats()));
-
-  for (size_t i = 0; const auto& sub : index) {
-    ScoredDocs single_docs;
-    ScoredDocs merged_docs;
-    irs::CostAttr::Type single_cost = 0;
-    irs::CostAttr::Type merged_cost = 0;
-
+  {
+    SCOPED_TRACE("pairwise merge");
     ASSERT_NO_FATAL_FAILURE(
-      CollectSegment(single, i, sub, single_docs, single_cost));
+      AssertSameAsSingle(single, merged, index, /*ordered_stats=*/true));
+  }
+  {
+    SCOPED_TRACE("n-way merge");
     ASSERT_NO_FATAL_FAILURE(
-      CollectSegment(merged, i, sub, merged_docs, merged_cost));
-
-    ASSERT_EQ(single_docs, merged_docs);
-    ASSERT_EQ(single_cost, merged_cost);
-    ++i;
+      AssertSameAsSingle(single, merged_all, index, /*ordered_stats=*/false));
   }
 }
 

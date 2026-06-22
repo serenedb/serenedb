@@ -167,6 +167,18 @@ void CompoundCollector::Merge(PrepareCollector&& other) {
   }
 }
 
+void CompoundCollector::MergeAll(MergeVisitor visit) {
+  for (size_t i = 0, size = _children.size(); i < size; ++i) {
+    _children[i]->MergeAll([&, i](MergeSink sink) {
+      visit([&](PrepareCollector& other) {
+        auto& rhs = sdb::basics::downCast<CompoundCollector>(other);
+        SDB_ASSERT(_children.size() == rhs._children.size());
+        sink(*rhs._children[i]);
+      });
+    });
+  }
+}
+
 StatsBuffer CompoundCollector::Finish(IResourceManager& memory) {
   StatsBuffer stats{StatsBuffer::Storage{{memory}}, _scorer};
   for (auto& child : _children) {

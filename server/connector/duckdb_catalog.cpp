@@ -35,6 +35,7 @@
 #include <duckdb/execution/operator/projection/physical_projection.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
@@ -1074,6 +1075,13 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
 
 duckdb::DatabaseSize SereneDBCatalog::GetDatabaseSize(
   duckdb::ClientContext& context) {
+  // Facade tables hold no row data themselves -- it lives in the hidden store
+  // database. Report the store's size (the user never names the store).
+  auto store = duckdb::DatabaseManager::Get(context).GetDatabase(
+    context, std::string{catalog::kStoreDatabaseName});
+  if (store) {
+    return store->GetCatalog().GetDatabaseSize(context);
+  }
   return {};
 }
 

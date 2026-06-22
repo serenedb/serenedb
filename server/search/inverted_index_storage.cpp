@@ -318,7 +318,8 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
       _last_durable_tick = _recovery_tick;
     }
   }
-  _snapshot = std::make_shared<InvertedIndexSnapshot>(std::move(reader));
+  std::atomic_store(&_snapshot,
+                    std::make_shared<InvertedIndexSnapshot>(std::move(reader)));
 }
 
 void InvertedIndexStorage::TruncateCommit(TruncateGuard&& guard, Tick tick,

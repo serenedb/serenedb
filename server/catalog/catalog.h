@@ -27,7 +27,6 @@
 #include <expected>
 #include <functional>
 #include <memory>
-#include <shared_mutex>
 #include <vector>
 
 #include "basics/containers/flat_hash_map.h"
@@ -470,7 +469,9 @@ class Catalog final {
                           std::string_view new_name, std::shared_ptr<T> object);
 
   mutable absl::Mutex _mutex;
-  mutable std::shared_mutex _snapshot_mutex;
+  // Accessed only via std::atomic_load/std::atomic_store (libc++ lacks
+  // std::atomic<std::shared_ptr>): a leaf with no lock ordering -- mutations
+  // build a clone off to the side and atomically swap it in.
   std::shared_ptr<const Snapshot> _snapshot;
   CatalogStore* _engine;
 };

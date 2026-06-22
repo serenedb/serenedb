@@ -96,7 +96,7 @@ Filter::Query::ptr Exclusion::prepare(const PrepareContext& ctx) const {
   const PrepareContext sub_ctx = ctx.Boost(Boost());
   const auto& excludes = GetExcludes();
   SDB_ASSERT(!excludes.empty());
-  SDB_ASSERT(std::ranges::all_of(
+  SDB_ASSERT(absl::c_all_of(
     excludes, [](const Filter::ptr& excl) { return excl != nullptr; }));
 
   return PrepareExclusion(sub_ctx, GetInclude(), excludes);

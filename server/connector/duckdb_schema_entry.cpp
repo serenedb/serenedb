@@ -186,7 +186,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
       base_name = absl::StrCat(tbl, "_", column, "_", label);
     }
     auto name_exists = [&](std::string_view candidate) {
-      return std::ranges::any_of(options.check_constraints, [&](const auto& c) {
+      return absl::c_any_of(options.check_constraints, [&](const auto& c) {
         return c.GetName() == candidate;
       });
     };

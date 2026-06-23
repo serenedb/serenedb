@@ -815,35 +815,6 @@ void HandleRenameRelationError(Result r, std::string_view name,
   SDB_THROW(std::move(r));
 }
 
-void HandleStructFieldError(Result r, std::string_view table,
-                            std::string_view column) {
-  if (r.ok()) {
-    return;
-  }
-  if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                    ERR_MSG("relation \"", table, "\" does not exist"));
-  }
-  if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-                    ERR_MSG("\"", table, "\" is not a table"));
-  }
-  if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-      ERR_MSG("column or field of \"", column, "\" does not exist in \"", table,
-              "\""));
-  }
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
-      ERR_MSG("field already exists in column \"", column, "\""));
-  }
-  // ERROR_BAD_PARAMETER (not a struct / index dependency) carries its own
-  // message; surface it verbatim.
-  SDB_THROW(std::move(r));
-}
-
 // Maps a "relation not found" result from a table-level catalog op to the PG
 // "relation does not exist" error. DuckDB's binder already enforces IF EXISTS,
 // so reaching here means a race with a concurrent DROP -- handle defensively.
@@ -1403,80 +1374,6 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
           ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
           ERR_MSG("column \"", type_info.column_name, "\" of relation \"",
                   table_name, "\" does not exist"));
-      }
-      if (!r.ok()) {
-        SDB_THROW(std::move(r));
-      }
-      return;
-    }
-
-    case duckdb::AlterTableType::ADD_FIELD: {
-      auto& field_info = table_info.Cast<duckdb::AddFieldInfo>();
-      Result r = catalog_impl.ChangeStructField(
-        db, name, table_name, field_info.column_path,
-        catalog::Catalog::StructFieldOp::Add, field_info.new_field.Name(),
-        field_info.new_field.Type(), field_info.if_field_not_exists);
-      HandleStructFieldError(std::move(r), table_name,
-                             field_info.column_path[0]);
-      return;
-    }
-
-    case duckdb::AlterTableType::REMOVE_FIELD: {
-      auto& field_info = table_info.Cast<duckdb::RemoveFieldInfo>();
-      Result r = catalog_impl.ChangeStructField(
-        db, name, table_name, field_info.column_path,
-        catalog::Catalog::StructFieldOp::Drop, /*field_name=*/{},
-        duckdb::LogicalType{}, field_info.if_column_exists);
-      HandleStructFieldError(std::move(r), table_name,
-                             field_info.column_path[0]);
-      return;
-    }
-
-    case duckdb::AlterTableType::RENAME_FIELD: {
-      auto& field_info = table_info.Cast<duckdb::RenameFieldInfo>();
-      Result r = catalog_impl.ChangeStructField(
-        db, name, table_name, field_info.column_path,
-        catalog::Catalog::StructFieldOp::Rename, field_info.new_name,
-        duckdb::LogicalType{}, /*if_exists=*/false);
-      HandleStructFieldError(std::move(r), table_name,
-                             field_info.column_path[0]);
-      return;
-    }
-
-    case duckdb::AlterTableType::ADD_CONSTRAINT: {
-      auto& constraint_info = table_info.Cast<duckdb::AddConstraintInfo>();
-      if (constraint_info.constraint->type != duckdb::ConstraintType::UNIQUE ||
-          !constraint_info.constraint->Cast<duckdb::UniqueConstraint>()
-             .IsPrimaryKey()) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-          ERR_MSG("this ALTER TABLE operation is not supported"));
-      }
-      auto& unique =
-        constraint_info.constraint->Cast<duckdb::UniqueConstraint>();
-      if (unique.HasIndex()) {
-        // A PK declared by column position rather than by name -- the parser
-        // only produces this for inline CREATE TABLE constraints, not ALTER.
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-          ERR_MSG("this ALTER TABLE operation is not supported"));
-      }
-      Result r =
-        catalog_impl.AddPrimaryKey(db, name, table_name, unique.GetColumnNames());
-      if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                        ERR_MSG("relation \"", table_name,
-                                "\" does not exist"));
-      }
-      if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-                        ERR_MSG("\"", table_name, "\" is not a table"));
-      }
-      if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-                        ERR_MSG("column named in key does not exist in "
-                                "relation \"",
-                                table_name, "\""));
       }
       if (!r.ok()) {
         SDB_THROW(std::move(r));

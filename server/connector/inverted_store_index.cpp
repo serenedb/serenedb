@@ -227,16 +227,14 @@ void InvertedStoreIndex::ReplayAppend(duckdb::DataChunk& chunk,
   }
 
   auto& ins = *session.insert_writer;
-  const auto& columns = session.table->Columns();
   ins.Init(count, chunk);
   for (duckdb::idx_t k = 0; k < session.ref_positions.size(); ++k) {
     auto col_id = session.ref_col_ids[k];
-    auto it = std::ranges::find_if(
-      columns, [&](const auto& c) { return c.GetId() == col_id; });
-    if (it == columns.end()) {
+    const auto* col = session.table->ColumnById(col_id);
+    if (!col) {
       continue;
     }
-    const ColumnDescriptor desc{col_id, it->type};
+    const ColumnDescriptor desc{col_id, col->type};
     ins.SwitchColumn(desc, chunk.data[session.ref_positions[k]], key_views,
                      count);
   }
@@ -371,12 +369,11 @@ duckdb::ErrorData InvertedStoreIndex::AppendRows(
   for (duckdb::idx_t pos = 0;
        pos < chunk.ColumnCount() && pos < chunk_column_ids.size(); ++pos) {
     auto col_id = chunk_column_ids[pos];
-    auto it = std::ranges::find_if(
-      table->Columns(), [&](const auto& c) { return c.GetId() == col_id; });
-    if (it == table->Columns().end()) {
+    const auto* col = table->ColumnById(col_id);
+    if (!col) {
       continue;
     }
-    const ColumnDescriptor desc{col_id, it->type};
+    const ColumnDescriptor desc{col_id, col->type};
     writer->SwitchColumn(desc, chunk.data[pos], key_views, count);
   }
   if (auto indexed_exprs = writer->IndexedExpressions();

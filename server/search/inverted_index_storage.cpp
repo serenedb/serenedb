@@ -190,7 +190,20 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
   writer_options.lock_repository = false;  // single-process server owns the dir
   writer_options.db = &sdb::DuckDBEngine::Instance().instance();
   writer_options.reader_options.db = writer_options.db;
-  writer_options.column_options = [&](irs::field_id id) -> irs::ColumnOptions {
+  // These callbacks are stored in the irs writer and fire on every later column
+  // open (segment flush during appends), long after the constructor returns.
+  // The catalog clones the InvertedIndex across snapshots and the storage
+  // outlives the object passed here (a DROP COLUMN drops + recreates the store
+  // index, freeing the original), so resolve the live index by id each time
+  // rather than capturing the constructor's reference.
+  writer_options.column_options =
+    [this](irs::field_id id) -> irs::ColumnOptions {
+    auto index_ptr = catalog::GetCatalog()
+                       .GetCatalogSnapshot()
+                       ->GetObject<catalog::InvertedIndex>(_index_id);
+    SDB_ASSERT(index_ptr, "column callback: inverted index ", _index_id,
+               " not found");
+    const auto& index = *index_ptr;
     if (const auto* entry = index.FindEntry(id)) {
       return {
         .row_group_size = entry->row_group_size,
@@ -206,9 +219,9 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
         .row_group_size = index.GetOptions().row_group_size,
       };
     }
-    const auto* features = index.FindSyntheticFeatures(id);
-    SDB_ASSERT(features, "column callback for unknown column: ", id);
-    SDB_ASSERT(!features->HasFeatures(irs::IndexFeatures::Norm),
+    const auto lookup = index.LookupField(id);
+    SDB_ASSERT(lookup.entry, "column callback for unknown column: ", id);
+    SDB_ASSERT(!lookup.entry->features.HasFeatures(irs::IndexFeatures::Norm),
                "norm-role synthetic id must not reach column callback: ", id);
     return {
       .skip_validity = true,
@@ -216,8 +229,13 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
     };
   };
   writer_options.norm_column_options =
-    [&](irs::field_id id) -> irs::NormColumnOptions {
-    const auto* entry = index.FindEntry(id);
+    [this](irs::field_id id) -> irs::NormColumnOptions {
+    auto index_ptr = catalog::GetCatalog()
+                       .GetCatalogSnapshot()
+                       ->GetObject<catalog::InvertedIndex>(_index_id);
+    SDB_ASSERT(index_ptr, "norm callback: inverted index ", _index_id,
+               " not found");
+    const auto* entry = index_ptr->FindEntry(id);
     SDB_ASSERT(entry != nullptr, ERROR_INTERNAL,
                "norm callback for unknown id: ", id);
     SDB_ASSERT(irs::field_limits::valid(entry->synthetic_column),
@@ -300,7 +318,8 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
       _last_durable_tick = _recovery_tick;
     }
   }
-  _snapshot = std::make_shared<InvertedIndexSnapshot>(std::move(reader));
+  std::atomic_store(&_snapshot,
+                    std::make_shared<InvertedIndexSnapshot>(std::move(reader)));
 }
 
 void InvertedIndexStorage::TruncateCommit(TruncateGuard&& guard, Tick tick,

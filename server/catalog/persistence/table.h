@@ -36,6 +36,7 @@ struct TableData {
   TableEngine engine = TableEngine::Transactional;
   std::vector<std::vector<Column::Id>> unique_constraints;
   std::vector<TableForeignKey> foreign_keys;
+  std::string comment;
 };
 
 }  // namespace sdb::catalog::persistence

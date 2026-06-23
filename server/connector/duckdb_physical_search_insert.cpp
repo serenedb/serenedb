@@ -148,7 +148,9 @@ std::shared_ptr<catalog::Table> CreateCtasTable(
   const bool if_not_exists =
     create_info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
   catalog::CreateTableOperationOptions op_options;
-  op_options.create_with_tombstone = true;
+  // A valid pre-allocated id puts CreateTable in CTAS mode: tombstoned and with
+  // no backing store table (a Search table never has one).
+  op_options.table_id = catalog::NextId();
 
   auto r = catalog_impl.CreateTable(database_id, schema.name,
                                     std::move(options), op_options);

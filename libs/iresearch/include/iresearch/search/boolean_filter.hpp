@@ -27,6 +27,7 @@
 
 #include "iresearch/search/all_docs_provider.hpp"
 #include "iresearch/search/filter.hpp"
+#include "iresearch/search/terms_filter.hpp"
 #include "iresearch/utils/iterator.hpp"
 
 namespace irs {
@@ -87,9 +88,6 @@ class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
  protected:
   bool equals(const Filter& rhs) const noexcept final;
 
-  virtual Query::ptr PrepareBoolean(std::span<const Filter::ptr> filters,
-                                    const PrepareContext& ctx) const = 0;
-
   std::vector<Filter::ptr> _filters;
   ScoreMergeType _merge_type = ScoreMergeType::Sum;
 };
@@ -100,13 +98,12 @@ class And final : public BooleanFilter {
   And() = default;
   And(std::vector<Filter::ptr> filters) : BooleanFilter{std::move(filters)} {}
 
-  Query::ptr prepare(const PrepareContext& ctx) const final;
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
+
+  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 
   TypeInfo::type_id type() const noexcept final { return irs::Type<And>::id(); }
-
- protected:
-  Query::ptr PrepareBoolean(std::span<const Filter::ptr> filters,
-                            const PrepareContext& ctx) const final;
 };
 
 // Represents disjunction
@@ -124,13 +121,12 @@ class Or final : public BooleanFilter {
     return *this;
   }
 
-  Query::ptr prepare(const PrepareContext& ctx) const final;
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
+
+  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 
   TypeInfo::type_id type() const noexcept final { return irs::Type<Or>::id(); }
-
- protected:
-  Query::ptr PrepareBoolean(std::span<const Filter::ptr> filters,
-                            const PrepareContext& ctx) const final;
 
  private:
   uint32_t _min_match_count{1};
@@ -182,7 +178,10 @@ class Exclusion : public FilterWithType<Exclusion> {
     return std::span{_filters}.subspan(1);
   }
 
-  Query::ptr prepare(const PrepareContext& ctx) const final;
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
+
+  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 
   std::span<Filter::ptr> GetChildren() final { return std::span{_filters}; }
 
@@ -209,7 +208,13 @@ class Not final : public FilterWithType<Not> {
     return sdb::basics::downCast<T>(*_filter);
   }
 
-  Query::ptr prepare(const PrepareContext& ctx) const final;
+  void clear() { _filter.reset(); }
+  bool empty() const { return nullptr == _filter; }
+
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
+
+  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 
   std::span<Filter::ptr> GetChildren() final { return {&_filter, 1}; }
 

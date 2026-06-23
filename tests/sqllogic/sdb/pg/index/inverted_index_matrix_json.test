@@ -1,0 +1,281 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY kw_dict(template = 'keyword');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ng_dict(template = 'ngram', mingram = 2,
+    maxgram = 3, preserveoriginal = false, frequency = true, position = true);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geo_s2_dict(template = 'geojson',
+    coding = 's2point');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geo_src_dict(template = 'geojson',
+    coding = 'source');
+
+
+# ============================================================================
+# JSON scalar (GeoJSON s2point + source-coded)
+# ============================================================================
+
+statement ok
+CREATE TABLE m_j(pk INTEGER PRIMARY KEY, j JSON);
+
+statement ok
+CREATE INDEX m_j_col_s2_st   ON m_j USING inverted(pk, j geo_s2_dict)  INCLUDE (j);
+
+statement ok
+CREATE INDEX m_j_col_src_st  ON m_j USING inverted(pk, j geo_src_dict) INCLUDE (j);
+
+# JSON expression that extracts a primitive (string leaf) -- the only shape
+# the catalog accepts for indexed JSON expressions.
+statement ok
+CREATE INDEX m_j_expr_type_ns ON m_j USING inverted(pk, (j->>'type') kw_dict);
+
+# JSON column with a text tokenizer takes the same primitive-only dispatch
+# path as JSON expressions (catalog synthesizes bool/numeric sub-fields and
+# the sink routes through WriteJsonBatch).
+statement ok
+CREATE TABLE m_j_prim(pk INTEGER PRIMARY KEY, j JSON);
+
+statement ok
+CREATE INDEX m_j_prim_col_kw ON m_j_prim USING inverted(pk, j kw_dict);
+
+statement ok
+INSERT INTO m_j_prim VALUES (1, '"alpha"'), (2, '42'), (3, 'true'), (4, 'null');
+
+statement ok
+VACUUM (REFRESH_TABLE) m_j_prim;
+
+query
+SELECT pk FROM m_j_prim_col_kw WHERE j @@ ts_like('alpha') ORDER BY pk;
+----
+pk
+1
+
+# Storing a JSON object via a text tokenizer is rejected at insert time
+# (no per-leaf path exists for objects/arrays under the text dispatch).
+statement error
+INSERT INTO m_j_prim VALUES (99, '{"obj":1}');
+----
+db error: ERROR: Failed to commit: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
+
+
+statement ok
+INSERT INTO m_j VALUES
+    (1, '{"type":"Point","coordinates":[0.0, 0.0]}'),
+    (2, '{"type":"Point","coordinates":[10.0, 20.0]}'),
+    (3, '{"type":"Point","coordinates":[-5.0, 47.0]}');
+
+statement ok
+VACUUM (REFRESH_TABLE) m_j;
+
+query
+SELECT count(*) FROM m_j_col_s2_st;
+----
+count
+3
+
+query
+SELECT count(*) FROM m_j_col_src_st;
+----
+count
+3
+
+query
+SELECT pk FROM m_j_expr_type_ns WHERE j->>'type' @@ ts_like('Point') ORDER BY pk;
+----
+pk
+1
+2
+3
+
+
+# JSON-returning expression `(j->'val')` — the per-leaf-type dispatch path.
+# Catalog synthesizes string/numeric/bool/null sub-field ids; the filter
+# builder peels casts (e.g. ::int, ::bool) and routes each predicate to its
+# typed sub-field. Rows hold {"val": primitive}; the JSON column itself is
+# an object so we don't add a column-side index here (the column primitive
+# path is covered by m_j_prim above).
+statement ok
+CREATE TABLE m_jv(pk INTEGER PRIMARY KEY, j JSON);
+
+statement ok
+CREATE INDEX m_jv_expr_kw ON m_jv USING inverted(pk, (j->'val') kw_dict);
+
+statement ok
+INSERT INTO m_jv VALUES
+    (1, '{"val":"alpha"}'),
+    (2, '{"val":42}'),
+    (3, '{"val":true}'),
+    (4, '{"val":null}');
+
+statement ok
+VACUUM (REFRESH_TABLE) m_jv;
+
+# Expression source: string leaf via ->>
+query
+SELECT pk FROM m_jv_expr_kw WHERE j->>'val' = 'alpha';
+----
+pk
+1
+
+# Expression source: numeric leaf via cast-peel
+query
+SELECT pk FROM m_jv_expr_kw WHERE (j->'val')::int = 42;
+----
+pk
+2
+
+# Expression source: bool leaf via cast-peel
+query
+SELECT pk FROM m_jv_expr_kw WHERE (j->'val')::bool = true;
+----
+pk
+3
+
+# Expression source: null leaf
+query
+SELECT pk FROM m_jv_expr_kw WHERE (j->'val') IS NULL;
+----
+pk
+4
+
+
+# ============================================================================
+# JSON list / array
+# ----------------------------------------------------------------------------
+# Nested JSON is rejected with any tokenizer. Scalar JSON has per-leaf
+# decomposition in the sink, but JSON[] / JSON[N] would silently route
+# through WriteListBatch<VARCHAR> (JSON's LogicalTypeId is VARCHAR), so it
+# would index each element as raw text rather than per-leaf primitives.
+# INCLUDE-only (just-store) is fine -- doesn't go through the term_dict
+# dispatch.
+# ============================================================================
+
+statement ok
+CREATE TABLE m_jl(pk INTEGER PRIMARY KEY,
+                  j JSON,
+                  js JSON[],
+                  ja JSON[2]);
+
+# INCLUDE-only: works (just-store via columnstore).
+statement ok
+CREATE INDEX m_jl_inc ON m_jl USING inverted(pk) INCLUDE (js, ja);
+
+# Indexed JSON[] with keyword/ngram/geo: rejected.
+statement error
+CREATE INDEX m_jl_kw_list ON m_jl USING inverted(pk, js kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'js' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[])
+
+
+statement error
+CREATE INDEX m_jl_ng_list ON m_jl USING inverted(pk, js ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'js' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[])
+
+
+statement error
+CREATE INDEX m_jl_geo_list ON m_jl USING inverted(pk, js geo_s2_dict);
+----
+db error: ERROR: Failed to create index: Column 'js' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# Indexed JSON[N] same.
+statement error
+CREATE INDEX m_jl_kw_array ON m_jl USING inverted(pk, ja kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'ja' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[2])
+
+
+statement error
+CREATE INDEX m_jl_geo_array ON m_jl USING inverted(pk, ja geo_src_dict);
+----
+db error: ERROR: Failed to create index: Column 'ja' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# INCLUDE-only path indexes rows.
+statement ok
+INSERT INTO m_jl VALUES
+    (1, '{"x":1}'::JSON,
+        ARRAY['{"a":1}'::JSON, '{"b":2}'::JSON],
+        ['{"c":3}'::JSON, '{"d":4}'::JSON]),
+    (2, '{"x":2}'::JSON,
+        ARRAY[]::JSON[],
+        ['{"e":5}'::JSON, '{"f":6}'::JSON]);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_jl;
+
+query
+SELECT count(*) FROM m_jl_inc;
+----
+count
+2
+
+
+# ============================================================================
+# JSON geo expression — the column-source path is already covered (m_j_col_*).
+# ============================================================================
+
+statement ok
+CREATE TABLE m_jg(pk INTEGER PRIMARY KEY, j JSON);
+
+statement ok
+CREATE INDEX m_jg_expr_s2  ON m_jg USING inverted(pk, (j) geo_s2_dict);
+
+statement ok
+CREATE INDEX m_jg_expr_src ON m_jg USING inverted(pk, (j) geo_src_dict);
+
+statement ok
+INSERT INTO m_jg VALUES
+    (1, '{"type":"Point","coordinates":[0.0, 0.0]}'),
+    (2, '{"type":"Point","coordinates":[10.0, 20.0]}');
+
+statement ok
+VACUUM (REFRESH_TABLE) m_jg;
+
+query
+SELECT count(*) FROM m_jg_expr_s2;
+----
+count
+2
+
+query
+SELECT count(*) FROM m_jg_expr_src;
+----
+count
+2
+
+
+# --- teardown ---------------------------------------------------------------
+
+statement ok
+DROP TABLE m_j;
+
+statement ok
+DROP TABLE m_j_prim;
+
+statement ok
+DROP TABLE m_jv;
+
+statement ok
+DROP TABLE m_jl;
+
+statement ok
+DROP TABLE m_jg;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY kw_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ng_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY geo_s2_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY geo_src_dict;

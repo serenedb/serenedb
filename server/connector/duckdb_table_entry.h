@@ -69,6 +69,9 @@ class SereneDBTableEntry final : public duckdb::TableCatalogEntry {
 
   duckdb::Catalog& GetStorageCatalog(duckdb::ClientContext& context) override;
 
+  duckdb::DuckTableEntry& GetStorageTableEntry(
+    duckdb::ClientContext& context) override;
+
   duckdb::TableStorageInfo GetStorageInfo(duckdb::ClientContext& context) final;
 
   void BindUpdateConstraints(duckdb::Binder& binder, duckdb::LogicalGet& get,

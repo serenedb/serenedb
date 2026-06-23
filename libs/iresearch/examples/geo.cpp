@@ -204,10 +204,21 @@ irs::DirectoryReader BuildIndex(irs::Directory& dir,
 std::vector<std::string> RunFilter(const irs::DirectoryReader& reader,
                                    const irs::Filter& filter,
                                    const std::vector<std::string>& names) {
-  std::vector<std::string> hits;
-  auto prepared = filter.prepare({.index = reader});
+  auto collector = filter.MakeCollector(nullptr);
+  std::vector<irs::QueryBuilder::ptr> queries;
+  queries.reserve(reader.size());
   for (auto& segment : reader) {
-    auto it = prepared->execute({.segment = segment});
+    queries.emplace_back(
+      filter.PrepareSegment(segment, {.collector = collector.get()}));
+  }
+  const auto stats = collector->Finish(irs::IResourceManager::gNoop);
+
+  std::vector<std::string> hits;
+  for (auto& query : queries) {
+    if (!query) {
+      continue;
+    }
+    auto it = query->Execute({}, stats);
     while (it->next()) {
       const auto doc = it->value();
       const auto idx = doc - irs::doc_limits::min();

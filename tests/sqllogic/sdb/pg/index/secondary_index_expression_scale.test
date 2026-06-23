@@ -1,0 +1,133 @@
+# Expression (functional) secondary index at scale -- complements the small
+# any/pg/index/secondary_index_expression.test with a larger table, a pinned
+# EXPLAIN, DML maintenance, and UNIQUE enforcement on the computed key. Issue
+# #830 (secondary/ART path). EXPLAIN plans are serenedb-specific, so this lives
+# in the sdb subtree.
+
+
+statement ok
+CREATE TABLE pudge_expr_scale(j INTEGER, k INTEGER);
+
+
+statement ok
+INSERT INTO pudge_expr_scale SELECT i, i * 3 FROM range(1000) s(i);
+
+
+statement ok
+CREATE INDEX pudge_expr_scale_sum ON pudge_expr_scale((j + k));
+
+
+# Point lookup on the computed key over 1000 rows: (j + k) = 4*j = 2000 -> j=500.
+query
+SELECT j, k FROM pudge_expr_scale WHERE (j + k) = 2000;
+----
+j	k
+500	1500
+
+
+# Range over the computed key: 4*j < 400 -> j in [0, 99] -> 100 rows.
+query
+SELECT count(*) FROM pudge_expr_scale WHERE (j + k) < 400;
+----
+count
+100
+
+
+# An EXPRESSION filter is not pushed as a column TableFilter, so duckdb's index
+# scan (which matches a single indexed column) cannot use this index -- the plan
+# stays SEQ_SCAN + FILTER on the recomputed key, on serenedb and native alike.
+# The index is still maintained and enforces UNIQUE. A filter on a raw indexed
+# column DOES switch to a runtime Index Scan -- see
+# secondary_index_point_lookup.test.
+query
+EXPLAIN SELECT j, k FROM pudge_expr_scale WHERE (j + k) = 2000;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│      ((j + k) = 2000)     │
+│                           │
+│         ~200 rows         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
+│    ────────────────────   │
+│           Table:          │
+│      pudge_expr_scale     │
+│                           │
+│   Type: Sequential Scan   │
+│                           │
+│        Projections:       │
+│             j             │
+│             k             │
+│                           │
+│        ~1,000 rows        │
+└───────────────────────────┘
+
+
+# DML maintenance at scale: moving a row's computed key is reflected immediately.
+statement ok
+UPDATE pudge_expr_scale SET k = 999999 WHERE j = 500;
+
+
+query
+SELECT j, k FROM pudge_expr_scale WHERE (j + k) = 2000;
+----
+j	k
+
+
+query
+SELECT j, k FROM pudge_expr_scale WHERE (j + k) = 1000499;
+----
+j	k
+500	999999
+
+
+statement ok
+DELETE FROM pudge_expr_scale WHERE j = 500;
+
+
+query
+SELECT count(*) FROM pudge_expr_scale WHERE (j + k) = 1000499;
+----
+count
+0
+
+
+statement ok
+DROP TABLE pudge_expr_scale;
+
+
+# UNIQUE expression index over a larger table enforces on the computed key.
+statement ok
+CREATE TABLE invoker_expr_uniq(a INTEGER, b INTEGER);
+
+
+statement ok
+INSERT INTO invoker_expr_uniq SELECT i, 0 FROM range(1000) s(i);
+
+
+statement ok
+CREATE UNIQUE INDEX invoker_expr_uniq_idx ON invoker_expr_uniq((a * 10 + b));
+
+
+# a=7,b=0 -> 70, already produced by a=7 above -> rejected.
+statement error
+INSERT INTO invoker_expr_uniq VALUES (7, 0);
+
+
+# a=7,b=3 -> 73, distinct -> allowed.
+statement ok
+INSERT INTO invoker_expr_uniq VALUES (7, 3);
+
+
+query
+SELECT count(*) FROM invoker_expr_uniq;
+----
+count
+1001
+
+
+statement ok
+DROP TABLE invoker_expr_uniq;

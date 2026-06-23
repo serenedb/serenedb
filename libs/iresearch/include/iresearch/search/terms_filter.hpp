@@ -77,10 +77,15 @@ class ByTerms final : public FilterWithField<ByTermsOptions>,
                     const ByTermsOptions::search_terms& terms,
                     FilterVisitor& visitor);
 
-  static Query::ptr Prepare(const PrepareContext& ctx, irs::field_id id,
-                            const ByTermsOptions& options);
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
+  static QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                          const PrepareContext& ctx,
+                                          irs::field_id field,
+                                          const ByTermsOptions& options,
+                                          score_t boost);
 
-  Query::ptr prepare(const PrepareContext& ctx) const final;
+  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 };
 
 }  // namespace irs

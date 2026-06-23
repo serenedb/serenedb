@@ -26,6 +26,7 @@
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/search/filter_optimizer.hpp>
 #include <iresearch/search/levenshtein_filter.hpp>
 #include <iresearch/search/ngram_similarity_filter.hpp>
 #include <iresearch/search/phrase_filter.hpp>
@@ -139,12 +140,25 @@ irs::DirectoryReader BuildIndex(irs::Directory& dir,
 // Run a prepared filter over all segments, collect doc names
 // (kCorpus[i].first).
 std::vector<std::string> RunFilter(const irs::DirectoryReader& reader,
-                                   const irs::Filter& filter,
+                                   irs::Filter::ptr filter,
                                    const std::vector<std::string>& names) {
-  std::vector<std::string> hits;
-  auto prepared = filter.prepare({.index = reader});
+  irs::Optimize(filter, {.scored = false});
+
+  auto collector = filter->MakeCollector(nullptr);
+  std::vector<irs::QueryBuilder::ptr> queries;
+  queries.reserve(reader.size());
   for (auto& segment : reader) {
-    auto it = prepared->execute({.segment = segment});
+    queries.emplace_back(
+      filter->PrepareSegment(segment, {.collector = collector.get()}));
+  }
+  const auto stats = collector->Finish(irs::IResourceManager::gNoop);
+
+  std::vector<std::string> hits;
+  for (auto& query : queries) {
+    if (!query) {
+      continue;
+    }
+    auto it = query->Execute({}, stats);
     while (it->next()) {
       const auto idx = it->value() - irs::doc_limits::min();
       if (idx < names.size()) {
@@ -184,6 +198,7 @@ int main() {
   engine.Initialize();
 
   irs::formats::Init();
+  irs::InitOptimizeRules();
 
   // Nested scope so reader/dir destruct before DuckDBEngine::Shutdown tears
   // down the duckdb::DuckDB they were dispatching through.
@@ -198,14 +213,14 @@ int main() {
     //    to appear in order with no gap.
     {
       std::cout << "=== ByPhrase \"quick brown fox\" ===\n";
-      irs::ByPhrase q;
-      *q.mutable_field_id() = kBodyFieldId;
-      q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      auto q = std::make_unique<irs::ByPhrase>();
+      *q->mutable_field_id() = kBodyFieldId;
+      q->mutable_options()->push_back<irs::ByTermOptions>().term =
         Bytes("quick");
-      q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      q->mutable_options()->push_back<irs::ByTermOptions>().term =
         Bytes("brown");
-      q.mutable_options()->push_back<irs::ByTermOptions>().term = Bytes("fox");
-      PrintHits("expect d0 only", RunFilter(reader, q, names));
+      q->mutable_options()->push_back<irs::ByTermOptions>().term = Bytes("fox");
+      PrintHits("expect d0 only", RunFilter(reader, std::move(q), names));
     }
 
     // 2) NGramSimilarity: any doc that contains >= threshold * |ngrams| of
@@ -215,31 +230,33 @@ int main() {
     //    char-ngram-tokenized fields for fuzzy substring matching.)
     {
       std::cout << "\n=== ByNGramSimilarity {brown, fox} threshold=1.0 ===\n";
-      irs::ByNGramSimilarity q;
-      *q.mutable_field_id() = kBodyFieldId;
-      q.mutable_options()->ngrams.emplace_back(Bytes("brown"));
-      q.mutable_options()->ngrams.emplace_back(Bytes("fox"));
-      q.mutable_options()->threshold = 1.0F;
-      PrintHits("expect d0, d2", RunFilter(reader, q, names));
+      auto q = std::make_unique<irs::ByNGramSimilarity>();
+      *q->mutable_field_id() = kBodyFieldId;
+      q->mutable_options()->ngrams.emplace_back(Bytes("brown"));
+      q->mutable_options()->ngrams.emplace_back(Bytes("fox"));
+      q->mutable_options()->threshold = 1.0F;
+      PrintHits("expect d0, d2", RunFilter(reader, std::move(q), names));
     }
     {
       std::cout << "\n=== ByNGramSimilarity {brown, fox} threshold=0.5 ===\n";
-      irs::ByNGramSimilarity q;
-      *q.mutable_field_id() = kBodyFieldId;
-      q.mutable_options()->ngrams.emplace_back(Bytes("brown"));
-      q.mutable_options()->ngrams.emplace_back(Bytes("fox"));
-      q.mutable_options()->threshold = 0.5F;
-      PrintHits("expect d0, d1, d2 (>= 1 of 2)", RunFilter(reader, q, names));
+      auto q = std::make_unique<irs::ByNGramSimilarity>();
+      *q->mutable_field_id() = kBodyFieldId;
+      q->mutable_options()->ngrams.emplace_back(Bytes("brown"));
+      q->mutable_options()->ngrams.emplace_back(Bytes("fox"));
+      q->mutable_options()->threshold = 0.5F;
+      PrintHits("expect d0, d1, d2 (>= 1 of 2)",
+                RunFilter(reader, std::move(q), names));
     }
 
     // 3) Regex: `f[ao]x` matches token "fox" and "fax" (no "fix"). Pattern
     //    syntax is Perl/RE2 by default; switch via options().syntax.
     {
       std::cout << "\n=== ByRegexp /f[ao]x/ ===\n";
-      irs::ByRegexp q;
-      *q.mutable_field_id() = kBodyFieldId;
-      *q.mutable_options() = irs::ByRegexpOptions{Bytes("f[ao]x")};
-      PrintHits("expect d0, d2 (matches 'fox')", RunFilter(reader, q, names));
+      auto q = std::make_unique<irs::ByRegexp>();
+      *q->mutable_field_id() = kBodyFieldId;
+      *q->mutable_options() = irs::ByRegexpOptions{Bytes("f[ao]x")};
+      PrintHits("expect d0, d2 (matches 'fox')",
+                RunFilter(reader, std::move(q), names));
     }
 
     // 4) Wildcard / LIKE: '_' = exactly one char, '%' = any sequence. So
@@ -247,11 +264,12 @@ int main() {
     //    longer tokens like "foxy".
     {
       std::cout << "\n=== ByWildcard \"f_x\" ===\n";
-      irs::ByWildcard q;
-      *q.mutable_field_id() = kBodyFieldId;
-      *q.mutable_options() = irs::ByWildcardOptions{irs::bstring{Bytes("f_x")}};
+      auto q = std::make_unique<irs::ByWildcard>();
+      *q->mutable_field_id() = kBodyFieldId;
+      *q->mutable_options() =
+        irs::ByWildcardOptions{irs::bstring{Bytes("f_x")}};
       PrintHits("expect d0, d2, d5 (fox, fox, fix)",
-                RunFilter(reader, q, names));
+                RunFilter(reader, std::move(q), names));
     }
 
     // 5) Levenshtein (fuzzy term): edits up to max_distance. "fox" with
@@ -259,13 +277,13 @@ int main() {
     //    edit: "foxy" (one insertion), "fix" (one substitution).
     {
       std::cout << "\n=== ByEditDistance \"fox\" max_distance=1 ===\n";
-      irs::ByEditDistance q;
-      *q.mutable_field_id() = kBodyFieldId;
-      q.mutable_options()->term = irs::bstring{Bytes("fox")};
-      q.mutable_options()->max_distance = 1;
-      q.mutable_options()->with_transpositions = true;
+      auto q = std::make_unique<irs::ByEditDistance>();
+      *q->mutable_field_id() = kBodyFieldId;
+      q->mutable_options()->term = irs::bstring{Bytes("fox")};
+      q->mutable_options()->max_distance = 1;
+      q->mutable_options()->with_transpositions = true;
       PrintHits("expect d0, d2, d4, d5 (fox, fox, foxy, fix)",
-                RunFilter(reader, q, names));
+                RunFilter(reader, std::move(q), names));
     }
   }
 

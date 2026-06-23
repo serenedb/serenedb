@@ -85,7 +85,8 @@ Filter::ptr LowerRegexp(irs::field_id id, bytes_view pattern,
 
 class ByRegexp final : public FilterWithField<ByRegexpOptions> {
  public:
-  Query::ptr prepare(const PrepareContext& ctx) const final;
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
 };
 
 }  // namespace irs

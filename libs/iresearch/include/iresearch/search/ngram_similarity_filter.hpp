@@ -29,6 +29,8 @@ namespace irs {
 
 class ByNGramSimilarity;
 
+size_t MinMatchCount(size_t terms_count, float_t threshold) noexcept;
+
 // Options for ngram similarity filter
 struct ByNGramSimilarityOptions {
   using FilterType = ByNGramSimilarity;
@@ -48,15 +50,18 @@ struct ByNGramSimilarityOptions {
 
 class ByNGramSimilarity : public FilterWithField<ByNGramSimilarityOptions> {
  public:
-  static Query::ptr Prepare(const PrepareContext& ctx, irs::field_id id,
-                            const std::vector<irs::bstring>& ngrams,
-                            float_t threshold, bool allow_phrase = true);
+  static QueryBuilder::ptr PrepareSegment(
+    const SubReader& segment, const PrepareContext& ctx,
+    irs::field_id field_name, const std::vector<irs::bstring>& ngrams,
+    float_t threshold, score_t boost);
 
-  Query::ptr prepare(const PrepareContext& ctx) const final {
-    SDB_ASSERT(!options().ngrams.empty());
-    return Prepare(ctx.Boost(Boost()), field_id(), options().ngrams,
-                   options().threshold, options().allow_phrase);
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final {
+    return PrepareSegment(segment, ctx, field_id(), options().ngrams,
+                          options().threshold, Boost());
   }
+
+  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 };
 
 }  // namespace irs

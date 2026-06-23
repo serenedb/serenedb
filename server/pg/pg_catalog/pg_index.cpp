@@ -68,7 +68,7 @@ catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
          catalog->GetIndexes(GetDatabaseId(), schema->GetName())) {
       SDB_ASSERT(index_ptr);
       auto& index = *index_ptr;
-      auto column_ids = index.GetColumnIds();
+      const auto& column_ids = index.GetColumnIds();
       auto natts = static_cast<int16_t>(column_ids.size());
 
       // Build indkey: map column IDs to 1-based attnum in the parent table
@@ -78,16 +78,10 @@ catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
       auto table_obj = catalog->GetObject(index.GetRelationId());
       if (table_obj && table_obj->GetType() == catalog::ObjectType::Table) {
         auto& table = basics::downCast<catalog::Table>(*table_obj);
-        auto& columns = table.Columns();
         for (auto col_id : column_ids) {
-          int16_t attnum = 0;
-          for (size_t i = 0; i < columns.size(); ++i) {
-            if (columns[i].GetId() == col_id) {
-              attnum = static_cast<int16_t>(i + 1);
-              break;
-            }
-          }
-          indkey.push_back(attnum);
+          const auto pos = table.ColumnPosById(col_id);
+          indkey.push_back(
+            pos < table.Columns().size() ? static_cast<int16_t>(pos + 1) : 0);
         }
       }
       indkey_storage.push_back(std::move(indkey));
@@ -120,18 +114,12 @@ catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
       if (pk_columns.empty()) {
         continue;
       }
-      auto& columns = table->Columns();
       std::vector<int16_t> indkey;
       indkey.reserve(pk_columns.size());
       for (auto pk_id : pk_columns) {
-        int16_t attnum = 0;
-        for (size_t i = 0; i < columns.size(); ++i) {
-          if (columns[i].GetId() == pk_id) {
-            attnum = static_cast<int16_t>(i + 1);
-            break;
-          }
-        }
-        indkey.push_back(attnum);
+        const auto pos = table->ColumnPosById(pk_id);
+        indkey.push_back(
+          pos < table->Columns().size() ? static_cast<int16_t>(pos + 1) : 0);
       }
       auto natts = static_cast<int16_t>(indkey.size());
       indkey_storage.push_back(std::move(indkey));

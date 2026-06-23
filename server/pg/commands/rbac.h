@@ -20,11 +20,19 @@
 
 #pragma once
 
+#include <span>
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include "catalog/object.h"
 #include "pg/connection_context.h"
 namespace sdb::pg {
+
+struct ParsedPriv {
+  std::string keyword;
+  std::vector<std::string> columns;
+};
 
 struct CreateRoleOptions {
   bool login = false;
@@ -65,8 +73,6 @@ struct AlterRoleOptions {
 void AlterRole(ConnectionContext& ctx, std::string_view name,
                const AlterRoleOptions& opts);
 
-// ALTER ROLE name SET/RESET <guc> -> per-role GUC settings (rolconfig). `op` is
-// "SET", "RESET", or "RESET_ALL". `value` is the rendered config value (SET).
 void AlterRoleConfig(ConnectionContext& ctx, std::string_view name,
                      std::string_view op, std::string_view setting,
                      std::string_view value);
@@ -81,20 +87,13 @@ struct GrantObjectOptions {
   std::string granted_by;
 };
 
-// GRANT/REVOKE ... ON DOMAIN: SereneDB has no domain types, so the named object
-// is never a domain -- reject with PostgreSQL's semantic error (PG accepts the
-// syntax then rejects the same way for a non-domain).
-[[noreturn]] void ThrowNotADomain(std::string_view name);
-
 void GrantObject(ConnectionContext& ctx, catalog::ObjectType type,
-                 std::string_view privileges, std::string_view obj_name,
-                 std::string_view grantee, bool revoke,
-                 const GrantObjectOptions& opts = {});
+                 std::span<const ParsedPriv> privileges,
+                 std::string_view obj_name, std::string_view grantee,
+                 bool revoke, const GrantObjectOptions& opts = {});
 
-// GRANT/REVOKE ... ON ALL <TABLES|SEQUENCES|FUNCTIONS> IN SCHEMA s: apply the
-// grant to every existing object of `type` in schema `schema_name`.
 void GrantObjectAllInSchema(ConnectionContext& ctx, catalog::ObjectType type,
-                            std::string_view privileges,
+                            std::span<const ParsedPriv> privileges,
                             std::string_view schema_name,
                             std::string_view grantee, bool revoke,
                             const GrantObjectOptions& opts = {});
@@ -114,9 +113,8 @@ struct DefaultPrivilegesOptions {
   std::string in_schema;  // empty -> all schemas (defaclnamespace = 0)
 };
 
-// ALTER DEFAULT PRIVILEGES ... -> a pg_default_acl row. `objtype_char` is the
-// PG catalog objtype ('r'/'S'/'f'/'T'/'n').
-void AlterDefaultPrivileges(ConnectionContext& ctx, std::string_view privileges,
+void AlterDefaultPrivileges(ConnectionContext& ctx,
+                            std::span<const ParsedPriv> privileges,
                             std::string_view objtype_char,
                             std::string_view grantee, bool revoke,
                             const DefaultPrivilegesOptions& opts);

@@ -63,18 +63,6 @@ std::shared_ptr<catalog::Role> CurrentRole(ConnectionContext& ctx) {
   return role;
 }
 
-// PG: creating/dropping/altering roles requires the CREATEROLE attribute (or
-// superuser); the error carries a DETAIL naming the missing attribute.
-void RequireCreateRole(ConnectionContext& ctx, std::string_view action) {
-  auto role = CurrentRole(ctx);
-  if (!role->IsSuperuser() && !role->Has(catalog::RoleOption::CreateRole)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-      ERR_MSG("permission denied to ", action),
-      ERR_DETAIL("Only roles with the CREATEROLE attribute may create roles."));
-  }
-}
-
 void RequireCreateRolePrivilege(ConnectionContext& ctx, std::string_view verb) {
   auto role = CurrentRole(ctx);
   if (role->IsSuperuser() || role->Has(catalog::RoleOption::CreateRole)) {
@@ -88,26 +76,45 @@ void RequireCreateRolePrivilege(ConnectionContext& ctx, std::string_view verb) {
                verb, " roles."));
 }
 
-void RequireRoleAdmin(ConnectionContext& ctx, const catalog::Snapshot& snapshot,
-                      const catalog::Role& target, std::string_view verb) {
-  auto current = CurrentRole(ctx);
-  if (current->IsSuperuser()) {
-    return;
+enum class RoleAdmin { Ok, TargetSuperuser, NotAdmin };
+
+RoleAdmin CheckRoleAdmin(const catalog::Snapshot& snapshot, ObjectId actor_id,
+                         const catalog::Role& target) {
+  auto actor = snapshot.GetObject<catalog::Role>(actor_id);
+  if (actor && actor->IsSuperuser()) {
+    return RoleAdmin::Ok;
   }
   if (target.IsSuperuser()) {
+    return RoleAdmin::TargetSuperuser;
+  }
+  if (!actor || !actor->Has(catalog::RoleOption::CreateRole) ||
+      !auth::HasAdminOption(snapshot, actor_id, target.GetId())) {
+    return RoleAdmin::NotAdmin;
+  }
+  return RoleAdmin::Ok;
+}
+
+[[noreturn]] void ThrowRoleAdmin(RoleAdmin status, std::string_view verb,
+                                 std::string_view target_name) {
+  if (status == RoleAdmin::TargetSuperuser) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     ERR_MSG("permission denied to ", verb, " role"),
                     ERR_DETAIL("Only roles with the SUPERUSER attribute may ",
                                verb, " roles with the SUPERUSER attribute."));
   }
-  if (!current->Has(catalog::RoleOption::CreateRole) ||
-      !auth::HasAdminOption(snapshot, current->GetId(), target.GetId())) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-      ERR_MSG("permission denied to ", verb, " role"),
-      ERR_DETAIL("Only roles with the CREATEROLE attribute and the ADMIN "
-                 "option on role \"",
-                 target.GetName(), "\" may ", verb, " this role."));
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+    ERR_MSG("permission denied to ", verb, " role"),
+    ERR_DETAIL("Only roles with the CREATEROLE attribute and the ADMIN "
+               "option on role \"",
+               target_name, "\" may ", verb, " this role."));
+}
+
+void RequireRoleAdmin(ConnectionContext& ctx, const catalog::Snapshot& snapshot,
+                      const catalog::Role& target, std::string_view verb) {
+  auto status = CheckRoleAdmin(snapshot, ctx.GetRoleId(), target);
+  if (status != RoleAdmin::Ok) {
+    ThrowRoleAdmin(status, verb, target.GetName());
   }
 }
 
@@ -115,8 +122,6 @@ void RequireRoleAdmin(ConnectionContext& ctx, const catalog::Snapshot& snapshot,
 
 void CreateRole(ConnectionContext& ctx, std::string_view name,
                 const CreateRoleOptions& options) {
-  RequireCreateRole(ctx, "create role");
-
   auto& catalog = GlobalCatalog();
   auto role = catalog::Role::NewUser(name, options.password);
   catalog::RoleOption opts = catalog::RoleOption::None;
@@ -136,7 +141,8 @@ void CreateRole(ConnectionContext& ctx, std::string_view name,
   role->SetConnLimit(options.conn_limit);
   role->SetValidUntil(options.valid_until);
 
-  auto r = catalog.CreateRole(std::move(role));
+  auto r = catalog.CreateRole(catalog::RequireOwnership(ctx.GetRoleId()),
+                              std::move(role));
   if (r.is(ERROR_USER_DUPLICATE)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
                     ERR_MSG("role \"", name, "\" already exists"));
@@ -195,16 +201,7 @@ void DropRole(ConnectionContext& ctx, std::string_view name, bool missing_ok) {
                             " because it is required by the database system"));
   }
 
-  if (auto deps = snapshot->RoleDependentCount(role->GetId()); deps > 0) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-      ERR_MSG("role \"", name,
-              "\" cannot be dropped because some objects "
-              "depend on it"),
-      ERR_DETAIL(deps, " object(s) in database depend on role \"", name, "\""));
-  }
-
-  auto r = catalog.DropRole(name);
+  auto r = catalog.DropRole(catalog::RequireOwnership(ctx.GetRoleId()), name);
   if (!r.ok()) {
     SDB_THROW(std::move(r));
   }
@@ -233,18 +230,22 @@ bool IsSelfPasswordOnly(const AlterRoleOptions& opts) {
 
 void AlterRole(ConnectionContext& ctx, std::string_view name,
                const AlterRoleOptions& opts) {
-  if (!(name == ctx.user() && IsSelfPasswordOnly(opts))) {
-    auto snapshot = FreshSnapshot();
-    if (auto target = snapshot->GetRole(name)) {
-      RequireRoleAdmin(ctx, *snapshot, *target, "alter");
-    }
-  }
+  const bool self_password_only =
+    name == ctx.user() && IsSelfPasswordOnly(opts);
 
   auto& catalog = GlobalCatalog();
+  RoleAdmin reject = RoleAdmin::Ok;
   auto r = catalog.ChangeRole(
     name,
     [&](const catalog::Role& old_role,
         std::shared_ptr<catalog::Role>& new_role) -> Result {
+      if (!self_password_only) {
+        reject = CheckRoleAdmin(*catalog.GetCatalogSnapshot(), ctx.GetRoleId(),
+                                old_role);
+        if (reject != RoleAdmin::Ok) {
+          return Result{ERROR_FORBIDDEN};
+        }
+      }
       new_role = std::static_pointer_cast<catalog::Role>(old_role.Clone());
       catalog::RoleOption o = new_role->Options();
       o = SetBit(o, catalog::RoleOption::Login, opts.login);
@@ -268,6 +269,9 @@ void AlterRole(ConnectionContext& ctx, std::string_view name,
       }
       return {};
     });
+  if (reject != RoleAdmin::Ok) {
+    ThrowRoleAdmin(reject, "alter", name);
+  }
   if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("role \"", name, "\" does not exist"));
@@ -279,22 +283,24 @@ void AlterRole(ConnectionContext& ctx, std::string_view name,
 
 void RenameRole(ConnectionContext& ctx, std::string_view name,
                 std::string_view new_name) {
-  {
-    auto snapshot = FreshSnapshot();
-    if (auto target = snapshot->GetRole(name)) {
-      RequireRoleAdmin(ctx, *snapshot, *target, "rename");
-    }
-  }
-
   auto& catalog = GlobalCatalog();
+  RoleAdmin reject = RoleAdmin::Ok;
   auto r = catalog.ChangeRole(
     name,
     [&](const catalog::Role& old_role,
         std::shared_ptr<catalog::Role>& new_role) -> Result {
+      reject = CheckRoleAdmin(*catalog.GetCatalogSnapshot(), ctx.GetRoleId(),
+                              old_role);
+      if (reject != RoleAdmin::Ok) {
+        return Result{ERROR_FORBIDDEN};
+      }
       new_role = std::static_pointer_cast<catalog::Role>(old_role.Clone());
       new_role->UpdateName(new_name);
       return {};
     });
+  if (reject != RoleAdmin::Ok) {
+    ThrowRoleAdmin(reject, "rename", name);
+  }
   if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("role \"", name, "\" does not exist"));
@@ -311,18 +317,21 @@ void RenameRole(ConnectionContext& ctx, std::string_view name,
 void AlterRoleConfig(ConnectionContext& ctx, std::string_view name,
                      std::string_view op, std::string_view setting,
                      std::string_view value) {
-  if (name != ctx.user()) {
-    auto snapshot = FreshSnapshot();
-    if (auto target = snapshot->GetRole(name)) {
-      RequireRoleAdmin(ctx, *snapshot, *target, "alter");
-    }
-  }
+  const bool is_self = name == ctx.user();
 
   auto& catalog = GlobalCatalog();
+  RoleAdmin reject = RoleAdmin::Ok;
   auto r = catalog.ChangeRole(
     name,
     [&](const catalog::Role& old_role,
         std::shared_ptr<catalog::Role>& new_role) -> Result {
+      if (!is_self) {
+        reject = CheckRoleAdmin(*catalog.GetCatalogSnapshot(), ctx.GetRoleId(),
+                                old_role);
+        if (reject != RoleAdmin::Ok) {
+          return Result{ERROR_FORBIDDEN};
+        }
+      }
       new_role = std::static_pointer_cast<catalog::Role>(old_role.Clone());
       if (op == "RESET_ALL") {
         new_role->ResetAllConfig();
@@ -333,6 +342,9 @@ void AlterRoleConfig(ConnectionContext& ctx, std::string_view name,
       }
       return {};
     });
+  if (reject != RoleAdmin::Ok) {
+    ThrowRoleAdmin(reject, "alter", name);
+  }
   if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("role \"", name, "\" does not exist"));
@@ -398,37 +410,17 @@ catalog::AclMode ParseAclModeOrThrow(std::string_view privileges,
   }
 }
 
-// One parsed privilege from the GRANT pragma string: a keyword and an optional
-// column list. The transformer encodes columns inline as "SELECT(a:b)".
-struct ParsedPriv {
-  std::string keyword;               // e.g. "SELECT" / "ALL" / a bad name
-  std::vector<std::string> columns;  // empty => table-level (no '(...)')
-};
-
-// Parse the encoded privilege string ("SELECT(a:b),UPDATE(c)" or
-// "SELECT,INSERT" or "ALL") into its privileges + per-privilege column lists.
-std::vector<ParsedPriv> ParsePrivList(std::string_view privileges) {
-  std::vector<ParsedPriv> out;
-  for (std::string_view tok :
-       absl::StrSplit(privileges, ',', absl::SkipEmpty())) {
-    ParsedPriv p;
-    auto open = tok.find('(');
-    if (open == std::string_view::npos) {
-      p.keyword = std::string{tok};
-    } else {
-      p.keyword = std::string{tok.substr(0, open)};
-      auto close = tok.rfind(')');
-      auto inner = tok.substr(open + 1, close - open - 1);
-      for (std::string_view c : absl::StrSplit(inner, ':', absl::SkipEmpty())) {
-        p.columns.emplace_back(c);
-      }
-    }
-    out.push_back(std::move(p));
+catalog::AclMode ParseAclModeOrThrow(std::span<const ParsedPriv> privileges,
+                                     catalog::ObjectType type) {
+  std::vector<std::string_view> keywords;
+  keywords.reserve(privileges.size());
+  for (const auto& p : privileges) {
+    keywords.push_back(p.keyword);
   }
-  return out;
+  return ParseAclModeOrThrow(absl::StrJoin(keywords, ","), type);
 }
 
-bool AnyColumnPrivs(const std::vector<ParsedPriv>& parsed) {
+bool AnyColumnPrivs(std::span<const ParsedPriv> parsed) {
   return std::ranges::any_of(
     parsed, [](const ParsedPriv& p) { return !p.columns.empty(); });
 }
@@ -470,7 +462,8 @@ void ApplyAclChange(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,
 
 }  // namespace
 
-void AlterDefaultPrivileges(ConnectionContext& ctx, std::string_view privileges,
+void AlterDefaultPrivileges(ConnectionContext& ctx,
+                            std::span<const ParsedPriv> privileges,
                             std::string_view objtype_char,
                             std::string_view grantee, bool revoke,
                             const DefaultPrivilegesOptions& opts) {
@@ -578,8 +571,9 @@ std::shared_ptr<catalog::Object> ResolveGrantTarget(
 // built-in-type ACL map (built-in types own no catalog object). The stored Acl
 // is the non-default grant set; pg_type seeds the owner default when rendering.
 void GrantBuiltinType(ConnectionContext& ctx, uint64_t type_oid,
-                      std::string_view privileges, std::string_view grantee,
-                      bool revoke, const GrantObjectOptions& opts) {
+                      std::span<const ParsedPriv> privileges,
+                      std::string_view grantee, bool revoke,
+                      const GrantObjectOptions& opts) {
   auto& catalog = GlobalCatalog();
   auto snapshot = FreshSnapshot();
 
@@ -613,19 +607,70 @@ void GrantBuiltinType(ConnectionContext& ctx, uint64_t type_oid,
 }
 
 }  // namespace
-
-void ThrowNotADomain(std::string_view name) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-                  ERR_MSG("\"", name, "\" is not a domain"));
-}
-
 namespace {
+
+struct AclGrantContext {
+  catalog::AclMode privs;
+  ObjectId grantee_id;
+  ObjectId current_id;
+  ObjectId granted_by_id;
+  bool revoke;
+  const GrantObjectOptions& opts;
+  bool* no_authority;
+  bool* nothing_applied;
+  bool* dependents_block;
+  bool* not_member;
+};
+
+void ApplyAclGrant(const catalog::Snapshot& live, ObjectId owner,
+                   catalog::Acl& acl, const AclGrantContext& gc) {
+  auto actor = live.GetObject<catalog::Role>(gc.current_id);
+  const bool is_superuser = actor && actor->IsSuperuser();
+  if (gc.granted_by_id.isSet() && !is_superuser &&
+      !auth::ComputeMembershipClosure(live, gc.current_id)
+         .contains(gc.granted_by_id)) {
+    *gc.not_member = true;
+    return;
+  }
+  const auto roles = auth::ComputeEffectiveRoles(live, gc.current_id);
+  const bool is_owner = is_superuser || roles.contains(owner);
+  const ObjectId grantor = gc.granted_by_id.isSet()
+                             ? gc.granted_by_id
+                             : (is_owner ? owner : gc.current_id);
+  catalog::AclMode allowed = gc.privs;
+  if (!is_owner) {
+    allowed &= auth::AclGrantOptionHeld(acl, roles);
+  }
+  if (allowed == catalog::AclMode::NoRights) {
+    if (!is_owner &&
+        auth::AclPrivsHeld(acl, roles) == catalog::AclMode::NoRights) {
+      *gc.no_authority = true;
+    } else {
+      *gc.nothing_applied = true;
+    }
+    return;
+  }
+  if (!gc.revoke) {
+    const auto grant_option =
+      gc.opts.with_grant_option ? allowed : catalog::AclMode::NoRights;
+    auth::AclGrant(acl, gc.grantee_id, grantor, allowed, grant_option);
+  } else if (gc.opts.grant_option_only) {
+    auth::AclRemoveGrantOption(acl, gc.grantee_id, grantor, allowed);
+  } else if (gc.opts.cascade) {
+    auth::AclRevokeCascade(acl, gc.grantee_id, grantor, allowed);
+  } else if (auth::AclDependentPrivs(acl, gc.grantee_id, allowed) !=
+             catalog::AclMode::NoRights) {
+    *gc.dependents_block = true;
+  } else {
+    auth::AclRevoke(acl, gc.grantee_id, grantor, allowed);
+  }
+}
 
 // Column-level GRANT/REVOKE (PG column privileges). Only tables carry
 // per-column ACLs; `privileges` is the parsed list, each entry naming its own
 // columns.
 void GrantObjectColumns(ConnectionContext& ctx, catalog::ObjectType type,
-                        const std::vector<ParsedPriv>& parsed,
+                        std::span<const ParsedPriv> parsed,
                         std::string_view obj_name, std::string_view grantee,
                         bool revoke, const GrantObjectOptions& opts) {
   auto& catalog = GlobalCatalog();
@@ -639,10 +684,7 @@ void GrantObjectColumns(ConnectionContext& ctx, catalog::ObjectType type,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("relation \"", rel_name, "\" does not exist"));
   }
-  const ObjectId owner = target->GetOwner();
-  auto current = CurrentRole(ctx);
-  const bool is_superuser = current->IsSuperuser();
-  const ObjectId current_id = current->GetId();
+  const ObjectId current_id = CurrentRole(ctx)->GetId();
   const ObjectId grantee_id = ResolveGranteeId(*snapshot, grantee);
 
   ObjectId granted_by_id = id::kInvalid;
@@ -653,20 +695,12 @@ void GrantObjectColumns(ConnectionContext& ctx, catalog::ObjectType type,
                       ERR_MSG("role \"", opts.granted_by, "\" does not exist"));
     }
     granted_by_id = gb->GetId();
-    if (!is_superuser && !auth::ComputeMembershipClosure(*snapshot, current_id)
-                            .contains(granted_by_id)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-        ERR_MSG("must be member of role \"", opts.granted_by, "\""));
-    }
   }
-
-  const auto roles = auth::ComputeEffectiveRoles(*snapshot, current_id);
-  const bool is_owner = is_superuser || roles.contains(owner);
 
   bool no_authority = false;
   bool nothing_applied = false;
   bool dependents_block = false;
+  bool not_member = false;
   // PG column-applicable privileges: GRANT ALL (col) confers only these (a
   // column has no DELETE/TRUNCATE/TRIGGER/MAINTAIN of its own).
   constexpr catalog::AclMode kColumnPrivs =
@@ -687,41 +721,17 @@ void GrantObjectColumns(ConnectionContext& ctx, catalog::ObjectType type,
     for (const auto& column : p.columns) {
       auto r = catalog.ChangeColumnAcl(
         ctx.GetDatabaseId(), schema_name, rel_name, column,
-        [&](catalog::Acl& acl) {
-          // PG: the owner/superuser may grant anything; a non-owner may confer
-          // only the column privileges it holds WITH GRANT OPTION on this
-          // column. The grant is recorded under that grantor.
-          const ObjectId grantor = granted_by_id.isSet()
-                                     ? granted_by_id
-                                     : (is_owner ? owner : current_id);
-          catalog::AclMode allowed = privs;
-          if (!is_owner) {
-            allowed &= auth::AclGrantOptionHeld(acl, roles);
-          }
-          if (allowed == catalog::AclMode::NoRights) {
-            if (!is_owner &&
-                auth::AclPrivsHeld(acl, roles) == catalog::AclMode::NoRights) {
-              no_authority = true;
-            } else {
-              nothing_applied = true;
-            }
-            return;
-          }
-          if (!revoke) {
-            const auto grant_option =
-              opts.with_grant_option ? allowed : catalog::AclMode::NoRights;
-            auth::AclGrant(acl, grantee_id, grantor, allowed, grant_option);
-          } else if (opts.grant_option_only) {
-            auth::AclRemoveGrantOption(acl, grantee_id, grantor, allowed);
-          } else if (opts.cascade) {
-            auth::AclRevokeCascade(acl, grantee_id, grantor, allowed);
-          } else if (auth::AclDependentPrivs(acl, grantee_id, allowed) !=
-                     catalog::AclMode::NoRights) {
-            dependents_block = true;
-          } else {
-            auth::AclRevoke(acl, grantee_id, grantor, allowed);
-          }
+        [&](const catalog::Snapshot& live, ObjectId owner, catalog::Acl& acl) {
+          ApplyAclGrant(
+            live, owner, acl,
+            {privs, grantee_id, current_id, granted_by_id, revoke, opts,
+             &no_authority, &nothing_applied, &dependents_block, &not_member});
         });
+      if (not_member) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+          ERR_MSG("must be member of role \"", opts.granted_by, "\""));
+      }
       if (!r.ok()) {
         SDB_THROW(std::move(r));
       }
@@ -748,12 +758,12 @@ void GrantObjectColumns(ConnectionContext& ctx, catalog::ObjectType type,
 }  // namespace
 
 void GrantObject(ConnectionContext& ctx, catalog::ObjectType type,
-                 std::string_view privileges, std::string_view obj_name,
-                 std::string_view grantee, bool revoke,
-                 const GrantObjectOptions& opts) {
+                 std::span<const ParsedPriv> privileges,
+                 std::string_view obj_name, std::string_view grantee,
+                 bool revoke, const GrantObjectOptions& opts) {
   // Column-level GRANT (SELECT (a,b) ON t) takes the per-column path.
-  if (auto parsed = ParsePrivList(privileges); AnyColumnPrivs(parsed)) {
-    GrantObjectColumns(ctx, type, parsed, obj_name, grantee, revoke, opts);
+  if (AnyColumnPrivs(privileges)) {
+    GrantObjectColumns(ctx, type, privileges, obj_name, grantee, revoke, opts);
     return;
   }
 
@@ -780,13 +790,8 @@ void GrantObject(ConnectionContext& ctx, catalog::ObjectType type,
                     ERR_MSG(is_relation ? "relation" : ToPgObjectTypeName(type),
                             " \"", rel_name, "\" does not exist"));
   }
-  // A GRANT target (relation / schema / database / function / type) is always
-  // created with a real owner, so GetOwner() is set.
-  const ObjectId owner = target->GetOwner();
 
-  auto current = CurrentRole(ctx);
-  const bool is_superuser = current->IsSuperuser();
-  const ObjectId current_id = current->GetId();
+  const ObjectId current_id = CurrentRole(ctx)->GetId();
 
   const ObjectId grantee_id = ResolveGranteeId(*snapshot, grantee);
 
@@ -798,12 +803,6 @@ void GrantObject(ConnectionContext& ctx, catalog::ObjectType type,
                       ERR_MSG("role \"", opts.granted_by, "\" does not exist"));
     }
     granted_by_id = gb->GetId();
-    if (!is_superuser && !auth::ComputeMembershipClosure(*snapshot, current_id)
-                            .contains(granted_by_id)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-        ERR_MSG("must be member of role \"", opts.granted_by, "\""));
-    }
   }
 
   const catalog::AclMode privs = ParseAclModeOrThrow(privileges, type);
@@ -811,6 +810,7 @@ void GrantObject(ConnectionContext& ctx, catalog::ObjectType type,
   bool no_authority = false;
   bool nothing_applied = false;
   bool dependents_block = false;
+  bool not_member = false;
   // For a Database target ChangeAcl looks up the object by `database_id`
   // directly, so it must be the *target* database -- not the connection's
   // current database, which may differ (GRANT ON DATABASE postgres while
@@ -820,49 +820,18 @@ void GrantObject(ConnectionContext& ctx, catalog::ObjectType type,
                                      ? target->GetId()
                                      : ctx.GetDatabaseId();
   auto r = catalog.ChangeAcl(
-    acl_database_id, schema_name, rel_name, type, [&](catalog::Acl& acl) {
-      auto live = catalog.GetCatalogSnapshot();
-      const auto roles = auth::ComputeEffectiveRoles(*live, current_id);
-      const bool is_owner = is_superuser || roles.contains(owner);
-      const ObjectId grantor =
-        granted_by_id.isSet() ? granted_by_id : (is_owner ? owner : current_id);
-      catalog::AclMode allowed = privs;
-      if (!is_owner) {
-        allowed &= auth::AclGrantOptionHeld(acl, roles);
-      }
-      if (allowed == catalog::AclMode::NoRights) {
-        // PG: a grantor with NO privilege at all on the object is refused
-        // outright; one that holds the privilege but not its grant option (so
-        // it cannot confer it) gets a warning + no-op.
-        if (!is_owner &&
-            auth::AclPrivsHeld(acl, roles) == catalog::AclMode::NoRights) {
-          no_authority = true;
-        } else {
-          nothing_applied = true;
-        }
-        return;
-      }
-      if (!revoke) {
-        const auto grant_option =
-          opts.with_grant_option ? allowed : catalog::AclMode::NoRights;
-        auth::AclGrant(acl, grantee_id, grantor, allowed, grant_option);
-        return;
-      }
-      if (opts.grant_option_only) {
-        auth::AclRemoveGrantOption(acl, grantee_id, grantor, allowed);
-        return;
-      }
-      if (opts.cascade) {
-        auth::AclRevokeCascade(acl, grantee_id, grantor, allowed);
-        return;
-      }
-      if (auth::AclDependentPrivs(acl, grantee_id, allowed) !=
-          catalog::AclMode::NoRights) {
-        dependents_block = true;
-        return;
-      }
-      auth::AclRevoke(acl, grantee_id, grantor, allowed);
+    acl_database_id, schema_name, rel_name, type,
+    [&](const catalog::Snapshot& live, ObjectId owner, catalog::Acl& acl) {
+      ApplyAclGrant(
+        live, owner, acl,
+        {privs, grantee_id, current_id, granted_by_id, revoke, opts,
+         &no_authority, &nothing_applied, &dependents_block, &not_member});
     });
+  if (not_member) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+      ERR_MSG("must be member of role \"", opts.granted_by, "\""));
+  }
   if (dependents_block) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
                     ERR_MSG("dependent privileges exist"),
@@ -897,7 +866,7 @@ void GrantObject(ConnectionContext& ctx, catalog::ObjectType type,
         }
         auto cr = catalog.ChangeColumnAcl(
           ctx.GetDatabaseId(), schema_name, rel_name, col.GetName(),
-          [&](catalog::Acl& acl) {
+          [&](const catalog::Snapshot&, ObjectId owner, catalog::Acl& acl) {
             auth::AclRevoke(acl, grantee_id, owner, privs);
           });
         if (!cr.ok()) {
@@ -909,7 +878,7 @@ void GrantObject(ConnectionContext& ctx, catalog::ObjectType type,
 }
 
 void GrantObjectAllInSchema(ConnectionContext& ctx, catalog::ObjectType type,
-                            std::string_view privileges,
+                            std::span<const ParsedPriv> privileges,
                             std::string_view schema_name,
                             std::string_view grantee, bool revoke,
                             const GrantObjectOptions& opts) {
@@ -963,9 +932,10 @@ void GrantRole(ConnectionContext& ctx, std::string_view role,
   const ObjectId role_id = role_obj->GetId();
   const ObjectId member_id = member_obj->GetId();
 
-  // PG: the grantor must be a superuser or hold ADMIN OPTION on `role`.
-  if (!CurrentRole(ctx)->IsSuperuser() &&
-      !auth::HasAdminOption(*snapshot, ctx.GetRoleId(), role_id)) {
+  const bool is_superuser = CurrentRole(ctx)->IsSuperuser();
+  const ObjectId grantor_id = ctx.GetRoleId();
+
+  if (!is_superuser && !auth::HasAdminOption(*snapshot, grantor_id, role_id)) {
     const auto verb = revoke ? "revoke" : "grant";
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -989,14 +959,20 @@ void GrantRole(ConnectionContext& ctx, std::string_view role,
       ERR_MSG("role \"", role, "\" is a member of role \"", member, "\""));
   }
 
-  enum class Reject { None, RoleGone, Cycle };
+  enum class Reject { None, RoleGone, Cycle, NoAdmin };
   Reject reject = Reject::None;
   auto r = catalog.ChangeRole(
     member,
     [&](const catalog::Role& old_role,
         std::shared_ptr<catalog::Role>& new_role) -> Result {
+      auto live = catalog.GetCatalogSnapshot();
+      auto actor = live->GetObject<catalog::Role>(grantor_id);
+      if (!(actor && actor->IsSuperuser()) &&
+          !auth::HasAdminOption(*live, grantor_id, role_id)) {
+        reject = Reject::NoAdmin;
+        return Result{ERROR_FORBIDDEN};
+      }
       if (!revoke) {
-        auto live = catalog.GetCatalogSnapshot();
         if (!live->GetObject<catalog::Role>(role_id)) {
           reject = Reject::RoleGone;
           return Result{ERROR_USER_NOT_FOUND};
@@ -1023,6 +999,14 @@ void GrantRole(ConnectionContext& ctx, std::string_view role,
       }
       return {};
     });
+  if (reject == Reject::NoAdmin) {
+    const auto verb = revoke ? "revoke" : "grant";
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+      ERR_MSG("permission denied to ", verb, " role \"", role, "\""),
+      ERR_DETAIL("Only roles with the ADMIN option on role \"", role, "\" may ",
+                 verb, " this role."));
+  }
   if (reject == Reject::RoleGone) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("role \"", role, "\" does not exist"));
@@ -1067,9 +1051,7 @@ void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
   auto& catalog = GlobalCatalog();
   auto snapshot = FreshSnapshot();
 
-  auto current = CurrentRole(ctx);
-  const bool is_superuser = current->IsSuperuser();
-  const ObjectId current_id = current->GetId();
+  const ObjectId current_id = CurrentRole(ctx)->GetId();
 
   std::string_view new_owner_name = new_owner;
   if (new_owner == "CURRENT_USER" || new_owner == "SESSION_USER" ||
@@ -1085,76 +1067,17 @@ void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
 
   std::string schema_name;
   std::string rel_name;
-  ObjectId cur_owner;
   if (type == catalog::ObjectType::Schema) {
-    auto schema = snapshot->GetSchema(ctx.GetDatabaseId(), name);
-    if (!schema) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                      ERR_MSG("schema \"", name, "\" does not exist"));
-    }
     rel_name = std::string{name};
-    cur_owner = schema->GetOwner();
-  } else if (type == catalog::ObjectType::PgSqlType) {
-    // Types live in their own per-schema namespace, not the relation namespace.
-    const std::string current_schema = ctx.GetCurrentSchema();
-    const auto parsed = ParseObjectName(name, current_schema);
-    auto t = snapshot->GetType(catalog::NoAccessCheck(), ctx.GetDatabaseId(),
-                               parsed.schema, parsed.relation);
-    if (!t) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                      ERR_MSG("type \"", parsed.relation, "\" does not exist"));
-    }
-    schema_name = parsed.schema;
-    rel_name = parsed.relation;
-    cur_owner = t->GetOwner();
   } else {
-    // Keep the current-schema string alive: ParseObjectName returns
-    // string_views; an unqualified name's schema view points into it.
     const std::string current_schema = ctx.GetCurrentSchema();
     const auto parsed = ParseObjectName(name, current_schema);
-    auto rel =
-      snapshot->GetRelation(catalog::NoAccessCheck(), ctx.GetDatabaseId(),
-                            parsed.schema, parsed.relation);
-    if (!rel) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                      ERR_MSG(ToPgObjectTypeName(type), " \"", parsed.relation,
-                              "\" does not exist"));
-    }
     schema_name = parsed.schema;
     rel_name = parsed.relation;
-    cur_owner = rel->GetOwner();
   }
-  SDB_ASSERT(cur_owner.isSet());
-  const ObjectId real_owner = cur_owner;
-
-  if (!is_superuser) {
-    if (!auth::ComputeEffectiveRoles(*snapshot, current_id)
-           .contains(real_owner)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-        ERR_MSG("must be owner of ", ToPgObjectTypeName(type), " ", rel_name));
-    }
-    if (!auth::ComputeSetRoleClosure(*snapshot, current_id)
-           .contains(new_owner_id)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-        ERR_MSG("must be able to SET ROLE \"", new_owner_name, "\""));
-    }
-    // PG: the new owner must hold CREATE on the relation's containing schema
-    // (a schema itself has no containing schema, so this applies only to
-    // relations). A no-op transfer to the current owner skips the check.
-    if (type != catalog::ObjectType::Schema && new_owner_id != real_owner) {
-      auto schema = snapshot->GetSchema(ctx.GetDatabaseId(), schema_name);
-      if (schema && !auth::HasPrivilege(*snapshot, new_owner_id, *schema,
-                                        catalog::AclMode::Create)) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                        ERR_MSG("permission denied for schema ", schema_name));
-      }
-    }
-  }
-
-  auto r = catalog.ChangeOwner(ctx.GetDatabaseId(), schema_name, rel_name, type,
-                               new_owner_id);
+  auto r = catalog.ChangeOwner(catalog::RequireOwnership(current_id),
+                               ctx.GetDatabaseId(), schema_name, rel_name, type,
+                               new_owner_id, new_owner_name);
   if (!r.ok()) {
     SDB_THROW(std::move(r));
   }

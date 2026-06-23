@@ -320,11 +320,4 @@ ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context) {
   return state->GetConnectionContext();
 }
 
-void RequirePrivilege(ConnectionContext& ctx, const catalog::Object& object,
-                      catalog::AclMode need) {
-  auto snapshot = ctx.EnsureCatalogSnapshot();
-  auto current = snapshot->GetObject(object.GetId());
-  snapshot->RequireAccess(ctx.GetRoleId(), current ? *current : object, need);
-}
-
 }  // namespace sdb::connector

@@ -53,9 +53,11 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
     // CREATE DATABASE: create new database in SereneDB catalog
     auto state = context.registered_state->Get<SereneDBClientState>(
       kSereneDBClientStateKey);
-    const auto& exec_ctx =
-      state ? state->GetConnectionContext() : ExecContext::superuser();
-    auto r = catalog::CreateDatabase(exec_ctx, name);
+    const auto ax =
+      state
+        ? catalog::RequireOwnership(state->GetConnectionContext().GetRoleId())
+        : catalog::NoAccessCheck();
+    auto r = catalog::CreateDatabase(ax, name);
     if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
       if (info.on_conflict == duckdb::OnCreateConflict::ERROR_ON_CONFLICT) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_DATABASE),
@@ -101,23 +103,19 @@ duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(
 void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
   auto state =
     context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);
-  // User-initiated DROP DATABASE: only the owner or a superuser may drop it.
-  // Checked first, before any teardown, so an unauthorized drop is refused
-  // cleanly. Internal/lifecycle detach has no session state and is not gated.
+
+  auto ax = catalog::NoAccessCheck();
+  const ExecContext* exec_ctx = &ExecContext::superuser();
   if (state) {
     auto& conn_ctx = state->GetConnectionContext();
-    auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-    if (auto db = snapshot->GetDatabase(GetName())) {
-      snapshot->RequireOwnership(conn_ctx.GetRoleId(), *db);
-    }
+    ax = catalog::RequireOwnership(conn_ctx.GetRoleId());
+    exec_ctx = &conn_ctx;
+    conn_ctx.DropCatalogSnapshot();
   }
-  const auto& exec_ctx =
-    state ? state->GetConnectionContext() : ExecContext::superuser();
-  if (state) {
-    state->GetConnectionContext().DropCatalogSnapshot();
-  }
+
   duckdb::shared_ptr<void> keep_alive = GetAttached().shared_from_this();
-  auto r = catalog::DropDatabase(exec_ctx, GetName(), std::move(keep_alive));
+  auto r =
+    catalog::DropDatabase(*exec_ctx, ax, GetName(), std::move(keep_alive));
   SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
   if (!r.ok()) {
     SDB_THROW(std::move(r));

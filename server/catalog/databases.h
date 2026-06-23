@@ -27,8 +27,11 @@
 
 namespace sdb::catalog {
 
-Result CreateDatabase(const ExecContext& exec, std::string_view name);
-Result DropDatabase(const ExecContext& exec, std::string_view db_name,
+struct AccessContext;
+
+Result CreateDatabase(const AccessContext& ax, std::string_view name);
+Result DropDatabase(const ExecContext& exec, const AccessContext& ax,
+                    std::string_view db_name,
                     duckdb::shared_ptr<void> keep_alive = {});
 
 }  // namespace sdb::catalog

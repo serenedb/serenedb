@@ -20,6 +20,7 @@
 
 #include "connector/duckdb_rbac_function.h"
 
+#include <duckdb/common/types/value.hpp>
 #include <duckdb/function/pragma_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <optional>
@@ -59,6 +60,32 @@ bool ArgBool(const duckdb::FunctionParameters& params, size_t i,
 int32_t ArgInt(const duckdb::FunctionParameters& params, size_t i,
                const char* name) {
   return Arg<int32_t>(params, i, name);
+}
+
+LogicalType PrivListType() {
+  return LogicalType::LIST(LogicalType::STRUCT(
+    {{"keyword", LogicalType::VARCHAR},
+     {"columns", LogicalType::LIST(LogicalType::VARCHAR)}}));
+}
+
+std::vector<pg::ParsedPriv> ArgPrivList(
+  const duckdb::FunctionParameters& params, size_t i, const char* name) {
+  if (params.values[i].IsNull()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+      ERR_MSG("serenedb RBAC pragma: argument '", name, "' must not be NULL"));
+  }
+  std::vector<pg::ParsedPriv> out;
+  for (const auto& entry : duckdb::ListValue::GetChildren(params.values[i])) {
+    const auto& fields = duckdb::StructValue::GetChildren(entry);
+    pg::ParsedPriv p;
+    p.keyword = fields[0].GetValue<std::string>();
+    for (const auto& col : duckdb::ListValue::GetChildren(fields[1])) {
+      p.columns.push_back(col.GetValue<std::string>());
+    }
+    out.push_back(std::move(p));
+  }
+  return out;
 }
 
 // PRAGMA serenedb_create_role('name', login, superuser, password, inherit,
@@ -137,7 +164,7 @@ void AlterDefaultPrivilegesPragma(duckdb::ClientContext& context,
   opts.in_schema = ArgStr(params, 6, "in_schema");
   opts.grant_option_only = ArgBool(params, 7, "grant_option_only");
   opts.cascade = ArgBool(params, 8, "cascade");
-  pg::AlterDefaultPrivileges(conn_ctx, ArgStr(params, 0, "privileges"),
+  pg::AlterDefaultPrivileges(conn_ctx, ArgPrivList(params, 0, "privileges"),
                              ArgStr(params, 1, "objtype_char"),
                              ArgStr(params, 2, "grantee"),
                              ArgBool(params, 3, "revoke"), opts);
@@ -197,20 +224,16 @@ void GrantTablePragma(duckdb::ClientContext& context,
   opts.cascade = ArgBool(params, 7, "cascade");
   opts.granted_by = ArgStr(params, 8, "granted_by");
   const auto objtype = ArgStr(params, 5, "objtype");
-  if (objtype == "DOMAIN") {
-    pg::ThrowNotADomain(ArgStr(params, 1, "name"));
-  }
+  const auto privileges = ArgPrivList(params, 0, "privileges");
   if (auto bulk = BulkObjTypeOf(objtype)) {
-    pg::GrantObjectAllInSchema(conn_ctx, *bulk, ArgStr(params, 0, "privileges"),
-                               ArgStr(params, 1, "name"),
-                               ArgStr(params, 2, "grantee"),
-                               ArgBool(params, 3, "revoke"), opts);
+    pg::GrantObjectAllInSchema(
+      conn_ctx, *bulk, privileges, ArgStr(params, 1, "name"),
+      ArgStr(params, 2, "grantee"), ArgBool(params, 3, "revoke"), opts);
     return;
   }
-  pg::GrantObject(conn_ctx, GrantObjTypeOf(objtype),
-                  ArgStr(params, 0, "privileges"), ArgStr(params, 1, "name"),
-                  ArgStr(params, 2, "grantee"), ArgBool(params, 3, "revoke"),
-                  opts);
+  pg::GrantObject(conn_ctx, GrantObjTypeOf(objtype), privileges,
+                  ArgStr(params, 1, "name"), ArgStr(params, 2, "grantee"),
+                  ArgBool(params, 3, "revoke"), opts);
 }
 
 // PRAGMA serenedb_alter_owner('objtype', 'name', 'new_owner')
@@ -267,7 +290,7 @@ void RegisterRbacPragmas(duckdb::DatabaseInstance& db) {
 
   loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
     "serenedb_alter_default_privileges", AlterDefaultPrivilegesPragma,
-    {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
+    {PrivListType(), LogicalType::VARCHAR, LogicalType::VARCHAR,
      LogicalType::BOOLEAN, LogicalType::BOOLEAN, LogicalType::VARCHAR,
      LogicalType::VARCHAR, LogicalType::BOOLEAN, LogicalType::BOOLEAN}));
 
@@ -277,7 +300,7 @@ void RegisterRbacPragmas(duckdb::DatabaseInstance& db) {
 
   loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
     "serenedb_grant_table", GrantTablePragma,
-    {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
+    {PrivListType(), LogicalType::VARCHAR, LogicalType::VARCHAR,
      LogicalType::BOOLEAN, LogicalType::BOOLEAN, LogicalType::VARCHAR,
      LogicalType::BOOLEAN, LogicalType::BOOLEAN, LogicalType::VARCHAR}));
 

@@ -24,44 +24,29 @@
 #include "app/name_validator.h"
 #include "catalog/catalog.h"
 #include "catalog/database.h"
-#include "catalog/role.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::catalog {
 
-Result CreateDatabase(const ExecContext& exec, std::string_view name) {
+Result CreateDatabase(const AccessContext& ax, std::string_view name) {
   if (auto r = DatabaseNameValidator::validateName(/*allowSystem*/ false, name);
       r.fail()) {
     return r;
   }
 
-  // PG: CREATE DATABASE requires the CREATEDB attribute (or superuser). The
-  // creator owns the new database (datdba = current_user). A caller with no
-  // resolvable role is an internal/bootstrap context (effectively superuser),
-  // so it is allowed and the database is root-owned.
-  auto& global = catalog::GetCatalog();
-  ObjectId owner = id::kRootUser;
-  if (auto role = global.GetCatalogSnapshot()->GetRole(exec.user())) {
-    if (!role->IsSuperuser() && !role->Has(RoleOption::CreateDb)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                      ERR_MSG("permission denied to create database"));
-    }
-    owner = role->GetId();
-  }
+  auto database =
+    std::make_shared<catalog::Database>(ax.role, ObjectId{}, name);
 
-  auto database = std::make_shared<catalog::Database>(owner, ObjectId{}, name);
-
-  return global.CreateDatabase(std::move(database));
+  return catalog::GetCatalog().CreateDatabase(ax, std::move(database));
 }
 
-Result DropDatabase(const ExecContext& exec, std::string_view db_name,
+Result DropDatabase(const ExecContext& exec, const AccessContext& ax,
+                    std::string_view db_name,
                     duckdb::shared_ptr<void> keep_alive) {
   if (exec.systemAuthLevel() != auth::Level::RW) {
     return {ERROR_FORBIDDEN};
   }
 
-  return catalog::GetCatalog().DropDatabase(db_name, std::move(keep_alive));
+  return catalog::GetCatalog().DropDatabase(ax, db_name, std::move(keep_alive));
 }
 
 }  // namespace sdb::catalog

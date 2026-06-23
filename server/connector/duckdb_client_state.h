@@ -24,7 +24,6 @@
 #include <duckdb/main/client_context_state.hpp>
 #include <memory>
 
-#include "catalog/object.h"
 #include "connector/duckdb_access_check.h"
 #include "pg/progress_tracker.h"
 
@@ -104,8 +103,5 @@ class SereneDBClientState final : public duckdb::ClientContextState {
 
 // Helper to get the ConnectionContext from a DuckDB ClientContext.
 ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context);
-
-void RequirePrivilege(ConnectionContext& ctx, const catalog::Object& object,
-                      catalog::AclMode need);
 
 }  // namespace sdb::connector

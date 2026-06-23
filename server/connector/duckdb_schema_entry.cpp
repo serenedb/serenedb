@@ -40,7 +40,6 @@
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
 
-#include "auth/privilege.h"
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
 #include "catalog/catalog.h"
@@ -378,7 +377,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
           }
           auto& ref_table = basics::downCast<catalog::Table>(*referenced);
           out.referenced_table = ref_table.GetId();
-          std::vector<const catalog::Column*> ref_cols;
           for (auto& col_name : fk.pk_columns) {
             auto it = absl::c_find_if(
               ref_table.Columns(),
@@ -390,14 +388,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
                         "\" named in foreign key does not exist"));
             }
             out.referenced_columns.push_back(it->GetId());
-            ref_cols.push_back(&*it);
-          }
-          if (!auth::HasColumnPrivilege(*snapshot, conn_ctx.GetRoleId(),
-                                        ref_table, catalog::AclMode::References,
-                                        ref_cols)) {
-            THROW_SQL_ERROR(
-              ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-              ERR_MSG("permission denied for table ", ref_table.GetName()));
           }
         }
         options.foreign_keys.push_back(std::move(out));
@@ -835,17 +825,8 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
                                 duckdb::AlterInfo& info) {
   auto& catalog_impl = catalog::GetCatalog();
   auto db = GetDatabaseId();
-
-  // ALTER requires ownership (or superuser) of the target relation.
-  if (info.type == duckdb::AlterType::ALTER_TABLE ||
-      info.type == duckdb::AlterType::ALTER_VIEW) {
-    auto& conn_ctx = GetSereneDBContext(transaction.GetContext());
-    auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-    if (auto rel = snapshot->GetRelation(catalog::NoAccessCheck(), db, name,
-                                         info.name)) {
-      snapshot->RequireOwnership(conn_ctx.GetRoleId(), *rel);
-    }
-  }
+  const auto ax = catalog::RequireOwnership(
+    GetSereneDBContext(transaction.GetContext()).GetRoleId());
 
   if (info.type == duckdb::AlterType::ALTER_SCALAR_FUNCTION) {
     auto& fn_info = info.Cast<duckdb::AlterScalarFunctionInfo>();
@@ -856,8 +837,8 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
     }
     auto& rename_info = fn_info.Cast<duckdb::RenameScalarFunctionInfo>();
 
-    Result r =
-      catalog_impl.RenameFunction(db, name, info.name, rename_info.new_name);
+    Result r = catalog_impl.RenameFunction(ax, db, name, info.name,
+                                           rename_info.new_name);
 
     if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND) ||
         r.is(ERROR_SERVER_ILLEGAL_NAME)) {
@@ -888,8 +869,8 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
                       ERR_MSG("only RENAME is supported for ALTER VIEW"));
     }
     auto& rename_info = view_info.Cast<duckdb::RenameViewInfo>();
-    Result r =
-      catalog_impl.RenameView(db, name, info.name, rename_info.new_view_name);
+    Result r = catalog_impl.RenameView(ax, db, name, info.name,
+                                       rename_info.new_view_name);
     HandleRenameRelationError(std::move(r), info.name,
                               rename_info.new_view_name, "view");
     return;
@@ -908,7 +889,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       auto& drop_info = table_info.Cast<duckdb::DropConstraintInfo>();
 
       Result r = catalog_impl.ChangeTable(
-        db, name, table_name,
+        ax, db, name, table_name,
         [&](const catalog::Table& table,
             std::shared_ptr<catalog::Table>& updated) {
           return table.DropCheckConstraint(updated, drop_info.constraint_name);
@@ -953,7 +934,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       auto& rename_info = table_info.Cast<duckdb::RenameTableInfo>();
       // RenameRelation routes by actual object type, so ALTER TABLE on a view
       // or index (which Postgres allows) still renames the correct object.
-      Result r = catalog_impl.RenameRelation(db, name, table_name,
+      Result r = catalog_impl.RenameRelation(ax, db, name, table_name,
                                              rename_info.new_table_name);
       HandleRenameRelationError(std::move(r), table_name,
                                 rename_info.new_table_name, "table");
@@ -964,7 +945,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       auto& rename_info = table_info.Cast<duckdb::RenameConstraintInfo>();
 
       Result r = catalog_impl.ChangeTable(
-        db, name, table_name,
+        ax, db, name, table_name,
         [&](const catalog::Table& table,
             std::shared_ptr<catalog::Table>& updated) {
           return table.RenameConstraint(updated, rename_info.old_name,
@@ -1002,7 +983,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       auto& rename_info = table_info.Cast<duckdb::RenameColumnInfo>();
 
       Result r = catalog_impl.ChangeTable(
-        db, name, table_name,
+        ax, db, name, table_name,
         [&](const catalog::Table& table,
             std::shared_ptr<catalog::Table>& updated) {
           return table.RenameColumn(updated, rename_info.old_name,
@@ -1053,7 +1034,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
         column.expr = std::make_shared<ColumnExpr>(cd.DefaultValue().Copy());
       }
       Result r = catalog_impl.ChangeTable(
-        db, name, table_name,
+        ax, db, name, table_name,
         [&](const catalog::Table& table,
             std::shared_ptr<catalog::Table>& updated) {
           return table.AddColumn(updated, column,
@@ -1077,7 +1058,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
 
     case duckdb::AlterTableType::REMOVE_COLUMN: {
       auto& remove_info = table_info.Cast<duckdb::RemoveColumnInfo>();
-      Result r = catalog_impl.DropTableColumn(db, name, table_name,
+      Result r = catalog_impl.DropTableColumn(ax, db, name, table_name,
                                               remove_info.removed_column,
                                               remove_info.if_column_exists);
       if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
@@ -1104,7 +1085,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
         using_sql = type_info.expression->ToString();
       }
       Result r = catalog_impl.ChangeColumnType(
-        db, name, table_name, type_info.column_name, type_info.target_type,
+        ax, db, name, table_name, type_info.column_name, type_info.target_type,
         std::move(using_sql));
       if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
         THROW_SQL_ERROR(

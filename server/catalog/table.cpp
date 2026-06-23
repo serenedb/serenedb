@@ -167,16 +167,22 @@ std::shared_ptr<Object> Table::Clone() const {
   return cloned;
 }
 
-std::shared_ptr<Table> Table::WithMutatedColumns(
-  absl::FunctionRef<void(std::vector<Column>&)> mutate) const {
-  std::vector<Column> columns = _columns;
-  mutate(columns);
-  auto cloned = std::make_shared<Table>(
-    GetPermissions(), GetParentId(), GetId(), GetName(), std::move(columns),
-    _pk_columns, _check_constraints, _generated_pk_seq_id, _engine,
-    _unique_constraints, _foreign_keys);
-  cloned->SetTombstoned(Tombstoned());
-  return cloned;
+Result Table::ChangeColumnAcl(std::shared_ptr<Table>& result,
+                              std::string_view column_name,
+                              absl::FunctionRef<void(Acl&)> mutate) const {
+  auto it = absl::c_find_if(
+    _columns, [&](const Column& c) { return c.GetName() == column_name; });
+  if (it == _columns.end()) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
+  auto new_table = basics::downCast<Table>(Clone());
+  auto& column = new_table->_columns[std::distance(_columns.begin(), it)];
+  auto acl = column.GetPermissions().acl;
+  mutate(acl);
+  column.SetPermissions(Permissions{ObjectId{}, std::move(acl)});
+  result = std::move(new_table);
+  return {};
 }
 
 std::shared_ptr<Table> Table::DropColumnDefault(Column::Id column_id) const {

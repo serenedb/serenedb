@@ -72,7 +72,9 @@ duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
   // SELECT * FROM <index_name> resolves the base table here
   auto& sdb_ctx = GetSereneDBContext(context);
-  RequirePrivilege(sdb_ctx, *_sdb_table, catalog::AclMode::Select);
+  sdb_ctx.EnsureCatalogSnapshot()->GetTable(
+    catalog::RequireAccess(context, catalog::AclMode::Select),
+    _sdb_table->GetId());
   auto snapshot = sdb_ctx.EnsureSearchSnapshot(_inverted_index->GetId());
   auto data = duckdb::make_uniq<TableScanBindData>();
   data->table = _sdb_table;
@@ -222,8 +224,9 @@ duckdb::TableFunction TableSecondaryIndexScanEntry::GetScanFunction(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
   // SELECT on the base table is required even when reached via the index name.
-  RequirePrivilege(GetSereneDBContext(context), *_sdb_table,
-                   catalog::AclMode::Select);
+  GetSereneDBContext(context).EnsureCatalogSnapshot()->GetTable(
+    catalog::RequireAccess(context, catalog::AclMode::Select),
+    _sdb_table->GetId());
   // Scanning a secondary index by name reads the table: the index itself
   // is a native ART on the store table.
   auto store_name = catalog::StoreTableName(

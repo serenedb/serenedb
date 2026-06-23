@@ -57,45 +57,33 @@ ALTER i SET DATA TYPE VARCHAR USING concat(i, '_', j);
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 ALTER TABLE integers
 ALTER COLUMN i SET DEFAULT 10;
-----
-db error: ERROR: this ALTER TABLE operation is not supported
-
 
 # DOCS_TEST: example_008
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 ALTER TABLE integers
 ALTER COLUMN i DROP DEFAULT;
-----
-db error: ERROR: this ALTER TABLE operation is not supported
-
 
 # DOCS_TEST: example_009
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 ALTER TABLE integers
 ALTER COLUMN i SET NOT NULL;
-----
-db error: ERROR: this ALTER TABLE operation is not supported
-
 
 # DOCS_TEST: example_010
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 ALTER TABLE integers
 ALTER COLUMN i DROP NOT NULL;
-----
-db error: ERROR: this ALTER TABLE operation is not supported
-
 
 # DOCS_TEST: example_011
 
@@ -322,12 +310,9 @@ INSERT INTO integers VALUES (1, 10), (2, 20);
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 ALTER TABLE integers
 ALTER COLUMN i SET DEFAULT 10;
-----
-db error: ERROR: this ALTER TABLE operation is not supported
-
 
 # DOCS_TEST: example_026
 
@@ -345,12 +330,9 @@ INSERT INTO integers VALUES (1, 10), (2, 20);
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 ALTER TABLE integers
 ALTER COLUMN i DROP DEFAULT;
-----
-db error: ERROR: this ALTER TABLE operation is not supported
-
 
 # DOCS_TEST: example_027
 
@@ -458,8 +440,6 @@ CREATE TABLE items (id INTEGER);
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 ALTER TABLE items
 ADD CONSTRAINT positive_id CHECK (id > 0);
-----
-db error: ERROR: this ALTER TABLE operation is not supported

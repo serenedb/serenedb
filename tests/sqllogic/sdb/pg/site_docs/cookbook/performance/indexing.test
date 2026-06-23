@@ -31,7 +31,5 @@ statement ok
 CREATE INDEX idx_multi_column ON tbl (col1, col2);
 
 
-statement error
+statement ok
 CREATE INDEX idx_expr ON tbl (col1 + 1);
-----
-db error: ERROR: Failed to create index: column "(col1 + 1)" does not exist

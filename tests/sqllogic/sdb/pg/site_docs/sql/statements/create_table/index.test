@@ -437,15 +437,12 @@ db error: ERROR: Violates foreign key constraint because key "id: 1, j: b" does 
 statement ok
 CREATE TABLE t5 (id INTEGER UNIQUE, j VARCHAR);
 
-statement error
+statement ok
 CREATE TABLE t6 (
     id INTEGER PRIMARY KEY,
     t5_id INTEGER,
     FOREIGN KEY (t5_id) REFERENCES t5(id)
 );
-----
-db error: ERROR: Failed to create foreign key: there is no primary key or unique constraint for referenced table "t5"
-
 
 # DOCS_TEST: example_027
 

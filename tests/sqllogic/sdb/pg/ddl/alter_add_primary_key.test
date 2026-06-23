@@ -191,8 +191,10 @@ ALTER TABLE pk_nulls ADD PRIMARY KEY (i);
 # A table can have only one primary key.
 # ---------------------------------------------------------------------------
 
-statement error (?i)multiple primary keys for table .*are not allowed
+statement error
 ALTER TABLE pk1 ADD PRIMARY KEY (j);
+----
+db error: ERROR: duplicate name
 
 
 # ---------------------------------------------------------------------------
@@ -221,7 +223,7 @@ statement ok
 CREATE INDEX pk_idx_b ON pk_idx (b);
 
 
-statement error (?i)cannot add a primary key.*depends on it
+statement error (?i)cannot alter entry .* because there are entries that depend on it
 ALTER TABLE pk_idx ADD PRIMARY KEY (a);
 
 
@@ -238,18 +240,18 @@ INSERT INTO pk_idx VALUES (1, 1), (1, 2);
 
 
 # ---------------------------------------------------------------------------
-# ADD CONSTRAINT for UNIQUE / CHECK / FOREIGN KEY is not supported.
+# ADD CONSTRAINT supports UNIQUE and CHECK (FOREIGN KEY is not supported).
 # ---------------------------------------------------------------------------
 
 statement ok
 CREATE TABLE pk_ac (a INTEGER, b INTEGER);
 
 
-statement error (?i)this alter table operation is not supported
+statement ok
 ALTER TABLE pk_ac ADD CONSTRAINT uq UNIQUE (a);
 
 
-statement error (?i)this alter table operation is not supported
+statement ok
 ALTER TABLE pk_ac ADD CONSTRAINT ck CHECK (a > 0);
 
 

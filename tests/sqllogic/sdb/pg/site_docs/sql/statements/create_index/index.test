@@ -42,10 +42,8 @@ CREATE INDEX gy_idx ON films (genre, year);
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 CREATE INDEX i_index ON integers ((j + k));
-----
-db error: ERROR: Failed to create index: column "(j + k)" does not exist
 
 
 # DOCS_TEST: example_006

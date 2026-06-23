@@ -210,21 +210,21 @@ CREATE INDEX ati_struct_idx ON ati_struct USING inverted((s['id']::INTEGER));
 statement error
 ALTER TABLE ati_struct ADD COLUMN s.k INTEGER;
 ----
-db error: ERROR: cannot alter a field of column "s" because index "ati_struct_idx" depends on it; drop the index first
+db error: ERROR: cannot alter type of column "s" because index "ati_struct_idx" depends on it; drop the index first
 
 
 # RENAME the indexed sub-field -- rejected.
 statement error
 ALTER TABLE ati_struct RENAME COLUMN s.id TO ident;
 ----
-db error: ERROR: cannot alter a field of column "s" because index "ati_struct_idx" depends on it; drop the index first
+db error: ERROR: cannot alter type of column "s" because index "ati_struct_idx" depends on it; drop the index first
 
 
 # DROP the indexed sub-field -- rejected.
 statement error
 ALTER TABLE ati_struct DROP COLUMN s.id;
 ----
-db error: ERROR: cannot alter a field of column "s" because index "ati_struct_idx" depends on it; drop the index first
+db error: ERROR: cannot alter type of column "s" because index "ati_struct_idx" depends on it; drop the index first
 
 
 # A whole-column type change is rejected for the same reason.

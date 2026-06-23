@@ -24,6 +24,8 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/types/vector.hpp>
+#include <duckdb/common/types/vector_cache.hpp>
+#include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/storage/data_pointer.hpp>
 
 #include "iresearch/types.hpp"
@@ -38,6 +40,17 @@ namespace irs {
 
 class WriteContext;
 struct FooterColumnEntry;
+
+struct Chunk {
+  duckdb::Vector data;
+
+  Chunk(duckdb::Vector data, size_t count) : data{std::move(data)} {
+    SetCount(count);
+  }
+
+  size_t Count() const { return data.size(); }
+  void SetCount(size_t count) { duckdb::FlatVector::SetSize(data, count); }
+};
 
 class ColumnWriter final {
  public:
@@ -57,11 +70,12 @@ class ColumnWriter final {
   template<typename Fill>
   void PushInStaging(uint64_t row, Fill&& fill) {
     PadNullsTo(row);
-    fill(_staging, _filled);
-    ++_filled;
-    if (_filled == _row_group_size) {
-      FlushRowGroup();
-    }
+    auto& back = OpenChunk();
+    const auto n = back.Count();
+    fill(back.data, n);
+    back.SetCount(n + 1);
+    ++_data_ctx.filled;
+    MaybeFlushRowGroup();
   }
 
   field_id Id() const noexcept { return _id; }
@@ -81,22 +95,30 @@ class ColumnWriter final {
 
   void SetHyperLogLog(duckdb::shared_ptr<duckdb::HyperLogLog> hll);
 
-  // Pad `_filled` up to `target_row` with null entries. Used by merge to
-  // span the doc-id range of a source that has no row in this column
-  // (so doc-id indexed reads stay aligned across sources).
   void PadNullsTo(uint64_t target_row);
 
+  struct DataContext {
+    static constexpr size_t kInitialSize = 256;
+
+    std::vector<Chunk> chunks;
+    std::vector<duckdb::VectorCache> chunk_caches;
+    size_t used_chunks = 0;
+    size_t filled = 0;
+    size_t first_rg_doc_id = 0;
+    size_t next_capacity = kInitialSize;
+  };
+
  private:
-  void FlushRowGroup();
+  Chunk& OpenChunk();
+  void MaybeFlushRowGroup();
+  void FlushChunks(uint64_t count);
 
   field_id _id;
   duckdb::LogicalType _type;
   uint32_t _row_group_size;
   WriteContext* _write_ctx;
   FooterColumnEntry* _entry;
-  duckdb::Vector _staging;
-  uint64_t _filled = 0;
-  uint64_t _row_group_first_doc = 0;
+  DataContext _data_ctx;
   bool _skip_validity = false;
   bool _hyperloglog = false;
   duckdb::CompressionType _forced_compression =

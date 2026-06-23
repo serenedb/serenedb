@@ -506,8 +506,9 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
 
   // Transactional CTAS. Planning is side-effect free (it can run more than once
   // per statement, e.g. on rebind): pre-allocate the table id and build the
-  // operators only; the catalog entry is created at execution. The pre-allocated
-  // id names the store table so the CTAS-variant insert can encode it now.
+  // operators only; the catalog entry is created at execution. The
+  // pre-allocated id names the store table so the CTAS-variant insert can
+  // encode it now.
   auto& schema_entry = op.schema.Cast<SereneDBSchemaEntry>();
   auto database_id = schema_entry.GetDatabaseId();
 
@@ -766,10 +767,10 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
     // Wrap `plan` with a PhysicalProjection that resolves VALUE_DEFAULT and
     // passes every projected new-row column through -- the SET values, duckdb's
     // recomputed STORED generated columns, and the old-value passthroughs that
-    // BindUpdateConstraints added -- plus the PK virtuals, so SereneDBSearchUpdate
-    // sees [resolved new-row vals, pk_virtuals]. A Search table has no separate
-    // inverted indexes, so BuildRowIdColumns appends only the PK virtuals:
-    // [real..., pk_0..pk_{n-1}] / [real..., generated_pk].
+    // BindUpdateConstraints added -- plus the PK virtuals, so
+    // SereneDBSearchUpdate sees [resolved new-row vals, pk_virtuals]. A Search
+    // table has no separate inverted indexes, so BuildRowIdColumns appends only
+    // the PK virtuals: [real..., pk_0..pk_{n-1}] / [real..., generated_pk].
     const auto& pk_col_ids = sdb_table->PKColumns();
     const auto num_pk = pk_col_ids.size();
     const auto num_virtual = pk_col_ids.empty() ? 1 : num_pk;

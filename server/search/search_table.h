@@ -20,17 +20,22 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
+#include <absl/time/time.h>
+
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/store/directory.hpp>
 #include <memory>
+#include <mutex>
 #include <shared_mutex>
 
 #include "basics/assert.h"
 #include "basics/result.h"
 #include "catalog/identifiers/object_id.h"
+#include "search/maintenance.h"
 #include "search/search_db_wal.h"
 
 namespace sdb::search {
@@ -39,7 +44,7 @@ namespace sdb::search {
 // Search-engine sibling of InvertedIndexStorage. Attached to the
 // catalog::Table via GetData()/SetData(); the directory layout is derived from
 // (db_id, table_id), see GetPath.
-class SearchTable {
+class SearchTable : public std::enable_shared_from_this<SearchTable> {
  public:
   // `is_new` opens a fresh index (and publishes an empty commit); otherwise the
   // durable index is reopened and its committed tick restored.
@@ -113,6 +118,59 @@ class SearchTable {
     UpdateNumRows(live - NumRows());
   }
 
+  // --- Background maintenance ---
+  // Same interface InvertedIndexStorage exposes, so the templated RefreshLoop /
+  // CompactionCoordinator (search/task.h) drive a search table too: the store
+  // provides the "how" (these ops + the cadence/nudge/stale-pressure state),
+  // the loops provide the "when".
+  ObjectId GetId() const noexcept { return _table_id; }
+  auto& GetTasksSettings() { return _maint_settings; }
+
+  // Wake the compaction coordinator after a refresh produced new segments; the
+  // coordinator polls this generation during its backoff wait.
+  void NudgeCompaction() noexcept {
+    _compaction_gen.fetch_add(1, std::memory_order_release);
+  }
+  uint64_t CompactionGeneration() const noexcept {
+    return _compaction_gen.load(std::memory_order_acquire);
+  }
+  // Demand-driven cleanup: a non-empty compaction leaves unreferenced files and
+  // raises stale pressure; the refresh loop runs cleanup once it crosses a
+  // threshold (or on its periodic step), then clears it.
+  void BumpStalePressure() noexcept {
+    _stale_pressure.fetch_add(1, std::memory_order_relaxed);
+  }
+  uint32_t StalePressure() const noexcept {
+    return _stale_pressure.load(std::memory_order_relaxed);
+  }
+  void ClearStalePressure() noexcept {
+    _stale_pressure.store(0, std::memory_order_relaxed);
+  }
+
+  // Launch this table's refresh + compaction loops (via SearchEngine). Call
+  // once, after the table is open and recovery (if any) finalized.
+  void StartTasks();
+
+  // The maintenance ops the loops invoke. RefreshUnsafe takes _refresh_mutex
+  // (try-lock; wait=true blocks) and publishes pending inserts; Compact/Cleanup
+  // are lock-free (iresearch serializes them internally) so a long merge never
+  // blocks the refresh chain. `field_options` is the merge's per-field encoding
+  // config -- generic (nullptr) for now, since a search table is a plain
+  // columnstore + PK term; the catalog Table becomes the source once
+  // indexed-column support lands. Each returns timing for the loop's logging.
+  ResultWithTime RefreshUnsafe(bool wait,
+                               const irs::ProgressReportCallback& progress,
+                               RefreshResult& code);
+  ResultWithTime CompactUnsafe(const irs::CompactionPolicy& policy,
+                               const irs::MergeWriter::FlushProgress& progress,
+                               bool& empty_compaction,
+                               const irs::IndexFieldOptions* field_options);
+  ResultWithTime CleanupUnsafe();
+
+  // Synchronous maintenance for explicit VACUUM (REFRESH_* / COMPACT_*).
+  void VacuumRefresh();
+  void VacuumCompact();
+
  private:
   void OpenWriter();
 
@@ -126,6 +184,24 @@ class SearchTable {
   // Borrowed from the search engine (set in OpenWriter). Outlives this object.
   SearchDbWal* _wal = nullptr;
   uint64_t _last_committed_tick = 0;
+
+  // Background maintenance (new model -- mirrors InvertedIndexStorage).
+  // _refresh_mutex serializes refresh-vs-refresh (Compact/Cleanup are lock-free;
+  // iresearch serializes them internally). A zero refresh/compaction interval
+  // disables that chain. The cadence lives in _maint_settings; the loops poll
+  // _compaction_gen (refresh nudges) and _stale_pressure (compaction-driven
+  // cleanup demand).
+  TasksSettings _maint_settings;
+  absl::Mutex _refresh_mutex;
+  std::atomic<uint64_t> _compaction_gen{0};
+  std::atomic<uint32_t> _stale_pressure{0};
+#ifdef SDB_DEV
+  // Dev-only double-start tripwire: StartTasks pushes one refresh + one
+  // compaction loop into the engine, so a second call would create competing
+  // loops. Not a release concern -- each instance is started exactly once
+  // (recovery's StartSearchTableMaintenance pass, or CREATE/CTAS finalize).
+  std::atomic<bool> _tasks_started{false};
+#endif
 };
 
 }  // namespace sdb::search

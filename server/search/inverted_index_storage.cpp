@@ -360,7 +360,7 @@ InvertedIndexStorage::Stats InvertedIndexStorage::UpdateStatsUnsafe(
   return stats;
 }
 
-InvertedIndexStorage::ResultWithTime InvertedIndexStorage::CleanupUnsafe() {
+ResultWithTime InvertedIndexStorage::CleanupUnsafe() {
   auto begin = std::chrono::steady_clock::now();
   auto result = CleanupUnsafeImpl();
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -382,7 +382,7 @@ Result InvertedIndexStorage::CleanupUnsafeImpl() {
   return {};
 }
 
-InvertedIndexStorage::ResultWithTime InvertedIndexStorage::CompactUnsafe(
+ResultWithTime InvertedIndexStorage::CompactUnsafe(
   const irs::CompactionPolicy& policy,
   const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
   const irs::IndexFieldOptions* field_options) {
@@ -395,7 +395,7 @@ InvertedIndexStorage::ResultWithTime InvertedIndexStorage::CompactUnsafe(
   return {std::move(result), time_ms};
 }
 
-InvertedIndexStorage::ResultWithTime InvertedIndexStorage::RefreshUnsafe(
+ResultWithTime InvertedIndexStorage::RefreshUnsafe(
   bool wait, const irs::ProgressReportCallback& progress, RefreshResult& code,
   bool for_checkpoint) {
   auto begin = std::chrono::steady_clock::now();

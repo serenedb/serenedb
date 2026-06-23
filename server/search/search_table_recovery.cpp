@@ -203,4 +203,20 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
   }
 }
 
+void StartSearchTableMaintenance() {
+  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
+  SDB_ASSERT(snapshot);
+  for (const auto& database : snapshot->GetDatabases()) {
+    const ObjectId db_id = database->GetId();
+    for (const auto& schema : snapshot->GetSchemas(db_id)) {
+      for (const auto& table : snapshot->GetTables(db_id, schema->GetName())) {
+        if (table->GetEngine() != catalog::TableEngine::Search) {
+          continue;
+        }
+        table->GetData()->StartTasks();  // GetData asserts the store is bound
+      }
+    }
+  }
+}
+
 }  // namespace sdb::search

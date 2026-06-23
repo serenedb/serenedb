@@ -89,9 +89,13 @@ int SearchEngine::MaxConcurrentCompactions() noexcept {
 
 void SearchEngine::start() {
   InitInvertedIndexes();
-  // Replay each database's search-table WAL into iresearch. Delta-based and
-  // unconditional, mirroring inverted-index recovery (no skip flag).
+  // Replay each database's search-table WAL into iresearch (delta-based and
+  // unconditional, mirroring inverted-index recovery).
   RunSearchTableRecovery(false);
+  // Only now that every shard is fully replayed + committed do we start the
+  // search-table background loops -- never while recovery is still rebuilding a
+  // table, or a background commit's WAL GC could reclaim un-replayed chunks.
+  StartSearchTableMaintenance();
   SDB_INFO(SEARCH, "Search maintenance: per-index refresh/compaction loops");
 }
 
@@ -112,20 +116,24 @@ void SearchEngine::stop() {
   _db_wals.clear();
 }
 
-void SearchEngine::StartTasks(
-  const std::shared_ptr<InvertedIndexStorage>& storage) {
+template<class Storage>
+void SearchEngine::StartTasks(const std::shared_ptr<Storage>& storage) {
   SDB_ASSERT(storage);
   if (_stopping.load(std::memory_order_acquire)) {
     return;
   }
   absl::MutexLock lock{&_loops_mutex};
-  // Drop loops whose index was already dropped (their coroutine returned) so
-  // the registry stays bounded across many CREATE/DROP INDEX cycles.
+  // Drop loops whose target was already dropped (their coroutine returned) so
+  // the registry stays bounded across many CREATE/DROP cycles.
   std::erase_if(
     _loops, [](const yaclib::Future<>& f) { return !f.Valid() || f.Ready(); });
-  _loops.push_back(RefreshLoop(storage));
-  _loops.push_back(CompactionCoordinator(storage));
+  _loops.push_back(RefreshLoop<Storage>(storage));
+  _loops.push_back(CompactionCoordinator<Storage>(storage));
 }
+
+template void SearchEngine::StartTasks(
+  const std::shared_ptr<InvertedIndexStorage>&);
+template void SearchEngine::StartTasks(const std::shared_ptr<SearchTable>&);
 
 std::filesystem::path SearchEngine::GetPersistedPath(
   ObjectId database_id) const {

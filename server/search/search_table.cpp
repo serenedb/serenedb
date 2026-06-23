@@ -21,19 +21,39 @@
 #include "search/search_table.h"
 
 #include <absl/base/internal/endian.h>
+#include <absl/flags/flag.h>
 #include <absl/strings/str_cat.h>
 
+#include <chrono>
 #include <duckdb/common/file_system.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/directory_utils.hpp>
+#include <iresearch/utils/index_utils.hpp>
+#include <limits>
+#include <mutex>
 #include <system_error>
 
 #include "basics/duckdb_engine.h"
 #include "basics/exceptions.h"
+#include "basics/log.h"
+#include "search/task.h"
 #include "storage_engine/search_engine.h"
+
+ABSL_FLAG(uint32_t, server_search_table_refresh_interval_ms, 1000,
+          "Interval between background commits (RefreshCommit) for search "
+          "tables, making inserts searchable. 0 disables background commit "
+          "(VACUUM is then the only way to flush); set both this and the "
+          "compaction interval to 0 to turn background maintenance off.");
+ABSL_FLAG(uint32_t, server_search_table_compaction_interval_ms, 10000,
+          "Interval between background segment consolidations for search "
+          "tables. 0 disables background consolidation.");
+ABSL_FLAG(uint32_t, server_search_table_cleanup_interval_step, 10,
+          "Run iresearch directory GC every Nth background commit for search "
+          "tables. 0 disables periodic GC (VACUUM still GCs).");
 
 namespace sdb::search {
 
@@ -89,6 +109,13 @@ std::shared_ptr<SearchTable> SearchTable::Create(ObjectId db_id,
 SearchTable::SearchTable(ObjectId db_id, ObjectId table_id, bool is_new)
   : _table_id{table_id}, _db_id{db_id}, _is_new{is_new} {
   OpenWriter();
+
+  _maint_settings.refresh_interval_msec =
+    absl::GetFlag(FLAGS_server_search_table_refresh_interval_ms);
+  _maint_settings.compaction_interval_msec =
+    absl::GetFlag(FLAGS_server_search_table_compaction_interval_ms);
+  _maint_settings.cleanup_interval_step =
+    absl::GetFlag(FLAGS_server_search_table_cleanup_interval_step);
 }
 
 SearchTable::~SearchTable() {
@@ -158,6 +185,124 @@ void SearchTable::OpenWriter() {
   if (_is_new) {
     _writer->RefreshCommit();
   }
+}
+
+void SearchTable::StartTasks() {
+#ifdef SDB_DEV
+  const bool already = _tasks_started.exchange(true);
+  SDB_ASSERT(!already, "SearchTable::StartTasks called twice for table ",
+             GetTableId().id());
+#endif
+  // Launch this table's refresh + compaction loops on the shared background
+  // scheduler -- the same RefreshLoop / CompactionCoordinator that drive
+  // inverted indexes, templated on the storage type. A zero refresh/compaction
+  // interval makes the respective loop idle-poll until an ALTER enables it.
+  // Called only after recovery finalize (StartSearchTableMaintenance) or
+  // CREATE/CTAS finalize, so a background commit's WAL GC never races replay.
+  GetSearchEngine().StartTasks(shared_from_this());
+}
+
+ResultWithTime SearchTable::RefreshUnsafe(
+  bool wait, const irs::ProgressReportCallback& /*progress*/,
+  RefreshResult& code) {
+  const auto begin = std::chrono::steady_clock::now();
+  code = RefreshResult::NoChanges;
+  Result result;
+  try {
+    std::unique_lock<absl::Mutex> lock{_refresh_mutex, std::try_to_lock};
+    if (!lock.owns_lock()) {
+      if (wait) {
+        lock.lock();
+      } else {
+        code = RefreshResult::InProgress;  // another refresh/VACUUM is running
+      }
+    }
+    if (lock.owns_lock()) {
+      // Publish staged batches; touch the WAL only when something actually
+      // committed, so an idle table doesn't churn ticks + GC every interval.
+      if (_writer->RefreshCommit()) {
+        _wal->OnShardCommit(GetTableId(), _last_committed_tick);
+        code = RefreshResult::Done;
+      }
+    }
+  } catch (const std::exception& e) {
+    result = {ERROR_INTERNAL, "refresh failed for search table ",
+              GetTableId().id(), ": ", e.what()};
+  }
+  const uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - begin)
+                             .count();
+  return {std::move(result), time_ms};
+}
+
+ResultWithTime SearchTable::CompactUnsafe(
+  const irs::CompactionPolicy& policy,
+  const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
+  const irs::IndexFieldOptions* field_options) {
+  const auto begin = std::chrono::steady_clock::now();
+  empty_compaction = false;
+  Result result;
+  if (!policy) {
+    result = {ERROR_BAD_PARAMETER, "unset compaction policy for search table ",
+              GetTableId().id()};
+  } else {
+    try {
+      // Lock-free: iresearch serializes Compact against refresh/DML internally,
+      // so a long merge never blocks the refresh chain. field_options is the
+      // merged segment's per-field encoding config -- generic (nullptr) for a
+      // search table for now.
+      const auto res =
+        _writer->Compact(policy, field_options, nullptr, progress);
+      if (!res) {
+        result = {ERROR_INTERNAL, "compaction failed for search table ",
+                  GetTableId().id()};
+      } else {
+        empty_compaction = (res.size == 0);  // nothing merged -> idle round
+      }
+    } catch (const std::exception& e) {
+      result = {ERROR_INTERNAL, "consolidation failed for search table ",
+                GetTableId().id(), ": ", e.what()};
+    }
+  }
+  const uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - begin)
+                             .count();
+  return {std::move(result), time_ms};
+}
+
+ResultWithTime SearchTable::CleanupUnsafe() {
+  const auto begin = std::chrono::steady_clock::now();
+  Result result;
+  try {
+    irs::directory_utils::RemoveAllUnreferenced(*_dir);
+  } catch (const std::exception& e) {
+    result = {ERROR_INTERNAL, "cleanup failed for search table ",
+              GetTableId().id(), ": ", e.what()};
+  }
+  const uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - begin)
+                             .count();
+  return {std::move(result), time_ms};
+}
+
+void SearchTable::VacuumRefresh() {
+  RefreshResult code = RefreshResult::Undefined;
+  RefreshUnsafe(/*wait=*/true, nullptr, code);
+  CleanupUnsafe();
+}
+
+void SearchTable::VacuumCompact() {
+  static const auto kFullMerge = irs::index_utils::MakePolicy(
+    irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
+  static const irs::MergeWriter::FlushProgress kProgress = [] { return true; };
+  RefreshResult code = RefreshResult::Undefined;
+  RefreshUnsafe(/*wait=*/true, nullptr, code);
+  bool empty = false;
+  CompactUnsafe(kFullMerge, kProgress, empty, /*field_options=*/nullptr);
+  if (!empty) {
+    RefreshUnsafe(/*wait=*/true, nullptr, code);
+  }
+  CleanupUnsafe();
 }
 
 }  // namespace sdb::search

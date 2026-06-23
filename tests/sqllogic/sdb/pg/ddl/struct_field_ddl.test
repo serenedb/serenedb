@@ -1,0 +1,67 @@
+# Nested STRUCT field DDL: ALTER TABLE ... ADD/DROP/RENAME COLUMN b.<field>,
+# matching native duckdb. Each is internally an ALTER COLUMN TYPE with a
+# remap_struct USING cast; existing values are preserved BY NAME (a renamed
+# field keeps its value rather than becoming NULL).
+
+statement ok
+CREATE TABLE sfd (id INTEGER, b STRUCT(x INTEGER, y INTEGER));
+
+
+statement count 1
+INSERT INTO sfd VALUES (1, {'x': 10, 'y': 20});
+
+
+statement ok
+ALTER TABLE sfd ADD COLUMN b.w INTEGER;
+
+
+query
+SELECT b.x AS x, b.y AS y, b.w AS w FROM sfd;
+----
+x	y	w
+10	20	NULL
+
+
+statement ok
+ALTER TABLE sfd RENAME COLUMN b.x TO xx;
+
+
+# the renamed field keeps its value
+query
+SELECT b.xx AS xx, b.y AS y, b.w AS w FROM sfd;
+----
+xx	y	w
+10	20	NULL
+
+
+statement ok
+ALTER TABLE sfd DROP COLUMN b.y;
+
+
+query
+SELECT b.xx AS xx, b.w AS w FROM sfd;
+----
+xx	w
+10	NULL
+
+
+# the dropped field is gone
+statement error
+SELECT b.y FROM sfd;
+
+
+# inserts with the new struct shape work
+statement count 1
+INSERT INTO sfd VALUES (2, {'xx': 5, 'w': 9});
+
+
+query
+SELECT id, b.xx AS xx, b.w AS w FROM sfd ORDER BY id;
+----
+id	xx	w
+1	10	NULL
+2	5	9
+
+
+statement ok
+DROP TABLE sfd;

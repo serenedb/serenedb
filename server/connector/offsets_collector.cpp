@@ -42,15 +42,20 @@ void PrepareFilterEntry(FilterEntry& entry, const irs::TermReader* reader,
     return;
   }
   auto docs = std::visit(
-    absl::Overload{
-      [&](const irs::SeekCookie* cookie) {
-        static constexpr auto kFeatures = irs::IndexFeatures::Freq |
-                                          irs::IndexFeatures::Pos |
-                                          irs::IndexFeatures::Offs;
-        return reader->Iterator(kFeatures,
-                                irs::PostingCookie{.cookie = cookie});
-      },
-      [&](const auto* query) { return query->ExecuteWithOffsets(segment); }},
+    absl::Overload{[&](const irs::SeekCookie* cookie) {
+                     static constexpr auto kFeatures =
+                       irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
+                       irs::IndexFeatures::Offs;
+                     return reader->Iterator(
+                       kFeatures, irs::PostingCookie{.cookie = cookie});
+                   },
+                   [&](const auto* query) {
+                     if constexpr (requires { query->ExecuteWithOffsets(); }) {
+                       return query->ExecuteWithOffsets();
+                     } else {
+                       return query->ExecuteWithOffsets(segment);
+                     }
+                   }},
     entry.filter);
 
   if (!docs || irs::doc_limits::eof(docs->value())) {
@@ -112,6 +117,9 @@ namespace {
 
 void RecordCookie(FieldState& field, const irs::TermReader* reader,
                   const irs::SeekCookie* cookie) {
+  if (!cookie) {
+    return;
+  }
   if (field.seen_cookies.insert(cookie).second) {
     field.reader = reader;
     field.entries.emplace_back(cookie);
@@ -130,15 +138,12 @@ bool OffsetsCollector::Visit(const irs::TermQuery&, const irs::TermState& state,
 
 bool OffsetsCollector::Visit(const irs::MultiTermQuery&,
                              const irs::MultiTermState& state, irs::score_t) {
-  auto* field = FindFieldState(state.reader);
+  auto* field = FindFieldState(state.Reader());
   if (!field) {
     return true;
   }
-  for (const auto& term_state : state.scored_states) {
-    RecordCookie(*field, state.reader, term_state.cookie.get());
-  }
-  for (const auto& term_state : state.unscored_states) {
-    RecordCookie(*field, state.reader, term_state.get());
+  for (const auto& entry : state.Terms()) {
+    RecordCookie(*field, state.Reader(), entry.cookie.get());
   }
   return true;
 }

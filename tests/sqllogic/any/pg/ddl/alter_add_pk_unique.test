@@ -1,0 +1,64 @@
+# ALTER TABLE ADD PRIMARY KEY / ADD UNIQUE on a table, matching native duckdb.
+# PRIMARY KEY is fully enforced: existing rows are validated on ADD, and future
+# duplicate / NULL keys are rejected. ADD UNIQUE is accepted (a non-PK UNIQUE
+# add that native duckdb also accepts).
+
+statement ok
+CREATE TABLE apk (a INTEGER, b INTEGER);
+
+
+statement count 2
+INSERT INTO apk VALUES (1, 10), (2, 20);
+
+
+statement ok
+ALTER TABLE apk ADD PRIMARY KEY (a);
+
+
+# duplicate primary key is rejected
+statement error
+INSERT INTO apk VALUES (1, 99);
+
+
+# a primary key implies NOT NULL
+statement error
+INSERT INTO apk VALUES (NULL, 99);
+
+
+# a table may have only one primary key
+statement error
+ALTER TABLE apk ADD PRIMARY KEY (b);
+
+
+# ADD [CONSTRAINT] UNIQUE is accepted
+statement ok
+ALTER TABLE apk ADD CONSTRAINT u_b UNIQUE (b);
+
+
+query
+SELECT a, b FROM apk ORDER BY a;
+----
+a	b
+1	10
+2	20
+
+
+statement ok
+DROP TABLE apk;
+
+
+# Existing-row validation: ADD PRIMARY KEY over duplicate data is rejected.
+statement ok
+CREATE TABLE adup (a INTEGER);
+
+
+statement count 2
+INSERT INTO adup VALUES (1), (1);
+
+
+statement error
+ALTER TABLE adup ADD PRIMARY KEY (a);
+
+
+statement ok
+DROP TABLE adup;

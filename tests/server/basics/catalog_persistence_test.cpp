@@ -110,11 +110,23 @@ void CheckFixture(std::string_view name, const T& sample) {
 }
 
 TEST(CatalogPersistence, secondary_index) {
+  // columns slot 2 is an expression sentinel (Column::kInvalidId); the
+  // interleaving (column, expr, column) is the ART key order and must
+  // round-trip.
   CheckFixture("secondary_index.bin",
                SecondaryIndexData{
                  .name = "idx_demo",
-                 .column_ids = {ObjectId{1}, ObjectId{2}, ObjectId{3}},
                  .unique = true,
+                 .columns = {ObjectId{1}, Column::kInvalidId, ObjectId{3}},
+                 .expressions =
+                   {
+                     ExpressionData{
+                       .serialized_expr = "expr-bytes",
+                       .dependent_columns = {ObjectId{2}},
+                       .return_type = duckdb::LogicalType::DOUBLE,
+                       .pretty_printed = "a + b",
+                     },
+                   },
                });
 }
 
@@ -166,10 +178,10 @@ TEST(CatalogPersistence, tokenizer_configs) {
     std::make_index_sequence<std::variant_size_v<ConfigVariant>>{});
 }
 
-TEST(CatalogPersistence, column_serialized) {
+TEST(CatalogPersistence, entry_config_serialized) {
   CheckFixture(
-    "column_serialized.bin",
-    ColumnSerialized{
+    "entry_config_serialized.bin",
+    EntryConfigSerialized{
       .text_dictionary = ObjectId{5},
       .store_values = true,
       .compression = duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
@@ -181,31 +193,22 @@ TEST(CatalogPersistence, column_serialized) {
     });
 }
 
-TEST(CatalogPersistence, expression_serialized) {
-  CheckFixture("expression_serialized.bin",
-               ExpressionSerialized{
-                 .serialized_expr = "expr-bytes",
-                 .pretty_printed = "a + b",
-                 .dependent_columns = {ObjectId{1}, ObjectId{2}},
-                 .return_type = duckdb::LogicalType::DOUBLE,
-                 .synthetic_column = irs::field_limits::invalid(),
-                 .text_dictionary = ObjectId{3},
-                 .field_id = 7,
-                 .norm_row_group_size = 9,
-                 .features = search::Features{},
-               });
-}
-
 TEST(CatalogPersistence, inverted_index) {
+  // One column key (field_id == column id 1) and one expression key (allocated
+  // field_id 7). `entries` is kept to a single element so the unordered map
+  // serializes to stable bytes.
   CheckFixture(
     "inverted_index.bin",
     InvertedIndexData{
       .name = "idx",
-      .column_ids = {ObjectId{1}},
-      .columns = {{ObjectId{1}, ColumnSerialized{.text_dictionary = ObjectId{5},
-                                                 .row_group_size = 100}}},
-      .expressions = {ExpressionSerialized{.serialized_expr = "e",
-                                           .field_id = 7}},
+      .columns = {ObjectId{1}},
+      .expression_keys = {ExpressionKey{
+        .data = ExpressionData{.serialized_expr = "e",
+                               .return_type = duckdb::LogicalType::DOUBLE,
+                               .pretty_printed = "x + 1"},
+        .field_id = 7}},
+      .entries = {{1, EntryConfigSerialized{.text_dictionary = ObjectId{5},
+                                            .row_group_size = 100}}},
       .options = InvertedIndexOptions{.row_group_size = 1024},
     });
 }

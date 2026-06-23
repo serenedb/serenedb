@@ -31,13 +31,15 @@ namespace sdb::connector {
 // iresearch-claimable conjuncts are evaluated here per ANN candidate.
 class TextScanFilter final : public faiss::IDSelector {
  public:
-  explicit TextScanFilter(const irs::Filter::Query& query);
+  TextScanFilter(const irs::Filter& filter, irs::PrepareCollector& collector);
 
   void Reset(const irs::SubReader& segment);
   bool is_member(faiss::idx_t id) const final;
 
  private:
-  const irs::Filter::Query& _query;
+  const irs::Filter& _filter;
+  irs::PrepareCollector& _collector;
+  mutable irs::QueryBuilder::ptr _query;
   mutable irs::DocIterator::ptr _it;
 };
 

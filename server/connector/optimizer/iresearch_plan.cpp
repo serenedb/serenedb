@@ -539,8 +539,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("ts_offsets(): column '", col_name(), "' not found in table"));
   }
-  const auto& idx_col_ids = found->bind_data->inverted_index->GetColumnIds();
-  if (absl::c_find(idx_col_ids, target_col_id) == idx_col_ids.end()) {
+  if (!found->bind_data->inverted_index->HasColumn(target_col_id)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("ts_offsets(): column '", col_name(), "' not found in index"));
@@ -787,9 +786,11 @@ bool TryClaimSearchFilter(
   const auto table_index = get.table_index;
   const auto relation_id = index.GetRelationId();
 
+  containers::FlatHashSet<irs::field_id> analyzed_fields;
+
   const auto make_info = [&](auto field_id, const auto* info,
                              duckdb::LogicalType type) {
-    return connector::SearchColumnInfo{
+    connector::SearchColumnInfo column_info{
       .field_id = field_id,
       .null_field_id =
         info ? info->null_field_id : irs::field_limits::invalid(),
@@ -800,30 +801,18 @@ bool TryClaimSearchFilter(
       .logical_type = std::move(type),
       .tokenizer = index.GetTokenizer(snapshot, field_id),
     };
-  };
-
-  struct IndexedExprMeta {
-    duckdb::LogicalType return_type;
-    irs::field_id field_id = 0;
-  };
-  containers::FlatHashMap<std::string_view, IndexedExprMeta>
-    indexed_expressions;
-  for (const auto& [field_id, entry] : index.GetEntries()) {
-    const auto* expr = entry.GetExpressionData();
-    if (!expr) {
-      continue;
+    if (column_info.tokenizer.analyzer->type() !=
+        irs::Type<irs::StringTokenizer>::id()) {
+      analyzed_fields.insert(field_id);
     }
-    indexed_expressions.emplace(
-      expr->serialized_expr,
-      IndexedExprMeta{.return_type = expr->return_type, .field_id = field_id});
-  }
+    return column_info;
+  };
 
   connector::ColumnGetter getter =
     [&](const duckdb::BoundColumnRefExpression& ref)
     -> std::optional<connector::SearchColumnInfo> {
     const auto col_id = ResolveColumnId(ref.binding, bind_data, get);
-    if (col_id == catalog::Column::kInvalidId ||
-        !absl::c_linear_search(index.GetColumnIds(), col_id)) {
+    if (col_id == catalog::Column::kInvalidId || !index.HasColumn(col_id)) {
       return std::nullopt;
     }
     const auto* info = index.FindColumnInfo(col_id);
@@ -845,12 +834,13 @@ bool TryClaimSearchFilter(
     auto normalized = connector::NormalizeBoundExpression(
       expr, relation_id, projected_ids, context);
     auto serialized = connector::SerializeBoundExpression(*normalized);
-    auto entry = indexed_expressions.find(serialized);
-    if (entry == indexed_expressions.end()) {
+    const auto field_id = index.FindFieldIdBySerialized(serialized);
+    const auto* expr_data = index.ExpressionByFieldId(field_id);
+    if (!expr_data) {
       return std::nullopt;
     }
-    const auto* info = index.FindEntry(entry->second.field_id);
-    return make_info(entry->second.field_id, info, entry->second.return_type);
+    const auto* info = index.FindEntry(field_id);
+    return make_info(field_id, info, expr_data->return_type);
   };
 
   auto& scan = bind_data.scan_source->Cast<connector::SearchScan>();
@@ -872,7 +862,8 @@ bool TryClaimSearchFilter(
   }
 
   irs::Filter::ptr root = std::move(root_and);
-  irs::Optimize(root, {.scored = scan.text_scorer || scan.EmitOffsets()});
+  irs::Optimize(root, {.scored = scan.text_scorer.has_value(),
+                       .analyzed_fields = std::move(analyzed_fields)});
 
   std::shared_ptr<irs::Filter> stored;
   if (scan.vector_scorer) {

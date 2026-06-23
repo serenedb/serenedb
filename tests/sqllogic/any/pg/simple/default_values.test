@@ -338,3 +338,48 @@ SELECT * FROM vedernikoff_vsv;
 ----
 r	bottom	mid	top
 10	30	60	61
+
+
+# A generated column in the INSERT target (explicit list OR by-position) accepts
+# only DEFAULT -- its value is computed; a literal/expression targeting it is an
+# error. INSERT ... SELECT always supplies a value, so naming a generated column
+# there is rejected. Matches PostgreSQL.
+statement ok
+CREATE TABLE genpos (a INT, g INT GENERATED ALWAYS AS (a * 10) STORED, c INT);
+
+
+# explicit list names the generated column with DEFAULT -> computed
+statement count 1
+INSERT INTO genpos (a, g, c) VALUES (1, DEFAULT, 100);
+
+
+# by-position list, DEFAULT at the generated column -> computed
+statement count 1
+INSERT INTO genpos VALUES (2, DEFAULT, 200);
+
+
+# by-position list, a literal at the generated column -> error
+statement error
+INSERT INTO genpos VALUES (3, 999, 300);
+
+
+# explicit list names the generated column with a literal -> error
+statement error
+INSERT INTO genpos (a, g) VALUES (4, 44);
+
+
+# INSERT ... SELECT naming the generated column -> error
+statement error
+INSERT INTO genpos (a, g) SELECT 5, 50;
+
+
+query
+SELECT * FROM genpos ORDER BY a;
+----
+a	g	c
+1	10	100
+2	20	200
+
+
+statement ok
+DROP TABLE genpos;

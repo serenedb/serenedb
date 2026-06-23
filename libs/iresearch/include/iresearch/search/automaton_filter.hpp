@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <memory>
 #include <utility>
 
 #include "iresearch/search/filter.hpp"
@@ -30,20 +31,18 @@ namespace irs {
 
 class AutomatonFilter;
 struct FilterVisitor;
+struct CompiledAcceptor;
 
 struct AutomatonOptions {
   using FilterType = AutomatonFilter;
 
   bstring pattern;
-  automaton acceptor;
+  std::shared_ptr<const CompiledAcceptor> compiled;
   size_t scored_terms_limit{1024};
 
   AutomatonOptions() = default;
   AutomatonOptions(automaton acceptor, bytes_view pattern,
-                   size_t scored_terms_limit)
-    : pattern{pattern},
-      acceptor{std::move(acceptor)},
-      scored_terms_limit{scored_terms_limit} {}
+                   size_t scored_terms_limit);
 
   bool operator==(const AutomatonOptions& rhs) const noexcept {
     return pattern == rhs.pattern &&
@@ -55,7 +54,10 @@ class AutomatonFilter final : public FilterWithField<AutomatonOptions> {
  public:
   static field_visitor visitor(const automaton& acceptor);
 
-  Query::ptr prepare(const PrepareContext& ctx) const final;
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
+
+  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 };
 
 }  // namespace irs

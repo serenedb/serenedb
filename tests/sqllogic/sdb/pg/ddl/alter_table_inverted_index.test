@@ -115,7 +115,10 @@ id
 1
 
 
-# DROP a non-indexed column: the index is unaffected.
+# DROP a non-indexed column: the index is unaffected, and its INCLUDE column
+# stays bound to the right source. Dropping a column shifts the positions of
+# the ones after it, so a row inserted + refreshed post-drop must still project
+# extra2 -- not score, which moved into extra2's old slot -- through the index.
 statement ok
 ALTER TABLE ati_t2 DROP COLUMN tag;
 
@@ -125,6 +128,21 @@ SELECT id FROM ati_idx2 WHERE body2 @@ ts_phrase('delta');
 ----
 id
 2
+
+
+statement count 1
+INSERT INTO ati_t2 VALUES (4, 'golf hotel', 40, 100);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ati_t2;
+
+
+query
+SELECT id, extra2 FROM ati_idx2 WHERE body2 @@ ts_phrase('golf');
+----
+id	extra2
+4	40
 
 
 # ALTER COLUMN TYPE of a non-indexed column.
@@ -158,6 +176,7 @@ id	extra2	score
 1	10	100
 2	20	100
 3	30	100
+4	40	100
 
 
 statement ok

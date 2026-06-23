@@ -1,0 +1,439 @@
+control substitution on
+
+# ============================================================================
+# g19 -- IMPLICIT (no opclass) role: close remaining rejection / accept gaps.
+#
+# This section completes the term_dict::Validate coverage matrix for the
+# implicit (opclass-less) role. Three buckets:
+#
+#   (1) LIST<unsupported> / ARRAY<unsupported> rejections that g16 didn't
+#       reach: UBIGINT, UHUGEINT, BIT, ENUM, STRUCT(a INTEGER),
+#       MAP(VARCHAR, INTEGER), VARIANT, UUID, INTERVAL, GEOMETRY('OGC:CRS84').
+#       The GEOMETRY-list/array cases are also pinned by g7_gl / g7_ga; we
+#       repeat them here under the g19_ prefix for self-contained matrix
+#       completeness.
+#
+#   (2) Scalar BIT / ENUM / VARIANT under the g19_ prefix (g16 already pins
+#       the same payload; duplicated intentionally so this section reads as
+#       a self-contained implicit-role grid).
+#
+#   (3) Accept paths the implicit/column and implicit/expression matrices
+#       didn't pin: LIST<TIMESTAMPTZ/TIME/TIMESTAMP_MS/TIMESTAMP_NS>,
+#       ARRAY<TIMESTAMP/BIGINT/JSON/BLOB/FLOAT/DOUBLE,3>, plus
+#       expression-source scalar TIMETZ / TIME_NS / BLOB / JSON / VARCHAR
+#       and expression-source ARRAY<JSON,3> / ARRAY<BLOB,3>.
+#       UTINYINT expression scalar is already covered by g11_d_u8_expr_st,
+#       so it is not repeated here.
+#
+#   (4) Nested LIST<LIST<INTEGER>> via expression: term_dict::Validate
+#       recurses one level only -- inner LIST classifies as Unsupported, so
+#       the outer LIST is rejected. ([[pk]] is the literal short form
+#       DuckDB lowers to main.list_value(main.list_value(pk)).)
+#
+# Storage strategy: term_dict-rejected columns (UBIGINT / UHUGEINT /
+# BIT / ENUM / STRUCT / MAP / VARIANT / UUID[] / INTERVAL[] / GEOMETRY[])
+# never receive INSERTs -- CREATE INDEX rejection runs before any row store
+# path. Rocksdb-incompatible accept-paths (TIMESTAMPTZ / TIME / TIMESTAMP_MS
+# / TIMESTAMP_NS LIST, TIMETZ / TIME_NS scalar expression) are routed
+# through a parquet-backed view so the rocksdb row store is bypassed --
+# same recipe as m_unsup, g6_v_unsup, g11_a_v / g11_d_v / g11_e_v.
+# Rocksdb-compatible accept-paths (TIMESTAMP / BIGINT / JSON / BLOB / FLOAT
+# / DOUBLE ARRAY, BLOB / JSON / VARCHAR scalar expression) live on a
+# dedicated table to keep INSERTs clear of the rocksdb-incompatible columns
+# on g19_t.
+# ============================================================================
+
+statement ok
+CREATE TYPE g19_enum_t AS ENUM ('alpha', 'beta', 'gamma');
+
+statement ok
+CREATE TABLE g19_t(pk           INTEGER PRIMARY KEY,
+                   list_ubig    UBIGINT[],
+                   list_uhuge   UHUGEINT[],
+                   list_bit     BIT[],
+                   list_enum    g19_enum_t[],
+                   list_struct  STRUCT(a INTEGER)[],
+                   list_map     MAP(VARCHAR, INTEGER)[],
+                   list_variant VARIANT[],
+                   arr_ubig     UBIGINT[3],
+                   arr_uhuge    UHUGEINT[3],
+                   arr_uuid     UUID[3],
+                   arr_intv     INTERVAL[3],
+                   arr_geom     GEOMETRY('OGC:CRS84')[3],
+                   bit_s        BIT,
+                   enum_s       g19_enum_t,
+                   vr           VARIANT);
+
+
+# ----------------------------------------------------------------------------
+# (a) LIST<unsupported-leaf> implicit rejections. The container branch of
+# term_dict::Validate (inverted_index.cpp:257-268) inspects the child kind;
+# every leaf here classifies as Unsupported.
+# ----------------------------------------------------------------------------
+
+statement error
+CREATE INDEX g19_imp_list_ubig ON g19_t USING inverted(pk, list_ubig);
+----
+db error: ERROR: Failed to create index: Column 'list_ubig' has unsupported type UBIGINT[] and can not be indexed
+
+
+statement error
+CREATE INDEX g19_imp_list_uhuge ON g19_t USING inverted(pk, list_uhuge);
+----
+db error: ERROR: Failed to create index: Column 'list_uhuge' has unsupported type UHUGEINT[] and can not be indexed
+
+
+statement error
+CREATE INDEX g19_imp_list_bit ON g19_t USING inverted(pk, list_bit);
+----
+db error: ERROR: Failed to create index: Column 'list_bit' has unsupported type BIT[] and can not be indexed
+
+
+statement error
+CREATE INDEX g19_imp_list_enum ON g19_t USING inverted(pk, list_enum);
+----
+db error: ERROR: Failed to create index: Column 'list_enum' has unsupported type g19_enum_t[] and can not be indexed
+
+
+statement error
+CREATE INDEX g19_imp_list_struct ON g19_t USING inverted(pk, list_struct);
+----
+db error: ERROR: Failed to create index: Column 'list_struct' has unsupported type STRUCT(a INTEGER)[] and can not be indexed
+
+
+statement error
+CREATE INDEX g19_imp_list_map ON g19_t USING inverted(pk, list_map);
+----
+db error: ERROR: Failed to create index: Column 'list_map' has unsupported type MAP(VARCHAR, INTEGER)[] and can not be indexed
+
+
+statement error
+CREATE INDEX g19_imp_list_variant ON g19_t USING inverted(pk, list_variant);
+----
+db error: ERROR: Failed to create index: Column 'list_variant' has unsupported type VARIANT[] and can not be indexed
+
+
+# ----------------------------------------------------------------------------
+# (b) ARRAY<unsupported-leaf> implicit rejections. Fixed-size arrays render
+# as "<child>[N]" (types.cpp:474); the container branch path is the same as
+# LIST.
+# ----------------------------------------------------------------------------
+
+statement error
+CREATE INDEX g19_imp_arr_ubig ON g19_t USING inverted(pk, arr_ubig);
+----
+db error: ERROR: Failed to create index: Column 'arr_ubig' has unsupported type UBIGINT[3] and can not be indexed
+
+
+statement error
+CREATE INDEX g19_imp_arr_uhuge ON g19_t USING inverted(pk, arr_uhuge);
+----
+db error: ERROR: Failed to create index: Column 'arr_uhuge' has unsupported type UHUGEINT[3] and can not be indexed
+
+
+statement error
+CREATE INDEX g19_imp_arr_uuid ON g19_t USING inverted(pk, arr_uuid);
+----
+db error: ERROR: Failed to create index: Column 'arr_uuid' has unsupported type UUID[3] and can not be indexed
+
+
+statement error
+CREATE INDEX g19_imp_arr_intv ON g19_t USING inverted(pk, arr_intv);
+----
+db error: ERROR: Failed to create index: Column 'arr_intv' has unsupported type INTERVAL[3] and can not be indexed
+
+
+# ARRAY<GEOMETRY('OGC:CRS84'),3>: rejected by the explicit GEOMETRY
+# special-case at inverted_index.cpp:263 (the GEOMETRY child is String-kind
+# and would otherwise be accepted, but the container branch carves it out).
+# Also pinned by g7_ga; repeated under g19_ for self-contained coverage.
+statement error
+CREATE INDEX g19_imp_arr_geom ON g19_t USING inverted(pk, arr_geom);
+----
+db error: ERROR: Failed to create index: Column 'arr_geom' has unsupported type GEOMETRY('OGC:CRS84')[3] and can not be indexed
+
+
+# ----------------------------------------------------------------------------
+# (c) Scalar BIT / ENUM / VARIANT implicit rejections (also pinned by g16_*;
+# replayed here as part of the g19_ self-contained implicit-role grid).
+# ----------------------------------------------------------------------------
+
+statement error
+CREATE INDEX g19_imp_bit_s ON g19_t USING inverted(pk, bit_s);
+----
+db error: ERROR: Failed to create index: Column 'bit_s' has unsupported type BIT and can not be indexed
+
+
+statement error
+CREATE INDEX g19_imp_enum_s ON g19_t USING inverted(pk, enum_s);
+----
+db error: ERROR: Failed to create index: Column 'enum_s' has unsupported type g19_enum_t and can not be indexed
+
+
+statement error
+CREATE INDEX g19_imp_vr ON g19_t USING inverted(pk, vr);
+----
+db error: ERROR: Failed to create index: Column 'vr' has unsupported type VARIANT and can not be indexed
+
+
+# ----------------------------------------------------------------------------
+# (d) Expression-source nested LIST<LIST<INTEGER>>: [[pk]] lowers to
+# main.list_value(main.list_value(pk)) (already pinned by bad_list_list in
+# inverted_index_expressions.test; replayed here under g19_ for completeness).
+# ----------------------------------------------------------------------------
+
+statement error
+CREATE INDEX g19_imp_expr_nested ON g19_t USING inverted(pk, ([[pk]]));
+----
+db error: ERROR: Failed to create index: Column 'main.list_value(main.list_value(pk))' has unsupported type INTEGER[][] and can not be indexed
+
+
+# ----------------------------------------------------------------------------
+# (e) Rocksdb-compatible ARRAY<scalar,3> accept-paths (column source) and
+# scalar / array expression accept-paths. Lives on a dedicated table so
+# INSERTs don't have to step around the rocksdb-incompatible columns on
+# g19_t. The implicit term_dict path accepts:
+#   - TIMESTAMP[3] / BIGINT[3] / JSON[3] / BLOB[3] / FLOAT[3] / DOUBLE[3]
+#     ARRAY columns (Classify maps each leaf to NumericI64 / String /
+#     NumericF32 / NumericF64).
+#   - BLOB / JSON / VARCHAR scalar expression (identity-wrapper via
+#     coalesce keeps the binder from constant-folding the projection away).
+#   - ARRAY<JSON,3> / ARRAY<BLOB,3> via identity expression.
+# ----------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE g19_acc_t(pk     INTEGER PRIMARY KEY,
+                       arr_ts TIMESTAMP[3],
+                       arr_bi BIGINT[3],
+                       arr_j  JSON[3],
+                       arr_b  BLOB[3],
+                       arr_f  FLOAT[3],
+                       arr_d  DOUBLE[3],
+                       b      BLOB,
+                       j      JSON,
+                       v      VARCHAR);
+
+statement ok
+CREATE INDEX g19_acc_arr_ts ON g19_acc_t USING inverted(pk, arr_ts);
+
+statement ok
+CREATE INDEX g19_acc_arr_bi ON g19_acc_t USING inverted(pk, arr_bi);
+
+statement ok
+CREATE INDEX g19_acc_arr_j ON g19_acc_t USING inverted(pk, arr_j);
+
+statement ok
+CREATE INDEX g19_acc_arr_b ON g19_acc_t USING inverted(pk, arr_b);
+
+statement ok
+CREATE INDEX g19_acc_arr_f ON g19_acc_t USING inverted(pk, arr_f);
+
+statement ok
+CREATE INDEX g19_acc_arr_d ON g19_acc_t USING inverted(pk, arr_d);
+
+statement ok
+CREATE INDEX g19_acc_expr_b ON g19_acc_t USING inverted(pk, (coalesce(b, NULL::BLOB)));
+
+statement ok
+CREATE INDEX g19_acc_expr_j ON g19_acc_t USING inverted(pk, (coalesce(j, NULL::JSON)));
+
+statement ok
+CREATE INDEX g19_acc_expr_v ON g19_acc_t USING inverted(pk, (coalesce(v, NULL::VARCHAR)));
+
+statement ok
+CREATE INDEX g19_acc_expr_arr_j ON g19_acc_t USING inverted(pk, (arr_j));
+
+statement ok
+CREATE INDEX g19_acc_expr_arr_b ON g19_acc_t USING inverted(pk, (arr_b));
+
+statement ok
+INSERT INTO g19_acc_t VALUES
+    (1,
+     [TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-02-01 00:00:00', TIMESTAMP '2024-03-01 00:00:00'],
+     [10::BIGINT, 20::BIGINT, 30::BIGINT],
+     ARRAY['"alpha"'::JSON, '"beta"'::JSON, '"gamma"'::JSON],
+     ['aa'::BLOB, 'bb'::BLOB, 'cc'::BLOB],
+     [1.0::FLOAT, 2.0::FLOAT, 3.0::FLOAT],
+     [1.5::DOUBLE, 2.5::DOUBLE, 3.5::DOUBLE],
+     'hello'::BLOB,
+     '"jvalue1"'::JSON,
+     'vvalue1'),
+    (2,
+     [TIMESTAMP '2024-06-01 00:00:00', TIMESTAMP '2024-07-01 00:00:00', TIMESTAMP '2024-08-01 00:00:00'],
+     [40::BIGINT, 50::BIGINT, 60::BIGINT],
+     ARRAY['"delta"'::JSON, '"epsilon"'::JSON, '"zeta"'::JSON],
+     ['dd'::BLOB, 'ee'::BLOB, 'ff'::BLOB],
+     [4.0::FLOAT, 5.0::FLOAT, 6.0::FLOAT],
+     [4.5::DOUBLE, 5.5::DOUBLE, 6.5::DOUBLE],
+     'world'::BLOB,
+     '"jvalue2"'::JSON,
+     'vvalue2');
+
+statement ok
+VACUUM (REFRESH_TABLE) g19_acc_t;
+
+query
+SELECT count(*) FROM g19_acc_arr_ts;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_arr_bi;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_arr_j;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_arr_b;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_arr_f;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_arr_d;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_expr_b;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_expr_j;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_expr_v;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_expr_arr_j;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_expr_arr_b;
+----
+count
+2
+
+
+# ----------------------------------------------------------------------------
+# (f) Rocksdb-incompatible accept-paths via parquet-backed view: the catalog
+# accepts these types through term_dict (Classify -> NumericI64), but the
+# rocksdb row store refuses TIMESTAMPTZ / TIME / TIMESTAMP_MS / TIMESTAMP_NS
+# / TIMETZ / TIME_NS payloads. The parquet round-trip preserves the column
+# types while bypassing rocksdb -- same shape as m_unsup / g11_a_v.
+# ----------------------------------------------------------------------------
+
+statement count 2
+COPY (SELECT * FROM (VALUES
+  (1,
+   [TIMESTAMPTZ '2024-01-01 00:00:00+00', TIMESTAMPTZ '2024-02-01 00:00:00+00'],
+   [TIME '01:23:45', TIME '02:34:56'],
+   [TIMESTAMP_MS '2024-01-01 00:00:00', TIMESTAMP_MS '2024-02-01 00:00:00'],
+   [TIMESTAMP_NS '2024-01-01 00:00:00', TIMESTAMP_NS '2024-02-01 00:00:00'],
+   '01:23:45+02'::TIMETZ,
+   '01:23:45.123456789'::TIME_NS),
+  (2,
+   [TIMESTAMPTZ '2024-06-15 12:00:00+00', TIMESTAMPTZ '2024-07-15 12:00:00+00'],
+   [TIME '23:00:00', TIME '23:30:00'],
+   [TIMESTAMP_MS '2024-06-15 12:00:00', TIMESTAMP_MS '2024-07-15 12:00:00'],
+   [TIMESTAMP_NS '2024-06-15 12:00:00', TIMESTAMP_NS '2024-07-15 12:00:00'],
+   '23:00:00+05'::TIMETZ,
+   '23:00:00.987654321'::TIME_NS)
+) AS t(pk, list_tstz, list_tt, list_tsms, list_tsns, ttz, tns))
+TO '${__TEST_DIR__}/sdb_g19_temporal.parquet' (FORMAT parquet);
+
+statement ok
+CREATE VIEW g19_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/sdb_g19_temporal.parquet');
+
+statement ok
+CREATE INDEX g19_acc_list_tstz ON g19_v USING inverted(pk, list_tstz);
+
+statement ok
+CREATE INDEX g19_acc_list_tt ON g19_v USING inverted(pk, list_tt);
+
+statement ok
+CREATE INDEX g19_acc_list_tsms ON g19_v USING inverted(pk, list_tsms);
+
+statement ok
+CREATE INDEX g19_acc_list_tsns ON g19_v USING inverted(pk, list_tsns);
+
+statement ok
+CREATE INDEX g19_acc_expr_ttz ON g19_v USING inverted(pk, (coalesce(ttz, ttz)));
+
+statement ok
+CREATE INDEX g19_acc_expr_tns ON g19_v USING inverted(pk, (coalesce(tns, tns)));
+
+query
+SELECT count(*) FROM g19_acc_list_tstz;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_list_tt;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_list_tsms;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_list_tsns;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_expr_ttz;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_expr_tns;
+----
+count
+2
+
+
+# --- teardown ---------------------------------------------------------------
+
+statement ok
+DROP TABLE g19_t;
+
+statement ok
+DROP TABLE g19_acc_t;
+
+statement ok
+DROP VIEW g19_v CASCADE;
+
+statement ok
+DROP TYPE g19_enum_t;

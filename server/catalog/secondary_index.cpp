@@ -23,53 +23,47 @@
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
 
+#include "basics/containers/flat_hash_set.h"
 #include "basics/serializer.h"
 #include "catalog/persistence/secondary_index.h"
 
 namespace sdb::catalog {
-namespace {
-
-using persistence::SecondaryIndexData;
-
-std::shared_ptr<SecondaryIndex> FromData(SecondaryIndexData data,
-                                         ReadContext ctx) {
-  return std::make_shared<SecondaryIndex>(
-    ctx.database_id, ctx.schema_id, ctx.id, ctx.relation_id,
-    std::move(data.name), std::move(data.column_ids), data.unique);
-}
-
-}  // namespace
 
 SecondaryIndex::SecondaryIndex(ObjectId database_id, ObjectId schema_id,
                                ObjectId id, ObjectId relation_id,
                                std::string name,
-                               std::vector<Column::Id> column_ids, bool unique)
+                               std::vector<Column::Id> columns,
+                               std::vector<ExpressionData> expressions,
+                               bool unique)
   : Index(database_id, schema_id, id, relation_id, std::move(name),
-          std::move(column_ids), ObjectType::SecondaryIndex),
+          DeriveIds(columns, expressions), ObjectType::SecondaryIndex),
+    _columns{std::move(columns)},
+    _expressions{std::move(expressions)},
     _unique{unique} {}
 
 std::shared_ptr<SecondaryIndex> SecondaryIndex::Deserialize(
   duckdb::Deserializer& src, ReadContext ctx) {
-  SecondaryIndexData data;
+  persistence::SecondaryIndexData data;
   basics::ReadTuple(src, data);
-  return FromData(std::move(data), ctx);
+  return std::make_shared<SecondaryIndex>(
+    ctx.database_id, ctx.schema_id, ctx.id, ctx.relation_id,
+    std::move(data.name), std::move(data.columns), std::move(data.expressions),
+    data.unique);
 }
 
 void SecondaryIndex::Serialize(duckdb::Serializer& sink) const {
-  auto ids = GetColumnIds();
-  basics::WriteTuple(sink, SecondaryIndexData{
-                             .name = std::string{GetName()},
-                             .column_ids = {ids.begin(), ids.end()},
+  basics::WriteTuple(sink, persistence::SecondaryIndexData{
+                             .name = GetName(),
                              .unique = _unique,
+                             .columns = Columns(),
+                             .expressions = Expressions(),
                            });
 }
 
 std::shared_ptr<Object> SecondaryIndex::Clone() const {
-  auto ids = GetColumnIds();
-  return std::make_shared<SecondaryIndex>(
-    GetDatabaseId(), GetParentId(), GetId(), GetRelationId(),
-    std::string{GetName()}, std::vector<Column::Id>{ids.begin(), ids.end()},
-    _unique);
+  return std::make_shared<SecondaryIndex>(GetDatabaseId(), GetParentId(),
+                                          GetId(), GetRelationId(), GetName(),
+                                          Columns(), Expressions(), _unique);
 }
 
 }  // namespace sdb::catalog

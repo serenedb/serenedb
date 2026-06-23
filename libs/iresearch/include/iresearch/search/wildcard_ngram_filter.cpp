@@ -35,6 +35,8 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/boolean_query.hpp"
+#include "iresearch/search/collectors.hpp"
+#include "iresearch/search/limited_sample_selector.hpp"
 #include "iresearch/search/phrase_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
@@ -151,23 +153,25 @@ class WildcardIterator : public DocIterator {
   ColumnReader::BlobPointReader _cursor;
 };
 
-class WildcardQuery : public Filter::Query {
+class WildcardQuery : public QueryBuilder {
  public:
-  WildcardQuery(std::shared_ptr<RE2> matcher, Query::ptr&& approx,
-                field_id store_field_id)
-    : _matcher{std::move(matcher)},
+  WildcardQuery(const SubReader& segment, std::shared_ptr<RE2> matcher,
+                QueryBuilder::ptr&& approx, field_id store_field_id)
+    : QueryBuilder{segment},
+      _matcher{std::move(matcher)},
       _approx{std::move(approx)},
       _store_field_id{store_field_id} {
     SDB_ASSERT(_approx);
   }
 
-  DocIterator::ptr execute(const ExecutionContext& ctx) const final {
-    auto approx = _approx->execute(ctx);
+  DocIterator::ptr Execute(const ExecutionContext& ctx,
+                           const StatsBuffer& stats) const final {
+    auto approx = _approx->Execute(ctx, stats);
     if (!_matcher || approx == DocIterator::empty()) {
       return approx;
     }
     SDB_ASSERT(irs::field_limits::valid(_store_field_id));
-    const auto* col_reader = ctx.segment.GetColReader();
+    const auto* col_reader = _segment.GetColReader();
     if (!col_reader) {
       return DocIterator::empty();
     }
@@ -179,75 +183,147 @@ class WildcardQuery : public Filter::Query {
                                                   *column, *col_reader);
   }
 
-  void visit(const SubReader&, PreparedStateVisitor&, score_t) const final {}
+  void Visit(PreparedStateVisitor&, score_t) const final {}
 
   score_t Boost() const noexcept final { return kNoBoost; }
 
  private:
   std::shared_ptr<RE2> _matcher;
-  Query::ptr _approx;
+  QueryBuilder::ptr _approx;
   field_id _store_field_id;
 };
 
 constexpr size_t kDefaultScoredTermsLimit = 1024;
 
-}  // namespace
+enum class WildcardNgramKind { kTerm, kPrefix, kPhrase, kConjunction };
 
-Filter::Query::ptr ByWildcardNgram::Prepare(
-  const PrepareContext& ctx, irs::field_id id,
-  const ByWildcardNgramOptions& opts) {
-  auto& parts = opts.parts;
-  auto size = parts.size();
-  Filter::Query::ptr p;
-
+WildcardNgramKind ClassifyKind(const ByWildcardNgramOptions& opts) {
+  const auto size = opts.parts.size();
   if (size == 0) {
     bytes_view token = opts.token;
     if (token.size() != 1 && token.back() == 0xFF) {
-      p = ByTerm::prepare(ctx, id, token);
-    } else {
+      return WildcardNgramKind::kTerm;
+    }
+    return WildcardNgramKind::kPrefix;
+  }
+  if (size == 1 && opts.has_pos) {
+    return WildcardNgramKind::kPhrase;
+  }
+  return WildcardNgramKind::kConjunction;
+}
+
+ByPhrase MakePhraseFilter(irs::field_id field, const ByPhraseOptions& part) {
+  ByPhrase phrase;
+  *phrase.mutable_field_id() = field;
+  *phrase.mutable_options() = part;
+  return phrase;
+}
+
+ByTerm MakeTermFilter(irs::field_id field, bytes_view term) {
+  ByTerm by_term;
+  *by_term.mutable_field_id() = field;
+  by_term.mutable_options()->term = bstring{term};
+  return by_term;
+}
+
+}  // namespace
+
+PrepareCollector::ptr ByWildcardNgram::MakeCollector(
+  const Scorer* scorer) const {
+  const auto& opts = options();
+  switch (ClassifyKind(opts)) {
+    case WildcardNgramKind::kTerm:
+      return std::make_unique<ByTermsCollector>(scorer, 1);
+    case WildcardNgramKind::kPrefix:
+      return std::make_unique<LimitedTermsCollector>(scorer,
+                                                     kDefaultScoredTermsLimit);
+    case WildcardNgramKind::kPhrase:
+      return MakePhraseFilter(field_id(), opts.parts.front())
+        .MakeCollector(scorer);
+    case WildcardNgramKind::kConjunction: {
+      auto compound = std::make_unique<CompoundCollector>(scorer);
+      if (opts.has_pos) {
+        for (const auto& part : opts.parts) {
+          compound->Add(
+            MakePhraseFilter(field_id(), part).MakeCollector(scorer));
+        }
+      } else {
+        for (const auto& part : opts.parts) {
+          for (const auto& info : part) {
+            compound->Add(MakeTermFilter(
+                            field_id(), std::get<ByTermOptions>(info.part).term)
+                            .MakeCollector(scorer));
+          }
+        }
+      }
+      return compound;
+    }
+  }
+  return std::make_unique<NoopCollector>();
+}
+
+QueryBuilder::ptr ByWildcardNgram::PrepareSegment(
+  const SubReader& segment, const PrepareContext& ctx) const {
+  const auto& opts = options();
+  auto sub_ctx = ctx;
+  sub_ctx.Boost(Boost());
+
+  const auto wrap = [&](QueryBuilder::ptr&& approx) -> QueryBuilder::ptr {
+    if (!approx || approx == QueryBuilder::Empty()) {
+      return QueryBuilder::Empty();
+    }
+    return memory::make_tracked<WildcardQuery>(ctx.memory, segment,
+                                               opts.matcher, std::move(approx),
+                                               opts.store_field_id);
+  };
+
+  switch (ClassifyKind(opts)) {
+    case WildcardNgramKind::kTerm:
+      return wrap(
+        ByTerm::PrepareSegment(segment, sub_ctx, field_id(), opts.token));
+    case WildcardNgramKind::kPrefix: {
+      bytes_view token = opts.token;
       if (token.back() == 0xFF) {
         token = kEmptyStringView<byte_type>;
       }
-      p = ByPrefix::prepare(ctx, id, token, kDefaultScoredTermsLimit);
+      return wrap(ByPrefix::PrepareSegment(segment, sub_ctx, field_id(), token,
+                                           kDefaultScoredTermsLimit));
     }
-  } else if (size == 1 && opts.has_pos) {
-    p = ByPhrase::Prepare(ctx, id, parts[0]);
-  }
+    case WildcardNgramKind::kPhrase:
+      return wrap(MakePhraseFilter(field_id(), opts.parts.front())
+                    .PrepareSegment(segment, sub_ctx));
+    case WildcardNgramKind::kConjunction: {
+      auto* compound = dynamic_cast<CompoundCollector*>(ctx.collector);
+      SDB_ASSERT(ctx.collector == nullptr || compound != nullptr);
 
-  if (p) {
-    if (p == Filter::Query::empty()) {
-      return p;
-    }
-    return memory::make_tracked<WildcardQuery>(
-      ctx.memory, opts.matcher, std::move(p), opts.store_field_id);
-  }
-
-  AndQuery::queries_t queries{{ctx.memory}};
-  if (opts.has_pos) {
-    queries.resize(size);
-    for (size_t i = 0; auto& part : parts) {
-      p = ByPhrase::Prepare(ctx, id, part);
-      if (p == Filter::Query::empty()) {
-        return p;
-      }
-      queries[i++] = std::move(p);
-    }
-  } else {
-    for (auto& part : parts) {
-      for (const auto& info : part) {
-        p = ByTerm::prepare(ctx, id, std::get<ByTermOptions>(info.part).term);
-        if (p == Filter::Query::empty()) {
-          return p;
+      AndQuery::queries_t queries{{ctx.memory}};
+      size_t idx = 0;
+      if (opts.has_pos) {
+        for (const auto& part : opts.parts) {
+          auto child = sub_ctx;
+          child.collector = compound ? &compound->Child(idx++) : nullptr;
+          queries.emplace_back(
+            MakePhraseFilter(field_id(), part).PrepareSegment(segment, child));
         }
-        queries.push_back(std::move(p));
+      } else {
+        for (const auto& part : opts.parts) {
+          for (const auto& info : part) {
+            auto child = sub_ctx;
+            child.collector = compound ? &compound->Child(idx++) : nullptr;
+            queries.emplace_back(
+              MakeTermFilter(field_id(),
+                             std::get<ByTermOptions>(info.part).term)
+                .PrepareSegment(segment, child));
+          }
+        }
       }
+      auto conjunction =
+        memory::make_tracked<AndQuery>(ctx.memory, segment, std::move(queries),
+                                       ScoreMergeType::Sum, sub_ctx.boost);
+      return wrap(std::move(conjunction));
     }
-    size = queries.size();
   }
-  auto conjunction = memory::make_tracked<AndQuery>(ctx.memory);
-  conjunction->prepare(ctx, ScoreMergeType::Sum, std::move(queries));
-  return memory::make_tracked<WildcardQuery>(
-    ctx.memory, opts.matcher, std::move(conjunction), opts.store_field_id);
+  return QueryBuilder::Empty();
 }
 
 ByWildcardNgramOptions::ByWildcardNgramOptions(

@@ -103,7 +103,8 @@ Filter::ptr LowerWildcard(irs::field_id id, bytes_view term,
 
 class ByWildcard final : public FilterWithField<ByWildcardOptions> {
  public:
-  Query::ptr prepare(const PrepareContext& ctx) const final;
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
 };
 
 }  // namespace irs

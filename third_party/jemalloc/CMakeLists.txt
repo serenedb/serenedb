@@ -32,7 +32,7 @@ if (LINUX OR DARWIN)
   endif ()
 
   if (USE_JEMALLOC_PROF)
-    set(JEMALLOC_PROF "--enable-prof")
+    set(JEMALLOC_PROF "--enable-prof" "--disable-prof-libunwind" "--disable-prof-libgcc")
   endif ()
 
   # add build-type specific c flags and cxx flags here, because otherwise

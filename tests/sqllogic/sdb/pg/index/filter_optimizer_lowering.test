@@ -575,3 +575,105 @@ SELECT id FROM fo_low_idx WHERE name @@ ts_all([ts_starts_with('al'), ts_starts_
 ----
 id
 1
+
+
+statement ok
+CREATE TABLE fo_lev_mt (id INTEGER PRIMARY KEY, t VARCHAR);
+
+statement ok
+CREATE INDEX fo_lev_mt_idx ON fo_lev_mt USING inverted(id, t fo_low_en);
+
+statement ok
+INSERT INTO fo_lev_mt VALUES
+  (1, 'album slpha'),
+  (2, 'alpha'),
+  (3, 'beta');
+
+statement ok
+VACUUM (REFRESH_TABLE) fo_lev_mt;
+
+query
+EXPLAIN SELECT id FROM fo_lev_mt_idx WHERE t @@ ts_all([ts_starts_with('al'), ts_levenshtein('alpha', 1)]);
+----
+QUERY PLAN
+┌─────────────────────────────────────────────┐
+│                IRESEARCH_SCAN               │
+│    ──────────────────────────────────────   │
+│             Index: fo_lev_mt_idx            │
+│                Lookup: table                │
+│                                             │
+│                   Filter:                   │
+│ ┌──────────────────────────────────────────┐│
+│ │┌───────────────────┐                     ││
+│ ││        AND        ├──────────┐          ││
+│ │└─────────┬─────────┘          │          ││
+│ │┌─────────┴─────────┐┌─────────┴─────────┐││
+│ ││    STARTS_WITH    ││LEVENSHTEIN_AU...  │││
+│ ││    ────────────   ││    ────────────   │││
+│ ││   t(string) 'al'  ││ t(string) 'alpha' │││
+│ ││     limit=1024    ││   max_terms=1024  │││
+│ │└───────────────────┘└───────────────────┘││
+│ └──────────────────────────────────────────┘│
+│                                             │
+│               Projections: id               │
+│                                             │
+│                    ~1 row                   │
+└─────────────────────────────────────────────┘
+
+query
+SELECT id FROM fo_lev_mt_idx WHERE t @@ ts_all([ts_starts_with('al'), ts_levenshtein('alpha', 1)]) ORDER BY id;
+----
+id
+1
+2
+
+
+statement ok
+CREATE TABLE fo_lev_mix (id INTEGER PRIMARY KEY, k VARCHAR, a VARCHAR);
+
+statement ok
+CREATE INDEX fo_lev_mix_idx ON fo_lev_mix USING inverted(id, k, a fo_low_en);
+
+statement ok
+INSERT INTO fo_lev_mix VALUES
+  (1, 'alpha', 'album slpha'),
+  (2, 'beta',  'album slpha'),
+  (3, 'alphb', 'alpha');
+
+statement ok
+VACUUM (REFRESH_TABLE) fo_lev_mix;
+
+query
+EXPLAIN SELECT id FROM fo_lev_mix_idx WHERE k @@ ts_all([ts_starts_with('al'), ts_levenshtein('alpha', 1)]) AND a @@ ts_all([ts_starts_with('al'), ts_levenshtein('alpha', 1)]);
+----
+QUERY PLAN
+┌─────────────────────────────────────────────────────────────────┐
+│                          IRESEARCH_SCAN                         │
+│    ──────────────────────────────────────────────────────────   │
+│                      Index: fo_lev_mix_idx                      │
+│                          Lookup: table                          │
+│                                                                 │
+│                             Filter:                             │
+│┌───────────────────────────────────────────────────────────────┐│
+││┌───────────────────┐                                          ││
+│││        AND        ├──────────┬────────────────────┐          ││
+││└─────────┬─────────┘          │                    │          ││
+││┌─────────┴─────────┐┌─────────┴─────────┐┌─────────┴─────────┐││
+│││LEVENSHTEIN_AU...  ││    STARTS_WITH    ││LEVENSHTEIN_AU...  │││
+│││    ────────────   ││    ────────────   ││    ────────────   │││
+│││ k(string) 'alpha' ││   a(string) 'al'  ││ a(string) 'alpha' │││
+│││   max_terms=1024  ││     limit=1024    ││   max_terms=1024  │││
+││└───────────────────┘└───────────────────┘└───────────────────┘││
+│└───────────────────────────────────────────────────────────────┘│
+│                                                                 │
+│                         Projections: id                         │
+│                                                                 │
+│                              ~1 row                             │
+└─────────────────────────────────────────────────────────────────┘
+
+query
+SELECT id FROM fo_lev_mix_idx WHERE k @@ ts_all([ts_starts_with('al'), ts_levenshtein('alpha', 1)]) AND a @@ ts_all([ts_starts_with('al'), ts_levenshtein('alpha', 1)]) ORDER BY id;
+----
+id
+1
+3

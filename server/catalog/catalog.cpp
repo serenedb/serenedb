@@ -27,7 +27,6 @@
 #include <absl/synchronization/mutex.h>
 
 #include <algorithm>
-#include <atomic>
 #include <duckdb/common/exception/parser_exception.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
@@ -114,8 +113,6 @@ AccessContext RequireOwnership(duckdb::ClientContext& context) {
 
 namespace {
 
-std::atomic<uint64_t> g_catalog_version{1};
-
 Result Apply(
   auto& snapshot, std::shared_mutex& snapshot_mutex, auto&& f,
   std::function<void(const std::shared_ptr<Snapshot>&)> rollback = {}) {
@@ -126,20 +123,17 @@ Result Apply(
     }
     return r;
   }
-  clone->StampVersion();
-  std::shared_ptr<const Snapshot> clone_const = std::move(clone);
   {
     std::unique_lock guard{snapshot_mutex};
-    snapshot = std::move(clone_const);
+    clone->StampVersion(snapshot->Version() + 1);
+    snapshot = std::move(clone);
   }
   return {};
 }
 
 }  // namespace
 
-void Snapshot::StampVersion() noexcept {
-  _version = g_catalog_version.fetch_add(1, std::memory_order_relaxed) + 1;
-}
+void Snapshot::StampVersion(uint64_t version) noexcept { _version = version; }
 
 Snapshot::Snapshot() = default;
 Snapshot::~Snapshot() = default;
@@ -152,6 +146,10 @@ std::shared_ptr<Snapshot> Snapshot::Clone() const {
   result->_deps = _deps;
   result->_in_load = _in_load;
   result->_version = _version;
+  // Inherit the built role closures. A mutation that changes the role graph
+  // overwrites them via RebuildRoleClosures; everything else reuses the
+  // parent's map unchanged.
+  result->_role_closures = _role_closures;
   // New snapshot starts with empty DuckDB cache (lazily populated)
   return result;
 }
@@ -629,6 +627,49 @@ void Snapshot::ModifyInvertedIndexDependencies(const InvertedIndex& index,
   }
 }
 
+void Snapshot::ModifyRoleDependencies(const Object& obj, EdgeAction action) {
+  const auto self = obj.GetId();
+  // PUBLIC pseudo-grantee (id 0) and the unset owner, so they are skipped --
+  // PUBLIC and "no owner" are not droppable roles.
+  auto touch = [&](ObjectId role) {
+    if (!role.isSet()) {
+      return;
+    }
+    if (action == EdgeAction::Add) {
+      // The role's dependency node may not exist yet (a role nobody references
+      // has none); create-if-missing before GetDependencyForWrite, which
+      // assumes the node is present.
+      _deps.AddDependency<RoleDependency>(role);
+      GetDependencyForWrite<RoleDependency>(role)->referencing_objects.insert(
+        self);
+    } else if (_deps.TryGetDependency(role)) {
+      GetDependencyForWrite<RoleDependency>(role)->referencing_objects.erase(
+        self);
+    }
+  };
+  auto touch_acl = [&](auto acl) {
+    for (const auto& item : acl) {
+      touch(item.grantee);
+      touch(item.grantor);
+    }
+  };
+  touch(obj.GetOwner());
+  touch_acl(obj.GetAcl());
+  if (obj.GetType() == ObjectType::Table) {
+    for (const auto& col : basics::downCast<const Table>(obj).Columns()) {
+      touch_acl(col.GetAcl());
+    }
+  } else if (obj.GetType() == ObjectType::Role) {
+    const auto& defaults = basics::downCast<const Role>(obj).DefaultAcls();
+    if (!defaults.empty()) {
+      touch(self);
+    }
+    for (const auto& entry : defaults) {
+      touch_acl(entry.acl);
+    }
+  }
+}
+
 template<typename DependencyType>
 Result Snapshot::AddObjectDefinition(ObjectId parent_id,
                                      std::shared_ptr<Object> object) {
@@ -645,6 +686,7 @@ Result Snapshot::AddObjectDefinition(ObjectId parent_id,
 
 void Snapshot::AddDependencies(ObjectId parent_id, const Object& obj) {
   auto id = obj.GetId();
+  ModifyRoleDependencies(obj, EdgeAction::Add);
   switch (obj.GetType()) {
     case ObjectType::Database:
     case ObjectType::Role:
@@ -987,7 +1029,22 @@ bool Snapshot::CheckSchemaEmptyDependency(ObjectId schema_id) const {
 }
 
 const auth::RoleClosure& Snapshot::EffectiveRoleClosure(ObjectId role) const {
-  return _role_closure_cache.Get(*this, role);
+  if (const auto* rc = _role_closures.Find(role)) {
+    return *rc;
+  }
+  static const auth::RoleClosure kEmpty;
+  return kEmpty;
+}
+
+void Snapshot::RebuildRoleClosures() { _role_closures.Build(*this); }
+
+std::size_t Snapshot::RoleDependentCount(ObjectId role) const {
+  auto dep = _deps.TryGetDependency(role);
+  if (!dep) {
+    return 0;
+  }
+  return basics::downCast<const RoleDependency>(*dep)
+    .referencing_objects.size();
 }
 
 void Snapshot::RequireAccess(ObjectId role, const Object& object,
@@ -1165,7 +1222,10 @@ std::shared_ptr<Database> Snapshot::GetDatabase(ObjectId database) const {
 void Snapshot::ReplaceObjectBody(const std::shared_ptr<Object>& new_object) {
   auto it = _objects.find(new_object->GetId());
   SDB_ASSERT(it != _objects.end());
+  // Owner/ACL may have changed (ALTER OWNER, GRANT/REVOKE); refresh role edges.
+  ModifyRoleDependencies(**it, EdgeAction::Delete);
   const_cast<std::shared_ptr<Object>&>(*it) = new_object;
+  ModifyRoleDependencies(*new_object, EdgeAction::Add);
 }
 
 void Snapshot::ReplaceDatabaseBody(
@@ -1205,6 +1265,7 @@ Result Snapshot::ReplaceObject(ObjectId parent_id, std::string_view old_name,
   SDB_ASSERT(it != _objects.end());
   SDB_ASSERT((*it)->GetId() == new_object->GetId());
   auto old_object = *it;
+  ModifyRoleDependencies(*old_object, EdgeAction::Delete);
   // Refresh reverse-edges if the object's body changed. Replaces of
   // objects without body (Role, Sequence, ...) are pure name/value
   // swaps and need no edge fixups.
@@ -1227,6 +1288,7 @@ Result Snapshot::ReplaceObject(ObjectId parent_id, std::string_view old_name,
       break;
   }
   const_cast<std::shared_ptr<Object>&>(*it) = new_object;
+  ModifyRoleDependencies(*new_object, EdgeAction::Add);
   switch (new_object->GetType()) {
     case ObjectType::Table:
       ModifyTableDependencies(parent_id, basics::downCast<Table>(*new_object),
@@ -1459,6 +1521,7 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
   SDB_ASSERT(!node.empty());
   std::shared_ptr<Object> obj = node.value();
   SDB_ASSERT(obj);
+  ModifyRoleDependencies(*obj, EdgeAction::Delete);
   auto drop_childs = [&](const auto& deps) {
     for (auto child_id : deps) {
       RemoveObjectDefinition(id, child_id);
@@ -1792,8 +1855,13 @@ Result Catalog::CreateRole(std::shared_ptr<Role> role) {
       }
       duckdb::MemoryStream stream;
       auto bytes = catalog::SerializeObject(*role, stream);
-      return _engine->CreateDefinition(id::kInstance, ObjectType::Role,
-                                       role->GetId(), bytes);
+      if (auto cr = _engine->CreateDefinition(id::kInstance, ObjectType::Role,
+                                              role->GetId(), bytes);
+          !cr.ok()) {
+        return cr;
+      }
+      clone->RebuildRoleClosures();
+      return Result{};
     },
     [&](auto& clone) { clone->UnregisterObject(role, id::kInstance, true); });
 
@@ -2690,8 +2758,13 @@ Result Catalog::ChangeRole(std::string_view name,
       }
       duckdb::MemoryStream stream;
       auto bytes = catalog::SerializeObject(*new_role_ptr, stream);
-      return _engine->CreateDefinition(id::kInstance, ObjectType::Role,
-                                       new_role_ptr->GetId(), bytes);
+      if (auto cr = _engine->CreateDefinition(id::kInstance, ObjectType::Role,
+                                              new_role_ptr->GetId(), bytes);
+          !cr.ok()) {
+        return cr;
+      }
+      clone->RebuildRoleClosures();
+      return Result{};
     },
     [&](const std::shared_ptr<Snapshot>& clone) {
       auto obj = clone->GetObject<Role>(new_role_ptr->GetId());
@@ -2764,6 +2837,37 @@ Result Catalog::ChangeOwner(ObjectId database_id, std::string_view schema,
                  });
   }
 
+  // Types live in their own per-schema namespace, separate from relations.
+  if (type == ObjectType::PgSqlType) {
+    auto schema_id =
+      _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+    if (!schema_id) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
+                      ERR_MSG("schema \"", schema, "\" does not exist"));
+    }
+    auto type_id = _snapshot->GetObjectId<ResolveType::Type>(*schema_id, name);
+    if (!type_id) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                      ERR_MSG("type \"", name, "\" does not exist"));
+    }
+    auto obj = _snapshot->GetObject(*type_id);
+    SDB_ASSERT(obj);
+    auto cloned = obj->Clone();
+    TransferOwner(*cloned, new_owner);
+    return Apply(_snapshot, _snapshot_mutex,
+                 [&](std::shared_ptr<Snapshot>& clone) -> Result {
+                   duckdb::MemoryStream stream;
+                   auto bytes = catalog::SerializeObject(*cloned, stream);
+                   if (auto r = clone->ReplaceObject<ResolveType::Type>(
+                         *schema_id, cloned->GetName(), cloned);
+                       !r.ok()) {
+                     return r;
+                   }
+                   return _engine->CreateDefinition(
+                     *schema_id, ObjectType::PgSqlType, cloned->GetId(), bytes);
+                 });
+  }
+
   // Relations (table / view / sequence) live under a schema.
   auto schema_id =
     _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
@@ -2787,11 +2891,14 @@ Result Catalog::ChangeOwner(ObjectId database_id, std::string_view schema,
 
   std::vector<std::shared_ptr<Object>> cascade;
   if (obj->GetType() == ObjectType::Table) {
-    cascade = _snapshot->GetSequences(database_id, schema) |
-              std::views::filter([&](const auto& seq) {
-                return seq->GetOwnerTableId() == *object_id;
-              }) |
-              std::ranges::to<std::vector<std::shared_ptr<Object>>>();
+    cascade =
+      _snapshot->GetDependency<TableDependency>(*object_id)->owned_sequences |
+      std::views::transform([&](ObjectId seq_id) -> std::shared_ptr<Object> {
+        auto seq = _snapshot->GetObject<Sequence>(seq_id);
+        SDB_ASSERT(seq);
+        return seq;
+      }) |
+      std::ranges::to<std::vector<std::shared_ptr<Object>>>();
   }
 
   return Apply(
@@ -3166,11 +3273,17 @@ Result Catalog::DropRole(std::string_view role) {
   if (!role_ptr) {
     return {ERROR_SERVER_ILLEGAL_NAME};
   }
-  auto r =
-    Apply(_snapshot, _snapshot_mutex, [&](std::shared_ptr<Snapshot>& clone) {
+  auto r = Apply(
+    _snapshot, _snapshot_mutex,
+    [&](std::shared_ptr<Snapshot>& clone) {
       clone->UnregisterObject(role_ptr, id::kInstance);
-      return _engine->DropDefinition(id::kInstance, ObjectType::Role,
-                                     role_ptr->GetId());
+      if (auto r = _engine->DropDefinition(id::kInstance, ObjectType::Role,
+                                           role_ptr->GetId());
+          !r.ok()) {
+        return r;
+      }
+      clone->RebuildRoleClosures();
+      return Result{};
     });
 
   if (!r.ok()) {
@@ -3839,14 +3952,16 @@ Result Catalog::DropTokenizer(std::string_view database,
 
 Result Catalog::FinalizeLoad() {
   absl::MutexLock lock{&_mutex};
-  return Apply(_snapshot, _snapshot_mutex,
-               [&](std::shared_ptr<Snapshot>& clone) -> Result {
-                 for (const auto& obj : clone->Objects()) {
-                   clone->AddDependencies(obj->GetParentId(), *obj);
-                 }
-                 clone->EndLoad();
-                 return {};
-               });
+  return Apply(
+    _snapshot, _snapshot_mutex,
+    [&](std::shared_ptr<Snapshot>& clone) -> Result {
+      for (const auto& obj : clone->Objects()) {
+        clone->AddDependencies(obj->GetParentId(), *obj);
+      }
+      clone->EndLoad();
+      clone->RebuildRoleClosures();
+      return {};
+    });
 }
 
 std::shared_ptr<const Snapshot> Catalog::GetCatalogSnapshot() const noexcept {

@@ -130,10 +130,15 @@ struct Snapshot {
   connector::DuckDBEntryCache& GetDuckDBEntryCache() const;
 
   // Sorted inherit-closure of `role` ({role} + roles reachable via inherit
-  // edges) plus its superuser bit, memoized per snapshot. `resolved` is false
-  // for an unknown role -> deny. The reference is stable for the snapshot's
+  // edges) plus its superuser bit. Built eagerly for every role at snapshot
+  // publish (RebuildRoleClosures) and read lock-free here; an unknown role
+  // yields an empty closure -> deny. The reference is stable for the snapshot's
   // lifetime.
   const auth::RoleClosure& EffectiveRoleClosure(ObjectId role) const;
+
+  // Materialize the closure of every role. Called once by Catalog::Apply on the
+  // not-yet-published clone, before the snapshot swap; never after.
+  void RebuildRoleClosures();
 
   // RBAC enforcement, owned by the catalog (it holds the ACL data + closure
   // cache). These throw the PG-exact SQL error (42501) directly on failure --
@@ -144,6 +149,11 @@ struct Snapshot {
   void RequireAccess(ObjectId role, const Object& object, AclMode need) const;
 
   void RequireOwnership(ObjectId role, const Object& object) const;
+
+  // Number of objects that reference `role` as owner or via an ACL entry
+  // (grantee/grantor), across every object type. Used by DROP ROLE to refuse a
+  // role that still has dependents (PG: pg_shdepend). 0 if none.
+  std::size_t RoleDependentCount(ObjectId role) const;
 
   std::vector<std::shared_ptr<Role>> GetRoles() const;
   std::vector<std::shared_ptr<Database>> GetDatabases() const;
@@ -314,6 +324,10 @@ struct Snapshot {
                                   EdgeAction action);
   void ModifyInvertedIndexDependencies(const InvertedIndex& index,
                                        ObjectId index_id, EdgeAction action);
+  // Add/remove the role-dependency edges (owner + ACL grantee/grantor, incl.
+  // column ACLs) for `obj`. Called wherever an object enters, leaves, or has
+  // its body replaced in the graph, so DROP ROLE sees an exact dependent set.
+  void ModifyRoleDependencies(const Object& obj, EdgeAction action);
 
   template<typename T>
   Result RegisterObject(std::shared_ptr<T> object, ObjectId parent_id,
@@ -400,13 +414,13 @@ struct Snapshot {
   ObjectDependencies _deps;
   ObjectSetById<Object> _objects;
   mutable connector::DuckDBEntryCache _duckdb_cache;
-  mutable auth::RoleClosureCache _role_closure_cache;
+  auth::RoleClosureMap _role_closures;
   bool _in_load = true;
   uint64_t _version = 0;
 
  public:
   uint64_t Version() const noexcept { return _version; }
-  void StampVersion() noexcept;
+  void StampVersion(uint64_t version) noexcept;
 };
 
 using IndexFactory =

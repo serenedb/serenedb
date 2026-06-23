@@ -20,11 +20,10 @@
 
 #pragma once
 
-#include <absl/synchronization/mutex.h>
-
 #include <vector>
 
-#include "basics/containers/node_hash_map.h"
+#include "auth/acl.h"
+#include "basics/containers/flat_hash_map.h"
 #include "catalog/identifiers/object_id.h"
 
 namespace sdb::catalog {
@@ -34,20 +33,31 @@ struct Snapshot;
 }  // namespace sdb::catalog
 namespace sdb::auth {
 
+RoleIdSet ComputeEffectiveRoles(const catalog::Snapshot& snapshot,
+                                ObjectId role);
+
+RoleIdSet ComputeMembershipClosure(const catalog::Snapshot& snapshot,
+                                   ObjectId role);
+
+RoleIdSet ComputeSetRoleClosure(const catalog::Snapshot& snapshot,
+                                ObjectId role);
+
 struct RoleClosure {
   std::vector<ObjectId> closure;
   bool is_superuser = false;
 };
 
-class RoleClosureCache {
+class RoleClosureMap {
  public:
-  const RoleClosure& Get(const catalog::Snapshot& snapshot,
-                         ObjectId role) const;
+  void Build(const catalog::Snapshot& snapshot);
+
+  const RoleClosure* Find(ObjectId role) const {
+    auto it = _by_role.find(role);
+    return it == _by_role.end() ? nullptr : &it->second;
+  }
 
  private:
-  mutable absl::Mutex _mu;
-  mutable containers::NodeHashMap<ObjectId, RoleClosure> _by_role
-    ABSL_GUARDED_BY(_mu);
+  containers::FlatHashMap<ObjectId, RoleClosure> _by_role;
 };
 
 }  // namespace sdb::auth

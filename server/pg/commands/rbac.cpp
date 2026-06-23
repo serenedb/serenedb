@@ -168,27 +168,6 @@ void CreateRole(ConnectionContext& ctx, std::string_view name,
   }
 }
 
-std::size_t CountRoleDependencies(const catalog::Snapshot& snapshot,
-                                  ObjectId role_id) {
-  std::size_t deps = 0;
-  for (const auto& db : snapshot.GetDatabases()) {
-    for (const auto& schema : snapshot.GetSchemas(db->GetId())) {
-      for (const auto& table :
-           snapshot.GetTables(db->GetId(), schema->GetName())) {
-        const bool referenced =
-          table->GetOwner() == role_id ||
-          absl::c_any_of(table->GetAcl(), [&](const catalog::AclItem& item) {
-            return item.grantee == role_id || item.grantor == role_id;
-          });
-        if (referenced) {
-          ++deps;
-        }
-      }
-    }
-  }
-  return deps;
-}
-
 void DropRole(ConnectionContext& ctx, std::string_view name, bool missing_ok) {
   RequireCreateRolePrivilege(ctx, "drop");
 
@@ -216,7 +195,7 @@ void DropRole(ConnectionContext& ctx, std::string_view name, bool missing_ok) {
                             " because it is required by the database system"));
   }
 
-  if (auto deps = CountRoleDependencies(*snapshot, role->GetId()); deps > 0) {
+  if (auto deps = snapshot->RoleDependentCount(role->GetId()); deps > 0) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
       ERR_MSG("role \"", name,
@@ -1073,6 +1052,9 @@ catalog::ObjectType OwnerObjType(std::string_view word) {
   if (word == "SCHEMA") {
     return catalog::ObjectType::Schema;
   }
+  if (word == "TYPE") {
+    return catalog::ObjectType::PgSqlType;
+  }
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                   ERR_MSG("ALTER ", word, " ... OWNER TO is not supported"));
 }
@@ -1112,6 +1094,19 @@ void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
     }
     rel_name = std::string{name};
     cur_owner = schema->GetOwner();
+  } else if (type == catalog::ObjectType::PgSqlType) {
+    // Types live in their own per-schema namespace, not the relation namespace.
+    const std::string current_schema = ctx.GetCurrentSchema();
+    const auto parsed = ParseObjectName(name, current_schema);
+    auto t = snapshot->GetType(catalog::NoAccessCheck(), ctx.GetDatabaseId(),
+                               parsed.schema, parsed.relation);
+    if (!t) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                      ERR_MSG("type \"", parsed.relation, "\" does not exist"));
+    }
+    schema_name = parsed.schema;
+    rel_name = parsed.relation;
+    cur_owner = t->GetOwner();
   } else {
     // Keep the current-schema string alive: ParseObjectName returns
     // string_views; an unqualified name's schema view points into it.

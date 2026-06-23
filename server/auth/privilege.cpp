@@ -22,7 +22,6 @@
 
 #include <algorithm>
 #include <span>
-#include <vector>
 
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
@@ -30,73 +29,6 @@
 #include "catalog/table.h"
 
 namespace sdb::auth {
-namespace {
-
-// Which per-edge option gates traversal: All = every edge (is_member_of),
-// Inherit = inherit_option edges (has_privs_of_role), Set = set_option edges
-// (member_can_set_role).
-enum class EdgeFilter { All, Inherit, Set };
-
-bool EdgePasses(const catalog::Membership& edge, EdgeFilter filter) {
-  switch (filter) {
-    case EdgeFilter::All:
-      return true;
-    case EdgeFilter::Inherit:
-      return edge.inherit_option;
-    case EdgeFilter::Set:
-      return edge.set_option;
-  }
-  return false;
-}
-
-// BFS over membership edges, following only edges that pass `filter`. Dangling
-// edges (DROP ROLE leaves them behind) are skipped.
-RoleIdSet ComputeClosure(const catalog::Snapshot& snapshot, ObjectId role,
-                         EdgeFilter filter) {
-  RoleIdSet out;
-  if (!role.isSet()) {
-    return out;
-  }
-  out.insert(role);
-  std::vector<ObjectId> work{role};
-  while (!work.empty()) {
-    auto cur = work.back();
-    work.pop_back();
-    auto obj = snapshot.GetObject<catalog::Role>(cur);
-    if (!obj) {
-      continue;
-    }
-    for (const auto& edge : obj->MemberOf()) {
-      if (!EdgePasses(edge, filter)) {
-        continue;
-      }
-      if (out.contains(edge.role) ||
-          !snapshot.GetObject<catalog::Role>(edge.role)) {
-        continue;
-      }
-      out.insert(edge.role);
-      work.push_back(edge.role);
-    }
-  }
-  return out;
-}
-
-}  // namespace
-
-RoleIdSet ComputeEffectiveRoles(const catalog::Snapshot& snapshot,
-                                ObjectId role) {
-  return ComputeClosure(snapshot, role, EdgeFilter::Inherit);
-}
-
-RoleIdSet ComputeMembershipClosure(const catalog::Snapshot& snapshot,
-                                   ObjectId role) {
-  return ComputeClosure(snapshot, role, EdgeFilter::All);
-}
-
-RoleIdSet ComputeSetRoleClosure(const catalog::Snapshot& snapshot,
-                                ObjectId role) {
-  return ComputeClosure(snapshot, role, EdgeFilter::Set);
-}
 
 bool HasAdminOption(const catalog::Snapshot& snapshot, ObjectId member,
                     ObjectId target) {

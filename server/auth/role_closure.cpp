@@ -21,13 +21,62 @@
 #include "auth/role_closure.h"
 
 #include <algorithm>
+#include <vector>
 
-#include "auth/privilege.h"
 #include "catalog/catalog.h"
 #include "catalog/role.h"
 
 namespace sdb::auth {
 namespace {
+
+// Which per-edge option gates traversal: All = every edge (is_member_of),
+// Inherit = inherit_option edges (has_privs_of_role), Set = set_option edges
+// (member_can_set_role).
+enum class EdgeFilter { All, Inherit, Set };
+
+bool EdgePasses(const catalog::Membership& edge, EdgeFilter filter) {
+  switch (filter) {
+    case EdgeFilter::All:
+      return true;
+    case EdgeFilter::Inherit:
+      return edge.inherit_option;
+    case EdgeFilter::Set:
+      return edge.set_option;
+  }
+  return false;
+}
+
+// BFS over membership edges, following only edges that pass `filter`. Dangling
+// edges (DROP ROLE leaves them behind) are skipped.
+RoleIdSet ComputeClosure(const catalog::Snapshot& snapshot, ObjectId role,
+                         EdgeFilter filter) {
+  RoleIdSet out;
+  if (!role.isSet()) {
+    return out;
+  }
+  out.insert(role);
+  std::vector<ObjectId> work{role};
+  while (!work.empty()) {
+    auto cur = work.back();
+    work.pop_back();
+    auto obj = snapshot.GetObject<catalog::Role>(cur);
+    if (!obj) {
+      continue;
+    }
+    for (const auto& edge : obj->MemberOf()) {
+      if (!EdgePasses(edge, filter)) {
+        continue;
+      }
+      if (out.contains(edge.role) ||
+          !snapshot.GetObject<catalog::Role>(edge.role)) {
+        continue;
+      }
+      out.insert(edge.role);
+      work.push_back(edge.role);
+    }
+  }
+  return out;
+}
 
 RoleClosure ComputeRoleClosure(const catalog::Snapshot& snapshot,
                                ObjectId role) {
@@ -51,25 +100,33 @@ RoleClosure ComputeRoleClosure(const catalog::Snapshot& snapshot,
 
 }  // namespace
 
-const RoleClosure& RoleClosureCache::Get(const catalog::Snapshot& snapshot,
-                                         ObjectId role) const {
-  // Hot path: every privilege check hits this. The closure for a (snapshot,
-  // role) is computed once and never changes (the snapshot is immutable COW),
-  // and NodeHashMap nodes are reference-stable across inserts, so a cache hit
-  // only needs a shared read lock -- no writer contention. The exclusive lock
-  // is taken solely to compute+insert on the first miss (double-checked).
-  {
-    absl::ReaderMutexLock lock{&_mu};
-    if (auto it = _by_role.find(role); it != _by_role.end()) {
-      return it->second;
-    }
+RoleIdSet ComputeEffectiveRoles(const catalog::Snapshot& snapshot,
+                                ObjectId role) {
+  return ComputeClosure(snapshot, role, EdgeFilter::Inherit);
+}
+
+RoleIdSet ComputeMembershipClosure(const catalog::Snapshot& snapshot,
+                                   ObjectId role) {
+  return ComputeClosure(snapshot, role, EdgeFilter::All);
+}
+
+RoleIdSet ComputeSetRoleClosure(const catalog::Snapshot& snapshot,
+                                ObjectId role) {
+  return ComputeClosure(snapshot, role, EdgeFilter::Set);
+}
+
+void RoleClosureMap::Build(const catalog::Snapshot& snapshot) {
+  // Eager: compute every role's inherit-closure once, at snapshot publish.
+  // Reads afterward are lock-free lookups into this frozen map. Rebuild cost is
+  // paid only on the (rare) DDL/GRANT publish, never on the (hot) privilege
+  // check.
+  auto roles = snapshot.GetRoles();
+  _by_role.clear();
+  _by_role.reserve(roles.size());
+  for (const auto& role : roles) {
+    _by_role.emplace(role->GetId(),
+                     ComputeRoleClosure(snapshot, role->GetId()));
   }
-  absl::WriterMutexLock lock{&_mu};
-  auto it = _by_role.find(role);
-  if (it == _by_role.end()) {
-    it = _by_role.emplace(role, ComputeRoleClosure(snapshot, role)).first;
-  }
-  return it->second;
 }
 
 }  // namespace sdb::auth

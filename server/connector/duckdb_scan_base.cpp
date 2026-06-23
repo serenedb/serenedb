@@ -33,6 +33,7 @@
 #include <iresearch/store/directory.hpp>
 #include <numeric>
 #include <ranges>
+#include <string_view>
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
@@ -122,6 +123,34 @@ void InitCommonState(CommonScanGlobalState& state,
              state.projected_columns.size());
 }
 
+void DecodeExtractPath(const duckdb::ColumnIndex& column_index,
+                       const duckdb::LogicalType& root_type,
+                       std::vector<std::string_view>& out) {
+  // col->field1 -- exactly one child assumed.
+  SDB_ASSERT(column_index.ChildIndexCount() == 1);
+  const duckdb::ColumnIndex* node = &column_index.GetChildIndex(0);
+  const duckdb::LogicalType* cur_type = &root_type;
+  while (true) {
+    if (node->HasPrimaryIndex()) {
+      SDB_ASSERT(cur_type->id() == duckdb::LogicalTypeId::STRUCT,
+                 "Numeric identifiers are only in structs");
+      const auto node_index = node->GetPrimaryIndex();
+      const auto& children = duckdb::StructType::GetChildTypes(*cur_type);
+      SDB_ASSERT(node_index < children.size(), "Invalid index node");
+      out.emplace_back(children[node_index].first);
+      cur_type = &children[node_index].second;
+    } else {
+      out.emplace_back(node->GetFieldName());
+    }
+    if (!node->HasChildren()) {
+      break;
+    }
+    // col->field1->field2->... etc. Each indirection has exactly one child.
+    SDB_ASSERT(node->ChildIndexCount() == 1);
+    node = &node->GetChildIndex(0);
+  }
+}
+
 void ClassifyColumnstoreProjections(CommonScanGlobalState& state,
                                     const SereneDBScanBindData& bind_data) {
   if (!bind_data.IsInvertedIndexEntry() || !bind_data.inverted_index) {
@@ -130,6 +159,8 @@ void ClassifyColumnstoreProjections(CommonScanGlobalState& state,
       [](auto p) { return p != duckdb::DConstants::INVALID_INDEX; });
     return;
   }
+
+  std::vector<std::string_view> path;
   for (duckdb::idx_t proj = 0; proj < state.projected_columns.size(); ++proj) {
     const auto bind_col = state.projected_columns[proj];
     if (bind_col == duckdb::DConstants::INVALID_INDEX) {
@@ -146,21 +177,10 @@ void ClassifyColumnstoreProjections(CommonScanGlobalState& state,
           proj < state.projected_column_indexes.size()) {
         const auto& column_index = state.projected_column_indexes[proj];
         if (column_index.IsPushdownExtract() && column_index.HasChildren()) {
-          std::vector<std::string> path;
-          const duckdb::ColumnIndex* node = &column_index.GetChildIndex(0);
-          bool by_key_only = true;
-          while (true) {
-            if (node->HasPrimaryIndex()) {
-              by_key_only = false;
-              break;
-            }
-            path.emplace_back(node->GetFieldName());
-            if (!node->HasChildren()) {
-              break;
-            }
-            node = &node->GetChildIndex(0);
-          }
-          if (by_key_only && !path.empty()) {
+          path.clear();
+          DecodeExtractPath(column_index, bind_data.column_types[bind_col],
+                            path);
+          if (!path.empty()) {
             cp.extract_path = std::move(path);
             cp.extract_scan_type = column_index.GetScanType();
           }

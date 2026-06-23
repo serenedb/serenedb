@@ -85,13 +85,6 @@ class Table final : public Object {
   Result SetDefault(std::shared_ptr<Table>& result,
                     std::string_view column_name,
                     std::shared_ptr<ColumnExpr> expr) const;
-  // Sets the table comment (empty string clears it).
-  Result SetComment(std::shared_ptr<Table>& result,
-                    std::string_view comment) const;
-  // Sets a column's comment (empty string clears it).
-  Result SetColumnComment(std::shared_ptr<Table>& result,
-                          std::string_view column_name,
-                          std::string_view comment) const;
   // Appends a CHECK constraint; the name is uniquified against existing ones.
   Result AddCheckConstraint(std::shared_ptr<Table>& result, std::string name,
                             std::shared_ptr<ColumnExpr> expr) const;
@@ -113,6 +106,15 @@ class Table final : public Object {
   Result ChangeColumnType(std::shared_ptr<Table>& result,
                           std::string_view column_name,
                           duckdb::LogicalType new_type) const;
+  // Sets the table-level comment (empty string clears it).
+  Result SetComment(std::shared_ptr<Table>& result,
+                    std::string_view comment) const;
+  // Sets a column's comment (empty clears). ERROR_SERVER_ILLEGAL_NAME if the
+  // column does not exist.
+  Result SetColumnComment(std::shared_ptr<Table>& result,
+                          std::string_view column_name,
+                          std::string_view comment) const;
+  std::string_view Comment() const noexcept { return _comment; }
   // Records `pk_columns` as the table's PRIMARY KEY and appends the supplied
   // NOT NULL check constraints (the caller builds them, matching CREATE TABLE
   // semantics where a PK column is implicitly NOT NULL). The synthetic

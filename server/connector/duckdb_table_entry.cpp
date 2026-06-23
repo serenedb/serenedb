@@ -164,10 +164,11 @@ void SereneDBTableEntry::BindUpdateConstraints(duckdb::Binder& binder,
     return;
   }
 
-  // Search table: deliberately do NOT call the base method -- search
-  // UPDATE is delete+insert at the index level, so we project every physical
-  // column (below) and recompute STORED gen-cols ourselves.
-  auto user_set = update.columns;
+  // Search table: deliberately do NOT call the base method -- search UPDATE is
+  // delete+insert at the index level, so we project every physical column
+  // below. STORED generated columns are recomputed by duckdb's update binder
+  // (bind_update.cpp) whenever an assigned column feeds them, so they already
+  // ride along in update.columns/expressions; we must not add them again here.
 
   // CHECK passthroughs -- VerifyUpdateConstraints needs every CHECK input
   // present in the chunk, otherwise CreateMockChunk skips the check.
@@ -179,42 +180,11 @@ void SereneDBTableEntry::BindUpdateConstraints(duckdb::Binder& binder,
     }
   }
 
-  // STORED gen-col recompute. The bound gen expression lives in
-  // update.bound_defaults[phys] (CheckBinder pre-inlined transitive gen->gen
-  // refs at CREATE TABLE time, so its leaves are non-gen physical cols).
-  // We append a BoundConstantExpression(NULL) sentinel here -- the logical
-  // optimizer rejects BoundReferenceExpression on the logical side, so we
-  // can't put the real expression in. PlanUpdate keys off the sentinel and
-  // substitutes the real expression at physical-plan time.
-  const auto& cols = GetColumns();
-  for (auto& gen_col : cols.Physical()) {
-    if (gen_col.Category() != duckdb::TableColumnType::GENERATED_STORED) {
-      continue;
-    }
-    SDB_ASSERT(gen_col.Physical().index < update.bound_defaults.size());
-    auto& bound_gen = *update.bound_defaults[gen_col.Physical().index];
-
-    duckdb::physical_index_set_t deps;
-    duckdb::ExpressionIterator::VisitExpression<
-      duckdb::BoundReferenceExpression>(
-      bound_gen, [&](const duckdb::BoundReferenceExpression& r) {
-        deps.insert(duckdb::PhysicalIndex(r.index));
-      });
-
-    const bool needs_recompute = absl::c_any_of(
-      deps, [&](auto d) { return absl::c_contains(user_set, d); });
-    if (!needs_recompute) {
-      continue;
-    }
-    duckdb::LogicalUpdate::BindExtraColumns(*this, get, proj, update, deps);
-    update.expressions.push_back(
-      duckdb::make_uniq<duckdb::BoundConstantExpression>(
-        duckdb::Value(gen_col.Type())));
-    update.columns.push_back(gen_col.Physical());
-  }
-
   // Project every physical column so the deleted-then-reinserted row can be
-  // rebuilt in full from the update's input.
+  // rebuilt in full from the update's input. Columns already in the update set
+  // (user assignments + duckdb's generated-column recomputes) are skipped; the
+  // rest are added as old-value passthroughs.
+  const auto& cols = GetColumns();
   duckdb::physical_index_set_t all_physical;
   for (auto& col : cols.Physical()) {
     all_physical.insert(col.Physical());

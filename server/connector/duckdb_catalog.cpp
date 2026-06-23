@@ -763,11 +763,13 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   auto sdb_table = table_entry.GetSereneDBTable();
 
   if (sdb_table->GetEngine() == catalog::TableEngine::Search) {
-    // Wrap `plan` with a PhysicalProjection that resolves VALUE_DEFAULT (and
-    // recomputes STORED gen-cols), passing the PK virtuals through, so
-    // SereneDBSearchUpdate only sees [resolved SET vals, pk_virtuals]. A Search
-    // table has no separate inverted indexes, so BuildRowIdColumns appends only
-    // the PK virtuals: [real..., pk_0..pk_{n-1}] / [real..., generated_pk].
+    // Wrap `plan` with a PhysicalProjection that resolves VALUE_DEFAULT and
+    // passes every projected new-row column through -- the SET values, duckdb's
+    // recomputed STORED generated columns, and the old-value passthroughs that
+    // BindUpdateConstraints added -- plus the PK virtuals, so SereneDBSearchUpdate
+    // sees [resolved new-row vals, pk_virtuals]. A Search table has no separate
+    // inverted indexes, so BuildRowIdColumns appends only the PK virtuals:
+    // [real..., pk_0..pk_{n-1}] / [real..., generated_pk].
     const auto& pk_col_ids = sdb_table->PKColumns();
     const auto num_pk = pk_col_ids.size();
     const auto num_virtual = pk_col_ids.empty() ? 1 : num_pk;
@@ -779,48 +781,16 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
     proj_types.reserve(num_updates + num_virtual);
     proj_exprs.reserve(num_updates + num_virtual);
 
-    // phys -> expression that yields its post-update value. Built once, used
-    // by the gen-col branch below to rewrite BoundRef leaves in O(1).
-    duckdb::physical_index_map_t<const duckdb::Expression*> dep_source;
-    for (duckdb::idx_t j = 0; j < op.columns.size(); ++j) {
-      const auto t = op.expressions[j]->GetExpressionType();
-      if (t == duckdb::ExpressionType::VALUE_DEFAULT) {
-        dep_source[op.columns[j]] =
-          op.bound_defaults[op.columns[j].index].get();
-      } else if (t == duckdb::ExpressionType::BOUND_REF) {
-        dep_source[op.columns[j]] = op.expressions[j].get();
-      }
-    }
-
     for (duckdb::idx_t i = 0; i < num_updates; ++i) {
       auto& expr = op.expressions[i];
-      const auto t = expr->GetExpressionType();
-      if (t == duckdb::ExpressionType::VALUE_DEFAULT) {
+      if (expr->GetExpressionType() == duckdb::ExpressionType::VALUE_DEFAULT) {
         auto phys = op.columns[i].index;
         SDB_ASSERT(phys < op.bound_defaults.size());
         proj_types.push_back(op.bound_defaults[phys]->GetReturnType());
         proj_exprs.push_back(op.bound_defaults[phys]->Copy());
-      } else if (t == duckdb::ExpressionType::BOUND_REF) {
+      } else {
         proj_types.push_back(expr->GetReturnType());
         proj_exprs.push_back(expr->Copy());
-      } else {
-        // STORED gen-col recompute: placeholder from BindUpdateConstraints;
-        // the real expression lives in bound_defaults. Rewrite each
-        // BoundRef(dep_phys) leaf to the dep's post-update source.
-        auto phys = op.columns[i].index;
-        SDB_ASSERT(phys < op.bound_defaults.size());
-        auto bound_copy = op.bound_defaults[phys]->Copy();
-        duckdb::ExpressionIterator::VisitExpressionClassMutable(
-          bound_copy, duckdb::ExpressionClass::BOUND_REF,
-          [&](duckdb::unique_ptr<duckdb::Expression>& e) {
-            auto dep = duckdb::PhysicalIndex(
-              e->Cast<duckdb::BoundReferenceExpression>().index);
-            auto it = dep_source.find(dep);
-            SDB_ASSERT(it != dep_source.end());
-            e = it->second->Copy();
-          });
-        proj_types.push_back(bound_copy->GetReturnType());
-        proj_exprs.push_back(std::move(bound_copy));
       }
     }
 

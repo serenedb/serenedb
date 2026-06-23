@@ -200,3 +200,6 @@
 [submodule "third_party/database-connector"]
 	path = third_party/database-connector
 	url = https://github.com/serenedb/database-connector.git
+[submodule "third_party/duckdb-inet"]
+	path = third_party/duckdb-inet
+	url = git@github.com:serenedb/duckdb-inet.git

@@ -682,7 +682,7 @@ set(LATEST_STORAGE TRUE CACHE BOOL "" FORCE)
 # Suppress the per-extension "vcpkg.json present but VCPKG_BUILD not set" warning.
 set(VCPKG_BUILD ON CACHE BOOL "" FORCE)
 set(BUILD_EXTENSIONS
-    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu"
+    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet"
     CACHE STRING
     ""
     FORCE
@@ -723,6 +723,7 @@ target_link_libraries(
         postgres_scanner_extension
         autocomplete_extension
         icu_extension
+        inet_extension
 )
 
 # !!! KEEP THIS LAST !!!

@@ -274,15 +274,16 @@ void MaterializeExtractLeaf(const ColumnReader& leaf,
                             MaterializeState& leaf_state, const DocIds& rows,
                             const duckdb::LogicalType& scan_type,
                             duckdb::Vector& out_vec, duckdb::idx_t out_offset,
-                            duckdb::ClientContext& context) {
+                            duckdb::ClientContext& context,
+                            bool may_use_entire = false) {
   if (leaf.Type() == scan_type) {
     MaterializeNode(leaf, leaf_state, rows, out_vec, out_offset,
-                    /*may_use_entire=*/true);
+                    may_use_entire);
     return;
   }
   auto scratch = leaf_state.scratch.Acquire(leaf.Type());
   MaterializeNode(leaf, leaf_state, rows, *scratch, /*output_start=*/0,
-                  /*may_use_entire=*/true);
+                  may_use_entire);
   CastExtractInto(context, *scratch, out_vec, rows.size(), out_offset,
                   leaf_state.scratch);
 }
@@ -299,7 +300,7 @@ void MaterializeStructExtractNode(
   const ColumnReader& reader, MaterializeState& state, const DocIds& doc_ids,
   std::span<const std::string_view> path, const duckdb::LogicalType& scan_type,
   duckdb::Vector& out_vec, duckdb::idx_t output_start,
-  duckdb::ClientContext& context) {
+  duckdb::ClientContext& context, bool may_use_entire = false) {
   SDB_ASSERT(reader.Type().id() == duckdb::LogicalTypeId::STRUCT);
   SDB_ASSERT(!path.empty());
   if (doc_ids.size() == 0) {
@@ -326,7 +327,7 @@ void MaterializeStructExtractNode(
     leaf_state = leaf_state->children[idx].get();
   }
   MaterializeExtractLeaf(*leaf, *leaf_state, doc_ids, scan_type, out_vec,
-                         output_start, context);
+                         output_start, context, may_use_entire);
 }
 
 template<typename DocIds>
@@ -384,10 +385,12 @@ void MaterializeExtractNode(const ColumnReader& reader, MaterializeState& state,
                             std::span<const std::string_view> path,
                             const duckdb::LogicalType& scan_type,
                             duckdb::Vector& out_vec, duckdb::idx_t output_start,
-                            duckdb::ClientContext& context) {
+                            duckdb::ClientContext& context,
+                            bool may_use_entire = false) {
   if (reader.Type().id() == duckdb::LogicalTypeId::STRUCT) {
     MaterializeStructExtractNode(reader, state, doc_ids, path, scan_type,
-                                 out_vec, output_start, context);
+                                 out_vec, output_start, context,
+                                 may_use_entire);
   } else {
     MaterializeVariantExtractNode(reader, state, doc_ids, path, scan_type,
                                   out_vec, output_start, context);

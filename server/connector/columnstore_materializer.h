@@ -104,7 +104,8 @@ class ColumnstoreMaterializer {
         SDB_ASSERT(_context);
         irs::MaterializeExtractNode(
           *b.reader, *b.state, irs::IotaRange{start_doc, count}, b.extract_path,
-          b.extract_scan_type, out_vec, output_start, *_context);
+          b.extract_scan_type, out_vec, output_start, *_context,
+          may_use_entire);
         continue;
       }
       const auto type_id = b.reader->Type().id();

@@ -1324,6 +1324,74 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
                                 table_name, "\" does not exist"));
       }
 
+      // IF [NOT] EXISTS on a struct field short-circuits to a no-op, matching
+      // ADD/DROP COLUMN IF [NOT] EXISTS on top-level columns. The by-name remap
+      // below ignores the flag and would otherwise error on a duplicate/absent
+      // field, so check existence here. `path[0]` is the root column (its type
+      // is `root`); deeper segments navigate into nested structs.
+      auto field_exists = [](const duckdb::LogicalType& root,
+                             const duckdb::vector<duckdb::string>& path,
+                             size_t path_end, const std::string& leaf) -> bool {
+        const duckdb::LogicalType* cur = &root;
+        for (size_t i = 1; i < path_end; ++i) {
+          if (cur->id() != duckdb::LogicalTypeId::STRUCT) {
+            return false;
+          }
+          const duckdb::LogicalType* next = nullptr;
+          for (const auto& [fname, ftype] :
+               duckdb::StructType::GetChildTypes(*cur)) {
+            if (duckdb::StringUtil::CIEquals(fname, path[i])) {
+              next = &ftype;
+              break;
+            }
+          }
+          if (!next) {
+            return false;
+          }
+          cur = next;
+        }
+        if (cur->id() != duckdb::LogicalTypeId::STRUCT) {
+          return false;
+        }
+        for (const auto& [fname, ftype] :
+             duckdb::StructType::GetChildTypes(*cur)) {
+          (void)ftype;
+          if (duckdb::StringUtil::CIEquals(fname, leaf)) {
+            return true;
+          }
+        }
+        return false;
+      };
+      // A struct-field op requires the root column to be a struct.
+      if (col_it->type.id() != duckdb::LogicalTypeId::STRUCT) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+                        ERR_MSG("field \"", root_column, "\" is not a struct"));
+      }
+      if (table_info.alter_table_type == duckdb::AlterTableType::ADD_FIELD) {
+        const auto& add_field = table_info.Cast<duckdb::AddFieldInfo>();
+        if (field_exists(col_it->type, *column_path, column_path->size(),
+                         add_field.new_field.Name())) {
+          if (add_field.if_field_not_exists) {
+            return;
+          }
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
+            ERR_MSG("field already exists in column \"", root_column, "\""));
+        }
+      } else if (table_info.alter_table_type ==
+                 duckdb::AlterTableType::REMOVE_FIELD) {
+        const auto& remove_field = table_info.Cast<duckdb::RemoveFieldInfo>();
+        if (!field_exists(col_it->type, *column_path, column_path->size() - 1,
+                          column_path->back())) {
+          if (remove_field.if_column_exists) {
+            return;
+          }
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                          ERR_MSG("column or field of \"", root_column,
+                                  "\" does not exist in \"", table_name, "\""));
+        }
+      }
+
       duckdb::StructFieldRemap remap;
       try {
         if (table_info.alter_table_type == duckdb::AlterTableType::ADD_FIELD) {

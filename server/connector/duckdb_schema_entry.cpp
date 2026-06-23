@@ -1324,11 +1324,8 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
                                 table_name, "\" does not exist"));
       }
 
-      // IF [NOT] EXISTS on a struct field short-circuits to a no-op, matching
-      // ADD/DROP COLUMN IF [NOT] EXISTS on top-level columns. The by-name remap
-      // below ignores the flag and would otherwise error on a duplicate/absent
-      // field, so check existence here. `path[0]` is the root column (its type
-      // is `root`); deeper segments navigate into nested structs.
+      // The remap below ignores IF [NOT] EXISTS, so short-circuit the no-op
+      // (Add of an existing field / Drop of a missing one) here.
       auto field_exists = [](const duckdb::LogicalType& root,
                              const duckdb::vector<duckdb::string>& path,
                              size_t path_end, const std::string& leaf) -> bool {

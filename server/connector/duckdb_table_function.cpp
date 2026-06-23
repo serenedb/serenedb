@@ -360,6 +360,12 @@ std::string ProjectionDisplayName(const SereneDBScanBindData& bind,
                                   const duckdb::vector<std::string>& names) {
   const auto col_id = column_index.GetPrimaryIndex();
   if (col_id < names.size()) {
+    if (column_index.IsPushdownExtract() && column_index.HasChildren() &&
+        col_id < bind.column_types.size()) {
+      std::vector<std::string_view> path{names[col_id]};
+      DecodeExtractPath(column_index, bind.column_types[col_id], path);
+      return absl::StrJoin(path, ".");
+    }
     return names[col_id];
   }
   if (const auto pk_idx = SereneDBTableEntry::VirtualToPKColumnIndex(col_id);
@@ -596,8 +602,12 @@ bool IResearchSupportsPushdownExtract(const duckdb::FunctionData& bind_data_p,
     return false;
   }
   const auto bind_col = col_idx.index;
-  if (bind_col >= bind.column_ids.size() ||
-      bind.column_types[bind_col].id() != duckdb::LogicalTypeId::VARIANT) {
+  if (bind_col >= bind.column_ids.size()) {
+    return false;
+  }
+  const auto type_id = bind.column_types[bind_col].id();
+  if (type_id != duckdb::LogicalTypeId::VARIANT &&
+      type_id != duckdb::LogicalTypeId::STRUCT) {
     return false;
   }
   const auto* info =

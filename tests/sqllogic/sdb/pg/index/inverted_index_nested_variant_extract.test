@@ -1,0 +1,145 @@
+hash-threshold 100
+
+# Field-extraction over VARIANTs stored in the iresearch columnstore.
+#
+# Three nesting shapes, all served by the index (INCLUDE'd columns):
+#   1. plain variant object       -> v.a
+#   2. variant holding an object  -> v.inner.x   (variant-of-struct)
+#   3. struct holding a variant   -> s.vi.k      (struct-of-variant)
+#
+# Regression guard: (3) `variant_extract(struct_extract(s,'vi'),'k')` over a
+# columnstore-materialized struct-child variant used to SIGSEGV
+# (CastVariantToJSON -> UnifiedVariantVectorData::GetTypeId), while the whole
+# struct, the variant child alone, and the same extract through a subquery
+# barrier all round-trip fine.
+
+statement ok
+CREATE TABLE nv_t (
+  pk INTEGER PRIMARY KEY,
+  txt VARCHAR,
+  s STRUCT(vi VARIANT, n INTEGER),
+  v VARIANT
+)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY nv_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+)
+
+
+statement ok
+CREATE INDEX nv_t_idx ON nv_t USING inverted(pk, txt nv_en)
+  INCLUDE (s, v)
+
+
+statement ok
+INSERT INTO nv_t VALUES
+  (1, 'first',  ROW('{"k": 1}'::json::variant, 100),
+                '{"a": 10, "inner": {"x": 7, "y": 8}}'::json::variant),
+  (2, 'second', ROW('{"k": 2}'::json::variant, 200),
+                '{"a": 20, "inner": {"x": 9, "y": 11}}'::json::variant)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) nv_t
+
+
+# --- controls: whole-value access round-trips ---------------------------
+
+query
+SELECT pk, s FROM nv_t_idx WHERE txt @@ ts_phrase('first') ORDER BY pk;
+----
+pk	s
+1	("{""k"":1}",100)
+
+
+query
+SELECT pk, s.vi AS vi FROM nv_t_idx WHERE txt @@ ts_phrase('first') ORDER BY pk;
+----
+pk	vi
+1	{"k":1}
+
+
+query
+SELECT pk, s.n AS n FROM nv_t_idx WHERE txt @@ ts_phrase('first') ORDER BY pk;
+----
+pk	n
+1	100
+
+
+query
+SELECT pk, v FROM nv_t_idx WHERE txt @@ ts_phrase('first') ORDER BY pk;
+----
+pk	v
+1	{"a":10,"inner":{"x":7,"y":8}}
+
+
+# --- 1. plain variant key extract ---------------------------------------
+
+query
+SELECT pk, v.a AS a FROM nv_t_idx WHERE txt @@ ts_phrase('first') ORDER BY pk;
+----
+pk	a
+1	10
+
+
+query
+SELECT pk, v.a AS a FROM nv_t_idx WHERE txt @@ ts_phrase('second') ORDER BY pk;
+----
+pk	a
+2	20
+
+
+# --- 2. variant-of-struct: extract through a nested object --------------
+
+query
+SELECT pk, v.inner.x AS x, v.inner.y AS y FROM nv_t_idx
+WHERE txt @@ ts_phrase('first') ORDER BY pk;
+----
+pk	x	y
+1	7	8
+
+
+# --- 3. struct-of-variant: extract a key out of a struct's variant field
+query
+SELECT pk, s.vi.k AS k FROM nv_t_idx WHERE txt @@ ts_phrase('first') ORDER BY pk;
+----
+pk	k
+1	1
+
+
+query
+SELECT pk, s.vi.k AS k FROM nv_t_idx WHERE txt @@ ts_phrase('second') ORDER BY pk;
+----
+pk	k
+2	2
+
+
+# Same extract through a subquery barrier (materialises s.vi first).
+
+query
+SELECT pk, vi.k AS k
+FROM (SELECT pk, s.vi AS vi FROM nv_t_idx WHERE txt @@ ts_phrase('first')) t
+ORDER BY pk;
+----
+pk	k
+1	1
+
+
+# Both rows side by side -- exercises the struct-child variant across a run.
+
+query
+SELECT pk, s.vi.k AS k, v.inner.x AS x FROM nv_t_idx
+WHERE txt @@ ts_phrase('first') OR txt @@ ts_phrase('second')
+ORDER BY pk;
+----
+pk	k	x
+1	1	7
+2	2	9

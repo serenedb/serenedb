@@ -132,6 +132,15 @@ void InitCommonState(CommonScanGlobalState& state,
                      const SereneDBScanBindData& bind_data,
                      duckdb::TableFunctionInitInput& input);
 
+// Decode a pushdown-extract ColumnIndex into its dotted field-path components.
+// Struct steps carry a numeric index resolved against `root_type`; variant
+// steps carry the field name directly. `column_index` must be a pushdown
+// extract with children. Components are appended to `out` and borrow from the
+// type/index (valid for the scan's lifetime).
+void DecodeExtractPath(const duckdb::ColumnIndex& column_index,
+                       const duckdb::LogicalType& root_type,
+                       std::vector<std::string_view>& out);
+
 void ClassifyColumnstoreProjections(CommonScanGlobalState& state,
                                     const SereneDBScanBindData& bind_data);
 

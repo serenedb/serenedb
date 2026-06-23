@@ -442,13 +442,6 @@ void CatalogStore::WriteContext::ChangeStoreColumnType(std::string table,
   });
 }
 
-void CatalogStore::WriteContext::AlterStoreColumnField(std::string table,
-                                                       std::string clause) {
-  _entries.push_back({.op = Op::AlterStoreColumnField,
-                      .store_table = {.name = std::move(table)},
-                      .name_a = std::move(clause)});
-}
-
 void CatalogStore::WriteContext::DropStoreForeignKey(std::string table,
                                                      std::string other) {
   _entries.push_back({
@@ -933,15 +926,6 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
             absl::StrAppend(&sql, " USING ", entry.def);
           }
           auto res = _conn->Query(sql);
-          if (res->HasError()) {
-            return {ERROR_INTERNAL, res->GetError()};
-          }
-          break;
-        }
-        case WriteContext::Op::AlterStoreColumnField: {
-          auto res = _conn->Query(
-            absl::StrCat("ALTER TABLE \"", kStoreAlias, "\".main.",
-                         QuotedIdent(entry.store_table.name), " ", entry.name_a));
           if (res->HasError()) {
             return {ERROR_INTERNAL, res->GetError()};
           }

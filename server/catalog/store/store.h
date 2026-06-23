@@ -161,11 +161,6 @@ class CatalogStore {
     // the implicit cast).
     void ChangeStoreColumnType(std::string table, std::string name,
                                std::string type_sql, std::string using_sql);
-    // Adds/drops/renames a field inside a STRUCT column. `clause` is the full
-    // ALTER clause following the table name, e.g. `ADD COLUMN "s"."k" INTEGER`,
-    // `DROP COLUMN "s"."i"` or `RENAME COLUMN "s"."j" TO "v"`. The store engine
-    // performs the data re-encode (added fields default to NULL).
-    void AlterStoreColumnField(std::string table, std::string clause);
     // Removes the FK linkage entry on `table` that references/backs
     // `other` (symmetric: PK-side back-reference or the FK itself).
     void DropStoreForeignKey(std::string table, std::string other);
@@ -202,7 +197,6 @@ class CatalogStore {
       DropStoreColumn,
       AddStoreColumn,
       ChangeStoreColumnType,
-      AlterStoreColumnField,
       DropStoreForeignKey,
       DropStoreCheck,
       DropStoreNotNull,

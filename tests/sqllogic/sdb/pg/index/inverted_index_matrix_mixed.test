@@ -1,0 +1,548 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY kw_dict(template = 'keyword');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ng_dict(template = 'ngram', mingram = 2,
+    maxgram = 3, preserveoriginal = false, frequency = true, position = true);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geo_s2_dict(template = 'geojson',
+    coding = 's2point');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geo_src_dict(template = 'geojson',
+    coding = 'source');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY any_text_dict(template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false, accent = false, frequency = true, position = true);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geopoint_dict(template = 'geopoint', latitude = 'lat', longitude = 'lng');
+
+
+# ============================================================================
+# Mixed-tokenizer multi-column inverted indexes.
+# ----------------------------------------------------------------------------
+# Each CREATE INDEX combines opclasses of different families on the same
+# index (text term_dict + geo + implicit numeric, keyword + ngram + INCLUDE,
+# hnsw with mixed INCLUDE types, two JSON columns with different opclasses).
+# For each accepted index we verify:
+#   * a single-column filter routes through the per-column codec, and
+#   * a multi-column AND filter combines posting lists across the heterogeneous
+#     opclasses on one index.
+# ============================================================================
+
+# --- (a) text(kw_dict) + geo_s2 + implicit numeric --------------------------
+
+statement ok
+CREATE TABLE g10_a(pk INTEGER PRIMARY KEY,
+                   v VARCHAR,
+                   g GEOMETRY('OGC:CRS84'),
+                   n INTEGER);
+
+statement ok
+CREATE INDEX g10_a_mix ON g10_a
+    USING inverted(pk, v kw_dict, g geo_s2_dict, n);
+
+statement ok
+INSERT INTO g10_a VALUES
+    (1, 'alpha', 'POINT(0 0)'::GEOMETRY('OGC:CRS84'),   10),
+    (2, 'beta',  'POINT(10 20)'::GEOMETRY('OGC:CRS84'), 50);
+
+statement ok
+VACUUM (REFRESH_TABLE) g10_a;
+
+query
+SELECT pk FROM g10_a_mix WHERE v @@ ts_like('alpha') ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM g10_a_mix
+WHERE v @@ ts_like('beta') AND n @@ ts_between(40, 60, true, true)
+ORDER BY pk;
+----
+pk
+2
+
+# --- (b) kw_dict + ng_dict + INCLUDE(numeric) -------------------------------
+
+statement ok
+CREATE TABLE g10_b(pk INTEGER PRIMARY KEY,
+                   v1 VARCHAR,
+                   v2 VARCHAR,
+                   n  INTEGER);
+
+statement ok
+CREATE INDEX g10_b_mix ON g10_b
+    USING inverted(pk, v1 kw_dict, v2 ng_dict) INCLUDE (n);
+
+statement ok
+INSERT INTO g10_b VALUES
+    (1, 'alpha', 'wonderful', 10),
+    (2, 'beta',  'magnificent', 50);
+
+statement ok
+VACUUM (REFRESH_TABLE) g10_b;
+
+query
+SELECT pk FROM g10_b_mix WHERE v2 @@ ts_ngram('won', 0.5) ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM g10_b_mix
+WHERE v1 @@ ts_like('beta') AND v2 @@ ts_ngram('mag', 0.5)
+ORDER BY pk;
+----
+pk
+2
+
+# --- (c) hnsw + INCLUDE(VARCHAR, INTEGER, GEOMETRY) -------------------------
+
+statement ok
+CREATE TABLE g10_c(pk INTEGER PRIMARY KEY,
+                   emb FLOAT[3],
+                   v VARCHAR,
+                   n INTEGER,
+                   g GEOMETRY('OGC:CRS84'));
+
+statement ok
+CREATE INDEX g10_c_mix ON g10_c
+    USING inverted(pk, emb hnsw (metric = 'l2')) INCLUDE (v, n, g);
+
+statement ok
+INSERT INTO g10_c VALUES
+    (1, [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT], 'alpha', 10,
+        'POINT(0 0)'::GEOMETRY('OGC:CRS84')),
+    (2, [0.0::FLOAT, 1.0::FLOAT, 0.0::FLOAT], 'beta',  50,
+        'POINT(10 20)'::GEOMETRY('OGC:CRS84'));
+
+statement ok
+VACUUM (REFRESH_TABLE) g10_c;
+
+query
+SELECT pk FROM g10_c_mix
+ORDER BY emb <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3]
+LIMIT 1;
+----
+pk
+1
+
+query
+SELECT pk FROM g10_c_mix
+WHERE emb <-> [0.0::FLOAT, 1.0::FLOAT, 0.0::FLOAT]::FLOAT[3] < 0.5
+  AND n = 50
+ORDER BY pk;
+----
+pk
+2
+
+# --- (d) two JSON columns: kw_dict primitive + geo_s2 GeoJSON + numeric -----
+
+statement ok
+CREATE TABLE g10_d(pk INTEGER PRIMARY KEY,
+                   j  JSON,
+                   j2 JSON,
+                   n  INTEGER);
+
+statement ok
+CREATE INDEX g10_d_mix ON g10_d
+    USING inverted(pk, j kw_dict, j2 geo_s2_dict, n);
+
+statement ok
+INSERT INTO g10_d VALUES
+    (1, '"alpha"', '{"type":"Point","coordinates":[0.0, 0.0]}',   10),
+    (2, '"beta"',  '{"type":"Point","coordinates":[10.0, 20.0]}', 50);
+
+statement ok
+VACUUM (REFRESH_TABLE) g10_d;
+
+query
+SELECT pk FROM g10_d_mix WHERE j @@ ts_like('alpha') ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM g10_d_mix
+WHERE j @@ ts_like('beta') AND n @@ ts_between(40, 60, true, true)
+ORDER BY pk;
+----
+pk
+2
+
+
+# ============================================================================
+# Mixed-tokenizer multi-column inverted indexes  --  combos omitted from g10.
+# ----------------------------------------------------------------------------
+# Each subsection builds one mixed-opclass inverted index, inserts two rows,
+# and verifies (i) a single-column probe routes through the per-column codec
+# and (ii) a multi-predicate AND probe intersects posting lists across the
+# heterogeneous opclasses on one index. All dicts are reused from the
+# top-of-file and g1/g4 declarations.
+# ============================================================================
+
+# --- (a) kw_dict + ng_dict on two VARCHAR columns, no INCLUDE ---------------
+
+statement ok
+CREATE TABLE g13_a(pk INTEGER PRIMARY KEY,
+                   v  VARCHAR,
+                   v2 VARCHAR);
+
+statement ok
+CREATE INDEX g13_a_mix ON g13_a
+    USING inverted(pk, v kw_dict, v2 ng_dict);
+
+statement ok
+INSERT INTO g13_a VALUES
+    (1, 'alpha', 'wonderful'),
+    (2, 'beta',  'magnificent');
+
+statement ok
+VACUUM (REFRESH_TABLE) g13_a;
+
+query
+SELECT pk FROM g13_a_mix WHERE v @@ ts_like('alpha') ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM g13_a_mix WHERE v2 @@ ts_ngram('mag', 0.5) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM g13_a_mix
+WHERE v @@ ts_like('alpha') AND v2 @@ ts_ngram('won', 0.5)
+ORDER BY pk;
+----
+pk
+1
+
+# --- (b) kw_dict + any_text_dict on two VARCHAR columns ---------------------
+
+statement ok
+CREATE TABLE g13_b(pk INTEGER PRIMARY KEY,
+                   v  VARCHAR,
+                   v2 VARCHAR);
+
+statement ok
+CREATE INDEX g13_b_mix ON g13_b
+    USING inverted(pk, v kw_dict, v2 any_text_dict);
+
+statement ok
+INSERT INTO g13_b VALUES
+    (1, 'alpha', 'quick brown fox'),
+    (2, 'beta',  'lazy yellow dog');
+
+statement ok
+VACUUM (REFRESH_TABLE) g13_b;
+
+query
+SELECT pk FROM g13_b_mix WHERE v @@ ts_like('alpha') ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM g13_b_mix WHERE v2 @@ ts_like('lazy') ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM g13_b_mix
+WHERE v @@ ts_like('beta') AND v2 @@ ts_like('yellow')
+ORDER BY pk;
+----
+pk
+2
+
+# --- (c) two distinct geo opclasses on two JSON columns ---------------------
+
+statement ok
+CREATE TABLE g13_c(pk INTEGER PRIMARY KEY,
+                   j  JSON,
+                   j2 JSON);
+
+statement ok
+CREATE INDEX g13_c_mix ON g13_c
+    USING inverted(pk, j geo_s2_dict, j2 geo_src_dict);
+
+statement ok
+INSERT INTO g13_c VALUES
+    (1, '{"type":"Point","coordinates":[0.0, 0.0]}',
+        '{"type":"Point","coordinates":[0.0, 0.0]}'),
+    (2, '{"type":"Point","coordinates":[10.0, 20.0]}',
+        '{"type":"Point","coordinates":[10.0, 20.0]}');
+
+statement ok
+VACUUM (REFRESH_TABLE) g13_c;
+
+query
+SELECT count(*) FROM g13_c_mix;
+----
+count
+2
+
+query
+SELECT pk FROM g13_c_mix
+WHERE j <-> '{"type":"Point","coordinates":[0.1, 0.1]}' < 100000.0
+ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM g13_c_mix
+WHERE j2 <-> '{"type":"Point","coordinates":[10.0, 20.0]}' < 1.0
+ORDER BY pk;
+----
+pk
+2
+
+# --- (d) kw + ng + hnsw + INCLUDE(numeric, VARCHAR) -------------------------
+
+statement ok
+CREATE TABLE g13_d(pk  INTEGER PRIMARY KEY,
+                   v   VARCHAR,
+                   v2  VARCHAR,
+                   emb FLOAT[3],
+                   n   INTEGER,
+                   tag VARCHAR);
+
+statement ok
+CREATE INDEX g13_d_mix ON g13_d
+    USING inverted(pk, v kw_dict, v2 ng_dict, emb hnsw (metric = 'l2'))
+    INCLUDE (n, tag);
+
+statement ok
+INSERT INTO g13_d VALUES
+    (1, 'alpha', 'wonderful',   [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT], 10, 'first'),
+    (2, 'beta',  'magnificent', [0.0::FLOAT, 1.0::FLOAT, 0.0::FLOAT], 50, 'second');
+
+statement ok
+VACUUM (REFRESH_TABLE) g13_d;
+
+query
+SELECT pk, n, tag FROM g13_d_mix WHERE v @@ ts_like('alpha') ORDER BY pk;
+----
+pk	n	tag
+1	10	first
+
+query
+SELECT pk, n, tag FROM g13_d_mix WHERE v2 @@ ts_ngram('mag', 0.5) ORDER BY pk;
+----
+pk	n	tag
+2	50	second
+
+query
+SELECT pk FROM g13_d_mix
+ORDER BY emb <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3]
+LIMIT 1;
+----
+pk
+1
+
+query
+SELECT pk, tag FROM g13_d_mix
+WHERE v @@ ts_like('beta')
+  AND v2 @@ ts_ngram('mag', 0.5)
+  AND emb <-> [0.0::FLOAT, 1.0::FLOAT, 0.0::FLOAT]::FLOAT[3] < 0.5
+ORDER BY pk;
+----
+pk	tag
+2	second
+
+# --- (e) kw_dict on JSON primitive + geopoint_dict on lat/lng JSON ----------
+
+statement ok
+CREATE TABLE g13_e(pk INTEGER PRIMARY KEY,
+                   j  JSON,
+                   j2 JSON);
+
+statement ok
+CREATE INDEX g13_e_mix ON g13_e
+    USING inverted(pk, j kw_dict, j2 geopoint_dict);
+
+statement ok
+INSERT INTO g13_e VALUES
+    (1, '"alpha"', '{"name":"a","lat":55.703900,"lng":37.615895}'),
+    (2, '"beta"',  '{"name":"b","lat":55.704831,"lng":37.616297}');
+
+statement ok
+VACUUM (REFRESH_TABLE) g13_e;
+
+query
+SELECT pk FROM g13_e_mix WHERE j @@ ts_like('alpha') ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM g13_e_mix
+WHERE j2 <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
+ORDER BY pk;
+----
+pk
+1
+2
+
+query
+SELECT pk FROM g13_e_mix
+WHERE j @@ ts_like('beta')
+  AND j2 <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
+ORDER BY pk;
+----
+pk
+2
+
+# --- (f) column kw + expression ng + implicit numeric on one index ----------
+
+statement ok
+CREATE TABLE g13_f(pk INTEGER PRIMARY KEY,
+                   v  VARCHAR,
+                   v2 VARCHAR,
+                   n  INTEGER);
+
+statement ok
+CREATE INDEX g13_f_mix ON g13_f
+    USING inverted(pk, v kw_dict, (upper(v2)) ng_dict, n);
+
+statement ok
+INSERT INTO g13_f VALUES
+    (1, 'alpha', 'wonderful',   10),
+    (2, 'beta',  'magnificent', 50);
+
+statement ok
+VACUUM (REFRESH_TABLE) g13_f;
+
+query
+SELECT pk FROM g13_f_mix WHERE v @@ ts_like('alpha') ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM g13_f_mix WHERE upper(v2) @@ ts_ngram('MAG', 0.5) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM g13_f_mix WHERE n @@ ts_between(40, 60, true, true) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM g13_f_mix
+WHERE v @@ ts_like('beta')
+  AND upper(v2) @@ ts_ngram('MAG', 0.5)
+  AND n @@ ts_between(40, 60, true, true)
+ORDER BY pk;
+----
+pk
+2
+
+# --- (g) geo_s2 + kw + INCLUDE(JSON) ----------------------------------------
+
+statement ok
+CREATE TABLE g13_g(pk INTEGER PRIMARY KEY,
+                   g  GEOMETRY('OGC:CRS84'),
+                   v  VARCHAR,
+                   j  JSON);
+
+statement ok
+CREATE INDEX g13_g_mix ON g13_g
+    USING inverted(pk, g geo_s2_dict, v kw_dict) INCLUDE (j);
+
+statement ok
+INSERT INTO g13_g VALUES
+    (1, 'POINT(0 0)'::GEOMETRY('OGC:CRS84'),   'alpha', '{"meta":"first"}'),
+    (2, 'POINT(10 20)'::GEOMETRY('OGC:CRS84'), 'beta',  '{"meta":"second"}');
+
+statement ok
+VACUUM (REFRESH_TABLE) g13_g;
+
+query
+SELECT pk, j FROM g13_g_mix WHERE v @@ ts_like('alpha') ORDER BY pk;
+----
+pk	j
+1	{"meta":"first"}
+
+query
+SELECT count(*) FROM g13_g_mix;
+----
+count
+2
+
+query
+SELECT pk, j FROM g13_g_mix
+WHERE v @@ ts_like('beta')
+  AND g <-> 'POINT(10 20)'::GEOMETRY('OGC:CRS84') < 1.0
+ORDER BY pk;
+----
+pk	j
+2	{"meta":"second"}
+
+
+# --- teardown ---------------------------------------------------------------
+
+statement ok
+DROP TABLE g10_a;
+
+statement ok
+DROP TABLE g10_b;
+
+statement ok
+DROP TABLE g10_c;
+
+statement ok
+DROP TABLE g10_d;
+
+statement ok
+DROP TABLE g13_a;
+
+statement ok
+DROP TABLE g13_b;
+
+statement ok
+DROP TABLE g13_c;
+
+statement ok
+DROP TABLE g13_d;
+
+statement ok
+DROP TABLE g13_e;
+
+statement ok
+DROP TABLE g13_f;
+
+statement ok
+DROP TABLE g13_g;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY kw_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ng_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY geo_s2_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY geo_src_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY any_text_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY geopoint_dict;

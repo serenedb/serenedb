@@ -93,17 +93,17 @@ void SetGranularTerm(ByGranularRangeOptions::terms& boundary,
 //////////////////////////////////////////////////////////////////////////////
 class ByGranularRange : public FilterWithField<ByGranularRangeOptions> {
  public:
-  static Query::ptr prepare(const PrepareContext& ctx, irs::field_id id,
-                            const options_type& options);
-
   static void visit(const SubReader& segment, const TermReader& reader,
                     const options_type& options, FilterVisitor& visitor);
 
-  Query::ptr prepare(const PrepareContext& ctx) const final {
-    SDB_ASSERT(options().range.min.empty() || options().range.max.empty() ||
-               options().range.min.front() != options().range.max.front());
-    return prepare(ctx.Boost(Boost()), field_id(), options());
-  }
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
+  static QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                          const PrepareContext& ctx,
+                                          const irs::field_id field,
+                                          const options_type& options);
+
+  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 };
 
 }  // namespace irs

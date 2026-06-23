@@ -26,43 +26,37 @@
 #include "iresearch/search/filter.hpp"
 #include "iresearch/search/prepared_state_visitor.hpp"
 #include "iresearch/search/states/ngram_state.hpp"
-#include "iresearch/search/states_cache.hpp"
 
 namespace irs {
 
-using NGramStates = StatesCache<NGramState>;
-
 // Prepared ngram similarity query implementation
-class NGramSimilarityQuery : public Filter::Query {
+class NGramSimilarityQuery : public QueryBuilder {
  public:
   // returns set of features required for filter
   static constexpr IndexFeatures kRequiredFeatures =
     IndexFeatures::Freq | IndexFeatures::Pos;
 
-  NGramSimilarityQuery(size_t min_match_count, NGramStates&& states,
-                       bstring&& stats, score_t boost = kNoBoost)
-    : _min_match_count{min_match_count},
-      _states{std::move(states)},
-      _stats{std::move(stats)},
+  NGramSimilarityQuery(const SubReader& segment, size_t min_match_count,
+                       NGramState&& state, score_t boost = kNoBoost)
+    : QueryBuilder{segment},
+      _min_match_count{min_match_count},
+      _state{std::move(state)},
       _boost{boost} {}
 
-  DocIterator::ptr execute(const ExecutionContext& ctx) const final;
+  DocIterator::ptr Execute(const ExecutionContext& ctx,
+                           const StatsBuffer& stats) const final;
 
-  void visit(const SubReader& segment, PreparedStateVisitor& visitor,
-             score_t boost) const final {
-    if (const auto* state = _states.find(segment); state) {
-      visitor.Visit(*this, *state, boost * _boost);
-    }
+  void Visit(PreparedStateVisitor& visitor, score_t boost) const final {
+    visitor.Visit(*this, _state, boost * _boost);
   }
 
   score_t Boost() const noexcept final { return _boost; }
 
-  DocIterator::ptr ExecuteWithOffsets(const SubReader& rdr) const;
+  DocIterator::ptr ExecuteWithOffsets() const;
 
  private:
   size_t _min_match_count;
-  NGramStates _states;
-  bstring _stats;
+  NGramState _state;
   score_t _boost;
 };
 

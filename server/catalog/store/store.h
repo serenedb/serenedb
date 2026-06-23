@@ -94,7 +94,12 @@ struct StoreIndexDef {
   std::string table;
   ObjectId table_id;
   ObjectId index_id;
+  // Inverted: raw column names for `USING inverted(...)`.
   std::vector<std::string> columns;
+  // Plain (ART): per-key SQL rendered in order, ready to drop into the index
+  // key list -- a quoted column identifier, or a parenthesized expression such
+  // as "(j + k)". Empty for inverted indexes.
+  std::vector<std::string> keys;
   Kind kind = Kind::Inverted;
   bool unique = false;
 };
@@ -167,6 +172,18 @@ class CatalogStore {
     // Removes the CHECK constraint with this expression text.
     void DropStoreCheck(std::string table, std::string expr);
     void DropStoreNotNull(std::string table, std::string column);
+    void AddStoreNotNull(std::string table, std::string column);
+    // Adds the CHECK constraint with this expression text; the store verifies
+    // it against existing rows (mirrors DropStoreCheck).
+    void AddStoreCheck(std::string table, std::string expr);
+    // Adds a PRIMARY KEY (recreates storage, validates existing rows: no
+    // duplicates, no nulls). `columns` are store-table column names in key
+    // order.
+    void AddStorePrimaryKey(std::string table,
+                            std::vector<std::string> columns);
+    // Adds a UNIQUE constraint over `columns` (recreate + existing-row dup
+    // validation).
+    void AddStoreUnique(std::string table, std::vector<std::string> columns);
     void CreateStoreIndex(StoreIndexDef def);
     void DropStoreIndex(ObjectId index_id);
 
@@ -189,6 +206,10 @@ class CatalogStore {
       DropStoreForeignKey,
       DropStoreCheck,
       DropStoreNotNull,
+      AddStoreNotNull,
+      AddStoreCheck,
+      AddStorePrimaryKey,
+      AddStoreUnique,
       CreateStoreIndex,
       DropStoreIndex,
     };

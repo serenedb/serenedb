@@ -48,7 +48,7 @@ struct PrefixEntry {
 };
 
 bool LevenshteinPrefixFusionRule::Apply(Filter::ptr& slot,
-                                        const OptimizeContext& /*ctx*/) {
+                                        const OptimizeContext& ctx) {
   auto& node = sdb::basics::downCast<And>(*slot);
   auto& children = node.mutable_filters();
 
@@ -56,6 +56,9 @@ bool LevenshteinPrefixFusionRule::Apply(Filter::ptr& slot,
   for (size_t i = 0; i < children.size(); ++i) {
     if (children[i]->type() == Type<ByPrefix>::id()) {
       auto& prefix = sdb::basics::downCast<ByPrefix>(*children[i]);
+      if (ctx.HasAnalyzer(prefix.field_id())) {
+        continue;
+      }
       prefixes.emplace_back(children[i].get(), prefix.field_id(),
                             prefix.options().term);
     }
@@ -71,6 +74,9 @@ bool LevenshteinPrefixFusionRule::Apply(Filter::ptr& slot,
       continue;
     }
     auto& filter = sdb::basics::downCast<ByEditDistance>(*child);
+    if (ctx.HasAnalyzer(filter.field_id())) {
+      continue;
+    }
     auto& opts = *filter.mutable_options();
 
     bstring target = opts.prefix;

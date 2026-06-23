@@ -1,0 +1,182 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY kw_dict(template = 'keyword');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ng_dict(template = 'ngram', mingram = 2,
+    maxgram = 3, preserveoriginal = false, frequency = true, position = true);
+
+
+# ============================================================================
+# VARCHAR scalar  --  column / expression  x  store / no-store  x
+#                    text / wildcard / geo-src / geo-s2
+# ============================================================================
+
+statement ok
+CREATE TABLE m_v(pk INTEGER PRIMARY KEY, v VARCHAR);
+
+statement ok
+CREATE INDEX m_v_col_text_st  ON m_v USING inverted(pk, v kw_dict) INCLUDE (v);
+
+statement ok
+CREATE INDEX m_v_col_text_ns  ON m_v USING inverted(pk, v kw_dict);
+
+statement ok
+CREATE INDEX m_v_col_wild_st  ON m_v USING inverted(pk, v ng_dict) INCLUDE (v);
+
+statement ok
+CREATE INDEX m_v_col_wild_ns  ON m_v USING inverted(pk, v ng_dict);
+
+statement ok
+CREATE INDEX m_v_expr_text_ns ON m_v USING inverted(pk, (upper(v)) kw_dict);
+
+statement ok
+CREATE INDEX m_v_expr_text_st ON m_v USING inverted(pk, (upper(v)) kw_dict)
+    INCLUDE (v);
+
+statement ok
+INSERT INTO m_v VALUES (1, 'alpha'), (2, 'beta'), (3, 'gamma');
+
+statement ok
+VACUUM (REFRESH_TABLE) m_v;
+
+query
+SELECT pk FROM m_v_col_text_st  WHERE v @@ ts_like('beta')       ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_v_col_text_ns  WHERE v @@ ts_like('beta')       ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_v_col_wild_st  WHERE v @@ ts_ngram('beta', 0.5) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_v_col_wild_ns  WHERE v @@ ts_ngram('beta', 0.5) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_v_expr_text_st WHERE upper(v) @@ ts_like('BETA') ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_v_expr_text_ns WHERE upper(v) @@ ts_like('BETA') ORDER BY pk;
+----
+pk
+2
+
+
+# ============================================================================
+# VARCHAR list / array — text + ngram.
+# ============================================================================
+
+statement ok
+CREATE TABLE m_vla(pk INTEGER PRIMARY KEY, vs VARCHAR[], va VARCHAR[3]);
+
+statement ok
+CREATE INDEX m_vla_vs_text ON m_vla USING inverted(pk, vs kw_dict);
+
+statement ok
+CREATE INDEX m_vla_va_text ON m_vla USING inverted(pk, va kw_dict);
+
+statement ok
+CREATE INDEX m_vla_vs_wild ON m_vla USING inverted(pk, vs ng_dict);
+
+statement ok
+INSERT INTO m_vla VALUES
+    (1, ['alpha', 'beta'],     ['alpha', 'beta', 'gamma']),
+    (2, ['delta'],             ['delta', 'epsilon', 'zeta']);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_vla;
+
+query
+SELECT pk FROM m_vla_vs_text WHERE vs @@ ts_like('beta');
+----
+pk
+1
+
+query
+SELECT pk FROM m_vla_va_text WHERE va @@ ts_like('epsilon');
+----
+pk
+2
+
+query
+SELECT pk FROM m_vla_vs_wild WHERE vs @@ ts_ngram('alp', 0.5);
+----
+pk
+1
+
+
+# ============================================================================
+# ng_dict expression-side: wildcard tokenizer over expression sources
+# ============================================================================
+
+statement ok
+CREATE TABLE g2_e(pk INTEGER PRIMARY KEY, v VARCHAR, b BLOB, n INTEGER);
+
+statement ok
+CREATE INDEX g2_e_expr_wild_st ON g2_e USING inverted(pk, (upper(v)) ng_dict) INCLUDE (v);
+
+statement ok
+CREATE INDEX g2_e_expr_wild_ns ON g2_e USING inverted(pk, (decode(encode(b, 'hex'), 'hex')) ng_dict);
+
+statement error
+CREATE INDEX g2_e_expr_wild_int ON g2_e USING inverted(pk, (n + 1) ng_dict);
+----
+db error: ERROR: Failed to create index: Column '(n + 1)' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
+
+
+statement ok
+INSERT INTO g2_e VALUES
+    (1, 'alpha', '\\x68656c6c6f'::BLOB, 10),
+    (2, 'beta',  '\\x776f726c64'::BLOB, 20),
+    (3, 'gamma', '\\xdeadbeef'::BLOB,   30);
+
+statement ok
+VACUUM (REFRESH_TABLE) g2_e;
+
+query
+SELECT pk FROM g2_e_expr_wild_st WHERE upper(v) @@ ts_ngram('BET', 0.5) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM g2_e_expr_wild_ns
+WHERE decode(encode(b, 'hex'), 'hex') @@ ts_ngram('\\xdeadbeef'::BLOB, 0.5)
+ORDER BY pk;
+----
+pk
+3
+
+
+# --- teardown ---------------------------------------------------------------
+
+statement ok
+DROP TABLE m_v;
+
+statement ok
+DROP TABLE m_vla;
+
+statement ok
+DROP TABLE g2_e;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY kw_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ng_dict;

@@ -145,11 +145,25 @@ SQLLOGIC_RUNNER="${RUNNER_ARGS[1]:-$(realpath "$SCRIPT_DIR/../../third_party/sql
 SQLLOGIC_TARGET="${CARGO_TARGET_DIR:-$(realpath "$SCRIPT_DIR/../../.cache/cargo-target")}"
 mkdir -p "$SQLLOGIC_TARGET"
 echo "Pre-building sqllogictest..."
-cargo build --manifest-path "$SQLLOGIC_RUNNER/sqllogictest-bin/Cargo.toml" \
-	--target-dir "$SQLLOGIC_TARGET" --release --quiet || {
-	echo "ERROR: failed to pre-build sqllogictest"
-	exit 1
-}
+# cargo's crates.io fetch flakes intermittently on the CI runners (HTTP/2
+# framing errors, "unable to update registry"). It's transient, so retry a
+# few times before giving up instead of failing the whole suite.
+build_exit_code=0
+build_attempts="${SDB_SQLLOGIC_BUILD_ATTEMPTS:-3}"
+for attempt in $(seq 1 "$build_attempts"); do
+	cargo build --manifest-path "$SQLLOGIC_RUNNER/sqllogictest-bin/Cargo.toml" \
+		--target-dir "$SQLLOGIC_TARGET" --release --quiet
+	build_exit_code=$?
+	[[ $build_exit_code == 0 ]] && break
+	if [[ $attempt -lt $build_attempts ]]; then
+		echo "sqllogictest build failed (exit $build_exit_code); attempt $attempt/$build_attempts, retrying in 10s..." >&2
+		sleep 10
+	fi
+done
+if [[ $build_exit_code != 0 ]]; then
+	echo "ERROR: failed to pre-build sqllogictest after $build_attempts attempt(s)" >&2
+	exit $build_exit_code
+fi
 export SDB_SKIP_SQLLOGIC_BUILD=1
 
 # Start a fresh serened instance (restart loop + empty datadir) and wait for

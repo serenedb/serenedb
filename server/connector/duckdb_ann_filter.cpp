@@ -26,11 +26,14 @@
 
 namespace sdb::connector {
 
-TextScanFilter::TextScanFilter(const irs::Filter::Query& query)
-  : _query{query} {}
+TextScanFilter::TextScanFilter(const irs::Filter& filter,
+                               irs::PrepareCollector& collector)
+  : _filter{filter}, _collector{collector} {}
 
 void TextScanFilter::Reset(const irs::SubReader& segment) {
-  _it = _query.execute({.segment = segment});
+  _query = _filter.PrepareSegment(segment, {.collector = &_collector});
+  SDB_ASSERT(_query);
+  _it = _query->Execute({}, irs::StatsBuffer::Empty());
   SDB_ASSERT(_it);
 }
 

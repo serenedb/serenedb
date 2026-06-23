@@ -22,9 +22,16 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/filter_visitor.hpp"
+#include "iresearch/search/limited_sample_selector.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
 
 namespace irs {
+
+AutomatonOptions::AutomatonOptions(automaton acceptor, bytes_view pattern,
+                                   size_t scored_terms_limit)
+  : pattern{pattern},
+    compiled{std::make_shared<const CompiledAcceptor>(std::move(acceptor))},
+    scored_terms_limit{scored_terms_limit} {}
 
 field_visitor AutomatonFilter::visitor(const automaton& acceptor) {
   if (!Validate(acceptor)) {
@@ -47,10 +54,17 @@ field_visitor AutomatonFilter::visitor(const automaton& acceptor) {
   };
 }
 
-Filter::Query::ptr AutomatonFilter::prepare(const PrepareContext& ctx) const {
-  return PrepareAutomatonFilter(ctx.Boost(Boost()), field_id(),
-                                options().acceptor,
-                                options().scored_terms_limit);
+QueryBuilder::ptr AutomatonFilter::PrepareSegment(
+  const SubReader& segment, const PrepareContext& ctx) const {
+  SDB_ASSERT(options().compiled);
+  return PrepareAutomatonSegment(segment, ctx, field_id(),
+                                 options().compiled->matcher, Boost());
+}
+
+PrepareCollector::ptr AutomatonFilter::MakeCollector(
+  const Scorer* scorer) const {
+  return std::make_unique<LimitedTermsCollector>(scorer,
+                                                 options().scored_terms_limit);
 }
 
 }  // namespace irs

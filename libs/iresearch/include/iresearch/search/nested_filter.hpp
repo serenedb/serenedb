@@ -93,7 +93,10 @@ struct ByNestedOptions {
 // Filter is capable of finding parents by the corresponding child filter.
 class ByNestedFilter final : public FilterWithOptions<ByNestedOptions> {
  public:
-  Query::ptr prepare(const PrepareContext& ctx) const final;
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
+
+  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 };
 
 }  // namespace irs

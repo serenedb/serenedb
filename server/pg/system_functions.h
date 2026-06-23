@@ -1028,6 +1028,7 @@ inline constexpr SystemMacro kExternalMacros[] = {
   // TODO(mbkkt): implement properly.
   {"pg_catalog", "pg_column_is_updatable", "(a, b, c) AS true"},
   {"pg_catalog", "pg_relation_is_updatable", "(a, b) AS 0"},
+  {"pg_catalog", "pg_relation_is_publishable", "(a) AS false"},
   {"pg_catalog", "pg_sequence_last_value", "(a) AS CAST(NULL AS BIGINT)"},
   {"pg_catalog", "pg_indexam_progress_phasename", "(a, b) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_statistics_obj_is_visible", "(a) AS true"},

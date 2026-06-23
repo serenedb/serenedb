@@ -57,7 +57,6 @@ tests/drivers/c/harness
 /package_all/
 
 # Matches the stuff that's gonna replace developers
-
 /.claude/*
 !/.claude/skills/
 

@@ -44,7 +44,8 @@ class ByColumnExistence final
   field_id id() const noexcept { return _id; }
   field_id* mutable_id() noexcept { return &_id; }
 
-  Query::ptr prepare(const PrepareContext& ctx) const final;
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
 
  protected:
   bool equals(const Filter& rhs) const noexcept final {

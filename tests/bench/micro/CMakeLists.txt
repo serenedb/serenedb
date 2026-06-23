@@ -17,7 +17,7 @@ add_bench(hash_map)
 add_bench(lower_bound)
 add_bench(memory_file)
 add_bench(segmentation_stream)
-add_bench(top_term_collector)
+add_bench(top_term_selector)
 add_bench(random)
 add_bench(io_buffers)
 add_bench(fp_neg_zero_cmp)
@@ -29,6 +29,7 @@ add_bench(path_hierarchy_tokenizer)
 add_bench(regexp_vs_wildcard)
 add_bench(filter_prepare)
 add_bench(consecutive_run_length)
+add_bench(facade_merge)
 
 target_include_directories(
     serenedb-bench-micro-regexp_vs_wildcard

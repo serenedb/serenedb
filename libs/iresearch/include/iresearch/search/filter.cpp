@@ -28,31 +28,37 @@ namespace irs {
 namespace {
 
 // Represents a query returning empty result set
-struct EmptyQuery : public Filter::Query {
+struct EmptyQueryBuilder : public QueryBuilder {
  public:
-  DocIterator::ptr execute(const ExecutionContext&) const final {
+  EmptyQueryBuilder() noexcept : QueryBuilder{SubReader::empty()} {}
+
+  DocIterator::ptr Execute(const ExecutionContext&,
+                           const StatsBuffer&) const final {
     return DocIterator::empty();
   }
 
-  void visit(const SubReader&, PreparedStateVisitor&, score_t) const final {
-    // No terms to visit
-  }
+  void Visit(PreparedStateVisitor&, score_t) const final {}
 
   score_t Boost() const noexcept final { return kNoBoost; }
 };
 
-EmptyQuery gEmptyQuery;
+EmptyQueryBuilder gEmptyQuery;
 
 }  // namespace
 
-Filter::Query::ptr Filter::Query::empty() {
-  return memory::to_managed<Query>(gEmptyQuery);
+QueryBuilder::ptr QueryBuilder::Empty() {
+  return memory::to_managed<QueryBuilder>(gEmptyQuery);
+}
+
+PrepareCollector::ptr Filter::MakeCollector(const Scorer* /*scorer*/) const {
+  return std::make_unique<NoopCollector>();
 }
 
 Filter::ptr Filter::empty() { return std::make_unique<Empty>(); }
 
-Filter::Query::ptr Empty::prepare(const PrepareContext& /*ctx*/) const {
-  return memory::to_managed<Query>(gEmptyQuery);
+QueryBuilder::ptr Empty::PrepareSegment(const SubReader&,
+                                        const PrepareContext&) const {
+  return QueryBuilder::Empty();
 }
 
 }  // namespace irs

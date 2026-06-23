@@ -1,0 +1,377 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY kw_dict(template = 'keyword');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ng_dict(template = 'ngram', mingram = 2,
+    maxgram = 3, preserveoriginal = false, frequency = true, position = true);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY any_text_dict(template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false, accent = false, frequency = true, position = true);
+
+
+# ============================================================================
+# g20 -- Text-tokenizer (kw_dict / ng_dict / any_text_dict) rejection
+# completeness for list/array of non-string children + scalar BIT/ENUM +
+# expression-source scalar INTEGER / GEOMETRY('OGC:CRS84').
+#
+# Closes the remaining gaps in text-tokenizer rejection:
+#
+#   (1) LIST<UUID>, LIST<GEOMETRY('OGC:CRS84')>, ARRAY<GEOMETRY('OGC:CRS84'),3>:
+#       term_dict::Validate rejects in the LIST/ARRAY container branch
+#       (server/catalog/inverted_index.cpp:257-266). UUID has no Classify entry
+#       (default arm -> Unsupported), and GEOMETRY children are caught by the
+#       explicit special-case at inverted_index.cpp:263.
+#       Wording: "has unsupported type X and can not be indexed".
+#
+#   (2) LIST<INTEGER>, LIST<BIGINT>, LIST<DOUBLE>, ARRAY<INTEGER,3>:
+#       term_dict::Validate passes (children classify as Numeric{I32,I64,F64}),
+#       so ValidateTokenizerVsColumn (server/catalog/index.cpp:447-469) fires
+#       next. Wording: "uses a tokenizer; must be VARCHAR, BLOB, or a
+#       LIST/ARRAY of VARCHAR/BLOB (got X)".
+#
+#   (3) ARRAY<JSON,3>: JSON's LogicalTypeId is VARCHAR (alias-tagged), so the
+#       child satisfies is_string_leaf but the !IsJSONType() guard at
+#       index.cpp:459 strips it back out. Same ValidateTokenizerVsColumn
+#       wording as (2). m_jl pinned JSON[] for kw/ng; g1 pinned any_text on
+#       LIST<JSON>; g20 adds ARRAY<JSON,3> across all three tokenizers.
+#
+#   (4) Scalar BIT, ENUM: term_dict::Classify default arm -> Unsupported.
+#       term_dict::Validate fails first with the "has unsupported type"
+#       wording. (BIT was already covered for implicit-path rejection in g16;
+#       g20 nails the kw/ng/any_text branches.)
+#
+#   (5) Expression-source scalar INTEGER and GEOMETRY('OGC:CRS84'):
+#       INTEGER classifies as NumericI32 (Supported) and GEOMETRY classifies
+#       as String (Supported, opclass is non-empty), so both reach
+#       ValidateTokenizerVsColumn -- which rejects because neither is
+#       VARCHAR/BLOB nor a LIST/ARRAY of them. The error label is the
+#       verbatim expression text for non-trivial expressions ('(n + 1)'); the
+#       +1 keeps the expression from constant-folding away. DuckDB's parser
+#       normalizes a single-identifier paren like `(g)` to a bare column
+#       reference, so the error label collapses to 'g' (not '(g)').
+#
+# kw_dict / ng_dict / any_text_dict are already declared near the top of this
+# file -- not redeclared. No rows are inserted: every cell is pure CREATE
+# INDEX rejection, so rocksdb-incompatible types (BIT, ENUM) sit safely in a
+# regular table without ever reaching the storage path.
+# ============================================================================
+
+statement ok
+CREATE TYPE g20_enum_t AS ENUM ('a', 'b');
+
+
+statement ok
+CREATE TABLE g20_t(pk     INTEGER PRIMARY KEY,
+                   list_i  INTEGER[],
+                   list_bi BIGINT[],
+                   list_d  DOUBLE[],
+                   list_u  UUID[],
+                   list_g  GEOMETRY('OGC:CRS84')[],
+                   arr_i   INTEGER[3],
+                   arr_g   GEOMETRY('OGC:CRS84')[3],
+                   arr_j   JSON[3],
+                   bit_s   BIT,
+                   enum_s  g20_enum_t,
+                   v       VARCHAR,
+                   n       INTEGER,
+                   g       GEOMETRY('OGC:CRS84'));
+
+
+# ----------------------------------------------------------------------------
+# kw_dict (keyword tokenizer)
+# ----------------------------------------------------------------------------
+
+# (a) kw_dict on LIST<INTEGER>: term_dict passes (NumericI32),
+#     ValidateTokenizerVsColumn rejects.
+statement error
+CREATE INDEX g20_kw_li ON g20_t USING inverted(pk, list_i kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[])
+
+
+# (b) kw_dict on LIST<BIGINT>: NumericI64 child, ValidateTokenizerVsColumn.
+statement error
+CREATE INDEX g20_kw_lbi ON g20_t USING inverted(pk, list_bi kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_bi' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got BIGINT[])
+
+
+# (c) kw_dict on LIST<DOUBLE>: NumericF64 child, ValidateTokenizerVsColumn.
+statement error
+CREATE INDEX g20_kw_ld ON g20_t USING inverted(pk, list_d kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_d' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got DOUBLE[])
+
+
+# (d) kw_dict on LIST<UUID>: UUID classifies Unsupported (default arm), so
+#     term_dict::Validate fails in the container branch.
+statement error
+CREATE INDEX g20_kw_lu ON g20_t USING inverted(pk, list_u kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_u' has unsupported type UUID[] and can not be indexed
+
+
+# (e) kw_dict on LIST<GEOMETRY('OGC:CRS84')>: explicit child-GEOMETRY guard
+#     in term_dict::Validate fires regardless of CRS.
+statement error
+CREATE INDEX g20_kw_lg ON g20_t USING inverted(pk, list_g kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_g' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
+
+
+# (f) kw_dict on ARRAY<INTEGER,3>: NumericI32 child, ValidateTokenizerVsColumn.
+statement error
+CREATE INDEX g20_kw_ai ON g20_t USING inverted(pk, arr_i kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'arr_i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[3])
+
+
+# (g) kw_dict on ARRAY<GEOMETRY('OGC:CRS84'),3>: explicit child-GEOMETRY guard.
+statement error
+CREATE INDEX g20_kw_ag ON g20_t USING inverted(pk, arr_g kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'arr_g' has unsupported type GEOMETRY('OGC:CRS84')[3] and can not be indexed
+
+
+# (h) kw_dict on ARRAY<JSON,3>: JSON child is VARCHAR-aliased; is_string_leaf
+#     matches but the !IsJSONType() guard strips JSON back out, so
+#     ValidateTokenizerVsColumn rejects.
+statement error
+CREATE INDEX g20_kw_aj ON g20_t USING inverted(pk, arr_j kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'arr_j' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[3])
+
+
+# (i) kw_dict on scalar BIT: Classify default arm -> Unsupported,
+#     term_dict::Validate fails on the scalar branch.
+statement error
+CREATE INDEX g20_kw_bit ON g20_t USING inverted(pk, bit_s kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'bit_s' has unsupported type BIT and can not be indexed
+
+
+# (j) kw_dict on scalar ENUM: same path; the user-visible type alias
+#     ('g20_enum_t') is what ToString surfaces.
+statement error
+CREATE INDEX g20_kw_en ON g20_t USING inverted(pk, enum_s kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'enum_s' has unsupported type g20_enum_t and can not be indexed
+
+
+# (k) kw_dict on INTEGER expression source: term_dict accepts (NumericI32),
+#     ValidateTokenizerVsColumn rejects; the column label is the verbatim
+#     expression text. '+ 1' keeps it from constant-folding.
+statement error
+CREATE INDEX g20_kw_expr_n ON g20_t USING inverted(pk, (n + 1) kw_dict);
+----
+db error: ERROR: Failed to create index: Column '(n + 1)' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
+
+
+# (l) kw_dict on GEOMETRY('OGC:CRS84') expression source: term_dict accepts
+#     (String, non-empty opclass), ValidateTokenizerVsColumn rejects. The
+#     DuckDB parser normalizes the single-identifier paren `(g)` to a bare
+#     column reference, so the error label collapses to 'g'.
+statement error
+CREATE INDEX g20_kw_expr_g ON g20_t USING inverted(pk, (g) kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
+
+
+# ----------------------------------------------------------------------------
+# ng_dict (n-gram tokenizer)
+# ----------------------------------------------------------------------------
+
+# (a) ng_dict on LIST<INTEGER>.
+statement error
+CREATE INDEX g20_ng_li ON g20_t USING inverted(pk, list_i ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[])
+
+
+# (b) ng_dict on LIST<BIGINT>.
+statement error
+CREATE INDEX g20_ng_lbi ON g20_t USING inverted(pk, list_bi ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_bi' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got BIGINT[])
+
+
+# (c) ng_dict on LIST<DOUBLE>.
+statement error
+CREATE INDEX g20_ng_ld ON g20_t USING inverted(pk, list_d ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_d' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got DOUBLE[])
+
+
+# (d) ng_dict on LIST<UUID>.
+statement error
+CREATE INDEX g20_ng_lu ON g20_t USING inverted(pk, list_u ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_u' has unsupported type UUID[] and can not be indexed
+
+
+# (e) ng_dict on LIST<GEOMETRY('OGC:CRS84')>: not previously covered for
+#     ng_dict on a LIST (only ARRAY at m_gl_ng_array).
+statement error
+CREATE INDEX g20_ng_lg ON g20_t USING inverted(pk, list_g ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_g' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
+
+
+# (f) ng_dict on ARRAY<INTEGER,3>.
+statement error
+CREATE INDEX g20_ng_ai ON g20_t USING inverted(pk, arr_i ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'arr_i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[3])
+
+
+# (g) ng_dict on ARRAY<GEOMETRY('OGC:CRS84'),3>.
+statement error
+CREATE INDEX g20_ng_ag ON g20_t USING inverted(pk, arr_g ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'arr_g' has unsupported type GEOMETRY('OGC:CRS84')[3] and can not be indexed
+
+
+# (h) ng_dict on ARRAY<JSON,3>.
+statement error
+CREATE INDEX g20_ng_aj ON g20_t USING inverted(pk, arr_j ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'arr_j' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[3])
+
+
+# (i) ng_dict on scalar BIT.
+statement error
+CREATE INDEX g20_ng_bit ON g20_t USING inverted(pk, bit_s ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'bit_s' has unsupported type BIT and can not be indexed
+
+
+# (j) ng_dict on scalar ENUM.
+statement error
+CREATE INDEX g20_ng_en ON g20_t USING inverted(pk, enum_s ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'enum_s' has unsupported type g20_enum_t and can not be indexed
+
+
+# (k) ng_dict on INTEGER expression source.
+statement error
+CREATE INDEX g20_ng_expr_n ON g20_t USING inverted(pk, (n + 1) ng_dict);
+----
+db error: ERROR: Failed to create index: Column '(n + 1)' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
+
+
+# (l) ng_dict on GEOMETRY('OGC:CRS84') expression source. Single-identifier
+#     paren collapses to bare column label 'g'.
+statement error
+CREATE INDEX g20_ng_expr_g ON g20_t USING inverted(pk, (g) ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
+
+
+# ----------------------------------------------------------------------------
+# any_text_dict (text tokenizer)
+# ----------------------------------------------------------------------------
+
+# (a) any_text_dict on LIST<INTEGER>.
+statement error
+CREATE INDEX g20_at_li ON g20_t USING inverted(pk, list_i any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[])
+
+
+# (b) any_text_dict on LIST<BIGINT>.
+statement error
+CREATE INDEX g20_at_lbi ON g20_t USING inverted(pk, list_bi any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_bi' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got BIGINT[])
+
+
+# (c) any_text_dict on LIST<DOUBLE>.
+statement error
+CREATE INDEX g20_at_ld ON g20_t USING inverted(pk, list_d any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_d' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got DOUBLE[])
+
+
+# (d) any_text_dict on LIST<UUID>.
+statement error
+CREATE INDEX g20_at_lu ON g20_t USING inverted(pk, list_u any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_u' has unsupported type UUID[] and can not be indexed
+
+
+# (e) any_text_dict on LIST<GEOMETRY('OGC:CRS84')>.
+statement error
+CREATE INDEX g20_at_lg ON g20_t USING inverted(pk, list_g any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_g' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
+
+
+# (f) any_text_dict on ARRAY<INTEGER,3>.
+statement error
+CREATE INDEX g20_at_ai ON g20_t USING inverted(pk, arr_i any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'arr_i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[3])
+
+
+# (g) any_text_dict on ARRAY<GEOMETRY('OGC:CRS84'),3>.
+statement error
+CREATE INDEX g20_at_ag ON g20_t USING inverted(pk, arr_g any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'arr_g' has unsupported type GEOMETRY('OGC:CRS84')[3] and can not be indexed
+
+
+# (h) any_text_dict on ARRAY<JSON,3>: g1 covered LIST<JSON> with any_text but
+#     not the fixed-size ARRAY<JSON,N> variant.
+statement error
+CREATE INDEX g20_at_aj ON g20_t USING inverted(pk, arr_j any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'arr_j' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[3])
+
+
+# (i) any_text_dict on scalar BIT.
+statement error
+CREATE INDEX g20_at_bit ON g20_t USING inverted(pk, bit_s any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'bit_s' has unsupported type BIT and can not be indexed
+
+
+# (j) any_text_dict on scalar ENUM.
+statement error
+CREATE INDEX g20_at_en ON g20_t USING inverted(pk, enum_s any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'enum_s' has unsupported type g20_enum_t and can not be indexed
+
+
+# (k) any_text_dict on INTEGER expression source.
+statement error
+CREATE INDEX g20_at_expr_n ON g20_t USING inverted(pk, (n + 1) any_text_dict);
+----
+db error: ERROR: Failed to create index: Column '(n + 1)' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
+
+
+# (l) any_text_dict on GEOMETRY('OGC:CRS84') expression source. Single-identifier
+#     paren collapses to bare column label 'g'.
+statement error
+CREATE INDEX g20_at_expr_g ON g20_t USING inverted(pk, (g) any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
+
+
+# --- teardown ---------------------------------------------------------------
+
+statement ok
+DROP TABLE g20_t;
+
+statement ok
+DROP TYPE g20_enum_t;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY kw_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ng_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY any_text_dict;

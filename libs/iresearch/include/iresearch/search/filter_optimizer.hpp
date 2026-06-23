@@ -35,6 +35,11 @@ namespace irs {
 
 struct OptimizeContext {
   bool scored = false;
+  sdb::containers::FlatHashSet<irs::field_id> analyzed_fields;
+
+  bool HasAnalyzer(irs::field_id field) const noexcept {
+    return analyzed_fields.contains(field);
+  }
 };
 
 template<typename Visit>
@@ -83,8 +88,10 @@ void RegisterRule(RuleDesc rule);
 
 template<RuleLike Rule>
 void RegisterRule() {
-  auto r = RuleDesc{Rule::kName, Rule::kTargets, &Rule::Apply};
-  RegisterRule(std::move(r));
+  if constexpr (Rule::kEnable) {
+    auto r = RuleDesc{Rule::kName, Rule::kTargets, &Rule::Apply};
+    RegisterRule(std::move(r));
+  }
 }
 
 void InitOptimizeRules();

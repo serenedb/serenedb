@@ -136,12 +136,10 @@ class ByPhraseOptions {
 
 class ByPhrase : public FilterWithField<ByPhraseOptions> {
  public:
-  static Query::ptr Prepare(const PrepareContext& ctx, irs::field_id id,
-                            const ByPhraseOptions& options);
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
 
-  Query::ptr prepare(const PrepareContext& ctx) const final {
-    return Prepare(ctx.Boost(Boost()), field_id(), options());
-  }
+  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 };
 
 }  // namespace irs

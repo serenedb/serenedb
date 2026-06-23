@@ -77,7 +77,7 @@ std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
         row_group.unshredded = MakeColumnReader(
           field_limits::invalid(), std::move(*variant_layout.unshredded));
         if (variant_layout.shred_state != VariantShredState::Unshredded) {
-          row_group.shredded_node = MakeColumnReader(
+          row_group.shredded = MakeColumnReader(
             field_limits::invalid(), std::move(*variant_layout.shredded_node));
         }
       }
@@ -88,7 +88,7 @@ std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
     case duckdb::LogicalTypeId::STRUCT: {
       struct_children.reserve(node.child_columns.size());
       for (auto& child : node.child_columns) {
-        struct_children.push_back(
+        struct_children.emplace_back(
           MakeColumnReader(field_limits::invalid(), std::move(child)));
       }
       node.pointers.clear();
@@ -253,19 +253,18 @@ ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
     }
     _validity_offsets.push_back(vtotal);
   }
-  _variant_rg_starts.reserve(_variant_rgs.size() + 1);
+  _data_offsets.reserve(_variant_rgs.size() + 1);
   uint64_t total = 0;
   for (const auto& rg : _variant_rgs) {
     SDB_ASSERT(rg.unshredded);
     SDB_ASSERT(rg.unshredded->RowCount() == rg.row_count);
     SDB_ASSERT(rg.shred_state == VariantShredState::Unshredded ||
-               rg.shredded_node->RowCount() == rg.row_count);
-    _variant_rg_starts.push_back(total);
+               rg.shredded->RowCount() == rg.row_count);
+    _data_offsets.push_back(total);
     total += rg.row_count;
   }
-  _variant_rg_starts.push_back(total);
+  _data_offsets.push_back(total);
   _row_count = total;
-  _data_offsets.push_back(0);
   _stats = BuildMergedStatistics().ToUnique();
 }
 
@@ -288,7 +287,7 @@ RgWindow ColumnReader::LocateVariantRg(uint64_t row,
                                        RgWindow hint) const noexcept {
   SDB_ASSERT(_type.id() == duckdb::LogicalTypeId::VARIANT);
   SDB_ASSERT(row < _row_count);
-  return LocateInOffsets(row, _variant_rg_starts, hint);
+  return LocateInOffsets(row, _data_offsets, hint);
 }
 
 duckdb::BaseStatistics ColumnReader::BuildMergedStatistics() const {

@@ -148,12 +148,10 @@ TEST(by_edit_distance_test, boost) {
     q.mutable_options()->term =
       irs::ViewCast<irs::byte_type>(std::string_view("bar*"));
 
-    auto prepared = Lower(std::move(q))
-                      ->prepare({
-                        .index = irs::SubReader::empty(),
-                        .memory = counter,
-                      });
-    ASSERT_EQ(irs::kNoBoost, prepared->Boost());
+    irs::Filter::ptr lowered = Lower(std::move(q));
+    tests::PreparedFilter prepared{*lowered, irs::SubReader::empty(), nullptr,
+                                   counter};
+    ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
   EXPECT_EQ(counter.current, 0);
   EXPECT_GT(counter.max, 0);
@@ -169,12 +167,10 @@ TEST(by_edit_distance_test, boost) {
       irs::ViewCast<irs::byte_type>(std::string_view("bar*"));
     q.boost(boost);
 
-    auto prepared = Lower(std::move(q))
-                      ->prepare({
-                        .index = irs::SubReader::empty(),
-                        .memory = counter,
-                      });
-    ASSERT_EQ(boost, prepared->Boost());
+    irs::Filter::ptr lowered = Lower(std::move(q));
+    tests::PreparedFilter prepared{*lowered, irs::SubReader::empty(), nullptr,
+                                   counter};
+    ASSERT_EQ(boost, prepared.Query(0)->Boost());
   }
   EXPECT_EQ(counter.current, 0);
   EXPECT_GT(counter.max, 0);
@@ -185,18 +181,14 @@ TEST(by_edit_distance_test, test_type_of_prepared_query) {
   MaxMemoryCounter counter;
   // term query
   {
-    auto lhs = MakeTermFilter("foo", "bar")
-                 .prepare({
-                   .index = irs::SubReader::empty(),
-                   .memory = counter,
-                 });
-    auto rhs = MakeLevenshtein("foo", "bar")
-                 ->prepare({
-                   .index = irs::SubReader::empty(),
-                   .memory = counter,
-                 });
-    auto& lhs_ref = *lhs;
-    auto& rhs_ref = *rhs;
+    const auto lhs_filter = MakeTermFilter("foo", "bar");
+    tests::PreparedFilter lhs{lhs_filter, irs::SubReader::empty(), nullptr,
+                              counter};
+    const auto rhs_filter = Lower(MakeFilter("foo", "bar"));
+    tests::PreparedFilter rhs{*rhs_filter, irs::SubReader::empty(), nullptr,
+                              counter};
+    auto& lhs_ref = *lhs.Query(0);
+    auto& rhs_ref = *rhs.Query(0);
     ASSERT_EQ(typeid(lhs_ref), typeid(rhs_ref));
   }
   EXPECT_EQ(counter.current, 0);
@@ -581,16 +573,14 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     opts.provider = irs::DefaultPDP;
     opts.with_transpositions = true;
 
-    auto prepared = Lower(std::move(filter))
-                      ->prepare({
-                        .index = *index,
-                        .memory = counter,
-                        .scorer = order.front().get(),
-                      });
-    ASSERT_NE(nullptr, prepared);
+    irs::Filter::ptr lowered =
+      std::make_unique<irs::ByEditDistance>(std::move(filter));
+    irs::Optimize(lowered, {.scored = true});
+    tests::PreparedFilter prepared{*lowered, *index, order.front().get(),
+                                   counter};
+    ASSERT_NE(nullptr, prepared.Query(0));
 
-    auto docs =
-      prepared->execute({.segment = index[0], .scorer = order.front().get()});
+    auto docs = prepared.Execute(0);
     ASSERT_NE(nullptr, docs);
 
     auto score = docs->PrepareScore({
@@ -632,19 +622,15 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     opts.provider = irs::DefaultPDP;
     opts.with_transpositions = true;
 
-    auto prepared = Lower(std::move(filter))
-                      ->prepare({
-                        .index = *index,
-                        .memory = counter,
-                        .scorer = order.front().get(),
-                      });
-    ASSERT_NE(nullptr, prepared);
+    irs::Filter::ptr lowered =
+      std::make_unique<irs::ByEditDistance>(std::move(filter));
+    irs::Optimize(lowered, {.scored = true});
+    tests::PreparedFilter prepared{*lowered, *index, order.front().get(),
+                                   counter};
+    ASSERT_NE(nullptr, prepared.Query(0));
 
     fetcher.Clear();
-    auto docs = prepared->execute({
-      .segment = index[0],
-      .scorer = order.front().get(),
-    });
+    auto docs = prepared.Execute(0);
     ASSERT_NE(nullptr, docs);
 
     auto score = docs->PrepareScore({
@@ -685,19 +671,15 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     opts.provider = irs::DefaultPDP;
     opts.with_transpositions = true;
 
-    auto prepared = Lower(std::move(filter))
-                      ->prepare({
-                        .index = *index,
-                        .memory = counter,
-                        .scorer = order.front().get(),
-                      });
-    ASSERT_NE(nullptr, prepared);
+    irs::Filter::ptr lowered =
+      std::make_unique<irs::ByEditDistance>(std::move(filter));
+    irs::Optimize(lowered, {.scored = true});
+    tests::PreparedFilter prepared{*lowered, *index, order.front().get(),
+                                   counter};
+    ASSERT_NE(nullptr, prepared.Query(0));
 
     fetcher.Clear();
-    auto docs = prepared->execute({
-      .segment = index[0],
-      .scorer = order.front().get(),
-    });
+    auto docs = prepared.Execute(0);
     ASSERT_NE(nullptr, docs);
 
     auto score = docs->PrepareScore({
@@ -739,19 +721,15 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     opts.provider = irs::DefaultPDP;
     opts.with_transpositions = true;
 
-    auto prepared = Lower(std::move(filter))
-                      ->prepare({
-                        .index = *index,
-                        .memory = counter,
-                        .scorer = order.front().get(),
-                      });
-    ASSERT_NE(nullptr, prepared);
+    irs::Filter::ptr lowered =
+      std::make_unique<irs::ByEditDistance>(std::move(filter));
+    irs::Optimize(lowered, {.scored = true});
+    tests::PreparedFilter prepared{*lowered, *index, order.front().get(),
+                                   counter};
+    ASSERT_NE(nullptr, prepared.Query(0));
 
     fetcher.Clear();
-    auto docs = prepared->execute({
-      .segment = index[0],
-      .scorer = order.front().get(),
-    });
+    auto docs = prepared.Execute(0);
     ASSERT_NE(nullptr, docs);
 
     auto score = docs->PrepareScore({
@@ -813,19 +791,15 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     opts.provider = irs::DefaultPDP;
     opts.with_transpositions = true;
 
-    auto prepared = Lower(std::move(filter))
-                      ->prepare({
-                        .index = *index,
-                        .memory = counter,
-                        .scorer = order.front().get(),
-                      });
-    ASSERT_NE(nullptr, prepared);
+    irs::Filter::ptr lowered =
+      std::make_unique<irs::ByEditDistance>(std::move(filter));
+    irs::Optimize(lowered, {.scored = true});
+    tests::PreparedFilter prepared{*lowered, *index, order.front().get(),
+                                   counter};
+    ASSERT_NE(nullptr, prepared.Query(0));
 
     fetcher.Clear();
-    auto docs = prepared->execute({
-      .segment = index[0],
-      .scorer = order.front().get(),
-    });
+    auto docs = prepared.Execute(0);
     ASSERT_NE(nullptr, docs);
 
     auto score = docs->PrepareScore({
@@ -889,19 +863,15 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     opts.provider = irs::DefaultPDP;
     opts.with_transpositions = true;
 
-    auto prepared = Lower(std::move(filter))
-                      ->prepare({
-                        .index = *index,
-                        .memory = counter,
-                        .scorer = order.front().get(),
-                      });
-    ASSERT_NE(nullptr, prepared);
+    irs::Filter::ptr lowered =
+      std::make_unique<irs::ByEditDistance>(std::move(filter));
+    irs::Optimize(lowered, {.scored = true});
+    tests::PreparedFilter prepared{*lowered, *index, order.front().get(),
+                                   counter};
+    ASSERT_NE(nullptr, prepared.Query(0));
 
     fetcher.Clear();
-    auto docs = prepared->execute({
-      .segment = index[0],
-      .scorer = order.front().get(),
-    });
+    auto docs = prepared.Execute(0);
     ASSERT_NE(nullptr, docs);
 
     auto score = docs->PrepareScore({
@@ -977,7 +947,7 @@ TEST_P(ByEditDistanceTestCase, visit) {
     const auto& filter = sdb::basics::downCast<irs::ByTerm>(*lowered);
 
     tests::EmptyFilterVisitor visitor;
-    irs::ByTerm::visit(segment, *reader, filter.options().term, visitor);
+    irs::ByTerm::Visit(segment, *reader, filter.options().term, visitor);
     ASSERT_EQ(1, visitor.prepare_calls_counter());
     ASSERT_EQ(1, visitor.visit_calls_counter());
     ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{

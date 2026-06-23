@@ -32,13 +32,10 @@
 #include <duckdb/common/exception/parser_exception.hpp>
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
-#include <duckdb/common/string_util.hpp>
 #include <duckdb/function/scalar_macro_function.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
-#include <duckdb/parser/expression/operator_expression.hpp>
-#include <duckdb/parser/keyword_helper.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <iostream>

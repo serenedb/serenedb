@@ -41,7 +41,7 @@ ABSL_FLAG(uint64_t, server_maximal_queue_size, 4096,
           "Maximum FIFO queue depth per priority in the SchedulerFeature "
           "scheduler; controls backpressure for the HTTP/REST work queue.");
 ABSL_FLAG(uint64_t, server_cpu_threads, 0,
-          "DuckDB executor pool size at process start. 0 = let DuckDB "
+          "Executor pool size at process start. 0 = let DuckDB "
           "auto-detect from cpu_count. The SQL-level `SET threads = N` "
           "continues to win at runtime.");
 

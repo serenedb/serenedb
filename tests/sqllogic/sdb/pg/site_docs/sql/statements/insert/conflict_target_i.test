@@ -12,3 +12,9 @@ statement ok
 INSERT INTO tbl
     VALUES (1, 40, 700)
     ON CONFLICT (i) DO UPDATE SET k = 2 * EXCLUDED.k;
+
+query
+SELECT i, j, k FROM tbl ORDER BY i;
+----
+i	j	k
+1	20	1400

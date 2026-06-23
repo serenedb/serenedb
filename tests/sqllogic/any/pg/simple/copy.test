@@ -96,7 +96,7 @@ EXPLAIN COPY reversed(id, name) FROM '${__TEST_DIR__}/lmao' WITH (FORMAT CSV, HE
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│           INSERT          │
+│        BATCH_INSERT       │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │        SDB_PROGRESS       │
@@ -596,7 +596,7 @@ EXPLAIN ANALYZE COPY arelav_consumer FROM '<slt:ignore>/arelav_consuma.csv';
 <slt:ignore>
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│           INSERT          │
+│        BATCH_INSERT       │
 │    ────────────────────   │
 │                           │
 │           1 row           │

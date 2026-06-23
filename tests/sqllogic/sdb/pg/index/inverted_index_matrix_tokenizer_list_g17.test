@@ -1,0 +1,407 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY kw_dict(template = 'keyword');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ng_dict(template = 'ngram', mingram = 2,
+    maxgram = 3, preserveoriginal = false, frequency = true, position = true);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY any_text_dict(template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false, accent = false, frequency = true, position = true);
+
+
+# ============================================================================
+# g17 -- Tokenizer-completeness for LIST/ARRAY columns + expression-source
+# LIST/ARRAY across all tokenizers.
+#
+# Two gaps filled in one section:
+#
+#  (1) Column-source LIST/ARRAY coverage was uneven. kw_dict already had a
+#      full grid (m_vla, m_bla, g7_*), but ng_dict and any_text_dict only
+#      covered LIST<VARCHAR> + a BLOB scalar slice. g17 adds the missing
+#      ng_dict-on-ARRAY<VARCHAR,3>/LIST<BLOB>/ARRAY<BLOB,3>, JSON-scalar
+#      cells for both ng_dict and any_text_dict (JSON is a VARCHAR alias,
+#      so the tokenizer validator accepts it), and BLOB-scalar-with-INCLUDE
+#      sidecars under each tokenizer.
+#
+#  (2) Expression-source LIST/ARRAY was zero across the board. No prior
+#      test placed a parenthesized identity expression on VARCHAR[],
+#      VARCHAR[N], BLOB[], BLOB[N] under kw_dict / ng_dict / any_text_dict /
+#      implicit. g17 builds that entire matrix, plus implicit-path
+#      expression-source LIST<JSON>.
+#
+# Reuses existing dicts (kw_dict, ng_dict, any_text_dict) -- no new dict
+# declarations. All cells in g17 are validator-positive; the negative cells
+# (LIST<JSON> + tokenizer, LIST<GEOMETRY>) are already pinned by m_jl_*,
+# g1_reject_*, m_gl_*, g7_gl, and g7_ga.
+# ============================================================================
+
+statement ok
+CREATE TABLE g17_v(pk INTEGER PRIMARY KEY, v VARCHAR);
+
+statement ok
+CREATE TABLE g17_b(pk INTEGER PRIMARY KEY, b BLOB);
+
+statement ok
+CREATE TABLE g17_j(pk INTEGER PRIMARY KEY, j JSON);
+
+statement ok
+CREATE TABLE g17_vla(pk INTEGER PRIMARY KEY, vs VARCHAR[], va VARCHAR[3]);
+
+statement ok
+CREATE TABLE g17_bla(pk INTEGER PRIMARY KEY, bs BLOB[], ba BLOB[3]);
+
+statement ok
+CREATE TABLE g17_jl(pk INTEGER PRIMARY KEY, js JSON[]);
+
+
+# --- (f) ng_dict on VARCHAR expression source (no INCLUDE) ------------------
+
+statement ok
+CREATE INDEX g17_v_expr_ng ON g17_v USING inverted(pk, (upper(v)) ng_dict);
+
+statement ok
+INSERT INTO g17_v VALUES (1, 'alpha'), (2, 'beta');
+
+statement ok
+VACUUM (REFRESH_TABLE) g17_v;
+
+query
+SELECT count(*) FROM g17_v_expr_ng;
+----
+count
+2
+
+
+# --- (e) ng_dict on BLOB scalar WITH INCLUDE --------------------------------
+# --- (h) any_text_dict on BLOB scalar WITH INCLUDE --------------------------
+# --- (i) any_text_dict on BLOB expression source ----------------------------
+
+statement ok
+CREATE INDEX g17_b_col_ng_st  ON g17_b USING inverted(pk, b ng_dict)        INCLUDE (b);
+
+statement ok
+CREATE INDEX g17_b_col_at_st  ON g17_b USING inverted(pk, b any_text_dict)  INCLUDE (b);
+
+statement ok
+CREATE INDEX g17_b_expr_at_ns ON g17_b USING inverted(pk, (decode(encode(b, 'hex'), 'hex')) any_text_dict);
+
+statement ok
+INSERT INTO g17_b VALUES
+    (1, '\\x68656c6c6f'::BLOB),
+    (2, '\\xdeadbeef'::BLOB);
+
+statement ok
+VACUUM (REFRESH_TABLE) g17_b;
+
+query
+SELECT count(*) FROM g17_b_col_ng_st;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_b_col_at_st;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_b_expr_at_ns;
+----
+count
+2
+
+
+# --- (d) ng_dict on JSON scalar --------------------------------------------
+# --- (g) any_text_dict on JSON scalar --------------------------------------
+# --- (j) any_text_dict on JSON-typed expression source ---------------------
+# JSON is VARCHAR with an alias, so the tokenizer validator treats these as
+# accepted (same path that lets m_j_prim_col_kw work under kw_dict).
+
+statement ok
+CREATE INDEX g17_j_col_ng   ON g17_j USING inverted(pk, j ng_dict);
+
+statement ok
+CREATE INDEX g17_j_col_at   ON g17_j USING inverted(pk, j any_text_dict);
+
+statement ok
+CREATE INDEX g17_j_expr_at  ON g17_j USING inverted(pk, (j) any_text_dict);
+
+statement ok
+INSERT INTO g17_j VALUES
+    (1, '"alpha"'::JSON),
+    (2, '"beta"'::JSON);
+
+statement ok
+VACUUM (REFRESH_TABLE) g17_j;
+
+query
+SELECT count(*) FROM g17_j_col_ng;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_j_col_at;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_j_expr_at;
+----
+count
+2
+
+
+# --- (a) ng_dict on ARRAY<VARCHAR, 3> column --------------------------------
+# --- (k) kw_dict on LIST<VARCHAR>   expression source -----------------------
+# --- (l) kw_dict on ARRAY<VARCHAR>  expression source -----------------------
+# --- (o) ng_dict on LIST<VARCHAR>   expression source -----------------------
+# --- (p) ng_dict on ARRAY<VARCHAR>  expression source -----------------------
+# --- (s) any_text_dict on LIST<VARCHAR>  expression source ------------------
+# --- (t) any_text_dict on ARRAY<VARCHAR> expression source ------------------
+# --- (w) implicit (no opclass) LIST<VARCHAR>  expression source -------------
+# --- (x) implicit (no opclass) ARRAY<VARCHAR> expression source -------------
+
+statement ok
+CREATE INDEX g17_vla_va_col_ng    ON g17_vla USING inverted(pk, va ng_dict);
+
+statement ok
+CREATE INDEX g17_vla_vs_expr_kw   ON g17_vla USING inverted(pk, (vs) kw_dict);
+
+statement ok
+CREATE INDEX g17_vla_va_expr_kw   ON g17_vla USING inverted(pk, (va) kw_dict);
+
+statement ok
+CREATE INDEX g17_vla_vs_expr_ng   ON g17_vla USING inverted(pk, (vs) ng_dict);
+
+statement ok
+CREATE INDEX g17_vla_va_expr_ng   ON g17_vla USING inverted(pk, (va) ng_dict);
+
+statement ok
+CREATE INDEX g17_vla_vs_expr_at   ON g17_vla USING inverted(pk, (vs) any_text_dict);
+
+statement ok
+CREATE INDEX g17_vla_va_expr_at   ON g17_vla USING inverted(pk, (va) any_text_dict);
+
+statement ok
+CREATE INDEX g17_vla_vs_expr_imp  ON g17_vla USING inverted(pk, (vs));
+
+statement ok
+CREATE INDEX g17_vla_va_expr_imp  ON g17_vla USING inverted(pk, (va));
+
+statement ok
+INSERT INTO g17_vla VALUES
+    (1, ['alpha', 'beta'], ['alpha', 'beta', 'gamma']),
+    (2, ['delta'],         ['delta', 'epsilon', 'zeta']);
+
+statement ok
+VACUUM (REFRESH_TABLE) g17_vla;
+
+query
+SELECT count(*) FROM g17_vla_va_col_ng;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_vla_vs_expr_kw;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_vla_va_expr_kw;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_vla_vs_expr_ng;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_vla_va_expr_ng;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_vla_vs_expr_at;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_vla_va_expr_at;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_vla_vs_expr_imp;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_vla_va_expr_imp;
+----
+count
+2
+
+
+# --- (b) ng_dict on LIST<BLOB>      column ---------------------------------
+# --- (c) ng_dict on ARRAY<BLOB, 3>  column ---------------------------------
+# --- (m) kw_dict on LIST<BLOB>      expression source ----------------------
+# --- (n) kw_dict on ARRAY<BLOB>     expression source ----------------------
+# --- (q) ng_dict on LIST<BLOB>      expression source ----------------------
+# --- (r) ng_dict on ARRAY<BLOB>     expression source ----------------------
+# --- (u) any_text_dict on LIST<BLOB>  expression source --------------------
+# --- (v) any_text_dict on ARRAY<BLOB> expression source --------------------
+# --- (y) implicit (no opclass) LIST<BLOB>  expression source ---------------
+
+statement ok
+CREATE INDEX g17_bla_bs_col_ng    ON g17_bla USING inverted(pk, bs ng_dict);
+
+statement ok
+CREATE INDEX g17_bla_ba_col_ng    ON g17_bla USING inverted(pk, ba ng_dict);
+
+statement ok
+CREATE INDEX g17_bla_bs_expr_kw   ON g17_bla USING inverted(pk, (bs) kw_dict);
+
+statement ok
+CREATE INDEX g17_bla_ba_expr_kw   ON g17_bla USING inverted(pk, (ba) kw_dict);
+
+statement ok
+CREATE INDEX g17_bla_bs_expr_ng   ON g17_bla USING inverted(pk, (bs) ng_dict);
+
+statement ok
+CREATE INDEX g17_bla_ba_expr_ng   ON g17_bla USING inverted(pk, (ba) ng_dict);
+
+statement ok
+CREATE INDEX g17_bla_bs_expr_at   ON g17_bla USING inverted(pk, (bs) any_text_dict);
+
+statement ok
+CREATE INDEX g17_bla_ba_expr_at   ON g17_bla USING inverted(pk, (ba) any_text_dict);
+
+statement ok
+CREATE INDEX g17_bla_bs_expr_imp  ON g17_bla USING inverted(pk, (bs));
+
+statement ok
+INSERT INTO g17_bla VALUES
+    (1, ['hello'::BLOB, 'world'::BLOB], ['aaa'::BLOB, 'bbb'::BLOB, 'ccc'::BLOB]),
+    (2, ['deadbeef'::BLOB],             ['ddd'::BLOB, 'eee'::BLOB, 'fff'::BLOB]);
+
+statement ok
+VACUUM (REFRESH_TABLE) g17_bla;
+
+query
+SELECT count(*) FROM g17_bla_bs_col_ng;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_bla_ba_col_ng;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_bla_bs_expr_kw;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_bla_ba_expr_kw;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_bla_bs_expr_ng;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_bla_ba_expr_ng;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_bla_bs_expr_at;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_bla_ba_expr_at;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_bla_bs_expr_imp;
+----
+count
+2
+
+
+# --- (z) implicit (no opclass) LIST<JSON> expression source -----------------
+# Mirrors g7_jl_imp on the column side; this is the expression-source twin.
+
+statement ok
+CREATE INDEX g17_jl_js_expr_imp ON g17_jl USING inverted(pk, (js));
+
+statement ok
+INSERT INTO g17_jl VALUES
+    (1, ARRAY['"alpha"'::JSON, '"beta"'::JSON]),
+    (2, ARRAY['"gamma"'::JSON]);
+
+statement ok
+VACUUM (REFRESH_TABLE) g17_jl;
+
+query
+SELECT count(*) FROM g17_jl_js_expr_imp;
+----
+count
+2
+
+
+# --- teardown ---------------------------------------------------------------
+
+statement ok
+DROP TABLE g17_v;
+
+statement ok
+DROP TABLE g17_b;
+
+statement ok
+DROP TABLE g17_j;
+
+statement ok
+DROP TABLE g17_vla;
+
+statement ok
+DROP TABLE g17_bla;
+
+statement ok
+DROP TABLE g17_jl;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY kw_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ng_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY any_text_dict;

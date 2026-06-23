@@ -102,6 +102,7 @@ class Column final : public Object {
   duckdb::LogicalType type;
   std::shared_ptr<ColumnExpr> expr;
   GeneratedType generated_type = GeneratedType::kNone;
+  std::string comment;
 };
 
 inline std::shared_ptr<Object> Column::Clone() const {

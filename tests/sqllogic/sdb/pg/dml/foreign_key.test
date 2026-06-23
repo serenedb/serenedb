@@ -106,3 +106,83 @@ DROP TABLE fk_child_i;
 
 statement ok
 DROP TABLE fk_parent_i;
+
+# Self-referencing FOREIGN KEY must be enforced (a row's parent must exist),
+# not silently accepted. (Matches native duckdb: a row referencing itself in a
+# single INSERT is rejected because the row is not yet visible -- PG defers the
+# check, but that is a duckdb-wide behavior, so this stays in the sdb subtree.)
+statement ok
+CREATE TABLE fk_self (id INTEGER PRIMARY KEY, parent INTEGER, FOREIGN KEY (parent) REFERENCES fk_self (id));
+
+statement ok
+INSERT INTO fk_self VALUES (1, NULL);
+
+statement ok
+INSERT INTO fk_self VALUES (2, 1);
+
+# dangling parent must be rejected
+statement error
+INSERT INTO fk_self VALUES (3, 99);
+
+# deleting a row still referenced by another must be rejected
+statement error
+DELETE FROM fk_self WHERE id = 1;
+
+query
+SELECT id, parent FROM fk_self ORDER BY id;
+----
+id	parent
+1	NULL
+2	1
+
+statement ok
+DROP TABLE fk_self;
+
+# A FOREIGN KEY may reference a UNIQUE (non-PK) column, not only the PRIMARY KEY
+# (matches PG and native duckdb).
+statement ok
+CREATE TABLE fk_u_parent (id INTEGER UNIQUE, j VARCHAR);
+
+statement ok
+INSERT INTO fk_u_parent VALUES (1, 'a');
+
+statement ok
+CREATE TABLE fk_u_child (id INTEGER PRIMARY KEY, pid INTEGER, FOREIGN KEY (pid) REFERENCES fk_u_parent (id));
+
+statement error
+INSERT INTO fk_u_child VALUES (10, 999);
+
+statement ok
+INSERT INTO fk_u_child VALUES (11, 1);
+
+statement ok
+DROP TABLE fk_u_child;
+
+statement ok
+DROP TABLE fk_u_parent;
+
+# FOREIGN KEY constraints are reflected in pg_constraint (contype 'f') and
+# information_schema, matching a native duckdb table.
+statement ok
+CREATE TABLE fk_refl_p (a INTEGER PRIMARY KEY);
+
+statement ok
+CREATE TABLE fk_refl_c (id INTEGER PRIMARY KEY, pa INTEGER, FOREIGN KEY (pa) REFERENCES fk_refl_p (a));
+
+query
+SELECT contype FROM pg_constraint WHERE conrelid = 'fk_refl_c'::regclass AND contype = 'f';
+----
+contype
+f
+
+query
+SELECT constraint_type FROM information_schema.table_constraints WHERE table_name = 'fk_refl_c' AND constraint_type = 'FOREIGN KEY';
+----
+constraint_type
+FOREIGN KEY
+
+statement ok
+DROP TABLE fk_refl_c;
+
+statement ok
+DROP TABLE fk_refl_p;

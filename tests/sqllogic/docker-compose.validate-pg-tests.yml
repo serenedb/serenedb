@@ -28,6 +28,16 @@ services:
     networks:
       - test-network
     command: ["postgres", "-c", "max_connections=900"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      # start_period: grace window where failures don't count and the container
+      # is marked healthy on the first success -- so a fast postgres unblocks
+      # `tests` almost immediately; the window only covers a slow initdb.
+      start_period: 20s
+      start_interval: 250ms  # poll fast during startup (Docker 25+)
+      interval: 2s
+      timeout: 3s
+      retries: 5
 
   tests:
     image: ${BUILD_IMAGE}
@@ -40,7 +50,8 @@ services:
       - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
       - "${CARGO_HOME_CACHE:-${HOME}/.cache/serenedb-cargo-home}:/cargo-home"
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     environment:
       - LOG_DIR=/logs
       - HOME=/sqllogic

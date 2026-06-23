@@ -309,11 +309,10 @@ inline auto MakeFieldNameResolver(const SereneDBScanBindData& bind_data,
     const auto column_type = bind_data.ColumnTypeById(col_id);
     const bool found_type = column_type.id() != duckdb::LogicalTypeId::INVALID;
     const auto lookup = index.LookupField(fid);
-    auto entry_base = [&](irs::field_id entry_fid,
-                          const catalog::InvertedIndexEntryInfo& entry) {
+    auto entry_base = [&](irs::field_id entry_fid) {
       std::string s;
-      if (const auto* expr = entry.GetExpressionData();
-          expr && !expr->pretty_printed.empty()) {
+      const auto* expr = index.ExpressionByFieldId(entry_fid);
+      if (expr && !expr->pretty_printed.empty()) {
         s = expr->pretty_printed;
       } else {
         s = bind_data.ColumnNameById(catalog::Column::Id{entry_fid});
@@ -333,7 +332,7 @@ inline auto MakeFieldNameResolver(const SereneDBScanBindData& bind_data,
     if (lookup.entry) {
       const auto& entry = *lookup.entry;
       if (fid == lookup.entry_field_id) {
-        const auto* expr = entry.GetExpressionData();
+        const auto* expr = index.ExpressionByFieldId(fid);
         if (base.empty() && expr && !expr->pretty_printed.empty()) {
           base = expr->pretty_printed;
         }
@@ -350,16 +349,16 @@ inline auto MakeFieldNameResolver(const SereneDBScanBindData& bind_data,
         return base;
       }
       if (fid == entry.null_field_id) {
-        return entry_base(lookup.entry_field_id, entry) + "(null)";
+        return entry_base(lookup.entry_field_id) + "(null)";
       }
       if (fid == entry.bool_field_id) {
-        return entry_base(lookup.entry_field_id, entry) + "(bool)";
+        return entry_base(lookup.entry_field_id) + "(bool)";
       }
       if (fid == entry.numeric_field_id) {
-        return entry_base(lookup.entry_field_id, entry) + "(numeric)";
+        return entry_base(lookup.entry_field_id) + "(numeric)";
       }
       if (fid == entry.synthetic_column) {
-        return entry_base(lookup.entry_field_id, entry) + "(synthetic)";
+        return entry_base(lookup.entry_field_id) + "(synthetic)";
       }
     }
     if (base.empty()) {

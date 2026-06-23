@@ -195,14 +195,16 @@ void RemoveFromExistingSegment(DocumentMask& deleted_docs,
     return;
   }
 
-  auto prepared = query.filter->prepare({.index = reader});
+  auto collector = query.filter->MakeCollector(nullptr);
+  auto prepared =
+    query.filter->PrepareSegment(reader, {.collector = collector.get()});
 
   if (!prepared) [[unlikely]] {
     return;  // skip invalid prepared filters
   }
 
-  auto itr =
-    prepared->execute({.segment = reader, .pending_docs_mask = &deleted_docs});
+  auto itr = prepared->Execute({.pending_docs_mask = &deleted_docs},
+                               StatsBuffer::Empty());
 
   if (!itr) [[unlikely]] {
     return;  // skip invalid iterators
@@ -229,13 +231,15 @@ bool RemoveFromImportedSegment(DocumentMask& deleted_docs,
     return false;
   }
 
-  auto prepared = query.filter->prepare({.index = reader});
+  auto collector = query.filter->MakeCollector(nullptr);
+  auto prepared =
+    query.filter->PrepareSegment(reader, {.collector = collector.get()});
   if (!prepared) [[unlikely]] {
     return false;  // skip invalid prepared filters
   }
 
-  auto itr =
-    prepared->execute({.segment = reader, .pending_docs_mask = &deleted_docs});
+  auto itr = prepared->Execute({.pending_docs_mask = &deleted_docs},
+                               StatsBuffer::Empty());
   if (!itr) [[unlikely]] {
     return false;  // skip invalid iterators
   }
@@ -268,14 +272,16 @@ void FlushedSegmentContext::Remove(IndexWriter::QueryContext& query) {
 
   auto& document_mask = flushed.document_mask;
 
-  auto prepared = query.filter->prepare({.index = *reader});
+  auto collector = query.filter->MakeCollector(nullptr);
+  auto prepared =
+    query.filter->PrepareSegment(*reader, {.collector = collector.get()});
 
   if (!prepared) [[unlikely]] {
     return;  // Skip invalid prepared filters
   }
 
-  auto itr = prepared->execute(
-    {.segment = *reader, .pending_docs_mask = &document_mask});
+  auto itr = prepared->Execute({.pending_docs_mask = &document_mask},
+                               StatsBuffer::Empty());
 
   if (!itr) [[unlikely]] {
     return;  // Skip invalid iterators

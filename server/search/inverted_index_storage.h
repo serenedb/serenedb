@@ -31,7 +31,6 @@
 #include <map>
 #include <memory>
 #include <mutex>
-#include <shared_mutex>
 
 #include "catalog/inverted_index.h"
 #include "catalog/types.h"
@@ -173,14 +172,12 @@ class InvertedIndexStorage final
   auto& GetMutex() { return _mutex; }
 
   InvertedIndexSnapshotPtr GetInvertedIndexSnapshot() const {
-    std::shared_lock guard{_snapshot_mutex};
-    return _snapshot;
+    return std::atomic_load(&_snapshot);
   }
 
   void StoreInvertedIndexSnapshot(
     InvertedIndexSnapshotPtr inverted_index_snapshot) {
-    std::unique_lock guard{_snapshot_mutex};
-    _snapshot = std::move(inverted_index_snapshot);
+    std::atomic_store(&_snapshot, std::move(inverted_index_snapshot));
   }
 
   auto& GetTasksSettings() { return _tasks_settings; }
@@ -255,7 +252,8 @@ class InvertedIndexStorage final
   ObjectId _index_id;
   SearchEngine& _search;
   std::shared_ptr<ThreadPoolState> _state;
-  mutable std::shared_mutex _snapshot_mutex;
+  // Accessed via std::atomic_load/std::atomic_store (libc++ lacks
+  // std::atomic<std::shared_ptr>).
   InvertedIndexSnapshotPtr _snapshot;
   std::unique_ptr<irs::Directory> _dir;
   std::unique_ptr<irs::Scorer> _topk_scorer;

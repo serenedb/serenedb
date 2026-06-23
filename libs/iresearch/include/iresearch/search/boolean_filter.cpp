@@ -22,6 +22,7 @@
 
 #include "boolean_filter.hpp"
 
+#include "all_filter.hpp"
 #include "conjunction.hpp"
 #include "disjunction.hpp"
 #include "exclusion.hpp"
@@ -40,66 +41,120 @@ bool BooleanFilter::equals(const Filter& rhs) const noexcept {
   });
 }
 
-Filter::Query::ptr And::PrepareBoolean(std::span<const Filter::ptr> filters,
-                                       const PrepareContext& ctx) const {
-  SDB_ASSERT(filters.size() > 1);
-
-  PrepareContext sub_ctx = ctx;
-  sub_ctx.boost *= Boost();
-
-  BooleanQuery::queries_t queries{{sub_ctx.memory}};
-  queries.reserve(filters.size());
-  for (const auto& filter : filters) {
-    queries.emplace_back(filter->prepare(sub_ctx));
+PrepareCollector::ptr And::MakeCollector(const Scorer* scorer) const {
+  auto compound = std::make_unique<CompoundCollector>(scorer);
+  for (const auto& filter : _filters) {
+    compound->Add(filter->MakeCollector(scorer));
   }
-  auto q = memory::make_tracked<AndQuery>(sub_ctx.memory);
-  q->prepare(sub_ctx, merge_type(), std::move(queries));
-  return q;
+  return compound;
 }
 
-Filter::Query::ptr And::prepare(const PrepareContext& ctx) const {
-  return PrepareBoolean(_filters, ctx);
-}
-
-Filter::Query::ptr Or::prepare(const PrepareContext& ctx) const {
-  SDB_ASSERT(_min_match_count != 0);
-  return PrepareBoolean(_filters, ctx);
-}
-
-Filter::Query::ptr Or::PrepareBoolean(std::span<const Filter::ptr> filters,
+QueryBuilder::ptr And::PrepareSegment(const SubReader& segment,
                                       const PrepareContext& ctx) const {
-  SDB_ASSERT(_min_match_count != 0);
-  SDB_ASSERT(_min_match_count <= filters.size());
-  SDB_ASSERT(filters.size() > 1);
+  SDB_ASSERT(_filters.size() > 1);
+  auto* compound = ctx.collector
+                     ? &sdb::basics::downCast<CompoundCollector>(*ctx.collector)
+                     : nullptr;
 
-  const PrepareContext sub_ctx = ctx.Boost(Boost());
+  const auto composite_boost = ctx.boost * Boost();
 
-  BooleanQuery::queries_t queries{{sub_ctx.memory}};
-  queries.reserve(filters.size());
-  for (const auto& filter : filters) {
-    queries.emplace_back(filter->prepare(sub_ctx));
+  BooleanQuery::queries_t queries{{ctx.memory}};
+  queries.reserve(_filters.size());
+  PrepareContext child = ctx;
+  child.boost = composite_boost;
+  size_t idx = 0;
+  for (const auto& filter : _filters) {
+    child.collector = compound ? &compound->Child(idx++) : nullptr;
+    queries.emplace_back(filter->PrepareSegment(segment, child));
   }
-
-  memory::managed_ptr<BooleanQuery> q;
-  if (1 == _min_match_count) {
-    q = memory::make_tracked<OrQuery>(sub_ctx.memory);
-  } else {
-    SDB_ASSERT(_min_match_count < filters.size());
-    q = memory::make_tracked<MinMatchQuery>(sub_ctx.memory, _min_match_count);
-  }
-
-  q->prepare(sub_ctx, merge_type(), std::move(queries));
-  return q;
+  return memory::make_tracked<AndQuery>(ctx.memory, segment, std::move(queries),
+                                        merge_type(), composite_boost);
 }
 
-Filter::Query::ptr Exclusion::prepare(const PrepareContext& ctx) const {
-  const PrepareContext sub_ctx = ctx.Boost(Boost());
-  const auto& excludes = GetExcludes();
-  SDB_ASSERT(!excludes.empty());
-  SDB_ASSERT(std::ranges::all_of(
-    excludes, [](const Filter::ptr& excl) { return excl != nullptr; }));
+PrepareCollector::ptr Or::MakeCollector(const Scorer* scorer) const {
+  auto compound = std::make_unique<CompoundCollector>(scorer);
+  for (const auto& filter : _filters) {
+    compound->Add(filter->MakeCollector(scorer));
+  }
+  return compound;
+}
 
-  return PrepareExclusion(sub_ctx, GetInclude(), excludes);
+QueryBuilder::ptr Or::PrepareSegment(const SubReader& segment,
+                                     const PrepareContext& ctx) const {
+  SDB_ASSERT(_filters.size() > 1);
+  SDB_ASSERT(_min_match_count != 0);
+  auto* compound = ctx.collector
+                     ? &sdb::basics::downCast<CompoundCollector>(*ctx.collector)
+                     : nullptr;
+
+  const auto composite_boost = ctx.boost * Boost();
+
+  BooleanQuery::queries_t queries{{ctx.memory}};
+  queries.reserve(_filters.size());
+  PrepareContext child = ctx;
+  child.boost = composite_boost;
+  size_t idx = 0;
+  for (const auto& filter : _filters) {
+    child.collector = compound ? &compound->Child(idx++) : nullptr;
+    queries.emplace_back(filter->PrepareSegment(segment, child));
+  }
+  if (_min_match_count <= 1) {
+    return memory::make_tracked<OrQuery>(
+      ctx.memory, segment, std::move(queries), merge_type(), composite_boost);
+  }
+  if (_min_match_count >= _filters.size()) {
+    return memory::make_tracked<AndQuery>(
+      ctx.memory, segment, std::move(queries), merge_type(), composite_boost);
+  }
+  return memory::make_tracked<MinMatchQuery>(ctx.memory, segment,
+                                             std::move(queries), merge_type(),
+                                             composite_boost, _min_match_count);
+}
+
+PrepareCollector::ptr Exclusion::MakeCollector(const Scorer* scorer) const {
+  auto compound = std::make_unique<CompoundCollector>(scorer);
+  const auto& include = GetInclude();
+  compound->Add(include ? include->MakeCollector(scorer)
+                        : All{}.MakeCollector(scorer));
+  for (const auto& exclude : GetExcludes()) {
+    compound->Add(exclude->MakeCollector(nullptr));
+  }
+  return compound;
+}
+
+QueryBuilder::ptr Exclusion::PrepareSegment(const SubReader& segment,
+                                            const PrepareContext& ctx) const {
+  SDB_ASSERT(!GetExcludes().empty());
+  auto* compound = ctx.collector
+                     ? &sdb::basics::downCast<CompoundCollector>(*ctx.collector)
+                     : nullptr;
+
+  const auto child_boost = ctx.boost * Boost();
+
+  PrepareContext incl_ctx = ctx;
+  incl_ctx.boost = child_boost;
+  incl_ctx.collector = compound ? &compound->Child(0) : nullptr;
+  const auto& include_filter = GetInclude();
+  auto include = include_filter
+                   ? include_filter->PrepareSegment(segment, incl_ctx)
+                   : MakeAllQuery(segment, incl_ctx, kNoBoost);
+
+  std::vector<QueryBuilder::ptr> excludes;
+  const auto exclude_filters = GetExcludes();
+  SDB_ASSERT(absl::c_all_of(exclude_filters,
+                            [](const auto& excl) { return excl != nullptr; }));
+  excludes.reserve(exclude_filters.size());
+  size_t idx = 1;
+  for (const auto& filter : exclude_filters) {
+    PrepareContext child = ctx;
+    child.boost = child_boost;
+    child.collector = compound ? &compound->Child(idx++) : nullptr;
+    excludes.emplace_back(filter->PrepareSegment(segment, child));
+  }
+  SDB_ASSERT(
+    absl::c_all_of(excludes, [](const auto& excl) { return excl != nullptr; }));
+  return memory::make_tracked<ExclusionQuery>(
+    ctx.memory, segment, std::move(include), std::move(excludes));
 }
 
 bool Exclusion::equals(const irs::Filter& rhs) const noexcept {
@@ -115,9 +170,15 @@ bool Exclusion::equals(const irs::Filter& rhs) const noexcept {
          std::ranges::equal(GetExcludes(), typed_rhs.GetExcludes(), same);
 }
 
-Filter::Query::ptr Not::prepare(const PrepareContext&) const {
+QueryBuilder::ptr Not::PrepareSegment(const SubReader&,
+                                      const PrepareContext&) const {
   SDB_UNREACHABLE();
-  return Query::empty();
+  return QueryBuilder::Empty();
+}
+
+PrepareCollector::ptr Not::MakeCollector(const Scorer*) const {
+  SDB_UNREACHABLE();
+  return std::make_unique<NoopCollector>();
 }
 
 bool Not::equals(const irs::Filter& rhs) const noexcept {
@@ -125,9 +186,8 @@ bool Not::equals(const irs::Filter& rhs) const noexcept {
     return false;
   }
   const auto& typed_rhs = sdb::basics::downCast<Not>(rhs);
-  SDB_ASSERT(_filter != nullptr);
-  SDB_ASSERT(typed_rhs._filter != nullptr);
-  return *_filter == *typed_rhs._filter;
+  return (!empty() && !typed_rhs.empty() && *_filter == *typed_rhs._filter) ||
+         (empty() && typed_rhs.empty());
 }
 
 }  // namespace irs

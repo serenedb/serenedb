@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <utility>
+#include <vector>
 
 #include "basics/shared.hpp"
 #include "iresearch/index/directory_reader.hpp"
@@ -45,10 +46,14 @@ inline uint64_t ExecuteTopKWithCount(const DirectoryReader& reader,
                                      size_t k, std::span<ScoreDoc> hits) {
   SDB_ASSERT(BlockSize(k) == hits.size());
 
-  auto prepared = filter.prepare({
-    .index = reader,
-    .scorer = &scorer,
-  });
+  auto prepare_collector = filter.MakeCollector(&scorer);
+  std::vector<QueryBuilder::ptr> queries;
+  queries.reserve(reader.size());
+  for (auto& segment : reader) {
+    queries.emplace_back(
+      filter.PrepareSegment(segment, {.collector = prepare_collector.get()}));
+  }
+  const auto stats = prepare_collector->Finish(IResourceManager::gNoop);
 
   score_t score_threshold = std::numeric_limits<score_t>::min();
   NthPartitionScoreCollector<Order::DESC> collector{score_threshold, k, hits};
@@ -56,12 +61,14 @@ inline uint64_t ExecuteTopKWithCount(const DirectoryReader& reader,
   uint32_t seg_idx = 0;
   for (auto& segment : reader) {
     fetcher.Clear();
+    auto& query = queries[seg_idx];
     collector.SetSegment(seg_idx++);
 
-    auto it = prepared->execute({
-      .segment = segment,
-      .scorer = &scorer,
-    });
+    if (!query) {
+      continue;
+    }
+
+    auto it = query->Execute({}, stats);
 
     auto score_func = it->PrepareScore({
       .scorer = &scorer,
@@ -83,11 +90,14 @@ inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
                             std::span<ScoreDoc> hits) {
   SDB_ASSERT(BlockSize(k) == hits.size());
 
-  auto prepared = filter.prepare({
-    .index = reader,
-    .scorer = &scorer,
-
-  });
+  auto prepare_collector = filter.MakeCollector(&scorer);
+  std::vector<QueryBuilder::ptr> queries;
+  queries.reserve(reader.size());
+  for (auto& segment : reader) {
+    queries.emplace_back(
+      filter.PrepareSegment(segment, {.collector = prepare_collector.get()}));
+  }
+  const auto stats = prepare_collector->Finish(IResourceManager::gNoop);
 
   score_t score_threshold = std::numeric_limits<score_t>::min();
   NthPartitionScoreCollector<Order::DESC> collector{score_threshold, k, hits};
@@ -95,13 +105,14 @@ inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
   uint32_t seg_idx = 0;
   for (auto& segment : reader) {
     fetcher.Clear();
+    auto& query = queries[seg_idx];
     collector.SetSegment(seg_idx++);
 
-    auto it = prepared->execute({
-      .segment = segment,
-      .scorer = &scorer,
-      .wand = wand,
-    });
+    if (!query) {
+      continue;
+    }
+
+    auto it = query->Execute({.wand = wand}, stats);
 
     auto score_func = it->PrepareScore({
       .scorer = &scorer,

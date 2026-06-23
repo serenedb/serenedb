@@ -30,7 +30,8 @@
 
 namespace irs {
 
-Filter::Query::ptr ByWildcard::prepare(const PrepareContext&) const {
+QueryBuilder::ptr ByWildcard::PrepareSegment(const SubReader&,
+                                             const PrepareContext&) const {
   SDB_THROW(sdb::ERROR_INTERNAL,
             "ByWildcard must be lowered by the optimizer before prepare");
 }

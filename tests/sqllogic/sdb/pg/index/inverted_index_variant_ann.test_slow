@@ -56,6 +56,15 @@ count
 30104
 
 
+# A high ef_search makes the greedy walk reliably descend the filler gradient
+# to the (reachable) sentinel island. Without it the approximate top-k depends
+# on the per-segment graph layout, which the parallel suite perturbs (refresh /
+# merge timing), so the probes below would be flaky. With it they return the
+# true nearest neighbours.
+statement ok
+SET sdb_ef_search TO 4096
+
+
 query
 SELECT meta FROM variant_ann_idx
   ORDER BY (meta.emb)::FLOAT[3] <-> [1, 0, 0]::FLOAT[3] LIMIT 1;
@@ -76,7 +85,7 @@ pk	meta
 3	{"emb":[0,0,1],"label":"three"}
 
 
-# Far cluster: nearest to [10,10,10] is pk=4.
+# Nearest to [10,10,10] is the pk=4 sentinel (exact match).
 query
 SELECT pk, meta FROM variant_ann_idx
   ORDER BY (meta.emb)::FLOAT[3] <-> [10, 10, 10]::FLOAT[3] LIMIT 1;

@@ -1,0 +1,59 @@
+control substitution on
+
+# Expression (functional) secondary index survives a crash/restart: the catalog
+# must deserialize the indexed-expression payload and the store-side ART must
+# persist and keep enforcing (incl. UNIQUE on the computed key). Issue #830.
+
+statement ok
+CREATE TABLE pudge(j INTEGER, k INTEGER);
+
+statement ok
+INSERT INTO pudge VALUES (1, 100), (2, 200), (3, 300);
+
+statement ok
+CREATE INDEX vedernikoff_sum ON pudge ((j + k));
+
+statement ok
+CREATE UNIQUE INDEX vedernikoff_uniq ON pudge ((j * 1000 + k));
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT j, k FROM pudge WHERE (j + k) = 202;
+----
+j	k
+2	200
+
+connection after_crash
+query
+SELECT j, k FROM pudge WHERE (j + k) = 303;
+----
+j	k
+3	300
+
+connection after_crash
+statement ok
+INSERT INTO pudge VALUES (4, 7);
+
+connection after_crash
+query
+SELECT j, k FROM pudge WHERE (j + k) = 11;
+----
+j	k
+4	7
+
+# The UNIQUE expression index still enforces the recomputed key after restart:
+# (1, 100) recomputes to 1100, duplicating the surviving first row.
+connection after_crash
+statement error
+INSERT INTO pudge VALUES (1, 100);
+
+connection after_crash
+statement ok
+DROP TABLE pudge;

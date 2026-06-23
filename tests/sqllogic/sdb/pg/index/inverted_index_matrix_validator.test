@@ -1,0 +1,375 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY kw_dict(template = 'keyword');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ng_dict(template = 'ngram', mingram = 2,
+    maxgram = 3, preserveoriginal = false, frequency = true, position = true);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geo_s2_dict(template = 'geojson',
+    coding = 's2point');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geo_src_dict(template = 'geojson',
+    coding = 'source');
+
+
+# ============================================================================
+# Strict tokenizer-vs-column-type validator coverage.
+#
+# Locks in the CREATE INDEX-time validator:
+#  - text tokenizers (kw_dict / ng_dict) are valid only on VARCHAR, BLOB,
+#    LIST<VARCHAR|BLOB>, or ARRAY<VARCHAR|BLOB>;
+#  - geo tokenizers (geo_s2_dict / geo_src_dict) are valid only on JSON,
+#    VARCHAR (GeoJSON content), or GEOMETRY (WKB content);
+#  - GEOMETRY may only appear with a geo tokenizer, and only as a scalar;
+#  - JSON in LIST/ARRAY position is rejected for any tokenizer (the scalar
+#    "mixed" case is the only accepted JSON form).
+# ============================================================================
+
+statement ok
+CREATE TABLE m_reject(pk INTEGER PRIMARY KEY,
+                     i INTEGER, bi BIGINT, db DOUBLE, bo BOOLEAN,
+                     dt DATE, ts TIMESTAMP,
+                     u UUID, iv INTERVAL,
+                     il INTEGER[], bl BOOLEAN[],
+                     vs VARCHAR, bs BLOB,
+                     g GEOMETRY('OGC:CRS84'));
+
+# Text tokenizer kw_dict on non-string scalars: rejected.
+statement error
+CREATE INDEX m_reject_kw_i ON m_reject USING inverted(pk, i kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
+
+
+statement error
+CREATE INDEX m_reject_kw_bi ON m_reject USING inverted(pk, bi kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'bi' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got BIGINT)
+
+
+statement error
+CREATE INDEX m_reject_kw_db ON m_reject USING inverted(pk, db kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'db' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got DOUBLE)
+
+
+statement error
+CREATE INDEX m_reject_kw_bo ON m_reject USING inverted(pk, bo kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'bo' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got BOOLEAN)
+
+
+statement error
+CREATE INDEX m_reject_kw_dt ON m_reject USING inverted(pk, dt kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'dt' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got DATE)
+
+
+statement error
+CREATE INDEX m_reject_kw_ts ON m_reject USING inverted(pk, ts kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'ts' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIMESTAMP)
+
+
+statement error
+CREATE INDEX m_reject_kw_u ON m_reject USING inverted(pk, u kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'u' has unsupported type UUID and can not be indexed
+
+
+statement error
+CREATE INDEX m_reject_kw_iv ON m_reject USING inverted(pk, iv kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'iv' has unsupported type INTERVAL and can not be indexed
+
+
+# Text tokenizer ng_dict on non-string scalar: rejected.
+statement error
+CREATE INDEX m_reject_ng_i ON m_reject USING inverted(pk, i ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
+
+
+# Text tokenizer on non-string LIST / ARRAY: rejected.
+statement error
+CREATE INDEX m_reject_kw_il ON m_reject USING inverted(pk, il kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'il' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[])
+
+
+statement error
+CREATE INDEX m_reject_ng_bl ON m_reject USING inverted(pk, bl ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'bl' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got BOOLEAN[])
+
+
+# Text tokenizer on GEOMETRY scalar: rejected.
+statement error
+CREATE INDEX m_reject_kw_g ON m_reject USING inverted(pk, g kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
+
+
+statement error
+CREATE INDEX m_reject_ng_g ON m_reject USING inverted(pk, g ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
+
+
+# Geo tokenizer on non-JSON VARCHAR / BLOB / numerics: rejected.
+# (VARCHAR is accepted only when carrying GeoJSON content via the JSON alias.)
+statement error
+CREATE INDEX m_reject_s2_vs ON m_reject USING inverted(pk, vs geo_s2_dict);
+----
+db error: ERROR: Failed to create index: Column 'vs' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+statement error
+CREATE INDEX m_reject_src_vs ON m_reject USING inverted(pk, vs geo_src_dict);
+----
+db error: ERROR: Failed to create index: Column 'vs' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+statement error
+CREATE INDEX m_reject_s2_bs ON m_reject USING inverted(pk, bs geo_s2_dict);
+----
+db error: ERROR: Failed to create index: Column 'bs' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+statement error
+CREATE INDEX m_reject_s2_i ON m_reject USING inverted(pk, i geo_s2_dict);
+----
+db error: ERROR: Failed to create index: Column 'i' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+statement error
+CREATE INDEX m_reject_src_i ON m_reject USING inverted(pk, i geo_src_dict);
+----
+db error: ERROR: Failed to create index: Column 'i' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# Sanity: the accepted scalar paths still work on this same table.
+statement ok
+CREATE INDEX m_reject_kw_vs ON m_reject USING inverted(pk, vs kw_dict);
+
+statement ok
+CREATE INDEX m_reject_s2_g ON m_reject USING inverted(pk, g geo_s2_dict);
+
+# Implicit (no opclass) path still accepts numeric / temporal / boolean columns.
+statement ok
+CREATE INDEX m_reject_imp ON m_reject USING inverted(pk, i, bi, bo, dt, ts);
+
+
+# ============================================================================
+# Validator branches: explicit statement-error pins for opclass acceptance
+# rules that aren't covered elsewhere in the matrix. Each rejection uses the
+# inventory regex so the exact error message stays observable.
+#   (a) GEOMETRY without OGC:CRS84 + geo_s2_dict       -> CRS84 validator
+#   (b) hnsw on scalar FLOAT                            -> hnsw validator
+#   (c) hnsw on LIST<FLOAT>                             -> hnsw validator
+#   (d) hnsw on ARRAY<DOUBLE,3>                         -> hnsw validator
+#   (e) hnsw on ARRAY<INTEGER,3>                        -> hnsw validator
+#   (f) hnsw on scalar VARCHAR                          -> hnsw validator
+#   (g) implicit (no opclass) on UUID                   -> term_dict Unsupported
+#   (h) implicit (no opclass) on DECIMAL(10,2)          -> term_dict Unsupported
+#   (i) implicit (no opclass) on INTERVAL               -> term_dict Unsupported
+#   (j) implicit (no opclass) on HUGEINT                -> term_dict Unsupported
+# ============================================================================
+
+statement ok
+CREATE TABLE g5_reject(pk INTEGER PRIMARY KEY,
+                       g_nocrs GEOMETRY,
+                       f FLOAT,
+                       fl FLOAT[],
+                       da DOUBLE[3],
+                       ia INTEGER[3],
+                       v VARCHAR,
+                       u UUID,
+                       d DECIMAL(10,2),
+                       iv INTERVAL,
+                       h HUGEINT);
+
+# (a) GEOMETRY without OGC:CRS84 annotation: CRS84 validator rejects.
+statement error
+CREATE INDEX g5_reject_s2_nocrs ON g5_reject USING inverted(pk, g_nocrs geo_s2_dict);
+----
+db error: ERROR: Failed to create index: Column 'g_nocrs': GEOMETRY type has no CRS attached; declare it with ::GEOMETRY('OGC:CRS84')
+
+
+# (b) hnsw on scalar FLOAT: must be ARRAY(FLOAT, N).
+statement error
+CREATE INDEX g5_reject_hnsw_f ON g5_reject USING inverted(pk, f hnsw (metric = 'l2'));
+----
+db error: ERROR: Failed to create index: Column 'f' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not FLOAT
+
+
+# (c) hnsw on LIST<FLOAT>: must be ARRAY(FLOAT, N), not a variable-length list.
+statement error
+CREATE INDEX g5_reject_hnsw_fl ON g5_reject USING inverted(pk, fl hnsw (metric = 'l2'));
+----
+db error: ERROR: Failed to create index: Column 'fl' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not FLOAT[]
+
+
+# (d) hnsw on ARRAY<DOUBLE,3>: element type must be FLOAT, not DOUBLE.
+statement error
+CREATE INDEX g5_reject_hnsw_da ON g5_reject USING inverted(pk, da hnsw (metric = 'l2'));
+----
+db error: ERROR: Failed to create index: Column 'da' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not DOUBLE[3]
+
+
+# (e) hnsw on ARRAY<INTEGER,3>: element type must be FLOAT, not INTEGER.
+statement error
+CREATE INDEX g5_reject_hnsw_ia ON g5_reject USING inverted(pk, ia hnsw (metric = 'l2'));
+----
+db error: ERROR: Failed to create index: Column 'ia' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not INTEGER[3]
+
+
+# (f) hnsw on scalar VARCHAR: not ARRAY at all.
+statement error
+CREATE INDEX g5_reject_hnsw_v ON g5_reject USING inverted(pk, v hnsw (metric = 'l2'));
+----
+db error: ERROR: Failed to create index: Column 'v' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not VARCHAR
+
+
+# (g) implicit (no opclass) on UUID: term_dict has no codec for UUID.
+statement error
+CREATE INDEX g5_reject_imp_u ON g5_reject USING inverted(pk, u);
+----
+db error: ERROR: Failed to create index: Column 'u' has unsupported type UUID and can not be indexed
+
+
+# (h) implicit (no opclass) on DECIMAL(10,2): term_dict has no codec for DECIMAL.
+statement error
+CREATE INDEX g5_reject_imp_d ON g5_reject USING inverted(pk, d);
+----
+db error: ERROR: Failed to create index: Column 'd' has unsupported type DECIMAL(10,2) and can not be indexed
+
+
+# (i) implicit (no opclass) on INTERVAL: term_dict has no codec for INTERVAL.
+statement error
+CREATE INDEX g5_reject_imp_iv ON g5_reject USING inverted(pk, iv);
+----
+db error: ERROR: Failed to create index: Column 'iv' has unsupported type INTERVAL and can not be indexed
+
+
+# (j) implicit (no opclass) on HUGEINT: term_dict has no codec for HUGEINT.
+statement error
+CREATE INDEX g5_reject_imp_h ON g5_reject USING inverted(pk, h);
+----
+db error: ERROR: Failed to create index: Column 'h' has unsupported type HUGEINT and can not be indexed
+
+
+statement ok
+CREATE TABLE g6_t(pk INTEGER PRIMARY KEY,
+                  b BLOB,
+                  bo BOOLEAN,
+                  t8 TINYINT,
+                  t16 SMALLINT,
+                  t64 BIGINT,
+                  f FLOAT,
+                  dbl DOUBLE,
+                  dt DATE,
+                  ts TIMESTAMP,
+                  g GEOMETRY('OGC:CRS84'));
+
+statement ok
+CREATE INDEX g6_idx ON g6_t USING inverted
+    INCLUDE (b, bo, t8, t16, t64, f, dbl, dt, ts, g);
+
+statement ok
+INSERT INTO g6_t VALUES
+    (1, '\\x0102'::BLOB, true,  -8::TINYINT,  -300::SMALLINT,
+        9000000000::BIGINT, 1.5::FLOAT, 2.5::DOUBLE,
+        DATE '2024-01-01', TIMESTAMP '2024-01-01 00:00:00',
+        'POINT(0 0)'::GEOMETRY('OGC:CRS84')),
+    (2, '\\x0304'::BLOB, false,  8::TINYINT,   300::SMALLINT,
+        -9000000000::BIGINT, -3.25::FLOAT, -4.75::DOUBLE,
+        DATE '2024-06-15', TIMESTAMP '2024-06-15 12:00:00',
+        'POINT(10 20)'::GEOMETRY('OGC:CRS84'));
+
+statement ok
+VACUUM (REFRESH_TABLE) g6_t;
+
+query
+SELECT count(*) FROM g6_idx;
+----
+count
+2
+
+query
+SELECT pk, bo, t8, t16, t64 FROM g6_idx ORDER BY pk;
+----
+pk	bo	t8	t16	t64
+1	t	-8	-300	9000000000
+2	f	8	300	-9000000000
+
+query
+SELECT pk, dt, ts FROM g6_idx ORDER BY pk;
+----
+pk	dt	ts
+1	2024-01-01	2024-01-01 00:00:00
+2	2024-06-15	2024-06-15 12:00:00
+
+statement count 2
+COPY (SELECT * FROM (VALUES
+  (1, 5::UTINYINT,   500::USMALLINT,   5000::UINTEGER,
+      TIMESTAMP_MS '2024-01-01 00:00:00',
+      TIMESTAMP_NS '2024-01-01 00:00:00',
+      TIMESTAMPTZ  '2024-01-01 00:00:00+00'),
+  (2, 250::UTINYINT, 60000::USMALLINT, 4000000000::UINTEGER,
+      TIMESTAMP_MS '2024-06-15 12:00:00',
+      TIMESTAMP_NS '2024-06-15 12:00:00',
+      TIMESTAMPTZ  '2024-06-15 12:00:00+00')
+) AS t(pk, u8, u16, u32, ts_ms, ts_ns, ts_tz))
+TO '${__TEST_DIR__}/sdb_g6_unsup.parquet' (FORMAT parquet);
+
+statement ok
+CREATE VIEW g6_v_unsup AS SELECT * FROM read_parquet('${__TEST_DIR__}/sdb_g6_unsup.parquet');
+
+statement ok
+CREATE INDEX g6_idx_unsup ON g6_v_unsup USING inverted
+    INCLUDE (u8, u16, u32, ts_ms, ts_ns, ts_tz);
+
+query
+SELECT count(*) FROM g6_idx_unsup;
+----
+count
+2
+
+query
+SELECT pk, u8, u16, u32 FROM g6_idx_unsup ORDER BY pk;
+----
+pk	u8	u16	u32
+1	5	500	5000
+2	250	60000	4000000000
+
+
+# --- teardown ---------------------------------------------------------------
+
+statement ok
+DROP TABLE m_reject;
+
+statement ok
+DROP TABLE g5_reject;
+
+statement ok
+DROP TABLE g6_t;
+
+statement ok
+DROP VIEW g6_v_unsup CASCADE;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY kw_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ng_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY geo_s2_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY geo_src_dict;

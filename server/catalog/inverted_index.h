@@ -25,6 +25,7 @@
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -127,6 +128,7 @@ Result Validate(std::string_view label, const duckdb::LogicalType& type);
 
 }  // namespace ivf
 
+using persistence::ExpressionKey;
 using persistence::IVFColumnConfig;
 
 struct InvertedIndexEntryInfo {
@@ -142,17 +144,9 @@ struct InvertedIndexEntryInfo {
   std::optional<IVFColumnConfig> ivf_config;
   uint32_t row_group_size = 0;
 
-  std::optional<ExpressionData> expression;
-
   irs::field_id null_field_id = irs::field_limits::invalid();
   irs::field_id bool_field_id = irs::field_limits::invalid();
   irs::field_id numeric_field_id = irs::field_limits::invalid();
-
-  bool IsExpression() const noexcept { return expression.has_value(); }
-  bool IsColumn() const noexcept { return !expression.has_value(); }
-  const ExpressionData* GetExpressionData() const noexcept {
-    return expression ? &*expression : nullptr;
-  }
 
   bool IsIVF() const noexcept { return ivf_config.has_value(); }
   bool HasTextDictionary() const noexcept { return text_dictionary.isSet(); }
@@ -177,21 +171,27 @@ class InvertedIndex final : public Index {
   using Entries =
     containers::NodeHashMap<irs::field_id, InvertedIndexEntryInfo>;
 
+  // `columns` are the de-duped plain-column keys (each key's field_id is its
+  // column id). `expression_keys` carry each expression's payload + its
+  // allocated field_id as one unit. `entries` is the per-field config keyed by
+  // field_id.
   InvertedIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
                 ObjectId relation_id, std::string name,
-                std::vector<Column::Id> column_ids, Entries entries,
+                std::vector<Column::Id> columns,
+                std::vector<ExpressionKey> expression_keys, Entries entries,
                 InvertedIndexOptions options)
     : Index{database_id,
             schema_id,
             id,
             relation_id,
             std::move(name),
-            std::move(column_ids),
+            DeriveFromKeys(columns, expression_keys),
             ObjectType::InvertedIndex},
       _entries{std::move(entries)},
+      _expression_keys{std::move(expression_keys)},
       _options{std::move(options)} {
+    BuildExprByFieldIdIndex();
     BuildSerializedExprIndex();
-    BuildSyntheticFeaturesIndex();
     BuildFieldLookupIndex();
     BumpTickServerForEntryIds();
   }
@@ -207,6 +207,17 @@ class InvertedIndex final : public Index {
   const InvertedIndexEntryInfo* FindColumnInfo(
     catalog::Column::Id column_id) const noexcept;
 
+  // The expression key owning `field_id`, or nullptr if `field_id` is a plain
+  // column key (or unknown). Pointer is stable for the index's lifetime (into
+  // the immutable _expression_keys vector).
+  const ExpressionData* ExpressionByFieldId(irs::field_id id) const noexcept;
+
+  // The expression keys (payload + allocated field_id), one self-contained unit
+  // each.
+  const std::vector<ExpressionKey>& ExpressionKeys() const noexcept {
+    return _expression_keys;
+  }
+
   struct FieldLookup {
     const InvertedIndexEntryInfo* entry = nullptr;
     irs::field_id entry_field_id = irs::field_limits::invalid();
@@ -214,12 +225,6 @@ class InvertedIndex final : public Index {
   FieldLookup LookupField(irs::field_id id) const noexcept;
   static void AppendKindSuffix(std::string& out,
                                const duckdb::LogicalType& type);
-  const search::Features* FindSyntheticFeatures(
-    irs::field_id synthetic_id) const noexcept;
-
-  std::vector<Column::Id> GetReferencedColumnIds() const final;
-
-  const Entries& GetEntries() const noexcept { return _entries; }
 
   ColumnTokenizer GetTokenizer(const std::shared_ptr<const Snapshot>& snapshot,
                                irs::field_id field_id) const;
@@ -252,18 +257,26 @@ class InvertedIndex final : public Index {
   }
 
  private:
+  // One pass: de-dup `columns` and append each expression key's dependent
+  // columns -> the base query surface.
+  static DerivedColumnIds DeriveFromKeys(
+    std::span<const Column::Id> columns,
+    std::span<const ExpressionKey> expression_keys);
+
+  void BuildExprByFieldIdIndex();
   void BuildSerializedExprIndex();
-  void BuildSyntheticFeaturesIndex();
   void BuildFieldLookupIndex();
   void BumpTickServerForEntryIds();
 
   Entries _entries;
-  // Reverse map: serialized expression -> field_id.
-  // Views point into the durable storage in entries
+  std::vector<ExpressionKey> _expression_keys;
+  // Bridge: field_id -> the owning expression key's payload (nullptr-absent for
+  // column keys). Pointers are stable (into the immutable _expression_keys).
+  containers::FlatHashMap<irs::field_id, const ExpressionData*>
+    _expr_by_field_id;
+  // Reverse map: serialized expression -> field_id. Views point into the
+  // durable storage in _expression_keys.
   containers::FlatHashMap<std::string_view, irs::field_id> _expr_to_field;
-  // Reverse map: synthetic field_id -> owner entry's features.
-  containers::FlatHashMap<irs::field_id, search::Features>
-    _synthetic_to_features;
   containers::FlatHashMap<irs::field_id, FieldLookup> _field_lookup;
   InvertedIndexOptions _options;
   mutable std::shared_ptr<search::InvertedIndexStorage> _data;

@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/synchronization/notification.h>
+
 #include <cstdint>
 #include <duckdb.hpp>
 #include <iresearch/index/index_reader.hpp>
@@ -48,13 +50,24 @@ struct SearchFullScanGlobalState : public CommonScanGlobalState {
   bool parallel_topk = false;
 
   duckdb::idx_t MaxThreads() const final {
-    if (count_only && !query) {
+    if (count_only && queries.empty()) {
       return 1;
     }
     return std::max<duckdb::idx_t>(1, total_segments);
   }
 
-  irs::Filter::Query::ptr query;
+  const irs::Filter* filter = nullptr;
+  std::vector<irs::PrepareCollector::ptr> collectors;
+  std::vector<irs::QueryBuilder::ptr> queries;
+  std::optional<irs::StatsBuffer> stats;
+
+  absl::Notification prepare_finished;
+  std::atomic_uint32_t prepare_segment = 0;
+  std::atomic_uint32_t prepare_count = 0;
+  std::atomic_uint32_t collector_slots = 0;
+
+  // Scorer state. `scorer_obj` is non-null iff the plan attached BM25 /
+  // TFIDF / DFI / LM-* via the projection or ORDER BY rewrite.
   std::unique_ptr<irs::Scorer> scorer_obj;
   const SearchScan* scan = nullptr;
 
@@ -78,6 +91,8 @@ struct SearchFullScanTopKLocalState : public SegDocBufferedScanLocalState {
 
   void OnSegment(duckdb::ClientContext& ctx, const irs::SubReader& seg,
                  uint32_t seg_idx, SearchFullScanGlobalState& g);
+  void OnSegmentPrepare(duckdb::ClientContext& ctx, const irs::SubReader& seg,
+                        uint32_t seg_idx, SearchFullScanGlobalState& g);
   bool OnSegmentsExhausted(duckdb::ClientContext& ctx,
                            SearchFullScanGlobalState& g,
                            duckdb::DataChunk& output);
@@ -104,6 +119,8 @@ struct SearchFullScanScanLocalState : public SegDocBufferedScanLocalState {
 
   void StartSegment(duckdb::ClientContext& ctx, const irs::SubReader& seg,
                     uint32_t seg_idx, SearchFullScanGlobalState& g);
+  void OnSegmentPrepare(duckdb::ClientContext& ctx, const irs::SubReader& seg,
+                        uint32_t seg_idx, SearchFullScanGlobalState& g);
   duckdb::idx_t EmitChunk(duckdb::ClientContext& ctx,
                           SearchFullScanGlobalState& g,
                           duckdb::DataChunk& output,

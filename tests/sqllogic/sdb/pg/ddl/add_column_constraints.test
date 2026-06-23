@@ -1,0 +1,57 @@
+# ALTER TABLE ADD COLUMN with an inline constraint other than DEFAULT is not
+# supported: serenedb errors instead of silently dropping the constraint (the PG
+# grammar used to parse e.g. NOT NULL and then discard it). DEFAULT and a plain
+# add are supported; any other constraint must be added in a separate ALTER step.
+
+statement ok
+CREATE TABLE acc (a INT);
+
+
+statement count 1
+INSERT INTO acc VALUES (1);
+
+
+statement error
+ALTER TABLE acc ADD COLUMN b INT NOT NULL;
+
+
+statement error
+ALTER TABLE acc ADD COLUMN b INT PRIMARY KEY;
+
+
+statement error
+ALTER TABLE acc ADD COLUMN b INT UNIQUE;
+
+
+statement error
+ALTER TABLE acc ADD COLUMN b INT CHECK (b > 0);
+
+
+# DEFAULT is supported
+statement ok
+ALTER TABLE acc ADD COLUMN d INT DEFAULT 9;
+
+
+# a plain add is supported
+statement ok
+ALTER TABLE acc ADD COLUMN e INT;
+
+
+query
+SELECT * FROM acc;
+----
+a	d	e
+1	9	NULL
+
+
+# supported path: add the column, then add the constraint in a separate step
+statement ok
+ALTER TABLE acc ALTER COLUMN d SET NOT NULL;
+
+
+statement error
+INSERT INTO acc (a, d) VALUES (2, NULL);
+
+
+statement ok
+DROP TABLE acc;

@@ -1,0 +1,149 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY kw_dict(template = 'keyword');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ng_dict(template = 'ngram', mingram = 2,
+    maxgram = 3, preserveoriginal = false, frequency = true, position = true);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geo_s2_dict(template = 'geojson',
+    coding = 's2point');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geo_src_dict(template = 'geojson',
+    coding = 'source');
+
+
+# ============================================================================
+# GEOMETRY scalar (s2point + source-coded)
+# ============================================================================
+
+statement ok
+CREATE TABLE m_g(pk INTEGER PRIMARY KEY, g GEOMETRY('OGC:CRS84'));
+
+statement ok
+CREATE INDEX m_g_col_s2_st   ON m_g USING inverted(pk, g geo_s2_dict)  INCLUDE (g);
+
+statement ok
+CREATE INDEX m_g_col_src_ns  ON m_g USING inverted(pk, g geo_src_dict);
+
+statement ok
+CREATE INDEX m_g_expr_s2_ns  ON m_g USING inverted(pk, (g) geo_s2_dict);
+
+statement ok
+CREATE INDEX m_g_expr_src_ns ON m_g USING inverted(pk, (g) geo_src_dict);
+
+statement ok
+INSERT INTO m_g VALUES
+    (1, 'POINT(0 0)'::GEOMETRY('OGC:CRS84')),
+    (2, 'POINT(10 20)'::GEOMETRY('OGC:CRS84')),
+    (3, 'POINT(-5 47)'::GEOMETRY('OGC:CRS84'));
+
+statement ok
+VACUUM (REFRESH_TABLE) m_g;
+
+query
+SELECT count(*) FROM m_g_col_s2_st;
+----
+count
+3
+
+query
+SELECT count(*) FROM m_g_col_src_ns;
+----
+count
+3
+
+query
+SELECT count(*) FROM m_g_expr_s2_ns;
+----
+count
+3
+
+query
+SELECT count(*) FROM m_g_expr_src_ns;
+----
+count
+3
+
+
+# ============================================================================
+# GEOMETRY list / array
+# ----------------------------------------------------------------------------
+# Indexed nested GEOMETRY is rejected (no semantic for keyword/ngram tokens
+# over per-element WKB bytes; geo analyzers reject too). INCLUDE-only goes
+# through the columnstore directly -- it works for GEOMETRY[] and GEOMETRY[N].
+# ============================================================================
+
+statement ok
+CREATE TABLE m_gl(pk INTEGER PRIMARY KEY,
+                  g GEOMETRY('OGC:CRS84'),
+                  gs GEOMETRY('OGC:CRS84')[],
+                  ga GEOMETRY('OGC:CRS84')[2]);
+
+# INCLUDE-only: works (just-store via columnstore).
+statement ok
+CREATE INDEX m_gl_inc ON m_gl USING inverted(pk) INCLUDE (gs, ga);
+
+# Indexed GEOMETRY[] with keyword: rejected at CREATE INDEX.
+statement error
+CREATE INDEX m_gl_kw_list ON m_gl USING inverted(pk, gs kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'gs' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
+
+
+# Indexed GEOMETRY[N] with ngram: rejected at CREATE INDEX.
+statement error
+CREATE INDEX m_gl_ng_array ON m_gl USING inverted(pk, ga ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'ga' has unsupported type GEOMETRY('OGC:CRS84')[2] and can not be indexed
+
+
+# Indexed GEOMETRY[] with geo analyzer: rejected (geo analyzer validator).
+statement error
+CREATE INDEX m_gl_geo_list ON m_gl USING inverted(pk, gs geo_s2_dict);
+----
+db error: ERROR: Failed to create index: Column 'gs' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
+
+
+# INCLUDE-only path still indexes rows.
+statement ok
+INSERT INTO m_gl VALUES
+    (1, 'POINT(0 0)'::GEOMETRY('OGC:CRS84'),
+        ARRAY['POINT(1 1)', 'POINT(2 2)']::GEOMETRY('OGC:CRS84')[],
+        ['POINT(3 3)', 'POINT(4 4)']::GEOMETRY('OGC:CRS84')[2]),
+    (2, 'POINT(5 5)'::GEOMETRY('OGC:CRS84'),
+        ARRAY[]::GEOMETRY('OGC:CRS84')[],
+        ['POINT(6 6)', 'POINT(7 7)']::GEOMETRY('OGC:CRS84')[2]);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_gl;
+
+query
+SELECT count(*) FROM m_gl_inc;
+----
+count
+2
+
+
+# --- teardown ---------------------------------------------------------------
+
+statement ok
+DROP TABLE m_g;
+
+statement ok
+DROP TABLE m_gl;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY kw_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ng_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY geo_s2_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY geo_src_dict;

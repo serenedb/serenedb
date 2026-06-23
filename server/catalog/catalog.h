@@ -444,30 +444,6 @@ class Catalog final {
                           std::string_view table, std::string_view column,
                           duckdb::LogicalType new_type, std::string using_sql);
 
-  // Sub-field operation on a STRUCT column
-  // (ALTER TABLE ... ADD/DROP/RENAME COLUMN <struct>.<field>).
-  enum class StructFieldOp : uint8_t { Add, Drop, Rename };
-  // Adds, drops or renames a field inside a STRUCT column. `column_path[0]` is
-  // the top-level column. For Add, `column_path` is the path to the parent
-  // struct and `field_name`/`field_type` describe the new field; for Drop and
-  // Rename, `column_path` ends with the target field and `field_name` is the
-  // new name (Rename only). `if_exists` makes a missing field (Drop) or an
-  // already-present field (Add) a no-op. The store performs the data re-encode
-  // (added fields default to NULL).
-  Result ChangeStructField(ObjectId database_id, std::string_view schema,
-                           std::string_view table,
-                           const std::vector<std::string>& column_path,
-                           StructFieldOp op, const std::string& field_name,
-                           duckdb::LogicalType field_type, bool if_exists);
-
-  // Adds a PRIMARY KEY over `column_names` to an existing table and mirrors it
-  // to the underlying store. The PK columns are made implicitly NOT NULL. Fails
-  // if the table already has a primary key or has dependent indexes (whose row
-  // identity would otherwise be invalidated).
-  Result AddPrimaryKey(ObjectId database_id, std::string_view schema,
-                       std::string_view table,
-                       const std::vector<std::string>& column_names);
-
   Result RemoveTombstone(ObjectId database_id, std::string_view schema,
                          std::string_view name);
 

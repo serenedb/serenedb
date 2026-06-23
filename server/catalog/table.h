@@ -115,14 +115,6 @@ class Table final : public Object {
                           std::string_view column_name,
                           std::string_view comment) const;
   std::string_view Comment() const noexcept { return _comment; }
-  // Records `pk_columns` as the table's PRIMARY KEY and appends the supplied
-  // NOT NULL check constraints (the caller builds them, matching CREATE TABLE
-  // semantics where a PK column is implicitly NOT NULL). The synthetic
-  // generated-PK sequence is left intact; row identity switches to the PK
-  // columns via SereneDBTableEntry::BuildRowIdColumns.
-  Result AddPrimaryKey(std::shared_ptr<Table>& result,
-                       std::vector<Column::Id> pk_columns,
-                       std::vector<CheckConstraint> not_null_constraints) const;
 
  private:
   // Rebuilds _column_index from _columns. Mutators that change the size or

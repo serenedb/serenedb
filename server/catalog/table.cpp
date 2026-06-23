@@ -391,19 +391,6 @@ Result Table::ChangeColumnType(std::shared_ptr<Table>& result,
   return {};
 }
 
-Result Table::AddPrimaryKey(
-  std::shared_ptr<Table>& result, std::vector<Column::Id> pk_columns,
-  std::vector<CheckConstraint> not_null_constraints) const {
-  auto new_table = basics::downCast<Table>(Clone());
-  new_table->_pk_columns = std::move(pk_columns);
-  for (auto& c : not_null_constraints) {
-    c.SetParentId(new_table->GetId());
-    new_table->_check_constraints.push_back(std::move(c));
-  }
-  result = std::move(new_table);
-  return {};
-}
-
 std::shared_ptr<Table> Table::DropForeignKeysReferencing(
   ObjectId referenced_table) const {
   auto cloned = basics::downCast<Table>(Clone());

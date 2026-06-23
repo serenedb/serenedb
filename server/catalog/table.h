@@ -85,6 +85,13 @@ class Table final : public Object {
   Result SetDefault(std::shared_ptr<Table>& result,
                     std::string_view column_name,
                     std::shared_ptr<ColumnExpr> expr) const;
+  // Sets the table comment (empty string clears it).
+  Result SetComment(std::shared_ptr<Table>& result,
+                    std::string_view comment) const;
+  // Sets a column's comment (empty string clears it).
+  Result SetColumnComment(std::shared_ptr<Table>& result,
+                          std::string_view column_name,
+                          std::string_view comment) const;
   // Appends a CHECK constraint; the name is uniquified against existing ones.
   Result AddCheckConstraint(std::shared_ptr<Table>& result, std::string name,
                             std::shared_ptr<ColumnExpr> expr) const;

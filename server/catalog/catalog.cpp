@@ -39,6 +39,7 @@
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/expression/operator_expression.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
+#include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <iostream>
 #include <iterator>
@@ -3274,51 +3275,48 @@ Result Catalog::ChangeStructField(ObjectId database_id, std::string_view schema,
   std::string field_clause =
     BuildStructFieldClause(op, column_path, field_name, field_type);
 
-  return Apply(
-    _snapshot, _snapshot_mutex,
-    [&](std::shared_ptr<Snapshot>& clone) -> Result {
-      auto rr =
-        clone->ReplaceObject<ResolveType::Relation>(*schema_id, table, updated);
-      if (!rr.ok()) {
-        return rr;
-      }
-      return basics::SafeCall([&] {
-        duckdb::MemoryStream stream;
-        auto bytes = catalog::SerializeObject(*updated, stream);
-        return _engine->Write([&](auto& ctx) {
-          ctx.PutDefinition(*schema_id, ObjectType::Table, updated->GetId(),
-                            bytes);
-          if (store_name.empty()) {
-            return;
-          }
-          // The store lowers a field op to ALTER COLUMN TYPE, which it blocks
-          // while an index depends on the table; drop the mirrored store
-          // indexes, apply the field change, then recreate them.
-          std::vector<StoreIndexDef> recreate;
-          auto deps = _snapshot->GetDependency<TableDependency>(*table_id);
-          auto schema_obj = _snapshot->GetObject<Schema>(*schema_id);
-          auto database = _snapshot->GetObject<Database>(database_id);
-          if (deps && schema_obj && database) {
-            for (auto idx_id : deps->indexes) {
-              auto idx = _snapshot->GetObject<Index>(idx_id);
-              if (!idx) {
-                continue;
-              }
-              if (auto def =
-                    MakeStoreIndexDef(database->GetName(),
-                                      schema_obj->GetName(), *updated, *idx)) {
-                ctx.DropStoreIndex(idx_id);
-                recreate.push_back(std::move(*def));
-              }
+  return Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) -> Result {
+    auto rr =
+      clone->ReplaceObject<ResolveType::Relation>(*schema_id, table, updated);
+    if (!rr.ok()) {
+      return rr;
+    }
+    return basics::SafeCall([&] {
+      duckdb::MemoryStream stream;
+      auto bytes = catalog::SerializeObject(*updated, stream);
+      return _engine->Write([&](auto& ctx) {
+        ctx.PutDefinition(*schema_id, ObjectType::Table, updated->GetId(),
+                          bytes);
+        if (store_name.empty()) {
+          return;
+        }
+        // The store lowers a field op to ALTER COLUMN TYPE, which it blocks
+        // while an index depends on the table; drop the mirrored store
+        // indexes, apply the field change, then recreate them.
+        std::vector<StoreIndexDef> recreate;
+        auto deps = _snapshot->GetDependency<TableDependency>(*table_id);
+        auto schema_obj = _snapshot->GetObject<Schema>(*schema_id);
+        auto database = _snapshot->GetObject<Database>(database_id);
+        if (deps && schema_obj && database) {
+          for (auto idx_id : deps->indexes) {
+            auto idx = _snapshot->GetObject<Index>(idx_id);
+            if (!idx) {
+              continue;
+            }
+            if (auto def = MakeStoreIndexDef(
+                  database->GetName(), schema_obj->GetName(), *updated, *idx)) {
+              ctx.DropStoreIndex(idx_id);
+              recreate.push_back(std::move(*def));
             }
           }
-          ctx.AlterStoreColumnField(store_name, field_clause);
-          for (auto& def : recreate) {
-            ctx.CreateStoreIndex(std::move(def));
-          }
-        });
+        }
+        ctx.AlterStoreColumnField(store_name, field_clause);
+        for (auto& def : recreate) {
+          ctx.CreateStoreIndex(std::move(def));
+        }
       });
     });
+  });
 }
 
 Result Catalog::AddPrimaryKey(ObjectId database_id, std::string_view schema,
@@ -3416,25 +3414,24 @@ Result Catalog::AddPrimaryKey(ObjectId database_id, std::string_view schema,
   }
   clause += ")";
 
-  return Apply(_snapshot, _snapshot_mutex,
-               [&](std::shared_ptr<Snapshot>& clone) -> Result {
-                 auto rr = clone->ReplaceObject<ResolveType::Relation>(
-                   *schema_id, table, updated);
-                 if (!rr.ok()) {
-                   return rr;
-                 }
-                 return basics::SafeCall([&] {
-                   duckdb::MemoryStream stream;
-                   auto bytes = catalog::SerializeObject(*updated, stream);
-                   return _engine->Write([&](auto& ctx) {
-                     ctx.PutDefinition(*schema_id, ObjectType::Table,
-                                       updated->GetId(), bytes);
-                     if (!store_name.empty()) {
-                       ctx.AlterStoreColumnField(store_name, clause);
-                     }
-                   });
-                 });
-               });
+  return Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) -> Result {
+    auto rr =
+      clone->ReplaceObject<ResolveType::Relation>(*schema_id, table, updated);
+    if (!rr.ok()) {
+      return rr;
+    }
+    return basics::SafeCall([&] {
+      duckdb::MemoryStream stream;
+      auto bytes = catalog::SerializeObject(*updated, stream);
+      return _engine->Write([&](auto& ctx) {
+        ctx.PutDefinition(*schema_id, ObjectType::Table, updated->GetId(),
+                          bytes);
+        if (!store_name.empty()) {
+          ctx.AlterStoreColumnField(store_name, clause);
+        }
+      });
+    });
+  });
 }
 
 Result Catalog::ChangeColumnType(ObjectId database_id, std::string_view schema,

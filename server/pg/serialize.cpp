@@ -42,6 +42,7 @@
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/common/types/uhugeint.hpp>
 #include <duckdb/common/types/uuid.hpp>
+#include <duckdb/inet/inet_ipaddress.hpp>
 #include <limits>
 #include <string_view>
 #include <type_traits>
@@ -863,6 +864,58 @@ void SerializeBit(SerializationContext& context,
     absl::big_endian::Store32(data, n_bits);
     // raw.GetData()[0] is padding, [1..n_bytes] are the bit data
     memcpy(data + 4, raw.GetData() + 1, n_bytes);
+  }
+}
+
+// PG `inet` (OID 869). The source is the inet extension's STRUCT
+// {ip_type UTINYINT, address HUGEINT, mask USMALLINT}: ip_type is 1 for IPv4,
+// 2 for IPv6; `address` is the unsigned IP stored as a signed hugeint with the
+// IPv6 top bit flipped for sort order. PG's wire family is 2 (IPv4) / 3 (IPv6).
+template<VarFormat Format>
+void SerializeInet(SerializationContext& context,
+                   const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                   duckdb::idx_t row) {
+  const auto& ip_type_d = vdata.children[0].unified;
+  const auto& addr_d = vdata.children[1].unified;
+  const auto& mask_d = vdata.children[2].unified;
+  const auto ip_type =
+    ip_type_d.GetData<uint8_t>()[ip_type_d.sel->get_index(row)];
+  const auto stored =
+    addr_d.GetData<duckdb::hugeint_t>()[addr_d.sel->get_index(row)];
+  const auto mask = mask_d.GetData<uint16_t>()[mask_d.sel->get_index(row)];
+
+  const bool is_v6 = ip_type == 2;
+  uint64_t hi = static_cast<uint64_t>(stored.upper);
+  const uint64_t lo = stored.lower;
+  if (is_v6) {
+    hi ^= (uint64_t{1} << 63);  // undo the IPv6 sort-order flip
+  }
+
+  if constexpr (Format == VarFormat::Text) {
+    // Reuse the extension's formatter (handles IPv6 canonicalization and the
+    // "/mask" suffix rules) so output is identical to host()/::varchar.
+    INET_IPAddress inet;
+    inet.type = static_cast<INET_IPAddressType>(ip_type);
+    inet.address.lower = lo;
+    inet.address.upper = hi;
+    inet.mask = mask;
+    char buf[64];
+    const size_t len = ipaddress_to_string(&inet, buf, sizeof(buf));
+    context.buffer->WriteUncommitted(std::string_view{buf, len});
+  } else {
+    // PG binary: family(1), bits(1), is_cidr(1), nb(1), then nb address bytes.
+    const uint8_t nb = is_v6 ? 16 : 4;
+    auto* data = context.buffer->GetContiguousData(4 + nb);
+    data[0] = is_v6 ? 3 : 2;
+    data[1] = static_cast<uint8_t>(mask);
+    data[2] = 0;
+    data[3] = nb;
+    if (is_v6) {
+      absl::big_endian::Store64(data + 4, hi);
+      absl::big_endian::Store64(data + 12, lo);
+    } else {
+      absl::big_endian::Store32(data + 4, static_cast<uint32_t>(lo));
+    }
   }
 }
 
@@ -1731,6 +1784,10 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
       RETURN_ARRAY_SERIALIZATION(SerializeBit<VarFormat::Text>,
                                  SerializeBit<VarFormat::Binary>, kVarbit);
     case STRUCT: {
+      if (IsInet(type)) {
+        RETURN_ARRAY_SERIALIZATION(SerializeInet<VarFormat::Text>,
+                                   SerializeInet<VarFormat::Binary>, kInet);
+      }
       // Element OID is resolved per-row by Type2Oid: anonymous ROW(...) yields
       // kRecord, named record types yield their pg_type OID.
       static constexpr auto kText =
@@ -2067,6 +2124,10 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
       RETURN_IN_RECORD_SERIALIZATION(kText, kTextInRecord, kBinary);
     }
     case STRUCT: {
+      if (IsInet(type)) {
+        RETURN_SERIALIZATION(SerializeInet<VarFormat::Text>,
+                             SerializeInet<VarFormat::Binary>);
+      }
       static constexpr auto kText =
         SerializeRecord<VarFormat::Text, WrapContext::None>;
       static constexpr auto kTextInRecord =

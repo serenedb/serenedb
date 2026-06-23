@@ -104,4 +104,23 @@ inline bool IsOidLike(const duckdb::LogicalType& type) {
 
 #undef DECLARE_PG_TYPE
 
+inline constexpr std::string_view kInetAlias = "INET";
+
+inline bool IsInet(const duckdb::LogicalType& type) {
+  return type.id() == duckdb::LogicalTypeId::STRUCT &&
+         type.GetAlias() == kInetAlias;
+}
+
+#ifndef SDB_PG_LOGICAL_TYPES_NO_FACTORY
+inline duckdb::LogicalType INET() {
+  duckdb::child_list_t<duckdb::LogicalType> children;
+  children.emplace_back("ip_type", duckdb::LogicalType::UTINYINT);
+  children.emplace_back("address", duckdb::LogicalType::HUGEINT);
+  children.emplace_back("mask", duckdb::LogicalType::USMALLINT);
+  auto type = duckdb::LogicalType::STRUCT(std::move(children));
+  type.SetAlias(std::string(kInetAlias));
+  return type;
+}
+#endif
+
 }  // namespace sdb::pg

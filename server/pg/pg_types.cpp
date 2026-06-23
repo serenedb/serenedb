@@ -176,6 +176,9 @@ int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array) {
       return (in_array ? catalog::PgSqlType::ToArrayOid(oid) : oid).id();
     }
     case STRUCT: {
+      if (IsInet(type)) {
+        return in_array ? kInetArray : kInet;
+      }
       auto ext = type.GetExtensionInfo();
       // null in case of anonymous record types (e.g. SELECT ROW(1, 2))
       if (ext) {

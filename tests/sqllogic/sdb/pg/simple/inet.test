@@ -116,29 +116,20 @@ arr
 {1.2.3.4,5.6.7.8/30}
 
 
-# INET has no native PG wire representation, so serenedb's planner wraps every
-# INET output column in a CAST(... AS VARCHAR) projection (see
-# wrap_unsupported_types.cpp). The top PROJECTION below is that injected cast,
-# which is why the value reaches the client as a string.
-onlyif serenedb
+# INET is serialized natively as PG `inet` (OID 869), not wrapped to text, so it
+# reports as the inet type over the wire. The extended-protocol client renders
+# regtype as a raw OID (no OID->name map), so these checks run on simple only.
+skipif pg-wire-extended
 query
-EXPLAIN SELECT '10.0.0.5/24'::INET AS ip;
+SELECT pg_typeof('1.2.3.4'::INET) AS typ;
 ----
-QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│    CAST(#0 AS VARCHAR)    │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             ip            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         DUMMY_SCAN        │
-└───────────────────────────┘
+typ
+inet
+
+
+skipif pg-wire-extended
+query
+SELECT 'inet'::regtype AS rt;
+----
+rt
+inet

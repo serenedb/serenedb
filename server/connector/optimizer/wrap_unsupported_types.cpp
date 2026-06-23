@@ -35,15 +35,7 @@
 namespace sdb::optimizer {
 namespace {
 
-bool IsInet(const duckdb::LogicalType& type) {
-  return type.id() == duckdb::LogicalTypeId::STRUCT &&
-         type.GetAlias() == "INET";
-}
-
 bool NeedsClientCast(const duckdb::LogicalType& type) {
-  if (IsInet(type)) {
-    return true;
-  }
   switch (type.id()) {
     case duckdb::LogicalTypeId::VARIANT:
       return true;
@@ -67,9 +59,6 @@ bool NeedsClientCast(const duckdb::LogicalType& type) {
 }
 
 duckdb::LogicalType ClientCastTarget(const duckdb::LogicalType& type) {
-  if (IsInet(type)) {
-    return duckdb::LogicalType::VARCHAR;
-  }
   switch (type.id()) {
     case duckdb::LogicalTypeId::VARIANT:
       return duckdb::LogicalType::JSON();

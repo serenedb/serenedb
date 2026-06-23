@@ -1332,35 +1332,27 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       auto field_exists = [](const duckdb::LogicalType& root,
                              const duckdb::vector<duckdb::string>& path,
                              size_t path_end, const std::string& leaf) -> bool {
-        const duckdb::LogicalType* cur = &root;
-        for (size_t i = 1; i < path_end; ++i) {
-          if (cur->id() != duckdb::LogicalTypeId::STRUCT) {
+        // Direct child of struct `type` named `name` (case-insensitive), or null.
+        auto child = [](const duckdb::LogicalType& type,
+                        std::string_view name) -> const duckdb::LogicalType* {
+          if (type.id() != duckdb::LogicalTypeId::STRUCT) {
+            return nullptr;
+          }
+          const auto& children = duckdb::StructType::GetChildTypes(type);
+          auto found = absl::c_find_if(children, [&](const auto& field) {
+            return duckdb::StringUtil::CIEquals(field.first, name);
+          });
+          return found == children.end() ? nullptr : &found->second;
+        };
+        // Walk path[1..path_end) into nested structs; bail if a segment is absent.
+        const duckdb::LogicalType* current = &root;
+        for (size_t depth = 1; depth < path_end; ++depth) {
+          current = child(*current, path[depth]);
+          if (!current) {
             return false;
           }
-          const duckdb::LogicalType* next = nullptr;
-          for (const auto& [fname, ftype] :
-               duckdb::StructType::GetChildTypes(*cur)) {
-            if (duckdb::StringUtil::CIEquals(fname, path[i])) {
-              next = &ftype;
-              break;
-            }
-          }
-          if (!next) {
-            return false;
-          }
-          cur = next;
         }
-        if (cur->id() != duckdb::LogicalTypeId::STRUCT) {
-          return false;
-        }
-        for (const auto& [fname, ftype] :
-             duckdb::StructType::GetChildTypes(*cur)) {
-          (void)ftype;
-          if (duckdb::StringUtil::CIEquals(fname, leaf)) {
-            return true;
-          }
-        }
-        return false;
+        return child(*current, leaf) != nullptr;
       };
       // A struct-field op requires the root column to be a struct.
       if (col_it->type.id() != duckdb::LogicalTypeId::STRUCT) {

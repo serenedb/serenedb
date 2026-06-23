@@ -17,7 +17,7 @@ CREATE TABLE vec_t (
 
 
 statement ok
-CREATE INDEX vec_t_idx ON vec_t USING inverted(pk, emb hnsw (metric = 'l2'))
+CREATE INDEX vec_t_idx ON vec_t USING inverted(pk, emb ivf (metric = 'l2'))
   INCLUDE (label, tag)
 
 

@@ -26,6 +26,7 @@
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/main/database.hpp>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -41,7 +42,6 @@
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/format_utils.hpp"
-#include "iresearch/formats/hnsw/hnsw_writer.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/directory.hpp"
@@ -101,12 +101,6 @@ void SerializeColumnData(duckdb::Serializer& obj,
 
 }  // namespace
 
-struct HnswWriterEntry {
-  field_id column_id;
-  HNSWInfo info;
-  std::unique_ptr<HnswWriter> writer;
-};
-
 struct ColWriter::Impl {
   Directory* dir;
   std::string filename;
@@ -122,8 +116,8 @@ struct ColWriter::Impl {
     column_entries_by_id;
   std::vector<std::unique_ptr<NormColumnWriter>> norm_writers;
   sdb::containers::FlatHashMap<field_id, NormColumnWriter*> norm_by_id;
-  std::vector<std::unique_ptr<HnswWriterEntry>> hnsw_writers;
-  sdb::containers::FlatHashMap<field_id, HnswWriterEntry*> hnsw_by_id;
+  ColWriter::CommitHook commit_hook;
+  std::optional<ReadContext> commit_ctx;
 };
 
 ColWriter::ColWriter(Directory& dir, std::string_view segment_name,
@@ -152,8 +146,7 @@ void ColWriter::EnsureOut() {
 }
 
 bool ColWriter::Empty() const noexcept {
-  return _impl->column_writers.empty() && _impl->norm_writers.empty() &&
-         _impl->hnsw_writers.empty();
+  return _impl->column_writers.empty() && _impl->norm_writers.empty();
 }
 
 ColWriter::~ColWriter() {
@@ -170,9 +163,6 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
   auto& cw =
     OpenColumn(id, std::move(type), opts.skip_validity, opts.row_group_size,
                opts.compression, opts.hyperloglog);
-  if (opts.hnsw_info) {
-    AttachHnsw(id, *opts.hnsw_info);
-  }
   return cw;
 }
 
@@ -216,31 +206,22 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
   return back;
 }
 
-HnswWriter& ColWriter::AttachHnsw(field_id column_id, HNSWInfo info) {
-  // Per-batch SearchSink may call AttachHnsw multiple times for the same
-  // column; return the existing writer.
-  if (auto it = _impl->hnsw_by_id.find(column_id);
-      it != _impl->hnsw_by_id.end()) {
-    auto& existing = *it->second;
-    SDB_ASSERT(existing.info.d == info.d &&
-                 existing.info.metric == info.metric &&
-                 existing.info.m == info.m &&
-                 existing.info.ef_construction == info.ef_construction,
-               "ColWriter::AttachHnsw: re-attach with mismatched "
-               "HNSWInfo on column ",
-               column_id);
-    return *existing.writer;
+void ColWriter::SetCommitHook(CommitHook hook) {
+  _impl->commit_hook = std::move(hook);
+}
+
+std::unique_ptr<ColumnReader> ColWriter::ReopenColumn(field_id id) const {
+  auto it = _impl->column_entries_by_id.find(id);
+  if (it == _impl->column_entries_by_id.end()) {
+    return nullptr;
   }
-  SDB_ASSERT(_impl->column_by_id.contains(column_id),
-             "ColWriter::AttachHnsw: column ", column_id,
-             " must be opened first");
-  auto entry = std::make_unique<HnswWriterEntry>();
-  entry->column_id = column_id;
-  entry->info = info;
-  entry->writer = std::make_unique<HnswWriter>(info);
-  auto& back = *_impl->hnsw_writers.emplace_back(std::move(entry));
-  _impl->hnsw_by_id.emplace(column_id, &back);
-  return *back.writer;
+  return MakeColumnReader(it->second->id, Clone(it->second->root));
+}
+
+ReadContext& ColWriter::CommitReadContext() noexcept {
+  SDB_ASSERT(_impl->commit_ctx.has_value(),
+             "ColWriter::CommitReadContext: only valid during the commit hook");
+  return *_impl->commit_ctx;
 }
 
 std::span<const std::unique_ptr<NormColumnWriter>> ColWriter::NormWriters()
@@ -282,26 +263,26 @@ void ColWriter::Commit(uint64_t target_row) {
     nw->PadTo(target_row);
     nw->Finalize();
   }
-  // HNSW graphs build after column data is durable on disk so the writer
-  // doesn't carry an in-memory vector cache during ingest.
-  if (!_impl->hnsw_writers.empty()) {
+  if (_impl->commit_hook) {
     _impl->out->Flush();
-    // TODO(mbkkt) measure seq vs rand for hnsw construction
     auto in = _impl->dir->open(_impl->filename, IOAdvice::RANDOM);
     if (!in) {
-      throw IoError{absl::StrCat("failed to open .col writer for HNSW build: ",
-                                 _impl->filename)};
+      throw IoError{
+        absl::StrCat("failed to open .col writer for derived index build: ",
+                     _impl->filename)};
     }
-    ReadContext hnsw_ctx{*_impl->db, std::move(in)};
-    for (auto& entry : _impl->hnsw_writers) {
-      auto it = _impl->column_entries_by_id.find(entry->column_id);
-      SDB_ASSERT(it != _impl->column_entries_by_id.end(),
-                 "ColWriter::Commit: HNSW entry references missing column id ",
-                 entry->column_id);
-      const FooterColumnEntry* col_entry = it->second;
-      auto col_reader = MakeColumnReader(col_entry->id, Clone(col_entry->root));
-      entry->writer->Build(*col_reader, hnsw_ctx);
+    _impl->commit_ctx.emplace(*_impl->db, std::move(in));
+    std::vector<field_id> column_ids;
+    column_ids.reserve(_impl->column_entries.size());
+    for (const auto& e : _impl->column_entries) {
+      column_ids.push_back(e->id);
     }
+    const size_t before = _impl->column_writers.size();
+    _impl->commit_hook(*this, column_ids);
+    for (size_t i = before; i < _impl->column_writers.size(); ++i) {
+      _impl->column_writers[i]->Finalize();
+    }
+    _impl->commit_ctx.reset();
   }
 
   const uint64_t footer_offset = _impl->out->Position();
@@ -347,27 +328,6 @@ void ColWriter::Commit(uint64_t target_row) {
   _impl->out->WriteU64(footer_offset);
   format_utils::WriteFooter(*_impl->out);
   _impl->out.reset();
-}
-
-std::vector<BuiltHnsw> ColWriter::TakeBuiltHnsw() {
-  std::vector<BuiltHnsw> out;
-  if (!_impl) {
-    return out;
-  }
-  out.reserve(_impl->hnsw_writers.size());
-  for (auto& entry : _impl->hnsw_writers) {
-    if (!entry || !entry->writer) {
-      continue;
-    }
-    auto graph = entry->writer->Graph();
-    if (!graph) {
-      continue;
-    }
-    out.push_back(BuiltHnsw{.column_id = entry->column_id,
-                            .info = entry->info,
-                            .graph = std::move(graph)});
-  }
-  return out;
 }
 
 void ColWriter::Rollback() noexcept { _impl->out.reset(); }

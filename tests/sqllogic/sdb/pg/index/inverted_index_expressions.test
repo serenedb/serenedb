@@ -1355,10 +1355,10 @@ statement error
 CREATE INDEX inc_e_dict_with_opts ON inc_e_num USING inverted(
     id, (a + b) verbatim_dict (compression='zstd'));
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'verbatim_dict' on '(a + b)' (known: included, hnsw)
+db error: ERROR: Failed to create index: Unknown built-in opclass 'verbatim_dict' on '(a + b)' (known: included, ivf)
 
 
-# --- HNSW on an indexed expression: `(expr) hnsw(metric='l2', m=..., ef_construction=...)` builds an ANN graph over the expression's value.
+# --- HNSW on an indexed expression: `(expr) ivf(metric='l2')` builds an ANN graph over the expression's value.
 
 statement ok
 CREATE TABLE hnsw_e(id INT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT);
@@ -1366,7 +1366,7 @@ CREATE TABLE hnsw_e(id INT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT);
 statement ok
 CREATE INDEX hnsw_e_idx ON hnsw_e USING inverted(
     id,
-    (array_value(x, y, z)) hnsw(metric='l2', m=8, ef_construction=16));
+    (array_value(x, y, z)) ivf(metric='l2'));
 
 statement ok
 INSERT INTO hnsw_e VALUES
@@ -1423,7 +1423,7 @@ CREATE TABLE hnsw_e2(id INT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT);
 
 statement ok
 CREATE INDEX hnsw_e2_idx ON hnsw_e2 USING inverted(
-    id, (array_value(x, y, z)) hnsw(metric='l2', m=8, ef_construction=16));
+    id, (array_value(x, y, z)) ivf(metric='l2'));
 
 statement ok
 INSERT INTO hnsw_e2 VALUES (1, 1, 0, 0), (2, 0, 1, 0), (3, 0, 0, 1);
@@ -1437,8 +1437,7 @@ statement error
 CREATE INDEX hnsw_e_no_opts ON hnsw_e USING inverted(
     id, (array_value(x, y, z)) hnsw);
 ----
-db error: ERROR: Unknown opclass 'hnsw' on column 'array_value(x, y, z)': no text dictionary by that name in schema 'public'
-HINT: 'hnsw' is a built-in opclass; use the options form 'hnsw (...)'
+db error: ERROR: Failed to create index: Unknown opclass 'hnsw' on column 'array_value(x, y, z)': no text dictionary by that name in schema 'public'
 
 
 # ARRAY of non-FLOAT child type is rejected.
@@ -1448,18 +1447,18 @@ CREATE TABLE hnsw_e3(id INT PRIMARY KEY, a INT, b INT, c INT);
 
 statement error
 CREATE INDEX hnsw_e3_idx ON hnsw_e3 USING inverted(
-    id, (array_value(a, b, c)) hnsw(metric='l2', m=8, ef_construction=16));
+    id, (array_value(a, b, c)) ivf(metric='l2'));
 ----
-db error: ERROR: Failed to create index: Column 'array_value(a, b, c)' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not INTEGER[3]
+db error: ERROR: Failed to create index: Column 'array_value(a, b, c)' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not INTEGER[3]
 
 
 # Non-ARRAY return type rejected when hnsw is requested.
 
 statement error
 CREATE INDEX hnsw_e_scalar ON hnsw_e USING inverted(
-    id, (x + y + z) hnsw(metric='l2', m=8, ef_construction=16));
+    id, (x + y + z) ivf(metric='l2'));
 ----
-db error: ERROR: Failed to create index: Column '((x + y) + z)' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not FLOAT
+db error: ERROR: Failed to create index: Column '((x + y) + z)' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not FLOAT
 
 
 # --- INCLUDE columns alongside an indexed expression ---------------------

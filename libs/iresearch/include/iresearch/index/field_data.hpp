@@ -26,6 +26,7 @@
 #include <absl/container/flat_hash_map.h>
 
 #include <deque>
+#include <span>
 #include <vector>
 
 #include "basics/memory.hpp"
@@ -141,7 +142,8 @@ class FieldsData : util::Noncopyable {
   size_t memory_reserved() const noexcept;
 
   size_t size() const { return _fields.size(); }
-  void flush(burst_trie::FieldWriter& fw, FlushState& state);
+  void flush(burst_trie::FieldWriter& fw, FlushState& state,
+             std::span<const BasicTermReader* const> extra = {});
   void reset() noexcept;
 
  private:

@@ -1020,7 +1020,8 @@ FieldData* FieldsData::emplace(field_id id, IndexFeatures index_features) {
   return it->second;
 }
 
-void FieldsData::flush(burst_trie::FieldWriter& fw, FlushState& state) {
+void FieldsData::flush(burst_trie::FieldWriter& fw, FlushState& state,
+                       std::span<const BasicTermReader* const> extra) {
   IndexFeatures index_features{IndexFeatures::None};
 
   // sort fields
@@ -1041,15 +1042,31 @@ void FieldsData::flush(burst_trie::FieldWriter& fw, FlushState& state) {
                  return lhs->meta().id < rhs->meta().id;
                });
 
+  std::vector<const BasicTermReader*> sorted_extra(extra.begin(), extra.end());
+  absl::c_sort(sorted_extra,
+               [](const BasicTermReader* lhs, const BasicTermReader* rhs) {
+                 return lhs->id() < rhs->id();
+               });
+
   TermReaderImpl terms(_sorted_postings, nullptr);
 
   fw.prepare(state);
-  for (auto* field : _sorted_fields) {
-    // Reset reader
-    terms.Reset(*field);
-
-    // Write inverted data
-    fw.write(terms);
+  size_t fi = 0;
+  size_t ei = 0;
+  const size_t fn = _sorted_fields.size();
+  const size_t en = sorted_extra.size();
+  while (fi < fn || ei < en) {
+    const bool take_field =
+      ei >= en ||
+      (fi < fn && _sorted_fields[fi]->meta().id < sorted_extra[ei]->id());
+    if (take_field) {
+      terms.Reset(*_sorted_fields[fi]);
+      fw.write(terms);
+      ++fi;
+    } else {
+      fw.write(*sorted_extra[ei]);
+      ++ei;
+    }
   }
 
   fw.end();

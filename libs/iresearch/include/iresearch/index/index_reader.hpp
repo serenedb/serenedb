@@ -28,7 +28,7 @@
 
 #include "iresearch/formats/column/norm_reader.hpp"
 #include "iresearch/formats/formats.hpp"
-#include "iresearch/formats/hnsw/hnsw_reader.hpp"
+#include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/types.hpp"
@@ -142,13 +142,6 @@ struct SubReader : public IndexReader, public NormProvider {
     return *this;
   }
 
-  void Search(field_id field, HNSWSearchInfo info, HNSWAnnSearchBuffer& buffer,
-              uint32_t segment_id, ReadContext& read_ctx) const;
-
-  void RangeSearch(field_id field, HNSWRangeSearchInfo info,
-                   HNSWRangeSearchBuffer& buffer, uint32_t segment_id,
-                   ReadContext& read_ctx) const;
-
   size_t size() const noexcept final { return 1; }
 
   virtual const SegmentInfo& Meta() const = 0;
@@ -170,7 +163,7 @@ struct SubReader : public IndexReader, public NormProvider {
   virtual const ColumnReader* Column(field_id /*field*/) const {
     return nullptr;
   }
-  virtual const HnswReader* HNSW(field_id /*field*/) const { return nullptr; }
+  virtual const IvfEntry* Ivf(field_id /*field*/) const { return nullptr; }
 };
 
 template<typename Visitor, typename FilterVisitor>

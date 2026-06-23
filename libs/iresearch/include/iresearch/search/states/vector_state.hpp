@@ -20,41 +20,22 @@
 
 #pragma once
 
-#include <faiss/impl/HNSW.h>
-
-#include <memory>
-#include <utility>
-
-#include "iresearch/formats/hnsw/hnsw_reader.hpp"  // ChunkedVectorCache, ReadHNSW
-#include "iresearch/index/column_info.hpp"
+#include "iresearch/formats/seek_cookie.hpp"
+#include "iresearch/search/cost.hpp"
 
 namespace irs {
 
-class DataOutput;
+struct TermReader;
 class ColumnReader;
-class ReadContext;
 
-void WriteHNSW(DataOutput& out, const faiss::HNSW& hnsw);
+struct VectorState {
+  explicit VectorState(IResourceManager& memory) noexcept
+    : cookies{{memory}} {}
 
-class HnswWriter final {
- public:
-  explicit HnswWriter(HNSWInfo info);
-  ~HnswWriter();
-
-  HnswWriter(const HnswWriter&) = delete;
-  HnswWriter& operator=(const HnswWriter&) = delete;
-
-  void Build(const ColumnReader& vector_column, ReadContext& ctx);
-
-  void Serialize(DataOutput& out);
-
-  const HNSWInfo& Info() const noexcept { return _info; }
-
-  const std::shared_ptr<faiss::HNSW>& Graph() const noexcept { return _hnsw; }
-
- private:
-  HNSWInfo _info;
-  std::shared_ptr<faiss::HNSW> _hnsw;
+  const TermReader* reader = nullptr;
+  const ColumnReader* vector_column = nullptr;
+  ManagedVector<SeekCookie::ptr> cookies;
+  CostAttr::Type estimation = 0;
 };
 
 }  // namespace irs

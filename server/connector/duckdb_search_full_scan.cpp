@@ -34,8 +34,12 @@
 #include <iresearch/search/doc_collector.hpp>
 #include <iresearch/search/score_function.hpp>
 #include <iresearch/search/scorer.hpp>
+#include <iresearch/search/vector_radius_filter.hpp>
+#include <iresearch/search/vector_similarity_filter.hpp>
+#include <iresearch/search/vector_similarity_scorer.hpp>
 #include <iresearch/utils/string.hpp>
 #include <span>
+#include <type_traits>
 
 #include "basics/assert.h"
 #include "basics/debugging.h"
@@ -63,6 +67,42 @@ const irs::Filter& MatchAllFilter() {
   return kInstance;
 }
 
+irs::Filter::Query::ptr PrepareScanQuery(const SearchScan& ss,
+                                         const irs::Scorer* scorer) {
+  if (ss.vector_scorer) {
+    const auto& vs = *ss.vector_scorer;
+    const irs::PrepareContext ctx{
+      .index = ss.snapshot->reader,
+      .scorer = scorer,
+    };
+    if (vs.radius != std::numeric_limits<float>::max()) {
+      irs::ByRadius f;
+      *f.mutable_field_id() = vs.field_id;
+      auto* o = f.mutable_options();
+      o->query = vs.query_vector;
+      o->centroids_id = vs.centroids_id;
+      o->postings_id = vs.postings_id;
+      o->metric = vs.metric;
+      o->radius = vs.EffectiveRadius();
+      o->inclusive = vs.radius_inclusive;
+      o->inner = ss.stored_filter;
+      return f.prepare(ctx);
+    }
+    irs::ByVectorSimilarity f;
+    *f.mutable_field_id() = vs.field_id;
+    auto* o = f.mutable_options();
+    o->query = vs.query_vector;
+    o->centroids_id = vs.centroids_id;
+    o->postings_id = vs.postings_id;
+    o->metric = vs.metric;
+    o->nprobe = vs.nprobe;
+    o->inner = ss.stored_filter;
+    return f.prepare(ctx);
+  }
+  const auto& filter = ss.stored_filter ? *ss.stored_filter : MatchAllFilter();
+  return filter.prepare({.index = ss.snapshot->reader, .scorer = scorer});
+}
+
 }  // namespace
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
@@ -82,10 +122,11 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
   state->scan = &ss;
   state->reader = &ss.snapshot->reader;
   state->total_segments = ss.snapshot->reader.size();
+  state->vector_scorer = ss.vector_scorer ? &*ss.vector_scorer : nullptr;
 
   if ((state->count_only = ss.count_only)) {
-    if (ss.stored_filter) {
-      state->query = ss.stored_filter->prepare({.index = ss.snapshot->reader});
+    if (ss.vector_scorer || ss.stored_filter) {
+      state->query = PrepareScanQuery(ss, /*scorer=*/nullptr);
     }
     return duckdb::unique_ptr_cast<SearchFullScanGlobalState,
                                    duckdb::GlobalTableFunctionState>(
@@ -94,15 +135,17 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
 
   if (ss.text_scorer) {
     state->scorer_obj = catalog::MakeScorer(*ss.text_scorer);
+  } else if (ss.score_order) {
+    state->scorer_obj = std::make_unique<irs::VectorSimilarityScorer>();
   }
-  const auto& filter = ss.stored_filter ? *ss.stored_filter : MatchAllFilter();
-  state->query = filter.prepare({
-    .index = ss.snapshot->reader,
-    .scorer = state->scorer_obj.get(),
-  });
+  state->query = PrepareScanQuery(ss, state->scorer_obj.get());
 
-  if (ss.score_top_k && ss.text_scorer) {
+  if (ss.score_top_k && (ss.text_scorer || ss.score_order)) {
     state->parallel_topk = true;
+  }
+  if (ss.score_order && *ss.score_order == duckdb::OrderType::ASCENDING) {
+    state->global_kth_score.store(std::numeric_limits<irs::score_t>::max(),
+                                  std::memory_order_relaxed);
   }
 
   ClassifyColumnstoreProjections(*state, bind_data);
@@ -170,9 +213,15 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> SearchFullScanInitLocal(
   if (gstate.parallel_topk) {
     auto lstate = duckdb::make_uniq<SearchFullScanTopKLocalState>();
     lstate->bind_data = &bd;
-    const size_t k = *bd.scan_source->Cast<SearchScan>().score_top_k;
+    auto& ss = bd.scan_source->Cast<SearchScan>();
+    const size_t k = *ss.score_top_k;
     lstate->hit_buf.resize(irs::BlockSize(k));
     lstate->hit_slice = std::span<irs::ScoreDoc>{lstate->hit_buf};
+    if (ss.score_order) {
+      lstate->local_threshold = *ss.score_order == duckdb::OrderType::ASCENDING
+                                  ? std::numeric_limits<irs::score_t>::max()
+                                  : std::numeric_limits<irs::score_t>::lowest();
+    }
     BuildOffsetsEntries(*lstate, input, bd);
     return lstate;
   }
@@ -236,26 +285,36 @@ void IResearchSetScanOrder(
   }
 }
 
-void SearchFullScanTopKLocalState::OnSegment(duckdb::ClientContext& ctx,
-                                             const irs::SubReader& seg,
-                                             uint32_t seg_idx,
-                                             SearchFullScanGlobalState& g) {
-  auto& search = bind_data->scan_source->Cast<SearchScan>();
-  if (!collector) {
-    const size_t k = *search.score_top_k;
-    collector.emplace(local_threshold, k, hit_slice);
-  }
+namespace {
 
-  score_fetcher.Clear();
-  collector->SetSegment(seg_idx);
+template<irs::Order O>
+void CollectSegmentTopK(SearchFullScanTopKLocalState& s,
+                        const irs::SubReader& seg, uint32_t seg_idx,
+                        SearchFullScanGlobalState& g) {
+  using C = irs::NthPartitionScoreCollector<O>;
+  auto& search = s.bind_data->scan_source->Cast<SearchScan>();
+  if (!std::holds_alternative<C>(s.collector)) {
+    const size_t k = *search.score_top_k;
+    s.collector.template emplace<C>(s.local_threshold, k, s.hit_slice);
+  }
+  auto& collector = std::get<C>(s.collector);
+
+  s.score_fetcher.Clear();
+  collector.SetSegment(seg_idx);
 
   const auto seen_global = g.global_kth_score.load(std::memory_order_relaxed);
-  if (seen_global > local_threshold) {
-    local_threshold = seen_global;
+  if constexpr (O == irs::Order::ASC) {
+    if (seen_global < s.local_threshold) {
+      s.local_threshold = seen_global;
+    }
+  } else {
+    if (seen_global > s.local_threshold) {
+      s.local_threshold = seen_global;
+    }
   }
 
   const bool wand_enabled =
-    WandEnabled(bind_data->inverted_index.get(), search.text_scorer);
+    WandEnabled(s.bind_data->inverted_index.get(), search.text_scorer);
   auto it = seg.mask(g.query->execute({
     .segment = seg,
     .scorer = g.scorer_obj.get(),
@@ -264,18 +323,40 @@ void SearchFullScanTopKLocalState::OnSegment(duckdb::ClientContext& ctx,
   auto score_func = it->PrepareScore({
     .scorer = g.scorer_obj.get(),
     .segment = &seg,
-    .fetcher = &score_fetcher,
+    .fetcher = &s.score_fetcher,
   });
   if (auto* it_threshold = irs::GetMutable<irs::ScoreThresholdAttr>(it.get())) {
-    collector->SetScoreThreshold(it_threshold->value);
+    collector.SetScoreThreshold(it_threshold->value);
   }
-  it->Collect(score_func, score_fetcher, *collector);
-  collector->SetScoreThreshold(local_threshold);
+  it->Collect(score_func, s.score_fetcher, collector);
+  collector.SetScoreThreshold(s.local_threshold);
 
-  const irs::score_t kth = local_threshold;
+  const irs::score_t kth = s.local_threshold;
   auto cur = g.global_kth_score.load(std::memory_order_relaxed);
-  while (kth > cur && !g.global_kth_score.compare_exchange_weak(
-                        cur, kth, std::memory_order_relaxed)) {
+  if constexpr (O == irs::Order::ASC) {
+    while (kth < cur && !g.global_kth_score.compare_exchange_weak(
+                          cur, kth, std::memory_order_relaxed)) {
+    }
+  } else {
+    while (kth > cur && !g.global_kth_score.compare_exchange_weak(
+                          cur, kth, std::memory_order_relaxed)) {
+    }
+  }
+}
+
+}  // namespace
+
+void SearchFullScanTopKLocalState::OnSegment(duckdb::ClientContext& /*ctx*/,
+                                             const irs::SubReader& seg,
+                                             uint32_t seg_idx,
+                                             SearchFullScanGlobalState& g) {
+  auto& search = bind_data->scan_source->Cast<SearchScan>();
+  const bool ascending =
+    search.score_order && *search.score_order == duckdb::OrderType::ASCENDING;
+  if (ascending) {
+    CollectSegmentTopK<irs::Order::ASC>(*this, seg, seg_idx, g);
+  } else {
+    CollectSegmentTopK<irs::Order::DESC>(*this, seg, seg_idx, g);
   }
 }
 
@@ -302,11 +383,19 @@ bool SearchFullScanTopKLocalState::OnSegmentsExhausted(
 void SearchFullScanTopKLocalState::PrepEmitBuffer(
   duckdb::ClientContext& /*ctx*/, SearchFullScanGlobalState& g) {
   prepped = true;
-  if (!collector) {
+  if (std::holds_alternative<std::monostate>(collector)) {
     return;  // no segments claimed by this thread
   }
 
-  const size_t accepted = collector->AcceptedCount();
+  const size_t accepted = std::visit(
+    [](auto& c) -> size_t {
+      if constexpr (std::is_same_v<std::decay_t<decltype(c)>, std::monostate>) {
+        return 0;
+      } else {
+        return c.AcceptedCount();
+      }
+    },
+    collector);
   auto accepted_slice = hit_slice.subspan(0, accepted);
   absl::c_sort(
     accepted_slice, [](const irs::ScoreDoc& l, const irs::ScoreDoc& r) {

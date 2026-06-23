@@ -100,10 +100,6 @@ class MergeWriter : public util::Noncopyable {
   // Flush all added readers into a single segment.
   bool Flush(SegmentMeta& segment, const FlushProgress& progress = {});
 
-  PreloadedHnswGraphs TakeBuiltHnswGraphs() noexcept {
-    return std::move(_built_hnsw_graphs);
-  }
-
   const ReaderCtx& operator[](size_t i) const noexcept {
     SDB_ASSERT(i < _readers.size());
     return _readers[i];
@@ -116,7 +112,6 @@ class MergeWriter : public util::Noncopyable {
   duckdb::DatabaseInstance& _db;
   const ColumnOptionsProvider* _column_options = nullptr;
   const NormColumnOptionsProvider* _norm_column_options = nullptr;
-  PreloadedHnswGraphs _built_hnsw_graphs;
 };
 
 static_assert(std::is_nothrow_move_constructible_v<MergeWriter>);

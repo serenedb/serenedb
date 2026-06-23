@@ -92,8 +92,9 @@ set(IResearch_core_sources
     ./formats/index/burst_trie.cpp
     ./formats/index/idx_reader.cpp
     ./formats/index/idx_writer.cpp
-    ./formats/hnsw/hnsw_reader.cpp
-    ./formats/hnsw/hnsw_writer.cpp
+    ./formats/ivf/ivf_writer.cpp
+    ./formats/ivf/ivf_reader.cpp
+    ./formats/ivf/quantizer.cpp
     ./index/directory_reader.cpp
     ./index/directory_reader_impl.cpp
     ./index/field_data.cpp
@@ -146,6 +147,10 @@ set(IResearch_core_sources
     ./search/mixed_boolean_filter.cpp
     ./search/ngram_similarity_filter.cpp
     ./search/ngram_similarity_query.cpp
+    ./search/vector_similarity_filter.cpp
+    ./search/vector_similarity_query.cpp
+    ./search/vector_similarity_scorer.cpp
+    ./search/vector_radius_filter.cpp
     ./search/geo_filter.cpp
     ./search/proxy_filter.cpp
     ./search/tfidf.cpp
@@ -272,6 +277,7 @@ target_link_libraries(
     PRIVATE lz4_static
     PRIVATE text
     PRIVATE stemmer-static
+    PRIVATE superkmeans
 )
 
 if(uring_FOUND)

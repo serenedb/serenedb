@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/functional/any_invocable.h>
+
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/types.hpp>
 #include <memory>
@@ -40,11 +42,11 @@ class DatabaseInstance;
 namespace irs {
 
 class Directory;
-struct HNSWInfo;
 
+class ColumnReader;
 class ColumnWriter;
 class NormColumnWriter;
-class HnswWriter;
+class ReadContext;
 
 class ColWriter final {
  public:
@@ -71,15 +73,15 @@ class ColWriter final {
   std::span<const std::unique_ptr<NormColumnWriter>> NormWriters()
     const noexcept;
 
-  // Attach an HNSW graph to a previously-opened ARRAY column. Graph is
-  // built at Commit() from the just-flushed column bytes and emitted as
-  // an inline side-payload referenced by footer slot 102.
-  HnswWriter& AttachHnsw(field_id column_id, HNSWInfo info);
+  using CommitHook =
+    absl::AnyInvocable<void(ColWriter&, std::span<const field_id>)>;
+  void SetCommitHook(CommitHook hook);
+
+  std::unique_ptr<ColumnReader> ReopenColumn(field_id id) const;
+  ReadContext& CommitReadContext() noexcept;
 
   void Commit(uint64_t target_row);
   void Rollback() noexcept;
-
-  std::vector<BuiltHnsw> TakeBuiltHnsw();
 
  private:
   void EnsureOut();

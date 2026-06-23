@@ -195,7 +195,7 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
       return {
         .row_group_size = entry->row_group_size,
         .compression = entry->compression,
-        .hnsw_info = index.GetHNSWInfo(id),
+        .ivf_info = index.GetIvfInfo(id),
         .hyperloglog = entry->hyperloglog,
       };
     }

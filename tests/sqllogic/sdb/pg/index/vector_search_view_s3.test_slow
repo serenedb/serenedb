@@ -108,7 +108,7 @@ LIMIT 256;
 
 
 statement ok
-SET sdb_ef_search TO 512;
+SET sdb_nprobe TO 512;
 
 
 statement count 10000
@@ -124,7 +124,7 @@ FROM read_json('s3://${MINIO_BUCKET}/${__DATABASE__}_vecs_single.jsonl');
 
 statement ok
 CREATE INDEX vecs_json_hnsw ON vecs_json
-USING inverted(emb hnsw (metric = 'l2', m = 64, ef_construction = 256));
+USING inverted(emb ivf (metric = 'l2'));
 
 
 query
@@ -148,7 +148,7 @@ t
 
 
 statement ok
-SET sdb_ef_search TO 2048;
+SET sdb_nprobe TO 2048;
 
 
 query
@@ -166,7 +166,7 @@ t
 
 
 statement ok
-SET sdb_ef_search TO 512;
+SET sdb_nprobe TO 512;
 
 
 statement ok
@@ -178,7 +178,7 @@ FROM read_json('s3://${MINIO_BUCKET}/${__DATABASE__}_vecs_single.jsonl',
 
 statement ok
 CREATE INDEX vecs_json_cols_hnsw ON vecs_json_cols
-USING inverted(emb hnsw (metric = 'l2', m = 64, ef_construction = 256));
+USING inverted(emb ivf (metric = 'l2'));
 
 
 query
@@ -222,7 +222,7 @@ FROM read_json('s3://${MINIO_BUCKET}/${__DATABASE__}_vecs_glob_*.jsonl');
 
 statement ok
 CREATE INDEX vecs_json_glob_hnsw ON vecs_json_glob
-USING inverted(emb hnsw (metric = 'l2', m = 64, ef_construction = 256));
+USING inverted(emb ivf (metric = 'l2'));
 
 
 query
@@ -258,11 +258,11 @@ FROM read_json('s3://${MINIO_BUCKET}/${__DATABASE__}_vecs_text.jsonl');
 
 statement ok
 CREATE INDEX vecs_text_json_idx ON vecs_text_json
-USING inverted(id, body en_s3, emb hnsw (metric = 'l2', m = 64, ef_construction = 256));
+USING inverted(id, body en_s3, emb ivf (metric = 'l2'));
 
 
 statement ok
-SET sdb_ef_search TO 2048;
+SET sdb_nprobe TO 2048;
 
 
 query
@@ -308,7 +308,7 @@ t
 
 
 statement ok
-SET sdb_ef_search TO 512;
+SET sdb_nprobe TO 512;
 
 
 statement ok
@@ -346,11 +346,11 @@ CREATE VIEW vecs_hd_arr_json AS
 
 statement ok
 CREATE INDEX vecs_hd_arr_json_idx ON vecs_hd_arr_json
-  USING inverted(body en_s3, vec hnsw (metric = 'cosine'));
+  USING inverted(body en_s3, vec ivf (metric = 'cosine'));
 
 
 statement ok
-SET sdb_ef_search TO 2048;
+SET sdb_nprobe TO 2048;
 
 
 query
@@ -389,4 +389,4 @@ count
 
 
 statement ok
-SET sdb_ef_search TO 512;
+SET sdb_nprobe TO 512;

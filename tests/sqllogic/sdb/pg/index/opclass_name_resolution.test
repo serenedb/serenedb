@@ -3,7 +3,7 @@
 # A bare opclass name (no parens) on a column or indexed expression is
 # resolved against the snapshot's text search dictionaries first. If a
 # user-defined dictionary with that name exists, it is used -- even when
-# the name collides with a built-in opclass ('hnsw', 'included').
+# the name collides with a built-in opclass ('ivf', 'included').
 #
 # With parens, the name must be a built-in opclass; non-built-in names
 # with parens error. A bare name that matches a built-in but has no
@@ -13,18 +13,18 @@
 # --- dict with a built-in opclass name shadows the built-in --------------
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY hnsw(template = 'keyword');
+CREATE TEXT SEARCH DICTIONARY ivf(template = 'keyword');
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY included(template = 'keyword');
 
 
-# Bare 'hnsw' on a column: resolves to the dict, not the built-in HNSW.
+# Bare 'ivf' on a column: resolves to the dict, not the built-in IVF.
 statement ok
 CREATE TABLE shadow_hnsw_col(id INT PRIMARY KEY, s VARCHAR);
 
 statement ok
-CREATE INDEX shadow_hnsw_col_idx ON shadow_hnsw_col USING inverted(id, s hnsw);
+CREATE INDEX shadow_hnsw_col_idx ON shadow_hnsw_col USING inverted(id, s ivf);
 
 statement ok
 INSERT INTO shadow_hnsw_col VALUES (1, 'foo'), (2, 'bar'), (3, 'foo');
@@ -61,13 +61,13 @@ id
 3
 
 
-# Bare 'hnsw' on an indexed expression: dict wins.
+# Bare 'ivf' on an indexed expression: dict wins.
 statement ok
 CREATE TABLE shadow_hnsw_expr(id INT PRIMARY KEY, a VARCHAR, b VARCHAR);
 
 statement ok
 CREATE INDEX shadow_hnsw_expr_idx ON shadow_hnsw_expr USING inverted(
-    id, (a || b) hnsw);
+    id, (a || b) ivf);
 
 statement ok
 INSERT INTO shadow_hnsw_expr VALUES (1, 'foo', 'bar'), (2, 'baz', 'qux');
@@ -105,13 +105,13 @@ id
 
 # --- With parens, the built-in still wins regardless of the dict ---------
 
-# 'hnsw (...)' on a vector column: built-in HNSW, not the dict named 'hnsw'.
+# 'ivf (...)' on a vector column: built-in IVF, not the dict named 'ivf'.
 statement ok
 CREATE TABLE parens_hnsw_col(id INT PRIMARY KEY, emb FLOAT[3]);
 
 statement ok
 CREATE INDEX parens_hnsw_col_idx ON parens_hnsw_col USING inverted(
-    id, emb hnsw(metric = 'l2', m = 8, ef_construction = 16));
+    id, emb ivf(metric = 'l2'));
 
 statement ok
 INSERT INTO parens_hnsw_col VALUES
@@ -150,13 +150,13 @@ id	s
 1	foo
 
 
-# 'hnsw (...)' on an indexed expression: built-in HNSW.
+# 'ivf (...)' on an indexed expression: built-in IVF.
 statement ok
 CREATE TABLE parens_hnsw_expr(id INT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT);
 
 statement ok
 CREATE INDEX parens_hnsw_expr_idx ON parens_hnsw_expr USING inverted(
-    id, (array_value(x, y, z)) hnsw(metric = 'l2', m = 8, ef_construction = 16));
+    id, (array_value(x, y, z)) ivf(metric = 'l2'));
 
 statement ok
 INSERT INTO parens_hnsw_expr VALUES (1, 1, 2, 3), (2, 10, 10, 10);
@@ -194,17 +194,17 @@ id	s
 2	10
 
 
-# --- ARRAY: bare 'hnsw' resolves to the user text dict, which requires
+# --- ARRAY: bare 'ivf' resolves to the user text dict, which requires
 # VARCHAR/BLOB elements -- it cannot be applied to ARRAY/LIST of numerics.
-# Vector search uses the parens form 'hnsw(...)' which selects the built-in
-# HNSW opclass and requires ARRAY(FLOAT, N).
+# Vector search uses the parens form 'ivf(...)' which selects the built-in
+# IVF opclass and requires ARRAY(FLOAT, N).
 
 statement ok
 CREATE TABLE shadow_hnsw_int_arr_col(id INT PRIMARY KEY, emb INT[3]);
 
 statement error
 CREATE INDEX shadow_hnsw_int_arr_col_idx ON shadow_hnsw_int_arr_col USING inverted(
-    id, emb hnsw);
+    id, emb ivf);
 ----
 db error: ERROR: Failed to create index: Column 'emb' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[3])
 
@@ -214,7 +214,7 @@ CREATE TABLE shadow_hnsw_float_arr_col(id INT PRIMARY KEY, emb FLOAT[3]);
 
 statement error
 CREATE INDEX shadow_hnsw_float_arr_col_idx ON shadow_hnsw_float_arr_col USING inverted(
-    id, emb hnsw);
+    id, emb ivf);
 ----
 db error: ERROR: Failed to create index: Column 'emb' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got FLOAT[3])
 
@@ -224,28 +224,28 @@ CREATE TABLE shadow_hnsw_arr_expr(id INT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT)
 
 statement error
 CREATE INDEX shadow_hnsw_arr_expr_idx ON shadow_hnsw_arr_expr USING inverted(
-    id, (array_value(x, y, z)) hnsw);
+    id, (array_value(x, y, z)) ivf);
 ----
 db error: ERROR: Failed to create index: Column 'array_value(x, y, z)' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got FLOAT[3])
 
 
-# The parens form selects the built-in HNSW even with the shadowing dict
+# The parens form selects the built-in IVF even with the shadowing dict
 # in scope -- this is the supported escape hatch. INT[3] still fails at
-# validation because HNSW requires ARRAY(FLOAT, N).
+# validation because IVF requires ARRAY(FLOAT, N).
 statement ok
 CREATE INDEX good_shadow_hnsw_float_arr_col_idx ON shadow_hnsw_float_arr_col USING inverted(
-    id, emb hnsw(metric = 'l2', m = 8, ef_construction = 16));
+    id, emb ivf(metric = 'l2'));
 
 statement error
 CREATE INDEX bad_shadow_hnsw_int_arr_with_opts_idx ON shadow_hnsw_int_arr_col USING inverted(
-    id, emb hnsw(metric = 'l2', m = 8, ef_construction = 16));
+    id, emb ivf(metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'emb' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not INTEGER[3]
+db error: ERROR: Failed to create index: Column 'emb' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not INTEGER[3]
 
 
 # --- No dict with a built-in name: bare use surfaces the options hint ----
 
-# Fresh schema with no 'hnsw' / 'included' dicts in scope.
+# Fresh schema with no 'ivf' / 'included' dicts in scope.
 statement ok
 CREATE SCHEMA hint_only;
 
@@ -253,16 +253,16 @@ statement ok
 SET search_path TO hint_only;
 
 
-# Bare 'hnsw' on a column with no dict by that name in this schema -- hint
+# Bare 'ivf' on a column with no dict by that name in this schema -- hint
 # error pointing at the options form.
 statement ok
 CREATE TABLE hint_hnsw_col(id INT PRIMARY KEY, s VARCHAR);
 
 statement error
-CREATE INDEX hint_hnsw_col_idx ON hint_hnsw_col USING inverted(id, s hnsw);
+CREATE INDEX hint_hnsw_col_idx ON hint_hnsw_col USING inverted(id, s ivf);
 ----
-db error: ERROR: Unknown opclass 'hnsw' on column 's': no text dictionary by that name in schema 'hint_only'
-HINT: 'hnsw' is a built-in opclass; use the options form 'hnsw (...)'
+db error: ERROR: Unknown opclass 'ivf' on column 's': no text dictionary by that name in schema 'hint_only'
+HINT: 'ivf' is a built-in opclass; use the options form 'ivf (...)'
 
 
 # Bare 'included' on a column with no dict by that name -- same hint shape.
@@ -273,16 +273,16 @@ db error: ERROR: Unknown opclass 'included' on column 's': no text dictionary by
 HINT: 'included' is a built-in opclass; use the options form 'included (...)'
 
 
-# Bare 'hnsw' on an indexed expression with no dict -- same hint.
+# Bare 'ivf' on an indexed expression with no dict -- same hint.
 statement ok
 CREATE TABLE hint_hnsw_expr(id INT PRIMARY KEY, a VARCHAR, b VARCHAR);
 
 statement error
 CREATE INDEX hint_hnsw_expr_idx ON hint_hnsw_expr USING inverted(
-    id, (a || b) hnsw);
+    id, (a || b) ivf);
 ----
-db error: ERROR: Unknown opclass 'hnsw' on column '(a || b)': no text dictionary by that name in schema 'hint_only'
-HINT: 'hnsw' is a built-in opclass; use the options form 'hnsw (...)'
+db error: ERROR: Unknown opclass 'ivf' on column '(a || b)': no text dictionary by that name in schema 'hint_only'
+HINT: 'ivf' is a built-in opclass; use the options form 'ivf (...)'
 
 
 # Bare 'included' on an indexed expression with no dict in scope -- same
@@ -307,7 +307,7 @@ statement error
 CREATE INDEX hint_parens_dict ON hint_hnsw_col USING inverted(
     id, s hint_only_dict (compression = 'zstd'));
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'hint_only_dict' on 's' (known: included, hnsw)
+db error: ERROR: Failed to create index: Unknown built-in opclass 'hint_only_dict' on 's' (known: included, ivf)
 
 
 # A non-built-in name with no dict by that name: bare-name lookup misses,

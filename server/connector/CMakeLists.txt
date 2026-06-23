@@ -11,7 +11,6 @@ add_library(
     search_filter_builder.cpp
     geo_filter_builder.cpp
     search_filter_printer.cpp
-    duckdb_ann_filter.cpp
     duckdb_client_state.cpp
     duckdb_catalog.cpp
     duckdb_entry_cache.cpp
@@ -23,7 +22,6 @@ add_library(
     duckdb_table_function.cpp
     duckdb_scan_base.cpp
     duckdb_search_full_scan.cpp
-    duckdb_search_ann_scan.cpp
     columnstore_materializer.cpp
     index_source_factory.cpp
     index_source_view.cpp

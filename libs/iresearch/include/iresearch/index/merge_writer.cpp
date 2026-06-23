@@ -23,9 +23,11 @@
 
 #include "merge_writer.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/internal/resize_uninitialized.h>
 
+#include <span>
 #include <vector>
 
 #include "basics/assert.h"
@@ -37,10 +39,10 @@
 #include "iresearch/formats/column/merge.hpp"
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
-#include "iresearch/formats/hnsw/hnsw_reader.hpp"
 #include "iresearch/formats/index/burst_trie.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/formats/ivf/ivf_writer.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -607,14 +609,35 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
                  CompoundFieldIterator& field_itr,
                  const MergedNormIdMap& merged_norm_ids,
                  const MergeWriter::FlushProgress& progress,
-                 IResourceManager& rm, IdxWriter& idx) {
+                 IResourceManager& rm, IdxWriter& idx,
+                 std::span<const BasicTermReader* const> extra) {
   auto field_writer = std::make_unique<burst_trie::FieldWriter>(
     meta.codec->get_postings_writer(/*compaction=*/true, rm),
     /*compaction=*/true, rm);
   field_writer->SetIdxWriter(idx);
   field_writer->prepare(flush_state);
 
+  std::vector<const BasicTermReader*> sorted_extra(extra.begin(), extra.end());
+  absl::c_sort(sorted_extra,
+               [](const BasicTermReader* lhs, const BasicTermReader* rhs) {
+                 return lhs->id() < rhs->id();
+               });
+  size_t ei = 0;
+  const size_t en = sorted_extra.size();
+
   while (field_itr.Next()) {
+    const auto fid = field_itr.Meta().id;
+    while (ei < en && sorted_extra[ei]->id() < fid) {
+      field_writer->write(*sorted_extra[ei]);
+      ++ei;
+    }
+
+    if (ei < en && sorted_extra[ei]->id() == fid) {
+      field_writer->write(*sorted_extra[ei]);
+      ++ei;
+      continue;
+    }
+
     FieldProperties props;
     props.index_features = field_itr.Meta().index_features;
 
@@ -627,6 +650,11 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
 
     field_itr.SetProperties(props);
     field_writer->write(field_itr);
+  }
+
+  while (ei < en) {
+    field_writer->write(*sorted_extra[ei]);
+    ++ei;
   }
 
   field_writer->end();
@@ -746,14 +774,16 @@ bool MergeWriter::Flush(SegmentMeta& segment,
   std::unique_ptr<ColReader> col_reader;
   MergedNormProvider norm_provider;
   IdxWriter idx{track_dir, segment.name, _db};
+
+  IvfWriter ivf_writer{_column_options};
+  col_writer->SetCommitHook(
+    [&ivf_writer](ColWriter& cw, std::span<const field_id> ids) {
+      ivf_writer.OnCommit(cw, ids);
+    });
   col_writer->Commit(segment.docs_count);
-  auto built = col_writer->TakeBuiltHnsw();
-  if (!built.empty()) {
-    _built_hnsw_graphs.reserve(built.size());
-    for (auto& b : built) {
-      _built_hnsw_graphs.emplace(b.column_id, b.graph);
-      idx.AddHNSW(b.column_id, b.info, std::move(b.graph));
-    }
+  for (auto& c : ivf_writer.TakeBuiltCentroids()) {
+    idx.AddIvfCentroids(c.centroids_id, c.metric, c.nlist, c.d,
+                        std::move(c.centroids));
   }
   if (segment.docs_count != 0) {
     col_reader = std::make_unique<ColReader>(track_dir, segment.name, _db);
@@ -775,8 +805,8 @@ bool MergeWriter::Flush(SegmentMeta& segment,
 
   if (segment.docs_count != 0 &&
       !WriteFields(state, segment, fields_itr, merged_norm_ids,
-                   progress_callback, _readers.get_allocator().Manager(),
-                   idx)) {
+                   progress_callback, _readers.get_allocator().Manager(), idx,
+                   ivf_writer.ClusterReaders())) {
     return false;
   }
   idx.Commit();

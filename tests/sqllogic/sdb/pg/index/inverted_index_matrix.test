@@ -828,19 +828,19 @@ CREATE TABLE m_vec(pk INTEGER PRIMARY KEY, emb FLOAT[3], fs FLOAT[]);
 
 statement ok
 CREATE INDEX m_vec_hnsw_st   ON m_vec
-    USING inverted(pk, emb hnsw (metric = 'l2')) INCLUDE (emb);
+    USING inverted(pk, emb ivf (metric = 'l2')) INCLUDE (emb);
 
 statement ok
 CREATE INDEX m_vec_hnsw_ns   ON m_vec
-    USING inverted(pk, emb hnsw (metric = 'cosine'));
+    USING inverted(pk, emb ivf (metric = 'cosine'));
 
 statement ok
 CREATE INDEX m_vec_hnsw_expr_ns ON m_vec
-    USING inverted(pk, (emb) hnsw (metric = 'l2'));
+    USING inverted(pk, (emb) ivf (metric = 'l2'));
 
 statement ok
 CREATE INDEX m_vec_hnsw_expr_st ON m_vec
-    USING inverted(pk, (emb) hnsw (metric = 'l2')) INCLUDE (emb);
+    USING inverted(pk, (emb) ivf (metric = 'l2')) INCLUDE (emb);
 
 statement ok
 CREATE INDEX m_vec_floats_st ON m_vec USING inverted(pk, fs) INCLUDE (fs);
@@ -2116,37 +2116,37 @@ db error: ERROR: Failed to create index: Column 'g_nocrs': GEOMETRY type has no 
 
 # (b) hnsw on scalar FLOAT: must be ARRAY(FLOAT, N).
 statement error
-CREATE INDEX g5_reject_hnsw_f ON g5_reject USING inverted(pk, f hnsw (metric = 'l2'));
+CREATE INDEX g5_reject_hnsw_f ON g5_reject USING inverted(pk, f ivf (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'f' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not FLOAT
+db error: ERROR: Failed to create index: Column 'f' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not FLOAT
 
 
 # (c) hnsw on LIST<FLOAT>: must be ARRAY(FLOAT, N), not a variable-length list.
 statement error
-CREATE INDEX g5_reject_hnsw_fl ON g5_reject USING inverted(pk, fl hnsw (metric = 'l2'));
+CREATE INDEX g5_reject_hnsw_fl ON g5_reject USING inverted(pk, fl ivf (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'fl' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not FLOAT[]
+db error: ERROR: Failed to create index: Column 'fl' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not FLOAT[]
 
 
 # (d) hnsw on ARRAY<DOUBLE,3>: element type must be FLOAT, not DOUBLE.
 statement error
-CREATE INDEX g5_reject_hnsw_da ON g5_reject USING inverted(pk, da hnsw (metric = 'l2'));
+CREATE INDEX g5_reject_hnsw_da ON g5_reject USING inverted(pk, da ivf (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'da' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not DOUBLE[3]
+db error: ERROR: Failed to create index: Column 'da' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not DOUBLE[3]
 
 
 # (e) hnsw on ARRAY<INTEGER,3>: element type must be FLOAT, not INTEGER.
 statement error
-CREATE INDEX g5_reject_hnsw_ia ON g5_reject USING inverted(pk, ia hnsw (metric = 'l2'));
+CREATE INDEX g5_reject_hnsw_ia ON g5_reject USING inverted(pk, ia ivf (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'ia' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not INTEGER[3]
+db error: ERROR: Failed to create index: Column 'ia' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not INTEGER[3]
 
 
 # (f) hnsw on scalar VARCHAR: not ARRAY at all.
 statement error
-CREATE INDEX g5_reject_hnsw_v ON g5_reject USING inverted(pk, v hnsw (metric = 'l2'));
+CREATE INDEX g5_reject_hnsw_v ON g5_reject USING inverted(pk, v ivf (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'v' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not VARCHAR
+db error: ERROR: Failed to create index: Column 'v' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not VARCHAR
 
 
 # (g) implicit (no opclass) on UUID: term_dict has no codec for UUID.
@@ -2685,7 +2685,7 @@ CREATE TABLE g10_c(pk INTEGER PRIMARY KEY,
 
 statement ok
 CREATE INDEX g10_c_mix ON g10_c
-    USING inverted(pk, emb hnsw (metric = 'l2')) INCLUDE (v, n, g);
+    USING inverted(pk, emb ivf (metric = 'l2')) INCLUDE (v, n, g);
 
 statement ok
 INSERT INTO g10_c VALUES
@@ -3354,7 +3354,7 @@ CREATE TABLE g13_d(pk  INTEGER PRIMARY KEY,
 
 statement ok
 CREATE INDEX g13_d_mix ON g13_d
-    USING inverted(pk, v kw_dict, v2 ng_dict, emb hnsw (metric = 'l2'))
+    USING inverted(pk, v kw_dict, v2 ng_dict, emb ivf (metric = 'l2'))
     INCLUDE (n, tag);
 
 statement ok
@@ -5559,44 +5559,44 @@ db error: ERROR: Failed to create index: Column 'v' uses a geo analyzer; must be
 
 # (o) Column-form scalar DOUBLE: must be ARRAY(FLOAT, N).
 statement error
-CREATE INDEX g21_hnsw_col_dbl ON g21_t USING inverted(pk, dbl hnsw (metric = 'l2'));
+CREATE INDEX g21_hnsw_col_dbl ON g21_t USING inverted(pk, dbl ivf (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'dbl' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not DOUBLE
+db error: ERROR: Failed to create index: Column 'dbl' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not DOUBLE
 
 
 # (p) Expression-source scalar FLOAT: still not ARRAY.
 statement error
-CREATE INDEX g21_hnsw_expr_f ON g21_t USING inverted(pk, (f_scalar) hnsw (metric = 'l2'));
+CREATE INDEX g21_hnsw_expr_f ON g21_t USING inverted(pk, (f_scalar) ivf (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'f_scalar' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not FLOAT
+db error: ERROR: Failed to create index: Column 'f_scalar' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not FLOAT
 
 
 # (q) Expression-source scalar VARCHAR: not ARRAY at all.
 statement error
-CREATE INDEX g21_hnsw_expr_v ON g21_t USING inverted(pk, (v) hnsw (metric = 'l2'));
+CREATE INDEX g21_hnsw_expr_v ON g21_t USING inverted(pk, (v) ivf (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'v' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not VARCHAR
+db error: ERROR: Failed to create index: Column 'v' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not VARCHAR
 
 
 # (r) Expression-source LIST<FLOAT>: variable-length, not fixed ARRAY.
 statement error
-CREATE INDEX g21_hnsw_expr_emb_list ON g21_t USING inverted(pk, (emb_list) hnsw (metric = 'l2'));
+CREATE INDEX g21_hnsw_expr_emb_list ON g21_t USING inverted(pk, (emb_list) ivf (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'emb_list' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not FLOAT[]
+db error: ERROR: Failed to create index: Column 'emb_list' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not FLOAT[]
 
 
 # (s) Expression-source ARRAY<DOUBLE,3>: element type must be FLOAT.
 statement error
-CREATE INDEX g21_hnsw_expr_arr_d ON g21_t USING inverted(pk, (arr_d) hnsw (metric = 'l2'));
+CREATE INDEX g21_hnsw_expr_arr_d ON g21_t USING inverted(pk, (arr_d) ivf (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'arr_d' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not DOUBLE[3]
+db error: ERROR: Failed to create index: Column 'arr_d' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not DOUBLE[3]
 
 
 # (t) Expression-source ARRAY<INTEGER,3>: element type must be FLOAT.
 statement error
-CREATE INDEX g21_hnsw_expr_arr_i ON g21_t USING inverted(pk, (arr_i) hnsw (metric = 'l2'));
+CREATE INDEX g21_hnsw_expr_arr_i ON g21_t USING inverted(pk, (arr_i) ivf (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'arr_i' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not INTEGER[3]
+db error: ERROR: Failed to create index: Column 'arr_i' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not INTEGER[3]
 
 
 

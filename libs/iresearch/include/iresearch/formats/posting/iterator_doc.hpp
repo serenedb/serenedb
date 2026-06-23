@@ -21,6 +21,7 @@
 #pragma once
 
 #include "basics/empty.hpp"
+#include "basics/exceptions.h"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/posting/iterator_pos.hpp"

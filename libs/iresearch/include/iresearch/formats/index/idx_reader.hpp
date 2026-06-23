@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <faiss/impl/HNSW.h>
-
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -29,8 +27,7 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/formats/column/col_reader.hpp"  // PreloadedHnswGraphs
-#include "iresearch/index/column_info.hpp"          // HNSWInfo
+#include "iresearch/index/column_info.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/store/data_input.hpp"  // IndexInput
 #include "iresearch/types.hpp"
@@ -58,27 +55,32 @@ inline constexpr int32_t kIdxFormatVersion = 0;
 
 enum class IdxSlotKind : uint8_t {
   TermDict = 0,
-  HNSW = 1,
+  Ivf = 1,
 };
 
-struct HNSWEntry {
-  std::shared_ptr<const faiss::HNSW> graph;
-  HNSWInfo info;
+struct IvfEntry {
+  uint32_t nlist = 0;
+  uint32_t d = 0;
+  VectorMetric metric = VectorMetric::L2Sqr;
+  std::vector<float> centroids;
+
+  const float* Centroid(uint32_t c) const noexcept {
+    return centroids.data() + static_cast<size_t>(c) * d;
+  }
 };
 
 class IdxReader final {
  public:
-  IdxReader(const Directory& dir, std::string_view segment_name,
-            const PreloadedHnswGraphs& preloaded = {});
+  IdxReader(const Directory& dir, std::string_view segment_name);
   ~IdxReader();
 
   IdxReader(const IdxReader&) = delete;
   IdxReader& operator=(const IdxReader&) = delete;
 
-  bool HasHNSW(field_id id) const noexcept;
-  const HNSWEntry* HNSW(field_id id) const noexcept;
+  bool HasIvf(field_id id) const noexcept;
+  const IvfEntry* Ivf(field_id id) const noexcept;
 
-  std::span<const std::pair<field_id, HNSWEntry>> HNSWEntries() const noexcept;
+  std::span<const std::pair<field_id, IvfEntry>> IvfEntries() const noexcept;
 
   const TermDictMeta* TermDict(field_id id) const noexcept;
 

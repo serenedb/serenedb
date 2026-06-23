@@ -143,7 +143,7 @@ CREATE TABLE src_hnsw_only (id INT PRIMARY KEY, emb FLOAT[3]);
 
 statement ok
 CREATE INDEX src_hnsw_only_idx ON src_hnsw_only
-  USING inverted(emb hnsw (metric = 'l2'));
+  USING inverted(emb ivf (metric = 'l2'));
 
 statement ok
 INSERT INTO src_hnsw_only VALUES
@@ -224,7 +224,7 @@ CREATE TABLE src_hnsw_mixed (id INT PRIMARY KEY, emb FLOAT[3], label VARCHAR);
 
 statement ok
 CREATE INDEX src_hnsw_mixed_idx ON src_hnsw_mixed
-  USING inverted(emb hnsw (metric = 'l2'));
+  USING inverted(emb ivf (metric = 'l2'));
 
 statement ok
 INSERT INTO src_hnsw_mixed VALUES

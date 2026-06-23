@@ -84,7 +84,7 @@ WHERE txt IS NOT NULL AND txt <> '';
 
 statement ok
 CREATE INDEX docs_ann ON docs USING inverted(
-  emb hnsw (metric = 'cosine', m = 16, ef_construction = 64)
+  emb ivf (metric = 'cosine')
 );
 
 

@@ -56,7 +56,7 @@ inline constexpr ObjectId kVariant{kMinSystem.id() + 100};
 inline constexpr ObjectId kVariantArray{kMinSystem.id() + 101};
 
 // OpClasses
-inline constexpr ObjectId kPgOpclassHnsw{kMinSystem.id() + 200};
+inline constexpr ObjectId kPgOpclassIvf{kMinSystem.id() + 200};
 inline constexpr ObjectId kPgOpclassIncluded{kMinSystem.id() + 201};
 
 // Access methods

@@ -198,7 +198,7 @@ CREATE TABLE deadinside (kostya INT, clickclack FLOAT[3]);
 
 
 statement ok
-CREATE INDEX deadinside_alias_idx ON deadinside USING inverted(kostya, clickclack hnsw (metric = 'l2'));
+CREATE INDEX deadinside_alias_idx ON deadinside USING inverted(kostya, clickclack ivf (metric = 'l2'));
 
 
 statement count 4
@@ -292,7 +292,7 @@ CREATE TABLE arelav (kostya INT, emb FLOAT[3]);
 
 
 statement ok
-CREATE INDEX arelav_idx ON arelav USING inverted(kostya, emb hnsw (metric = 'l2'));
+CREATE INDEX arelav_idx ON arelav USING inverted(kostya, emb ivf (metric = 'l2'));
 
 
 statement count 8

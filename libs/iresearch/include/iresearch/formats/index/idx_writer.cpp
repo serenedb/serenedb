@@ -32,7 +32,6 @@
 #include "basics/math_utils.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
-#include "iresearch/formats/hnsw/hnsw_writer.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/directory.hpp"
@@ -43,16 +42,18 @@ namespace irs {
 namespace {
 
 constexpr duckdb::field_id_t kFooterSlotTermDict = 100;
-constexpr duckdb::field_id_t kFooterSlotHnsw = 101;
+constexpr duckdb::field_id_t kFooterSlotIvf = 101;
 
 }  // namespace
 
-struct HnswEntry {
+struct IvfCentroidEntry {
   field_id column_id;
-  HNSWInfo info;
-  std::shared_ptr<const faiss::HNSW> graph;
-  uint64_t graph_offset = 0;
-  uint64_t graph_byte_size = 0;
+  VectorMetric metric;
+  uint32_t nlist;
+  uint32_t d;
+  std::vector<float> centroids;
+  uint64_t centroids_offset = 0;
+  uint64_t centroids_byte_size = 0;
 };
 
 struct TermDictEntry {
@@ -66,7 +67,7 @@ struct IdxWriter::Impl {
   duckdb::DatabaseInstance* db;
   Encryption::Stream::ptr cipher;
   IndexOutput::ptr out;
-  std::vector<HnswEntry> hnsw_entries;
+  std::vector<IvfCentroidEntry> ivf_entries;
   std::vector<TermDictEntry> term_dict_entries;
 };
 
@@ -117,12 +118,18 @@ IndexOutput& IdxWriter::BlocksOut() {
   return *_impl->out;
 }
 
-void IdxWriter::AddHNSW(field_id id, const HNSWInfo& info,
-                        std::shared_ptr<const faiss::HNSW> graph) {
-  SDB_ASSERT(graph != nullptr, "IdxWriter::AddHNSW: null graph for column ",
+void IdxWriter::AddIvfCentroids(field_id id, VectorMetric metric,
+                                uint32_t nlist, uint32_t d,
+                                std::vector<float> centroids) {
+  SDB_ASSERT(centroids.size() == static_cast<size_t>(nlist) * d,
+             "IdxWriter::AddIvfCentroids: centroid size mismatch for column ",
              id);
-  _impl->hnsw_entries.push_back(
-    HnswEntry{.column_id = id, .info = info, .graph = std::move(graph)});
+  _impl->ivf_entries.push_back(
+    IvfCentroidEntry{.column_id = id,
+                     .metric = metric,
+                     .nlist = nlist,
+                     .d = d,
+                     .centroids = std::move(centroids)});
 }
 
 void IdxWriter::AddTermDictEntry(field_id id, TermDictMeta meta) {
@@ -131,7 +138,7 @@ void IdxWriter::AddTermDictEntry(field_id id, TermDictMeta meta) {
 }
 
 bool IdxWriter::Empty() const noexcept {
-  return _impl->hnsw_entries.empty() && _impl->term_dict_entries.empty();
+  return _impl->ivf_entries.empty() && _impl->term_dict_entries.empty();
 }
 
 void IdxWriter::Commit() {
@@ -141,10 +148,14 @@ void IdxWriter::Commit() {
 
   EnsureOut();
 
-  for (auto& e : _impl->hnsw_entries) {
-    e.graph_offset = _impl->out->Position();
-    irs::WriteHNSW(*_impl->out, *e.graph);
-    e.graph_byte_size = _impl->out->Position() - e.graph_offset;
+  for (auto& e : _impl->ivf_entries) {
+    e.centroids_offset = _impl->out->Position();
+    if (!e.centroids.empty()) {
+      _impl->out->WriteData(
+        reinterpret_cast<const byte_type*>(e.centroids.data()),
+        e.centroids.size() * sizeof(float));
+    }
+    e.centroids_byte_size = _impl->out->Position() - e.centroids_offset;
   }
 
   const uint64_t footer_offset = _impl->out->Position();
@@ -170,16 +181,17 @@ void IdxWriter::Commit() {
       });
     });
   serializer.WriteList(
-    kFooterSlotHnsw, "hnsw", _impl->hnsw_entries.size(),
+    kFooterSlotIvf, "ivf", _impl->ivf_entries.size(),
     [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-      const auto& e = _impl->hnsw_entries[i];
+      const auto& e = _impl->ivf_entries[i];
       list.WriteObject([&](duckdb::Serializer& obj) {
         obj.WriteProperty<uint64_t>(0, "id", e.column_id);
-        obj.WriteProperty<uint64_t>(1, "graph_offset", e.graph_offset);
-        obj.WriteProperty<uint64_t>(2, "graph_byte_size", e.graph_byte_size);
-        obj.WriteProperty<uint64_t>(3, "max_doc", e.info.max_doc);
-        obj.WriteProperty<uint8_t>(4, "metric",
-                                   static_cast<uint8_t>(e.info.metric));
+        obj.WriteProperty<uint64_t>(1, "centroids_offset", e.centroids_offset);
+        obj.WriteProperty<uint64_t>(2, "centroids_byte_size",
+                                    e.centroids_byte_size);
+        obj.WriteProperty<uint32_t>(3, "nlist", e.nlist);
+        obj.WriteProperty<uint32_t>(4, "d", e.d);
+        obj.WriteProperty<uint8_t>(5, "metric", static_cast<uint8_t>(e.metric));
       });
     });
   serializer.End();
@@ -202,7 +214,7 @@ void IdxWriter::Commit() {
 void IdxWriter::Rollback() noexcept {
   _impl->out.reset();
   _impl->cipher.reset();
-  _impl->hnsw_entries.clear();
+  _impl->ivf_entries.clear();
   _impl->term_dict_entries.clear();
 }
 

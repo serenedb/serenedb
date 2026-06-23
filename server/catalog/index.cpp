@@ -53,13 +53,18 @@ namespace sdb::catalog {
 namespace {
 
 constexpr std::string_view kMetricField = "metric";
-constexpr std::string_view kMField = "m";
-constexpr std::string_view kEfConstructionField = "ef_construction";
 
 constexpr std::string_view kL2Metric = "l2";
 constexpr std::string_view kL1Metric = "l1";
 constexpr std::string_view kCosineMetric = "cosine";
 constexpr std::string_view kIPMetric = "ip";
+
+constexpr std::string_view kNlistField = "nlist";
+constexpr std::string_view kTrainSampleField = "train_sample";
+constexpr std::string_view kQuantField = "quant";
+
+constexpr std::string_view kSQ8Quant = "sq8";
+constexpr std::string_view kNoneQuant = "none";
 
 template<typename T>
 ResultOr<T> GetIndexOption(std::string_view index_kind,
@@ -105,7 +110,7 @@ ResultOr<bool> GetIndexBoolOption(std::string_view index_kind,
 
 constexpr std::array<std::string_view, 2> kKnownOpclassTypes{
   kIncludedKind,
-  kHNSWKind,
+  kIVFKind,
 };
 constexpr std::string_view kCompressionField = "compression";
 constexpr std::string_view kRowGroupSizeField = "row_group_size";
@@ -237,128 +242,8 @@ std::string DescribeKnownOpclassTypes() {
   return out;
 }
 
-std::string DescribeHNSWOptions() {
-  return "metric (string: l2|l1|cosine|ip, REQUIRED), "
-         "m (int >= 2, default 32), "
-         "ef_construction (int >= 1, default 40, must be >= m), "
-         "compression (string, default 'auto'), "
-         "row_group_size (int >= 1)";
-}
-
-Result ApplyHNSWOptions(
-  std::string_view column_name,
-  const duckdb::case_insensitive_map_t<duckdb::Value>& opts,
-  HNSWColumnConfig& cfg, duckdb::CompressionType& compression,
-  uint32_t& row_group_size) {
-  bool metric_set = false;
-  for (const auto& [key, raw_val] : opts) {
-    if (key == kMetricField) {
-      auto str = GetIndexStringOption(kHNSWKind, column_name, key, raw_val);
-      if (!str) {
-        return std::move(str).error();
-      }
-      std::string v = std::move(*str);
-      absl::AsciiStrToLower(&v);
-      if (v == kL2Metric) {
-        cfg.metric = irs::HNSWMetric::L2Sqr;
-      } else if (v == kL1Metric) {
-        cfg.metric = irs::HNSWMetric::L1;
-      } else if (v == kCosineMetric) {
-        cfg.metric = irs::HNSWMetric::Cosine;
-      } else if (v == kIPMetric) {
-        cfg.metric = irs::HNSWMetric::NegativeIP;
-      } else {
-        return {ERROR_BAD_PARAMETER,
-                "Column '",
-                column_name,
-                "': unknown hnsw metric '",
-                v,
-                "'. Expected one of: ",
-                kL2Metric,
-                " ",
-                kL1Metric,
-                " ",
-                kCosineMetric,
-                " ",
-                kIPMetric};
-      }
-      metric_set = true;
-    } else if (key == kMField) {
-      auto n = GetIndexIntOption(kHNSWKind, column_name, key, raw_val);
-      if (!n) {
-        return std::move(n).error();
-      }
-      if (*n < 2) {
-        return {ERROR_BAD_PARAMETER,
-                "Column '",
-                column_name,
-                "': hnsw option '",
-                kMField,
-                "' must be at least 2, got ",
-                *n};
-      }
-      cfg.m = static_cast<int>(*n);
-    } else if (key == kEfConstructionField) {
-      auto n = GetIndexIntOption(kHNSWKind, column_name, key, raw_val);
-      if (!n) {
-        return std::move(n).error();
-      }
-      if (*n < 1) {
-        return {ERROR_BAD_PARAMETER,
-                "Column '",
-                column_name,
-                "': hnsw option '",
-                kEfConstructionField,
-                "' must be positive, got ",
-                *n};
-      }
-      cfg.ef_construction = static_cast<int>(*n);
-    } else if (key == kCompressionField) {
-      auto str = GetIndexStringOption(kHNSWKind, column_name, key, raw_val);
-      if (!str) {
-        return std::move(str).error();
-      }
-      auto parsed = ParseCompressionName(column_name, *str);
-      if (!parsed) {
-        return std::move(parsed).error();
-      }
-      compression = *parsed;
-    } else if (key == kRowGroupSizeField) {
-      auto parsed = ParseRowGroupSize(kHNSWKind, column_name, key, raw_val);
-      if (!parsed) {
-        return std::move(parsed).error();
-      }
-      row_group_size = *parsed;
-    } else {
-      return {ERROR_BAD_PARAMETER,        "Column '", column_name,
-              "': unknown hnsw option '", key,        "'. Accepted options: ",
-              DescribeHNSWOptions()};
-    }
-  }
-  if (!metric_set) {
-    return {ERROR_BAD_PARAMETER, "Column '",
-            column_name,         "': hnsw opclass requires the '",
-            kMetricField,        "' option (one of: ",
-            kL2Metric,           ", ",
-            kL1Metric,           ", ",
-            kCosineMetric,       ", ",
-            kIPMetric,           "). Example: hnsw (metric = 'l2')"};
-  }
-  if (cfg.ef_construction < cfg.m) {
-    return {ERROR_BAD_PARAMETER,
-            "Column '",
-            column_name,
-            "': hnsw option 'ef_construction' (",
-            cfg.ef_construction,
-            ") must be >= 'm' (",
-            cfg.m,
-            ")"};
-  }
-  return {};
-}
-
 bool IsTokenizerOpclass(const CreateIndexColumn& c) {
-  if (c.IsBuiltin(kHNSWKind) || c.IsBuiltin(kIncludedKind)) {
+  if (c.IsBuiltin(kIVFKind) || c.IsBuiltin(kIncludedKind)) {
     return false;
   }
   return true;
@@ -372,8 +257,8 @@ Result ValidateInvertedIndexColumns(
                          : c.catalog_column->type;
     const auto label = c.name;
 
-    if (c.IsBuiltin(kHNSWKind)) {
-      if (auto r = hnsw::Validate(label, type); !r.ok()) {
+    if (c.IsBuiltin(kIVFKind)) {
+      if (auto r = ivf::Validate(label, type); !r.ok()) {
         return r;
       }
       continue;
@@ -540,7 +425,140 @@ Result ApplyIncludedOpclass(
   return {};
 }
 
-Result ApplyHNSWOpclass(
+std::string DescribeIVFOptions() {
+  return "metric (string: l2|l1|cosine|ip, REQUIRED), "
+         "nlist (int >= 1, default auto ~sqrt(rows)), "
+         "train_sample (int >= 1, default auto), "
+         "quant (string: sq8|none, default none), "
+         "compression (string, default 'auto'), "
+         "row_group_size (int >= 1)";
+}
+
+Result ApplyIVFOptions(
+  std::string_view column_name,
+  const duckdb::case_insensitive_map_t<duckdb::Value>& opts,
+  IVFColumnConfig& cfg, duckdb::CompressionType& compression,
+  uint32_t& row_group_size) {
+  bool metric_set = false;
+  for (const auto& [key, raw_val] : opts) {
+    if (key == kMetricField) {
+      auto str = GetIndexStringOption(kIVFKind, column_name, key, raw_val);
+      if (!str) {
+        return std::move(str).error();
+      }
+      std::string v = std::move(*str);
+      absl::AsciiStrToLower(&v);
+      if (v == kL2Metric) {
+        cfg.metric = irs::VectorMetric::L2Sqr;
+      } else if (v == kL1Metric) {
+        cfg.metric = irs::VectorMetric::L1;
+      } else if (v == kCosineMetric) {
+        cfg.metric = irs::VectorMetric::Cosine;
+      } else if (v == kIPMetric) {
+        cfg.metric = irs::VectorMetric::InnerProduct;
+      } else {
+        return {ERROR_BAD_PARAMETER,
+                "Column '",
+                column_name,
+                "': unknown ivf metric '",
+                v,
+                "'. Expected one of: ",
+                kL2Metric,
+                " ",
+                kL1Metric,
+                " ",
+                kCosineMetric,
+                " ",
+                kIPMetric};
+      }
+      metric_set = true;
+    } else if (key == kNlistField) {
+      auto n = GetIndexIntOption(kIVFKind, column_name, key, raw_val);
+      if (!n) {
+        return std::move(n).error();
+      }
+      if (*n < 1) {
+        return {ERROR_BAD_PARAMETER,
+                "Column '",
+                column_name,
+                "': ivf option '",
+                kNlistField,
+                "' must be positive, got ",
+                *n};
+      }
+      cfg.nlist = static_cast<uint32_t>(*n);
+    } else if (key == kTrainSampleField) {
+      auto n = GetIndexIntOption(kIVFKind, column_name, key, raw_val);
+      if (!n) {
+        return std::move(n).error();
+      }
+      if (*n < 1) {
+        return {ERROR_BAD_PARAMETER,
+                "Column '",
+                column_name,
+                "': ivf option '",
+                kTrainSampleField,
+                "' must be positive, got ",
+                *n};
+      }
+      cfg.train_sample = static_cast<uint32_t>(*n);
+    } else if (key == kQuantField) {
+      auto str = GetIndexStringOption(kIVFKind, column_name, key, raw_val);
+      if (!str) {
+        return std::move(str).error();
+      }
+      std::string v = std::move(*str);
+      absl::AsciiStrToLower(&v);
+      if (v == kSQ8Quant) {
+        cfg.quant = irs::VectorQuantization::SQ8;
+      } else if (v == kNoneQuant) {
+        cfg.quant = irs::VectorQuantization::None;
+      } else {
+        return {ERROR_BAD_PARAMETER,
+                "Column '",
+                column_name,
+                "': unknown ivf quant '",
+                v,
+                "'. Expected one of: ",
+                kSQ8Quant,
+                " ",
+                kNoneQuant};
+      }
+    } else if (key == kCompressionField) {
+      auto str = GetIndexStringOption(kIVFKind, column_name, key, raw_val);
+      if (!str) {
+        return std::move(str).error();
+      }
+      auto parsed = ParseCompressionName(column_name, *str);
+      if (!parsed) {
+        return std::move(parsed).error();
+      }
+      compression = *parsed;
+    } else if (key == kRowGroupSizeField) {
+      auto parsed = ParseRowGroupSize(kIVFKind, column_name, key, raw_val);
+      if (!parsed) {
+        return std::move(parsed).error();
+      }
+      row_group_size = *parsed;
+    } else {
+      return {ERROR_BAD_PARAMETER,       "Column '", column_name,
+              "': unknown ivf option '", key,        "'. Accepted options: ",
+              DescribeIVFOptions()};
+    }
+  }
+  if (!metric_set) {
+    return {ERROR_BAD_PARAMETER, "Column '",
+            column_name,         "': ivf opclass requires the '",
+            kMetricField,        "' option (one of: ",
+            kL2Metric,           ", ",
+            kL1Metric,           ", ",
+            kCosineMetric,       ", ",
+            kIPMetric,           "). Example: ivf (metric = 'l2')"};
+  }
+  return {};
+}
+
+Result ApplyIVFOpclass(
   duckdb::ClientContext& context, std::string_view owner_label,
   const duckdb::LogicalType& value_type,
   const std::optional<duckdb::case_insensitive_map_t<duckdb::Value>>& opts,
@@ -549,13 +567,13 @@ Result ApplyHNSWOpclass(
   SDB_ASSERT(value_type.id() == duckdb::LogicalTypeId::ARRAY);
   SDB_ASSERT(duckdb::ArrayType::GetChildType(value_type).id() ==
              duckdb::LogicalTypeId::FLOAT);
-  HNSWColumnConfig cfg{
+  IVFColumnConfig cfg{
     .d = static_cast<int>(duckdb::ArrayType::GetSize(value_type)),
   };
   auto compression = duckdb::CompressionType::COMPRESSION_AUTO;
   uint32_t row_group_size = 0;
   if (auto r =
-        ApplyHNSWOptions(owner_label, *opts, cfg, compression, row_group_size);
+        ApplyIVFOptions(owner_label, *opts, cfg, compression, row_group_size);
       r.fail()) {
     return r;
   }
@@ -564,7 +582,7 @@ Result ApplyHNSWOpclass(
       r.fail()) {
     return r;
   }
-  entry.hnsw_config = cfg;
+  entry.ivf_config = cfg;
   entry.compression = compression;
   entry.row_group_size = row_group_size;
   entry.store_values = true;
@@ -684,9 +702,9 @@ Result ApplyOpclassToEntry(duckdb::ClientContext& context,
   if (c.opclass.empty()) {
     return {};
   }
-  if (c.IsBuiltin(kHNSWKind)) {
-    return ApplyHNSWOpclass(context, owner_label, value_type, c.opclass_options,
-                            entry);
+  if (c.IsBuiltin(kIVFKind)) {
+    return ApplyIVFOpclass(context, owner_label, value_type, c.opclass_options,
+                           entry);
   }
   if (c.IsBuiltin(kIncludedKind)) {
     if (auto r = ApplyIncludedOpclass(context, owner_label, value_type,
@@ -700,8 +718,7 @@ Result ApplyOpclassToEntry(duckdb::ClientContext& context,
 
   auto dict = LookupTokenizer(snapshot, database_id, schema_name, c.opclass);
   if (!dict) {
-    if (c.opclass == kHNSWKind || c.opclass == kIncludedKind) {
-      // Maybe confused with hnws(...) and included(...), give a hint
+    if (c.opclass == kIVFKind || c.opclass == kIncludedKind) {
       ThrowUnknownBuiltinOpclass(c.opclass, owner_label, schema_name);
     }
     return MakeUnknownOpclassError(c.opclass, owner_label, schema_name);
@@ -791,7 +808,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
       static_cast<irs::field_id>(c.catalog_column->GetId());
     auto& index_col =
       entries.try_emplace(col_field_id, InvertedIndexEntryInfo{}).first->second;
-    if (!c.IsBuiltin(kIncludedKind) && !c.IsBuiltin(kHNSWKind)) {
+    if (!c.IsBuiltin(kIncludedKind) && !c.IsBuiltin(kIVFKind)) {
       index_col.indexed_term_dict = true;
     }
     if (IsTokenizerOpclass(c) &&
@@ -818,6 +835,18 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
     }
     if (!irs::field_limits::valid(entry.null_field_id)) {
       entry.null_field_id = static_cast<irs::field_id>(NextId());
+    }
+    if (entry.ivf_config) {
+      auto& cfg = *entry.ivf_config;
+      if (!irs::field_limits::valid(cfg.centroids_id)) {
+        cfg.centroids_id = static_cast<irs::field_id>(NextId());
+      }
+      if (!irs::field_limits::valid(cfg.postings_id)) {
+        cfg.postings_id = static_cast<irs::field_id>(NextId());
+      }
+      if (!irs::field_limits::valid(cfg.sq_id)) {
+        cfg.sq_id = static_cast<irs::field_id>(NextId());
+      }
     }
   }
   return std::make_shared<InvertedIndex>(

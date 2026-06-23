@@ -51,7 +51,7 @@ inline uint64_t ExecuteTopKWithCount(const DirectoryReader& reader,
   });
 
   score_t score_threshold = std::numeric_limits<score_t>::min();
-  NthPartitionScoreCollector collector{score_threshold, k, hits};
+  NthPartitionScoreCollector<Order::DESC> collector{score_threshold, k, hits};
   ColumnArgsFetcher fetcher;
   uint32_t seg_idx = 0;
   for (auto& segment : reader) {
@@ -90,7 +90,7 @@ inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
   });
 
   score_t score_threshold = std::numeric_limits<score_t>::min();
-  NthPartitionScoreCollector collector{score_threshold, k, hits};
+  NthPartitionScoreCollector<Order::DESC> collector{score_threshold, k, hits};
   ColumnArgsFetcher fetcher;
   uint32_t seg_idx = 0;
   for (auto& segment : reader) {

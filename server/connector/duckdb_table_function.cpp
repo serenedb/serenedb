@@ -40,7 +40,6 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_scan_entry.h"
 #include "connector/duckdb_scan_base.hpp"
-#include "connector/duckdb_search_ann_scan.h"
 #include "connector/duckdb_search_full_scan.hpp"
 #include "connector/duckdb_table_entry.h"
 #include "connector/optimizer/iresearch_plan.h"
@@ -284,7 +283,9 @@ std::unique_ptr<ScanSource> SearchScan::Clone() const {
   return std::make_unique<SearchScan>(*this);
 }
 
-bool SearchScan::IsMatchAll() const noexcept { return !stored_filter; }
+bool SearchScan::IsMatchAll() const noexcept {
+  return !stored_filter && !vector_scorer;
+}
 
 bool WandEnabled(const catalog::InvertedIndex* index,
                  const std::optional<catalog::ScorerOptions>& scorer) {
@@ -647,10 +648,6 @@ bool IsCountOnlyScan(const SereneDBScanBindData& bind_data,
   });
 }
 
-bool IsAnnScan(const SereneDBScanBindData& bind_data) {
-  return !!bind_data.scan_source->Cast<SearchScan>().vector_scorer;
-}
-
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
   auto& bind_data = const_cast<SereneDBScanBindData&>(
@@ -661,8 +658,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
 
   switch (bind_data.scan_source->Kind()) {
     case ScanSourceKind::Search:
-      return IsAnnScan(bind_data) ? SearchAnnScanInitGlobal(context, input)
-                                  : SearchFullScanInitGlobal(context, input);
+      return SearchFullScanInitGlobal(context, input);
     case ScanSourceKind::FullTable:
       SDB_UNREACHABLE();
   }
@@ -674,9 +670,7 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
   auto& bind_data = input.bind_data->Cast<SereneDBScanBindData>();
   switch (bind_data.scan_source->Kind()) {
     case ScanSourceKind::Search:
-      return IsAnnScan(bind_data)
-               ? SearchAnnScanInitLocal(context, input, global_state)
-               : SearchFullScanInitLocal(context, input, global_state);
+      return SearchFullScanInitLocal(context, input, global_state);
     case ScanSourceKind::FullTable:
       SDB_UNREACHABLE();
   }
@@ -688,9 +682,7 @@ void IResearchScanFunction(duckdb::ClientContext& context,
   auto& bind_data = data.bind_data->Cast<SereneDBScanBindData>();
   switch (bind_data.scan_source->Kind()) {
     case ScanSourceKind::Search:
-      return IsAnnScan(bind_data)
-               ? SearchAnnScanFunction(context, data, output)
-               : SearchFullScanFunction(context, data, output);
+      return SearchFullScanFunction(context, data, output);
     case ScanSourceKind::FullTable:
       SDB_UNREACHABLE();
   }

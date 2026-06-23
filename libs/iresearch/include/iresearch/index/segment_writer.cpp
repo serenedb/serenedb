@@ -33,6 +33,7 @@
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/formats/ivf/ivf_writer.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -134,11 +135,12 @@ void SegmentWriter::finish() {
   }
 }
 
-void SegmentWriter::FlushFields(FlushState& state) {
+void SegmentWriter::FlushFields(FlushState& state,
+                                std::span<const BasicTermReader* const> extra) {
   SDB_ASSERT(_field_writer);
 
   try {
-    _fields.flush(*_field_writer, state);
+    _fields.flush(*_field_writer, state, extra);
   } catch (...) {
     _field_writer.reset();
     throw;
@@ -159,16 +161,17 @@ void SegmentWriter::FlushFields(FlushState& state) {
 
   IdxWriter idx{_dir, _seg_name, _db};
 
+  IvfWriter ivf_writer{_column_options};
   if (_col_writer) {
+    _col_writer->SetCommitHook(
+      [&ivf_writer](ColWriter& cw, std::span<const field_id> ids) {
+        ivf_writer.OnCommit(cw, ids);
+      });
     _col_writer->Commit(buffered_docs());
-    auto built = _col_writer->TakeBuiltHnsw();
     _col_writer.reset();
-    if (!built.empty()) {
-      _built_hnsw_graphs.reserve(built.size());
-      for (auto& b : built) {
-        _built_hnsw_graphs.emplace(b.column_id, b.graph);
-        idx.AddHNSW(b.column_id, b.info, std::move(b.graph));
-      }
+    for (auto& c : ivf_writer.TakeBuiltCentroids()) {
+      idx.AddIvfCentroids(c.centroids_id, c.metric, c.nlist, c.d,
+                          std::move(c.centroids));
     }
   }
 
@@ -178,7 +181,7 @@ void SegmentWriter::FlushFields(FlushState& state) {
 
   if (state.doc_count != 0) {
     _field_writer->SetIdxWriter(idx);
-    FlushFields(state);
+    FlushFields(state, ivf_writer.ClusterReaders());
   }
 
   _col_reader.reset();
@@ -210,7 +213,6 @@ void SegmentWriter::reset() noexcept {
     _col_writer->Rollback();
     _col_writer.reset();
   }
-  _built_hnsw_graphs.clear();
 }
 
 void SegmentWriter::reset(const SegmentMeta& meta) {

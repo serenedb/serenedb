@@ -84,7 +84,7 @@ class SegmentReaderImpl final : public SubReader {
   NormReader::ptr norms(field_id field) const final;
 
   const ColumnReader* Column(field_id field) const final;
-  const HnswReader* HNSW(field_id field) const final;
+  const IvfEntry* Ivf(field_id field) const final;
   const ColReader* GetColReader() const final {
     return _data ? _data->col_reader.get() : nullptr;
   }
@@ -93,8 +93,6 @@ class SegmentReaderImpl final : public SubReader {
   struct ColumnData {
     std::unique_ptr<ColReader> col_reader;
     std::unique_ptr<IdxReader> idx_reader;
-    std::vector<std::unique_ptr<HnswReader>> hnsw_readers;
-    sdb::containers::FlatHashMap<field_id, const HnswReader*> hnsw_by_id;
 
     void Open(const Directory& dir, const SegmentMeta& meta,
               const IndexReaderOptions& options);

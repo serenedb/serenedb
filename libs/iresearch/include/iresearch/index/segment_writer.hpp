@@ -140,9 +140,6 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     }
     return MakePersistedNormReader(*col);
   }
-  PreloadedHnswGraphs TakeBuiltHnswGraphs() noexcept {
-    return std::move(_built_hnsw_graphs);
-  }
   ColWriter* GetColWriter() noexcept { return _col_writer.get(); }
 
  private:
@@ -157,7 +154,8 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
 
   void finish();
 
-  void FlushFields(FlushState& state);
+  void FlushFields(FlushState& state,
+                   std::span<const BasicTermReader* const> extra);
 
   TrackingDirectory _dir;
   ScorerPtr _scorer;
@@ -172,7 +170,6 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   const ColumnOptionsProvider* _column_options = nullptr;
   const NormColumnOptionsProvider* _norm_column_options = nullptr;
   std::unique_ptr<ColWriter> _col_writer;
-  PreloadedHnswGraphs _built_hnsw_graphs;
   doc_id_t _batch_first_doc_id = doc_limits::eof();
   bool _initialized = false;
   bool _valid = true;

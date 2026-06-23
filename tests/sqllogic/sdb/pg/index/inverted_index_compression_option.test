@@ -199,7 +199,7 @@ CREATE TABLE hnsw_comp (id INT PRIMARY KEY, emb FLOAT[3]);
 
 statement ok
 CREATE INDEX hnsw_comp_unc ON hnsw_comp
-  USING inverted(emb hnsw (metric = 'l2', compression = 'uncompressed'));
+  USING inverted(emb ivf (metric = 'l2', compression = 'uncompressed'));
 
 statement ok
 INSERT INTO hnsw_comp VALUES
@@ -223,7 +223,7 @@ statement ok
 CREATE TABLE hnsw_mat (id INT PRIMARY KEY, emb FLOAT[3]);
 
 statement ok
-CREATE INDEX hnsw_mat_idx ON hnsw_mat USING inverted(emb hnsw (metric = 'l2'));
+CREATE INDEX hnsw_mat_idx ON hnsw_mat USING inverted(emb ivf (metric = 'l2'));
 
 statement ok
 INSERT INTO hnsw_mat VALUES
@@ -246,10 +246,10 @@ CREATE TABLE hnsw_bad (id INT PRIMARY KEY, emb FLOAT[3]);
 
 statement error
 CREATE INDEX hnsw_bad_idx ON hnsw_bad
-  USING inverted(emb hnsw (metric = 'l2', compression = 'no_such'));
+  USING inverted(emb ivf (metric = 'l2', compression = 'no_such'));
 
 # --- 12. HNSW codec/type mismatch rejected synchronously ----------------
 # FSST is VARCHAR-only; ARRAY(FLOAT,N) leaf is FLOAT, not VARCHAR.
 statement error
 CREATE INDEX hnsw_mismatch ON hnsw_bad
-  USING inverted(emb hnsw (metric = 'l2', compression = 'fsst'));
+  USING inverted(emb ivf (metric = 'l2', compression = 'fsst'));

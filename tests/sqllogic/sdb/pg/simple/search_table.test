@@ -463,3 +463,51 @@ a	b
 
 statement ok
 DROP TABLE search_ine;
+
+
+## STORED generated columns on a search table. The INSERT path resolves them
+## through the two-pass ResolveDefaultsProjection: generated columns are
+## computed over the storage-ordered chunk, so the value is correct even when
+## the user inserts columns out of order and omits the generated column.
+statement ok
+CREATE TABLE search_gen (a INTEGER,
+  b INTEGER GENERATED ALWAYS AS (a + 1) STORED, note TEXT)
+  WITH (storage = 'search');
+
+statement ok
+INSERT INTO search_gen (note, a) VALUES ('x', 5), ('y', 7);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_gen;
+
+query
+SELECT a, b, note FROM search_gen ORDER BY a;
+----
+a	b	note
+5	6	x
+7	8	y
+
+statement ok
+DROP TABLE search_gen;
+
+
+# A generated column may depend on more than one stored column.
+statement ok
+CREATE TABLE search_gen_multi (w INTEGER, h INTEGER,
+  area INTEGER GENERATED ALWAYS AS (w * h) STORED) WITH (storage = 'search');
+
+statement ok
+INSERT INTO search_gen_multi (w, h) VALUES (3, 4), (5, 6);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_gen_multi;
+
+query
+SELECT w, h, area FROM search_gen_multi ORDER BY w;
+----
+w	h	area
+3	4	12
+5	6	30
+
+statement ok
+DROP TABLE search_gen_multi;

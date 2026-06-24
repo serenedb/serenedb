@@ -70,216 +70,14 @@
       "label": "Server",
       "flags": [
         {
-          "name": "server_compaction_threads",
-          "flag": "--server_compaction_threads",
-          "type": "",
-          "defaultValue": "0",
-          "description": "Threads in the iresearch compaction pool (0 = auto-derive from cores, clamped to [1, 4 * cores]).",
-          "source": "server",
-          "category": "server",
-          "categoryLabel": "Server"
-        },
-        {
-          "name": "server_cpu_threads",
-          "flag": "--server_cpu_threads",
-          "type": "",
-          "defaultValue": "0",
-          "description": "DuckDB executor pool size at process start. 0 = let DuckDB auto-detect from cpu_count. The SQL-level `SET threads = N` continues to win at runtime.",
-          "source": "server",
-          "category": "server",
-          "categoryLabel": "Server"
-        },
-        {
           "name": "server_directory",
           "flag": "--server_directory",
           "type": "",
-          "defaultValue": "",
-          "description": "Path to the database directory. Overrides any positional arg.",
+          "defaultValue": "serenedb-data",
+          "description": "Path to the database directory. A positional argument, if given, takes precedence.",
           "source": "server",
           "category": "server",
           "categoryLabel": "Server"
-        },
-        {
-          "name": "server_endpoints",
-          "flag": "--server_endpoints",
-          "type": "",
-          "defaultValue": "",
-          "description": "Endpoint(s) for client requests (e.g. `pgsql+tcp://127.0.0.1:7890`). Comma-separated for multiple. Supported schemes: pgsql+tcp, tcp, ssl, unix.",
-          "source": "server",
-          "category": "server",
-          "categoryLabel": "Server"
-        },
-        {
-          "name": "server_io_threads",
-          "flag": "--server_io_threads",
-          "type": "",
-          "defaultValue": "0",
-          "description": "IO threads for HTTP and pg-wire connections (0 = max(1, cpu_count / 4)).",
-          "source": "server",
-          "category": "server",
-          "categoryLabel": "Server"
-        },
-        {
-          "name": "server_maximal_queue_size",
-          "flag": "--server_maximal_queue_size",
-          "type": "",
-          "defaultValue": "4096",
-          "description": "Maximum FIFO queue depth per priority in the SchedulerFeature scheduler; controls backpressure for the HTTP/REST work queue.",
-          "source": "server",
-          "category": "server",
-          "categoryLabel": "Server"
-        },
-        {
-          "name": "server_refresh_threads",
-          "flag": "--server_refresh_threads",
-          "type": "",
-          "defaultValue": "0",
-          "description": "Threads in the iresearch refresh pool (0 = auto-derive from cores, clamped to [1, 4 * cores]).",
-          "source": "server",
-          "category": "server",
-          "categoryLabel": "Server"
-        },
-        {
-          "name": "server_request_threads",
-          "flag": "--server_request_threads",
-          "type": "",
-          "defaultValue": "0",
-          "description": "Maximum worker threads for the SchedulerFeature pool (the legacy ArangoDB scheduler used for HTTP/REST work; distinct from server_io_threads and server_cpu_threads). 0 = auto-detect (max(32, 2 * cpu_count)).",
-          "source": "server",
-          "category": "server",
-          "categoryLabel": "Server"
-        },
-        {
-          "name": "server_skip_search_recovery",
-          "flag": "--server_skip_search_recovery",
-          "type": "",
-          "defaultValue": "false",
-          "description": "Skip the entire WAL replay phase for inverted indexes on startup. Diagnostic only -- data loss is permanent for the skipped delta.",
-          "source": "server",
-          "category": "server",
-          "categoryLabel": "Server"
-        }
-      ]
-    },
-    {
-      "id": "http",
-      "label": "HTTP",
-      "flags": [
-        {
-          "name": "http_compress_response_threshold",
-          "flag": "--http_compress_response_threshold",
-          "type": "",
-          "defaultValue": "0",
-          "description": "Response body size threshold for transparent gzip/deflate compression (0 disables compression).",
-          "source": "http",
-          "category": "http",
-          "categoryLabel": "HTTP"
-        },
-        {
-          "name": "http_keep_alive_timeout",
-          "flag": "--http_keep_alive_timeout",
-          "type": "",
-          "defaultValue": "300",
-          "description": "Keep-alive timeout for HTTP and pg-wire connections (in seconds; 0 disables keep-alive).",
-          "source": "http",
-          "category": "http",
-          "categoryLabel": "HTTP"
-        },
-        {
-          "name": "http_return_queue_time_header",
-          "flag": "--http_return_queue_time_header",
-          "type": "",
-          "defaultValue": "true",
-          "description": "Return the x-serene-queue-time-seconds header on every response.",
-          "source": "http",
-          "category": "http",
-          "categoryLabel": "HTTP"
-        },
-        {
-          "name": "http_trusted_origin",
-          "flag": "--http_trusted_origin",
-          "type": "",
-          "defaultValue": "",
-          "description": "Trusted origin URLs for CORS requests with credentials.",
-          "source": "http",
-          "category": "http",
-          "categoryLabel": "HTTP"
-        }
-      ]
-    },
-    {
-      "id": "ssl",
-      "label": "TLS / SSL",
-      "flags": [
-        {
-          "name": "ssl_cafile",
-          "flag": "--ssl_cafile",
-          "type": "",
-          "defaultValue": "",
-          "description": "CA file used for client certificate verification. Empty disables client-cert checks.",
-          "source": "ssl",
-          "category": "ssl",
-          "categoryLabel": "TLS / SSL"
-        },
-        {
-          "name": "ssl_cipher_list",
-          "flag": "--ssl_cipher_list",
-          "type": "",
-          "defaultValue": "",
-          "description": "OpenSSL cipher list to restrict the server to. See OpenSSL docs.",
-          "source": "ssl",
-          "category": "ssl",
-          "categoryLabel": "TLS / SSL"
-        },
-        {
-          "name": "ssl_ecdh_curve",
-          "flag": "--ssl_ecdh_curve",
-          "type": "",
-          "defaultValue": "x25519:prime256v1",
-          "description": "Colon-separated list of TLS key-exchange groups passed to SSL_CTX_set1_groups_list. Empty disables the call.",
-          "source": "ssl",
-          "category": "ssl",
-          "categoryLabel": "TLS / SSL"
-        },
-        {
-          "name": "ssl_keyfile",
-          "flag": "--ssl_keyfile",
-          "type": "",
-          "defaultValue": "",
-          "description": "Server private key (PEM, certificate + key concatenated). Required for SSL endpoints.",
-          "source": "ssl",
-          "category": "ssl",
-          "categoryLabel": "TLS / SSL"
-        },
-        {
-          "name": "ssl_prefer_http1_in_alpn",
-          "flag": "--ssl_prefer_http1_in_alpn",
-          "type": "",
-          "defaultValue": "false",
-          "description": "Prefer HTTP/1.1 over HTTP/2 in the ALPN selection callback.",
-          "source": "ssl",
-          "category": "ssl",
-          "categoryLabel": "TLS / SSL"
-        },
-        {
-          "name": "ssl_protocol",
-          "flag": "--ssl_protocol",
-          "type": "",
-          "defaultValue": "tls",
-          "description": "TLS protocol selector: 'tls' (generic, OpenSSL negotiates), 'tls1.2', or 'tls1.3'. Legacy SSLv2/v3/TLSv1 are rejected.",
-          "source": "ssl",
-          "category": "ssl",
-          "categoryLabel": "TLS / SSL"
-        },
-        {
-          "name": "ssl_session_cache",
-          "flag": "--ssl_session_cache",
-          "type": "",
-          "defaultValue": "false",
-          "description": "Enable OpenSSL server-side session caching (SSL_SESS_CACHE_SERVER); off = SSL_SESS_CACHE_OFF.",
-          "source": "ssl",
-          "category": "ssl",
-          "categoryLabel": "TLS / SSL"
         }
       ]
     },
@@ -306,6 +104,234 @@
           "source": "log",
           "category": "log",
           "categoryLabel": "Logging"
+        }
+      ]
+    },
+    {
+      "id": "server/network/server.cpp",
+      "label": "server/network/server.cpp",
+      "flags": [
+        {
+          "name": "auth_api_key",
+          "flag": "--auth_api_key",
+          "type": "",
+          "defaultValue": "",
+          "description": "Static HTTP ApiKey credential as id:key (empty = ApiKey rejected).",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "auth_bearer_token",
+          "flag": "--auth_bearer_token",
+          "type": "",
+          "defaultValue": "",
+          "description": "Static HTTP Bearer token (empty = Bearer rejected).",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "auth_method",
+          "flag": "--auth_method",
+          "type": "",
+          "defaultValue": "scram",
+          "description": "Password auth method for --auth_password: scram (SCRAM-SHA-256, default), md5, or password (cleartext; requires TLS).",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "auth_password",
+          "flag": "--auth_password",
+          "type": "",
+          "defaultValue": "",
+          "description": "Temporary single-user password (empty = trust). Placeholder until RBAC; SCRAM-SHA-256 by default. Cleartext password auth requires TLS.",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "auth_timeout",
+          "flag": "--auth_timeout",
+          "type": "",
+          "defaultValue": "30s",
+          "description": "Max time from connect to authenticated, per connection (0 = off). pg: covers TLS+startup+auth; http: the request-header read deadline.",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "auth_user",
+          "flag": "--auth_user",
+          "type": "",
+          "defaultValue": "postgres",
+          "description": "User the temporary --auth_password / token credentials apply to.",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "http_body_timeout",
+          "flag": "--http_body_timeout",
+          "type": "",
+          "defaultValue": "30s",
+          "description": "Max time to read one HTTP request body.",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "http_cors_origins",
+          "flag": "--http_cors_origins",
+          "type": "",
+          "defaultValue": "",
+          "description": "CORS allow-origin list for the HTTP/ES API: comma-separated origins or '*' (empty disables CORS). Echoes an allowed Origin and answers preflight OPTIONS.",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "idle_session_timeout",
+          "flag": "--idle_session_timeout",
+          "type": "",
+          "defaultValue": "1m15s",
+          "description": "Close a session idle (between requests) longer than this. Drives the HTTP keep-alive idle timeout.",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "io_threads",
+          "flag": "--io_threads",
+          "type": "",
+          "defaultValue": "0",
+          "description": "IO threads for HTTP and pg-wire connections (0 = max(1, cpu_count / 4)).",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "listen",
+          "flag": "--listen",
+          "type": "",
+          "defaultValue": "postgres://127.0.0.1:7890",
+          "description": "Listener URL(s), comma-separated or repeated (last-wins). Each is one listener: postgres://host:port[?sslmode=...], http(s)://host:port?api=es, postgres:///path/to.sock (unix).",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "max_connections",
+          "flag": "--max_connections",
+          "type": "",
+          "defaultValue": "0",
+          "description": "Max concurrent client connections across all listeners (0 = unlimited). Over-cap connections get 53300 (pg) / 503 (http) then close. Per-listener override via ?max_connections=.",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "pg_max_message_bytes",
+          "flag": "--pg_max_message_bytes",
+          "type": "",
+          "defaultValue": "67108864",
+          "description": "Maximum size of a single pg-wire message (statement text / bound parameter value). Bulk data should use COPY, which streams.",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "tls_ca",
+          "flag": "--tls_ca",
+          "type": "",
+          "defaultValue": "",
+          "description": "Default PEM CA bundle to verify client certificates (sslmode=verify-ca/verify-full).",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "tls_cert",
+          "flag": "--tls_cert",
+          "type": "",
+          "defaultValue": "",
+          "description": "Default PEM server certificate chain for TLS listeners (a listener may override with ?cert=).",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "tls_ciphers",
+          "flag": "--tls_ciphers",
+          "type": "",
+          "defaultValue": "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305",
+          "description": "OpenSSL TLS 1.2 cipher list (forward-secret AEAD, Mozilla intermediate); TLS 1.3 suites are fixed by OpenSSL.",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "tls_groups",
+          "flag": "--tls_groups",
+          "type": "",
+          "defaultValue": "X25519:P-256",
+          "description": "TLS key-exchange groups, colon-separated.",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "tls_key",
+          "flag": "--tls_key",
+          "type": "",
+          "defaultValue": "",
+          "description": "Default PEM private key for --tls_cert.",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "tls_min_version",
+          "flag": "--tls_min_version",
+          "type": "",
+          "defaultValue": "1.2",
+          "description": "Minimum TLS version: 1.2 or 1.3 (legacy TLS is not supported).",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        }
+      ]
+    },
+    {
+      "id": "server/query/server_engine.cpp",
+      "label": "server/query/server_engine.cpp",
+      "flags": [
+        {
+          "name": "cpu_threads",
+          "flag": "--cpu_threads",
+          "type": "",
+          "defaultValue": "0",
+          "description": "DuckDB executor pool size at process start. 0 = let DuckDB auto-detect from cpu_count. The SQL-level `SET threads = N` continues to win at runtime.",
+          "source": "server/query/server_engine.cpp",
+          "category": "server/query/server_engine.cpp",
+          "categoryLabel": "server/query/server_engine.cpp"
+        }
+      ]
+    },
+    {
+      "id": "server/scheduler/background_scheduler.cpp",
+      "label": "server/scheduler/background_scheduler.cpp",
+      "flags": [
+        {
+          "name": "background_threads",
+          "flag": "--background_threads",
+          "type": "",
+          "defaultValue": "0",
+          "description": "Number of background worker threads (drop / cleanup / maintenance tasks; later object-store prefetch). 0 = auto-detect.",
+          "source": "server/scheduler/background_scheduler.cpp",
+          "category": "server/scheduler/background_scheduler.cpp",
+          "categoryLabel": "server/scheduler/background_scheduler.cpp"
         }
       ]
     }

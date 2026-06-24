@@ -40,7 +40,7 @@ statement ok
 VACUUM (REFRESH_TABLE) wal_mi_b;
 
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO wal_mi_a VALUES (2, 'ayylmao two'), (3, 'ayylmao three');

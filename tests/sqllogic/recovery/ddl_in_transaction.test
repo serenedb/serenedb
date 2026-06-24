@@ -19,14 +19,11 @@ statement ok
 CREATE TABLE ddl_txn_t1(id INTEGER PRIMARY KEY, v INTEGER);
 
 
-# Pre-existing limitation (also on main): the transaction's pinned catalog
-# snapshot predates the CREATE, so the new table is not visible inside the
-# same transaction block.
-statement error
+# DDL is statement-committed, so the new table is immediately visible to later
+# statements in the same block. The INSERT is plain DML and is undone by the
+# ROLLBACK below.
+statement ok
 INSERT INTO ddl_txn_t1 VALUES (1, 10);
-----
-db error: ERROR: Table with name ddl_txn_t1 does not exist!
-<slt:ignore>
 
 
 statement ok

@@ -161,16 +161,16 @@ CREATE INDEX g3_b_expr_st ON g3_b USING inverted(pk,
 
 statement ok
 INSERT INTO g3_b VALUES
-    (1, '\\x68656c6c6f'::BLOB, 'a'),
-    (2, '\\x776f726c64'::BLOB, 'b'),
-    (3, '\\xdeadbeef'::BLOB,   'c');
+    (1, '\x68656c6c6f'::BLOB, 'a'),
+    (2, '\x776f726c64'::BLOB, 'b'),
+    (3, '\xdeadbeef'::BLOB,   'c');
 
 statement ok
 VACUUM (REFRESH_TABLE) g3_b;
 
 query
 SELECT pk FROM g3_b_expr_st
-WHERE decode(encode(b, 'hex'), 'hex') @@ ts_like('\\xdeadbeef'::BLOB) ORDER BY pk;
+WHERE decode(encode(b, 'hex'), 'hex') @@ ts_like('\xdeadbeef'::BLOB) ORDER BY pk;
 ----
 pk
 3

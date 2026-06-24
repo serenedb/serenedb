@@ -1,0 +1,152 @@
+# A CHECK constraint that references a user-defined type (e.g. CAST(col AS enum))
+# cannot be bound by the store catalog, so it is carried from the facade-bound
+# plan into the bound-constraint list of every write operator. Verify enforcement
+# on INSERT / UPDATE / DELETE / upsert / MERGE (every clause form), in both the
+# passing and the failing case. 'n' is a valid enum label that fails the
+# predicate, isolating CHECK enforcement from the cast itself.
+
+
+statement ok
+CREATE TYPE chk_kind AS ENUM ('y', 'n')
+
+
+statement ok
+CREATE TABLE ct (id INT PRIMARY KEY, s TEXT, CHECK (CAST(s AS chk_kind) = 'y'))
+
+
+statement ok
+INSERT INTO ct VALUES (1, 'y'), (2, 'y'), (3, 'y')
+
+
+# --- INSERT ---
+
+statement ok
+INSERT INTO ct VALUES (10, 'y')
+
+statement error
+INSERT INTO ct VALUES (11, 'n')
+----
+db error: ERROR: CHECK constraint failed on table <slt:ignore>
+
+
+# --- UPDATE ---
+
+statement ok
+UPDATE ct SET s = 'y' WHERE id = 1
+
+statement error
+UPDATE ct SET s = 'n' WHERE id = 1
+----
+db error: ERROR: CHECK constraint failed on table <slt:ignore>
+
+
+# --- DELETE: no CHECK, must not be falsely rejected ---
+
+statement ok
+DELETE FROM ct WHERE id = 10
+
+
+# --- upsert: INSERT ... ON CONFLICT DO UPDATE ---
+
+statement ok
+INSERT INTO ct VALUES (2, 'y') ON CONFLICT (id) DO UPDATE SET s = 'y'
+
+statement error
+INSERT INTO ct VALUES (2, 'y') ON CONFLICT (id) DO UPDATE SET s = 'n'
+----
+db error: ERROR: CHECK constraint failed on table <slt:ignore>
+
+
+# upsert still checks the INSERT arm's incoming row, even with DO NOTHING
+
+statement error
+INSERT INTO ct VALUES (12, 'n') ON CONFLICT (id) DO NOTHING
+----
+db error: ERROR: CHECK constraint failed on table <slt:ignore>
+
+
+# --- MERGE: matched -> UPDATE ---
+
+statement ok
+MERGE INTO ct USING (SELECT 1 AS id, 'y' AS s) src ON ct.id = src.id
+  WHEN MATCHED THEN UPDATE SET s = src.s
+
+statement error
+MERGE INTO ct USING (SELECT 1 AS id, 'n' AS s) src ON ct.id = src.id
+  WHEN MATCHED THEN UPDATE SET s = src.s
+----
+db error: ERROR: CHECK constraint failed on table <slt:ignore>
+
+
+# --- MERGE: not matched -> INSERT ---
+
+statement ok
+MERGE INTO ct USING (SELECT 20 AS id, 'y' AS s) src ON ct.id = src.id
+  WHEN NOT MATCHED THEN INSERT (id, s) VALUES (src.id, src.s)
+
+statement error
+MERGE INTO ct USING (SELECT 21 AS id, 'n' AS s) src ON ct.id = src.id
+  WHEN NOT MATCHED THEN INSERT (id, s) VALUES (src.id, src.s)
+----
+db error: ERROR: CHECK constraint failed on table <slt:ignore>
+
+
+# --- MERGE: matched AND <condition> -> UPDATE ---
+
+statement error
+MERGE INTO ct USING (SELECT 1 AS id, 'n' AS s) src ON ct.id = src.id
+  WHEN MATCHED AND ct.id = 1 THEN UPDATE SET s = src.s
+----
+db error: ERROR: CHECK constraint failed on table <slt:ignore>
+
+
+# --- MERGE: not matched AND <condition> -> INSERT ---
+
+statement error
+MERGE INTO ct USING (SELECT 31 AS id, 'n' AS s) src ON ct.id = src.id
+  WHEN NOT MATCHED AND src.id > 0 THEN INSERT (id, s) VALUES (src.id, src.s)
+----
+db error: ERROR: CHECK constraint failed on table <slt:ignore>
+
+
+# --- MERGE: not matched by source -> UPDATE ---
+
+statement error
+MERGE INTO ct USING (SELECT 1 AS id) src ON ct.id = src.id
+  WHEN NOT MATCHED BY SOURCE THEN UPDATE SET s = 'n'
+----
+db error: ERROR: CHECK constraint failed on table <slt:ignore>
+
+
+# --- MERGE: multi-clause, the INSERT arm carries the invalid value ---
+
+statement error
+MERGE INTO ct USING (SELECT 40 AS id, 'n' AS s) src ON ct.id = src.id
+  WHEN MATCHED THEN UPDATE SET s = src.s
+  WHEN NOT MATCHED THEN INSERT (id, s) VALUES (src.id, src.s)
+----
+db error: ERROR: CHECK constraint failed on table <slt:ignore>
+
+
+# --- MERGE: matched -> DELETE, no CHECK, must not be falsely rejected ---
+
+statement ok
+MERGE INTO ct USING (SELECT 20 AS id) src ON ct.id = src.id
+  WHEN MATCHED THEN DELETE
+
+
+# no rejected statement ever mutated the table: every surviving row is valid
+
+query I
+SELECT count(*) FROM ct WHERE s <> 'y'
+----
+count
+0
+
+
+statement ok
+DROP TABLE ct
+
+
+statement ok
+DROP TYPE chk_kind

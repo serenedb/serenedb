@@ -29,7 +29,7 @@ statement ok
 VACUUM (REFRESH_TABLE) huge_t;
 
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # 100k rows.
 statement ok

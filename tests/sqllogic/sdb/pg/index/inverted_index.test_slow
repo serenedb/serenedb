@@ -133,7 +133,7 @@ FROM
   generate_series(1, 100) as cutelooked_team(boss);
 
 statement count 100000
-COPY csv_idx_src TO '${__TEST_DIR__}/csv_idx_slow.csv';
+COPY csv_idx_src TO '${__TEST_DIR__}/csv_idx_slow.csv' HEADER;
 
 statement ok
 CREATE VIEW csv_idx_ext AS
@@ -243,7 +243,7 @@ SELECT
 FROM generate_series(1, 10000) AS s(n);
 
 statement count 10000
-COPY dense_csv_slow_src TO '${__TEST_DIR__}/dense_csv_slow.csv';
+COPY dense_csv_slow_src TO '${__TEST_DIR__}/dense_csv_slow.csv' HEADER;
 
 statement ok
 CREATE VIEW dense_csv_slow_ext AS

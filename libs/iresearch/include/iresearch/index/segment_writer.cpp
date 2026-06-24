@@ -106,8 +106,7 @@ SegmentWriter::SegmentWriter(ConstructToken, Directory& dir,
     _docs_context{{options.resource_manager}},
     _fields{options.resource_manager, options.scorers_features},
     _db{DerefDb(options.db)},
-    _column_options{options.column_options},
-    _norm_column_options{options.norm_column_options} {
+    _fallback_field_options{options.field_options} {
   _docs_mask.set = decltype(_docs_mask.set){{options.resource_manager}};
 }
 
@@ -197,7 +196,24 @@ void SegmentWriter::FlushFields(FlushState& state) {
   return DocMap{};
 }
 
-void SegmentWriter::reset() noexcept {
+void SegmentWriter::SetFieldOptions(
+  std::shared_ptr<const IndexFieldOptions> options) noexcept {
+  if (!options) {
+    return;
+  }
+  // On resume the col/field writers hold a raw view of the previous (equal)
+  // options; re-point them before the assignment drops its last owner.
+  const auto* next = options.get();
+  if (_initialized) {
+    if (_col_writer) {
+      _col_writer->SetFieldOptions(next);
+    }
+    _fields.SetFieldOptions(next);
+  }
+  _field_options = std::move(options);
+}
+
+void SegmentWriter::ResetState() noexcept {
   _initialized = false;
   _dir.ClearTracked();
   _docs_context.clear();
@@ -213,8 +229,18 @@ void SegmentWriter::reset() noexcept {
   _built_hnsw_graphs.clear();
 }
 
+void SegmentWriter::reset() noexcept {
+  ResetState();
+  // Release the override so a pooled writer never pins a snapshot's index past
+  // the operation. (A drop waits on the storage refcount, so a still-pinned
+  // index only defers the drop to the next recycle, never dangles.)
+  _field_options.reset();
+}
+
 void SegmentWriter::reset(const SegmentMeta& meta) {
-  reset();
+  // Keep _field_options: the caller set it for this segment; the col/field
+  // writers below open against ActiveFieldOptions().
+  ResetState();
 
   _seg_name = meta.name;
 
@@ -225,9 +251,11 @@ void SegmentWriter::reset(const SegmentMeta& meta) {
       /*compaction=*/false, rm);
   }
 
-  _col_writer = std::make_unique<ColWriter>(
-    _dir, meta.name, _db, _column_options, _norm_column_options);
-  _fields.SetColWriter(_col_writer.get(), _norm_column_options);
+  const auto* active = ActiveFieldOptions();
+  _col_writer = std::make_unique<ColWriter>(_dir, meta.name, _db);
+  _col_writer->SetFieldOptions(active);
+  _fields.SetColWriter(_col_writer.get());
+  _fields.SetFieldOptions(active);
 
   _initialized = true;
 }

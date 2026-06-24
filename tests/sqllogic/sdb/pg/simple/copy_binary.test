@@ -1,0 +1,119 @@
+hash-threshold 100
+
+control substitution on
+
+# --- basic int+text round-trip through a PGCOPY binary file ---
+
+statement ok
+CREATE TABLE tindex
+(
+  id INTEGER PRIMARY KEY,
+  name TEXT
+);
+
+
+statement ok
+CREATE TABLE clickclack
+(
+  id INTEGER PRIMARY KEY,
+  name TEXT
+);
+
+
+statement count 3
+INSERT INTO tindex VALUES (1, 'vedernikoff'), (2, 'pavelvi'), (3, 'babsky');
+
+
+statement count 3
+COPY tindex TO '/tmp/${__DATABASE__}_copy_binary.bin' (FORMAT binary);
+
+
+statement count 3
+COPY clickclack FROM '/tmp/${__DATABASE__}_copy_binary.bin' (FORMAT binary);
+
+
+query
+SELECT * FROM clickclack ORDER BY 1, 2;
+----
+id	name
+1	vedernikoff
+2	pavelvi
+3	babsky
+
+
+statement count 3
+DELETE FROM clickclack;
+
+
+# COPY (query) TO binary, then load back
+
+statement count 1
+COPY (SELECT * FROM tindex ORDER BY 1 DESC LIMIT 1) TO '/tmp/${__DATABASE__}_copy_binary.bin' (FORMAT binary);
+
+
+statement count 1
+COPY clickclack FROM '/tmp/${__DATABASE__}_copy_binary.bin' (FORMAT binary);
+
+
+query
+SELECT * FROM clickclack;
+----
+id	name
+3	babsky
+
+
+# --- multi-type + NULL round-trip (exercises the flat-vector fast paths for
+# int/bigint/double/bool/text and the NULL path). Self-verifying via EXCEPT so
+# it needs no pre-computed hash: an exact round-trip leaves zero differing rows
+# in either direction (set semantics treat NULLs as equal). ---
+
+statement ok
+CREATE TABLE bsrc AS
+SELECT
+  g::int                                   AS i4,
+  (g::bigint * 1000000)                    AS i8,
+  (g * 0.5)::double                        AS f8,
+  (g % 2 = 0)                              AS b,
+  ('row_' || g)                            AS t,
+  CASE WHEN g % 3 = 0 THEN NULL ELSE 'v' || g END AS maybe
+FROM generate_series(1, 20000) g;
+
+
+statement count 20000
+COPY bsrc TO '/tmp/${__DATABASE__}_copy_binary_multi.bin' (FORMAT binary);
+
+
+statement ok
+CREATE TABLE bdst
+(
+  i4    INTEGER,
+  i8    BIGINT,
+  f8    DOUBLE,
+  b     BOOLEAN,
+  t     TEXT,
+  maybe TEXT
+);
+
+
+statement count 20000
+COPY bdst FROM '/tmp/${__DATABASE__}_copy_binary_multi.bin' (FORMAT binary);
+
+
+query
+SELECT
+  (SELECT count(*) FROM (SELECT * FROM bsrc EXCEPT SELECT * FROM bdst) a)
+  + (SELECT count(*) FROM (SELECT * FROM bdst EXCEPT SELECT * FROM bsrc) b)
+  AS diff;
+----
+diff
+0
+
+
+# the NULL column actually carried NULLs both before and after (sanity that the
+# EXCEPT above is not comparing two all-non-NULL columns)
+
+query
+SELECT count(*) AS nulls FROM bdst WHERE maybe IS NULL;
+----
+nulls
+6666

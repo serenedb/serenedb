@@ -25,8 +25,7 @@
 #include "benchmark/benchmark.h"
 #include "function2.hpp"
 
-// #define HAS_FOLLY
-#ifdef HAS_FOLLY
+#ifdef SDB_ENABLE_FOLLY
 #include "folly/Function.h"
 #endif
 
@@ -106,7 +105,7 @@ void BmTrivialAbslAnyInvocable(benchmark::State& state) {
 }
 BENCHMARK(BmTrivialAbslAnyInvocable);
 
-#ifdef HAS_FOLLY
+#ifdef SDB_ENABLE_FOLLY
 
 void BM_TrivialFollyFunction(benchmark::State& state) {
   ConstructAndCallFunctionBenchmark<folly::Function<void()>>(state,
@@ -166,7 +165,7 @@ void BmLargeAbslAnyInvocable(benchmark::State& state) {
 }
 BENCHMARK(BmLargeAbslAnyInvocable);
 
-#ifdef HAS_FOLLY
+#ifdef SDB_ENABLE_FOLLY
 
 void BM_LargeFollyFunction(benchmark::State& state) {
   ConstructAndCallFunctionBenchmark<folly::Function<void()>>(state,
@@ -233,7 +232,7 @@ void BmFunPtrAbslAnyInvocable(benchmark::State& state) {
 }
 BENCHMARK(BmFunPtrAbslAnyInvocable);
 
-#ifdef HAS_FOLLY
+#ifdef SDB_ENABLE_FOLLY
 
 void BM_FunPtrFollyFunction(benchmark::State& state) {
   ConstructAndCallFunctionBenchmark<folly::Function<void()>>(state,
@@ -312,7 +311,7 @@ void BmTrivialArgsAbslAnyInvocable(benchmark::State& state) {
 }
 BENCHMARK(BmTrivialArgsAbslAnyInvocable);
 
-#ifdef HAS_FOLLY
+#ifdef SDB_ENABLE_FOLLY
 
 void BM_TrivialArgsFollyFunction(benchmark::State& state) {
   CallFunctionBenchmark<folly::Function<void(int, int, int)>>(
@@ -389,7 +388,7 @@ void BmNonTrivialArgsAbslAnyInvocable(benchmark::State& state) {
 }
 BENCHMARK(BmNonTrivialArgsAbslAnyInvocable);
 
-#ifdef HAS_FOLLY
+#ifdef SDB_ENABLE_FOLLY
 
 void BM_NonTrivialArgsFollyFunction(benchmark::State& state) {
   std::string a, b, c;

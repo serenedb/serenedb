@@ -62,7 +62,7 @@ count
 # Un-refreshed tail: index commits suppressed so it lives only in the store WAL
 # (post-refresh, never durable in the segments). Recovery must replay it once.
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO rpc_t SELECT i, 'tail_' || i FROM range(3000, 3500) AS t(i);

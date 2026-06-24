@@ -57,14 +57,14 @@ CREATE INDEX g7_b_imp ON g7_b USING inverted(pk, b);
 
 statement ok
 INSERT INTO g7_b VALUES
-    (1, '\\x68656c6c6f'::BLOB),
-    (2, '\\xdeadbeef'::BLOB);
+    (1, '\x68656c6c6f'::BLOB),
+    (2, '\xdeadbeef'::BLOB);
 
 statement ok
 VACUUM (REFRESH_TABLE) g7_b;
 
 query
-SELECT pk FROM g7_b_imp WHERE b @@ ts_like('\\xdeadbeef'::BLOB) ORDER BY pk;
+SELECT pk FROM g7_b_imp WHERE b @@ ts_like('\xdeadbeef'::BLOB) ORDER BY pk;
 ----
 pk
 2

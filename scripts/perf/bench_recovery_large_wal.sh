@@ -77,9 +77,9 @@ wait_quiet() {
 start_serened() {
 	local srv="$1" datadir="$2"
 	taskset -c "${SERVER_CORES}" "${BENCH_BIN}" "${datadir}" \
-		--server_endpoints "pgsql+tcp://0.0.0.0:${PORT}" \
-		--server_io_threads "${IO_THREADS}" \
-		--server_cpu_threads "${CPU_THREADS}" \
+		--listen "postgres://0.0.0.0:${PORT}" \
+		--io_threads "${IO_THREADS}" \
+		--cpu_threads "${CPU_THREADS}" \
 		>>"${OUT_DIR}/serened_${srv}.log" 2>&1 &
 	CUR_PID=$!
 }

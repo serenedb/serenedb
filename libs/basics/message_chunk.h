@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <cstdint>
+#include <new>
 #include <span>
 #include <string_view>
 
@@ -54,11 +56,27 @@ class Chunk {
     SDB_ASSERT(_end <= _capacity);
   }
 
+  // Rewind the write position to an earlier absolute offset (Buffer::Discard).
+  void SetEnd(size_t end) {
+    SDB_ASSERT(end <= _capacity);
+    _end = end;
+  }
+
+  // Detach and return the next-chunk chain (Buffer::Discard frees it).
+  Chunk* DetachNext() {
+    auto* next = _next;
+    _next = nullptr;
+    return next;
+  }
+
+  void Reset() noexcept {
+    _begin = 0;
+    _end = 0;
+  }
+
   size_t FreeSpace() const { return _capacity - _end; }
 
   size_t Size() const { return _end - _begin; }
-
-  size_t TryWrite(std::string_view data);
 
   Chunk* Next() const { return _next; }
 
@@ -80,7 +98,9 @@ class Chunk {
   }
 
  private:
-  Chunk(size_t capacity);
+  Chunk(size_t capacity)
+    : _data{static_cast<uint8_t*>(::operator new(capacity))},
+      _capacity{capacity} {}
 
   uint8_t* _data;
   size_t _begin{0};

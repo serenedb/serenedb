@@ -86,7 +86,7 @@ pk	geo
 
 # Freeze iresearch commits BEFORE the second batch.
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # These two rows reach RocksDB WAL but the iresearch trx never commits.
 statement ok

@@ -67,7 +67,7 @@ TRUNCATE gnusi_t;
 
 # Block bg search commits so the post-truncate writes stay WAL-only.
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # Phase 4: post-truncate writes.
 statement ok

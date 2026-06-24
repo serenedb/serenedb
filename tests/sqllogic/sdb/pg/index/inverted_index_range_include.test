@@ -55,7 +55,7 @@ QUERY PLAN
 │           Index:          │
 │   vec_r_idx (ANN range)   │
 │                           │
-│      Radius: 1.000000     │
+│         Radius: 1         │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -89,7 +89,7 @@ QUERY PLAN
 │   vec_r_idx (ANN range)   │
 │                           │
 │       Lookup: table       │
-│      Radius: 1.000000     │
+│         Radius: 1         │
 │          Dims: 3          │
 │                           │
 │        Projections:       │

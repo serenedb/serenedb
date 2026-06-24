@@ -32,7 +32,7 @@ services:
         tar -xzf /workspace/$TARBALL_NAME -C /tmp/serenedb --strip-components=1 &&
         exec /tmp/serenedb/usr/bin/serened \
           --flagfile=/tmp/serenedb/etc/serenedb/serened.conf \
-          --server_endpoints pgsql+tcp://0.0.0.0:7890 \
+          --listen postgres://0.0.0.0:7890 \
       '
 
   tests:

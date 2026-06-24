@@ -45,6 +45,7 @@
 #include <utility>
 
 #include "basics/assert.h"
+#include "basics/static_strings.h"
 #include "basics/string_utils.h"
 #include "catalog/catalog.h"
 #include "catalog/search_analyzer_impl.h"

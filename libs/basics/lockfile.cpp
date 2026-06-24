@@ -81,7 +81,7 @@ ErrorCode CreateLockFile(const char* filename) {
     return ERROR_SYS_ERROR;
   }
 
-  std::string buf = std::to_string(getpid());
+  std::string buf = absl::StrCat(getpid());
   if (SERENEDB_WRITE(fd, buf.c_str(), buf.size()) == -1) {
     SetError(ERROR_SYS_ERROR);
     SERENEDB_CLOSE(fd);

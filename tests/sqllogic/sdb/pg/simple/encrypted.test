@@ -38,4 +38,4 @@ skipif pg-wire-extended
 query error
 select 123::numeric;
 ----
-connection closed
+db error: FATAL: SSL connection is required

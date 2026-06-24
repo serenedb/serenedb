@@ -17,7 +17,7 @@ services:
     command: >
       sh -c '
         exec /serenedb/${BUILD_DIR}/bin/serened /tmp/serenedb_datadir \
-          --server_endpoints pgsql+tcp://0.0.0.0:5432 \
+          --listen postgres://0.0.0.0:5432 \
       '
 
   tests:

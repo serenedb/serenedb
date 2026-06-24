@@ -27,6 +27,7 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_replace.h>
 #include <absl/strings/str_split.h>
+#include <fast_float/fast_float.h>
 #include <math.h>
 #include <stdlib.h>
 
@@ -440,19 +441,19 @@ bool Boolean(std::string_view str) {
 
 int64_t Int64(const char* value, size_t size) noexcept {
   int64_t result = 0;
-  std::from_chars(value, value + size, result);
+  fast_float::from_chars(value, value + size, result);
   return result;
 }
 
 uint64_t Uint64(const char* value, size_t size) noexcept {
   uint64_t result = 0;
-  std::from_chars(value, value + size, result);
+  fast_float::from_chars(value, value + size, result);
   return result;
 }
 
 ResultOr<uint64_t> TryUint64(const char* value, size_t size) noexcept {
   uint64_t result = 0;
-  auto [ptr, ec] = std::from_chars(value, value + size, result, 10);
+  auto [ptr, ec] = fast_float::from_chars(value, value + size, result, 10);
   if (ec == std::errc()) {
     if (ptr != value + size) {
       return std::unexpected<Result>{std::in_place, ERROR_ILLEGAL_NUMBER};
@@ -469,7 +470,7 @@ ResultOr<uint64_t> TryUint64(std::string_view value) noexcept {
 
 uint32_t Uint32(const char* value, size_t size) noexcept {
   uint32_t result = 0;
-  std::from_chars(value, value + size, result);
+  fast_float::from_chars(value, value + size, result);
   return result;
 }
 

@@ -33,7 +33,7 @@ statement ok
 VACUUM (REFRESH_TABLE) rv_t;
 
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # Scenario A: pk=2 — delete then re-insert with new content (revival).
 statement ok

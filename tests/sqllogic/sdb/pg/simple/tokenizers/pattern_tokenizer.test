@@ -122,7 +122,7 @@ ts_lexize
 statement ok
 CREATE TEXT SEARCH DICTIONARY pattern_whitespace(
     template = 'pattern',
-    pattern = '\\s+'
+    pattern = '\s+'
 )
 
 
@@ -138,7 +138,7 @@ ts_lexize
 statement ok
 CREATE TEXT SEARCH DICTIONARY pattern_words(
     template = 'pattern',
-    pattern = '\\w+',
+    pattern = '\w+',
     group = 0
 )
 
@@ -206,7 +206,7 @@ ts_lexize
 statement ok
 CREATE TEXT SEARCH DICTIONARY pattern_unicode(
     template = 'pattern',
-    pattern = '\\p{L}+',
+    pattern = '\p{L}+',
     group = 0
 )
 

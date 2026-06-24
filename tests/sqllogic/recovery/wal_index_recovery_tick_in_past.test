@@ -9,7 +9,7 @@ control substitution on
 # from the captured tick onward → the index must contain all 1000 docs.
 #
 # Adapted: we have no `RocksDBBackgroundThread::run` fault, but we don't need
-# it — `SearchCommitTask::commitUnsafe` blocks every search commit including
+# it — `SearchRefreshTask::commitUnsafe` blocks every search commit including
 # the one schedule right after CREATE INDEX. So whatever the index already
 # committed during backfill is durable; everything after stays in WAL.
 
@@ -40,7 +40,7 @@ VACUUM (REFRESH_TABLE) past_t;
 # At this point past_idx has _recovery_tick == engine.recoveryTick(). Everything
 # below now goes into WAL but the iresearch tick stays where it is.
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # More rows that the backfill never saw — these are what recovery must replay.
 statement ok

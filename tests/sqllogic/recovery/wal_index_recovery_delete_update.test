@@ -32,7 +32,7 @@ VACUUM (REFRESH_TABLE) du_t;
 
 # Post-refresh mutations, index leg suppressed -> store WAL only.
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 DELETE FROM du_t WHERE id < 100;

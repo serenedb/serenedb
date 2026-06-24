@@ -1,0 +1,147 @@
+hash-threshold 100
+
+control substitution on
+
+# --- basic int+text round-trip through a PG text-format file ---
+
+statement ok
+CREATE TABLE tsrc
+(
+  id INTEGER PRIMARY KEY,
+  name TEXT
+);
+
+
+statement ok
+CREATE TABLE tdst
+(
+  id INTEGER PRIMARY KEY,
+  name TEXT
+);
+
+
+statement count 3
+INSERT INTO tsrc VALUES (1, 'vedernikoff'), (2, 'pavelvi'), (3, 'babsky');
+
+
+statement count 3
+COPY tsrc TO '/tmp/${__DATABASE__}_copy_text.txt' (FORMAT text);
+
+
+statement count 3
+COPY tdst FROM '/tmp/${__DATABASE__}_copy_text.txt' (FORMAT text);
+
+
+query
+SELECT * FROM tdst ORDER BY 1, 2;
+----
+id	name
+1	vedernikoff
+2	pavelvi
+3	babsky
+
+
+# --- escaping round-trip: embedded tab/newline/backslash, NULL, empty string.
+# Self-verifying via EXCEPT both ways (exact round-trip => 0 differing rows;
+# set semantics treat NULLs as equal). ---
+
+statement ok
+CREATE TABLE esrc (id INTEGER, s TEXT);
+
+
+statement count 5
+INSERT INTO esrc VALUES
+  (1, 'plain'),
+  (2, NULL),
+  (3, e'a\tb\nc\\d'),
+  (4, ''),
+  (5, e'tab\tand\\back');
+
+
+statement count 5
+COPY esrc TO '/tmp/${__DATABASE__}_copy_text_esc.txt' (FORMAT text);
+
+
+statement ok
+CREATE TABLE edst (id INTEGER, s TEXT);
+
+
+statement count 5
+COPY edst FROM '/tmp/${__DATABASE__}_copy_text_esc.txt' (FORMAT text);
+
+
+query
+SELECT
+  (SELECT count(*) FROM (SELECT * FROM esrc EXCEPT SELECT * FROM edst) a)
+  + (SELECT count(*) FROM (SELECT * FROM edst EXCEPT SELECT * FROM esrc) b)
+  AS diff;
+----
+diff
+0
+
+
+# the NULL and the embedded specials actually survived (not silently coalesced)
+
+query
+SELECT count(*) AS nulls FROM edst WHERE s IS NULL;
+----
+nulls
+1
+
+
+query
+SELECT length(s) AS l FROM edst WHERE id = 3;
+----
+l
+7
+
+
+# --- bulk multi-type + NULL round-trip (int/bigint/double/bool/text + NULL). ---
+
+statement ok
+CREATE TABLE bsrc AS
+SELECT
+  g::int                                   AS i4,
+  (g::bigint * 1000000)                    AS i8,
+  (g * 0.5)::double                        AS f8,
+  (g % 2 = 0)                              AS b,
+  ('row_' || g)                            AS t,
+  CASE WHEN g % 3 = 0 THEN NULL ELSE 'v' || g END AS maybe
+FROM generate_series(1, 20000) g;
+
+
+statement count 20000
+COPY bsrc TO '/tmp/${__DATABASE__}_copy_text_multi.txt' (FORMAT text);
+
+
+statement ok
+CREATE TABLE bdst
+(
+  i4    INTEGER,
+  i8    BIGINT,
+  f8    DOUBLE,
+  b     BOOLEAN,
+  t     TEXT,
+  maybe TEXT
+);
+
+
+statement count 20000
+COPY bdst FROM '/tmp/${__DATABASE__}_copy_text_multi.txt' (FORMAT text);
+
+
+query
+SELECT
+  (SELECT count(*) FROM (SELECT * FROM bsrc EXCEPT SELECT * FROM bdst) a)
+  + (SELECT count(*) FROM (SELECT * FROM bdst EXCEPT SELECT * FROM bsrc) b)
+  AS diff;
+----
+diff
+0
+
+
+query
+SELECT count(*) AS nulls FROM bdst WHERE maybe IS NULL;
+----
+nulls
+6666

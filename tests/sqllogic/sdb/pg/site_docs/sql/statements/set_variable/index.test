@@ -46,9 +46,9 @@ SET VARIABLE my_map = MAP {'k1': 10, 'k2': 20};
 
 # DOCS_TEST_RAW
 #| -- write some CSV files
-#| COPY (SELECT 42 AS a) TO 'test1.csv';
+#| COPY (SELECT 42 AS a) TO 'test1.csv' (HEADER);
 #|
-#| COPY (SELECT 84 AS a) TO 'test2.csv';
+#| COPY (SELECT 84 AS a) TO 'test2.csv' (HEADER);
 #|
 #| -- add a list of CSV files to a table
 #| CREATE TABLE csv_files (file VARCHAR);
@@ -65,10 +65,10 @@ SET VARIABLE my_map = MAP {'k1': 10, 'k2': 20};
 
 statement ok
 -- write some CSV files
-COPY (SELECT 42 AS a) TO '/tmp/${__DATABASE__}_sql_statements_set_variable_index_example_004_1_test1_csv.csv';
+COPY (SELECT 42 AS a) TO '/tmp/${__DATABASE__}_sql_statements_set_variable_index_example_004_1_test1_csv.csv' (HEADER);
 
 statement ok
-COPY (SELECT 84 AS a) TO '/tmp/${__DATABASE__}_sql_statements_set_variable_index_example_004_1_test2_csv.csv';
+COPY (SELECT 84 AS a) TO '/tmp/${__DATABASE__}_sql_statements_set_variable_index_example_004_1_test2_csv.csv' (HEADER);
 
 statement ok
 -- add a list of CSV files to a table
@@ -88,7 +88,7 @@ statement ok
 -- initialize a variable with the list of csv files
 SET VARIABLE list_of_files = (SELECT list(file) FROM csv_files);
 
-query ??
+query ?? rowsort
 -- read the CSV files
 SELECT
     a,

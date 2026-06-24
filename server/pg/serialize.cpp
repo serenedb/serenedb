@@ -49,13 +49,12 @@
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/common/types/uhugeint.hpp>
 #include <duckdb/common/types/uuid.hpp>
+#include <duckdb/inet/inet_ipaddress.hpp>
 #include <limits>
 #include <string_view>
 #include <type_traits>
 
 #define SDB_PG_LOGICAL_TYPES_NO_FACTORY
-
-#include <duckdb/inet/inet_ipaddress.hpp>
 
 #include "basics/assert.h"
 #include "basics/dtoa.h"

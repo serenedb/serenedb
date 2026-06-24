@@ -189,38 +189,17 @@ SELECT '11110000'::BIT AS b;
 b
 11110000
 
-# DIVERGENCE (protocol, BUG): non-byte-aligned bit strings are corrupted on the
-# extended/binary path. SereneDB's binary BIT encoding mishandles the trailing
-# pad bits, so the client reads wrong bits: '101010' decodes as '101000', '1'
-# as '0', '0101'::BITSTRING as '0000'. The text protocol is correct. Each case
-# is asserted per-protocol so both stay green and the divergence is recorded.
-skipif pg-wire-extended
 query
 SELECT '101010'::BIT AS b;
 ----
 b
 101010
 
-onlyif pg-wire-extended
-query
-SELECT '101010'::BIT AS b;
-----
-b
-101000
-
-skipif pg-wire-extended
 query
 SELECT '0101'::BITSTRING AS b;
 ----
 b
 0101
-
-onlyif pg-wire-extended
-query
-SELECT '0101'::BITSTRING AS b;
-----
-b
-0000
 
 # ---------------------------------------------------------------------------
 # tsquery -- full-text query type. PostgreSQL has a native tsquery, but its

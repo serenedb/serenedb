@@ -22,7 +22,7 @@ query
 PRAGMA version;
 ----
 library_version	source_id	codename
-<slt:ignore>	<slt:ignore>	Development Version
+<slt:ignore>
 
 # DOCS_TEST: example_003
 

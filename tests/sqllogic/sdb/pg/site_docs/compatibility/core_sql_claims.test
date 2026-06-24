@@ -449,7 +449,7 @@ statement ok
 SELECT NULL::double precision;
 
 # types: inet
-statement error
+statement ok
 SELECT NULL::inet;
 
 # types: integer
@@ -1752,7 +1752,7 @@ statement error
 SELECT inet '192.168.1.5/24' << inet '192.168.1.0/24';
 
 # op_net: <<=
-statement error
+statement ok
 SELECT inet '192.168.1.5/24' <<= inet '192.168.1.0/24';
 
 # op_net: >>
@@ -1760,7 +1760,7 @@ statement error
 SELECT inet '192.168.1.0/24' >> inet '192.168.1.5/24';
 
 # op_net: >>=
-statement error
+statement ok
 SELECT inet '192.168.1.0/24' >>= inet '192.168.1.0/24';
 
 # op_net: &&
@@ -1780,7 +1780,7 @@ statement error
 SELECT inet '192.168.1.5/24' | inet '0.0.0.255';
 
 # op_net: +
-statement error
+statement ok
 SELECT inet '192.168.1.5/24' + 5;
 
 # op_net: -
@@ -1792,15 +1792,15 @@ statement error
 SELECT abbrev(inet '10.1.0.0/16');
 
 # op_net: broadcast
-statement error
+statement ok
 SELECT broadcast(inet '192.168.1.5/24');
 
 # op_net: family
-statement error
+statement ok
 SELECT family(inet '192.168.1.5');
 
 # op_net: host
-statement error
+statement ok
 SELECT host(inet '192.168.1.5/24');
 
 # op_net: hostmask
@@ -1820,11 +1820,11 @@ statement error
 SELECT masklen(inet '192.168.1.5/24');
 
 # op_net: netmask
-statement error
+statement ok
 SELECT netmask(inet '192.168.1.5/24');
 
 # op_net: network
-statement error
+statement ok
 SELECT network(inet '192.168.1.5/24');
 
 # op_net: set_masklen

@@ -113,9 +113,7 @@ inline bool IsInet(const duckdb::LogicalType& type) {
 }
 
 #ifndef SDB_PG_LOGICAL_TYPES_NO_FACTORY
-inline duckdb::LogicalType INET() {
-  return duckdb::make_inet_type();
-}
+inline duckdb::LogicalType INET() { return duckdb::make_inet_type(); }
 #endif
 
 }  // namespace sdb::pg

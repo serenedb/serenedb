@@ -1,15 +1,5 @@
 add_subdirectory(sdb_catalog)
 add_subdirectory(commands)
-
-# serialize.cpp reuses the inet extension's canonical IP-to-string formatter
-# (ipaddress_to_string) so native PG `inet` output matches host()/::varchar.
-# The extension exposes its headers under src/duckdb/inet/, included as
-# <duckdb/inet/...> alongside DuckDB's own <duckdb/...> headers.
-target_include_directories(
-    sereneserver
-    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb-inet/src
-)
-
 target_sources(
     sereneserver
     PRIVATE

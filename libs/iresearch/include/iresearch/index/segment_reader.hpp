@@ -69,7 +69,7 @@ class SegmentReader final : public SubReader {
   NormReader::ptr norms(field_id field) const final;
 
   const ColumnReader* Column(field_id field) const final;
-  const IvfEntry* Ivf(field_id field) const final;
+  const FlatCentroids* Ivf(field_id field) const final;
   const ColReader* GetColReader() const final;
 
   const std::shared_ptr<const SegmentReaderImpl>& GetImpl() const noexcept {

@@ -37,6 +37,7 @@
 namespace irs {
 
 class Directory;
+class FlatCentroids;
 
 struct TermDictMeta {
   IndexFeatures features{IndexFeatures::None};
@@ -58,17 +59,6 @@ enum class IdxSlotKind : uint8_t {
   Ivf = 1,
 };
 
-struct IvfEntry {
-  uint32_t nlist = 0;
-  uint32_t d = 0;
-  VectorMetric metric = VectorMetric::L2Sqr;
-  std::vector<float> centroids;
-
-  const float* Centroid(uint32_t c) const noexcept {
-    return centroids.data() + static_cast<size_t>(c) * d;
-  }
-};
-
 class IdxReader final {
  public:
   IdxReader(const Directory& dir, std::string_view segment_name);
@@ -78,9 +68,7 @@ class IdxReader final {
   IdxReader& operator=(const IdxReader&) = delete;
 
   bool HasIvf(field_id id) const noexcept;
-  const IvfEntry* Ivf(field_id id) const noexcept;
-
-  std::span<const std::pair<field_id, IvfEntry>> IvfEntries() const noexcept;
+  const FlatCentroids* Ivf(field_id id) const noexcept;
 
   const TermDictMeta* TermDict(field_id id) const noexcept;
 

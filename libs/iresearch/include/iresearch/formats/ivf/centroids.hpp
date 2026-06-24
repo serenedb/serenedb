@@ -21,46 +21,44 @@
 #pragma once
 
 #include <cstdint>
-#include <duckdb/common/types/vector.hpp>
+#include <span>
 #include <vector>
 
-#include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/index/column_info.hpp"
-#include "iresearch/types.hpp"
 
 namespace irs {
 
-class ReadContext;
+class IndexInput;
+class IndexOutput;
 
-inline constexpr size_t kCentroidTermWidth = 4;
-
-inline void EncodeCentroidTerm(uint32_t id, byte_type* out) noexcept {
-  out[0] = static_cast<byte_type>(id >> 24);
-  out[1] = static_cast<byte_type>(id >> 16);
-  out[2] = static_cast<byte_type>(id >> 8);
-  out[3] = static_cast<byte_type>(id);
-}
-
-using VectorDistanceFn = float (*)(const byte_type*, const byte_type*,
-                                   uint16_t);
-
-VectorDistanceFn ResolveVectorDistance(VectorMetric metric);
-
-bool VectorMetricNearestIsLargest(VectorMetric metric) noexcept;
-
-class IvfVectorReader {
+class FlatCentroids {
  public:
-  IvfVectorReader(const ColumnReader& vector_column, ReadContext& ctx);
+  FlatCentroids() = default;
+  FlatCentroids(VectorMetric metric, uint32_t nlist, uint32_t d,
+                std::vector<float> centroids);
 
+  // Resolves up to `nprobe` nearest posting lists for `query` and appends their
+  // ids to `out`. Uses the stored metric internally.
+  void Search(std::span<const float> query, uint32_t nprobe,
+              std::vector<uint32_t>& out) const;
+
+  void Serialize(IndexOutput& out) const;
+  static FlatCentroids Deserialize(IndexInput& in, uint64_t byte_size);
+
+  uint32_t Count() const noexcept { return _nlist; }
   uint32_t Dimension() const noexcept { return _d; }
-
-  const float* ReadDoc(doc_id_t doc);
+  VectorMetric Metric() const noexcept { return _metric; }
+  bool Empty() const noexcept { return _nlist == 0; }
 
  private:
-  uint32_t _d;
-  ColumnReader::RangeScan _scan;
-  duckdb::Vector _buf;
-  std::vector<float> _scratch;
+  const float* Centroid(uint32_t c) const noexcept {
+    return _centroids.data() + static_cast<size_t>(c) * _d;
+  }
+
+  VectorMetric _metric = VectorMetric::L2Sqr;
+  uint32_t _nlist = 0;
+  uint32_t _d = 0;
+  std::vector<float> _centroids;  // nlist x d row-major
 };
 
 }  // namespace irs

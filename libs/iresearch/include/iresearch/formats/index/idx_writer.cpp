@@ -32,6 +32,7 @@
 #include "basics/math_utils.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
+#include "iresearch/formats/ivf/centroids.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/directory.hpp"
@@ -48,12 +49,9 @@ constexpr duckdb::field_id_t kFooterSlotIvf = 101;
 
 struct IvfCentroidEntry {
   field_id column_id;
-  VectorMetric metric;
-  uint32_t nlist;
-  uint32_t d;
-  std::vector<float> centroids;
-  uint64_t centroids_offset = 0;
-  uint64_t centroids_byte_size = 0;
+  FlatCentroids index;
+  uint64_t offset = 0;
+  uint64_t byte_size = 0;
 };
 
 struct TermDictEntry {
@@ -118,18 +116,9 @@ IndexOutput& IdxWriter::BlocksOut() {
   return *_impl->out;
 }
 
-void IdxWriter::AddIvfCentroids(field_id id, VectorMetric metric,
-                                uint32_t nlist, uint32_t d,
-                                std::vector<float> centroids) {
-  SDB_ASSERT(centroids.size() == static_cast<size_t>(nlist) * d,
-             "IdxWriter::AddIvfCentroids: centroid size mismatch for column ",
-             id);
+void IdxWriter::AddCentroids(field_id id, FlatCentroids index) {
   _impl->ivf_entries.push_back(
-    IvfCentroidEntry{.column_id = id,
-                     .metric = metric,
-                     .nlist = nlist,
-                     .d = d,
-                     .centroids = std::move(centroids)});
+    IvfCentroidEntry{.column_id = id, .index = std::move(index)});
 }
 
 void IdxWriter::AddTermDictEntry(field_id id, TermDictMeta meta) {
@@ -149,13 +138,9 @@ void IdxWriter::Commit() {
   EnsureOut();
 
   for (auto& e : _impl->ivf_entries) {
-    e.centroids_offset = _impl->out->Position();
-    if (!e.centroids.empty()) {
-      _impl->out->WriteData(
-        reinterpret_cast<const byte_type*>(e.centroids.data()),
-        e.centroids.size() * sizeof(float));
-    }
-    e.centroids_byte_size = _impl->out->Position() - e.centroids_offset;
+    e.offset = _impl->out->Position();
+    e.index.Serialize(*_impl->out);
+    e.byte_size = _impl->out->Position() - e.offset;
   }
 
   const uint64_t footer_offset = _impl->out->Position();
@@ -180,20 +165,16 @@ void IdxWriter::Commit() {
         obj.WriteProperty<uint64_t>(8, "norm", e.meta.norm);
       });
     });
-  serializer.WriteList(
-    kFooterSlotIvf, "ivf", _impl->ivf_entries.size(),
-    [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-      const auto& e = _impl->ivf_entries[i];
-      list.WriteObject([&](duckdb::Serializer& obj) {
-        obj.WriteProperty<uint64_t>(0, "id", e.column_id);
-        obj.WriteProperty<uint64_t>(1, "centroids_offset", e.centroids_offset);
-        obj.WriteProperty<uint64_t>(2, "centroids_byte_size",
-                                    e.centroids_byte_size);
-        obj.WriteProperty<uint32_t>(3, "nlist", e.nlist);
-        obj.WriteProperty<uint32_t>(4, "d", e.d);
-        obj.WriteProperty<uint8_t>(5, "metric", static_cast<uint8_t>(e.metric));
-      });
-    });
+  serializer.WriteList(kFooterSlotIvf, "ivf", _impl->ivf_entries.size(),
+                       [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+                         const auto& e = _impl->ivf_entries[i];
+                         list.WriteObject([&](duckdb::Serializer& obj) {
+                           obj.WriteProperty<uint64_t>(0, "id", e.column_id);
+                           obj.WriteProperty<uint64_t>(1, "offset", e.offset);
+                           obj.WriteProperty<uint64_t>(2, "byte_size",
+                                                       e.byte_size);
+                         });
+                       });
   serializer.End();
 
   IndexOutput* trailer_out = _impl->out.get();

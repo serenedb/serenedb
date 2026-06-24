@@ -20,7 +20,6 @@
 
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 
-#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -70,39 +69,6 @@ bool VectorMetricNearestIsLargest(VectorMetric metric) noexcept {
       return false;
   }
   return false;
-}
-
-void SelectNearestCentroids(const float* query, const IvfCentroids& centroids,
-                            uint32_t nprobe, VectorDistanceFn dist,
-                            bool nearest_is_largest,
-                            std::vector<uint32_t>& out) {
-  const uint32_t nlist = centroids.nlist;
-  if (nlist == 0) {
-    return;
-  }
-  nprobe = std::min<uint32_t>(std::max<uint32_t>(nprobe, 1), nlist);
-
-  const auto* q = reinterpret_cast<const byte_type*>(query);
-  const auto d = static_cast<uint16_t>(centroids.d);
-
-  std::vector<std::pair<float, uint32_t>> scored;
-  scored.reserve(nlist);
-  for (uint32_t c = 0; c < nlist; ++c) {
-    const auto* cv = reinterpret_cast<const byte_type*>(centroids.Centroid(c));
-    scored.emplace_back(dist(q, cv, d), c);
-  }
-
-  const auto mid = scored.begin() + nprobe;
-  std::partial_sort(
-    scored.begin(), mid, scored.end(),
-    [nearest_is_largest](const auto& l, const auto& r) noexcept {
-      return nearest_is_largest ? l.first > r.first : l.first < r.first;
-    });
-
-  out.reserve(out.size() + nprobe);
-  for (auto it = scored.begin(); it != mid; ++it) {
-    out.push_back(it->second);
-  }
 }
 
 IvfVectorReader::IvfVectorReader(const ColumnReader& vector_column,

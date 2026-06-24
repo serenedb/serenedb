@@ -777,10 +777,16 @@ bool MergeWriter::Flush(SegmentMeta& segment,
 
   col_writer->Commit(segment.docs_count);
   auto ivf_writer = col_writer->TakeIvf();
+  std::span<const BasicTermReader* const> cluster_readers;
   if (ivf_writer) {
     for (auto& c : ivf_writer->TakeBuiltCentroids()) {
-      idx.AddIvfCentroids(c.centroids_id, c.metric, c.nlist, c.d,
-                          std::move(c.centroids));
+      idx.AddCentroids(c.centroids_id, std::move(c.index));
+    }
+    cluster_readers = ivf_writer->ClusterReaders();
+    // Extra cluster readers contribute their features (e.g. IndexFeatures::Pay
+    // for quantized codes) so the ".pay" stream is opened during flush.
+    for (const auto* reader : cluster_readers) {
+      index_features |= reader->properties().index_features;
     }
   }
   if (segment.docs_count != 0) {
@@ -800,11 +806,6 @@ bool MergeWriter::Flush(SegmentMeta& segment,
     .doc_count = segment.docs_count,
     .index_features = index_features,
   };
-
-  std::span<const BasicTermReader* const> cluster_readers;
-  if (ivf_writer) {
-    cluster_readers = ivf_writer->ClusterReaders();
-  }
   if (segment.docs_count != 0 &&
       !WriteFields(state, segment, fields_itr, merged_norm_ids,
                    progress_callback, _readers.get_allocator().Manager(), idx,

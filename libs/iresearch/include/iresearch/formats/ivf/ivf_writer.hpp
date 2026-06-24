@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "iresearch/formats/formats.hpp"
+#include "iresearch/formats/ivf/centroids.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/iterators.hpp"
@@ -57,17 +58,18 @@ class IvfBuilder {
  public:
   explicit IvfBuilder(IvfInfo info) : _info{std::move(info)} {}
 
-  BuiltIvf Build(const ColumnReader& vector_column, ReadContext& ctx,
-                 QuantizerWriter* qw) const;
+  BuiltIvf Build(const ColumnReader& vector_column, ReadContext& ctx) const;
 
  private:
   IvfInfo _info;
 };
 
-class IvfTermReader final : public BasicTermReader {
+class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
  public:
   IvfTermReader(field_id postings_id,
-                const std::vector<std::vector<doc_id_t>>& clusters);
+                const std::vector<std::vector<doc_id_t>>& clusters,
+                QuantizerWriter* qw, const ColumnReader* vectors,
+                ReadContext* ctx, uint32_t d);
   ~IvfTermReader() final;
 
   TermIterator::ptr iterator() const final;
@@ -77,8 +79,22 @@ class IvfTermReader final : public BasicTermReader {
   bytes_view(max)() const final { return _max; }
   Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
 
+  // Quantized fields stream their codes into ".pay" via this payload writer.
+  TermPayloadWriter* PayloadWriter() const final {
+    return _qw != nullptr ? const_cast<IvfTermReader*>(this) : nullptr;
+  }
+
+  // TermPayloadWriter: re-reads one cluster's vectors and streams its codes.
+  void WriteTermPayload(IndexOutput& out, std::span<const doc_id_t> docs) final;
+  void Finish(IndexOutput& out) final;
+
  private:
   const std::vector<std::vector<doc_id_t>>* _clusters;
+  QuantizerWriter* _qw;
+  const ColumnReader* _vectors;
+  ReadContext* _ctx;
+  uint32_t _d;
+  std::vector<float> _vec_buf;  // scratch for re-read cluster vectors
   FieldMeta _meta;
   std::array<byte_type, 4> _min_buf{};
   std::array<byte_type, 4> _max_buf{};
@@ -89,16 +105,14 @@ class IvfTermReader final : public BasicTermReader {
 
 struct BuiltCentroids {
   field_id centroids_id;
-  VectorMetric metric;
-  uint32_t nlist;
-  uint32_t d;
-  std::vector<float> centroids;  // nlist x d row-major
+  FlatCentroids index;
 };
 
 class IvfWriter {
  public:
-  explicit IvfWriter(const ColumnOptionsProvider* column_options) noexcept
-    : _column_options{column_options} {}
+  explicit IvfWriter(const ColumnOptionsProvider* column_options) noexcept;
+
+  ~IvfWriter();
 
   void OnCommit(ColWriter& cw, std::span<const field_id> column_ids);
 
@@ -114,9 +128,15 @@ class IvfWriter {
   struct Result {
     field_id postings_id;
     std::vector<std::vector<doc_id_t>> clusters;
+    // Retained until flush so the cluster codes can be (re-)read and streamed
+    // into ".pay"; null when the field is not quantized.
+    std::unique_ptr<QuantizerWriter> qw;
+    std::unique_ptr<ColumnReader> vector_column;
+    uint32_t d = 0;
   };
 
   const ColumnOptionsProvider* _column_options;
+  ReadContext* _read_ctx = nullptr;  // borrowed; valid through flush
   std::vector<Result> _results;
   std::vector<BuiltCentroids> _centroids;
   std::vector<std::unique_ptr<IvfTermReader>> _readers;

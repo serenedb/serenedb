@@ -163,7 +163,7 @@ struct SubReader : public IndexReader, public NormProvider {
   virtual const ColumnReader* Column(field_id /*field*/) const {
     return nullptr;
   }
-  virtual const IvfEntry* Ivf(field_id /*field*/) const { return nullptr; }
+  virtual const FlatCentroids* Ivf(field_id /*field*/) const { return nullptr; }
 };
 
 template<typename Visitor, typename FilterVisitor>

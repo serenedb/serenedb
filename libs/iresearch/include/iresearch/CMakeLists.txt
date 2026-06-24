@@ -93,6 +93,7 @@ set(IResearch_core_sources
     ./formats/index/burst_trie.cpp
     ./formats/index/idx_reader.cpp
     ./formats/index/idx_writer.cpp
+    ./formats/ivf/centroids.cpp
     ./formats/ivf/ivf_writer.cpp
     ./formats/ivf/ivf_reader.cpp
     ./formats/ivf/quantizer.cpp

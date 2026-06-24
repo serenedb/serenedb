@@ -168,8 +168,7 @@ void SegmentWriter::FlushFields(FlushState& state,
     _col_writer.reset();
     if (ivf_writer) {
       for (auto& c : ivf_writer->TakeBuiltCentroids()) {
-        idx.AddIvfCentroids(c.centroids_id, c.metric, c.nlist, c.d,
-                            std::move(c.centroids));
+        idx.AddCentroids(c.centroids_id, std::move(c.index));
       }
     }
   }

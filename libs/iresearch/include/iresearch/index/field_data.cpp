@@ -1035,6 +1035,12 @@ void FieldsData::flush(burst_trie::FieldWriter& fw, FlushState& state,
     index_features |= static_cast<IndexFeatures>(meta.index_features);
   }
 
+  // Extra term readers (e.g. IVF cluster postings) contribute their features
+  // too -- in particular IndexFeatures::Pay, which gates the ".pay" stream.
+  for (const auto* reader : extra) {
+    index_features |= reader->properties().index_features;
+  }
+
   state.index_features = static_cast<IndexFeatures>(index_features);
 
   absl::c_sort(_sorted_fields,

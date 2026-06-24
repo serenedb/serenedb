@@ -20,85 +20,113 @@
 
 #include "iresearch/formats/ivf/quantizer.hpp"
 
+#include <faiss/impl/ScalarQuantizer.h>
+
 #include <algorithm>
-#include <cmath>
-#include <cstring>
-#include <duckdb/common/types.hpp>
-#include <duckdb/common/types/vector.hpp>
-#include <duckdb/common/vector/array_vector.hpp>
+#include <cstdint>
 #include <limits>
 #include <vector>
 
-#include "iresearch/formats/column/col_writer.hpp"
-#include "iresearch/formats/column/column_writer.hpp"
-#include "iresearch/utils/type_limits.hpp"
+#include "iresearch/index/iterators.hpp"
+#include "iresearch/store/data_input.hpp"
+#include "iresearch/store/data_output.hpp"
 
 namespace irs {
 namespace {
 
 class ScalarQuantizerWriter final : public QuantizerWriter {
  public:
-  explicit ScalarQuantizerWriter(uint32_t d) : _d{d} {}
+  explicit ScalarQuantizerWriter(uint32_t d)
+    : _d{d}, _sq{d, faiss::ScalarQuantizer::QuantizerType::QT_8bit} {
+    ResetAccum();
+  }
 
-  void Train(const float* matrix, uint64_t rows, uint32_t d,
-             std::span<const float> /*centroids*/,
-             std::span<const uint32_t> /*assign*/) final {
-    SDB_ASSERT(d == _d);
-    _offset.assign(_d, std::numeric_limits<float>::max());
-    std::vector<float> dmax(_d, std::numeric_limits<float>::lowest());
-    for (uint64_t i = 0; i < rows; ++i) {
-      const float* v = matrix + i * _d;
+  void UpdateStats(const float* vecs, size_t n) final {
+    for (size_t i = 0; i < n; ++i) {
+      const float* v = vecs + i * _d;
       for (uint32_t j = 0; j < _d; ++j) {
-        _offset[j] = std::min(_offset[j], v[j]);
-        dmax[j] = std::max(dmax[j], v[j]);
+        _vmin[j] = std::min(_vmin[j], v[j]);
+        _vmax[j] = std::max(_vmax[j], v[j]);
       }
     }
-    _scale.assign(_d, 1.f);
+    _sq.trained.resize(2 * static_cast<size_t>(_d));
     for (uint32_t j = 0; j < _d; ++j) {
-      const float range = dmax[j] - _offset[j];
-      _scale[j] = range > 0.f ? range / 255.f : 1.f;
+      _sq.trained[j] = _vmin[j];
+      _sq.trained[_d + j] = _vmax[j] - _vmin[j];
     }
   }
 
-  void Encode(doc_id_t doc, const float* vec) final {
-    _docs.push_back(doc);
-    const size_t base = _codes.size();
-    _codes.resize(base + _d);
-    for (uint32_t j = 0; j < _d; ++j) {
-      const float q = (vec[j] - _offset[j]) / _scale[j];
-      const int32_t u = std::clamp<int32_t>(std::lround(q), 0, 255);
-      _codes[base + j] = static_cast<int8_t>(u - 128);
-    }
-  }
-
-  void Serialize(ColWriter& cw, field_id sq_id, uint64_t total_rows) final {
-    if (total_rows == 0 || _d == 0) {
+  void EncodeCluster(IndexOutput& out, const float* vecs,
+                     size_t n) const final {
+    if (n == 0) {
       return;
     }
-    const auto type = duckdb::LogicalType::ARRAY(duckdb::LogicalType::TINYINT,
-                                                 static_cast<int64_t>(_d));
-    auto& writer =
-      cw.OpenColumn(sq_id, type, /*skip_validity=*/true, DEFAULT_ROW_GROUP_SIZE,
-                    duckdb::CompressionType::COMPRESSION_AUTO,
-                    /*hyperloglog=*/false);
+    _code.resize(n * _sq.code_size);
+    _sq.compute_codes(vecs, _code.data(), n);
+    out.WriteData(_code.data(), _code.size());
+  }
 
-    std::vector<int8_t> aligned(static_cast<size_t>(total_rows) * _d, 0);
-    for (size_t i = 0; i < _docs.size(); ++i) {
-      const uint64_t row = static_cast<uint64_t>(_docs[i]) - doc_limits::min();
-      std::memcpy(aligned.data() + row * _d, _codes.data() + i * _d, _d);
-    }
+  void Finalize(IndexOutput& out) final {
+    out.WriteData(reinterpret_cast<const byte_type*>(_sq.trained.data()),
+                  _sq.trained.size() * sizeof(float));
+    ResetAccum();
+  }
 
-    for (uint64_t off = 0; off < total_rows;) {
-      const uint64_t batch =
-        std::min<uint64_t>(STANDARD_VECTOR_SIZE, total_rows - off);
-      duckdb::Vector vec{type, static_cast<duckdb::idx_t>(batch)};
-      auto& child = duckdb::ArrayVector::GetEntry(vec);
-      std::memcpy(duckdb::FlatVector::GetDataMutable<int8_t>(child),
-                  aligned.data() + off * _d, static_cast<size_t>(batch) * _d);
-      writer.Append(off, vec, static_cast<duckdb::idx_t>(batch));
-      off += batch;
+  VectorQuantization Kind() const noexcept final {
+    return VectorQuantization::SQ8;
+  }
+
+  uint32_t CodeSize() const noexcept final {
+    return static_cast<uint32_t>(_sq.code_size);
+  }
+
+ private:
+  void ResetAccum() {
+    _vmin.assign(_d, std::numeric_limits<float>::max());
+    _vmax.assign(_d, std::numeric_limits<float>::lowest());
+    _sq.trained.assign(2 * static_cast<size_t>(_d), 0.f);
+  }
+
+  uint32_t _d;
+  faiss::ScalarQuantizer _sq;
+  std::vector<float> _vmin;
+  std::vector<float> _vmax;
+  mutable std::vector<uint8_t> _code;
+};
+
+class ScalarQuantizerReader final : public QuantizerReader {
+ public:
+  ScalarQuantizerReader(std::unique_ptr<IndexInput> pay_in, uint32_t d)
+    : _pay_in{std::move(pay_in)},
+      _d{d},
+      _sq{d, faiss::ScalarQuantizer::QuantizerType::QT_8bit} {}
+
+  void SetQuery(std::span<const float> query, VectorMetric metric) final {
+    _query.assign(query.begin(), query.end());
+    _faiss_metric = metric == VectorMetric::L2Sqr
+                      ? faiss::MetricType::METRIC_L2
+                      : faiss::MetricType::METRIC_INNER_PRODUCT;
+  }
+
+  void Search(uint64_t pay_start, std::span<const doc_id_t> docs, score_t boost,
+              ScoreCollector& collector) final {
+    const size_t n = docs.size();
+    if (n == 0) {
+      return;
     }
-    writer.Finalize();
+    _codes.resize(n * _d);
+    _stat.resize(2 * static_cast<size_t>(_d));
+    _pay_in->ReadData(pay_start, _codes.data(), _codes.size());
+    _pay_in->ReadData(pay_start + _codes.size(),
+                      reinterpret_cast<byte_type*>(_stat.data()),
+                      _stat.size() * sizeof(float));
+    _sq.trained = _stat;
+    std::unique_ptr<faiss::ScalarQuantizer::SQDistanceComputer> dc{
+      _sq.get_distance_computer(_faiss_metric)};
+    dc->set_query(_query.data());
+    for (size_t i = 0; i < n; ++i) {
+      collector.Add(dc->query_to_code(_codes.data() + i * _d) * boost, docs[i]);
+    }
   }
 
   VectorQuantization Kind() const noexcept final {
@@ -106,11 +134,13 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
   }
 
  private:
+  std::unique_ptr<IndexInput> _pay_in;
   uint32_t _d;
-  std::vector<float> _scale;
-  std::vector<float> _offset;
-  std::vector<int8_t> _codes;
-  std::vector<doc_id_t> _docs;
+  std::vector<float> _query;
+  faiss::MetricType _faiss_metric = faiss::MetricType::METRIC_L2;
+  faiss::ScalarQuantizer _sq;
+  std::vector<uint8_t> _codes;
+  std::vector<float> _stat;
 };
 
 }  // namespace
@@ -128,8 +158,13 @@ std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(VectorQuantization quant,
 }
 
 std::unique_ptr<QuantizerReader> MakeQuantizerReader(
-  VectorQuantization /*quant*/, const ColumnReader& /*store*/,
-  ReadContext& /*ctx*/) {
+  VectorQuantization quant, std::unique_ptr<IndexInput> pay_in, uint32_t d) {
+  switch (quant) {
+    case VectorQuantization::None:
+      return nullptr;
+    case VectorQuantization::SQ8:
+      return std::make_unique<ScalarQuantizerReader>(std::move(pay_in), d);
+  }
   return nullptr;
 }
 

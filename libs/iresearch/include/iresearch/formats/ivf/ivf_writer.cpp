@@ -29,6 +29,7 @@
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <limits>
+#include <random>
 #include <span>
 
 #include "basics/assert.h"
@@ -46,21 +47,42 @@
 namespace irs {
 namespace {
 
-std::vector<float> ReadMatrix(const ColumnReader& child, uint64_t total,
-                              ReadContext& ctx) {
-  std::vector<float> data(total);
-  duckdb::Vector batch{duckdb::LogicalType::FLOAT, STANDARD_VECTOR_SIZE};
+// Streams the flat vector column in row-aligned chunks (no full matrix in RAM),
+// invoking `sink(first_row, n_rows, data)` where `data` points at `n_rows * d`
+// contiguous floats. The chunk holds whole rows so callers can map each row to
+// its validity / doc id.
+template<typename Sink>
+void StreamRowBatches(const ColumnReader& child, uint64_t rows, uint32_t d,
+                      ReadContext& ctx, Sink&& sink) {
+  const auto rows_per_batch =
+    static_cast<duckdb::idx_t>(std::max<uint64_t>(1, STANDARD_VECTOR_SIZE / d));
+  duckdb::Vector batch{duckdb::LogicalType::FLOAT,
+                       static_cast<duckdb::idx_t>(rows_per_batch) * d};
   ColumnReader::RangeScan scan{child, ctx};
-  uint64_t produced = 0;
-  while (produced < total) {
-    const auto take =
-      std::min<uint64_t>(STANDARD_VECTOR_SIZE, total - produced);
-    scan.Scan(produced, take, batch, /*out_offset=*/0);
-    const float* p = duckdb::FlatVector::GetData<float>(batch);
-    std::memcpy(data.data() + produced, p, take * sizeof(float));
-    produced += take;
+  for (uint64_t first = 0; first < rows; first += rows_per_batch) {
+    const auto n = static_cast<duckdb::idx_t>(
+      std::min<uint64_t>(rows_per_batch, rows - first));
+    scan.Scan(first * d, n * d, batch, /*out_offset=*/0);
+    sink(first, n, duckdb::FlatVector::GetData<float>(batch));
   }
-  return data;
+}
+
+uint64_t ResolveTrainSample(const IvfInfo& info, uint64_t valid_count,
+                            uint32_t nlist) {
+  uint64_t n_train;
+  if (info.train_sample != 0) {
+    n_train = std::min<uint64_t>(valid_count, info.train_sample);
+  } else {
+    // Mirror SuperKMeans' default GetNVectorsToSample policy so behaviour and
+    // the training set size match what it would otherwise pick internally.
+    const auto by_fraction =
+      static_cast<uint64_t>(0.3 * static_cast<double>(valid_count));
+    const uint64_t by_clusters = static_cast<uint64_t>(nlist) * 256;
+    n_train =
+      std::min<uint64_t>(valid_count, std::min(by_fraction, by_clusters));
+  }
+  // Train requires at least `nlist` points; nlist is already <= valid_count.
+  return std::clamp<uint64_t>(n_train, nlist, valid_count);
 }
 
 std::vector<bool> ReadValidity(const ColumnReader& vector_column, uint64_t rows,
@@ -105,8 +127,8 @@ uint32_t ResolveNlist(const IvfInfo& info, uint64_t valid_count) {
 
 }  // namespace
 
-BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
-                           QuantizerWriter* qw) const {
+BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column,
+                           ReadContext& ctx) const {
   const auto* child = vector_column.Child();
   SDB_ASSERT(child);
   const auto d = static_cast<uint32_t>(vector_column.ArraySize());
@@ -118,77 +140,106 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
     return out;
   }
 
-  const auto data = ReadMatrix(*child, rows * d, ctx);
+  // Pass 0: stream the validity mask (no vector data) to size the index.
   const auto valid = ReadValidity(vector_column, rows, ctx);
-
-  std::vector<float> compact;
-  std::vector<doc_id_t> compact_doc;
-  compact.reserve(rows * d);
-  compact_doc.reserve(rows);
+  uint64_t valid_count = 0;
   for (uint64_t r = 0; r < rows; ++r) {
-    if (!valid[r]) {
-      continue;
-    }
-    const float* v = data.data() + r * d;
-    compact.insert(compact.end(), v, v + d);
-    compact_doc.push_back(static_cast<doc_id_t>(r + doc_limits::min()));
+    valid_count += valid[r] ? 1 : 0;
   }
-  const uint64_t valid_count = compact_doc.size();
   if (valid_count == 0) {
     return out;
   }
 
   const uint32_t nlist = ResolveNlist(_info, valid_count);
+  out.nlist = nlist;
+  const uint64_t n_train = ResolveTrainSample(_info, valid_count, nlist);
 
-  std::vector<float> centroids;
-  std::vector<uint32_t> assign(valid_count, 0);
-  const bool single_cluster = nlist <= 1 || valid_count < 4ull * nlist;
-  if (single_cluster) {
-    out.nlist = 1;
-    centroids.assign(d, 0.f);
-    for (uint64_t i = 0; i < valid_count; ++i) {
-      const float* v = compact.data() + i * d;
-      for (uint32_t j = 0; j < d; ++j) {
-        centroids[j] += v[j];
-      }
-    }
-    for (uint32_t j = 0; j < d; ++j) {
-      centroids[j] /= static_cast<float>(valid_count);
-    }
-  } else {
-    out.nlist = nlist;
-    skmeans::SuperKMeansConfig cfg;
-    cfg.n_threads = 1;
-    if (_info.train_sample != 0) {
-      cfg.max_points_per_cluster =
-        std::max<uint32_t>(1, _info.train_sample / nlist);
-    }
-    skmeans::SuperKMeans<skmeans::Quantization::f32,
-                         skmeans::DistanceFunction::l2>
-      km{nlist, d, cfg};
-    centroids = km.Train(compact.data(), valid_count);
-    assign = km.Assign(compact.data(), centroids.data(), valid_count, nlist);
+  // Pass 1: reservoir-sample `n_train` valid vectors (algorithm R) into a
+  // contiguous buffer, streaming the column so the full matrix is never
+  // resident.
+  std::vector<float> sample(static_cast<size_t>(n_train) * d);
+  {
+    std::mt19937_64 rng{skmeans::SuperKMeansConfig{}.seed};
+    uint64_t seen = 0;
+    StreamRowBatches(
+      *child, rows, d, ctx,
+      [&](uint64_t first, duckdb::idx_t n, const float* p) {
+        for (duckdb::idx_t k = 0; k < n; ++k) {
+          if (!valid[first + k]) {
+            continue;
+          }
+          const float* v = p + static_cast<size_t>(k) * d;
+          if (seen < n_train) {
+            std::memcpy(sample.data() + seen * d, v, d * sizeof(float));
+          } else {
+            const uint64_t j =
+              std::uniform_int_distribution<uint64_t>{0, seen}(rng);
+            if (j < n_train) {
+              std::memcpy(sample.data() + j * d, v, d * sizeof(float));
+            }
+          }
+          ++seen;
+        }
+      });
+    SDB_ASSERT(seen == valid_count);
   }
 
-  out.centroids = std::move(centroids);
-  out.clusters.assign(out.nlist, {});
-  out.cluster_radii.assign(out.nlist, 0.f);
+  skmeans::SuperKMeansConfig cfg;
+  cfg.n_threads = 1;
+  cfg.sampling_fraction = 1.0f;  // already sampled; cluster on all we pass in
+  skmeans::SuperKMeans<skmeans::Quantization::f32,
+                       skmeans::DistanceFunction::l2>
+    km{nlist, d, cfg};
+  out.centroids = km.Train(sample.data(), n_train);
+  std::vector<float>{}.swap(sample);
 
-  if (qw) {
-    qw->Train(compact.data(), valid_count, d, out.centroids, assign);
-  }
+  out.clusters.assign(nlist, {});
+  out.cluster_radii.assign(nlist, 0.f);
 
-  for (uint64_t i = 0; i < valid_count; ++i) {
-    const uint32_t c = assign[i];
-    SDB_ASSERT(c < out.nlist);
-    const float* v = compact.data() + i * d;
-    out.clusters[c].push_back(compact_doc[i]);
-    const float dist2 = SquaredL2(v, out.centroids.data() + c * d, d);
-    out.cluster_radii[c] = std::max(out.cluster_radii[c], dist2);
-    if (qw) {
-      qw->Encode(compact_doc[i], v);
+  // Pass 2: stream the column again and assign each valid vector to its nearest
+  // centroid. `Assign` is brute-force and stateless, so assigning a gathered
+  // chunk yields the same result as a single full call; we accumulate across
+  // scan batches into `kAssignChunk`-row chunks to amortize the GEMM setup.
+  constexpr size_t kAssignChunk = 4096;
+  std::vector<float> gather;
+  std::vector<doc_id_t> gather_doc;
+  gather.reserve(kAssignChunk * d);
+  gather_doc.reserve(kAssignChunk);
+  const auto flush = [&]() {
+    if (gather_doc.empty()) {
+      return;
     }
-  }
+    const auto assign =
+      km.Assign(gather.data(), out.centroids.data(), gather_doc.size(), nlist);
+    for (size_t i = 0; i < gather_doc.size(); ++i) {
+      const uint32_t c = assign[i];
+      SDB_ASSERT(c < nlist);
+      out.clusters[c].push_back(gather_doc[i]);
+      const float dist2 =
+        SquaredL2(gather.data() + i * d,
+                  out.centroids.data() + static_cast<size_t>(c) * d, d);
+      out.cluster_radii[c] = std::max(out.cluster_radii[c], dist2);
+    }
+    gather.clear();
+    gather_doc.clear();
+  };
+  StreamRowBatches(*child, rows, d, ctx,
+                   [&](uint64_t first, duckdb::idx_t n, const float* p) {
+                     for (duckdb::idx_t k = 0; k < n; ++k) {
+                       if (!valid[first + k]) {
+                         continue;
+                       }
+                       const float* v = p + static_cast<size_t>(k) * d;
+                       gather.insert(gather.end(), v, v + d);
+                       gather_doc.push_back(
+                         static_cast<doc_id_t>(first + k + doc_limits::min()));
+                       if (gather_doc.size() >= kAssignChunk) {
+                         flush();
+                       }
+                     }
+                   });
+  flush();
+
   for (auto& r : out.cluster_radii) {
     r = std::sqrt(r);
   }
@@ -294,8 +345,16 @@ class IvfTermIterator final : public TermIterator {
 };
 
 IvfTermReader::IvfTermReader(field_id postings_id,
-                             const std::vector<std::vector<doc_id_t>>& clusters)
-  : _clusters{&clusters}, _meta{postings_id, IndexFeatures::None} {
+                             const std::vector<std::vector<doc_id_t>>& clusters,
+                             QuantizerWriter* qw, const ColumnReader* vectors,
+                             ReadContext* ctx, uint32_t d)
+  : _clusters{&clusters},
+    _qw{qw},
+    _vectors{vectors},
+    _ctx{ctx},
+    _d{d},
+    _meta{postings_id,
+          qw != nullptr ? IndexFeatures::Pay : IndexFeatures::None} {
   bool found = false;
   for (size_t c = 0; c < clusters.size(); ++c) {
     if (clusters[c].empty()) {
@@ -318,6 +377,42 @@ TermIterator::ptr IvfTermReader::iterator() const {
   return memory::to_managed<TermIterator>(*_it);
 }
 
+void IvfTermReader::WriteTermPayload(IndexOutput& out,
+                                     std::span<const doc_id_t> docs) {
+  SDB_ASSERT(_qw && _vectors && _vectors->Child() && _ctx);
+  const size_t n = docs.size();
+  if (n != 0) {
+    constexpr size_t kBatch = STANDARD_VECTOR_SIZE;
+    _vec_buf.resize(std::min(n, kBatch) * _d);
+    auto scan_batches = [&](auto&& sink) {
+      ColumnReader::RangeScan scan{*_vectors->Child(), *_ctx};
+      duckdb::Vector row{duckdb::LogicalType::FLOAT,
+                         static_cast<duckdb::idx_t>(_d)};
+      size_t filled = 0;
+      for (size_t k = 0; k < n; ++k) {
+        const uint64_t r = static_cast<uint64_t>(docs[k]) - doc_limits::min();
+        scan.Scan(r * _d, _d, row, /*out_offset=*/0);
+        std::memcpy(_vec_buf.data() + filled * _d,
+                    duckdb::FlatVector::GetData<float>(row),
+                    static_cast<size_t>(_d) * sizeof(float));
+        if (++filled == kBatch) {
+          sink(_vec_buf.data(), filled);
+          filled = 0;
+        }
+      }
+      if (filled != 0) {
+        sink(_vec_buf.data(), filled);
+      }
+    };
+    scan_batches([&](const float* p, size_t c) { _qw->UpdateStats(p, c); });
+    scan_batches(
+      [&](const float* p, size_t c) { _qw->EncodeCluster(out, p, c); });
+  }
+  _qw->Finalize(out);
+}
+
+void IvfTermReader::Finish(IndexOutput& /*out*/) { SDB_ASSERT(_qw); }
+
 void IvfWriter::OnCommit(ColWriter& cw, std::span<const field_id> column_ids) {
   if (!_column_options || !*_column_options) {
     return;
@@ -336,21 +431,23 @@ void IvfWriter::OnCommit(ColWriter& cw, std::span<const field_id> column_ids) {
       MakeQuantizerWriter(opts.ivf_info->quant, d, opts.ivf_info->metric);
 
     IvfBuilder builder{*opts.ivf_info};
-    BuiltIvf built = builder.Build(*col, cw.CommitReadContext(), qw.get());
+    BuiltIvf built = builder.Build(*col, cw.CommitReadContext());
     if (built.nlist == 0) {
       continue;
     }
-    if (qw && field_limits::valid(opts.ivf_info->sq_id)) {
-      qw->Serialize(cw, opts.ivf_info->sq_id, col->RowCount());
-    }
-    _centroids.push_back(
-      BuiltCentroids{.centroids_id = opts.ivf_info->centroids_id,
-                     .metric = opts.ivf_info->metric,
-                     .nlist = built.nlist,
-                     .d = built.d,
-                     .centroids = std::move(built.centroids)});
-    _results.push_back(
-      Result{opts.ivf_info->postings_id, std::move(built.clusters)});
+    // Retained for flush-time payload streaming (see IvfTermReader): the
+    // quantized codes are (re-)read from the vector column and written into
+    // ".pay" per cluster.
+    _read_ctx = &cw.CommitReadContext();
+    _centroids.push_back(BuiltCentroids{
+      .centroids_id = opts.ivf_info->centroids_id,
+      .index = FlatCentroids{opts.ivf_info->metric, built.nlist, built.d,
+                             std::move(built.centroids)}});
+    _results.push_back(Result{.postings_id = opts.ivf_info->postings_id,
+                              .clusters = std::move(built.clusters),
+                              .qw = std::move(qw),
+                              .vector_column = std::move(col),
+                              .d = d});
   }
 }
 
@@ -360,11 +457,17 @@ std::span<const BasicTermReader* const> IvfWriter::ClusterReaders() {
     _reader_ptrs.reserve(_results.size());
     for (auto& r : _results) {
       _readers.push_back(
-        std::make_unique<IvfTermReader>(r.postings_id, r.clusters));
+        std::make_unique<IvfTermReader>(r.postings_id, r.clusters, r.qw.get(),
+                                        r.vector_column.get(), _read_ctx, r.d));
       _reader_ptrs.push_back(_readers.back().get());
     }
   }
   return _reader_ptrs;
 }
+
+IvfWriter::IvfWriter(const ColumnOptionsProvider* column_options) noexcept
+  : _column_options{column_options} {}
+
+IvfWriter::~IvfWriter() = default;
 
 }  // namespace irs

@@ -252,7 +252,7 @@ const ColumnReader* SegmentReaderImpl::Column(field_id field) const {
   return _data->col_reader->Column(field);
 }
 
-const IvfEntry* SegmentReaderImpl::Ivf(field_id field) const {
+const FlatCentroids* SegmentReaderImpl::Ivf(field_id field) const {
   if (!_data || !_data->idx_reader) {
     return nullptr;
   }

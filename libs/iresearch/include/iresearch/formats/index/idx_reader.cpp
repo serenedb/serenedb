@@ -34,6 +34,7 @@
 #include "basics/math_utils.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
+#include "iresearch/formats/ivf/centroids.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/directory.hpp"
@@ -65,7 +66,7 @@ struct IdxReader::Impl {
   Encryption::Stream::ptr cipher;
   IndexInput::ptr in;
   uint64_t body_start{};
-  std::vector<std::pair<field_id, IvfEntry>> ivf_entries;
+  std::vector<std::pair<field_id, FlatCentroids>> ivf_entries;
   sdb::containers::FlatHashMap<field_id, size_t> ivf_by_id;
   std::vector<std::pair<field_id, TermDictMeta>> term_dicts;
   sdb::containers::FlatHashMap<field_id, size_t> term_dict_by_id;
@@ -149,29 +150,12 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
     [&](duckdb::Deserializer::List& list, duckdb::idx_t /*i*/) {
       list.ReadObject([&](duckdb::Deserializer& obj) {
         const auto id = obj.ReadProperty<uint64_t>(0, "id");
-        const auto centroids_offset =
-          obj.ReadProperty<uint64_t>(1, "centroids_offset");
-        const auto centroids_byte_size =
-          obj.ReadProperty<uint64_t>(2, "centroids_byte_size");
-        IvfEntry entry;
-        entry.nlist = obj.ReadProperty<uint32_t>(3, "nlist");
-        entry.d = obj.ReadProperty<uint32_t>(4, "d");
-        entry.metric =
-          static_cast<VectorMetric>(obj.ReadProperty<uint8_t>(5, "metric"));
+        const auto offset = obj.ReadProperty<uint64_t>(1, "offset");
+        const auto byte_size = obj.ReadProperty<uint64_t>(2, "byte_size");
 
-        const uint64_t count = static_cast<uint64_t>(entry.nlist) * entry.d;
-        SDB_ENSURE(count * sizeof(float) == centroids_byte_size,
-                   sdb::ERROR_SERVER_CORRUPTED_DATAFILE,
-                   "idx: IVF centroid byte size mismatch (nlist*d*4=",
-                   count * sizeof(float), ", expected ", centroids_byte_size,
-                   ")");
-        entry.centroids.resize(count);
-        if (count != 0) {
-          _impl->in->ReadData(
-            centroids_offset,
-            reinterpret_cast<byte_type*>(entry.centroids.data()),
-            count * sizeof(float));
-        }
+        auto body = _impl->in->Dup();
+        body->Seek(offset);
+        auto entry = FlatCentroids::Deserialize(*body, byte_size);
 
         const size_t idx = _impl->ivf_entries.size();
         _impl->ivf_entries.emplace_back(id, std::move(entry));
@@ -187,15 +171,10 @@ bool IdxReader::HasIvf(field_id id) const noexcept {
   return _impl->ivf_by_id.contains(id);
 }
 
-const IvfEntry* IdxReader::Ivf(field_id id) const noexcept {
+const FlatCentroids* IdxReader::Ivf(field_id id) const noexcept {
   auto it = _impl->ivf_by_id.find(id);
   return it == _impl->ivf_by_id.end() ? nullptr
                                       : &_impl->ivf_entries[it->second].second;
-}
-
-std::span<const std::pair<field_id, IvfEntry>> IdxReader::IvfEntries()
-  const noexcept {
-  return _impl->ivf_entries;
 }
 
 const TermDictMeta* IdxReader::TermDict(field_id id) const noexcept {

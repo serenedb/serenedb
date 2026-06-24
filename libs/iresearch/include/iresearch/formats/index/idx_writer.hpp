@@ -39,6 +39,7 @@ namespace irs {
 
 class Directory;
 class IndexOutput;
+class FlatCentroids;
 
 class IdxWriter final {
  public:
@@ -51,8 +52,7 @@ class IdxWriter final {
 
   IndexOutput& BlocksOut();
 
-  void AddIvfCentroids(field_id id, VectorMetric metric, uint32_t nlist,
-                       uint32_t d, std::vector<float> centroids);
+  void AddCentroids(field_id id, FlatCentroids index);
 
   void AddTermDictEntry(field_id id, TermDictMeta meta);
 

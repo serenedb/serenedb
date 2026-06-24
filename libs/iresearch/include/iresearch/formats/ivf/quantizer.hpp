@@ -29,24 +29,26 @@
 
 namespace irs {
 
-class ColWriter;
 class ColumnReader;
 class ReadContext;
+class IndexOutput;
+class IndexInput;
+class ScoreCollector;
 
 class QuantizerWriter {
  public:
   virtual ~QuantizerWriter() = default;
 
-  virtual void Train(const float* matrix, uint64_t rows, uint32_t d,
-                     std::span<const float> centroids,
-                     std::span<const uint32_t> assign) = 0;
+  virtual void UpdateStats(const float* vecs, size_t n) = 0;
 
-  virtual void Encode(doc_id_t doc, const float* vec) = 0;
+  virtual void EncodeCluster(IndexOutput& out, const float* vecs,
+                             size_t n) const = 0;
 
-  virtual void Serialize(ColWriter& cw, field_id sq_id,
-                         uint64_t total_rows) = 0;
+  virtual void Finalize(IndexOutput& out) = 0;
 
   virtual VectorQuantization Kind() const noexcept = 0;
+
+  virtual uint32_t CodeSize() const noexcept = 0;
 };
 
 class QuantizerReader {
@@ -55,7 +57,8 @@ class QuantizerReader {
 
   virtual void SetQuery(std::span<const float> query, VectorMetric metric) = 0;
 
-  virtual float Distance(doc_id_t doc) = 0;
+  virtual void Search(uint64_t pay_start, std::span<const doc_id_t> docs,
+                      score_t boost, ScoreCollector& collector) = 0;
 
   virtual VectorQuantization Kind() const noexcept = 0;
 };
@@ -64,8 +67,7 @@ std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(VectorQuantization quant,
                                                      uint32_t d,
                                                      VectorMetric metric);
 
-std::unique_ptr<QuantizerReader> MakeQuantizerReader(VectorQuantization quant,
-                                                     const ColumnReader& store,
-                                                     ReadContext& ctx);
+std::unique_ptr<QuantizerReader> MakeQuantizerReader(
+  VectorQuantization quant, std::unique_ptr<IndexInput> pay_in, uint32_t d);
 
 }  // namespace irs

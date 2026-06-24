@@ -32,7 +32,10 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/ivf/ivf_reader.hpp"
+#include "iresearch/formats/ivf/quantizer.hpp"
+#include "iresearch/index/column_info.hpp"
 #include "iresearch/index/field_meta.hpp"
+#include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/conjunction.hpp"
 #include "iresearch/search/cost.hpp"
@@ -181,6 +184,83 @@ class VectorSimilarityDocIterator : public DocIterator {
   score_t _cached_score = 0.f;
 };
 
+class QuantizedVectorDocIterator : public DocIterator {
+ public:
+  QuantizedVectorDocIterator(const TermReader& reader,
+                             std::vector<PostingCookie>&& cookies,
+                             std::vector<uint64_t>&& pay_starts,
+                             std::unique_ptr<QuantizerReader> qr, score_t boost,
+                             CostAttr::Type estimation)
+    : _reader{reader},
+      _cookies{std::move(cookies)},
+      _pay_starts{std::move(pay_starts)},
+      _qr{std::move(qr)},
+      _boost{boost},
+      _cost{estimation} {
+    SDB_ASSERT(_qr);
+    SDB_ASSERT(_cookies.size() == _pay_starts.size());
+  }
+
+  doc_id_t advance() final {
+    for (;;) {
+      if (!_cur) {
+        if (_cluster >= _cookies.size()) {
+          return _doc = doc_limits::eof();
+        }
+        _cur = _reader.Iterator(IndexFeatures::None, _cookies[_cluster++]);
+        if (!_cur) {
+          continue;
+        }
+      }
+      const auto doc = _cur->advance();
+      if (!doc_limits::eof(doc)) {
+        return _doc = doc;
+      }
+      _cur = nullptr;
+    }
+  }
+
+  doc_id_t seek(doc_id_t target) final {
+    while (_doc < target) {
+      if (doc_limits::eof(advance())) {
+        break;
+      }
+    }
+    return _doc;
+  }
+
+  void Collect(const ScoreFunction&, ColumnArgsFetcher&,
+               ScoreCollector& collector) final {
+    for (size_t c = 0; c < _cookies.size(); ++c) {
+      auto it = _reader.Iterator(IndexFeatures::None, _cookies[c]);
+      if (!it) {
+        continue;
+      }
+      _docs.clear();
+      for (auto doc = it->advance(); !doc_limits::eof(doc);
+           doc = it->advance()) {
+        _docs.push_back(doc);
+      }
+      _qr->Search(_pay_starts[c], _docs, _boost, collector);
+    }
+  }
+
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    return type == irs::Type<CostAttr>::id() ? &_cost : nullptr;
+  }
+
+ private:
+  const TermReader& _reader;
+  std::vector<PostingCookie> _cookies;
+  std::vector<uint64_t> _pay_starts;
+  std::unique_ptr<QuantizerReader> _qr;
+  score_t _boost;
+  CostAttr _cost;
+  std::vector<doc_id_t> _docs;
+  DocIterator::ptr _cur;
+  size_t _cluster = 0;
+};
+
 }  // namespace
 
 DocIterator::ptr VectorSimilarityQuery::Execute(
@@ -201,6 +281,20 @@ DocIterator::ptr VectorSimilarityQuery::Execute(
   for (const auto& cookie : _state.cookies) {
     SDB_ASSERT(cookie);
     cookies.push_back({.cookie = cookie.get(), .field = _state.reader->meta()});
+  }
+
+  if (_state.quant != VectorQuantization::None && !_inner) {
+    if (auto pay_in = _state.reader->ReopenPayload()) {
+      if (auto qr =
+            MakeQuantizerReader(_state.quant, std::move(pay_in), _state.d)) {
+        qr->SetQuery(std::span{_query}, _metric);
+        return memory::make_managed<QuantizedVectorDocIterator>(
+          *_state.reader, std::move(cookies),
+          std::vector<uint64_t>{_state.pay_starts.begin(),
+                                _state.pay_starts.end()},
+          std::move(qr), _boost, _state.estimation);
+      }
+    }
   }
 
   auto approx = _state.reader->Iterator(IndexFeatures::None, cookies, ctx.wand,

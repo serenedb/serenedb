@@ -21,6 +21,7 @@
 #pragma once
 
 #include "iresearch/formats/seek_cookie.hpp"
+#include "iresearch/index/column_info.hpp"
 #include "iresearch/search/cost.hpp"
 
 namespace irs {
@@ -29,12 +30,17 @@ struct TermReader;
 class ColumnReader;
 
 struct VectorState {
-  explicit VectorState(IResourceManager& memory) noexcept : cookies{{memory}} {}
+  explicit VectorState(IResourceManager& memory) noexcept
+    : cookies{{memory}}, pay_starts{{memory}} {}
 
   const TermReader* reader = nullptr;
   const ColumnReader* vector_column = nullptr;
   ManagedVector<SeekCookie::ptr> cookies;
   CostAttr::Type estimation = 0;
+
+  VectorQuantization quant = VectorQuantization::None;
+  uint32_t d = 0;
+  ManagedVector<uint64_t> pay_starts;
 };
 
 }  // namespace irs

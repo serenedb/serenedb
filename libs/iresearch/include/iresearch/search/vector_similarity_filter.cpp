@@ -28,7 +28,10 @@
 #include "basics/memory.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
+#include "iresearch/formats/ivf/centroids.hpp"
 #include "iresearch/formats/ivf/ivf_reader.hpp"
+#include "iresearch/formats/posting/common.hpp"
+#include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/vector_similarity_query.hpp"
 
@@ -46,18 +49,13 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
   const auto* postings = segment.field(opts.postings_id);
   const auto* ivf = segment.Ivf(opts.centroids_id);
   const auto* vector_col = segment.Column(field_id());
-  if (!postings || !ivf || !vector_col || ivf->nlist == 0 ||
-      opts.query.size() != ivf->d) {
+  if (!postings || !ivf || !vector_col || ivf->Empty() ||
+      opts.query.size() != ivf->Dimension()) {
     return QueryBuilder::Empty();
   }
 
-  const auto dist = ResolveVectorDistance(opts.metric);
-  const IvfCentroids centroids{
-    .data = ivf->centroids.data(), .nlist = ivf->nlist, .d = ivf->d};
-
   std::vector<uint32_t> probes;
-  SelectNearestCentroids(opts.query.data(), centroids, opts.nprobe, dist,
-                         VectorMetricNearestIsLargest(opts.metric), probes);
+  ivf->Search(opts.query, opts.nprobe, probes);
   if (probes.empty()) {
     return QueryBuilder::Empty();
   }
@@ -69,9 +67,19 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
   }
   const auto* term_meta = irs::get<TermMeta>(*terms);
 
+  const VectorQuantization quant =
+    (IndexFeatures::None !=
+       (postings->meta().index_features & IndexFeatures::Pay) &&
+     (opts.metric == VectorMetric::L2Sqr ||
+      opts.metric == VectorMetric::InnerProduct))
+      ? VectorQuantization::SQ8
+      : VectorQuantization::None;
+
   VectorState state{ctx.memory};
   state.reader = postings;
   state.vector_column = vector_col;
+  state.quant = quant;
+  state.d = ivf->Dimension();
 
   std::array<byte_type, kCentroidTermWidth> term_buf{};
   CostAttr::Type estimation = 0;
@@ -83,6 +91,10 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
     terms->read();
     if (term_meta) {
       estimation += term_meta->docs_count;
+    }
+    if (quant != VectorQuantization::None) {
+      state.pay_starts.push_back(
+        static_cast<const TermMetaImpl*>(term_meta)->pay_start);
     }
     state.cookies.emplace_back(terms->cookie());
   }

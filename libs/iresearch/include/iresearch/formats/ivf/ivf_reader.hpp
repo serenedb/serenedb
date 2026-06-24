@@ -44,7 +44,8 @@ inline void EncodeCentroidTerm(uint32_t id, byte_type* out) noexcept {
   out[3] = static_cast<byte_type>(id);
 }
 
-using VectorDistanceFn = float (*)(const byte_type*, const byte_type*, uint16_t);
+using VectorDistanceFn = float (*)(const byte_type*, const byte_type*,
+                                   uint16_t);
 
 VectorDistanceFn ResolveVectorDistance(VectorMetric metric);
 
@@ -67,7 +68,8 @@ struct IvfCentroids {
 // nearest-first). `query` holds `centroids.d` floats.
 void SelectNearestCentroids(const float* query, const IvfCentroids& centroids,
                             uint32_t nprobe, VectorDistanceFn dist,
-                            bool nearest_is_largest, std::vector<uint32_t>& out);
+                            bool nearest_is_largest,
+                            std::vector<uint32_t>& out);
 
 // Forward-only reader of per-doc fp32 vectors from an ARRAY(FLOAT) column, used
 // for exact distance rerank. Docs from a cluster-union disjunction arrive in

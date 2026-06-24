@@ -78,19 +78,18 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
     if (total_rows == 0 || _d == 0) {
       return;
     }
-    const auto type = duckdb::LogicalType::ARRAY(
-      duckdb::LogicalType::TINYINT, static_cast<int64_t>(_d));
-    auto& writer = cw.OpenColumn(sq_id, type, /*skip_validity=*/true,
-                                 DEFAULT_ROW_GROUP_SIZE,
-                                 duckdb::CompressionType::COMPRESSION_AUTO,
-                                 /*hyperloglog=*/false);
+    const auto type = duckdb::LogicalType::ARRAY(duckdb::LogicalType::TINYINT,
+                                                 static_cast<int64_t>(_d));
+    auto& writer =
+      cw.OpenColumn(sq_id, type, /*skip_validity=*/true, DEFAULT_ROW_GROUP_SIZE,
+                    duckdb::CompressionType::COMPRESSION_AUTO,
+                    /*hyperloglog=*/false);
 
     // Scatter the encoded rows into a doc-aligned, zero-filled buffer; gaps
     // (null / unassigned docs) stay zero and are never reranked.
     std::vector<int8_t> aligned(static_cast<size_t>(total_rows) * _d, 0);
     for (size_t i = 0; i < _docs.size(); ++i) {
-      const uint64_t row =
-        static_cast<uint64_t>(_docs[i]) - doc_limits::min();
+      const uint64_t row = static_cast<uint64_t>(_docs[i]) - doc_limits::min();
       std::memcpy(aligned.data() + row * _d, _codes.data() + i * _d, _d);
     }
 
@@ -100,8 +99,7 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
       duckdb::Vector vec{type, static_cast<duckdb::idx_t>(batch)};
       auto& child = duckdb::ArrayVector::GetEntry(vec);
       std::memcpy(duckdb::FlatVector::GetDataMutable<int8_t>(child),
-                  aligned.data() + off * _d,
-                  static_cast<size_t>(batch) * _d);
+                  aligned.data() + off * _d, static_cast<size_t>(batch) * _d);
       writer.Append(off, vec, static_cast<duckdb::idx_t>(batch));
       off += batch;
     }

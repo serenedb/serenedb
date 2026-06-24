@@ -34,12 +34,12 @@
 #include "basics/assert.h"
 #include "basics/exceptions.h"
 #include "basics/memory.hpp"
+#include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/column_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -173,7 +173,8 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
       cfg.max_points_per_cluster =
         std::max<uint32_t>(1, _info.train_sample / nlist);
     }
-    skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>
+    skmeans::SuperKMeans<skmeans::Quantization::f32,
+                         skmeans::DistanceFunction::l2>
       km{nlist, d, cfg};
     centroids = km.Train(compact.data(), valid_count);
     assign = km.Assign(compact.data(), centroids.data(), valid_count, nlist);
@@ -220,8 +221,7 @@ class IvfTermIterator final : public TermIterator {
  public:
   static constexpr size_t kWidth = 4;
 
-  explicit IvfTermIterator(
-    const std::vector<std::vector<doc_id_t>>& clusters)
+  explicit IvfTermIterator(const std::vector<std::vector<doc_id_t>>& clusters)
     : _clusters{&clusters}, _terms(clusters.size() * kWidth) {
     for (size_t c = 0; c < clusters.size(); ++c) {
       EncodeBE(static_cast<uint32_t>(c), _terms.data() + c * kWidth);
@@ -303,8 +303,8 @@ class IvfTermIterator final : public TermIterator {
   mutable DocIter _doc_itr;
 };
 
-IvfTermReader::IvfTermReader(
-  field_id postings_id, const std::vector<std::vector<doc_id_t>>& clusters)
+IvfTermReader::IvfTermReader(field_id postings_id,
+                             const std::vector<std::vector<doc_id_t>>& clusters)
   : _clusters{&clusters}, _meta{postings_id, IndexFeatures::None} {
   bool found = false;
   for (size_t c = 0; c < clusters.size(); ++c) {
@@ -353,12 +353,12 @@ void IvfWriter::OnCommit(ColWriter& cw, std::span<const field_id> column_ids) {
     if (qw && field_limits::valid(opts.ivf_info->sq_id)) {
       qw->Serialize(cw, opts.ivf_info->sq_id, col->RowCount());
     }
-    _centroids.push_back(BuiltCentroids{
-      .centroids_id = opts.ivf_info->centroids_id,
-      .metric = opts.ivf_info->metric,
-      .nlist = built.nlist,
-      .d = built.d,
-      .centroids = std::move(built.centroids)});
+    _centroids.push_back(
+      BuiltCentroids{.centroids_id = opts.ivf_info->centroids_id,
+                     .metric = opts.ivf_info->metric,
+                     .nlist = built.nlist,
+                     .d = built.d,
+                     .centroids = std::move(built.centroids)});
     _results.push_back(
       Result{opts.ivf_info->postings_id, std::move(built.clusters)});
   }

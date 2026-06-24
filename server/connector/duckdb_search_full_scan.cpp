@@ -67,40 +67,31 @@ const irs::Filter& MatchAllFilter() {
   return kInstance;
 }
 
-irs::Filter::Query::ptr PrepareScanQuery(const SearchScan& ss,
-                                         const irs::Scorer* scorer) {
-  if (ss.vector_scorer) {
-    const auto& vs = *ss.vector_scorer;
-    const irs::PrepareContext ctx{
-      .index = ss.snapshot->reader,
-      .scorer = scorer,
-    };
-    if (vs.radius != std::numeric_limits<float>::max()) {
-      irs::ByRadius f;
-      *f.mutable_field_id() = vs.field_id;
-      auto* o = f.mutable_options();
-      o->query = vs.query_vector;
-      o->centroids_id = vs.centroids_id;
-      o->postings_id = vs.postings_id;
-      o->metric = vs.metric;
-      o->radius = vs.EffectiveRadius();
-      o->inclusive = vs.radius_inclusive;
-      o->inner = ss.stored_filter;
-      return f.prepare(ctx);
-    }
-    irs::ByVectorSimilarity f;
-    *f.mutable_field_id() = vs.field_id;
-    auto* o = f.mutable_options();
+irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
+                                  std::shared_ptr<const irs::Filter> inner) {
+  if (vs.radius != std::numeric_limits<float>::max()) {
+    auto f = std::make_unique<irs::ByRadius>();
+    *f->mutable_field_id() = vs.field_id;
+    auto* o = f->mutable_options();
     o->query = vs.query_vector;
     o->centroids_id = vs.centroids_id;
     o->postings_id = vs.postings_id;
     o->metric = vs.metric;
-    o->nprobe = vs.nprobe;
-    o->inner = ss.stored_filter;
-    return f.prepare(ctx);
+    o->radius = vs.EffectiveRadius();
+    o->inclusive = vs.radius_inclusive;
+    o->inner = std::move(inner);
+    return f;
   }
-  const auto& filter = ss.stored_filter ? *ss.stored_filter : MatchAllFilter();
-  return filter.prepare({.index = ss.snapshot->reader, .scorer = scorer});
+  auto f = std::make_unique<irs::ByVectorSimilarity>();
+  *f->mutable_field_id() = vs.field_id;
+  auto* o = f->mutable_options();
+  o->query = vs.query_vector;
+  o->centroids_id = vs.centroids_id;
+  o->postings_id = vs.postings_id;
+  o->metric = vs.metric;
+  o->nprobe = vs.nprobe;
+  o->inner = std::move(inner);
+  return f;
 }
 
 }  // namespace
@@ -134,7 +125,13 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
   } else if (ss.score_order) {
     state->scorer_obj = std::make_unique<irs::VectorSimilarityScorer>();
   }
-  state->filter = ss.stored_filter ? ss.stored_filter.get() : &MatchAllFilter();
+  if (ss.vector_scorer) {
+    state->owned_filter = MakeVectorFilter(*ss.vector_scorer, ss.stored_filter);
+    state->filter = state->owned_filter.get();
+  } else {
+    state->filter =
+      ss.stored_filter ? ss.stored_filter.get() : &MatchAllFilter();
+  }
   state->queries.resize(ss.snapshot->reader.size());
   state->collectors.resize(state->MaxThreads());
 
@@ -351,9 +348,9 @@ void CollectSegmentTopK(SearchFullScanTopKLocalState& s,
     }
   }
 
-  const auto& seg_query = EnsureSegmentQuery(g, *this, seg, seg_idx);
+  const auto& seg_query = EnsureSegmentQuery(g, s, seg, seg_idx);
   const bool wand_enabled =
-    WandEnabled(bind_data->inverted_index.get(), search.text_scorer);
+    WandEnabled(s.bind_data->inverted_index.get(), search.text_scorer);
   auto it =
     seg.mask(seg_query.Execute({.wand = {.wand_enabled = wand_enabled}},
                                g.stats ? *g.stats : irs::StatsBuffer::Empty()));

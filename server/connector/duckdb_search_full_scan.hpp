@@ -57,6 +57,7 @@ struct SearchFullScanGlobalState : public CommonScanGlobalState {
   }
 
   const irs::Filter* filter = nullptr;
+  irs::Filter::ptr owned_filter;
   std::vector<irs::PrepareCollector::ptr> collectors;
   std::vector<irs::QueryBuilder::ptr> queries;
   std::optional<irs::StatsBuffer> stats;

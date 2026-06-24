@@ -183,31 +183,28 @@ class VectorSimilarityDocIterator : public DocIterator {
 
 }  // namespace
 
-DocIterator::ptr VectorSimilarityQuery::execute(
-  const ExecutionContext& ctx) const {
-  const auto& segment = ctx.segment;
-  const auto* state = _states.find(segment);
-  if (!state || state->cookies.empty()) {
+DocIterator::ptr VectorSimilarityQuery::Execute(
+  const ExecutionContext& ctx, const StatsBuffer& stats) const {
+  if (_state.cookies.empty()) {
     return DocIterator::empty();
   }
-  SDB_ASSERT(state->reader);
-  SDB_ASSERT(state->vector_column);
+  SDB_ASSERT(_state.reader);
+  SDB_ASSERT(_state.vector_column);
 
-  const auto* col_reader = segment.GetColReader();
+  const auto* col_reader = _segment.GetColReader();
   if (!col_reader) {
     return DocIterator::empty();
   }
 
   std::vector<PostingCookie> cookies;
-  cookies.reserve(state->cookies.size());
-  for (const auto& cookie : state->cookies) {
+  cookies.reserve(_state.cookies.size());
+  for (const auto& cookie : _state.cookies) {
     SDB_ASSERT(cookie);
-    cookies.push_back({.cookie = cookie.get(), .field = state->reader->meta()});
+    cookies.push_back({.cookie = cookie.get(), .field = _state.reader->meta()});
   }
 
-  auto approx =
-    state->reader->Iterator(IndexFeatures::None, cookies, ctx.wand,
-                            /*min_match=*/1, ScoreMergeType::Noop);
+  auto approx = _state.reader->Iterator(IndexFeatures::None, cookies, ctx.wand,
+                                        /*min_match=*/1, ScoreMergeType::Noop);
   if (!approx) {
     return DocIterator::empty();
   }
@@ -216,7 +213,7 @@ DocIterator::ptr VectorSimilarityQuery::execute(
   // predicate (e.g. a text filter) before reranking. Keeps the published
   // BoostBlockAttr on the wrapping VectorSimilarityDocIterator.
   if (_inner) {
-    auto inner_it = _inner->execute(ctx);
+    auto inner_it = _inner->Execute(ctx, stats);
     if (!inner_it) {
       return DocIterator::empty();
     }
@@ -225,15 +222,15 @@ DocIterator::ptr VectorSimilarityQuery::execute(
     itrs.emplace_back(std::move(approx));
     itrs.emplace_back(std::move(inner_it));
     approx = MakeConjunction(ScoreMergeType::Noop, ctx.wand,
-                             segment.docs_count(), std::move(itrs));
+                             _segment.docs_count(), std::move(itrs));
     if (!approx) {
       return DocIterator::empty();
     }
   }
 
   return memory::make_managed<VectorSimilarityDocIterator>(
-    std::move(approx), *col_reader, *state->vector_column, std::span{_query},
-    _metric, _radius, _inclusive, state->estimation, _boost);
+    std::move(approx), *col_reader, *_state.vector_column, std::span{_query},
+    _metric, _radius, _inclusive, _state.estimation, _boost);
 }
 
 }  // namespace irs

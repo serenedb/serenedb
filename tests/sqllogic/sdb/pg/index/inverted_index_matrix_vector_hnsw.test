@@ -9,19 +9,19 @@ CREATE TABLE m_vec(pk INTEGER PRIMARY KEY, emb FLOAT[3], fs FLOAT[]);
 
 statement ok
 CREATE INDEX m_vec_hnsw_st   ON m_vec
-    USING inverted(pk, emb hnsw (metric = 'l2')) INCLUDE (emb);
+    USING inverted(pk, emb ivf (metric = 'l2')) INCLUDE (emb);
 
 statement ok
 CREATE INDEX m_vec_hnsw_ns   ON m_vec
-    USING inverted(pk, emb hnsw (metric = 'cosine'));
+    USING inverted(pk, emb ivf (metric = 'cosine'));
 
 statement ok
 CREATE INDEX m_vec_hnsw_expr_ns ON m_vec
-    USING inverted(pk, (emb) hnsw (metric = 'l2'));
+    USING inverted(pk, (emb) ivf (metric = 'l2'));
 
 statement ok
 CREATE INDEX m_vec_hnsw_expr_st ON m_vec
-    USING inverted(pk, (emb) hnsw (metric = 'l2')) INCLUDE (emb);
+    USING inverted(pk, (emb) ivf (metric = 'l2')) INCLUDE (emb);
 
 statement ok
 CREATE INDEX m_vec_floats_st ON m_vec USING inverted(pk, fs) INCLUDE (fs);

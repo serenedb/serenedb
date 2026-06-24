@@ -32,7 +32,8 @@ class ByRadius;
 
 // Range options. The filter's field id is the original ARRAY(FLOAT) vector
 // column; `postings_id` is the companion IVF posting field. `radius` is
-// expressed in the metric's own kernel space (squared L2 for VectorMetric::L2Sqr)
+// expressed in the metric's own kernel space (squared L2 for
+// VectorMetric::L2Sqr)
 // -- the connector converts the user predicate at plan time. Every cluster is
 // probed (no nprobe), and the iterator emits exactly the docs within radius.
 struct ByRadiusOptions {
@@ -56,7 +57,8 @@ struct ByRadiusOptions {
 
 class ByRadius final : public FilterWithField<ByRadiusOptions> {
  public:
-  Query::ptr prepare(const PrepareContext& ctx) const final;
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
 };
 
 }  // namespace irs

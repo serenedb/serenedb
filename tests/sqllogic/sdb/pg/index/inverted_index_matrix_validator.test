@@ -202,37 +202,37 @@ db error: ERROR: Failed to create index: Column 'g_nocrs': GEOMETRY type has no 
 
 # (b) hnsw on scalar FLOAT: must be ARRAY(FLOAT, N).
 statement error
-CREATE INDEX g5_reject_hnsw_f ON g5_reject USING inverted(pk, f hnsw (metric = 'l2'));
+CREATE INDEX g5_reject_hnsw_f ON g5_reject USING inverted(pk, f ivf (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'f' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not FLOAT
+db error: ERROR: Failed to create index: Column 'f' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not FLOAT
 
 
 # (c) hnsw on LIST<FLOAT>: must be ARRAY(FLOAT, N), not a variable-length list.
 statement error
-CREATE INDEX g5_reject_hnsw_fl ON g5_reject USING inverted(pk, fl hnsw (metric = 'l2'));
+CREATE INDEX g5_reject_hnsw_fl ON g5_reject USING inverted(pk, fl ivf (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'fl' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not FLOAT[]
+db error: ERROR: Failed to create index: Column 'fl' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not FLOAT[]
 
 
 # (d) hnsw on ARRAY<DOUBLE,3>: element type must be FLOAT, not DOUBLE.
 statement error
-CREATE INDEX g5_reject_hnsw_da ON g5_reject USING inverted(pk, da hnsw (metric = 'l2'));
+CREATE INDEX g5_reject_hnsw_da ON g5_reject USING inverted(pk, da ivf (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'da' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not DOUBLE[3]
+db error: ERROR: Failed to create index: Column 'da' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not DOUBLE[3]
 
 
 # (e) hnsw on ARRAY<INTEGER,3>: element type must be FLOAT, not INTEGER.
 statement error
-CREATE INDEX g5_reject_hnsw_ia ON g5_reject USING inverted(pk, ia hnsw (metric = 'l2'));
+CREATE INDEX g5_reject_hnsw_ia ON g5_reject USING inverted(pk, ia ivf (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'ia' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not INTEGER[3]
+db error: ERROR: Failed to create index: Column 'ia' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not INTEGER[3]
 
 
 # (f) hnsw on scalar VARCHAR: not ARRAY at all.
 statement error
-CREATE INDEX g5_reject_hnsw_v ON g5_reject USING inverted(pk, v hnsw (metric = 'l2'));
+CREATE INDEX g5_reject_hnsw_v ON g5_reject USING inverted(pk, v ivf (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'v' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not VARCHAR
+db error: ERROR: Failed to create index: Column 'v' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not VARCHAR
 
 
 # (g) implicit (no opclass) on UUID: term_dict has no codec for UUID.

@@ -25,11 +25,8 @@
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/search/states/vector_state.hpp"
-#include "iresearch/search/states_cache.hpp"
 
 namespace irs {
-
-using VectorStates = StatesCache<VectorState>;
 
 // Prepared vector query shared by the kNN (ByVectorSimilarity) and range
 // (ByRadius) filters: per segment it holds the chosen cluster posting cookies
@@ -38,12 +35,14 @@ using VectorStates = StatesCache<VectorState>;
 // query vector. A finite `radius` turns the wrapper into a membership gate
 // (range search); a non-finite radius leaves every candidate to the outer
 // top-K collector (kNN).
-class VectorSimilarityQuery : public Filter::Query {
+class VectorSimilarityQuery : public QueryBuilder {
  public:
-  VectorSimilarityQuery(VectorStates&& states, std::vector<float>&& query,
-                        VectorMetric metric, float radius, bool inclusive,
-                        score_t boost, Query::ptr&& inner = nullptr)
-    : _states{std::move(states)},
+  VectorSimilarityQuery(const SubReader& segment, VectorState&& state,
+                        std::vector<float>&& query, VectorMetric metric,
+                        float radius, bool inclusive, score_t boost,
+                        QueryBuilder::ptr&& inner = nullptr)
+    : QueryBuilder{segment},
+      _state{std::move(state)},
       _query{std::move(query)},
       _inner{std::move(inner)},
       _metric{metric},
@@ -51,18 +50,17 @@ class VectorSimilarityQuery : public Filter::Query {
       _inclusive{inclusive},
       _boost{boost} {}
 
-  DocIterator::ptr execute(const ExecutionContext& ctx) const final;
+  DocIterator::ptr Execute(const ExecutionContext& ctx,
+                           const StatsBuffer& stats) const final;
 
-  void visit(const SubReader&, PreparedStateVisitor&, score_t) const final {}
+  void Visit(PreparedStateVisitor&, score_t) const final {}
 
   score_t Boost() const noexcept final { return _boost; }
 
  private:
-  VectorStates _states;
+  VectorState _state;
   std::vector<float> _query;
-  // Optional predicate intersected with the cluster-union candidates before
-  // rerank (hybrid search, e.g. ByTerm + ByVectorSimilarity).
-  Query::ptr _inner;
+  QueryBuilder::ptr _inner;
   VectorMetric _metric;
   float _radius;
   bool _inclusive;

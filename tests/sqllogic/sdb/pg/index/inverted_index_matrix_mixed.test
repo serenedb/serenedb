@@ -113,7 +113,7 @@ CREATE TABLE g10_c(pk INTEGER PRIMARY KEY,
 
 statement ok
 CREATE INDEX g10_c_mix ON g10_c
-    USING inverted(pk, emb hnsw (metric = 'l2')) INCLUDE (v, n, g);
+    USING inverted(pk, emb ivf (metric = 'l2')) INCLUDE (v, n, g);
 
 statement ok
 INSERT INTO g10_c VALUES
@@ -320,7 +320,7 @@ CREATE TABLE g13_d(pk  INTEGER PRIMARY KEY,
 
 statement ok
 CREATE INDEX g13_d_mix ON g13_d
-    USING inverted(pk, v kw_dict, v2 ng_dict, emb hnsw (metric = 'l2'))
+    USING inverted(pk, v kw_dict, v2 ng_dict, emb ivf (metric = 'l2'))
     INCLUDE (n, tag);
 
 statement ok

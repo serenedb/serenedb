@@ -93,11 +93,11 @@ void SelectNearestCentroids(const float* query, const IvfCentroids& centroids,
   }
 
   const auto mid = scored.begin() + nprobe;
-  std::partial_sort(scored.begin(), mid, scored.end(),
-                    [nearest_is_largest](const auto& l, const auto& r) noexcept {
-                      return nearest_is_largest ? l.first > r.first
-                                                : l.first < r.first;
-                    });
+  std::partial_sort(
+    scored.begin(), mid, scored.end(),
+    [nearest_is_largest](const auto& l, const auto& r) noexcept {
+      return nearest_is_largest ? l.first > r.first : l.first < r.first;
+    });
 
   out.reserve(out.size() + nprobe);
   for (auto it = scored.begin(); it != mid; ++it) {

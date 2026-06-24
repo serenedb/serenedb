@@ -56,7 +56,8 @@ struct ByVectorSimilarityOptions {
 class ByVectorSimilarity final
   : public FilterWithField<ByVectorSimilarityOptions> {
  public:
-  Query::ptr prepare(const PrepareContext& ctx) const final;
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
 };
 
 }  // namespace irs

@@ -29,8 +29,7 @@ struct TermReader;
 class ColumnReader;
 
 struct VectorState {
-  explicit VectorState(IResourceManager& memory) noexcept
-    : cookies{{memory}} {}
+  explicit VectorState(IResourceManager& memory) noexcept : cookies{{memory}} {}
 
   const TermReader* reader = nullptr;
   const ColumnReader* vector_column = nullptr;

@@ -34,86 +34,77 @@
 
 namespace irs {
 
-Filter::Query::ptr ByVectorSimilarity::prepare(
-  const PrepareContext& ctx) const {
+QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
+  const SubReader& segment, const PrepareContext& ctx) const {
   const auto& opts = options();
   if (opts.query.empty() || opts.nprobe == 0 ||
       !field_limits::valid(opts.centroids_id) ||
       !field_limits::valid(opts.postings_id)) {
-    return Query::empty();
+    return QueryBuilder::Empty();
+  }
+
+  const auto* postings = segment.field(opts.postings_id);
+  const auto* ivf = segment.Ivf(opts.centroids_id);
+  const auto* vector_col = segment.Column(field_id());
+  if (!postings || !ivf || !vector_col || ivf->nlist == 0 ||
+      opts.query.size() != ivf->d) {
+    return QueryBuilder::Empty();
   }
 
   const auto dist = ResolveVectorDistance(opts.metric);
-  VectorStates states{ctx.memory, ctx.index.size()};
+  const IvfCentroids centroids{
+    .data = ivf->centroids.data(), .nlist = ivf->nlist, .d = ivf->d};
 
   std::vector<uint32_t> probes;
-  for (const auto& segment : ctx.index) {
-    const auto* postings = segment.field(opts.postings_id);
-    const auto* ivf = segment.Ivf(opts.centroids_id);
-    const auto* vector_col = segment.Column(field_id());
-    if (!postings || !ivf || !vector_col) {
+  SelectNearestCentroids(opts.query.data(), centroids, opts.nprobe, dist,
+                         VectorMetricNearestIsLargest(opts.metric), probes);
+  if (probes.empty()) {
+    return QueryBuilder::Empty();
+  }
+  std::sort(probes.begin(), probes.end());
+
+  auto terms = postings->iterator(SeekMode::NORMAL);
+  if (!terms) {
+    return QueryBuilder::Empty();
+  }
+  const auto* term_meta = irs::get<TermMeta>(*terms);
+
+  VectorState state{ctx.memory};
+  state.reader = postings;
+  state.vector_column = vector_col;
+
+  std::array<byte_type, kCentroidTermWidth> term_buf{};
+  CostAttr::Type estimation = 0;
+  for (const uint32_t c : probes) {
+    EncodeCentroidTerm(c, term_buf.data());
+    if (!terms->seek(bytes_view{term_buf.data(), term_buf.size()})) {
       continue;
     }
-
-    if (ivf->nlist == 0 || opts.query.size() != ivf->d) {
-      continue;
+    terms->read();
+    if (term_meta) {
+      estimation += term_meta->docs_count;
     }
-    const IvfCentroids centroids{
-      .data = ivf->centroids.data(), .nlist = ivf->nlist, .d = ivf->d};
+    state.cookies.emplace_back(terms->cookie());
+  }
+  state.estimation = estimation;
 
-    probes.clear();
-    SelectNearestCentroids(opts.query.data(), centroids, opts.nprobe, dist,
-                           VectorMetricNearestIsLargest(opts.metric), probes);
-    if (probes.empty()) {
-      continue;
-    }
-    // Seek the cluster terms in ascending centroid-id (== ascending term) order
-    // so the dictionary cursor only moves forward.
-    std::sort(probes.begin(), probes.end());
-
-    auto terms = postings->iterator(SeekMode::NORMAL);
-    if (!terms) {
-      continue;
-    }
-    const auto* term_meta = irs::get<TermMeta>(*terms);
-
-    auto& state = states.insert(segment);
-    state.reader = postings;
-    state.vector_column = vector_col;
-
-    std::array<byte_type, kCentroidTermWidth> term_buf{};
-    CostAttr::Type estimation = 0;
-    for (const uint32_t c : probes) {
-      EncodeCentroidTerm(c, term_buf.data());
-      if (!terms->seek(bytes_view{term_buf.data(), term_buf.size()})) {
-        continue;
-      }
-      terms->read();
-      if (term_meta) {
-        estimation += term_meta->docs_count;
-      }
-      state.cookies.emplace_back(terms->cookie());
-    }
-    state.estimation = estimation;
+  if (state.cookies.empty()) {
+    return QueryBuilder::Empty();
   }
 
-  if (states.empty()) {
-    return Query::empty();
-  }
-
-  Filter::Query::ptr inner;
+  QueryBuilder::ptr inner;
   if (opts.inner) {
     auto inner_ctx = ctx;
-    inner_ctx.scorer = nullptr;
-    inner = opts.inner->prepare(inner_ctx);
+    inner_ctx.collector = nullptr;
+    inner = opts.inner->PrepareSegment(segment, inner_ctx);
     if (!inner) {
-      return Query::empty();
+      return QueryBuilder::Empty();
     }
   }
 
   return memory::make_tracked<VectorSimilarityQuery>(
-    ctx.memory, std::move(states), std::vector<float>{opts.query}, opts.metric,
-    std::numeric_limits<float>::infinity(), /*inclusive=*/true,
+    ctx.memory, segment, std::move(state), std::vector<float>{opts.query},
+    opts.metric, std::numeric_limits<float>::infinity(), /*inclusive=*/true,
     ctx.boost * Boost(), std::move(inner));
 }
 

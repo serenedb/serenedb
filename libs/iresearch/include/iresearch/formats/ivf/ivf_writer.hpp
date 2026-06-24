@@ -68,9 +68,9 @@ class IvfBuilder {
 
   // Trains the codebook on `vector_column` (an ARRAY(FLOAT) column) and assigns
   // every non-null row to a cluster. Null rows are excluded from training and
-  // from every cluster posting list. doc-ids follow row order + doc_limits::min.
-  // When `qw` is non-null it is trained on the same matrix and fed every valid
-  // doc's vector via Encode for later Serialize.
+  // from every cluster posting list. doc-ids follow row order +
+  // doc_limits::min. When `qw` is non-null it is trained on the same matrix and
+  // fed every valid doc's vector via Encode for later Serialize.
   BuiltIvf Build(const ColumnReader& vector_column, ReadContext& ctx,
                  QuantizerWriter* qw) const;
 

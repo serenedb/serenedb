@@ -72,7 +72,7 @@ EntryConfigSerialized PackConfig(const InvertedIndexEntryInfo& entry) {
     .hyperloglog = entry.hyperloglog,
     .compression = entry.compression,
     .features = entry.features,
-    .hnsw_config = entry.hnsw_config,
+    .ivf_config = entry.ivf_config,
     .synthetic_column = entry.synthetic_column,
     .row_group_size = entry.row_group_size,
     .norm_row_group_size = entry.norm_row_group_size,

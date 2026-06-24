@@ -85,6 +85,7 @@ std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
         id, std::move(node.type), std::move(node.validity_pointers),
         std::move(variant_rgs), std::move(node.hyperloglog));
     }
+    case duckdb::LogicalTypeId::UNION:
     case duckdb::LogicalTypeId::STRUCT: {
       struct_children.reserve(node.child_columns.size());
       for (auto& child : node.child_columns) {
@@ -184,6 +185,7 @@ ColumnReader::ColumnReader(
       _data_offsets.push_back(0);  // sentinel only
     } break;
     case duckdb::LogicalTypeId::VARIANT:
+    case duckdb::LogicalTypeId::UNION:
     case duckdb::LogicalTypeId::STRUCT: {
       SDB_ASSERT(!_struct_fields.empty());
       SDB_ASSERT(_data_pointers.empty());
@@ -309,6 +311,7 @@ duckdb::BaseStatistics ColumnReader::BuildMergedStatistics() const {
         duckdb::ListStats::SetChildStats(s, child_stats(*_child));
         return s;
       }
+      case duckdb::LogicalTypeId::UNION:
       case duckdb::LogicalTypeId::STRUCT: {
         auto s = duckdb::StructStats::CreateEmpty(_type);
         for (size_t fi = 0; fi < _struct_fields.size(); ++fi) {

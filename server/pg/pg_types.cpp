@@ -209,6 +209,8 @@ int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array) {
       return Type2Oid(duckdb::ArrayType::GetChildType(type), true);
     case VARIANT:
       return in_array ? kVariantArray : kVariant;
+    case UNION:
+      return in_array ? kUnionArray : kUnion;
     default:
       return kUnknown;
   }
@@ -256,6 +258,7 @@ duckdb::LogicalType Oid2Type(int32_t oid, const catalog::Snapshot& snapshot) {
     SDB_OID2TYPE(kRegconfig, REGCONFIG())
     SDB_OID2TYPE(kRegdictionary, REGDICTIONARY())
     SDB_OID2TYPE(kVariant, LogicalType::VARIANT())
+    SDB_OID2TYPE(kUnion, LogicalType::VARCHAR)
     default: {
       if (auto obj = snapshot.GetObject(ObjectId{static_cast<uint64_t>(oid)});
           obj && obj->GetType() == catalog::ObjectType::PgSqlType) {
@@ -380,6 +383,7 @@ std::string RegtypeOut(uint64_t oid) {
     SDB_REGTYPE_OUT(kPgBrinBloomSummary, "pg_brin_bloom_summary")
     SDB_REGTYPE_OUT(kPgBrinMinmaxMultiSummary, "pg_brin_minmax_multi_summary")
     SDB_REGTYPE_WITH_ARRAY_OUT(kVariant, "variant")
+    SDB_REGTYPE_WITH_ARRAY_OUT(kUnion, "union")
   }
   return absl::StrCat(oid);
 }
@@ -511,7 +515,8 @@ uint64_t RegtypeIn(std::string_view name) {
       .SDB_REGTYPE_IN("anycompatiblemultirange", kAnycompatiblemultirange)
       .SDB_REGTYPE_IN("pg_brin_bloom_summary", kPgBrinBloomSummary)
       .SDB_REGTYPE_IN("pg_brin_minmax_multi_summary", kPgBrinMinmaxMultiSummary)
-      .SDB_REGTYPE_WITH_ARRAY_IN("variant", kVariant);
+      .SDB_REGTYPE_WITH_ARRAY_IN("variant", kVariant)
+      .SDB_REGTYPE_WITH_ARRAY_IN("union", kUnion);
   };
   if (auto it = kTypeNameToOid.TryFind(name)) {
     return static_cast<uint64_t>(*it);

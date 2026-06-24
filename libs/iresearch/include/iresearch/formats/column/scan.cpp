@@ -43,6 +43,7 @@ std::unique_ptr<MaterializeState> MakeMaterializeState(
       SDB_ASSERT(child);
       state->children.emplace_back(MakeMaterializeState(*child, ctx));
     } break;
+    case duckdb::LogicalTypeId::UNION:
     case duckdb::LogicalTypeId::STRUCT: {
       state->children.reserve(reader.StructFieldCount());
       for (size_t fi = 0; fi < reader.StructFieldCount(); ++fi) {

@@ -1,0 +1,63 @@
+hash-threshold 100
+
+control substitution on
+
+statement ok
+CREATE TABLE union_src(id INTEGER, u UNION(num INTEGER, str VARCHAR));
+
+
+statement count 4
+INSERT INTO union_src VALUES
+  (1, union_value(num := 1)),
+  (2, 'two'),
+  (3, union_value(str := 'three')),
+  (4, 4);
+
+
+statement count 4
+COPY union_src TO '${__TEST_DIR__}/union.parquet' (FORMAT PARQUET);
+
+
+statement ok
+CREATE TABLE union_pq(id INTEGER, u UNION(num INTEGER, str VARCHAR));
+
+
+statement count 4
+COPY union_pq FROM '${__TEST_DIR__}/union.parquet' (FORMAT PARQUET);
+
+
+query
+SELECT id, u FROM union_pq ORDER BY id;
+----
+id	u
+1	1
+2	two
+3	three
+4	4
+
+
+statement count 4
+COPY union_src TO '${__TEST_DIR__}/union.csv' (FORMAT CSV, HEADER TRUE);
+
+
+# Read the CSV back into a TEXT column to verify the on-disk content. COPY TO
+# CSV uses UNION's native text encoding (the active member's value), which for
+# UNION matches the VARCHAR cast that regular SELECT statements get from the
+# WrapUnsupportedTypes optimizer.
+statement ok
+CREATE TABLE union_csv_text(id INTEGER, u TEXT);
+
+
+statement count 4
+COPY union_csv_text FROM '${__TEST_DIR__}/union.csv'
+  (FORMAT CSV, HEADER TRUE);
+
+
+query
+SELECT id, u FROM union_csv_text ORDER BY id;
+----
+id	u
+1	1
+2	two
+3	three
+4	4

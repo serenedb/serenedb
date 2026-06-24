@@ -38,6 +38,7 @@ namespace {
 bool NeedsClientCast(const duckdb::LogicalType& type) {
   switch (type.id()) {
     case duckdb::LogicalTypeId::VARIANT:
+    case duckdb::LogicalTypeId::UNION:
       return true;
     case duckdb::LogicalTypeId::LIST:
       return NeedsClientCast(duckdb::ListType::GetChildType(type));
@@ -62,6 +63,8 @@ duckdb::LogicalType ClientCastTarget(const duckdb::LogicalType& type) {
   switch (type.id()) {
     case duckdb::LogicalTypeId::VARIANT:
       return duckdb::LogicalType::JSON();
+    case duckdb::LogicalTypeId::UNION:
+      return duckdb::LogicalType::VARCHAR;
     case duckdb::LogicalTypeId::LIST:
       return duckdb::LogicalType::LIST(
         ClientCastTarget(duckdb::ListType::GetChildType(type)));

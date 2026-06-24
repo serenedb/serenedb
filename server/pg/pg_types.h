@@ -243,6 +243,8 @@ enum PgTypeOID : int32_t {
   kPgBrinMinmaxMultiSummary = 4601,
   kVariant = id::kVariant.id(),
   kVariantArray = id::kVariantArray.id(),
+  kUnion = id::kUnion.id(),
+  kUnionArray = id::kUnionArray.id(),
 };
 
 int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array = false);

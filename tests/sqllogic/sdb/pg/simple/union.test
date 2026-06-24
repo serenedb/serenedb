@@ -1,0 +1,94 @@
+statement ok
+CREATE TABLE union_values(id INTEGER, u UNION(num INTEGER, str VARCHAR));
+
+
+statement count 4
+INSERT INTO union_values VALUES
+  (1, union_value(num := 1)),
+  (2, 'two'),
+  (3, union_value(str := 'three')),
+  (4, 4);
+
+
+# The union renders to the client as the active member's text value (the
+# WrapUnsupportedTypes optimizer casts UNION -> VARCHAR, mirroring how VARIANT
+# is cast to JSON).
+query
+SELECT id, u FROM union_values ORDER BY id;
+----
+id	u
+1	1
+2	two
+3	three
+4	4
+
+
+# The regtype text formatter on the server returns "union", but the
+# extended-protocol client (sqllogictest-rs) has a hardcoded OID->name map of
+# well-known PG OIDs and falls back to printing the raw OID for the custom
+# UNION OID, so the pg_typeof / regtype assertions only run on simple protocol.
+skipif pg-wire-extended
+query
+SELECT pg_typeof(u) FROM union_values WHERE id = 1;
+----
+pg_typeof
+union
+
+
+skipif pg-wire-extended
+query
+SELECT 'union'::regtype;
+----
+regtype
+union
+
+
+query
+EXPLAIN SELECT u FROM union_values;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS VARCHAR)    │
+│                           │
+│          ~4 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
+│    ────────────────────   │
+│    Table: union_values    │
+│   Type: Sequential Scan   │
+│       Projections: u      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+statement ok
+CREATE TABLE union_pk(id INTEGER PRIMARY KEY, u UNION(num INTEGER, str VARCHAR));
+
+
+statement count 4
+INSERT INTO union_pk VALUES
+  (1, union_value(num := 1)),
+  (2, 'two'),
+  (3, union_value(str := 'three')),
+  (4, 4);
+
+
+query
+SELECT u FROM union_pk WHERE id = 2;
+----
+u
+two
+
+
+query
+SELECT id, u FROM union_pk ORDER BY id;
+----
+id	u
+1	1
+2	two
+3	three
+4	4

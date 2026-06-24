@@ -9,26 +9,7 @@ INSERT INTO tbl VALUES ('hello'), ('world');
 statement ok
 CREATE SEQUENCE id_sequence START 1;
 
-# DOCS_TEST_RAW
-#| ALTER TABLE tbl ADD COLUMN id INTEGER DEFAULT nextval('id_sequence');
-#| ----
-#| db error: ERROR: Referenced update column id not found in table!
-
 # DOCS_TEST_BODY
 
-# The error differs by wire protocol: the simple path fails when backfilling the
-# new column's default, the extended path rejects the decomposed multi-statement.
-skipif pg-wire-extended
-statement error
+statement ok
 ALTER TABLE tbl ADD COLUMN id INTEGER DEFAULT nextval('id_sequence');
-----
-db error: ERROR: Referenced update column id not found in table!
-
-Did you mean: "s"
-
-
-onlyif pg-wire-extended
-statement error
-ALTER TABLE tbl ADD COLUMN id INTEGER DEFAULT nextval('id_sequence');
-----
-db error: ERROR: Cannot prepare multiple statements at once!

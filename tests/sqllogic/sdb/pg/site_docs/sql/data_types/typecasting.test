@@ -54,10 +54,11 @@ db error: ERROR: Could not convert string 'NotANumber' to INT32
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT CAST(CAST([1, 2, 3] AS VARCHAR) AS INTEGER[]);
 ----
-db error: ERROR: Failed to parse array literal: malformed array literal: must be wrapped in {}
+list_value
+{1,2,3}
 
 
 # DOCS_TEST: example_006

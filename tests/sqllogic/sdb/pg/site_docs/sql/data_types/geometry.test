@@ -152,7 +152,7 @@ CREATE OR REPLACE TABLE points AS SELECT printf('POINT (%d %d)', x, y)::GEOMETRY
 FROM range(0, 4) AS rx(x), range(0, 4) AS ry(y);
 
 #statement ok
--- Checkpoint the database to persist the data and storage layout to disk
+# Checkpoint the database to persist the data and storage layout to disk
 #CHECKPOINT;
 
 statement ok

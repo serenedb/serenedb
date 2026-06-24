@@ -1,0 +1,190 @@
+# INET type behavior shared with PostgreSQL: type I/O (IPv4 + IPv6), host,
+# family, network, broadcast, subnet containment, arithmetic, arrays. Lives in
+# any/ so it is validated against a real PostgreSQL as well as serenedb.
+# netmask() and html_escape/html_unescape are serenedb-extension-specific and
+# live in sdb/pg/simple/inet.test.
+
+query
+SELECT '192.168.0.1/24'::INET AS a;
+----
+a
+192.168.0.1/24
+
+
+query
+SELECT '2001:db8::1/64'::INET AS a6;
+----
+a6
+2001:db8::1/64
+
+
+query
+SELECT host('192.168.0.1/24'::INET) AS host;
+----
+host
+192.168.0.1
+
+
+query
+SELECT family('1.2.3.4'::INET) AS f4, family('::1'::INET) AS f6;
+----
+f4	f6
+4	6
+
+
+query
+SELECT network('192.168.1.5/24'::INET) AS net;
+----
+net
+192.168.1.0/24
+
+
+query
+SELECT broadcast('192.168.1.5/24'::INET) AS bcast;
+----
+bcast
+192.168.1.255/24
+
+
+query
+SELECT '192.168.1.5'::INET <<= '192.168.1.0/24'::INET AS contained;
+----
+contained
+t
+
+
+query
+SELECT '192.168.1.0/24'::INET >>= '192.168.1.5'::INET AS contains;
+----
+contains
+t
+
+
+query
+SELECT '10.0.0.1'::INET + 5 AS plus5;
+----
+plus5
+10.0.0.6
+
+
+query
+SELECT '10.0.0.10'::INET - 5 AS minus5;
+----
+minus5
+10.0.0.5
+
+
+statement ok
+CREATE TABLE inet_values(id INTEGER, ip INET);
+
+
+statement ok
+INSERT INTO inet_values VALUES
+  (1, '10.0.0.1'::INET),
+  (2, '2001:db8::1/64'::INET),
+  (3, '192.168.1.0/24'::INET);
+
+
+query
+SELECT id, ip FROM inet_values ORDER BY id;
+----
+id	ip
+1	10.0.0.1
+2	2001:db8::1/64
+3	192.168.1.0/24
+
+
+query
+SELECT ARRAY['1.2.3.4'::INET, '5.6.7.8/30'::INET] AS arr;
+----
+arr
+{1.2.3.4,5.6.7.8/30}
+
+
+query
+SELECT ARRAY['2001:db8::1'::INET, '::1'::INET] AS arr6;
+----
+arr6
+{2001:db8::1,::1}
+
+
+query
+SELECT ARRAY['10.0.0.1'::INET, '2001:db8::1/64'::INET, '192.168.1.0/24'::INET] AS arr_mixed;
+----
+arr_mixed
+{10.0.0.1,2001:db8::1/64,192.168.1.0/24}
+
+
+query
+SELECT ARRAY['1.2.3.4'::INET, NULL] AS arr_null;
+----
+arr_null
+{1.2.3.4,NULL}
+
+
+query
+SELECT ARRAY[]::INET[] AS arr_empty;
+----
+arr_empty
+{}
+
+
+query
+SELECT '{1.2.3.4,5.6.7.8/30}'::INET[] AS arr_in;
+----
+arr_in
+{1.2.3.4,5.6.7.8/30}
+
+
+query
+SELECT '1.2.3.4'::INET = ANY(ARRAY['1.2.3.4'::INET, '5.6.7.8'::INET]) AS found;
+----
+found
+t
+
+
+query
+SELECT unnest(ARRAY['1.2.3.4'::INET, '::1'::INET, '192.168.1.0/24'::INET]) AS ip ORDER BY 1;
+----
+ip
+1.2.3.4
+192.168.1.0/24
+::1
+
+
+statement ok
+CREATE TABLE inet_arr(id INTEGER, ips INET[]);
+
+
+statement ok
+INSERT INTO inet_arr VALUES
+  (1, ARRAY['10.0.0.1'::INET, '10.0.0.2'::INET]),
+  (2, ARRAY['2001:db8::1/64'::INET, NULL, '::1'::INET]),
+  (3, ARRAY[]::INET[]);
+
+
+query
+SELECT id, ips FROM inet_arr ORDER BY id;
+----
+id	ips
+1	{10.0.0.1,10.0.0.2}
+2	{2001:db8::1/64,NULL,::1}
+3	{}
+
+
+# The extended-protocol client renders regtype as a raw OID (no OID->name map),
+# so the regtype-name checks run on the simple protocol only.
+skipif pg-wire-extended
+query
+SELECT pg_typeof('1.2.3.4'::INET) AS typ;
+----
+typ
+inet
+
+
+skipif pg-wire-extended
+query
+SELECT 'inet'::regtype AS rt;
+----
+rt
+inet

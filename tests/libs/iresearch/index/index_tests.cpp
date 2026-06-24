@@ -9501,7 +9501,8 @@ TEST_P(IndexTestCase, compact_progress) {
 
     irs::MergeWriter::FlushProgress progress;
 
-    ASSERT_TRUE(writer->Compact(policy, get_codec(), progress));
+    ASSERT_TRUE(writer->Compact(policy, /*field_options=*/nullptr, get_codec(),
+                                progress));
     writer->RefreshCommit();  // write compacted segment
     reader = irs::DirectoryReader(dir, get_codec(),
                                   irs::tests::DefaultReaderOptions());
@@ -9537,7 +9538,8 @@ TEST_P(IndexTestCase, compact_progress) {
 
     irs::MergeWriter::FlushProgress progress = []() -> bool { return false; };
 
-    ASSERT_FALSE(writer->Compact(policy, get_codec(), progress));
+    ASSERT_FALSE(writer->Compact(policy, /*field_options=*/nullptr, get_codec(),
+                                 progress));
     writer->RefreshCommit();  // write compacted segment
     reader = writer->GetSnapshot();
     tests::AssertSnapshotEquality(
@@ -9586,7 +9588,8 @@ TEST_P(IndexTestCase, compact_progress) {
       return true;
     };
 
-    ASSERT_TRUE(writer->Compact(policy, get_codec(), progress));
+    ASSERT_TRUE(writer->Compact(policy, /*field_options=*/nullptr, get_codec(),
+                                progress));
     writer->RefreshCommit();  // write compacted segment
     reader = writer->GetSnapshot();
     tests::AssertSnapshotEquality(
@@ -9632,7 +9635,8 @@ TEST_P(IndexTestCase, compact_progress) {
       return --call_count;
     };
 
-    ASSERT_FALSE(writer->Compact(policy, get_codec(), progress));
+    ASSERT_FALSE(writer->Compact(policy, /*field_options=*/nullptr, get_codec(),
+                                 progress));
     writer->RefreshCommit();  // write compacted segment
 
     reader = irs::DirectoryReader(dir, get_codec(),
@@ -11714,8 +11718,8 @@ TEST_P(IndexTestCase11, compact_old_format) {
   // compact
   auto old_codec = irs::formats::Get("1_5simd");
   irs::index_utils::CompactionCount compact_all;
-  ASSERT_TRUE(
-    writer->Compact(irs::index_utils::MakePolicy(compact_all), old_codec));
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all),
+                              /*field_options=*/nullptr, old_codec));
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
   validate_codec(old_codec, 1);

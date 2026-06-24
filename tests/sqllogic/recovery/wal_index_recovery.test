@@ -41,7 +41,7 @@ a	b
 
 # Freeze the search commit path: rocksdb will keep advancing, iresearch won't
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # These rows land in the WAL but won't ever reach iresearch in this process
 statement ok

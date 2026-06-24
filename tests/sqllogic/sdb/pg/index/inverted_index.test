@@ -549,7 +549,7 @@ INSERT INTO text_idx_src VALUES
   (5, 'krivda writes sql at night', 'clickclack university');
 
 statement count 5
-COPY text_idx_src TO '${__TEST_DIR__}/text_idx_memes.csv';
+COPY text_idx_src TO '${__TEST_DIR__}/text_idx_memes.csv' HEADER;
 
 statement ok
 CREATE VIEW text_idx_ext AS
@@ -722,7 +722,7 @@ INSERT INTO score_text_src VALUES
   (3, 'the lazy dog');
 
 statement count 3
-COPY score_text_src TO '${__TEST_DIR__}/score_text.csv';
+COPY score_text_src TO '${__TEST_DIR__}/score_text.csv' HEADER;
 
 statement ok
 CREATE VIEW score_text_ext AS
@@ -933,7 +933,7 @@ INSERT INTO dense_csv_src VALUES
   (5, 'shared term epsilon info', 'dept red color');
 
 statement count 5
-COPY dense_csv_src TO '${__TEST_DIR__}/dense_csv.csv';
+COPY dense_csv_src TO '${__TEST_DIR__}/dense_csv.csv' HEADER;
 
 statement ok
 CREATE VIEW dense_csv_ext AS

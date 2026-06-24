@@ -45,19 +45,10 @@ namespace sdb::search {
 
 class InvertedIndexStorage;
 
-struct ThreadPoolState {
-  std::atomic_size_t pending_refreshes{0};
-  std::atomic_size_t non_empty_refreshes{0};
-  std::atomic_size_t pending_compactions{0};
-  std::atomic_size_t noop_compaction_count{0};
-  std::atomic_size_t noop_refresh_count{0};
-};
-
 struct TasksSettings {
   size_t cleanup_interval_step{};
   size_t refresh_interval_msec{};
   size_t compaction_interval_msec{};
-  irs::CompactionPolicy compaction_policy;
   uint32_t version{};
   size_t writebuffer_active{};
   size_t writebuffer_idle{};
@@ -111,8 +102,7 @@ class InvertedIndexStorage final
                        bool is_new);
 
   static std::filesystem::path GetPath(ObjectId db_id, ObjectId schema_id,
-                                       ObjectId table_id, ObjectId index_id,
-                                       ObjectId storage_id);
+                                       ObjectId table_id, ObjectId index_id);
 
   static std::shared_ptr<InvertedIndexStorage> Create(
     ObjectId id, const catalog::InvertedIndex& index, bool is_new);
@@ -142,9 +132,14 @@ class InvertedIndexStorage final
     return _writer->GetBatch();
   }
 
+  // `field_options` (nullable) is the per-merge per-column encoding config: the
+  // compaction task hands the InvertedIndex from its own DDL snapshot so the
+  // merge encodes against that view, never the live catalog. It pins for the
+  // whole synchronous merge, so non-owning.
   ResultWithTime CompactUnsafe(const irs::CompactionPolicy& policy,
                                const irs::MergeWriter::FlushProgress& progress,
-                               bool& empty_compaction);
+                               bool& empty_compaction,
+                               const irs::IndexFieldOptions* field_options);
 
   ResultWithTime RefreshUnsafe(bool wait,
                                const irs::ProgressReportCallback& progress,
@@ -154,9 +149,6 @@ class InvertedIndexStorage final
   ResultWithTime CleanupUnsafe();
   Stats UpdateStatsUnsafe(InvertedIndexSnapshotPtr data) const;
 
-  void ScheduleCompaction(absl::Duration delay);
-  void ScheduleRefresh(absl::Duration delay);
-
   void Refresh();
   // Refresh driven by the checkpoint barrier: the store WAL is about to be
   // truncated and its iteration bumped, so the stamped durable cursor must
@@ -165,11 +157,8 @@ class InvertedIndexStorage final
   void CheckpointRefresh();
 
   ObjectId GetId() const noexcept { return _index_id; }
-  auto GetState() const noexcept { return _state; }
 
   Stats GetStats() const;
-
-  auto& GetMutex() { return _mutex; }
 
   InvertedIndexSnapshotPtr GetInvertedIndexSnapshot() const {
     return std::atomic_load(&_snapshot);
@@ -182,10 +171,31 @@ class InvertedIndexStorage final
 
   auto& GetTasksSettings() { return _tasks_settings; }
 
-  void StartTasks() {
-    ScheduleRefresh({});
-    ScheduleCompaction({});
+  // Wake the compaction coordinator: a refresh that produced new segments bumps
+  // this generation so the coordinator re-evaluates without waiting for its
+  // timer. The coordinator polls CompactionGeneration() during its backoff
+  // wait.
+  void NudgeCompaction() noexcept {
+    _compaction_gen.fetch_add(1, std::memory_order_release);
   }
+  uint64_t CompactionGeneration() const noexcept {
+    return _compaction_gen.load(std::memory_order_acquire);
+  }
+
+  // Demand-driven cleanup: a non-empty compaction leaves unreferenced files, so
+  // it raises stale pressure. The refresh loop runs cleanup once the pressure
+  // crosses a small threshold (or on its periodic step), clearing it.
+  void BumpStalePressure() noexcept {
+    _stale_pressure.fetch_add(1, std::memory_order_relaxed);
+  }
+  uint32_t StalePressure() const noexcept {
+    return _stale_pressure.load(std::memory_order_relaxed);
+  }
+  void ClearStalePressure() noexcept {
+    _stale_pressure.store(0, std::memory_order_relaxed);
+  }
+
+  void StartTasks();
 
   void FinishCreation();
 
@@ -243,7 +253,8 @@ class InvertedIndexStorage final
  private:
   Result CompactUnsafeImpl(const irs::CompactionPolicy& policy,
                            const irs::MergeWriter::FlushProgress& progress,
-                           bool& empty_compaction);
+                           bool& empty_compaction,
+                           const irs::IndexFieldOptions* field_options);
   Result RefreshUnsafeImpl(bool wait,
                            const irs::ProgressReportCallback& progress,
                            RefreshResult& code, bool for_checkpoint);
@@ -251,7 +262,6 @@ class InvertedIndexStorage final
 
   ObjectId _index_id;
   SearchEngine& _search;
-  std::shared_ptr<ThreadPoolState> _state;
   // Accessed via std::atomic_load/std::atomic_store (libc++ lacks
   // std::atomic<std::shared_ptr>).
   InvertedIndexSnapshotPtr _snapshot;
@@ -259,7 +269,6 @@ class InvertedIndexStorage final
   std::unique_ptr<irs::Scorer> _topk_scorer;
   std::shared_ptr<irs::IndexWriter> _writer;
   TasksSettings _tasks_settings;
-  absl::Mutex _mutex;
   absl::Mutex _refresh_mutex;
 
   Tick _recovery_tick{0};
@@ -282,6 +291,8 @@ class InvertedIndexStorage final
   duckdb::mutex _flush_cursors_mutex;
   std::map<Tick, WalCursor> _flush_cursors;
   std::atomic<bool> _out_of_sync{false};
+  std::atomic<uint64_t> _compaction_gen{0};
+  std::atomic<uint32_t> _stale_pressure{0};
   int64_t _iceberg_snapshot_id{0};
   Phase _phase{Phase::Creating};
 

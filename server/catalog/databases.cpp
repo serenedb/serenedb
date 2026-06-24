@@ -26,19 +26,15 @@
 
 namespace sdb::catalog {
 
-Result CreateDatabase(const ExecContext& exec, std::string_view name) {
+Result CreateDatabase(std::string_view name) {
   auto database = std::make_shared<catalog::Database>(
     ObjectId{}, catalog::DatabaseOptions{std::string{name}});
 
   return catalog::GetCatalog().CreateDatabase(std::move(database));
 }
 
-Result DropDatabase(const ExecContext& exec, std::string_view db_name,
+Result DropDatabase(std::string_view db_name,
                     duckdb::shared_ptr<void> keep_alive) {
-  if (exec.systemAuthLevel() != auth::Level::RW) {
-    return {ERROR_FORBIDDEN};
-  }
-
   return catalog::GetCatalog().DropDatabase(db_name, std::move(keep_alive));
 }
 

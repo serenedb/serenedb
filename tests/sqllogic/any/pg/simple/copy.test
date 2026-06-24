@@ -579,7 +579,6 @@ QUERY PLAN
 ││    Query Profiling Information    ││
 │└───────────────────────────────────┘│
 └─────────────────────────────────────┘
-EXPLAIN ANALYZE COPY arelav_consumer FROM '<slt:ignore>/arelav_consuma.csv';
 <slt:ignore>
 ┌───────────────────────────┐
 │      RESULT_COLLECTOR     │

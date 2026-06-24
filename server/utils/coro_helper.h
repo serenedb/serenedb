@@ -27,7 +27,6 @@
 
 #include "basics/assert.h"
 #include "basics/result.h"
-#include "utils/exec_context.h"
 
 // For more safety
 template<>

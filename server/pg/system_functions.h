@@ -1026,9 +1026,9 @@ inline constexpr SystemMacro kExternalMacros[] = {
   {"pg_catalog", "pg_options_to_table",
    R"((opts) AS TABLE SELECT NULL::TEXT AS option_name, NULL::TEXT AS option_value WHERE false)"},
   {"pg_catalog", "pg_mcv_list_items",
-   R"((mcv) AS TABLE SELECT NULL::INTEGER AS index, NULL::TEXT AS values, NULL::DOUBLE AS nulls, NULL::DOUBLE AS frequency, NULL::DOUBLE AS base_frequency WHERE false)"},
+   R"((mcv) AS TABLE SELECT NULL::INTEGER AS index, NULL::TEXT[] AS values, NULL::BOOLEAN[] AS nulls, NULL::DOUBLE AS frequency, NULL::DOUBLE AS base_frequency WHERE false)"},
   {"pg_catalog", "pg_get_publication_tables",
-   R"((pubname) AS TABLE SELECT NULL::INTEGER AS relid, NULL::TEXT AS attrs, NULL::TEXT AS qual WHERE false)"},
+   R"((pubname) AS TABLE SELECT NULL::INTEGER AS pubid, NULL::INTEGER AS relid, NULL::SMALLINT[] AS attrs, NULL::TEXT AS qual WHERE false)"},
 
   // pg_stat_get_* stubs -- statistics functions, all return 0 or NULL
   {"pg_catalog", "pg_stat_get_analyze_count", "(a) AS CAST(0 AS BIGINT)"},
@@ -1144,8 +1144,8 @@ inline constexpr SystemMacro kExternalMacros[] = {
   {"pg_catalog", "pg_char_to_encoding", "(enc_name) AS 6::int4"},
   // No temp schemas supported yet.
   {"pg_catalog", "pg_my_temp_schema", "() AS 0::oid"},
-  // We do not spawn backends per connection
-  {"pg_catalog", "pg_backend_pid", "() AS CAST(0 AS INTEGER)"},
+  // pg_backend_pid() is a C++ scalar (PgBackendPidFunction) -- it reads the
+  // per-connection backend PID from the ConnectionContext.
   // clang-format on
 };
 

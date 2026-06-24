@@ -85,7 +85,7 @@ class HyperLogLogMerger {
 }  // namespace
 
 void MergeInto(std::span<const MergeSource> sources, ColWriter& output,
-               const ColumnOptionsProvider* column_options) {
+               const IndexFieldOptions* field_options) {
   absl::flat_hash_map<field_id, const ColumnReader*> first_seen_col;
   std::vector<field_id> ordered_ids;
   for (const auto& s : sources) {
@@ -105,8 +105,8 @@ void MergeInto(std::span<const MergeSource> sources, ColWriter& output,
 
   for (const auto field_id_v : ordered_ids) {
     const auto* first_col = first_seen_col[field_id_v];
-    const auto opts = (column_options && *column_options)
-                        ? (*column_options)(field_id_v)
+    const auto opts = field_options
+                        ? field_options->GetColumnOptions(field_id_v)
                         : ColumnOptions{};
 
     auto& cw =

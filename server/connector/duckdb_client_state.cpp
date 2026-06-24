@@ -20,6 +20,9 @@
 
 #include "connector/duckdb_client_state.h"
 
+#include <absl/container/flat_hash_set.h>
+#include <absl/strings/match.h>
+
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -28,8 +31,6 @@
 #include <utility>
 
 #include "basics/assert.h"
-#include "basics/containers/trivial_map.h"
-#include "basics/debugging.h"
 #include "basics/system-compiler.h"
 #include "catalog/database.h"
 #include "catalog/store/store.h"
@@ -91,15 +92,22 @@ std::unique_ptr<pg::ProgressReporter> MakeProgressReporter(
 
 }  // namespace
 
-void SereneDBClientState::Register(
+SereneDBClientState& SereneDBClientState::Register(
   duckdb::ClientContext& client_ctx,
   std::shared_ptr<ConnectionContext> connection_ctx) {
   auto state =
     duckdb::make_shared_ptr<SereneDBClientState>(std::move(connection_ctx));
+  auto& registered = *state;
   client_ctx.registered_state->Insert(kSereneDBClientStateKey,
                                       std::move(state));
   client_ctx.warning_handler = [](duckdb::ClientContext& ctx,
                                   const char* message) {
+    if (absl::StrContains(message, "no transaction is active")) {
+      GetSereneDBContext(ctx).AddNotice(
+        SQL_ERROR_DATA(ERR_CODE(ERRCODE_NO_ACTIVE_SQL_TRANSACTION),
+                       ERR_MSG("there is no transaction in progress")));
+      return true;
+    }
     GetSereneDBContext(ctx).AddNotice(
       SQL_ERROR_DATA(ERR_CODE(ERRCODE_WARNING), ERR_MSG(message)));
     return true;
@@ -134,6 +142,10 @@ void SereneDBClientState::Register(
       return;
     }
     auto& sdb_ctx = GetSereneDBContext(ctx);
+    // A reported GUC may have changed -- flag it so the wire layer re-emits
+    // ParameterStatus at the next ReadyForQuery (a cheap version bump; the GUC
+    // poll itself is skipped entirely when nothing changed).
+    sdb_ctx.MarkSettingsChanged();
     // Outside an explicit transaction there's nothing to roll back --
     // the map stays empty.
     if (!sdb_ctx.IsExplicitTransaction()) {
@@ -149,10 +161,9 @@ void SereneDBClientState::Register(
                                      const std::string& name) {
     // Internal knobs -- hidden from SHOW ALL / pg_settings / duckdb_settings().
     // Still settable/readable by name.
-    static constexpr containers::TrivialSet kHidden = [](auto selector) {
-      return selector().Case("sdb_faults").Case("debug_verification");
-    };
-    return !kHidden.Contains(name);
+    static const absl::flat_hash_set<std::string_view> kHidden = {
+      "sdb_faults", "debug_verification"};
+    return !kHidden.contains(name);
   };
 
   client_ctx.isolation_level_validator =
@@ -169,10 +180,13 @@ void SereneDBClientState::Register(
       if (conn_ctx.IsExplicitTransaction() &&
           conn_ctx.HadQueryInTransaction() &&
           level != conn_ctx.GetIsolationLevel()) {
-        throw duckdb::InvalidInputException(
-          "SET TRANSACTION ISOLATION LEVEL must be called before any query");
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+          ERR_MSG(
+            "SET TRANSACTION ISOLATION LEVEL must be called before any query"));
       }
     };
+  return registered;
 }
 
 namespace {
@@ -239,7 +253,7 @@ void SereneDBClientState::TransactionCommit(
   auto r = _connection_ctx->Commit();
   if (!r.ok()) {
     throw duckdb::TransactionException("SereneDB commit failed: %s",
-                                       std::string{r.errorMessage()});
+                                       r.errorMessage());
   }
 }
 
@@ -249,7 +263,7 @@ void SereneDBClientState::TransactionRollback(
   auto r = _connection_ctx->Rollback();
   if (!r.ok()) {
     throw duckdb::TransactionException("SereneDB rollback failed: %s",
-                                       std::string{r.errorMessage()});
+                                       r.errorMessage());
   }
 }
 
@@ -262,15 +276,18 @@ duckdb::RebindQueryInfo SereneDBClientState::OnExecutePrepared(
   return current_rebind;
 }
 
+void SereneDBClientState::QueryBegin(duckdb::ClientContext& context) {
+  _connection_ctx->OnStatementBegin();
+}
+
 void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {
   if (auto* queue = _connection_ctx->GetCopyQueue()) {
     queue->CloseListening();
   }
-  copy_stdin_buffer.reset();
   copy_stdin_open_count = 0;
   copy_stdin_done = false;
   progress.reset();
-  _connection_ctx->OnNewStatement();
+  _connection_ctx->OnStatementEnd();
 }
 
 ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context) {

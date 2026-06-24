@@ -41,7 +41,7 @@ statement ok
 VACUUM (REFRESH_TABLE) iw_idx_t;
 
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # === START of WAL window: indexed writes first ===
 statement ok

@@ -259,12 +259,12 @@ id	body
 statement count 2
 COPY (SELECT 10 AS id, 'pudge goes mid' AS body
       UNION ALL SELECT 11, 'anchin reads manga')
-TO '${__TEST_DIR__}/glob_a.csv';
+TO '${__TEST_DIR__}/glob_a.csv' HEADER;
 
 statement count 2
 COPY (SELECT 12 AS id, 'pudge plays again' AS body
       UNION ALL SELECT 13, 'krivda writes sql')
-TO '${__TEST_DIR__}/glob_b.csv';
+TO '${__TEST_DIR__}/glob_b.csv' HEADER;
 
 statement ok
 CREATE VIEW csv_glob AS
@@ -396,7 +396,7 @@ COPY (SELECT 10 AS id, 'one' AS body
       UNION ALL SELECT 11, 'two'
       UNION ALL SELECT 12, 'three'
       UNION ALL SELECT 13, 'four')
-TO '${__TEST_DIR__}/bare.csv';
+TO '${__TEST_DIR__}/bare.csv' HEADER;
 
 statement ok
 CREATE VIEW bare_csv_v AS SELECT * FROM read_csv('${__TEST_DIR__}/bare.csv');

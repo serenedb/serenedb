@@ -41,7 +41,7 @@ count
 # Batch 2: suppress the index commit so it lands only in the store WAL --
 # post-refresh, not yet durable in the segments.
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO rd_t SELECT i, 'doc_' || i FROM range(5000, 7000) AS t(i);

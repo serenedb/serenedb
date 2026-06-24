@@ -13,7 +13,7 @@ export PGPASSWORD=postgres
 DATA="/tmp/perf-ngramonline-${USER}-${LABEL}"
 rm -rf "$DATA"
 mkdir -p "$DATA"
-"$BIN" "$DATA" --server_endpoints="pgsql+tcp://0.0.0.0:${PORT}" >"$OUT/${LABEL}_serened.log" 2>&1 &
+"$BIN" "$DATA" --listen="postgres://0.0.0.0:${PORT}" >"$OUT/${LABEL}_serened.log" 2>&1 &
 SERVED_PID=$!
 trap 'kill -9 $SERVED_PID 2>/dev/null || true; rm -rf "$DATA"' EXIT
 for _ in $(seq 1 60); do

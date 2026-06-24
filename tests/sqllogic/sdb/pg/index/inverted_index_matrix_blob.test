@@ -27,28 +27,28 @@ CREATE INDEX m_b_expr_text_ns ON m_b USING inverted(pk,
 
 statement ok
 INSERT INTO m_b VALUES
-    (1, '\\x68656c6c6f'::BLOB),
-    (2, '\\x776f726c64'::BLOB),
-    (3, '\\xdeadbeef'::BLOB);
+    (1, '\x68656c6c6f'::BLOB),
+    (2, '\x776f726c64'::BLOB),
+    (3, '\xdeadbeef'::BLOB);
 
 statement ok
 VACUUM (REFRESH_TABLE) m_b;
 
 query
-SELECT pk FROM m_b_col_text_st  WHERE b @@ ts_like('\\xdeadbeef'::BLOB) ORDER BY pk;
+SELECT pk FROM m_b_col_text_st  WHERE b @@ ts_like('\xdeadbeef'::BLOB) ORDER BY pk;
 ----
 pk
 3
 
 query
-SELECT pk FROM m_b_col_text_ns  WHERE b @@ ts_like('\\xdeadbeef'::BLOB) ORDER BY pk;
+SELECT pk FROM m_b_col_text_ns  WHERE b @@ ts_like('\xdeadbeef'::BLOB) ORDER BY pk;
 ----
 pk
 3
 
 query
 SELECT pk FROM m_b_expr_text_ns
-WHERE decode(encode(b, 'hex'), 'hex') @@ ts_like('\\xdeadbeef'::BLOB)
+WHERE decode(encode(b, 'hex'), 'hex') @@ ts_like('\xdeadbeef'::BLOB)
 ORDER BY pk;
 ----
 pk
@@ -75,10 +75,10 @@ statement ok
 INSERT INTO m_bla VALUES
     (1, ['hello'::BLOB, 'world'::BLOB],
         ['aaa'::BLOB, 'bbb'::BLOB, 'ccc'::BLOB],
-        '\\x68656c6c6f'::BLOB),
+        '\x68656c6c6f'::BLOB),
     (2, ['deadbeef'::BLOB],
         ['ddd'::BLOB, 'eee'::BLOB, 'fff'::BLOB],
-        '\\x776f726c64'::BLOB);
+        '\x776f726c64'::BLOB);
 
 statement ok
 VACUUM (REFRESH_TABLE) m_bla;
@@ -102,7 +102,7 @@ pk
 2
 
 query
-SELECT pk FROM m_bla_b_wild WHERE b @@ ts_ngram('\\x68656c'::BLOB, 0.5);
+SELECT pk FROM m_bla_b_wild WHERE b @@ ts_ngram('\x68656c'::BLOB, 0.5);
 ----
 pk
 1

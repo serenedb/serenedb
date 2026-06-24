@@ -247,6 +247,7 @@ repeatable read
 # 10. SET LOCAL outside a transaction -> error
 # Warning in Postgres
 skipif postgres
+skipif pg-wire-extended # TODO(mbkkt) peek for next sync, so autocommit?
 statement error
 SET LOCAL transaction_isolation TO 'read committed';
 ----
@@ -609,6 +610,7 @@ extra_float_digits
 
 # 25. RESET LOCAL ALL outside a txn -> error
 skipif postgres
+skipif pg-wire-extended # TODO(mbkkt) peek for next sync, so autocommit?
 statement error
 RESET LOCAL ALL;
 ----

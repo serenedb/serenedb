@@ -1,0 +1,37 @@
+query
+SELECT count(*) > 0 FROM sdb_settings WHERE name = 'io_threads';
+----
+?column?
+t
+
+query
+SELECT vartype FROM sdb_settings WHERE name = 'io_threads';
+----
+vartype
+integer
+
+query
+SELECT context, pending_restart FROM sdb_settings WHERE name = 'io_threads';
+----
+context	pending_restart
+postmaster	f
+
+# io_threads is auto-sized to the host core count at boot, so its runtime value
+# diverges from the compile-time boot_val/reset_val (both 0 = "auto").
+query
+SELECT setting = boot_val, setting = reset_val, boot_val = reset_val FROM sdb_settings WHERE name = 'io_threads';
+----
+?column?	?column?	?column?
+f	f	t
+
+query
+SELECT count(DISTINCT context) FROM sdb_settings;
+----
+count
+1
+
+query
+SELECT count(*) > 0 FROM sdb_settings WHERE unit IS NULL AND category IS NULL AND min_val IS NULL AND max_val IS NULL;
+----
+?column?
+t

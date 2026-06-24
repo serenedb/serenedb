@@ -55,7 +55,7 @@ count
 ###############################################################################
 
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO chain_t SELECT i, 'r1ins_' || i FROM range(3000, 6000) AS t(i);
@@ -82,7 +82,7 @@ SELECT 1;
 
 connection r2
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 connection r2
 statement ok
@@ -114,7 +114,7 @@ SELECT 1;
 
 connection r3
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 connection r3
 statement ok
@@ -146,7 +146,7 @@ SELECT 1;
 
 connection r4
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 connection r4
 statement ok

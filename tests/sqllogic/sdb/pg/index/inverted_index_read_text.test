@@ -168,7 +168,7 @@ CREATE INDEX blob_docs_idx ON blob_docs USING inverted(body pat_caps);
 
 # Pattern extracts capitalized identifiers. "Robertson" only appears in bravo.md.
 query
-SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+$', 1) AS slug
 FROM blob_docs_idx WHERE body @@ 'Robertson' ORDER BY slug;
 ----
 slug
@@ -177,7 +177,7 @@ bravo
 
 # "BM25" also satisfies the pattern (starts uppercase, 4 chars).
 query
-SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+$', 1) AS slug
 FROM blob_docs_idx WHERE body @@ 'BM25' ORDER BY slug;
 ----
 slug
@@ -194,7 +194,7 @@ t
 
 # ts_like wildcard over BLOB.
 query
-SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+$', 1) AS slug
 FROM blob_docs_idx WHERE body @@ ts_like('Rob%') ORDER BY slug;
 ----
 slug
@@ -203,7 +203,7 @@ bravo
 
 # ts_starts_with prefix match over BLOB.
 query
-SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+$', 1) AS slug
 FROM blob_docs_idx WHERE body @@ ts_starts_with('Rob') ORDER BY slug;
 ----
 slug
@@ -212,7 +212,7 @@ bravo
 
 # ts_regexp pattern match over BLOB ('Rob.*on' matches "Robertson").
 query
-SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+$', 1) AS slug
 FROM blob_docs_idx WHERE body @@ ts_regexp('Rob.*on') ORDER BY slug;
 ----
 slug
@@ -221,7 +221,7 @@ bravo
 
 # ts_levenshtein fuzzy match over BLOB (distance 1 from "Robertson").
 query
-SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+$', 1) AS slug
 FROM blob_docs_idx WHERE body @@ ts_levenshtein('Robertsen', 1) ORDER BY slug;
 ----
 slug
@@ -252,7 +252,7 @@ CREATE INDEX blob_ng_docs_idx ON blob_ng_docs USING inverted(body blob_ng);
 # ts_ngram fuzzy similarity over BLOB. Trigrams of "Robertson" overlap with the
 # trigrams indexed from bravo.md's body. Threshold 0.3 keeps the match loose.
 query
-SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+$', 1) AS slug
 FROM blob_ng_docs_idx WHERE body @@ ts_ngram('Robertson', 0.3) ORDER BY slug;
 ----
 slug
@@ -372,7 +372,7 @@ id
 2
 
 query
-SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+$', 1) AS slug
 FROM blob_ng_docs_idx WHERE body @@ ts_ngram('Robertson'::BLOB, 0.3) ORDER BY slug;
 ----
 slug
@@ -527,7 +527,7 @@ count
 
 # Single-document match: only bravo.md mentions "ranking".
 query
-SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+$', 1) AS slug
 FROM v_text_idx WHERE content @@ 'ranking' ORDER BY slug;
 ----
 slug
@@ -536,7 +536,7 @@ bravo
 
 # Multi-document match: "term" appears in alpha + bravo.
 query
-SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+$', 1) AS slug
 FROM v_text_idx WHERE content @@ 'term' ORDER BY slug;
 ----
 slug
@@ -546,7 +546,7 @@ bravo
 
 # BM25 ranking over multi-doc match.
 query
-SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug,
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+$', 1) AS slug,
        BM25(v_text_idx.tableoid) > 0 AS has_score
 FROM v_text_idx
 WHERE content @@ 'term'
@@ -560,7 +560,7 @@ bravo	t
 # ts_highlight via lookup TF + ts_offsets: index returns byte offsets, lookup
 # TF fetches content from disk, highlight wraps the matched token.
 query
-SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug,
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+$', 1) AS slug,
        ts_highlight(content, ts_offsets(content)) AS snippet
 FROM v_text_idx
 WHERE content @@ 'ranking'
@@ -577,7 +577,7 @@ bravo	It is a probabilistic <b>ranking</b> function descended from Robertson ana
 
 # Phrase across adjacent terms (bravo has "term frequency" verbatim).
 query
-SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+$', 1) AS slug
 FROM v_text_idx WHERE content @@ ts_phrase('term', 'frequency') ORDER BY slug;
 ----
 slug
@@ -587,7 +587,7 @@ bravo
 # Boolean AND: documents containing both "term" and "analyzer". Only bravo
 # has both literally (alpha has "analyzers" plural).
 query
-SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+$', 1) AS slug
 FROM v_text_idx
 WHERE content @@ (ts_phrase('term') && ts_phrase('analyzer'))
 ORDER BY slug;
@@ -598,7 +598,7 @@ bravo
 
 # Boolean OR: alpha mentions "inverted", charlie mentions "highlighting".
 query
-SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+$', 1) AS slug
 FROM v_text_idx
 WHERE content @@ (ts_phrase('inverted') || ts_phrase('highlighting'))
 ORDER BY slug;
@@ -610,7 +610,7 @@ charlie
 
 # Wildcard via ts_like: matches both "analyzers" (alpha) and "analyzer" (bravo).
 query
-SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+$', 1) AS slug
 FROM v_text_idx WHERE content @@ ts_like('analyz%') ORDER BY slug;
 ----
 slug
@@ -621,7 +621,7 @@ bravo
 # Fuzzy via ts_levenshtein: "analyer" -> "analyzer" is distance 1 (bravo);
 # "analyer" -> "analyzers" is distance 2, so alpha doesn't match at distance 1.
 query
-SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+$', 1) AS slug
 FROM v_text_idx
 WHERE content @@ ts_levenshtein('analyer', 1)
 ORDER BY slug;
@@ -633,7 +633,7 @@ bravo
 # Distance 2 picks up both: "analyzer" (bravo, distance 1) and "analyzers"
 # (alpha, distance 2).
 query
-SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+$', 1) AS slug
 FROM v_text_idx
 WHERE content @@ ts_levenshtein('analyer', 2)
 ORDER BY slug;
@@ -645,7 +645,7 @@ bravo
 
 # Regex via ts_regexp: 'rank.*g' matches "ranking" in bravo only.
 query
-SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+$', 1) AS slug
 FROM v_text_idx WHERE content @@ ts_regexp('rank.*g') ORDER BY slug;
 ----
 slug
@@ -654,7 +654,7 @@ bravo
 
 # Prefix via ts_starts_with: any token starting with "snip" -> charlie's "snippets".
 query
-SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+$', 1) AS slug
 FROM v_text_idx WHERE content @@ ts_starts_with('snip') ORDER BY slug;
 ----
 slug
@@ -663,7 +663,7 @@ charlie
 
 # Boolean with NOT (!!): document mentioning 'term' but NOT 'ranking' -> alpha only.
 query
-SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+$', 1) AS slug
 FROM v_text_idx
 WHERE content @@ (ts_phrase('term') && !!ts_phrase('ranking'))
 ORDER BY slug;
@@ -675,7 +675,7 @@ alpha
 # BM25 ranking with a mix of operators: alpha + charlie both match, alpha has
 # higher term density on 'index', charlie wins on 'highlighting'.
 query
-SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug,
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+$', 1) AS slug,
        BM25(v_text_idx.tableoid) > 0 AS has_score
 FROM v_text_idx
 WHERE content @@ (ts_phrase('index') || ts_phrase('highlighting'))
@@ -688,7 +688,7 @@ charlie	t
 
 # Highlight from a multi-term phrase match.
 query
-SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug,
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+$', 1) AS slug,
        ts_highlight(content, ts_offsets(content)) AS snippet
 FROM v_text_idx
 WHERE content @@ ts_phrase('passage', 'extraction')
@@ -720,7 +720,7 @@ count
 
 
 query
-SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+$', 1) AS slug
 FROM t_text_idx WHERE content @@ 'ranking' ORDER BY slug;
 ----
 slug
@@ -728,7 +728,7 @@ bravo
 
 
 query
-SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+\$', 1) AS slug
+SELECT regexp_extract(path, '-([a-z]+)[.][a-z]+$', 1) AS slug
 FROM t_text_idx WHERE content @@ 'term' ORDER BY slug;
 ----
 slug

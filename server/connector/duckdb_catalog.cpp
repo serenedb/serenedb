@@ -63,6 +63,7 @@
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <ranges>
 
+#include "basics/static_strings.h"
 #include "basics/string_utils.h"
 #include "catalog/catalog.h"
 #include "catalog/pk_spec.h"
@@ -633,6 +634,27 @@ duckdb::unique_ptr<duckdb::LogicalOperator> InsertBackfillFilterProjection(
   return proj;
 }
 
+// Retarget bound constraints onto the store mirror. The store catalog cannot
+// bind CHECK constraints that reference facade-only types or functions, so the
+// mirror table omits them; they were already bound against the facade entry, so
+// carry them onto the store-bound set as engine-supplied extras (appended last,
+// where DataTable's Verify{Append,Update}Constraints expect the surplus). This
+// is what enforces such CHECKs on INSERT, UPDATE and upsert alike.
+duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>>
+RetargetStoreConstraints(
+  duckdb::ClientContext& context, duckdb::DuckTableEntry& store_entry,
+  duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>>& facade_bound) {
+  auto store_constraints =
+    duckdb::Binder::BindConstraints(context, store_entry.GetConstraints(),
+                                    store_entry.name, store_entry.GetColumns());
+  for (auto& constraint : facade_bound) {
+    if (constraint->type == duckdb::ConstraintType::CHECK) {
+      store_constraints.push_back(std::move(constraint));
+    }
+  }
+  return store_constraints;
+}
+
 }  // namespace
 
 duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
@@ -643,20 +665,11 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   auto& store_entry =
     table_entry.ResolveStoreEntry(context).Cast<duckdb::DuckTableEntry>();
 
-  // Retarget constraints onto the store mirror. Facade-bound CHECK constraints
-  // can reference facade-only functions (bound with macros expanded); the store
-  // mirror demotes those, so they ride along from here. Column layouts match by
-  // construction. The batch-vs-streaming branch and the store DuckTableEntry
-  // target (via GetStorageTableEntry) are handled by upstream PlanInsert.
-  auto store_constraints =
-    duckdb::Binder::BindConstraints(context, store_entry.GetConstraints(),
-                                    store_entry.name, store_entry.GetColumns());
-  for (auto& constraint : op.bound_constraints) {
-    if (constraint->type == duckdb::ConstraintType::CHECK) {
-      store_constraints.push_back(std::move(constraint));
-    }
-  }
-  op.bound_constraints = std::move(store_constraints);
+  // Column layouts match by construction; upstream PlanInsert handles the
+  // batch-vs-streaming branch and the store DuckTableEntry target (via
+  // GetStorageTableEntry).
+  op.bound_constraints =
+    RetargetStoreConstraints(context, store_entry, op.bound_constraints);
 
   // Resolve defaults/generated columns (the shared upstream two-pass) BELOW the
   // progress wrapper, then clear the map so the delegated PlanInsert does not
@@ -694,8 +707,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
                         .ResolveStoreEntry(context)
                         .Cast<duckdb::DuckTableEntry>();
   op.bound_constraints =
-    duckdb::Binder::BindConstraints(context, store_entry.GetConstraints(),
-                                    store_entry.name, store_entry.GetColumns());
+    RetargetStoreConstraints(context, store_entry, op.bound_constraints);
   return store_entry.ParentCatalog().Cast<duckdb::DuckCatalog>().PlanUpdate(
     context, planner, op, plan);
 }
@@ -711,8 +723,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanMergeInto(
                         .ResolveStoreEntry(context)
                         .Cast<duckdb::DuckTableEntry>();
   op.bound_constraints =
-    duckdb::Binder::BindConstraints(context, store_entry.GetConstraints(),
-                                    store_entry.name, store_entry.GetColumns());
+    RetargetStoreConstraints(context, store_entry, op.bound_constraints);
   return store_entry.ParentCatalog().Cast<duckdb::DuckCatalog>().PlanMergeInto(
     context, planner, op, plan);
 }
@@ -891,8 +902,9 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     } else if (type == "secondary" || type == "inverted") {
       create_index_info->index_type = std::move(type);
     } else {
-      throw duckdb::CatalogException("access method \"%s\" does not exist",
-                                     idx_type);
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+        ERR_MSG("access method \"", idx_type, "\" does not exist"));
     }
   }
 

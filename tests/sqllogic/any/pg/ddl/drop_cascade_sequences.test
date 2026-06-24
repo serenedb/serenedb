@@ -359,3 +359,64 @@ DROP TABLE vedernikoff_x_t1;
 
 statement ok
 DROP TABLE vedernikoff_x_t2;
+
+
+# A column DEFAULT nextval(...) added via ALTER TABLE ADD COLUMN registers the
+# sequence dependency through the ALTER (ReplaceObject) path, not CREATE. The
+# drop must still see it: no-CASCADE errors, CASCADE clears only the default and
+# keeps the column with its data.
+statement ok
+CREATE SEQUENCE vedernikoff_pudge_seq;
+
+
+statement ok
+CREATE TABLE vedernikoff_pudge_hook (id INT);
+
+
+statement ok
+ALTER TABLE vedernikoff_pudge_hook ADD COLUMN n INT DEFAULT nextval('vedernikoff_pudge_seq');
+
+
+statement ok
+INSERT INTO vedernikoff_pudge_hook (id) VALUES (1);
+
+
+query
+SELECT n FROM vedernikoff_pudge_hook WHERE id = 1;
+----
+n
+1
+
+
+statement error
+DROP SEQUENCE vedernikoff_pudge_seq;
+
+
+statement error
+DROP SEQUENCE vedernikoff_pudge_seq RESTRICT;
+
+
+statement ok
+DROP SEQUENCE vedernikoff_pudge_seq CASCADE;
+
+
+statement ok
+INSERT INTO vedernikoff_pudge_hook (id) VALUES (2);
+
+
+query
+SELECT n FROM vedernikoff_pudge_hook WHERE id = 2;
+----
+n
+NULL
+
+
+query
+SELECT count(*) FROM vedernikoff_pudge_hook;
+----
+count
+2
+
+
+statement ok
+DROP TABLE vedernikoff_pudge_hook;

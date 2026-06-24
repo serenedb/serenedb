@@ -36,7 +36,6 @@ namespace sdb::catalog {
 
 enum class ResolveType {
   Database = 0,
-  Role,
   Schema,
   Function,
   Relation,
@@ -47,7 +46,6 @@ enum class ResolveType {
 class ResolutionTable {
  public:
   ResolutionTable() {
-    _roles = std::make_shared<MapByName<ObjectId>>();
     _databases = std::make_shared<MapByName<ObjectId>>();
     _schemas = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
     _relations = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
@@ -61,9 +59,6 @@ class ResolutionTable {
     if constexpr (Type == ResolveType::Database) {
       auto it = _databases->find(object_name);
       return it == _databases->end() ? std::nullopt : std::optional{it->second};
-    } else if constexpr (Type == ResolveType::Role) {
-      auto it = _roles->find(object_name);
-      return it == _roles->end() ? std::nullopt : std::optional{it->second};
     } else {
       auto resolve =
         [](const MapByIdPtr<MapByNamePtr<ObjectId>>& lookup_map,
@@ -110,17 +105,6 @@ class ResolutionTable {
       auto [_, inserted] = CloneData(_schemas).try_emplace(
         object_id, std::make_shared<MapByName<ObjectId>>());
       SDB_ASSERT(inserted);
-      return {};
-    } else if constexpr (Type == ResolveType::Role) {
-      auto& roles = CloneData(_roles);
-      if (!replace) {
-        auto [_, inserted] = roles.try_emplace(object_name, object_id);
-        if (!inserted) {
-          return {ERROR_USER_DUPLICATE};
-        }
-      } else {
-        roles.insert_or_assign(object_name, object_id);
-      }
       return {};
     } else {
       auto insert = [replace](MapByIdPtr<MapByNamePtr<ObjectId>>& insert_map,
@@ -206,14 +190,6 @@ class ResolutionTable {
         CloneData(_types).erase(id);
       }
       return {id};
-    } else if constexpr (Type == ResolveType::Role) {
-      auto object = CloneData(_roles).extract(object_name);
-      if (object.empty()) {
-        return std::nullopt;
-      }
-      auto id = object.mapped();
-      SDB_ASSERT(id.isSet());
-      return {id};
     } else {
       auto remove =
         [](MapByIdPtr<MapByNamePtr<ObjectId>>& remove_map, ObjectId parent_id,
@@ -254,8 +230,6 @@ class ResolutionTable {
 
   auto GetDatabaseIds() const { return *_databases | std::views::values; }
 
-  auto GetRoleIds() const { return *_roles | std::views::values; }
-
   auto GetRelationIds(ObjectId schema_id) const {
     auto it = _relations->find(schema_id);
     SDB_ASSERT(it != _relations->end());
@@ -291,8 +265,6 @@ class ResolutionTable {
     return *clone;
   }
 
-  // role_name -> role_id
-  MapByNamePtr<ObjectId> _roles;
   // database_name -> database_id
   MapByNamePtr<ObjectId> _databases;
   // database_id -> (schema_name -> schema_id)

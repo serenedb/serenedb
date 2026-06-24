@@ -44,7 +44,7 @@ statement ok
 VACUUM (REFRESH_TABLE) vedernikoff_drop;
 
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # Pre-truncate WAL-only writes for both tables.
 statement ok

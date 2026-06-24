@@ -26,6 +26,8 @@
 #include <span>
 #include <yaclib/async/make.hpp>
 #include <yaclib/async/when_all.hpp>
+#include <yaclib/coro/await.hpp>
+#include <yaclib/coro/future.hpp>
 
 #include "basics/assert.h"
 #include "basics/debugging.h"
@@ -35,7 +37,7 @@
 #include "catalog/object.h"
 #include "catalog/store/store.h"
 #include "catalog/types.h"
-#include "general_server/scheduler.h"
+#include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "storage_engine/search_engine.h"
 
@@ -44,10 +46,9 @@ namespace {
 
 Result RemoveIndexStorage(ObjectId db_id, ObjectId schema_id = ObjectId{0},
                           ObjectId table_id = ObjectId{0},
-                          ObjectId index_id = ObjectId{0},
-                          ObjectId storage_id = ObjectId{0}) {
-  auto path = search::InvertedIndexStorage::GetPath(db_id, schema_id, table_id,
-                                                    index_id, storage_id);
+                          ObjectId index_id = ObjectId{0}) {
+  auto path =
+    search::InvertedIndexStorage::GetPath(db_id, schema_id, table_id, index_id);
   std::error_code ec;
   std::filesystem::remove_all(path, ec);
   if (ec) {
@@ -76,13 +77,9 @@ yaclib::Future<> RunChildrenTasks(std::span<std::shared_ptr<T>> tasks) {
 AsyncResult DropTask::Schedule(std::shared_ptr<DropTask> task) noexcept {
   try {
     while (true) {
-      auto* scheduler = GetScheduler();
-      if (!scheduler) {
-        co_return {};
-      }
-      co_await scheduler->delay(task->GetName(), task->_delay);
-      auto r = co_await scheduler->queueWithFuture(
-        RequestLane::InternalLow,
+      auto& scheduler = BackgroundScheduler::instance();
+      co_await scheduler.Delay(task->_delay);
+      auto r = co_await scheduler.Run(
         [task] { return DropTask::ExecuteTask(std::move(task)); });
       if (r.errorNumber() == ERROR_LOCKED) {
         task->_delay = std::min(kMaxDelay, task->_delay * 2);
@@ -131,14 +128,10 @@ Result IndexDrop::Finalize() {
 
 AsyncResult IndexDrop::Execute() {
   if (_type == catalog::ObjectType::InvertedIndex && _is_root) {
-    // Seam (b): wait until the index's iresearch storage is fully released
-    // (catalog snapshots holding the dropped index gone, in-flight transactions
-    // / replay sessions gone, background tasks drained via their expired
-    // weak_ptr) BEFORE the directory is removed -- so no live holder touches a
-    // removed dir. _data is the storage weak captured at drop time.
-    if (!_data.expired()) {
-      return yaclib::MakeFuture<Result>(ERROR_LOCKED);
-    }
+    // The storage is guaranteed released here: AllowToDropDependencies() gates
+    // on _data.expired(), so neither this drop nor any ancestor reaches Execute
+    // while a catalog snapshot, query, replay session, or background task still
+    // holds the iresearch storage -- no live holder touches the removed dir.
     auto r = RemoveIndexStorage(_db_id, _schema_id, _parent_id, _id);
     if (!r.ok()) {
       SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());

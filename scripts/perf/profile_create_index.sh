@@ -67,7 +67,7 @@ echo "  perf:   ${PERF_DATA}"
 perf record -F "${FREQ}" -g --call-graph "${PERF_CALL_GRAPH:-fp}" \
 	--output "${PERF_DATA}" -- \
 	"${SERENED_BIN}" "${DATA_DIR}" \
-	--server_endpoints "pgsql+tcp://0.0.0.0:${PORT}" \
+	--listen "postgres://0.0.0.0:${PORT}" \
 	>"${OUT_DIR}/serened.log" 2>&1 &
 PERF_PID=$!
 trap "kill -INT ${PERF_PID} 2>/dev/null || true" EXIT

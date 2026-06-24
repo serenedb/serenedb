@@ -21,8 +21,9 @@
 #include "pg/pg_catalog/pg_authid.h"
 
 #include "app/app_server.h"
+#include "basics/static_strings.h"
 #include "catalog/catalog.h"
-#include "catalog/role.h"
+#include "catalog/identifiers/object_id.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -37,24 +38,21 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgAuthid>::GetTableData() {
-  auto catalog = _config.EnsureCatalogSnapshot();
-
+  // RBAC/roles were removed; pg_authid (and pg_roles / \du layered on it) keeps
+  // working off one static superuser row for the default login role.
   std::vector<PgAuthid> values;
-  for (const auto& role : catalog->GetRoles()) {
-    PgAuthid row{
-      .oid = role->GetId().id(),
-      .rolname = role->GetName(),
-      .rolsuper = true,  // No RBAC yet, all roles are superusers
-      .rolinherit = true,
-      .rolcreaterole = true,
-      .rolcreatedb = true,
-      .rolcanlogin = role->isActive(),
-      .rolreplication = true,
-      .rolbypassrls = true,
-      .rolconnlimit = -1,
-    };
-    values.push_back(std::move(row));
-  }
+  values.push_back(PgAuthid{
+    .oid = id::kRootUser.id(),
+    .rolname = StaticStrings::kDefaultUser,
+    .rolsuper = true,
+    .rolinherit = true,
+    .rolcreaterole = true,
+    .rolcreatedb = true,
+    .rolcanlogin = true,
+    .rolreplication = true,
+    .rolbypassrls = true,
+    .rolconnlimit = -1,
+  });
 
   auto result = CreateColumns<PgAuthid>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

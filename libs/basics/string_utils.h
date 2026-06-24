@@ -24,11 +24,13 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/charconv.h>
 #include <absl/strings/internal/resize_uninitialized.h>
+#include <absl/strings/match.h>
 
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -67,6 +69,27 @@ IRS_FORCE_INLINE void StrResizeAmortized(Str& str, size_t len) {
 template<typename Str>
 IRS_FORCE_INLINE void StrAppend(Str& str, size_t len) {
   str.__append_default_init(len);
+}
+
+// Parses a boolean spelled as on/true/yes/1/t/y or off/false/no/0/f/n
+// (case-insensitive); nullopt for anything else. The caller decides how an
+// unrecognized value is reported.
+inline std::optional<bool> ParseBool(std::string_view value) {
+  if (value == "1" || absl::EqualsIgnoreCase(value, "on") ||
+      absl::EqualsIgnoreCase(value, "true") ||
+      absl::EqualsIgnoreCase(value, "yes") ||
+      absl::EqualsIgnoreCase(value, "t") ||
+      absl::EqualsIgnoreCase(value, "y")) {
+    return true;
+  }
+  if (value == "0" || absl::EqualsIgnoreCase(value, "off") ||
+      absl::EqualsIgnoreCase(value, "false") ||
+      absl::EqualsIgnoreCase(value, "no") ||
+      absl::EqualsIgnoreCase(value, "f") ||
+      absl::EqualsIgnoreCase(value, "n")) {
+    return false;
+  }
+  return std::nullopt;
 }
 
 /// collection of string utility functions

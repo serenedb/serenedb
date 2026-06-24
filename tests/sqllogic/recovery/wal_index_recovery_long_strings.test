@@ -24,7 +24,7 @@ statement ok
 VACUUM (REFRESH_TABLE) ls_t;
 
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # Build very long bodies of repeating tokens. Each row has ~500 unique-ish
 # tokens, total bytes around 4-8 KB per row.

@@ -169,10 +169,10 @@ struct IndexWriterOptions : public SegmentOptions {
   // Lifetime of `*db` must extend until IndexWriter shutdown.
   duckdb::DatabaseInstance* db = nullptr;
 
-  // Per-column knobs the writer consults at flush + merge time. The
-  // catalog is the single source of truth; both callbacks return what's
-  // currently configured for the column, never anything baked into a
-  // source segment. See `iresearch/index/column_info.hpp` for the shape.
+  // Fallback per-column knobs, wrapped into a FunctionFieldOptions at Make().
+  // Used only when an operation carries no per-op IndexFieldOptions (tests);
+  // the serenedb host overrides per write (SetFieldOptions) and per merge
+  // (Compact).
   ColumnOptionsProvider column_options;
   NormColumnOptionsProvider norm_column_options;
 
@@ -476,6 +476,14 @@ class IndexWriter : private util::Noncopyable {
     // Remove/Replace, does not advance it). Used by WAL-replay streaming.
     void AdvanceQueries(uint64_t n = 1) noexcept { _queries += n; }
 
+    // Per-op encoding config (the transaction's DDL-snapshot InvertedIndex),
+    // forwarded to the segment writer. Owning so a batch outliving its caller's
+    // snapshot still flushes correctly.
+    void SetFieldOptions(
+      std::shared_ptr<const IndexFieldOptions> options) noexcept {
+      _field_options = std::move(options);
+    }
+
    private:
     bool CommitImpl(uint64_t last_tick) noexcept;
     // refresh segment if required (guarded by FlushContext::context_mutex_)
@@ -488,6 +496,7 @@ class IndexWriter : private util::Noncopyable {
     ActiveSegmentContext _active;
     // We can use active_.Segment()->queries_.size() for same purpose
     uint64_t _queries{0};
+    std::shared_ptr<const IndexFieldOptions> _field_options;
   };
   static_assert(std::is_nothrow_move_constructible_v<Transaction>);
   static_assert(std::is_nothrow_move_assignable_v<Transaction>);
@@ -538,7 +547,10 @@ class IndexWriter : private util::Noncopyable {
   // given the exact same index_meta containing all segments in the
   // commit, however, the resulting acceptor will only be segments not
   // yet marked for compaction by other policies in the same commit
+  // `field_options` (nullable): per-merge encoding config, pinned by the caller
+  // for the whole synchronous merge; nullptr uses the writer's fallback.
   CompactionResult Compact(const CompactionPolicy& policy,
+                           const IndexFieldOptions* field_options = nullptr,
                            Format::ptr codec = nullptr,
                            const MergeWriter::FlushProgress& progress = {});
 
@@ -945,8 +957,10 @@ class IndexWriter : private util::Noncopyable {
   // (e.g. no free segments available)
   ActiveSegmentContext GetSegmentContext();
 
-  // Return options for SegmentWriter
-  SegmentWriterOptions GetSegmentWriterOptions(bool compaction) const noexcept;
+  // Return options for SegmentWriter. `field_options` (nullable, merge path)
+  // overrides the construction-time fallback for a single compaction.
+  SegmentWriterOptions GetSegmentWriterOptions(
+    bool compaction, const IndexFieldOptions* field_options) const noexcept;
 
   // Return next segment identifier
   uint64_t NextSegmentId() noexcept;
@@ -965,8 +979,9 @@ class IndexWriter : private util::Noncopyable {
   IndexFeatures _wand_features{};  // Set of features required for wand
   ScorerPtr _topk_scorer;
   duckdb::DatabaseInstance* _db = nullptr;
-  ColumnOptionsProvider _column_options;
-  NormColumnOptionsProvider _norm_column_options;
+  // Fallback options (FunctionFieldOptions wrapping the provider callbacks),
+  // shared to each segment writer; null when no provider was configured.
+  std::shared_ptr<const IndexFieldOptions> _field_options;
   PayloadProvider _meta_payload_provider;  // provides payload for new segments
   const Comparer* _comparator;
   Format::ptr _codec;

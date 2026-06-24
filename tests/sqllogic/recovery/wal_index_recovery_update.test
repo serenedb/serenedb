@@ -41,7 +41,7 @@ a
 
 # Block iresearch commit, then mutate the rows
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 UPDATE wal_upd_t SET b = 'new tiger' WHERE a = 1;

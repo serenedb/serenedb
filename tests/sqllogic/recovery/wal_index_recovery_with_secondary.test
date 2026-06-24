@@ -38,7 +38,7 @@ statement ok
 VACUUM (REFRESH_TABLE) ws_t;
 
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # Mix of writes that hit the inverted columns AND the secondary index.
 statement ok

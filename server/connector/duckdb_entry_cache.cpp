@@ -35,6 +35,7 @@
 #include <duckdb/parser/parsed_data/create_type_info.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
+#include <shared_mutex>
 
 #include "basics/down_cast.h"
 #include "basics/static_strings.h"

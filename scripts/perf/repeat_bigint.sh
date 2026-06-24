@@ -10,7 +10,7 @@ run_one() {
 	local data="/tmp/perf-repeat-${USER}-${label}"
 	rm -rf "$data"
 	mkdir -p "$data"
-	"$bin" "$data" --server_endpoints="pgsql+tcp://0.0.0.0:${port}" >/dev/null 2>&1 &
+	"$bin" "$data" --listen="postgres://0.0.0.0:${port}" >/dev/null 2>&1 &
 	local pid=$!
 	# wait ready
 	for _ in $(seq 1 60); do

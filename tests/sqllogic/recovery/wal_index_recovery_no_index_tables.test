@@ -47,7 +47,7 @@ statement ok
 VACUUM (REFRESH_TABLE) ni2_main;
 
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # Interleave writes: lots of unrelated activity surrounding the inverted
 # inserts. Recovery must filter to ni2_main only.

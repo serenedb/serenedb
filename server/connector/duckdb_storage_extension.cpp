@@ -50,11 +50,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
   duckdb::AttachOptions& options) {
   if (info.path.empty()) {
     // CREATE DATABASE: create new database in SereneDB catalog
-    auto state = context.registered_state->Get<SereneDBClientState>(
-      kSereneDBClientStateKey);
-    const auto& exec_ctx =
-      state ? state->GetConnectionContext() : ExecContext::superuser();
-    auto r = catalog::CreateDatabase(exec_ctx, name);
+    auto r = catalog::CreateDatabase(name);
     if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
       if (info.on_conflict == duckdb::OnCreateConflict::ERROR_ON_CONFLICT) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_DATABASE),
@@ -100,13 +96,11 @@ duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(
 void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
   auto state =
     context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);
-  const auto& exec_ctx =
-    state ? state->GetConnectionContext() : ExecContext::superuser();
   if (state) {
     state->GetConnectionContext().DropCatalogSnapshot();
   }
   duckdb::shared_ptr<void> keep_alive = GetAttached().shared_from_this();
-  auto r = catalog::DropDatabase(exec_ctx, GetName(), std::move(keep_alive));
+  auto r = catalog::DropDatabase(GetName(), std::move(keep_alive));
   SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
   if (!r.ok()) {
     SDB_THROW(std::move(r));

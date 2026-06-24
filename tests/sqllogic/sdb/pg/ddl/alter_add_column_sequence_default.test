@@ -1,0 +1,71 @@
+# ALTER TABLE ADD COLUMN with a sequence-backed DEFAULT (PG-compatible).
+#
+# Supersedes alter_add_column_dependency_guard.test, which pinned the *rejection*
+# of this ALTER. A volatile default expands to [ADD COLUMN; UPDATE backfill; SET
+# DEFAULT] run as an implicit block; under the default REPEATABLE READ the
+# transaction's catalog snapshot used to stay frozen, so the backfill UPDATE
+# could not bind the just-added column ("Referenced update column c not found").
+# The catalog is now decoupled from MVCC isolation (serenedb DDL is atomic and
+# non-transactional), so it refreshes after the ADD COLUMN: the ALTER is accepted
+# as in PostgreSQL and the sequence dependency is recorded.
+
+statement ok
+CREATE SEQUENCE s;
+
+
+statement ok
+CREATE TABLE t(id INT);
+
+
+statement ok
+INSERT INTO t VALUES (10);
+
+
+# PG accepts the ALTER; the volatile default backfills the existing row.
+statement ok
+ALTER TABLE t ADD COLUMN c INT DEFAULT nextval('s');
+
+
+query
+SELECT id, c FROM t ORDER BY id;
+----
+id	c
+10	1
+
+
+# New rows draw the next sequence value through the default.
+statement ok
+INSERT INTO t (id) VALUES (20);
+
+
+query
+SELECT id, c FROM t ORDER BY id;
+----
+id	c
+10	1
+20	2
+
+
+# The column default depends on the sequence, so a plain DROP SEQUENCE
+# (RESTRICT, the default) is blocked -- matching PostgreSQL.
+statement error
+DROP SEQUENCE s;
+
+
+# DROP ... CASCADE drops the dependent column default; the column itself stays.
+statement ok
+DROP SEQUENCE s CASCADE;
+
+
+statement ok
+INSERT INTO t (id) VALUES (30);
+
+
+# After the cascade drop the column has no default, so the new row gets NULL.
+query
+SELECT id, c FROM t ORDER BY id;
+----
+id	c
+10	1
+20	2
+30	NULL

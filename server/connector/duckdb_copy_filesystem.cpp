@@ -26,12 +26,14 @@
 #include <cstring>
 #include <duckdb/common/file_opener.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <optional>
 #include <span>
 
 #include "basics/assert.h"
 #include "basics/message_buffer.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
+#include "pg/copy_in_bridge.h"
 #include "pg/copy_messages_queue.h"
 #include "pg/errcodes.h"
 #include "pg/protocol.h"
@@ -50,18 +52,20 @@ void SendCopyResponse(message::Buffer& send_buffer, uint8_t msg_type) {
   constexpr size_t kMsgSize = sizeof(uint8_t) + sizeof(int32_t) +
                               sizeof(uint8_t) + sizeof(int16_t) +
                               (kColumnCount * sizeof(int16_t));
-  std::span data{send_buffer.GetContiguousData(kMsgSize), kMsgSize};
+  message::Writer writer{send_buffer};
+  std::span data{writer.Alloc(kMsgSize), kMsgSize};
   data[0] = msg_type;
   absl::big_endian::Store32(data.data() + 1,
                             static_cast<int32_t>(kMsgSize - 1));
   data[5] = 0;
   absl::big_endian::Store16(data.data() + 6,
                             static_cast<int16_t>(kColumnCount));
-  send_buffer.Commit(true);
+  writer.Commit(true);
 }
 
 struct ConnectionPlumbing {
   pg::CopyMessagesQueue* queue;
+  pg::CopyInBridge* bridge;
   message::Buffer* send_buffer;
   SereneDBClientState& state;
 };
@@ -85,125 +89,105 @@ ConnectionPlumbing GetPlumbing(duckdb::FileOpener* opener,
               " requires SereneDB client state (not registered)"));
   }
   auto& conn = state->GetConnectionContext();
-  auto* queue = conn.GetCopyQueue();
   auto* send = conn.GetSendBuffer();
-  if (!queue || !send) {
+  if (!send) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG("COPY ", path,
               " requires a PG wire connection (transport not attached)"));
   }
-  return {queue, send, *state};
+  return {conn.GetCopyQueue(), conn.GetCopyInBridge(), send, *state};
 }
 
 }  // namespace
 
-// DuckDB may open /dev/stdin more than once per query (CSV sniff then
-// real read); the shared copy_stdin_buffer lets later opens replay the
-// prefix that the earlier open already drained from the wire.
+// Reads the non-seekable COPY FROM STDIN wire stream SINGLE-PASS, off the
+// bridge (new server) or the message queue (old server). Every COPY format
+// opens it exactly once (csv/json sniff+scan share one buffer-manager pass), so
+// the ctor rejects an unexpected re-open -- a non-seekable stream has nothing
+// to replay.
 struct CopyInFileHandle final : public duckdb::FileHandle {
+  // `bridge` (new coroutine server) and `queue` (old server) are mutually
+  // exclusive: exactly one is non-null. With the bridge, the session has
+  // already sent CopyInResponse, so the handle doesn't.
   CopyInFileHandle(duckdb::FileSystem& fs, SereneDBClientState& state,
-                   pg::CopyMessagesQueue& queue, message::Buffer& send_buffer)
+                   pg::CopyMessagesQueue* queue, pg::CopyInBridge* bridge,
+                   message::Buffer& send_buffer)
     : duckdb::FileHandle(
         fs, std::string{kDevStdin},
         duckdb::FileOpenFlags(duckdb::FileOpenFlags::FILE_FLAGS_READ)),
       _state{state},
-      _iterator{queue} {
+      _bridge{bridge} {
     const auto open_idx = _state.copy_stdin_open_count++;
-    if (open_idx == 0) {
-      queue.StartListening();
-      SendCopyResponse(send_buffer, PQ_MSG_COPY_IN_RESPONSE);
-      _state.copy_stdin_buffer = std::make_shared<std::string>();
+    if (open_idx != 0) {
+      // A re-open would need to replay from offset 0, but the wire stream is
+      // non-seekable and already drained past that point. No COPY format does
+      // this (csv/json sniff+scan share a single buffer-manager pass), so fail
+      // loudly rather than feed the reader bytes from the wrong offset.
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG(
+          "COPY FROM STDIN: unexpected re-open of a non-seekable stream"));
     }
-    _buffer = _state.copy_stdin_buffer;
+    if (queue) {
+      queue->StartListening();
+      SendCopyResponse(send_buffer, PQ_MSG_COPY_IN_RESPONSE);
+      _iterator.emplace(*queue);
+    }
   }
 
   ~CopyInFileHandle() final = default;
   void Close() final {}
 
   int64_t DoRead(void* buf, int64_t nr_bytes) {
-    auto* out = static_cast<char*>(buf);
-    int64_t total = 0;
-
-    if (_buffer && _buffer_offset < _buffer->size()) {
-      auto avail = std::min(
-        static_cast<int64_t>(_buffer->size() - _buffer_offset), nr_bytes);
-      std::memcpy(out, _buffer->data() + _buffer_offset, avail);
-      _buffer_offset += avail;
-      out += avail;
-      total += avail;
-      nr_bytes -= avail;
-      if (nr_bytes == 0) {
-        return total;
-      }
-    }
-
-    // Each handle owns its own iterator, so once one handle has seen
-    // CopyDone the others must short-circuit instead of re-blocking on
-    // queue.Pop.
+    // Short-circuit once CopyDone/EOF has been seen instead of re-blocking.
     if (_state.copy_stdin_done) {
-      return total;
+      return 0;
     }
-
-    auto read = _iterator.Next(out, static_cast<uint64_t>(nr_bytes));
-    total += static_cast<int64_t>(read);
-    if (_buffer && read > 0) {
-      _buffer->append(out, read);
-      // The bytes this handle drained are already delivered to its caller;
-      // only LATER opens may replay them. Without this the handle's next
-      // DoRead re-serves its own appends and the stream duplicates.
-      _buffer_offset = _buffer->size();
-    }
+    auto* out = static_cast<char*>(buf);
+    const auto read = _bridge ? _bridge->Read(out, nr_bytes)
+                              : static_cast<int64_t>(_iterator->Next(
+                                  out, static_cast<uint64_t>(nr_bytes)));
     if (read == 0) {
       _state.copy_stdin_done = true;
     }
-    return total;
+    return read;
   }
 
  private:
   SereneDBClientState& _state;
-  pg::CopyMessagesQueueIterator _iterator;
-  std::shared_ptr<std::string> _buffer;
-  size_t _buffer_offset = 0;
+  pg::CopyInBridge* _bridge;
+  std::optional<pg::CopyMessagesQueueIterator> _iterator;
 };
 
-// Wire protocol: CopyOutResponse (once, on open) -> N x CopyData (each
-// Write) -> CopyDone (on Close).
+// A dumb byte sink: each Write becomes one CopyData frame, nothing more. The
+// pg-wire session owns the stream boundaries -- it emits CopyOutResponse (with
+// the real column count) before the COPY runs and CopyDone only after it
+// succeeds -- so a mid-COPY error can no longer leak a spurious CopyDone from a
+// destructor, and the response is no longer stuck with column count 0. This is
+// format-agnostic: csv/json/parquet/... all just stream bytes through here.
 struct CopyOutFileHandle final : public duckdb::FileHandle {
   CopyOutFileHandle(duckdb::FileSystem& fs, message::Buffer& send_buffer)
     : duckdb::FileHandle(
         fs, std::string{kDevStdout},
         duckdb::FileOpenFlags(duckdb::FileOpenFlags::FILE_FLAGS_WRITE)),
-      _send_buffer{send_buffer} {
-    SendCopyResponse(_send_buffer, PQ_MSG_COPY_OUT_RESPONSE);
-  }
+      _send_buffer{send_buffer} {}
 
-  ~CopyOutFileHandle() final = default;
-
-  void Close() final {
-    if (_closed) {
-      return;
-    }
-    _closed = true;
-    static constexpr uint8_t kCopyDone[5] = {PQ_MSG_COPY_DONE, 0, 0, 0, 4};
-    _send_buffer.Write({reinterpret_cast<const char*>(kCopyDone), 5}, true);
-  }
+  void Close() final {}
 
   void DoWrite(const void* buf, int64_t nr_bytes) {
-    auto before = _send_buffer.GetUncommittedSize();
-    auto* prefix = _send_buffer.GetContiguousData(5);
-    _send_buffer.WriteUncommitted(
+    message::Writer writer{_send_buffer};
+    auto* prefix = writer.Alloc(5);
+    writer.Write(
       {static_cast<const char*>(buf), static_cast<size_t>(nr_bytes)});
     prefix[0] = PQ_MSG_COPY_DATA;
-    absl::big_endian::Store32(
-      prefix + 1,
-      static_cast<int32_t>(_send_buffer.GetUncommittedSize() - before - 1));
-    _send_buffer.Commit(false);
+    absl::big_endian::Store32(prefix + 1,
+                              static_cast<int32_t>(writer.Written() - 1));
+    writer.Commit(false);
   }
 
  private:
   message::Buffer& _send_buffer;
-  bool _closed = false;
 };
 
 bool SereneDBCopyFileSystem::CanHandleFile(const std::string& fpath) {
@@ -221,8 +205,15 @@ duckdb::unique_ptr<duckdb::FileHandle> SereneDBCopyFileSystem::OpenFile(
   duckdb::optional_ptr<duckdb::FileOpener> opener) {
   if (path == kDevStdin) {
     auto plumbing = GetPlumbing(opener.get(), path);
-    return duckdb::make_uniq<CopyInFileHandle>(
-      *this, plumbing.state, *plumbing.queue, *plumbing.send_buffer);
+    if (!plumbing.queue && !plumbing.bridge) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("COPY ", path,
+                " requires a PG wire connection (transport not attached)"));
+    }
+    return duckdb::make_uniq<CopyInFileHandle>(*this, plumbing.state,
+                                               plumbing.queue, plumbing.bridge,
+                                               *plumbing.send_buffer);
   }
   if (path == kDevStdout) {
     auto plumbing = GetPlumbing(opener.get(), path);
@@ -274,7 +265,10 @@ duckdb::vector<duckdb::OpenFileInfo> SereneDBCopyFileSystem::Glob(
 }
 
 int64_t SereneDBCopyFileSystem::GetFileSize(duckdb::FileHandle& handle) {
-  return -1;  // unknown (streaming)
+  // Mirror PipeFileSystem: a non-seekable stream reports 0, not -1 -- size is
+  // read as unsigned idx_t downstream, where -1 becomes idx_t(-1) and blows up
+  // MaxThreads (file_size/bytes_per_thread) into a huge over-spawn.
+  return 0;
 }
 
 void SereneDBCopyFileSystem::Seek(duckdb::FileHandle& handle,

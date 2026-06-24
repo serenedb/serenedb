@@ -27,7 +27,7 @@
 
 #include "basics/crc.hpp"
 
-#ifdef BENCH_FOLLY
+#ifdef SDB_ENABLE_FOLLY
 #include <folly/hash/Checksum.h>
 #endif
 
@@ -52,7 +52,7 @@ void BmCalculateAbseil(benchmark::State& state) {
   }
 }
 
-#ifdef BENCH_FOLLY
+#ifdef SDB_ENABLE_FOLLY
 void BmCalculateFolly(benchmark::State& state) {
   int len = state.range(0);
   std::string data = TestString(len);
@@ -95,7 +95,7 @@ void BmCalculateFolly(benchmark::State& state) {
 
 BENCHMARK(BmCalculateAbseil)->ARGS2;
 
-#ifdef BENCH_FOLLY
+#ifdef SDB_ENABLE_FOLLY
 BENCHMARK(BmCalculateFolly)->ARGS2;
 #endif
 

@@ -41,7 +41,7 @@ id
 
 # Block search commits — rocksdb keeps advancing, iresearch falls behind.
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # These rows enter the WAL but never reach iresearch.
 statement ok

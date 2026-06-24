@@ -320,7 +320,7 @@ void SearchScan::AppendSummary(
     out.insert("Score", text_scorer->ToString());
   }
   if (score_top_k) {
-    std::string topk_val = std::to_string(*score_top_k);
+    std::string topk_val = absl::StrCat(*score_top_k);
     if (WandEnabled(bind.inverted_index.get(), text_scorer)) {
       absl::StrAppend(&topk_val, ", optimized");
     }
@@ -328,9 +328,9 @@ void SearchScan::AppendSummary(
   }
   if (vector_scorer) {
     if (vector_scorer->radius != std::numeric_limits<float>::max()) {
-      out.insert("Radius", std::to_string(vector_scorer->radius));
+      out.insert("Radius", absl::StrCat(vector_scorer->radius));
     }
-    out.insert("Dims", std::to_string(vector_scorer->query_vector.size()));
+    out.insert("Dims", absl::StrCat(vector_scorer->query_vector.size()));
     if (stored_filter && bind.inverted_index) {
       out.insert(
         "TextFilter",

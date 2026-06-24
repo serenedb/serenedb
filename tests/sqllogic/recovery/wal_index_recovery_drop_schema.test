@@ -61,7 +61,7 @@ VACUUM (REFRESH_TABLE) ds_drop.t;
 
 # Block search commits.
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # Writes to both schemas that never reach iresearch.
 statement ok

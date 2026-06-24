@@ -35,7 +35,7 @@ statement ok
 VACUUM (REFRESH_TABLE) ni_t;
 
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # Update only the non-indexed column. The index should not see anything.
 statement ok

@@ -22,222 +22,348 @@
 #include "task.h"
 
 #include <absl/cleanup/cleanup.h>
+#include <absl/time/time.h>
 
-#include <atomic>
+#include <algorithm>
+#include <chrono>
+#include <cstdint>
 #include <exception>
+#include <iresearch/utils/index_utils.hpp>
+#include <vector>
+#include <yaclib/async/run.hpp>
+#include <yaclib/coro/await.hpp>
+#include <yaclib/coro/future.hpp>
+#include <yaclib/coro/on.hpp>
 
-#include "basics/assert.h"
+#include "basics/lifecycle.h"
 #include "basics/log.h"
-#include "basics/system-compiler.h"
+#include "basics/metrics.h"
+#include "catalog/catalog.h"
+#include "catalog/inverted_index.h"
+#include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
+#include "storage_engine/search_engine.h"
 
 namespace sdb::search {
+namespace {
 
-void RefreshTask::Finalize(
-  std::shared_ptr<search::InvertedIndexStorage> inverted_index_storage,
-  RefreshResult res) {
-  static constexpr size_t kMaxNonEmptyRefreshes = 10;
-  static constexpr size_t kMaxPendingCompactions = 3;
+using Clock = BackgroundScheduler::clock;
 
-  if (res != RefreshResult::NoChanges) {
-    _state->pending_refreshes.fetch_add(1, std::memory_order_release);
+// Poll cadence when the relevant interval is disabled (== 0): keep the loop
+// alive and re-reading settings so a later ALTER that sets a non-zero interval
+// takes effect without relaunching the coroutine.
+constexpr Clock::duration kDisabledPoll = std::chrono::seconds{1};
+// Upper bound for the empty-compaction backoff: don't hammer compaction while
+// the index is idle, but resume promptly once work appears.
+constexpr Clock::duration kMaxCompactionBackoff = std::chrono::seconds{30};
+// Granularity for waking on a NudgeCompaction during the backoff wait: the
+// coordinator wakes within one slice of a refresh that produced segments.
+constexpr Clock::duration kNudgePollSlice = std::chrono::milliseconds{100};
+// On RefreshResult::NoChanges lengthen the next refresh delay toward this many
+// extra multiples of the configured interval (~x1.5 per idle tick) to avoid
+// fsync churn on an idle index; Done resets to the configured interval.
+constexpr int kMaxRefreshStretch = 4;
+// Run cleanup once stale pressure (raised by non-empty compactions) crosses
+// this, independent of the periodic cleanup step.
+constexpr uint32_t kStalePressureCleanup = 4;
 
-    if (res == RefreshResult::Done) {
-      _state->noop_refresh_count.store(0, std::memory_order_release);
-      _state->noop_compaction_count.store(0, std::memory_order_release);
-
-      if (_state->pending_compactions.load(std::memory_order_acquire) <
-            kMaxPendingCompactions &&
-          _state->non_empty_refreshes.fetch_add(1, std::memory_order_acq_rel) >=
-            kMaxNonEmptyRefreshes) {
-        inverted_index_storage->ScheduleCompaction(_compaction_interval_msec);
-        _state->non_empty_refreshes.store(0, std::memory_order_release);
-      }
-    }
-    ScheduleContinue(std::move(inverted_index_storage), _refresh_interval_msec);
-  } else {
-    _state->non_empty_refreshes.store(0, std::memory_order_release);
-    _state->noop_refresh_count.fetch_add(1, std::memory_order_release);
-    for (auto count = _state->pending_refreshes.load(std::memory_order_acquire);
-         count < 1;) {
-      if (_state->pending_refreshes.compare_exchange_weak(
-            count, 1, std::memory_order_acq_rel)) {
-        ScheduleContinue(std::move(inverted_index_storage),
-                         _refresh_interval_msec);
-        break;
-      }
-    }
-  }
+Clock::duration ToDuration(size_t msec) noexcept {
+  return std::chrono::milliseconds{msec};
 }
 
-void RefreshTask::operator()() {
-  SDB_TRACE(SEARCH, "RefreshTask started");
-  const char run_id = 0;
-  auto data = _inverted_index_storage.lock();
-  absl::Cleanup set_promise = [promise = std::move(_promise)]() mutable {
-    SDB_ASSERT(promise.Valid());
-    std::move(promise).Set();
-  };
-  SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
-  if (!data) {
-    SDB_TRACE(SEARCH, "InvertedIndexStorage ", _id, " is deleted");
-    return;
+bool ShouldStop() noexcept {
+  return lifecycle::IsStopping() || GetSearchEngine().IsStopping();
+}
+
+// Default background compaction policy (the TieredMergePolicy analog) -- this
+// is what fixes today's dead compaction: the coordinator owns the policy
+// instead of the never-assigned catalog setting that left the loop inert.
+// `Small` reduces the merge byte budget when the global slot gate is nearly
+// full so the pool keeps draining under occupancy backpressure. VACUUM keeps
+// CompactionCount{SIZE_MAX}.
+const irs::CompactionPolicy& TierPolicyNormal() {
+  static const irs::CompactionPolicy kPolicy =
+    irs::index_utils::MakePolicy(irs::index_utils::CompactionTier{});
+  return kPolicy;
+}
+
+const irs::CompactionPolicy& TierPolicySmall() {
+  static const irs::CompactionPolicy kPolicy = irs::index_utils::MakePolicy(
+    irs::index_utils::CompactionTier{.max_segments_bytes = size_t{512} << 20});
+  return kPolicy;
+}
+
+void DoRefresh(InvertedIndexStorage& idx, bool run_cleanup,
+               RefreshResult& code) {
+  SDB_IF_FAILURE("SearchRefreshTask::lockInvertedIndexStorage") {
+    SDB_THROW(ERROR_DEBUG);
   }
-  auto id = data->GetId();
-  _state->pending_refreshes.fetch_sub(1, std::memory_order_release);
-
-  auto code = RefreshResult::Undefined;
-  absl::Cleanup reschedule = [&code, data, this]() noexcept {
-    try {
-      Finalize(std::move(data), code);
-    } catch (const std::exception& ex) {
-      SDB_ERROR(SEARCH, "failed to call finalize: ", ex.what());
-    }
-  };
-
-  // reload RuntimeState
-  {
-    SDB_IF_FAILURE("SearchRefreshTask::lockInvertedIndexStorage") {
-      SDB_THROW(ERROR_DEBUG);
-    }
-    absl::ReaderMutexLock lock{data->GetMutex()};
-    auto& settings = data->GetTasksSettings();
-
-    _refresh_interval_msec = absl::Milliseconds(settings.refresh_interval_msec);
-    _compaction_interval_msec =
-      absl::Milliseconds(settings.compaction_interval_msec);
-    _cleanup_interval_step = settings.cleanup_interval_step;
-  }
-
-  // TODO(phase5-follow-up): Currently `refresh_interval_ms` defaults to 0
-  // (not set on CREATE INDEX by our DuckDB path), which disables background
-  // sync entirely -- inserts never become searchable. A synchronous
-  // Refresh() caller still expects a refresh to happen, so always refresh
-  // when `_wait` is set even if background scheduling is off.
-  if (absl::ZeroDuration() == _refresh_interval_msec && !_wait) {
-    std::move(reschedule).Cancel();
-    SDB_DEBUG(SEARCH, "sync is disabled for the index '", id.id(), "', runId '",
-              size_t(&run_id), "'");
-    return;
-  }
-
   SDB_IF_FAILURE("SearchRefreshTask::commitUnsafe") { SDB_THROW(ERROR_DEBUG); }
-  auto [res, timeMs] = data->RefreshUnsafe(_wait, nullptr, code);
-
-  if (res.ok()) {
-    SDB_TRACE(SEARCH, "successful sync of Search index '", id.id(),
-              "', run id '", size_t(&run_id), "', took: ", timeMs, "ms");
-  } else {
-    SDB_WARN(SEARCH, "error after running for ", timeMs,
-             "ms while refreshing Search index '", id.id(), "', run id '",
-             size_t(&run_id), "': ", res.errorNumber(), " ",
-             res.errorMessage());
-  }
-  if (_cleanup_interval_step &&
-      ++_cleanup_interval_count >= _cleanup_interval_step) {  // if enabled
-    _cleanup_interval_count = 0;
-    SDB_IF_FAILURE("SearchRefreshTask::cleanupUnsafe") {
-      SDB_THROW(ERROR_DEBUG);
-    }
-
-    auto [res, timeMs] = data->CleanupUnsafe();
-
+  {
+    metrics::Scoped guard{metrics::Gauge::RefreshActive};
+    code = RefreshResult::Undefined;
+    auto [res, time_ms] = idx.RefreshUnsafe(/*wait=*/false, nullptr, code);
     if (res.ok()) {
-      SDB_TRACE(SEARCH, "successful cleanup of Search index '", id.id(),
-                "', run id '", size_t(&run_id), "', took: ", timeMs, "ms");
+      SDB_TRACE(SEARCH, "successful sync of Search index '", idx.GetId().id(),
+                "', took: ", time_ms, "ms");
     } else {
-      SDB_WARN(SEARCH, "error after running for ", timeMs,
-               "ms while cleaning up Search index '", id.id(), "', run id '",
-               size_t(&run_id), "': ", res.errorNumber(), " ",
-               res.errorMessage());
+      SDB_WARN(SEARCH, "error after running for ", time_ms,
+               "ms while refreshing Search index '", idx.GetId().id(),
+               "': ", res.errorNumber(), " ", res.errorMessage());
     }
+  }
+  if (!run_cleanup) {
+    return;
+  }
+  SDB_IF_FAILURE("SearchRefreshTask::cleanupUnsafe") { SDB_THROW(ERROR_DEBUG); }
+  metrics::Scoped guard{metrics::Gauge::CleanupActive};
+  auto [res, time_ms] = idx.CleanupUnsafe();
+  if (res.ok()) {
+    SDB_TRACE(SEARCH, "successful cleanup of Search index '", idx.GetId().id(),
+              "', took: ", time_ms, "ms");
+  } else {
+    SDB_WARN(SEARCH, "error after running for ", time_ms,
+             "ms while cleaning up Search index '", idx.GetId().id(),
+             "': ", res.errorNumber(), " ", res.errorMessage());
   }
 }
 
-void CompactionTask::operator()() {
-  SDB_TRACE(SEARCH, "CompactionTask started");
-  const char run_id = 0;
-  auto data = _inverted_index_storage.lock();
-  absl::Cleanup set_promise = [promise = std::move(_promise)]() mutable {
-    std::move(promise).Set();
-  };
-  SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
-  if (!data) {
-    SDB_WARN(SEARCH, "CompactionTask: inverted index storage is deleted");
-    return;
-  }
-  auto id = data->GetId();
-  _state->pending_compactions.fetch_sub(1, std::memory_order_release);
-
-  absl::Cleanup reschedule = [this, data]() mutable noexcept {
-    try {
-      for (auto count =
-             _state->pending_compactions.load(std::memory_order_acquire);
-           count < 1;) {
-        if (_state->pending_compactions.compare_exchange_weak(
-              count, count + 1, std::memory_order_acq_rel)) {
-          ScheduleContinue(std::move(data), _compaction_interval_msec);
-          break;
-        }
-      }
-    } catch (const std::exception& ex) {
-      SDB_ERROR(SEARCH, "failed to reschedule: ", ex.what());
-    }
-  };
-
-  // reload RuntimeState
-  {
-    SDB_IF_FAILURE("SearchCompactionTask::lockInvertedIndexStorage") {
-      SDB_THROW(ERROR_DEBUG);
-    }
-
-    absl::ReaderMutexLock lock{data->GetMutex()};
-    auto& settings = data->GetTasksSettings();
-
-    _compaction_policy = settings.compaction_policy;
-    _compaction_interval_msec =
-      absl::Milliseconds(settings.compaction_interval_msec);
-  }
-  if (absl::ZeroDuration() == _compaction_interval_msec ||
-      !_compaction_policy) {
-    std::move(reschedule).Cancel();
-
-    SDB_DEBUG(SEARCH, "compaction is disabled for the index '", id.id(),
-              "', runId '", size_t(&run_id), "'");
-    return;
-  }
-  static constexpr size_t kMaxNoopRefreshes = 10;
-  static constexpr size_t kMaxNoopCompactions = 10;
-  if (_state->noop_refresh_count.load(std::memory_order_acquire) <
-        kMaxNoopRefreshes &&
-      _state->noop_compaction_count.load(std::memory_order_acquire) <
-        kMaxNoopCompactions) {
-    _state->pending_compactions.fetch_add(1, std::memory_order_release);
-    ScheduleContinue(std::move(data), _compaction_interval_msec);
-    std::move(reschedule).Cancel();
+bool DoCompaction(InvertedIndexStorage& idx,
+                  const irs::CompactionPolicy& policy) {
+  SDB_IF_FAILURE("SearchCompactionTask::lockInvertedIndexStorage") {
+    SDB_THROW(ERROR_DEBUG);
   }
   SDB_IF_FAILURE("SearchCompactionTask::compactUnsafe") {
     SDB_THROW(ERROR_DEBUG);
   }
-
-  bool empty_compaction = false;
-  const auto [res, timeMs] =
-    data->CompactUnsafe(_compaction_policy, _progress, empty_compaction);
-
-  if (res.ok()) {
-    if (empty_compaction) {
-      _state->noop_compaction_count.fetch_add(1, std::memory_order_release);
-    } else {
-      _state->noop_compaction_count.store(0, std::memory_order_release);
-    }
-    SDB_TRACE(SEARCH, "successful compaction of Search index '", id.id(),
-              "', run id '", size_t(&run_id), "', took: ", timeMs, "ms");
-  } else {
-    SDB_DEBUG(SEARCH, "error after running for ", timeMs,
-              "ms while compacting Search index '", id.id(), "', run id '",
-              size_t(&run_id), "': ", res.errorNumber(), " ",
-              res.errorMessage());
+  // Pin the index from a fresh catalog snapshot for the whole merge: the merge
+  // encodes the new segment against THIS DDL view (the snapshot keeps it alive,
+  // so a concurrent DROP cannot dangle it). A merge that finds the index
+  // already dropped has nothing to compact -- the drop task gates on
+  // _data.expired() and waits for this storage to be released.
+  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
+  auto index = snapshot->GetObject<catalog::InvertedIndex>(idx.GetId());
+  if (!index) {
+    return false;
   }
+  metrics::Scoped guard{metrics::Gauge::CompactionActive};
+  bool empty_compaction = false;
+  auto [res, time_ms] = idx.CompactUnsafe(
+    policy, [] { return !ShouldStop(); }, empty_compaction, index.get());
+  if (res.ok()) {
+    SDB_TRACE(SEARCH, "successful compaction of Search index '",
+              idx.GetId().id(), "', took: ", time_ms, "ms");
+  } else {
+    SDB_DEBUG(SEARCH, "error after running for ", time_ms,
+              "ms while compacting Search index '", idx.GetId().id(),
+              "': ", res.errorNumber(), " ", res.errorMessage());
+  }
+  return !empty_compaction;
+}
+
+// Fan out one CompactUnsafe per currently-free global slot. Each merge is
+// independent: the tier policy + the writer's _compacting exclusion set hand
+// every concurrent call a disjoint candidate window (overlap -> Fail -> no
+// work), so concurrency is bounded only by the slot gate; the smaller policy
+// when the gate is full keeps the pool draining. noexcept on purpose: a slot is
+// acquired here and released only by its child, so if Run/push_back threw (OOM)
+// the slot would leak into the gate count -- fail fast instead.
+std::vector<yaclib::FutureOn<bool>> LaunchCompactionFanout(
+  BackgroundScheduler& s, SearchEngine& engine,
+  const std::weak_ptr<InvertedIndexStorage>& weak) noexcept {
+  std::vector<yaclib::FutureOn<bool>> runs;
+  while (engine.TryAcquireCompaction()) {
+    const auto& policy = engine.FreeCompactionSlots() == 0 ? TierPolicySmall()
+                                                           : TierPolicyNormal();
+    runs.push_back(s.Run([&, weak] {
+      absl::Cleanup release = [&] { engine.ReleaseCompaction(); };
+      if (ShouldStop()) {
+        return false;
+      }
+      auto idx = weak.lock();
+      if (!idx) {
+        return false;
+      }
+      SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
+      return DoCompaction(*idx, policy);
+    }));
+  }
+  return runs;
+}
+
+// Wait up to `total` for the timer OR a NudgeCompaction. OneShotEvent is a poor
+// fit (one-shot, non-thread-safe Reset, lost-wakeup across iterations with many
+// producers), so we poll the per-index generation in bounded slices -- the
+// fallback the design explicitly allows. Returns early on a nudge or on stop.
+yaclib::Future<> WaitForCompactionTrigger(
+  BackgroundScheduler& s, std::weak_ptr<InvertedIndexStorage> weak,
+  uint64_t base_gen, Clock::duration total) {
+  auto remaining = total;
+  while (remaining > Clock::duration::zero()) {
+    const auto slice = std::min(remaining, kNudgePollSlice);
+    co_await s.Delay(slice);
+    if (ShouldStop()) {
+      break;
+    }
+    auto idx = weak.lock();
+    if (!idx) {
+      break;
+    }
+    const bool nudged = idx->CompactionGeneration() != base_gen;
+    idx.reset();
+    if (nudged) {
+      break;
+    }
+    remaining -= slice;
+  }
+  co_return {};
+}
+
+}  // namespace
+
+yaclib::Future<> RefreshLoop(std::weak_ptr<InvertedIndexStorage> weak) {
+  auto& s = BackgroundScheduler::instance();
+  size_t cleanup_count = 0;
+  int stretch = 0;
+  try {
+    for (;;) {
+      auto idx = weak.lock();
+      if (!idx) {
+        SDB_TRACE(SEARCH,
+                  "InvertedIndexStorage is deleted, ending refresh loop");
+        break;
+      }
+      const auto& settings = idx->GetTasksSettings();
+      const auto interval = ToDuration(settings.refresh_interval_msec);
+      const auto cleanup_step = settings.cleanup_interval_step;
+      const bool enabled = interval > Clock::duration::zero();
+      idx.reset();
+
+      const auto delay =
+        enabled ? interval + interval * stretch : kDisabledPoll;
+      co_await s.Delay(delay);
+      if (ShouldStop()) {
+        break;
+      }
+      if (!enabled) {
+        continue;
+      }
+
+      idx = weak.lock();
+      if (!idx) {
+        break;
+      }
+
+      SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
+
+      const bool stale = idx->StalePressure() >= kStalePressureCleanup;
+      const bool periodic = cleanup_step && ++cleanup_count >= cleanup_step;
+      const bool run_cleanup = stale || periodic;
+      if (run_cleanup) {
+        cleanup_count = 0;
+        idx->ClearStalePressure();
+      }
+
+      co_await yaclib::On(s.executor());
+      if (ShouldStop()) {
+        break;
+      }
+      RefreshResult code = RefreshResult::Undefined;
+      DoRefresh(*idx, run_cleanup, code);
+
+      switch (code) {
+        case RefreshResult::Done:
+          stretch = 0;
+          idx->NudgeCompaction();
+          break;
+        case RefreshResult::NoChanges:
+          stretch = std::min(kMaxRefreshStretch,
+                             stretch == 0 ? 1 : stretch + stretch / 2 + 1);
+          break;
+        default:
+          break;
+      }
+    }
+  } catch (const std::exception& ex) {
+    SDB_ERROR(SEARCH, "refresh loop terminated by exception: ", ex.what());
+  }
+  co_return {};
+}
+
+yaclib::Future<> CompactionCoordinator(
+  std::weak_ptr<InvertedIndexStorage> weak) {
+  auto& s = BackgroundScheduler::instance();
+  auto& engine = GetSearchEngine();
+  auto backoff = Clock::duration::zero();
+  bool cascade = false;
+  try {
+    for (;;) {
+      auto idx = weak.lock();
+      if (!idx) {
+        SDB_TRACE(SEARCH,
+                  "InvertedIndexStorage is deleted, ending compaction loop");
+        break;
+      }
+      const auto& settings = idx->GetTasksSettings();
+      const auto interval = ToDuration(settings.compaction_interval_msec);
+      const bool enabled = interval > Clock::duration::zero();
+      const auto base_gen = idx->CompactionGeneration();
+      idx.reset();
+
+      if (!enabled) {
+        cascade = false;
+        co_await s.Delay(kDisabledPoll);
+        if (ShouldStop()) {
+          break;
+        }
+        continue;
+      }
+
+      // A productive tick re-evaluates immediately (Lucene MERGE_FINISHED
+      // cascade); otherwise wait the interval+backoff or a refresh nudge.
+      if (!cascade) {
+        co_await WaitForCompactionTrigger(s, weak, base_gen,
+                                          interval + backoff);
+        if (ShouldStop()) {
+          break;
+        }
+      }
+      cascade = false;
+
+      auto runs = LaunchCompactionFanout(s, engine, weak);
+      if (runs.empty()) {
+        // Gate full: every slot is busy elsewhere; wait for one to free up.
+        backoff = backoff == Clock::duration::zero() ? interval : backoff * 2;
+        backoff = std::min(backoff, kMaxCompactionBackoff);
+        continue;
+      }
+
+      // Join the fan-out before looping/returning so no detached child touches
+      // the storage after this coroutine completes.
+      co_await yaclib::Await(runs.begin(), runs.end());
+
+      bool produced = false;
+      for (auto& run : runs) {
+        const auto r = std::move(run).Touch();
+        produced |= r.State() == yaclib::ResultState::Value && r.Value();
+      }
+      if (produced) {
+        // Re-evaluate at once and raise stale pressure so the refresh loop's
+        // cleanup tail reclaims the now-unreferenced merge inputs.
+        backoff = Clock::duration::zero();
+        cascade = true;
+        if (auto live = weak.lock()) {
+          live->BumpStalePressure();
+        }
+      } else {
+        backoff = backoff == Clock::duration::zero() ? interval : backoff * 2;
+        backoff = std::min(backoff, kMaxCompactionBackoff);
+      }
+    }
+  } catch (const std::exception& ex) {
+    SDB_ERROR(SEARCH, "compaction loop terminated by exception: ", ex.what());
+  }
+  co_return {};
 }
 
 }  // namespace sdb::search

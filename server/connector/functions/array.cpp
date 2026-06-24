@@ -41,32 +41,32 @@ int32_t CountListDepth(const duckdb::LogicalType& type) {
   return depth;
 }
 
-// --- array_ndims ---
-
-struct ArrayNdimsBindData : public duckdb::FunctionData {
+struct SimpleIntBindData : public duckdb::FunctionData {
   int32_t ndims;
 
-  explicit ArrayNdimsBindData(int32_t ndims) : ndims{ndims} {}
+  explicit SimpleIntBindData(int32_t ndims) : ndims{ndims} {}
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
-    return duckdb::make_uniq<ArrayNdimsBindData>(ndims);
+    return duckdb::make_uniq<SimpleIntBindData>(ndims);
   }
 
   bool Equals(const duckdb::FunctionData& other) const final {
-    return ndims == other.Cast<ArrayNdimsBindData>().ndims;
+    return ndims == other.Cast<SimpleIntBindData>().ndims;
   }
 };
+
+// --- array_ndims ---
 
 duckdb::unique_ptr<duckdb::FunctionData> ArrayNdimsBind(
   duckdb::BindScalarFunctionInput& input) {
   const auto& type = input.GetArguments()[0]->GetReturnType();
-  return duckdb::make_uniq<ArrayNdimsBindData>(CountListDepth(type));
+  return duckdb::make_uniq<SimpleIntBindData>(CountListDepth(type));
 }
 
 void ArrayNdimsFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                         duckdb::Vector& result) {
   auto& bind_data = state.expr.Cast<duckdb::BoundFunctionExpression>()
-                      .bind_info->Cast<ArrayNdimsBindData>();
+                      .bind_info->Cast<SimpleIntBindData>();
   auto count = args.size();
   auto& input = args.data[0];
 
@@ -95,30 +95,16 @@ void ArrayNdimsFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 
 // --- array_dims ---
 
-struct ArrayDimsBindData : public duckdb::FunctionData {
-  int32_t ndims;
-
-  explicit ArrayDimsBindData(int32_t ndims) : ndims{ndims} {}
-
-  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
-    return duckdb::make_uniq<ArrayDimsBindData>(ndims);
-  }
-
-  bool Equals(const duckdb::FunctionData& other) const final {
-    return ndims == other.Cast<ArrayDimsBindData>().ndims;
-  }
-};
-
 duckdb::unique_ptr<duckdb::FunctionData> ArrayDimsBind(
   duckdb::BindScalarFunctionInput& input) {
   const auto& type = input.GetArguments()[0]->GetReturnType();
-  return duckdb::make_uniq<ArrayDimsBindData>(CountListDepth(type));
+  return duckdb::make_uniq<SimpleIntBindData>(CountListDepth(type));
 }
 
 void ArrayDimsFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                        duckdb::Vector& result) {
   auto& bind_data = state.expr.Cast<duckdb::BoundFunctionExpression>()
-                      .bind_info->Cast<ArrayDimsBindData>();
+                      .bind_info->Cast<SimpleIntBindData>();
   auto ndims = bind_data.ndims;
   auto count = args.size();
 

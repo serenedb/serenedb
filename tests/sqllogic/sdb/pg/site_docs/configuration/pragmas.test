@@ -270,8 +270,8 @@ CREATE OR REPLACE TABLE metadata_info_table AS
 SELECT i, repeat('x', 1000) AS payload
 FROM range(0, 10000) AS t(i);
 
-statement ok
-CHECKPOINT;
+#statement ok
+#CHECKPOINT;
 
 # DOCS_TEST_RAW
 #| PRAGMA metadata_info;

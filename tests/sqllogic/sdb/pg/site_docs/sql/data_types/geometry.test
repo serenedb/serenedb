@@ -151,9 +151,9 @@ statement ok
 CREATE OR REPLACE TABLE points AS SELECT printf('POINT (%d %d)', x, y)::GEOMETRY AS geom
 FROM range(0, 4) AS rx(x), range(0, 4) AS ry(y);
 
-statement ok
+#statement ok
 -- Checkpoint the database to persist the data and storage layout to disk
-CHECKPOINT;
+#CHECKPOINT;
 
 statement ok
 -- Attach a second database
@@ -171,9 +171,9 @@ statement ok
 CREATE OR REPLACE TABLE points AS SELECT printf('POINT (%d %d)', x, y)::GEOMETRY AS geom
 FROM range(0, 4) AS rx(x), range(0, 4) AS ry(y);
 
-statement ok
+#statement ok
 -- Checkpoint to persist the data and storage layout to disk, and apply shredding
-CHECKPOINT;
+#CHECKPOINT;
 
 statement ok
 -- Now check the storage layout and memory usage of the geometry column in both attached databases

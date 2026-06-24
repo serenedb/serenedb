@@ -90,7 +90,7 @@
           "flag": "--log_level",
           "type": "",
           "defaultValue": "info",
-          "description": "DuckDB minimum log severity at process start: trace | debug | info | warning | error | fatal. Override at runtime with `SET logging_level = '<value>'`.",
+          "description": "Minimum log severity at process start: trace | debug | info | warning | error | fatal. Override at runtime with `SET logging_level = '<value>'`.",
           "source": "log",
           "category": "log",
           "categoryLabel": "Logging"
@@ -100,7 +100,7 @@
           "flag": "--log_storage",
           "type": "",
           "defaultValue": "stdout",
-          "description": "DuckDB log destination at process start: 'stdout' (default; container log drivers capture it), 'memory' (queryable via SELECT * FROM duckdb_logs()), or 'file://<path>'. Override at runtime with `SET logging_storage = '<value>'`.",
+          "description": "Log destination at process start: 'stdout' (default; container log drivers capture it), 'memory' (queryable via SELECT * FROM duckdb_logs()), or 'file://<path>'. Override at runtime with `SET logging_storage = '<value>'`.",
           "source": "log",
           "category": "log",
           "categoryLabel": "Logging"
@@ -312,7 +312,7 @@
           "flag": "--cpu_threads",
           "type": "",
           "defaultValue": "0",
-          "description": "DuckDB executor pool size at process start. 0 = let DuckDB auto-detect from cpu_count. The SQL-level `SET threads = N` continues to win at runtime.",
+          "description": "Executor pool size at process start. 0 = let DuckDB auto-detect from cpu_count. The SQL-level `SET threads = N` continues to win at runtime.",
           "source": "server/query/server_engine.cpp",
           "category": "server/query/server_engine.cpp",
           "categoryLabel": "server/query/server_engine.cpp"

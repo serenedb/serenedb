@@ -266,7 +266,15 @@ COPY (
            AS variant_nested,
          {'outer': {'mid': {'a': rnd(i, 11)::DOUBLE,
                             'b': 'n-' || (i % 100)::VARCHAR}}}::VARIANT
-           AS variant_nested_f64
+           AS variant_nested_f64,
+         CASE WHEN i % 2 = 0
+           THEN (i % 1000)::INTEGER::UNION(num INTEGER, str VARCHAR)
+           ELSE ('str-' || (i % 1024)::VARCHAR)::UNION(num INTEGER, str VARCHAR)
+         END AS union_is,
+         CASE WHEN i % 2 = 0
+           THEN rnd(i, 12)::DOUBLE::UNION(d DOUBLE, str VARCHAR)
+           ELSE ('s-' || (i % 100)::VARCHAR)::UNION(d DOUBLE, str VARCHAR)
+         END AS union_fs
   FROM range(${N}) t(i)
 ) TO '${PQ_SQL_PATH}' (FORMAT parquet);
 "
@@ -337,7 +345,8 @@ INCLUDE (
   i8, i16, i32, i64, f32, f64, s, bool_col,
   arr_i32, arr_f64, lst_i32, struct_basic, struct_f64,
   map_i32, lst_struct, deep, variant_obj, variant_f64, variant_messy,
-  variant_nested, variant_nested_f64
+  variant_nested, variant_nested_f64,
+  union_is, union_fs
 );
 "
 fi
@@ -404,6 +413,8 @@ QUERIES=(
 	"variantMsg|SUM(variant_messy.a::DOUBLE)"
 	"variantNest|SUM(variant_nested.outer.mid.a::INTEGER) + SUM(length(variant_nested.outer.mid.b::VARCHAR))"
 	"variantNestF|SUM(variant_nested_f64.outer.mid.a::DOUBLE) + SUM(length(variant_nested_f64.outer.mid.b::VARCHAR))"
+	"union|SUM(union_extract(union_is, 'num')) + SUM(length(union_extract(union_is, 'str')))"
+	"unionF|SUM(union_extract(union_fs, 'd')) + SUM(length(union_extract(union_fs, 'str')))"
 )
 
 # Three timing modes, picked by env.  In every mode the hot number is

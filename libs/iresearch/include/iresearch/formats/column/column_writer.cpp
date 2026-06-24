@@ -614,6 +614,7 @@ void FlushNode(WriteContext& write_ctx, const duckdb::LogicalType& type,
       MarkFullyShredded(shredded_chunks, *layout.shredded_node);
       return;
     }
+    case duckdb::LogicalTypeId::UNION:
     case duckdb::LogicalTypeId::STRUCT: {
       if (!skip_validity) {
         CompressColumn(write_ctx, validity_type, chunks, row_count, row_start,

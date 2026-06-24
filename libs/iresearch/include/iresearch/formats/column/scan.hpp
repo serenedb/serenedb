@@ -235,6 +235,7 @@ void MaterializeNode(const ColumnReader& reader, MaterializeState& state,
       }
       return;
     }
+    case duckdb::LogicalTypeId::UNION:
     case duckdb::LogicalTypeId::STRUCT: {
       auto& entries = duckdb::StructVector::GetEntries(out_vec);
       SDB_ASSERT(entries.size() == reader.StructFieldCount());

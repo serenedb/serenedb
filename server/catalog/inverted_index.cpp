@@ -320,6 +320,7 @@ Result Validate(std::string_view label, const duckdb::LogicalType& type) {
     case STRUCT:
     case MAP:
     case VARIANT:
+    case UNION:
       return {};
     default:
       return {ERROR_BAD_PARAMETER,

@@ -225,11 +225,11 @@ DROP ROLE obs_vedernikoff;
 # --- Actor dimension: who may issue DROP ROLE ---
 
 statement ok
-CREATE ROLE obs_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE obs_vedernikoff LOGIN;
 
 
 statement ok
-CREATE ROLE obs_mop LOGIN PASSWORD 'pw';
+CREATE ROLE obs_mop LOGIN;
 
 
 # A plain (non-CREATEROLE) role cannot drop itself: the role-admin check fires
@@ -263,7 +263,7 @@ DROP ROLE obs_mop;
 # A CREATEROLE admin gets ADMIN on every role it creates, so it passes the
 # role-admin check -- but the ownership dependency still blocks the drop.
 statement ok
-CREATE ROLE obs_babsky LOGIN PASSWORD 'pw';
+CREATE ROLE obs_babsky LOGIN;
 
 
 statement ok

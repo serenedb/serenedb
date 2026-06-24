@@ -27,7 +27,7 @@ INSERT INTO agg_clickclack VALUES (1, 10, 100), (2, 20, 200), (3, 30, 300);
 
 
 statement ok
-CREATE ROLE agg_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE agg_vedernikoff LOGIN;
 
 
 # Granted SELECT on (id, av) only -- secret is ungranted throughout.

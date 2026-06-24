@@ -22,7 +22,7 @@ INSERT INTO go_mop_deadinside VALUES (1, 'clickclack'), (2, 'iceberg');
 
 
 statement ok
-CREATE ROLE go_rev_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE go_rev_vedernikoff LOGIN;
 
 
 # ---- Grant SELECT WITH GRANT OPTION: both the privilege and its option held.

@@ -42,7 +42,7 @@ DROP ROLE IF EXISTS isr_adm_babsky;
 # ----------------------------------------------------------------------
 
 statement ok
-CREATE ROLE isr_adm_androed LOGIN PASSWORD 'pw';
+CREATE ROLE isr_adm_androed LOGIN;
 
 
 statement ok

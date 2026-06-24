@@ -30,7 +30,7 @@ CREATE TABLE mb_mop_pudge (id int, amount int);
 
 
 statement ok
-CREATE ROLE mb_mop_negaimorit LOGIN PASSWORD 'pw';
+CREATE ROLE mb_mop_negaimorit LOGIN;
 
 
 statement ok

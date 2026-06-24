@@ -26,15 +26,15 @@ DROP ROLE IF EXISTS xog_j_kostya;
 
 
 statement ok
-CREATE ROLE xog_j_mop LOGIN PASSWORD 'pw';
+CREATE ROLE xog_j_mop LOGIN;
 
 
 statement ok
-CREATE ROLE xog_j_babsky LOGIN PASSWORD 'pw';
+CREATE ROLE xog_j_babsky LOGIN;
 
 
 statement ok
-CREATE ROLE xog_j_kostya LOGIN PASSWORD 'pw';
+CREATE ROLE xog_j_kostya LOGIN;
 
 
 statement ok

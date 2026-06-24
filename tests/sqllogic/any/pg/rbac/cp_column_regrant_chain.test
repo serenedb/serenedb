@@ -49,15 +49,15 @@ INSERT INTO crg_iceberg VALUES (1, 2, 3);
 
 
 statement ok
-CREATE ROLE crg_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE crg_vedernikoff LOGIN;
 
 
 statement ok
-CREATE ROLE crg_babsky LOGIN PASSWORD 'pw';
+CREATE ROLE crg_babsky LOGIN;
 
 
 statement ok
-CREATE ROLE crg_mop LOGIN PASSWORD 'pw';
+CREATE ROLE crg_mop LOGIN;
 
 
 # === r1 receives the column SELECT WITH GRANT OPTION ===

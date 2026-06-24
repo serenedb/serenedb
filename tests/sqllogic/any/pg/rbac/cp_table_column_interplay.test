@@ -44,7 +44,7 @@ INSERT INTO tci_iceberg VALUES (1, 2, 3);
 
 
 statement ok
-CREATE ROLE tci_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE tci_vedernikoff LOGIN;
 
 
 statement ok
@@ -140,7 +140,7 @@ INSERT INTO tci_clickclack VALUES (10, 20, 30);
 
 
 statement ok
-CREATE ROLE tci_babsky LOGIN PASSWORD 'pw';
+CREATE ROLE tci_babsky LOGIN;
 
 
 # Column grant first: relacl carries no grantee element yet, only attacl does.
@@ -230,7 +230,7 @@ CREATE TABLE tci_mop (clickclack int, babsky int, mop int);
 
 
 statement ok
-CREATE ROLE tci_kalganov LOGIN PASSWORD 'pw';
+CREATE ROLE tci_kalganov LOGIN;
 
 
 statement ok

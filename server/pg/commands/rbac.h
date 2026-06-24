@@ -38,10 +38,12 @@ struct CreateRoleOptions {
   bool login = false;
   bool superuser = false;
   bool inherit = true;
+  // PASSWORD / CONNECTION LIMIT / VALID UNTIL are parsed but unsupported: the
+  // command rejects them when given (auth + connection limits are not
+  // modelled).
   bool has_password = false;
-  std::string password;
-  int conn_limit = -1;      // pg_authid.rolconnlimit (-1 = unlimited)
-  std::string valid_until;  // empty -> NULL (no expiry)
+  bool has_conn_limit = false;
+  bool has_valid_until = false;
 };
 
 struct MemberOptions {
@@ -62,12 +64,12 @@ struct AlterRoleOptions {
   int createdb = -1;
   int createrole = -1;
   int inherit = -1;
-  bool set_password = false;
-  bool password_null = false;
-  std::string password;
-  int conn_limit = -2;  // -2 unspecified (-1 = unlimited)
-  bool set_valid_until = false;
-  std::string valid_until;  // empty + set_valid_until -> NULL
+  // PASSWORD / CONNECTION LIMIT / VALID UNTIL are parsed but unsupported: the
+  // command rejects them when given (auth + connection limits are not
+  // modelled).
+  bool has_password = false;
+  bool has_conn_limit = false;
+  bool has_valid_until = false;
 };
 
 void AlterRole(ConnectionContext& ctx, std::string_view name,

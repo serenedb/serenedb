@@ -33,15 +33,15 @@ INSERT INTO cmg_iceberg VALUES (10, 20);
 
 
 statement ok
-CREATE ROLE cmg_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE cmg_vedernikoff LOGIN;
 
 
 statement ok
-CREATE ROLE cmg_babsky LOGIN PASSWORD 'pw';
+CREATE ROLE cmg_babsky LOGIN;
 
 
 statement ok
-CREATE ROLE cmg_clickclack LOGIN PASSWORD 'pw';
+CREATE ROLE cmg_clickclack LOGIN;
 
 
 # Two grantees read the same column; one of them also gets UPDATE on it.

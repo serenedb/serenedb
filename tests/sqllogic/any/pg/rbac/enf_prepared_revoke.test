@@ -24,7 +24,7 @@ INSERT INTO mop_ledger VALUES (1, 10), (2, 20), (3, 30);
 
 
 statement ok
-CREATE ROLE ved_reader LOGIN PASSWORD 'pw';
+CREATE ROLE ved_reader LOGIN;
 
 
 statement ok

@@ -39,7 +39,7 @@ DROP ROLE IF EXISTS doc_kostya;
 
 
 statement ok
-CREATE ROLE doc_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE doc_vedernikoff LOGIN;
 
 
 statement ok
@@ -99,7 +99,7 @@ DROP TABLE doc_t;
 # =====================================================================
 
 statement ok
-CREATE ROLE doc_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE doc_vedernikoff LOGIN;
 
 
 statement ok
@@ -137,7 +137,7 @@ DROP ROLE doc_vedernikoff;
 # =====================================================================
 
 statement ok
-CREATE ROLE doc_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE doc_vedernikoff LOGIN;
 
 
 statement ok
@@ -183,7 +183,7 @@ DROP ROLE doc_kostya;
 # =====================================================================
 
 statement ok
-CREATE ROLE doc_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE doc_vedernikoff LOGIN;
 
 
 statement ok
@@ -239,7 +239,7 @@ DROP ROLE doc_vedernikoff;
 # =====================================================================
 
 statement ok
-CREATE ROLE doc_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE doc_vedernikoff LOGIN;
 
 
 statement ok

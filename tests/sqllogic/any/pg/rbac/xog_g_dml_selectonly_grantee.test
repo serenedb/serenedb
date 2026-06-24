@@ -24,7 +24,7 @@ INSERT INTO xog_g_clickclack VALUES (1, 'iceberg'), (2, 'mop');
 
 
 statement ok
-CREATE ROLE xog_g_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE xog_g_vedernikoff LOGIN;
 
 
 statement ok

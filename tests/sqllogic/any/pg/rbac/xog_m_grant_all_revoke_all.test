@@ -28,11 +28,11 @@ CREATE TABLE xog_m_clickclack (id int);
 
 
 statement ok
-CREATE ROLE xog_m_all LOGIN PASSWORD 'pw';
+CREATE ROLE xog_m_all LOGIN;
 
 
 statement ok
-CREATE ROLE xog_m_list LOGIN PASSWORD 'pw';
+CREATE ROLE xog_m_list LOGIN;
 
 
 # GRANT ALL to one role, the explicit seven to the other.

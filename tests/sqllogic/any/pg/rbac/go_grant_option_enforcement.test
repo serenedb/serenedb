@@ -32,15 +32,15 @@ CREATE TABLE goe_iceberg (id int);
 
 
 statement ok
-CREATE ROLE goe_mop LOGIN PASSWORD 'pw';
+CREATE ROLE goe_mop LOGIN;
 
 
 statement ok
-CREATE ROLE goe_clickclack LOGIN PASSWORD 'pw';
+CREATE ROLE goe_clickclack LOGIN;
 
 
 statement ok
-CREATE ROLE goe_babsky LOGIN PASSWORD 'pw';
+CREATE ROLE goe_babsky LOGIN;
 
 
 # mop gets SELECT WITH GRANT OPTION; clickclack gets plain UPDATE (no option).

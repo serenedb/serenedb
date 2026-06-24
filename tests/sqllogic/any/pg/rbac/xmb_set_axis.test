@@ -29,7 +29,7 @@ CREATE ROLE xmb_sax_iceberg;
 
 
 statement ok
-CREATE ROLE xmb_sax_mop LOGIN PASSWORD 'pw';
+CREATE ROLE xmb_sax_mop LOGIN;
 
 
 # ---- Default edge: MEMBER, USAGE, and SET all true ----

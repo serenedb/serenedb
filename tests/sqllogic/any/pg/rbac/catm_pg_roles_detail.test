@@ -117,8 +117,18 @@ count
 # NOSUPERUSER spelled out is identical to the default: rolsuper f.
 # ----------------------------------------------------------------------
 
+# PostgreSQL accepts PASSWORD (stored, never exposed); serenedb rejects it. The
+# role itself was already created without a password, so it survives either way.
+skipif serenedb
 statement ok
 ALTER ROLE catm_kostya_super PASSWORD 'mopclickclack';
+
+
+onlyif serenedb
+statement error
+ALTER ROLE catm_kostya_super PASSWORD 'mopclickclack';
+----
+db error: ERROR: PASSWORD is not supported<slt:ignore>
 
 
 # ALTER ROLE ... PASSWORD does not change the visible attribute columns: the

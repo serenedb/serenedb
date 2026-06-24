@@ -37,19 +37,19 @@ INSERT INTO iud_iceberg VALUES (1, 10), (2, 20), (3, 30);
 
 
 statement ok
-CREATE ROLE iud_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE iud_vedernikoff LOGIN;
 
 
 statement ok
-CREATE ROLE iud_babsky LOGIN PASSWORD 'pw';
+CREATE ROLE iud_babsky LOGIN;
 
 
 statement ok
-CREATE ROLE iud_mop LOGIN PASSWORD 'pw';
+CREATE ROLE iud_mop LOGIN;
 
 
 statement ok
-CREATE ROLE iud_clickclack LOGIN PASSWORD 'pw';
+CREATE ROLE iud_clickclack LOGIN;
 
 
 # === INSERT-only: vedernikoff ===

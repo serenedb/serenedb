@@ -27,7 +27,7 @@ DROP ROLE IF EXISTS xao_otp_mop;
 
 
 statement ok
-CREATE ROLE xao_otp_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE xao_otp_vedernikoff LOGIN;
 
 
 statement ok

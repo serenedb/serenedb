@@ -63,7 +63,7 @@ CREATE TABLE cp_iceberg (id int, payload text, tagline text, headcount int);
 # ============================================================================
 
 statement ok
-CREATE ROLE cp_clickclack LOGIN PASSWORD 'pw';
+CREATE ROLE cp_clickclack LOGIN;
 
 
 statement ok
@@ -85,7 +85,7 @@ t	t	t	t
 # ============================================================================
 
 statement ok
-CREATE ROLE cp_kostya LOGIN PASSWORD 'pw';
+CREATE ROLE cp_kostya LOGIN;
 
 
 statement ok

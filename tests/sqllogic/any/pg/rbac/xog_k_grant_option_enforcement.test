@@ -32,19 +32,19 @@ CREATE TABLE xog_k_mop (id int);
 
 
 statement ok
-CREATE ROLE xog_k_go LOGIN PASSWORD 'pw';
+CREATE ROLE xog_k_go LOGIN;
 
 
 statement ok
-CREATE ROLE xog_k_no LOGIN PASSWORD 'pw';
+CREATE ROLE xog_k_no LOGIN;
 
 
 statement ok
-CREATE ROLE xog_k_t1 LOGIN PASSWORD 'pw';
+CREATE ROLE xog_k_t1 LOGIN;
 
 
 statement ok
-CREATE ROLE xog_k_t2 LOGIN PASSWORD 'pw';
+CREATE ROLE xog_k_t2 LOGIN;
 
 
 statement ok

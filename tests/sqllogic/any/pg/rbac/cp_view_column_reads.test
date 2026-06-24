@@ -53,11 +53,11 @@ CREATE VIEW vcr_clickclack AS SELECT a, b FROM vcr_iceberg;
 
 
 statement ok
-CREATE ROLE vcr_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE vcr_vedernikoff LOGIN;
 
 
 statement ok
-CREATE ROLE vcr_babsky LOGIN PASSWORD 'pw';
+CREATE ROLE vcr_babsky LOGIN;
 
 
 # === Base table is enforced per referenced relation ===

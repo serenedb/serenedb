@@ -24,7 +24,7 @@ CREATE TABLE fkr_roster (id int PRIMARY KEY, badge int);
 
 
 statement ok
-CREATE ROLE fkr_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE fkr_vedernikoff LOGIN;
 
 
 # vedernikoff may create objects in the schema but holds nothing on fkr_roster.

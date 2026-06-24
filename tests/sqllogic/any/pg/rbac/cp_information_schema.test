@@ -24,7 +24,7 @@ CREATE TABLE cis_iceberg (clickclack int, babsky int, mop int);
 
 
 statement ok
-CREATE ROLE cis_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE cis_vedernikoff LOGIN;
 
 
 statement ok

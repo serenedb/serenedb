@@ -21,91 +21,59 @@
 
 #include "catalog/role.h"
 
-#include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
-#include <duckdb/common/serializer/memory_stream.hpp>
 #include <map>
 #include <ranges>
 #include <string_view>
 
 #include "app/app_server.h"
 #include "basics/log.h"
-#include "basics/random/uniform_character.h"
 #include "basics/serializer.h"
-#include "basics/ssl/ssl_interface.h"
 #include "basics/static_strings.h"
-#include "basics/string_utils.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"
 #include "general_server/general_server_feature.h"
 #include "general_server/state.h"
 
 namespace sdb::catalog {
-namespace {
 
-// private hash function
-ErrorCode HexHashFromData(std::string_view hash_method, std::string_view str,
-                          std::string& out_hash) {
-#ifdef SDB_DEV
-  if (hash_method == "noop") {
-    out_hash = str;
-    return ERROR_OK;
+Role::Role(RoleData data)
+  : catalog::Object{Permissions{},
+                    {},
+                    data.id,
+                    std::move(data.name),
+                    ObjectType::Role},
+    _active{data.active},
+    _options{static_cast<RoleOption>(data.options)},
+    _member_of{std::move(data.member_of)},
+    _conn_limit{data.conn_limit},
+    _valid_until{std::move(data.valid_until)},
+    _config{std::move(data.config)},
+    _default_acls{std::move(data.default_acls)},
+    _builtin_type_acls{std::move(data.builtin_type_acls)} {
+  for (const auto& [db_name, level] : data.db_access) {
+    try {
+      GrantDatabase(db_name, level);
+    } catch (const basics::Exception& e) {
+      SDB_DEBUG(GENERAL, e.message());
+    }
   }
-#endif
-  // maximum length is 64 bytes for SHA512
-  char buffer[64];
-  size_t crypted_length;
-
-  if (hash_method == "sha1") {
-    rest::ssl_interface::SslShA1(str.data(), str.size(), &buffer[0]);
-    crypted_length = 20;
-  } else if (hash_method == "sha512") {
-    rest::ssl_interface::SslShA512(str.data(), str.size(), &buffer[0]);
-    crypted_length = 64;
-  } else if (hash_method == "sha384") {
-    rest::ssl_interface::SslShA384(str.data(), str.size(), &buffer[0]);
-    crypted_length = 48;
-  } else if (hash_method == "sha256") {
-    rest::ssl_interface::SslShA256(str.data(), str.size(), &buffer[0]);
-    crypted_length = 32;
-  } else if (hash_method == "sha224") {
-    rest::ssl_interface::SslShA224(str.data(), str.size(), &buffer[0]);
-    crypted_length = 28;
-  } else if (hash_method == "md5") {
-    rest::ssl_interface::SslMD5(str.data(), str.size(), &buffer[0]);
-    crypted_length = 16;
-  } else {
-    // invalid algorithm...
-    SDB_DEBUG(GENERAL, "invalid algorithm for hexHashFromData: ", hash_method);
-    return ERROR_BAD_PARAMETER;
+  // The default user always retains RW on the default database and is a
+  // superuser -- enforced at load time so a tampered or downgraded grant can't
+  // lock it out.
+  if (_name == StaticStrings::kDefaultUser) {
+    GrantDatabase(StaticStrings::kDefaultDatabase, auth::Level::RW);
+    _options |= RoleOption::Superuser;
   }
-
-  SDB_ASSERT(crypted_length > 0);
-
-  out_hash = basics::string_utils::EncodeHex(&buffer[0], crypted_length);
-
-  return ERROR_OK;
 }
 
-}  // namespace
-
-Role::Role(PrivateTag, ObjectId id, std::string_view name)
-  : catalog::Role{id, name} {}
-
-Role::Role(ObjectId id, std::string_view name)
-  : catalog::Object{
-      Permissions{}, {}, id, std::string{name}, ObjectType::Role} {}
-
-RoleData Role::ToData() const {
+RoleData Role::BuildData() const {
   RoleData data{
     .id = GetId(),
     .name = std::string{GetName()},
     .active = _active,
-    .password_method = _password_method,
-    .password_salt = _password_salt,
-    .password_hash = _password_hash,
     .options = static_cast<uint32_t>(_options),
     .member_of = _member_of,
     .conn_limit = _conn_limit,
@@ -121,89 +89,14 @@ RoleData Role::ToData() const {
 }
 
 void catalog::Role::Serialize(duckdb::Serializer& sink) const {
-  basics::WriteTuple(sink, ToData());
-}
-
-std::shared_ptr<catalog::Role> catalog::Role::NewUser(std::string_view name,
-                                                      std::string_view password,
-                                                      ObjectId id) {
-  auto role = std::make_shared<catalog::Role>(PrivateTag{}, id, name);
-  role->_active = true;
-  role->_options = RoleOption::Login | RoleOption::Inherit;
-
-  role->_password_method = "sha256";
-
-  auto salt = random::UniformCharacter("0123456789abcdef").random(8);
-  std::string hash;
-  auto r =
-    HexHashFromData(role->_password_method, absl::StrCat(salt, password), hash);
-  if (r != ERROR_OK) {
-    SDB_THROW(r, "Could not calculate hex-hash from data");
-  }
-
-  role->_password_salt = salt;
-  role->_password_hash = hash;
-
-  // build authentication entry
-  return role;
-}
-
-std::shared_ptr<Role> Role::FromData(RoleData data) {
-  auto role =
-    std::make_shared<catalog::Role>(Role::PrivateTag{}, data.id, data.name);
-  role->UpdateActive(data.active);
-  role->_password_method = std::move(data.password_method);
-  role->_password_salt = std::move(data.password_salt);
-  role->_password_hash = std::move(data.password_hash);
-  role->_options = static_cast<RoleOption>(data.options);
-  role->_member_of = std::move(data.member_of);
-  role->_conn_limit = data.conn_limit;
-  role->_valid_until = std::move(data.valid_until);
-  role->_config = std::move(data.config);
-  role->_default_acls = std::move(data.default_acls);
-  role->_builtin_type_acls = std::move(data.builtin_type_acls);
-  for (const auto& [db_name, level] : data.db_access) {
-    try {
-      role->GrantDatabase(db_name, level);
-    } catch (const basics::Exception& e) {
-      SDB_DEBUG(GENERAL, e.message());
-    }
-  }
-  // The default user always retains RW on the default database and is a
-  // superuser -- enforced at load time so a tampered or downgraded grant can't
-  // lock it out.
-  if (data.name == StaticStrings::kDefaultUser) {
-    role->GrantDatabase(StaticStrings::kDefaultDatabase, auth::Level::RW);
-    role->_options |= RoleOption::Superuser;
-  }
-  return role;
+  basics::WriteTuple(sink, BuildData());
 }
 
 std::shared_ptr<Role> Role::Deserialize(duckdb::Deserializer& src,
                                         ReadContext) {
   RoleData data;
   basics::ReadTuple(src, data);
-  return FromData(std::move(data));
-}
-
-bool catalog::Role::CheckPassword(std::string_view password) const {
-  std::string hash;
-  auto res = HexHashFromData(_password_method,
-                             absl::StrCat(_password_salt, password), hash);
-  if (res != ERROR_OK) {
-    SDB_THROW(res, "Could not calculate hex-hash from input");
-  }
-  return _password_hash == hash;
-}
-
-void catalog::Role::UpdatePassword(std::string_view password) {
-  std::string hash;
-  auto res = HexHashFromData(_password_method,
-                             absl::StrCat(_password_salt, password), hash);
-  if (res != ERROR_OK) {
-    SDB_THROW(res, "Could not calculate hex-hash from input");
-  }
-  _password_hash = hash;
+  return std::make_shared<catalog::Role>(std::move(data));
 }
 
 void catalog::Role::GrantDatabase(std::string_view database,
@@ -318,9 +211,7 @@ void catalog::Role::RemoveBuiltinTypeAcl(uint64_t type_oid) {
 }
 
 std::shared_ptr<Object> Role::Clone() const {
-  duckdb::MemoryStream stream;
-  return catalog::DeserializeObject<Role>(
-    catalog::SerializeObject(*this, stream), {});
+  return std::make_shared<Role>(BuildData());
 }
 
 }  // namespace sdb::catalog

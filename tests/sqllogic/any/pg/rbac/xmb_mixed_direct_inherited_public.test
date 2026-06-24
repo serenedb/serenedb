@@ -29,7 +29,7 @@ INSERT INTO xmb_mdp_clickclack VALUES (1, 'babsky');
 
 
 statement ok
-CREATE ROLE xmb_mdp_mop LOGIN PASSWORD 'pw';
+CREATE ROLE xmb_mdp_mop LOGIN;
 
 
 statement ok

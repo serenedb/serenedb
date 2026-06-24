@@ -30,7 +30,7 @@ GRANT SELECT, INSERT ON ni_mop_iceberg TO public;
 
 # A NOINHERIT login role and a group holding privileges on the table.
 statement ok
-CREATE ROLE ni_mop_vedernikoff LOGIN NOINHERIT PASSWORD 'pw';
+CREATE ROLE ni_mop_vedernikoff LOGIN NOINHERIT;
 
 
 statement ok

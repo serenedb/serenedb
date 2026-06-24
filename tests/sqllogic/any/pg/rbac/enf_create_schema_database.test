@@ -17,7 +17,7 @@ DROP ROLE IF EXISTS enf_cs_vedernikoff;
 
 
 statement ok
-CREATE ROLE enf_cs_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE enf_cs_vedernikoff LOGIN;
 
 
 # Without CREATE on the database, CREATE SCHEMA is refused.

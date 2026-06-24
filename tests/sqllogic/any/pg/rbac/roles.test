@@ -27,7 +27,7 @@ DROP ROLE IF EXISTS role_cyc_b;
 # ----------------------------------------------------------------------
 
 statement ok
-CREATE ROLE role_ved LOGIN SUPERUSER PASSWORD 'clickclack';
+CREATE ROLE role_ved LOGIN SUPERUSER;
 
 
 statement ok
@@ -54,7 +54,7 @@ postgres	t
 
 # Duplicate role is rejected.
 statement error
-CREATE ROLE role_ved LOGIN PASSWORD 'x';
+CREATE ROLE role_ved LOGIN;
 ----
 db error: ERROR: role "role_ved" already exists
 
@@ -135,11 +135,19 @@ db error: ERROR: role "nonesuch" does not exist
 
 
 # ----------------------------------------------------------------------
-# ALTER ROLE password runs.
+# ALTER ROLE password: PostgreSQL stores it; serenedb rejects PASSWORD.
 # ----------------------------------------------------------------------
 
+skipif serenedb
 statement ok
 ALTER ROLE role_ved PASSWORD 'newclickclack';
+
+
+onlyif serenedb
+statement error
+ALTER ROLE role_ved PASSWORD 'newclickclack';
+----
+db error: ERROR: PASSWORD is not supported<slt:ignore>
 
 
 # ----------------------------------------------------------------------

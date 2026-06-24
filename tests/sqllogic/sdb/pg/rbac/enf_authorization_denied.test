@@ -36,7 +36,7 @@ CREATE INDEX clickclack_vault_v_idx ON clickclack_vault_v USING inverted (secret
 
 
 statement ok
-CREATE ROLE vedernikoff_intern LOGIN PASSWORD 'pw';
+CREATE ROLE vedernikoff_intern LOGIN;
 
 
 # ---- superuser-only role DDL must refuse a non-superuser ----
@@ -57,7 +57,7 @@ db error: ERROR: permission denied to drop role<slt:ignore>
 
 connection c_intern user=vedernikoff_intern
 statement error
-ALTER ROLE postgres PASSWORD 'pwned';
+ALTER ROLE postgres LOGIN;
 ----
 db error: ERROR: permission denied to alter role<slt:ignore>
 

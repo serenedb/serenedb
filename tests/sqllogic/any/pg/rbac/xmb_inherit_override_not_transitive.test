@@ -34,7 +34,7 @@ CREATE TABLE xmb_iont_clickclack (id int);
 
 
 statement ok
-CREATE ROLE xmb_iont_mop NOINHERIT LOGIN PASSWORD 'pw';
+CREATE ROLE xmb_iont_mop NOINHERIT LOGIN;
 
 
 statement ok

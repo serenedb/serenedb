@@ -81,14 +81,31 @@ rolsuper	rolcreatedb	rolcreaterole	rolinherit	rolcanlogin
 f	f	f	f	f
 
 
-# PASSWORD '<literal>' then PASSWORD NULL: the password column is never exposed
-# in plaintext, and NULL clears it.
+# PASSWORD '<literal>' then PASSWORD NULL: PostgreSQL never exposes the column in
+# plaintext and NULL clears it; serenedb does not support PASSWORD and rejects
+# both. Either way the password column reads NULL.
+skipif serenedb
 statement ok
 ALTER ROLE dgar_vedernikoff PASSWORD 'mop_secret';
 
 
+onlyif serenedb
+statement error
+ALTER ROLE dgar_vedernikoff PASSWORD 'mop_secret';
+----
+db error: ERROR: PASSWORD is not supported<slt:ignore>
+
+
+skipif serenedb
 statement ok
 ALTER ROLE dgar_vedernikoff PASSWORD NULL;
+
+
+onlyif serenedb
+statement error
+ALTER ROLE dgar_vedernikoff PASSWORD NULL;
+----
+db error: ERROR: PASSWORD is not supported<slt:ignore>
 
 
 query

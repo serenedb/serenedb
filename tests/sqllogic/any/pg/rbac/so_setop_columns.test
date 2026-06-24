@@ -39,7 +39,7 @@ INSERT INTO so_beta VALUES (1, 11, 111), (3, 33, 333);
 
 
 statement ok
-CREATE ROLE so_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE so_vedernikoff LOGIN;
 
 
 # Column SELECT on the public columns of each table only; secret and hidden

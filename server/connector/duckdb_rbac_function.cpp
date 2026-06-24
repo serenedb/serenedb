@@ -88,11 +88,12 @@ std::vector<pg::ParsedPriv> ArgPrivList(
   return out;
 }
 
-// PRAGMA serenedb_create_role('name', login, superuser, password, inherit,
-//   conn_limit, valid_until)
-//   [2] superuser BOOLEAN, [3] password VARCHAR ('' => no password),
-//   [4] inherit BOOLEAN (INHERIT vs NOINHERIT), [5] conn_limit INTEGER,
-//   [6] valid_until VARCHAR ('' => no expiry)
+// PRAGMA serenedb_create_role('name', login, superuser, inherit, has_password,
+//   has_conn_limit, has_valid_until)
+//   [1] login BOOLEAN, [2] superuser BOOLEAN, [3] inherit BOOLEAN (INHERIT vs
+//   NOINHERIT). PASSWORD / CONNECTION LIMIT / VALID UNTIL are parsed by the
+//   grammar but unsupported; the trailing flags only signal that one was given
+//   so the command can reject it.
 void CreateRolePragma(duckdb::ClientContext& context,
                       const duckdb::FunctionParameters& params) {
   auto& conn_ctx = GetSereneDBContext(context);
@@ -100,12 +101,10 @@ void CreateRolePragma(duckdb::ClientContext& context,
   pg::CreateRoleOptions options;
   options.login = ArgBool(params, 1, "login");
   options.superuser = ArgBool(params, 2, "superuser");
-  auto password = ArgStr(params, 3, "password");
-  options.has_password = !password.empty();
-  options.password = std::move(password);
-  options.inherit = ArgBool(params, 4, "inherit");
-  options.conn_limit = ArgInt(params, 5, "conn_limit");
-  options.valid_until = ArgStr(params, 6, "valid_until");
+  options.inherit = ArgBool(params, 3, "inherit");
+  options.has_password = ArgBool(params, 4, "has_password");
+  options.has_conn_limit = ArgBool(params, 5, "has_conn_limit");
+  options.has_valid_until = ArgBool(params, 6, "has_valid_until");
 
   pg::CreateRole(conn_ctx, ArgStr(params, 0, "name"), options);
 }
@@ -119,9 +118,10 @@ void DropRolePragma(duckdb::ClientContext& context,
 }
 
 // PRAGMA serenedb_alter_role('name', login, super, createdb, createrole,
-//   inherit, has_password, 'password', password_null, conn_limit,
-//   set_valid_until, 'valid_until'). Attribute flags are tri-state ints
-//   (-1 unspecified / 0 false / 1 true); conn_limit uses -2 for unspecified.
+//   inherit, has_password, has_conn_limit, has_valid_until). Attribute flags
+//   are tri-state ints (-1 unspecified / 0 false / 1 true). PASSWORD /
+//   CONNECTION LIMIT / VALID UNTIL are parsed but unsupported; the trailing
+//   flags only signal that one was given so the command can reject it.
 void AlterRolePragma(duckdb::ClientContext& context,
                      const duckdb::FunctionParameters& params) {
   auto& conn_ctx = GetSereneDBContext(context);
@@ -131,14 +131,9 @@ void AlterRolePragma(duckdb::ClientContext& context,
   opts.createdb = ArgInt(params, 3, "createdb");
   opts.createrole = ArgInt(params, 4, "createrole");
   opts.inherit = ArgInt(params, 5, "inherit");
-  if (ArgInt(params, 6, "has_password") == 1) {
-    opts.set_password = true;
-    opts.password_null = ArgInt(params, 8, "password_null") == 1;
-    opts.password = ArgStr(params, 7, "password");
-  }
-  opts.conn_limit = ArgInt(params, 9, "conn_limit");
-  opts.set_valid_until = ArgBool(params, 10, "set_valid_until");
-  opts.valid_until = ArgStr(params, 11, "valid_until");
+  opts.has_password = ArgBool(params, 6, "has_password");
+  opts.has_conn_limit = ArgBool(params, 7, "has_conn_limit");
+  opts.has_valid_until = ArgBool(params, 8, "has_valid_until");
   pg::AlterRole(conn_ctx, ArgStr(params, 0, "name"), opts);
 }
 
@@ -269,8 +264,8 @@ void RegisterRbacPragmas(duckdb::DatabaseInstance& db) {
   loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
     "serenedb_create_role", CreateRolePragma,
     {LogicalType::VARCHAR, LogicalType::BOOLEAN, LogicalType::BOOLEAN,
-     LogicalType::VARCHAR, LogicalType::BOOLEAN, LogicalType::INTEGER,
-     LogicalType::VARCHAR}));
+     LogicalType::BOOLEAN, LogicalType::BOOLEAN, LogicalType::BOOLEAN,
+     LogicalType::BOOLEAN}));
 
   loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
     "serenedb_drop_role", DropRolePragma,
@@ -280,8 +275,7 @@ void RegisterRbacPragmas(duckdb::DatabaseInstance& db) {
     "serenedb_alter_role", AlterRolePragma,
     {LogicalType::VARCHAR, LogicalType::INTEGER, LogicalType::INTEGER,
      LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::INTEGER,
-     LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::INTEGER,
-     LogicalType::INTEGER, LogicalType::BOOLEAN, LogicalType::VARCHAR}));
+     LogicalType::BOOLEAN, LogicalType::BOOLEAN, LogicalType::BOOLEAN}));
 
   loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
     "serenedb_alter_role_config", AlterRoleConfigPragma,

@@ -24,7 +24,7 @@ CREATE TABLE xog_ga_clickclack (id int);
 
 
 statement ok
-CREATE ROLE xog_ga_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE xog_ga_vedernikoff LOGIN;
 
 
 statement ok

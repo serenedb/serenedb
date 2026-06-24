@@ -24,11 +24,11 @@ CREATE TABLE xog_f_mop (id int);
 
 
 statement ok
-CREATE ROLE xog_f_babsky LOGIN PASSWORD 'pw';
+CREATE ROLE xog_f_babsky LOGIN;
 
 
 statement ok
-CREATE ROLE xog_f_kostya LOGIN PASSWORD 'pw';
+CREATE ROLE xog_f_kostya LOGIN;
 
 
 # Grant SELECT directly to babsky AND to PUBLIC. babsky now has two sources;

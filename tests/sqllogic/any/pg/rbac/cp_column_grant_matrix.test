@@ -23,7 +23,7 @@ INSERT INTO cgm_iceberg VALUES (1, 2, 3);
 
 
 statement ok
-CREATE ROLE cgm_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE cgm_vedernikoff LOGIN;
 
 
 statement ok

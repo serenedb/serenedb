@@ -16,7 +16,7 @@ CREATE TABLE acp_kostya (id int, payload text);
 
 
 statement ok
-CREATE ROLE acp_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE acp_vedernikoff LOGIN;
 
 
 # No grants: any-column privilege is FALSE for every privilege.

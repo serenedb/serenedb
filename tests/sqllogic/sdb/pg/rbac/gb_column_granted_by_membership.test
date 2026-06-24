@@ -37,15 +37,15 @@ INSERT INTO gbm_ledger VALUES (1, 42);
 
 
 statement ok
-CREATE ROLE gbm_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE gbm_vedernikoff LOGIN;
 
 
 statement ok
-CREATE ROLE gbm_mop LOGIN PASSWORD 'pw';
+CREATE ROLE gbm_mop LOGIN;
 
 
 statement ok
-CREATE ROLE gbm_clickclack LOGIN PASSWORD 'pw';
+CREATE ROLE gbm_clickclack LOGIN;
 
 
 # mop owns nothing here; postgres (superuser) owns the table and confers the

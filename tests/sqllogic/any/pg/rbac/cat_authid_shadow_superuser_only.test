@@ -19,7 +19,7 @@ DROP ROLE IF EXISTS cat_authid_intern;
 
 
 statement ok
-CREATE ROLE cat_authid_intern LOGIN PASSWORD 'pw';
+CREATE ROLE cat_authid_intern LOGIN;
 
 
 # Sanity: the intern really is a non-superuser.

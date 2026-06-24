@@ -19,11 +19,11 @@ DROP ROLE IF EXISTS cr_babsky;
 
 
 statement ok
-CREATE ROLE cr_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE cr_vedernikoff LOGIN;
 
 
 statement ok
-CREATE ROLE cr_babsky LOGIN PASSWORD 'pw';
+CREATE ROLE cr_babsky LOGIN;
 
 
 statement ok

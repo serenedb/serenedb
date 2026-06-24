@@ -29,7 +29,7 @@ DROP ROLE IF EXISTS xao_sim_mop;
 
 
 statement ok
-CREATE ROLE xao_sim_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE xao_sim_vedernikoff LOGIN;
 
 
 statement ok

@@ -1,47 +1,13 @@
-# CREATE ROLE ... CONNECTION LIMIT / VALID UNTIL and ALTER ROLE ... SET <guc>
-# populate the matching pg_authid / pg_roles / pg_db_role_setting catalog
-# columns exactly like PostgreSQL (verified on PG18). CONNECTION LIMIT is stored
-# and surfaced but not enforced at runtime (connection limiting is a runtime
-# concern); the column value still matches PG.
+# CREATE ROLE defaults and ALTER ROLE ... SET <guc> populate the matching
+# pg_authid / pg_roles / pg_db_role_setting catalog columns exactly like
+# PostgreSQL (verified on PG18). A plain role carries rolconnlimit = -1 and a
+# NULL rolvaliduntil on both engines, and the per-role GUC catalogs surface and
+# clear SET/RESET identically.
 #
 # Lore: vedernikoff the role. Self-cleaning; role name is file-unique.
 
 statement ok
 DROP ROLE IF EXISTS cat_attr_vedernikoff;
-
-
-# CONNECTION LIMIT is parsed and stored in pg_authid.rolconnlimit.
-statement ok
-CREATE ROLE cat_attr_vedernikoff LOGIN CONNECTION LIMIT 5;
-
-
-query
-SELECT rolconnlimit, rolvaliduntil IS NULL AS validuntil_null
-FROM pg_authid WHERE rolname = 'cat_attr_vedernikoff';
-----
-rolconnlimit	validuntil_null
-5	t
-
-
-statement ok
-DROP ROLE cat_attr_vedernikoff;
-
-
-# VALID UNTIL is parsed and stored in pg_authid.rolvaliduntil.
-statement ok
-CREATE ROLE cat_attr_vedernikoff LOGIN VALID UNTIL '2030-01-01';
-
-
-query
-SELECT rolconnlimit, rolvaliduntil
-FROM pg_authid WHERE rolname = 'cat_attr_vedernikoff';
-----
-rolconnlimit	rolvaliduntil
--1	2030-01-01 00:00:00+00
-
-
-statement ok
-DROP ROLE cat_attr_vedernikoff;
 
 
 # A plain role carries the PG defaults: rolconnlimit = -1, rolvaliduntil NULL.

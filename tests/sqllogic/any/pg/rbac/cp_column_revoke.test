@@ -28,7 +28,7 @@ INSERT INTO crv_iceberg VALUES (1, 2, 3);
 
 
 statement ok
-CREATE ROLE crv_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE crv_vedernikoff LOGIN;
 
 
 statement ok

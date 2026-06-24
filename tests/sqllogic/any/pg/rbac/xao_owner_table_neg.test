@@ -31,7 +31,7 @@ DROP ROLE IF EXISTS xao_otn_babsky;
 
 
 statement ok
-CREATE ROLE xao_otn_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE xao_otn_vedernikoff LOGIN;
 
 
 statement ok
@@ -43,7 +43,7 @@ CREATE ROLE xao_otn_iceberg;
 
 
 statement ok
-CREATE ROLE xao_otn_babsky LOGIN PASSWORD 'pw';
+CREATE ROLE xao_otn_babsky LOGIN;
 
 
 # vedernikoff can SET ROLE to mop (default GRANT carries the set option) but

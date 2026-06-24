@@ -13,7 +13,7 @@ DROP ROLE IF EXISTS htp_vedernikoff;
 
 
 statement ok
-CREATE ROLE htp_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE htp_vedernikoff LOGIN;
 
 
 # --- superuser bypasses the (missing) object lookup -> true ---

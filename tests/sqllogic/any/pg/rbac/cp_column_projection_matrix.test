@@ -36,7 +36,7 @@ INSERT INTO cpm_iceberg VALUES (1, 2, 3, 4), (5, 6, 7, 8);
 
 
 statement ok
-CREATE ROLE cpm_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE cpm_vedernikoff LOGIN;
 
 
 # SELECT on (clickclack, babsky) only -- mop and weight stay ungranted.

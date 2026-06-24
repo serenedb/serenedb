@@ -40,11 +40,11 @@ INSERT INTO cci2_iceberg VALUES (1, 2, 3);
 
 
 statement ok
-CREATE ROLE cci2_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE cci2_vedernikoff LOGIN;
 
 
 statement ok
-CREATE ROLE cci2_babsky LOGIN PASSWORD 'pw';
+CREATE ROLE cci2_babsky LOGIN;
 
 
 statement ok

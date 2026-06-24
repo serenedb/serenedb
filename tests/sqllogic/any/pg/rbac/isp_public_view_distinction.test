@@ -23,7 +23,7 @@ CREATE TABLE isp_makak (id int, blob text);
 
 
 statement ok
-CREATE ROLE isp_lambda LOGIN PASSWORD 'mop';
+CREATE ROLE isp_lambda LOGIN;
 
 
 statement ok

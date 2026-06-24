@@ -44,7 +44,7 @@ INSERT INTO cac_iceberg VALUES (1, 2);
 # === Table-level GRANT ALL ===
 
 statement ok
-CREATE ROLE cac_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE cac_vedernikoff LOGIN;
 
 
 statement ok
@@ -88,7 +88,7 @@ UPDATE cac_iceberg SET clickclack = 10, babsky = 20;
 # === Mixed: column SELECT + table INSERT ===
 
 statement ok
-CREATE ROLE cac_babsky LOGIN PASSWORD 'pw';
+CREATE ROLE cac_babsky LOGIN;
 
 
 statement ok
@@ -137,7 +137,7 @@ INSERT INTO cac_iceberg (clickclack, babsky) VALUES (3, 4);
 # === REFERENCES(a) is not SELECT ===
 
 statement ok
-CREATE ROLE cac_mop LOGIN PASSWORD 'pw';
+CREATE ROLE cac_mop LOGIN;
 
 
 statement ok

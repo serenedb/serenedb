@@ -17,7 +17,7 @@ DROP ROLE IF EXISTS enf_sq_vedernikoff;
 
 
 statement ok
-CREATE ROLE enf_sq_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE enf_sq_vedernikoff LOGIN;
 
 
 statement ok

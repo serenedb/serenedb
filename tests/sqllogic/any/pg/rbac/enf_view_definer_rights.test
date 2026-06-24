@@ -48,7 +48,7 @@ CREATE VIEW vdr_clickclack AS SELECT id, av FROM vdr_iceberg;
 
 
 statement ok
-CREATE ROLE vdr_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE vdr_vedernikoff LOGIN;
 
 
 # Grant SELECT on the VIEW only -- vedernikoff gets nothing on vdr_iceberg.

@@ -23,7 +23,7 @@ DROP ROLE IF EXISTS xao_oog_babsky;
 
 
 statement ok
-CREATE ROLE xao_oog_mop LOGIN PASSWORD 'pw';
+CREATE ROLE xao_oog_mop LOGIN;
 
 
 statement ok

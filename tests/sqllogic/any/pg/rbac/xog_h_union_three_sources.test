@@ -34,7 +34,7 @@ CREATE ROLE xog_h_grp;
 
 
 statement ok
-CREATE ROLE xog_h_negaimorit LOGIN PASSWORD 'pw';
+CREATE ROLE xog_h_negaimorit LOGIN;
 
 
 statement ok

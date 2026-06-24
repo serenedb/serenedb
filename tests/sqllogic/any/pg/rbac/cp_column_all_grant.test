@@ -37,11 +37,11 @@ INSERT INTO cag_iceberg VALUES (1, 2);
 
 
 statement ok
-CREATE ROLE cag_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE cag_vedernikoff LOGIN;
 
 
 statement ok
-CREATE ROLE cag_babsky LOGIN PASSWORD 'pw';
+CREATE ROLE cag_babsky LOGIN;
 
 
 # === GRANT ALL (a): column-applicable ALL = arwx (INSERT/SELECT/UPDATE/REFERENCES) ===

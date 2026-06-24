@@ -44,7 +44,7 @@ DROP ROLE IF EXISTS isr_en_solo;
 # ----------------------------------------------------------------------
 
 statement ok
-CREATE ROLE isr_en_pudge LOGIN PASSWORD 'pw';
+CREATE ROLE isr_en_pudge LOGIN;
 
 
 statement ok
@@ -189,7 +189,7 @@ isr_en_pudge
 # ----------------------------------------------------------------------
 
 statement ok
-CREATE ROLE isr_en_solo LOGIN PASSWORD 'pw';
+CREATE ROLE isr_en_solo LOGIN;
 
 
 connection c_solo user=isr_en_solo

@@ -35,7 +35,7 @@ CREATE TABLE phr_iceberg (id int, payload text);
 
 
 statement ok
-CREATE ROLE phr_clickclack LOGIN PASSWORD 'pw';
+CREATE ROLE phr_clickclack LOGIN;
 
 
 statement ok

@@ -41,7 +41,7 @@ CREATE ROLE xog_l_mid;
 
 
 statement ok
-CREATE ROLE xog_l_leaf LOGIN PASSWORD 'pw';
+CREATE ROLE xog_l_leaf LOGIN;
 
 
 # Build the chain and the three sources: UPDATE on the grandparent group,

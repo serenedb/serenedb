@@ -60,34 +60,16 @@ ENABLE_BITMASK_ENUM(RoleOption);
 
 class Role final : public catalog::Object {
  public:
-  struct PrivateTag {
-    explicit PrivateTag() = default;
-  };
-
-  explicit Role(PrivateTag, ObjectId id, std::string_view name);
-
-  // Capture the persistent state into a flat RoleData (used by the
-  // reflection-based Serialize path).
-  RoleData ToData() const;
-  // Construct a Role from RoleData (read-side counterpart). Static helper
-  // so Deserialize has a shared implementation.
-  static std::shared_ptr<Role> FromData(RoleData data);
+  explicit Role(RoleData data);
 
   void Serialize(duckdb::Serializer& sink) const final;
   std::shared_ptr<Object> Clone() const final;
 
-  static std::shared_ptr<catalog::Role> NewUser(std::string_view name,
-                                                std::string_view password,
-                                                ObjectId id = {});
   static std::shared_ptr<Role> Deserialize(duckdb::Deserializer& src,
                                            ReadContext ctx);
 
   std::string_view Username() const { return GetName(); }
-  std::string_view PasswordMethod() const { return _password_method; }
-  std::string_view PasswordSalt() const { return _password_salt; }
-  std::string_view PasswordHash() const { return _password_hash; }
   bool IsActive() const { return _active; }
-  bool HasPassword() const { return !_password_hash.empty(); }
 
   RoleOption Options() const noexcept { return _options; }
   bool Has(RoleOption o) const noexcept {
@@ -97,11 +79,11 @@ class Role final : public catalog::Object {
   bool CanLogin() const noexcept { return Has(RoleOption::Login) && _active; }
   void SetOptions(RoleOption o) noexcept { _options = o; }
 
-  // pg_authid attributes (stored & surfaced, not enforced at runtime).
+  // pg_authid attributes surfaced for catalog introspection. CONNECTION LIMIT
+  // and VALID UNTIL are unsupported (rejected when set), so these always carry
+  // their defaults; the getters exist for pg_authid rendering.
   int32_t ConnLimit() const noexcept { return _conn_limit; }
-  void SetConnLimit(int32_t limit) noexcept { _conn_limit = limit; }
   std::string_view ValidUntil() const noexcept { return _valid_until; }
-  void SetValidUntil(std::string_view ts) { _valid_until = ts; }
 
   // Per-role GUC settings surfaced as pg_roles.rolconfig ("guc=value" each).
   std::span<const std::string> Config() const noexcept { return _config; }
@@ -139,24 +121,17 @@ class Role final : public catalog::Object {
   void AddMembership(const Membership& edge);
   bool RemoveMembership(ObjectId role);
 
-  bool CheckPassword(std::string_view password) const;
-
   void UpdateName(std::string_view name) { _name = name; }
-  void UpdatePassword(std::string_view password);
-  void ClearPassword() { _password_hash.clear(); }
   void UpdateActive(bool active) { _active = active; }
 
   void GrantDatabase(std::string_view database, auth::Level level);
 
  private:
-  Role(ObjectId id, std::string_view name);
+  RoleData BuildData() const;
 
   bool _active = true;
   RoleOption _options = RoleOption::None;
   std::vector<Membership> _member_of;
-  std::string _password_method;
-  std::string _password_salt;
-  std::string _password_hash;
   int32_t _conn_limit = -1;
   std::string _valid_until;
   std::vector<std::string> _config;

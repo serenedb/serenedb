@@ -35,7 +35,7 @@ CREATE TABLE xmb_cib_makak (id int);
 
 
 statement ok
-CREATE ROLE xmb_cib_babsky LOGIN PASSWORD 'pw';
+CREATE ROLE xmb_cib_babsky LOGIN;
 
 
 statement ok

@@ -39,7 +39,7 @@ CREATE TABLE ident_makak (id int, gul text);
 # ============================================================================
 
 statement ok
-CREATE ROLE "ident_Vedernikoff" LOGIN PASSWORD 'pw';
+CREATE ROLE "ident_Vedernikoff" LOGIN;
 
 
 statement ok

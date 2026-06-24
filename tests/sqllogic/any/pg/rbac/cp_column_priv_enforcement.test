@@ -41,7 +41,7 @@ INSERT INTO cp_kostya VALUES (1, 'iceberg', 4), (2, 'vedernikoff', 8);
 # ============================================================================
 
 statement ok
-CREATE ROLE cp_abramov LOGIN PASSWORD 'pw';
+CREATE ROLE cp_abramov LOGIN;
 
 
 statement ok
@@ -75,7 +75,7 @@ row_id	row_payload	row_headcount
 # ============================================================================
 
 statement ok
-CREATE ROLE cp_zhidky LOGIN PASSWORD 'pw';
+CREATE ROLE cp_zhidky LOGIN;
 
 
 statement ok
@@ -112,7 +112,7 @@ n
 # ============================================================================
 
 statement ok
-CREATE ROLE cp_salam LOGIN PASSWORD 'pw';
+CREATE ROLE cp_salam LOGIN;
 
 
 statement ok

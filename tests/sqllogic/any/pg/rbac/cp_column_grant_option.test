@@ -34,7 +34,7 @@ INSERT INTO cgo_iceberg VALUES (1, 2, 3);
 
 
 statement ok
-CREATE ROLE cgo_r1 LOGIN PASSWORD 'pw';
+CREATE ROLE cgo_r1 LOGIN;
 
 
 # clickclack: SELECT WITH GRANT OPTION. babsky: plain SELECT (no option).

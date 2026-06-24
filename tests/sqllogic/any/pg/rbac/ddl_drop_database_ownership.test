@@ -17,7 +17,7 @@ CREATE DATABASE ddb_clickclack;
 
 
 statement ok
-CREATE ROLE ddb_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE ddb_vedernikoff LOGIN;
 
 
 # Non-owner DROP DATABASE is refused (PG: "must be owner of database ...").

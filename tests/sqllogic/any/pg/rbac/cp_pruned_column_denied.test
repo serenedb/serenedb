@@ -30,7 +30,7 @@ INSERT INTO prn_iceberg VALUES (1, 10, 100), (2, 20, 200);
 
 
 statement ok
-CREATE ROLE prn_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE prn_vedernikoff LOGIN;
 
 
 # SELECT on (id, av) only -- secret stays ungranted.

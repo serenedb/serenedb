@@ -21,11 +21,11 @@ CREATE TABLE cpn_kostya (id int, payload text, headcount int);
 
 
 statement ok
-CREATE ROLE cpn_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE cpn_vedernikoff LOGIN;
 
 
 statement ok
-CREATE ROLE cpn_clickclack LOGIN PASSWORD 'pw';
+CREATE ROLE cpn_clickclack LOGIN;
 
 
 # No grants at all: every column privilege is FALSE on every column.

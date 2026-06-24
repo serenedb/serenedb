@@ -75,6 +75,20 @@
 namespace sdb::connector {
 namespace {
 
+// Align catalog_type with the surviving macros: MACRO_ENTRY iff all remaining
+// macros are scalar, else TABLE_MACRO_ENTRY. Prevents a mismatched catalog
+// bucket (e.g. a TableMacroFunction left in a MACRO_ENTRY bucket) which breaks
+// Cast<>() at lookup time.
+void AlignMacroCatalogType(duckdb::CreateMacroInfo& new_info) {
+  const bool all_scalar =
+    !new_info.macros.empty() &&
+    std::ranges::all_of(new_info.macros, [](const auto& m) {
+      return m->type == duckdb::MacroType::SCALAR_MACRO;
+    });
+  new_info.type = all_scalar ? duckdb::CatalogType::MACRO_ENTRY
+                             : duckdb::CatalogType::TABLE_MACRO_ENTRY;
+}
+
 // DROP FUNCTION name(type, ...) -- selective overload removal.
 // Fetches the existing PgSqlFunction, finds the matching overload by
 // parameter signature, and either removes just that overload (updating the
@@ -144,24 +158,12 @@ Result DropFunctionOverload(catalog::Catalog& catalog,
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
       macro_info.Copy());
   new_info->macros.erase(new_info->macros.begin() + match_idx);
-  // Align catalog_type with the surviving macros: MACRO_ENTRY iff all
-  // remaining macros are scalar, else TABLE_MACRO_ENTRY. Prevents a
-  // mismatched catalog bucket (e.g. a TableMacroFunction left in a
-  // MACRO_ENTRY bucket) which breaks Cast<>() at lookup time.
-  bool all_scalar = !new_info->macros.empty();
-  for (const auto& m : new_info->macros) {
-    if (m->type != duckdb::MacroType::SCALAR_MACRO) {
-      all_scalar = false;
-      break;
-    }
-  }
-  new_info->type = all_scalar ? duckdb::CatalogType::MACRO_ENTRY
-                              : duckdb::CatalogType::TABLE_MACRO_ENTRY;
+  AlignMacroCatalogType(*new_info);
 
   auto function = std::make_shared<catalog::PgSqlFunction>(
     catalog::Permissions{}, ObjectId{}, ObjectId{}, info.name,
     std::move(new_info));
-  return catalog.CreateFunction(catalog::NoAccessCheck(), database_id,
+  return catalog.CreateFunction(catalog::RequireOwnership(context), database_id,
                                 info.schema, function, true);
 }
 
@@ -211,21 +213,12 @@ Result DropFunctionByKind(duckdb::ClientContext& context,
   std::erase_if(new_info->macros, [&](const auto& m) {
     return m->is_procedure == info.is_procedure;
   });
-  // Align catalog_type with the surviving macros (see DropFunctionOverload).
-  bool all_scalar = !new_info->macros.empty();
-  for (const auto& m : new_info->macros) {
-    if (m->type != duckdb::MacroType::SCALAR_MACRO) {
-      all_scalar = false;
-      break;
-    }
-  }
-  new_info->type = all_scalar ? duckdb::CatalogType::MACRO_ENTRY
-                              : duckdb::CatalogType::TABLE_MACRO_ENTRY;
+  AlignMacroCatalogType(*new_info);
 
   auto function = std::make_shared<catalog::PgSqlFunction>(
     catalog::Permissions{}, ObjectId{}, ObjectId{}, info.name,
     std::move(new_info));
-  return catalog.CreateFunction(catalog::NoAccessCheck(), database_id,
+  return catalog.CreateFunction(catalog::RequireOwnership(context), database_id,
                                 info.schema, function, true);
 }
 
@@ -234,11 +227,6 @@ Result DropFunctionByKind(duckdb::ClientContext& context,
 void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
   auto& catalog = catalog::GetCatalog();
 
-  // DROP requires ownership (or superuser): a non-owner must not drop another
-  // role's object. The catalog mutations enforce this against the session role
-  // and throw 42501 "must be owner of <type> <name>" directly on a non-owner.
-  // No-op for missing objects (the mutation's own resolution reports
-  // not-found).
   Result r;
   switch (info.type) {
     using enum duckdb::CatalogType;

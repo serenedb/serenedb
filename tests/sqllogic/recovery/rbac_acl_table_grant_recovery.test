@@ -28,7 +28,7 @@ INSERT INTO rbac_acl_tg_ledger VALUES (1, 'clickclack'), (2, 'MOP');
 
 
 statement ok
-CREATE ROLE rbac_acl_tg_iceberg LOGIN PASSWORD 'mop';
+CREATE ROLE rbac_acl_tg_iceberg LOGIN;
 
 
 statement ok

@@ -36,7 +36,7 @@ CREATE TABLE mb_ved_makak (id int);
 
 
 statement ok
-CREATE ROLE mb_ved_clickclack LOGIN PASSWORD 'pw';
+CREATE ROLE mb_ved_clickclack LOGIN;
 
 
 statement ok

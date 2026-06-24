@@ -22,7 +22,7 @@ INSERT INTO ddlo_kostya VALUES (1, 'mop');
 
 
 statement ok
-CREATE ROLE ddlo_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE ddlo_vedernikoff LOGIN;
 
 
 # ---- non-owner DDL must be refused (PG: "must be owner of table/...") ----

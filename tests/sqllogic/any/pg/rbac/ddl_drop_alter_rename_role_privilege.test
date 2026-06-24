@@ -2,7 +2,7 @@
 # may always proceed; otherwise the actor needs the CREATEROLE attribute AND the
 # ADMIN option on the target role. A non-superuser may never touch a SUPERUSER
 # target (checked before the admin option). A non-privileged role may still
-# change its OWN password and its OWN per-role GUCs, but not its own attributes.
+# change its OWN per-role GUCs, but not its own attributes.
 #
 # PG also grants a non-superuser CREATEROLE holder ADMIN on every role it
 # creates, so it can administer what it created (but not roles created by
@@ -28,7 +28,7 @@ DROP ROLE IF EXISTS dar_mop;
 
 
 statement ok
-CREATE ROLE dar_babsky LOGIN PASSWORD 'pw';
+CREATE ROLE dar_babsky LOGIN;
 
 
 statement ok
@@ -36,11 +36,11 @@ ALTER ROLE dar_babsky CREATEROLE;
 
 
 statement ok
-CREATE ROLE dar_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE dar_vedernikoff LOGIN;
 
 
 statement ok
-CREATE ROLE dar_mop LOGIN PASSWORD 'pw';
+CREATE ROLE dar_mop LOGIN;
 
 
 statement ok
@@ -52,6 +52,36 @@ ALTER ROLE dar_mop SUPERUSER;
 connection c_ved user=dar_vedernikoff
 statement error
 DROP ROLE dar_mop;
+----
+db error: ERROR: permission denied to drop role
+DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on the target roles may drop roles.
+
+
+# The CREATEROLE gate fires before existence: dropping a role that does not even
+# exist still reports the permission error, not "does not exist".
+connection c_ved user=dar_vedernikoff
+statement error
+DROP ROLE dar_ghost;
+----
+db error: ERROR: permission denied to drop role
+DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on the target roles may drop roles.
+
+
+# The gate also fires before the IF EXISTS skip: a plain role gets the permission
+# error rather than the "does not exist, skipping" notice.
+connection c_ved user=dar_vedernikoff
+statement error
+DROP ROLE IF EXISTS dar_ghost;
+----
+db error: ERROR: permission denied to drop role
+DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on the target roles may drop roles.
+
+
+# The gate fires before the self-check: a plain role dropping itself sees the
+# permission error, not "current user cannot be dropped".
+connection c_ved user=dar_vedernikoff
+statement error
+DROP ROLE dar_vedernikoff;
 ----
 db error: ERROR: permission denied to drop role
 DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on the target roles may drop roles.
@@ -69,7 +99,7 @@ DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on role "d
 
 connection c_bab user=dar_babsky
 statement error
-ALTER ROLE dar_vedernikoff CONNECTION LIMIT 5;
+ALTER ROLE dar_vedernikoff LOGIN;
 ----
 db error: ERROR: permission denied to alter role
 DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on role "dar_vedernikoff" may alter this role.
@@ -87,7 +117,7 @@ DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on role "d
 # admin-option check.
 connection c_bab user=dar_babsky
 statement error
-ALTER ROLE dar_mop CONNECTION LIMIT 3;
+ALTER ROLE dar_mop LOGIN;
 ----
 db error: ERROR: permission denied to alter role
 DETAIL: Only roles with the SUPERUSER attribute may alter roles with the SUPERUSER attribute.
@@ -97,12 +127,12 @@ DETAIL: Only roles with the SUPERUSER attribute may alter roles with the SUPERUS
 # them freely.
 connection c_bab2 user=dar_babsky
 statement ok
-CREATE ROLE dar_clickclack LOGIN PASSWORD 'pw';
+CREATE ROLE dar_clickclack LOGIN;
 
 
 connection c_bab3 user=dar_babsky
 statement ok
-ALTER ROLE dar_clickclack CONNECTION LIMIT 7;
+ALTER ROLE dar_clickclack LOGIN;
 
 
 connection c_bab4 user=dar_babsky
@@ -115,13 +145,8 @@ statement ok
 DROP ROLE dar_clickclack2;
 
 
-# Self-exceptions: a plain role may change its own password and its own GUCs,
-# but not its own attributes.
-connection c_ved2 user=dar_vedernikoff
-statement ok
-ALTER ROLE dar_vedernikoff PASSWORD 'pw2';
-
-
+# Self-exceptions: a plain role may change its own per-role GUCs, but not its own
+# attributes.
 connection c_ved3 user=dar_vedernikoff
 statement ok
 ALTER ROLE dar_vedernikoff SET search_path TO public;
@@ -129,7 +154,7 @@ ALTER ROLE dar_vedernikoff SET search_path TO public;
 
 connection c_ved4 user=dar_vedernikoff
 statement error
-ALTER ROLE dar_vedernikoff CONNECTION LIMIT 1;
+ALTER ROLE dar_vedernikoff LOGIN;
 ----
 db error: ERROR: permission denied to alter role
 DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on role "dar_vedernikoff" may alter this role.

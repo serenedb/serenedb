@@ -35,7 +35,7 @@ CREATE TABLE xmb_cte_makak (id int);
 
 
 statement ok
-CREATE ROLE xmb_cte_mop LOGIN PASSWORD 'pw';
+CREATE ROLE xmb_cte_mop LOGIN;
 
 
 statement ok

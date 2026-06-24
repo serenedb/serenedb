@@ -26,11 +26,11 @@ CREATE TABLE isp_kryakva (id int, body text);
 
 
 statement ok
-CREATE ROLE isp_pavel LOGIN PASSWORD 'mop';
+CREATE ROLE isp_pavel LOGIN;
 
 
 statement ok
-CREATE ROLE isp_salam LOGIN PASSWORD 'mop';
+CREATE ROLE isp_salam LOGIN;
 
 
 statement ok

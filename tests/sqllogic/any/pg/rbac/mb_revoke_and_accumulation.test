@@ -23,7 +23,7 @@ CREATE TABLE mb_acc_clickclack (id int);
 
 
 statement ok
-CREATE ROLE mb_acc_abramov LOGIN PASSWORD 'pw';
+CREATE ROLE mb_acc_abramov LOGIN;
 
 
 statement ok

@@ -20,11 +20,11 @@ DROP ROLE IF EXISTS xog_b_babsky;
 
 
 statement ok
-CREATE ROLE xog_b_mop LOGIN PASSWORD 'pw';
+CREATE ROLE xog_b_mop LOGIN;
 
 
 statement ok
-CREATE ROLE xog_b_babsky LOGIN PASSWORD 'pw';
+CREATE ROLE xog_b_babsky LOGIN;
 
 
 statement ok

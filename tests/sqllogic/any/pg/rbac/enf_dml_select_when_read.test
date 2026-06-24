@@ -23,7 +23,7 @@ INSERT INTO edm_iceberg VALUES (1, 10), (2, 20), (3, 30);
 
 
 statement ok
-CREATE ROLE edm_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE edm_vedernikoff LOGIN;
 
 
 # === DELETE-only ===

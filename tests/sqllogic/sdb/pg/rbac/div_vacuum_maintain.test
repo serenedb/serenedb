@@ -26,11 +26,11 @@ DROP ROLE IF EXISTS vac_vedernikoff;
 
 
 statement ok
-CREATE ROLE vac_clickclack LOGIN PASSWORD 'pw';
+CREATE ROLE vac_clickclack LOGIN;
 
 
 statement ok
-CREATE ROLE vac_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE vac_vedernikoff LOGIN;
 
 
 statement ok

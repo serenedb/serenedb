@@ -41,7 +41,7 @@ INSERT INTO xmb_diu_clickclack VALUES (1, 'mop'), (2, 'babsky');
 
 
 statement ok
-CREATE ROLE xmb_diu_vitalik LOGIN PASSWORD 'pw';
+CREATE ROLE xmb_diu_vitalik LOGIN;
 
 
 statement ok

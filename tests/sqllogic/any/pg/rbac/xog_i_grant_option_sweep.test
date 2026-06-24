@@ -21,7 +21,7 @@ CREATE TABLE xog_i_mop (id int);
 
 
 statement ok
-CREATE ROLE xog_i_kostya LOGIN PASSWORD 'pw';
+CREATE ROLE xog_i_kostya LOGIN;
 
 
 # Owner holds all seven WITH GRANT OPTION implicitly.

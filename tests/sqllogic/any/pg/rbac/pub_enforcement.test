@@ -24,7 +24,7 @@ INSERT INTO pub_kostya VALUES (1, 'clickclack ships'), (2, 'mop deployed');
 
 
 statement ok
-CREATE ROLE pub_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE pub_vedernikoff LOGIN;
 
 
 # Before the PUBLIC grant the fresh role cannot even read.

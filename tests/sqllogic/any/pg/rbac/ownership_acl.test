@@ -25,7 +25,7 @@ INSERT INTO own_mop_babsky VALUES (1, 'clickclack'), (2, 'iceberg');
 
 
 statement ok
-CREATE ROLE own_acl_vedernikoff LOGIN PASSWORD 'mop';
+CREATE ROLE own_acl_vedernikoff LOGIN;
 
 
 # Before any explicit grant, relacl holds at most the owner row -- there is no

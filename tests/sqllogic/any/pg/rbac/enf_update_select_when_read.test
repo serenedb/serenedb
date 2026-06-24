@@ -16,7 +16,7 @@ DROP ROLE IF EXISTS enf_us_vedernikoff;
 
 
 statement ok
-CREATE ROLE enf_us_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE enf_us_vedernikoff LOGIN;
 
 
 statement ok
@@ -89,7 +89,7 @@ DROP ROLE IF EXISTS enf_us_pudge;
 
 
 statement ok
-CREATE ROLE enf_us_pudge LOGIN PASSWORD 'pw';
+CREATE ROLE enf_us_pudge LOGIN;
 
 
 statement ok
@@ -120,7 +120,7 @@ DROP ROLE IF EXISTS enf_us_nobody;
 
 
 statement ok
-CREATE ROLE enf_us_nobody LOGIN PASSWORD 'pw';
+CREATE ROLE enf_us_nobody LOGIN;
 
 
 connection c_nobody user=enf_us_nobody

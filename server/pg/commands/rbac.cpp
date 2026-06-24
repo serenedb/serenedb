@@ -63,58 +63,19 @@ std::shared_ptr<catalog::Role> CurrentRole(ConnectionContext& ctx) {
   return role;
 }
 
-void RequireCreateRolePrivilege(ConnectionContext& ctx, std::string_view verb) {
-  auto role = CurrentRole(ctx);
-  if (role->IsSuperuser() || role->Has(catalog::RoleOption::CreateRole)) {
-    return;
+void RejectUnsupportedRoleOptions(bool has_password, bool has_conn_limit,
+                                  bool has_valid_until) {
+  if (has_password) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("PASSWORD is not supported"));
   }
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-    ERR_MSG("permission denied to ", verb, " role"),
-    ERR_DETAIL("Only roles with the CREATEROLE attribute and the ADMIN option "
-               "on the target roles may ",
-               verb, " roles."));
-}
-
-enum class RoleAdmin { Ok, TargetSuperuser, NotAdmin };
-
-RoleAdmin CheckRoleAdmin(const catalog::Snapshot& snapshot, ObjectId actor_id,
-                         const catalog::Role& target) {
-  auto actor = snapshot.GetObject<catalog::Role>(actor_id);
-  if (actor && actor->IsSuperuser()) {
-    return RoleAdmin::Ok;
+  if (has_conn_limit) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("CONNECTION LIMIT is not supported"));
   }
-  if (target.IsSuperuser()) {
-    return RoleAdmin::TargetSuperuser;
-  }
-  if (!actor || !actor->Has(catalog::RoleOption::CreateRole) ||
-      !auth::HasAdminOption(snapshot, actor_id, target.GetId())) {
-    return RoleAdmin::NotAdmin;
-  }
-  return RoleAdmin::Ok;
-}
-
-[[noreturn]] void ThrowRoleAdmin(RoleAdmin status, std::string_view verb,
-                                 std::string_view target_name) {
-  if (status == RoleAdmin::TargetSuperuser) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                    ERR_MSG("permission denied to ", verb, " role"),
-                    ERR_DETAIL("Only roles with the SUPERUSER attribute may ",
-                               verb, " roles with the SUPERUSER attribute."));
-  }
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-    ERR_MSG("permission denied to ", verb, " role"),
-    ERR_DETAIL("Only roles with the CREATEROLE attribute and the ADMIN "
-               "option on role \"",
-               target_name, "\" may ", verb, " this role."));
-}
-
-void RequireRoleAdmin(ConnectionContext& ctx, const catalog::Snapshot& snapshot,
-                      const catalog::Role& target, std::string_view verb) {
-  auto status = CheckRoleAdmin(snapshot, ctx.GetRoleId(), target);
-  if (status != RoleAdmin::Ok) {
-    ThrowRoleAdmin(status, verb, target.GetName());
+  if (has_valid_until) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("VALID UNTIL is not supported"));
   }
 }
 
@@ -122,8 +83,10 @@ void RequireRoleAdmin(ConnectionContext& ctx, const catalog::Snapshot& snapshot,
 
 void CreateRole(ConnectionContext& ctx, std::string_view name,
                 const CreateRoleOptions& options) {
+  RejectUnsupportedRoleOptions(options.has_password, options.has_conn_limit,
+                               options.has_valid_until);
+
   auto& catalog = GlobalCatalog();
-  auto role = catalog::Role::NewUser(name, options.password);
   catalog::RoleOption opts = catalog::RoleOption::None;
   if (options.login) {
     opts |= catalog::RoleOption::Login;
@@ -134,12 +97,10 @@ void CreateRole(ConnectionContext& ctx, std::string_view name,
   if (options.inherit) {
     opts |= catalog::RoleOption::Inherit;
   }
-  role->SetOptions(opts);
-  if (!options.has_password) {
-    role->ClearPassword();
-  }
-  role->SetConnLimit(options.conn_limit);
-  role->SetValidUntil(options.valid_until);
+  auto role = std::make_shared<catalog::Role>(catalog::RoleData{
+    .name = std::string{name},
+    .options = static_cast<uint32_t>(opts),
+  });
 
   auto r = catalog.CreateRole(catalog::RequireOwnership(ctx.GetRoleId()),
                               std::move(role));
@@ -150,37 +111,12 @@ void CreateRole(ConnectionContext& ctx, std::string_view name,
   if (!r.ok()) {
     SDB_THROW(std::move(r));
   }
-
-  auto creator = CurrentRole(ctx);
-  if (!creator->IsSuperuser()) {
-    auto new_role = FreshSnapshot()->GetRole(name);
-    const catalog::Membership edge{
-      .role = new_role->GetId(),
-      .admin_option = true,
-      .inherit_option = false,
-      .set_option = false,
-    };
-    auto gr = catalog.ChangeRole(
-      creator->GetName(),
-      [&](const catalog::Role& old_role,
-          std::shared_ptr<catalog::Role>& updated) -> Result {
-        updated = std::static_pointer_cast<catalog::Role>(old_role.Clone());
-        updated->AddMembership(edge);
-        return {};
-      });
-    if (!gr.ok()) {
-      SDB_THROW(std::move(gr));
-    }
-  }
 }
 
 void DropRole(ConnectionContext& ctx, std::string_view name, bool missing_ok) {
-  RequireCreateRolePrivilege(ctx, "drop");
-
   auto& catalog = GlobalCatalog();
-  auto snapshot = catalog.GetCatalogSnapshot();
-  auto role = snapshot->GetRole(name);
-  if (!role) {
+  auto r = catalog.DropRole(catalog::RequireOwnership(ctx.GetRoleId()), name);
+  if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
     if (missing_ok) {
       ctx.AddNotice(SQL_ERROR_DATA(
         ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
@@ -190,18 +126,6 @@ void DropRole(ConnectionContext& ctx, std::string_view name, bool missing_ok) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("role \"", name, "\" does not exist"));
   }
-  RequireRoleAdmin(ctx, *snapshot, *role, "drop");
-  if (name == ctx.user()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
-                    ERR_MSG("current user cannot be dropped"));
-  }
-  if (name == StaticStrings::kDefaultUser) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-                    ERR_MSG("cannot drop role ", name,
-                            " because it is required by the database system"));
-  }
-
-  auto r = catalog.DropRole(catalog::RequireOwnership(ctx.GetRoleId()), name);
   if (!r.ok()) {
     SDB_THROW(std::move(r));
   }
@@ -220,32 +144,19 @@ catalog::RoleOption SetBit(catalog::RoleOption options, catalog::RoleOption bit,
   return options;
 }
 
-bool IsSelfPasswordOnly(const AlterRoleOptions& opts) {
-  return opts.set_password && opts.login == -1 && opts.superuser == -1 &&
-         opts.createdb == -1 && opts.createrole == -1 && opts.inherit == -1 &&
-         opts.conn_limit == -2 && !opts.set_valid_until;
-}
-
 }  // namespace
 
 void AlterRole(ConnectionContext& ctx, std::string_view name,
                const AlterRoleOptions& opts) {
-  const bool self_password_only =
-    name == ctx.user() && IsSelfPasswordOnly(opts);
+  RejectUnsupportedRoleOptions(opts.has_password, opts.has_conn_limit,
+                               opts.has_valid_until);
 
   auto& catalog = GlobalCatalog();
-  RoleAdmin reject = RoleAdmin::Ok;
   auto r = catalog.ChangeRole(
-    name,
+    catalog::RequireOwnership(ctx.GetRoleId()), name, "alter",
+    /*skip_admin_check=*/false,
     [&](const catalog::Role& old_role,
         std::shared_ptr<catalog::Role>& new_role) -> Result {
-      if (!self_password_only) {
-        reject = CheckRoleAdmin(*catalog.GetCatalogSnapshot(), ctx.GetRoleId(),
-                                old_role);
-        if (reject != RoleAdmin::Ok) {
-          return Result{ERROR_FORBIDDEN};
-        }
-      }
       new_role = std::static_pointer_cast<catalog::Role>(old_role.Clone());
       catalog::RoleOption o = new_role->Options();
       o = SetBit(o, catalog::RoleOption::Login, opts.login);
@@ -254,24 +165,8 @@ void AlterRole(ConnectionContext& ctx, std::string_view name,
       o = SetBit(o, catalog::RoleOption::CreateRole, opts.createrole);
       o = SetBit(o, catalog::RoleOption::Inherit, opts.inherit);
       new_role->SetOptions(o);
-      if (opts.set_password) {
-        if (opts.password_null) {
-          new_role->ClearPassword();
-        } else {
-          new_role->UpdatePassword(opts.password);
-        }
-      }
-      if (opts.conn_limit != -2) {
-        new_role->SetConnLimit(opts.conn_limit);
-      }
-      if (opts.set_valid_until) {
-        new_role->SetValidUntil(opts.valid_until);
-      }
       return {};
     });
-  if (reject != RoleAdmin::Ok) {
-    ThrowRoleAdmin(reject, "alter", name);
-  }
   if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("role \"", name, "\" does not exist"));
@@ -284,23 +179,14 @@ void AlterRole(ConnectionContext& ctx, std::string_view name,
 void RenameRole(ConnectionContext& ctx, std::string_view name,
                 std::string_view new_name) {
   auto& catalog = GlobalCatalog();
-  RoleAdmin reject = RoleAdmin::Ok;
   auto r = catalog.ChangeRole(
-    name,
+    catalog::RequireOwnership(ctx.GetRoleId()), name, "rename", false,
     [&](const catalog::Role& old_role,
         std::shared_ptr<catalog::Role>& new_role) -> Result {
-      reject = CheckRoleAdmin(*catalog.GetCatalogSnapshot(), ctx.GetRoleId(),
-                              old_role);
-      if (reject != RoleAdmin::Ok) {
-        return Result{ERROR_FORBIDDEN};
-      }
       new_role = std::static_pointer_cast<catalog::Role>(old_role.Clone());
       new_role->UpdateName(new_name);
       return {};
     });
-  if (reject != RoleAdmin::Ok) {
-    ThrowRoleAdmin(reject, "rename", name);
-  }
   if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("role \"", name, "\" does not exist"));
@@ -320,18 +206,10 @@ void AlterRoleConfig(ConnectionContext& ctx, std::string_view name,
   const bool is_self = name == ctx.user();
 
   auto& catalog = GlobalCatalog();
-  RoleAdmin reject = RoleAdmin::Ok;
   auto r = catalog.ChangeRole(
-    name,
+    catalog::RequireOwnership(ctx.GetRoleId()), name, "alter", is_self,
     [&](const catalog::Role& old_role,
         std::shared_ptr<catalog::Role>& new_role) -> Result {
-      if (!is_self) {
-        reject = CheckRoleAdmin(*catalog.GetCatalogSnapshot(), ctx.GetRoleId(),
-                                old_role);
-        if (reject != RoleAdmin::Ok) {
-          return Result{ERROR_FORBIDDEN};
-        }
-      }
       new_role = std::static_pointer_cast<catalog::Role>(old_role.Clone());
       if (op == "RESET_ALL") {
         new_role->ResetAllConfig();
@@ -342,9 +220,6 @@ void AlterRoleConfig(ConnectionContext& ctx, std::string_view name,
       }
       return {};
     });
-  if (reject != RoleAdmin::Ok) {
-    ThrowRoleAdmin(reject, "alter", name);
-  }
   if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("role \"", name, "\" does not exist"));
@@ -532,11 +407,6 @@ void AlterDefaultPrivileges(ConnectionContext& ctx,
 
 namespace {
 
-// Resolves the GRANT target and yields its schema/name plus the owning role
-// (relowner). Returns nullptr if the object does not exist. The owner comes
-// from the object itself, never from a self-grant ACL row -- ALTER OWNER and
-// owner-self-REVOKE leave that row stale or absent while GetOwner() stays
-// authoritative.
 std::shared_ptr<catalog::Object> ResolveGrantTarget(
   ConnectionContext& ctx, const catalog::Snapshot& snap,
   catalog::ObjectType type, std::string_view raw_name, std::string& out_schema,
@@ -932,18 +802,6 @@ void GrantRole(ConnectionContext& ctx, std::string_view role,
   const ObjectId role_id = role_obj->GetId();
   const ObjectId member_id = member_obj->GetId();
 
-  const bool is_superuser = CurrentRole(ctx)->IsSuperuser();
-  const ObjectId grantor_id = ctx.GetRoleId();
-
-  if (!is_superuser && !auth::HasAdminOption(*snapshot, grantor_id, role_id)) {
-    const auto verb = revoke ? "revoke" : "grant";
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-      ERR_MSG("permission denied to ", verb, " role \"", role, "\""),
-      ERR_DETAIL("Only roles with the ADMIN option on role \"", role, "\" may ",
-                 verb, " this role."));
-  }
-
   const catalog::Membership edge{
     .role = role_id,
     .admin_option = opts.admin == 1,
@@ -959,63 +817,9 @@ void GrantRole(ConnectionContext& ctx, std::string_view role,
       ERR_MSG("role \"", role, "\" is a member of role \"", member, "\""));
   }
 
-  enum class Reject { None, RoleGone, Cycle, NoAdmin };
-  Reject reject = Reject::None;
-  auto r = catalog.ChangeRole(
-    member,
-    [&](const catalog::Role& old_role,
-        std::shared_ptr<catalog::Role>& new_role) -> Result {
-      auto live = catalog.GetCatalogSnapshot();
-      auto actor = live->GetObject<catalog::Role>(grantor_id);
-      if (!(actor && actor->IsSuperuser()) &&
-          !auth::HasAdminOption(*live, grantor_id, role_id)) {
-        reject = Reject::NoAdmin;
-        return Result{ERROR_FORBIDDEN};
-      }
-      if (!revoke) {
-        if (!live->GetObject<catalog::Role>(role_id)) {
-          reject = Reject::RoleGone;
-          return Result{ERROR_USER_NOT_FOUND};
-        }
-        if (auth::ComputeMembershipClosure(*live, role_id)
-              .contains(member_id)) {
-          reject = Reject::Cycle;
-          return Result{ERROR_BAD_PARAMETER, "membership cycle"};
-        }
-      }
-      new_role = std::static_pointer_cast<catalog::Role>(old_role.Clone());
-      if (revoke && opts.admin_option_only) {
-        auto edges = new_role->MemberOf();
-        auto it = std::ranges::find(edges, role_id, &catalog::Membership::role);
-        if (it != edges.end()) {
-          catalog::Membership kept = *it;
-          kept.admin_option = false;
-          new_role->AddMembership(kept);
-        }
-      } else if (revoke) {
-        new_role->RemoveMembership(role_id);
-      } else {
-        new_role->AddMembership(edge);
-      }
-      return {};
-    });
-  if (reject == Reject::NoAdmin) {
-    const auto verb = revoke ? "revoke" : "grant";
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-      ERR_MSG("permission denied to ", verb, " role \"", role, "\""),
-      ERR_DETAIL("Only roles with the ADMIN option on role \"", role, "\" may ",
-                 verb, " this role."));
-  }
-  if (reject == Reject::RoleGone) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("role \"", role, "\" does not exist"));
-  }
-  if (reject == Reject::Cycle) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_GRANT_OPERATION),
-      ERR_MSG("role \"", role, "\" is a member of role \"", member, "\""));
-  }
+  auto r = catalog.ChangeMembership(catalog::RequireOwnership(ctx.GetRoleId()),
+                                    role_id, role, member_id, member, edge,
+                                    revoke, opts.admin_option_only);
   if (!r.ok()) {
     SDB_THROW(std::move(r));
   }

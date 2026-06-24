@@ -38,11 +38,11 @@ GRANT SELECT ON xmb_nre_mop TO xmb_nre_iceberg;
 
 
 statement ok
-CREATE ROLE xmb_nre_vedernikoff LOGIN NOINHERIT PASSWORD 'pw';
+CREATE ROLE xmb_nre_vedernikoff LOGIN NOINHERIT;
 
 
 statement ok
-CREATE ROLE xmb_nre_clickclack LOGIN INHERIT PASSWORD 'pw';
+CREATE ROLE xmb_nre_clickclack LOGIN INHERIT;
 
 
 # ---- Default edge for both: rolinherit decides ----

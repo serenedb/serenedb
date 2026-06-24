@@ -39,7 +39,7 @@ DROP ROLE IF EXISTS isr_vw_mop;
 
 
 statement ok
-CREATE ROLE isr_vw_vitalik LOGIN PASSWORD 'pw';
+CREATE ROLE isr_vw_vitalik LOGIN;
 
 
 statement ok

@@ -38,7 +38,7 @@ CREATE TABLE mop_ledger (id int);
 
 
 statement ok
-CREATE ROLE vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE vedernikoff LOGIN;
 
 
 statement ok

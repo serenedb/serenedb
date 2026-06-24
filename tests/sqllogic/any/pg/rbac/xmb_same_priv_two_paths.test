@@ -35,7 +35,7 @@ INSERT INTO xmb_sptp_clickclack VALUES (1), (2);
 
 
 statement ok
-CREATE ROLE xmb_sptp_mop LOGIN PASSWORD 'pw';
+CREATE ROLE xmb_sptp_mop LOGIN;
 
 
 statement ok

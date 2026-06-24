@@ -38,7 +38,7 @@ INSERT INTO ccr_clickclack VALUES (1, 5, 999), (2, 6, 888);
 
 
 statement ok
-CREATE ROLE ccr_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE ccr_vedernikoff LOGIN;
 
 
 # iceberg: SELECT on (id, babsky) only -- mop is ungranted.

@@ -1,0 +1,128 @@
+# Selective DROP FUNCTION / CREATE OR REPLACE FUNCTION require ownership, the
+# same as dropping the whole function. A non-owner who merely holds CREATE on the
+# schema must NOT be able to remove one overload, drop by kind on a mixed
+# function/procedure, or replace an overload's body. (Regression guard: the
+# selective-overload and by-kind drop paths re-persisted the survivors via an
+# unprivileged CreateFunction, so a non-owner could delete or replace another
+# role's function overloads -- PG denies all of these with "must be owner".)
+#
+# The DROP denials assert behaviorally (the overload count is unchanged): PG
+# renders the schema-qualified name in DROP errors ("must be owner of function
+# s.f") while serenedb renders the bare name, so the text is pinned only for the
+# CREATE OR REPLACE case where both engines emit the unqualified name.
+#
+# Lore: vedernikoff owns the schema and the functions; babsky holds USAGE+CREATE
+# on the schema but owns nothing.
+
+statement ok
+DROP SCHEMA IF EXISTS xao_ofn_mop CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_ofn_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_ofn_babsky;
+
+
+statement ok
+CREATE ROLE xao_ofn_vedernikoff LOGIN;
+
+
+statement ok
+CREATE ROLE xao_ofn_babsky LOGIN;
+
+
+statement ok
+CREATE SCHEMA xao_ofn_mop;
+
+
+statement ok
+ALTER SCHEMA xao_ofn_mop OWNER TO xao_ofn_vedernikoff;
+
+
+statement ok
+GRANT USAGE, CREATE ON SCHEMA xao_ofn_mop TO xao_ofn_babsky;
+
+
+# vedernikoff owns two function overloads plus a same-named procedure.
+connection cowner user=xao_ofn_vedernikoff
+statement ok
+CREATE FUNCTION xao_ofn_mop.clickclack(int) RETURNS int LANGUAGE sql AS 'SELECT $1';
+
+
+connection cowner user=xao_ofn_vedernikoff
+statement ok
+CREATE FUNCTION xao_ofn_mop.clickclack(text) RETURNS text LANGUAGE sql AS 'SELECT $1';
+
+
+# (a) non-owner cannot drop a single (non-last) overload by signature.
+connection cbabsky user=xao_ofn_babsky
+statement error
+DROP FUNCTION xao_ofn_mop.clickclack(int);
+
+
+# (b) non-owner cannot replace an overload's body (same unqualified-name form on
+# both engines, so the exact message is pinned here).
+connection cbabsky2 user=xao_ofn_babsky
+statement error
+CREATE OR REPLACE FUNCTION xao_ofn_mop.clickclack(int) RETURNS int LANGUAGE sql AS 'SELECT $1 + 99';
+----
+db error: ERROR: must be owner of function clickclack<slt:ignore>
+
+
+# Both overloads survive after the denied attempts.
+query
+SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'xao_ofn_mop' AND p.proname = 'clickclack';
+----
+count
+2
+
+
+# (c) non-owner cannot drop by kind on a mixed function/procedure name.
+connection cowner2 user=xao_ofn_vedernikoff
+statement ok
+CREATE PROCEDURE xao_ofn_mop.babsky(text) LANGUAGE sql AS 'SELECT 1';
+
+
+connection cowner3 user=xao_ofn_vedernikoff
+statement ok
+CREATE FUNCTION xao_ofn_mop.babsky(int) RETURNS int LANGUAGE sql AS 'SELECT $1';
+
+
+connection cbabsky3 user=xao_ofn_babsky
+statement error
+DROP FUNCTION xao_ofn_mop.babsky;
+
+
+query
+SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'xao_ofn_mop' AND p.proname = 'babsky';
+----
+count
+2
+
+
+# The owner can still selectively drop an overload (leaves one behind).
+connection cowner4 user=xao_ofn_vedernikoff
+statement ok
+DROP FUNCTION xao_ofn_mop.clickclack(int);
+
+
+query
+SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'xao_ofn_mop' AND p.proname = 'clickclack';
+----
+count
+1
+
+
+statement ok
+DROP SCHEMA xao_ofn_mop CASCADE;
+
+
+statement ok
+DROP ROLE xao_ofn_vedernikoff;
+
+
+statement ok
+DROP ROLE xao_ofn_babsky;

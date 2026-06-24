@@ -38,7 +38,7 @@ CREATE TABLE ident_kryakva (id int);
 
 
 statement ok
-CREATE ROLE "ident_Pavel" LOGIN PASSWORD 'pw';
+CREATE ROLE "ident_Pavel" LOGIN;
 
 
 # ============================================================================

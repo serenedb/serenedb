@@ -500,6 +500,13 @@ class Catalog final {
                      std::string_view schema, std::string_view name,
                      ChangeCallback<Table> callback);
   Result ChangeRole(std::string_view name, ChangeCallback<Role> callback);
+  Result ChangeRole(const AccessContext& ax, std::string_view name,
+                    std::string_view verb, bool skip_admin_check,
+                    ChangeCallback<Role> callback);
+  Result ChangeMembership(const AccessContext& ax, ObjectId role,
+                          std::string_view role_name, ObjectId member,
+                          std::string_view member_name, const Membership& edge,
+                          bool revoke, bool admin_option_only);
   Result ChangeOwner(const AccessContext& ax, ObjectId database_id,
                      std::string_view schema, std::string_view name,
                      ObjectType type, ObjectId new_owner,

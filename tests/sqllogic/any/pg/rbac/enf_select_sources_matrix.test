@@ -42,11 +42,11 @@ INSERT INTO esm_mop VALUES (1, 5), (2, 6);
 
 
 statement ok
-CREATE ROLE esm_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE esm_vedernikoff LOGIN;
 
 
 statement ok
-CREATE ROLE esm_babsky LOGIN PASSWORD 'pw';
+CREATE ROLE esm_babsky LOGIN;
 
 
 statement ok

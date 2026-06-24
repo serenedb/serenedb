@@ -24,15 +24,15 @@ DROP ROLE IF EXISTS xog_n_writer;
 
 
 statement ok
-CREATE ROLE xog_n_mop LOGIN PASSWORD 'pw';
+CREATE ROLE xog_n_mop LOGIN;
 
 
 statement ok
-CREATE ROLE xog_n_reader LOGIN PASSWORD 'pw';
+CREATE ROLE xog_n_reader LOGIN;
 
 
 statement ok
-CREATE ROLE xog_n_writer LOGIN PASSWORD 'pw';
+CREATE ROLE xog_n_writer LOGIN;
 
 
 statement ok

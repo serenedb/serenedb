@@ -53,7 +53,7 @@ INSERT INTO iso_pavel VALUES (100, 'babsky'), (200, 'pudge');
 
 
 statement ok
-CREATE ROLE iso_negaimorit LOGIN PASSWORD 'pw';
+CREATE ROLE iso_negaimorit LOGIN;
 
 
 # ============================================================================

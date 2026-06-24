@@ -32,11 +32,11 @@ INSERT INTO ident_iceberg VALUES (1, 'clickclack'), (2, 'vedernikoff');
 
 
 statement ok
-CREATE ROLE ident_kostya LOGIN PASSWORD 'pw';
+CREATE ROLE ident_kostya LOGIN;
 
 
 statement ok
-CREATE ROLE ident_deadinside LOGIN PASSWORD 'pw';
+CREATE ROLE ident_deadinside LOGIN;
 
 
 # ============================================================================

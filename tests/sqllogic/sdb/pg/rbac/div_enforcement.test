@@ -34,7 +34,7 @@ CREATE INDEX enf_secret_idx ON enf_secret(id);
 
 
 statement ok
-CREATE ROLE enf_user LOGIN PASSWORD 'pw';
+CREATE ROLE enf_user LOGIN;
 
 
 # ---- As enf_user (non-superuser, no grants): every access denied ----

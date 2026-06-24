@@ -28,7 +28,7 @@ DROP ROLE IF EXISTS xao_osn_babsky;
 
 
 statement ok
-CREATE ROLE xao_osn_clickclack LOGIN PASSWORD 'pw';
+CREATE ROLE xao_osn_clickclack LOGIN;
 
 
 statement ok
@@ -40,7 +40,7 @@ CREATE ROLE xao_osn_mop;
 
 
 statement ok
-CREATE ROLE xao_osn_babsky LOGIN PASSWORD 'pw';
+CREATE ROLE xao_osn_babsky LOGIN;
 
 
 statement ok

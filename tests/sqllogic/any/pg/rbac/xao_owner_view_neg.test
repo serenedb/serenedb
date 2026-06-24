@@ -28,7 +28,7 @@ DROP ROLE IF EXISTS xao_ovn_vedernikoff;
 
 
 statement ok
-CREATE ROLE xao_ovn_mop LOGIN PASSWORD 'pw';
+CREATE ROLE xao_ovn_mop LOGIN;
 
 
 statement ok
@@ -40,7 +40,7 @@ CREATE ROLE xao_ovn_babsky;
 
 
 statement ok
-CREATE ROLE xao_ovn_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE xao_ovn_vedernikoff LOGIN;
 
 
 statement ok

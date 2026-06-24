@@ -43,7 +43,7 @@ INSERT INTO zc_pb VALUES (1, 100), (2, 200);
 
 
 statement ok
-CREATE ROLE zc_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE zc_vedernikoff LOGIN;
 
 
 # === C8: no grant on zc_pb -> every zero-column read is refused ===

@@ -22,11 +22,11 @@ CREATE TABLE irs_kostya (id int, secret text);
 
 
 statement ok
-CREATE ROLE irs_insonly LOGIN PASSWORD 'pw';
+CREATE ROLE irs_insonly LOGIN;
 
 
 statement ok
-CREATE ROLE irs_full LOGIN PASSWORD 'pw';
+CREATE ROLE irs_full LOGIN;
 
 
 statement ok

@@ -1861,6 +1861,28 @@ Result Catalog::CreateRole(const AccessContext& ax,
           !cr.ok()) {
         return cr;
       }
+      auto creator = clone->template GetObject<Role>(ax.role);
+      if (creator && !creator->IsSuperuser()) {
+        auto updated = std::static_pointer_cast<Role>(creator->Clone());
+        updated->AddMembership(Membership{
+          .role = role->GetId(),
+          .admin_option = true,
+          .inherit_option = false,
+          .set_option = false,
+        });
+        if (auto rr = clone->template ReplaceObject<ResolveType::Role>(
+              id::kInstance, updated->GetName(), updated);
+            !rr.ok()) {
+          return rr;
+        }
+        duckdb::MemoryStream cstream;
+        auto cbytes = catalog::SerializeObject(*updated, cstream);
+        if (auto cr = _engine->CreateDefinition(id::kInstance, ObjectType::Role,
+                                                updated->GetId(), cbytes);
+            !cr.ok()) {
+          return cr;
+        }
+      }
       clone->RebuildRoleClosures();
       return Result{};
     },
@@ -2032,25 +2054,25 @@ void RequireObjectOwner(const Snapshot& snapshot, ObjectId role,
 }
 
 void RequireRoleAdmin(const Snapshot& snapshot, ObjectId actor_id,
-                      const Role& target) {
+                      const Role& target, std::string_view verb) {
   auto actor = snapshot.GetObject<Role>(actor_id);
   if (actor && actor->IsSuperuser()) {
     return;
   }
   if (target.IsSuperuser()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                    ERR_MSG("permission denied to drop role"),
-                    ERR_DETAIL("Only roles with the SUPERUSER attribute may "
-                               "drop roles with the SUPERUSER attribute."));
+                    ERR_MSG("permission denied to ", verb, " role"),
+                    ERR_DETAIL("Only roles with the SUPERUSER attribute may ",
+                               verb, " roles with the SUPERUSER attribute."));
   }
   if (!actor || !actor->Has(RoleOption::CreateRole) ||
       !auth::HasAdminOption(snapshot, actor_id, target.GetId())) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-      ERR_MSG("permission denied to drop role"),
+      ERR_MSG("permission denied to ", verb, " role"),
       ERR_DETAIL("Only roles with the CREATEROLE attribute and the ADMIN "
                  "option on role \"",
-                 target.GetName(), "\" may drop this role."));
+                 target.GetName(), "\" may ", verb, " this role."));
   }
 }
 
@@ -2298,6 +2320,7 @@ Result Catalog::CreateFunction(const AccessContext& ax, ObjectId database_id,
     // CREATE OR REPLACE preserves the original owner and grants (PG keeps the
     // existing catalog tuple's proowner and proacl).
     if (existed_id.isSet()) {
+      RequireObjectOwner(*_snapshot, ax.role, existed_id);
       if (auto existing = _snapshot->GetObject<Object>(existed_id)) {
         function->SetPermissions(existing->GetPermissions());
       }
@@ -2796,15 +2819,19 @@ Result Catalog::RenameRelation(const AccessContext& ax, ObjectId database_id,
   }
 }
 
-Result Catalog::ChangeRole(std::string_view name,
-                           ChangeCallback<Role> new_role) {
+Result Catalog::ChangeRole(const AccessContext& ax, std::string_view name,
+                           std::string_view verb, bool skip_admin_check,
+                           ChangeCallback<Role> callback) {
   absl::MutexLock lock{&_mutex};
   auto role = _snapshot->GetRole(name);
   if (!role) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
+  if (!skip_admin_check) {
+    RequireRoleAdmin(*_snapshot, ax.role, *role, verb);
+  }
   std::shared_ptr<Role> new_role_ptr;
-  auto r = new_role(*role, new_role_ptr);
+  auto r = callback(*role, new_role_ptr);
   if (!r.ok()) {
     return r;
   }
@@ -2840,6 +2867,87 @@ Result Catalog::ChangeRole(std::string_view name,
   }
 
   return {};
+}
+
+Result Catalog::ChangeRole(std::string_view name,
+                           ChangeCallback<Role> new_role) {
+  return ChangeRole(AccessContext{}, name, {}, /*skip_admin_check=*/true,
+                    std::move(new_role));
+}
+
+Result Catalog::ChangeMembership(const AccessContext& ax, ObjectId role,
+                                 std::string_view role_name, ObjectId member,
+                                 std::string_view member_name,
+                                 const Membership& edge, bool revoke,
+                                 bool admin_option_only) {
+  absl::MutexLock lock{&_mutex};
+  auto actor = _snapshot->GetObject<Role>(ax.role);
+  if (!(actor && actor->IsSuperuser()) &&
+      !auth::HasAdminOption(*_snapshot, ax.role, role)) {
+    const auto verb = revoke ? "revoke" : "grant";
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+      ERR_MSG("permission denied to ", verb, " role \"", role_name, "\""),
+      ERR_DETAIL("Only roles with the ADMIN option on role \"", role_name,
+                 "\" may ", verb, " this role."));
+  }
+  if (!revoke) {
+    if (!_snapshot->GetObject<Role>(role)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                      ERR_MSG("role \"", role_name, "\" does not exist"));
+    }
+    if (auth::ComputeMembershipClosure(*_snapshot, role).contains(member)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_GRANT_OPERATION),
+                      ERR_MSG("role \"", role_name, "\" is a member of role \"",
+                              member_name, "\""));
+    }
+  }
+
+  auto member_role = _snapshot->GetObject<Role>(member);
+  if (!member_role) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  auto new_role = std::static_pointer_cast<Role>(member_role->Clone());
+  if (revoke && admin_option_only) {
+    auto edges = new_role->MemberOf();
+    auto it = std::ranges::find(edges, role, &Membership::role);
+    if (it != edges.end()) {
+      Membership kept = *it;
+      kept.admin_option = false;
+      new_role->AddMembership(kept);
+    }
+  } else if (revoke) {
+    new_role->RemoveMembership(role);
+  } else {
+    new_role->AddMembership(edge);
+  }
+
+  return Apply(
+    _snapshot, _snapshot_mutex,
+    [&](std::shared_ptr<Snapshot>& clone) {
+      auto r = clone->ReplaceObject<ResolveType::Role>(
+        id::kInstance, new_role->GetName(), new_role);
+      if (!r.ok()) {
+        return r;
+      }
+      duckdb::MemoryStream stream;
+      auto bytes = catalog::SerializeObject(*new_role, stream);
+      if (auto cr = _engine->CreateDefinition(id::kInstance, ObjectType::Role,
+                                              new_role->GetId(), bytes);
+          !cr.ok()) {
+        return cr;
+      }
+      clone->RebuildRoleClosures();
+      return Result{};
+    },
+    [&](const std::shared_ptr<Snapshot>& clone) {
+      auto obj = clone->GetObject<Role>(new_role->GetId());
+      if (obj->GetName() == new_role->GetName()) {
+        auto r = clone->ReplaceObject<ResolveType::Role>(
+          id::kInstance, new_role->GetName(), member_role);
+        SDB_ASSERT(r.ok());
+      }
+    });
 }
 
 namespace {
@@ -3357,11 +3465,23 @@ Result Catalog::ChangeTable(const AccessContext& ax, ObjectId database_id,
 
 Result Catalog::DropRole(const AccessContext& ax, std::string_view role) {
   absl::MutexLock lock{&_mutex};
+  RequireRoleAttribute(*_snapshot, ax.role, RoleOption::CreateRole, "drop role",
+                       "Only roles with the CREATEROLE attribute and the ADMIN "
+                       "option on the target roles may drop roles.");
   auto role_ptr = _snapshot->GetRole(role);
   if (!role_ptr) {
     return {ERROR_SERVER_ILLEGAL_NAME};
   }
-  RequireRoleAdmin(*_snapshot, ax.role, *role_ptr);
+  if (role_ptr->GetId() == ax.role) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
+                    ERR_MSG("current user cannot be dropped"));
+  }
+  if (role == StaticStrings::kDefaultUser) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+                    ERR_MSG("cannot drop role ", role,
+                            " because it is required by the database system"));
+  }
+  RequireRoleAdmin(*_snapshot, ax.role, *role_ptr, "drop");
   if (auto deps = _snapshot->RoleDependentCount(role_ptr->GetId()); deps > 0) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
@@ -4632,10 +4752,13 @@ void InitCatalog() {
   // already loaded any persisted roles; if none exist we mint the root user
   // and persist it via CreateRole(), which persists it so it survives across
   // restarts. The bootstrap user is the cluster superuser (and may create
-  // roles/databases); the password is empty (auth is a Trust stub).
+  // roles/databases).
   if (GetCatalog().GetCatalogSnapshot()->GetRoles().empty()) {
-    auto root = Role::NewUser(StaticStrings::kDefaultUser, "", id::kRootUser);
-    root->SetOptions(RoleOption::All);
+    auto root = std::make_shared<Role>(persistence::RoleData{
+      .id = id::kRootUser,
+      .name = std::string{StaticStrings::kDefaultUser},
+      .options = static_cast<uint32_t>(RoleOption::All),
+    });
     if (auto br = GetCatalog().CreateRole(NoAccessCheck(), std::move(root));
         !br.ok()) {
       SDB_THROW(std::move(br));

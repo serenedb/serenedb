@@ -39,7 +39,7 @@ INSERT INTO sqc_beta VALUES (1, 5), (2, 6);
 
 
 statement ok
-CREATE ROLE sqc_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE sqc_vedernikoff LOGIN;
 
 
 # Only (id, av) on sqc_alpha; secret and all of sqc_beta stay ungranted.

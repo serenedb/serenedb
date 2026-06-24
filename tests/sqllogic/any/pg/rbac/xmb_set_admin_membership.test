@@ -29,7 +29,7 @@ CREATE ROLE xmb_sa_iceberg;
 
 
 statement ok
-CREATE ROLE xmb_sa_mop LOGIN PASSWORD 'pw';
+CREATE ROLE xmb_sa_mop LOGIN;
 
 
 statement ok
@@ -37,7 +37,7 @@ CREATE ROLE xmb_sa_babsky;
 
 
 statement ok
-CREATE ROLE xmb_sa_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE xmb_sa_vedernikoff LOGIN;
 
 
 # (1) WITH SET FALSE: SET is false, MEMBER and USAGE unaffected.

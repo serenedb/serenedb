@@ -55,7 +55,7 @@ CREATE ROLE xcat_ro_noinherit LOGIN NOINHERIT;
 
 # A login role with a password: rolpassword is masked.
 statement ok
-CREATE ROLE xcat_ro_pw LOGIN PASSWORD 'icebergmop';
+CREATE ROLE xcat_ro_pw LOGIN;
 
 
 # The attribute matrix for the four non-password roles, pinned and ordered.

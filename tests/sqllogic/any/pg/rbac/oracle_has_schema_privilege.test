@@ -22,7 +22,7 @@ DROP ROLE IF EXISTS osh_vedernikoff;
 
 
 statement ok
-CREATE ROLE osh_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE osh_vedernikoff LOGIN;
 
 
 statement ok

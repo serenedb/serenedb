@@ -261,7 +261,7 @@ f	t	f	f	f	t	f
 # ============================================================================
 
 statement ok
-CREATE ROLE combo_enforce LOGIN PASSWORD 'pw';
+CREATE ROLE combo_enforce LOGIN;
 
 
 statement ok

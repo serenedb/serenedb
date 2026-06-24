@@ -37,11 +37,11 @@ INSERT INTO mb_dia_iceberg VALUES (1, 'clickclack'), (2, 'mop');
 
 
 statement ok
-CREATE ROLE mb_dia_vitalik LOGIN PASSWORD 'pw';
+CREATE ROLE mb_dia_vitalik LOGIN;
 
 
 statement ok
-CREATE ROLE mb_dia_shlepach LOGIN PASSWORD 'pw';
+CREATE ROLE mb_dia_shlepach LOGIN;
 
 
 statement ok

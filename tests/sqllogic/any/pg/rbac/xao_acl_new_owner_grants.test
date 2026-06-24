@@ -24,11 +24,11 @@ DROP ROLE IF EXISTS xao_nog_vedernikoff;
 
 
 statement ok
-CREATE ROLE xao_nog_mop LOGIN PASSWORD 'pw';
+CREATE ROLE xao_nog_mop LOGIN;
 
 
 statement ok
-CREATE ROLE xao_nog_babsky LOGIN PASSWORD 'pw';
+CREATE ROLE xao_nog_babsky LOGIN;
 
 
 statement ok

@@ -28,7 +28,7 @@ INSERT INTO cda_iceberg VALUES (1, 2, 3);
 
 
 statement ok
-CREATE ROLE cda_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE cda_vedernikoff LOGIN;
 
 
 statement ok

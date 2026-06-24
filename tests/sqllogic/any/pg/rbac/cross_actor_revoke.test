@@ -23,7 +23,7 @@ CREATE TABLE clickclack_ledger (id int);
 
 
 statement ok
-CREATE ROLE mop_deputy LOGIN PASSWORD 'pw';
+CREATE ROLE mop_deputy LOGIN;
 
 
 statement ok

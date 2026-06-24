@@ -29,7 +29,7 @@ INSERT INTO xmb_rkd_clickclack VALUES (1, 'vedernikoff');
 
 
 statement ok
-CREATE ROLE xmb_rkd_mop LOGIN PASSWORD 'pw';
+CREATE ROLE xmb_rkd_mop LOGIN;
 
 
 statement ok

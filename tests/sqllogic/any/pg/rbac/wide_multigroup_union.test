@@ -80,11 +80,11 @@ INSERT INTO wide_mg_iceberg VALUES (1, 'clickclack'), (2, 'mop'), (3, 'pudge');
 
 
 statement ok
-CREATE ROLE wide_mg_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE wide_mg_vedernikoff LOGIN;
 
 
 statement ok
-CREATE ROLE wide_mg_kostya LOGIN PASSWORD 'pw';
+CREATE ROLE wide_mg_kostya LOGIN;
 
 
 statement ok

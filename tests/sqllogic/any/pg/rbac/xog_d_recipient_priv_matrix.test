@@ -40,7 +40,7 @@ CREATE TABLE xog_d_clickclack (id int, payload text);
 
 
 statement ok
-CREATE ROLE xog_d_direct LOGIN PASSWORD 'pw';
+CREATE ROLE xog_d_direct LOGIN;
 
 
 statement ok
@@ -48,15 +48,15 @@ CREATE ROLE xog_d_grp;
 
 
 statement ok
-CREATE ROLE xog_d_member LOGIN PASSWORD 'pw';
+CREATE ROLE xog_d_member LOGIN;
 
 
 statement ok
-CREATE ROLE xog_d_public LOGIN PASSWORD 'pw';
+CREATE ROLE xog_d_public LOGIN;
 
 
 statement ok
-CREATE ROLE xog_d_nothing LOGIN PASSWORD 'pw';
+CREATE ROLE xog_d_nothing LOGIN;
 
 
 # Wire the recipients: a direct grant of SELECT+UPDATE; a group that holds

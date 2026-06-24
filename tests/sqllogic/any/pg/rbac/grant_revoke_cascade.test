@@ -35,11 +35,11 @@ INSERT INTO dgrc_clickclack VALUES (1), (2), (3);
 
 
 statement ok
-CREATE ROLE dgrc_alice LOGIN PASSWORD 'pw';
+CREATE ROLE dgrc_alice LOGIN;
 
 
 statement ok
-CREATE ROLE dgrc_bob LOGIN PASSWORD 'pw';
+CREATE ROLE dgrc_bob LOGIN;
 
 
 # Owner grants alice SELECT WITH GRANT OPTION...

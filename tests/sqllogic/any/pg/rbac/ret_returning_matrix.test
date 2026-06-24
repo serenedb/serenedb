@@ -35,7 +35,7 @@ INSERT INTO ret_ledger VALUES (1, 10, 100);
 
 
 statement ok
-CREATE ROLE ret_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE ret_vedernikoff LOGIN;
 
 
 # === CASE 1: INSERT(id, amt) only, no SELECT ===

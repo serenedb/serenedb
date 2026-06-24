@@ -20,7 +20,7 @@ CREATE TABLE xog_e_iceberg (id int);
 
 
 statement ok
-CREATE ROLE xog_e_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE xog_e_vedernikoff LOGIN;
 
 
 statement ok

@@ -19,11 +19,11 @@ DROP ROLE IF EXISTS cdb_babsky;
 
 
 statement ok
-CREATE ROLE cdb_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE cdb_vedernikoff LOGIN;
 
 
 statement ok
-CREATE ROLE cdb_babsky LOGIN PASSWORD 'pw';
+CREATE ROLE cdb_babsky LOGIN;
 
 
 statement ok

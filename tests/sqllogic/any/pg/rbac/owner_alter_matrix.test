@@ -23,7 +23,7 @@ DROP TABLE IF EXISTS oam_clickclack;
 
 
 statement ok
-CREATE ROLE oam_vedernikoff LOGIN PASSWORD 'pw';
+CREATE ROLE oam_vedernikoff LOGIN;
 
 
 statement ok
@@ -31,7 +31,7 @@ CREATE ROLE oam_mop;
 
 
 statement ok
-CREATE ROLE oam_iceberg LOGIN PASSWORD 'pw';
+CREATE ROLE oam_iceberg LOGIN;
 
 
 # vedernikoff can SET ROLE to oam_mop (default GRANT carries the set option).

@@ -33,7 +33,7 @@ GRANT SELECT ON xmb_eoc_clickclack TO xmb_eoc_iceberg;
 
 
 statement ok
-CREATE ROLE xmb_eoc_mop LOGIN PASSWORD 'pw';
+CREATE ROLE xmb_eoc_mop LOGIN;
 
 
 # ---- INHERIT TRUE, SET TRUE: wields privileges and can SET ----

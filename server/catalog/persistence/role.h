@@ -63,9 +63,6 @@ struct RoleData {
   ObjectId id;
   std::string name;
   bool active = true;
-  std::string password_method;
-  std::string password_salt;
-  std::string password_hash;
   absl::node_hash_map<std::string, auth::Level> db_access;
   uint32_t options = 0;
   std::vector<MembershipData> member_of;

@@ -20,7 +20,7 @@ INSERT INTO iceberg_ledger VALUES (1, 'clickclack'), (2, 'MOP');
 
 
 statement ok
-CREATE ROLE vedernikoff LOGIN PASSWORD 'iceberg';
+CREATE ROLE vedernikoff LOGIN;
 
 
 statement ok

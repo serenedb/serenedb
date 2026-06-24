@@ -108,7 +108,7 @@ void SearchEngine::stop() {
     yaclib::Wait(loops.begin(), loops.end());
   }
   // Close the per-database WALs (flush + release file handles) before shutdown.
-  std::lock_guard<std::mutex> lock(_db_wals_mu);
+  absl::MutexLock lock(&_db_wals_mu);
   _db_wals.clear();
 }
 
@@ -136,7 +136,7 @@ std::filesystem::path SearchEngine::GetPersistedPath(
 }
 
 SearchDbWal& SearchEngine::GetDbWal(ObjectId database_id) {
-  std::lock_guard<std::mutex> lock(_db_wals_mu);
+  absl::MutexLock lock(&_db_wals_mu);
   auto it = _db_wals.find(database_id);
   if (it == _db_wals.end()) {
     // Borrow the process-wide FileSystem (owned by the DuckDB instance, which

@@ -21,12 +21,12 @@
 #pragma once
 
 #include <absl/functional/any_invocable.h>
+#include <absl/synchronization/mutex.h>
 
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
-#include <mutex>
 #include <span>
 #include <string>
 #include <string_view>
@@ -185,16 +185,16 @@ class SearchDbWal {
 
   const uint64_t _seal_threshold;
 
-  std::mutex _append_mu;
+  absl::Mutex _append_mu;
   std::atomic<uint64_t> _tick{0};
   std::unique_ptr<duckdb::BufferedFileWriter> _active;
   uint64_t _active_first_tick = 0;
   uint64_t _active_chunk_bytes = 0;
 
-  std::mutex _seg_mu;
+  absl::Mutex _seg_mu;
   containers::FlatHashMap<uint64_t, uint64_t> _seg_ids;
 
-  std::mutex _sub_mu;
+  absl::Mutex _sub_mu;
   containers::FlatHashMap<uint64_t, uint64_t> _committed;
 
   void EnsureActiveSegmentLocked(uint64_t first_tick);

@@ -26,7 +26,6 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
-#include <mutex>
 #include <vector>
 #include <yaclib/async/future.hpp>
 
@@ -111,7 +110,7 @@ class SearchEngine final {
  private:
   DatabasePathFeature& _dir_feature;
   // Per-database central WALs (see GetDbWal). Guarded by _db_wals_mu.
-  std::mutex _db_wals_mu;
+  absl::Mutex _db_wals_mu;
   containers::FlatHashMap<ObjectId, std::unique_ptr<SearchDbWal>> _db_wals;
   std::atomic<bool> _stopping{false};
   std::atomic<int> _running_compactions{0};

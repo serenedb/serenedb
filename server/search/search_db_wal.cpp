@@ -494,7 +494,7 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
                                    uint64_t tick_span) {
   SDB_ASSERT(!sections.empty(), "AppendCommit with no shard sections");
   SDB_ASSERT(tick_span >= 1, "every commit advances the tick by at least 1");
-  std::lock_guard<std::mutex> lock(_append_mu);
+  absl::MutexLock lock(&_append_mu);
 
   uint64_t base = _tick.fetch_add(tick_span, std::memory_order_relaxed);
   uint64_t tick = base + tick_span;
@@ -581,7 +581,7 @@ SearchDbWal::ChunkWriter SearchDbWal::NewChunkWriter(ObjectId table_id) {
 
   uint64_t seg_id;
   {
-    std::lock_guard<std::mutex> lock(_seg_mu);
+    absl::MutexLock lock(&_seg_mu);
     auto it = _seg_ids.find(table_id.id());
     if (it == _seg_ids.end()) {
       it = _seg_ids.emplace(table_id.id(), MaxChunkSegId(dir)).first;
@@ -596,13 +596,13 @@ SearchDbWal::ChunkWriter SearchDbWal::NewChunkWriter(ObjectId table_id) {
 
 void SearchDbWal::RegisterShard(ObjectId table_id, uint64_t committed_tick) {
   {
-    std::lock_guard<std::mutex> lock(_sub_mu);
+    absl::MutexLock lock(&_sub_mu);
     auto& cur = _committed[table_id.id()];
     cur = std::max(cur, committed_tick);
   }
   // Continue the tick line past every shard's durable tick: a shard's committed
   // tick can exceed the WAL max if consumed records were already GC'd.
-  std::lock_guard<std::mutex> lock(_append_mu);
+  absl::MutexLock lock(&_append_mu);
   if (_tick.load(std::memory_order_relaxed) < committed_tick) {
     _tick.store(committed_tick, std::memory_order_relaxed);
   }
@@ -610,12 +610,12 @@ void SearchDbWal::RegisterShard(ObjectId table_id, uint64_t committed_tick) {
 
 void SearchDbWal::OnShardCommit(ObjectId table_id, uint64_t committed_tick) {
   {
-    std::lock_guard<std::mutex> lock(_sub_mu);
+    absl::MutexLock lock(&_sub_mu);
     auto& cur = _committed[table_id.id()];
     cur = std::max(cur, committed_tick);
   }
   {
-    std::lock_guard<std::mutex> lock(_append_mu);
+    absl::MutexLock lock(&_append_mu);
     if (_tick.load(std::memory_order_relaxed) < committed_tick) {
       _tick.store(committed_tick, std::memory_order_relaxed);
     }
@@ -625,14 +625,14 @@ void SearchDbWal::OnShardCommit(ObjectId table_id, uint64_t committed_tick) {
 
 void SearchDbWal::DeregisterShard(ObjectId table_id) {
   {
-    std::lock_guard<std::mutex> lock(_sub_mu);
+    absl::MutexLock lock(&_sub_mu);
     _committed.erase(table_id.id());
   }
   RunGc();
 }
 
 uint64_t SearchDbWal::MinCommittedTick() {
-  std::lock_guard<std::mutex> lock(_sub_mu);
+  absl::MutexLock lock(&_sub_mu);
   if (_committed.empty()) {
     return 0;
   }
@@ -652,7 +652,7 @@ void SearchDbWal::RunGc() {
   // if a concurrent AppendCommit rolls it.
   uint64_t active_first_tick;
   {
-    std::lock_guard<std::mutex> lock(_append_mu);
+    absl::MutexLock lock(&_append_mu);
     active_first_tick = _active_first_tick;
   }
 
@@ -702,7 +702,7 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
                               const ReplayCallback& insert_cb,
                               const DeleteReplayCallback& delete_cb,
                               const TruncateReplayCallback& truncate_cb) {
-  std::lock_guard<std::mutex> lock(_append_mu);
+  absl::MutexLock lock(&_append_mu);
   uint64_t max_tick = 0;
   std::unordered_set<std::string> referenced;  // surviving chunk-file paths
   std::vector<uint64_t> seg_scratch;           // reused by ParseOp across

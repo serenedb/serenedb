@@ -21,6 +21,15 @@ PATTERNS = [
 
 EXCEPTIONS = {
     "scripts/check_api_keys.py",
+    # Cloud-storage cookbook docs use AWS's canonical placeholder credentials
+    # (AKIAIOSFODNN7EXAMPLE / wJalrXUtnFEMI...EXAMPLEKEY), not real secrets.
+    "tests/sqllogic/sdb/pg/site_docs/cookbook/network_cloud_storage/cloudflare_r2_import.test",
+    "tests/sqllogic/sdb/pg/site_docs/cookbook/network_cloud_storage/fastly_object_storage_import.test",
+    "tests/sqllogic/sdb/pg/site_docs/cookbook/network_cloud_storage/gcs_import.test",
+    "tests/sqllogic/sdb/pg/site_docs/cookbook/network_cloud_storage/s3_export.test",
+    "tests/sqllogic/sdb/pg/site_docs/cookbook/network_cloud_storage/s3_express_one.test",
+    "tests/sqllogic/sdb/pg/site_docs/cookbook/network_cloud_storage/s3_iceberg_import.test",
+    "tests/sqllogic/sdb/pg/site_docs/cookbook/network_cloud_storage/s3_import.test",
 }
 
 

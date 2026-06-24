@@ -51,6 +51,7 @@
 // Vendored inet extension: IP parser/formatter, reused so inet input
 // deserialization matches the extension's storage form.
 #include <duckdb/inet/inet_ipaddress.hpp>
+
 #include "pg/pg_types.h"
 
 namespace sdb::pg {

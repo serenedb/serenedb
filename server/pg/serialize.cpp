@@ -63,6 +63,7 @@
 // Vendored inet extension: canonical IP-to-string formatter, reused so native
 // `inet` text output matches the extension's host()/::varchar rendering.
 #include <duckdb/inet/inet_ipaddress.hpp>
+
 #include "pg/errcodes.h"
 #include "pg/pg_types.h"
 #include "pg/sql_exception_macro.h"
@@ -1452,8 +1453,9 @@ struct RecordBinCore {
 // {ip_type UTINYINT, address HUGEINT, mask USMALLINT}: ip_type 1=IPv4, 2=IPv6;
 // `address` is the unsigned IP stored as a signed hugeint with the IPv6 top bit
 // flipped for sort order.
-IRS_FORCE_INLINE void ReadInet(const duckdb::RecursiveUnifiedVectorFormat& vdata,
-                               duckdb::idx_t row, INET_IPAddress& inet) {
+IRS_FORCE_INLINE void ReadInet(
+  const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row,
+  INET_IPAddress& inet) {
   const auto& c0 = vdata.children[0].unified;
   const auto& c1 = vdata.children[1].unified;
   const auto& c2 = vdata.children[2].unified;
@@ -1479,8 +1481,8 @@ struct InetTextCore {
                      duckdb::idx_t row) {
     INET_IPAddress inet;
     ReadInet(vdata, row, inet);
-    // Reuse the extension's formatter (IPv6 canonicalization + "/mask" rules) so
-    // output matches host()/::varchar.
+    // Reuse the extension's formatter (IPv6 canonicalization + "/mask" rules)
+    // so output matches host()/::varchar.
     char buf[64];
     const size_t len = ipaddress_to_string(&inet, buf, sizeof(buf));
     EmitTextItem<InContainer>(context, std::string_view{buf, len});
@@ -1493,7 +1495,8 @@ struct InetBinCore {
                      duckdb::idx_t row) {
     INET_IPAddress inet;
     ReadInet(vdata, row, inet);
-    // PG binary inet: family(1), bits(1), is_cidr(1), nb(1), then nb addr bytes.
+    // PG binary inet: family(1), bits(1), is_cidr(1), nb(1), then nb addr
+    // bytes.
     const bool is_v6 = inet.type == INET_IP_ADDRESS_V6;
     const uint8_t nb = is_v6 ? 16 : 4;
     auto* data = context.writer->Alloc(4 + nb);

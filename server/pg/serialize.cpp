@@ -1469,43 +1469,42 @@ IRS_FORCE_INLINE void ReadInet(
   inet.mask = mask;
 }
 
-template<WrapContext InContainer>
 struct InetTextCore {
-  static void Render(SerializationContext& context,
-                     const duckdb::RecursiveUnifiedVectorFormat& vdata,
-                     duckdb::idx_t row) {
+  static constexpr uint32_t kMaxBytes = 64;
+  IRS_FORCE_INLINE static size_t Render(
+    uint8_t* dst, SerializationContext&,
+    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row) {
     INET_IPAddress inet;
     ReadInet(vdata, row, inet);
     // Reuse the extension's formatter (IPv6 canonicalization + "/mask" rules)
     // so output matches host()/::varchar.
-    char buf[64];
-    const size_t len = ipaddress_to_string(&inet, buf, sizeof(buf));
-    EmitTextItem<InContainer>(context, std::string_view{buf, len});
+    return ipaddress_to_string(&inet, reinterpret_cast<char*>(dst), kMaxBytes);
   }
 };
 
 struct InetBinCore {
-  static void Render(SerializationContext& context,
-                     const duckdb::RecursiveUnifiedVectorFormat& vdata,
-                     duckdb::idx_t row) {
+  static constexpr uint32_t kMaxBytes = 4 + 16;
+  IRS_FORCE_INLINE static size_t Render(
+    uint8_t* dst, SerializationContext&,
+    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row) {
     INET_IPAddress inet;
     ReadInet(vdata, row, inet);
     // PG binary inet bytes: [0]=family, [1]=bits, [2]=is_cidr, [3]=nb (4 or
     // 16), then nb big-endian addr bytes.
     const bool is_v6 = inet.type == INET_IP_ADDRESS_V6;
     const uint8_t nb = is_v6 ? 16 : 4;
-    auto* data = context.writer->Alloc(4 + nb);
-    data[0] = is_v6 ? 3 : 2;
-    data[1] = static_cast<uint8_t>(inet.mask);
-    data[2] = 0;
-    data[3] = nb;
+    dst[0] = is_v6 ? 3 : 2;
+    dst[1] = static_cast<uint8_t>(inet.mask);
+    dst[2] = 0;
+    dst[3] = nb;
     if (is_v6) {
-      absl::big_endian::Store64(data + 4, inet.address.upper);
-      absl::big_endian::Store64(data + 12, inet.address.lower);
+      absl::big_endian::Store64(dst + 4, inet.address.upper);
+      absl::big_endian::Store64(dst + 12, inet.address.lower);
     } else {
-      absl::big_endian::Store32(data + 4,
+      absl::big_endian::Store32(dst + 4,
                                 static_cast<uint32_t>(inet.address.lower));
     }
+    return size_t{4} + nb;
   }
 };
 
@@ -2190,8 +2189,8 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
         format, context, kind);
     case STRUCT:
       if (IsInet(type)) {
-        return MakeArraySerializer<InetTextCore<WrapContext::Array>,
-                                   InetBinCore, kInet>(format, context, kind);
+        return MakeArraySerializer<InetTextCore, InetBinCore, kInet>(
+          format, context, kind);
       }
       // Element OID is resolved per-row by Type2Oid: anonymous ROW(...) yields
       // kRecord, named record types yield their pg_type OID.
@@ -2431,9 +2430,8 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
                                    EnumBinCore>(format, context);
     case STRUCT:
       if (IsInet(type)) {
-        return SelectFieldSerializer<InetTextCore<WrapContext::None>,
-                                     InetTextCore<WrapContext::Record>,
-                                     InetBinCore>(format, context);
+        return SelectFieldSerializer<InetTextCore, InetTextCore, InetBinCore>(
+          format, context);
       }
       return SelectFieldSerializer<RecordTextCore<WrapContext::None>,
                                    RecordTextCore<WrapContext::Record>,

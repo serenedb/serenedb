@@ -5,27 +5,60 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 : "${RESOURCES:=$(realpath "$SCRIPT_DIR/../../resources")}"
 export RESOURCES
 
-# Local TSan runs: if the built serened is a TSan binary and TSAN_OPTIONS isn't
-# already set, export it (with the local suppressions file) so a serened started
-# from this shell -- or a TSan-built sqllogictest client -- loads the same
-# suppressions CI uses. Guarded on the binary being TSan-instrumented and the
-# file existing, so non-TSan local runs are not perturbed. Existing TSAN_OPTIONS
-# is left untouched.
-if [[ -z "${TSAN_OPTIONS:-}" ]]; then
-	_sdb_repo_root=$(realpath "$SCRIPT_DIR/../..")
-	for _sdb_bin in "$_sdb_repo_root"/build_tsan/bin/serened "$_sdb_repo_root"/build*/bin/serened; do
-		[[ -x "$_sdb_bin" ]] || continue
-		if nm -D "$_sdb_bin" 2>/dev/null | grep -q '__tsan_init'; then
-			_sdb_tsan_opts="detect_deadlocks=true:second_deadlock_stack=1:history_size=0"
-			if [[ -f "$_sdb_repo_root/resources/suppressions/tsan.txt" ]]; then
-				_sdb_tsan_opts="${_sdb_tsan_opts}:suppressions=${_sdb_repo_root}/resources/suppressions/tsan.txt"
-			fi
-			export TSAN_OPTIONS="$_sdb_tsan_opts"
-			break
+# Local sanitizer runs: if the built serened is a sanitizer binary and the
+# matching *_OPTIONS var isn't already set, export it (with the local
+# suppressions file) so a serened started from this shell -- or a sanitizer-built
+# sqllogictest client -- loads the same suppressions CI uses. Guarded on the
+# binary being instrumented for that sanitizer and the file existing, so
+# uninstrumented local runs are not perturbed. Existing *_OPTIONS are left
+# untouched. LSan runs under ASan, so an ASan binary also gets LSAN_OPTIONS.
+_sdb_repo_root=$(realpath "$SCRIPT_DIR/../..")
+for _sdb_bin in "$_sdb_repo_root"/build_tsan/bin/serened \
+	"$_sdb_repo_root"/build_asan/bin/serened \
+	"$_sdb_repo_root"/build*/bin/serened; do
+	[[ -x "$_sdb_bin" ]] || continue
+	_sdb_syms=$(nm -D "$_sdb_bin" 2>/dev/null)
+
+	if [[ -z "${TSAN_OPTIONS:-}" ]] && grep -q '__tsan_init' <<<"$_sdb_syms"; then
+		_sdb_opts="detect_deadlocks=true:second_deadlock_stack=1:history_size=0"
+		if [[ -f "$_sdb_repo_root/resources/suppressions/tsan.txt" ]]; then
+			_sdb_opts="${_sdb_opts}:suppressions=${_sdb_repo_root}/resources/suppressions/tsan.txt"
 		fi
-	done
-	unset _sdb_repo_root _sdb_bin _sdb_tsan_opts
-fi
+		export TSAN_OPTIONS="$_sdb_opts"
+	fi
+
+	if grep -q '__asan_init' <<<"$_sdb_syms"; then
+		if [[ -z "${ASAN_OPTIONS:-}" ]]; then
+			_sdb_opts="handle_ioctl=true:check_initialization_order=true:detect_odr_violation=1:strict_init_order=true"
+			if [[ -f "$_sdb_repo_root/resources/suppressions/asan.txt" ]]; then
+				_sdb_opts="${_sdb_opts}:suppressions=${_sdb_repo_root}/resources/suppressions/asan.txt"
+			fi
+			export ASAN_OPTIONS="$_sdb_opts"
+		fi
+		if [[ -z "${LSAN_OPTIONS:-}" && -f "$_sdb_repo_root/resources/suppressions/lsan.txt" ]]; then
+			export LSAN_OPTIONS="suppressions=${_sdb_repo_root}/resources/suppressions/lsan.txt"
+		fi
+	fi
+
+	if [[ -z "${UBSAN_OPTIONS:-}" ]] && grep -q '__ubsan_handle' <<<"$_sdb_syms"; then
+		_sdb_opts="print_stacktrace=1"
+		if [[ -f "$_sdb_repo_root/resources/suppressions/ubsan.txt" ]]; then
+			_sdb_opts="${_sdb_opts}:suppressions=${_sdb_repo_root}/resources/suppressions/ubsan.txt"
+		fi
+		export UBSAN_OPTIONS="$_sdb_opts"
+	fi
+
+	if [[ -z "${MSAN_OPTIONS:-}" ]] && grep -q '__msan_init' <<<"$_sdb_syms"; then
+		_sdb_opts="poison_in_dtor=1"
+		if [[ -f "$_sdb_repo_root/resources/suppressions/msan.txt" ]]; then
+			_sdb_opts="${_sdb_opts}:suppressions=${_sdb_repo_root}/resources/suppressions/msan.txt"
+		fi
+		export MSAN_OPTIONS="$_sdb_opts"
+	fi
+
+	break
+done
+unset _sdb_repo_root _sdb_bin _sdb_syms _sdb_opts
 
 # Boolean flags configuration
 declare -a BOOLEAN_FLAGS=(debug override force-override format show-all-errors fast cancellation)

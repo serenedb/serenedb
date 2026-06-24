@@ -52,7 +52,6 @@ enum class ObjectType : uint8_t {
   // is loaded.
   // Top-level (parent = instance)
   Database = 128,
-  Role,
   // Under database
   Schema,
   // Under schema - dependencies first

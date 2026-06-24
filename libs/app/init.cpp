@@ -21,6 +21,7 @@
 #include "init.h"
 
 #include <absl/debugging/symbolize.h>
+#include <fast_float/fast_float.h>
 #include <sys/resource.h>
 
 #include <algorithm>
@@ -32,12 +33,12 @@
 #include <string_view>
 #include <yaclib/log.hpp>
 
+#include "app/version.h"
 #include "basics/crash_handler.h"
 #include "basics/files.h"
 #include "basics/log.h"
 #include "basics/random/random_generator.h"
 #include "basics/string_utils.h"
-#include "rest/version.h"
 #define ZLIB_COMPAT
 #include <functable.h>
 
@@ -74,8 +75,8 @@ void CheckMaxMapCount() {
   }
   const auto trimmed = basics::string_utils::Trim(s);
   uint64_t actual = 0;
-  if (auto [p, ec] = std::from_chars(trimmed.data(),
-                                     trimmed.data() + trimmed.size(), actual);
+  if (auto [p, ec] = fast_float::from_chars(
+        trimmed.data(), trimmed.data() + trimmed.size(), actual);
       ec != std::errc{}) {
     return;
   }
@@ -95,14 +96,14 @@ void InitProcess(const char* argv0) {
   // Order matters:
   //   * RaiseFdLimit              soft NOFILE -> 65535 (or hard, if lower)
   //   * random::Reset             seeds the PRNGs the basics layer holds
-  //   * Version::initialize       fills the rest::Version table
+  //   * Version::initialize       fills the Version table
   //   * FUNCTABLE_INIT            picks the zlib-ng dispatch (SIMD)
   //   * InitializeSymbolizer      lets the absl crash handler symbolize
   //   * YACLIB_INIT_DEBUG         routes yaclib's debug-asserts through us
   RaiseFdLimit();
   CheckMaxMapCount();
   random::Reset();
-  rest::Version::initialize();
+  Version::initialize();
   FUNCTABLE_INIT;
   absl::InitializeSymbolizer(argv0);
   YACLIB_INIT_DEBUG([](std::string_view file, std::size_t line,

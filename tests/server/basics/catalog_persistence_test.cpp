@@ -46,7 +46,6 @@
 #include "catalog/persistence/database.h"
 #include "catalog/persistence/index.h"
 #include "catalog/persistence/inverted_index.h"
-#include "catalog/persistence/role.h"
 #include "catalog/persistence/schema.h"
 #include "catalog/persistence/scorer_options.h"
 #include "catalog/persistence/secondary_index.h"
@@ -233,20 +232,6 @@ TEST(CatalogPersistence, sequence_options) {
                                          .owner_table_id = 3,
                                          .cycle = true,
                                        });
-}
-
-TEST(CatalogPersistence, role_data) {
-  // Single-entry db_access: the map is unordered, so >1 entry would not
-  // serialize to stable bytes.
-  CheckFixture("role_data.bin", RoleData{
-                                  .id = ObjectId{2},
-                                  .name = "alice",
-                                  .active = true,
-                                  .password_method = "scram",
-                                  .password_salt = "salt",
-                                  .password_hash = "hash",
-                                  .db_access = {{"db1", auth::Level::RW}},
-                                });
 }
 
 TEST(CatalogPersistence, inverted_index_options) {

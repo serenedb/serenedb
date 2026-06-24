@@ -21,21 +21,11 @@
 
 #include "search_engine.h"
 
+#include <absl/flags/declare.h>
 #include <absl/flags/flag.h>
-#include <absl/functional/any_invocable.h>
 #include <absl/strings/escaping.h>
-#include <absl/time/time.h>
 
-ABSL_FLAG(bool, server_skip_search_recovery, false,
-          "Skip the entire WAL replay phase for inverted indexes on startup. "
-          "Diagnostic only -- data loss is permanent for the skipped delta.");
-ABSL_FLAG(uint32_t, server_refresh_threads, 0,
-          "Threads in the iresearch refresh pool (0 = auto-derive from cores, "
-          "clamped to [1, 4 * cores]).");
-ABSL_FLAG(uint32_t, server_compaction_threads, 0,
-          "Threads in the iresearch compaction pool (0 = auto-derive from "
-          "cores, clamped to [1, 4 * cores]).");
-
+#include <algorithm>
 #include <duckdb/common/file_system.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/fast_text_model.hpp>
@@ -43,8 +33,9 @@ ABSL_FLAG(uint32_t, server_compaction_threads, 0,
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/search/filter_optimizer.hpp>
+#include <utility>
+#include <yaclib/async/wait.hpp>
 
-#include "app/app_server.h"
 #include "basics/assert.h"
 #include "basics/down_cast.h"
 #include "basics/duckdb_engine.h"
@@ -60,62 +51,19 @@ ABSL_FLAG(uint32_t, server_compaction_threads, 0,
 #include "search/inverted_index_storage.h"
 #include "search/search_db_wal.h"
 #include "search/search_table_recovery.h"
+#include "search/task.h"
 #include "search/wal_recovery.h"
-#include "storage_engine/search_engine.h"
 
-using namespace std::chrono_literals;
+ABSL_DECLARE_FLAG(uint64_t, background_threads);
 
 namespace sdb::search {
 namespace {
 
 constexpr std::string_view kEngineDirRoot = "engine_search";
 
-uint32_t ComputeThreadsCount(uint32_t threads, uint32_t threads_limit,
-                             uint32_t div) noexcept {
-  SDB_ASSERT(div);
-  constexpr uint32_t kMaxThreads = 8;
-  constexpr uint32_t kMinThreads = 1;
-
-  return std::clamp(
-    threads ? threads : uint32_t(number_of_cores::GetValue()) / div,
-    kMinThreads, threads_limit ? threads_limit : kMaxThreads);
-}
-
 }  // namespace
 
-class SearchThreadPools {
- public:
-  using ThreadPool = irs::async_utils::ThreadPool<>;
-
-  SearchThreadPools() = default;
-
-  ~SearchThreadPools() { Stop(); }
-
-  ThreadPool& Get(ThreadGroup id) noexcept {
-    return ThreadGroup::Refresh == id ? _refresh_threads_pool
-                                      : _compaction_threads_pool;
-  }
-
-  void Stop() noexcept {
-    _refresh_threads_pool.stop(true);
-    _compaction_threads_pool.stop(true);
-  }
-
- private:
-  ThreadPool _refresh_threads_pool;
-  ThreadPool _compaction_threads_pool;
-};
-
-SearchEngine::SearchEngine()
-  : _dir_feature{DatabasePathFeature::instance()},
-    _thread_pools(std::make_shared<SearchThreadPools>()) {
-  const uint32_t threads_limit =
-    static_cast<uint32_t>(4 * number_of_cores::GetValue());
-  _refresh_threads = ComputeThreadsCount(
-    absl::GetFlag(FLAGS_server_refresh_threads), threads_limit, 6);
-  _compaction_threads = ComputeThreadsCount(
-    absl::GetFlag(FLAGS_server_compaction_threads), threads_limit, 6);
-
+SearchEngine::SearchEngine() : _dir_feature{DatabasePathFeature::instance()} {
   ::irs::analysis::ClassificationTokenizer::set_model_provider(
     &fast_text::CreateModel<fasttext::FastText>);
   ::irs::analysis::NearestNeighborsTokenizer::set_model_provider(
@@ -131,64 +79,52 @@ SearchEngine::~SearchEngine() { gInstance = nullptr; }
 
 SearchEngine& GetSearchEngine() { return *SearchEngine::gInstance; }
 
+int SearchEngine::MaxConcurrentCompactions() noexcept {
+  // The background pool is max(logical/4, 2) threads (--background_threads,
+  // resolved at startup). Merges may use all but one of them -- refresh,
+  // cleanup, and drop are light and interleave on the single spare thread.
+  return std::max<int>(
+    1, static_cast<int>(absl::GetFlag(FLAGS_background_threads)) - 1);
+}
+
 void SearchEngine::start() {
-  SDB_ASSERT(std::make_tuple(size_t(0), size_t(0), size_t(0)) ==
-             stats(ThreadGroup::Refresh));
-  SDB_ASSERT(std::make_tuple(size_t(0), size_t(0), size_t(0)) ==
-             stats(ThreadGroup::Compaction));
-
-  SDB_ASSERT(_refresh_threads);
-  SDB_ASSERT(_compaction_threads);
-
-  _thread_pools->Get(ThreadGroup::Refresh)
-    .start(_refresh_threads, IR_NATIVE_STRING("search:refresh"));
-  _thread_pools->Get(ThreadGroup::Compaction)
-    .start(_compaction_threads, IR_NATIVE_STRING("search:compaction"));
-
-  const bool skip_wal_recovery =
-    absl::GetFlag(FLAGS_server_skip_search_recovery);
-  InitInvertedIndexes(skip_wal_recovery);
-  // Replay each database's search-table WAL into iresearch.
-  RunSearchTableRecovery(skip_wal_recovery);
-
-  SDB_INFO(SEARCH, "Search maintenance: ", _refresh_threads,
-           " refresh thread(s), ", _compaction_threads,
-           " compaction thread(s)");
+  InitInvertedIndexes();
+  // Replay each database's search-table WAL into iresearch. Delta-based and
+  // unconditional, mirroring inverted-index recovery (no skip flag).
+  RunSearchTableRecovery(false);
+  SDB_INFO(SEARCH, "Search maintenance: per-index refresh/compaction loops");
 }
 
 void SearchEngine::stop() {
-  // Nudge both pools to drain before we block on Stop().
-  _thread_pools->Get(ThreadGroup::Refresh).stop(false);
-  _thread_pools->Get(ThreadGroup::Compaction).stop(false);
-  _thread_pools->Stop();
+  _stopping.store(true, std::memory_order_release);
+
+  std::vector<yaclib::Future<>> loops;
+  {
+    absl::MutexLock lock{&_loops_mutex};
+    loops = std::move(_loops);
+    _loops.clear();
+  }
+  if (!loops.empty()) {
+    yaclib::Wait(loops.begin(), loops.end());
+  }
   // Close the per-database WALs (flush + release file handles) before shutdown.
   std::lock_guard<std::mutex> lock(_db_wals_mu);
   _db_wals.clear();
 }
 
-bool SearchEngine::Queue(ThreadGroup id, absl::Duration delay,
-                         absl::AnyInvocable<void()>&& fn) {
-  auto r = basics::SafeCall([&]() {
-    return _thread_pools->Get(id).run(std::move(fn), delay)
-             ? Result{}
-             : Result{ERROR_INTERNAL};
-  });
-
-  if (r.ok()) [[likely]] {
-    return true;
+void SearchEngine::StartTasks(
+  const std::shared_ptr<InvertedIndexStorage>& storage) {
+  SDB_ASSERT(storage);
+  if (_stopping.load(std::memory_order_acquire)) {
+    return;
   }
-
-  if (!lifecycle::IsStopping()) {
-    SDB_WARN(
-      SEARCH, "Caught exception while sumbitting a task to thread group '",
-      std::underlying_type_t<ThreadGroup>(id), "', error: ", r.errorMessage());
-  }
-
-  return false;
-}
-
-std::tuple<size_t, size_t, size_t> SearchEngine::stats(ThreadGroup id) const {
-  return _thread_pools->Get(id).stats();
+  absl::MutexLock lock{&_loops_mutex};
+  // Drop loops whose index was already dropped (their coroutine returned) so
+  // the registry stays bounded across many CREATE/DROP INDEX cycles.
+  std::erase_if(
+    _loops, [](const yaclib::Future<>& f) { return !f.Valid() || f.Ready(); });
+  _loops.push_back(RefreshLoop(storage));
+  _loops.push_back(CompactionCoordinator(storage));
 }
 
 std::filesystem::path SearchEngine::GetPersistedPath(

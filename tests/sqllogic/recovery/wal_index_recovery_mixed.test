@@ -35,7 +35,7 @@ statement ok
 VACUUM (REFRESH_TABLE) wal_mix_t;
 
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # pk=2: only delete → must disappear
 statement ok

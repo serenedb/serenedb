@@ -39,29 +39,119 @@
 
 namespace sdb::query {
 
-void Transaction::OnNewStatement() {
-  auto level = GetIsolationLevel();
-  if (level == IsolationLevel::READ_COMMITTED) {
-    DropCatalogSnapshot();
-    _search_snapshots.clear();
-    if (_search_txn) {
-      _search_txn->ResetReaders();
-    }
+// Snapshot lifecycle across statements and transactions.
+//
+// A query reads through three independently-versioned views:
+//   * the catalog snapshot -- serenedb metadata (tables, indexes, schemas);
+//   * the native read view -- DuckDB MVCC over table storage;
+//   * search snapshots     -- iresearch MVCC readers over index data.
+//
+// Only READ COMMITTED and REPEATABLE READ exist. The native read view and the
+// search readers (the actual MVCC data) follow isolation (IsStableSnapshot): an
+// explicit REPEATABLE READ transaction, OR any transaction that has performed
+// uncommitted DML, holds one frozen data snapshot for the rest of its life, so
+// another session's committed DML stays invisible; everywhere else (autocommit,
+// or a DML-less READ COMMITTED transaction) the data refreshes per statement.
+// Commit/rollback releases everything (Commit/Rollback -> Destroy).
+//
+// Freezing the data once a transaction has written is a safety requirement, not
+// just a REPEATABLE READ nicety: the uncommitted rows are tied to this catalog
+// + read view, and serenedb's atomic, lock-free DDL (unlike PG's row/table
+// locks) would otherwise let another session's DDL drift them.
+//
+// The catalog is the exception: it is NOT under MVCC isolation, because
+// serenedb DDL is atomic and non-transactional (it commits immediately, the
+// analog of postgres' CommandCounterIncrement). So the catalog refreshes per
+// statement under READ COMMITTED, AND after our own DDL even under REPEATABLE
+// READ -- it only stays pinned while uncommitted DML is held (reacquiring it
+// then would be unsafe: our pending rows are tied to it). DuckDB's
+// ModifiedDatabase() cannot drive this -- it is set for DDL too
+// (CheckIfPreparedStatementIsExecutable records every statement's
+// modified_databases, and ALTER/CREATE/DROP declare the catalog database) -- so
+// DML and DDL are classified from the statement itself (MarkStatementDml /
+// MarkStatementDdl). The motivating case is ALTER TABLE ADD COLUMN ... DEFAULT
+// <volatile>: it expands to [ADD COLUMN; UPDATE backfill; SET DEFAULT] and runs
+// as an implicit block under the default REPEATABLE READ, so the backfill
+// UPDATE must bind the catalog the ADD COLUMN just produced. (Once DML has
+// frozen the views, same-session DDL is no longer observed mid-transaction --
+// an accepted edge case.)
+//
+// Views release eagerly -- per-statement views at statement end, the
+// transaction-held ones at commit/rollback -- so they never pin MVCC versions
+// or index segments against background cleanup, and re-acquire lazily on first
+// use (EnsureCatalogSnapshot / EnsureSearchSnapshot). The one per-statement
+// step that must run at statement *start* is advancing the native read view:
+// RefreshStartTime() captures "now", so to see everything committed before the
+// statement it has to run when the statement begins, not when the prior ended.
+
+bool Transaction::IsStableSnapshot() const {
+  // An explicit REPEATABLE READ transaction holds one snapshot for its life.
+  if (!GetClientContext().transaction.IsAutoCommit() &&
+      GetIsolationLevel() == IsolationLevel::REPEATABLE_READ) {
+    return true;
+  }
+  // A transaction that has performed uncommitted DML freezes too: its rows are
+  // tied to this catalog + read view, so re-acquiring either would let them
+  // drift (e.g. another session's atomic DDL on a table we hold pending writes
+  // for). PG prevents this with row/table locks; serenedb's lock-free atomic
+  // DDL cannot, so we pin instead.
+  return _had_dml;
+}
+
+void Transaction::OnStatementBegin() {
+  if (IsStableSnapshot()) {
+    return;
+  }
+  // READ COMMITTED / autocommit with no writes yet (IsStableSnapshot already
+  // excluded REPEATABLE READ and any modified transaction): advance the native
+  // read view so this statement sees the latest committed data. Autocommit
+  // already begins a fresh transaction per statement, so only an explicit
+  // transaction needs the advance.
+  auto& txn = GetClientContext().transaction;
+  if (txn.HasActiveTransaction() && !txn.IsAutoCommit()) {
+    txn.ActiveTransaction().RefreshStartTime();
   }
 }
 
-void Transaction::RefreshReadCommittedSnapshot() {
-  if (GetIsolationLevel() != IsolationLevel::READ_COMMITTED) {
+void Transaction::OnStatementEnd() {
+  const bool was_ddl = _statement_is_ddl;
+  if (_statement_is_dml) {
+    _had_dml = true;
+  }
+  _statement_is_ddl = false;
+  _statement_is_dml = false;
+
+  if (_had_dml) {
+    // Uncommitted DML pins all three views for the rest of the transaction:
+    // read-your-writes, plus the safety freeze -- our pending rows are tied to
+    // this catalog + read view, and another session's lock-free atomic DDL
+    // would otherwise drift them. Commit/Rollback -> Destroy releases all.
     return;
   }
-  // Statement-level snapshots over native storage: while the explicit
-  // transaction has made no writes, move its read visibility forward so
-  // the next statement sees other transactions' committed changes.
-  auto& context = GetClientContext();
-  auto& txn_ctx = context.transaction;
-  if (txn_ctx.HasActiveTransaction() && !txn_ctx.IsAutoCommit() &&
-      !txn_ctx.ActiveTransaction().ModifiedDatabase()) {
-    txn_ctx.ActiveTransaction().RefreshStartTime();
+  if (!IsStableSnapshot()) {
+    // READ COMMITTED / autocommit, no DML: refresh everything per statement so
+    // the next statement sees the latest committed catalog and data. Drop
+    // search readers so background compaction is not pinned. All re-acquire
+    // lazily; the native read view advances at the next statement's
+    // OnStatementBegin.
+    DropCatalogSnapshot();
+    _search_snapshots.clear();
+    // Search-table reads go through SearchTxn()'s reader cache, not the
+    // _search_snapshots above; reset on the same (non-pinned) boundary.
+    if (_search_txn) {
+      _search_txn->ResetReaders();
+    }
+    return;
+  }
+  // Explicit REPEATABLE READ, no DML: the native read view and search readers
+  // stay frozen for the transaction's life. The catalog is NOT under MVCC
+  // isolation -- serenedb DDL is atomic and non-transactional -- so our own DDL
+  // must still drop it, or a later statement could not observe the column/table
+  // it changed: ALTER ADD COLUMN ... DEFAULT <volatile> expands to [ADD COLUMN;
+  // UPDATE backfill; SET DEFAULT] and, under the default REPEATABLE READ, runs
+  // as an implicit block whose backfill must bind the new column.
+  if (was_ddl) {
+    DropCatalogSnapshot();
   }
 }
 
@@ -216,6 +306,9 @@ void Transaction::Destroy() noexcept {
   _search_txn.reset();
   _num_log_data_markers = 0;
   _had_query_in_transaction = false;
+  _had_dml = false;
+  _statement_is_dml = false;
+  _statement_is_ddl = false;
 }
 
 void Transaction::ApplyTableStatsDiffs() noexcept {

@@ -52,7 +52,6 @@
 #include <yaclib/async/when_all.hpp>
 
 #include "app/app_server.h"
-#include "auth/role_utils.h"
 #include "basics/application-exit.h"
 #include "basics/assert.h"
 #include "basics/buffer.h"
@@ -82,7 +81,6 @@
 #include "catalog/object.h"
 #include "catalog/object_dependency.h"
 #include "catalog/resolution_table.h"
-#include "catalog/role.h"
 #include "catalog/schema.h"
 #include "catalog/secondary_index.h"
 #include "catalog/sequence.h"
@@ -93,16 +91,11 @@
 #include "catalog/user_type.h"
 #include "catalog/view.h"
 #include "connector/duckdb_entry_cache.h"
-#include "folly/Function.h"
-#include "general_server/scheduler.h"
-#include "general_server/scheduler_feature.h"
-#include "general_server/state.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/sql_utils.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 #include "storage_engine/search_engine.h"
-#include "utils/exec_context.h"
 
 namespace sdb::catalog {
 namespace {
@@ -156,6 +149,19 @@ std::optional<std::string> RerenderPrettyAfterRename(
   return parsed[0]->ToString();
 }
 
+void UpdatePendingDrops(PendingDrops& pending_drops, ObjectId parend_id,
+                        ObjectId id, const std::shared_ptr<DropTask>& task,
+                        bool is_root) {
+  auto it = pending_drops.find(id);
+  if (it != pending_drops.end()) {
+    task->SetAttached(std::move(it->second));
+    pending_drops.erase(it);
+  }
+  if (is_root) {
+    pending_drops[parend_id].emplace_back(std::move(task));
+  }
+}
+
 }  // namespace
 
 Snapshot::Snapshot() = default;
@@ -179,34 +185,40 @@ connector::DuckDBEntryCache& Snapshot::GetDuckDBEntryCache() const {
 }
 
 std::shared_ptr<DatabaseDrop> Snapshot::CreateDatabaseDrop(
-  const std::shared_ptr<Database>& db, duckdb::shared_ptr<void> keep_alive) {
-  auto db_deps = GetDependency<DatabaseDependency>(db->GetId());
-  auto schemas_drop = db_deps->schemas |
-                      std::views::transform([&](ObjectId id) {
-                        auto schema = GetObject<Schema>(id);
-                        SDB_ASSERT(schema);
-                        return CreateSchemaDrop(db->GetId(), schema, false);
-                      }) |
-                      std::ranges::to<std::vector>();
-  auto drop_task = std::make_shared<DatabaseDrop>(db, std::move(schemas_drop),
-                                                  std::move(keep_alive));
-  return drop_task;
+  PendingDrops& pending_drops, const std::shared_ptr<Database>& db,
+  duckdb::shared_ptr<void> keep_alive) {
+  const auto db_id = db->GetId();
+  auto db_deps = GetDependency<DatabaseDependency>(db_id);
+  auto schemas_drop =
+    db_deps->schemas | std::views::transform([&](ObjectId id) {
+      auto schema = GetObject<Schema>(id);
+      SDB_ASSERT(schema);
+      return CreateSchemaDrop(pending_drops, db_id, schema, false);
+    }) |
+    std::ranges::to<std::vector>();
+  auto task = std::make_shared<DatabaseDrop>(db, std::move(schemas_drop),
+                                             std::move(keep_alive));
+  UpdatePendingDrops(pending_drops, ObjectId{}, db_id, task, false);
+  return task;
 }
 
 std::shared_ptr<SchemaDrop> Snapshot::CreateSchemaDrop(
-  ObjectId db_id, const std::shared_ptr<Schema>& schema, bool is_root) {
-  auto schema_deps = GetDependency<SchemaDependency>(schema->GetId());
+  PendingDrops& pending_drops, ObjectId db_id,
+  const std::shared_ptr<Schema>& schema, bool is_root) {
+  const auto schema_id = schema->GetId();
+  auto schema_deps = GetDependency<SchemaDependency>(schema_id);
   auto tables_drop =
     schema_deps->tables | std::views::transform([&](ObjectId id) {
       auto table = GetObject<Table>(id);
       SDB_ASSERT(table);
-      return CreateTableDrop(db_id, schema->GetId(), table, false);
+      return CreateTableDrop(pending_drops, db_id, schema_id, table, false);
     }) |
     std::ranges::to<std::vector>();
 
-  auto drop_task = std::make_shared<SchemaDrop>(schema, std::move(tables_drop),
-                                                db_id, is_root);
-  return drop_task;
+  auto task = std::make_shared<SchemaDrop>(schema, std::move(tables_drop),
+                                           db_id, is_root);
+  UpdatePendingDrops(pending_drops, db_id, schema_id, task, is_root);
+  return task;
 }
 
 // Store-table name of `table_id` ("db.schema.table"), or nullopt when
@@ -232,16 +244,17 @@ std::optional<std::string> Snapshot::ComposeStoreTableName(
 }
 
 std::shared_ptr<TableDrop> Snapshot::CreateTableDrop(
-  ObjectId db_id, ObjectId schema_id, const std::shared_ptr<Table>& table,
-  bool is_root) {
-  auto table_deps = GetDependency<TableDependency>(table->GetId());
-  auto indexes =
-    table_deps->indexes | std::views::transform([&](ObjectId id) {
-      auto index = GetObject<Index>(id);
-      SDB_ASSERT(index);
-      return CreateIndexDrop(db_id, schema_id, table->GetId(), index, is_root);
-    }) |
-    std::ranges::to<std::vector>();
+  PendingDrops& pending_drops, ObjectId db_id, ObjectId schema_id,
+  const std::shared_ptr<Table>& table, bool is_root) {
+  const auto table_id = table->GetId();
+  auto table_deps = GetDependency<TableDependency>(table_id);
+  auto indexes = table_deps->indexes | std::views::transform([&](ObjectId id) {
+                   auto index = GetObject<Index>(id);
+                   SDB_ASSERT(index);
+                   return CreateIndexDrop(pending_drops, db_id, schema_id,
+                                          table_id, index, false);
+                 }) |
+                 std::ranges::to<std::vector>();
   auto owned_sequences =
     table_deps->owned_sequences | std::ranges::to<std::vector>();
 
@@ -260,14 +273,16 @@ std::shared_ptr<TableDrop> Snapshot::CreateTableDrop(
       }
     }
   }
-  return std::make_shared<TableDrop>(
+  auto task = std::make_shared<TableDrop>(
     table, db_id, std::move(indexes), std::move(owned_sequences), schema_id,
     std::move(store_name), std::move(fk_referenced), is_root);
+  UpdatePendingDrops(pending_drops, schema_id, table_id, task, is_root);
+  return task;
 }
 
 std::shared_ptr<IndexDrop> Snapshot::CreateIndexDrop(
-  ObjectId db_id, ObjectId schema_id, ObjectId table_id,
-  const std::shared_ptr<Index>& index, bool is_root) {
+  PendingDrops& pending_drops, ObjectId db_id, ObjectId schema_id,
+  ObjectId table_id, const std::shared_ptr<Index>& index, bool is_root) {
   // Capture the iresearch storage handle (weak) so the async IndexDrop can wait
   // for every holder (snapshots, txns, tasks) to release before removing the
   // on-disk directory. Secondary indexes have no storage -> empty weak.
@@ -275,8 +290,10 @@ std::shared_ptr<IndexDrop> Snapshot::CreateIndexDrop(
   if (index->GetType() == ObjectType::InvertedIndex) {
     data = basics::downCast<const InvertedIndex>(*index).GetData();
   }
-  return std::make_shared<IndexDrop>(index, db_id, schema_id, table_id,
-                                     std::move(data), is_root);
+  auto task = std::make_shared<IndexDrop>(index, db_id, schema_id, table_id,
+                                          std::move(data), is_root);
+  UpdatePendingDrops(pending_drops, table_id, index->GetId(), task, is_root);
+  return task;
 }
 
 template<typename T>
@@ -290,13 +307,6 @@ Result Snapshot::RegisterObject(std::shared_ptr<T> object, ObjectId parent_id,
     }
     return AddObjectDefinition<DatabaseDependency>(parent_id,
                                                    std::move(object));
-  } else if constexpr (std::is_same_v<T, Role>) {
-    auto r = AddToResolution<ResolveType::Role>(parent_id, object->GetId(),
-                                                object->GetName(), replace);
-    if (!r.ok()) {
-      return r;
-    }
-    return AddObjectDefinition(parent_id, std::move(object));
   } else if constexpr (std::is_same_v<T, Schema>) {
     auto r = AddToResolution<ResolveType::Schema>(parent_id, object->GetId(),
                                                   object->GetName(), replace);
@@ -367,9 +377,6 @@ void Snapshot::UnregisterObject(std::shared_ptr<T> object, ObjectId parent_id,
   if constexpr (std::is_same_v<T, Database>) {
     RemoveFromResolution<ResolveType::Database>(parent_id, object->GetName(),
                                                 maybe_not_found);
-  } else if constexpr (std::is_same_v<T, Role>) {
-    RemoveFromResolution<ResolveType::Role>(parent_id, object->GetName(),
-                                            maybe_not_found);
   } else if constexpr (std::is_same_v<T, Schema>) {
     RemoveFromResolution<ResolveType::Schema>(parent_id, object->GetName(),
                                               maybe_not_found);
@@ -660,7 +667,6 @@ void Snapshot::AddDependencies(ObjectId parent_id, const Object& obj) {
   auto id = obj.GetId();
   switch (obj.GetType()) {
     case ObjectType::Database:
-    case ObjectType::Role:
       break;
     case ObjectType::Schema:
       GetDependencyForWrite<DatabaseDependency>(parent_id)->schemas.insert(id);
@@ -671,13 +677,13 @@ void Snapshot::AddDependencies(ObjectId parent_id, const Object& obj) {
     case ObjectType::Table: {
       GetDependencyForWrite<SchemaDependency>(parent_id)->tables.insert(id);
       const auto& table = basics::downCast<Table>(obj);
-      for (const auto& col : table.Columns()) {
-        if (_objects.find(col.GetId()) == _objects.end()) {
-          _objects.insert(std::make_shared<Column>(col));
+      for (const auto& c : table.Columns()) {
+        if (!_objects.contains(c.GetId())) {
+          _objects.insert(std::make_shared<Column>(c));
         }
       }
       for (const auto& c : table.CheckConstraints()) {
-        if (_objects.find(c.GetId()) == _objects.end()) {
+        if (!_objects.contains(c.GetId())) {
           _objects.insert(std::make_shared<CheckConstraint>(c));
         }
       }
@@ -733,16 +739,6 @@ void Snapshot::AddDependencies(ObjectId parent_id, const Object& obj) {
     case ObjectType::Tombstone:
       SDB_UNREACHABLE();
   }
-}
-
-std::vector<std::shared_ptr<Role>> Snapshot::GetRoles() const {
-  return _resolution_table.GetRoleIds() |
-         std::views::transform([&](ObjectId role_id) {
-           auto it = _objects.find(role_id);
-           SDB_ASSERT(it != _objects.end());
-           return basics::downCast<Role>(*it);
-         }) |
-         std::ranges::to<std::vector>();
 }
 
 std::vector<std::shared_ptr<Database>> Snapshot::GetDatabases() const {
@@ -1108,17 +1104,6 @@ std::optional<ObjectId> Snapshot::GetObjectId(ObjectId parent_id,
   return _resolution_table.ResolveObject<Type>(parent_id, name);
 }
 
-std::shared_ptr<Role> Snapshot::GetRole(std::string_view name) const {
-  auto id =
-    _resolution_table.ResolveObject<ResolveType::Role>(id::kInstance, name);
-  if (!id) {
-    return {};
-  }
-  auto role = GetObject<Role>(*id);
-  SDB_ASSERT(role);
-  return role;
-}
-
 std::shared_ptr<Database> Snapshot::GetDatabase(ObjectId database) const {
   auto obj = GetObject(database);
   if (!obj) {
@@ -1151,7 +1136,7 @@ Result Snapshot::ReplaceObject(ObjectId parent_id, std::string_view old_name,
   SDB_ASSERT((*it)->GetId() == new_object->GetId());
   auto old_object = *it;
   // Refresh reverse-edges if the object's body changed. Replaces of
-  // objects without body (Role, Sequence, ...) are pure name/value
+  // objects without body (Sequence, ...) are pure name/value
   // swaps and need no edge fixups.
   switch (new_object->GetType()) {
     case ObjectType::Table:
@@ -1173,10 +1158,20 @@ Result Snapshot::ReplaceObject(ObjectId parent_id, std::string_view old_name,
   }
   const_cast<std::shared_ptr<Object>&>(*it) = new_object;
   switch (new_object->GetType()) {
-    case ObjectType::Table:
-      ModifyTableDependencies(parent_id, basics::downCast<Table>(*new_object),
-                              EdgeAction::Add);
-      break;
+    case ObjectType::Table: {
+      const auto& table = basics::downCast<Table>(*new_object);
+      for (const auto& c : table.Columns()) {
+        if (!_objects.contains(c.GetId())) {
+          _objects.insert(std::make_shared<Column>(c));
+        }
+      }
+      for (const auto& c : table.CheckConstraints()) {
+        if (!_objects.contains(c.GetId())) {
+          _objects.insert(std::make_shared<CheckConstraint>(c));
+        }
+      }
+      ModifyTableDependencies(parent_id, table, EdgeAction::Add);
+    } break;
     case ObjectType::PgSqlView:
       ModifyViewDependencies(parent_id,
                              basics::downCast<PgSqlView>(*new_object),
@@ -1357,7 +1352,8 @@ void Snapshot::CommitDropPlan(CatalogStore::WriteContext& ctx,
 
 // Apply cross-tree mutations in-memory; schedule IndexDrop tasks for
 // cascade-dropped indexes (column->index cascade).
-void Snapshot::ApplyDropPlan(ObjectId db_id, DropPlan& plan) {
+void Snapshot::ApplyDropPlan(PendingDrops& pending_drops, ObjectId db_id,
+                             DropPlan& plan) {
   for (const auto& [schema_id, view_id] : plan.view_drops) {
     if (auto v = GetObject<PgSqlView>(view_id)) {
       UnregisterObject(std::move(v), schema_id);
@@ -1386,8 +1382,9 @@ void Snapshot::ApplyDropPlan(ObjectId db_id, DropPlan& plan) {
     if (!table) {
       continue;
     }
-    auto task = CreateIndexDrop(db_id, table->GetParentId(), table_id, idx,
-                                /*is_root=*/true);
+    auto task =
+      CreateIndexDrop(pending_drops, db_id, table->GetParentId(), table_id, idx,
+                      /*is_root=*/true);
     UnregisterObject(std::move(idx), table_id);
     DropTask::Schedule(std::move(task)).Detach();
   }
@@ -1412,7 +1409,6 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
   if (root) {
     switch (obj->GetType()) {
       case ObjectType::Database:
-      case ObjectType::Role:
         break;
       case ObjectType::Schema: {
         auto db_deps = GetDependencyForWrite<DatabaseDependency>(parent_id);
@@ -1493,8 +1489,6 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
       auto db_deps = GetDependency<DatabaseDependency>(id);
       drop_childs(db_deps->schemas);
     } break;
-    case ObjectType::Role:
-      break;
     case ObjectType::Schema: {
       auto schema_deps = GetDependency<SchemaDependency>(id);
       drop_childs(schema_deps->types);
@@ -1586,14 +1580,6 @@ std::string DropPlan::FormatDependentsDetail(const Snapshot& snap,
 
 Catalog::Catalog()
   : _snapshot(std::make_shared<Snapshot>()), _engine{&GetCatalogStore()} {}
-
-Result Catalog::RegisterRole(std::shared_ptr<Role> role) {
-  SDB_INFO(GENERAL, "Register role ", role->GetName());
-  absl::MutexLock lock{&_mutex};
-  return Apply(_snapshot, [&](auto& clone) {
-    return clone->RegisterObject(std::move(role), id::kInstance, false);
-  });
-}
 
 Result Catalog::RegisterDatabase(std::shared_ptr<Database> database) {
   absl::MutexLock lock{&_mutex};
@@ -1714,30 +1700,6 @@ Result Catalog::CreateSchema(ObjectId database_id,
                                        schema->GetId(), bytes);
     },
     [&](auto clone) { clone->UnregisterObject(schema, database_id, true); });
-}
-
-Result Catalog::CreateRole(std::shared_ptr<Role> role) {
-  SDB_INFO(GENERAL, "Creating role: ", role->GetName());
-  absl::MutexLock lock{&_mutex};
-  auto r = Apply(
-    _snapshot,
-    [&](auto& clone) {
-      auto r = clone->RegisterObject(role, id::kInstance, false);
-      if (!r.ok()) {
-        return r;
-      }
-      duckdb::MemoryStream stream;
-      auto bytes = catalog::SerializeObject(*role, stream);
-      return _engine->CreateDefinition(id::kInstance, ObjectType::Role,
-                                       role->GetId(), bytes);
-    },
-    [&](auto& clone) { clone->UnregisterObject(role, id::kInstance, true); });
-
-  if (!r.ok()) {
-    return r;
-  }
-
-  return {};
 }
 
 Result Catalog::RegisterIndex(ObjectId database_id, ObjectId schema_id,
@@ -2524,47 +2486,6 @@ Result Catalog::RenameFunction(ObjectId database_id, std::string_view schema,
   return RenameObjectImpl<PgSqlFunction>(database_id, schema, name, new_name);
 }
 
-Result Catalog::ChangeRole(std::string_view name,
-                           ChangeCallback<Role> new_role) {
-  absl::MutexLock lock{&_mutex};
-  auto role = _snapshot->GetRole(name);
-  if (!role) {
-    return Result{ERROR_SERVER_ILLEGAL_NAME};
-  }
-  std::shared_ptr<Role> new_role_ptr;
-  auto r = new_role(*role, new_role_ptr);
-  if (!r.ok()) {
-    return r;
-  }
-  r = Apply(
-    _snapshot,
-    [&](std::shared_ptr<Snapshot>& clone) {
-      auto r = clone->ReplaceObject<ResolveType::Role>(id::kInstance, name,
-                                                       new_role_ptr);
-      if (!r.ok()) {
-        return r;
-      }
-      duckdb::MemoryStream stream;
-      auto bytes = catalog::SerializeObject(*new_role_ptr, stream);
-      return _engine->CreateDefinition(id::kInstance, ObjectType::Role,
-                                       new_role_ptr->GetId(), bytes);
-    },
-    [&](const std::shared_ptr<Snapshot>& clone) {
-      auto obj = clone->GetObject<Role>(new_role_ptr->GetId());
-      if (obj->GetName() == new_role_ptr->GetName()) {
-        auto r = clone->ReplaceObject<ResolveType::Role>(
-          id::kInstance, new_role_ptr->GetName(), role);
-        SDB_ASSERT(r.ok());
-      }
-    });
-
-  if (!r.ok()) {
-    return r;
-  }
-
-  return {};
-}
-
 Result Catalog::ChangeView(ObjectId database_id, std::string_view schema,
                            std::string_view name,
                            ChangeCallback<PgSqlView> new_view) {
@@ -2861,25 +2782,6 @@ Result Catalog::ChangeTable(ObjectId database_id, std::string_view schema,
   });
 }
 
-Result Catalog::DropRole(std::string_view role) {
-  absl::MutexLock lock{&_mutex};
-  auto role_ptr = _snapshot->GetRole(role);
-  if (!role_ptr) {
-    return {ERROR_SERVER_ILLEGAL_NAME};
-  }
-  auto r = Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
-    clone->UnregisterObject(role_ptr, id::kInstance);
-    return _engine->DropDefinition(id::kInstance, ObjectType::Role,
-                                   role_ptr->GetId());
-  });
-
-  if (!r.ok()) {
-    return r;
-  }
-
-  return {};
-}
-
 Result Catalog::DropDatabase(std::string_view name,
                              duckdb::shared_ptr<void> keep_alive) {
   absl::MutexLock lock{&_mutex};
@@ -2896,7 +2798,8 @@ Result Catalog::DropDatabase(std::string_view name,
     SDB_ASSERT(clone);
     auto database = clone->GetObject<Database>(*database_id);
     SDB_ASSERT(database);
-    auto task = clone->CreateDatabaseDrop(database, std::move(keep_alive));
+    auto task = clone->CreateDatabaseDrop(_pending_drops, database,
+                                          std::move(keep_alive));
     auto wr = _engine->Write([&](auto& ctx) {
       ctx.WriteTombstone(id::kInstance, *database_id);
       clone->CommitDropPlan(ctx, plan);
@@ -2907,7 +2810,7 @@ Result Catalog::DropDatabase(std::string_view name,
       return wr;
     }
     clone->UnregisterObject(std::move(database), id::kInstance);
-    clone->ApplyDropPlan(*database_id, plan);
+    clone->ApplyDropPlan(_pending_drops, *database_id, plan);
     // Check that SereneDB won't open this database after reboot
     SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
     DropTask::Schedule(std::move(task)).Detach();
@@ -2940,7 +2843,8 @@ Result Catalog::DropSchema(std::string_view database, std::string_view name,
     SDB_ASSERT(clone);
     auto schema = clone->GetObject<Schema>(*schema_id);
     SDB_ASSERT(schema);
-    auto task = clone->CreateSchemaDrop(*database_id, schema, true);
+    auto task =
+      clone->CreateSchemaDrop(_pending_drops, *database_id, schema, true);
     auto wr = _engine->Write([&](auto& ctx) {
       ctx.WriteTombstone(*database_id, *schema_id);
       clone->CommitDropPlan(ctx, plan);
@@ -2951,7 +2855,7 @@ Result Catalog::DropSchema(std::string_view database, std::string_view name,
       return wr;
     }
     clone->UnregisterObject(std::move(schema), *database_id);
-    clone->ApplyDropPlan(*database_id, plan);
+    clone->ApplyDropPlan(_pending_drops, *database_id, plan);
     // Check that SereneDB won't open this schema after reboot
     SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
     DropTask::Schedule(std::move(task)).Detach();
@@ -2994,8 +2898,8 @@ Result Catalog::DropTable(std::string_view database, std::string_view schema,
                     pg::ToPgObjectTypeName(object->GetType())};
     }
     auto table = basics::downCast<Table>(std::move(object));
-    auto task = clone->CreateTableDrop(*database_id, *schema_id, table, true);
-
+    auto task = clone->CreateTableDrop(_pending_drops, *database_id, *schema_id,
+                                       table, true);
     auto wr = _engine->Write([&](auto& ctx) {
       ctx.WriteTombstone(*schema_id, *table_id);
       clone->CommitDropPlan(ctx, plan);
@@ -3007,7 +2911,7 @@ Result Catalog::DropTable(std::string_view database, std::string_view schema,
     }
 
     clone->UnregisterObject(std::move(table), *schema_id);
-    clone->ApplyDropPlan(*database_id, plan);
+    clone->ApplyDropPlan(_pending_drops, *database_id, plan);
     SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
     DropTask::Schedule(std::move(task)).Detach();
     return Result{};
@@ -3054,7 +2958,7 @@ Result Catalog::DropTableColumn(ObjectId database_id, std::string_view schema,
     if (!wr.ok()) {
       return wr;
     }
-    clone->ApplyDropPlan(database_id, plan);
+    clone->ApplyDropPlan(_pending_drops, database_id, plan);
     return Result{};
   });
 }
@@ -3273,7 +3177,7 @@ Result Catalog::DropIndexByIdLocked(ObjectId database_id, ObjectId index_id,
     // Check that SereneDB won't open this index after reboot
     SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
 
-    auto task = clone->CreateIndexDrop(database_id, schema_id,
+    auto task = clone->CreateIndexDrop(_pending_drops, database_id, schema_id,
                                        index->GetRelationId(), index, true);
     clone->UnregisterObject(index, schema_id);
     DropTask::Schedule(std::move(task)).Detach();
@@ -3325,7 +3229,7 @@ Result Catalog::DropView(std::string_view database, std::string_view schema,
       return wr;
     }
     clone->UnregisterObject(std::move(view), *schema_id);
-    clone->ApplyDropPlan(*database_id, plan);
+    clone->ApplyDropPlan(_pending_drops, *database_id, plan);
     return Result{};
   });
 }
@@ -3376,7 +3280,7 @@ Result Catalog::DropSequence(std::string_view database, std::string_view schema,
       return wr;
     }
     clone->UnregisterObject(std::move(seq), *schema_id);
-    clone->ApplyDropPlan(*database_id, plan);
+    clone->ApplyDropPlan(_pending_drops, *database_id, plan);
     return Result{};
   });
 }
@@ -3425,7 +3329,7 @@ Result Catalog::DropType(std::string_view database, std::string_view schema,
       return wr;
     }
     clone->UnregisterObject(std::move(type), *schema_id);
-    clone->ApplyDropPlan(*database_id, plan);
+    clone->ApplyDropPlan(_pending_drops, *database_id, plan);
     return Result{};
   });
 }
@@ -3469,7 +3373,7 @@ Result Catalog::DropFunction(std::string_view database, std::string_view schema,
       return wr;
     }
     clone->UnregisterObject(std::move(function), *schema_id);
-    clone->ApplyDropPlan(*database_id, plan);
+    clone->ApplyDropPlan(_pending_drops, *database_id, plan);
     return Result{};
   });
 }
@@ -3516,7 +3420,7 @@ Result Catalog::DropTokenizer(std::string_view database,
     }
 
     clone->UnregisterObject(std::move(tokenizer), *schema_id);
-    clone->ApplyDropPlan(*database_id, plan);
+    clone->ApplyDropPlan(_pending_drops, *database_id, plan);
     return Result{};
   });
 }
@@ -3661,8 +3565,6 @@ class OpenDatabase {
     ClearDeletedDefinitions(DeletedScope::Root);
     return r;
   }
-
-  Result AddRoles();
 
  private:
   void Resolve();
@@ -3960,26 +3862,6 @@ Result OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
     });
 }
 
-Result OpenDatabase::AddRoles() {
-  auto& store = GetCatalogStore();
-  auto r = store.VisitBoot(
-    id::kInstance, ObjectType::Role,
-    [&](CatalogStore::Key, std::string_view bytes) -> Result {
-      auto role = catalog::DeserializeObject<catalog::Role>(bytes, {});
-      if (!role) {
-        return Result{ERROR_INTERNAL, "Failed to read role definition"};
-      }
-
-      return _catalog.RegisterRole(std::move(role));
-    });
-
-  if (!r.ok()) {
-    return {r.errorNumber(), "Failed to read roles, error: ", r.errorMessage()};
-  }
-
-  return {};
-}
-
 Result OpenDatabase::AddTable(ObjectId db_id, ObjectId schema_id,
                               ObjectId table_id, std::shared_ptr<Table> table) {
   auto r = _catalog.RegisterTable(db_id, schema_id, std::move(table));
@@ -4106,22 +3988,6 @@ void InitCatalog() {
   };
 
   OpenDatabase open_db{GetCatalog()};
-  if (auto r = open_db.AddRoles(); !r.ok()) {
-    SDB_THROW(std::move(r));
-  }
-
-  // Bootstrap the default `postgres` role on first start. AddRoles() has
-  // already loaded any persisted roles; if none exist we mint the root user
-  // and persist it via CreateRole(), which persists it so it survives across
-  // restarts. RBAC isn't implemented yet, so the password is empty and auth
-  // checks are skipped.
-  if (GetCatalog().GetCatalogSnapshot()->GetRoles().empty()) {
-    auto root = Role::NewUser(StaticStrings::kDefaultUser, "", id::kRootUser);
-    if (auto br = GetCatalog().CreateRole(std::move(root)); !br.ok()) {
-      SDB_THROW(std::move(br));
-    }
-  }
-
   if (auto r = open_db(); !r.ok()) {
     SDB_FATAL(GENERAL, "Failed to open database, ", r.errorMessage());
   }

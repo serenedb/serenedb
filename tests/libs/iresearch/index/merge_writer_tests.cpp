@@ -1364,11 +1364,12 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
   irs::SegmentMeta index_segment;
   index_segment.codec = codec_ptr;
 
-  const auto norm_column_options = irs::tests::MakeNormColumnOptionsProvider();
+  const irs::FunctionFieldOptions field_options{
+    nullptr, irs::tests::MakeNormColumnOptionsProvider()};
   const irs::SegmentWriterOptions options{
     .scorers_features = {},
     .db = &::sdb::DuckDBEngine::Instance().instance(),
-    .norm_column_options = &norm_column_options,
+    .field_options = &field_options,
   };
   irs::MergeWriter writer(dir, options);
   writer.Reset(reader.begin(), reader.end());

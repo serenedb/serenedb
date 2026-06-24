@@ -332,7 +332,7 @@ TEST_F(IRSVariantShreddingTest, MergeReshreds) {
        .mask = nullptr,
        .alive_count = 300},
     };
-    irs::MergeInto(sources, w, /*column_options=*/nullptr);
+    irs::MergeInto(sources, w, /*field_options=*/nullptr);
     w.Commit(600);
   }
 

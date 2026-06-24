@@ -41,7 +41,7 @@ count
 4000
 
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO rt_t SELECT i, 'tail_' || i FROM range(4000, 5500) AS t(i);

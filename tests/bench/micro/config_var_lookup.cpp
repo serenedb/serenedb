@@ -38,6 +38,8 @@
 //   6. utils::TrivialBiMap    - lowercase keys,  ICase switch-on-length
 //
 // Approaches 1 and 2 require building with -DSDB_BENCH_FROZEN=1.
+// Approach 6 requires building with -DSDB_ENABLE_TRIVIAL_BIMAP=1 (the
+// TrivialBiMap header was dropped from the tree with the container campaign).
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/ascii.h>
@@ -50,7 +52,9 @@
 
 #include <string_view>
 
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 #include "basics/containers/trivial_map.h"
+#endif
 
 namespace {
 
@@ -636,6 +640,7 @@ const absl::flat_hash_map<std::string, Value, IcaseHash, IcaseEqual>
 
 // Approach 6 - utils::TrivialBiMap, lowercase keys
 
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 static constexpr Value kTrivialValues[] = {
   0,   1,   2,   3,   4,   5,   6,   7,   8,   9,   10,  11,  12,  13,
   14,  15,  16,  17,  18,  19,  20,  21,  22,  23,  24,  25,  26,  27,
@@ -652,6 +657,7 @@ static_assert(std::size(kTrivialValues) == kN);
 
 constexpr auto kTrivialMap =
   sdb::containers::MakeTrivialBiMap<kLowerKeys, kTrivialValues>();
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 // Helpers
 
@@ -690,6 +696,7 @@ template<typename Map>
   }
 }
 
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 [[gnu::noinline]] static void TrivialLookup(benchmark::State& state,
                                             const std::string_view* keys,
                                             std::size_t n) {
@@ -702,6 +709,7 @@ template<typename Map>
     }
   }
 }
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 // Wire-protocol path (13 canonical-case keys, happens once per connection)
 
@@ -722,9 +730,11 @@ void BmAbslIcase_Wire(benchmark::State& s) {
 void BmLinear_Wire(benchmark::State& s) {
   LinearLookup(s, kWireKeys, std::size(kWireKeys));
 }
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 void BmTrivial_Wire(benchmark::State& s) {
   TrivialLookup(s, kWireKeys, std::size(kWireKeys));
 }
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 #ifdef SDB_BENCH_FROZEN
 BENCHMARK(BmFrozenLower_Wire);
@@ -733,7 +743,9 @@ BENCHMARK(BmFrozenIcase_Wire);
 BENCHMARK(BmAbslLower_Wire);
 BENCHMARK(BmAbslIcase_Wire);
 BENCHMARK(BmLinear_Wire);
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 BENCHMARK(BmTrivial_Wire);
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 // SQL SET/SHOW path (lowercase input)
 
@@ -754,9 +766,11 @@ void BmAbslIcase_Sql(benchmark::State& s) {
 void BmLinear_Sql(benchmark::State& s) {
   LinearLookup(s, kSqlKeys, std::size(kSqlKeys));
 }
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 void BmTrivial_Sql(benchmark::State& s) {
   TrivialLookup(s, kSqlKeys, std::size(kSqlKeys));
 }
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 #ifdef SDB_BENCH_FROZEN
 BENCHMARK(BmFrozenLower_Sql);
@@ -765,7 +779,9 @@ BENCHMARK(BmFrozenIcase_Sql);
 BENCHMARK(BmAbslLower_Sql);
 BENCHMARK(BmAbslIcase_Sql);
 BENCHMARK(BmLinear_Sql);
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 BENCHMARK(BmTrivial_Sql);
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 // Miss cases (varied key lengths to exercise length-dispatch fairly)
 
@@ -786,9 +802,11 @@ void BmAbslIcase_Miss(benchmark::State& s) {
 void BmLinear_Miss(benchmark::State& s) {
   LinearLookup(s, kMissKeys, std::size(kMissKeys));
 }
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 void BmTrivial_Miss(benchmark::State& s) {
   TrivialLookup(s, kMissKeys, std::size(kMissKeys));
 }
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 #ifdef SDB_BENCH_FROZEN
 BENCHMARK(BmFrozenLower_Miss);
@@ -797,7 +815,9 @@ BENCHMARK(BmFrozenIcase_Miss);
 BENCHMARK(BmAbslLower_Miss);
 BENCHMARK(BmAbslIcase_Miss);
 BENCHMARK(BmLinear_Miss);
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 BENCHMARK(BmTrivial_Miss);
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 }  // namespace
 

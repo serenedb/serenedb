@@ -49,13 +49,15 @@ class HnswWriter;
 class ColWriter final {
  public:
   ColWriter(Directory& dir, std::string_view segment_name,
-            duckdb::DatabaseInstance& db,
-            const ColumnOptionsProvider* column_options = nullptr,
-            const NormColumnOptionsProvider* norm_column_options = nullptr);
+            duckdb::DatabaseInstance& db);
   ~ColWriter();
 
   ColWriter(const ColWriter&) = delete;
   ColWriter& operator=(const ColWriter&) = delete;
+
+  // Install the (non-owning) options on open, re-pointed to an equal view on
+  // resume; the owning writer outlives the ColWriter.
+  void SetFieldOptions(const IndexFieldOptions* field_options) noexcept;
 
   ColumnWriter& OpenColumn(field_id id, duckdb::LogicalType type);
 

@@ -461,6 +461,11 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
   auto lstate = duckdb::make_uniq<CreateIndexLocalState>();
   lstate->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
     inverted_storage.GetTransaction());
+  // Encode the built segments against the index being created (the index IS the
+  // per-column options); co-owned via the gstate's snapshot so the segment
+  // writer can pin it until flush.
+  lstate->search_trx->SetFieldOptions(
+    basics::downCast<const catalog::InvertedIndex>(gstate.index_for_providers));
 
   auto tokenizer_provider =
     MakeTokenizerProvider(gstate.snapshot_for_providers, inverted_index);

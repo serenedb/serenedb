@@ -1,4 +1,1 @@
-target_sources(
-    sereneserver
-    PRIVATE database_path_feature.cpp endpoint_feature.cpp database_context.cpp
-)
+target_sources(sereneserver PRIVATE database_path_feature.cpp)

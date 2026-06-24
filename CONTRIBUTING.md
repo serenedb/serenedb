@@ -47,7 +47,7 @@ Additional build presets are defined in `CMakePresets.json`:
 ### Launch
 
 ```bash
-./build/bin/serened ./build_data --server_endpoints='pgsql+tcp://0.0.0.0:7890'
+./build/bin/serened ./build_data --listen='postgres://0.0.0.0:7890'
 ```
 
 Connect via psql: `psql -h localhost -p 7890 -U postgres`
@@ -436,7 +436,7 @@ Submodules are cloned with `--depth 1` (shallow) by default, which means only th
 ```bash
 cd third_party/<submodule>
 git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
-git fetch origin
+git fetch origin --unshallow
 git checkout <your-branch>
 ```
 
@@ -445,7 +445,7 @@ This configures the submodule to fetch all branches (persists for your local clo
 To apply this to every submodule at once, run from the repo root:
 
 ```bash
-git submodule foreach --recursive 'git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*" && git fetch origin'
+git submodule foreach --recursive 'git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*" && git fetch origin --unshallow'
 ```
 
 ---

@@ -26,7 +26,7 @@ RUN \
   # TODO: add /docker-entrypoint-initdb.d for PostgreSQL-style init scripts (.sh/.sql)
   # Bind to all interfaces and log to stdout (for docker networking and journald)
   if [ -f /etc/serenedb/serened.conf ]; then \
-    sed -i -e 's~^--server_endpoints=.*~--server_endpoints=pgsql+tcp://0.0.0.0:7890~' /etc/serenedb/serened.conf; \
+    sed -i -e 's~^--listen=.*~--listen=postgres://0.0.0.0:7890~' /etc/serenedb/serened.conf; \
     sed -i -e 's~^--log_storage=.*~--log_storage=stdout~' /etc/serenedb/serened.conf; \
   fi && \
   # Explicitly set UTC timezone (ubuntu:24.04 defaults to UTC, but be safe)

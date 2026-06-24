@@ -1,4 +1,4 @@
-# TODO: remove to pg tests
+# TODO: move to any/pg tests
 
 statement ok
 CREATE TABLE pudge(a integer, b text);

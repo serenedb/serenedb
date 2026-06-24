@@ -3,7 +3,7 @@
 #
 # Local debug:
 #   ninja serened
-#   ./build/bin/serened /tmp/datadir --server_endpoints pgsql+tcp://0.0.0.0:5432
+#   ./build/bin/serened /tmp/datadir --listen postgres://0.0.0.0:5432
 #   bash tests/drivers/sqlsmith/run.sh
 #
 # After Stage B (CI wiring), this script is also invoked from

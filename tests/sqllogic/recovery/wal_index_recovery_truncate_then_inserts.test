@@ -42,7 +42,7 @@ count
 
 # Block search commits, then truncate and burst-insert.
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 TRUNCATE mironov_t;

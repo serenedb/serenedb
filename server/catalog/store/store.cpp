@@ -940,13 +940,14 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
 Result CatalogStore::ExecuteCreateStoreTable(const StoreTableDef& def) {
   auto r = ExecuteCreateStoreTableImpl(def, /*with_checks=*/true);
   if (r.fail() && !def.checks.empty()) {
-    // CHECK expressions may reference functions that only the facade
-    // database can resolve; such constraints stay facade-side (unenforced)
-    // rather than failing the table.
+    // CHECK expressions may reference facade-only types or functions the store
+    // catalog cannot bind. The store table omits them; the facade-bound CHECK
+    // is carried into every write plan instead (RetargetStoreConstraints), so
+    // it is still enforced on INSERT/UPDATE/upsert.
     auto retry = ExecuteCreateStoreTableImpl(def, /*with_checks=*/false);
     if (retry.ok()) {
-      SDB_WARN(GENERAL, "store table \"", def.name,
-               "\": CHECK constraints were not mirrored: ", r.errorMessage());
+      SDB_TRACE(GENERAL, "store table \"", def.name,
+                "\": CHECK constraints kept facade-side: ", r.errorMessage());
       return retry;
     }
   }

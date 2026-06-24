@@ -74,7 +74,7 @@ void BindStoreTableIndexes(duckdb::ClientContext& context,
 
 }  // namespace
 
-void InitInvertedIndexes(bool skip_wal_recovery) {
+void InitInvertedIndexes() {
   auto begin = std::chrono::steady_clock::now();
 
   auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
@@ -113,7 +113,7 @@ void InitInvertedIndexes(bool skip_wal_recovery) {
         const auto relation = snapshot->GetObject(idx->GetRelationId());
         const bool table_backed =
           relation && relation->GetType() == catalog::ObjectType::Table;
-        if (skip_wal_recovery || !table_backed) {
+        if (!table_backed) {
           static_storages.push_back(std::move(inv_storage));
           continue;
         }

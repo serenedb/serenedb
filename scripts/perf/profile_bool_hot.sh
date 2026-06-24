@@ -26,7 +26,7 @@ for _ in $(seq 1 20); do
 	sleep 0.2
 done
 "${SERENED_BIN}" "${SERENED_DATA_DIR}" \
-	--server_endpoints "pgsql+tcp://0.0.0.0:${PORT}" \
+	--listen "postgres://0.0.0.0:${PORT}" \
 	>"${LOG}" 2>&1 &
 disown
 for _ in $(seq 1 60); do

@@ -13,7 +13,7 @@ apt-get update -qq
 apt-get install -y /workspace/"$DEB_PACKAGE"
 
 # Configure for testing: listen on all interfaces so the tests container can reach us
-sed -i 's|^--server_endpoints=.*|--server_endpoints=pgsql+tcp://0.0.0.0:7890|' /etc/serenedb/serened.conf
+sed -i 's|^--listen=.*|--listen=postgres://0.0.0.0:7890|' /etc/serenedb/serened.conf
 
 # Apply the new endpoint (postinst already started the service)
 systemctl restart serenedb

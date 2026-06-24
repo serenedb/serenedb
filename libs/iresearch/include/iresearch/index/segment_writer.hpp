@@ -145,6 +145,17 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   }
   ColWriter* GetColWriter() noexcept { return _col_writer.get(); }
 
+  // Owning per-op encoding config (the snapshot's InvertedIndex): flush encodes
+  // against the schema the rows were written under, not the live catalog.
+  // Owning keeps a mid-write segment's index alive for the operation.
+  void SetFieldOptions(
+    std::shared_ptr<const IndexFieldOptions> options) noexcept;
+
+  // Per-op override if set, else the construction-time fallback.
+  const IndexFieldOptions* ActiveFieldOptions() const noexcept {
+    return _field_options ? _field_options.get() : _fallback_field_options;
+  }
+
  private:
   bool index(field_id id, doc_id_t doc, IndexFeatures index_features,
              Tokenizer& tokens);
@@ -159,6 +170,10 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
 
   void FlushFields(FlushState& state);
 
+  // Reset body that keeps _field_options; reset() drops them, reset(meta)
+  // keeps.
+  void ResetState() noexcept;
+
   TrackingDirectory _dir;
   ScorerPtr _scorer;
   std::unique_ptr<ColReader> _col_reader;
@@ -169,8 +184,11 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   std::string _seg_name;
   std::unique_ptr<burst_trie::FieldWriter> _field_writer;
   duckdb::DatabaseInstance& _db;
-  const ColumnOptionsProvider* _column_options = nullptr;
-  const NormColumnOptionsProvider* _norm_column_options = nullptr;
+  // Non-owning fallback, owned by the IndexWriter; used when no override is
+  // set.
+  const IndexFieldOptions* _fallback_field_options = nullptr;
+  // Owning per-op override; null falls back to _fallback_field_options.
+  std::shared_ptr<const IndexFieldOptions> _field_options;
   std::unique_ptr<ColWriter> _col_writer;
   PreloadedHnswGraphs _built_hnsw_graphs;
   doc_id_t _batch_first_doc_id = doc_limits::eof();

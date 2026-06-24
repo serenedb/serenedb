@@ -33,7 +33,7 @@ statement ok
 VACUUM (REFRESH_TABLE) ua_t;
 
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # Case A: update ALL non-PK columns at once on row 1.
 statement ok

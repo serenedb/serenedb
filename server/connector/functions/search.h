@@ -105,7 +105,6 @@ inline constexpr std::string_view kHasAllTokens = "has_all_tokens";
 inline constexpr std::string_view kHasAnyTokens = "has_any_tokens";
 
 // Highlighting + position projections.
-inline constexpr std::string_view kTsHeadline = "ts_headline";
 inline constexpr std::string_view kTsHighlight = "ts_highlight";
 inline constexpr std::string_view kOffsets = "ts_offsets";
 

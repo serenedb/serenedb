@@ -44,7 +44,6 @@
 #include "catalog/object.h"
 #include "catalog/object_dependency.h"
 #include "catalog/resolution_table.h"
-#include "catalog/role.h"
 #include "catalog/schema.h"
 #include "catalog/sequence.h"
 #include "catalog/store/store.h"
@@ -86,8 +85,6 @@ constexpr ObjectType GetObjectType() noexcept {
     return ObjectType::Database;
   } else if constexpr (std::is_same_v<T, Schema>) {
     return ObjectType::Schema;
-  } else if constexpr (std::is_same_v<T, Role>) {
-    return ObjectType::Role;
   } else if constexpr (std::is_same_v<T, PgSqlFunction>) {
     return ObjectType::PgSqlFunction;
   } else if constexpr (std::is_same_v<T, PgSqlType>) {
@@ -107,6 +104,9 @@ constexpr ObjectType GetObjectType() noexcept {
   }
 }
 
+using PendingDrops =
+  containers::FlatHashMap<ObjectId, std::vector<std::weak_ptr<DropTask>>>;
+
 struct Snapshot {
   Snapshot();
   ~Snapshot();
@@ -114,7 +114,6 @@ struct Snapshot {
   std::shared_ptr<Snapshot> Clone() const;
 
   connector::DuckDBEntryCache& GetDuckDBEntryCache() const;
-  std::vector<std::shared_ptr<Role>> GetRoles() const;
   std::vector<std::shared_ptr<Database>> GetDatabases() const;
   std::vector<std::shared_ptr<Schema>> GetSchemas(ObjectId database) const;
   std::vector<std::shared_ptr<Object>> GetRelations(
@@ -146,7 +145,6 @@ struct Snapshot {
   void VisitIndexes(ObjectId database, std::string_view schema,
                     absl::FunctionRef<void(const Index&)> visitor) const;
 
-  std::shared_ptr<Role> GetRole(std::string_view name) const;
   std::shared_ptr<Database> GetDatabase(std::string_view database) const;
   std::shared_ptr<Database> GetDatabase(ObjectId database) const;
   std::shared_ptr<Schema> GetSchema(ObjectId database,
@@ -218,15 +216,17 @@ struct Snapshot {
   void EndLoad() noexcept;
 
   std::shared_ptr<DatabaseDrop> CreateDatabaseDrop(
-    const std::shared_ptr<Database>& db, duckdb::shared_ptr<void> keep_alive);
+    PendingDrops& pending_drops, const std::shared_ptr<Database>& db,
+    duckdb::shared_ptr<void> keep_alive);
   std::shared_ptr<SchemaDrop> CreateSchemaDrop(
-    ObjectId db_id, const std::shared_ptr<Schema>& schema, bool is_root);
+    PendingDrops& pending_drops, ObjectId db_id,
+    const std::shared_ptr<Schema>& schema, bool is_root);
   std::shared_ptr<TableDrop> CreateTableDrop(
-    ObjectId db_id, ObjectId schema_id, const std::shared_ptr<Table>& table,
-    bool is_root);
+    PendingDrops& pending_drops, ObjectId db_id, ObjectId schema_id,
+    const std::shared_ptr<Table>& table, bool is_root);
   std::shared_ptr<IndexDrop> CreateIndexDrop(
-    ObjectId db_id, ObjectId schema_id, ObjectId table_id,
-    const std::shared_ptr<Index>& index, bool is_root);
+    PendingDrops& pending_drops, ObjectId db_id, ObjectId schema_id,
+    ObjectId table_id, const std::shared_ptr<Index>& index, bool is_root);
 
   // Store-table name of `table_id` ("db.schema.table"), or nullopt when
   // the id is unset (self-referencing FK) or not resolvable.
@@ -241,7 +241,8 @@ struct Snapshot {
                       const DropPlan& plan) const;
   // Apply cross-tree mutations in-memory; schedule IndexDrop tasks for
   // cascade-dropped indexes (column->index cascade).
-  void ApplyDropPlan(ObjectId db_id, DropPlan& plan);
+  void ApplyDropPlan(PendingDrops& pending_drops, ObjectId db_id,
+                     DropPlan& plan);
 
   bool CheckSchemaEmptyDependency(ObjectId schema_id) const;
 
@@ -352,7 +353,6 @@ class Catalog final {
  public:
   explicit Catalog();
 
-  Result RegisterRole(std::shared_ptr<Role> role);
   Result RegisterDatabase(std::shared_ptr<Database> database);
   Result RegisterSchema(ObjectId database_id, std::shared_ptr<Schema> schema);
   Result RegisterView(ObjectId schema_id, std::shared_ptr<PgSqlView> view);
@@ -370,7 +370,6 @@ class Catalog final {
                        std::shared_ptr<Index> index);
 
   Result CreateDatabase(std::shared_ptr<Database> database);
-  Result CreateRole(std::shared_ptr<Role> role);
   Result CreateView(ObjectId database_id, std::string_view schema,
                     std::shared_ptr<PgSqlView> view, bool replace);
   Result CreateSequence(ObjectId database_id, std::string_view schema,
@@ -412,11 +411,9 @@ class Catalog final {
                     std::string_view name, ChangeCallback<PgSqlView> callback);
   Result ChangeTable(ObjectId database_id, std::string_view schema,
                      std::string_view name, ChangeCallback<Table> callback);
-  Result ChangeRole(std::string_view name, ChangeCallback<Role> callback);
 
   Result DropDatabase(std::string_view name,
                       duckdb::shared_ptr<void> keep_alive);
-  Result DropRole(std::string_view role);
   Result DropSchema(std::string_view database, std::string_view name,
                     bool cascade);
   Result DropView(std::string_view database, std::string_view schema,
@@ -473,11 +470,12 @@ class Catalog final {
   // std::atomic<std::shared_ptr>): a leaf with no lock ordering -- mutations
   // build a clone off to the side and atomically swap it in.
   std::shared_ptr<const Snapshot> _snapshot;
+  PendingDrops _pending_drops;
   CatalogStore* _engine;
 };
 
-// Builds the single in-process catalog, loads boot state, bootstraps the
-// default role, and attaches the databases. Throws on failure.
+// Builds the single in-process catalog, loads boot state, and attaches the
+// databases. Throws on failure.
 void InitCatalog();
 void ShutdownCatalog();
 

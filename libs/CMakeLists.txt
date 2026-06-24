@@ -15,6 +15,7 @@ add_library(
     basics/encoding_utils.cpp
     basics/exceptions.cpp
     basics/file_utils.cpp
+    basics/metrics.cpp
     basics/number_of_cores.cpp
     basics/physical_memory.cpp
     basics/result.cpp
@@ -41,7 +42,6 @@ add_library(
     basics/ssl/ssl_interface.cpp
     basics/ssl/ssl_helper.cpp
     basics/message_buffer.cpp
-    basics/message_chunk.cpp
     basics/message_sequence_view.cpp
     basics/duckdb_engine.cpp
     basics/log.cpp
@@ -131,26 +131,7 @@ target_compile_definitions(iresearch-static PRIVATE -DDISABLE_EXECINFO)
 ## serene
 ################################################################################
 
-set(LIB_SERVER_POSIX endpoint/endpoint_unix_domain.cpp)
-
-add_library(
-    serene
-    STATIC
-    ${LIB_SERVER_POSIX}
-    app/app_server.cpp
-    app/init.cpp
-    endpoint/endpoint.cpp
-    endpoint/endpoint_ip.cpp
-    endpoint/endpoint_ip_v4.cpp
-    endpoint/endpoint_ip_v6.cpp
-    endpoint/endpoint_list.cpp
-    rest/common_defines.cpp
-    rest/general_request.cpp
-    rest/general_response.cpp
-    rest/http_request.cpp
-    rest/http_response.cpp
-    rest/version.cpp
-)
+add_library(serene STATIC app/app_server.cpp app/init.cpp app/version.cpp)
 
 target_link_libraries(serene PUBLIC s2 boost_boost serene_base simdjson)
 

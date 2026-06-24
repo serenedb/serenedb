@@ -60,7 +60,7 @@ statement error
 TRUNCATE does_not_exist;
 ----
 db error: ERROR: Table with name does_not_exist does not exist!
-Did you mean "pg_stat_user_indexes"?
+Did you mean "<slt:ignore>"?
 
 
 # TRUNCATE a view (should fail)

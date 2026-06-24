@@ -1,1 +1,1 @@
-target_sources(sereneserver PRIVATE sdb_search_tasks_status.cpp)
+target_sources(sereneserver PRIVATE sdb_metrics.cpp sdb_settings.cpp)

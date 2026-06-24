@@ -5,16 +5,16 @@
 ### [Apache 2.0](http://www.apache.org/licenses/LICENSE-2.0)
 
 * [Abseil - C++ Common Libraries](https://abseil.io)
-* [RocksDB](https://github.com/facebook/rocksdb)
 * [S2 Geometry Library](https://s2geometry.io)
 * [OpenFST](https://www.openfst.org/)
 * [frozen](https://github.com/serge-sans-paille/frozen)
 * [Kaldi](https://github.com/kaldi-asr/kaldi)
 * [LLVM](https://github.com/llvm/llvm-project)
 * [Google Benchmark](https://github.com/google/benchmark)
-* [folly](https://github.com/facebook/folly)
 * [OpenSSL](https://github.com/openssl/openssl)
 * [simdjson](https://github.com/simdjson/simdjson)
+* [simdutf](https://github.com/simdutf/simdutf) (Apache 2.0 or MIT)
+* [ada](https://github.com/ada-url/ada) (Apache 2.0 or MIT)
 * [streamvbyte](https://github.com/lemire/streamvbyte)
 * [tcmalloc](https://github.com/google/tcmalloc)
 * [fast_float](https://github.com/fastfloat/fast_float)
@@ -44,7 +44,6 @@
 
 * [FakeIt](https://github.com/eranpeer/FakeIt)
 * [llhttp](https://github.com/nodejs/llhttp)
-* [nghttp2](https://github.com/nghttp2/nghttp2)
 * [FastText](https://github.com/facebookresearch/fastText)
 * [YACLib](https://github.com/YACLib/YACLib)
 * [magic_enum](https://github.com/Neargye/magic_enum)
@@ -55,6 +54,8 @@
 * [duckdb-httpfs](https://github.com/duckdb/duckdb-httpfs)
 * [duckdb-avro](https://github.com/duckdb/duckdb-avro)
 * [duckdb-iceberg](https://github.com/duckdb/duckdb-iceberg)
+* [duckdb-postgres](https://github.com/duckdb/postgres_scanner)
+* [database-connector](https://github.com/duckdb/database-connector)
 * [curl](https://github.com/curl/curl)
 * [faiss](https://github.com/facebookresearch/faiss)
 * [fmt](https://github.com/fmtlib/fmt)
@@ -63,14 +64,11 @@
 
 ### [BSD 2-clauses](https://opensource.org/licenses/bsd-license.php)
 
-* [linenoise-ng](https://github.com/antirez/linenoise)
 * [lz4](https://github.com/lz4/lz4)
 
 ### [BSD 3-clause](https://opensource.org/license/bsd-3-clause)
 
-* [double-conversion](https://github.com/google/double-conversion)
 * [Google Test](https://github.com/google/googletest)
-* [libpg_query](https://github.com/pganalyze/libpg_query)
 * [re2](https://github.com/google/re2)
 * [simdcomp](https://github.com/fast-pack/simdcomp)
 * [snappy](https://github.com/google/snappy)
@@ -94,7 +92,9 @@
 
 * [zlib-ng](https://github.com/zlib-ng/zlib-ng/blob/develop/LICENSE.md)
 * [minizip-ng](https://github.com/zlib-ng/minizip-ng/blob/develop/LICENSE)
-* [wyhash](https://github.com/wangyi-fudan/wyhash), Unlicense (vendored in `libs/vpack`)
+* [PostgreSQL](https://github.com/postgres/postgres), [PostgreSQL License](https://www.postgresql.org/about/licence/) (libpq, statically linked by the postgres_scanner extension)
+* [sdt](https://sourceware.org/git/?p=systemtap.git;a=blob;f=includes/sys/sdt.h), CC0 / public domain (USDT probe header)
+* [wyhash](https://github.com/wangyi-fudan/wyhash), Unlicense (vendored in `libs/basics/wyhash.h`)
 
 ## Programs
 

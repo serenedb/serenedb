@@ -37,7 +37,7 @@ VACUUM (REFRESH_TABLE) del_then_insert_t;
 
 # Block iresearch commit so all subsequent ops only land in the WAL.
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO del_then_insert_t VALUES (1, 'stale token apple');

@@ -16,7 +16,6 @@ target_sources(
         sequence.cpp
         function.cpp
         user_type.cpp
-        role.cpp
         secondary_index.cpp
         inverted_index.cpp
         scorer_options.cpp

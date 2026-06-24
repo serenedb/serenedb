@@ -41,6 +41,6 @@ struct MergeSource {
 };
 
 void MergeInto(std::span<const MergeSource> sources, ColWriter& output,
-               const ColumnOptionsProvider* column_options);
+               const IndexFieldOptions* field_options);
 
 }  // namespace irs

@@ -21,6 +21,7 @@
 #include "connector/functions/inout.h"
 
 #include <absl/strings/escaping.h>
+#include <fast_float/fast_float.h>
 
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/function/cast/cast_function_set.hpp>
@@ -103,16 +104,15 @@ duckdb::string_t PgByteaIn(std::string_view input, duckdb::Vector& result_vec) {
       throw duckdb::InvalidInputException(
         "invalid input syntax for type bytea");
     }
-    if (input[i + 1] >= '0' && input[i + 1] <= '3' && input[i + 2] >= '0' &&
-        input[i + 2] <= '7' && input[i + 3] >= '0' && input[i + 3] <= '7') {
-      *out++ =
-        static_cast<char>(((input[i + 1] - '0') << 6) +
-                          ((input[i + 2] - '0') << 3) + (input[i + 3] - '0'));
-      i += 4;
-    } else {
+    const char* octal = input.data() + i + 1;
+    unsigned value = 0;
+    const auto res = fast_float::from_chars(octal, octal + 3, value, 8);
+    if (res.ec != std::errc() || res.ptr != octal + 3 || value > 0xFFU) {
       throw duckdb::InvalidInputException(
         "invalid input syntax for type bytea");
     }
+    *out++ = static_cast<char>(value);
+    i += 4;
   }
   auto new_size = static_cast<duckdb::idx_t>(out - target.GetDataWriteable());
   target.Finalize();

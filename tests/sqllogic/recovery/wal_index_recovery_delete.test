@@ -41,7 +41,7 @@ a
 
 # Block search commit — the changes below stay only in WAL
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # Delete existing rows (must be removed by recovery)
 statement ok

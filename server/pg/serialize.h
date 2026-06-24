@@ -36,12 +36,18 @@ namespace sdb::pg {
 enum class VarFormat : int16_t {
   Text = 0,
   Binary = 1,
+  // PG COPY text field renderer: reuses the Text value renderers but, driven by
+  // SerializationContext::copy_text, backslash-escapes the field body inline
+  // (no int32 length prefix; NULL is emitted as the two bytes \N by the
+  // caller's wrapper). Field/row framing (tab between columns, newline per row)
+  // is done by WriteCopyChunk<CopyText>, not the serializer.
+  CopyText = 2,
 };
 
 // TODO: consider optimizing with type-switch + UnifiedVectorFormat per column
 // instead of RecursiveUnifiedVectorFormat (avoids recursive child traversal
 // for scalar types, and can lazily create child format for arrays).
-using SerializationFunction = void (*)(
+using SerializationFunction = bool (*)(
   struct SerializationContext& context,
   const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row);
 
@@ -54,14 +60,23 @@ using TypesSerializationCache =
   containers::NodeHashMap<const duckdb::LogicalType*, RecordSerializers>;
 
 struct SerializationContext {
-  message::Buffer* buffer;
+  message::Writer* writer = nullptr;
   int8_t extra_float_digits = 0;
   ByteaOutput bytea_output;
   const catalog::Snapshot* snapshot = nullptr;
   std::string_view quote_seq = "\"";  // can be mixed with backslashes
   uint32_t backslash_count = 1;
   bool in_record = false;
+  // PG COPY text mode: EmitEscaped additionally backslash-escapes the COPY
+  // control bytes (\b \f \n \r \t \v). Set together with backslash_count = 2
+  // (the COPY base, so a literal backslash becomes \\ and array/record depth
+  // doubling composes on top), so the existing Text renderers produce COPY-text
+  // output without a second pass.
+  bool copy_text = false;
+  char copy_delim = '\t';
+  std::string copy_null = "\\N";
   std::unique_ptr<TypesSerializationCache> types_cache;
+  std::vector<duckdb::RecursiveUnifiedVectorFormat> decoded;
 };
 
 void FillContext(const Config& config, SerializationContext& context);

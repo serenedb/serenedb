@@ -5,6 +5,28 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 : "${RESOURCES:=$(realpath "$SCRIPT_DIR/../../resources")}"
 export RESOURCES
 
+# Local TSan runs: if the built serened is a TSan binary and TSAN_OPTIONS isn't
+# already set, export it (with the local suppressions file) so a serened started
+# from this shell -- or a TSan-built sqllogictest client -- loads the same
+# suppressions CI uses. Guarded on the binary being TSan-instrumented and the
+# file existing, so non-TSan local runs are not perturbed. Existing TSAN_OPTIONS
+# is left untouched.
+if [[ -z "${TSAN_OPTIONS:-}" ]]; then
+	_sdb_repo_root=$(realpath "$SCRIPT_DIR/../..")
+	for _sdb_bin in "$_sdb_repo_root"/build_tsan/bin/serened "$_sdb_repo_root"/build*/bin/serened; do
+		[[ -x "$_sdb_bin" ]] || continue
+		if nm -D "$_sdb_bin" 2>/dev/null | grep -q '__tsan_init'; then
+			_sdb_tsan_opts="detect_deadlocks=true:second_deadlock_stack=1:history_size=0"
+			if [[ -f "$_sdb_repo_root/resources/suppressions/tsan.txt" ]]; then
+				_sdb_tsan_opts="${_sdb_tsan_opts}:suppressions=${_sdb_repo_root}/resources/suppressions/tsan.txt"
+			fi
+			export TSAN_OPTIONS="$_sdb_tsan_opts"
+			break
+		fi
+	done
+	unset _sdb_repo_root _sdb_bin _sdb_tsan_opts
+fi
+
 # Boolean flags configuration
 declare -a BOOLEAN_FLAGS=(debug override force-override format show-all-errors fast cancellation)
 

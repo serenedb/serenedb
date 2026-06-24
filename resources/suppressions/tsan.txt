@@ -1,41 +1,28 @@
-race:boost/lockfree/queue.hpp
-race:boost/lockfree/detail/freelist.hpp
-race:boost::lockfree::queue
-
-# logCrashInfo calls SDB_LOG which in turn calls std::string::reserve
-signal:libs/basics/CrashHandler.cpp
-signal:CrashHandlerSignalHandler
-
-signal:CExitHandler
-
-# alloc in signal handers strack trace here:
+# alloc in signal handler stack trace here:
 signal:sdb::app::AppServer::wait
-
-# A compiler optimization in DBImpl::ReleaseSnapshot() produces code where a
-# register is populated with different addresses based on some condition, and
-# this register is later read to populate the variable `oldest_snapshot`.
-# However, this generated read is a non-atomic read, which therefore results in
-# a false positive race warning. I have created an according GitHub issue:
-# https://github.com/google/sanitizers/issues/1398
-race:VersionSet::SetLastSequence
-
-# TODO Fix known thread leaks
-thread:ClusterFeature::startHeartbeatThread
-
-# TODO Fix lock order inversion
-deadlock:consensus::Agent::setPersistedState
-
-# TODO Fix data race in serenedb-tests
-race:DummyConnection::sendRequest
-
-# ATM we build V8 with sanitizers _disabled_, so the V8 code is not instrumented
-# which means the sanitizer cannot observe the synchronizations inside that code.
-# So when the V8 code calls back into instrumented code (e.g. the C runtime), TSan
-# might report potential data races because of these missing synchronizations.
-# For that reason we simply need to ignore _all_ data races coming from V8.
-race:v8::*
 
 # TODO It's "false positive" caused by code:
 # Because we call Begin() SwitchFlushContext() Commit()
 deadlock:SwitchFlushContext
 deadlock:irs::IndexWriter::Finish
+
+# False positive lock-order-inversion in the serenedb catalog store path.
+#
+# TSAN reports a cross-thread deadlock between DROP COLUMN's DataTable
+# copy-construct (LIdx -> LMeta -> LM) and that same txn's commit (LM -> LIdx),
+# triggered by `ALTER ... DROP COLUMN` / catalog Drop/ChangeTable
+# (Catalog::DropTableColumn / DropType / ChangeTable). It cannot deadlock:
+#   - All real DuckDB storage locks (DuckTransactionManager transaction_lock,
+#     DataTable::append_lock, TableIndexList lock) live ONLY in the hidden
+#     __sdb_store database. User tables use SereneDBTransactionManager (no-op
+#     commit, owns no DataTable), so they take none of these locks.
+#   - Every store mutation runs through CatalogStore::ExecuteEntries, which holds
+#     absl::MutexLock{&_mutex} (server/catalog/store/store.cpp) around the whole
+#     BEGIN..ALTER..COMMIT. Both reported lock-order edges execute SEQUENTIALLY
+#     on one thread under _mutex, so the lock instances never form a cross-thread
+#     cycle. TSAN's deadlock detector is instance-agnostic and unaware of the
+#     outer _mutex, hence the false report.
+# Caveat: only valid while __sdb_store is the sole writable DuckDB-native
+# transaction manager. Re-check if another native-DuckDB writable txn manager
+# is introduced.
+deadlock:sdb::catalog::CatalogStore::ExecuteEntries

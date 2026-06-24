@@ -32,6 +32,22 @@ if ! test -f "$WORKSPACE/docker.env"; then
 	touch "$WORKSPACE/docker.env"
 fi
 
+# Local TSan runs (run_in_docker.sh outside CI) skip the CI's
+# 01-ci-set-sanitizer-options step, so docker.env carries no TSAN_OPTIONS and
+# the suppressions file is never loaded. If the built serened is a TSan binary
+# and TSAN_OPTIONS isn't already provided, append the same options CI uses
+# (suppressions + deadlock detection) so a local run matches CI behaviour. The
+# path is the in-container one (/serenedb is the mounted WORKSPACE).
+if ! grep -q '^TSAN_OPTIONS=' "$WORKSPACE/docker.env" 2>/dev/null &&
+	test -x "$WORKSPACE/$BUILD_DIR/bin/serened" &&
+	nm -D "$WORKSPACE/$BUILD_DIR/bin/serened" 2>/dev/null | grep -q '__tsan_init'; then
+	tsan_opts="detect_deadlocks=true:second_deadlock_stack=1:history_size=0"
+	if test -f "$WORKSPACE/resources/suppressions/tsan.txt"; then
+		tsan_opts="${tsan_opts}:suppressions=/serenedb/resources/suppressions/tsan.txt"
+	fi
+	echo "TSAN_OPTIONS=${tsan_opts}" >>"$WORKSPACE/docker.env"
+fi
+
 mkdir -p "$WORKSPACE"/out/sanitizers/{leak,undefined,address,memory,thread}
 mkdir -p "$WORKSPACE/out/coverage/profiles"
 mkdir -p "$WORKSPACE/out/logs"

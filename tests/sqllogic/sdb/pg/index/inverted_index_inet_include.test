@@ -1,0 +1,70 @@
+hash-threshold 100
+
+# End-to-end: INCLUDE'd INET column round-trips through the inverted-index
+# columnstore. INET is a STRUCT(ip_type, address, mask) composite type, so this
+# exercises the composite path in the columnstore and ensures the inet type is
+# indexable by an inverted index (both IPv4 and IPv6).
+
+statement ok
+CREATE TABLE inet_idx_t (
+  pk INTEGER PRIMARY KEY,
+  text_for_search VARCHAR,
+  ip INET
+)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+)
+
+
+statement ok
+CREATE INDEX inet_idx ON inet_idx_t USING inverted(pk, text_for_search en)
+  INCLUDE (ip)
+
+
+statement ok
+INSERT INTO inet_idx_t VALUES (1, 'first',  '192.168.0.1/24'::INET)
+
+
+statement ok
+INSERT INTO inet_idx_t VALUES (2, 'second', '2001:db8::1/64'::INET)
+
+
+statement ok
+INSERT INTO inet_idx_t VALUES (3, 'third',  '10.0.0.1'::INET)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) inet_idx_t
+
+
+query
+SELECT pk, ip FROM inet_idx WHERE text_for_search @@ ts_phrase('first')
+ORDER BY pk;
+----
+pk	ip
+1	192.168.0.1/24
+
+
+query
+SELECT pk, ip FROM inet_idx WHERE text_for_search @@ ts_phrase('second')
+ORDER BY pk;
+----
+pk	ip
+2	2001:db8::1/64
+
+
+query
+SELECT pk, ip FROM inet_idx WHERE text_for_search @@ ts_phrase('third')
+ORDER BY pk;
+----
+pk	ip
+3	10.0.0.1

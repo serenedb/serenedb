@@ -1,0 +1,26 @@
+# serenedb-specific inet behavior (PostgreSQL-shared cases live in
+# any/pg/simple/inet.test):
+#  - netmask() keeps the /masklen suffix; PostgreSQL omits it (returns
+#    255.255.255.0), so this can't go in any/.
+#  - html_escape/html_unescape come from the duckdb-inet extension and have no
+#    PostgreSQL equivalent.
+
+query
+SELECT netmask('192.168.1.5/24'::INET) AS mask;
+----
+mask
+255.255.255.0/24
+
+
+query
+SELECT html_escape('<a href="x">') AS esc;
+----
+esc
+&lt;a href=&quot;x&quot;&gt;
+
+
+query
+SELECT html_unescape('&lt;a&gt;') AS unesc;
+----
+unesc
+<a>

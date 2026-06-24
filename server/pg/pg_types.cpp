@@ -196,6 +196,9 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
       return make(kText, kTextArray, -1);
     }
     case STRUCT: {
+      if (IsInet(type)) {
+        return make(kInet, kInetArray, -1);
+      }
       auto ext = type.GetExtensionInfo();
       // null in case of anonymous record types (e.g. SELECT ROW(1, 2))
       if (ext) {
@@ -280,6 +283,7 @@ duckdb::LogicalType Oid2Type(int32_t oid, const catalog::Snapshot& snapshot) {
     SDB_OID2TYPE(kRegrole, REGROLE())
     SDB_OID2TYPE(kRegnamespace, REGNAMESPACE())
     SDB_OID2TYPE(kUuid, LogicalType::UUID)
+    SDB_OID2TYPE(kInet, INET())
     SDB_OID2TYPE(kRegconfig, REGCONFIG())
     SDB_OID2TYPE(kRegdictionary, REGDICTIONARY())
     SDB_OID2TYPE(kVariant, LogicalType::VARIANT())

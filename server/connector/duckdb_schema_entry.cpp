@@ -1352,7 +1352,8 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       auto field_exists = [](const duckdb::LogicalType& root,
                              const duckdb::vector<duckdb::string>& path,
                              size_t path_end, const std::string& leaf) -> bool {
-        // Direct child of struct `type` named `name` (case-insensitive), or null.
+        // Direct child of struct `type` named `name` (case-insensitive), or
+        // null.
         auto child = [](const duckdb::LogicalType& type,
                         std::string_view name) -> const duckdb::LogicalType* {
           if (type.id() != duckdb::LogicalTypeId::STRUCT) {
@@ -1364,7 +1365,8 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
           });
           return found == children.end() ? nullptr : &found->second;
         };
-        // Walk path[1..path_end) into nested structs; bail if a segment is absent.
+        // Walk path[1..path_end) into nested structs; bail if a segment is
+        // absent.
         const duckdb::LogicalType* current = &root;
         for (size_t depth = 1; depth < path_end; ++depth) {
           current = child(*current, path[depth]);

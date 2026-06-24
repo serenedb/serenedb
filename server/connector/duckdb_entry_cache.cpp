@@ -656,7 +656,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
           auto info = duckdb::make_uniq<duckdb::CreateIndexInfo>();
           info->schema = schema;
           info->table = index_relation ? std::string{index_relation->GetName()}
-                                        : std::string{};
+                                       : std::string{};
           info->index_name = name;
           info->index_type =
             relation->GetType() == catalog::ObjectType::InvertedIndex

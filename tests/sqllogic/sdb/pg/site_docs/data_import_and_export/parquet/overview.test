@@ -845,4 +845,3 @@ USE $__DATABASE__;
 
 statement ok
 DETACH parquet_overview_export_035;
-

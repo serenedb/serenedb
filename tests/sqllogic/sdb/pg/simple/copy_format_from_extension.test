@@ -12,11 +12,11 @@ control substitution on
 # --- CSV from the .csv extension ---
 statement count 2
 COPY (SELECT 1 AS a, 'x' AS b UNION ALL SELECT 2 AS a, 'y' AS b)
-TO '/tmp/${__DATABASE__}_cfx.csv';
+TO '${__TEST_DIR__}/cfx.csv';
 
 query
 SELECT column0 AS a, column1 AS b
-FROM read_csv('/tmp/${__DATABASE__}_cfx.csv')
+FROM read_csv('${__TEST_DIR__}/cfx.csv')
 ORDER BY 1;
 ----
 a	b
@@ -27,11 +27,11 @@ a	b
 # --- JSON from the .json extension ---
 statement count 2
 COPY (SELECT 1 AS a, 'x' AS b UNION ALL SELECT 2 AS a, 'y' AS b)
-TO '/tmp/${__DATABASE__}_cfx.json';
+TO '${__TEST_DIR__}/cfx.json';
 
 query
 SELECT a, b
-FROM read_json('/tmp/${__DATABASE__}_cfx.json')
+FROM read_json('${__TEST_DIR__}/cfx.json')
 ORDER BY a;
 ----
 a	b
@@ -43,11 +43,11 @@ a	b
 # Parquet file, so this is the strongest discriminator. ---
 statement count 2
 COPY (SELECT 1 AS a, 'x' AS b UNION ALL SELECT 2 AS a, 'y' AS b)
-TO '/tmp/${__DATABASE__}_cfx.parquet';
+TO '${__TEST_DIR__}/cfx.parquet';
 
 query
 SELECT a, b
-FROM read_parquet('/tmp/${__DATABASE__}_cfx.parquet')
+FROM read_parquet('${__TEST_DIR__}/cfx.parquet')
 ORDER BY a;
 ----
 a	b
@@ -59,11 +59,11 @@ a	b
 # CSV, gzip-compressed (read_csv auto-decompresses the .gz). ---
 statement count 2
 COPY (SELECT 1 AS a, 'x' AS b UNION ALL SELECT 2 AS a, 'y' AS b)
-TO '/tmp/${__DATABASE__}_cfx.csv.gz';
+TO '${__TEST_DIR__}/cfx.csv.gz';
 
 query
 SELECT column0 AS a, column1 AS b
-FROM read_csv('/tmp/${__DATABASE__}_cfx.csv.gz')
+FROM read_csv('${__TEST_DIR__}/cfx.csv.gz')
 ORDER BY 1;
 ----
 a	b

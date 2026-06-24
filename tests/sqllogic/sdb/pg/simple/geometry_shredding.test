@@ -15,10 +15,10 @@ statement ok
 DETACH IF EXISTS geom_shred;
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_geom_noshred.db' AS geom_noshred (STORAGE_VERSION 'v1.5.0');
+ATTACH '${__TEST_DIR__}/geom_noshred.db' AS geom_noshred (STORAGE_VERSION 'v1.5.0');
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_geom_shred.db' AS geom_shred (STORAGE_VERSION 'v1.5.0');
+ATTACH '${__TEST_DIR__}/geom_shred.db' AS geom_shred (STORAGE_VERSION 'v1.5.0');
 
 
 # --- shredding disabled: storage segments stay GEOMETRY ---

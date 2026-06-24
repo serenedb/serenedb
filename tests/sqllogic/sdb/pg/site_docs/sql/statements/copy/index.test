@@ -405,12 +405,8 @@ COPY lineitem TO '${__TEST_DIR__}/sql_statements_copy_index_example_025_1_lineit
 
 # DOCS_TEST_BODY
 
-control substitution off
-
 statement ok
 COPY lineitem TO '${__TEST_DIR__}/copy_index_example_026_lineitem.tsv' (DELIMITER '\t', HEADER false);
-
-control substitution on
 
 # DOCS_TEST: example_027
 

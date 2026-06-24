@@ -42,6 +42,7 @@ time with time zone
 
 # DOCS_TEST_BODY
 
+skipif pg-wire-extended
 query
 SELECT '15:30:00.123456789'::TIME_NS;
 ----

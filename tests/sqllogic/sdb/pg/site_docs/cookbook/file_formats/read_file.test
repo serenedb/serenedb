@@ -122,5 +122,5 @@ WHERE part IN ('a', 'b') AND date >= '2012-01-01'
 ORDER BY part, date;
 ----
 filename	content	size	last_modified	date	part
-data/parquet-testing/hive-partitioning/simple/part=a/date=2012-01-01/data_0.parquet	<slt:ignore>	208	2024-11-12 02:23:20	2012-01-01	a
-data/parquet-testing/hive-partitioning/simple/part=b/date=2013-01-01/data_0.parquet	<slt:ignore>	208	2024-11-12 02:23:20	2013-01-01	b
+data/parquet-testing/hive-partitioning/simple/part=a/date=2012-01-01/data_0.parquet	<slt:ignore>	<slt:ignore>	2024-11-12 02:23:20	2012-01-01	a
+data/parquet-testing/hive-partitioning/simple/part=b/date=2013-01-01/data_0.parquet	<slt:ignore>	<slt:ignore>	2024-11-12 02:23:20	2013-01-01	b

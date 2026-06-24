@@ -168,6 +168,7 @@ ts
 
 # DOCS_TEST: make_timestamp_ns
 # DOCS_TEST_BODY
+skipif pg-wire-extended
 query
 SELECT make_timestamp_ns(1667810584123456789) AS ts;
 ----

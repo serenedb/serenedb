@@ -1,0 +1,71 @@
+hash-threshold 100
+
+control substitution on
+
+# Regression: COPY (<expression>) TO '<file>' with NO explicit FORMAT must
+# derive the format (and compression) from the target file extension. An
+# expression source previously kept the parse-time default format regardless of
+# the extension, so a .csv/.json/.parquet target produced a mis-typed file. We
+# round-trip through the matching reader -- the reader succeeding with the right
+# values proves the format was derived from the extension.
+
+# --- CSV from the .csv extension ---
+statement count 2
+COPY (SELECT 1 AS a, 'x' AS b UNION ALL SELECT 2 AS a, 'y' AS b)
+TO '/tmp/${__DATABASE__}_cfx.csv';
+
+query
+SELECT column0 AS a, column1 AS b
+FROM read_csv('/tmp/${__DATABASE__}_cfx.csv')
+ORDER BY 1;
+----
+a	b
+1	x
+2	y
+
+
+# --- JSON from the .json extension ---
+statement count 2
+COPY (SELECT 1 AS a, 'x' AS b UNION ALL SELECT 2 AS a, 'y' AS b)
+TO '/tmp/${__DATABASE__}_cfx.json';
+
+query
+SELECT a, b
+FROM read_json('/tmp/${__DATABASE__}_cfx.json')
+ORDER BY a;
+----
+a	b
+1	x
+2	y
+
+
+# --- Parquet from the .parquet extension. read_parquet only succeeds on a real
+# Parquet file, so this is the strongest discriminator. ---
+statement count 2
+COPY (SELECT 1 AS a, 'x' AS b UNION ALL SELECT 2 AS a, 'y' AS b)
+TO '/tmp/${__DATABASE__}_cfx.parquet';
+
+query
+SELECT a, b
+FROM read_parquet('/tmp/${__DATABASE__}_cfx.parquet')
+ORDER BY a;
+----
+a	b
+1	x
+2	y
+
+
+# --- Compression suffix is stripped before deriving the format: .csv.gz stays
+# CSV, gzip-compressed (read_csv auto-decompresses the .gz). ---
+statement count 2
+COPY (SELECT 1 AS a, 'x' AS b UNION ALL SELECT 2 AS a, 'y' AS b)
+TO '/tmp/${__DATABASE__}_cfx.csv.gz';
+
+query
+SELECT column0 AS a, column1 AS b
+FROM read_csv('/tmp/${__DATABASE__}_cfx.csv.gz')
+ORDER BY 1;
+----
+a	b
+1	x
+2	y

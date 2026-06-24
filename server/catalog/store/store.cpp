@@ -215,7 +215,7 @@ std::optional<StoreIndexDef> MakeStoreIndexDef(std::string_view database,
     if (!col) {
       return false;
     }
-    // GetReferencedColumnIds() is already de-duped, so each name is appended at
+    // GetReferencedColumns() is already de-duped, so each name is appended at
     // most once -- no name-level dedup needed (that would be O(#cols^2)).
     def.columns.emplace_back(col->GetName());
     return true;
@@ -223,7 +223,7 @@ std::optional<StoreIndexDef> MakeStoreIndexDef(std::string_view database,
   // Indexed columns plus indexed-expression dependencies must all be in the
   // index's column set so duckdb initializes their chunk vectors for the
   // BoundIndex appends.
-  for (auto col_id : index.GetReferencedColumnIds()) {
+  for (auto col_id : index.GetReferencedColumns()) {
     if (!add_column(col_id)) {
       return std::nullopt;
     }

@@ -831,9 +831,9 @@ Index::Index(ObjectId database_id, ObjectId schema_id, ObjectId id,
   : Object{schema_id, id, std::move(name), type},
     _database_id{database_id},
     _relation_id{relation_id},
-    _column_ids{std::move(derived.column_ids)},
-    _referenced_column_ids{std::move(derived.referenced)},
-    _column_id_set{_column_ids.begin(), _column_ids.end()} {
+    _columns{std::move(derived.columns)},
+    _referenced_columns{std::move(derived.referenced_columns)},
+    _referenced_columns_set{std::move(derived.referenced_columns_set)} {
   SDB_ASSERT(GetId().isSet());
 }
 
@@ -866,7 +866,7 @@ Index::DerivedColumnIds Index::DeriveIds(
       }
     }
   }
-  return {std::move(column_ids), std::move(referenced)};
+  return {std::move(column_ids), std::move(referenced), std::move(seen)};
 }
 
 }  // namespace sdb::catalog

@@ -150,11 +150,11 @@ InvertedIndex::DerivedColumnIds InvertedIndex::DeriveFromKeys(
       }
     }
   }
-  return {std::move(column_ids), std::move(referenced)};
+  return {std::move(column_ids), std::move(referenced), std::move(seen)};
 }
 
 void InvertedIndex::Serialize(duckdb::Serializer& sink) const {
-  auto data = PackEntries(GetName(), GetColumnIds(), _expression_keys, _entries,
+  auto data = PackEntries(GetName(), GetColumns(), _expression_keys, _entries,
                           _options);
   basics::WriteTuple(sink, data);
 }

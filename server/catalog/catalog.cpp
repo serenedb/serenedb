@@ -1209,7 +1209,7 @@ DropPlan Snapshot::ComputeDropPlan(ObjectId seed) const {
     for (auto idx_id : td->indexes) {
       auto idx = GetObject<Index>(idx_id);
       SDB_ASSERT(idx);
-      if (absl::c_contains(idx->GetReferencedColumnIds(), col_id)) {
+      if (idx->ReferencesColumn(col_id)) {
         result.push_back(idx_id);
       }
     }
@@ -1234,7 +1234,7 @@ DropPlan Snapshot::ComputeColumnDropPlan(ObjectId table_id,
   if (auto td = GetDependency<TableDependency>(table_id)) {
     for (auto idx_id : td->indexes) {
       auto idx = GetObject<Index>(idx_id);
-      if (idx && absl::c_contains(idx->GetReferencedColumnIds(), col_id)) {
+      if (idx && idx->ReferencesColumn(col_id)) {
         plan.index_drops.push_back(idx_id);
       }
     }
@@ -2995,7 +2995,7 @@ Result Catalog::ChangeColumnType(ObjectId database_id, std::string_view schema,
   if (auto td = _snapshot->GetDependency<TableDependency>(*table_id)) {
     for (auto idx_id : td->indexes) {
       auto idx = _snapshot->GetObject<Index>(idx_id);
-      if (idx && absl::c_contains(idx->GetReferencedColumnIds(), col_id)) {
+      if (idx && idx->ReferencesColumn(col_id)) {
         return Result{ERROR_BAD_PARAMETER,
                       "cannot alter type of column \"",
                       column,

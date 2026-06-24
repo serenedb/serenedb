@@ -85,18 +85,19 @@ class Index : public Object {
   // Plain-column key ids, de-duped in first-seen order (expression keys
   // excluded). Returns a reference; the subclass computes it once at
   // construction, no per-call allocation.
-  const std::vector<Column::Id>& GetColumnIds() const noexcept {
-    return _column_ids;
+  const std::vector<Column::Id>& GetColumns() const noexcept {
+    return _columns;
   }
-  // GetColumnIds() plus each expression key's dependent columns (de-duped).
-  const std::vector<Column::Id>& GetReferencedColumnIds() const noexcept {
-    return _referenced_column_ids;
+  // GetColumns() plus each expression key's dependent columns (de-duped).
+  const std::vector<Column::Id>& GetReferencedColumns() const noexcept {
+    return _referenced_columns;
   }
 
-  // O(1) membership: is `id` a plain-column key of this index? (Backed by a
-  // set built at construction -- use this instead of scanning GetColumnIds().)
-  bool HasColumn(Column::Id id) const noexcept {
-    return _column_id_set.contains(id);
+  // O(1) membership: does this index reference `id` as a plain-column key or
+  // an expression-key dependency? (Backed by a set built at construction --
+  // use this instead of scanning GetReferencedColumns().)
+  bool ReferencesColumn(Column::Id id) const noexcept {
+    return _referenced_columns_set.contains(id);
   }
 
   virtual containers::FlatHashSet<ObjectId> GetTokenizers() const { return {}; }
@@ -105,12 +106,13 @@ class Index : public Object {
 
  protected:
   // The base's common query surface, derived once by the subclass from its key
-  // storage. `column_ids` = de-duped plain-column key ids (first-seen order);
-  // `referenced` = `column_ids` followed by each expression's dependent
-  // columns, de-duped.
+  // storage. `columns` = de-duped plain-column key ids (first-seen order);
+  // `referenced_columns` = `columns` followed by each expression's dependent
+  // columns, de-duped; `referenced_columns_set` = its membership set.
   struct DerivedColumnIds {
-    std::vector<Column::Id> column_ids;
-    std::vector<Column::Id> referenced;
+    std::vector<Column::Id> columns;
+    std::vector<Column::Id> referenced_columns;
+    containers::FlatHashSet<Column::Id> referenced_columns_set;
   };
 
   // The subclass owns its key storage (secondary: ordered sentinel list;
@@ -134,9 +136,9 @@ class Index : public Object {
 
   ObjectId _database_id;
   ObjectId _relation_id;
-  std::vector<Column::Id> _column_ids;
-  std::vector<Column::Id> _referenced_column_ids;
-  containers::FlatHashSet<Column::Id> _column_id_set;
+  std::vector<Column::Id> _columns;
+  std::vector<Column::Id> _referenced_columns;
+  containers::FlatHashSet<Column::Id> _referenced_columns_set;
 };
 
 ResultOr<std::shared_ptr<SecondaryIndex>> CreateSecondaryIndex(

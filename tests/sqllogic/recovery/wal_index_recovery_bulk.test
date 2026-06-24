@@ -35,7 +35,7 @@ count
 # Block commits and ingest > flush-threshold rows so recovery has to flush
 # multiple times.
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO wal_bulk_t

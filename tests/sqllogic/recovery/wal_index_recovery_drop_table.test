@@ -44,7 +44,7 @@ VACUUM (REFRESH_TABLE) dt_drop;
 
 # Block search commits — rocksdb keeps advancing.
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # Writes to BOTH tables that never reach iresearch.
 statement ok

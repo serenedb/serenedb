@@ -49,7 +49,7 @@ VACUUM (REFRESH_TABLE) pl_lagging;
 # Both indexes are caught up. Block search commits and write to the lagging
 # table only.
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO pl_lagging VALUES

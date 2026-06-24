@@ -1304,12 +1304,10 @@ skipif postgres
 > +--------+------+-------------+
 > (0 rows)
 
-# serened rejects empty Parse with 'No statement to prepare!' whereas
-# PG accepts an empty Parse silently. Test asserts serened's own output.
-skipif postgres
+# An empty Parse (no statement in the query buffer) is accepted silently, like
+# PG -- sub-statements are prepared at Execute, not Parse.
 \parse stmt1
 ----
-> ERROR:  No statement to prepare!
 
 \close_prepared stmt1
 ----

@@ -41,7 +41,7 @@ VACUUM (REFRESH_TABLE) oni_inv_t;
 
 # === Block search commits, but never write to the indexed table. ===
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO oni_plain_a SELECT i, 'plain_a_' || i FROM range(0, 1000) AS t(i);

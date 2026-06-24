@@ -429,6 +429,46 @@ std::optional<irs::HNSWInfo> InvertedIndex::GetHNSWInfo(
   };
 }
 
+irs::ColumnOptions InvertedIndex::GetColumnOptions(irs::field_id id) const {
+  if (const auto* entry = FindEntry(id)) {
+    return {
+      .row_group_size = entry->row_group_size,
+      .compression = entry->compression,
+      .hnsw_info = GetHNSWInfo(id),
+      .hyperloglog = entry->hyperloglog,
+    };
+  }
+  if (static_cast<Column::Id>(id) == Column::kGeneratedPKId) {
+    return {
+      .skip_validity = true,
+      .row_group_size = _options.row_group_size,
+    };
+  }
+  const auto lookup = LookupField(id);
+  SDB_ASSERT(lookup.entry, "GetColumnOptions: unknown column id ", id);
+  SDB_ASSERT(!lookup.entry->features.HasFeatures(irs::IndexFeatures::Norm),
+             "GetColumnOptions: norm-role synthetic id ", id);
+  return {
+    .skip_validity = true,
+    .row_group_size = _options.row_group_size,
+  };
+}
+
+irs::NormColumnOptions InvertedIndex::GetNormColumnOptions(
+  irs::field_id id) const {
+  const auto* entry = FindEntry(id);
+  SDB_ASSERT(entry != nullptr, ERROR_INTERNAL,
+             "GetNormColumnOptions: unknown id ", id);
+  SDB_ASSERT(irs::field_limits::valid(entry->synthetic_column),
+             "GetNormColumnOptions: no catalog reservation; id ", id);
+  SDB_ASSERT(entry->features.HasFeatures(irs::IndexFeatures::Norm),
+             "GetNormColumnOptions: catalog features lack Norm; id ", id);
+  return {
+    .id = entry->synthetic_column,
+    .row_group_size = entry->norm_row_group_size,
+  };
+}
+
 containers::FlatHashSet<ObjectId> InvertedIndex::GetTokenizers() const {
   containers::FlatHashSet<ObjectId> res;
   for (const auto& [_, entry] : _entries) {

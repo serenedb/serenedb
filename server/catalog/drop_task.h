@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/substitute.h>
 
 #include <chrono>
@@ -27,6 +28,7 @@
 #include <exception>
 #include <limits>
 #include <memory>
+#include <vector>
 #include <yaclib/async/future.hpp>
 #include <yaclib/async/make.hpp>
 
@@ -40,7 +42,6 @@
 #include "catalog/schema.h"
 #include "catalog/store/store.h"
 #include "catalog/table.h"
-#include "general_server/scheduler.h"
 #include "search/inverted_index_storage.h"
 namespace sdb::catalog {
 
@@ -76,7 +77,14 @@ class DropTask {
   }
 
   virtual bool AllowToDrop() const noexcept {
-    return _object.expired() && AllowToDropDependencies();
+    return _object.expired() &&
+           absl::c_all_of(_attached,
+                          [](const auto& task) { return task.expired(); }) &&
+           AllowToDropDependencies();
+  }
+
+  void SetAttached(std::vector<std::weak_ptr<DropTask>> attached) noexcept {
+    _attached = std::move(attached);
   }
 
   virtual AsyncResult Execute() = 0;
@@ -91,6 +99,7 @@ class DropTask {
   bool _is_root;
   std::chrono::milliseconds _delay = kInitialDelay;
   std::weak_ptr<Object> _object;
+  std::vector<std::weak_ptr<DropTask>> _attached;
 };
 
 struct IndexDrop final : public DropTask {
@@ -117,9 +126,16 @@ struct IndexDrop final : public DropTask {
                             _id.id());
   }
 
-  // The store-index DROP is the gate; the inverted index's iresearch storage is
-  // drained inside Execute (weak_ptr wait) before the directory removal.
-  bool AllowToDropDependencies() const noexcept final { return true; }
+  // Gate the drop on the iresearch storage being fully released -- no catalog
+  // snapshot, query, replay session, or background refresh/compaction still
+  // holds it. This must live here (not only in Execute) so an ancestor drop
+  // (TableDrop / SchemaDrop / DatabaseDrop), which removes the directory at its
+  // own level and gates on this index's AllowToDrop, also waits for the storage
+  // before deleting the dir out from under a running task. A SecondaryIndex has
+  // no iresearch storage, so its empty weak is already expired.
+  bool AllowToDropDependencies() const noexcept final {
+    return _data.expired();
+  }
 
   std::string_view GetName() const noexcept final { return "index drop"; }
 

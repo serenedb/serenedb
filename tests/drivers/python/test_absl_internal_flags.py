@@ -107,17 +107,17 @@ def test_undefok_listing_multiple_flags() -> None:
 
 
 def test_fromenv_reads_existing_env_var() -> None:
-    r = _run(["--fromenv=server_io_threads", "--version"],
-             env_extra={"FLAGS_server_io_threads": "13"})
+    r = _run(["--fromenv=io_threads", "--version"],
+             env_extra={"FLAGS_io_threads": "13"})
     assert r.returncode == 0, r.stderr
 
 
 def test_fromenv_missing_env_var_fails() -> None:
     # Explicit fromenv without the corresponding FLAGS_* env must abort.
     env_no = {k: v for k, v in os.environ.items()
-              if k != "FLAGS_server_io_threads"}
+              if k != "FLAGS_io_threads"}
     r = subprocess.run(
-        [SERENED_BIN, "--fromenv=server_io_threads", "--version"],
+        [SERENED_BIN, "--fromenv=io_threads", "--version"],
         capture_output=True, text=True, timeout=15.0, env=env_no,
     )
     assert r.returncode != 0
@@ -126,17 +126,17 @@ def test_fromenv_missing_env_var_fails() -> None:
 def test_tryfromenv_silently_skips_missing_env_var() -> None:
     # Same as above but with --tryfromenv: missing env is silent, exit 0.
     env_no = {k: v for k, v in os.environ.items()
-              if k != "FLAGS_server_io_threads"}
+              if k != "FLAGS_io_threads"}
     r = subprocess.run(
-        [SERENED_BIN, "--tryfromenv=server_io_threads", "--version"],
+        [SERENED_BIN, "--tryfromenv=io_threads", "--version"],
         capture_output=True, text=True, timeout=15.0, env=env_no,
     )
     assert r.returncode == 0, r.stderr
 
 
 def test_tryfromenv_reads_existing_env_var() -> None:
-    r = _run(["--tryfromenv=server_io_threads", "--version"],
-             env_extra={"FLAGS_server_io_threads": "7"})
+    r = _run(["--tryfromenv=io_threads", "--version"],
+             env_extra={"FLAGS_io_threads": "7"})
     assert r.returncode == 0, r.stderr
 
 
@@ -159,8 +159,8 @@ def test_helpfull_lists_absl_internal_flag_definitions() -> None:
 
 def test_help_grep_substring() -> None:
     # --help=<substring> filters by name OR description.
-    r = _run(["--help=server_io_threads"])
-    assert "server_io_threads" in (r.stdout + r.stderr)
+    r = _run(["--help=io_threads"])
+    assert "io_threads" in (r.stdout + r.stderr)
 
 
 def test_help_shows_banner_with_flag_source_section() -> None:

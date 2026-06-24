@@ -166,7 +166,13 @@ struct ColumnTokenizer {
   irs::field_id tokenizer_column = irs::field_limits::invalid();
 };
 
-class InvertedIndex final : public Index {
+// Also an irs::IndexFieldOptions: the index IS the per-column physical-encoding
+// config the iresearch writer consults at flush/merge. A write or compaction
+// hands the writer the index from its own DDL snapshot, so the long-lived
+// writer never reaches into the live catalog. Copy-on-write means an unchanged
+// index is the same object across snapshots, so the inherited EqualOptions
+// (pointer identity) is the cheap segment-reuse check.
+class InvertedIndex final : public Index, public irs::IndexFieldOptions {
  public:
   using Entries =
     containers::NodeHashMap<irs::field_id, InvertedIndexEntryInfo>;
@@ -235,6 +241,29 @@ class InvertedIndex final : public Index {
   std::optional<irs::HNSWInfo> GetHNSWInfo(irs::field_id field_id) const;
 
   const InvertedIndexOptions& GetOptions() const noexcept { return _options; }
+
+  // irs::IndexFieldOptions: the per-field encoding config the writer asks for
+  // at flush/merge, resolved against this index's own entries (no catalog
+  // lookup).
+  irs::ColumnOptions GetColumnOptions(irs::field_id id) const final;
+  irs::NormColumnOptions GetNormColumnOptions(irs::field_id id) const final;
+
+  // Segment-reuse homogeneity gate: any two incarnations of an inverted index
+  // produce identical column encodings, so a write may always resume a segment
+  // opened by another incarnation. A DROP COLUMN that truly changes the
+  // physical layout recreates the storage (new index id -> new writer), so a
+  // single writer's pooled segments only ever see encoding-equivalent
+  // incarnations; RENAME -- the one in-place mutation -- leaves column options
+  // untouched. A serenedb writer's gate only ever compares two InvertedIndex
+  // options (the other concrete IndexFieldOptions, FunctionFieldOptions, is
+  // iresearch-test- only and never mixed onto the same writer), so equality
+  // reduces to "same type" -- which is an invariant here, asserted rather than
+  // branched on.
+  bool EqualOptions(const irs::IndexFieldOptions& other) const noexcept final {
+    SDB_ASSERT(dynamic_cast<const InvertedIndex*>(&other) != nullptr,
+               "EqualOptions across IndexFieldOptions types");
+    return true;
+  }
 
   const std::optional<ScorerOptions>& GetTopKScorer() const noexcept {
     return _options.topk_scorer;

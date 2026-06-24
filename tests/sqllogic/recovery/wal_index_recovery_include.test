@@ -131,7 +131,7 @@ pk	tags
 
 # Freeze iresearch commits: subsequent INSERTs land in RocksDB WAL only.
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO wal_inc_t VALUES

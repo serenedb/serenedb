@@ -23,7 +23,8 @@
 namespace sdb::search {
 
 // Called once from SearchEngine::start, after InitCatalog has loaded
-// every storage and after the search thread pools have started.
-void InitInvertedIndexes(bool skip_wal_recovery);
+// every storage and after the search thread pools have started. Always replays
+// the WAL delta into the inverted indexes (recovery is delta-based and cheap).
+void InitInvertedIndexes();
 
 }  // namespace sdb::search

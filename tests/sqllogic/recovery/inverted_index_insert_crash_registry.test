@@ -40,7 +40,7 @@ a
 # Freeze the iresearch commit; rows land in the WAL but never reach the index
 # in this process.
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO reg_t VALUES (2, 'delta echo foxtrot'), (3, 'golf hotel india');

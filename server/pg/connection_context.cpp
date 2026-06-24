@@ -31,9 +31,14 @@ ConnectionContext::ConnectionContext(
   duckdb::ClientContext& duckdb_ctx, std::string_view user,
   std::string_view dbname, ObjectId database_id,
   std::shared_ptr<catalog::Database> database, message::Buffer* send_buffer,
-  pg::CopyMessagesQueue* copy_queue)
-  : ExecContext{user, dbname, database_id},
-    Transaction{duckdb_ctx},
+  pg::CopyMessagesQueue* copy_queue, int32_t backend_pid,
+  network::pg::CancelRegistry* cancel_registry)
+  : Transaction{duckdb_ctx},
+    _user{user},
+    _database_name{dbname},
+    _database_id{database_id},
+    _backend_pid{backend_pid},
+    _cancel_registry{cancel_registry},
     _database{std::move(database)},
     _send_buffer{send_buffer},
     _copy_queue{copy_queue} {}
@@ -41,7 +46,7 @@ ConnectionContext::ConnectionContext(
 std::string ConnectionContext::GetCurrentSchemaFromSnapshot(
   std::shared_ptr<const catalog::Snapshot> snapshot) const {
   SDB_ASSERT(snapshot);
-  auto database_id = ExecContext::GetDatabaseId();
+  auto database_id = GetDatabaseId();
   auto search_path = GetSearchPath();
   auto it = absl::c_find_if(search_path, [&](const std::string& schema_name) {
     return snapshot->GetSchema(database_id, schema_name);

@@ -24,6 +24,8 @@
 #include <duckdb/inet/inet_type.hpp>
 #include <string_view>
 
+#include "basics/containers/flat_hash_set.h"
+
 namespace sdb::pg {
 
 // PG logical types for DuckDB -- base type + alias, following the same
@@ -95,12 +97,22 @@ DECLARE_PG_TYPE(VOID,           Void,           "void",            SQLNULL)
 // 32-bit OID-family types: backed by BIGINT in DuckDB for storage, but travel
 // as 4-byte unsigned OID on the PG wire (typsend = oidsend / typreceive =
 // oidrecv in pg_type.dat). `xid8` is NOT in this set -- it's an 8-byte xid.
+inline const containers::FlatHashSet<std::string_view> kOidLikeAliases = {
+  kOidAlias,          kRegprocAlias,   kRegprocedureAlias,  kRegoperAlias,
+  kRegoperatorAlias,  kRegclassAlias,  kRegtypeAlias,       kRegroleAlias,
+  kRegnamespaceAlias, kRegconfigAlias, kRegdictionaryAlias, kRegcollationAlias,
+  kXidAlias,          kCidAlias,       kTidAlias,
+};
+
 inline bool IsOidLike(const duckdb::LogicalType& type) {
-  return IsOid(type) || IsRegproc(type) || IsRegprocedure(type) ||
-         IsRegoper(type) || IsRegoperator(type) || IsRegclass(type) ||
-         IsRegtype(type) || IsRegrole(type) || IsRegnamespace(type) ||
-         IsRegconfig(type) || IsRegdictionary(type) || IsRegcollation(type) ||
-         IsXid(type) || IsCid(type) || IsTid(type);
+  // All OID-family types are BIGINT-backed; reject everything else before the
+  // one alias lookup. A single GetAlias() + hash-set probe replaces 15
+  // GetAlias()+compare calls (this runs per value on the bind/COPY decode
+  // path).
+  if (type.id() != duckdb::LogicalTypeId::BIGINT) {
+    return false;
+  }
+  return kOidLikeAliases.contains(type.GetAlias());
 }
 
 #undef DECLARE_PG_TYPE

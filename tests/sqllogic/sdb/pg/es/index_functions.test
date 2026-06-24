@@ -1,0 +1,106 @@
+hash-threshold 200
+
+# ES index lifecycle as table functions: an ES index is a table in the "es"
+# schema (_id PK, typed columns per property, _source, inverted index on
+# text properties).
+
+query
+CALL es_create_index('slt_es_books', '{"mappings":{"properties":{"title":{"type":"text"},"author":{"type":"keyword"},"year":{"type":"integer"},"rating":{"type":"double"},"published":{"type":"date"},"in_print":{"type":"boolean"}}}}');
+----
+acknowledged
+t
+
+statement error (?i)index \[slt_es_books\] already exists
+CALL es_create_index('slt_es_books', '{}');
+
+# text vs keyword survives the round trip (text = inverted-indexed VARCHAR);
+# properties come back alphabetical, like ES normalization.
+query
+CALL es_mapping('slt_es_books');
+----
+mappings
+{"properties":{"author":{"type":"keyword"},"in_print":{"type":"boolean"},"published":{"type":"date"},"rating":{"type":"double"},"title":{"type":"text"},"year":{"type":"integer"}}}
+
+query
+SELECT i.relname AS index_name, t.relname AS table_name
+FROM pg_index x
+JOIN pg_class i ON i.oid = x.indexrelid
+JOIN pg_class t ON t.oid = x.indrelid
+JOIN pg_namespace n ON n.oid = t.relnamespace
+WHERE n.nspname = 'es' AND t.relname = 'slt_es_books' AND NOT x.indisprimary
+ORDER BY i.relname;
+----
+index_name	table_name
+slt_es_books$text	slt_es_books
+
+# The backing table is plain SQL surface.
+statement count 1
+INSERT INTO es.slt_es_books VALUES ('1', 'jane', true, '2001-05-01', 4.5, 'The Pelican Brief', 2001, '{"title":"The Pelican Brief"}');
+
+query
+SELECT _id, author, year FROM es.slt_es_books;
+----
+_id	author	year
+1	jane	2001
+
+query
+SELECT count(*) FROM es_cat_indices() WHERE index = 'slt_es_books';
+----
+count
+1
+
+# A mapping-less body is legal and yields only the implicit columns.
+query
+CALL es_create_index('slt_es_empty', '');
+----
+acknowledged
+t
+
+query
+CALL es_mapping('slt_es_empty');
+----
+mappings
+{"properties":{}}
+
+query
+SELECT index FROM es_cat_indices() WHERE index LIKE 'slt_es_%' ORDER BY index;
+----
+index
+slt_es_books
+slt_es_empty
+
+statement error (?i)invalid index name \[SLT_ES_BAD\]
+CALL es_create_index('SLT_ES_BAD', '');
+
+statement error (?i)no handler for type \[geo_shape\]
+CALL es_create_index('slt_es_badtype', '{"mappings":{"properties":{"f":{"type":"geo_shape"}}}}');
+
+statement error (?i)invalid field name \[_meta\]
+CALL es_create_index('slt_es_badfield', '{"mappings":{"properties":{"_meta":{"type":"long"}}}}');
+
+statement error (?i)failed to parse mapping for index \[slt_es_badjson\]
+CALL es_create_index('slt_es_badjson', 'not json');
+
+statement error (?i)no such index \[slt_es_missing\]
+CALL es_mapping('slt_es_missing');
+
+statement error (?i)no such index \[slt_es_missing\]
+CALL es_drop_index('slt_es_missing');
+
+query
+CALL es_drop_index('slt_es_books');
+----
+acknowledged
+t
+
+query
+CALL es_drop_index('slt_es_empty');
+----
+acknowledged
+t
+
+query
+SELECT count(*) FROM es_cat_indices() WHERE index LIKE 'slt_es_%';
+----
+count
+0

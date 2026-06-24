@@ -1,0 +1,70 @@
+# VARCHAR -> LIST cast accepts BOTH PostgreSQL array text `{...}` and DuckDB
+# list text `[...]`, including composite elements. Regression for the cast that
+# used to reject `{...}` for non-scalar children and null-deref on a
+# composite-in-array element. Backed by the DuckDB list-string parser patch
+# (SplitStringList accepts `{` as well as `[`).
+
+# --- scalar lists: both dialects parse to the same PG array text ---
+query
+SELECT '{1,2,3}'::int[] AS a;
+----
+a
+{1,2,3}
+
+query
+SELECT '[1,2,3]'::int[] AS a;
+----
+a
+{1,2,3}
+
+query
+SELECT '{1,NULL,3}'::int[] AS a;
+----
+a
+{1,NULL,3}
+
+query
+SELECT '{}'::int[] AS a;
+----
+a
+{}
+
+query
+SELECT '{hello,world,NULL}'::text[] AS a;
+----
+a
+{hello,world,NULL}
+
+# --- nested scalar arrays, both dialects ---
+query
+SELECT '{{1,2},{3,4}}'::int[][] AS a;
+----
+a
+{{1,2},{3,4}}
+
+query
+SELECT '[[1,2],[3,4]]'::int[][] AS a;
+----
+a
+{{1,2},{3,4}}
+
+# --- composite-in-array: PG `{"(..)"}` dialect (used to null-deref) ---
+query
+SELECT '{"(5,6)","(7,8)"}'::struct(k int, w int)[] AS a;
+----
+a
+{"(5,6)","(7,8)"}
+
+# --- composite-in-array: DuckDB `[{'k':..}]` dialect ---
+query
+SELECT '[{''k'':5,''w'':6},{''k'':7,''w'':8}]'::struct(k int, w int)[] AS a;
+----
+a
+{"(5,6)","(7,8)"}
+
+# --- struct with a nested list field, composite-in-array ---
+query
+SELECT '{"(1,\"{1,2}\")","(2,\"{3,4}\")"}'::struct(k int, v int[])[] AS a;
+----
+a
+{"(1,\\"{1,2}\\")","(2,\\"{3,4}\\")"}

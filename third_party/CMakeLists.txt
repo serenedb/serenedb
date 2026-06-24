@@ -448,12 +448,6 @@ target_include_directories(
 )
 
 ################################################################################
-## NGHTTP2
-################################################################################
-
-add_subdirectory(nghttp2)
-
-################################################################################
 ## CURL (required by DuckDB's httpfs extension for S3 I/O)
 ################################################################################
 
@@ -467,6 +461,9 @@ set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(CURL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
 set(CURL_ENABLE_EXPORT_TARGET OFF CACHE BOOL "" FORCE)
 set(HTTP_ONLY ON CACHE BOOL "" FORCE)
+# nghttp2 was removed from third_party; force HTTP/2 off so curl does not pick
+# up a system libnghttp2.
+set(USE_NGHTTP2 OFF CACHE BOOL "" FORCE)
 set(CURL_USE_OPENSSL ON CACHE BOOL "" FORCE)
 set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
 set(CURL_USE_LIBSSH2 OFF CACHE BOOL "" FORCE)
@@ -540,6 +537,31 @@ sdb_update_module(${GIT_EXECUTABLE} "simdjson" ${CMAKE_CURRENT_SOURCE_DIR} "READ
 add_subdirectory(simdjson)
 
 ###############################################################################
+## simdutf (SIMD UTF-8 validation + base64)
+################################################################################
+
+set(SIMDUTF_TESTS OFF CACHE BOOL "" FORCE)
+set(SIMDUTF_BENCHMARKS OFF CACHE BOOL "" FORCE)
+set(SIMDUTF_TOOLS OFF CACHE BOOL "" FORCE)
+set(SIMDUTF_ICONV OFF CACHE BOOL "" FORCE)
+set(SIMDUTF_FUZZERS OFF CACHE BOOL "" FORCE)
+sdb_update_module(${GIT_EXECUTABLE} "simdutf" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+add_subdirectory(simdutf)
+
+###############################################################################
+## ada (WHATWG URL parsing) -- comes after simdutf (ADA_USE_SIMDUTF can use it)
+################################################################################
+
+set(ADA_TESTING OFF CACHE BOOL "" FORCE)
+set(ADA_BENCHMARKS OFF CACHE BOOL "" FORCE)
+set(ADA_TOOLS OFF CACHE BOOL "" FORCE)
+#[[ ADA_USE_SIMDUTF stays OFF for now: enabling it couples ada's CMake to the
+    simdutf target and only accelerates IDNA (a missed optimization, not a bug). ]]
+set(ADA_USE_SIMDUTF OFF CACHE BOOL "" FORCE)
+sdb_update_module(${GIT_EXECUTABLE} "ada" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+add_subdirectory(ada)
+
+###############################################################################
 ## croaring
 ################################################################################
 
@@ -563,49 +585,11 @@ sdb_update_module(${GIT_EXECUTABLE} "fast_float" ${CMAKE_CURRENT_SOURCE_DIR} "RE
 add_subdirectory(fast_float)
 
 ################################################################################
-## double-conversion
-################################################################################
-
-sdb_update_module(${GIT_EXECUTABLE} "double-conversion" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-add_subdirectory(double-conversion)
-add_library(double-conversion::double-conversion ALIAS double-conversion)
-
-################################################################################
 ## fmt
 ################################################################################
 
-if(NOT SDB_FAKE_FMT)
-    sdb_update_module(${GIT_EXECUTABLE} "fmt" ${CMAKE_CURRENT_SOURCE_DIR} "LICENSE")
-    add_subdirectory(fmt)
-endif()
-
-################################################################################
-## fake libraries (fmt, gflags, glog, folly)
-################################################################################
-
-add_subdirectory(fake)
-
-################################################################################
-## folly
-################################################################################
-
-set(FOLLY_HAVE_INT128_T ON)
-set(FOLLY_HAVE_EXTRANDOM_SFMT19937 OFF)
-set(FOLLY_HAVE_LIBGFLAGS ON)
-set(FOLLY_HAVE_LIBGLOG ON)
-# TODO(mbkkt) FOLLY_LIBRARY_SANITIZE_ADDRESS
-set(FOLLY_USE_SYMBOLIZER OFF)
-set(FOLLY_HAVE_LIBUNWIND OFF)
-set(FOLLY_HAVE_ELF OFF)
-set(FOLLY_HAVE_DWARF OFF)
-sdb_update_module(${GIT_EXECUTABLE} "folly" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-add_subdirectory(folly)
-target_include_directories(folly PUBLIC ${OPENSSL_INCLUDE_DIR})
-target_link_libraries(folly PUBLIC ${OPENSSL_LIBRARIES})
-# folly-deps.cmake consumes OPENSSL_LIBRARIES as plain file paths (our vendored
-# libssl.a / libcrypto.a via the pre-seeded cache vars above). Build system does not
-# infer a build-order dependency from a raw path, so wire it explicitly.
-add_dependencies(folly ssl crypto)
+sdb_update_module(${GIT_EXECUTABLE} "fmt" ${CMAKE_CURRENT_SOURCE_DIR} "LICENSE")
+add_subdirectory(fmt)
 
 ################################################################################
 ## jansson
@@ -672,6 +656,10 @@ set(BUILD_EXTENSIONS_ONLY FALSE CACHE BOOL "" FORCE)
 # Keep builtin extensions (core_functions, parquet, json, etc.)
 set(ENABLE_EXTENSION_AUTOLOADING FALSE CACHE BOOL "" FORCE)
 set(ENABLE_EXTENSION_AUTOINSTALL FALSE CACHE BOOL "" FORCE)
+# No dynamic extension load/install (we link a fixed BUILD_EXTENSIONS set). Drops
+# the load/install machinery and, via -DDUCKDB_DISABLE_EXTENSION_LOAD, lets the
+# read-mostly registries take shared_ptr_ipp.hpp's lock-free plain_load() path.
+set(DISABLE_EXTENSION_LOAD TRUE CACHE BOOL "" FORCE)
 set(EXTENSION_STATIC_BUILD TRUE CACHE BOOL "" FORCE)
 set(ENABLE_SANITIZER FALSE CACHE BOOL "" FORCE)
 set(ENABLE_UBSAN FALSE CACHE BOOL "" FORCE)

@@ -44,7 +44,7 @@ id
 1
 
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # PK update: change pk=1 → 10. name and data not changed in SET clause but
 # online code path reads them via txn->Get and writes at new pk.

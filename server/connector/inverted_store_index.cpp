@@ -128,6 +128,10 @@ struct InvertedStoreIndex::ReplaySession {
       trx{storage->GetTransaction()},
       delete_writer{trx} {
     expr_conn.BeginTransaction();
+    // Replay encodes recovered rows against this replay session's snapshot
+    // index (the index IS the per-column options); `index` co-owns the catalog
+    // object so the segment writer can pin it until flush.
+    trx.SetFieldOptions(index);
   }
 };
 

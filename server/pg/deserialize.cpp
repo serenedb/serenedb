@@ -41,6 +41,7 @@
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/function/cast/default_casts.hpp>
+#include <duckdb/inet/inet_ipaddress.hpp>
 #include <limits>
 #include <string>
 #include <string_view>
@@ -48,10 +49,6 @@
 #include <vector>
 
 #include "connector/pg_logical_types.h"
-// Vendored inet extension: IP parser/formatter, reused so inet input
-// deserialization matches the extension's storage form.
-#include <duckdb/inet/inet_ipaddress.hpp>
-
 #include "pg/pg_types.h"
 
 namespace sdb::pg {
@@ -1502,14 +1499,12 @@ struct NestedAdapter<ValueSink> {
   }
 };
 
-// INET (OID 869) decodes from PG's inet wire into the extension's STRUCT
-// {ip_type UTINYINT, address HUGEINT, mask USMALLINT}. The address is stored as
-// a signed hugeint with the IPv6 top bit flipped for sort order, so we re-apply
-// that flip here (the inverse of serialize's ReadInet).
+// STRUCT vector entries: [0]=ip_type (1=IPv4, 2=IPv6), [1]=address (signed
+// hugeint, IPv6 top bit flipped for sort order), [2]=mask. Inverse of ReadInet.
 void StoreInet(duckdb::Vector& vec, duckdb::idx_t row, INET_IPAddressType type,
                uint64_t addr_hi, uint64_t addr_lo, uint16_t mask) {
   if (type == INET_IP_ADDRESS_V6) {
-    addr_hi ^= (uint64_t{1} << 63);
+    addr_hi ^= (uint64_t{1} << 63);  // re-apply IPv6 sort-order flip
   }
   auto& entries = duckdb::StructVector::GetEntries(vec);
   Out<uint8_t>(entries[0])[row] = static_cast<uint8_t>(type);
@@ -1520,10 +1515,10 @@ void StoreInet(duckdb::Vector& vec, duckdb::idx_t row, INET_IPAddressType type,
   Out<uint16_t>(entries[2])[row] = mask;
 }
 
-// PG binary inet: family(1, 2=IPv4/3=IPv6), bits(1), is_cidr(1), nb(1, 4/16),
-// then nb address bytes (network order). is_cidr is ignored.
 bool DeserializeBinaryInet(DeserializeContext&, std::string_view data,
                            duckdb::Vector& vec, duckdb::idx_t row) {
+  // PG binary inet bytes: [0]=family, [1]=bits, [2]=is_cidr, [3]=nb (4 or 16),
+  // then nb big-endian addr bytes; only bits and nb are read.
   if (data.size() < 4) {
     return false;
   }

@@ -55,15 +55,13 @@
 
 #define SDB_PG_LOGICAL_TYPES_NO_FACTORY
 
+#include <duckdb/inet/inet_ipaddress.hpp>
+
 #include "basics/assert.h"
 #include "basics/dtoa.h"
 #include "basics/log.h"
 #include "basics/misc.hpp"
 #include "connector/pg_logical_types.h"
-// Vendored inet extension: canonical IP-to-string formatter, reused so native
-// `inet` text output matches the extension's host()/::varchar rendering.
-#include <duckdb/inet/inet_ipaddress.hpp>
-
 #include "pg/errcodes.h"
 #include "pg/pg_types.h"
 #include "pg/sql_exception_macro.h"
@@ -1449,10 +1447,8 @@ struct RecordBinCore {
   }
 };
 
-// PG `inet` (OID 869). Source is the inet extension's STRUCT
-// {ip_type UTINYINT, address HUGEINT, mask USMALLINT}: ip_type 1=IPv4, 2=IPv6;
-// `address` is the unsigned IP stored as a signed hugeint with the IPv6 top bit
-// flipped for sort order.
+// PG `inet` (OID 869). STRUCT entries: [0]=ip_type (1=IPv4, 2=IPv6),
+// [1]=address (signed hugeint, IPv6 top bit flipped for sort order), [2]=mask.
 IRS_FORCE_INLINE void ReadInet(
   const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row,
   INET_IPAddress& inet) {
@@ -1495,8 +1491,8 @@ struct InetBinCore {
                      duckdb::idx_t row) {
     INET_IPAddress inet;
     ReadInet(vdata, row, inet);
-    // PG binary inet: family(1), bits(1), is_cidr(1), nb(1), then nb addr
-    // bytes.
+    // PG binary inet bytes: [0]=family, [1]=bits, [2]=is_cidr, [3]=nb (4 or
+    // 16), then nb big-endian addr bytes.
     const bool is_v6 = inet.type == INET_IP_ADDRESS_V6;
     const uint8_t nb = is_v6 ? 16 : 4;
     auto* data = context.writer->Alloc(4 + nb);

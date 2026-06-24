@@ -68,4 +68,4 @@ ORDER BY indexname;
 ----
 indexname
 logs_idx
-logs_pkey
+my_logs_pkey

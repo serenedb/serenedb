@@ -187,6 +187,29 @@ inline size_t PostingsReaderBase::decode(const byte_type* in,
   auto& term_meta = static_cast<TermMetaImpl&>(state);
   const auto* p = in;
 
+  // auto encoding = read<uint16_t>(p);
+  // SDB_ASSERT(in + 2 == p);
+
+  // term_meta.docs_count = ReadByteSize124FromBytes((encoding & 3) + 1, p);
+  // if (IndexFeatures::None != (features & IndexFeatures::Freq)) {
+  //   term_meta.freq = term_meta.docs_count + ReadByteSize124FromBytes(((encoding >> 2) & 3) + 1, p);
+  // }
+
+  // term_meta.doc_start += ReadByteSize1248ForSkipEntryFromBytes((encoding >> 4) & 3, p);
+  // if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
+  //   term_meta.pos_start += ReadByteSize1248ForSkipEntryFromBytes((encoding >> 6) & 3, p);
+  //   if (IndexFeatures::None != (features & IndexFeatures::Offs)) {
+  //     term_meta.pay_start += ReadByteSize1248ForSkipEntryFromBytes((encoding >> 8) & 3, p);
+  //   }
+  //   term_meta.pos_offset = *p++;
+  // }
+
+  // if (1 == term_meta.docs_count) {
+  //   term_meta.e_single_doc = ReadByteSize124FromBytes(((encoding >> 10) & 3) + 1, p);
+  // } else if (_block_size < term_meta.docs_count) {
+  //   term_meta.e_skip_start = ReadByteSize1248ForSkipEntryFromBytes((encoding >> 10) & 3, p);
+  // }
+
   term_meta.docs_count = vread<uint32_t>(p);
   if (IndexFeatures::None != (features & IndexFeatures::Freq)) {
     term_meta.freq = term_meta.docs_count + vread<uint32_t>(p);
@@ -308,7 +331,9 @@ size_t PostingsReaderImpl<FormatTraits>::BitUnion(
       doc_in->Seek(term_state.doc_start);
       SDB_ASSERT(!doc_in->IsEOF());
       if (term_state.docs_count < doc_limits::kBlockSize) {
-        CommonSkipWandData(has_wand, *doc_in);
+        if (has_wand) {
+          ReadWandRoot(*doc_in);
+        }
       }
       SDB_ASSERT(!doc_in->IsEOF());
 

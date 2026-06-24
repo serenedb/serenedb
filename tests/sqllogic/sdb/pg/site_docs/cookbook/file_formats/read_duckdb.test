@@ -6,7 +6,7 @@ statement ok
 DETACH IF EXISTS read_duckdb_intro;
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_cookbook_file_formats_read_duckdb_example_001_database.duckdb' AS read_duckdb_intro;
+ATTACH '${__TEST_DIR__}/cookbook_file_formats_read_duckdb_example_001_database.duckdb' AS read_duckdb_intro;
 
 statement ok
 DROP TABLE IF EXISTS read_duckdb_intro.region;
@@ -29,7 +29,7 @@ DETACH read_duckdb_intro;
 # DOCS_TEST_BODY
 
 query
-FROM read_duckdb('/tmp/${__DATABASE__}_cookbook_file_formats_read_duckdb_example_001_database.duckdb', table_name = 'region');
+FROM read_duckdb('${__TEST_DIR__}/cookbook_file_formats_read_duckdb_example_001_database.duckdb', table_name = 'region');
 ----
 r_regionkey	r_name
 0	AFRICA
@@ -51,7 +51,7 @@ statement ok
 DETACH IF EXISTS read_duckdb_region;
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_cookbook_file_formats_read_duckdb_example_002_tpch_sf10.duckdb' AS read_duckdb_region;
+ATTACH '${__TEST_DIR__}/cookbook_file_formats_read_duckdb_example_002_tpch_sf10.duckdb' AS read_duckdb_region;
 
 statement ok
 DROP TABLE IF EXISTS read_duckdb_region.region;
@@ -70,7 +70,7 @@ DETACH read_duckdb_region;
 
 query
 SELECT r_regionkey, r_name
-FROM read_duckdb('/tmp/${__DATABASE__}_cookbook_file_formats_read_duckdb_example_002_tpch_sf10.duckdb', table_name = 'region');
+FROM read_duckdb('${__TEST_DIR__}/cookbook_file_formats_read_duckdb_example_002_tpch_sf10.duckdb', table_name = 'region');
 ----
 r_regionkey	r_name
 0	AFRICA
@@ -88,7 +88,7 @@ statement ok
 DETACH IF EXISTS read_duckdb_numbers_2;
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_cookbook_file_formats_read_duckdb_example_003_my_1.duckdb' AS read_duckdb_numbers_1;
+ATTACH '${__TEST_DIR__}/cookbook_file_formats_read_duckdb_example_003_my_1.duckdb' AS read_duckdb_numbers_1;
 
 statement ok
 DROP TABLE IF EXISTS read_duckdb_numbers_1.numbers;
@@ -106,7 +106,7 @@ statement ok
 DETACH read_duckdb_numbers_1;
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_cookbook_file_formats_read_duckdb_example_003_my_2.duckdb' AS read_duckdb_numbers_2;
+ATTACH '${__TEST_DIR__}/cookbook_file_formats_read_duckdb_example_003_my_2.duckdb' AS read_duckdb_numbers_2;
 
 statement ok
 DROP TABLE IF EXISTS read_duckdb_numbers_2.numbers;
@@ -122,8 +122,8 @@ DETACH read_duckdb_numbers_2;
 
 # DOCS_TEST_BODY
 
-query
-SELECT x FROM read_duckdb('/tmp/${__DATABASE__}_cookbook_file_formats_read_duckdb_example_003_my_*.duckdb', table_name = 'numbers');
+query ? rowsort
+SELECT x FROM read_duckdb('${__TEST_DIR__}/cookbook_file_formats_read_duckdb_example_003_my_*.duckdb', table_name = 'numbers');
 ----
 x
 42
@@ -135,7 +135,7 @@ statement ok
 DETACH IF EXISTS read_duckdb_single_4;
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_cookbook_file_formats_read_duckdb_example_004_my_2.duckdb' AS read_duckdb_single_4;
+ATTACH '${__TEST_DIR__}/cookbook_file_formats_read_duckdb_example_004_my_2.duckdb' AS read_duckdb_single_4;
 
 statement ok
 DROP TABLE IF EXISTS read_duckdb_single_4.numbers;
@@ -152,7 +152,7 @@ DETACH read_duckdb_single_4;
 # DOCS_TEST_BODY
 
 query
-FROM read_duckdb('/tmp/${__DATABASE__}_cookbook_file_formats_read_duckdb_example_004_my_2.duckdb');
+FROM read_duckdb('${__TEST_DIR__}/cookbook_file_formats_read_duckdb_example_004_my_2.duckdb');
 ----
 x
 43
@@ -163,7 +163,7 @@ statement ok
 DETACH IF EXISTS read_duckdb_single_5;
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_cookbook_file_formats_read_duckdb_example_005_my_2.duckdb' AS read_duckdb_single_5;
+ATTACH '${__TEST_DIR__}/cookbook_file_formats_read_duckdb_example_005_my_2.duckdb' AS read_duckdb_single_5;
 
 statement ok
 DROP TABLE IF EXISTS read_duckdb_single_5.numbers;
@@ -180,7 +180,7 @@ DETACH read_duckdb_single_5;
 # DOCS_TEST_BODY
 
 query
-SELECT #1 AS "my-2" FROM '/tmp/${__DATABASE__}_cookbook_file_formats_read_duckdb_example_005_my_2.duckdb';
+SELECT #1 AS "my-2" FROM '${__TEST_DIR__}/cookbook_file_formats_read_duckdb_example_005_my_2.duckdb';
 ----
 my-2
 43

@@ -10,10 +10,10 @@ statement ok
 CREATE OR REPLACE SEQUENCE demo_seq START 10;
 
 statement ok
-DROP TYPE IF EXISTS mood;
+DROP TYPE IF EXISTS my_mood;
 
 statement ok
-CREATE TYPE mood AS ENUM ('happy', 'sad');
+CREATE TYPE my_mood AS ENUM ('happy', 'sad');
 
 statement ok
 CREATE INDEX IF NOT EXISTS demo_idx ON metadata_demo(id);
@@ -318,10 +318,10 @@ FROM duckdb_temporary_files();
 query
 SELECT type_name
 FROM duckdb_types()
-WHERE type_name = 'mood';
+WHERE type_name = 'my_mood';
 ----
 type_name
-mood
+my_mood
 
 # DOCS_TEST: example_028
 

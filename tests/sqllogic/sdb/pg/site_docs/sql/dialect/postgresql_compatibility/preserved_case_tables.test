@@ -4,9 +4,9 @@ statement ok
 SET preserve_identifier_case = true;
 
 # DOCS_TEST_RAW
-#| CREATE TABLE MyTaBLe (x INTEGER);
+#| CREATE TABLE MyOtheRTaBLe (x INTEGER);
 #|
-#| SELECT * FROM "MyTaBLe";
+#| SELECT * FROM "MyOtheRTaBLe";
 #|
 #| CREATE TABLE "PreservedCase" (x INTEGER);
 #|
@@ -17,10 +17,10 @@ SET preserve_identifier_case = true;
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TABLE MyTaBLe (x INTEGER);
+CREATE TABLE MyOtheRTaBLe (x INTEGER);
 
 query ?
-SELECT * FROM "MyTaBLe";
+SELECT * FROM "MyOtheRTaBLe";
 ----
 x
 
@@ -37,8 +37,8 @@ x
 query ? rowsort
 SELECT DISTINCT tablename
 FROM pg_tables
-WHERE tablename IN ('MyTaBLe', 'PreservedCase');
+WHERE tablename IN ('MyOtheRTaBLe', 'PreservedCase');
 ----
 tablename
-MyTaBLe
+MyOtheRTaBLe
 PreservedCase

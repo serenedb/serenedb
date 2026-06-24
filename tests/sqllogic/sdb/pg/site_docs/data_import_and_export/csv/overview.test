@@ -6,7 +6,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (DATE '2024-01-01', 'AA', 'New York, NY', 'Los Angeles, CA'),
     (DATE '2024-01-02', 'UA', 'San Francisco, CA', 'Seattle, WA')
-) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_overview_example_001_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '${__TEST_DIR__}/data_import_and_export_csv_overview_example_001_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| SELECT * FROM 'flights.csv';
@@ -14,7 +14,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT * FROM '/tmp/${__DATABASE__}_data_import_and_export_csv_overview_example_001_1_flights_csv.csv';
+SELECT * FROM '${__TEST_DIR__}/data_import_and_export_csv_overview_example_001_1_flights_csv.csv';
 ----
 flightdate	uniquecarrier	origincityname	destcityname
 2024-01-01	AA	New York, NY	Los Angeles, CA
@@ -26,7 +26,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (DATE '2024-01-01', 'AA', 'New York, NY', 'Los Angeles, CA'),
     (DATE '2024-01-02', 'UA', 'San Francisco, CA', 'Seattle, WA')
-) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_overview_example_002_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER '|');
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '${__TEST_DIR__}/data_import_and_export_csv_overview_example_002_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER '|');
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -44,7 +44,7 @@ COPY (SELECT * FROM (VALUES
 
 query
 SELECT *
-FROM read_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_overview_example_002_1_flights_csv.csv',
+FROM read_csv('${__TEST_DIR__}/data_import_and_export_csv_overview_example_002_1_flights_csv.csv',
     delim = '|',
     header = true,
     columns = {
@@ -64,7 +64,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (DATE '2024-01-01', 'AA', 'New York, NY', 'Los Angeles, CA'),
     (DATE '2024-01-02', 'UA', 'San Francisco, CA', 'Seattle, WA')
-) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_overview_example_003_1_flights_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '${__TEST_DIR__}/data_import_and_export_csv_overview_example_003_1_flights_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| CREATE TABLE ontime (
@@ -87,7 +87,7 @@ CREATE TABLE ontime (
 );
 
 statement ok
-COPY ontime FROM '/tmp/${__DATABASE__}_data_import_and_export_csv_overview_example_003_1_flights_csv.csv';
+COPY ontime FROM '${__TEST_DIR__}/data_import_and_export_csv_overview_example_003_1_flights_csv.csv';
 
 # DOCS_TEST: example_004
 
@@ -101,7 +101,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (DATE '2024-01-01', 'AA', 'New York, NY', 'Los Angeles, CA'),
     (DATE '2024-01-02', 'UA', 'San Francisco, CA', 'Seattle, WA')
-) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_overview_example_004_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '${__TEST_DIR__}/data_import_and_export_csv_overview_example_004_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| CREATE TABLE ontime AS
@@ -111,7 +111,7 @@ COPY (SELECT * FROM (VALUES
 
 statement ok
 CREATE TABLE ontime AS
-    SELECT * FROM '/tmp/${__DATABASE__}_data_import_and_export_csv_overview_example_004_1_flights_csv.csv';
+    SELECT * FROM '${__TEST_DIR__}/data_import_and_export_csv_overview_example_004_1_flights_csv.csv';
 
 # DOCS_TEST: example_005
 
@@ -125,7 +125,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (DATE '2024-01-01', 'AA', 'New York, NY', 'Los Angeles, CA'),
     (DATE '2024-01-02', 'UA', 'San Francisco, CA', 'Seattle, WA')
-) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_overview_example_005_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '${__TEST_DIR__}/data_import_and_export_csv_overview_example_005_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| CREATE TABLE ontime AS
@@ -135,7 +135,7 @@ COPY (SELECT * FROM (VALUES
 
 statement ok
 CREATE TABLE ontime AS
-    FROM '/tmp/${__DATABASE__}_data_import_and_export_csv_overview_example_005_1_flights_csv.csv';
+    FROM '${__TEST_DIR__}/data_import_and_export_csv_overview_example_005_1_flights_csv.csv';
 
 # DOCS_TEST: example_006
 
@@ -143,7 +143,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_overview_example_006_1_csv_file_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_csv_overview_example_006_1_csv_file_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| SELECT * FROM read_csv('csv_file.csv', auto_type_candidates = ['BIGINT', 'DATE']);
@@ -151,7 +151,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT * FROM read_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_overview_example_006_1_csv_file_csv.csv', auto_type_candidates = ['BIGINT', 'DATE']);
+SELECT * FROM read_csv('${__TEST_DIR__}/data_import_and_export_csv_overview_example_006_1_csv_file_csv.csv', auto_type_candidates = ['BIGINT', 'DATE']);
 ----
 id	name	value
 1	alpha	10
@@ -163,7 +163,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (DATE '2024-01-01', 'AA', 'New York, NY', 'Los Angeles, CA'),
     (DATE '2024-01-02', 'UA', 'San Francisco, CA', 'Seattle, WA')
-) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_overview_example_007_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '${__TEST_DIR__}/data_import_and_export_csv_overview_example_007_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| SELECT * FROM read_csv('flights.csv');
@@ -171,7 +171,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT * FROM read_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_overview_example_007_1_flights_csv.csv');
+SELECT * FROM read_csv('${__TEST_DIR__}/data_import_and_export_csv_overview_example_007_1_flights_csv.csv');
 ----
 flightdate	uniquecarrier	origincityname	destcityname
 2024-01-01	AA	New York, NY	Los Angeles, CA
@@ -189,7 +189,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (DATE '2024-01-01', 'AA', 'New York, NY', 'Los Angeles, CA'),
     (DATE '2024-01-02', 'UA', 'San Francisco, CA', 'Seattle, WA')
-) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_overview_example_008_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '${__TEST_DIR__}/data_import_and_export_csv_overview_example_008_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| CREATE TABLE ontime AS
@@ -201,7 +201,7 @@ COPY (SELECT * FROM (VALUES
 
 statement ok
 CREATE TABLE ontime AS
-    SELECT * FROM read_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_overview_example_008_1_flights_csv.csv');
+    SELECT * FROM read_csv('${__TEST_DIR__}/data_import_and_export_csv_overview_example_008_1_flights_csv.csv');
 
 query
 DESCRIBE TABLE ontime;
@@ -218,7 +218,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (DATE '2024-01-01', 'AA', 'New York, NY', 'Los Angeles, CA'),
     (DATE '2024-01-02', 'UA', 'San Francisco, CA', 'Seattle, WA')
-) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_overview_example_009_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '${__TEST_DIR__}/data_import_and_export_csv_overview_example_009_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| SELECT * FROM read_csv('flights.csv', sample_size = 20_000);
@@ -226,7 +226,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT * FROM read_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_overview_example_009_1_flights_csv.csv', sample_size = 20_000);
+SELECT * FROM read_csv('${__TEST_DIR__}/data_import_and_export_csv_overview_example_009_1_flights_csv.csv', sample_size = 20_000);
 ----
 flightdate	uniquecarrier	origincityname	destcityname
 2024-01-01	AA	New York, NY	Los Angeles, CA
@@ -238,7 +238,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (DATE '2024-01-01', 'AA', 'New York, NY', 'Los Angeles, CA'),
     (DATE '2024-01-02', 'UA', 'San Francisco, CA', 'Seattle, WA')
-) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_overview_example_010_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '${__TEST_DIR__}/data_import_and_export_csv_overview_example_010_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| SELECT * FROM read_csv('flights.csv', header = true);
@@ -246,7 +246,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT * FROM read_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_overview_example_010_1_flights_csv.csv', header = true);
+SELECT * FROM read_csv('${__TEST_DIR__}/data_import_and_export_csv_overview_example_010_1_flights_csv.csv', header = true);
 ----
 flightdate	uniquecarrier	origincityname	destcityname
 2024-01-01	AA	New York, NY	Los Angeles, CA
@@ -264,7 +264,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (DATE '2024-01-01', 'AA', 'New York, NY', 'Los Angeles, CA'),
     (DATE '2024-01-02', 'UA', 'San Francisco, CA', 'Seattle, WA')
-) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_overview_example_011_1_flights_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '${__TEST_DIR__}/data_import_and_export_csv_overview_example_011_1_flights_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| CREATE TABLE ontime (
@@ -289,7 +289,7 @@ CREATE TABLE ontime (
 );
 
 statement ok
-COPY ontime FROM '/tmp/${__DATABASE__}_data_import_and_export_csv_overview_example_011_1_flights_csv.csv';
+COPY ontime FROM '${__TEST_DIR__}/data_import_and_export_csv_overview_example_011_1_flights_csv.csv';
 
 query
 SELECT * FROM ontime;
@@ -310,7 +310,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (DATE '2024-01-01', 'AA', 'New York, NY', 'Los Angeles, CA'),
     (DATE '2024-01-02', 'UA', 'San Francisco, CA', 'Seattle, WA')
-) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_overview_example_012_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER '|');
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '${__TEST_DIR__}/data_import_and_export_csv_overview_example_012_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER '|');
 
 # DOCS_TEST_RAW
 #| CREATE TABLE ontime (flightdate DATE, uniquecarrier VARCHAR, origincityname VARCHAR, destcityname VARCHAR);
@@ -325,7 +325,7 @@ statement ok
 CREATE TABLE ontime (flightdate DATE, uniquecarrier VARCHAR, origincityname VARCHAR, destcityname VARCHAR);
 
 statement ok
-COPY ontime FROM '/tmp/${__DATABASE__}_data_import_and_export_csv_overview_example_012_1_flights_csv.csv' (DELIMITER '|', HEADER);
+COPY ontime FROM '${__TEST_DIR__}/data_import_and_export_csv_overview_example_012_1_flights_csv.csv' (DELIMITER '|', HEADER);
 
 query
 SELECT * FROM ontime;

@@ -6,7 +6,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_001_1_input_parquet.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/cookbook_file_formats_parquet_import_example_001_1_input_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| SELECT * FROM read_parquet('input.parquet');
@@ -14,7 +14,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT * FROM read_parquet('/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_001_1_input_parquet.parquet');
+SELECT * FROM read_parquet('${__TEST_DIR__}/cookbook_file_formats_parquet_import_example_001_1_input_parquet.parquet');
 ----
 id	name	value
 1	alpha	10
@@ -26,7 +26,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_002_1_input_parquet.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/cookbook_file_formats_parquet_import_example_002_1_input_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| SELECT * FROM 'input.parquet';
@@ -34,7 +34,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT * FROM '/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_002_1_input_parquet.parquet';
+SELECT * FROM '${__TEST_DIR__}/cookbook_file_formats_parquet_import_example_002_1_input_parquet.parquet';
 ----
 id	name	value
 1	alpha	10
@@ -46,7 +46,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_003_1_input_parquet.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/cookbook_file_formats_parquet_import_example_003_1_input_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| CREATE TABLE new_tbl AS
@@ -56,7 +56,7 @@ COPY (SELECT * FROM (VALUES
 
 statement ok
 CREATE TABLE new_tbl AS
-    SELECT * FROM read_parquet('/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_003_1_input_parquet.parquet');
+    SELECT * FROM read_parquet('${__TEST_DIR__}/cookbook_file_formats_parquet_import_example_003_1_input_parquet.parquet');
 
 # DOCS_TEST: example_004
 
@@ -89,7 +89,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (8, 'fixture', 1.5, 2.5, 'delta', 4, 13, 23, 33, 30, 400, 4000),
     (9, 'sample', 3.5, 4.5, 'epsilon', 5, 14, 24, 34, 40, 500, 5000)
-) AS t("id", "name", "col1", "col2", "Some Column Name", "i", "a", "b", "c", "number", "number1", "number2")) TO '/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_004_1_input_parquet.parquet' (FORMAT parquet);
+) AS t("id", "name", "col1", "col2", "Some Column Name", "i", "a", "b", "c", "number", "number1", "number2")) TO '${__TEST_DIR__}/cookbook_file_formats_parquet_import_example_004_1_input_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| INSERT INTO tbl
@@ -99,7 +99,7 @@ COPY (SELECT * FROM (VALUES
 
 statement ok
 INSERT INTO tbl
-    SELECT * FROM read_parquet('/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_004_1_input_parquet.parquet');
+    SELECT * FROM read_parquet('${__TEST_DIR__}/cookbook_file_formats_parquet_import_example_004_1_input_parquet.parquet');
 
 # DOCS_TEST: example_005
 
@@ -107,7 +107,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (8, 'fixture', 1.5, 2.5, 'delta', 4, 13, 23, 33, 30, 400, 4000),
     (9, 'sample', 3.5, 4.5, 'epsilon', 5, 14, 24, 34, 40, 500, 5000)
-) AS t("id", "name", "col1", "col2", "Some Column Name", "i", "a", "b", "c", "number", "number1", "number2")) TO '/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_005_1_input_parquet.parquet' (FORMAT parquet);
+) AS t("id", "name", "col1", "col2", "Some Column Name", "i", "a", "b", "c", "number", "number1", "number2")) TO '${__TEST_DIR__}/cookbook_file_formats_parquet_import_example_005_1_input_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| COPY tbl FROM 'input.parquet' (FORMAT parquet);
@@ -115,7 +115,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-COPY tbl FROM '/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_005_1_input_parquet.parquet' (FORMAT parquet);
+COPY tbl FROM '${__TEST_DIR__}/cookbook_file_formats_parquet_import_example_005_1_input_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST: example_006
 
@@ -127,13 +127,13 @@ COPY tbl FROM '/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example
 
 statement ok
 COPY (FROM (VALUES (42, 43)) t(c1, c2))
-TO '/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_006_1_f_parquet.parquet';
+TO '${__TEST_DIR__}/cookbook_file_formats_parquet_import_example_006_1_f_parquet.parquet';
 
 # DOCS_TEST: example_007
 
 statement ok
 COPY (FROM (VALUES (42, 43)) t(c1, c2))
-TO '/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_007_1_f_parquet.parquet';
+TO '${__TEST_DIR__}/cookbook_file_formats_parquet_import_example_007_1_f_parquet.parquet';
 
 # DOCS_TEST_RAW
 #| FROM (VALUES (NULL::VARCHAR, NULL, NULL)) t(c1, c2, c3)
@@ -147,7 +147,7 @@ query
 FROM (VALUES (NULL::VARCHAR, NULL, NULL)) t(c1, c2, c3)
 WHERE false
 UNION ALL BY NAME
-FROM '/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_007_1_f_parquet.parquet';
+FROM '${__TEST_DIR__}/cookbook_file_formats_parquet_import_example_007_1_f_parquet.parquet';
 ----
 c1	c2	c3
 42	43	NULL

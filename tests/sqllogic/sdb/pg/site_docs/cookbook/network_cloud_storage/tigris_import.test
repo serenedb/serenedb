@@ -28,13 +28,13 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_tigris_import_example_002_1_file_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/cookbook_network_cloud_storage_tigris_import_example_002_1_file_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_tigris_import_example_002_1_file_parquet.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/cookbook_network_cloud_storage_tigris_import_example_002_1_file_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| SELECT * FROM 's3://⟨tigris-bucket-name⟩/⟨file⟩.csv';
@@ -44,7 +44,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT * FROM '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_tigris_import_example_002_1_file_csv.csv';
+SELECT * FROM '${__TEST_DIR__}/cookbook_network_cloud_storage_tigris_import_example_002_1_file_csv.csv';
 ----
 id	name	value
 1	alpha	10
@@ -52,7 +52,7 @@ id	name	value
 
 
 query
-SELECT * FROM read_parquet('/tmp/${__DATABASE__}_cookbook_network_cloud_storage_tigris_import_example_002_1_file_parquet.parquet');
+SELECT * FROM read_parquet('${__TEST_DIR__}/cookbook_network_cloud_storage_tigris_import_example_002_1_file_parquet.parquet');
 ----
 id	name	value
 1	alpha	10

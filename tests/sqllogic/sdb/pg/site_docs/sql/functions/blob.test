@@ -1,3 +1,5 @@
+control substitution on
+
 # DOCS_TEST: string_concat_op
 # DOCS_TEST_BODY
 query
@@ -124,7 +126,7 @@ md5_number
 # DOCS_TEST: read_blob
 
 statement ok
-COPY (SELECT 'hello') TO '/tmp/sdb_docs_read_blob_fixture.bin' (FORMAT csv, HEADER false);
+COPY (SELECT 'hello') TO '${__TEST_DIR__}/sdb_docs_read_blob_fixture.bin' (FORMAT csv, HEADER false);
 
 # DOCS_TEST_RAW
 #| SELECT content FROM read_blob('hello.bin');
@@ -134,7 +136,7 @@ COPY (SELECT 'hello') TO '/tmp/sdb_docs_read_blob_fixture.bin' (FORMAT csv, HEAD
 
 # DOCS_TEST_BODY
 query
-SELECT content FROM read_blob('/tmp/sdb_docs_read_blob_fixture.bin');
+SELECT content FROM read_blob('${__TEST_DIR__}/sdb_docs_read_blob_fixture.bin');
 ----
 content
 \\x68656c6c6f0a

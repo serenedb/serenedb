@@ -34,7 +34,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (5, 'New Frontier', 'action', 2023, 8.8),
     (6, 'Quiet Place', 'horror', 2018, 7.5)
-) AS t(id, title, genre, year, rating)) TO '/tmp/${__DATABASE__}_clients_psql_example_002_movies_csv.csv' (FORMAT CSV, HEADER TRUE);
+) AS t(id, title, genre, year, rating)) TO '${__TEST_DIR__}/clients_psql_example_002_movies_csv.csv' (FORMAT CSV, HEADER TRUE);
 
 # DOCS_TEST_RAW
 #| COPY movies FROM 'movies.csv' WITH (FORMAT CSV, HEADER TRUE);
@@ -42,4 +42,4 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-COPY movies FROM '/tmp/${__DATABASE__}_clients_psql_example_002_movies_csv.csv' WITH (FORMAT CSV, HEADER TRUE);
+COPY movies FROM '${__TEST_DIR__}/clients_psql_example_002_movies_csv.csv' WITH (FORMAT CSV, HEADER TRUE);

@@ -26,7 +26,7 @@ control substitution on
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_001_1_file_db.csv';
+ATTACH '${__TEST_DIR__}/sql_statements_attach_index_example_001_1_file_db.csv';
 
 # DOCS_TEST: example_002
 
@@ -39,7 +39,7 @@ statement ok
 DETACH IF EXISTS file_db;
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_002_1_file_db.csv' AS file_db;
+ATTACH '${__TEST_DIR__}/sql_statements_attach_index_example_002_1_file_db.csv' AS file_db;
 
 # DOCS_TEST: example_003
 
@@ -50,7 +50,7 @@ statement ok
 DETACH IF EXISTS file_readonly_fixture;
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_003_file.db' AS file_readonly_fixture;
+ATTACH '${__TEST_DIR__}/sql_statements_attach_index_example_003_file.db' AS file_readonly_fixture;
 
 statement ok
 CREATE TABLE file_readonly_fixture.items AS SELECT 1 AS id, 'alpha' AS name;
@@ -64,7 +64,7 @@ DETACH file_readonly_fixture;
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_003_file.db' AS file (READ_ONLY);
+ATTACH '${__TEST_DIR__}/sql_statements_attach_index_example_003_file.db' AS file (READ_ONLY);
 
 statement ok
 DETACH file;
@@ -77,7 +77,7 @@ DETACH file;
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_004_1_file_db.csv' (BLOCK_SIZE 16_384);
+ATTACH '${__TEST_DIR__}/sql_statements_attach_index_example_004_1_file_db.csv' (BLOCK_SIZE 16_384);
 
 # DOCS_TEST: example_005
 
@@ -87,7 +87,7 @@ ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_004_1_file_db.c
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_005_1_file_db.csv' (ROW_GROUP_SIZE 2048);
+ATTACH '${__TEST_DIR__}/sql_statements_attach_index_example_005_1_file_db.csv' (ROW_GROUP_SIZE 2048);
 
 # DOCS_TEST: example_006
 
@@ -97,7 +97,7 @@ ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_005_1_file_db.c
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_006_1_file_db.csv' (RECOVERY_MODE no_wal_writes);
+ATTACH '${__TEST_DIR__}/sql_statements_attach_index_example_006_1_file_db.csv' (RECOVERY_MODE no_wal_writes);
 
 # DOCS_TEST: example_008
 
@@ -107,7 +107,7 @@ ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_006_1_file_db.c
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH IF NOT EXISTS '/tmp/${__DATABASE__}_sql_statements_attach_index_example_008_1_file_db.csv';
+ATTACH IF NOT EXISTS '${__TEST_DIR__}/sql_statements_attach_index_example_008_1_file_db.csv';
 
 # DOCS_TEST: example_009
 
@@ -117,7 +117,7 @@ ATTACH IF NOT EXISTS '/tmp/${__DATABASE__}_sql_statements_attach_index_example_0
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH IF NOT EXISTS '/tmp/${__DATABASE__}_sql_statements_attach_index_example_009_1_file_db.csv' AS file_db;
+ATTACH IF NOT EXISTS '${__TEST_DIR__}/sql_statements_attach_index_example_009_1_file_db.csv' AS file_db;
 
 # DOCS_TEST: example_010
 
@@ -127,7 +127,7 @@ ATTACH IF NOT EXISTS '/tmp/${__DATABASE__}_sql_statements_attach_index_example_0
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH OR REPLACE '/tmp/${__DATABASE__}_sql_statements_attach_index_example_010_1_file2_db.csv' AS file_db;
+ATTACH OR REPLACE '${__TEST_DIR__}/sql_statements_attach_index_example_010_1_file2_db.csv' AS file_db;
 
 # DOCS_TEST: example_011
 
@@ -181,7 +181,7 @@ statement ok
 DETACH IF EXISTS stations_fixture;
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_015_stations.duckdb' AS stations_fixture;
+ATTACH '${__TEST_DIR__}/sql_statements_attach_index_example_015_stations.duckdb' AS stations_fixture;
 
 statement ok
 CREATE TABLE stations_fixture.stations AS SELECT * FROM (VALUES
@@ -203,13 +203,13 @@ statement ok
 DETACH IF EXISTS stations_db;
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_015_stations.duckdb' AS stations_db;
+ATTACH '${__TEST_DIR__}/sql_statements_attach_index_example_015_stations.duckdb' AS stations_db;
 
 statement ok
 DETACH stations_db;
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_015_stations.duckdb' AS stations_db (READ_ONLY);
+ATTACH '${__TEST_DIR__}/sql_statements_attach_index_example_015_stations.duckdb' AS stations_db (READ_ONLY);
 
 # DOCS_TEST: example_016
 
@@ -220,7 +220,7 @@ statement ok
 DETACH IF EXISTS stations_fixture;
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_016_stations.duckdb' AS stations_fixture;
+ATTACH '${__TEST_DIR__}/sql_statements_attach_index_example_016_stations.duckdb' AS stations_fixture;
 
 statement ok
 CREATE TABLE stations_fixture.stations AS SELECT * FROM (VALUES
@@ -239,13 +239,13 @@ DETACH stations_fixture;
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_016_stations.duckdb' AS stations_db;
+ATTACH '${__TEST_DIR__}/sql_statements_attach_index_example_016_stations.duckdb' AS stations_db;
 
 statement ok
 DETACH stations_db;
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_016_stations.duckdb' AS stations_db (READ_ONLY);
+ATTACH '${__TEST_DIR__}/sql_statements_attach_index_example_016_stations.duckdb' AS stations_db (READ_ONLY);
 
 # DOCS_TEST: example_017
 
@@ -255,7 +255,7 @@ ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_016_stations.du
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_017_1_file_db.csv' (STORAGE_VERSION 'v1.2.0');
+ATTACH '${__TEST_DIR__}/sql_statements_attach_index_example_017_1_file_db.csv' (STORAGE_VERSION 'v1.2.0');
 
 # DOCS_TEST: example_018
 
@@ -268,7 +268,7 @@ statement ok
 DETACH IF EXISTS enc_db;
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_018_1_encrypted_db.csv' AS enc_db (ENCRYPTION_KEY 'secret_key');
+ATTACH '${__TEST_DIR__}/sql_statements_attach_index_example_018_1_encrypted_db.csv' AS enc_db (ENCRYPTION_KEY 'secret_key');
 
 statement ok
 DETACH enc_db;
@@ -284,7 +284,7 @@ statement ok
 DETACH IF EXISTS enc_db;
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_020_1_encrypted_db.csv' AS enc_db (ENCRYPTION_KEY 'secret_key', ENCRYPTION_CIPHER 'CTR');
+ATTACH '${__TEST_DIR__}/sql_statements_attach_index_example_020_1_encrypted_db.csv' AS enc_db (ENCRYPTION_KEY 'secret_key', ENCRYPTION_CIPHER 'CTR');
 
 statement ok
 DETACH enc_db;

@@ -6,12 +6,12 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_001_dir_csv_1.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_001_dir_csv_1.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 statement ok
 COPY (SELECT * FROM (VALUES
     (3, 'gamma', 30)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_001_dir_csv_2.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_001_dir_csv_2.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -21,7 +21,7 @@ COPY (SELECT * FROM (VALUES
 
 query
 SELECT *
-FROM '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_001_dir_csv_*.csv';
+FROM '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_001_dir_csv_*.csv';
 ----
 id	name	value
 1	alpha	10
@@ -34,13 +34,13 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_002_1_csv_1.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_002_1_csv_1.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_002_1_csv_2.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_002_1_csv_2.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -50,7 +50,7 @@ COPY (SELECT * FROM (VALUES
 
 query
 SELECT *
-FROM '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_002_1_csv_*.csv';
+FROM '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_002_1_csv_*.csv';
 ----
 id	name	value
 1	alpha	10
@@ -64,13 +64,13 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_003_1_csv_1.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_003_1_csv_1.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_003_1_csv_2.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_003_1_csv_2.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -80,7 +80,7 @@ COPY (SELECT * FROM (VALUES
 
 query
 SELECT *
-FROM '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_003_1_csv_*.csv';
+FROM '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_003_1_csv_*.csv';
 ----
 id	name	value
 1	alpha	10
@@ -93,12 +93,12 @@ id	name	value
 statement ok
 COPY (SELECT * FROM (VALUES
     (DATE '2024-02-01', 'DL', 'Boston, MA', 'Chicago, IL', 867)
-) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName", "Distance")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_004_1_flights1_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName", "Distance")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_004_1_flights1_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 statement ok
 COPY (SELECT * FROM (VALUES
     (DATE '2024-02-01', 'DL', 'Boston, MA', 'Chicago, IL', 867)
-) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName", "Distance")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_004_2_flights2_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName", "Distance")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_004_2_flights2_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -108,7 +108,7 @@ COPY (SELECT * FROM (VALUES
 
 query
 SELECT *
-FROM read_csv(['/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_004_1_flights1_csv.csv', '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_004_2_flights2_csv.csv']);
+FROM read_csv(['${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_004_1_flights1_csv.csv', '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_004_2_flights2_csv.csv']);
 ----
 flightdate	uniquecarrier	origincityname	destcityname	distance
 2024-02-01	DL	Boston, MA	Chicago, IL	867
@@ -119,12 +119,12 @@ flightdate	uniquecarrier	origincityname	destcityname	distance
 statement ok
 COPY (SELECT * FROM (VALUES
     (DATE '2024-02-01', 'DL', 'Boston, MA', 'Chicago, IL', 867)
-) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName", "Distance")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_005_1_flights1_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName", "Distance")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_005_1_flights1_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 statement ok
 COPY (SELECT * FROM (VALUES
     (DATE '2024-02-01', 'DL', 'Boston, MA', 'Chicago, IL', 867)
-) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName", "Distance")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_005_2_flights2_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName", "Distance")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_005_2_flights2_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -142,13 +142,13 @@ SELECT
     replace(
         replace(
             filename,
-            '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_005_1_flights1_csv.csv',
+            '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_005_1_flights1_csv.csv',
             'flights1.csv'
         ),
-        '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_005_2_flights2_csv.csv',
+        '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_005_2_flights2_csv.csv',
         'flights2.csv'
     ) AS filename
-FROM read_csv(['/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_005_1_flights1_csv.csv', '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_005_2_flights2_csv.csv'], union_by_name = true, filename = true);
+FROM read_csv(['${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_005_1_flights1_csv.csv', '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_005_2_flights2_csv.csv'], union_by_name = true, filename = true);
 ----
 flightdate	uniquecarrier	origincityname	destcityname	distance	filename
 2024-02-01	DL	Boston, MA	Chicago, IL	867	flights1.csv
@@ -160,13 +160,13 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_006_1_parquet_1.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_006_1_parquet_1.parquet' (FORMAT parquet);
 
 statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_006_1_parquet_2.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_006_1_parquet_2.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -176,7 +176,7 @@ COPY (SELECT * FROM (VALUES
 
 query
 SELECT *
-FROM '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_006_1_parquet_*.parquet';
+FROM '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_006_1_parquet_*.parquet';
 ----
 id	name	value
 1	alpha	10
@@ -190,19 +190,19 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_007_1_file1_parquet.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_007_1_file1_parquet.parquet' (FORMAT parquet);
 
 statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_007_2_file2_parquet.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_007_2_file2_parquet.parquet' (FORMAT parquet);
 
 statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_007_3_file3_parquet.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_007_3_file3_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -212,7 +212,7 @@ COPY (SELECT * FROM (VALUES
 
 query
 SELECT *
-FROM read_parquet(['/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_007_1_file1_parquet.parquet', '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_007_2_file2_parquet.parquet', '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_007_3_file3_parquet.parquet']);
+FROM read_parquet(['${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_007_1_file1_parquet.parquet', '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_007_2_file2_parquet.parquet', '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_007_3_file3_parquet.parquet']);
 ----
 id	name	value
 1	alpha	10
@@ -228,25 +228,25 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_008_1_parquet_1.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_008_1_parquet_1.parquet' (FORMAT parquet);
 
 statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_008_1_parquet_2.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_008_1_parquet_2.parquet' (FORMAT parquet);
 
 statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_008_2_parquet_1.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_008_2_parquet_1.parquet' (FORMAT parquet);
 
 statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_008_2_parquet_2.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_008_2_parquet_2.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -256,7 +256,7 @@ COPY (SELECT * FROM (VALUES
 
 query
 SELECT *
-FROM read_parquet(['/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_008_1_parquet_*.parquet', '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_008_2_parquet_*.parquet']);
+FROM read_parquet(['${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_008_1_parquet_*.parquet', '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_008_2_parquet_*.parquet']);
 ----
 id	name	value
 1	alpha	10
@@ -274,13 +274,13 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_009_1_parquet_1.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_009_1_parquet_1.parquet' (FORMAT parquet);
 
 statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_009_1_parquet_2.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_009_1_parquet_2.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -290,7 +290,7 @@ COPY (SELECT * FROM (VALUES
 
 query
 SELECT *
-FROM read_parquet('/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_009_1_parquet_*.parquet');
+FROM read_parquet('${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_009_1_parquet_*.parquet');
 ----
 id	name	value
 1	alpha	10
@@ -304,19 +304,19 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_010_1_file1_parquet.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_010_1_file1_parquet.parquet' (FORMAT parquet);
 
 statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_010_2_file2_parquet.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_010_2_file2_parquet.parquet' (FORMAT parquet);
 
 statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_010_3_file3_parquet.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_010_3_file3_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -326,7 +326,7 @@ COPY (SELECT * FROM (VALUES
 
 query
 SELECT *
-FROM read_parquet(['/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_010_1_file1_parquet.parquet', '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_010_2_file2_parquet.parquet', '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_010_3_file3_parquet.parquet']);
+FROM read_parquet(['${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_010_1_file1_parquet.parquet', '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_010_2_file2_parquet.parquet', '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_010_3_file3_parquet.parquet']);
 ----
 id	name	value
 1	alpha	10
@@ -342,13 +342,13 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_011_1_parquet_1.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_011_1_parquet_1.parquet' (FORMAT parquet);
 
 statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_011_1_parquet_2.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_011_1_parquet_2.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -358,7 +358,7 @@ COPY (SELECT * FROM (VALUES
 
 query
 SELECT *
-FROM read_parquet('/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_011_1_parquet_*.parquet');
+FROM read_parquet('${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_011_1_parquet_*.parquet');
 ----
 id	name	value
 1	alpha	10
@@ -372,25 +372,25 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_012_1_parquet_1.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_012_1_parquet_1.parquet' (FORMAT parquet);
 
 statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_012_1_parquet_2.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_012_1_parquet_2.parquet' (FORMAT parquet);
 
 statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_012_2_parquet_1.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_012_2_parquet_1.parquet' (FORMAT parquet);
 
 statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_012_2_parquet_2.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_012_2_parquet_2.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -400,7 +400,7 @@ COPY (SELECT * FROM (VALUES
 
 query
 SELECT *
-FROM read_parquet(['/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_012_1_parquet_*.parquet', '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_012_2_parquet_*.parquet']);
+FROM read_parquet(['${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_012_1_parquet_*.parquet', '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_012_2_parquet_*.parquet']);
 ----
 id	name	value
 1	alpha	10
@@ -417,12 +417,12 @@ id	name	value
 statement ok
 COPY (SELECT * FROM (VALUES
     (DATE '2024-02-01', 'DL', 'Boston, MA', 'Chicago, IL', 867)
-) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName", "Distance")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_013_1_flights1_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName", "Distance")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_013_1_flights1_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 statement ok
 COPY (SELECT * FROM (VALUES
     (DATE '2024-02-01', 'DL', 'Boston, MA', 'Chicago, IL', 867)
-) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName", "Distance")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_013_2_flights2_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName", "Distance")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_013_2_flights2_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -440,13 +440,13 @@ SELECT
     replace(
         replace(
             filename,
-            '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_013_1_flights1_csv.csv',
+            '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_013_1_flights1_csv.csv',
             'flights1.csv'
         ),
-        '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_013_2_flights2_csv.csv',
+        '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_013_2_flights2_csv.csv',
         'flights2.csv'
     ) AS filename
-FROM read_csv(['/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_013_1_flights1_csv.csv', '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_013_2_flights2_csv.csv'], union_by_name = true, filename = true);
+FROM read_csv(['${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_013_1_flights1_csv.csv', '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_013_2_flights2_csv.csv'], union_by_name = true, filename = true);
 ----
 flightdate	uniquecarrier	origincityname	destcityname	distance	filename
 2024-02-01	DL	Boston, MA	Chicago, IL	867	flights1.csv
@@ -457,15 +457,15 @@ flightdate	uniquecarrier	origincityname	destcityname	distance	filename
 statement ok
 COPY (SELECT * FROM (VALUES
     (DATE '2024-02-01', 'DL', 'Boston, MA', 'Chicago, IL', 867)
-) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName", "Distance")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_014_flights1.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName", "Distance")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_014_flights1.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 statement ok
 COPY (SELECT * FROM (VALUES
     (DATE '2024-02-02', 'UA', 'Seattle, WA', 'Denver, CO', 1024)
-) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName", "Distance")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_014_flights2.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName", "Distance")) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_014_flights2.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 statement ok
-COPY (SELECT 'SereneDB docs fixture' AS content) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_014_notes.txt';
+COPY (SELECT 'SereneDB docs fixture' AS content) TO '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_014_notes.txt';
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -476,10 +476,10 @@ COPY (SELECT 'SereneDB docs fixture' AS content) TO '/tmp/${__DATABASE__}_data_i
 query
 SELECT replace(
     file,
-    '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_014_',
+    '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_014_',
     ''
 ) AS file
-FROM glob('/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_014_*')
+FROM glob('${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_014_*')
 ORDER BY file;
 ----
 file

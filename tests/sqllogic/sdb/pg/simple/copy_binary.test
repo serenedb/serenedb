@@ -25,11 +25,11 @@ INSERT INTO tindex VALUES (1, 'vedernikoff'), (2, 'pavelvi'), (3, 'babsky');
 
 
 statement count 3
-COPY tindex TO '/tmp/${__DATABASE__}_copy_binary.bin' (FORMAT binary);
+COPY tindex TO '${__TEST_DIR__}/copy_binary.bin' (FORMAT binary);
 
 
 statement count 3
-COPY clickclack FROM '/tmp/${__DATABASE__}_copy_binary.bin' (FORMAT binary);
+COPY clickclack FROM '${__TEST_DIR__}/copy_binary.bin' (FORMAT binary);
 
 
 query
@@ -48,11 +48,11 @@ DELETE FROM clickclack;
 # COPY (query) TO binary, then load back
 
 statement count 1
-COPY (SELECT * FROM tindex ORDER BY 1 DESC LIMIT 1) TO '/tmp/${__DATABASE__}_copy_binary.bin' (FORMAT binary);
+COPY (SELECT * FROM tindex ORDER BY 1 DESC LIMIT 1) TO '${__TEST_DIR__}/copy_binary.bin' (FORMAT binary);
 
 
 statement count 1
-COPY clickclack FROM '/tmp/${__DATABASE__}_copy_binary.bin' (FORMAT binary);
+COPY clickclack FROM '${__TEST_DIR__}/copy_binary.bin' (FORMAT binary);
 
 
 query
@@ -80,7 +80,7 @@ FROM generate_series(1, 20000) g;
 
 
 statement count 20000
-COPY bsrc TO '/tmp/${__DATABASE__}_copy_binary_multi.bin' (FORMAT binary);
+COPY bsrc TO '${__TEST_DIR__}/copy_binary_multi.bin' (FORMAT binary);
 
 
 statement ok
@@ -96,7 +96,7 @@ CREATE TABLE bdst
 
 
 statement count 20000
-COPY bdst FROM '/tmp/${__DATABASE__}_copy_binary_multi.bin' (FORMAT binary);
+COPY bdst FROM '${__TEST_DIR__}/copy_binary_multi.bin' (FORMAT binary);
 
 
 query

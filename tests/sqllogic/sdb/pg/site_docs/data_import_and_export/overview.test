@@ -16,7 +16,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_overview_example_002_1_test_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_overview_example_002_1_test_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| SELECT * FROM 'test.csv';
@@ -24,7 +24,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT * FROM '/tmp/${__DATABASE__}_data_import_and_export_overview_example_002_1_test_csv.csv';
+SELECT * FROM '${__TEST_DIR__}/data_import_and_export_overview_example_002_1_test_csv.csv';
 ----
 id	name	value
 1	alpha	10
@@ -36,7 +36,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_overview_example_003_1_test_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_overview_example_003_1_test_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| SELECT * FROM read_csv('test.csv', header = false);
@@ -44,7 +44,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT * FROM read_csv('/tmp/${__DATABASE__}_data_import_and_export_overview_example_003_1_test_csv.csv', header = false);
+SELECT * FROM read_csv('${__TEST_DIR__}/data_import_and_export_overview_example_003_1_test_csv.csv', header = false);
 ----
 column0	column1	column2
 1	alpha	10
@@ -81,7 +81,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (8, 'fixture', 1.5, 2.5, 'delta', 4, 13, 23, 33, 30, 400, 4000),
     (9, 'sample', 3.5, 4.5, 'epsilon', 5, 14, 24, 34, 40, 500, 5000)
-) AS t("id", "name", "col1", "col2", "Some Column Name", "i", "a", "b", "c", "number", "number1", "number2")) TO '/tmp/${__DATABASE__}_data_import_and_export_overview_example_004_1_test_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+) AS t("id", "name", "col1", "col2", "Some Column Name", "i", "a", "b", "c", "number", "number1", "number2")) TO '${__TEST_DIR__}/data_import_and_export_overview_example_004_1_test_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| COPY tbl FROM 'test.csv' (HEADER false);
@@ -89,7 +89,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-COPY tbl FROM '/tmp/${__DATABASE__}_data_import_and_export_overview_example_004_1_test_csv.csv' (HEADER false);
+COPY tbl FROM '${__TEST_DIR__}/data_import_and_export_overview_example_004_1_test_csv.csv' (HEADER false);
 
 # DOCS_TEST: example_005
 
@@ -97,7 +97,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_overview_example_005_1_test_csv_gz.csv.gz' (FORMAT CSV, HEADER true, DELIMITER ',', COMPRESSION 'GZIP');
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_overview_example_005_1_test_csv_gz.csv.gz' (FORMAT CSV, HEADER true, DELIMITER ',', COMPRESSION 'GZIP');
 
 # DOCS_TEST_RAW
 #| SELECT * FROM 'test.csv.gz';
@@ -105,7 +105,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT * FROM '/tmp/${__DATABASE__}_data_import_and_export_overview_example_005_1_test_csv_gz.csv.gz';
+SELECT * FROM '${__TEST_DIR__}/data_import_and_export_overview_example_005_1_test_csv_gz.csv.gz';
 ----
 id	name	value
 1	alpha	10
@@ -117,7 +117,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_overview_example_006_1_test_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_overview_example_006_1_test_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| CREATE TABLE test AS
@@ -127,7 +127,7 @@ COPY (SELECT * FROM (VALUES
 
 statement ok
 CREATE TABLE test AS
-    SELECT * FROM '/tmp/${__DATABASE__}_data_import_and_export_overview_example_006_1_test_csv.csv';
+    SELECT * FROM '${__TEST_DIR__}/data_import_and_export_overview_example_006_1_test_csv.csv';
 
 # DOCS_TEST: example_007
 
@@ -135,7 +135,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_overview_example_007_1_test_parquet.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_overview_example_007_1_test_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| SELECT * FROM 'test.parquet';
@@ -143,7 +143,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT * FROM '/tmp/${__DATABASE__}_data_import_and_export_overview_example_007_1_test_parquet.parquet';
+SELECT * FROM '${__TEST_DIR__}/data_import_and_export_overview_example_007_1_test_parquet.parquet';
 ----
 id	name	value
 1	alpha	10
@@ -155,7 +155,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_overview_example_008_1_test_parquet.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_overview_example_008_1_test_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| SELECT * FROM read_parquet('test.parquet');
@@ -163,7 +163,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT * FROM read_parquet('/tmp/${__DATABASE__}_data_import_and_export_overview_example_008_1_test_parquet.parquet');
+SELECT * FROM read_parquet('${__TEST_DIR__}/data_import_and_export_overview_example_008_1_test_parquet.parquet');
 ----
 id	name	value
 1	alpha	10
@@ -175,7 +175,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (8, 'fixture', 1.5, 2.5, 'delta', 4, 13, 23, 33, 30, 400, 4000),
     (9, 'sample', 3.5, 4.5, 'epsilon', 5, 14, 24, 34, 40, 500, 5000)
-) AS t("id", "name", "col1", "col2", "Some Column Name", "i", "a", "b", "c", "number", "number1", "number2")) TO '/tmp/${__DATABASE__}_data_import_and_export_overview_example_009_1_test_parquet.parquet' (FORMAT parquet);
+) AS t("id", "name", "col1", "col2", "Some Column Name", "i", "a", "b", "c", "number", "number1", "number2")) TO '${__TEST_DIR__}/data_import_and_export_overview_example_009_1_test_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| COPY tbl FROM 'test.parquet';
@@ -183,7 +183,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-COPY tbl FROM '/tmp/${__DATABASE__}_data_import_and_export_overview_example_009_1_test_parquet.parquet';
+COPY tbl FROM '${__TEST_DIR__}/data_import_and_export_overview_example_009_1_test_parquet.parquet';
 
 # DOCS_TEST: example_010
 
@@ -191,7 +191,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_overview_example_010_1_test_json.json' (FORMAT json);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_overview_example_010_1_test_json.json' (FORMAT json);
 
 # DOCS_TEST_RAW
 #| SELECT * FROM 'test.json';
@@ -199,7 +199,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT * FROM '/tmp/${__DATABASE__}_data_import_and_export_overview_example_010_1_test_json.json';
+SELECT * FROM '${__TEST_DIR__}/data_import_and_export_overview_example_010_1_test_json.json';
 ----
 id	name	value
 1	alpha	10
@@ -211,7 +211,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_overview_example_011_1_test_json.json' (FORMAT json);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_overview_example_011_1_test_json.json' (FORMAT json);
 
 # DOCS_TEST_RAW
 #| SELECT * FROM read_json_auto('test.json');
@@ -219,7 +219,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT * FROM read_json_auto('/tmp/${__DATABASE__}_data_import_and_export_overview_example_011_1_test_json.json');
+SELECT * FROM read_json_auto('${__TEST_DIR__}/data_import_and_export_overview_example_011_1_test_json.json');
 ----
 id	name	value
 1	alpha	10
@@ -231,7 +231,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (8, 'fixture', 1.5, 2.5, 'delta', 4, 13, 23, 33, 30, 400, 4000),
     (9, 'sample', 3.5, 4.5, 'epsilon', 5, 14, 24, 34, 40, 500, 5000)
-) AS t("id", "name", "col1", "col2", "Some Column Name", "i", "a", "b", "c", "number", "number1", "number2")) TO '/tmp/${__DATABASE__}_data_import_and_export_overview_example_012_1_test_json.json' (FORMAT json);
+) AS t("id", "name", "col1", "col2", "Some Column Name", "i", "a", "b", "c", "number", "number1", "number2")) TO '${__TEST_DIR__}/data_import_and_export_overview_example_012_1_test_json.json' (FORMAT json);
 
 # DOCS_TEST_RAW
 #| COPY tbl FROM 'test.json';
@@ -239,7 +239,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-COPY tbl FROM '/tmp/${__DATABASE__}_data_import_and_export_overview_example_012_1_test_json.json';
+COPY tbl FROM '${__TEST_DIR__}/data_import_and_export_overview_example_012_1_test_json.json';
 
 # DOCS_TEST: example_013
 
@@ -247,7 +247,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_overview_example_013_1_test_parquet.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_overview_example_013_1_test_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| COPY (FROM (VALUES (42), (43)) t(x)) TO 'test.parquet';
@@ -257,13 +257,13 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-COPY (FROM (VALUES (42), (43)) t(x)) TO '/tmp/${__DATABASE__}_data_import_and_export_overview_example_013_1_test_parquet.parquet';
+COPY (FROM (VALUES (42), (43)) t(x)) TO '${__TEST_DIR__}/data_import_and_export_overview_example_013_1_test_parquet.parquet';
 
 query
 SELECT x, 'test.parquet' AS filename
 FROM (
     SELECT *, filename
-    FROM '/tmp/${__DATABASE__}_data_import_and_export_overview_example_013_1_test_parquet.parquet'
+    FROM '${__TEST_DIR__}/data_import_and_export_overview_example_013_1_test_parquet.parquet'
 ) AS t(x, source_filename);
 ----
 x	filename

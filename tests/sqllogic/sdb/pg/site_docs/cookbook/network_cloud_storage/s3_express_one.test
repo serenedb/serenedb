@@ -38,7 +38,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_s3_express_one_example_003_1_my_file_parquet.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/cookbook_network_cloud_storage_s3_express_one_example_003_1_my_file_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -48,7 +48,7 @@ COPY (SELECT * FROM (VALUES
 
 query
 SELECT *
-FROM '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_s3_express_one_example_003_1_my_file_parquet.parquet';
+FROM '${__TEST_DIR__}/cookbook_network_cloud_storage_s3_express_one_example_003_1_my_file_parquet.parquet';
 ----
 id	name	value
 1	alpha	10

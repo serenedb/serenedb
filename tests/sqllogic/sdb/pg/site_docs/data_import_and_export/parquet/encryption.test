@@ -57,7 +57,7 @@ INSERT INTO tbl VALUES
 # DOCS_TEST_BODY
 
 statement ok
-COPY tbl TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_encryption_example_002_1_tbl_parquet.parquet' (ENCRYPTION_CONFIG {footer_key: 'key256'});
+COPY tbl TO '${__TEST_DIR__}/data_import_and_export_parquet_encryption_example_002_1_tbl_parquet.parquet' (ENCRYPTION_CONFIG {footer_key: 'key256'});
 
 # DOCS_TEST: example_003
 
@@ -65,7 +65,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (8, 'fixture', 1.5, 2.5, 'delta', 4, 13, 23, 33, 30, 400, 4000),
     (9, 'sample', 3.5, 4.5, 'epsilon', 5, 14, 24, 34, 40, 500, 5000)
-) AS t("id", "name", "col1", "col2", "Some Column Name", "i", "a", "b", "c", "number", "number1", "number2")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_encryption_example_003_1_tbl_parquet.parquet' (FORMAT parquet, ENCRYPTION_CONFIG {footer_key: 'key256'});
+) AS t("id", "name", "col1", "col2", "Some Column Name", "i", "a", "b", "c", "number", "number1", "number2")) TO '${__TEST_DIR__}/data_import_and_export_parquet_encryption_example_003_1_tbl_parquet.parquet' (FORMAT parquet, ENCRYPTION_CONFIG {footer_key: 'key256'});
 
 # DOCS_TEST_RAW
 #| COPY tbl FROM 'tbl.parquet' (ENCRYPTION_CONFIG {footer_key: 'key256'});
@@ -73,7 +73,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-COPY tbl FROM '/tmp/${__DATABASE__}_data_import_and_export_parquet_encryption_example_003_1_tbl_parquet.parquet' (ENCRYPTION_CONFIG {footer_key: 'key256'});
+COPY tbl FROM '${__TEST_DIR__}/data_import_and_export_parquet_encryption_example_003_1_tbl_parquet.parquet' (ENCRYPTION_CONFIG {footer_key: 'key256'});
 
 # DOCS_TEST: example_004
 
@@ -81,7 +81,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_encryption_example_004_1_tbl_parquet.parquet' (FORMAT parquet, ENCRYPTION_CONFIG {footer_key: 'key256'});
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_parquet_encryption_example_004_1_tbl_parquet.parquet' (FORMAT parquet, ENCRYPTION_CONFIG {footer_key: 'key256'});
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -91,7 +91,7 @@ COPY (SELECT * FROM (VALUES
 
 query
 SELECT *
-FROM read_parquet('/tmp/${__DATABASE__}_data_import_and_export_parquet_encryption_example_004_1_tbl_parquet.parquet', encryption_config = {footer_key: 'key256'});
+FROM read_parquet('${__TEST_DIR__}/data_import_and_export_parquet_encryption_example_004_1_tbl_parquet.parquet', encryption_config = {footer_key: 'key256'});
 ----
 id	name	value
 1	alpha	10

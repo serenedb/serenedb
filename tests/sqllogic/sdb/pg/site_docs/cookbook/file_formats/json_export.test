@@ -33,7 +33,7 @@ INSERT INTO tbl VALUES
 # DOCS_TEST_BODY
 
 statement ok
-COPY tbl TO '/tmp/${__DATABASE__}_cookbook_file_formats_json_export_example_001_1_output_json.json';
+COPY tbl TO '${__TEST_DIR__}/cookbook_file_formats_json_export_example_001_1_output_json.json';
 
 # DOCS_TEST: example_002
 
@@ -43,7 +43,7 @@ COPY tbl TO '/tmp/${__DATABASE__}_cookbook_file_formats_json_export_example_001_
 # DOCS_TEST_BODY
 
 statement ok
-COPY (SELECT * FROM range(3) tbl(n)) TO '/tmp/${__DATABASE__}_cookbook_file_formats_json_export_example_002_1_output_json.json';
+COPY (SELECT * FROM range(3) tbl(n)) TO '${__TEST_DIR__}/cookbook_file_formats_json_export_example_002_1_output_json.json';
 
 # DOCS_TEST: example_003
 
@@ -53,7 +53,7 @@ COPY (SELECT * FROM range(3) tbl(n)) TO '/tmp/${__DATABASE__}_cookbook_file_form
 # DOCS_TEST_BODY
 
 statement ok
-COPY (SELECT * FROM range(3) tbl(n)) TO '/tmp/${__DATABASE__}_cookbook_file_formats_json_export_example_003_1_output_json.json' (ARRAY);
+COPY (SELECT * FROM range(3) tbl(n)) TO '${__TEST_DIR__}/cookbook_file_formats_json_export_example_003_1_output_json.json' (ARRAY);
 
 # DOCS_TEST: example_004
 
@@ -70,7 +70,7 @@ COPY (SELECT * FROM range(3) tbl(n)) TO '/tmp/${__DATABASE__}_cookbook_file_form
 
 query
 SELECT unnest(string_split(rtrim(content, chr(10)), chr(10))) AS line
-FROM read_text('/tmp/${__DATABASE__}_cookbook_file_formats_json_export_example_002_1_output_json.json');
+FROM read_text('${__TEST_DIR__}/cookbook_file_formats_json_export_example_002_1_output_json.json');
 ----
 line
 {"n":0}
@@ -90,7 +90,7 @@ line
 # DOCS_TEST_BODY
 
 query
-SELECT n FROM read_json('/tmp/${__DATABASE__}_cookbook_file_formats_json_export_example_003_1_output_json.json') ORDER BY n;
+SELECT n FROM read_json('${__TEST_DIR__}/cookbook_file_formats_json_export_example_003_1_output_json.json') ORDER BY n;
 ----
 n
 0

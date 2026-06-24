@@ -11,18 +11,18 @@ CREATE TEXT SEARCH DICTIONARY logs_en (
 );
 
 statement ok
-CREATE TABLE logs (id INTEGER PRIMARY KEY, msg VARCHAR);
+CREATE TABLE my_logs (id INTEGER PRIMARY KEY, msg VARCHAR);
 
 statement ok
-CREATE INDEX logs_idx ON logs USING inverted (id, msg logs_en);
+CREATE INDEX logs_idx ON my_logs USING inverted (id, msg logs_en);
 
 statement ok
-INSERT INTO logs VALUES (1, 'disk full'), (2, 'connection reset');
+INSERT INTO my_logs VALUES (1, 'disk full'), (2, 'connection reset');
 
 # DOCS_TEST_BODY
 
 statement ok
-VACUUM (REFRESH_TABLE) logs;
+VACUUM (REFRESH_TABLE) my_logs;
 
 query
 SELECT id FROM logs_idx WHERE msg @@ 'disk' ORDER BY id;
@@ -35,14 +35,14 @@ id
 # DOCS_TEST_BODY
 
 statement ok
-VACUUM (COMPACT_TABLE) logs;
+VACUUM (COMPACT_TABLE) my_logs;
 
 # DOCS_TEST: example_003
 
 # DOCS_TEST_BODY
 
 statement ok
-VACUUM (RECOMPUTE_STATS_TABLE) logs;
+VACUUM (RECOMPUTE_STATS_TABLE) my_logs;
 
 # DOCS_TEST: example_004
 
@@ -51,10 +51,10 @@ VACUUM (RECOMPUTE_STATS_TABLE) logs;
 query
 SELECT index_name, table_name
 FROM duckdb_indexes()
-WHERE table_name = 'logs';
+WHERE table_name = 'my_logs';
 ----
 index_name	table_name
-logs_idx	logs
+logs_idx	my_logs
 
 # DOCS_TEST: example_005
 
@@ -63,7 +63,7 @@ logs_idx	logs
 query
 SELECT indexname
 FROM pg_indexes
-WHERE tablename = 'logs'
+WHERE tablename = 'my_logs'
 ORDER BY indexname;
 ----
 indexname

@@ -23,7 +23,7 @@ EXPLAIN (FORMAT html) SELECT 42 AS x;
 query
 CALL enable_profiling(
     format := 'json',
-    save_location := '/tmp/${__DATABASE__}_contribution_profiling_example_002_output.json',
+    save_location := '${__TEST_DIR__}/contribution_profiling_example_002_output.json',
     coverage := 'select',
     mode := 'standard',
     metrics := ['QUERY_NAME', 'LATENCY', 'OPERATOR_TIMING']

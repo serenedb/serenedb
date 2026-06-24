@@ -68,7 +68,7 @@ name
 # DOCS_TEST_BODY
 
 statement ok
-COPY events TO '/tmp/${__DATABASE__}_sql_data_types_variant_example_005_1_events_parquet.parquet' (
+COPY events TO '${__TEST_DIR__}/sql_data_types_variant_example_005_1_events_parquet.parquet' (
     FORMAT parquet,
     SHREDDING {'data': 'STRUCT(name VARCHAR, age INTEGER)'}
 );

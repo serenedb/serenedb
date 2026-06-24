@@ -1,3 +1,5 @@
+control substitution on
+
 # DOCS_TEST: setup
 
 # DOCS_TEST_BODY
@@ -393,7 +395,7 @@ nextval
 # DOCS_TEST: read_blob
 
 statement ok
-COPY (SELECT 'hello') TO '/tmp/sdb_docs_utility_read_blob.bin' (FORMAT csv, HEADER false);
+COPY (SELECT 'hello') TO '${__TEST_DIR__}/sdb_docs_utility_read_blob.bin' (FORMAT csv, HEADER false);
 
 # DOCS_TEST_RAW
 #| SELECT content FROM read_blob('hello.bin');
@@ -403,7 +405,7 @@ COPY (SELECT 'hello') TO '/tmp/sdb_docs_utility_read_blob.bin' (FORMAT csv, HEAD
 
 # DOCS_TEST_BODY
 query
-SELECT content FROM read_blob('/tmp/sdb_docs_utility_read_blob.bin');
+SELECT content FROM read_blob('${__TEST_DIR__}/sdb_docs_utility_read_blob.bin');
 ----
 content
 \\x68656c6c6f0a
@@ -411,7 +413,7 @@ content
 # DOCS_TEST: read_text
 
 statement ok
-COPY (SELECT 'hello') TO '/tmp/sdb_docs_utility_read_text.txt' (FORMAT csv, HEADER false);
+COPY (SELECT 'hello') TO '${__TEST_DIR__}/sdb_docs_utility_read_text.txt' (FORMAT csv, HEADER false);
 
 # DOCS_TEST_RAW
 #| SELECT content FROM read_text('hello.txt');
@@ -421,7 +423,7 @@ COPY (SELECT 'hello') TO '/tmp/sdb_docs_utility_read_text.txt' (FORMAT csv, HEAD
 
 # DOCS_TEST_BODY
 query
-SELECT content FROM read_text('/tmp/sdb_docs_utility_read_text.txt');
+SELECT content FROM read_text('${__TEST_DIR__}/sdb_docs_utility_read_text.txt');
 ----
 content
 <slt:ignore>

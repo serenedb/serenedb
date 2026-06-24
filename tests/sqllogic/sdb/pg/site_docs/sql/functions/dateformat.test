@@ -71,10 +71,10 @@ CREATE TABLE dates ("d" DATE, "ts" TIMESTAMP);
 statement ok
 COPY (SELECT * FROM (VALUES
     ('02/03/1992', 'Monday, 2 March 1992 - 08:32:45 PM')
-) AS t("d", "ts")) TO '/tmp/${__DATABASE__}_sql_functions_dateformat_example_006_1_test_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+) AS t("d", "ts")) TO '${__TEST_DIR__}/sql_functions_dateformat_example_006_1_test_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
 statement ok
-COPY dates FROM '/tmp/${__DATABASE__}_sql_functions_dateformat_example_006_1_test_csv.csv' (DATEFORMAT '%d/%m/%Y', TIMESTAMPFORMAT '%A, %-d %B %Y - %I:%M:%S %p');
+COPY dates FROM '${__TEST_DIR__}/sql_functions_dateformat_example_006_1_test_csv.csv' (DATEFORMAT '%d/%m/%Y', TIMESTAMPFORMAT '%A, %-d %B %Y - %I:%M:%S %p');
 
 # DOCS_TEST_RAW
 #| COPY dates FROM 'test.csv' (DATEFORMAT '%d/%m/%Y', TIMESTAMPFORMAT '%A, %-d %B %Y - %I:%M:%S %p');
@@ -95,7 +95,7 @@ d	ts
 statement ok
 COPY (SELECT * FROM (VALUES
     ('02/03/1992', 'Monday, 2 March 1992 - 08:32:45 PM')
-) AS t("d", "ts")) TO '/tmp/${__DATABASE__}_sql_functions_dateformat_example_007_1_test_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("d", "ts")) TO '${__TEST_DIR__}/sql_functions_dateformat_example_007_1_test_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -105,7 +105,7 @@ COPY (SELECT * FROM (VALUES
 
 query
 SELECT *
-FROM read_csv('/tmp/${__DATABASE__}_sql_functions_dateformat_example_007_1_test_csv.csv', dateformat = '%m/%d/%Y', timestampformat = '%A, %-d %B %Y - %I:%M:%S %p');
+FROM read_csv('${__TEST_DIR__}/sql_functions_dateformat_example_007_1_test_csv.csv', dateformat = '%m/%d/%Y', timestampformat = '%A, %-d %B %Y - %I:%M:%S %p');
 ----
 d	ts
 1992-02-03	1992-03-02 20:32:45

@@ -110,7 +110,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, '[2,3]', 4.5),
     (2, '[5,8]', 9.5)
-) AS t("a", "b", "c")) TO '/tmp/${__DATABASE__}_cookbook_meta_summarize_example_006_1_data_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("a", "b", "c")) TO '${__TEST_DIR__}/cookbook_meta_summarize_example_006_1_data_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| SUMMARIZE TABLE 'https://example.com/data/data.csv';
@@ -118,7 +118,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-SUMMARIZE TABLE '/tmp/${__DATABASE__}_cookbook_meta_summarize_example_006_1_data_csv.csv';
+SUMMARIZE TABLE '${__TEST_DIR__}/cookbook_meta_summarize_example_006_1_data_csv.csv';
 ----
 column_name	column_type	min	max	approx_unique	avg	std	q25	q50	q75	count	null_percentage
 a	BIGINT	1	2	2	1.5	0.7071067811865476	1	2	2	2	0.00

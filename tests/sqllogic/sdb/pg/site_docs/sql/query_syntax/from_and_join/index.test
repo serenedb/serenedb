@@ -250,7 +250,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_sql_query_syntax_from_and_join_index_example_008_1_test_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/sql_query_syntax_from_and_join_index_example_008_1_test_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -260,7 +260,7 @@ COPY (SELECT * FROM (VALUES
 
 query
 SELECT *
-FROM '/tmp/${__DATABASE__}_sql_query_syntax_from_and_join_index_example_008_1_test_csv.csv';
+FROM '${__TEST_DIR__}/sql_query_syntax_from_and_join_index_example_008_1_test_csv.csv';
 ----
 id	name	value
 1	alpha	10
@@ -425,7 +425,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_sql_query_syntax_from_and_join_index_example_016_1_test_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/sql_query_syntax_from_and_join_index_example_016_1_test_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -435,7 +435,7 @@ COPY (SELECT * FROM (VALUES
 
 query
 SELECT *
-FROM '/tmp/${__DATABASE__}_sql_query_syntax_from_and_join_index_example_016_1_test_csv.csv';
+FROM '${__TEST_DIR__}/sql_query_syntax_from_and_join_index_example_016_1_test_csv.csv';
 ----
 id	name	value
 1	alpha	10
@@ -447,7 +447,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_sql_query_syntax_from_and_join_index_example_017_1_test_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/sql_query_syntax_from_and_join_index_example_017_1_test_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -457,7 +457,7 @@ COPY (SELECT * FROM (VALUES
 
 query
 SELECT *
-FROM read_csv('/tmp/${__DATABASE__}_sql_query_syntax_from_and_join_index_example_017_1_test_csv.csv');
+FROM read_csv('${__TEST_DIR__}/sql_query_syntax_from_and_join_index_example_017_1_test_csv.csv');
 ----
 id	name	value
 1	alpha	10
@@ -469,7 +469,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_sql_query_syntax_from_and_join_index_example_018_1_test_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/sql_query_syntax_from_and_join_index_example_018_1_test_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -479,7 +479,7 @@ COPY (SELECT * FROM (VALUES
 
 query
 SELECT *
-FROM read_csv('/tmp/${__DATABASE__}_sql_query_syntax_from_and_join_index_example_018_1_test_csv.csv') WITH ORDINALITY;
+FROM read_csv('${__TEST_DIR__}/sql_query_syntax_from_and_join_index_example_018_1_test_csv.csv') WITH ORDINALITY;
 ----
 id	name	value	ordinality
 1	alpha	10	1

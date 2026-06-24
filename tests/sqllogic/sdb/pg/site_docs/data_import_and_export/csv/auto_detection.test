@@ -6,7 +6,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_auto_detection_example_001_my_csv_file.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_csv_auto_detection_example_001_my_csv_file.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| SELECT * FROM read_csv('my_csv_file.csv', sample_size = -1);
@@ -14,7 +14,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT * FROM read_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_auto_detection_example_001_my_csv_file.csv', sample_size = -1);
+SELECT * FROM read_csv('${__TEST_DIR__}/data_import_and_export_csv_auto_detection_example_001_my_csv_file.csv', sample_size = -1);
 ----
 id	name	value
 1	alpha	10
@@ -26,7 +26,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_auto_detection_example_002_1_my_file_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_csv_auto_detection_example_002_1_my_file_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| FROM sniff_csv('my_file.csv');
@@ -48,8 +48,8 @@ SELECT
     DateFormat,
     TimestampFormat,
     UserArguments,
-    regexp_replace(Prompt, '''/tmp/[^'']*''', '''my_file.csv''') AS Prompt
-FROM sniff_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_auto_detection_example_002_1_my_file_csv.csv');
+    regexp_replace(Prompt, '''${__TEST_DIR__}/[^'']*''', '''my_file.csv''') AS Prompt
+FROM sniff_csv('${__TEST_DIR__}/data_import_and_export_csv_auto_detection_example_002_1_my_file_csv.csv');
 ----
 Delimiter	Quote	Escape	NewLineDelimiter	Comment	SkipRows	HasHeader	Columns	DateFormat	TimestampFormat	UserArguments	prompt
 ,	(empty)	(empty)	\\n	(empty)	0	t	{"(id,BIGINT)","(name,VARCHAR)","(value,BIGINT)"}	NULL	NULL	NULL	FROM read_csv('my_file.csv', auto_detect=false, delim=',', quote='', escape='', new_line='\\n', skip=0, comment='', header=true, columns={'id': 'BIGINT', 'name': 'VARCHAR', 'value': 'BIGINT'});
@@ -68,8 +68,8 @@ SELECT
     DateFormat,
     TimestampFormat,
     UserArguments,
-    regexp_replace(Prompt, '''/tmp/[^'']*''', '''my_file.csv''') AS Prompt
-FROM sniff_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_auto_detection_example_002_1_my_file_csv.csv', sample_size = 1000);
+    regexp_replace(Prompt, '''${__TEST_DIR__}/[^'']*''', '''my_file.csv''') AS Prompt
+FROM sniff_csv('${__TEST_DIR__}/data_import_and_export_csv_auto_detection_example_002_1_my_file_csv.csv', sample_size = 1000);
 ----
 Delimiter	Quote	Escape	NewLineDelimiter	Comment	SkipRows	HasHeader	Columns	DateFormat	TimestampFormat	UserArguments	prompt
 ,	(empty)	(empty)	\\n	(empty)	0	t	{"(id,BIGINT)","(name,VARCHAR)","(value,BIGINT)"}	NULL	NULL	sample_size=1000	FROM read_csv('my_file.csv', auto_detect=false, delim=',', quote='', escape='', new_line='\\n', skip=0, comment='', header=true, columns={'id': 'BIGINT', 'name': 'VARCHAR', 'value': 'BIGINT'}, sample_size=1000);
@@ -80,7 +80,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_auto_detection_example_003_my_file_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_csv_auto_detection_example_003_my_file_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| SELECT Prompt FROM sniff_csv('my_file.csv');
@@ -88,8 +88,8 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT regexp_replace(Prompt, '''/tmp/[^'']*''', '''my_file.csv''') AS Prompt
-FROM sniff_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_auto_detection_example_003_my_file_csv.csv');
+SELECT regexp_replace(Prompt, '''${__TEST_DIR__}/[^'']*''', '''my_file.csv''') AS Prompt
+FROM sniff_csv('${__TEST_DIR__}/data_import_and_export_csv_auto_detection_example_003_my_file_csv.csv');
 ----
 prompt
 FROM read_csv('my_file.csv', auto_detect=false, delim=',', quote='', escape='', new_line='\\n', skip=0, comment='', header=true, columns={'id': 'BIGINT', 'name': 'VARCHAR', 'value': 'BIGINT'});

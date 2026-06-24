@@ -6,7 +6,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 1, 'write docs fixtures', false),
     (1, 2, 'run sqllogictest', true)
-) AS t("userId", "id", "title", "completed")) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_001_1_todos_json.json' (FORMAT json);
+) AS t("userId", "id", "title", "completed")) TO '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_001_1_todos_json.json' (FORMAT json);
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -17,7 +17,7 @@ COPY (SELECT * FROM (VALUES
 
 query
 SELECT *
-FROM read_json('/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_001_1_todos_json.json')
+FROM read_json('${__TEST_DIR__}/data_import_and_export_json_loading_json_example_001_1_todos_json.json')
 LIMIT 5;
 ----
 userid	id	title	completed
@@ -30,7 +30,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 1, 'write docs fixtures', false),
     (1, 2, 'run sqllogictest', true)
-) AS t("userId", "id", "title", "completed")) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_002_1_todos_json.json' (FORMAT json);
+) AS t("userId", "id", "title", "completed")) TO '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_002_1_todos_json.json' (FORMAT json);
 
 # DOCS_TEST_RAW
 #| CREATE TABLE todos AS
@@ -44,7 +44,7 @@ COPY (SELECT * FROM (VALUES
 statement ok
 CREATE TABLE todos AS
     SELECT *
-    FROM read_json('/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_002_1_todos_json.json');
+    FROM read_json('${__TEST_DIR__}/data_import_and_export_json_loading_json_example_002_1_todos_json.json');
 
 query
 DESCRIBE TABLE todos;
@@ -61,7 +61,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 1, 'write docs fixtures', false),
     (1, 2, 'run sqllogictest', true)
-) AS t("userId", "id", "title", "completed")) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_003_1_todos_json.json' (FORMAT json);
+) AS t("userId", "id", "title", "completed")) TO '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_003_1_todos_json.json' (FORMAT json);
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -76,7 +76,7 @@ COPY (SELECT * FROM (VALUES
 query
 SELECT *
 FROM read_json(
-        '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_003_1_todos_json.json',
+        '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_003_1_todos_json.json',
         columns = {userId: 'UBIGINT', completed: 'BOOLEAN'}
     )
 LIMIT 5;
@@ -92,7 +92,7 @@ COPY (
     SELECT '{"a":42}' AS line
     UNION ALL
     SELECT '{"b":[1,2,3]}' AS line
-) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_004_1_birds_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
+) TO '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_004_1_birds_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
 
 # DOCS_TEST_RAW
 #| FROM read_json_objects('data.json', format = 'unstructured');
@@ -100,7 +100,7 @@ COPY (
 # DOCS_TEST_BODY
 
 query
-FROM read_json_objects('/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_004_1_birds_json.json', format = 'unstructured');
+FROM read_json_objects('${__TEST_DIR__}/data_import_and_export_json_loading_json_example_004_1_birds_json.json', format = 'unstructured');
 ----
 json
 {"a":42}
@@ -113,7 +113,7 @@ COPY (
     SELECT '{"a":42}' AS line
     UNION ALL
     SELECT '{"b":[1,2,3]}' AS line
-) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_005_1_birds_nd_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
+) TO '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_005_1_birds_nd_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
 
 # DOCS_TEST_RAW
 #| FROM read_json_objects('data-nd.json', format = 'newline_delimited');
@@ -121,7 +121,7 @@ COPY (
 # DOCS_TEST_BODY
 
 query
-FROM read_json_objects('/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_005_1_birds_nd_json.json', format = 'newline_delimited');
+FROM read_json_objects('${__TEST_DIR__}/data_import_and_export_json_loading_json_example_005_1_birds_nd_json.json', format = 'newline_delimited');
 ----
 json
 {"a":42}
@@ -132,7 +132,7 @@ json
 statement ok
 COPY (
     SELECT '[{"a":42},{"b":[1,2,3]}]' AS line
-) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_006_1_birds_array_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
+) TO '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_006_1_birds_array_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
 
 # DOCS_TEST_RAW
 #| FROM read_json_objects('data-array.json', format = 'array');
@@ -140,7 +140,7 @@ COPY (
 # DOCS_TEST_BODY
 
 query
-FROM read_json_objects('/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_006_1_birds_array_json.json', format = 'array');
+FROM read_json_objects('${__TEST_DIR__}/data_import_and_export_json_loading_json_example_006_1_birds_array_json.json', format = 'array');
 ----
 json
 {"a":42}
@@ -151,12 +151,12 @@ json
 statement ok
 COPY (
     SELECT '{"a":42,"b":[1,2,3]}' AS line
-) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_007_1_birds1_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
+) TO '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_007_1_birds1_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
 
 statement ok
 COPY (
     SELECT '{"a":43,"b":[4,5,6],"c":3.3}' AS line
-) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_007_2_birds2_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
+) TO '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_007_2_birds2_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -170,7 +170,7 @@ COPY (
 query
 SELECT *
 FROM read_json(
-    ['/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_007_1_birds1_json.json', '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_007_2_birds2_json.json'],
+    ['${__TEST_DIR__}/data_import_and_export_json_loading_json_example_007_1_birds1_json.json', '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_007_2_birds2_json.json'],
     columns = {a: 'INTEGER', b: 'INTEGER[]', c: 'DOUBLE'}
 );
 ----
@@ -183,12 +183,12 @@ a	b	c
 statement ok
 COPY (
     SELECT '{"a":42,"b":[1,2,3]}' AS line
-) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_008_1_json_gz_1.json.gz' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '', COMPRESSION 'GZIP');
+) TO '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_008_1_json_gz_1.json.gz' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '', COMPRESSION 'GZIP');
 
 statement ok
 COPY (
     SELECT '{"a":43,"b":[4,5,6]}' AS line
-) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_008_1_json_gz_2.json.gz' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '', COMPRESSION 'GZIP');
+) TO '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_008_1_json_gz_2.json.gz' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '', COMPRESSION 'GZIP');
 
 # DOCS_TEST_RAW
 #| SELECT b, a FROM read_json('*.json.gz');
@@ -198,7 +198,7 @@ COPY (
 # DOCS_TEST_BODY
 
 query
-SELECT b, a FROM read_json('/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_008_1_json_gz_*.json.gz');
+SELECT b, a FROM read_json('${__TEST_DIR__}/data_import_and_export_json_loading_json_example_008_1_json_gz_*.json.gz');
 ----
 b	a
 {1,2,3}	42
@@ -206,7 +206,7 @@ b	a
 
 
 query
-SELECT b, a FROM '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_008_1_json_gz_*.json.gz';
+SELECT b, a FROM '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_008_1_json_gz_*.json.gz';
 ----
 b	a
 {1,2,3}	42
@@ -219,7 +219,7 @@ COPY (
     SELECT '{"a":42,"b":4.2}' AS line
     UNION ALL
     SELECT '{"a":43,"b":4.3}' AS line
-) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_009_1_birds_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
+) TO '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_009_1_birds_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -230,7 +230,7 @@ COPY (
 query
 SELECT
     *
-FROM read_json('/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_009_1_birds_json.json');
+FROM read_json('${__TEST_DIR__}/data_import_and_export_json_loading_json_example_009_1_birds_json.json');
 ----
 a	b
 42	4.2
@@ -243,7 +243,7 @@ COPY (
     SELECT '{"a":42,"b":[1,2,3]}' AS line
     UNION ALL
     SELECT '{"a":43,"b":[4,5,6]}' AS line
-) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_010_1_birds_records_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
+) TO '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_010_1_birds_records_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -253,7 +253,7 @@ COPY (
 
 query
 SELECT *
-FROM read_json('/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_010_1_birds_records_json.json');
+FROM read_json('${__TEST_DIR__}/data_import_and_export_json_loading_json_example_010_1_birds_records_json.json');
 ----
 a	b
 42	{1,2,3}
@@ -266,7 +266,7 @@ COPY (
     SELECT '{"a":42,"b":[1,2,3]}' AS line
     UNION ALL
     SELECT '{"a":43,"b":[4,5,6]}' AS line
-) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_015_1_birds_records_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
+) TO '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_015_1_birds_records_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -276,7 +276,7 @@ COPY (
 
 query
 SELECT *
-FROM read_json('/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_015_1_birds_records_json.json', records = false);
+FROM read_json('${__TEST_DIR__}/data_import_and_export_json_loading_json_example_015_1_birds_records_json.json', records = false);
 ----
 json
 (42,"{1,2,3}")
@@ -292,7 +292,7 @@ json
 
 statement ok
 COPY (SELECT * FROM range(5) r(i))
-TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_011_1_numbers_json.json' (ARRAY true);
+TO '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_011_1_numbers_json.json' (ARRAY true);
 
 # DOCS_TEST: example_012
 
@@ -303,7 +303,7 @@ COPY (SELECT * FROM (VALUES
     (2),
     (3),
     (4)
-) AS t("i")) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_012_1_numbers_json.json' (FORMAT json, ARRAY true);
+) AS t("i")) TO '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_012_1_numbers_json.json' (FORMAT json, ARRAY true);
 
 # DOCS_TEST_RAW
 #| CREATE TABLE numbers (i BIGINT);
@@ -316,7 +316,7 @@ statement ok
 CREATE TABLE numbers (i BIGINT);
 
 statement ok
-COPY numbers FROM '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_012_1_numbers_json.json' (ARRAY true);
+COPY numbers FROM '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_012_1_numbers_json.json' (ARRAY true);
 
 # DOCS_TEST: example_013
 
@@ -333,7 +333,7 @@ COPY (SELECT * FROM (VALUES
     (2),
     (3),
     (4)
-) AS t("i")) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_013_1_numbers_json.json' (FORMAT json);
+) AS t("i")) TO '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_013_1_numbers_json.json' (FORMAT json);
 
 # DOCS_TEST_RAW
 #| CREATE TABLE numbers (i BIGINT);
@@ -346,7 +346,7 @@ statement ok
 CREATE TABLE numbers (i BIGINT);
 
 statement ok
-COPY numbers FROM '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_013_1_numbers_json.json' (AUTO_DETECT true);
+COPY numbers FROM '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_013_1_numbers_json.json' (AUTO_DETECT true);
 
 # DOCS_TEST: example_014
 
@@ -363,7 +363,7 @@ COPY (SELECT * FROM (VALUES
     (2),
     (3),
     (4)
-) AS t("i")) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_014_1_numbers_json.json' (FORMAT json);
+) AS t("i")) TO '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_014_1_numbers_json.json' (FORMAT json);
 
 # DOCS_TEST_RAW
 #| CREATE TABLE numbers AS
@@ -373,4 +373,4 @@ COPY (SELECT * FROM (VALUES
 
 statement ok
 CREATE TABLE numbers AS
-    FROM '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_014_1_numbers_json.json';
+    FROM '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_014_1_numbers_json.json';

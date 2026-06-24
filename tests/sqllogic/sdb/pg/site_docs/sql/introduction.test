@@ -71,7 +71,7 @@ VALUES ('1994-11-29', 'Hayward', 54, 37);
 statement ok
 COPY (SELECT * FROM (VALUES
     ('Oakland', 45, 58, 0.1, DATE '1994-11-30')
-) AS t("city", "temp_lo", "temp_hi", "prcp", "date")) TO '/tmp/${__DATABASE__}_sql_introduction_example_008_1_weather_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+) AS t("city", "temp_lo", "temp_hi", "prcp", "date")) TO '${__TEST_DIR__}/sql_introduction_example_008_1_weather_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| COPY weather
@@ -81,7 +81,7 @@ COPY (SELECT * FROM (VALUES
 
 statement ok
 COPY weather
-FROM '/tmp/${__DATABASE__}_sql_introduction_example_008_1_weather_csv.csv';
+FROM '${__TEST_DIR__}/sql_introduction_example_008_1_weather_csv.csv';
 
 # DOCS_TEST: example_009
 

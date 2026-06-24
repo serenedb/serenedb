@@ -33,7 +33,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (3, 30, 'fixture lineitem'),
     (4, 40, 'mock lineitem')
-) AS t("l_orderkey", "l_partkey", "l_comment")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_001_1_lineitem_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+) AS t("l_orderkey", "l_partkey", "l_comment")) TO '${__TEST_DIR__}/sql_statements_copy_index_example_001_1_lineitem_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| COPY lineitem FROM 'lineitem.csv';
@@ -41,7 +41,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-COPY lineitem FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_001_1_lineitem_csv.csv';
+COPY lineitem FROM '${__TEST_DIR__}/sql_statements_copy_index_example_001_1_lineitem_csv.csv';
 
 # DOCS_TEST: example_002
 
@@ -49,7 +49,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (3, 30, 'fixture lineitem'),
     (4, 40, 'mock lineitem')
-) AS t("l_orderkey", "l_partkey", "l_comment")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_002_1_lineitem_csv.csv' (FORMAT CSV, HEADER false, DELIMITER '|');
+) AS t("l_orderkey", "l_partkey", "l_comment")) TO '${__TEST_DIR__}/sql_statements_copy_index_example_002_1_lineitem_csv.csv' (FORMAT CSV, HEADER false, DELIMITER '|');
 
 # DOCS_TEST_RAW
 #| COPY lineitem FROM 'lineitem.csv' (DELIMITER '|');
@@ -57,7 +57,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-COPY lineitem FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_002_1_lineitem_csv.csv' (DELIMITER '|');
+COPY lineitem FROM '${__TEST_DIR__}/sql_statements_copy_index_example_002_1_lineitem_csv.csv' (DELIMITER '|');
 
 # DOCS_TEST: example_003
 
@@ -65,7 +65,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (3, 30, 'fixture lineitem'),
     (4, 40, 'mock lineitem')
-) AS t("l_orderkey", "l_partkey", "l_comment")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_003_1_lineitem_pq.pq' (FORMAT parquet);
+) AS t("l_orderkey", "l_partkey", "l_comment")) TO '${__TEST_DIR__}/sql_statements_copy_index_example_003_1_lineitem_pq.pq' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| COPY lineitem FROM 'lineitem.pq' (FORMAT parquet);
@@ -73,7 +73,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-COPY lineitem FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_003_1_lineitem_pq.pq' (FORMAT parquet);
+COPY lineitem FROM '${__TEST_DIR__}/sql_statements_copy_index_example_003_1_lineitem_pq.pq' (FORMAT parquet);
 
 # DOCS_TEST: example_004
 
@@ -81,7 +81,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (3, 30, 'fixture lineitem'),
     (4, 40, 'mock lineitem')
-) AS t("l_orderkey", "l_partkey", "l_comment")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_004_1_lineitem_json.json' (FORMAT json);
+) AS t("l_orderkey", "l_partkey", "l_comment")) TO '${__TEST_DIR__}/sql_statements_copy_index_example_004_1_lineitem_json.json' (FORMAT json);
 
 # DOCS_TEST_RAW
 #| COPY lineitem FROM 'lineitem.json' (FORMAT json, AUTO_DETECT true);
@@ -89,7 +89,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-COPY lineitem FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_004_1_lineitem_json.json' (FORMAT json, AUTO_DETECT true);
+COPY lineitem FROM '${__TEST_DIR__}/sql_statements_copy_index_example_004_1_lineitem_json.json' (FORMAT json, AUTO_DETECT true);
 
 # DOCS_TEST: example_005
 
@@ -97,7 +97,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (3, 30, 'fixture lineitem'),
     (4, 40, 'mock lineitem')
-) AS t("l_orderkey", "l_partkey", "l_comment")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_005_1_lineitem_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+) AS t("l_orderkey", "l_partkey", "l_comment")) TO '${__TEST_DIR__}/sql_statements_copy_index_example_005_1_lineitem_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| COPY lineitem FROM "lineitem.csv";
@@ -105,7 +105,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-COPY lineitem FROM "/tmp/${__DATABASE__}_sql_statements_copy_index_example_005_1_lineitem_csv.csv";
+COPY lineitem FROM "${__TEST_DIR__}/sql_statements_copy_index_example_005_1_lineitem_csv.csv";
 
 # DOCS_TEST: example_007
 
@@ -115,7 +115,7 @@ COPY lineitem FROM "/tmp/${__DATABASE__}_sql_statements_copy_index_example_005_1
 # DOCS_TEST_BODY
 
 statement ok
-COPY lineitem TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_007_1_lineitem_csv.csv' (FORMAT csv, DELIMITER '|', HEADER);
+COPY lineitem TO '${__TEST_DIR__}/sql_statements_copy_index_example_007_1_lineitem_csv.csv' (FORMAT csv, DELIMITER '|', HEADER);
 
 # DOCS_TEST: example_008
 
@@ -125,7 +125,7 @@ COPY lineitem TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_007_1_l
 # DOCS_TEST_BODY
 
 statement ok
-COPY lineitem TO "/tmp/${__DATABASE__}_sql_statements_copy_index_example_008_1_lineitem_csv.csv";
+COPY lineitem TO "${__TEST_DIR__}/sql_statements_copy_index_example_008_1_lineitem_csv.csv";
 
 # DOCS_TEST: example_010
 
@@ -135,7 +135,7 @@ COPY lineitem TO "/tmp/${__DATABASE__}_sql_statements_copy_index_example_008_1_l
 # DOCS_TEST_BODY
 
 statement ok
-COPY (SELECT l_orderkey, l_partkey FROM lineitem) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_010_1_lineitem_parquet.parquet' (COMPRESSION zstd);
+COPY (SELECT l_orderkey, l_partkey FROM lineitem) TO '${__TEST_DIR__}/sql_statements_copy_index_example_010_1_lineitem_parquet.parquet' (COMPRESSION zstd);
 
 # DOCS_TEST: example_011
 
@@ -169,7 +169,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha'),
     (2, 'beta')
-) AS t("id", "name")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_013_1_test_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+) AS t("id", "name")) TO '${__TEST_DIR__}/sql_statements_copy_index_example_013_1_test_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| COPY test FROM 'test.csv';
@@ -177,7 +177,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-COPY test FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_013_1_test_csv.csv';
+COPY test FROM '${__TEST_DIR__}/sql_statements_copy_index_example_013_1_test_csv.csv';
 
 # DOCS_TEST: example_014
 
@@ -185,7 +185,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     ('product'),
     ('engineering')
-) AS t("name")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_014_1_categories_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("name")) TO '${__TEST_DIR__}/sql_statements_copy_index_example_014_1_categories_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| COPY category FROM 'categories.csv' (HEADER);
@@ -193,7 +193,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-COPY category FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_014_1_categories_csv.csv' (HEADER);
+COPY category FROM '${__TEST_DIR__}/sql_statements_copy_index_example_014_1_categories_csv.csv' (HEADER);
 
 # DOCS_TEST: example_015
 
@@ -201,7 +201,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (3, 30, 'fixture lineitem'),
     (4, 40, 'mock lineitem')
-) AS t("l_orderkey", "l_partkey", "l_comment")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_015_1_lineitem_tbl.tbl' (FORMAT CSV, HEADER false, DELIMITER '|');
+) AS t("l_orderkey", "l_partkey", "l_comment")) TO '${__TEST_DIR__}/sql_statements_copy_index_example_015_1_lineitem_tbl.tbl' (FORMAT CSV, HEADER false, DELIMITER '|');
 
 # DOCS_TEST_RAW
 #| COPY lineitem FROM 'lineitem.tbl' (DELIMITER '|');
@@ -209,7 +209,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-COPY lineitem FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_015_1_lineitem_tbl.tbl' (DELIMITER '|');
+COPY lineitem FROM '${__TEST_DIR__}/sql_statements_copy_index_example_015_1_lineitem_tbl.tbl' (DELIMITER '|');
 
 # DOCS_TEST: example_016
 
@@ -217,7 +217,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (3, 30, 'fixture lineitem'),
     (4, 40, 'mock lineitem')
-) AS t("l_orderkey", "l_partkey", "l_comment")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_016_1_lineitem_tbl.tbl' (FORMAT CSV, HEADER false, DELIMITER '|');
+) AS t("l_orderkey", "l_partkey", "l_comment")) TO '${__TEST_DIR__}/sql_statements_copy_index_example_016_1_lineitem_tbl.tbl' (FORMAT CSV, HEADER false, DELIMITER '|');
 
 # DOCS_TEST_RAW
 #| COPY lineitem FROM 'lineitem.tbl' (AUTO_DETECT true);
@@ -225,7 +225,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-COPY lineitem FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_016_1_lineitem_tbl.tbl' (AUTO_DETECT true);
+COPY lineitem FROM '${__TEST_DIR__}/sql_statements_copy_index_example_016_1_lineitem_tbl.tbl' (AUTO_DETECT true);
 
 # DOCS_TEST: example_017
 
@@ -233,7 +233,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     ('product'),
     ('engineering')
-) AS t("name")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_017_1_names_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+) AS t("name")) TO '${__TEST_DIR__}/sql_statements_copy_index_example_017_1_names_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| COPY category(name) FROM 'names.csv';
@@ -241,7 +241,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-COPY category(name) FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_017_1_names_csv.csv';
+COPY category(name) FROM '${__TEST_DIR__}/sql_statements_copy_index_example_017_1_names_csv.csv';
 
 # DOCS_TEST: example_018
 
@@ -249,7 +249,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (3, 30, 'fixture lineitem'),
     (4, 40, 'mock lineitem')
-) AS t("l_orderkey", "l_partkey", "l_comment")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_018_1_lineitem_parquet.parquet' (FORMAT parquet);
+) AS t("l_orderkey", "l_partkey", "l_comment")) TO '${__TEST_DIR__}/sql_statements_copy_index_example_018_1_lineitem_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| COPY lineitem FROM 'lineitem.parquet' (FORMAT parquet);
@@ -257,7 +257,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-COPY lineitem FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_018_1_lineitem_parquet.parquet' (FORMAT parquet);
+COPY lineitem FROM '${__TEST_DIR__}/sql_statements_copy_index_example_018_1_lineitem_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST: example_019
 
@@ -265,7 +265,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (3, 30, 'fixture lineitem'),
     (4, 40, 'mock lineitem')
-) AS t("l_orderkey", "l_partkey", "l_comment")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_019_1_lineitem_ndjson.ndjson' (FORMAT json);
+) AS t("l_orderkey", "l_partkey", "l_comment")) TO '${__TEST_DIR__}/sql_statements_copy_index_example_019_1_lineitem_ndjson.ndjson' (FORMAT json);
 
 # DOCS_TEST_RAW
 #| COPY lineitem FROM 'lineitem.ndjson' (FORMAT json);
@@ -273,7 +273,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-COPY lineitem FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_019_1_lineitem_ndjson.ndjson' (FORMAT json);
+COPY lineitem FROM '${__TEST_DIR__}/sql_statements_copy_index_example_019_1_lineitem_ndjson.ndjson' (FORMAT json);
 
 # DOCS_TEST: example_020
 
@@ -281,7 +281,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (3, 30, 'fixture lineitem'),
     (4, 40, 'mock lineitem')
-) AS t("l_orderkey", "l_partkey", "l_comment")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_020_1_lineitem_json.json' (FORMAT json, ARRAY true);
+) AS t("l_orderkey", "l_partkey", "l_comment")) TO '${__TEST_DIR__}/sql_statements_copy_index_example_020_1_lineitem_json.json' (FORMAT json, ARRAY true);
 
 # DOCS_TEST_RAW
 #| COPY lineitem FROM 'lineitem.json' (FORMAT json, ARRAY true);
@@ -289,7 +289,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-COPY lineitem FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_020_1_lineitem_json.json' (FORMAT json, ARRAY true);
+COPY lineitem FROM '${__TEST_DIR__}/sql_statements_copy_index_example_020_1_lineitem_json.json' (FORMAT json, ARRAY true);
 
 # DOCS_TEST: example_021
 
@@ -297,7 +297,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (3, 30, 'fixture lineitem'),
     (4, 40, 'mock lineitem')
-) AS t("l_orderkey", "l_partkey", "l_comment")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_021_1_lineitem_json.json' (FORMAT json);
+) AS t("l_orderkey", "l_partkey", "l_comment")) TO '${__TEST_DIR__}/sql_statements_copy_index_example_021_1_lineitem_json.json' (FORMAT json);
 
 # DOCS_TEST_RAW
 #| SET VARIABLE source_file = 'lineitem.json';
@@ -307,7 +307,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-SET VARIABLE source_file = '/tmp/${__DATABASE__}_sql_statements_copy_index_example_021_1_lineitem_json.json';
+SET VARIABLE source_file = '${__TEST_DIR__}/sql_statements_copy_index_example_021_1_lineitem_json.json';
 
 statement ok
 COPY lineitem FROM (getvariable('source_file'));
@@ -318,7 +318,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (3, 30, 'fixture lineitem'),
     (4, 40, 'mock lineitem')
-) AS t("l_orderkey", "l_partkey", "l_comment")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_022_1_lineitem_json.json' (FORMAT json);
+) AS t("l_orderkey", "l_partkey", "l_comment")) TO '${__TEST_DIR__}/sql_statements_copy_index_example_022_1_lineitem_json.json' (FORMAT json);
 
 # DOCS_TEST_RAW
 #| PREPARE v1 AS COPY lineitem FROM ($1);
@@ -335,7 +335,7 @@ PREPARE copy_from_param AS COPY lineitem FROM ($1);
 control substitution on
 
 statement ok
-EXECUTE copy_from_param('/tmp/${__DATABASE__}_sql_statements_copy_index_example_022_1_lineitem_json.json');
+EXECUTE copy_from_param('${__TEST_DIR__}/sql_statements_copy_index_example_022_1_lineitem_json.json');
 
 # DOCS_TEST: example_023
 
@@ -368,7 +368,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (8, 'fixture', 1.5, 2.5, 'delta', 4, 13, 23, 33, 30, 400, 4000),
     (9, 'sample', 3.5, 4.5, 'epsilon', 5, 14, 24, 34, 40, 500, 5000)
-) AS t("id", "name", "col1", "col2", "Some Column Name", "i", "a", "b", "c", "number", "number1", "number2")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_023_1_tbl_csv.csv' (FORMAT CSV, HEADER true, DELIMITER '|');
+) AS t("id", "name", "col1", "col2", "Some Column Name", "i", "a", "b", "c", "number", "number1", "number2")) TO '${__TEST_DIR__}/sql_statements_copy_index_example_023_1_tbl_csv.csv' (FORMAT CSV, HEADER true, DELIMITER '|');
 
 # DOCS_TEST_RAW
 #| COPY tbl FROM 'tbl.csv' WITH DELIMITER '|' CSV HEADER;
@@ -376,7 +376,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-COPY tbl FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_023_1_tbl_csv.csv' WITH DELIMITER '|' CSV HEADER;
+COPY tbl FROM '${__TEST_DIR__}/sql_statements_copy_index_example_023_1_tbl_csv.csv' WITH DELIMITER '|' CSV HEADER;
 
 # DOCS_TEST: example_024
 
@@ -386,7 +386,7 @@ COPY tbl FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_023_1_tbl_
 # DOCS_TEST_BODY
 
 statement ok
-COPY lineitem TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_024_1_lineitem_csv.csv';
+COPY lineitem TO '${__TEST_DIR__}/sql_statements_copy_index_example_024_1_lineitem_csv.csv';
 
 # DOCS_TEST: example_025
 
@@ -396,7 +396,7 @@ COPY lineitem TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_024_1_l
 # DOCS_TEST_BODY
 
 statement ok
-COPY lineitem TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_025_1_lineitem_tbl.tbl' (DELIMITER '|');
+COPY lineitem TO '${__TEST_DIR__}/sql_statements_copy_index_example_025_1_lineitem_tbl.tbl' (DELIMITER '|');
 
 # DOCS_TEST: example_026
 
@@ -408,7 +408,7 @@ COPY lineitem TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_025_1_l
 control substitution off
 
 statement ok
-COPY lineitem TO '/tmp/copy_index_example_026_lineitem.tsv' (DELIMITER '\t', HEADER false);
+COPY lineitem TO '${__TEST_DIR__}/copy_index_example_026_lineitem.tsv' (DELIMITER '\t', HEADER false);
 
 control substitution on
 
@@ -420,7 +420,7 @@ control substitution on
 # DOCS_TEST_BODY
 
 statement ok
-COPY lineitem(l_orderkey) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_027_1_orderkey_tbl.tbl' (DELIMITER '|');
+COPY lineitem(l_orderkey) TO '${__TEST_DIR__}/sql_statements_copy_index_example_027_1_orderkey_tbl.tbl' (DELIMITER '|');
 
 # DOCS_TEST: example_028
 
@@ -430,7 +430,7 @@ COPY lineitem(l_orderkey) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_exa
 # DOCS_TEST_BODY
 
 statement ok
-COPY (SELECT 42 AS a, 'hello' AS b) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_028_1_query_csv.csv' (DELIMITER ',');
+COPY (SELECT 42 AS a, 'hello' AS b) TO '${__TEST_DIR__}/sql_statements_copy_index_example_028_1_query_csv.csv' (DELIMITER ',');
 
 # DOCS_TEST: example_029
 
@@ -440,7 +440,7 @@ COPY (SELECT 42 AS a, 'hello' AS b) TO '/tmp/${__DATABASE__}_sql_statements_copy
 # DOCS_TEST_BODY
 
 statement ok
-COPY (SELECT 42 AS a, 'hello' AS b) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_029_1_query_parquet.parquet' (FORMAT parquet);
+COPY (SELECT 42 AS a, 'hello' AS b) TO '${__TEST_DIR__}/sql_statements_copy_index_example_029_1_query_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST: example_030
 
@@ -450,7 +450,7 @@ COPY (SELECT 42 AS a, 'hello' AS b) TO '/tmp/${__DATABASE__}_sql_statements_copy
 # DOCS_TEST_BODY
 
 statement ok
-COPY (SELECT 42 AS a, 'hello' AS b) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_030_1_query_ndjson.ndjson' (FORMAT json);
+COPY (SELECT 42 AS a, 'hello' AS b) TO '${__TEST_DIR__}/sql_statements_copy_index_example_030_1_query_ndjson.ndjson' (FORMAT json);
 
 # DOCS_TEST: example_031
 
@@ -460,7 +460,7 @@ COPY (SELECT 42 AS a, 'hello' AS b) TO '/tmp/${__DATABASE__}_sql_statements_copy
 # DOCS_TEST_BODY
 
 statement ok
-COPY (SELECT 42 AS a, 'hello' AS b) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_031_1_query_json.json' (FORMAT json, ARRAY true);
+COPY (SELECT 42 AS a, 'hello' AS b) TO '${__TEST_DIR__}/sql_statements_copy_index_example_031_1_query_json.json' (FORMAT json, ARRAY true);
 
 # DOCS_TEST: example_032
 
@@ -470,7 +470,7 @@ COPY (SELECT 42 AS a, 'hello' AS b) TO '/tmp/${__DATABASE__}_sql_statements_copy
 # DOCS_TEST_BODY
 
 statement ok
-COPY (SELECT l_orderkey, l_comment FROM lineitem) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_032_1_lineitem_part_parquet.parquet' (RETURN_STATS);
+COPY (SELECT l_orderkey, l_comment FROM lineitem) TO '${__TEST_DIR__}/sql_statements_copy_index_example_032_1_lineitem_part_parquet.parquet' (RETURN_STATS);
 
 # DOCS_TEST: example_033
 
@@ -482,7 +482,7 @@ COPY (SELECT l_orderkey, l_comment FROM lineitem) TO '/tmp/${__DATABASE__}_sql_s
 # DOCS_TEST_BODY
 
 statement ok
-SET VARIABLE target_file = '/tmp/${__DATABASE__}_sql_statements_copy_index_example_033_1_target_file_parquet.parquet';
+SET VARIABLE target_file = '${__TEST_DIR__}/sql_statements_copy_index_example_033_1_target_file_parquet.parquet';
 
 statement ok
 COPY (SELECT 'hello world') TO (getvariable('target_file'));
@@ -504,7 +504,7 @@ PREPARE copy_to_param AS COPY (SELECT 42 AS i) TO $1;
 control substitution on
 
 statement ok
-EXECUTE copy_to_param('/tmp/${__DATABASE__}_sql_statements_copy_index_example_034_1_file_csv.csv');
+EXECUTE copy_to_param('${__TEST_DIR__}/sql_statements_copy_index_example_034_1_file_csv.csv');
 
 # DOCS_TEST: example_035
 
@@ -519,7 +519,7 @@ statement ok
 SET VARIABLE my_format = 'parquet';
 
 statement ok
-COPY (SELECT 42 AS i) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_035_file.parquet' (FORMAT getvariable('my_format'));
+COPY (SELECT 42 AS i) TO '${__TEST_DIR__}/sql_statements_copy_index_example_035_file.parquet' (FORMAT getvariable('my_format'));
 
 # DOCS_TEST: example_036
 
@@ -529,7 +529,7 @@ COPY (SELECT 42 AS i) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example
 # DOCS_TEST_BODY
 
 statement ok
-COPY (SELECT 42 AS x, 84 AS y) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_036_1_out_csv.csv' WITH DELIMITER '|' CSV HEADER;
+COPY (SELECT 42 AS x, 84 AS y) TO '${__TEST_DIR__}/sql_statements_copy_index_example_036_1_out_csv.csv' WITH DELIMITER '|' CSV HEADER;
 
 # DOCS_TEST: example_039
 
@@ -544,7 +544,7 @@ COPY (SELECT 42 AS x, 84 AS y) TO '/tmp/${__DATABASE__}_sql_statements_copy_inde
 statement ok
 COPY
     (SELECT 128 AS i)
-    TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_039_1_my_parquet.parquet'
+    TO '${__TEST_DIR__}/sql_statements_copy_index_example_039_1_my_parquet.parquet'
     (FIELD_IDS 'auto');
 
 # DOCS_TEST: example_040
@@ -560,7 +560,7 @@ COPY
 statement ok
 COPY
     (SELECT 128 AS i)
-    TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_040_1_my_parquet.parquet'
+    TO '${__TEST_DIR__}/sql_statements_copy_index_example_040_1_my_parquet.parquet'
     (FIELD_IDS {i: 42});
 
 # DOCS_TEST: example_041
@@ -576,7 +576,7 @@ COPY
 statement ok
 COPY
     (SELECT 128 AS i, 256 AS j)
-    TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_041_1_my_parquet.parquet'
+    TO '${__TEST_DIR__}/sql_statements_copy_index_example_041_1_my_parquet.parquet'
     (FIELD_IDS {i: 42, j: 43});
 
 # DOCS_TEST: example_042
@@ -592,7 +592,7 @@ COPY
 statement ok
 COPY
     (SELECT {i: 128} AS my_struct)
-    TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_042_1_my_parquet.parquet'
+    TO '${__TEST_DIR__}/sql_statements_copy_index_example_042_1_my_parquet.parquet'
     (FIELD_IDS {my_struct: {__duckdb_field_id: 42, i: 43}});
 
 # DOCS_TEST: example_043
@@ -608,7 +608,7 @@ COPY
 statement ok
 COPY
     (SELECT [128, 256] AS my_list)
-    TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_043_1_my_parquet.parquet'
+    TO '${__TEST_DIR__}/sql_statements_copy_index_example_043_1_my_parquet.parquet'
     (FIELD_IDS {my_list: {__duckdb_field_id: 42, element: 43}});
 
 # DOCS_TEST: example_044
@@ -624,7 +624,7 @@ COPY
 statement ok
 COPY
     (SELECT MAP {'key1' : 128, 'key2': 256} my_map)
-    TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_044_1_my_parquet.parquet'
+    TO '${__TEST_DIR__}/sql_statements_copy_index_example_044_1_my_parquet.parquet'
     (FIELD_IDS {my_map: {__duckdb_field_id: 42, key: 43, value: 44}});
 
 # DOCS_TEST: example_045
@@ -635,7 +635,7 @@ COPY
 # DOCS_TEST_BODY
 
 statement ok
-COPY (SELECT 'HELLO!' AS hello) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_045_1_hello_json.json';
+COPY (SELECT 'HELLO!' AS hello) TO '${__TEST_DIR__}/sql_statements_copy_index_example_045_1_hello_json.json';
 
 # DOCS_TEST: example_046
 
@@ -645,7 +645,7 @@ COPY (SELECT 'HELLO!' AS hello) TO '/tmp/${__DATABASE__}_sql_statements_copy_ind
 # DOCS_TEST_BODY
 
 statement ok
-COPY (SELECT [1, 2, 3] AS num_list) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_046_1_numbers_json.json';
+COPY (SELECT [1, 2, 3] AS num_list) TO '${__TEST_DIR__}/sql_statements_copy_index_example_046_1_numbers_json.json';
 
 # DOCS_TEST: example_047
 
@@ -655,7 +655,7 @@ COPY (SELECT [1, 2, 3] AS num_list) TO '/tmp/${__DATABASE__}_sql_statements_copy
 # DOCS_TEST_BODY
 
 statement ok
-COPY (SELECT 'gzip_explicit' AS compression_type) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_047_1_explicit_compression_json.json' (FORMAT json, COMPRESSION 'GZIP');
+COPY (SELECT 'gzip_explicit' AS compression_type) TO '${__TEST_DIR__}/sql_statements_copy_index_example_047_1_explicit_compression_json.json' (FORMAT json, COMPRESSION 'GZIP');
 
 # DOCS_TEST: example_048
 
@@ -671,7 +671,7 @@ statement ok
 COPY (SELECT 1 AS id, 'Alice' AS name, [1, 2, 3] AS numbers
       UNION ALL
       SELECT 2, 'Bob', [4, 5, 6] AS numbers)
-TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_048_1_array_true_json.json' (FORMAT json, ARRAY true);
+TO '${__TEST_DIR__}/sql_statements_copy_index_example_048_1_array_true_json.json' (FORMAT json, ARRAY true);
 
 # DOCS_TEST: example_049
 
@@ -687,7 +687,7 @@ statement ok
 COPY (SELECT 1 AS id, 'Alice' AS name, [1, 2, 3] AS numbers
       UNION ALL
       SELECT 2, 'Bob', [4, 5, 6] AS numbers)
-TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_049_1_array_false_json.json' (FORMAT json, ARRAY false);
+TO '${__TEST_DIR__}/sql_statements_copy_index_example_049_1_array_false_json.json' (FORMAT json, ARRAY false);
 
 # DOCS_TEST: example_050
 
@@ -697,7 +697,7 @@ TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_049_1_array_false_jso
 # DOCS_TEST_BODY
 
 statement ok
-COPY (select 'foo'::BLOB) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_050_1_blob_output_blob.blob' (FORMAT BLOB);
+COPY (select 'foo'::BLOB) TO '${__TEST_DIR__}/sql_statements_copy_index_example_050_1_blob_output_blob.blob' (FORMAT BLOB);
 
 # DOCS_TEST: example_051
 
@@ -707,7 +707,7 @@ COPY (select 'foo'::BLOB) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_exa
 # DOCS_TEST_BODY
 
 statement ok
-COPY (select 'foo'::BLOB) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_051_1_blob_output_gzip_blob.blob' (FORMAT BLOB, COMPRESSION 'GZIP');
+COPY (select 'foo'::BLOB) TO '${__TEST_DIR__}/sql_statements_copy_index_example_051_1_blob_output_gzip_blob.blob' (FORMAT BLOB, COMPRESSION 'GZIP');
 
 # DOCS_TEST: example_052
 

@@ -26,7 +26,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_cloudflare_r2_import_example_002_1_file.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/cookbook_network_cloud_storage_cloudflare_r2_import_example_002_1_file.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| SELECT * FROM read_parquet('r2://⟨r2-bucket-name⟩/⟨file⟩');
@@ -34,7 +34,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT * FROM read_parquet('/tmp/${__DATABASE__}_cookbook_network_cloud_storage_cloudflare_r2_import_example_002_1_file.parquet');
+SELECT * FROM read_parquet('${__TEST_DIR__}/cookbook_network_cloud_storage_cloudflare_r2_import_example_002_1_file.parquet');
 ----
 id	name	value
 1	alpha	10

@@ -6,7 +6,7 @@ statement ok
 DETACH IF EXISTS my_database;
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_sql_statements_show_example_001_my.duckdb' AS my_database;
+ATTACH '${__TEST_DIR__}/sql_statements_show_example_001_my.duckdb' AS my_database;
 
 # DOCS_TEST_BODY
 

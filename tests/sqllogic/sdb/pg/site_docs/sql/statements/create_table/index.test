@@ -77,7 +77,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_sql_statements_create_table_index_example_006_1_file_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/sql_statements_create_table_index_example_006_1_file_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| CREATE TABLE t1 AS
@@ -89,7 +89,7 @@ COPY (SELECT * FROM (VALUES
 statement ok
 CREATE TABLE t1 AS
     SELECT *
-    FROM read_csv('/tmp/${__DATABASE__}_sql_statements_create_table_index_example_006_1_file_csv.csv');
+    FROM read_csv('${__TEST_DIR__}/sql_statements_create_table_index_example_006_1_file_csv.csv');
 
 # DOCS_TEST: example_007
 
@@ -103,7 +103,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_sql_statements_create_table_index_example_007_1_file_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/sql_statements_create_table_index_example_007_1_file_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| CREATE TABLE t1 AS
@@ -113,7 +113,7 @@ COPY (SELECT * FROM (VALUES
 
 statement ok
 CREATE TABLE t1 AS
-    FROM read_csv('/tmp/${__DATABASE__}_sql_statements_create_table_index_example_007_1_file_csv.csv');
+    FROM read_csv('${__TEST_DIR__}/sql_statements_create_table_index_example_007_1_file_csv.csv');
 
 # DOCS_TEST: example_008
 
@@ -153,7 +153,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_sql_statements_create_table_index_example_009_1_file_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/sql_statements_create_table_index_example_009_1_file_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| CREATE TEMP TABLE t1 AS
@@ -165,7 +165,7 @@ COPY (SELECT * FROM (VALUES
 statement ok
 CREATE TEMP TABLE t1 AS
     SELECT *
-    FROM read_csv('/tmp/${__DATABASE__}_sql_statements_create_table_index_example_009_1_file_csv.csv');
+    FROM read_csv('${__TEST_DIR__}/sql_statements_create_table_index_example_009_1_file_csv.csv');
 
 # DOCS_TEST: example_010
 
@@ -215,7 +215,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (DATE '2024-01-01', 'AA', 'New York, NY', 'Los Angeles, CA'),
     (DATE '2024-01-02', 'UA', 'San Francisco, CA', 'Seattle, WA')
-) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_sql_statements_create_table_index_example_014_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '${__TEST_DIR__}/sql_statements_create_table_index_example_014_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| CREATE TABLE flights AS
@@ -225,7 +225,7 @@ COPY (SELECT * FROM (VALUES
 
 statement ok
 CREATE TABLE flights AS
-    FROM '/tmp/${__DATABASE__}_sql_statements_create_table_index_example_014_1_flights_csv.csv';
+    FROM '${__TEST_DIR__}/sql_statements_create_table_index_example_014_1_flights_csv.csv';
 
 # DOCS_TEST: example_015
 
@@ -239,7 +239,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (DATE '2024-01-01', 'AA', 'New York, NY', 'Los Angeles, CA'),
     (DATE '2024-01-02', 'UA', 'San Francisco, CA', 'Seattle, WA')
-) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_sql_statements_create_table_index_example_015_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '${__TEST_DIR__}/sql_statements_create_table_index_example_015_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| CREATE OR REPLACE TABLE flights AS
@@ -249,7 +249,7 @@ COPY (SELECT * FROM (VALUES
 
 statement ok
 CREATE OR REPLACE TABLE flights AS
-    FROM '/tmp/${__DATABASE__}_sql_statements_create_table_index_example_015_1_flights_csv.csv';
+    FROM '${__TEST_DIR__}/sql_statements_create_table_index_example_015_1_flights_csv.csv';
 
 # DOCS_TEST: example_016
 

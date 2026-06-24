@@ -13,7 +13,7 @@ COPY (SELECT * FROM (VALUES
     ('GOOG', TIMESTAMP '2001-01-01 00:00:00', 1.0),
     ('GOOG', TIMESTAMP '2001-01-01 00:01:00', 2.0),
     ('GOOG', TIMESTAMP '2001-01-01 00:02:00', 3.0)
-) AS t("ticker", "when", "price")) TO '/tmp/${__DATABASE__}_cookbook_sql_features_asof_join_example_001_prices.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("ticker", "when", "price")) TO '${__TEST_DIR__}/cookbook_sql_features_asof_join_example_001_prices.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -26,7 +26,7 @@ COPY (SELECT * FROM (VALUES
     ('DATA', TIMESTAMP '2000-12-31 23:59:30', 6.65),
     ('DATA', TIMESTAMP '2001-01-01 00:00:30', 17.95),
     ('DATA', TIMESTAMP '2001-01-01 00:01:30', 18.37)
-) AS t("ticker", "when", "shares")) TO '/tmp/${__DATABASE__}_cookbook_sql_features_asof_join_example_001_holdings.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("ticker", "when", "shares")) TO '${__TEST_DIR__}/cookbook_sql_features_asof_join_example_001_holdings.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| CREATE TABLE prices AS FROM 'prices.csv';
@@ -36,10 +36,10 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TABLE prices AS FROM '/tmp/${__DATABASE__}_cookbook_sql_features_asof_join_example_001_prices.csv';
+CREATE TABLE prices AS FROM '${__TEST_DIR__}/cookbook_sql_features_asof_join_example_001_prices.csv';
 
 statement ok
-CREATE TABLE holdings AS FROM '/tmp/${__DATABASE__}_cookbook_sql_features_asof_join_example_001_holdings.csv';
+CREATE TABLE holdings AS FROM '${__TEST_DIR__}/cookbook_sql_features_asof_join_example_001_holdings.csv';
 
 # DOCS_TEST: example_002
 

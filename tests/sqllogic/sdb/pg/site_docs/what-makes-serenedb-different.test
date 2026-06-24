@@ -73,7 +73,7 @@ COPY (SELECT * FROM (VALUES
     (5, 'WALL-E',         'Animation',       8.1::DOUBLE),
     (6, 'Gladiator',      'Action',          8.2::DOUBLE)
 ) AS t(id, title, genre, vote_average))
-TO '/tmp/${__DATABASE__}_wmd_movies.parquet' (FORMAT parquet);
+TO '${__TEST_DIR__}/wmd_movies.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| SELECT genre, COUNT(*) AS films, ROUND(AVG(vote_average), 2) AS avg_rating
@@ -85,7 +85,7 @@ TO '/tmp/${__DATABASE__}_wmd_movies.parquet' (FORMAT parquet);
 
 query
 SELECT genre, COUNT(*) AS films, ROUND(AVG(vote_average), 2) AS avg_rating
-FROM read_parquet('/tmp/${__DATABASE__}_wmd_movies.parquet')
+FROM read_parquet('${__TEST_DIR__}/wmd_movies.parquet')
 GROUP BY genre
 ORDER BY films DESC, genre;
 ----

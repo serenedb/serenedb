@@ -263,7 +263,7 @@ statement ok
 DETACH IF EXISTS metadata_info_fixture;
 
 statement ok
-ATTACH OR REPLACE '/tmp/${__DATABASE__}_configuration_pragmas_example_023_metadata_info.db' AS metadata_info_fixture;
+ATTACH OR REPLACE '${__TEST_DIR__}/configuration_pragmas_example_023_metadata_info.db' AS metadata_info_fixture;
 
 statement ok
 USE metadata_info_fixture;
@@ -494,7 +494,7 @@ SET disabled_optimizers = '';
 # DOCS_TEST_BODY
 
 statement ok
-SET log_query_path = '/tmp/${__DATABASE__}_configuration_pragmas_example_048_duckdb_log.json';
+SET log_query_path = '${__TEST_DIR__}/configuration_pragmas_example_048_duckdb_log.json';
 
 # DOCS_TEST: example_049
 

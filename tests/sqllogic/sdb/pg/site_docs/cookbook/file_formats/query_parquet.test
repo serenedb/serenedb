@@ -6,7 +6,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_file_formats_query_parquet_example_001_input.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/cookbook_file_formats_query_parquet_example_001_input.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| SELECT * FROM read_parquet('input.parquet');
@@ -14,7 +14,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT * FROM read_parquet('/tmp/${__DATABASE__}_cookbook_file_formats_query_parquet_example_001_input.parquet');
+SELECT * FROM read_parquet('${__TEST_DIR__}/cookbook_file_formats_query_parquet_example_001_input.parquet');
 ----
 id	name	value
 1	alpha	10

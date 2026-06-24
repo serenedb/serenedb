@@ -62,14 +62,14 @@ COPY (SELECT * FROM (VALUES
     (10, 'north'),
     (20, 'south'),
     (30, 'north')
-) AS t("amount", "region")) TO '/tmp/${__DATABASE__}_sql_data_types_enum_example_005_regions.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("amount", "region")) TO '${__TEST_DIR__}/sql_data_types_enum_example_005_regions.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 statement ok
 COPY (SELECT * FROM (VALUES
     (10, 'north'),
     (20, 'south'),
     (30, 'north')
-) AS t("amount", "region")) TO '/tmp/${__DATABASE__}_sql_data_types_enum_example_005_rows.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+) AS t("amount", "region")) TO '${__TEST_DIR__}/sql_data_types_enum_example_005_rows.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| CREATE TYPE region AS ENUM (SELECT region FROM 'sales_data.csv');
@@ -81,13 +81,13 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TYPE region AS ENUM (SELECT region FROM '/tmp/${__DATABASE__}_sql_data_types_enum_example_005_regions.csv');
+CREATE TYPE region AS ENUM (SELECT region FROM '${__TEST_DIR__}/sql_data_types_enum_example_005_regions.csv');
 
 statement ok
 CREATE TABLE sales_data (amount INTEGER, region region);
 
 statement ok
-COPY sales_data FROM '/tmp/${__DATABASE__}_sql_data_types_enum_example_005_rows.csv';
+COPY sales_data FROM '${__TEST_DIR__}/sql_data_types_enum_example_005_rows.csv';
 
 # DOCS_TEST: example_006
 

@@ -10,7 +10,7 @@ CREATE TABLE people (name VARCHAR, birth_date DATE);
 # DOCS_TEST: example_002
 
 statement ok
-COPY (SELECT * FROM (VALUES ('Pedro', '31'), ('Oogie Boogie', ' three')) AS t(a, b)) TO '/tmp/${__DATABASE__}_reading_faulty_csv_files_example_002_faulty.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+COPY (SELECT * FROM (VALUES ('Pedro', '31'), ('Oogie Boogie', ' three')) AS t(a, b)) TO '${__TEST_DIR__}/reading_faulty_csv_files_example_002_faulty.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| FROM read_csv('faulty.csv', columns = {'name': 'VARCHAR', 'age': 'INTEGER'});
@@ -18,12 +18,12 @@ COPY (SELECT * FROM (VALUES ('Pedro', '31'), ('Oogie Boogie', ' three')) AS t(a,
 # DOCS_TEST_BODY
 
 statement error Could not convert string
-FROM read_csv('/tmp/${__DATABASE__}_reading_faulty_csv_files_example_002_faulty.csv', columns = {'name': 'VARCHAR', 'age': 'INTEGER'});
+FROM read_csv('${__TEST_DIR__}/reading_faulty_csv_files_example_002_faulty.csv', columns = {'name': 'VARCHAR', 'age': 'INTEGER'});
 
 # DOCS_TEST: example_003
 
 statement ok
-COPY (SELECT * FROM (VALUES ('Pedro', '31'), ('Oogie Boogie', ' three')) AS t(a, b)) TO '/tmp/${__DATABASE__}_reading_faulty_csv_files_example_003_faulty.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+COPY (SELECT * FROM (VALUES ('Pedro', '31'), ('Oogie Boogie', ' three')) AS t(a, b)) TO '${__TEST_DIR__}/reading_faulty_csv_files_example_003_faulty.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| FROM read_csv(
@@ -35,7 +35,7 @@ COPY (SELECT * FROM (VALUES ('Pedro', '31'), ('Oogie Boogie', ' three')) AS t(a,
 # DOCS_TEST_BODY
 
 query
-FROM read_csv('/tmp/${__DATABASE__}_reading_faulty_csv_files_example_003_faulty.csv', columns = {'name': 'VARCHAR', 'age': 'INTEGER'}, ignore_errors = true);
+FROM read_csv('${__TEST_DIR__}/reading_faulty_csv_files_example_003_faulty.csv', columns = {'name': 'VARCHAR', 'age': 'INTEGER'}, ignore_errors = true);
 ----
 name	age
 Pedro	31
@@ -43,7 +43,7 @@ Pedro	31
 # DOCS_TEST: example_004
 
 statement ok
-COPY (SELECT * FROM (VALUES ('Pedro', '31'), ('Oogie Boogie', ' three')) AS t(a, b)) TO '/tmp/${__DATABASE__}_reading_faulty_csv_files_example_004_faulty.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+COPY (SELECT * FROM (VALUES ('Pedro', '31'), ('Oogie Boogie', ' three')) AS t(a, b)) TO '${__TEST_DIR__}/reading_faulty_csv_files_example_004_faulty.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| SELECT name
@@ -52,7 +52,7 @@ COPY (SELECT * FROM (VALUES ('Pedro', '31'), ('Oogie Boogie', ' three')) AS t(a,
 # DOCS_TEST_BODY
 
 query
-SELECT name FROM read_csv('/tmp/${__DATABASE__}_reading_faulty_csv_files_example_004_faulty.csv', columns = {'name': 'VARCHAR', 'age': 'INTEGER'});
+SELECT name FROM read_csv('${__TEST_DIR__}/reading_faulty_csv_files_example_004_faulty.csv', columns = {'name': 'VARCHAR', 'age': 'INTEGER'});
 ----
 name
 Pedro
@@ -61,7 +61,7 @@ Oogie Boogie
 # DOCS_TEST: example_005
 
 statement ok
-COPY (SELECT * FROM (VALUES ('Pedro', '31'), ('Oogie Boogie', ' three')) AS t(a, b)) TO '/tmp/${__DATABASE__}_reading_faulty_csv_files_example_005_faulty.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+COPY (SELECT * FROM (VALUES ('Pedro', '31'), ('Oogie Boogie', ' three')) AS t(a, b)) TO '${__TEST_DIR__}/reading_faulty_csv_files_example_005_faulty.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| FROM read_csv(
@@ -73,7 +73,7 @@ COPY (SELECT * FROM (VALUES ('Pedro', '31'), ('Oogie Boogie', ' three')) AS t(a,
 # DOCS_TEST_BODY
 
 query
-FROM read_csv('/tmp/${__DATABASE__}_reading_faulty_csv_files_example_005_faulty.csv', columns = {'name': 'VARCHAR', 'age': 'INTEGER'}, store_rejects = true);
+FROM read_csv('${__TEST_DIR__}/reading_faulty_csv_files_example_005_faulty.csv', columns = {'name': 'VARCHAR', 'age': 'INTEGER'}, store_rejects = true);
 ----
 name	age
 Pedro	31
@@ -103,7 +103,7 @@ line	column_name
 # DOCS_TEST: example_008
 
 statement ok
-COPY (SELECT * FROM (VALUES ('Maria', '1990-01-01'), ('Pedro', 'The 90s')) AS t(a, b)) TO '/tmp/${__DATABASE__}_reading_faulty_csv_files_example_008_people.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+COPY (SELECT * FROM (VALUES ('Maria', '1990-01-01'), ('Pedro', 'The 90s')) AS t(a, b)) TO '${__TEST_DIR__}/reading_faulty_csv_files_example_008_people.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| FROM read_csv('people.csv', columns = {'name': 'VARCHAR', 'birth_date': 'DATE'});
@@ -111,4 +111,4 @@ COPY (SELECT * FROM (VALUES ('Maria', '1990-01-01'), ('Pedro', 'The 90s')) AS t(
 # DOCS_TEST_BODY
 
 statement error Could not convert string "The 90s" to 'DATE'
-FROM read_csv('/tmp/${__DATABASE__}_reading_faulty_csv_files_example_008_people.csv', columns = {'name': 'VARCHAR', 'birth_date': 'DATE'});
+FROM read_csv('${__TEST_DIR__}/reading_faulty_csv_files_example_008_people.csv', columns = {'name': 'VARCHAR', 'birth_date': 'DATE'});

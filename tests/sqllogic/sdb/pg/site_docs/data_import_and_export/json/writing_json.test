@@ -15,7 +15,7 @@ CREATE TABLE cities AS
     FROM (VALUES ('Amsterdam', 1), ('London', 2)) cities(name, id);
 
 statement ok
-COPY cities TO '/tmp/${__DATABASE__}_data_import_and_export_json_writing_json_example_001_cities.json';
+COPY cities TO '${__TEST_DIR__}/data_import_and_export_json_writing_json_example_001_cities.json';
 
 # DOCS_TEST: example_002
 
@@ -31,7 +31,7 @@ COPY cities TO '/tmp/${__DATABASE__}_data_import_and_export_json_writing_json_ex
 
 query
 SELECT unnest(string_split(rtrim(content, chr(10)), chr(10))) AS line
-FROM read_text('/tmp/${__DATABASE__}_data_import_and_export_json_writing_json_example_001_cities.json');
+FROM read_text('${__TEST_DIR__}/data_import_and_export_json_writing_json_example_001_cities.json');
 ----
 line
 {"name":"Amsterdam","id":1}

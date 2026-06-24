@@ -8,7 +8,7 @@ COPY (SELECT * FROM (VALUES
     (2, TIMESTAMP '2025-01-01 11:00:00', 'INFO',  'api',      'startup complete'),
     (3, TIMESTAMP '2025-01-01 12:00:00', 'ERROR', 'api',      'out of memory while indexing')
 ) AS t(id, timestamp, level, service, message))
-TO '/tmp/${__DATABASE__}_ext_logs.parquet' (FORMAT parquet);
+TO '${__TEST_DIR__}/ext_logs.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| CREATE VIEW logs AS
@@ -18,7 +18,7 @@ TO '/tmp/${__DATABASE__}_ext_logs.parquet' (FORMAT parquet);
 
 statement ok
 CREATE VIEW logs AS
-    SELECT * FROM read_parquet('/tmp/${__DATABASE__}_ext_logs.parquet');
+    SELECT * FROM read_parquet('${__TEST_DIR__}/ext_logs.parquet');
 
 # DOCS_TEST: example_002
 
@@ -28,7 +28,7 @@ COPY (SELECT * FROM (VALUES
     (2, 'INFO',  'api',      'startup complete'),
     (3, 'ERROR', 'api',      'out of memory while indexing')
 ) AS t(id, level, service, message))
-TO '/tmp/${__DATABASE__}_ext_logs.csv' (FORMAT csv, HEADER);
+TO '${__TEST_DIR__}/ext_logs.csv' (FORMAT csv, HEADER);
 
 # DOCS_TEST_RAW
 #| CREATE VIEW logs_csv AS
@@ -38,7 +38,7 @@ TO '/tmp/${__DATABASE__}_ext_logs.csv' (FORMAT csv, HEADER);
 
 statement ok
 CREATE VIEW logs_csv AS
-    SELECT * FROM read_csv('/tmp/${__DATABASE__}_ext_logs.csv');
+    SELECT * FROM read_csv('${__TEST_DIR__}/ext_logs.csv');
 
 # DOCS_TEST: example_003
 

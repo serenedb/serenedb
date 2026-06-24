@@ -6,7 +6,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_001_test.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_001_test.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -18,11 +18,11 @@ query
 SELECT * REPLACE (
     replace(
         file_name,
-        '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_001_test.parquet',
+        '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_001_test.parquet',
         'test.parquet'
     ) AS file_name
 )
-FROM parquet_metadata('/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_001_test.parquet');
+FROM parquet_metadata('${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_001_test.parquet');
 ----
 file_name	row_group_id	row_group_num_rows	row_group_num_columns	row_group_bytes	column_id	file_offset	num_values	path_in_schema	type	stats_min	stats_max	stats_null_count	stats_distinct_count	stats_min_value	stats_max_value	compression	encodings	index_page_offset	dictionary_page_offset	data_page_offset	total_compressed_size	total_uncompressed_size	key_value_metadata	bloom_filter_offset	bloom_filter_length	min_is_exact	max_is_exact	row_group_compressed_bytes	geo_bbox	geo_types
 test.parquet	0	2	3	<slt:ignore>	0	<slt:ignore>	2	id	INT32	1	2	0	NULL	1	2	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
@@ -35,13 +35,13 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_002_1_parquet_1.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_002_1_parquet_1.parquet' (FORMAT parquet);
 
 statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_002_1_parquet_2.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_002_1_parquet_2.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -53,11 +53,11 @@ query
 SELECT * REPLACE (
     replace(
         file_name,
-        '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_002_1_parquet_',
+        '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_002_1_parquet_',
         'data/file_'
     ) AS file_name
 )
-FROM parquet_metadata('/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_002_1_parquet_*.parquet')
+FROM parquet_metadata('${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_002_1_parquet_*.parquet')
 ORDER BY file_name, column_id;
 ----
 file_name	row_group_id	row_group_num_rows	row_group_num_columns	row_group_bytes	column_id	file_offset	num_values	path_in_schema	type	stats_min	stats_max	stats_null_count	stats_distinct_count	stats_min_value	stats_max_value	compression	encodings	index_page_offset	dictionary_page_offset	data_page_offset	total_compressed_size	total_uncompressed_size	key_value_metadata	bloom_filter_offset	bloom_filter_length	min_is_exact	max_is_exact	row_group_compressed_bytes	geo_bbox	geo_types
@@ -74,7 +74,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_003_1_test_parquet.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_003_1_test_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| DESCRIBE SELECT * FROM 'test.parquet';
@@ -82,7 +82,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-DESCRIBE SELECT * FROM '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_003_1_test_parquet.parquet';
+DESCRIBE SELECT * FROM '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_003_1_test_parquet.parquet';
 ----
 column_name	column_type	null	key	default	extra
 id	INTEGER	YES	NULL	NULL	NULL
@@ -95,7 +95,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_004_1_test_parquet.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_004_1_test_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -107,11 +107,11 @@ query
 SELECT * REPLACE (
     replace(
         file_name,
-        '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_004_1_test_parquet.parquet',
+        '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_004_1_test_parquet.parquet',
         'test.parquet'
     ) AS file_name
 )
-FROM parquet_schema('/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_004_1_test_parquet.parquet');
+FROM parquet_schema('${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_004_1_test_parquet.parquet');
 ----
 file_name	name	type	type_length	repetition_type	num_children	converted_type	scale	precision	field_id	logical_type	duckdb_type	column_id
 test.parquet	duckdb_schema	NULL	NULL	REQUIRED	3	NULL	NULL	NULL	NULL	NULL	NULL	0
@@ -125,7 +125,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_005_1_test_parquet.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_005_1_test_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -137,11 +137,11 @@ query
 SELECT * REPLACE (
     replace(
         file_name,
-        '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_005_1_test_parquet.parquet',
+        '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_005_1_test_parquet.parquet',
         'test.parquet'
     ) AS file_name
 )
-FROM parquet_file_metadata('/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_005_1_test_parquet.parquet');
+FROM parquet_file_metadata('${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_005_1_test_parquet.parquet');
 ----
 file_name	created_by	num_rows	num_row_groups	format_version	encryption_algorithm	footer_signing_key_metadata	file_size_bytes	footer_size	column_orders
 test.parquet	<slt:ignore>	2	1	1	NULL	NULL	<slt:ignore>	<slt:ignore>	{ColumnOrder(TYPE_ORDER=TypeDefinedOrder()),ColumnOrder(TYPE_ORDER=TypeDefinedOrder()),ColumnOrder(TYPE_ORDER=TypeDefinedOrder())}
@@ -153,7 +153,7 @@ COPY (
     SELECT
         42 AS number,
         true AS is_even
-) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_006_1_test_parquet.parquet' (
+) TO '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_006_1_test_parquet.parquet' (
     FORMAT parquet,
     KV_METADATA {
         number: 'Answer to life, universe, and everything',
@@ -171,12 +171,12 @@ query
 SELECT
     replace(
         file_name,
-        '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_006_1_test_parquet.parquet',
+        '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_006_1_test_parquet.parquet',
         'test.parquet'
     ) AS file_name,
     key,
     value
-FROM parquet_kv_metadata('/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_006_1_test_parquet.parquet')
+FROM parquet_kv_metadata('${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_006_1_test_parquet.parquet')
 ORDER BY key;
 ----
 file_name	key	value
@@ -189,7 +189,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_007_1_test_parquet.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_007_1_test_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| SELECT
@@ -205,7 +205,7 @@ SELECT
     len(parquet_metadata)    AS column_chunks,
     len(parquet_schema)      AS schema_elements,
     len(parquet_kv_metadata) AS kv_pairs
-FROM parquet_full_metadata('/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_007_1_test_parquet.parquet');
+FROM parquet_full_metadata('${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_007_1_test_parquet.parquet');
 ----
 column_chunks	schema_elements	kv_pairs
 3	4	0
@@ -216,7 +216,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_008_1_my_file_parquet.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_008_1_my_file_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| FROM parquet_bloom_probe('my_file.parquet', 'name', 'gamma');
@@ -227,12 +227,12 @@ query
 SELECT
     replace(
         file_name,
-        '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_008_1_my_file_parquet.parquet',
+        '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_008_1_my_file_parquet.parquet',
         'my_file.parquet'
     ) AS file_name,
     row_group_id,
     bloom_filter_excludes
-FROM parquet_bloom_probe('/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_008_1_my_file_parquet.parquet', 'name', 'gamma')
+FROM parquet_bloom_probe('${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_008_1_my_file_parquet.parquet', 'name', 'gamma')
 ORDER BY row_group_id;
 ----
 file_name	row_group_id	bloom_filter_excludes
@@ -244,7 +244,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_009_1_test_parquet.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_009_1_test_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| SELECT column_name, column_type
@@ -254,7 +254,7 @@ COPY (SELECT * FROM (VALUES
 
 query
 SELECT column_name, column_type
-FROM (DESCRIBE SELECT * FROM parquet_metadata('/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_009_1_test_parquet.parquet'));
+FROM (DESCRIBE SELECT * FROM parquet_metadata('${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_009_1_test_parquet.parquet'));
 ----
 column_name	column_type
 file_name	VARCHAR
@@ -295,7 +295,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_010_1_test_parquet.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_010_1_test_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| SELECT column_name, column_type
@@ -305,7 +305,7 @@ COPY (SELECT * FROM (VALUES
 
 query
 SELECT column_name, column_type
-FROM (DESCRIBE SELECT * FROM parquet_schema('/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_010_1_test_parquet.parquet'));
+FROM (DESCRIBE SELECT * FROM parquet_schema('${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_010_1_test_parquet.parquet'));
 ----
 column_name	column_type
 file_name	VARCHAR
@@ -328,7 +328,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_011_1_test_parquet.parquet' (FORMAT parquet);
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_011_1_test_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| SELECT column_name, column_type
@@ -338,7 +338,7 @@ COPY (SELECT * FROM (VALUES
 
 query
 SELECT column_name, column_type
-FROM (DESCRIBE SELECT * FROM parquet_file_metadata('/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_011_1_test_parquet.parquet'));
+FROM (DESCRIBE SELECT * FROM parquet_file_metadata('${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_011_1_test_parquet.parquet'));
 ----
 column_name	column_type
 file_name	VARCHAR
@@ -359,7 +359,7 @@ COPY (
     SELECT
         42 AS number,
         true AS is_even
-) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_012_1_test_parquet.parquet' (FORMAT parquet);
+) TO '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_012_1_test_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| SELECT column_name, column_type
@@ -369,7 +369,7 @@ COPY (
 
 query
 SELECT column_name, column_type
-FROM (DESCRIBE SELECT * FROM parquet_kv_metadata('/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_012_1_test_parquet.parquet'));
+FROM (DESCRIBE SELECT * FROM parquet_kv_metadata('${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_012_1_test_parquet.parquet'));
 ----
 column_name	column_type
 file_name	VARCHAR

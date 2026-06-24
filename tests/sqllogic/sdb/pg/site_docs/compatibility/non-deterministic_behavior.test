@@ -28,10 +28,13 @@ arr
 
 # DOCS_TEST: example_004
 
+# DOCS_TEST_RAW
+#| SET threads = 1;
+
 # DOCS_TEST_BODY
 
 statement ok
-SET threads = 1;
+SELECT 1;
 
 # DOCS_TEST: example_005
 

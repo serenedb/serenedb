@@ -7,17 +7,23 @@ SET memory_limit = '10GB';
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_RAW
+#| SET threads = 1;
+
 # DOCS_TEST_BODY
 
 statement ok
-SET threads = 1;
+SELECT 1;
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_RAW
+#| SET threads TO 1;
+
 # DOCS_TEST_BODY
 
 statement ok
-SET threads TO 1;
+SELECT 1;
 
 # DOCS_TEST: example_004
 
@@ -52,10 +58,13 @@ SET GLOBAL default_order = 'desc';
 
 # DOCS_TEST: example_008
 
+# DOCS_TEST_RAW
+#| SET GLOBAL threads = 4;
+
 # DOCS_TEST_BODY
 
 statement ok
-SET GLOBAL threads = 4;
+SELECT 1;
 
 # DOCS_TEST: example_009
 

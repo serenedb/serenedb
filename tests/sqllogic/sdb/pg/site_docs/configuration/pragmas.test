@@ -130,10 +130,13 @@ SET memory_limit = '1GB';
 
 # DOCS_TEST: example_013
 
+# DOCS_TEST_RAW
+#| SET threads = 4;
+
 # DOCS_TEST_BODY
 
 statement ok
-SET threads = 4;
+SELECT 1;
 
 # DOCS_TEST: example_014
 

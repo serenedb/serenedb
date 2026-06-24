@@ -1,9 +1,12 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_RAW
+#| SET threads = 4;
+
 # DOCS_TEST_BODY
 
 statement ok
-SET threads = 4;
+SELECT 1;
 
 # DOCS_TEST: example_002
 

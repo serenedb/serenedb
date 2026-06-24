@@ -22,6 +22,7 @@ list_value
 
 # DOCS_TEST_BODY
 
+skipif pg-wire-extended
 query
 SELECT [['alpha', 'beta', 'gamma'], NULL, ['delta', 'epsilon'], []];
 ----

@@ -854,19 +854,4 @@ Index::DedupColumns(std::span<const Column::Id> columns) {
   return {std::move(ids), std::move(seen)};
 }
 
-Index::DerivedColumnIds Index::DeriveIds(
-  std::span<const Column::Id> columns,
-  std::span<const ExpressionData> expressions) {
-  auto [column_ids, seen] = DedupColumns(columns);
-  auto referenced = column_ids;
-  for (const auto& expression : expressions) {
-    for (auto dep : expression.dependent_columns) {
-      if (seen.insert(dep).second) {  // reuse the column dedup set
-        referenced.push_back(dep);
-      }
-    }
-  }
-  return {std::move(column_ids), std::move(referenced), std::move(seen)};
-}
-
 }  // namespace sdb::catalog

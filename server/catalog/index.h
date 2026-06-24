@@ -129,10 +129,23 @@ class Index : public Object {
   static std::pair<std::vector<Column::Id>, containers::FlatHashSet<Column::Id>>
   DedupColumns(std::span<const Column::Id> columns);
   // One pass (single hash set): de-dup `columns` and append each expression's
-  // dependent columns.
-  static DerivedColumnIds DeriveIds(
-    std::span<const Column::Id> columns,
-    std::span<const ExpressionData> expressions);
+  // dependent columns. `expressions` is any range whose elements expose a
+  // `dependent_columns` member -- an ExpressionData range directly, or a
+  // projection onto one (e.g. inverted index keys onto their `.data`).
+  template<typename Expressions>
+  static DerivedColumnIds DeriveIds(std::span<const Column::Id> columns,
+                                    Expressions&& expressions) {
+    auto [column_ids, seen] = DedupColumns(columns);
+    auto referenced = column_ids;
+    for (const auto& expression : expressions) {
+      for (const auto dep : expression.dependent_columns) {
+        if (seen.emplace(dep).second) {  // reuse the column dedup set
+          referenced.push_back(dep);
+        }
+      }
+    }
+    return {std::move(column_ids), std::move(referenced), std::move(seen)};
+  }
 
   ObjectId _database_id;
   ObjectId _relation_id;

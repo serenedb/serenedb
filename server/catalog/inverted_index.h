@@ -25,6 +25,7 @@
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <vector>
@@ -191,7 +192,11 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
             id,
             relation_id,
             std::move(name),
-            DeriveFromKeys(columns, expression_keys),
+            DeriveIds(columns,
+                      std::views::transform(expression_keys,
+                                            [](const auto& key) -> const auto& {
+                                              return key.data;
+                                            })),
             ObjectType::InvertedIndex},
       _entries{std::move(entries)},
       _expression_keys{std::move(expression_keys)},
@@ -286,12 +291,6 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   }
 
  private:
-  // One pass: de-dup `columns` and append each expression key's dependent
-  // columns -> the base query surface.
-  static DerivedColumnIds DeriveFromKeys(
-    std::span<const Column::Id> columns,
-    std::span<const ExpressionKey> expression_keys);
-
   void BuildExprByFieldIdIndex();
   void BuildSerializedExprIndex();
   void BuildFieldLookupIndex();

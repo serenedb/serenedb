@@ -489,7 +489,7 @@ SET disabled_optimizers = '';
 # DOCS_TEST: example_048
 
 # DOCS_TEST_RAW
-#| SET log_query_path = '/tmp/serened_log/';
+#| SET log_query_path = '${__TEST_DIR__}/serened_log/';
 
 # DOCS_TEST_BODY
 

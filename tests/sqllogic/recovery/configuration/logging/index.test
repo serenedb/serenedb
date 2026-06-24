@@ -1,3 +1,5 @@
+control substitution on
+
 # DOCS_TEST: example_001
 
 # DOCS_TEST_BODY
@@ -108,12 +110,12 @@ success
 # DOCS_TEST_BODY
 
 statement ok
--- normalized: creates `/tmp/duckdb_log_contexts.csv` and `/tmp/duckdb_log_entries.csv`
-CALL enable_logging(storage_path = '/tmp');
+-- normalized: creates `${__TEST_DIR__}/duckdb_log_contexts.csv` and `${__TEST_DIR__}/duckdb_log_entries.csv`
+CALL enable_logging(storage_path = '${__TEST_DIR__}');
 
 query
--- denormalized: creates `/tmp/logs.csv`
-CALL enable_logging(storage_path = '/tmp/logs.csv');
+-- denormalized: creates `${__TEST_DIR__}/logs.csv`
+CALL enable_logging(storage_path = '${__TEST_DIR__}/logs.csv');
 ----
 success
 
@@ -149,7 +151,7 @@ success
 # DOCS_TEST_BODY
 
 query
-CALL enable_logging(storage_path = '/tmp/mylogs', storage_buffer_size = 0);
+CALL enable_logging(storage_path = '${__TEST_DIR__}/mylogs', storage_buffer_size = 0);
 ----
 success
 

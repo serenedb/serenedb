@@ -36,9 +36,6 @@
 namespace irs {
 namespace {
 
-// Per-dimension affine int8 scalar quantizer. Encodes
-// `code = round((v - offset) / scale) - 128`, reconstructs
-// `v ~= (code + 128) * scale + offset`.
 class ScalarQuantizerWriter final : public QuantizerWriter {
  public:
   explicit ScalarQuantizerWriter(uint32_t d) : _d{d} {}
@@ -85,8 +82,6 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
                     duckdb::CompressionType::COMPRESSION_AUTO,
                     /*hyperloglog=*/false);
 
-    // Scatter the encoded rows into a doc-aligned, zero-filled buffer; gaps
-    // (null / unassigned docs) stay zero and are never reranked.
     std::vector<int8_t> aligned(static_cast<size_t>(total_rows) * _d, 0);
     for (size_t i = 0; i < _docs.size(); ++i) {
       const uint64_t row = static_cast<uint64_t>(_docs[i]) - doc_limits::min();
@@ -135,10 +130,6 @@ std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(VectorQuantization quant,
 std::unique_ptr<QuantizerReader> MakeQuantizerReader(
   VectorQuantization /*quant*/, const ColumnReader& /*store*/,
   ReadContext& /*ctx*/) {
-  // Rerank mode (the default): SQ stats are not persisted, so approximate
-  // distances are unavailable and the query path reranks with exact fp32.
-  // SQ-only / PQ / AQ enable this by persisting their info and returning a
-  // concrete reader here.
   return nullptr;
 }
 

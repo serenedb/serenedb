@@ -46,8 +46,6 @@
 namespace irs {
 namespace {
 
-// Reads the full rows x d float matrix backing an ARRAY(FLOAT) column by
-// scanning its flat element child in STANDARD_VECTOR_SIZE batches.
 std::vector<float> ReadMatrix(const ColumnReader& child, uint64_t total,
                               ReadContext& ctx) {
   std::vector<float> data(total);
@@ -65,8 +63,6 @@ std::vector<float> ReadMatrix(const ColumnReader& child, uint64_t total,
   return data;
 }
 
-// Per-row validity of an ARRAY column (true == present). Empty fast path when
-// the column has no nulls.
 std::vector<bool> ReadValidity(const ColumnReader& vector_column, uint64_t rows,
                                ReadContext& ctx) {
   std::vector<bool> valid(rows, true);
@@ -125,8 +121,6 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
   const auto data = ReadMatrix(*child, rows * d, ctx);
   const auto valid = ReadValidity(vector_column, rows, ctx);
 
-  // Compact the valid rows into a contiguous training matrix and remember each
-  // compacted row's doc-id.
   std::vector<float> compact;
   std::vector<doc_id_t> compact_doc;
   compact.reserve(rows * d);
@@ -146,8 +140,6 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
 
   const uint32_t nlist = ResolveNlist(_info, valid_count);
 
-  // Train the codebook. Tiny segments collapse to a single mean centroid so we
-  // never feed SuperKMeans a degenerate problem.
   std::vector<float> centroids;
   std::vector<uint32_t> assign(valid_count, 0);
   const bool single_cluster = nlist <= 1 || valid_count < 4ull * nlist;
@@ -166,8 +158,6 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
   } else {
     out.nlist = nlist;
     skmeans::SuperKMeansConfig cfg;
-    // Single-threaded: avoids the omp_get_max_threads() path in the ctor and
-    // matches the OpenMP-disabled build.
     cfg.n_threads = 1;
     if (_info.train_sample != 0) {
       cfg.max_points_per_cluster =

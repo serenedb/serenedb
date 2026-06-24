@@ -42,6 +42,7 @@
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/format_utils.hpp"
+#include "iresearch/formats/ivf/ivf_writer.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/directory.hpp"
@@ -116,7 +117,7 @@ struct ColWriter::Impl {
     column_entries_by_id;
   std::vector<std::unique_ptr<NormColumnWriter>> norm_writers;
   sdb::containers::FlatHashMap<field_id, NormColumnWriter*> norm_by_id;
-  ColWriter::CommitHook commit_hook;
+  std::unique_ptr<IvfWriter> ivf;
   std::optional<ReadContext> commit_ctx;
 };
 
@@ -130,6 +131,7 @@ ColWriter::ColWriter(Directory& dir, std::string_view segment_name,
   _impl->column_options = column_options;
   _impl->norm_column_options = norm_column_options;
   _impl->filename = absl::StrCat(segment_name, ".", kColFormatExt);
+  _impl->ivf = std::make_unique<IvfWriter>(column_options);
 }
 
 void ColWriter::EnsureOut() {
@@ -206,8 +208,8 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
   return back;
 }
 
-void ColWriter::SetCommitHook(CommitHook hook) {
-  _impl->commit_hook = std::move(hook);
+std::unique_ptr<IvfWriter> ColWriter::TakeIvf() noexcept {
+  return std::move(_impl->ivf);
 }
 
 std::unique_ptr<ColumnReader> ColWriter::ReopenColumn(field_id id) const {
@@ -220,7 +222,7 @@ std::unique_ptr<ColumnReader> ColWriter::ReopenColumn(field_id id) const {
 
 ReadContext& ColWriter::CommitReadContext() noexcept {
   SDB_ASSERT(_impl->commit_ctx.has_value(),
-             "ColWriter::CommitReadContext: only valid during the commit hook");
+             "ColWriter::CommitReadContext: only valid during the IVF build");
   return *_impl->commit_ctx;
 }
 
@@ -263,7 +265,16 @@ void ColWriter::Commit(uint64_t target_row) {
     nw->PadTo(target_row);
     nw->Finalize();
   }
-  if (_impl->commit_hook) {
+  bool has_ivf = false;
+  if (_impl->column_options && *_impl->column_options) {
+    for (const auto& e : _impl->column_entries) {
+      if ((*_impl->column_options)(e->id).ivf_info) {
+        has_ivf = true;
+        break;
+      }
+    }
+  }
+  if (has_ivf) {
     _impl->out->Flush();
     auto in = _impl->dir->open(_impl->filename, IOAdvice::RANDOM);
     if (!in) {
@@ -278,7 +289,7 @@ void ColWriter::Commit(uint64_t target_row) {
       column_ids.push_back(e->id);
     }
     const size_t before = _impl->column_writers.size();
-    _impl->commit_hook(*this, column_ids);
+    _impl->ivf->OnCommit(*this, column_ids);
     for (size_t i = before; i < _impl->column_writers.size(); ++i) {
       _impl->column_writers[i]->Finalize();
     }

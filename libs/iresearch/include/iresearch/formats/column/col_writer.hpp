@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/functional/any_invocable.h>
-
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/types.hpp>
 #include <memory>
@@ -47,6 +45,7 @@ class ColumnReader;
 class ColumnWriter;
 class NormColumnWriter;
 class ReadContext;
+class IvfWriter;
 
 class ColWriter final {
  public:
@@ -73,17 +72,17 @@ class ColWriter final {
   std::span<const std::unique_ptr<NormColumnWriter>> NormWriters()
     const noexcept;
 
-  using CommitHook =
-    absl::AnyInvocable<void(ColWriter&, std::span<const field_id>)>;
-  void SetCommitHook(CommitHook hook);
-
-  std::unique_ptr<ColumnReader> ReopenColumn(field_id id) const;
-  ReadContext& CommitReadContext() noexcept;
+  std::unique_ptr<IvfWriter> TakeIvf() noexcept;
 
   void Commit(uint64_t target_row);
   void Rollback() noexcept;
 
  private:
+  friend class IvfWriter;
+
+  std::unique_ptr<ColumnReader> ReopenColumn(field_id id) const;
+  ReadContext& CommitReadContext() noexcept;
+
   void EnsureOut();
   bool Empty() const noexcept;
 

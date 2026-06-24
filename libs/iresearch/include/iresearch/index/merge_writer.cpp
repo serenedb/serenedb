@@ -775,15 +775,13 @@ bool MergeWriter::Flush(SegmentMeta& segment,
   MergedNormProvider norm_provider;
   IdxWriter idx{track_dir, segment.name, _db};
 
-  IvfWriter ivf_writer{_column_options};
-  col_writer->SetCommitHook(
-    [&ivf_writer](ColWriter& cw, std::span<const field_id> ids) {
-      ivf_writer.OnCommit(cw, ids);
-    });
   col_writer->Commit(segment.docs_count);
-  for (auto& c : ivf_writer.TakeBuiltCentroids()) {
-    idx.AddIvfCentroids(c.centroids_id, c.metric, c.nlist, c.d,
-                        std::move(c.centroids));
+  auto ivf_writer = col_writer->TakeIvf();
+  if (ivf_writer) {
+    for (auto& c : ivf_writer->TakeBuiltCentroids()) {
+      idx.AddIvfCentroids(c.centroids_id, c.metric, c.nlist, c.d,
+                          std::move(c.centroids));
+    }
   }
   if (segment.docs_count != 0) {
     col_reader = std::make_unique<ColReader>(track_dir, segment.name, _db);
@@ -803,10 +801,14 @@ bool MergeWriter::Flush(SegmentMeta& segment,
     .index_features = index_features,
   };
 
+  std::span<const BasicTermReader* const> cluster_readers;
+  if (ivf_writer) {
+    cluster_readers = ivf_writer->ClusterReaders();
+  }
   if (segment.docs_count != 0 &&
       !WriteFields(state, segment, fields_itr, merged_norm_ids,
                    progress_callback, _readers.get_allocator().Manager(), idx,
-                   ivf_writer.ClusterReaders())) {
+                   cluster_readers)) {
     return false;
   }
   idx.Commit();

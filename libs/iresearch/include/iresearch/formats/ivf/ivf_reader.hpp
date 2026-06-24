@@ -32,9 +32,6 @@ namespace irs {
 
 class ReadContext;
 
-// Centroid ids are stored as fixed-width big-endian uint32 terms so that FST
-// term order matches numeric centroid order. Reader and writer must agree on
-// this encoding.
 inline constexpr size_t kCentroidTermWidth = 4;
 
 inline void EncodeCentroidTerm(uint32_t id, byte_type* out) noexcept {
@@ -51,8 +48,6 @@ VectorDistanceFn ResolveVectorDistance(VectorMetric metric);
 
 bool VectorMetricNearestIsLargest(VectorMetric metric) noexcept;
 
-// Non-owning view over the trained codebook of one segment, read back from the
-// `.idx` IVF entry. `data` is the nlist x d row-major matrix.
 struct IvfCentroids {
   const float* data = nullptr;
   uint32_t nlist = 0;
@@ -63,26 +58,17 @@ struct IvfCentroids {
   }
 };
 
-// Appends to `out` the ids of the `nprobe` centroids nearest to `query`
-// (ascending centroid id within the kept set is not guaranteed; order is
-// nearest-first). `query` holds `centroids.d` floats.
 void SelectNearestCentroids(const float* query, const IvfCentroids& centroids,
                             uint32_t nprobe, VectorDistanceFn dist,
                             bool nearest_is_largest,
                             std::vector<uint32_t>& out);
 
-// Forward-only reader of per-doc fp32 vectors from an ARRAY(FLOAT) column, used
-// for exact distance rerank. Docs from a cluster-union disjunction arrive in
-// ascending order, so a single forward cursor over the flat element child
-// suffices. Not thread-safe; one instance per executing iterator.
 class IvfVectorReader {
  public:
   IvfVectorReader(const ColumnReader& vector_column, ReadContext& ctx);
 
   uint32_t Dimension() const noexcept { return _d; }
 
-  // Returns a pointer to `Dimension()` floats for `doc`, valid until the next
-  // call. `doc` must not be smaller than the previously requested doc.
   const float* ReadDoc(doc_id_t doc);
 
  private:

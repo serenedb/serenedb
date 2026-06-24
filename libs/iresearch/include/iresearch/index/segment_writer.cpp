@@ -161,17 +161,16 @@ void SegmentWriter::FlushFields(FlushState& state,
 
   IdxWriter idx{_dir, _seg_name, _db};
 
-  IvfWriter ivf_writer{_column_options};
+  std::unique_ptr<IvfWriter> ivf_writer;
   if (_col_writer) {
-    _col_writer->SetCommitHook(
-      [&ivf_writer](ColWriter& cw, std::span<const field_id> ids) {
-        ivf_writer.OnCommit(cw, ids);
-      });
     _col_writer->Commit(buffered_docs());
+    ivf_writer = _col_writer->TakeIvf();
     _col_writer.reset();
-    for (auto& c : ivf_writer.TakeBuiltCentroids()) {
-      idx.AddIvfCentroids(c.centroids_id, c.metric, c.nlist, c.d,
-                          std::move(c.centroids));
+    if (ivf_writer) {
+      for (auto& c : ivf_writer->TakeBuiltCentroids()) {
+        idx.AddIvfCentroids(c.centroids_id, c.metric, c.nlist, c.d,
+                            std::move(c.centroids));
+      }
     }
   }
 
@@ -181,7 +180,11 @@ void SegmentWriter::FlushFields(FlushState& state,
 
   if (state.doc_count != 0) {
     _field_writer->SetIdxWriter(idx);
-    FlushFields(state, ivf_writer.ClusterReaders());
+    std::span<const BasicTermReader* const> cluster_readers;
+    if (ivf_writer) {
+      cluster_readers = ivf_writer->ClusterReaders();
+    }
+    FlushFields(state, cluster_readers);
   }
 
   _col_reader.reset();

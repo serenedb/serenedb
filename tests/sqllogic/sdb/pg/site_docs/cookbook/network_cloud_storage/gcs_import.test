@@ -48,26 +48,26 @@ id	name	value
 # DOCS_TEST_BODY
 
 statement ok
-DETACH IF EXISTS duckdb_database;
+DETACH IF EXISTS gcs_import_readonly;
 
 statement ok
-DETACH IF EXISTS duckdb_database_fixture;
+DETACH IF EXISTS gcs_import_fixture;
 
 statement ok
-ATTACH '${__TEST_DIR__}/cookbook_network_cloud_storage_gcs_import_example_003_file.duckdb' AS duckdb_database_fixture;
+ATTACH '${__TEST_DIR__}/cookbook_network_cloud_storage_gcs_import_example_003_file.duckdb' AS gcs_import_fixture;
 
 statement ok
-DROP TABLE IF EXISTS duckdb_database_fixture.items;
+DROP TABLE IF EXISTS gcs_import_fixture.items;
 
 statement ok
-CREATE TABLE duckdb_database_fixture.items AS SELECT 1 AS id, 'alpha' AS name;
+CREATE TABLE gcs_import_fixture.items AS SELECT 1 AS id, 'alpha' AS name;
 
 statement ok
-DETACH duckdb_database_fixture;
+DETACH gcs_import_fixture;
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/cookbook_network_cloud_storage_gcs_import_example_003_file.duckdb' AS duckdb_database (READ_ONLY);
+ATTACH '${__TEST_DIR__}/cookbook_network_cloud_storage_gcs_import_example_003_file.duckdb' AS gcs_import_readonly (READ_ONLY);
 
 statement ok
-DETACH duckdb_database;
+DETACH gcs_import_readonly;

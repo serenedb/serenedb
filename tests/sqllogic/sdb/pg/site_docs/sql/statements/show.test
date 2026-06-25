@@ -3,10 +3,10 @@ control substitution on
 # DOCS_TEST: example_001
 
 statement ok
-DETACH IF EXISTS my_database;
+DETACH IF EXISTS my_database_show;
 
 statement ok
-ATTACH '${__TEST_DIR__}/sql_statements_show_example_001_my.duckdb' AS my_database;
+ATTACH '${__TEST_DIR__}/sql_statements_show_example_001_my.duckdb' AS my_database_show;
 
 # DOCS_TEST_BODY
 

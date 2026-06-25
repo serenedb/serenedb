@@ -17,7 +17,7 @@ statement ok
 USE $__DATABASE__;
 
 statement ok
-DETACH IF EXISTS temp2;
+DETACH IF EXISTS temp2_keywords;
 
 # DOCS_TEST_RAW
 #| ATTACH 'temp.db' AS temp2;
@@ -27,10 +27,10 @@ DETACH IF EXISTS temp2;
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '${__TEST_DIR__}/sql_dialect_keywords_and_identifiers_example_002_1_temp.db' AS temp2;
+ATTACH '${__TEST_DIR__}/sql_dialect_keywords_and_identifiers_example_002_1_temp.db' AS temp2_keywords;
 
 statement ok
-USE temp2;
+USE temp2_keywords;
 
 # DOCS_TEST: example_003
 

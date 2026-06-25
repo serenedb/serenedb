@@ -59,19 +59,19 @@ SHOW ALL TABLES;
 # DOCS_TEST: example_003
 
 statement ok
-DETACH IF EXISTS db;
+DETACH IF EXISTS db_listtables;
 
 statement ok
-ATTACH ':memory:' AS db;
+ATTACH ':memory:' AS db_listtables;
 
 statement ok
-CREATE TABLE db.main.main_tbl (u VARCHAR);
+CREATE TABLE db_listtables.main.main_tbl (u VARCHAR);
 
 statement ok
-CREATE SCHEMA db.s1;
+CREATE SCHEMA db_listtables.s1;
 
 statement ok
-CREATE TABLE db.s1.schema_tbl (v VARCHAR);
+CREATE TABLE db_listtables.s1.schema_tbl (v VARCHAR);
 
 # DOCS_TEST_RAW
 #| ATTACH 'db.duckdb';
@@ -87,7 +87,7 @@ CREATE TABLE db.s1.schema_tbl (v VARCHAR);
 # DOCS_TEST_BODY
 
 query rowsort
-SHOW TABLES FROM db;
+SHOW TABLES FROM db_listtables;
 ----
 name
 main_tbl
@@ -98,7 +98,7 @@ schema_tbl
 # DOCS_TEST_BODY
 
 query
-SHOW TABLES FROM db.s1;
+SHOW TABLES FROM db_listtables.s1;
 ----
 name
 schema_tbl

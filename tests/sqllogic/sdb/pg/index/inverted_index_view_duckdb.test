@@ -8,15 +8,15 @@
 control substitution on
 
 statement ok
-ATTACH '${__TEST_DIR__}/view_duckdb_single.db' AS ext_single;
+ATTACH '${__TEST_DIR__}/view_duckdb_single.db' AS ext_single_view_duckdb;
 
 
 statement ok
-CREATE OR REPLACE TABLE ext_single.main.docs(id INTEGER, body TEXT, score INTEGER);
+CREATE OR REPLACE TABLE ext_single_view_duckdb.main.docs(id INTEGER, body TEXT, score INTEGER);
 
 
 statement ok
-INSERT INTO ext_single.main.docs VALUES
+INSERT INTO ext_single_view_duckdb.main.docs VALUES
   (1, 'alpha cat runs', 10),
   (2, 'beta dog sleeps', 20),
   (3, 'gamma cat jumps', 30),
@@ -24,44 +24,44 @@ INSERT INTO ext_single.main.docs VALUES
 
 
 statement ok
-DETACH ext_single;
+DETACH ext_single_view_duckdb;
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/view_duckdb_glob_a.db' AS ext_a;
+ATTACH '${__TEST_DIR__}/view_duckdb_glob_a.db' AS ext_a_view_duckdb;
 
 
 statement ok
-CREATE OR REPLACE TABLE ext_a.main.docs(id INTEGER, body TEXT, score INTEGER);
+CREATE OR REPLACE TABLE ext_a_view_duckdb.main.docs(id INTEGER, body TEXT, score INTEGER);
 
 
 statement ok
-INSERT INTO ext_a.main.docs VALUES
+INSERT INTO ext_a_view_duckdb.main.docs VALUES
   (1, 'alpha cat runs', 10),
   (2, 'beta dog sleeps', 20),
   (3, 'gamma cat jumps', 30);
 
 
 statement ok
-DETACH ext_a;
+DETACH ext_a_view_duckdb;
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/view_duckdb_glob_b.db' AS ext_b;
+ATTACH '${__TEST_DIR__}/view_duckdb_glob_b.db' AS ext_b_view_duckdb;
 
 
 statement ok
-CREATE OR REPLACE TABLE ext_b.main.docs(id INTEGER, body TEXT, score INTEGER);
+CREATE OR REPLACE TABLE ext_b_view_duckdb.main.docs(id INTEGER, body TEXT, score INTEGER);
 
 
 statement ok
-INSERT INTO ext_b.main.docs VALUES
+INSERT INTO ext_b_view_duckdb.main.docs VALUES
   (10, 'epsilon cat purrs', 100),
   (11, 'zeta dog barks', 110);
 
 
 statement ok
-DETACH ext_b;
+DETACH ext_b_view_duckdb;
 
 
 statement ok
@@ -140,15 +140,15 @@ id
 # Source mutation after CREATE INDEX: the stale posting materializes as
 # NULLs instead of garbage.
 statement ok
-ATTACH '${__TEST_DIR__}/view_duckdb_single.db' AS ext_mut;
+ATTACH '${__TEST_DIR__}/view_duckdb_single.db' AS ext_mut_view_duckdb;
 
 
 statement ok
-DELETE FROM ext_mut.main.docs WHERE id = 3;
+DELETE FROM ext_mut_view_duckdb.main.docs WHERE id = 3;
 
 
 statement ok
-DETACH ext_mut;
+DETACH ext_mut_view_duckdb;
 
 
 query

@@ -12,11 +12,11 @@ CREATE TABLE local_t(x INTEGER);
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/cross_db_write.duckdb' AS ext;
+ATTACH '${__TEST_DIR__}/cross_db_write.duckdb' AS ext_xdb;
 
 
 statement ok
-CREATE TABLE ext.main.ext_t(x INTEGER);
+CREATE TABLE ext_xdb.main.ext_t(x INTEGER);
 
 
 # serenedb table then attached duckdb in one transaction -> rejected
@@ -29,7 +29,7 @@ INSERT INTO local_t VALUES (1);
 
 
 statement error
-INSERT INTO ext.main.ext_t VALUES (1);
+INSERT INTO ext_xdb.main.ext_t VALUES (1);
 ----
 db error: ERROR: Attempting to write to database "<slt:ignore>" in a transaction that has already modified database "<slt:ignore>" - a single transaction can only write to a single attached database.
 
@@ -47,7 +47,7 @@ count
 
 
 query
-SELECT count(*) FROM ext.main.ext_t;
+SELECT count(*) FROM ext_xdb.main.ext_t;
 ----
 count
 0
@@ -59,7 +59,7 @@ BEGIN;
 
 
 statement ok
-INSERT INTO ext.main.ext_t VALUES (2);
+INSERT INTO ext_xdb.main.ext_t VALUES (2);
 
 
 statement error
@@ -78,7 +78,7 @@ INSERT INTO local_t VALUES (3);
 
 
 statement ok
-INSERT INTO ext.main.ext_t VALUES (3);
+INSERT INTO ext_xdb.main.ext_t VALUES (3);
 
 
 query
@@ -89,14 +89,14 @@ count
 
 
 query
-SELECT count(*) FROM ext.main.ext_t;
+SELECT count(*) FROM ext_xdb.main.ext_t;
 ----
 count
 1
 
 
 statement ok
-DETACH ext;
+DETACH ext_xdb;
 
 
 statement ok

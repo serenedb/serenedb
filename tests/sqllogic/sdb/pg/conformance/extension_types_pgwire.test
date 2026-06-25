@@ -217,7 +217,7 @@ cat & dog
 # ---------------------------------------------------------------------------
 # UNION -- DuckDB tagged-union type. NOT representable over pg-wire at all:
 # both constructing a value with union_value() and reading a UNION column back
-# over the wire raise "Such type is not supported". The DDL that declares a
+# over the wire raise "Type '...' is not supported". The DDL that declares a
 # UNION column itself succeeds; only the wire-encoding of a UNION value fails.
 # Asserted as errors so the unsupported-but-clean behavior is locked in (it
 # must error, not crash).
@@ -226,7 +226,7 @@ cat & dog
 statement error
 SELECT union_value(num := 2) AS u;
 ----
-db error: ERROR: Such type is not supported
+db error: ERROR: Type 'UNION(num INTEGER)' is not supported
 
 
 statement ok
@@ -241,7 +241,7 @@ INSERT INTO ext_union_t VALUES (1), ('hello');
 statement error
 SELECT u FROM ext_union_t;
 ----
-db error: ERROR: Such type is not supported
+db error: ERROR: Type 'UNION(num INTEGER, str VARCHAR)' is not supported
 
 
 statement ok

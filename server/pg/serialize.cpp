@@ -2494,8 +2494,7 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
     }
     default:
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      ERR_MSG("Type '", type.ToString(),
-                              "' is not supported; id() = ", type.id()));
+                      ERR_MSG("Type '", type.ToString(), "' is not supported"));
   }
 }
 

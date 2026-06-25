@@ -147,8 +147,6 @@ class ResolutionTable {
         if (!inserted) {
           return {ERROR_SERVER_DUPLICATE_NAME};
         }
-        // A new schema starts with empty child namespaces; on a body swap
-        // (replace) they already exist, keyed by the stable id.
         if (!replace) {
           auto [_, insert_relation] =
             CloneData(_relations)
@@ -289,11 +287,6 @@ class ResolutionTable {
     return *clone;
   }
 
-  // insert_or_assign into a name->id map, but on an in-place body swap also
-  // refresh the stored key's backing. The key is a string_view into the
-  // object's _name; insert_or_assign keeps the existing (now-dangling) key when
-  // the name compares equal, so re-point it at `name`, which views the new
-  // object's _name. Safe: same content => same hash/bucket, only .data() moves.
   static void InsertOrRebind(MapByName<ObjectId>& map, std::string_view name,
                              ObjectId id) {
     auto [it, inserted] = map.insert_or_assign(name, id);

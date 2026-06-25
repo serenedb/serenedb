@@ -1,0 +1,39 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT current_schema();
+----
+current_schema
+public
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT current_schemas(true) AS schemas;
+----
+schemas
+{pg_catalog,public}
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT current_schemas(false) AS schemas;
+----
+schemas
+{public}
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT current_catalog() = current_database() AS catalog_is_current_db;
+----
+catalog_is_current_db
+t

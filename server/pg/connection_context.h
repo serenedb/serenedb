@@ -20,26 +20,49 @@
 
 #pragma once
 
-#include <absl/synchronization/mutex.h>
+#include <atomic>
 
 #include "basics/message_buffer.h"
 #include "catalog/identifiers/object_id.h"
 #include "pg/copy_messages_queue.h"
 #include "pg/sql_error.h"
 #include "query/transaction.h"
-#include "utils/exec_context.h"
+
+namespace sdb::pg {
+
+class CopyInBridge;
+}
+
+namespace sdb::network::pg {
+
+class CancelRegistry;
+}
 
 namespace sdb {
 
-class ConnectionContext final : public ExecContext, public query::Transaction {
+class ConnectionContext final : public query::Transaction {
  public:
   ConnectionContext(duckdb::ClientContext& duckdb_ctx, std::string_view user,
                     std::string_view dbname, ObjectId database_id,
                     std::shared_ptr<catalog::Database> database,
                     message::Buffer* send_buffer,
-                    pg::CopyMessagesQueue* copy_queue);
+                    pg::CopyMessagesQueue* copy_queue, int32_t backend_pid,
+                    network::pg::CancelRegistry* cancel_registry);
 
-  ~ConnectionContext() final { SDB_ASSERT(_notices.empty()); }
+  ~ConnectionContext() final { SDB_ASSERT(!HasNotices()); }
+
+  // The connection's identity, formerly supplied by the ExecContext base.
+  const std::string& user() const { return _user; }
+  const std::string& GetDatabase() const { return _database_name; }
+  ObjectId GetDatabaseId() const { return _database_id; }
+  // The connection's backend PID: pg_backend_pid() and the pid half of
+  // BackendKeyData both report this (the high 32 bits of the random cancel
+  // key).
+  int32_t GetBackendPid() const { return _backend_pid; }
+
+  // The server-shared cancel registry, so pg_cancel_backend()/
+  // pg_terminate_backend() can reach another connection's cancel token by pid.
+  auto* GetCancelRegistry() const { return _cancel_registry; }
 
   std::string GetCurrentSchema() const;
   std::string GetCurrentSchemaFromSnapshot(
@@ -51,22 +74,67 @@ class ConnectionContext final : public ExecContext, public query::Transaction {
 
   auto* GetCopyQueue() const { return _copy_queue; }
 
+  // COPY FROM STDIN bridge for the new coroutine server (the old server uses
+  // _copy_queue instead). Set per COPY statement, cleared after.
+  auto* GetCopyInBridge() const { return _copy_in_bridge; }
+  void SetCopyInBridge(pg::CopyInBridge* bridge) { _copy_in_bridge = bridge; }
+
+  // Per-statement side channel for table functions that must hand serialized
+  // response payload to the protocol handler beyond the statement's result
+  // (es_bulk appends ES bulk-items JSON here while emitting rows; INSERT has
+  // no RETURNING on serenedb tables). Set before the statement, cleared after.
+  auto* GetResponseSink() const { return _response_sink; }
+  void SetResponseSink(std::string* sink) { _response_sink = sink; }
+
+  // Notices are an intrusive MPSC stack (Strand-style): producers on any
+  // thread CAS-push; the single consumer exchanges the head out and reverses
+  // for FIFO. The common SELECT/DML path pays one relaxed-ish load to learn
+  // the stack is empty -- no mutex, no allocation.
   void AddNotice(pg::SqlErrorData notice) {
-    std::lock_guard lock{_mutex};
-    _notices.push_back(std::move(notice));
+    auto* node = new NoticeNode{std::move(notice), nullptr};
+    node->next = _notices.load(std::memory_order_relaxed);
+    while (!_notices.compare_exchange_weak(
+      node->next, node, std::memory_order_release, std::memory_order_relaxed)) {
+    }
   }
 
-  auto StealNotices() {
-    std::lock_guard lock{_mutex};
-    return std::exchange(_notices, {});
+  bool HasNotices() const {
+    return _notices.load(std::memory_order_relaxed) != nullptr;
+  }
+
+  // Single consumer: detaches the stack, reverses the links in place (FIFO),
+  // and feeds each notice to `fn` -- no intermediate storage.
+  template<typename Fn>
+  void ConsumeNotices(Fn&& fn) {
+    auto* node = _notices.exchange(nullptr, std::memory_order_acquire);
+    NoticeNode* fifo = nullptr;
+    while (node != nullptr) {
+      auto* next = std::exchange(node->next, fifo);
+      fifo = std::exchange(node, next);
+    }
+    while (fifo != nullptr) {
+      fn(fifo->data);
+      delete std::exchange(fifo, fifo->next);
+    }
   }
 
  private:
+  struct NoticeNode {
+    pg::SqlErrorData data;
+    NoticeNode* next;
+  };
+
+  const std::string _user;
+  const std::string _database_name;
+  const ObjectId _database_id;
+  const int32_t _backend_pid;
+  network::pg::CancelRegistry* const _cancel_registry;
   std::shared_ptr<catalog::Database> _database;
   message::Buffer* const _send_buffer;
   pg::CopyMessagesQueue* const _copy_queue;
-  absl::Mutex _mutex;
-  std::vector<pg::SqlErrorData> _notices;
+  pg::CopyInBridge* _copy_in_bridge = nullptr;
+  std::string* _response_sink = nullptr;
+  std::atomic<NoticeNode*> _notices{nullptr};
 };
 
 }  // namespace sdb

@@ -1,0 +1,34 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY stem_dict (
+    template = 'stem',
+    locale = 'en'
+);
+
+query ?
+SELECT ts_lexize('stem_dict', 'running');
+----
+ts_lexize
+{run}
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY stem_dict_words (
+    template = 'pipeline',
+    step1_template = 'delimiter',
+    step1_delimiter = ' ',
+    step2_template = 'stem',
+    step2_locale = 'en'
+);
+
+query ?
+SELECT ts_lexize('stem_dict_words', 'running runners ran');
+----
+ts_lexize
+{run,runner,ran}

@@ -86,7 +86,7 @@ pk	geo
 
 # Freeze iresearch commits BEFORE the second batch.
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO wal_geo_ni_t VALUES

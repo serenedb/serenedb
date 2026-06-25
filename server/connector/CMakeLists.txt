@@ -30,6 +30,8 @@ add_library(
     index_source_view_table.cpp
     view_fast_path.cpp
     duckdb_copy_filesystem.cpp
+    duckdb_pg_binary_copy.cpp
+    duckdb_pg_text_copy.cpp
     duckdb_physical_ctas.cpp
     duckdb_physical_progress.cpp
     duckdb_tokenizer_function.cpp
@@ -48,7 +50,6 @@ target_link_libraries(
     iresearch-static
     duckdb_static
     simdjson
-    Folly::folly
 )
 
 # TODO(Dronplane): why not make public includes for sereneserver so we avoid this ugly line below?

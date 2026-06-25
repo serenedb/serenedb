@@ -45,11 +45,10 @@ class Transaction : public Config {
   }
 #endif
 
-  void OnNewStatement();
-  // Restarts a writeless explicit engine transaction under READ COMMITTED
-  // so the upcoming statement sees freshly committed changes. Must run
-  // outside the query lifecycle (before the statement starts).
-  void RefreshReadCommittedSnapshot();
+  // Per-statement snapshot lifecycle, driven by DuckDB's QueryBegin/QueryEnd.
+  // See transaction.cpp for the model.
+  void OnStatementBegin();
+  void OnStatementEnd();
 
   // Pre-commit work that needs an active transaction (revert SET LOCAL for
   // custom-impl settings). Runs before the engine commit.
@@ -75,6 +74,19 @@ class Transaction : public Config {
     return _had_query_in_transaction;
   }
   void MarkQueryInTransaction() noexcept { _had_query_in_transaction = true; }
+
+  // Mark the in-flight statement as genuine data modification (INSERT/UPDATE/
+  // DELETE/COPY FROM/...). Set before the statement runs; folded into the
+  // transaction's DML state at OnStatementEnd, where it pins the snapshots.
+  // Atomic DDL also reports a modified database but must NOT be marked -- a
+  // later statement has to observe the catalog it changed.
+  void MarkStatementDml() noexcept { _statement_is_dml = true; }
+
+  // Mark the in-flight statement as catalog DDL (CREATE/DROP/ALTER/...).
+  // serenedb DDL is atomic and non-transactional, so at OnStatementEnd it drops
+  // the catalog snapshot even under REPEATABLE READ (when no uncommitted DML is
+  // held), making the change visible to the next statement.
+  void MarkStatementDdl() noexcept { _statement_is_ddl = true; }
 
   search::InvertedIndexSnapshotPtr EnsureSearchSnapshot(ObjectId index_id);
 
@@ -110,7 +122,7 @@ class Transaction : public Config {
       SDB_ASSERT(index);
 
       if constexpr (!std::is_same_v<std::decay_t<Filter>, std::nullptr_t>) {
-        const auto& referenced = index->GetReferencedColumnIds();
+        const auto& referenced = index->GetReferencedColumns();
         if (!filter(referenced)) {
           continue;
         }
@@ -121,8 +133,8 @@ class Transaction : public Config {
         // feed here.
         continue;
       }
-      auto storage =
-        basics::downCast<const catalog::InvertedIndex>(*index).GetData();
+      auto inverted = basics::downCast<const catalog::InvertedIndex>(index);
+      auto storage = inverted->GetData();
       SDB_ASSERT(storage);
       auto& entry =
         _search_transactions.try_emplace(index->GetId()).first->second;
@@ -132,12 +144,22 @@ class Transaction : public Config {
         // Keep the storage alive and reachable for Commit() without a catalog
         // re-lookup.
         entry.storage = storage;
+        // Encode this transaction's rows against the InvertedIndex from its own
+        // DDL snapshot (the index IS the per-column options); co-owned via the
+        // catalog snapshot this transaction holds, so the segment writer can
+        // pin it until flush without a live-catalog lookup.
+        entry.transaction->SetFieldOptions(std::move(inverted));
       }
       visit(*entry.transaction, *index);
     }
   }
 
  private:
+  // The cases a single snapshot serves a whole transaction: an explicit
+  // REPEATABLE READ transaction, or any transaction that has performed
+  // uncommitted DML. Everything else refreshes per statement.
+  bool IsStableSnapshot() const;
+
   struct SearchTransaction {
     std::unique_ptr<irs::IndexWriter::Transaction> transaction;
     std::shared_ptr<search::InvertedIndexStorage> storage;
@@ -147,6 +169,15 @@ class Transaction : public Config {
   containers::FlatHashMap<ObjectId, search::InvertedIndexSnapshotPtr>
     _search_snapshots;
   bool _had_query_in_transaction = false;
+  // Set once a statement has performed uncommitted DML; pins all three views
+  // for the rest of the transaction. Cleared at commit/rollback.
+  bool _had_dml = false;
+  // Whether the in-flight statement modifies data; folded into _had_dml at
+  // OnStatementEnd. Never spans a statement boundary.
+  bool _statement_is_dml = false;
+  // Whether the in-flight statement is catalog DDL; consumed at OnStatementEnd
+  // to force a catalog refresh. Never spans a statement boundary.
+  bool _statement_is_ddl = false;
 };
 
 }  // namespace sdb::query

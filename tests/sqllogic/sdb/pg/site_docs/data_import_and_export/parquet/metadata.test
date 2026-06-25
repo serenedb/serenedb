@@ -1,0 +1,377 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_001_test.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM parquet_metadata('test.parquet');
+
+# DOCS_TEST_BODY
+
+query
+SELECT * REPLACE (
+    replace(
+        file_name,
+        '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_001_test.parquet',
+        'test.parquet'
+    ) AS file_name
+)
+FROM parquet_metadata('${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_001_test.parquet');
+----
+file_name	row_group_id	row_group_num_rows	row_group_num_columns	row_group_bytes	column_id	file_offset	num_values	path_in_schema	type	stats_min	stats_max	stats_null_count	stats_distinct_count	stats_min_value	stats_max_value	compression	encodings	index_page_offset	dictionary_page_offset	data_page_offset	total_compressed_size	total_uncompressed_size	key_value_metadata	bloom_filter_offset	bloom_filter_length	min_is_exact	max_is_exact	row_group_compressed_bytes	geo_bbox	geo_types
+test.parquet	0	2	3	<slt:ignore>	0	<slt:ignore>	2	id	INT32	1	2	0	NULL	1	2	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
+test.parquet	0	2	3	<slt:ignore>	1	<slt:ignore>	2	name	BYTE_ARRAY	alpha	beta	0	NULL	alpha	beta	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
+test.parquet	0	2	3	<slt:ignore>	2	<slt:ignore>	2	value	INT32	10	20	0	NULL	10	20	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
+
+# DOCS_TEST: example_002
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_002_1_parquet_1.parquet' (FORMAT parquet);
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_002_1_parquet_2.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM parquet_metadata('data/*.parquet');
+
+# DOCS_TEST_BODY
+
+query
+SELECT * REPLACE (
+    replace(
+        file_name,
+        '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_002_1_parquet_',
+        'data/file_'
+    ) AS file_name
+)
+FROM parquet_metadata('${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_002_1_parquet_*.parquet')
+ORDER BY file_name, column_id;
+----
+file_name	row_group_id	row_group_num_rows	row_group_num_columns	row_group_bytes	column_id	file_offset	num_values	path_in_schema	type	stats_min	stats_max	stats_null_count	stats_distinct_count	stats_min_value	stats_max_value	compression	encodings	index_page_offset	dictionary_page_offset	data_page_offset	total_compressed_size	total_uncompressed_size	key_value_metadata	bloom_filter_offset	bloom_filter_length	min_is_exact	max_is_exact	row_group_compressed_bytes	geo_bbox	geo_types
+data/file_1.parquet	0	2	3	<slt:ignore>	0	<slt:ignore>	2	id	INT32	1	2	0	NULL	1	2	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
+data/file_1.parquet	0	2	3	<slt:ignore>	1	<slt:ignore>	2	name	BYTE_ARRAY	alpha	beta	0	NULL	alpha	beta	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
+data/file_1.parquet	0	2	3	<slt:ignore>	2	<slt:ignore>	2	value	INT32	10	20	0	NULL	10	20	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
+data/file_2.parquet	0	2	3	<slt:ignore>	0	<slt:ignore>	2	id	INT32	1	2	0	NULL	1	2	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
+data/file_2.parquet	0	2	3	<slt:ignore>	1	<slt:ignore>	2	name	BYTE_ARRAY	alpha	beta	0	NULL	alpha	beta	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
+data/file_2.parquet	0	2	3	<slt:ignore>	2	<slt:ignore>	2	value	INT32	10	20	0	NULL	10	20	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
+
+# DOCS_TEST: example_003
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_003_1_test_parquet.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| DESCRIBE SELECT * FROM 'test.parquet';
+
+# DOCS_TEST_BODY
+
+query
+DESCRIBE SELECT * FROM '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_003_1_test_parquet.parquet';
+----
+column_name	column_type	null	key	default	extra
+id	INTEGER	YES	NULL	NULL	NULL
+name	VARCHAR	YES	NULL	NULL	NULL
+value	INTEGER	YES	NULL	NULL	NULL
+
+# DOCS_TEST: example_004
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_004_1_test_parquet.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM parquet_schema('test.parquet');
+
+# DOCS_TEST_BODY
+
+query
+SELECT * REPLACE (
+    replace(
+        file_name,
+        '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_004_1_test_parquet.parquet',
+        'test.parquet'
+    ) AS file_name
+)
+FROM parquet_schema('${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_004_1_test_parquet.parquet');
+----
+file_name	name	type	type_length	repetition_type	num_children	converted_type	scale	precision	field_id	logical_type	duckdb_type	column_id
+test.parquet	duckdb_schema	NULL	NULL	REQUIRED	3	NULL	NULL	NULL	NULL	NULL	NULL	0
+test.parquet	id	INT32	NULL	OPTIONAL	NULL	INT_32	NULL	NULL	NULL	NULL	INTEGER	1
+test.parquet	name	BYTE_ARRAY	NULL	OPTIONAL	NULL	UTF8	NULL	NULL	NULL	NULL	VARCHAR	2
+test.parquet	value	INT32	NULL	OPTIONAL	NULL	INT_32	NULL	NULL	NULL	NULL	INTEGER	3
+
+# DOCS_TEST: example_005
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_005_1_test_parquet.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM parquet_file_metadata('test.parquet');
+
+# DOCS_TEST_BODY
+
+query
+SELECT * REPLACE (
+    replace(
+        file_name,
+        '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_005_1_test_parquet.parquet',
+        'test.parquet'
+    ) AS file_name
+)
+FROM parquet_file_metadata('${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_005_1_test_parquet.parquet');
+----
+file_name	created_by	num_rows	num_row_groups	format_version	encryption_algorithm	footer_signing_key_metadata	file_size_bytes	footer_size	column_orders
+test.parquet	<slt:ignore>	2	1	1	NULL	NULL	<slt:ignore>	<slt:ignore>	{ColumnOrder(TYPE_ORDER=TypeDefinedOrder()),ColumnOrder(TYPE_ORDER=TypeDefinedOrder()),ColumnOrder(TYPE_ORDER=TypeDefinedOrder())}
+
+# DOCS_TEST: example_006
+
+statement ok
+COPY (
+    SELECT
+        42 AS number,
+        true AS is_even
+) TO '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_006_1_test_parquet.parquet' (
+    FORMAT parquet,
+    KV_METADATA {
+        number: 'Answer to life, universe, and everything',
+        is_even: 'not ''odd'''
+    }
+);
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM parquet_kv_metadata('test.parquet');
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+    replace(
+        file_name,
+        '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_006_1_test_parquet.parquet',
+        'test.parquet'
+    ) AS file_name,
+    key,
+    value
+FROM parquet_kv_metadata('${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_006_1_test_parquet.parquet')
+ORDER BY key;
+----
+file_name	key	value
+test.parquet	\\x69735f6576656e	\\x6e6f7420276f646427
+test.parquet	\\x6e756d626572	\\x416e7377657220746f206c6966652c20756e6976657273652c20616e642065766572797468696e67
+
+# DOCS_TEST: example_007
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_007_1_test_parquet.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| SELECT
+#|     len(parquet_metadata)    AS column_chunks,
+#|     len(parquet_schema)      AS schema_elements,
+#|     len(parquet_kv_metadata) AS kv_pairs
+#| FROM parquet_full_metadata('test.parquet');
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+    len(parquet_metadata)    AS column_chunks,
+    len(parquet_schema)      AS schema_elements,
+    len(parquet_kv_metadata) AS kv_pairs
+FROM parquet_full_metadata('${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_007_1_test_parquet.parquet');
+----
+column_chunks	schema_elements	kv_pairs
+3	4	0
+
+# DOCS_TEST: example_008
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_008_1_my_file_parquet.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| FROM parquet_bloom_probe('my_file.parquet', 'name', 'gamma');
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+    replace(
+        file_name,
+        '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_008_1_my_file_parquet.parquet',
+        'my_file.parquet'
+    ) AS file_name,
+    row_group_id,
+    bloom_filter_excludes
+FROM parquet_bloom_probe('${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_008_1_my_file_parquet.parquet', 'name', 'gamma')
+ORDER BY row_group_id;
+----
+file_name	row_group_id	bloom_filter_excludes
+my_file.parquet	0	f
+
+# DOCS_TEST: example_009
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_009_1_test_parquet.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| SELECT column_name, column_type
+#| FROM (DESCRIBE SELECT * FROM parquet_metadata('test.parquet'));
+
+# DOCS_TEST_BODY
+
+query
+SELECT column_name, column_type
+FROM (DESCRIBE SELECT * FROM parquet_metadata('${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_009_1_test_parquet.parquet'));
+----
+column_name	column_type
+file_name	VARCHAR
+row_group_id	BIGINT
+row_group_num_rows	BIGINT
+row_group_num_columns	BIGINT
+row_group_bytes	BIGINT
+column_id	BIGINT
+file_offset	BIGINT
+num_values	BIGINT
+path_in_schema	VARCHAR
+type	VARCHAR
+stats_min	VARCHAR
+stats_max	VARCHAR
+stats_null_count	BIGINT
+stats_distinct_count	BIGINT
+stats_min_value	VARCHAR
+stats_max_value	VARCHAR
+compression	VARCHAR
+encodings	VARCHAR
+index_page_offset	BIGINT
+dictionary_page_offset	BIGINT
+data_page_offset	BIGINT
+total_compressed_size	BIGINT
+total_uncompressed_size	BIGINT
+key_value_metadata	MAP(BLOB, BLOB)
+bloom_filter_offset	BIGINT
+bloom_filter_length	BIGINT
+min_is_exact	BOOLEAN
+max_is_exact	BOOLEAN
+row_group_compressed_bytes	BIGINT
+geo_bbox	STRUCT(xmin DOUBLE, xmax DOUBLE, ymin DOUBLE, ymax DOUBLE, zmin DOUBLE, zmax DOUBLE, mmin DOUBLE, mmax DOUBLE)
+geo_types	VARCHAR[]
+
+# DOCS_TEST: example_010
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_010_1_test_parquet.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| SELECT column_name, column_type
+#| FROM (DESCRIBE SELECT * FROM parquet_schema('test.parquet'));
+
+# DOCS_TEST_BODY
+
+query
+SELECT column_name, column_type
+FROM (DESCRIBE SELECT * FROM parquet_schema('${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_010_1_test_parquet.parquet'));
+----
+column_name	column_type
+file_name	VARCHAR
+name	VARCHAR
+type	VARCHAR
+type_length	VARCHAR
+repetition_type	VARCHAR
+num_children	BIGINT
+converted_type	VARCHAR
+scale	BIGINT
+precision	BIGINT
+field_id	BIGINT
+logical_type	VARCHAR
+duckdb_type	VARCHAR
+column_id	BIGINT
+
+# DOCS_TEST: example_011
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_011_1_test_parquet.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| SELECT column_name, column_type
+#| FROM (DESCRIBE SELECT * FROM parquet_file_metadata('test.parquet'));
+
+# DOCS_TEST_BODY
+
+query
+SELECT column_name, column_type
+FROM (DESCRIBE SELECT * FROM parquet_file_metadata('${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_011_1_test_parquet.parquet'));
+----
+column_name	column_type
+file_name	VARCHAR
+created_by	VARCHAR
+num_rows	BIGINT
+num_row_groups	BIGINT
+format_version	BIGINT
+encryption_algorithm	VARCHAR
+footer_signing_key_metadata	VARCHAR
+file_size_bytes	UBIGINT
+footer_size	UBIGINT
+column_orders	VARCHAR[]
+
+# DOCS_TEST: example_012
+
+statement ok
+COPY (
+    SELECT
+        42 AS number,
+        true AS is_even
+) TO '${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_012_1_test_parquet.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| SELECT column_name, column_type
+#| FROM (DESCRIBE SELECT * FROM parquet_kv_metadata('test.parquet'));
+
+# DOCS_TEST_BODY
+
+query
+SELECT column_name, column_type
+FROM (DESCRIBE SELECT * FROM parquet_kv_metadata('${__TEST_DIR__}/data_import_and_export_parquet_metadata_example_012_1_test_parquet.parquet'));
+----
+column_name	column_type
+file_name	VARCHAR
+key	BLOB
+value	BLOB

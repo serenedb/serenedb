@@ -45,7 +45,7 @@ rm -f "${NATIVE_DB}" "${NATIVE_DB}.wal"
 echo "starting ${SERENED_BIN} on port ${PORT} (rows=${ROW_COUNT})" |
 	tee -a "${RUN_LOG}"
 "${SERENED_BIN}" "${DATA_DIR}" \
-	--server_endpoints "pgsql+tcp://0.0.0.0:${PORT}" \
+	--listen "postgres://0.0.0.0:${PORT}" \
 	>"${LOG}" 2>&1 &
 SERENED_PID=$!
 trap "kill -9 ${SERENED_PID} >/dev/null 2>&1 || true" EXIT

@@ -1,0 +1,15 @@
+# DOCS_TEST: example_012
+
+statement ok
+CREATE TABLE tbl (s VARCHAR);
+
+statement ok
+INSERT INTO tbl VALUES ('hello'), ('world');
+
+statement ok
+CREATE SEQUENCE id_sequence START 1;
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER TABLE tbl ADD COLUMN id INTEGER DEFAULT nextval('id_sequence');

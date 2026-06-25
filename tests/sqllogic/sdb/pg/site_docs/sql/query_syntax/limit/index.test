@@ -1,0 +1,101 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE addresses (
+    address VARCHAR,
+    city VARCHAR,
+    street_name VARCHAR,
+    income DOUBLE,
+    zip VARCHAR,
+    country VARCHAR,
+    population INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO addresses VALUES
+    ('123 Spruce Blvd', 'Linden', 'Spruce Blvd', 50000, '11111', 'NL', 100, 1, 10),
+    ('111 Birch Ln', 'Linden', 'Birch Ln', 60000, '11111', 'NL', 100, 2, 20),
+    ('111 Birch Ln', 'Lakeside', 'Birch Ln', 70000, '11111', 'US', 50, 3, 30),
+    ('111 Birch Ln', 'Lakeside', 'Birch Ln', 80000, '11111-0001', 'US', 50, 4, 40),
+    ('5 Pond Road', 'Mallard', 'Pond Road', 90000, '22222', 'UK', 25, 5, 50),
+    ('9 Lake View', 'Mallard', 'Lake View', 40000, '33333', 'UK', 25, 6, 60);
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM addresses
+LIMIT 5;
+----
+address	city	street_name	income	zip	country	population	number1	number2
+123 Spruce Blvd	Linden	Spruce Blvd	50000	11111	NL	100	1	10
+111 Birch Ln	Linden	Birch Ln	60000	11111	NL	100	2	20
+111 Birch Ln	Lakeside	Birch Ln	70000	11111	US	50	3	30
+111 Birch Ln	Lakeside	Birch Ln	80000	11111-0001	US	50	4	40
+5 Pond Road	Mallard	Pond Road	90000	22222	UK	25	5	50
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM addresses
+LIMIT 5
+OFFSET 5;
+----
+address	city	street_name	income	zip	country	population	number1	number2
+9 Lake View	Mallard	Lake View	40000	33333	UK	25	6	60
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query ?? rowsort
+SELECT city, count(*) AS population
+FROM addresses
+GROUP BY city
+ORDER BY population DESC
+LIMIT 5;
+----
+city	population
+Lakeside	2
+Linden	2
+Mallard	2
+
+# DOCS_TEST: example_004
+
+statement ok
+DELETE FROM addresses;
+
+statement ok
+INSERT INTO addresses
+SELECT
+    'Address ' || i,
+    CASE WHEN i % 2 = 0 THEN 'Linden' ELSE 'Mallard' END,
+    'Street ' || i,
+    50000 + i * 1000,
+    'ZIP' || i,
+    CASE WHEN i % 2 = 0 THEN 'NL' ELSE 'UK' END,
+    100 + i,
+    i,
+    i * 10
+FROM range(20) t(i);
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM addresses
+LIMIT 10%;
+----
+address	city	street_name	income	zip	country	population	number1	number2
+Address 0	Linden	Street 0	50000	ZIP0	NL	100	0	0
+Address 1	Mallard	Street 1	51000	ZIP1	UK	101	1	10

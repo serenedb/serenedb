@@ -1,0 +1,14 @@
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE tbl AS
+    SELECT s FROM range(1, 4) r(s);
+
+query ?
+SELECT string_agg(s, ', ' ORDER BY s DESC) AS countdown
+FROM tbl;
+----
+countdown
+3, 2, 1

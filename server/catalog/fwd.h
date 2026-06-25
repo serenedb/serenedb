@@ -27,7 +27,6 @@ struct Snapshot;
 class Object;
 class PgSqlFunction;
 class Table;
-class Role;
 class PgSqlView;
 class Sequence;
 class Index;

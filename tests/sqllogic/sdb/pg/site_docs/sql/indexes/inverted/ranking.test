@@ -1,0 +1,87 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE movies (
+    id INTEGER PRIMARY KEY,
+    title VARCHAR,
+    description VARCHAR,
+    genre VARCHAR
+);
+
+statement ok
+INSERT INTO movies VALUES
+(1, 'The Matrix', 'A computer hacker learns about the true nature of reality and his role in the war against its controllers.', 'sci-fi'),
+(2, 'The Matrix Reloaded', 'Neo and the rebel leaders estimate they have 72 hours until Zion falls to the machine army.', 'sci-fi'),
+(7, 'Star Trek: The Motion Picture', 'When an alien spacecraft of enormous power is spotted approaching Earth, Admiral Kirk resumes command of the Enterprise to intercept the galaxy threat.', 'sci-fi'),
+(8, 'Alien', 'After investigating a mysterious transmission, the crew of a commercial spacecraft encounters a deadly lifeform in the dark galaxy of space.', 'sci-fi');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ranking_dict (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE INDEX movies_idx ON movies
+    USING inverted (id, title ranking_dict, description ranking_dict, genre)
+    WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+statement ok
+VACUUM (REFRESH_TABLE) movies;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title, BM25(movies_idx.tableoid) AS relevance
+FROM movies_idx
+WHERE description @@ ts_phrase('alien')
+ORDER BY relevance DESC, id;
+----
+id	title	relevance
+7	Star Trek: The Motion Picture	1.9693236
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title, TFIDF(movies_idx.tableoid) AS relevance
+FROM movies_idx
+WHERE description @@ ts_phrase('alien')
+ORDER BY relevance DESC, id;
+----
+id	title	relevance
+7	Star Trek: The Motion Picture	1.2527629
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title
+FROM movies_idx
+WHERE description @@ 'galaxy'
+ORDER BY BM25(movies_idx.tableoid) DESC, id
+LIMIT 1;
+----
+id	title
+7	Star Trek: The Motion Picture
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title
+FROM movies_idx
+WHERE title @@ ('alien'::tsquery ^ 5.0) OR description @@ 'galaxy'
+ORDER BY BM25(movies_idx.tableoid) DESC, id;
+----
+id	title
+8	Alien
+7	Star Trek: The Motion Picture

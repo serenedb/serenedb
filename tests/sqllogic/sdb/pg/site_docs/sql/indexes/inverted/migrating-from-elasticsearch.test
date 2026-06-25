@@ -1,0 +1,45 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY mig_en (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true
+);
+
+statement ok
+CREATE TABLE catalog_docs (
+    id INTEGER PRIMARY KEY,
+    body VARCHAR,
+    category VARCHAR
+);
+
+statement ok
+INSERT INTO catalog_docs VALUES
+    (1, 'fast galaxy ship', 'sci-fi'),
+    (2, 'galaxy quest', 'sci-fi'),
+    (3, 'galaxy guide', 'guide'),
+    (4, 'slow turtle', 'nature');
+
+statement ok
+CREATE INDEX catalog_docs_idx ON catalog_docs
+    USING inverted (id, body mig_en, category);
+
+statement ok
+VACUUM (REFRESH_TABLE) catalog_docs;
+
+# DOCS_TEST_BODY
+
+query
+SELECT category, count(*) AS n
+FROM catalog_docs_idx
+WHERE body @@ 'galaxy'
+GROUP BY category
+ORDER BY category;
+----
+category	n
+guide	1
+sci-fi	2

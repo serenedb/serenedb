@@ -1,0 +1,15 @@
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement ok
+SET VARIABLE column_to_exclude = 'col1';
+
+statement ok
+CREATE TABLE tbl AS SELECT 12 AS col0, 34 AS col1, 56 AS col2;
+
+query
+SELECT COLUMNS(c -> c != getvariable('column_to_exclude')) FROM tbl;
+----
+col0	col2
+12	56

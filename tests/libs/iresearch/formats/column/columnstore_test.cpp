@@ -1091,7 +1091,7 @@ TEST_F(IRSColumnstoreTest, MergeIntoTwoSegmentsNoDeletes) {
        .mask = nullptr,
        .alive_count = kRowsB},
     };
-    irs::MergeInto(sources, w, /*column_options=*/nullptr);
+    irs::MergeInto(sources, w, /*field_options=*/nullptr);
     w.Commit(kRowsA + kRowsB);
   }
 
@@ -1173,7 +1173,7 @@ TEST_F(IRSColumnstoreTest, MergeIntoTwoSegmentsWithDeletes) {
        .mask = &mask_b,
        .alive_count = alive_b},
     };
-    irs::MergeInto(sources, w, /*column_options=*/nullptr);
+    irs::MergeInto(sources, w, /*field_options=*/nullptr);
     w.Commit(alive_a + alive_b);
   }
 
@@ -1226,9 +1226,11 @@ TEST_F(IRSColumnstoreTest, MergeIntoReusesHyperLogLog) {
 
   irs::ColumnOptionsProvider column_options =
     [](irs::field_id) -> irs::ColumnOptions { return {.hyperloglog = true}; };
+  irs::FunctionFieldOptions field_options{column_options, nullptr};
 
   {
-    irs::ColWriter w{dir, "src_a", Db(), &column_options};
+    irs::ColWriter w{dir, "src_a", Db()};
+    w.SetFieldOptions(&field_options);
     auto& cw = w.OpenColumn(kId, duckdb::LogicalType::BIGINT);
     duckdb::Vector batch{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
     auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(batch);
@@ -1239,7 +1241,8 @@ TEST_F(IRSColumnstoreTest, MergeIntoReusesHyperLogLog) {
     w.Commit(kRowsA);
   }
   {
-    irs::ColWriter w{dir, "src_b", Db(), &column_options};
+    irs::ColWriter w{dir, "src_b", Db()};
+    w.SetFieldOptions(&field_options);
     auto& cw = w.OpenColumn(kId, duckdb::LogicalType::BIGINT);
     duckdb::Vector batch{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
     auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(batch);
@@ -1256,7 +1259,8 @@ TEST_F(IRSColumnstoreTest, MergeIntoReusesHyperLogLog) {
   ASSERT_NE(rb.Column(kId)->HyperLogLog(), nullptr);
 
   {
-    irs::ColWriter w{dir, "merged", Db(), &column_options};
+    irs::ColWriter w{dir, "merged", Db()};
+    w.SetFieldOptions(&field_options);
     irs::MergeSource sources[2] = {
       {.reader = nullptr,
        .col_reader = &ra,
@@ -1267,7 +1271,7 @@ TEST_F(IRSColumnstoreTest, MergeIntoReusesHyperLogLog) {
        .mask = nullptr,
        .alive_count = kRowsB},
     };
-    irs::MergeInto(sources, w, &column_options);
+    irs::MergeInto(sources, w, &field_options);
     w.Commit(kRowsA + kRowsB);
   }
 
@@ -1287,9 +1291,11 @@ TEST_F(IRSColumnstoreTest, MergeIntoRebuildsHyperLogLogWithDeletes) {
 
   irs::ColumnOptionsProvider column_options =
     [](irs::field_id) -> irs::ColumnOptions { return {.hyperloglog = true}; };
+  irs::FunctionFieldOptions field_options{column_options, nullptr};
 
   {
-    irs::ColWriter w{dir, "src_a", Db(), &column_options};
+    irs::ColWriter w{dir, "src_a", Db()};
+    w.SetFieldOptions(&field_options);
     auto& cw = w.OpenColumn(kId, duckdb::LogicalType::BIGINT);
     duckdb::Vector batch{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
     auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(batch);
@@ -1300,7 +1306,8 @@ TEST_F(IRSColumnstoreTest, MergeIntoRebuildsHyperLogLogWithDeletes) {
     w.Commit(kRowsA);
   }
   {
-    irs::ColWriter w{dir, "src_b", Db(), &column_options};
+    irs::ColWriter w{dir, "src_b", Db()};
+    w.SetFieldOptions(&field_options);
     auto& cw = w.OpenColumn(kId, duckdb::LogicalType::BIGINT);
     duckdb::Vector batch{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
     auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(batch);
@@ -1326,7 +1333,8 @@ TEST_F(IRSColumnstoreTest, MergeIntoRebuildsHyperLogLogWithDeletes) {
   const uint64_t alive_b = kRowsB - mask_b.size();
 
   {
-    irs::ColWriter w{dir, "merged", Db(), &column_options};
+    irs::ColWriter w{dir, "merged", Db()};
+    w.SetFieldOptions(&field_options);
     irs::MergeSource sources[2] = {
       {.reader = nullptr,
        .col_reader = &ra,
@@ -1337,7 +1345,7 @@ TEST_F(IRSColumnstoreTest, MergeIntoRebuildsHyperLogLogWithDeletes) {
        .mask = &mask_b,
        .alive_count = alive_b},
     };
-    irs::MergeInto(sources, w, &column_options);
+    irs::MergeInto(sources, w, &field_options);
     w.Commit(alive_a + alive_b);
   }
 
@@ -1358,9 +1366,11 @@ TEST_F(IRSColumnstoreTest, MergeIntoMixedHyperLogLog) {
 
   irs::ColumnOptionsProvider column_options =
     [](irs::field_id) -> irs::ColumnOptions { return {.hyperloglog = true}; };
+  irs::FunctionFieldOptions field_options{column_options, nullptr};
 
   {
-    irs::ColWriter w{dir, "src_a", Db(), &column_options};
+    irs::ColWriter w{dir, "src_a", Db()};
+    w.SetFieldOptions(&field_options);
     auto& cw = w.OpenColumn(kId, duckdb::LogicalType::BIGINT);
     duckdb::Vector batch{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
     auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(batch);
@@ -1371,7 +1381,8 @@ TEST_F(IRSColumnstoreTest, MergeIntoMixedHyperLogLog) {
     w.Commit(kRowsA);
   }
   {
-    irs::ColWriter w{dir, "src_b", Db(), &column_options};
+    irs::ColWriter w{dir, "src_b", Db()};
+    w.SetFieldOptions(&field_options);
     auto& cw = w.OpenColumn(kId, duckdb::LogicalType::BIGINT);
     duckdb::Vector batch{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
     auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(batch);
@@ -1392,7 +1403,8 @@ TEST_F(IRSColumnstoreTest, MergeIntoMixedHyperLogLog) {
   const uint64_t alive_b = kRowsB - mask_b.size();
 
   {
-    irs::ColWriter w{dir, "merged", Db(), &column_options};
+    irs::ColWriter w{dir, "merged", Db()};
+    w.SetFieldOptions(&field_options);
     irs::MergeSource sources[2] = {
       {.reader = nullptr,
        .col_reader = &ra,
@@ -1403,7 +1415,7 @@ TEST_F(IRSColumnstoreTest, MergeIntoMixedHyperLogLog) {
        .mask = &mask_b,
        .alive_count = alive_b},
     };
-    irs::MergeInto(sources, w, &column_options);
+    irs::MergeInto(sources, w, &field_options);
     w.Commit(kRowsA + alive_b);
   }
 
@@ -1456,9 +1468,11 @@ TEST_F(IRSColumnstoreTest, MergeIntoUsesCallbackRowGroupSize) {
       .compression = duckdb::CompressionType::COMPRESSION_AUTO,
     };
   };
+  irs::FunctionFieldOptions field_options{column_options, nullptr};
 
   {
-    irs::ColWriter w{dir, "merged", Db(), &column_options};
+    irs::ColWriter w{dir, "merged", Db()};
+    w.SetFieldOptions(&field_options);
     irs::MergeSource sources[2] = {
       {.reader = nullptr,
        .col_reader = &ra,
@@ -1469,7 +1483,7 @@ TEST_F(IRSColumnstoreTest, MergeIntoUsesCallbackRowGroupSize) {
        .mask = nullptr,
        .alive_count = kRowsB},
     };
-    irs::MergeInto(sources, w, &column_options);
+    irs::MergeInto(sources, w, &field_options);
     w.Commit(kRowsA + kRowsB);
   }
 

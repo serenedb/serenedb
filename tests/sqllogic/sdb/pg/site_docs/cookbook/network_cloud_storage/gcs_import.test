@@ -1,0 +1,73 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_RAW
+#| CREATE SECRET (
+#|     TYPE gcs,
+#|     KEY_ID '⟨AKIAIOSFODNN7EXAMPLE⟩',
+#|     SECRET '⟨wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY⟩'
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE OR REPLACE SECRET (
+    TYPE gcs,
+    KEY_ID 'AKIAIOSFODNN7EXAMPLE',
+    SECRET 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
+);
+
+# DOCS_TEST: example_002
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/cookbook_network_cloud_storage_gcs_import_example_002_1_file_parquet.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM read_parquet('gs://⟨gcs_bucket⟩/⟨file.parquet⟩');
+
+# DOCS_TEST_BODY
+
+query ???
+SELECT *
+FROM read_parquet('${__TEST_DIR__}/cookbook_network_cloud_storage_gcs_import_example_002_1_file_parquet.parquet');
+----
+id	name	value
+1	alpha	10
+2	beta	20
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_RAW
+#| ATTACH 'gs://⟨gcs_bucket⟩/⟨file.duckdb⟩' AS ⟨duckdb_database⟩ (READ_ONLY);
+
+# DOCS_TEST_BODY
+
+statement ok
+DETACH IF EXISTS duckdb_database;
+
+statement ok
+DETACH IF EXISTS duckdb_database_fixture;
+
+statement ok
+ATTACH '${__TEST_DIR__}/cookbook_network_cloud_storage_gcs_import_example_003_file.duckdb' AS duckdb_database_fixture;
+
+statement ok
+DROP TABLE IF EXISTS duckdb_database_fixture.items;
+
+statement ok
+CREATE TABLE duckdb_database_fixture.items AS SELECT 1 AS id, 'alpha' AS name;
+
+statement ok
+DETACH duckdb_database_fixture;
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/cookbook_network_cloud_storage_gcs_import_example_003_file.duckdb' AS duckdb_database (READ_ONLY);
+
+statement ok
+DETACH duckdb_database;

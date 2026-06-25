@@ -1,0 +1,35 @@
+# DOCS_TEST: example_001
+
+statement ok
+DROP TABLE IF EXISTS tbl;
+
+statement ok
+CREATE TABLE tbl (col1 INTEGER, col2 INTEGER);
+
+statement ok
+INSERT INTO tbl VALUES (1, 10), (2, 20), (3, 30);
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX idx ON tbl (col1);
+
+# DOCS_TEST: example_002
+
+statement ok
+DROP TABLE IF EXISTS tbl;
+
+statement ok
+CREATE TABLE tbl (col1 INTEGER, col2 INTEGER);
+
+statement ok
+INSERT INTO tbl VALUES (1, 10), (2, 20), (3, 30);
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX idx_multi_column ON tbl (col1, col2);
+
+
+statement ok
+CREATE INDEX idx_expr ON tbl (col1 + 1);

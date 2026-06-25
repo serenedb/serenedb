@@ -1,0 +1,144 @@
+hash-threshold 100
+
+control substitution on
+
+# --- basic int+text round-trip through a newline-delimited JSON file ---
+
+statement ok
+CREATE TABLE tsrc
+(
+  id INTEGER PRIMARY KEY,
+  name TEXT
+);
+
+
+statement ok
+CREATE TABLE tdst
+(
+  id INTEGER PRIMARY KEY,
+  name TEXT
+);
+
+
+statement count 3
+INSERT INTO tsrc VALUES (1, 'vedernikoff'), (2, 'pavelvi'), (3, 'babsky');
+
+
+statement count 3
+COPY tsrc TO '${__TEST_DIR__}/copy.jsonl' (FORMAT json);
+
+
+statement count 3
+COPY tdst FROM '${__TEST_DIR__}/copy.jsonl' (FORMAT json);
+
+
+query
+SELECT * FROM tdst ORDER BY 1, 2;
+----
+id	name
+1	vedernikoff
+2	pavelvi
+3	babsky
+
+
+# --- escaping round-trip: embedded tab/newline/backslash/quote, NULL, empty
+# string. JSON string escaping must round-trip exactly (EXCEPT-diff both ways). ---
+
+statement ok
+CREATE TABLE esrc (id INTEGER, s TEXT);
+
+
+statement count 4
+INSERT INTO esrc VALUES
+  (1, 'plain'),
+  (2, NULL),
+  (3, e'a\tb\nc\\d"q'),
+  (4, '');
+
+
+statement count 4
+COPY esrc TO '${__TEST_DIR__}/copy_esc.jsonl' (FORMAT json);
+
+
+statement ok
+CREATE TABLE edst (id INTEGER, s TEXT);
+
+
+statement count 4
+COPY edst FROM '${__TEST_DIR__}/copy_esc.jsonl' (FORMAT json);
+
+
+query
+SELECT
+  (SELECT count(*) FROM (SELECT * FROM esrc EXCEPT SELECT * FROM edst) a)
+  + (SELECT count(*) FROM (SELECT * FROM edst EXCEPT SELECT * FROM esrc) b)
+  AS diff;
+----
+diff
+0
+
+
+query
+SELECT count(*) AS nulls FROM edst WHERE s IS NULL;
+----
+nulls
+1
+
+
+query
+SELECT length(s) AS l FROM edst WHERE id = 3;
+----
+l
+9
+
+
+# --- bulk multi-type + NULL round-trip (int/bigint/double/bool/text + NULL).
+# JSON maps by column name, so the destination column names match the source. ---
+
+statement ok
+CREATE TABLE bsrc AS
+SELECT
+  g::int                                   AS i4,
+  (g::bigint * 1000000)                    AS i8,
+  (g * 0.5)::double                        AS f8,
+  (g % 2 = 0)                              AS b,
+  ('row_' || g)                            AS t,
+  CASE WHEN g % 3 = 0 THEN NULL ELSE 'v' || g END AS maybe
+FROM generate_series(1, 20000) g;
+
+
+statement count 20000
+COPY bsrc TO '${__TEST_DIR__}/copy_multi.jsonl' (FORMAT json);
+
+
+statement ok
+CREATE TABLE bdst
+(
+  i4    INTEGER,
+  i8    BIGINT,
+  f8    DOUBLE,
+  b     BOOLEAN,
+  t     TEXT,
+  maybe TEXT
+);
+
+
+statement count 20000
+COPY bdst FROM '${__TEST_DIR__}/copy_multi.jsonl' (FORMAT json);
+
+
+query
+SELECT
+  (SELECT count(*) FROM (SELECT * FROM bsrc EXCEPT SELECT * FROM bdst) a)
+  + (SELECT count(*) FROM (SELECT * FROM bdst EXCEPT SELECT * FROM bsrc) b)
+  AS diff;
+----
+diff
+0
+
+
+query
+SELECT count(*) AS nulls FROM bdst WHERE maybe IS NULL;
+----
+nulls
+6666

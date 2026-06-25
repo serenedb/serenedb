@@ -1,0 +1,344 @@
+# Shared setup for the metadata-function examples below (executed, not displayed).
+
+statement ok
+CREATE OR REPLACE TABLE metadata_demo(id INTEGER, name VARCHAR, score DOUBLE, CHECK (score >= 0));
+
+statement ok
+CREATE OR REPLACE VIEW metadata_demo_v AS SELECT id, name FROM metadata_demo;
+
+statement ok
+CREATE OR REPLACE SEQUENCE demo_seq START 10;
+
+statement ok
+DROP TYPE IF EXISTS my_mood;
+
+statement ok
+CREATE TYPE my_mood AS ENUM ('happy', 'sad');
+
+statement ok
+CREATE INDEX IF NOT EXISTS demo_idx ON metadata_demo(id);
+
+statement ok
+DROP SECRET IF EXISTS demo_secret;
+
+statement ok
+CREATE SECRET demo_secret (TYPE s3, KEY_ID 'k', SECRET 's');
+
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT * FROM duckdb_settings();
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CALL duckdb_settings();
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT * FROM duckdb_views();
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT * FROM duckdb_views;
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT column_name, data_type
+FROM duckdb_columns()
+WHERE table_name = 'metadata_demo'
+ORDER BY column_index;
+----
+column_name	data_type
+id	INTEGER
+name	VARCHAR
+score	DOUBLE
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+SELECT table_name, constraint_type
+FROM duckdb_constraints()
+WHERE table_name = 'metadata_demo'
+  AND constraint_type = 'CHECK';
+----
+table_name	constraint_type
+metadata_demo	CHECK
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+SELECT crs_name, auth_name
+FROM duckdb_coordinate_systems()
+WHERE crs_name = 'OGC:CRS84';
+----
+crs_name	auth_name
+OGC:CRS84	OGC
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query
+SELECT database_name
+FROM duckdb_databases()
+WHERE database_name IN ('system', 'temp')
+ORDER BY database_name;
+----
+database_name
+system
+temp
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT *
+FROM duckdb_dependencies();
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+query
+SELECT extension_name
+FROM duckdb_extensions()
+WHERE extension_name IN ('icu', 'json', 'parquet')
+ORDER BY extension_name;
+----
+extension_name
+icu
+json
+parquet
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+query
+SELECT DISTINCT function_name
+FROM duckdb_functions()
+WHERE function_name = 'upper';
+----
+function_name
+upper
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+query
+SELECT index_name, table_name
+FROM duckdb_indexes()
+WHERE index_name = 'demo_idx';
+----
+index_name	table_name
+demo_idx	metadata_demo
+
+# DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
+
+query
+SELECT keyword_category
+FROM duckdb_keywords()
+WHERE keyword_name = 'select';
+----
+keyword_category
+reserved
+
+# DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT *
+FROM duckdb_log_contexts();
+
+# DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT *
+FROM duckdb_logs();
+
+# DOCS_TEST: example_016
+
+# DOCS_TEST_BODY
+
+query
+SELECT tag
+FROM duckdb_memory()
+WHERE tag = 'BASE_TABLE';
+----
+tag
+BASE_TABLE
+
+# DOCS_TEST: example_017
+
+# DOCS_TEST_BODY
+
+query
+SELECT name
+FROM duckdb_optimizers()
+ORDER BY name
+LIMIT 1;
+----
+name
+aggregate_function_rewriter
+
+# DOCS_TEST: example_018
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT *
+FROM duckdb_prepared_statements();
+
+# DOCS_TEST: example_019
+
+# DOCS_TEST_BODY
+
+query
+SELECT name, value
+FROM duckdb_profiling_settings()
+WHERE name = 'profiling_coverage';
+----
+name	value
+profiling_coverage	SELECT
+
+# DOCS_TEST: example_020
+
+# DOCS_TEST_BODY
+
+query
+SELECT DISTINCT schema_name
+FROM duckdb_schemas()
+WHERE schema_name IN ('main', 'pg_catalog')
+ORDER BY schema_name;
+----
+schema_name
+main
+pg_catalog
+
+# DOCS_TEST: example_021
+
+# DOCS_TEST_BODY
+
+query
+SELECT type
+FROM duckdb_secret_types()
+WHERE type IN ('postgres', 's3')
+ORDER BY type;
+----
+type
+postgres
+s3
+
+# DOCS_TEST: example_022
+
+# DOCS_TEST_BODY
+
+query
+SELECT name, type
+FROM duckdb_secrets()
+WHERE name = 'demo_secret';
+----
+name	type
+demo_secret	s3
+
+# DOCS_TEST: example_023
+
+# DOCS_TEST_BODY
+
+query
+SELECT sequence_name, start_value
+FROM duckdb_sequences()
+WHERE sequence_name = 'demo_seq';
+----
+sequence_name	start_value
+demo_seq	10
+
+# DOCS_TEST: example_024
+
+# DOCS_TEST_BODY
+
+query
+SELECT name, input_type
+FROM duckdb_settings()
+WHERE name = 'threads';
+----
+name	input_type
+threads	BIGINT
+
+# DOCS_TEST: example_025
+
+# DOCS_TEST_BODY
+
+query
+SELECT table_name, column_count
+FROM duckdb_tables()
+WHERE table_name = 'metadata_demo';
+----
+table_name	column_count
+metadata_demo	3
+
+# DOCS_TEST: example_026
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT *
+FROM duckdb_temporary_files();
+
+# DOCS_TEST: example_027
+
+# DOCS_TEST_BODY
+
+query
+SELECT type_name
+FROM duckdb_types()
+WHERE type_name = 'my_mood';
+----
+type_name
+my_mood
+
+# DOCS_TEST: example_028
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT *
+FROM duckdb_variables();
+
+# DOCS_TEST: example_029
+
+# DOCS_TEST_BODY
+
+query
+SELECT view_name, column_count
+FROM duckdb_views()
+WHERE view_name = 'metadata_demo_v';
+----
+view_name	column_count
+metadata_demo_v	2

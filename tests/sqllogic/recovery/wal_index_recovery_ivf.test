@@ -11,7 +11,7 @@ control substitution on
 #
 # Pre-crash row goes through a normal commit so the on-disk .cs is the
 # reference. Post-crash rows land in the WAL only -- we freeze
-# SearchCommitTask::commitUnsafe before INSERTing them so the iresearch
+# SearchRefreshTask::commitUnsafe before INSERTing them so the iresearch
 # trx never gets to flush.
 
 statement ok
@@ -68,7 +68,7 @@ pk
 # rows reach RocksDB (and its WAL) but the iresearch trx is never
 # committed -- their vectors only exist as WAL bytes when we crash.
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO wal_hnsw_t VALUES (2, [0.0, 1.0, 0.0]::FLOAT[3]),

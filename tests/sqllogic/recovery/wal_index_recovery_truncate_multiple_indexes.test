@@ -49,7 +49,7 @@ id
 2
 
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # Pre-truncate WAL-only writes that never reach iresearch.
 statement ok

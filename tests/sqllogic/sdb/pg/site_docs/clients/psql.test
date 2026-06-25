@@ -1,0 +1,45 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE movies(id INTEGER, title VARCHAR, genre VARCHAR, year INTEGER, rating DOUBLE);
+
+statement ok
+INSERT INTO movies VALUES
+    (1, 'Intro to Search', 'sci-fi', 2024, 9.5),
+    (2, 'Scaling Analytics', 'drama', 2025, 8.1),
+    (3, 'The Last Index', 'sci-fi', 2016, 7.7),
+    (4, 'Old Classic', 'drama', 2009, 8.9);
+
+# DOCS_TEST_BODY
+
+query
+SELECT title, rating FROM movies WHERE year > 2015 ORDER BY rating DESC LIMIT 5;
+----
+title	rating
+Intro to Search	9.5
+Scaling Analytics	8.1
+The Last Index	7.7
+
+# DOCS_TEST: example_002
+
+statement ok
+DROP TABLE IF EXISTS movies;
+
+statement ok
+CREATE TABLE movies(id INTEGER, title VARCHAR, genre VARCHAR, year INTEGER, rating DOUBLE);
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (5, 'New Frontier', 'action', 2023, 8.8),
+    (6, 'Quiet Place', 'horror', 2018, 7.5)
+) AS t(id, title, genre, year, rating)) TO '${__TEST_DIR__}/clients_psql_example_002_movies_csv.csv' (FORMAT CSV, HEADER TRUE);
+
+# DOCS_TEST_RAW
+#| COPY movies FROM 'movies.csv' WITH (FORMAT CSV, HEADER TRUE);
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY movies FROM '${__TEST_DIR__}/clients_psql_example_002_movies_csv.csv' WITH (FORMAT CSV, HEADER TRUE);

@@ -20,18 +20,21 @@
 
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
+#include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_replace.h>
+#include <absl/strings/str_split.h>
 
 #include <duckdb/common/assert.hpp>
+#include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/types/string.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
+#include <iterator>
 #include <limits>
 #include <magic_enum/magic_enum.hpp>
 #include <string>
 
-#include "basics/containers/trivial_map.h"
 #include "basics/debugging.h"
 #include "basics/serializer.h"
 #include "basics/static_strings.h"
@@ -40,7 +43,6 @@
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "query/config.h"
-#include "rest/version.h"
 
 namespace sdb {
 
@@ -112,6 +114,71 @@ void NoOverwriteClientEncoding(duckdb::ClientContext& ctx, duckdb::SetScope,
   throw duckdb::InvalidInputException{
     "parameter \"client_encoding\" cannot be changed from \"%s\" to \"%s\"",
     got_current ? current.ToString() : std::string{}, new_str};
+}
+
+// PG validates DateStyle as an output format (ISO / SQL / Postgres / German)
+// and/or a field order (YMD / DMY / MDY, plus the EURO*, NONEURO* and US
+// aliases), comma-separated in either order; an unrecognized token is
+// invalid_parameter_value. serenedb only renders ISO, but it still rejects
+// garbage so a bad value is a user error, not silently stored.
+void CheckDateStyle(duckdb::ClientContext&, duckdb::SetScope,
+                    duckdb::Value& value) {
+  if (value.IsNull()) {
+    return;
+  }
+  const std::string raw = value.ToString();
+  for (std::string_view field : absl::StrSplit(raw, ',', absl::SkipEmpty())) {
+    const auto token = absl::AsciiStrToUpper(absl::StripAsciiWhitespace(field));
+    static constexpr std::string_view kKnown[] = {
+      "ISO", "SQL", "POSTGRES", "GERMAN", "YMD", "DMY", "MDY", "US", "DEFAULT"};
+    bool ok =
+      absl::StartsWith(token, "EURO") || absl::StartsWith(token, "NONEURO");
+    for (const auto known : kKnown) {
+      ok = ok || token == known;
+    }
+    if (!ok) {
+      throw duckdb::InvalidInputException(
+        "invalid value for parameter \"DateStyle\": \"%s\"", raw);
+    }
+  }
+}
+
+// PG's IntervalStyle is an enum GUC: postgres / postgres_verbose /
+// sql_standard / iso_8601. Anything else is invalid_parameter_value.
+void CheckIntervalStyle(duckdb::ClientContext&, duckdb::SetScope,
+                        duckdb::Value& value) {
+  if (value.IsNull()) {
+    return;
+  }
+  const auto token = absl::AsciiStrToUpper(value.ToString());
+  if (token != "POSTGRES" && token != "POSTGRES_VERBOSE" &&
+      token != "SQL_STANDARD" && token != "ISO_8601") {
+    throw duckdb::InvalidInputException(
+      "invalid value for parameter \"IntervalStyle\": \"%s\"",
+      value.ToString());
+  }
+}
+
+void CheckApplicationName(duckdb::ClientContext&, duckdb::SetScope,
+                          duckdb::Value& value) {
+  if (value.IsNull()) {
+    return;
+  }
+  const std::string raw = value.ToString();
+  std::string clean;
+  clean.reserve(raw.size());
+  bool dirty = false;
+  for (const unsigned char c : raw) {
+    if (c < 32 || c > 126) {
+      absl::StrAppend(&clean, "\\x", absl::Hex(c, absl::kZeroPad2));
+      dirty = true;
+    } else {
+      clean.push_back(static_cast<char>(c));
+    }
+  }
+  if (dirty) {
+    value = duckdb::Value{clean};
+  }
 }
 
 constexpr std::pair<std::string_view, VariableDescription>
@@ -357,6 +424,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::VARCHAR,
         "Sets the application name to be reported in statistics and logs.",
         [] { return duckdb::Value{""}; },
+        CheckApplicationName,
       },
     },
     {
@@ -468,70 +536,51 @@ constexpr std::pair<std::string_view, VariableDescription>
         Readonly<"is_superuser">,
       },
     },
-};
-
-constexpr std::pair<std::string_view,
-                    std::pair<std::string_view, VariableDescription>>
-  kVariableDescriptionCanonical[] = {
     {
-      "datestyle",
+      "DateStyle",
       {
-        "DateStyle",
-        {
-          LogicalTypeId::VARCHAR,
-          "Sets the display format for date and time values.",
-          [] { return duckdb::Value{"ISO, MDY"}; },
-        },
+        LogicalTypeId::VARCHAR,
+        "Sets the display format for date and time values.",
+        [] { return duckdb::Value{"ISO, MDY"}; },
+        CheckDateStyle,
       },
     },
     {
-      "intervalstyle",
+      "IntervalStyle",
       {
-        "IntervalStyle",
-        {
-          LogicalTypeId::VARCHAR,
-          "Sets the display format for interval values.",
-          [] { return duckdb::Value{"postgres"}; },
-        },
+        LogicalTypeId::VARCHAR,
+        "Sets the display format for interval values.",
+        [] { return duckdb::Value{"postgres"}; },
+        CheckIntervalStyle,
       },
     },
     {
-      "timezone",
+      "TimeZone",
       {
-        "TimeZone",
-        {
-          LogicalTypeId::VARCHAR,
-          "Sets the time zone for displaying and interpreting time stamps.",
-          [] { return duckdb::Value{"Etc/UTC"}; },
-        },
+        LogicalTypeId::VARCHAR,
+        "Sets the time zone for displaying and interpreting time stamps.",
+        [] { return duckdb::Value{"Etc/UTC"}; },
       },
     },
 };
 
-constexpr auto kVarIndex =
-  containers::MakeTrivialBiMapFirstToIndex<kVariableDescription>();
-constexpr auto kVarCanonicalIndex =
-  containers::MakeTrivialBiMapFirstToIndex<kVariableDescriptionCanonical>();
+const duckdb::case_insensitive_set_view_t kVariableIndex = [] {
+  duckdb::case_insensitive_set_view_t m;
+  m.reserve(std::size(kVariableDescription));
+  for (const auto& entry : kVariableDescription) {
+    m.emplace(entry.first);
+  }
+  return m;
+}();
 
 }  // namespace
 
-std::optional<std::pair<std::string_view, VariableDescription>> GetDefault(
-  std::string_view name) {
-  if (auto idx = kVarIndex.TryFindICaseByFirst(name)) {
-    return kVariableDescription[*idx];
-  }
-  if (auto idx = kVarCanonicalIndex.TryFindICaseByFirst(name)) {
-    return kVariableDescriptionCanonical[*idx].second;
-  }
-  return std::nullopt;
-}
-
 std::string_view GetOriginalName(std::string_view name) {
-  auto info = GetDefault(name);
-  if (!info) {
+  auto it = kVariableIndex.find(name);
+  if (it == kVariableIndex.end()) {
     return {};
   }
-  return info->first;
+  return *it;
 }
 
 namespace {
@@ -557,10 +606,6 @@ namespace connector {
 
 void RegisterConfigVariables(duckdb::DBConfig& config) {
   for (const auto& [name, desc] : kVariableDescription) {
-    TryRegister(config, name, desc);
-  }
-  for (const auto& [_, pair] : kVariableDescriptionCanonical) {
-    const auto& [name, desc] = pair;
     TryRegister(config, name, desc);
   }
 }

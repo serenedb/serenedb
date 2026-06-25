@@ -20,6 +20,8 @@
 
 #include "connector/optimizer/iresearch_plan.h"
 
+#include <absl/container/flat_hash_set.h>
+
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/optimizer/optimizer_extension.hpp>
@@ -38,7 +40,7 @@
 #include <iresearch/search/filter_optimizer.hpp>
 #include <iresearch/search/proxy_filter.hpp>
 
-#include "basics/containers/trivial_map.h"
+#include "basics/containers/flat_hash_map.h"
 #include "catalog/inverted_index.h"
 #include "catalog/scorer_options.h"
 #include "connector/duckdb_client_state.h"
@@ -316,19 +318,14 @@ duckdb::unique_ptr<duckdb::Expression> MakeScoreRefExpression(
 
 bool IsScorerFunctionName(std::string_view name) {
   using S = catalog::ScorerOptions;
-  static constexpr containers::TrivialSet kScorerNames = [](auto selector) {
-    return selector()
-      .Case(S::Bm25::Owner::type_name())
-      .Case(S::Tfidf::Owner::type_name())
-      .Case(S::LmJm::Owner::type_name())
-      .Case(S::LmDirichlet::Owner::type_name())
-      .Case(S::IndriDirichlet::Owner::type_name())
-      .Case(S::Dfi::Owner::type_name())
-      .Case(S::RawBoost::Owner::type_name())
-      .Case(S::RawTf::Owner::type_name())
-      .Case(S::RawDL::Owner::type_name());
+  static const absl::flat_hash_set<std::string_view> kScorerNames{
+    S::Bm25::Owner::type_name(),           S::Tfidf::Owner::type_name(),
+    S::LmJm::Owner::type_name(),           S::LmDirichlet::Owner::type_name(),
+    S::IndriDirichlet::Owner::type_name(), S::Dfi::Owner::type_name(),
+    S::RawBoost::Owner::type_name(),       S::RawTf::Owner::type_name(),
+    S::RawDL::Owner::type_name(),
   };
-  return kScorerNames.Contains(name);
+  return kScorerNames.contains(name);
 }
 
 bool BindingResolvesToScoreColumn(const duckdb::BoundColumnRefExpression& ref,
@@ -557,17 +554,17 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("ts_offsets(): column '", col_name(), "' not found in table"));
   }
-  if (!found->bind_data->inverted_index->HasColumn(target_col_id)) {
+
+  const auto* col_info =
+    found->bind_data->inverted_index->FindColumnInfo(target_col_id);
+  if (!col_info) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("ts_offsets(): column '", col_name(), "' not found in index"));
   }
-
-  const auto* col_info =
-    found->bind_data->inverted_index->FindColumnInfo(target_col_id);
-  const bool is_text = col_info && col_info->text_dictionary.isSet();
+  const bool is_text = col_info->text_dictionary.isSet();
   const bool offs_stored =
-    col_info && col_info->features.HasFeatures(irs::IndexFeatures::Offs);
+    col_info->features.HasFeatures(irs::IndexFeatures::Offs);
 
   if (is_text && !offs_stored) {
     auto bind = duckdb::make_uniq<connector::OffsetsBindData>();
@@ -834,11 +831,11 @@ bool TryClaimSearchFilter(
     [&](const duckdb::BoundColumnRefExpression& ref)
     -> std::optional<connector::SearchColumnInfo> {
     const auto col_id = ResolveColumnId(ref.binding, bind_data, get);
-    if (col_id == catalog::Column::kInvalidId || !index.HasColumn(col_id)) {
+    if (col_id == catalog::Column::kInvalidId) {
       return std::nullopt;
     }
     const auto* info = index.FindColumnInfo(col_id);
-    if (info && !info->IsTermDict()) {
+    if (!info || !info->IsTermDict()) {
       return std::nullopt;
     }
     auto type = bind_data.ColumnTypeById(col_id);

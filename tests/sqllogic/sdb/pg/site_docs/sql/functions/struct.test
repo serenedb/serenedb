@@ -1,0 +1,111 @@
+# DOCS_TEST: structentry
+# DOCS_TEST_BODY
+query
+SELECT ({'i': 3, 's': 'string'}).i AS i;
+----
+i
+3
+
+# DOCS_TEST: structentry_bracket
+# DOCS_TEST_BODY
+query
+SELECT ({'i': 3, 's': 'string'})['i'] AS i;
+----
+i
+3
+
+# DOCS_TEST: structidx
+# DOCS_TEST_BODY
+query
+SELECT (row(42, 84))[1] AS first;
+----
+first
+42
+
+# DOCS_TEST: rowany
+# DOCS_TEST_BODY
+query
+SELECT row(i, i % 4, i / 4) AS r FROM (SELECT 10 AS i);
+----
+r
+(10,2,2)
+
+# DOCS_TEST: struct_concat
+# DOCS_TEST_BODY
+query
+SELECT struct_concat(struct_pack(i := 4), struct_pack(s := 'string')) AS s;
+----
+s
+(4,string)
+
+# DOCS_TEST: struct_contains
+# DOCS_TEST_BODY
+query
+SELECT struct_contains(row(1, 2, 3), 2) AS contains;
+----
+contains
+t
+
+# DOCS_TEST: struct_extract_entry
+# DOCS_TEST_BODY
+query
+SELECT struct_extract({'i': 3, 'v2': 3, 'v3': 0}, 'i') AS i;
+----
+i
+3
+
+# DOCS_TEST: struct_extract_idx
+# DOCS_TEST_BODY
+query
+SELECT struct_extract(row(42, 84), 1) AS first;
+----
+first
+42
+
+# DOCS_TEST: struct_extract_at
+# DOCS_TEST_BODY
+query
+SELECT struct_extract_at({'v1': 10, 'v2': 20, 'v3': 3}, 2) AS v;
+----
+v
+20
+
+# DOCS_TEST: struct_insert
+# DOCS_TEST_BODY
+query
+SELECT struct_insert({'a': 1}, b := 2) AS s;
+----
+s
+(1,2)
+
+# DOCS_TEST: struct_pack
+# DOCS_TEST_BODY
+query
+SELECT struct_pack(i := 4, s := 'string') AS s;
+----
+s
+(4,string)
+
+# DOCS_TEST: struct_position
+# DOCS_TEST_BODY
+query
+SELECT struct_position(row(1, 2, 3), 2) AS pos;
+----
+pos
+2
+
+# DOCS_TEST: struct_update
+# DOCS_TEST_BODY
+query
+SELECT struct_update({'a': 1, 'b': 2}, b := 3, c := 4) AS s;
+----
+s
+(1,3,4)
+
+# DOCS_TEST: struct_values
+# DOCS_TEST_BODY
+query
+SELECT struct_values({'a': 1, 'b': 2, 'c': 3}) AS vals;
+----
+vals
+(1,2,3)

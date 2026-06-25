@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector_buffer.hpp>
+#include <duckdb/common/vector/dictionary_vector.hpp>
 #include <duckdb/storage/buffer/buffer_handle.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/data_pointer.hpp>
@@ -75,12 +76,17 @@ inline size_t ConsecutiveRunLength(
 
 class SharedPinHolder final : public duckdb::AuxiliaryDataHolder {
  public:
-  explicit SharedPinHolder(std::shared_ptr<duckdb::BufferHandle> pin) noexcept
-    : _pin{std::move(pin)} {}
+  SharedPinHolder(std::shared_ptr<duckdb::BufferHandle> pin,
+                  duckdb::buffer_ptr<duckdb::DictionaryEntry> dict) noexcept
+    : _dict{std::move(dict)}, _pin{std::move(pin)} {}
 
  private:
+  duckdb::buffer_ptr<duckdb::DictionaryEntry> _dict;
   std::shared_ptr<duckdb::BufferHandle> _pin;
 };
+
+duckdb::buffer_ptr<duckdb::DictionaryEntry> DictFsstScanDictionary(
+  duckdb::ColumnScanState& state, bool is_dict_fsst);
 
 class ColumnReader final {
  public:
@@ -151,6 +157,8 @@ class ColumnReader final {
     explicit ScanCursor(duckdb::unique_ptr<duckdb::ColumnSegment> seg)
       : _seg{std::move(seg)} {
       _seg->InitializeScan(_state);
+      _is_dict_fsst = _seg->GetCompressionFunction().type ==
+                      duckdb::CompressionType::COMPRESSION_DICT_FSST;
       if (auto& block = _seg->GetBlockHandle()) {
         auto& bm = duckdb::BufferManager::GetBufferManager(_seg->GetDatabase());
         _pin = std::make_shared<duckdb::BufferHandle>(bm.Pin(block));
@@ -187,16 +195,27 @@ class ColumnReader final {
       _state.offset_in_column += count;
       _state.internal_index += count;
       _cursor += count;
-      // Keep the segment's pinned block alive on the output Vector for BOTH
-      // scan types. SCAN_FLAT_VECTOR can still reference segment memory for
-      // non-inline string_t payloads (PK blobs, VARCHAR > 12 bytes), so
-      // dropping the segment between Fetch and the caller consuming pk_data[k]
-      // is a heap-use-after-free (ASAN-confirmed via SearchFullScanFunction ->
-      // AppendPrimaryKey<PrimaryKeyI64I64>). The block is pinned once when the
-      // cursor opens the segment; each chunk just shares that pin.
-      if (_pin) {
+      // The output's non-inline string_t are zero-copy views into memory this
+      // cursor owns; keep that memory alive on the output Vector so it stays
+      // valid after the cursor moves to the next segment -- otherwise a later
+      // consumer reads freed memory (heap-use-after-free; ASAN-confirmed via
+      // SearchFullScanFunction -> AppendPrimaryKey<PrimaryKeyI64I64>). Two
+      // cases:
+      //  * Most codecs: the views point into the segment's pinned block (PK
+      //    blobs, VARCHAR > 12B). Share the block pin -- pinned once when the
+      //    cursor opens the segment; each chunk just shares it.
+      //  * dict_fsst: the scan FSST-decodes its strings into a buffer in a
+      //    memory pool (an arena owned by the scan state's reusable dictionary)
+      //    and the output only *references* that buffer -- it is not in the
+      //    block. The cursor frees the dictionary on a segment crossing, so
+      //    also share it (a ref-counted buffer) to keep the pool alive for the
+      //    output. dict_fsst is VARCHAR-only, so the codec flag alone gates it;
+      //    for every other codec the helper returns a null dict and the output
+      //    just rides on the pin.
+      if (_is_dict_fsst || _pin) {
         out_vec.BufferMutable().AddAuxiliaryData(
-          std::make_unique<SharedPinHolder>(_pin));
+          std::make_unique<SharedPinHolder>(
+            _pin, DictFsstScanDictionary(_state, _is_dict_fsst)));
       }
     }
 
@@ -207,6 +226,7 @@ class ColumnReader final {
     duckdb::unique_ptr<duckdb::ColumnSegment> _seg;
     duckdb::ColumnScanState _state{nullptr};
     std::shared_ptr<duckdb::BufferHandle> _pin;
+    bool _is_dict_fsst = false;
     uint64_t _cursor = 0;
   };
 

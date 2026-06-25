@@ -1,0 +1,70 @@
+# ----------------------------------------------------------------------
+# PG-compat: in an aborted transaction block every statement except
+# COMMIT/ROLLBACK is rejected with SQLSTATE 25P02 ("current transaction is
+# aborted") before parse-analysis.
+#
+# Regression for the simple-query path: it used to let PREPARE and
+# DEALLOCATE -- whose binder permits an invalid transaction -- execute
+# inside a failed block, where PostgreSQL (and the extended-protocol path)
+# reject them with 25P02.
+# ----------------------------------------------------------------------
+
+statement ok
+BEGIN;
+
+
+# A real error aborts the block (the message itself differs across engines).
+statement error
+SELECT * FROM no_such_table_abort;
+
+
+# An ordinary statement is refused with 25P02.
+statement error
+SELECT 1;
+----
+db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+
+
+# PREPARE and DEALLOCATE are refused too (the regressed cases).
+statement error
+PREPARE pabort AS SELECT 1;
+----
+db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+
+
+statement error
+DEALLOCATE ALL;
+----
+db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+
+
+# ROLLBACK ends the block; the connection then runs normally again.
+statement ok
+ROLLBACK;
+
+
+query
+SELECT 'after_rollback' AS state;
+----
+state
+after_rollback
+
+
+# COMMIT also ends an aborted block (PG converts it to a rollback).
+statement ok
+BEGIN;
+
+
+statement error
+SELECT * FROM no_such_table_abort;
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT 'after_commit' AS state;
+----
+state
+after_commit

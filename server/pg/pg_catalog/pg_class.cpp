@@ -168,7 +168,7 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
          catalog.GetIndexes(database_id, schema->GetName())) {
       auto row = MakeBaseRow(schema_id, *index);
       row.relkind = PgClass::Relkind::Index;
-      row.relnatts = static_cast<int16_t>(index->GetColumnIds().size());
+      row.relnatts = static_cast<int16_t>(index->GetColumns().size());
       values.push_back(std::move(row));
     }
 

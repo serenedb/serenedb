@@ -157,7 +157,7 @@ count
 # Projecting the file basename uses filename (a per-file constant from the
 # MultiFileList) -- still no content lookup.
 query
-SELECT regexp_extract(path, '/([a-z]+)[.][a-z]+\$', 1) AS slug
+SELECT regexp_extract(path, '/([a-z]+)[.][a-z]+$', 1) AS slug
 FROM v_s3_idx WHERE content @@ 'ranking' ORDER BY slug;
 ----
 slug
@@ -165,7 +165,7 @@ bravo
 
 # BM25 ordering over s3 fixtures.
 query
-SELECT regexp_extract(path, '/([a-z]+)[.][a-z]+\$', 1) AS slug
+SELECT regexp_extract(path, '/([a-z]+)[.][a-z]+$', 1) AS slug
 FROM v_s3_idx WHERE content @@ ts_phrase('term') OR content @@ ts_phrase('ranking')
 ORDER BY BM25(v_s3_idx.tableoid) DESC, slug;
 ----
@@ -176,7 +176,7 @@ alpha
 # ts_highlight forces the lookup TF to open each matching file remotely and
 # fetch its content; the snippet should wrap the match.
 query
-SELECT regexp_extract(path, '/([a-z]+)[.][a-z]+\$', 1) AS slug,
+SELECT regexp_extract(path, '/([a-z]+)[.][a-z]+$', 1) AS slug,
        ts_highlight(content, ts_offsets(content)) AS snippet
 FROM v_s3_idx
 WHERE content @@ ts_phrase('passage', 'extraction')
@@ -206,7 +206,7 @@ count
 3
 
 query
-SELECT regexp_extract(path, '/([a-z]+)[.][a-z]+\$', 1) AS slug
+SELECT regexp_extract(path, '/([a-z]+)[.][a-z]+$', 1) AS slug
 FROM t_s3_idx WHERE content @@ 'snippets' ORDER BY slug;
 ----
 slug

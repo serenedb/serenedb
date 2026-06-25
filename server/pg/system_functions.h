@@ -960,9 +960,20 @@ inline constexpr SystemMacro kExternalMacros[] = {
   // TODO(mbkkt): implement properly -- currently return NULL.
   {"pg_catalog", "pg_get_ruledef", "(oid) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_get_ruledef", "(oid, pretty_bool) AS CAST(NULL AS TEXT)"},
-  {"pg_catalog", "pg_get_viewdef", "(oid) AS CAST(NULL AS TEXT)"},
-  {"pg_catalog", "pg_get_viewdef", "(oid, pretty_bool) AS CAST(NULL AS TEXT)"},
-  {"pg_catalog", "pg_get_viewdef", "(oid, wrap_column) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "pg_get_viewdef",
+   "(relid) AS (SELECT regexp_replace(vd_view.sql, '^CREATE VIEW [^ ]+ "
+   "([(][^)]*[)] )?AS ', '') FROM pg_catalog.pg_class vd_class JOIN "
+   "duckdb_views() vd_view ON vd_view.view_name = vd_class.relname AND "
+   "vd_view.database_name = current_database() JOIN pg_catalog.pg_namespace "
+   "vd_ns ON vd_ns.oid = vd_class.relnamespace AND vd_ns.nspname = "
+   "vd_view.schema_name WHERE vd_class.oid = relid)"},
+  {"pg_catalog", "pg_get_viewdef",
+   "(relid, flag) AS (SELECT regexp_replace(vd_view.sql, '^CREATE VIEW "
+   "[^ ]+ ([(][^)]*[)] )?AS ', '') FROM pg_catalog.pg_class vd_class JOIN "
+   "duckdb_views() vd_view ON vd_view.view_name = vd_class.relname AND "
+   "vd_view.database_name = current_database() JOIN pg_catalog.pg_namespace "
+   "vd_ns ON vd_ns.oid = vd_class.relnamespace AND vd_ns.nspname = "
+   "vd_view.schema_name WHERE vd_class.oid = relid)"},
   {"pg_catalog", "pg_get_indexdef", "(oid) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_get_indexdef", "(oid, col, pretty_bool) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_get_triggerdef", "(oid) AS CAST(NULL AS TEXT)"},
@@ -1026,9 +1037,9 @@ inline constexpr SystemMacro kExternalMacros[] = {
   {"pg_catalog", "pg_options_to_table",
    R"((opts) AS TABLE SELECT NULL::TEXT AS option_name, NULL::TEXT AS option_value WHERE false)"},
   {"pg_catalog", "pg_mcv_list_items",
-   R"((mcv) AS TABLE SELECT NULL::INTEGER AS index, NULL::TEXT AS values, NULL::DOUBLE AS nulls, NULL::DOUBLE AS frequency, NULL::DOUBLE AS base_frequency WHERE false)"},
+   R"((mcv) AS TABLE SELECT NULL::INTEGER AS index, NULL::TEXT[] AS values, NULL::BOOLEAN[] AS nulls, NULL::DOUBLE AS frequency, NULL::DOUBLE AS base_frequency WHERE false)"},
   {"pg_catalog", "pg_get_publication_tables",
-   R"((pubname) AS TABLE SELECT NULL::INTEGER AS relid, NULL::TEXT AS attrs, NULL::TEXT AS qual WHERE false)"},
+   R"((pubname) AS TABLE SELECT NULL::INTEGER AS pubid, NULL::INTEGER AS relid, NULL::SMALLINT[] AS attrs, NULL::TEXT AS qual WHERE false)"},
 
   // pg_stat_get_* stubs -- statistics functions, all return 0 or NULL
   {"pg_catalog", "pg_stat_get_analyze_count", "(a) AS CAST(0 AS BIGINT)"},
@@ -1144,8 +1155,8 @@ inline constexpr SystemMacro kExternalMacros[] = {
   {"pg_catalog", "pg_char_to_encoding", "(enc_name) AS 6::int4"},
   // No temp schemas supported yet.
   {"pg_catalog", "pg_my_temp_schema", "() AS 0::oid"},
-  // We do not spawn backends per connection
-  {"pg_catalog", "pg_backend_pid", "() AS CAST(0 AS INTEGER)"},
+  // pg_backend_pid() is a C++ scalar (PgBackendPidFunction) -- it reads the
+  // per-connection backend PID from the ConnectionContext.
   // clang-format on
 };
 

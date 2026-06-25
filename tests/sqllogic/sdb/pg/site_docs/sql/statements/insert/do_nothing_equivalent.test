@@ -1,0 +1,17 @@
+# DOCS_TEST: example_015
+
+statement ok
+CREATE TABLE tbl (i INTEGER PRIMARY KEY, j INTEGER);
+
+statement ok
+INSERT INTO tbl VALUES (1, 42);
+
+# DOCS_TEST_BODY
+
+statement ok
+INSERT OR IGNORE INTO tbl
+    VALUES (1, 84);
+
+statement ok
+INSERT INTO tbl
+    VALUES (1, 84) ON CONFLICT DO NOTHING;

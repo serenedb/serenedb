@@ -290,10 +290,12 @@ Result Table::AddPrimaryKey(std::shared_ptr<Table>& result,
     }
   }
   auto new_table = basics::downCast<Table>(Clone());
-  new_table->_pk_columns = std::move(pk_columns);
+  new_table->_pk_columns = pk_columns;
   // A PK implies NOT NULL on each key column. Reuse SetNotNull so the implied
-  // not-null CHECKs match the CREATE-TABLE-with-PK path exactly.
-  for (auto col_id : new_table->_pk_columns) {
+  // not-null CHECKs match the CREATE-TABLE-with-PK path exactly. Iterate the
+  // local `pk_columns`: SetNotNull reassigns new_table below, which would free
+  // the object a range-for over new_table->_pk_columns binds to.
+  for (auto col_id : pk_columns) {
     const auto* col = new_table->ColumnById(col_id);
     std::shared_ptr<Table> tmp;
     if (auto r = new_table->SetNotNull(tmp, col->GetName()); !r.ok()) {

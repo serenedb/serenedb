@@ -1,0 +1,29 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT {'birds': ['duck', 'goose', 'heron'], 'aliens': NULL, 'amphibians': ['frog', 'toad']};
+----
+struct_pack
+("{duck,goose,heron}",,"{frog,toad}")
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT MAP(['a', 'b'], [[1, 2], [3, 4]]);
+----
+map
+{"(a,\\"{1,2}\\")","(b,\\"{3,4}\\")"}
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT [{'a': 1, 'b': 'x'}, {'a': 2, 'b': 'y'}];
+----
+list_value
+{"(1,x)","(2,y)"}

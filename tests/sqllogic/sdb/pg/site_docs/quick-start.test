@@ -1,0 +1,164 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_RAW
+#| CREATE TABLE movies AS
+#|     SELECT id, title, overview,
+#|            split_part(genres, '-', 1) AS genre,
+#|            vote_average, vote_count
+#|     FROM read_parquet('hf://datasets/wykonos/movies@~parquet/default/train/*.parquet')
+#|     WHERE overview IS NOT NULL AND vote_count > 1000;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE movies (
+    id INTEGER PRIMARY KEY,
+    title VARCHAR,
+    overview VARCHAR,
+    genre VARCHAR,
+    vote_average DOUBLE,
+    vote_count INTEGER
+);
+
+statement ok
+INSERT INTO movies VALUES
+ (1,  'Interstellar',   'A team of explorers travel through a wormhole in space in an attempt to ensure humanity survival.',              'Science Fiction', 8.4, 30708),
+ (2,  'The Martian',    'An astronaut becomes stranded on Mars and must science the hell out of surviving alone.',                       'Science Fiction', 8.0, 24000),
+ (3,  'Gravity',        'Two scientists are left adrift in space after debris destroys their shuttle during a routine spacewalk.',       'Science Fiction', 7.7, 21000),
+ (4,  'Inception',      'A thief who steals corporate secrets through dream-sharing technology is given a chance to erase his past.',    'Science Fiction', 8.4, 35000),
+ (5,  'Apollo 13',      'NASA must devise a strategy to return the crew safely to Earth after the spacecraft undergoes disaster.',        'Drama',           7.6, 12000),
+ (6,  'Hidden Figures', 'The untold story of the brilliant women who served as the brains behind the early space race at NASA.',         'Drama',           8.1, 8456),
+ (7,  'WALL-E',         'In a distant future a small waste-collecting robot embarks on a journey across space that decides humanity fate.','Animation',      8.1, 16908),
+ (8,  'Toy Story',      'A cowboy doll is profoundly threatened when a new spaceman action figure supplants him as top toy.',            'Animation',       8.0, 17000),
+ (9,  'The Notebook',   'A poor young man falls in love with a rich young woman giving her a sense of freedom.',                          'Romance',         7.8, 15000),
+ (10, 'Titanic',        'A seventeen-year-old aristocrat falls in love with a kind but poor artist aboard the ill-fated Titanic.',        'Romance',         7.9, 25000),
+ (11, 'Alien',          'During its return to Earth a commercial spaceship intercepts a distress signal and is stalked by a deadly creature.','Horror',     8.1, 12576),
+ (12, 'Gladiator',      'A former Roman general sets out to exact vengeance against the emperor who murdered his family.',                'Action',          8.2, 18000);
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT genre, COUNT(*) AS films, ROUND(AVG(vote_average), 2) AS avg_rating
+FROM movies
+GROUP BY genre
+ORDER BY avg_rating DESC, genre;
+----
+genre	films	avg_rating
+Action	1	8.2
+Science Fiction	4	8.13
+Horror	1	8.1
+Animation	2	8.05
+Drama	2	7.85
+Romance	2	7.85
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_RAW
+#| ALTER TABLE movies ADD COLUMN embedding FLOAT[4];
+#|
+#| UPDATE movies
+#| SET embedding = ai_embed(overview, 'text-embedding-3-small', 'openai');
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER TABLE movies ADD COLUMN embedding FLOAT[4];
+
+# Real embeddings come from ai_embed (shown above); here we attach small
+# illustrative vectors so the example is self-contained and deterministic.
+statement ok
+UPDATE movies AS m
+SET embedding = v.emb
+FROM (VALUES
+    (1,  [0.90, 0.10, 0.10, 0.00]::FLOAT[4]),
+    (2,  [0.88, 0.05, 0.10, 0.05]::FLOAT[4]),
+    (3,  [0.85, 0.10, 0.05, 0.05]::FLOAT[4]),
+    (4,  [0.55, 0.20, 0.40, 0.00]::FLOAT[4]),
+    (5,  [0.80, 0.10, 0.20, 0.00]::FLOAT[4]),
+    (6,  [0.75, 0.15, 0.10, 0.10]::FLOAT[4]),
+    (7,  [0.70, 0.20, 0.05, 0.60]::FLOAT[4]),
+    (8,  [0.10, 0.20, 0.10, 0.90]::FLOAT[4]),
+    (9,  [0.05, 0.95, 0.05, 0.05]::FLOAT[4]),
+    (10, [0.10, 0.90, 0.20, 0.00]::FLOAT[4]),
+    (11, [0.75, 0.00, 0.50, 0.00]::FLOAT[4]),
+    (12, [0.10, 0.10, 0.95, 0.00]::FLOAT[4])
+) AS v(id, emb)
+WHERE m.id = v.id;
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY english (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    frequency = true,
+    position = true,
+    offset = true
+);
+
+statement ok
+CREATE INDEX movies_idx ON movies
+    USING inverted(id, title english, overview english, embedding hnsw (metric = 'cosine'));
+
+statement ok
+VACUUM (REFRESH_TABLE) movies;
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT title, genre, ROUND(BM25(movies_idx.tableoid)::NUMERIC, 3) AS score
+FROM movies_idx
+WHERE overview @@ ts_phrase('falls in love')
+ORDER BY score DESC, title;
+----
+title	genre	score
+The Notebook	Romance	6.768
+Titanic	Romance	6.768
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_RAW
+#| SELECT title, genre
+#| FROM   movies_idx
+#| WHERE  overview @@ 'space'                                   -- lexical recall
+#| ORDER  BY embedding <=> ai_embed('space exploration',
+#|                                  'text-embedding-3-small', 'openai')
+#| LIMIT  3;                                                    -- semantic ranking
+
+# DOCS_TEST_BODY
+
+query
+SELECT title, genre
+FROM movies_idx
+WHERE overview @@ 'space'
+ORDER BY embedding <=> [0.90, 0.05, 0.10, 0.05]::FLOAT[4]
+LIMIT 3;
+----
+title	genre
+Interstellar	Science Fiction
+Gravity	Science Fiction
+Hidden Figures	Drama
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+SELECT genre, COUNT(*) AS matches, ROUND(AVG(vote_average), 2) AS avg_rating
+FROM movies_idx
+WHERE overview @@ 'space'
+GROUP BY genre
+ORDER BY matches DESC, genre;
+----
+genre	matches	avg_rating
+Science Fiction	2	8.05
+Animation	1	8.1
+Drama	1	8.1

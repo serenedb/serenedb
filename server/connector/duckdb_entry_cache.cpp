@@ -35,6 +35,7 @@
 #include <duckdb/parser/parsed_data/create_type_info.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
+#include <shared_mutex>
 
 #include "basics/down_cast.h"
 #include "basics/static_strings.h"
@@ -291,7 +292,7 @@ TableInfoAndIndices BuildTableInfoAndIndices(
   const auto& cols = table.Columns();
   containers::FlatHashSet<size_t> idx_set;
   for (auto& index : indexes) {
-    for (auto col_id : index->GetReferencedColumnIds()) {
+    for (auto col_id : index->GetReferencedColumns()) {
       const auto pos = table.ColumnPosById(col_id);
       if (pos < cols.size()) {
         idx_set.insert(pos);
@@ -339,7 +340,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
       info->columns.AddColumn(
         duckdb::ColumnDefinition(vinfo.names[i], vinfo.types[i]));
     }
-    const auto& col_ids = index.GetColumnIds();
+    const auto& col_ids = index.GetColumns();
     std::vector<size_t> indexed_col_indices(col_ids.begin(), col_ids.end());
     if (index.GetType() == catalog::ObjectType::InvertedIndex) {
       auto inverted_index_ptr =
@@ -651,11 +652,11 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
           // We only need enough metadata for DropObject to route by name;
           // the actual storage cleanup happens in catalog.DropIndex.
           auto& index = basics::downCast<const catalog::Index>(*relation);
-          auto table =
-            snapshot.GetObject<catalog::Table>(index.GetRelationId());
+          auto index_relation = snapshot.GetObject(index.GetRelationId());
           auto info = duckdb::make_uniq<duckdb::CreateIndexInfo>();
           info->schema = schema;
-          info->table = table ? table->GetName() : std::string{};
+          info->table = index_relation ? std::string{index_relation->GetName()}
+                                       : std::string{};
           info->index_name = name;
           info->index_type =
             relation->GetType() == catalog::ObjectType::InvertedIndex

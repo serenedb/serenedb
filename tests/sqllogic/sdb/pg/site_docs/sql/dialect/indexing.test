@@ -1,0 +1,21 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT list[1] AS element
+FROM (SELECT ['first', 'second', 'third'] AS list);
+----
+element
+first
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT (json ->> 0) AS element
+FROM (SELECT '["first", "second", "third"]'::JSON AS json);
+----
+element
+first

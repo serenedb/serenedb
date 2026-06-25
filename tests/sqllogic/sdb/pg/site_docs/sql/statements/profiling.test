@@ -1,0 +1,20 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+EXPLAIN
+    SELECT count(*)
+    FROM generate_series(1, 100) AS t(i)
+    WHERE i % 2 = 0;
+
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+EXPLAIN ANALYZE
+    SELECT count(*)
+    FROM generate_series(1, 100) AS t(i)
+    WHERE i % 2 = 0;

@@ -860,9 +860,9 @@ Index::Index(ObjectId database_id, ObjectId schema_id, ObjectId id,
   : Object{schema_id, id, std::move(name), type},
     _database_id{database_id},
     _relation_id{relation_id},
-    _column_ids{std::move(derived.column_ids)},
-    _referenced_column_ids{std::move(derived.referenced)},
-    _column_id_set{_column_ids.begin(), _column_ids.end()} {
+    _columns{std::move(derived.columns)},
+    _referenced_columns{std::move(derived.referenced_columns)},
+    _referenced_columns_set{std::move(derived.referenced_columns_set)} {
   SDB_ASSERT(GetId().isSet());
 }
 
@@ -881,21 +881,6 @@ Index::DedupColumns(std::span<const Column::Id> columns) {
     }
   }
   return {std::move(ids), std::move(seen)};
-}
-
-Index::DerivedColumnIds Index::DeriveIds(
-  std::span<const Column::Id> columns,
-  std::span<const ExpressionData> expressions) {
-  auto [column_ids, seen] = DedupColumns(columns);
-  auto referenced = column_ids;
-  for (const auto& expression : expressions) {
-    for (auto dep : expression.dependent_columns) {
-      if (seen.insert(dep).second) {  // reuse the column dedup set
-        referenced.push_back(dep);
-      }
-    }
-  }
-  return {std::move(column_ids), std::move(referenced)};
 }
 
 }  // namespace sdb::catalog

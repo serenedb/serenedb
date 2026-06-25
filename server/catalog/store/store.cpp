@@ -215,7 +215,7 @@ std::optional<StoreIndexDef> MakeStoreIndexDef(std::string_view database,
     if (!col) {
       return false;
     }
-    // GetReferencedColumnIds() is already de-duped, so each name is appended at
+    // GetReferencedColumns() is already de-duped, so each name is appended at
     // most once -- no name-level dedup needed (that would be O(#cols^2)).
     def.columns.emplace_back(col->GetName());
     return true;
@@ -223,7 +223,7 @@ std::optional<StoreIndexDef> MakeStoreIndexDef(std::string_view database,
   // Indexed columns plus indexed-expression dependencies must all be in the
   // index's column set so duckdb initializes their chunk vectors for the
   // BoundIndex appends.
-  for (auto col_id : index.GetReferencedColumnIds()) {
+  for (auto col_id : index.GetReferencedColumns()) {
     if (!add_column(col_id)) {
       return std::nullopt;
     }
@@ -940,13 +940,14 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
 Result CatalogStore::ExecuteCreateStoreTable(const StoreTableDef& def) {
   auto r = ExecuteCreateStoreTableImpl(def, /*with_checks=*/true);
   if (r.fail() && !def.checks.empty()) {
-    // CHECK expressions may reference functions that only the facade
-    // database can resolve; such constraints stay facade-side (unenforced)
-    // rather than failing the table.
+    // CHECK expressions may reference facade-only types or functions the store
+    // catalog cannot bind. The store table omits them; the facade-bound CHECK
+    // is carried into every write plan instead (RetargetStoreConstraints), so
+    // it is still enforced on INSERT/UPDATE/upsert.
     auto retry = ExecuteCreateStoreTableImpl(def, /*with_checks=*/false);
     if (retry.ok()) {
-      SDB_WARN(GENERAL, "store table \"", def.name,
-               "\": CHECK constraints were not mirrored: ", r.errorMessage());
+      SDB_TRACE(GENERAL, "store table \"", def.name,
+                "\": CHECK constraints kept facade-side: ", r.errorMessage());
       return retry;
     }
   }

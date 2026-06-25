@@ -8,20 +8,27 @@
 # Path to the database directory.
 --server_directory=@LOCALSTATEDIR@/lib/serenedb
 
-# Endpoint(s) the server listens on. Repeat the flag for multiple endpoints.
-#  pgsql+tcp://ipv4-address:port
-#  pgsql+tcp://[ipv6-address]:port
-#  pgsql+ssl://ipv4-address:port
-#  pgsql+unix:///path/to/socket
+# Endpoint(s) the server listens on. Comma-separate for multiple endpoints
+# (a repeated --listen is last-wins, not additive).
+#  postgres://ipv4-address:port
+#  postgres://[ipv6-address]:port
+#  postgres:///path/to.sock  (unix domain socket)
 #
 # Examples:
-#   --server_endpoints=pgsql+tcp://0.0.0.0:7890
-#   --server_endpoints=pgsql+tcp://[::]:7890
---server_endpoints=pgsql+tcp://127.0.0.1:7890
+#   --listen=postgres://0.0.0.0:7890
+#   --listen=postgres://0.0.0.0:7890,postgres://[::]:7890
+--listen=postgres://127.0.0.1:7890
 
 # Minimum log severity: trace | debug | info | warning | error | fatal.
 --log_level=info
 
-# Log destination: 'stdout', 'memory' (queryable via duckdb_logs()), or
-# 'file://<path>'.
-@COMMENT_LOGFILE@--log_storage=file://@LOCALSTATEDIR@/log/serenedb/serened.log
+# Log destination at process start:
+#   stdout  -- captured by systemd/journald (default)
+#   memory  -- queryable via SELECT * FROM duckdb_logs()
+#   file    -- written to --log_path below
+--log_storage=stdout
+
+# Filesystem destination, used only when --log_storage=file. A path ending in
+# '.csv' is written as a single log file; any other path is treated as a
+# directory that log CSVs are written into.
+# --log_path=@LOCALSTATEDIR@/log/serenedb

@@ -107,8 +107,7 @@ struct ColWriter::Impl {
   Directory* dir;
   std::string filename;
   duckdb::DatabaseInstance* db;
-  const ColumnOptionsProvider* column_options;
-  const NormColumnOptionsProvider* norm_column_options;
+  const IndexFieldOptions* field_options = nullptr;
   IndexOutput::ptr out;
   std::unique_ptr<WriteContext> write_ctx;
   std::vector<std::unique_ptr<ColumnWriter>> column_writers;
@@ -123,16 +122,22 @@ struct ColWriter::Impl {
 };
 
 ColWriter::ColWriter(Directory& dir, std::string_view segment_name,
-                     duckdb::DatabaseInstance& db,
-                     const ColumnOptionsProvider* column_options,
-                     const NormColumnOptionsProvider* norm_column_options)
+                     duckdb::DatabaseInstance& db)
   : _impl{std::make_unique<Impl>()} {
   _impl->dir = &dir;
   _impl->db = &db;
-  _impl->column_options = column_options;
-  _impl->norm_column_options = norm_column_options;
   _impl->filename = absl::StrCat(segment_name, ".", kColFormatExt);
   _impl->ivf = std::make_unique<IvfWriter>(column_options);
+}
+
+void ColWriter::SetFieldOptions(
+  const IndexFieldOptions* field_options) noexcept {
+  // Set once on open, then only re-pointed to an equal view on resume; opened
+  // columns already encode with the current options.
+  SDB_ASSERT(_impl->field_options == nullptr ||
+               CompatibleFieldOptions(_impl->field_options, field_options),
+             "ColWriter::SetFieldOptions: encodings differ mid-segment");
+  _impl->field_options = field_options;
 }
 
 void ColWriter::EnsureOut() {
@@ -160,8 +165,8 @@ ColWriter::~ColWriter() {
 
 ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
   ColumnOptions opts{};
-  if (_impl->column_options && *_impl->column_options) {
-    opts = (*_impl->column_options)(id);
+  if (_impl->field_options) {
+    opts = _impl->field_options->GetColumnOptions(id);
   }
   auto& cw =
     OpenColumn(id, std::move(type), opts.skip_validity, opts.row_group_size,
@@ -233,10 +238,10 @@ std::span<const std::unique_ptr<NormColumnWriter>> ColWriter::NormWriters()
 }
 
 NormColumnWriter* ColWriter::OpenNormColumn(field_id id) {
-  if (!_impl->norm_column_options || !*_impl->norm_column_options) {
+  if (!_impl->field_options) {
     return nullptr;
   }
-  const auto opts = (*_impl->norm_column_options)(id);
+  const auto opts = _impl->field_options->GetNormColumnOptions(id);
   if (!field_limits::valid(opts.id)) {
     return nullptr;
   }

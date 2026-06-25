@@ -1,0 +1,90 @@
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE base_docs (id INTEGER PRIMARY KEY, body VARCHAR, extra VARCHAR);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY view_en (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+INSERT INTO base_docs VALUES
+    (1, 'quick brown fox', 'alpha'),
+    (2, 'lazy dog sleeps', 'beta'),
+    (3, 'quick red fox', 'gamma');
+
+statement ok
+CREATE VIEW v_docs AS SELECT id, body, extra FROM base_docs;
+
+statement ok
+CREATE INDEX v_docs_idx ON v_docs USING inverted (id, body view_en);
+
+# DOCS_TEST: count_no_materialization
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) FROM v_docs_idx WHERE body @@ ts_phrase('quick');
+----
+count
+2
+
+# DOCS_TEST: score_no_materialization
+
+# DOCS_TEST_BODY
+
+query
+SELECT id FROM v_docs_idx
+WHERE body @@ ts_phrase('quick')
+ORDER BY BM25(v_docs_idx.tableoid) DESC, id;
+----
+id
+1
+3
+
+# DOCS_TEST: materialize
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, extra FROM v_docs_idx WHERE body @@ ts_phrase('quick') ORDER BY id;
+----
+id	extra
+1	alpha
+3	gamma
+
+# DOCS_TEST: generic_pk
+
+statement ok
+CREATE VIEW u_docs AS
+    SELECT 1 AS id, 'quick brown fox' AS body
+    UNION ALL SELECT 2, 'lazy dog sleeps';
+
+statement ok
+CREATE INDEX u_docs_idx ON u_docs USING inverted (id, body view_en) WITH (pk = 'id');
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) FROM u_docs_idx WHERE body @@ ts_phrase('quick');
+----
+count
+1
+
+# DOCS_TEST: generic_error
+
+# DOCS_TEST_BODY
+
+query error
+SELECT id, body FROM u_docs_idx WHERE body @@ ts_phrase('quick');
+----
+db error: ERROR: materialising real columns from this view-backed inverted index is not yet supported -- view body must be a simple `SELECT * FROM <reader>(literal_args)` over a recognised fast-path source (read_parquet/csv/json/...)

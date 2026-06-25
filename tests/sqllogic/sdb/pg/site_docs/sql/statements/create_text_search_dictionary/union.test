@@ -1,0 +1,38 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY union_dict (
+    template = 'union',
+    -- member 1 keeps the value verbatim, member 2 emits 2-grams
+    TOKENIZER1_TEMPLATE = 'keyword',
+    TOKENIZER2_TEMPLATE = 'ngram',
+    TOKENIZER2_MINGRAM = 2,
+    TOKENIZER2_MAXGRAM = 2
+);
+
+query ?
+SELECT ts_lexize('union_dict', 'abcd');
+----
+ts_lexize
+{abcd,ab,bc,cd}
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY union_word_phrase (
+    template = 'union',
+    -- member 1 splits into words, member 2 keeps the whole phrase
+    TOKENIZER1_TEMPLATE = 'delimiter',
+    TOKENIZER1_DELIMITER = ' ',
+    TOKENIZER2_TEMPLATE = 'keyword'
+);
+
+query ?
+SELECT ts_lexize('union_word_phrase', 'hello world');
+----
+ts_lexize
+{hello,"hello world",world}

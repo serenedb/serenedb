@@ -1,0 +1,67 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE t1 (grp VARCHAR, val INTEGER);
+
+statement ok
+INSERT INTO t1 VALUES
+    ('a', 2),
+    ('a', 1),
+    ('b', 5),
+    ('b', 4),
+    ('a', 3),
+    ('b', 6);
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+    42 AS x,
+    ['a', 'b', 'c',] AS y,
+    'hello world' AS z,
+;
+----
+x	y	z
+42	{a,b,c}	hello world
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query ??
+SELECT * FROM t1;
+----
+grp	val
+a	2
+a	1
+b	5
+b	4
+a	3
+b	6
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query ?? rowsort
+SELECT array_agg(rs.val), rs.grp
+FROM
+    (SELECT val, grp, row_number() OVER (PARTITION BY grp ORDER BY val DESC) AS rid
+    FROM t1 ORDER BY val DESC) AS rs
+WHERE rid < 4
+GROUP BY rs.grp;
+----
+array_agg	grp
+{3,2,1}	a
+{6,5,4}	b
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query ? rowsort
+SELECT max(val, 3) FROM t1 GROUP BY grp;
+----
+max
+{3,2,1}
+{6,5,4}

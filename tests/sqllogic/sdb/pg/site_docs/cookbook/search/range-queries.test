@@ -1,0 +1,121 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE movies (
+    id INTEGER PRIMARY KEY,
+    title VARCHAR,
+    description VARCHAR,
+    genre VARCHAR,
+    runtime INTEGER,
+    year INTEGER
+);
+
+statement ok
+INSERT INTO movies VALUES
+(1, 'The Matrix', 'A computer hacker learns about the true nature of reality and his role in the war against its controllers.', 'sci-fi', 136, 1999),
+(2, 'The Matrix Reloaded', 'Neo and the rebel leaders estimate they have 72 hours until Zion falls to the machine army.', 'sci-fi', 138, 2003),
+(3, 'The Matrix Revolutions', 'The human city of Zion defends itself against the massive machine invasion.', 'sci-fi', 129, 2003),
+(4, 'Jurassic Park', 'A pragmatic paleontologist touring an almost complete theme park on an island is tasked with protecting a group of children after the biggest blockbuster creatures break free.', 'adventure', 127, 1993),
+(5, 'Harry Potter and the Order of the Phoenix', 'With their warning about Lord Voldemorts return scoffed at, Harry and Dumbledore are targeted by the Wizard Authoritys new combative leader.', 'fantasy', 138, 2007),
+(6, 'Scary Movie', 'A year after disposing of the body of a man they accidentally killed, a group of dumb teenagers are stalked by a bumbling serial killer in the biggest blockbuster parody.', 'comedy', 88, 2000),
+(7, 'Star Trek: The Motion Picture', 'When an alien spacecraft of enormous power is spotted approaching Earth, Admiral James T. Kirk resumes command of the overhauled USS Enterprise to intercept the galaxy threat.', 'sci-fi', 132, 1979),
+(8, 'Alien', 'After investigating a mysterious transmission of unknown origin, the crew of a commercial spacecraft encounters a deadly lifeform in the dark galaxy of space.', 'sci-fi', 117, 1979),
+(9, 'Café Society', 'A young man arrives in Hollywood during the 1930s hoping to work in the film industry, falls in love, and finds himself swept up in the café culture and glamour of the era.', 'drama', 96, 2016),
+(10, 'The Grand Budapest Hotel', 'A writer encounters the owner of an aging high-class hotel who tells of his early years serving as a lobby boy in the legendary establishment.', 'comedy', 99, 2014);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY basic_dict (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE INDEX movies_idx ON movies
+    USING inverted (id, title basic_dict, description basic_dict, genre);
+
+statement ok
+VACUUM (REFRESH_TABLE) movies;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title, genre
+FROM movies_idx
+WHERE genre @@ ts_gt('drama')
+ORDER BY id;
+----
+id	title	genre
+1	The Matrix	sci-fi
+2	The Matrix Reloaded	sci-fi
+3	The Matrix Revolutions	sci-fi
+5	Harry Potter and the Order of the Phoenix	fantasy
+7	Star Trek: The Motion Picture	sci-fi
+8	Alien	sci-fi
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title, genre
+FROM movies_idx
+WHERE genre @@ ts_le('comedy')
+ORDER BY id;
+----
+id	title	genre
+4	Jurassic Park	adventure
+6	Scary Movie	comedy
+10	The Grand Budapest Hotel	comedy
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title, genre
+FROM movies_idx
+WHERE genre @@ ts_ge('comedy') AND genre @@ ts_le('fantasy')
+ORDER BY genre, id;
+----
+id	title	genre
+6	Scary Movie	comedy
+10	The Grand Budapest Hotel	comedy
+9	Café Society	drama
+5	Harry Potter and the Order of the Phoenix	fantasy
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title, genre
+FROM movies_idx
+WHERE NOT (genre @@ ts_le('drama'))
+ORDER BY id;
+----
+id	title	genre
+1	The Matrix	sci-fi
+2	The Matrix Reloaded	sci-fi
+3	The Matrix Revolutions	sci-fi
+5	Harry Potter and the Order of the Phoenix	fantasy
+7	Star Trek: The Motion Picture	sci-fi
+8	Alien	sci-fi
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title, genre
+FROM movies_idx
+WHERE genre @@ ts_ge('sci-fi') AND description @@ ts_phrase('galaxy')
+ORDER BY id;
+----
+id	title	genre
+7	Star Trek: The Motion Picture	sci-fi
+8	Alien	sci-fi

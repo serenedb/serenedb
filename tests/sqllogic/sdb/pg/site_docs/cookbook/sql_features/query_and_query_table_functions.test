@@ -1,0 +1,91 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE my_table (i INTEGER);
+
+statement ok
+INSERT INTO my_table VALUES (42);
+
+statement ok
+PREPARE select_from_table AS SELECT * FROM query_table($1);
+
+query
+EXECUTE select_from_table('my_table');
+----
+i
+42
+
+# DOCS_TEST: example_002
+
+statement ok
+CREATE TABLE ontime (
+    dep_delay INTEGER,
+    arr_delay INTEGER,
+    carrier VARCHAR
+);
+
+statement ok
+INSERT INTO ontime VALUES
+    (5, -3, 'AA'),
+    (-2, 10, 'UA'),
+    (0, 0, 'DL');
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE OR REPLACE MACRO my_summarize(table_name) AS TABLE
+SELECT
+    unnest([*COLUMNS('alias_.*')]) AS column_name,
+    unnest([*COLUMNS('min_.*')]) AS min_value,
+    unnest([*COLUMNS('max_.*')]) AS max_value
+FROM (
+    SELECT
+        any_value(alias(COLUMNS(*))) AS "alias_\0",
+        min(COLUMNS(*))::VARCHAR AS "min_\0",
+        max(COLUMNS(*))::VARCHAR AS "max_\0"
+    FROM query_table(table_name::VARCHAR)
+);
+
+query ???
+SELECT *
+FROM my_summarize('ontime')
+LIMIT 3;
+----
+column_name	min_value	max_value
+dep_delay	-2	5
+arr_delay	-3	10
+carrier	AA	UA
+
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE OR REPLACE MACRO stack(table_name, index, name, values) AS TABLE
+FROM query(
+    'UNPIVOT ' || table_name
+    || ' ON COLUMNS(* EXCLUDE (' || array_to_string(index, ', ')
+    || ')) INTO NAME ' || name || ' VALUES ' || values
+);
+
+query ????
+WITH cities AS (
+    FROM (
+        VALUES
+            ('NL', 'Amsterdam', '10', '12', '15'),
+            ('US', 'New York', '100', '120', '150')
+    ) _(country, city, '2000', '2010', '2020')
+)
+SELECT *
+FROM stack('cities', ['country', 'city'], 'year', 'population');
+----
+country	city	year	population
+NL	Amsterdam	2000	10
+NL	Amsterdam	2010	12
+NL	Amsterdam	2020	15
+US	New York	2000	100
+US	New York	2010	120
+US	New York	2020	150

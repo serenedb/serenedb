@@ -1,0 +1,990 @@
+# DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
+
+query
+SELECT printf('Hello world');
+----
+printf
+Hello world
+
+# DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
+
+query
+SELECT printf('The answer to %s is %d', 'life', 42);
+----
+printf
+The answer to life is 42
+
+# DOCS_TEST: example_016
+
+# DOCS_TEST_BODY
+
+query
+SELECT printf('I''d rather be %2$s than %1$s.', 'right', 'happy');
+----
+printf
+I'd rather be happy than right.
+
+# DOCS_TEST: example_017
+
+# DOCS_TEST_BODY
+
+query
+SELECT printf('%d + %d = %d', 3, 5, 3 + 5);
+----
+printf
+3 + 5 = 8
+
+# DOCS_TEST: example_018
+
+# DOCS_TEST_BODY
+
+query error
+SELECT printf('%s != %s', true, false);
+----
+db error: ERROR: invalid format specifier
+
+
+# DOCS_TEST: example_019
+
+# DOCS_TEST_BODY
+
+query
+SELECT printf('%s', DATE '1992-01-01');
+----
+printf
+1992-01-01
+
+query
+SELECT printf('%s', TIME '12:01:00');
+----
+printf
+12:01:00
+
+query
+SELECT printf('%s', TIMESTAMP '1992-01-01 12:01:00');
+----
+printf
+1992-01-01 12:01:00
+
+# DOCS_TEST: example_020
+
+# DOCS_TEST_BODY
+
+query
+SELECT printf('%s', 'hello'::BLOB) AS printf;
+----
+printf
+\\x68656c6c6f
+
+
+# DOCS_TEST: example_021
+
+# DOCS_TEST_BODY
+
+query
+SELECT printf('%04d', 33);
+----
+printf
+0033
+
+# DOCS_TEST: example_022
+
+# DOCS_TEST_BODY
+
+query
+SELECT printf('%02d:%02d:%02d %s', 12, 3, 16, 'AM');
+----
+printf
+12:03:16 AM
+
+# DOCS_TEST: example_023
+
+# DOCS_TEST_BODY
+
+query
+SELECT printf('%x', 123_456_789);
+----
+printf
+75bcd15
+
+# DOCS_TEST: example_024
+
+# DOCS_TEST_BODY
+
+query error
+SELECT printf('%b', 123_456_789);
+----
+db error: ERROR: invalid format specifier
+
+
+# DOCS_TEST: example_025
+
+# DOCS_TEST_BODY
+
+query error
+SELECT printf('%,d',  123_456_789);
+----
+db error: ERROR: invalid format specifier
+
+
+query
+SELECT printf('%.d',  123_456_789);
+----
+printf
+123456789
+
+query error
+SELECT printf('%''d', 123_456_789);
+----
+db error: ERROR: invalid format specifier
+
+
+query error
+SELECT printf('%_d',  123_456_789);
+----
+db error: ERROR: invalid format specifier
+
+
+# DOCS_TEST: example_026
+
+# DOCS_TEST_BODY
+
+query error
+SELECT printf('%,f',   123456.789);
+----
+db error: ERROR: invalid format specifier
+
+
+query error
+SELECT printf('%,.2f', 123456.789);
+----
+db error: ERROR: invalid format specifier
+
+
+# DOCS_TEST: string_index
+# DOCS_TEST_BODY
+query
+SELECT 'SereneDB'[4] AS char;
+----
+char
+e
+
+# DOCS_TEST: string_begin_end
+# DOCS_TEST_BODY
+query
+SELECT 'SereneDB'[:4] AS slice;
+----
+slice
+Sere
+
+# DOCS_TEST: string_like_target
+# DOCS_TEST_BODY
+query
+SELECT 'hello' LIKE '%lo' AS matches;
+----
+matches
+t
+
+# DOCS_TEST: string_similar_to_regex
+# DOCS_TEST_BODY
+query
+SELECT 'hello' SIMILAR TO 'l+' AS matches;
+----
+matches
+f
+
+# DOCS_TEST: string_concat_op
+# DOCS_TEST_BODY
+query
+SELECT 'Serene' || 'DB' AS strings;
+----
+strings
+SereneDB
+
+query
+SELECT [1, 2, 3] || [4, 5, 6] AS lists;
+----
+lists
+{1,2,3,4,5,6}
+
+query
+SELECT '\xAA'::BLOB || '\xBB'::BLOB AS blobs;
+----
+blobs
+\\xaabb
+
+# DOCS_TEST: array_extract
+# DOCS_TEST_BODY
+query
+SELECT array_extract('SereneDB', 2) AS char;
+----
+char
+e
+
+# DOCS_TEST: array_slice
+# DOCS_TEST_BODY
+query
+SELECT array_slice('SereneDB', 3, 4) AS slice;
+----
+slice
+re
+
+query
+SELECT array_slice('SereneDB', 3, NULL) AS slice;
+----
+slice
+NULL
+
+query
+SELECT array_slice('SereneDB', 0, -3) AS slice;
+----
+slice
+Serene
+
+# DOCS_TEST: ascii
+# DOCS_TEST_BODY
+query
+SELECT ascii('Ω') AS code_point;
+----
+code_point
+937
+
+# DOCS_TEST: bar
+# DOCS_TEST_BODY
+query
+SELECT bar(5, 0, 20, 10) AS band;
+----
+band
+██▌       
+
+# DOCS_TEST: bin
+# DOCS_TEST_BODY
+query
+SELECT bin('Aa') AS binary;
+----
+binary
+0100000101100001
+
+# DOCS_TEST: bit_length
+# DOCS_TEST_BODY
+query
+SELECT bit_length('abc') AS bits;
+----
+bits
+24
+
+# DOCS_TEST: chr
+# DOCS_TEST_BODY
+query
+SELECT chr(65) AS char;
+----
+char
+A
+
+# DOCS_TEST: concat
+# DOCS_TEST_BODY
+query
+SELECT concat('Hello', ' ', 'World') AS result;
+----
+result
+Hello World
+
+query
+SELECT concat([1, 2, 3], NULL, [4, 5, 6]) AS result;
+----
+result
+{1,2,3,4,5,6}
+
+# DOCS_TEST: concat_ws
+# DOCS_TEST_BODY
+query
+SELECT concat_ws(', ', 'Banana', 'Apple', 'Melon') AS result;
+----
+result
+Banana, Apple, Melon
+
+# DOCS_TEST: contains
+# DOCS_TEST_BODY
+query
+SELECT contains('abc', 'a') AS result;
+----
+result
+t
+
+# DOCS_TEST: formatreadabledecimalsize
+# DOCS_TEST_BODY
+query
+SELECT formatReadableDecimalSize(16000) AS result;
+----
+result
+16.0 kB
+
+# DOCS_TEST: format_bytes
+# DOCS_TEST_BODY
+query
+SELECT format_bytes(16_000) AS result;
+----
+result
+15.6 KiB
+
+# DOCS_TEST: from_base64
+# DOCS_TEST_BODY
+query
+SELECT from_base64('QQ==') AS result;
+----
+result
+\\x41
+
+# DOCS_TEST: greatest
+# DOCS_TEST_BODY
+query
+SELECT greatest(42, 84) AS result;
+----
+result
+84
+
+query
+SELECT greatest('abc', 'bcd', 'cde', 'EFG') AS result;
+----
+result
+cde
+
+# DOCS_TEST: hash
+# DOCS_TEST_BODY
+query
+SELECT hash('🌊') AS result;
+----
+result
+12255790945742965276
+
+# DOCS_TEST: hex
+# DOCS_TEST_BODY
+query
+SELECT hex('Hello') AS result;
+----
+result
+48656C6C6F
+
+# DOCS_TEST: ilike_escape
+# DOCS_TEST_BODY
+query
+SELECT ilike_escape('A%c', 'a$%C', '$') AS result;
+----
+result
+t
+
+# DOCS_TEST: instr
+# DOCS_TEST_BODY
+query
+SELECT instr('test test', 'es') AS result;
+----
+result
+2
+
+# DOCS_TEST: least
+# DOCS_TEST_BODY
+query
+SELECT least(42, 84) AS result;
+----
+result
+42
+
+query
+SELECT least('abc', 'bcd', 'cde', 'EFG') AS result;
+----
+result
+EFG
+
+# DOCS_TEST: left
+# DOCS_TEST_BODY
+query
+SELECT left('Hello🌊', 2) AS result;
+----
+result
+He
+
+# DOCS_TEST: left_grapheme
+# DOCS_TEST_BODY
+query
+SELECT left_grapheme('🤦🏼‍♂️🤦🏽‍♀️', 1) AS result;
+----
+result
+🤦🏼‍♂️
+
+# DOCS_TEST: length
+# DOCS_TEST_BODY
+query
+SELECT length('Hello🌊') AS result;
+----
+result
+6
+
+# DOCS_TEST: length_grapheme
+# DOCS_TEST_BODY
+query
+SELECT length_grapheme('🤦🏼‍♂️🤦🏽‍♀️') AS result;
+----
+result
+2
+
+# DOCS_TEST: like_escape
+# DOCS_TEST_BODY
+query
+SELECT like_escape('a%c', 'a$%c', '$') AS result;
+----
+result
+t
+
+# DOCS_TEST: lower
+# DOCS_TEST_BODY
+query
+SELECT lower('Hello') AS result;
+----
+result
+hello
+
+# DOCS_TEST: lpad
+# DOCS_TEST_BODY
+query
+SELECT lpad('hello', 8, '>') AS result;
+----
+result
+>>>hello
+
+# DOCS_TEST: ltrim
+# DOCS_TEST_BODY
+query
+SELECT ltrim('    test  ') AS result;
+----
+result
+test  
+
+query
+SELECT ltrim('>>>>test<<', '><') AS result;
+----
+result
+test<<
+
+# DOCS_TEST: md5
+# DOCS_TEST_BODY
+query
+SELECT md5('abc') AS result;
+----
+result
+900150983cd24fb0d6963f7d28e17f72
+
+# DOCS_TEST: md5_number_lower
+# DOCS_TEST_BODY
+query
+SELECT md5_number_lower('abc') AS result;
+----
+result
+8250560606382298838
+
+# DOCS_TEST: md5_number_upper
+# DOCS_TEST_BODY
+query
+SELECT md5_number_upper('abc') AS result;
+----
+result
+12704604231530709392
+
+# DOCS_TEST: nfc_normalize
+# DOCS_TEST_BODY
+query
+SELECT nfc_normalize('ardèch') AS result;
+----
+result
+ardèch
+
+# DOCS_TEST: not_ilike_escape
+# DOCS_TEST_BODY
+query
+SELECT not_ilike_escape('A%c', 'a$%C', '$') AS result;
+----
+result
+f
+
+# DOCS_TEST: not_like_escape
+# DOCS_TEST_BODY
+query
+SELECT not_like_escape('a%c', 'a$%c', '$') AS result;
+----
+result
+f
+
+# DOCS_TEST: parse_dirname
+# DOCS_TEST_BODY
+query
+SELECT parse_dirname('path/to/file.csv', 'system') AS result;
+----
+result
+path
+
+# DOCS_TEST: parse_dirpath
+# DOCS_TEST_BODY
+query
+SELECT parse_dirpath('path/to/file.csv', 'forward_slash') AS result;
+----
+result
+path/to
+
+# DOCS_TEST: parse_filename
+# DOCS_TEST_BODY
+query
+SELECT parse_filename('path/to/file.csv', true, 'forward_slash') AS result;
+----
+result
+file
+
+# DOCS_TEST: parse_path
+# DOCS_TEST_BODY
+query
+SELECT parse_path('path/to/file.csv', 'system') AS result;
+----
+result
+{path,to,file.csv}
+
+# DOCS_TEST: position_in
+# DOCS_TEST_BODY
+query
+SELECT position('b' IN 'abc') AS result;
+----
+result
+2
+
+# DOCS_TEST: prefix
+# DOCS_TEST_BODY
+query
+SELECT prefix('abc', 'ab') AS result;
+----
+result
+t
+
+# DOCS_TEST: printf
+# DOCS_TEST_BODY
+query
+SELECT printf('Benchmark "%s" took %d seconds', 'CSV', 42) AS result;
+----
+result
+Benchmark "CSV" took 42 seconds
+
+# DOCS_TEST: regexp_escape
+# DOCS_TEST_BODY
+query
+SELECT regexp_escape('https://serenedb.com') AS result;
+----
+result
+https\\:\\/\\/serenedb\\.com
+
+# DOCS_TEST: regexp_extract
+# DOCS_TEST_BODY
+query
+SELECT regexp_extract('ABC', '([a-z])(b)', 1, 'i') AS result;
+----
+result
+A
+
+# DOCS_TEST: regexp_extract_names
+# DOCS_TEST_BODY
+query
+SELECT regexp_extract('John Doe', '([a-z]+) ([a-z]+)', ['first_name', 'last_name'], 'i') AS result;
+----
+result
+(John,Doe)
+
+# DOCS_TEST: regexp_extract_all
+# DOCS_TEST_BODY
+query
+SELECT regexp_extract_all('Peter: 33, Paul:14', '(\w+):\s*(\d+)', 2) AS result;
+----
+result
+{33,14}
+
+# DOCS_TEST: regexp_extract_all_names
+# DOCS_TEST_BODY
+query
+SELECT regexp_extract_all('Peter: 33, Paul: 14', '(\w+):\s*(\d+)', ['name', 'age']) AS result;
+----
+result
+{"(Peter,33)","(Paul,14)"}
+
+# DOCS_TEST: regexp_full_match
+# DOCS_TEST_BODY
+query
+SELECT regexp_full_match('anabanana', '(an)*') AS result;
+----
+result
+f
+
+# DOCS_TEST: regexp_matches
+# DOCS_TEST_BODY
+query
+SELECT regexp_matches('anabanana', '(an)*') AS result;
+----
+result
+t
+
+# DOCS_TEST: regexp_replace
+# DOCS_TEST_BODY
+query
+SELECT regexp_replace('hello', '[lo]', '-') AS result;
+----
+result
+he-lo
+
+# DOCS_TEST: regexp_split_to_table
+# DOCS_TEST_BODY
+query
+SELECT * FROM regexp_split_to_table('hello world; 42', ';? ');
+----
+regexp_split_to_table
+hello
+world
+42
+
+# DOCS_TEST: repeat
+# DOCS_TEST_BODY
+query
+SELECT repeat('A', 5) AS result;
+----
+result
+AAAAA
+
+# DOCS_TEST: replace
+# DOCS_TEST_BODY
+query
+SELECT replace('hello', 'l', '-') AS result;
+----
+result
+he--o
+
+# DOCS_TEST: reverse
+# DOCS_TEST_BODY
+query
+SELECT reverse('hello') AS result;
+----
+result
+olleh
+
+# DOCS_TEST: right
+# DOCS_TEST_BODY
+query
+SELECT right('Hello🌊', 3) AS result;
+----
+result
+lo🌊
+
+# DOCS_TEST: right_grapheme
+# DOCS_TEST_BODY
+query
+SELECT right_grapheme('🤦🏼‍♂️🤦🏽‍♀️', 1) AS result;
+----
+result
+🤦🏽‍♀️
+
+# DOCS_TEST: rpad
+# DOCS_TEST_BODY
+query
+SELECT rpad('hello', 10, '<') AS result;
+----
+result
+hello<<<<<
+
+# DOCS_TEST: rtrim
+# DOCS_TEST_BODY
+query
+SELECT rtrim('    test  ') AS result;
+----
+result
+    test
+
+query
+SELECT rtrim('>>>>test<<', '><') AS result;
+----
+result
+>>>>test
+
+# DOCS_TEST: sha1
+# DOCS_TEST_BODY
+query
+SELECT sha1('🌊') AS result;
+----
+result
+be25fe9cf30cf5c01ae2054b60a5e5511e966d98
+
+# DOCS_TEST: sha256
+# DOCS_TEST_BODY
+query
+SELECT sha256('🌊') AS result;
+----
+result
+8db6bed4743d5a6159e0742df0fded8377d1250420aeda292e41ffa20eba806e
+
+# DOCS_TEST: split_part
+# DOCS_TEST_BODY
+query
+SELECT split_part('a;b;c', ';', 2) AS result;
+----
+result
+b
+
+# DOCS_TEST: starts_with
+# DOCS_TEST_BODY
+query
+SELECT starts_with('abc', 'a') AS result;
+----
+result
+t
+
+# DOCS_TEST: string_split
+# DOCS_TEST_BODY
+query
+SELECT string_split('hello-world', '-') AS result;
+----
+result
+{hello,world}
+
+# DOCS_TEST: string_split_regex
+# DOCS_TEST_BODY
+query
+SELECT string_split_regex('hello world; 42', ';? ') AS result;
+----
+result
+{hello,world,42}
+
+# DOCS_TEST: strip_accents
+# DOCS_TEST_BODY
+query
+SELECT strip_accents('mühleisen') AS result;
+----
+result
+muhleisen
+
+# DOCS_TEST: strlen
+# DOCS_TEST_BODY
+query
+SELECT strlen('🌊') AS result;
+----
+result
+4
+
+# DOCS_TEST: substring
+# DOCS_TEST_BODY
+query
+SELECT substring('Hello', 2) AS result;
+----
+result
+ello
+
+query
+SELECT substring('Hello', 2, 2) AS result;
+----
+result
+el
+
+# DOCS_TEST: substring_grapheme
+# DOCS_TEST_BODY
+query
+SELECT substring_grapheme('🌊🤦🏼‍♂️🤦🏽‍♀️🌊', 3) AS result;
+----
+result
+🤦🏽‍♀️🌊
+
+query
+SELECT substring_grapheme('🌊🤦🏼‍♂️🤦🏽‍♀️🌊', 3, 2) AS result;
+----
+result
+🤦🏽‍♀️🌊
+
+# DOCS_TEST: suffix
+# DOCS_TEST_BODY
+query
+SELECT suffix('abc', 'bc') AS result;
+----
+result
+t
+
+# DOCS_TEST: to_base
+# DOCS_TEST_BODY
+query
+SELECT to_base(42, 16, 5) AS result;
+----
+result
+0002A
+
+# DOCS_TEST: to_base64
+# DOCS_TEST_BODY
+query
+SELECT to_base64('A'::BLOB) AS result;
+----
+result
+QQ==
+
+# DOCS_TEST: translate
+# DOCS_TEST_BODY
+query
+SELECT translate('12345', '143', 'ax') AS result;
+----
+result
+a2x5
+
+# DOCS_TEST: trim
+# DOCS_TEST_BODY
+query
+SELECT trim('    test  ') AS result;
+----
+result
+test
+
+query
+SELECT trim('>>>>test<<', '><') AS result;
+----
+result
+test
+
+# DOCS_TEST: unbin
+# DOCS_TEST_BODY
+query
+SELECT unbin('0110') AS result;
+----
+result
+\\x06
+
+# DOCS_TEST: unhex
+# DOCS_TEST_BODY
+query
+SELECT unhex('2A') AS result;
+----
+result
+\\x2a
+
+# DOCS_TEST: unicode
+# DOCS_TEST_BODY
+query
+SELECT [unicode('âbcd'), unicode('â'), unicode(''), unicode(NULL)] AS result;
+----
+result
+{226,226,-1,NULL}
+
+# DOCS_TEST: upper
+# DOCS_TEST_BODY
+query
+SELECT upper('Hello') AS result;
+----
+result
+HELLO
+
+# DOCS_TEST: url_decode
+# DOCS_TEST_BODY
+query
+SELECT url_decode('https%3A%2F%2Fserenedb.com%2Fwhy_serenedb%23portable') AS result;
+----
+result
+https://serenedb.com/why_serenedb#portable
+
+# DOCS_TEST: url_encode
+# DOCS_TEST_BODY
+query
+SELECT url_encode('this string has/ special+ characters>') AS result;
+----
+result
+this%20string%20has%2F%20special%2B%20characters%3E
+
+# DOCS_TEST: damerau_levenshtein
+# DOCS_TEST_BODY
+query
+SELECT damerau_levenshtein('serene', 'esrnee') AS result;
+----
+result
+2
+
+# DOCS_TEST: hamming
+# DOCS_TEST_BODY
+query
+SELECT hamming('serene', 'serine') AS result;
+----
+result
+1
+
+# DOCS_TEST: jaccard
+# DOCS_TEST_BODY
+query
+SELECT jaccard('serene', 'serine') AS result;
+----
+result
+0.8
+
+# DOCS_TEST: jaro_similarity
+# DOCS_TEST_BODY
+query
+SELECT jaro_similarity('serene', 'serenedb') AS result;
+----
+result
+0.9166666666666666
+
+# DOCS_TEST: jaro_winkler_similarity
+# DOCS_TEST_BODY
+query
+SELECT jaro_winkler_similarity('serene', 'serenedb') AS result;
+----
+result
+0.95
+
+# DOCS_TEST: levenshtein
+# DOCS_TEST_BODY
+query
+SELECT levenshtein('serene', 'serenedb') AS result;
+----
+result
+2
+
+# DOCS_TEST: md5_number
+# DOCS_TEST_RAW
+#| SELECT md5_number('abc') AS md5_number;
+#| ----
+#| md5_number
+#| 152195979970564155685860391459828531600
+
+# DOCS_TEST: read_text
+# DOCS_TEST_RAW
+#| SELECT content FROM read_text('hello.txt');
+#| ----
+#| content
+#| hello
+
+# DOCS_TEST: format
+# DOCS_TEST_BODY
+query
+SELECT format('Hello %s, you are %s', 'World', 42) AS greeting;
+----
+greeting
+Hello World, you are 42
+
+# DOCS_TEST: format_identifier_literal
+# DOCS_TEST_BODY
+query
+SELECT format('INSERT INTO %I VALUES (%L)', 'my table', 'a''b') AS stmt;
+----
+stmt
+INSERT INTO "my table" VALUES ('a''b')
+
+# DOCS_TEST: format_positional
+# DOCS_TEST_BODY
+query
+SELECT format('%1$s %1$s %2$s', 'a', 'b') AS repeated;
+----
+repeated
+a a b
+
+# DOCS_TEST: format_width
+# DOCS_TEST_BODY
+query
+SELECT format('|%-10s|%10s|', 'left', 'right') AS padded;
+----
+padded
+|left      |     right|

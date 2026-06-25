@@ -136,24 +136,9 @@ std::shared_ptr<InvertedIndex> InvertedIndex::Deserialize(
   return UnpackEntries(std::move(data), ctx);
 }
 
-InvertedIndex::DerivedColumnIds InvertedIndex::DeriveFromKeys(
-  std::span<const Column::Id> columns,
-  std::span<const ExpressionKey> expression_keys) {
-  auto [column_ids, seen] = DedupColumns(columns);
-  auto referenced = column_ids;
-  for (const auto& key : expression_keys) {
-    for (auto dep : key.data.dependent_columns) {
-      if (seen.insert(dep).second) {  // reuse the column dedup set
-        referenced.push_back(dep);
-      }
-    }
-  }
-  return {std::move(column_ids), std::move(referenced)};
-}
-
 void InvertedIndex::Serialize(duckdb::Serializer& sink) const {
-  auto data = PackEntries(GetName(), GetColumnIds(), _expression_keys, _entries,
-                          _options);
+  auto data =
+    PackEntries(GetName(), GetColumns(), _expression_keys, _entries, _options);
   basics::WriteTuple(sink, data);
 }
 
@@ -438,6 +423,46 @@ std::optional<irs::IvfInfo> InvertedIndex::GetIvfInfo(
     .quant = cfg.quant,
     .nlist = cfg.nlist,
     .train_sample = cfg.train_sample,
+  };
+}
+
+irs::ColumnOptions InvertedIndex::GetColumnOptions(irs::field_id id) const {
+  if (const auto* entry = FindEntry(id)) {
+    return {
+      .row_group_size = entry->row_group_size,
+      .compression = entry->compression,
+      .hnsw_info = GetHNSWInfo(id),
+      .hyperloglog = entry->hyperloglog,
+    };
+  }
+  if (static_cast<Column::Id>(id) == Column::kGeneratedPKId) {
+    return {
+      .skip_validity = true,
+      .row_group_size = _options.row_group_size,
+    };
+  }
+  const auto lookup = LookupField(id);
+  SDB_ASSERT(lookup.entry, "GetColumnOptions: unknown column id ", id);
+  SDB_ASSERT(!lookup.entry->features.HasFeatures(irs::IndexFeatures::Norm),
+             "GetColumnOptions: norm-role synthetic id ", id);
+  return {
+    .skip_validity = true,
+    .row_group_size = _options.row_group_size,
+  };
+}
+
+irs::NormColumnOptions InvertedIndex::GetNormColumnOptions(
+  irs::field_id id) const {
+  const auto* entry = FindEntry(id);
+  SDB_ASSERT(entry != nullptr, ERROR_INTERNAL,
+             "GetNormColumnOptions: unknown id ", id);
+  SDB_ASSERT(irs::field_limits::valid(entry->synthetic_column),
+             "GetNormColumnOptions: no catalog reservation; id ", id);
+  SDB_ASSERT(entry->features.HasFeatures(irs::IndexFeatures::Norm),
+             "GetNormColumnOptions: catalog features lack Norm; id ", id);
+  return {
+    .id = entry->synthetic_column,
+    .row_group_size = entry->norm_row_group_size,
   };
 }
 

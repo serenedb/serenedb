@@ -32,7 +32,7 @@ VACUUM (REFRESH_TABLE) gayazov_t;
 
 # Block search commits. Everything below this stays in the WAL until restart.
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # round 1: insert + truncate
 statement ok

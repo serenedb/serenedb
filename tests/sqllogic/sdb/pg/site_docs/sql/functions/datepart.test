@@ -1,0 +1,215 @@
+# DOCS_TEST: century
+# DOCS_TEST_BODY
+query
+SELECT century(DATE '1992-02-15') AS century;
+----
+century
+20
+
+# DOCS_TEST: day
+# DOCS_TEST_BODY
+query
+SELECT day(DATE '1992-02-15') AS day;
+----
+day
+15
+
+# DOCS_TEST: dayofmonth
+# DOCS_TEST_BODY
+query
+SELECT dayofmonth(DATE '1992-02-15') AS dayofmonth;
+----
+dayofmonth
+15
+
+# DOCS_TEST: dayofweek
+# DOCS_TEST_BODY
+query
+SELECT dayofweek(DATE '1992-02-15') AS dayofweek;
+----
+dayofweek
+6
+
+# DOCS_TEST: dayofyear
+# DOCS_TEST_BODY
+query
+SELECT dayofyear(DATE '1992-02-15') AS dayofyear;
+----
+dayofyear
+46
+
+# DOCS_TEST: decade
+# DOCS_TEST_BODY
+query
+SELECT decade(DATE '1992-02-15') AS decade;
+----
+decade
+199
+
+# DOCS_TEST: epoch
+# DOCS_TEST_BODY
+query
+SELECT epoch(DATE '1992-02-15') AS epoch;
+----
+epoch
+698112000
+
+# DOCS_TEST: era
+# DOCS_TEST_BODY
+query
+SELECT era(DATE '0044-03-15 (BC)') AS era;
+----
+era
+0
+
+# DOCS_TEST: hour
+# DOCS_TEST_BODY
+query
+SELECT hour(timestamp '2021-08-03 11:59:44.123456') AS hour;
+----
+hour
+11
+
+# DOCS_TEST: isodow
+# DOCS_TEST_BODY
+query
+SELECT isodow(DATE '1992-02-15') AS isodow;
+----
+isodow
+6
+
+# DOCS_TEST: isoyear
+# DOCS_TEST_BODY
+query
+SELECT isoyear(DATE '2022-01-01') AS isoyear;
+----
+isoyear
+2021
+
+# DOCS_TEST: julian
+# DOCS_TEST_BODY
+query
+SELECT julian(DATE '1992-09-20') AS julian;
+----
+julian
+2448886
+
+# DOCS_TEST: microsecond
+# DOCS_TEST_BODY
+query
+SELECT microsecond(timestamp '2021-08-03 11:59:44.123456') AS microsecond;
+----
+microsecond
+44123456
+
+# DOCS_TEST: millennium
+# DOCS_TEST_BODY
+query
+SELECT millennium(DATE '1992-02-15') AS millennium;
+----
+millennium
+2
+
+# DOCS_TEST: millisecond
+# DOCS_TEST_BODY
+query
+SELECT millisecond(timestamp '2021-08-03 11:59:44.123456') AS millisecond;
+----
+millisecond
+44123
+
+# DOCS_TEST: minute
+# DOCS_TEST_BODY
+query
+SELECT minute(timestamp '2021-08-03 11:59:44.123456') AS minute;
+----
+minute
+59
+
+# DOCS_TEST: month
+# DOCS_TEST_BODY
+query
+SELECT month(DATE '1992-02-15') AS month;
+----
+month
+2
+
+# DOCS_TEST: quarter
+# DOCS_TEST_BODY
+query
+SELECT quarter(DATE '1992-02-15') AS quarter;
+----
+quarter
+1
+
+# DOCS_TEST: second
+# DOCS_TEST_BODY
+query
+SELECT second(timestamp '2021-08-03 11:59:44.123456') AS second;
+----
+second
+44
+
+# DOCS_TEST: week
+# DOCS_TEST_BODY
+query
+SELECT week(DATE '1992-02-15') AS week;
+----
+week
+7
+
+# DOCS_TEST: weekday
+# DOCS_TEST_BODY
+query
+SELECT weekday(DATE '1992-02-15') AS weekday;
+----
+weekday
+6
+
+# DOCS_TEST: weekofyear
+# DOCS_TEST_BODY
+query
+SELECT weekofyear(DATE '1992-02-15') AS weekofyear;
+----
+weekofyear
+7
+
+# DOCS_TEST: year
+# DOCS_TEST_BODY
+query
+SELECT year(DATE '1992-02-15') AS year;
+----
+year
+1992
+
+# DOCS_TEST: yearweek
+# DOCS_TEST_BODY
+query
+SELECT yearweek(DATE '1992-02-15') AS yearweek;
+----
+yearweek
+199207
+
+# DOCS_TEST: timezone_hour
+# DOCS_TEST_BODY
+query
+SELECT timezone_hour(TIMESTAMP '2021-08-03 11:59:44.123456') AS timezone_hour;
+----
+timezone_hour
+0
+
+# DOCS_TEST: timezone_minute
+# DOCS_TEST_BODY
+query
+SELECT timezone_minute(TIMESTAMP '2021-08-03 11:59:44.123456') AS timezone_minute;
+----
+timezone_minute
+0
+
+# DOCS_TEST: timezone
+# DOCS_TEST_BODY
+query
+SELECT timezone(TIMESTAMP '2021-08-03 11:59:44.123456') AS timezone;
+----
+timezone
+0

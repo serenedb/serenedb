@@ -32,7 +32,7 @@ run_case() {
 	rm -rf "$data"
 	mkdir -p "$data"
 
-	"$BIN" "$data" --server_endpoints="pgsql+tcp://0.0.0.0:${PORT}" \
+	"$BIN" "$data" --listen="postgres://0.0.0.0:${PORT}" \
 		>"${outprefix}.serened.log" 2>&1 &
 	local sp=$!
 	for _ in $(seq 1 60); do

@@ -69,7 +69,7 @@ rm -f "${NATIVE_DB}" "${NATIVE_DB}.wal"
 
 echo "starting ${SERENED_BIN} on port ${PORT} with data dir ${SERENED_DATA_DIR}"
 "${SERENED_BIN}" "${SERENED_DATA_DIR}" \
-	--server_endpoints "pgsql+tcp://0.0.0.0:${PORT}" \
+	--listen "postgres://0.0.0.0:${PORT}" \
 	>"${LOG}" 2>&1 &
 SERENED_PID=$!
 trap "kill -9 ${SERENED_PID} >/dev/null 2>&1 || true" EXIT
@@ -172,7 +172,7 @@ NDB_SQL_PATH=$(printf '%s' "${NATIVE_DB}" | sed "s/'/''/g")
 # table (in `native_db.main`). search_path puts `public` first so unqualified
 # CREATE/INSERT keeps landing in serened's catalog; native_db is second so
 # bare references like `hits_native` still resolve. Native CREATE TABLE is
-# explicitly qualified (matches the iceberg.test_slow convention).
+# explicitly qualified (matches the catalog_iceberg.test_slow convention).
 run_setup "attach_native_db" "${BUILD_THREADS}" "
 ATTACH '${NDB_SQL_PATH}' AS native_db (TYPE duckdb, STORAGE_VERSION latest);
 SET search_path TO public, native_db.main;

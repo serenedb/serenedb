@@ -487,9 +487,9 @@ doc_id_t ComputeDocIds(DocIdMapT& doc_id_map, const SubReader& reader,
 
 const MergeWriter::FlushProgress kProgressNoop = [] { return true; };
 
-field_id MergeNormColumnFromSources(
-  ColWriter& col_writer, field_id id, std::span<const MergeSource> sources,
-  const NormColumnOptionsProvider* norm_column_options) {
+field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
+                                    std::span<const MergeSource> sources,
+                                    const IndexFieldOptions* field_options) {
   bool any_source_has_norm = false;
   for (const auto& src : sources) {
     if (!src.col_reader) {
@@ -503,8 +503,8 @@ field_id MergeNormColumnFromSources(
     }
   }
   NormColumnOptions opts{};
-  if (any_source_has_norm && norm_column_options && *norm_column_options) {
-    opts = (*norm_column_options)(id);
+  if (any_source_has_norm && field_options) {
+    opts = field_options->GetNormColumnOptions(id);
   }
   field_id out_id = field_limits::invalid();
   NormColumnWriter* norm_writer = nullptr;
@@ -528,7 +528,7 @@ field_id MergeNormColumnFromSources(
 
     if (!norm_writer) {
       SDB_ENSURE(field_limits::valid(opts.id), sdb::ERROR_INTERNAL,
-                 "MergeNormColumnFromSources: norm_column_options did not "
+                 "MergeNormColumnFromSources: GetNormColumnOptions did not "
                  "mint a valid id for field ",
                  id);
       out_id = opts.id;
@@ -574,17 +574,17 @@ field_id MergeNormColumnFromSources(
 
 using MergedNormIdMap = absl::flat_hash_map<field_id, field_id>;
 
-MergedNormIdMap MergeNorms(
-  ColWriter& col_writer, std::span<const MergeSource> sources,
-  const FieldMetaMapT& field_meta_map,
-  const NormColumnOptionsProvider* norm_column_options) {
+MergedNormIdMap MergeNorms(ColWriter& col_writer,
+                           std::span<const MergeSource> sources,
+                           const FieldMetaMapT& field_meta_map,
+                           const IndexFieldOptions* field_options) {
   MergedNormIdMap out;
   for (const auto& [id, features] : field_meta_map) {
     if (!IsSubsetOf(IndexFeatures::Norm, features)) {
       continue;
     }
     const auto new_norm_id =
-      MergeNormColumnFromSources(col_writer, id, sources, norm_column_options);
+      MergeNormColumnFromSources(col_writer, id, sources, field_options);
     if (field_limits::valid(new_norm_id)) {
       out.emplace(id, new_norm_id);
     }
@@ -701,8 +701,7 @@ void OpenColWriter(duckdb::DatabaseInstance& db, TrackingDirectory& dir,
                    ManagedVector<MergeWriter::ReaderCtx>& readers,
                    std::vector<MergeSource>& sources,
                    std::unique_ptr<ColWriter>& col_writer,
-                   const ColumnOptionsProvider* column_options,
-                   const NormColumnOptionsProvider* norm_column_options) {
+                   const IndexFieldOptions* field_options) {
   sources.reserve(readers.size());
   for (auto& ctx : readers) {
     sources.push_back(MergeSource{
@@ -712,8 +711,8 @@ void OpenColWriter(duckdb::DatabaseInstance& db, TrackingDirectory& dir,
       .alive_count = static_cast<uint64_t>(ctx.reader->live_docs_count()),
     });
   }
-  col_writer = std::make_unique<ColWriter>(dir, segment_name, db,
-                                           column_options, norm_column_options);
+  col_writer = std::make_unique<ColWriter>(dir, segment_name, db);
+  col_writer->SetFieldOptions(field_options);
 }
 
 }  // namespace
@@ -754,11 +753,11 @@ bool MergeWriter::Flush(SegmentMeta& segment,
   std::vector<MergeSource> sources;
   std::unique_ptr<ColWriter> col_writer;
   OpenColWriter(_db, track_dir, segment.name, _readers, sources, col_writer,
-                _column_options, _norm_column_options);
+                _field_options);
   SDB_ASSERT(col_writer);
 
   const auto merged_norm_ids =
-    MergeNorms(*col_writer, sources, field_meta_map, _norm_column_options);
+    MergeNorms(*col_writer, sources, field_meta_map, _field_options);
 
   if (!progress_callback()) {
     return false;
@@ -766,7 +765,7 @@ bool MergeWriter::Flush(SegmentMeta& segment,
 
   if (!sources.empty()) {
     // TODO(mbkkt) Use progress_callback?
-    MergeInto(sources, *col_writer, _column_options);
+    MergeInto(sources, *col_writer, _field_options);
   }
 
   if (!progress_callback()) {

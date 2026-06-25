@@ -1,0 +1,304 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy');
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE SCHEMA my_schema;
+
+statement ok
+CREATE TYPE my_schema.mood AS ENUM ('sad', 'ok', 'happy');
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT 'clubs'::ENUM ('spades', 'hearts', 'diamonds', 'clubs') AS suit;
+----
+suit
+clubs
+
+# DOCS_TEST: example_004
+
+statement ok
+CREATE TABLE sales_data (
+    amount INTEGER,
+    region VARCHAR
+);
+
+statement ok
+INSERT INTO sales_data VALUES
+    (10, 'north'),
+    (20, 'south'),
+    (30, 'north');
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TYPE region AS ENUM (SELECT region FROM sales_data);
+
+# DOCS_TEST: example_005
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS sales_data;
+
+statement ok
+DROP TYPE IF EXISTS region CASCADE;
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (10, 'north'),
+    (20, 'south'),
+    (30, 'north')
+) AS t("amount", "region")) TO '${__TEST_DIR__}/sql_data_types_enum_example_005_regions.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (10, 'north'),
+    (20, 'south'),
+    (30, 'north')
+) AS t("amount", "region")) TO '${__TEST_DIR__}/sql_data_types_enum_example_005_rows.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+
+# DOCS_TEST_RAW
+#| CREATE TYPE region AS ENUM (SELECT region FROM 'sales_data.csv');
+#|
+#| CREATE TABLE sales_data (amount INTEGER, region region);
+#|
+#| COPY sales_data FROM 'sales_data.csv';
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TYPE region AS ENUM (SELECT region FROM '${__TEST_DIR__}/sql_data_types_enum_example_005_regions.csv');
+
+statement ok
+CREATE TABLE sales_data (amount INTEGER, region region);
+
+statement ok
+COPY sales_data FROM '${__TEST_DIR__}/sql_data_types_enum_example_005_rows.csv';
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TYPE breed AS ENUM ('maltese', 'Maltese');
+
+query
+-- Will return false
+SELECT 'maltese'::breed = 'Maltese'::breed;
+----
+?column?
+f
+
+query error db error: ERROR: Could not convert string 'MALTESE' to UINT8
+-- Will error
+SELECT 'MALTESE'::breed;
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE person (
+    name TEXT,
+    current_mood mood
+);
+
+statement ok
+INSERT INTO person VALUES
+    ('Pedro', 'happy'),
+    ('Mark', NULL),
+    ('Pagliacci', 'sad'),
+    ('Mr. Mackey', 'ok');
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+statement error db error: ERROR: Could not convert string 'quackity-quack' to UINT8
+INSERT INTO person VALUES ('Hannes', 'quackity-quack');
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query
+SELECT current_mood, regexp_matches(current_mood, '.*a.*') AS contains_a FROM person;
+----
+current_mood	contains_a
+happy	t
+NULL	NULL
+sad	t
+ok	f
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TYPE new_mood AS ENUM ('happy', 'anxious');
+
+query
+SELECT * FROM person
+WHERE current_mood = 'happy'::new_mood;
+----
+name	current_mood
+Pedro	happy
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+query
+SELECT * FROM person
+WHERE current_mood = name;
+----
+name	current_mood
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+query
+SELECT * FROM person
+WHERE current_mood = 'sad';
+----
+name	current_mood
+Pagliacci	sad
+
+# DOCS_TEST: example_013
+
+statement ok
+DROP TABLE IF EXISTS person;
+
+statement ok
+DROP TYPE IF EXISTS mood CASCADE;
+
+statement ok
+CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy');
+
+statement ok
+CREATE TABLE person (
+    name TEXT,
+    current_mood mood
+);
+
+statement ok
+INSERT INTO person VALUES
+    ('Pedro', 'happy'),
+    ('Mark', NULL),
+    ('Pagliacci', 'sad'),
+    ('Mr. Mackey', 'ok');
+
+# DOCS_TEST_BODY
+
+query
+SELECT * FROM person
+WHERE current_mood = 'bogus';
+----
+name	current_mood
+
+# DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
+
+query error db error: ERROR: Could not convert string 'bogus' to UINT8
+SELECT * FROM person
+WHERE current_mood = 'bogus'::mood;
+
+# DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TYPE priority AS ENUM ('low', 'medium', 'high');
+
+query
+SELECT 'low'::priority < 'high'::priority AS comp;
+----
+comp
+t
+
+# DOCS_TEST: example_016
+
+# DOCS_TEST_BODY
+
+query
+SELECT unnest(['medium'::priority, 'high'::priority, 'low'::priority]) AS m
+ORDER BY m;
+----
+m
+low
+medium
+high
+
+# DOCS_TEST: example_017
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE tasks (name TEXT, priority_level priority);
+
+statement ok
+INSERT INTO tasks VALUES ('a', 'low'), ('b', 'medium'), ('c', 'high');
+
+query
+-- WARNING!
+-- Equivalent to `WHERE priority_level::VARCHAR >= 'medium'`
+SELECT * FROM tasks
+WHERE priority_level >= 'medium';
+----
+name	priority_level
+b	medium
+c	high
+
+# DOCS_TEST: example_018
+
+# DOCS_TEST_BODY
+
+query
+SELECT * FROM tasks
+WHERE priority_level >= 'medium'::priority;
+----
+name	priority_level
+b	medium
+c	high
+
+# DOCS_TEST: example_019
+
+# DOCS_TEST_BODY
+
+query
+SELECT enum_range(NULL::mood) AS my_enum_range;
+----
+my_enum_range
+{sad,ok,happy}
+
+# DOCS_TEST: example_020
+
+statement ok
+DROP TYPE IF EXISTS removable_mood CASCADE;
+
+statement ok
+CREATE TYPE removable_mood AS ENUM ('sad', 'ok', 'happy');
+
+# DOCS_TEST_RAW
+#| DROP TYPE ⟨enum_name⟩;
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP TYPE removable_mood;

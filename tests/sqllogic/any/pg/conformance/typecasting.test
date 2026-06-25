@@ -1,0 +1,301 @@
+# TYPECASTING conformance: scalar/list text round-trips across PG and SereneDB.
+# Covers scalar -> VARCHAR -> scalar, array text round-trips, both array
+# literal forms, numeric/decimal text and boolean text forms.
+
+
+# --- scalar -> VARCHAR -> scalar round-trips (agree on both) ---
+
+query
+SELECT CAST(CAST(123 AS VARCHAR) AS INTEGER) AS r;
+----
+r
+123
+
+
+query
+SELECT CAST(CAST(-42 AS VARCHAR) AS INTEGER) AS r;
+----
+r
+-42
+
+
+query
+SELECT CAST(CAST(2147483647 AS VARCHAR) AS INTEGER) AS r;
+----
+r
+2147483647
+
+
+query
+SELECT CAST(CAST(3.14 :: DOUBLE PRECISION AS VARCHAR) AS DOUBLE PRECISION) AS r;
+----
+r
+3.14
+
+
+query
+SELECT CAST(CAST(0.1 :: DOUBLE PRECISION AS VARCHAR) AS DOUBLE PRECISION) AS r;
+----
+r
+0.1
+
+
+query
+SELECT CAST(CAST(1.5e10 :: DOUBLE PRECISION AS VARCHAR) AS DOUBLE PRECISION) AS r;
+----
+r
+15000000000
+
+
+query
+SELECT CAST(CAST('Infinity' :: DOUBLE PRECISION AS VARCHAR) AS DOUBLE PRECISION) AS r;
+----
+r
+Infinity
+
+
+query
+SELECT CAST(CAST('NaN' :: DOUBLE PRECISION AS VARCHAR) AS DOUBLE PRECISION) AS r;
+----
+r
+NaN
+
+
+query
+SELECT CAST(CAST(TRUE AS VARCHAR) AS BOOLEAN) AS r;
+----
+r
+t
+
+
+query
+SELECT CAST(CAST(DATE '2021-03-15' AS VARCHAR) AS DATE) AS r;
+----
+r
+2021-03-15
+
+
+query
+SELECT CAST(DATE '2021-03-15' AS VARCHAR) AS r;
+----
+r
+2021-03-15
+
+
+query
+SELECT CAST(CAST(TIMESTAMP '2021-03-15 12:34:56' AS VARCHAR) AS TIMESTAMP) AS r;
+----
+r
+2021-03-15 12:34:56
+
+
+query
+SELECT CAST(TIMESTAMP '2021-03-15 12:34:56' AS VARCHAR) AS r;
+----
+r
+2021-03-15 12:34:56
+
+
+# --- numeric / decimal text round-trips (agree on both) ---
+
+query
+SELECT CAST(CAST(CAST(1234.5678 AS NUMERIC(10,4)) AS VARCHAR) AS NUMERIC(10,4)) AS r;
+----
+r
+1234.5678
+
+
+query
+SELECT CAST(CAST(1234.5678 AS NUMERIC(10,4)) AS VARCHAR) AS r;
+----
+r
+1234.5678
+
+
+query
+SELECT CAST(CAST(CAST(0 AS NUMERIC(10,2)) AS VARCHAR) AS NUMERIC(10,2)) AS r;
+----
+r
+0.00
+
+
+# --- boolean text forms ('t'/'f', 'true'/'false', etc) accepted by both ---
+
+query
+SELECT CAST('t' AS BOOLEAN) AS r;
+----
+r
+t
+
+
+query
+SELECT CAST('f' AS BOOLEAN) AS r;
+----
+r
+f
+
+
+query
+SELECT CAST('true' AS BOOLEAN) AS r;
+----
+r
+t
+
+
+query
+SELECT CAST('false' AS BOOLEAN) AS r;
+----
+r
+f
+
+
+query
+SELECT CAST('yes' AS BOOLEAN) AS r;
+----
+r
+t
+
+
+query
+SELECT CAST('no' AS BOOLEAN) AS r;
+----
+r
+f
+
+
+query
+SELECT CAST('1' AS BOOLEAN) AS r;
+----
+r
+t
+
+
+query
+SELECT CAST('0' AS BOOLEAN) AS r;
+----
+r
+f
+
+
+query
+SELECT CAST('on' AS BOOLEAN) AS r;
+----
+r
+t
+
+
+query
+SELECT CAST('off' AS BOOLEAN) AS r;
+----
+r
+f
+
+
+# DIVERGENCE: boolean cast to VARCHAR -- both render PG short form 't'/'false'
+# (no divergence on the long literal text; both DBs agree here).
+query
+SELECT CAST(TRUE AS VARCHAR) AS r;
+----
+r
+true
+
+
+query
+SELECT CAST(FALSE AS VARCHAR) AS r;
+----
+r
+false
+
+
+# --- array text round-trips ---
+
+# An array-typed result column renders with braces {...} on both DBs over the
+# wire protocol, regardless of internal text format.
+query
+SELECT ARRAY[1, 2, 3] AS r;
+----
+r
+{1,2,3}
+
+
+# Brace literal '{...}' is accepted by both DBs.
+query
+SELECT '{1,2,3}' :: INTEGER[] AS r;
+----
+r
+{1,2,3}
+
+
+query
+SELECT CAST('{7,8,9}' AS INTEGER[]) AS r;
+----
+r
+{7,8,9}
+
+
+# Full text round-trip array -> VARCHAR -> array agrees on both DBs (the
+# intermediate text differs, but SereneDB re-parses its own bracket form, so
+# the round-tripped array is identical).
+query
+SELECT CAST(CAST(ARRAY[1, 2, 3] AS VARCHAR) AS INTEGER[]) AS r;
+----
+r
+{1,2,3}
+
+
+query
+SELECT CAST(CAST(ARRAY[-1, 2, -3] AS VARCHAR) AS INTEGER[]) AS r;
+----
+r
+{-1,2,-3}
+
+
+# DIVERGENCE: array -> VARCHAR text form. PostgreSQL emits the brace form
+# "{1,2,3}"; SereneDB emits the DuckDB bracket form "[1, 2, 3]".
+onlyif postgres
+query
+SELECT CAST(ARRAY[1, 2, 3] AS VARCHAR) AS r;
+----
+r
+{1,2,3}
+
+onlyif serenedb
+query
+SELECT CAST(ARRAY[1, 2, 3] AS VARCHAR) AS r;
+----
+r
+[1, 2, 3]
+
+
+onlyif postgres
+query
+SELECT CAST(ARRAY['a', 'b'] AS VARCHAR) AS r;
+----
+r
+{a,b}
+
+onlyif serenedb
+query
+SELECT CAST(ARRAY['a', 'b'] AS VARCHAR) AS r;
+----
+r
+[a, b]
+
+
+# DIVERGENCE: bracket array literal '[1, 2, 3]'::INTEGER[]. PostgreSQL rejects
+# it as a malformed array literal; SereneDB accepts it (DuckDB list syntax) and
+# parses it to {1,2,3}.
+onlyif postgres
+query error
+SELECT '[1, 2, 3]' :: INTEGER[] AS r;
+----
+db error: ERROR: malformed array literal: "[1, 2, 3]"
+DETAIL: Missing "]" after array dimensions.
+
+
+onlyif serenedb
+query
+SELECT '[1, 2, 3]' :: INTEGER[] AS r;
+----
+r
+{1,2,3}

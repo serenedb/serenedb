@@ -1,0 +1,93 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE catalog (
+    id INTEGER PRIMARY KEY,
+    name VARCHAR,
+    category VARCHAR,
+    emb FLOAT[3]
+);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY catalog_en (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE INDEX catalog_idx ON catalog
+    USING inverted (id, name catalog_en, category, emb hnsw (metric = 'l2'));
+
+statement ok
+INSERT INTO catalog VALUES
+    (1, 'red running shoes', 'footwear', [1.0, 0.0, 0.0]::FLOAT[3]),
+    (2, 'blue running shorts', 'apparel', [0.0, 1.0, 0.0]::FLOAT[3]),
+    (3, 'red trail shoes', 'footwear', [0.9, 0.1, 0.0]::FLOAT[3]),
+    (4, 'green hat', 'apparel', [0.0, 0.0, 1.0]::FLOAT[3]),
+    (5, 'red dress shoes', 'footwear', [0.8, 0.0, 0.2]::FLOAT[3]);
+
+statement ok
+VACUUM (REFRESH_TABLE) catalog;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, name
+FROM catalog_idx
+WHERE name @@ ts_phrase('shoes')
+ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3]
+LIMIT 2;
+----
+id	name
+1	red running shoes
+3	red trail shoes
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, name
+FROM catalog_idx
+WHERE category @@ 'footwear'
+ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3]
+LIMIT 2;
+----
+id	name
+1	red running shoes
+3	red trail shoes
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+WITH fused AS (
+    SELECT id, ROW_NUMBER() OVER (ORDER BY s DESC) AS rank FROM (
+        SELECT id, BM25(catalog_idx.tableoid) AS s
+        FROM catalog_idx
+        WHERE name @@ ts_phrase('red')
+        ORDER BY s DESC LIMIT 100
+    ) lex
+    UNION ALL
+    SELECT id, ROW_NUMBER() OVER (ORDER BY dist) AS rank FROM (
+        SELECT id, emb <-> [1.0, 0.0, 0.0]::FLOAT[3] AS dist
+        FROM catalog_idx
+        ORDER BY dist LIMIT 100
+    ) vec
+)
+SELECT id
+FROM fused
+GROUP BY id
+ORDER BY SUM(1.0 / (60 + rank)) DESC, id
+LIMIT 3;
+----
+id
+1
+3
+5

@@ -111,7 +111,7 @@ extension_directories	[]	Set the directories to store extensions in
 extension_directory	(empty)	Set the directory to store extensions in
 external_file_cache_local_block_size	16384	Block size in bytes for the external file cache when reading local (non-remote) files.
 external_file_cache_remote_block_size	2097152	Block size in bytes for the external file cache when reading remote files (e.g. HTTP/S3).
-external_threads	1	The number of external threads that work on DuckDB tasks.
+external_threads	0	The number of external threads that work on DuckDB tasks.
 extra_float_digits	1	Sets the number of digits displayed for floating-point values.
 file_search_path	(empty)	A comma separated list of directories to search for input files
 force_bitpacking_mode	AUTO	DEBUG SETTING: forces a specific bitpacking mode
@@ -391,7 +391,7 @@ extension_directories	[]	Set the directories to store extensions in
 extension_directory	(empty)	Set the directory to store extensions in
 external_file_cache_local_block_size	16384	Block size in bytes for the external file cache when reading local (non-remote) files.
 external_file_cache_remote_block_size	2097152	Block size in bytes for the external file cache when reading remote files (e.g. HTTP/S3).
-external_threads	1	The number of external threads that work on DuckDB tasks.
+external_threads	0	The number of external threads that work on DuckDB tasks.
 extra_float_digits	1	Sets the number of digits displayed for floating-point values.
 file_search_path	(empty)	A comma separated list of directories to search for input files
 force_bitpacking_mode	AUTO	DEBUG SETTING: forces a specific bitpacking mode

@@ -1,0 +1,22 @@
+# DOCS_TEST: example_032
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE tbl (col VARCHAR);
+
+statement ok
+INSERT INTO tbl
+VALUES ('asdf'), ('42');
+
+statement ok
+DELETE FROM tbl
+WHERE col = 'asdf';
+
+statement error
+ALTER TABLE tbl
+ALTER COLUMN col TYPE INTEGER;
+----
+db error: ERROR: Conversion Error: Could not convert string 'asdf' to INT32
+
+LINE 1: <slt:ignore>

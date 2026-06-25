@@ -212,15 +212,18 @@ ObjectId LookupDatabaseId(const catalog::Snapshot& snapshot,
   return db->GetId();
 }
 
-void CompactInvertedStorage(search::InvertedIndexStorage& inverted) {
+void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
+                            const catalog::InvertedIndex& index) {
   static const auto kPolicy = irs::index_utils::MakePolicy(
     irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
   static const irs::MergeWriter::FlushProgress kProgress = [] { return true; };
   inverted.Refresh();
   for (size_t pass = 0; pass < 8; ++pass) {
     bool empty_compaction = false;
+    // The merge encodes against this VACUUM statement's snapshot index, kept
+    // alive by the caller's catalog snapshot for the whole call.
     const auto [res, _] =
-      inverted.CompactUnsafe(kPolicy, kProgress, empty_compaction);
+      inverted.CompactUnsafe(kPolicy, kProgress, empty_compaction, &index);
     if (!res.ok()) {
       throw duckdb::InternalException("compact_index: compaction failed: %s",
                                       res.errorMessage());
@@ -234,25 +237,29 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted) {
 
 void ForEachInvertedStorage(
   const catalog::Snapshot& snapshot, ObjectId relation_id,
-  absl::FunctionRef<void(search::InvertedIndexStorage&)> v) {
+  absl::FunctionRef<void(search::InvertedIndexStorage&,
+                         const catalog::InvertedIndex&)>
+    v) {
   for (auto& index : snapshot.GetIndexesByRelation(relation_id)) {
     if (!index || index->GetType() != catalog::ObjectType::InvertedIndex) {
       continue;
     }
-    if (auto storage =
-          basics::downCast<const catalog::InvertedIndex>(*index).GetData()) {
-      v(*storage);
+    const auto& inverted =
+      basics::downCast<const catalog::InvertedIndex>(*index);
+    if (auto storage = inverted.GetData()) {
+      v(*storage, inverted);
     }
   }
 }
 
 void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
                       Scope scope, const ResolvedName& target) {
-  auto apply = [action](search::InvertedIndexStorage& s) {
+  auto apply = [action](search::InvertedIndexStorage& s,
+                        const catalog::InvertedIndex& index) {
     if (action == Action::Refresh) {
       s.Refresh();
     } else {
-      CompactInvertedStorage(s);
+      CompactInvertedStorage(s, index);
     }
   };
 
@@ -279,12 +286,13 @@ void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
             index->GetName() != target.object) {
           continue;
         }
-        auto storage =
-          basics::downCast<const catalog::InvertedIndex>(*index).GetData();
+        const auto& inverted =
+          basics::downCast<const catalog::InvertedIndex>(*index);
+        auto storage = inverted.GetData();
         if (!storage) {
           continue;
         }
-        apply(*storage);
+        apply(*storage, inverted);
         return;
       }
       throw duckdb::CatalogException("inverted index '%s' not found.",

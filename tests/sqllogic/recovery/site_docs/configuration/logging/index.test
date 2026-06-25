@@ -1,0 +1,178 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+CALL enable_logging();
+----
+success
+
+statement ok
+-- Run some queries...
+SELECT * FROM duckdb_logs;
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+CALL disable_logging();
+----
+success
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+CALL truncate_duckdb_logs();
+----
+success
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+CALL enable_logging(level = 'debug');
+----
+success
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+CALL enable_logging('HTTP');
+----
+success
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+CALL enable_logging(['HTTP', 'QueryLog']);
+----
+success
+
+# DOCS_TEST: example_007
+
+statement ok
+CALL truncate_duckdb_logs();
+
+statement ok
+CALL enable_logging('HTTP');
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT request.headers FROM duckdb_logs_parsed('HTTP');
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+statement ok
+DESCRIBE FROM duckdb_logs_parsed('HTTP');
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query
+CALL enable_logging(storage = 'stdout');
+----
+success
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+query
+CALL enable_logging(storage = 'file', storage_config = {'path': 'path/to/store/logs'});
+----
+success
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+query
+CALL enable_logging(storage_path = 'path/to/store/logs');
+----
+success
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+statement ok
+-- normalized: creates `${__TEST_DIR__}/duckdb_log_contexts.csv` and `${__TEST_DIR__}/duckdb_log_entries.csv`
+CALL enable_logging(storage_path = '${__TEST_DIR__}');
+
+query
+-- denormalized: creates `${__TEST_DIR__}/logs.csv`
+CALL enable_logging(storage_path = '${__TEST_DIR__}/logs.csv');
+----
+success
+
+# DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
+
+query
+CALL enable_logging(storage_config = {'buffer_size': 0});
+----
+success
+
+# DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
+
+query
+CALL enable_logging(storage_buffer_size = 0);
+----
+success
+
+# DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
+
+query
+CALL enable_logging(storage = 'stdout', storage_buffer_size = 2048);
+----
+success
+
+# DOCS_TEST: example_016
+
+# DOCS_TEST_BODY
+
+query
+CALL enable_logging(storage_path = '${__TEST_DIR__}/mylogs', storage_buffer_size = 0);
+----
+success
+
+# DOCS_TEST: example_017
+
+# DOCS_TEST_BODY
+
+query
+-- regular invocation
+CALL enable_logging(storage = 'file', storage_config = {'path': 'path/to/store/logs'});
+----
+success
+
+query
+-- using shorthand for common path storage config param
+CALL enable_logging(storage = 'file', storage_path = 'path/to/store/logs');
+----
+success
+
+query
+-- omitting `storage = 'file'` -> is implied from presence of `storage_config`
+CALL enable_logging(storage_config = {'path': 'path/to/store/logs'});
+----
+success

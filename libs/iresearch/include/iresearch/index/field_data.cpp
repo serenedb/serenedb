@@ -1004,11 +1004,11 @@ FieldData* FieldsData::emplace(field_id id, IndexFeatures index_features) {
 
   NormColumnOptions norm_options{};
   if (_col_writer && IsSubsetOf(IndexFeatures::Norm, index_features)) {
-    SDB_ASSERT(_norm_column_options && *_norm_column_options,
-               "Norm-featured field requires a norm_column_options callback");
-    norm_options = (*_norm_column_options)(id);
+    SDB_ASSERT(_field_options,
+               "Norm-featured field requires per-field index options");
+    norm_options = _field_options->GetNormColumnOptions(id);
     SDB_ASSERT(field_limits::valid(norm_options.id),
-               "norm_column_options must return a valid id for field ", id);
+               "GetNormColumnOptions must return a valid id for field ", id);
   }
   try {
     it->second = &_fields.emplace_back(

@@ -1,0 +1,615 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE sales AS SELECT * FROM (VALUES
+    (100, 'north', TIMESTAMP '2025-01-01 09:00:00', 'alpha', 42),
+    (250, 'north', TIMESTAMP '2025-01-02 09:00:00', 'beta', 84),
+    (180, 'south', TIMESTAMP '2025-01-03 09:00:00', 'alpha', 42),
+    (220, 'south', TIMESTAMP '2025-01-04 09:00:00', 'gamma', 17)
+) AS t(amount, region, time, name, value);
+
+statement ok
+CREATE TABLE results AS SELECT * FROM (VALUES
+    ('100m', DATE '2025-01-01', 'Ada', 12.3e0, 10, TIMESTAMP '2025-01-01 10:00:00'),
+    ('100m', DATE '2025-01-02', 'Bob', 12.1e0, 12, TIMESTAMP '2025-01-02 10:00:00'),
+    ('200m', DATE '2025-01-01', 'Cy', 24.3e0, 9, TIMESTAMP '2025-01-01 11:00:00')
+) AS t(event, date, athlete, time, points, datetime);
+
+
+# DOCS_TEST_BODY
+
+query ?
+SELECT row_number() OVER () AS row_number
+FROM sales
+ORDER BY 1;
+----
+row_number
+1
+2
+3
+4
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_RAW
+#| SELECT row_number() OVER (ORDER BY time)
+#| FROM sales;
+
+# DOCS_TEST_BODY
+
+query ?
+SELECT row_number() OVER (ORDER BY time) AS row_number
+FROM sales
+ORDER BY 1;
+----
+row_number
+1
+2
+3
+4
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_RAW
+#| SELECT row_number() OVER (PARTITION BY region ORDER BY time)
+#| FROM sales;
+
+# DOCS_TEST_BODY
+
+query ?
+SELECT row_number() OVER (PARTITION BY region ORDER BY time) AS row_number
+FROM sales
+ORDER BY 1;
+----
+row_number
+1
+1
+2
+2
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_RAW
+#| SELECT amount - lag(amount) OVER (ORDER BY time)
+#| FROM sales;
+
+# DOCS_TEST_BODY
+
+query ?
+SELECT amount - lag(amount) OVER (ORDER BY time) AS difference
+FROM sales
+ORDER BY time;
+----
+difference
+NULL
+150
+-70
+40
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_RAW
+#| SELECT amount / sum(amount) OVER (PARTITION BY region) AS percentage
+#| FROM sales;
+
+# DOCS_TEST_BODY
+
+query ?
+WITH sales(amount, region) AS (
+    VALUES (100, 'north'), (250, 'north'), (180, 'south'), (220, 'south')
+)
+SELECT round(amount::DOUBLE / sum(amount) OVER (PARTITION BY region), 4) AS percentage
+FROM sales
+ORDER BY region, amount;
+----
+percentage
+0.2857
+0.7143
+0.45
+0.55
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_RAW
+#| -- Count the number of distinct names at a given point in time
+#| SELECT count(DISTINCT name) OVER (ORDER BY time) FROM sales;
+
+# DOCS_TEST_BODY
+
+query ?
+SELECT count(DISTINCT name) OVER (ORDER BY time) AS count
+FROM sales
+ORDER BY time;
+----
+count
+1
+2
+2
+3
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_RAW
+#| -- Compute the modal value up to each time, breaking ties in favor of the most recent value
+#| SELECT mode(value ORDER BY time DESC) OVER (ORDER BY time) FROM sales;
+
+# DOCS_TEST_BODY
+
+query ?
+SELECT mode(value ORDER BY time DESC) OVER (ORDER BY time) AS mode
+FROM sales
+ORDER BY time;
+----
+mode
+42
+84
+42
+42
+
+# DOCS_TEST: example_008
+
+
+# DOCS_TEST_BODY
+
+query ???
+SELECT event, athlete,
+    first_value(athlete ORDER BY time) OVER w AS fastest
+FROM results
+WINDOW w AS (PARTITION BY event ORDER BY date)
+ORDER BY event, athlete;
+----
+event	athlete	fastest
+100m	Ada	Ada
+100m	Bob	Bob
+200m	Cy	Cy
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_RAW
+#| CREATE TABLE "Generation History" AS
+#|     FROM 'power-plant-generation-history.csv';
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE "Generation History" AS SELECT * FROM (VALUES
+    ('Boston', DATE '2019-01-02', 564337),
+    ('Boston', DATE '2019-01-03', 507405),
+    ('Boston', DATE '2019-01-04', 528523),
+    ('Boston', DATE '2019-01-05', 469538),
+    ('Boston', DATE '2019-01-06', 474163),
+    ('Boston', DATE '2019-01-07', 507213),
+    ('Boston', DATE '2019-01-08', 613040),
+    ('Boston', DATE '2019-01-09', 582588),
+    ('Boston', DATE '2019-01-10', 499506),
+    ('Boston', DATE '2019-01-11', 482014),
+    ('Boston', DATE '2019-01-12', 486134),
+    ('Boston', DATE '2019-01-13', 531518),
+    ('Worcester', DATE '2019-01-02', 118860),
+    ('Worcester', DATE '2019-01-03', 101977),
+    ('Worcester', DATE '2019-01-04', 106054),
+    ('Worcester', DATE '2019-01-05', 92182),
+    ('Worcester', DATE '2019-01-06', 94492),
+    ('Worcester', DATE '2019-01-07', 99932),
+    ('Worcester', DATE '2019-01-08', 118854),
+    ('Worcester', DATE '2019-01-09', 113506),
+    ('Worcester', DATE '2019-01-10', 96644),
+    ('Worcester', DATE '2019-01-11', 93806),
+    ('Worcester', DATE '2019-01-12', 98963),
+    ('Worcester', DATE '2019-01-13', 107170)
+) AS t("Plant", "Date", "MWh");
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_RAW
+#| SELECT "Plant", "Date",
+#|     row_number() OVER (PARTITION BY "Plant" ORDER BY "Date") AS "Row"
+#| FROM "Generation History";
+
+# DOCS_TEST_BODY
+
+query ???
+SELECT "Plant", "Date",
+    row_number() OVER (PARTITION BY "Plant" ORDER BY "Date") AS "Row"
+FROM "Generation History"
+ORDER BY 1, 2;
+----
+plant	date	Row
+Boston	2019-01-02	1
+Boston	2019-01-03	2
+Boston	2019-01-04	3
+Boston	2019-01-05	4
+Boston	2019-01-06	5
+Boston	2019-01-07	6
+Boston	2019-01-08	7
+Boston	2019-01-09	8
+Boston	2019-01-10	9
+Boston	2019-01-11	10
+Boston	2019-01-12	11
+Boston	2019-01-13	12
+Worcester	2019-01-02	1
+Worcester	2019-01-03	2
+Worcester	2019-01-04	3
+Worcester	2019-01-05	4
+Worcester	2019-01-06	5
+Worcester	2019-01-07	6
+Worcester	2019-01-08	7
+Worcester	2019-01-09	8
+Worcester	2019-01-10	9
+Worcester	2019-01-11	10
+Worcester	2019-01-12	11
+Worcester	2019-01-13	12
+
+# DOCS_TEST: example_011
+
+
+# DOCS_TEST_BODY
+
+query ??
+SELECT points,
+    sum(points) OVER (
+        ORDER BY datetime
+        ROWS BETWEEN 1 PRECEDING
+                 AND 1 FOLLOWING) AS "Moving Sum"
+FROM results
+ORDER BY datetime;
+----
+points	Moving Sum
+10	19
+9	31
+12	21
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_RAW
+#| SELECT "Plant", "Date",
+#|     avg("MWh") OVER (
+#|         PARTITION BY "Plant"
+#|         ORDER BY "Date" ASC
+#|         RANGE BETWEEN INTERVAL 3 DAYS PRECEDING
+#|                   AND INTERVAL 3 DAYS FOLLOWING)
+#|         AS "MWh 7-day Moving Average"
+#| FROM "Generation History";
+
+# DOCS_TEST_BODY
+
+query ???
+SELECT "Plant", "Date",
+    avg("MWh") OVER (
+        PARTITION BY "Plant"
+        ORDER BY "Date" ASC
+        RANGE BETWEEN INTERVAL 3 DAYS PRECEDING
+                  AND INTERVAL 3 DAYS FOLLOWING)
+        AS "MWh 7-day Moving Average"
+FROM "Generation History"
+ORDER BY 1, 2;
+----
+plant	date	MWh 7-day Moving Average
+Boston	2019-01-02	517450.75
+Boston	2019-01-03	508793.2
+Boston	2019-01-04	508529.8333333333
+Boston	2019-01-05	523459.85714285716
+Boston	2019-01-06	526067.1428571428
+Boston	2019-01-07	524938.7142857143
+Boston	2019-01-08	518294.5714285714
+Boston	2019-01-09	520665.4285714286
+Boston	2019-01-10	528859
+Boston	2019-01-11	532466.6666666666
+Boston	2019-01-12	516352
+Boston	2019-01-13	499793
+Worcester	2019-01-02	104768.25
+Worcester	2019-01-03	102713
+Worcester	2019-01-04	102249.5
+Worcester	2019-01-05	104621.57142857143
+Worcester	2019-01-06	103856.71428571429
+Worcester	2019-01-07	103094.85714285714
+Worcester	2019-01-08	101345.14285714286
+Worcester	2019-01-09	102313.85714285714
+Worcester	2019-01-10	104125
+Worcester	2019-01-11	104823.83333333333
+Worcester	2019-01-12	102017.8
+Worcester	2019-01-13	99145.75
+
+# DOCS_TEST: example_013
+
+# DOCS_TEST_RAW
+#| SELECT "Date", "Plant",
+#|     avg("MWh") OVER (
+#|         ORDER BY "Date" ASC
+#|         GROUPS BETWEEN 3 PRECEDING
+#|                    AND 3 FOLLOWING)
+#|         AS "MWh 7-day Moving Average"
+#| FROM "Generation History";
+
+# DOCS_TEST_BODY
+
+query ???
+SELECT "Date", "Plant",
+    avg("MWh") OVER (
+        ORDER BY "Date" ASC
+        GROUPS BETWEEN 3 PRECEDING
+                   AND 3 FOLLOWING)
+        AS "MWh 7-day Moving Average"
+FROM "Generation History"
+ORDER BY 1, 2;
+----
+date	plant	MWh 7-day Moving Average
+2019-01-02	Boston	311109.5
+2019-01-02	Worcester	311109.5
+2019-01-03	Boston	305753.1
+2019-01-03	Worcester	305753.1
+2019-01-04	Boston	305389.6666666667
+2019-01-04	Worcester	305389.6666666667
+2019-01-05	Boston	314040.71428571426
+2019-01-05	Worcester	314040.71428571426
+2019-01-06	Boston	314961.9285714286
+2019-01-06	Worcester	314961.9285714286
+2019-01-07	Boston	314016.78571428574
+2019-01-07	Worcester	314016.78571428574
+2019-01-08	Boston	309819.85714285716
+2019-01-08	Worcester	309819.85714285716
+2019-01-09	Boston	311489.64285714284
+2019-01-09	Worcester	311489.64285714284
+2019-01-10	Boston	316492
+2019-01-10	Worcester	316492
+2019-01-11	Boston	318645.25
+2019-01-11	Worcester	318645.25
+2019-01-12	Boston	309184.9
+2019-01-12	Worcester	309184.9
+2019-01-13	Boston	299469.375
+2019-01-13	Worcester	299469.375
+
+# DOCS_TEST: example_014
+
+# DOCS_TEST_RAW
+#| SELECT event, date, athlete,
+#|     avg(time) OVER w AS recent
+#| FROM results
+#| WINDOW w AS (
+#|     PARTITION BY event
+#|     ORDER BY date
+#|     RANGE BETWEEN INTERVAL 10 DAYS PRECEDING AND INTERVAL 10 DAYS FOLLOWING
+#|         EXCLUDE CURRENT ROW
+#| );
+
+# DOCS_TEST_BODY
+
+query ????
+SELECT event, date, athlete,
+    avg(time) OVER w AS recent
+FROM results
+WINDOW w AS (
+    PARTITION BY event
+    ORDER BY date
+    RANGE BETWEEN INTERVAL 10 DAYS PRECEDING AND INTERVAL 10 DAYS FOLLOWING
+        EXCLUDE CURRENT ROW
+)
+ORDER BY event, date, athlete;
+----
+event	date	athlete	recent
+100m	2025-01-01	Ada	12.1
+100m	2025-01-02	Bob	12.3
+200m	2025-01-01	Cy	NULL
+
+# DOCS_TEST: example_015
+
+# DOCS_TEST_RAW
+#| SELECT "Plant", "Date",
+#|     min("MWh") OVER seven AS "MWh 7-day Moving Minimum",
+#|     avg("MWh") OVER seven AS "MWh 7-day Moving Average",
+#|     max("MWh") OVER seven AS "MWh 7-day Moving Maximum"
+#| FROM "Generation History"
+#| WINDOW seven AS (
+#|     PARTITION BY "Plant"
+#|     ORDER BY "Date" ASC
+#|     RANGE BETWEEN INTERVAL 3 DAYS PRECEDING
+#|               AND INTERVAL 3 DAYS FOLLOWING);
+
+# DOCS_TEST_BODY
+
+query ?????
+SELECT "Plant", "Date",
+    min("MWh") OVER seven AS "MWh 7-day Moving Minimum",
+    avg("MWh") OVER seven AS "MWh 7-day Moving Average",
+    max("MWh") OVER seven AS "MWh 7-day Moving Maximum"
+FROM "Generation History"
+WINDOW seven AS (
+    PARTITION BY "Plant"
+    ORDER BY "Date" ASC
+    RANGE BETWEEN INTERVAL 3 DAYS PRECEDING
+              AND INTERVAL 3 DAYS FOLLOWING)
+ORDER BY 1, 2;
+----
+plant	date	MWh 7-day Moving Minimum	MWh 7-day Moving Average	MWh 7-day Moving Maximum
+Boston	2019-01-02	469538	517450.75	564337
+Boston	2019-01-03	469538	508793.2	564337
+Boston	2019-01-04	469538	508529.8333333333	564337
+Boston	2019-01-05	469538	523459.85714285716	613040
+Boston	2019-01-06	469538	526067.1428571428	613040
+Boston	2019-01-07	469538	524938.7142857143	613040
+Boston	2019-01-08	469538	518294.5714285714	613040
+Boston	2019-01-09	474163	520665.4285714286	613040
+Boston	2019-01-10	482014	528859	613040
+Boston	2019-01-11	482014	532466.6666666666	613040
+Boston	2019-01-12	482014	516352	582588
+Boston	2019-01-13	482014	499793	531518
+Worcester	2019-01-02	92182	104768.25	118860
+Worcester	2019-01-03	92182	102713	118860
+Worcester	2019-01-04	92182	102249.5	118860
+Worcester	2019-01-05	92182	104621.57142857143	118860
+Worcester	2019-01-06	92182	103856.71428571429	118854
+Worcester	2019-01-07	92182	103094.85714285714	118854
+Worcester	2019-01-08	92182	101345.14285714286	118854
+Worcester	2019-01-09	93806	102313.85714285714	118854
+Worcester	2019-01-10	93806	104125	118854
+Worcester	2019-01-11	93806	104823.83333333333	118854
+Worcester	2019-01-12	93806	102017.8	113506
+Worcester	2019-01-13	93806	99145.75	107170
+
+# DOCS_TEST: example_016
+
+# DOCS_TEST_RAW
+#| SELECT "Plant", "Date",
+#|     min("MWh") OVER seven AS "MWh 7-day Moving Minimum",
+#|     avg("MWh") OVER seven AS "MWh 7-day Moving Average",
+#|     max("MWh") OVER seven AS "MWh 7-day Moving Maximum",
+#|     min("MWh") OVER three AS "MWh 3-day Moving Minimum",
+#|     avg("MWh") OVER three AS "MWh 3-day Moving Average",
+#|     max("MWh") OVER three AS "MWh 3-day Moving Maximum"
+#| FROM "Generation History"
+#| WINDOW
+#|     seven AS (
+#|         PARTITION BY "Plant"
+#|         ORDER BY "Date" ASC
+#|         RANGE BETWEEN INTERVAL 3 DAYS PRECEDING
+#|                   AND INTERVAL 3 DAYS FOLLOWING),
+#|     three AS (
+#|         PARTITION BY "Plant"
+#|         ORDER BY "Date" ASC
+#|         RANGE BETWEEN INTERVAL 1 DAYS PRECEDING
+#|                   AND INTERVAL 1 DAYS FOLLOWING);
+
+# DOCS_TEST_BODY
+
+query ????????
+SELECT "Plant", "Date",
+    min("MWh") OVER seven AS "MWh 7-day Moving Minimum",
+    avg("MWh") OVER seven AS "MWh 7-day Moving Average",
+    max("MWh") OVER seven AS "MWh 7-day Moving Maximum",
+    min("MWh") OVER three AS "MWh 3-day Moving Minimum",
+    avg("MWh") OVER three AS "MWh 3-day Moving Average",
+    max("MWh") OVER three AS "MWh 3-day Moving Maximum"
+FROM "Generation History"
+WINDOW
+    seven AS (
+        PARTITION BY "Plant"
+        ORDER BY "Date" ASC
+        RANGE BETWEEN INTERVAL 3 DAYS PRECEDING
+                  AND INTERVAL 3 DAYS FOLLOWING),
+    three AS (
+        PARTITION BY "Plant"
+        ORDER BY "Date" ASC
+        RANGE BETWEEN INTERVAL 1 DAYS PRECEDING
+                  AND INTERVAL 1 DAYS FOLLOWING)
+ORDER BY 1, 2;
+----
+plant	date	MWh 7-day Moving Minimum	MWh 7-day Moving Average	MWh 7-day Moving Maximum	MWh 3-day Moving Minimum	MWh 3-day Moving Average	MWh 3-day Moving Maximum
+Boston	2019-01-02	469538	517450.75	564337	507405	535871	564337
+Boston	2019-01-03	469538	508793.2	564337	507405	533421.6666666666	564337
+Boston	2019-01-04	469538	508529.8333333333	564337	469538	501822	528523
+Boston	2019-01-05	469538	523459.85714285716	613040	469538	490741.3333333333	528523
+Boston	2019-01-06	469538	526067.1428571428	613040	469538	483638	507213
+Boston	2019-01-07	469538	524938.7142857143	613040	474163	531472	613040
+Boston	2019-01-08	469538	518294.5714285714	613040	507213	567613.6666666666	613040
+Boston	2019-01-09	474163	520665.4285714286	613040	499506	565044.6666666666	613040
+Boston	2019-01-10	482014	528859	613040	482014	521369.3333333333	582588
+Boston	2019-01-11	482014	532466.6666666666	613040	482014	489218	499506
+Boston	2019-01-12	482014	516352	582588	482014	499888.6666666667	531518
+Boston	2019-01-13	482014	499793	531518	486134	508826	531518
+Worcester	2019-01-02	92182	104768.25	118860	101977	110418.5	118860
+Worcester	2019-01-03	92182	102713	118860	101977	108963.66666666667	118860
+Worcester	2019-01-04	92182	102249.5	118860	92182	100071	106054
+Worcester	2019-01-05	92182	104621.57142857143	118860	92182	97576	106054
+Worcester	2019-01-06	92182	103856.71428571429	118854	92182	95535.33333333333	99932
+Worcester	2019-01-07	92182	103094.85714285714	118854	94492	104426	118854
+Worcester	2019-01-08	92182	101345.14285714286	118854	99932	110764	118854
+Worcester	2019-01-09	93806	102313.85714285714	118854	96644	109668	118854
+Worcester	2019-01-10	93806	104125	118854	93806	101318.66666666667	113506
+Worcester	2019-01-11	93806	104823.83333333333	118854	93806	96471	98963
+Worcester	2019-01-12	93806	102017.8	113506	93806	99979.66666666667	107170
+Worcester	2019-01-13	93806	99145.75	107170	98963	103066.5	107170
+
+# DOCS_TEST: example_017
+
+# DOCS_TEST_RAW
+#| SELECT "Plant", "Date",
+#|     min("MWh") OVER seven AS "MWh 7-day Moving Minimum",
+#|     quantile_cont("MWh", [0.25, 0.5, 0.75]) OVER seven
+#|         AS "MWh 7-day Moving IQR",
+#|     max("MWh") OVER seven AS "MWh 7-day Moving Maximum"
+#| FROM "Generation History"
+#| WINDOW seven AS (
+#|     PARTITION BY "Plant"
+#|     ORDER BY "Date" ASC
+#|     RANGE BETWEEN INTERVAL 3 DAYS PRECEDING
+#|               AND INTERVAL 3 DAYS FOLLOWING);
+
+# DOCS_TEST_BODY
+
+query ?????
+SELECT "Plant", "Date",
+    min("MWh") OVER seven AS "MWh 7-day Moving Minimum",
+    quantile_cont("MWh", [0.25, 0.5, 0.75]) OVER seven
+        AS "MWh 7-day Moving IQR",
+    max("MWh") OVER seven AS "MWh 7-day Moving Maximum"
+FROM "Generation History"
+WINDOW seven AS (
+    PARTITION BY "Plant"
+    ORDER BY "Date" ASC
+    RANGE BETWEEN INTERVAL 3 DAYS PRECEDING
+              AND INTERVAL 3 DAYS FOLLOWING)
+ORDER BY 1, 2;
+----
+plant	date	MWh 7-day Moving Minimum	MWh 7-day Moving IQR	MWh 7-day Moving Maximum
+Boston	2019-01-02	469538	{497938.25,517964,537476.5}	564337
+Boston	2019-01-03	469538	{474163,507405,528523}	564337
+Boston	2019-01-04	469538	{482425.5,507309,523243.5}	564337
+Boston	2019-01-05	469538	{490688,507405,546430}	613040
+Boston	2019-01-06	469538	{490688,507405,555555.5}	613040
+Boston	2019-01-07	469538	{486834.5,507213,555555.5}	613040
+Boston	2019-01-08	469538	{478088.5,499506,544900.5}	613040
+Boston	2019-01-09	474163	{484074,499506,544900.5}	613040
+Boston	2019-01-10	482014	{492820,507213,557053}	613040
+Boston	2019-01-11	482014	{489477,515512,569820.5}	613040
+Boston	2019-01-12	482014	{486134,499506,531518}	582588
+Boston	2019-01-13	482014	{485104,492820,507509}	531518
+Worcester	2019-01-02	92182	{99528.25,104015.5,109255.5}	118860
+Worcester	2019-01-03	92182	{94492,101977,106054}	118860
+Worcester	2019-01-04	92182	{95852,100954.5,105034.75}	118860
+Worcester	2019-01-05	92182	{97212,101977,112454}	118860
+Worcester	2019-01-06	92182	{97212,101977,109780}	118854
+Worcester	2019-01-07	92182	{95568,99932,109780}	118854
+Worcester	2019-01-08	92182	{94149,96644,106719}	118854
+Worcester	2019-01-09	93806	{95568,98963,106719}	118854
+Worcester	2019-01-10	93806	{97803.5,99932,110338}	118854
+Worcester	2019-01-11	93806	{97223.75,103066.5,111922}	118854
+Worcester	2019-01-12	93806	{96644,98963,107170}	113506
+Worcester	2019-01-13	93806	{95934.5,97803.5,101014.75}	107170
+
+# DOCS_TEST: example_018
+
+
+# DOCS_TEST_BODY
+
+query ???
+SELECT "Plant", "Date", "MWh"
+FROM "Generation History"
+ORDER BY "Plant", "Date";
+----
+plant	date	mwh
+Boston	2019-01-02	564337
+Boston	2019-01-03	507405
+Boston	2019-01-04	528523
+Boston	2019-01-05	469538
+Boston	2019-01-06	474163
+Boston	2019-01-07	507213
+Boston	2019-01-08	613040
+Boston	2019-01-09	582588
+Boston	2019-01-10	499506
+Boston	2019-01-11	482014
+Boston	2019-01-12	486134
+Boston	2019-01-13	531518
+Worcester	2019-01-02	118860
+Worcester	2019-01-03	101977
+Worcester	2019-01-04	106054
+Worcester	2019-01-05	92182
+Worcester	2019-01-06	94492
+Worcester	2019-01-07	99932
+Worcester	2019-01-08	118854
+Worcester	2019-01-09	113506
+Worcester	2019-01-10	96644
+Worcester	2019-01-11	93806
+Worcester	2019-01-12	98963
+Worcester	2019-01-13	107170

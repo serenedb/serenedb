@@ -1,0 +1,51 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY solr_syn (
+    template = 'solr_synonyms',
+    -- comma-separated terms are bidirectional; "=>" maps left to right
+    synonyms = 'car, automobile, auto
+laptop => notebook'
+);
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query ?
+SELECT ts_lexize('solr_syn', 'car');
+----
+ts_lexize
+{auto,automobile,car}
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query ?
+SELECT ts_lexize('solr_syn', 'automobile');
+----
+ts_lexize
+{auto,automobile,car}
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query ?
+SELECT ts_lexize('solr_syn', 'laptop');
+----
+ts_lexize
+{notebook}
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query ?
+SELECT ts_lexize('solr_syn', 'keyboard');
+----
+ts_lexize
+{keyboard}

@@ -1,0 +1,11 @@
+# DOCS_TEST: example_010
+
+statement ok
+CREATE TABLE tbl (a INTEGER, b INTEGER);
+
+# DOCS_TEST_BODY
+
+statement ok
+INSERT INTO tbl
+    BY POSITION (b, a)
+    VALUES (5, 42);

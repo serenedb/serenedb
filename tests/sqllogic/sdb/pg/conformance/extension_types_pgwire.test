@@ -1,0 +1,248 @@
+# SereneDB EXTENSION types over the PostgreSQL wire protocol.
+#
+# These types have NO PostgreSQL equivalent (VARIANT, the unsigned integer
+# family, HUGEINT/UHUGEINT, MAP, UNION, BITSTRING). A real PostgreSQL server
+# rejects every one of them ("type ... does not exist" / syntax error), so they
+# can never live in a dual-run any/pg/ conformance file. This file is therefore
+# SereneDB-only and runs over BOTH pg-wire-simple and pg-wire-extended. Its job
+# is to guard the Logical2Pg wire-encoding path: each representable type must
+# return a sane textual value over the wire and must not crash the server.
+#
+# Where the simple (text) and extended (binary) protocols disagree the case is
+# split with skipif/onlyif pg-wire-extended and tagged DIVERGENCE / BUG.
+
+# ---------------------------------------------------------------------------
+# VARIANT -- DuckDB self-describing dynamic type. Encoded over the wire as its
+# textual / JSON form. Stable across both protocols.
+# ---------------------------------------------------------------------------
+
+query
+SELECT 42::VARIANT AS v;
+----
+v
+42
+
+query
+SELECT 'hello'::VARIANT AS v;
+----
+v
+"hello"
+
+query
+SELECT true::VARIANT AS v;
+----
+v
+true
+
+query
+SELECT 3.14::VARIANT AS v;
+----
+v
+3.14
+
+query
+SELECT CAST({'a': 1, 'b': 'x'} AS VARIANT) AS v;
+----
+v
+{"a":1,"b":"x"}
+
+query
+SELECT CAST([1, 2, 3] AS VARIANT) AS v;
+----
+v
+[1,2,3]
+
+# ---------------------------------------------------------------------------
+# Unsigned integer family (UTINYINT / USMALLINT / UINTEGER / UBIGINT /
+# UHUGEINT). No PostgreSQL counterpart. Encoded as their decimal text. Stable
+# across both protocols, including values above the matching signed maximum.
+# ---------------------------------------------------------------------------
+
+query
+SELECT 255::UTINYINT AS t;
+----
+t
+255
+
+query
+SELECT 65535::USMALLINT AS t;
+----
+t
+65535
+
+query
+SELECT 4294967295::UINTEGER AS t;
+----
+t
+4294967295
+
+query
+SELECT 18446744073709551615::UBIGINT AS t;
+----
+t
+18446744073709551615
+
+query
+SELECT 18446744073709551616::UHUGEINT AS t;
+----
+t
+18446744073709551616
+
+# ---------------------------------------------------------------------------
+# HUGEINT -- 128-bit signed integer. No PostgreSQL counterpart.
+#
+# Moderate magnitudes encode identically over both protocols.
+# ---------------------------------------------------------------------------
+
+query
+SELECT 12345::HUGEINT AS h;
+----
+h
+12345
+
+query
+SELECT -98765::HUGEINT AS h;
+----
+h
+-98765
+
+query
+SELECT 99999999999999999999::HUGEINT AS h;
+----
+h
+99999999999999999999
+
+# DIVERGENCE (protocol, BUG): a HUGEINT near the 128-bit limit round-trips fine
+# over the simple/text protocol but breaks the extended/binary path. SereneDB
+# emits a binary HUGEINT the client decodes as PG numeric, and for ~39-digit
+# magnitudes the decode fails ("error deserializing column"), aborting the
+# extended engine. Asserted on simple only; extended is skipped to avoid the
+# crash. The crash itself is the finding.
+skipif pg-wire-extended
+query
+SELECT 170141183460469231731687303715884105727::HUGEINT AS h;
+----
+h
+170141183460469231731687303715884105727
+
+# ---------------------------------------------------------------------------
+# MAP -- DuckDB key/value type. No PostgreSQL counterpart. Encoded over the
+# wire as a PG array of (key,value) composite rows. Stable across both
+# protocols.
+# ---------------------------------------------------------------------------
+
+query
+SELECT MAP {'a': 1, 'b': 2} AS m;
+----
+m
+{"(a,1)","(b,2)"}
+
+query
+SELECT MAP {1: 'a', 2: 'b'} AS m;
+----
+m
+{"(1,a)","(2,b)"}
+
+# ---------------------------------------------------------------------------
+# STRUCT and LIST -- DuckDB composite types. PostgreSQL has no {...} / [...]
+# literal syntax (it rejects both with a syntax error), but SereneDB maps these
+# onto the PG composite-row and array wire formats, so they encode as standard
+# PG text on both protocols.
+# ---------------------------------------------------------------------------
+
+query
+SELECT {'x': 1, 'y': 'a'} AS s;
+----
+s
+(1,a)
+
+query
+SELECT {'a': {'b': 1}} AS s;
+----
+s
+("(1)")
+
+query
+SELECT [1, 2, 3] AS l;
+----
+l
+{1,2,3}
+
+query
+SELECT [[1, 2], [3, 4]] AS l;
+----
+l
+{{1,2},{3,4}}
+
+# ---------------------------------------------------------------------------
+# BITSTRING / BIT -- BITSTRING is a SereneDB-only alias (PG has no "bitstring"
+# type) and PG's own '...'::BIT truncates to BIT(1), so the value semantics
+# differ from PG anyway.
+#
+# Byte-aligned bit strings (length a multiple of 8) encode correctly over both
+# protocols.
+# ---------------------------------------------------------------------------
+
+query
+SELECT '11110000'::BIT AS b;
+----
+b
+11110000
+
+query
+SELECT '101010'::BIT AS b;
+----
+b
+101010
+
+query
+SELECT '0101'::BITSTRING AS b;
+----
+b
+0101
+
+# ---------------------------------------------------------------------------
+# tsquery -- full-text query type. PostgreSQL has a native tsquery, but its
+# canonical text form quotes each lexeme ('cat' & 'dog'); SereneDB returns the
+# unquoted source form. (tsvector, PG's companion type, does not exist in
+# SereneDB at all.) Encoded identically over both SereneDB protocols.
+# ---------------------------------------------------------------------------
+
+query
+SELECT 'cat & dog'::tsquery AS q;
+----
+q
+cat & dog
+
+# ---------------------------------------------------------------------------
+# UNION -- DuckDB tagged-union type. NOT representable over pg-wire at all:
+# both constructing a value with union_value() and reading a UNION column back
+# over the wire raise "Such type is not supported". The DDL that declares a
+# UNION column itself succeeds; only the wire-encoding of a UNION value fails.
+# Asserted as errors so the unsupported-but-clean behavior is locked in (it
+# must error, not crash).
+# ---------------------------------------------------------------------------
+
+statement error
+SELECT union_value(num := 2) AS u;
+----
+db error: ERROR: Such type is not supported
+
+
+statement ok
+DROP TABLE IF EXISTS ext_union_t;
+
+statement ok
+CREATE TABLE ext_union_t(u UNION(num INTEGER, str VARCHAR));
+
+statement ok
+INSERT INTO ext_union_t VALUES (1), ('hello');
+
+statement error
+SELECT u FROM ext_union_t;
+----
+db error: ERROR: Such type is not supported
+
+
+statement ok
+DROP TABLE IF EXISTS ext_union_t;

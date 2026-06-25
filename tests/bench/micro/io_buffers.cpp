@@ -21,8 +21,10 @@
 #include <absl/random/random.h>
 #include <absl/strings/cord.h>
 #include <benchmark/benchmark.h>
+#ifdef SDB_ENABLE_FOLLY
 #include <folly/io/Cursor.h>
 #include <folly/io/IOBufQueue.h>
+#endif
 
 #include <boost/circular_buffer.hpp>
 #include <boost/container/devector.hpp>
@@ -181,6 +183,7 @@ class BufferFixture : public benchmark::Fixture {
 std::vector<std::string> BufferFixture::gData = {};
 std::vector<size_t> BufferFixture::gActions = {};
 
+#ifdef SDB_ENABLE_FOLLY
 BENCHMARK_DEFINE_F(BufferFixture, BM_folly_appender)(benchmark::State& state) {
   for (auto _ : state) {
     folly::IOBufQueue buffer;
@@ -230,6 +233,7 @@ BENCHMARK_DEFINE_F(BufferFixture,
     benchmark::DoNotOptimize(buffer);
   }
 }
+#endif
 
 BENCHMARK_DEFINE_F(BufferFixture, BM_absl_cord)(benchmark::State& state) {
   for (auto _ : state) {
@@ -306,8 +310,13 @@ BENCHMARK_DEFINE_F(BufferFixture,
 BENCHMARK_DEFINE_F(BufferFixture, BM_sdb_buffer)(benchmark::State& state) {
   for (auto _ : state) {
     sdb::message::Buffer buffer(64, 4096);
-    Step([&](std::string_view s) { buffer.Write(s, false); },
-         [&]() { buffer.FlushStart(); }, [&](size_t n) { buffer.FlushDone(); });
+    Step(
+      [&](std::string_view s) {
+        sdb::message::Writer writer{buffer};
+        writer.Write(s);
+        writer.Commit(false);
+      },
+      [&]() { buffer.FlushStart(); }, [&](size_t n) { buffer.FlushDone(); });
     benchmark::DoNotOptimize(true);
   }
 }
@@ -317,9 +326,11 @@ BENCHMARK_DEFINE_F(BufferFixture, BM_sdb_buffer)(benchmark::State& state) {
 // max_in_buffer - the maximum of packets in buffer
 #define BUFFER_BENCHMARK(name) BENCHMARK_REGISTER_F(BufferFixture, name);
 
+#ifdef SDB_ENABLE_FOLLY
 BUFFER_BENCHMARK(BM_folly_iobuf)
 BUFFER_BENCHMARK(BM_folly_appender)
 BUFFER_BENCHMARK(BM_folly_appender_with_mutex)
+#endif
 BUFFER_BENCHMARK(BM_absl_cord)
 BUFFER_BENCHMARK(BM_deque_char)
 BUFFER_BENCHMARK(BM_basic_string)

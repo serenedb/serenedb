@@ -1,0 +1,54 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha'),
+    (2, 'beta')
+) AS t("hello", "world")) TO '${__TEST_DIR__}/cookbook_performance_file_formats_example_001_part_0001.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+# DOCS_TEST_RAW
+#| SELECT Prompt FROM sniff_csv('part-0001.csv');
+
+# DOCS_TEST_BODY
+
+query
+SELECT replace(
+    Prompt,
+    '${__TEST_DIR__}/cookbook_performance_file_formats_example_001_part_0001.csv',
+    'file_path.csv'
+) AS Prompt
+FROM sniff_csv('${__TEST_DIR__}/cookbook_performance_file_formats_example_001_part_0001.csv');
+----
+prompt
+FROM read_csv('file_path.csv', auto_detect=false, delim=',', quote='', escape='', new_line='\\n', skip=0, comment='', header=true, columns={'hello': 'BIGINT', 'world': 'VARCHAR'});
+
+
+# DOCS_TEST: example_002
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha'),
+    (2, 'beta')
+) AS t("hello", "world")) TO '${__TEST_DIR__}/cookbook_performance_file_formats_example_002_1_part_csv_1.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (3, 'gamma'),
+    (4, 'delta')
+) AS t("hello", "world")) TO '${__TEST_DIR__}/cookbook_performance_file_formats_example_002_1_part_csv_2.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+# DOCS_TEST_RAW
+#| FROM read_csv('part-*.csv', auto_detect=false, delim=',', quote='"', escape='"', new_line='\n', skip=0, header=true, columns={'hello': 'BIGINT', 'world': 'VARCHAR'});
+
+# DOCS_TEST_BODY
+
+query
+FROM read_csv('${__TEST_DIR__}/cookbook_performance_file_formats_example_002_1_part_csv_*.csv', auto_detect=false, delim=',', quote='"', escape='"', new_line='\n', skip=0, header=true, columns={'hello': 'BIGINT', 'world': 'VARCHAR'});
+----
+hello	world
+1	alpha
+2	beta
+3	gamma
+4	delta

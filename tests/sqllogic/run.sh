@@ -5,6 +5,61 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 : "${RESOURCES:=$(realpath "$SCRIPT_DIR/../../resources")}"
 export RESOURCES
 
+# Local sanitizer runs: if the built serened is a sanitizer binary and the
+# matching *_OPTIONS var isn't already set, export it (with the local
+# suppressions file) so a serened started from this shell -- or a sanitizer-built
+# sqllogictest client -- loads the same suppressions CI uses. Guarded on the
+# binary being instrumented for that sanitizer and the file existing, so
+# uninstrumented local runs are not perturbed. Existing *_OPTIONS are left
+# untouched. LSan runs under ASan, so an ASan binary also gets LSAN_OPTIONS.
+_sdb_repo_root=$(realpath "$SCRIPT_DIR/../..")
+for _sdb_bin in "$_sdb_repo_root"/build_tsan/bin/serened \
+	"$_sdb_repo_root"/build_asan/bin/serened \
+	"$_sdb_repo_root"/build*/bin/serened; do
+	[[ -x "$_sdb_bin" ]] || continue
+	_sdb_syms=$(nm -D "$_sdb_bin" 2>/dev/null)
+
+	if [[ -z "${TSAN_OPTIONS:-}" ]] && grep -q '__tsan_init' <<<"$_sdb_syms"; then
+		_sdb_opts="detect_deadlocks=true:second_deadlock_stack=1:history_size=0"
+		if [[ -f "$_sdb_repo_root/resources/suppressions/tsan.txt" ]]; then
+			_sdb_opts="${_sdb_opts}:suppressions=${_sdb_repo_root}/resources/suppressions/tsan.txt"
+		fi
+		export TSAN_OPTIONS="$_sdb_opts"
+	fi
+
+	if grep -q '__asan_init' <<<"$_sdb_syms"; then
+		if [[ -z "${ASAN_OPTIONS:-}" ]]; then
+			_sdb_opts="handle_ioctl=true:check_initialization_order=true:detect_odr_violation=1:strict_init_order=true"
+			if [[ -f "$_sdb_repo_root/resources/suppressions/asan.txt" ]]; then
+				_sdb_opts="${_sdb_opts}:suppressions=${_sdb_repo_root}/resources/suppressions/asan.txt"
+			fi
+			export ASAN_OPTIONS="$_sdb_opts"
+		fi
+		if [[ -z "${LSAN_OPTIONS:-}" && -f "$_sdb_repo_root/resources/suppressions/lsan.txt" ]]; then
+			export LSAN_OPTIONS="suppressions=${_sdb_repo_root}/resources/suppressions/lsan.txt"
+		fi
+	fi
+
+	if [[ -z "${UBSAN_OPTIONS:-}" ]] && grep -q '__ubsan_handle' <<<"$_sdb_syms"; then
+		_sdb_opts="print_stacktrace=1"
+		if [[ -f "$_sdb_repo_root/resources/suppressions/ubsan.txt" ]]; then
+			_sdb_opts="${_sdb_opts}:suppressions=${_sdb_repo_root}/resources/suppressions/ubsan.txt"
+		fi
+		export UBSAN_OPTIONS="$_sdb_opts"
+	fi
+
+	if [[ -z "${MSAN_OPTIONS:-}" ]] && grep -q '__msan_init' <<<"$_sdb_syms"; then
+		_sdb_opts="poison_in_dtor=1"
+		if [[ -f "$_sdb_repo_root/resources/suppressions/msan.txt" ]]; then
+			_sdb_opts="${_sdb_opts}:suppressions=${_sdb_repo_root}/resources/suppressions/msan.txt"
+		fi
+		export MSAN_OPTIONS="$_sdb_opts"
+	fi
+
+	break
+done
+unset _sdb_repo_root _sdb_bin _sdb_syms _sdb_opts
+
 # Boolean flags configuration
 declare -a BOOLEAN_FLAGS=(debug override force-override format show-all-errors fast cancellation)
 
@@ -386,23 +441,38 @@ launch_postgres() {
 
 launch_external() {
 	shopt -s globstar
-	local pattern test_files needs_s3=false needs_iceberg=false needs_ollama=false needs_postgres=false
+	local pattern test_files f
+	local needs_s3=false needs_iceberg=false needs_ollama=false needs_postgres=false
+	local -a misnamed=()
 	for pattern in "${tests[@]}"; do
 		test_files=$(compgen -G "$pattern" 2>/dev/null || true)
-		if echo "$test_files" | grep -q '_s3\.'; then
-			needs_s3=true
-		fi
-		if echo "$test_files" | grep -q 'iceberg'; then
-			needs_iceberg=true
-		fi
-		if echo "$test_files" | grep -q '_ollama\.'; then
-			needs_ollama=true
-		fi
-		if echo "$test_files" | grep -q '_pgscan\.'; then
-			needs_postgres=true
-		fi
+		[[ -n "$test_files" ]] || continue
+		while IFS= read -r f; do
+			[[ -n "$f" ]] || continue
+			case "$f" in
+			# A test that boots a docker-backed service (MinIO, iceberg-rest,
+			# ollama, postgres) MUST be .test_slow so --fast runs -- e.g. the
+			# package RTA, which has no docker -- exclude it. An external-service
+			# suffix on a plain .test is a mistake; fail loudly instead of
+			# letting the service launch blow up later.
+			*_s3.test | *_iceberg.test | *_ollama.test | *_pgscan.test)
+				misnamed+=("$f")
+				;;
+			*_s3.test_slow) needs_s3=true ;;
+			*_iceberg.test_slow) needs_iceberg=true ;;
+			*_ollama.test_slow) needs_ollama=true ;;
+			*_pgscan.test_slow) needs_postgres=true ;;
+			esac
+		done <<<"$test_files"
 	done
 	shopt -u globstar
+
+	if [[ ${#misnamed[@]} -gt 0 ]]; then
+		echo "ERROR: tests that launch an external service must be named *.test_slow so" >&2
+		echo "       --fast runs (e.g. the package RTA, which has no docker) exclude them:" >&2
+		printf '         %s\n' "${misnamed[@]}" >&2
+		exit 1
+	fi
 
 	# iceberg-rest's warehouse runs on MinIO (see launch_iceberg_rest), so any
 	# iceberg test transitively requires MinIO too.

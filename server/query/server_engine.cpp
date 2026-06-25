@@ -28,16 +28,19 @@
 #include <duckdb/catalog/default/default_types.hpp>
 #include <duckdb/catalog/default/default_views.hpp>
 
+#include "basics/number_of_cores.h"
 #include "catalog/store/store.h"
 #include "connector/duckdb_copy_filesystem.h"
+#include "connector/duckdb_pg_binary_copy.h"
+#include "connector/duckdb_pg_text_copy.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_storage_extension.h"
 #include "connector/duckdb_tokenizer_function.h"
 #include "connector/duckdb_vacuum_function.h"
 #include "connector/functions/array.h"
-#include "connector/functions/cast.h"
 #include "connector/functions/embedding/embedding.h"
 #include "connector/functions/encode_key.h"
+#include "connector/functions/es.h"
 #include "connector/functions/inout.h"
 #include "connector/functions/json.h"
 #include "connector/functions/math.h"
@@ -210,24 +213,38 @@ extern "C" const duckdb::DefaultType* duckdb_external_types(
   return kExternalTypes;
 }
 
-ABSL_DECLARE_FLAG(uint64_t, server_cpu_threads);
+ABSL_FLAG(uint64_t, cpu_threads, 0,
+          "Executor pool size at process start. 0 = let server "
+          "auto-detect from cpu_count. The SQL-level `SET threads = N` "
+          "continues to win at runtime.");
 
 namespace sdb::server::query {
 
 void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   connector::RegisterSereneDBStorage(config);
   connector::RegisterConfigVariables(config);
-  if (const auto t = absl::GetFlag(FLAGS_server_cpu_threads); t > 0) {
-    config.SetOptionByName("threads", duckdb::Value::UBIGINT(t));
+  // DuckDB's own auto-detect uses std::thread::hardware_concurrency(), which
+  // ignores cgroup CPU limits and would over-thread in a container. Pin it to
+  // our cgroup-aware logical core count when unset (SET threads=N still wins at
+  // runtime), and publish the resolved value into the flag.
+  auto threads = absl::GetFlag(FLAGS_cpu_threads);
+  if (threads == 0) {
+    threads = CountLogicalCores();
+    absl::SetFlag(&FLAGS_cpu_threads, threads);
   }
+  config.SetOptionByName("threads", duckdb::Value::UBIGINT(threads));
+  // serenedb runs every query on the internal pool (sessions are scheduled as
+  // tasks; the driver is itself a pool worker), so there is no external thread
+  // feeding the scheduler. Default external_threads=1 would over-count
+  // parallelism by one and make `threads`/`cpu_threads` resolve to N-1 internal
+  // workers; zero makes the count exact and `threads=1` a true single worker.
+  config.SetOptionByName("external_threads", duckdb::Value::UBIGINT(0));
 }
 
 void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   catalog::RegisterCatalogStoreFunctions(db);
 
   connector::RegisterTokenizerPragma(db);
-
-  connector::RegisterPgCasts(db);
 
   connector::RegisterPgMathFunctions(db);
 
@@ -245,7 +262,13 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
 
   connector::RegisterPgJsonFunctions(db);
 
+  connector::RegisterEsFunctions(db);
+
   connector::RegisterVacuumFunction(db);
+
+  connector::RegisterPgBinaryCopyFunction(db);
+
+  connector::RegisterPgTextCopyFunction(db);
 
   connector::RegisterSearchFunctions(db);
 
@@ -274,9 +297,13 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   auto& fs = duckdb::FileSystem::GetFileSystem(db);
   fs.RegisterSubSystem(duckdb::make_uniq<connector::SereneDBCopyFileSystem>());
 
-  // Parse and cache system functions/views
-  // for serving from our attached catalog.
-  duckdb::Parser parser;
+  // Parse and cache system functions/views for serving from our attached
+  // catalog. Route through the database parser cache so the PEG matcher built
+  // here is the one reused by every connection -- a bare Parser uses a
+  // throwaway local cache.
+  duckdb::ParserOptions parser_options;
+  parser_options.parser_cache = &db.GetParserCache();
+  duckdb::Parser parser{parser_options};
   pg::InitSystemFunctions(parser);
   pg::InitSystemViews(parser);
 }

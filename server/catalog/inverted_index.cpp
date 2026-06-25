@@ -431,7 +431,7 @@ irs::ColumnOptions InvertedIndex::GetColumnOptions(irs::field_id id) const {
     return {
       .row_group_size = entry->row_group_size,
       .compression = entry->compression,
-      .hnsw_info = GetHNSWInfo(id),
+      .ivf_info = GetIvfInfo(id),
       .hyperloglog = entry->hyperloglog,
     };
   }

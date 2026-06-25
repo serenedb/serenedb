@@ -70,7 +70,7 @@ void NormalizeRows(float* data, size_t n, uint32_t d) {
   }
 }
 
-// Use 
+// Use
 std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
                                   size_t n, uint32_t k, uint32_t d,
                                   uint32_t seed) {

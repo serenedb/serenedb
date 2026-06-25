@@ -512,12 +512,13 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
 void IvfTermReader::Finish(IndexOutput& /*out*/) { SDB_ASSERT(_qw); }
 
 void IvfWriter::OnCommit(ColWriter& cw, IdxWriter& idx,
-                         std::span<const field_id> column_ids) {
-  if (!_column_options || !*_column_options) {
+                         std::span<const field_id> column_ids,
+                         const IndexFieldOptions* field_options) {
+  if (!field_options) {
     return;
   }
   for (const field_id id : column_ids) {
-    const auto opts = (*_column_options)(id);
+    const auto opts = field_options->GetColumnOptions(id);
     if (!opts.ivf_info) {
       continue;
     }
@@ -563,8 +564,7 @@ std::span<const BasicTermReader* const> IvfWriter::ClusterReaders(
   return _reader_ptrs;
 }
 
-IvfWriter::IvfWriter(const ColumnOptionsProvider* column_options) noexcept
-  : _column_options{column_options} {}
+IvfWriter::IvfWriter() noexcept = default;
 
 IvfWriter::~IvfWriter() = default;
 

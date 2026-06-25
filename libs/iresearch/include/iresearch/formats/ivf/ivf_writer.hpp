@@ -105,12 +105,13 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
 
 class IvfWriter {
  public:
-  explicit IvfWriter(const ColumnOptionsProvider* column_options) noexcept;
+  IvfWriter() noexcept;
 
   ~IvfWriter();
 
   void OnCommit(ColWriter& cw, IdxWriter& idx,
-                std::span<const field_id> column_ids);
+                std::span<const field_id> column_ids,
+                const IndexFieldOptions* field_options);
 
   bool Empty() const noexcept { return _results.empty(); }
 
@@ -128,7 +129,6 @@ class IvfWriter {
     uint32_t d = 0;
   };
 
-  const ColumnOptionsProvider* _column_options;
   std::vector<Result> _results;
   std::vector<std::unique_ptr<IvfTermReader>> _readers;
   std::vector<const BasicTermReader*> _reader_ptrs;

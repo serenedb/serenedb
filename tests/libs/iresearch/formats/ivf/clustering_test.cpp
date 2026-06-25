@@ -18,11 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/formats/ivf/clustering.hpp"
-
 #include <cmath>
 #include <vector>
 
+#include "iresearch/formats/ivf/clustering.hpp"
 #include "tests_shared.hpp"
 
 using namespace irs;
@@ -41,10 +40,9 @@ float Norm(const float* v, uint32_t d) {
 // large norm (lets the L2/L1 "not unit" assertion hold regardless of which
 // points land in which cluster).
 const std::vector<float> kBlobs2x4{
-  8.f, 8.f,  0.f, 0.f,   7.f, 9.f,  0.f, 0.f,
-  9.f, 7.f,  0.f, 0.f,   8.f, 8.5f, 0.f, 0.f,
-  8.f, -8.f, 0.f, 0.f,   7.f, -9.f, 0.f, 0.f,
-  9.f, -7.f, 0.f, 0.f,   8.f, -8.5f, 0.f, 0.f,
+  8.f, 8.f, 0.f,  0.f,  7.f, 9.f, 0.f,  0.f,   9.f, 7.f, 0.f,
+  0.f, 8.f, 8.5f, 0.f,  0.f, 8.f, -8.f, 0.f,   0.f, 7.f, -9.f,
+  0.f, 0.f, 9.f,  -7.f, 0.f, 0.f, 8.f,  -8.5f, 0.f, 0.f,
 };
 
 }  // namespace
@@ -67,7 +65,8 @@ TEST(clustering_test, train_centroids_norms_per_metric) {
   // IP / Cosine: spherical (angular) -> every centroid unit-norm.
   for (const VectorMetric m :
        {VectorMetric::InnerProduct, VectorMetric::Cosine}) {
-    const auto c = TrainCentroids(m, kBlobs2x4.data(), /*n=*/8, k, d, /*seed=*/42);
+    const auto c =
+      TrainCentroids(m, kBlobs2x4.data(), /*n=*/8, k, d, /*seed=*/42);
     ASSERT_EQ(c.size(), static_cast<size_t>(k) * d);
     for (uint32_t i = 0; i < k; ++i) {
       EXPECT_NEAR(Norm(c.data() + static_cast<size_t>(i) * d, d), 1.f, 1e-3f);
@@ -76,7 +75,8 @@ TEST(clustering_test, train_centroids_norms_per_metric) {
 
   // L2 / L1: plain means -> centroids keep the data's (large) magnitude.
   for (const VectorMetric m : {VectorMetric::L2Sqr, VectorMetric::L1}) {
-    const auto c = TrainCentroids(m, kBlobs2x4.data(), /*n=*/8, k, d, /*seed=*/42);
+    const auto c =
+      TrainCentroids(m, kBlobs2x4.data(), /*n=*/8, k, d, /*seed=*/42);
     ASSERT_EQ(c.size(), static_cast<size_t>(k) * d);
     for (uint32_t i = 0; i < k; ++i) {
       EXPECT_GT(Norm(c.data() + static_cast<size_t>(i) * d, d), 2.f);
@@ -107,8 +107,8 @@ TEST(clustering_test, nearest_centroid_l1_vs_l2_disagree) {
   const std::vector<float> p{0.f, 0.f, 0.f, 0.f};
   // cA: L1=3, L2=9 ; cB: L1=4, L2=8. L2 prefers cB, L1 prefers cA.
   const std::vector<float> centroids{3.f, 0.f, 0.f, 0.f, 2.f, 2.f, 0.f, 0.f};
-  EXPECT_EQ(NearestCentroid(VectorMetric::L2Sqr, p.data(), centroids.data(), 2, d),
-            1u);
+  EXPECT_EQ(
+    NearestCentroid(VectorMetric::L2Sqr, p.data(), centroids.data(), 2, d), 1u);
   EXPECT_EQ(NearestCentroid(VectorMetric::L1, p.data(), centroids.data(), 2, d),
             0u);
 }

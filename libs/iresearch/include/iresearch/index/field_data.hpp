@@ -26,8 +26,8 @@
 #include <absl/container/flat_hash_map.h>
 
 #include <deque>
-#include <span>
 #include <memory>
+#include <span>
 #include <vector>
 
 #include "basics/memory.hpp"

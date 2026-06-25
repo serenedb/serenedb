@@ -30,8 +30,7 @@
 
 namespace irs {
 
-static constexpr uint64_t kHeaderSize =
-  2 * sizeof(uint8_t) + 2 * sizeof(uint32_t);
+static constexpr uint64_t kHeaderSize = sizeof(uint8_t) + 2 * sizeof(uint32_t);
 
 class IndexInput;
 class IndexOutput;

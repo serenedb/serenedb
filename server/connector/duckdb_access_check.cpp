@@ -48,23 +48,23 @@ void RequireColumns(const catalog::Snapshot& snapshot, ObjectId role,
                   ERR_MSG("permission denied for table ", table.GetName()));
 }
 
-void RequireColumn(const catalog::Snapshot& snapshot, ObjectId role,
-                   const catalog::Table& table, catalog::AclMode need,
-                   uint64_t logical_index) {
+// Resolve logical column indices (the position excluding the generated PK, as
+// the planner numbers them) to Column pointers in a single pass over the table.
+std::vector<const catalog::Column*> ResolveColumns(
+  const catalog::Table& table, const absl::flat_hash_set<uint64_t>& logical) {
+  std::vector<const catalog::Column*> out;
+  out.reserve(logical.size());
   uint64_t visible = 0;
   for (const auto& col : table.Columns()) {
     if (col.GetId() == catalog::Column::kGeneratedPKId) {
       continue;
     }
-    if (visible == logical_index) {
-      const catalog::Column* one[] = {&col};
-      RequireColumns(snapshot, role, table, need, one);
-      return;
+    if (logical.contains(visible)) {
+      out.push_back(&col);
     }
     ++visible;
   }
-  RequireColumns(snapshot, role, table, need,
-                 std::span<const catalog::Column* const>{});
+  return out;
 }
 
 }  // namespace
@@ -125,42 +125,23 @@ void AccessRecord::Enforce(ConnectionContext& ctx) const {
       snapshot->RequireAccess(role, table, table_action);
     }
 
-    if (rel.table_read || !rel.selected.empty()) {
-      if (rel.selected.empty()) {
-        RequireColumns(*snapshot, role, table, catalog::AclMode::Select,
-                       std::span<const catalog::Column* const>{});
-      } else {
-        for (auto logical_index : rel.selected) {
-          RequireColumn(*snapshot, role, table, catalog::AclMode::Select,
-                        logical_index);
-        }
-      }
-    }
-
-    for (auto logical_index : rel.returned) {
-      RequireColumn(*snapshot, role, table, catalog::AclMode::Select,
-                    logical_index);
+    // SELECT covers both the columns read directly (selected) and those a DML
+    // RETURNING clause reads back (returned). An empty set with table_read set
+    // is the "read with no specific column" case (e.g. count(*)) -> table-level.
+    if (rel.table_read || !rel.selected.empty() || !rel.returned.empty()) {
+      absl::flat_hash_set<uint64_t> read = rel.selected;
+      read.insert(rel.returned.begin(), rel.returned.end());
+      RequireColumns(*snapshot, role, table, catalog::AclMode::Select,
+                     ResolveColumns(table, read));
     }
 
     if ((rel.action & catalog::AclMode::Update) != catalog::AclMode::NoRights) {
-      if (rel.updated.empty()) {
-        RequireColumns(*snapshot, role, table, catalog::AclMode::Update,
-                       std::span<const catalog::Column* const>{});
-      }
-      for (auto logical_index : rel.updated) {
-        RequireColumn(*snapshot, role, table, catalog::AclMode::Update,
-                      logical_index);
-      }
+      RequireColumns(*snapshot, role, table, catalog::AclMode::Update,
+                     ResolveColumns(table, rel.updated));
     }
     if ((rel.action & catalog::AclMode::Insert) != catalog::AclMode::NoRights) {
-      if (rel.inserted.empty()) {
-        RequireColumns(*snapshot, role, table, catalog::AclMode::Insert,
-                       std::span<const catalog::Column* const>{});
-      }
-      for (auto logical_index : rel.inserted) {
-        RequireColumn(*snapshot, role, table, catalog::AclMode::Insert,
-                      logical_index);
-      }
+      RequireColumns(*snapshot, role, table, catalog::AclMode::Insert,
+                     ResolveColumns(table, rel.inserted));
     }
   }
 }

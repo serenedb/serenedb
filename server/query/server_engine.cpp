@@ -39,7 +39,6 @@
 #include "connector/duckdb_tokenizer_function.h"
 #include "connector/duckdb_vacuum_function.h"
 #include "connector/functions/array.h"
-#include "connector/functions/cast.h"
 #include "connector/functions/embedding/embedding.h"
 #include "connector/functions/encode_key.h"
 #include "connector/functions/es.h"
@@ -225,6 +224,7 @@ namespace sdb::server::query {
 void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   connector::RegisterSereneDBStorage(config);
   connector::RegisterConfigVariables(config);
+  config.options.pg_array_to_varchar = true;
   // DuckDB's own auto-detect uses std::thread::hardware_concurrency(), which
   // ignores cgroup CPU limits and would over-thread in a container. Pin it to
   // our cgroup-aware logical core count when unset (SET threads=N still wins at
@@ -257,8 +257,6 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterSequenceFunctions(db);
 
   connector::RegisterPgInOutFunctions(db);
-
-  connector::RegisterPgCasts(db);
 
   connector::RegisterRbacPragmas(db);
 

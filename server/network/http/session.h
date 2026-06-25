@@ -147,6 +147,8 @@ class HttpSession final
         _user.empty() ? StaticStrings::kDefaultUser : _user;
       auto role = snapshot->GetRole(user);
       SDB_ENSURE(role, ERROR_FORBIDDEN, "role \"", user, "\" does not exist");
+      SDB_ENSURE(role->CanLogin(), ERROR_FORBIDDEN, "role \"", user,
+                 "\" is not permitted to log in");
 
       _conn = DuckDBEngine::Instance().CreateConnection();
       _connection_ctx = std::make_shared<ConnectionContext>(

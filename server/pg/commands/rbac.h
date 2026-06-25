@@ -39,9 +39,11 @@ struct CreateRoleOptions {
   bool superuser = false;
   bool inherit = true;
   // PASSWORD is hashed into a SCRAM verifier and stored on the role; `password`
-  // holds the cleartext when has_password is set.
+  // holds the cleartext when has_password is set. password_is_null is set only
+  // by PASSWORD NULL (clears it); PASSWORD '' is a real, never-matching password.
   bool has_password = false;
   std::string password;
+  bool password_is_null = false;
   // CONNECTION LIMIT / VALID UNTIL are parsed but unsupported: the command
   // rejects them when given (connection limits are not modelled).
   bool has_conn_limit = false;
@@ -67,9 +69,11 @@ struct AlterRoleOptions {
   int createrole = -1;
   int inherit = -1;
   // PASSWORD is hashed into a SCRAM verifier and stored on the role; `password`
-  // holds the cleartext when has_password is set.
+  // holds the cleartext when has_password is set. password_is_null is set only
+  // by PASSWORD NULL (clears it); PASSWORD '' is a real, never-matching password.
   bool has_password = false;
   std::string password;
+  bool password_is_null = false;
   // CONNECTION LIMIT / VALID UNTIL are parsed but unsupported: the command
   // rejects them when given (connection limits are not modelled).
   bool has_conn_limit = false;

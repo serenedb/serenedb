@@ -66,9 +66,11 @@ void RejectUnsupportedRoleOptions(bool has_conn_limit, bool has_valid_until) {
 }
 
 // Hash a cleartext password into the PG-format SCRAM verifier string stored as
-// rolpassword. Empty input clears the password (login under trust).
-std::string MakePasswordVerifier(std::string_view password) {
-  if (password.empty()) {
+// rolpassword. PASSWORD NULL (is_null) clears it -> login under trust. Any
+// non-null password, INCLUDING the empty string, hashes to a real verifier (an
+// empty password is then a valid password that no supplied secret matches).
+std::string MakePasswordVerifier(std::string_view password, bool is_null) {
+  if (is_null) {
     return {};
   }
   auto verifier = network::BuildScramVerifier(password);
@@ -99,8 +101,12 @@ void CreateRole(ConnectionContext& ctx, std::string_view name,
   auto role = std::make_shared<catalog::Role>(catalog::RoleData{
     .name = std::string{name},
     .options = static_cast<uint32_t>(opts),
-    // No PASSWORD clause -> options.password is empty -> empty verifier.
-    .password_verifier = MakePasswordVerifier(options.password),
+    // No PASSWORD clause -> no stored verifier. PASSWORD '<x>' (incl. '') ->
+    // a real verifier. CREATE has no PASSWORD NULL form (is_null is false).
+    .password_verifier =
+      options.has_password
+        ? MakePasswordVerifier(options.password, options.password_is_null)
+        : "",
   });
 
   auto r = catalog.CreateRole(catalog::RequireOwnership(ctx.GetRoleId()),
@@ -153,7 +159,9 @@ void AlterRole(ConnectionContext& ctx, std::string_view name,
 
   // Hash outside the mutate lambda (which runs under the catalog lock).
   const std::string verifier =
-    opts.has_password ? MakePasswordVerifier(opts.password) : "";
+    opts.has_password
+      ? MakePasswordVerifier(opts.password, opts.password_is_null)
+      : "";
 
   auto& catalog = GlobalCatalog();
   auto r = catalog.ChangeRole(
@@ -702,12 +710,6 @@ void GrantRole(ConnectionContext& ctx, std::string_view role,
                         : opts.inherit == 1,
     .set_option = opts.set != 0,
   };
-
-  if (!revoke && role_id == member_id) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_GRANT_OPERATION),
-      ERR_MSG("role \"", role, "\" is a member of role \"", member, "\""));
-  }
 
   auto r = catalog.ChangeMembership(catalog::RequireOwnership(ctx.GetRoleId()),
                                     role_id, role, member_id, member, edge,

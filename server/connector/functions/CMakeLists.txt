@@ -2,7 +2,6 @@ target_sources(
     serene_connector
     PRIVATE
         array.cpp
-        cast.cpp
         encode_key.cpp
         es.cpp
         inout.cpp

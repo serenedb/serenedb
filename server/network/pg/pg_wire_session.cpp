@@ -354,6 +354,13 @@ bool PgWireSession<Kind>::SetupConnection() {
                      ERR_MSG("role \"", user, "\" does not exist")));
     return false;
   }
+  if (!role->CanLogin()) {
+    WriteFatalResponse(
+      this->_send,
+      SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
+                     ERR_MSG("role \"", user, "\" is not permitted to log in")));
+    return false;
+  }
 
   _conn = DuckDBEngine::Instance().CreateConnection();
   _txn_state.emplace(_conn->context->transaction);

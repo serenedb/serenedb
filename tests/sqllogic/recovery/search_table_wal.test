@@ -179,7 +179,7 @@ DROP TABLE s_wal_pk;
 connection pk_before_commit
 statement ok
 COPY (SELECT i AS x, 'v' || i AS y FROM range(0, 12000) t(i))
-  TO '/tmp/${__DATABASE__}_ctas_src.parquet' (FORMAT PARQUET, ROW_GROUP_SIZE 2000);
+  TO '${__TEST_DIR__}/ctas_src.parquet' (FORMAT PARQUET, ROW_GROUP_SIZE 2000);
 
 # --- 4a. Crash AFTER the WAL commit -> recovery replays from the chunk files. ---
 connection pk_before_commit
@@ -189,7 +189,7 @@ SET sdb_faults = 'crash_after_search_wal_commit';
 connection pk_before_commit
 statement error connection closed
 CREATE TABLE ctas_after WITH (storage = 'search') AS
-  SELECT x, y FROM read_parquet('/tmp/${__DATABASE__}_ctas_src.parquet');
+  SELECT x, y FROM read_parquet('${__TEST_DIR__}/ctas_src.parquet');
 
 # --- restart ---
 connection ctas_after_conn
@@ -220,7 +220,7 @@ SET sdb_faults = 'crash_before_search_wal_commit';
 connection ctas_after_conn
 statement error connection closed
 CREATE TABLE ctas_before WITH (storage = 'search') AS
-  SELECT x, y FROM read_parquet('/tmp/${__DATABASE__}_ctas_src.parquet');
+  SELECT x, y FROM read_parquet('${__TEST_DIR__}/ctas_src.parquet');
 
 # --- restart ---
 connection ctas_before_conn
@@ -257,7 +257,7 @@ BEGIN;
 
 connection ctas_before_conn
 statement ok
-INSERT INTO mix_t SELECT x, y FROM read_parquet('/tmp/${__DATABASE__}_ctas_src.parquet');
+INSERT INTO mix_t SELECT x, y FROM read_parquet('${__TEST_DIR__}/ctas_src.parquet');
 
 connection ctas_before_conn
 statement ok

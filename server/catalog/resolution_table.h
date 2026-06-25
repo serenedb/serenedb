@@ -153,13 +153,13 @@ class ResolutionTable {
           auto [_, insert_relation] =
             CloneData(_relations)
               .try_emplace(object_id, std::make_shared<MapByName<ObjectId>>());
-          auto [_2, insert_function] =
+          auto [_, insert_function] =
             CloneData(_functions)
               .try_emplace(object_id, std::make_shared<MapByName<ObjectId>>());
-          auto [_3, insert_tokenizer] =
+          auto [_, insert_tokenizer] =
             CloneData(_tokenizers)
               .try_emplace(object_id, std::make_shared<MapByName<ObjectId>>());
-          auto [_4, insert_type] = CloneData(_types).try_emplace(
+          auto [_, insert_type] = CloneData(_types).try_emplace(
             object_id, std::make_shared<MapByName<ObjectId>>());
           SDB_ASSERT(insert_relation);
           SDB_ASSERT(insert_function);

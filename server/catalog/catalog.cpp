@@ -3206,7 +3206,6 @@ Result Catalog::ChangeAcl(ObjectId database_id, std::string_view schema,
   ObjectId parent;
   if (type == ObjectType::Database) {
     obj = _snapshot->GetObject(database_id);
-    parent = {};
   } else if (type == ObjectType::Schema) {
     // For a schema target the schema's own name arrives in `name`; `schema` is
     // empty (it has no containing schema).

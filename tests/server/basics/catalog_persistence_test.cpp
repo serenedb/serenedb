@@ -280,7 +280,6 @@ TEST(CatalogPersistence, role_data) {
       .id = ObjectId{2},
       .name = "alice",
       .active = true,
-      .db_access = {{"db1", auth::Level::RW}},
       // RBAC: attribute bitmask + a membership edge with non-default per-edge
       // options, so the golden bytes exercise MembershipData round-trip.
       .options = 0b0110,  // Login | Inherit

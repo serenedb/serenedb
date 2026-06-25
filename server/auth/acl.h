@@ -54,6 +54,7 @@ catalog::AclMode AclGrantOptionHeld(catalog::AclView acl,
 catalog::AclMode AclGrantOptionHeld(catalog::AclView acl, RoleIdSpan roles);
 
 catalog::AclMode AclPrivsHeld(catalog::AclView acl, const RoleIdSet& roles);
+catalog::AclMode AclPrivsHeld(catalog::AclView acl, RoleIdSpan roles);
 
 // Items are keyed by (grantee, grantor).
 void AclGrant(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,

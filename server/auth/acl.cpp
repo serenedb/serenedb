@@ -42,31 +42,15 @@ using catalog::AclMode;
 using catalog::ObjectType;
 
 // Lowercase keyword -> AclMode; callers lowercase the input before lookup.
-const containers::FlatHashMap<std::string_view, AclMode> kPrivNames = [] {
-  struct Builder {
-    absl::flat_hash_map<std::string_view, AclMode> map;
-    Builder& Case(std::string_view name, AclMode mode) {
-      map.emplace(name, mode);
-      return *this;
-    }
-  } builder;
-  builder.Case("select", AclMode::Select)
-    .Case("insert", AclMode::Insert)
-    .Case("update", AclMode::Update)
-    .Case("delete", AclMode::Delete)
-    .Case("truncate", AclMode::Truncate)
-    .Case("references", AclMode::References)
-    .Case("trigger", AclMode::Trigger)
-    .Case("maintain", AclMode::Maintain)
-    .Case("execute", AclMode::Execute)
-    .Case("usage", AclMode::Usage)
-    .Case("create", AclMode::Create)
-    .Case("temporary", AclMode::CreateTemp)
-    .Case("temp", AclMode::CreateTemp)
-    .Case("connect", AclMode::Connect);
-  return containers::FlatHashMap<std::string_view, AclMode>{
-    std::move(builder.map)};
-}();
+const containers::FlatHashMap<std::string_view, AclMode> kPrivNames{
+  {"select", AclMode::Select},     {"insert", AclMode::Insert},
+  {"update", AclMode::Update},     {"delete", AclMode::Delete},
+  {"truncate", AclMode::Truncate}, {"references", AclMode::References},
+  {"trigger", AclMode::Trigger},   {"maintain", AclMode::Maintain},
+  {"execute", AclMode::Execute},   {"usage", AclMode::Usage},
+  {"create", AclMode::Create},     {"temporary", AclMode::CreateTemp},
+  {"temp", AclMode::CreateTemp},   {"connect", AclMode::Connect},
+};
 
 AclMode ClassPrivs(ObjectType type) noexcept {
   switch (type) {
@@ -253,6 +237,17 @@ AclMode AclPrivsHeld(catalog::AclView acl, const RoleIdSet& roles) {
   for (const auto& item : acl) {
     if (item.grantee == catalog::kPublicGrantee ||
         roles.contains(item.grantee)) {
+      held |= item.privs;
+    }
+  }
+  return held;
+}
+
+AclMode AclPrivsHeld(catalog::AclView acl, RoleIdSpan roles) {
+  AclMode held = AclMode::NoRights;
+  for (const auto& item : acl) {
+    if (item.grantee == catalog::kPublicGrantee ||
+        std::ranges::binary_search(roles, item.grantee)) {
       held |= item.privs;
     }
   }

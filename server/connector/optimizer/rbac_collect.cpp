@@ -24,7 +24,7 @@
 #include <duckdb/main/database.hpp>
 #include <duckdb/optimizer/optimizer_extension.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
-#include <duckdb/planner/expression_iterator.hpp>
+#include <duckdb/planner/logical_operator_visitor.hpp>
 #include <duckdb/planner/operator/logical_delete.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_insert.hpp>
@@ -41,19 +41,6 @@
 namespace sdb::optimizer {
 namespace {
 
-void CollectReadColumns(duckdb::LogicalGet& get,
-                        connector::RelationAccess& rel) {
-  if (rel.action != catalog::AclMode::NoRights) {
-    return;
-  }
-  for (const auto& col_id : get.GetColumnIds()) {
-    if (col_id.IsRowIdColumn() || col_id.IsVirtualColumn()) {
-      continue;
-    }
-    rel.selected.insert(col_id.GetPrimaryIndex());
-  }
-}
-
 std::shared_ptr<catalog::Table> WriteTarget(duckdb::TableCatalogEntry& table) {
   if (auto* facade = dynamic_cast<connector::SereneDBTableEntry*>(&table)) {
     return facade->GetSereneDBTable();
@@ -63,24 +50,14 @@ std::shared_ptr<catalog::Table> WriteTarget(duckdb::TableCatalogEntry& table) {
 
 using GetMap = absl::flat_hash_map<uint64_t, const duckdb::LogicalGet*>;
 
-void BuildGetMap(const duckdb::LogicalOperator& op, GetMap& gets) {
-  if (op.type == duckdb::LogicalOperatorType::LOGICAL_GET) {
-    const auto& get = op.Cast<duckdb::LogicalGet>();
-    gets[get.table_index.index] = &get;
-  }
-  for (const auto& child : op.children) {
-    BuildGetMap(*child, gets);
-  }
-}
-
 std::optional<uint64_t> ResolveLogicalColumn(
   const duckdb::BoundColumnRefExpression& col, const GetMap& gets) {
   auto it = gets.find(col.binding.table_index.index);
+  const auto proj = col.binding.column_index.GetIndex();
   if (it == gets.end()) {
-    return col.binding.column_index.GetIndex();
+    return proj;
   }
   const auto& column_ids = it->second->GetColumnIds();
-  const auto proj = col.binding.column_index.GetIndex();
   if (proj >= column_ids.size()) {
     return std::nullopt;
   }
@@ -91,131 +68,126 @@ std::optional<uint64_t> ResolveLogicalColumn(
   return cid.GetPrimaryIndex();
 }
 
-void CollectExprColumns(const duckdb::Expression& expr,
-                        connector::AccessRecord& access, const GetMap& gets) {
-  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
-    const auto& col = expr.Cast<duckdb::BoundColumnRefExpression>();
-    const auto& name = col.GetName();
-    if (name == "rowid" || (!name.empty() && name.front() == '#')) {
-      return;
-    }
-    const auto logical = ResolveLogicalColumn(col, gets);
-    if (logical.has_value()) {
-      access.ForEach([&](uint64_t table_index, connector::RelationAccess& rel) {
-        if (table_index == col.binding.table_index.index) {
-          auto& dst = rel.dml_projection ? rel.returned : rel.selected;
-          dst.insert(*logical);
-        }
-      });
-    }
-  }
-  duckdb::ExpressionIterator::EnumerateChildren(
-    expr, [&](const duckdb::Expression& child) {
-      CollectExprColumns(child, access, gets);
-    });
-}
+class RbacVisitor final : public duckdb::LogicalOperatorVisitor {
+ public:
+  RbacVisitor(connector::AccessRecord& access, const GetMap& gets)
+    : _access{access}, _gets{gets} {}
 
-void Walk(duckdb::LogicalOperator& op, connector::AccessRecord& access) {
-  switch (op.type) {
-    case duckdb::LogicalOperatorType::LOGICAL_DELETE: {
-      auto& del = op.Cast<duckdb::LogicalDelete>();
-      access.MarkWriteTarget(del.table_index.index, WriteTarget(del.table),
-                             del.is_truncate ? catalog::AclMode::Truncate
-                                             : catalog::AclMode::Delete);
-      break;
-    }
-    case duckdb::LogicalOperatorType::LOGICAL_UPDATE: {
-      auto& upd = op.Cast<duckdb::LogicalUpdate>();
-      std::vector<uint64_t> set_cols;
-      if (!upd.update_is_del_and_insert) {
-        set_cols.reserve(upd.columns.size());
-        for (const auto& phys : upd.columns) {
-          set_cols.push_back(phys.index);
-        }
+  void VisitOperator(duckdb::LogicalOperator& op) override {
+    using duckdb::LogicalOperatorType;
+    bool is_dml = true;
+    switch (op.type) {
+      case LogicalOperatorType::LOGICAL_DELETE: {
+        auto& del = op.Cast<duckdb::LogicalDelete>();
+        _access.MarkWriteTarget(del.table_index.index, WriteTarget(del.table),
+                                del.is_truncate ? catalog::AclMode::Truncate
+                                                : catalog::AclMode::Delete);
+        break;
       }
-      access.MarkWriteTarget(upd.table_index.index, WriteTarget(upd.table),
-                             catalog::AclMode::Update, set_cols);
-      break;
-    }
-    case duckdb::LogicalOperatorType::LOGICAL_INSERT: {
-      auto& ins = op.Cast<duckdb::LogicalInsert>();
-      std::vector<uint64_t> ins_cols;
-      if (ins.column_index_map.empty()) {
-        const auto n = ins.expected_types.size();
-        for (uint64_t i = 0; i < n; ++i) {
-          ins_cols.push_back(i);
-        }
-      } else {
-        for (uint64_t i = 0; i < ins.column_index_map.size(); ++i) {
-          if (ins.column_index_map[duckdb::PhysicalIndex(i)] !=
-              duckdb::DConstants::INVALID_INDEX) {
-            ins_cols.push_back(i);
+      case LogicalOperatorType::LOGICAL_UPDATE: {
+        auto& upd = op.Cast<duckdb::LogicalUpdate>();
+        std::vector<uint64_t> set_cols;
+        if (!upd.update_is_del_and_insert) {
+          for (const auto& phys : upd.columns) {
+            set_cols.push_back(phys.index);
           }
         }
+        _access.MarkWriteTarget(upd.table_index.index, WriteTarget(upd.table),
+                                catalog::AclMode::Update, set_cols);
+        break;
       }
-      access.MarkWriteTarget(ins.table_index.index, WriteTarget(ins.table),
-                             catalog::AclMode::Insert, ins_cols);
-      break;
+      case LogicalOperatorType::LOGICAL_INSERT: {
+        auto& ins = op.Cast<duckdb::LogicalInsert>();
+        std::vector<uint64_t> ins_cols;
+        if (ins.column_index_map.empty()) {
+          for (uint64_t i = 0; i < ins.expected_types.size(); ++i) {
+            ins_cols.push_back(i);
+          }
+        } else {
+          for (uint64_t i = 0; i < ins.column_index_map.size(); ++i) {
+            if (ins.column_index_map[duckdb::PhysicalIndex(i)] !=
+                duckdb::DConstants::INVALID_INDEX) {
+              ins_cols.push_back(i);
+            }
+          }
+        }
+        _access.MarkWriteTarget(ins.table_index.index, WriteTarget(ins.table),
+                                catalog::AclMode::Insert, ins_cols);
+        break;
+      }
+      case LogicalOperatorType::LOGICAL_MERGE_INTO: {
+        auto& merge = op.Cast<duckdb::LogicalMergeInto>();
+        _access.MarkWriteTarget(
+          merge.table_index.index, WriteTarget(merge.table),
+          catalog::AclMode::Insert | catalog::AclMode::Update |
+            catalog::AclMode::Delete);
+        break;
+      }
+      case LogicalOperatorType::LOGICAL_GET: {
+        auto& get = op.Cast<duckdb::LogicalGet>();
+        _access.ForEach([&](uint64_t idx, connector::RelationAccess& rel) {
+          if (idx != get.table_index.index ||
+              rel.action != catalog::AclMode::NoRights) {
+            return;
+          }
+          for (const auto& col_id : get.GetColumnIds()) {
+            if (!col_id.IsRowIdColumn() && !col_id.IsVirtualColumn()) {
+              rel.selected.insert(col_id.GetPrimaryIndex());
+            }
+          }
+        });
+        is_dml = false;
+        break;
+      }
+      default:
+        is_dml = false;
+        break;
     }
-    case duckdb::LogicalOperatorType::LOGICAL_MERGE_INTO: {
-      auto& merge = op.Cast<duckdb::LogicalMergeInto>();
-      access.MarkWriteTarget(merge.table_index.index, WriteTarget(merge.table),
-                             catalog::AclMode::Insert |
-                               catalog::AclMode::Update |
-                               catalog::AclMode::Delete);
-      break;
+
+    const bool skip_projection =
+      _skip_next_projection &&
+      op.type == LogicalOperatorType::LOGICAL_PROJECTION;
+    const bool prev_skip = _skip_next_projection;
+    _skip_next_projection =
+      op.type == LogicalOperatorType::LOGICAL_UPDATE &&
+      op.Cast<duckdb::LogicalUpdate>().update_is_del_and_insert;
+
+    VisitOperatorChildren(op);
+    if (!is_dml && !skip_projection) {
+      VisitOperatorExpressions(op);
     }
-    default:
-      break;
+    _skip_next_projection = prev_skip;
   }
-  for (auto& child : op.children) {
-    Walk(*child, access);
-  }
-}
 
-bool IsDmlOperator(duckdb::LogicalOperatorType type) {
-  switch (type) {
-    case duckdb::LogicalOperatorType::LOGICAL_INSERT:
-    case duckdb::LogicalOperatorType::LOGICAL_UPDATE:
-    case duckdb::LogicalOperatorType::LOGICAL_DELETE:
-    case duckdb::LogicalOperatorType::LOGICAL_MERGE_INTO:
-      return true;
-    default:
-      return false;
+  duckdb::unique_ptr<duckdb::Expression> VisitReplace(
+    duckdb::BoundColumnRefExpression& col,
+    duckdb::unique_ptr<duckdb::Expression>* expr_ptr) override {
+    const auto& name = col.GetName();
+    if (name != "rowid" && (name.empty() || name.front() != '#')) {
+      if (auto logical = ResolveLogicalColumn(col, _gets)) {
+        _access.ForEach([&](uint64_t idx, connector::RelationAccess& rel) {
+          if (idx == col.binding.table_index.index) {
+            (rel.dml_projection ? rel.returned : rel.selected).insert(*logical);
+          }
+        });
+      }
+    }
+    return LogicalOperatorVisitor::VisitReplace(col, expr_ptr);
   }
-}
 
-void WalkReadGets(duckdb::LogicalOperator& op,
-                  connector::AccessRecord& access) {
+ private:
+  connector::AccessRecord& _access;
+  const GetMap& _gets;
+  bool _skip_next_projection = false;
+};
+
+void BuildGetMap(const duckdb::LogicalOperator& op, GetMap& gets) {
   if (op.type == duckdb::LogicalOperatorType::LOGICAL_GET) {
-    auto& get = op.Cast<duckdb::LogicalGet>();
-    access.ForEach([&](uint64_t table_index, connector::RelationAccess& rel) {
-      if (table_index == get.table_index.index) {
-        CollectReadColumns(get, rel);
-      }
-    });
+    const auto& get = op.Cast<duckdb::LogicalGet>();
+    gets[get.table_index.index] = &get;
   }
-  for (auto& child : op.children) {
-    WalkReadGets(*child, access);
-  }
-}
-
-void WalkExpressions(duckdb::LogicalOperator& op,
-                     connector::AccessRecord& access, const GetMap& gets,
-                     bool skip_projection = false) {
-  const bool is_rebuild_projection =
-    skip_projection &&
-    op.type == duckdb::LogicalOperatorType::LOGICAL_PROJECTION;
-  if (!IsDmlOperator(op.type) && !is_rebuild_projection) {
-    for (auto& expr : op.expressions) {
-      CollectExprColumns(*expr, access, gets);
-    }
-  }
-  const bool children_under_del_insert =
-    op.type == duckdb::LogicalOperatorType::LOGICAL_UPDATE &&
-    op.Cast<duckdb::LogicalUpdate>().update_is_del_and_insert;
-  for (auto& child : op.children) {
-    WalkExpressions(*child, access, gets, children_under_del_insert);
+  for (const auto& child : op.children) {
+    BuildGetMap(*child, gets);
   }
 }
 
@@ -231,9 +203,7 @@ void CollectAndEnforce(duckdb::OptimizerExtensionInput& input,
   absl::Cleanup clear_access = [&] { access.Clear(); };
   GetMap gets;
   BuildGetMap(*plan, gets);
-  Walk(*plan, access);
-  WalkReadGets(*plan, access);
-  WalkExpressions(*plan, access, gets);
+  RbacVisitor{access, gets}.VisitOperator(*plan);
   access.Enforce(state->GetConnectionContext());
 }
 

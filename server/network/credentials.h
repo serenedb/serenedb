@@ -69,7 +69,8 @@ std::optional<ScramVerifier> ParseScramVerifier(std::string_view verifier);
 std::string ScramVerifierToString(const ScramVerifier& verifier);
 
 // Derive a fresh verifier from a cleartext password (random salt, default
-// iterations) -- used by the temporary config credential source.
+// iterations) -- used to hash CREATE/ALTER ROLE ... PASSWORD and by the config
+// credential source.
 std::optional<ScramVerifier> BuildScramVerifier(std::string_view password);
 
 // The AuthenticationMD5Password expected response:

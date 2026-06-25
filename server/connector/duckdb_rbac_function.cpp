@@ -90,11 +90,11 @@ std::vector<pg::ParsedPriv> ArgPrivList(
 }
 
 // PRAGMA serenedb_create_role('name', login, superuser, inherit, has_password,
-//   has_conn_limit, has_valid_until)
+//   password, has_conn_limit, has_valid_until)
 //   [1] login BOOLEAN, [2] superuser BOOLEAN, [3] inherit BOOLEAN (INHERIT vs
-//   NOINHERIT). PASSWORD / CONNECTION LIMIT / VALID UNTIL are parsed by the
-//   grammar but unsupported; the trailing flags only signal that one was given
-//   so the command can reject it.
+//   NOINHERIT). [4] has_password / [5] password set the SCRAM verifier.
+//   CONNECTION LIMIT / VALID UNTIL are parsed by the grammar but unsupported;
+//   their flags only signal one was given so the command can reject it.
 void CreateRolePragma(duckdb::ClientContext& context,
                       const duckdb::FunctionParameters& params) {
   auto& conn_ctx = GetSereneDBContext(context);
@@ -120,10 +120,12 @@ void DropRolePragma(duckdb::ClientContext& context,
 }
 
 // PRAGMA serenedb_alter_role('name', login, super, createdb, createrole,
-//   inherit, has_password, has_conn_limit, has_valid_until). Attribute flags
-//   are tri-state ints (-1 unspecified / 0 false / 1 true). PASSWORD /
-//   CONNECTION LIMIT / VALID UNTIL are parsed but unsupported; the trailing
-//   flags only signal that one was given so the command can reject it.
+//   inherit, has_password, password, has_conn_limit, has_valid_until).
+//   Attribute flags are tri-state ints (-1 unspecified / 0 false / 1 true). [6]
+//   has_password / [7] password update the SCRAM verifier (has_password
+//   distinguishes a PASSWORD clause -- incl. PASSWORD NULL, which clears it --
+//   from none). CONNECTION LIMIT / VALID UNTIL are parsed but unsupported;
+//   their flags only signal one was given so the command can reject it.
 void AlterRolePragma(duckdb::ClientContext& context,
                      const duckdb::FunctionParameters& params) {
   auto& conn_ctx = GetSereneDBContext(context);

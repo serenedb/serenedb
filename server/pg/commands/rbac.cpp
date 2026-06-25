@@ -54,17 +54,6 @@ std::shared_ptr<const catalog::Snapshot> FreshSnapshot() {
   return GlobalCatalog().GetCatalogSnapshot();
 }
 
-ObjectId CurrentRoleId(const catalog::Snapshot& snapshot,
-                       ConnectionContext& ctx) {
-  auto role = snapshot.GetRole(ctx.user());
-  if (!role) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-      ERR_MSG("current role \"", ctx.user(), "\" does not exist"));
-  }
-  return role->GetId();
-}
-
 void RejectUnsupportedRoleOptions(bool has_conn_limit, bool has_valid_until) {
   if (has_conn_limit) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -110,8 +99,8 @@ void CreateRole(ConnectionContext& ctx, std::string_view name,
   auto role = std::make_shared<catalog::Role>(catalog::RoleData{
     .name = std::string{name},
     .options = static_cast<uint32_t>(opts),
-    .password_verifier =
-      options.has_password ? MakePasswordVerifier(options.password) : "",
+    // No PASSWORD clause -> options.password is empty -> empty verifier.
+    .password_verifier = MakePasswordVerifier(options.password),
   });
 
   auto r = catalog.CreateRole(catalog::RequireOwnership(ctx.GetRoleId()),
@@ -433,26 +422,26 @@ struct AclGrantContext {
 
 void ApplyAclGrant(const catalog::Snapshot& live, ObjectId owner,
                    catalog::Acl& acl, const AclGrantContext& gc) {
-  auto actor = live.GetObject<catalog::Role>(gc.current_id);
-  const bool is_superuser = actor && actor->IsSuperuser();
+  const auto& rc = live.EffectiveRoleClosure(gc.current_id);
+  const bool is_superuser = rc.is_superuser;
   if (gc.granted_by_id.isSet() && !is_superuser &&
       !auth::ComputeMembershipClosure(live, gc.current_id)
          .contains(gc.granted_by_id)) {
     *gc.not_member = true;
     return;
   }
-  const auto roles = auth::ComputeEffectiveRoles(live, gc.current_id);
-  const bool is_owner = is_superuser || roles.contains(owner);
+  const bool is_owner =
+    is_superuser || std::ranges::binary_search(rc.closure, owner);
   const ObjectId grantor = gc.granted_by_id.isSet()
                              ? gc.granted_by_id
                              : (is_owner ? owner : gc.current_id);
   catalog::AclMode allowed = gc.privs;
   if (!is_owner) {
-    allowed &= auth::AclGrantOptionHeld(acl, roles);
+    allowed &= auth::AclGrantOptionHeld(acl, rc.closure);
   }
   if (allowed == catalog::AclMode::NoRights) {
     if (!is_owner &&
-        auth::AclPrivsHeld(acl, roles) == catalog::AclMode::NoRights) {
+        auth::AclPrivsHeld(acl, rc.closure) == catalog::AclMode::NoRights) {
       *gc.no_authority = true;
     } else {
       *gc.nothing_applied = true;
@@ -490,7 +479,7 @@ void GrantObjectColumns(ConnectionContext& ctx, catalog::ObjectType type,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("relation \"", rel_name, "\" does not exist"));
   }
-  const ObjectId current_id = CurrentRoleId(*snapshot, ctx);
+  const ObjectId current_id = ctx.GetRoleId();
   const ObjectId grantee_id = ResolveGranteeId(*snapshot, grantee);
 
   const ObjectId granted_by_id = ResolveGrantedBy(*snapshot, opts.granted_by);
@@ -583,7 +572,7 @@ void GrantObject(ConnectionContext& ctx, catalog::ObjectType type,
                             " \"", rel_name, "\" does not exist"));
   }
 
-  const ObjectId current_id = CurrentRoleId(*snapshot, ctx);
+  const ObjectId current_id = ctx.GetRoleId();
 
   const ObjectId grantee_id = ResolveGranteeId(*snapshot, grantee);
 
@@ -735,7 +724,7 @@ void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
   auto& catalog = GlobalCatalog();
   auto snapshot = FreshSnapshot();
 
-  const ObjectId current_id = CurrentRoleId(*snapshot, ctx);
+  const ObjectId current_id = ctx.GetRoleId();
 
   std::string_view new_owner_name = new_owner;
   if (new_owner == "CURRENT_USER" || new_owner == "SESSION_USER" ||

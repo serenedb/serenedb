@@ -6,11 +6,11 @@ control substitution on
 # DOES survive restart.
 
 statement ok
-ATTACH '${__TEST_DIR__}/attach_recovery.duckdb' AS attach_probe;
+ATTACH '${__TEST_DIR__}/db121.duckdb' AS db121;
 
 
 query
-SELECT count(*) FROM duckdb_databases() WHERE database_name = 'attach_probe';
+SELECT count(*) FROM duckdb_databases() WHERE database_name = 'db121';
 ----
 count
 1
@@ -34,7 +34,12 @@ SELECT 1;
 
 connection after_crash
 query
-SELECT count(*) FROM duckdb_databases() WHERE database_name = 'attach_probe';
+SELECT count(*) FROM duckdb_databases() WHERE database_name = 'db121';
 ----
 count
 0
+
+
+connection after_crash
+statement ok
+DETACH IF EXISTS db121;

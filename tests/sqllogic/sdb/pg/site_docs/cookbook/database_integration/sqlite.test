@@ -23,7 +23,7 @@ This feature relies on the "sqlite_scanner" extension which is not built into th
 # DOCS_TEST_BODY
 
 statement error
-ATTACH 'test.db' AS test (TYPE sqlite);
+ATTACH 'db101.db' AS db101 (TYPE sqlite);
 ----
 db error: ERROR: LOAD is not supported by SereneDB: extensions are compiled into the server binary and cannot be loaded at runtime.
 If you need the "sqlite_scanner" extension, please open an issue at https://github.com/serenedb/serenedb/issues.

@@ -39,7 +39,6 @@ macro(install_config name path)
     endif()
 
     set(CRLFSTYLE "UNIX")
-    set(COMMENT_LOGFILE "")
     set(PROGRAM_SUFFIX "")
 
     configure_file(

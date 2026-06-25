@@ -199,21 +199,23 @@ class ColumnReader final {
       // cursor owns; keep that memory alive on the output Vector so it stays
       // valid after the cursor moves to the next segment -- otherwise a later
       // consumer reads freed memory (heap-use-after-free; ASAN-confirmed via
-      // SearchFullScanFunction -> AppendPrimaryKey<PrimaryKeyI64I64>). Two cases:
+      // SearchFullScanFunction -> AppendPrimaryKey<PrimaryKeyI64I64>). Two
+      // cases:
       //  * Most codecs: the views point into the segment's pinned block (PK
       //    blobs, VARCHAR > 12B). Share the block pin -- pinned once when the
       //    cursor opens the segment; each chunk just shares it.
       //  * dict_fsst: the scan FSST-decodes its strings into a buffer in a
       //    memory pool (an arena owned by the scan state's reusable dictionary)
       //    and the output only *references* that buffer -- it is not in the
-      //    block. The cursor frees the dictionary on a segment crossing, so also
-      //    share it (a ref-counted buffer) to keep the pool alive for the
+      //    block. The cursor frees the dictionary on a segment crossing, so
+      //    also share it (a ref-counted buffer) to keep the pool alive for the
       //    output. dict_fsst is VARCHAR-only, so the codec flag alone gates it;
       //    for every other codec the helper returns a null dict and the output
       //    just rides on the pin.
       if (_is_dict_fsst || _pin) {
-        out_vec.BufferMutable().AddAuxiliaryData(std::make_unique<SharedPinHolder>(
-          _pin, DictFsstScanDictionary(_state, _is_dict_fsst)));
+        out_vec.BufferMutable().AddAuxiliaryData(
+          std::make_unique<SharedPinHolder>(
+            _pin, DictFsstScanDictionary(_state, _is_dict_fsst)));
       }
     }
 

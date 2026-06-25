@@ -9,16 +9,16 @@ control substitution on
 # database, so it never touches the shared engine.
 
 statement ok
-DETACH IF EXISTS geom_noshred;
+DETACH IF EXISTS db141;
 
 statement ok
-DETACH IF EXISTS geom_shred;
+DETACH IF EXISTS db142;
 
 statement ok
-ATTACH '${__TEST_DIR__}/geom_noshred.db' AS geom_noshred (STORAGE_VERSION 'v1.5.0');
+ATTACH '${__TEST_DIR__}/db141.db' AS db141 (STORAGE_VERSION 'v1.5.0');
 
 statement ok
-ATTACH '${__TEST_DIR__}/geom_shred.db' AS geom_shred (STORAGE_VERSION 'v1.5.0');
+ATTACH '${__TEST_DIR__}/db142.db' AS db142 (STORAGE_VERSION 'v1.5.0');
 
 
 # --- shredding disabled: storage segments stay GEOMETRY ---
@@ -26,16 +26,16 @@ statement ok
 SET geometry_minimum_shredding_size = -1;
 
 statement ok
-CREATE OR REPLACE TABLE geom_noshred.points AS
+CREATE OR REPLACE TABLE db141.points AS
 SELECT printf('POINT (%d %d)', x, y)::GEOMETRY AS geom
 FROM range(0, 8) AS rx(x), range(0, 8) AS ry(y);
 
 statement ok
-CHECKPOINT geom_noshred;
+CHECKPOINT db141;
 
 query
 SELECT string_agg(DISTINCT segment_type, ',' ORDER BY segment_type) AS types
-FROM pragma_storage_info('geom_noshred.points');
+FROM pragma_storage_info('db141.points');
 ----
 types
 GEOMETRY,VALIDITY
@@ -46,16 +46,16 @@ statement ok
 SET geometry_minimum_shredding_size = 0;
 
 statement ok
-CREATE OR REPLACE TABLE geom_shred.points AS
+CREATE OR REPLACE TABLE db142.points AS
 SELECT printf('POINT (%d %d)', x, y)::GEOMETRY AS geom
 FROM range(0, 8) AS rx(x), range(0, 8) AS ry(y);
 
 statement ok
-CHECKPOINT geom_shred;
+CHECKPOINT db142;
 
 query
 SELECT string_agg(DISTINCT segment_type, ',' ORDER BY segment_type) AS types
-FROM pragma_storage_info('geom_shred.points');
+FROM pragma_storage_info('db142.points');
 ----
 types
 DOUBLE,VALIDITY
@@ -65,7 +65,13 @@ statement ok
 RESET geometry_minimum_shredding_size;
 
 statement ok
-DETACH geom_noshred;
+DETACH db141;
 
 statement ok
-DETACH geom_shred;
+DETACH db142;
+
+statement ok
+DETACH IF EXISTS db141;
+
+statement ok
+DETACH IF EXISTS db142;

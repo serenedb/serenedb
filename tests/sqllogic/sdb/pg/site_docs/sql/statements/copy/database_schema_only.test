@@ -6,19 +6,19 @@ statement ok
 USE $__DATABASE__;
 
 statement ok
-DETACH IF EXISTS db1_${__RUN_ID__};
+DETACH IF EXISTS db11;
 
 statement ok
-DETACH IF EXISTS db2_${__RUN_ID__};
+DETACH IF EXISTS db12;
 
 statement ok
-ATTACH ':memory:' AS db1_${__RUN_ID__};
+ATTACH ':memory:' AS db11;
 
 statement ok
-ATTACH ':memory:' AS db2_${__RUN_ID__};
+ATTACH ':memory:' AS db12;
 
 statement ok
-CREATE TABLE db1_${__RUN_ID__}.tbl1 AS SELECT 42 AS x, 3 AS y;
+CREATE TABLE db11.tbl1 AS SELECT 42 AS x, 3 AS y;
 
 # DOCS_TEST_RAW
 #| COPY FROM DATABASE db1 TO db2 (SCHEMA);
@@ -26,4 +26,10 @@ CREATE TABLE db1_${__RUN_ID__}.tbl1 AS SELECT 42 AS x, 3 AS y;
 # DOCS_TEST_BODY
 
 statement ok
-COPY FROM DATABASE db1_${__RUN_ID__} TO db2_${__RUN_ID__} (SCHEMA);
+COPY FROM DATABASE db11 TO db12 (SCHEMA);
+
+statement ok
+DETACH IF EXISTS db11;
+
+statement ok
+DETACH IF EXISTS db12;

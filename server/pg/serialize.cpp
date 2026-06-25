@@ -942,6 +942,31 @@ struct TimestampTzBinCore {
   }
 };
 
+template<WrapContext InContainer>
+struct TimestampTzNsTextCore {
+  IRS_FORCE_INLINE static void Render(
+    SerializationContext& ctx,
+    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
+    const auto ts =
+      duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::timestamp_tz_ns_t>(
+        vdata.unified)[idx];
+    duckdb::StringHeap heap{duckdb::Allocator::DefaultAllocator()};
+    const auto str = duckdb::StringCast::Operation(ts, heap);
+    WithWrapIfNested<InContainer>(ctx, [&] {
+      ctx.writer->Write(std::string_view{str.GetData(), str.GetSize()});
+    });
+  }
+};
+
+struct TimestampTzNsBinCore {
+  using Value = duckdb::timestamp_tz_ns_t;
+  static constexpr uint32_t kMaxBytes = 8;
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value ts) {
+    absl::big_endian::Store64(dst, (ts.value - kGapNs) / 1000);
+    return 8;
+  }
+};
+
 struct TimeTextCore {
   IRS_FORCE_INLINE static void Render(
     SerializationContext& ctx,
@@ -1267,6 +1292,7 @@ bool NeedsQuotingIn(const duckdb::LogicalType& type,
     case TIMESTAMP:
     case TIMESTAMP_NS:
     case TIMESTAMP_TZ:
+    case TIMESTAMP_TZ_NS:
     case BLOB:
     case STRUCT:
       return true;
@@ -2177,6 +2203,10 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
       return MakeArraySerializer<TimestampTzTextCore<WrapContext::Array>,
                                  TimestampTzBinCore, kTimestampTz>(
         format, context, kind);
+    case TIMESTAMP_TZ_NS:
+      return MakeArraySerializer<TimestampTzNsTextCore<WrapContext::Array>,
+                                 TimestampTzNsBinCore, kTimestampTz>(
+        format, context, kind);
     case INTERVAL:
       return MakeArraySerializer<IntervalTextCore<WrapContext::Array>,
                                  IntervalBinCore, kInterval>(format, context,
@@ -2414,6 +2444,10 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
       return SelectFieldSerializer<TimestampTzTextCore<WrapContext::None>,
                                    TimestampTzTextCore<WrapContext::Record>,
                                    TimestampTzBinCore>(format, context);
+    case TIMESTAMP_TZ_NS:
+      return SelectFieldSerializer<TimestampTzNsTextCore<WrapContext::None>,
+                                   TimestampTzNsTextCore<WrapContext::Record>,
+                                   TimestampTzNsBinCore>(format, context);
     case INTERVAL:
       return SelectFieldSerializer<IntervalTextCore<WrapContext::None>,
                                    IntervalTextCore<WrapContext::Record>,
@@ -2460,7 +2494,8 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
     }
     default:
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      ERR_MSG("Such type is not supported"));
+                      ERR_MSG("Type '", type.ToString(),
+                              "' is not supported; id() = ", type.id()));
   }
 }
 

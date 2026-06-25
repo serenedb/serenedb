@@ -89,10 +89,10 @@ statement ok
 DROP TABLE IF EXISTS points;
 
 statement ok
-DETACH IF EXISTS geometry_db;
+DETACH IF EXISTS db161;
 
 statement ok
-DETACH IF EXISTS shredded_db;
+DETACH IF EXISTS db162;
 
 # DOCS_TEST_RAW
 #| -- Attach a persistent database with storage version v1.5
@@ -138,10 +138,10 @@ DETACH IF EXISTS shredded_db;
 
 statement ok
 -- Attach a persistent database with storage version v1.5
-ATTACH '${__TEST_DIR__}/sql_data_types_geometry_example_004_geometry_db.db' as geometry_db (STORAGE_VERSION 'v1.5.0');
+ATTACH '${__TEST_DIR__}/db161.db' as db161 (STORAGE_VERSION 'v1.5.0');
 
 statement ok
-USE geometry_db;
+USE db161;
 
 statement ok
 -- Disable shredding completely and create a table with 1 million 2D points
@@ -157,10 +157,10 @@ FROM range(0, 4) AS rx(x), range(0, 4) AS ry(y);
 
 statement ok
 -- Attach a second database
-ATTACH '${__TEST_DIR__}/sql_data_types_geometry_example_004_shredded_db.db' as shredded_db (STORAGE_VERSION 'v1.5.0');
+ATTACH '${__TEST_DIR__}/db162.db' as db162 (STORAGE_VERSION 'v1.5.0');
 
 statement ok
-USE shredded_db;
+USE db162;
 
 statement ok
 -- This time, set the minimum shredding size to 0 to always shred geometry columns,
@@ -184,10 +184,10 @@ SELECT database_name, database_size FROM pragma_database_size();
 # Run these to exercise the storage path; the GEOMETRY/DOUBLE contrast is rendered
 # from DOCS_TEST_RAW above.
 statement ok
-SELECT DISTINCT(segment_type) FROM pragma_storage_info('geometry_db.points');
+SELECT DISTINCT(segment_type) FROM pragma_storage_info('db161.points');
 
 statement ok
-SELECT DISTINCT(segment_type) FROM pragma_storage_info('shredded_db.points');
+SELECT DISTINCT(segment_type) FROM pragma_storage_info('db162.points');
 
 # DOCS_TEST: example_005
 
@@ -288,3 +288,12 @@ SELECT ST_CRS('POINT(4.897070 52.377956)'::GEOMETRY('OGC:CRS84')) AS crs;
 ----
 crs
 OGC:CRS84
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DETACH IF EXISTS db161;
+
+statement ok
+DETACH IF EXISTS db162;

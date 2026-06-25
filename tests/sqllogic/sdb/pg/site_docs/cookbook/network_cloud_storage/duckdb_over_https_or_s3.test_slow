@@ -3,22 +3,22 @@ control substitution on
 # DOCS_TEST: example_001
 
 statement ok
-DETACH IF EXISTS stations_fixture_1;
+DETACH IF EXISTS db111;
 
 statement ok
-ATTACH '${__TEST_DIR__}/cookbook_network_cloud_storage_duckdb_over_https_or_s3_example_001_stations.duckdb' AS stations_fixture_1;
+ATTACH '${__TEST_DIR__}/db111.duckdb' AS db111;
 
 statement ok
-DROP TABLE IF EXISTS stations_fixture_1.stations;
+DROP TABLE IF EXISTS db111.stations;
 
 statement ok
-CREATE TABLE stations_fixture_1.stations AS SELECT * FROM (VALUES
+CREATE TABLE db111.stations AS SELECT * FROM (VALUES
     (1, 'Amsterdam Centraal'),
     (2, 'Rotterdam Centraal')
 ) AS t(station_id, station_name);
 
 statement ok
-DETACH stations_fixture_1;
+DETACH db111;
 
 # DOCS_TEST_RAW
 #| ATTACH 'https://blobs.duckdb.org/databases/stations.duckdb' AS stations_db;
@@ -26,24 +26,24 @@ DETACH stations_fixture_1;
 # DOCS_TEST_BODY
 
 statement ok
-DETACH IF EXISTS stations_db_1;
+DETACH IF EXISTS db111;
 
 statement ok
-ATTACH '${__TEST_DIR__}/cookbook_network_cloud_storage_duckdb_over_https_or_s3_example_001_stations.duckdb' AS stations_db_1;
+ATTACH '${__TEST_DIR__}/db111.duckdb' AS db111;
 
 # DOCS_TEST: example_002
 
 statement ok
-DETACH IF EXISTS stations_db_1;
+DETACH IF EXISTS db111;
 
 statement ok
-ATTACH '${__TEST_DIR__}/cookbook_network_cloud_storage_duckdb_over_https_or_s3_example_001_stations.duckdb' AS stations_db_2;
+ATTACH '${__TEST_DIR__}/db111.duckdb' AS db111;
 
 # DOCS_TEST_BODY
 
 query
 SELECT count(*) AS num_stations
-FROM stations_db_2.stations;
+FROM db111.stations;
 ----
 num_stations
 2
@@ -51,25 +51,25 @@ num_stations
 # DOCS_TEST: example_003
 
 statement ok
-DETACH IF EXISTS stations_db_2;
+DETACH IF EXISTS db111;
 
 statement ok
-DETACH IF EXISTS stations_fixture_3;
+DETACH IF EXISTS db112;
 
 statement ok
-ATTACH '${__TEST_DIR__}/cookbook_network_cloud_storage_duckdb_over_https_or_s3_example_003_stations.duckdb' AS stations_fixture_3;
+ATTACH '${__TEST_DIR__}/db112.duckdb' AS db112;
 
 statement ok
-DROP TABLE IF EXISTS stations_fixture_3.stations;
+DROP TABLE IF EXISTS db112.stations;
 
 statement ok
-CREATE TABLE stations_fixture_3.stations AS SELECT * FROM (VALUES
+CREATE TABLE db112.stations AS SELECT * FROM (VALUES
     (1, 'Amsterdam Centraal'),
     (2, 'Rotterdam Centraal')
 ) AS t(station_id, station_name);
 
 statement ok
-DETACH stations_fixture_3;
+DETACH db112;
 
 # DOCS_TEST_RAW
 #| ATTACH 's3://my-bucket/stations.duckdb' AS stations_db;
@@ -77,24 +77,27 @@ DETACH stations_fixture_3;
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '${__TEST_DIR__}/cookbook_network_cloud_storage_duckdb_over_https_or_s3_example_003_stations.duckdb' AS stations_db_3;
+ATTACH '${__TEST_DIR__}/db112.duckdb' AS db112;
 
 # DOCS_TEST: example_004
 
 statement ok
-DETACH IF EXISTS stations_db_3;
+DETACH IF EXISTS db112;
 
 statement ok
-ATTACH '${__TEST_DIR__}/cookbook_network_cloud_storage_duckdb_over_https_or_s3_example_003_stations.duckdb' AS stations_db_4;
+ATTACH '${__TEST_DIR__}/db112.duckdb' AS db112;
 
 # DOCS_TEST_BODY
 
 query
 SELECT count(*) AS num_stations
-FROM stations_db_4.stations;
+FROM db112.stations;
 ----
 num_stations
 2
 
 statement ok
-DETACH IF EXISTS stations_db_4;
+DETACH IF EXISTS db112;
+
+statement ok
+DETACH IF EXISTS db111;

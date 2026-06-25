@@ -10,10 +10,10 @@ control substitution on
 # DOCS_TEST: example_002
 
 statement ok
-DETACH IF EXISTS file_db;
+DETACH IF EXISTS db41;
 
 statement ok
-ATTACH '${__TEST_DIR__}/sql_statements_checkpoint_example_002_file_db.db' AS file_db;
+ATTACH '${__TEST_DIR__}/db41.db' AS db41;
 
 # DOCS_TEST_BODY
 
@@ -30,21 +30,21 @@ ATTACH '${__TEST_DIR__}/sql_statements_checkpoint_example_002_file_db.db' AS fil
 # DOCS_TEST: example_004
 
 statement ok
-DETACH IF EXISTS memory_compressed;
+DETACH IF EXISTS db42;
 
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH ':memory:' AS memory_compressed (COMPRESS);
+ATTACH ':memory:' AS db42 (COMPRESS);
 
 statement ok
-USE memory_compressed;
+USE db42;
 
 statement ok
 USE postgres;
 
 statement ok
-DETACH IF EXISTS memory_compressed;
+DETACH IF EXISTS db42;
 
 statement ok
-DETACH IF EXISTS file_db;
+DETACH IF EXISTS db41;

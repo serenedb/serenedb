@@ -17,7 +17,7 @@ statement ok
 USE $__DATABASE__;
 
 statement ok
-DETACH IF EXISTS temp2;
+DETACH IF EXISTS db91;
 
 # DOCS_TEST_RAW
 #| ATTACH 'temp.db' AS temp2;
@@ -27,10 +27,10 @@ DETACH IF EXISTS temp2;
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '${__TEST_DIR__}/sql_dialect_keywords_and_identifiers_example_002_1_temp.db' AS temp2;
+ATTACH '${__TEST_DIR__}/db91.db' AS db91;
 
 statement ok
-USE temp2;
+USE db91;
 
 # DOCS_TEST: example_003
 
@@ -103,3 +103,10 @@ query error
 SELECT {'a': 1, 'A': 2};
 ----
 db error: ERROR: Duplicate struct entry name "A"
+
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DETACH IF EXISTS db91;

@@ -26,7 +26,7 @@ CREATE TABLE tbl2 AS SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '${__TEST_DIR__}/${__RUN_ID__}_sql_statements_attach_index_example_001_1_file_db.csv';
+ATTACH '${__TEST_DIR__}/db25.csv';
 
 # DOCS_TEST: example_002
 
@@ -36,27 +36,27 @@ ATTACH '${__TEST_DIR__}/${__RUN_ID__}_sql_statements_attach_index_example_001_1_
 # DOCS_TEST_BODY
 
 statement ok
-DETACH IF EXISTS file_db_${__RUN_ID__};
+DETACH IF EXISTS db15;
 
 statement ok
-ATTACH '${__TEST_DIR__}/${__RUN_ID__}_sql_statements_attach_index_example_002_1_file_db.csv' AS file_db_${__RUN_ID__};
+ATTACH '${__TEST_DIR__}/db15.csv' AS db15;
 
 # DOCS_TEST: example_003
 
 statement ok
-DETACH IF EXISTS file_${__RUN_ID__};
+DETACH IF EXISTS db16;
 
 statement ok
-DETACH IF EXISTS file_readonly_fixture_${__RUN_ID__};
+DETACH IF EXISTS db17;
 
 statement ok
-ATTACH '${__TEST_DIR__}/${__RUN_ID__}_sql_statements_attach_index_example_003_file.db' AS file_readonly_fixture_${__RUN_ID__};
+ATTACH '${__TEST_DIR__}/db17.db' AS db17;
 
 statement ok
-CREATE TABLE file_readonly_fixture_${__RUN_ID__}.items AS SELECT 1 AS id, 'alpha' AS name;
+CREATE TABLE db17.items AS SELECT 1 AS id, 'alpha' AS name;
 
 statement ok
-DETACH file_readonly_fixture_${__RUN_ID__};
+DETACH db17;
 
 # DOCS_TEST_RAW
 #| ATTACH 'file.db' (READ_ONLY);
@@ -64,10 +64,10 @@ DETACH file_readonly_fixture_${__RUN_ID__};
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '${__TEST_DIR__}/${__RUN_ID__}_sql_statements_attach_index_example_003_file.db' AS file_${__RUN_ID__} (READ_ONLY);
+ATTACH '${__TEST_DIR__}/db17.db' AS db16 (READ_ONLY);
 
 statement ok
-DETACH file_${__RUN_ID__};
+DETACH db16;
 
 # DOCS_TEST: example_004
 
@@ -77,7 +77,7 @@ DETACH file_${__RUN_ID__};
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '${__TEST_DIR__}/${__RUN_ID__}_sql_statements_attach_index_example_004_1_file_db.csv' (BLOCK_SIZE 16_384);
+ATTACH '${__TEST_DIR__}/db26.csv' (BLOCK_SIZE 16_384);
 
 # DOCS_TEST: example_005
 
@@ -87,7 +87,7 @@ ATTACH '${__TEST_DIR__}/${__RUN_ID__}_sql_statements_attach_index_example_004_1_
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '${__TEST_DIR__}/${__RUN_ID__}_sql_statements_attach_index_example_005_1_file_db.csv' (ROW_GROUP_SIZE 2048);
+ATTACH '${__TEST_DIR__}/db27.csv' (ROW_GROUP_SIZE 2048);
 
 # DOCS_TEST: example_006
 
@@ -97,7 +97,7 @@ ATTACH '${__TEST_DIR__}/${__RUN_ID__}_sql_statements_attach_index_example_005_1_
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '${__TEST_DIR__}/${__RUN_ID__}_sql_statements_attach_index_example_006_1_file_db.csv' (RECOVERY_MODE no_wal_writes);
+ATTACH '${__TEST_DIR__}/db28.csv' (RECOVERY_MODE no_wal_writes);
 
 # DOCS_TEST: example_008
 
@@ -107,7 +107,7 @@ ATTACH '${__TEST_DIR__}/${__RUN_ID__}_sql_statements_attach_index_example_006_1_
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH IF NOT EXISTS '${__TEST_DIR__}/${__RUN_ID__}_sql_statements_attach_index_example_008_1_file_db.csv';
+ATTACH IF NOT EXISTS '${__TEST_DIR__}/db29.csv';
 
 # DOCS_TEST: example_009
 
@@ -117,7 +117,7 @@ ATTACH IF NOT EXISTS '${__TEST_DIR__}/${__RUN_ID__}_sql_statements_attach_index_
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH IF NOT EXISTS '${__TEST_DIR__}/${__RUN_ID__}_sql_statements_attach_index_example_009_1_file_db.csv' AS file_db_${__RUN_ID__};
+ATTACH IF NOT EXISTS '${__TEST_DIR__}/db15b.csv' AS db15;
 
 # DOCS_TEST: example_010
 
@@ -127,27 +127,27 @@ ATTACH IF NOT EXISTS '${__TEST_DIR__}/${__RUN_ID__}_sql_statements_attach_index_
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH OR REPLACE '${__TEST_DIR__}/${__RUN_ID__}_sql_statements_attach_index_example_010_1_file2_db.csv' AS file_db_${__RUN_ID__};
+ATTACH OR REPLACE '${__TEST_DIR__}/db15c.csv' AS db15;
 
 # DOCS_TEST: example_011
 
 statement ok
-DETACH IF EXISTS file_${__RUN_ID__};
+DETACH IF EXISTS db16;
 
 statement ok
-ATTACH ':memory:' AS file_${__RUN_ID__};
+ATTACH ':memory:' AS db16;
 
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TABLE file_${__RUN_ID__}.new_table (i INTEGER);
+CREATE TABLE db16.new_table (i INTEGER);
 
 # DOCS_TEST: example_012
 
 # DOCS_TEST_BODY
 
 statement ok
-DETACH file_${__RUN_ID__};
+DETACH db16;
 
 # DOCS_TEST: example_013
 
@@ -159,15 +159,15 @@ SHOW DATABASES;
 # DOCS_TEST: example_014
 
 statement ok
-DETACH IF EXISTS file_${__RUN_ID__};
+DETACH IF EXISTS db16;
 
 statement ok
-ATTACH ':memory:' AS file_${__RUN_ID__};
+ATTACH ':memory:' AS db16;
 
 # DOCS_TEST_BODY
 
 statement ok
-USE file_${__RUN_ID__};
+USE db16;
 
 # DOCS_TEST: example_015
 
@@ -175,22 +175,22 @@ statement ok
 USE $__DATABASE__;
 
 statement ok
-DETACH IF EXISTS file_${__RUN_ID__};
+DETACH IF EXISTS db16;
 
 statement ok
-DETACH IF EXISTS stations_fixture_${__RUN_ID__};
+DETACH IF EXISTS db18;
 
 statement ok
-ATTACH '${__TEST_DIR__}/${__RUN_ID__}_sql_statements_attach_index_example_015_stations.duckdb' AS stations_fixture_${__RUN_ID__};
+ATTACH '${__TEST_DIR__}/db18.duckdb' AS db18;
 
 statement ok
-CREATE TABLE stations_fixture_${__RUN_ID__}.stations AS SELECT * FROM (VALUES
+CREATE TABLE db18.stations AS SELECT * FROM (VALUES
     (1, 'Amsterdam Centraal'),
     (2, 'Rotterdam Centraal')
 ) AS t(station_id, station_name);
 
 statement ok
-DETACH stations_fixture_${__RUN_ID__};
+DETACH db18;
 
 # DOCS_TEST_RAW
 #| ATTACH 'https://blobs.duckdb.org/databases/stations.duckdb' AS stations_db;
@@ -200,36 +200,36 @@ DETACH stations_fixture_${__RUN_ID__};
 # DOCS_TEST_BODY
 
 statement ok
-DETACH IF EXISTS stations_db_${__RUN_ID__};
+DETACH IF EXISTS db19;
 
 statement ok
-ATTACH '${__TEST_DIR__}/${__RUN_ID__}_sql_statements_attach_index_example_015_stations.duckdb' AS stations_db_${__RUN_ID__};
+ATTACH '${__TEST_DIR__}/db18.duckdb' AS db19;
 
 statement ok
-DETACH stations_db_${__RUN_ID__};
+DETACH db19;
 
 statement ok
-ATTACH '${__TEST_DIR__}/${__RUN_ID__}_sql_statements_attach_index_example_015_stations.duckdb' AS stations_db_${__RUN_ID__} (READ_ONLY);
+ATTACH '${__TEST_DIR__}/db18.duckdb' AS db19 (READ_ONLY);
 
 # DOCS_TEST: example_016
 
 statement ok
-DETACH IF EXISTS stations_db_${__RUN_ID__};
+DETACH IF EXISTS db19;
 
 statement ok
-DETACH IF EXISTS stations_fixture_${__RUN_ID__};
+DETACH IF EXISTS db18;
 
 statement ok
-ATTACH '${__TEST_DIR__}/${__RUN_ID__}_sql_statements_attach_index_example_016_stations.duckdb' AS stations_fixture_${__RUN_ID__};
+ATTACH '${__TEST_DIR__}/db18b.duckdb' AS db18;
 
 statement ok
-CREATE TABLE stations_fixture_${__RUN_ID__}.stations AS SELECT * FROM (VALUES
+CREATE TABLE db18.stations AS SELECT * FROM (VALUES
     (1, 'Amsterdam Centraal'),
     (2, 'Rotterdam Centraal')
 ) AS t(station_id, station_name);
 
 statement ok
-DETACH stations_fixture_${__RUN_ID__};
+DETACH db18;
 
 # DOCS_TEST_RAW
 #| ATTACH 's3://⟨blobs-duckdb⟩/databases/stations.duckdb' AS stations_db;
@@ -239,13 +239,13 @@ DETACH stations_fixture_${__RUN_ID__};
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '${__TEST_DIR__}/${__RUN_ID__}_sql_statements_attach_index_example_016_stations.duckdb' AS stations_db_${__RUN_ID__};
+ATTACH '${__TEST_DIR__}/db18b.duckdb' AS db19;
 
 statement ok
-DETACH stations_db_${__RUN_ID__};
+DETACH db19;
 
 statement ok
-ATTACH '${__TEST_DIR__}/${__RUN_ID__}_sql_statements_attach_index_example_016_stations.duckdb' AS stations_db_${__RUN_ID__} (READ_ONLY);
+ATTACH '${__TEST_DIR__}/db18b.duckdb' AS db19 (READ_ONLY);
 
 # DOCS_TEST: example_017
 
@@ -255,7 +255,7 @@ ATTACH '${__TEST_DIR__}/${__RUN_ID__}_sql_statements_attach_index_example_016_st
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '${__TEST_DIR__}/${__RUN_ID__}_sql_statements_attach_index_example_017_1_file_db.csv' (STORAGE_VERSION 'v1.2.0');
+ATTACH '${__TEST_DIR__}/db30.csv' (STORAGE_VERSION 'v1.2.0');
 
 # DOCS_TEST: example_018
 
@@ -265,13 +265,13 @@ ATTACH '${__TEST_DIR__}/${__RUN_ID__}_sql_statements_attach_index_example_017_1_
 # DOCS_TEST_BODY
 
 statement ok
-DETACH IF EXISTS enc_db_${__RUN_ID__};
+DETACH IF EXISTS db20;
 
 statement ok
-ATTACH '${__TEST_DIR__}/${__RUN_ID__}_sql_statements_attach_index_example_018_1_encrypted_db.csv' AS enc_db_${__RUN_ID__} (ENCRYPTION_KEY 'secret_key');
+ATTACH '${__TEST_DIR__}/db20.csv' AS db20 (ENCRYPTION_KEY 'secret_key');
 
 statement ok
-DETACH enc_db_${__RUN_ID__};
+DETACH db20;
 
 # DOCS_TEST: example_020
 
@@ -281,57 +281,57 @@ DETACH enc_db_${__RUN_ID__};
 # DOCS_TEST_BODY
 
 statement ok
-DETACH IF EXISTS enc_db_${__RUN_ID__};
+DETACH IF EXISTS db20;
 
 statement ok
-ATTACH '${__TEST_DIR__}/${__RUN_ID__}_sql_statements_attach_index_example_020_1_encrypted_db.csv' AS enc_db_${__RUN_ID__} (ENCRYPTION_KEY 'secret_key', ENCRYPTION_CIPHER 'CTR');
+ATTACH '${__TEST_DIR__}/db20b.csv' AS db20 (ENCRYPTION_KEY 'secret_key', ENCRYPTION_CIPHER 'CTR');
 
 statement ok
-DETACH enc_db_${__RUN_ID__};
+DETACH db20;
 
 # DOCS_TEST: example_021
 
 statement ok
-DETACH IF EXISTS memory_db_${__RUN_ID__};
+DETACH IF EXISTS db21;
 
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH ':memory:' AS memory_db_${__RUN_ID__};
+ATTACH ':memory:' AS db21;
 
 statement ok
-USE memory_db_${__RUN_ID__};
+USE db21;
 
 # DOCS_TEST: example_022
 
 statement ok
-DETACH IF EXISTS new_db_${__RUN_ID__};
+DETACH IF EXISTS db22;
 
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH ':memory:' AS new_db_${__RUN_ID__};
+ATTACH ':memory:' AS db22;
 
 # DOCS_TEST: example_023
 
 # DOCS_TEST_BODY
 
 statement ok
-CREATE SCHEMA new_db_${__RUN_ID__}.my_schema;
+CREATE SCHEMA db22.my_schema;
 
 # DOCS_TEST: example_024
 
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TABLE new_db_${__RUN_ID__}.my_schema.my_table (col INTEGER);
+CREATE TABLE db22.my_schema.my_table (col INTEGER);
 
 # DOCS_TEST: example_025
 
 # DOCS_TEST_BODY
 
 query
-SELECT new_db_${__RUN_ID__}.my_schema.my_table.col FROM new_db_${__RUN_ID__}.my_schema.my_table;
+SELECT db22.my_schema.my_table.col FROM db22.my_schema.my_table;
 ----
 col
 
@@ -347,14 +347,14 @@ CREATE TABLE my_table (col INTEGER);
 # DOCS_TEST_BODY
 
 statement ok
-USE new_db_${__RUN_ID__};
+USE db22;
 
 # DOCS_TEST: example_028
 
 # DOCS_TEST_BODY
 
 statement ok
-USE new_db_${__RUN_ID__}.my_schema;
+USE db22.my_schema;
 
 # DOCS_TEST: example_029
 
@@ -362,10 +362,10 @@ statement ok
 USE $__DATABASE__;
 
 statement ok
-DETACH IF EXISTS new_db_${__RUN_ID__};
+DETACH IF EXISTS db22;
 
 statement ok
-DROP SCHEMA IF EXISTS new_db_${__RUN_ID__} CASCADE;
+DROP SCHEMA IF EXISTS db22 CASCADE;
 
 statement ok
 DROP SCHEMA IF EXISTS my_schema CASCADE;
@@ -373,7 +373,7 @@ DROP SCHEMA IF EXISTS my_schema CASCADE;
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH ':memory:' AS new_db_${__RUN_ID__};
+ATTACH ':memory:' AS db22;
 
 statement ok
 CREATE SCHEMA my_schema;
@@ -383,7 +383,7 @@ CREATE SCHEMA my_schema;
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TABLE new_db_${__RUN_ID__}.tbl (i INTEGER);
+CREATE TABLE db22.tbl (i INTEGER);
 
 # DOCS_TEST: example_031
 
@@ -395,14 +395,14 @@ CREATE TABLE my_schema.tbl (i INTEGER);
 # DOCS_TEST: example_032
 
 statement ok
-CREATE SCHEMA new_db_${__RUN_ID__};
+CREATE SCHEMA db22;
 
 # DOCS_TEST_BODY
 
 statement error
-CREATE TABLE new_db_${__RUN_ID__}.tbl2 (i INTEGER);
+CREATE TABLE db22.tbl2 (i INTEGER);
 ----
-db error: ERROR: Ambiguous reference to catalog or schema "new_db_<slt:ignore>" - use a fully qualified path like "<slt:ignore>.new_db_<slt:ignore>"
+db error: ERROR: Ambiguous reference to catalog or schema "db22" - use a fully qualified path like "<slt:ignore>.db22"
 
 
 # DOCS_TEST: example_033
@@ -417,36 +417,36 @@ statement ok
 DROP TABLE IF EXISTS tbl2;
 
 statement ok
-DETACH IF EXISTS db1_${__RUN_ID__};
+DETACH IF EXISTS db23;
 
 statement ok
-DETACH IF EXISTS db2_${__RUN_ID__};
+DETACH IF EXISTS db24;
 
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH ':memory:' AS db1_${__RUN_ID__};
+ATTACH ':memory:' AS db23;
 
 statement ok
-ATTACH ':memory:' AS db2_${__RUN_ID__};
+ATTACH ':memory:' AS db24;
 
 statement ok
-CREATE TABLE db1_${__RUN_ID__}.tbl1 (i INTEGER);
+CREATE TABLE db23.tbl1 (i INTEGER);
 
 statement ok
-CREATE TABLE db2_${__RUN_ID__}.tbl2 (j INTEGER);
+CREATE TABLE db24.tbl2 (j INTEGER);
 
 # DOCS_TEST: example_034
 
 # DOCS_TEST_BODY
 
 query
-SELECT * FROM db1_${__RUN_ID__}.tbl1;
+SELECT * FROM db23.tbl1;
 ----
 i
 
 query
-SELECT * FROM db2_${__RUN_ID__}.tbl2;
+SELECT * FROM db24.tbl2;
 ----
 j
 
@@ -462,7 +462,7 @@ j
 # DOCS_TEST_BODY
 
 statement ok
-SET search_path TO db1_${__RUN_ID__}, db2_${__RUN_ID__};
+SET search_path TO db23, db24;
 
 query
 SELECT * FROM tbl1;
@@ -481,10 +481,49 @@ statement ok
 SET search_path TO main;
 
 statement ok
-DETACH IF EXISTS db1_${__RUN_ID__};
+DETACH IF EXISTS db15;
 
 statement ok
-DETACH IF EXISTS db2_${__RUN_ID__};
+DETACH IF EXISTS db16;
 
 statement ok
-DETACH IF EXISTS new_db_${__RUN_ID__};
+DETACH IF EXISTS db17;
+
+statement ok
+DETACH IF EXISTS db18;
+
+statement ok
+DETACH IF EXISTS db19;
+
+statement ok
+DETACH IF EXISTS db20;
+
+statement ok
+DETACH IF EXISTS db21;
+
+statement ok
+DETACH IF EXISTS db22;
+
+statement ok
+DETACH IF EXISTS db23;
+
+statement ok
+DETACH IF EXISTS db24;
+
+statement ok
+DETACH IF EXISTS db25;
+
+statement ok
+DETACH IF EXISTS db26;
+
+statement ok
+DETACH IF EXISTS db27;
+
+statement ok
+DETACH IF EXISTS db28;
+
+statement ok
+DETACH IF EXISTS db29;
+
+statement ok
+DETACH IF EXISTS db30;

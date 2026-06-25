@@ -28,7 +28,7 @@ EXCEPTIONS = {
     "tests/sqllogic/sdb/pg/site_docs/cookbook/network_cloud_storage/gcs_import.test",
     "tests/sqllogic/sdb/pg/site_docs/cookbook/network_cloud_storage/s3_export.test",
     "tests/sqllogic/sdb/pg/site_docs/cookbook/network_cloud_storage/s3_express_one.test",
-    "tests/sqllogic/sdb/pg/site_docs/cookbook/network_cloud_storage/s3_iceberg_import.test",
+    "tests/sqllogic/sdb/pg/site_docs/cookbook/network_cloud_storage/s3_import_iceberg.test_slow",
     "tests/sqllogic/sdb/pg/site_docs/cookbook/network_cloud_storage/s3_import.test",
 }
 

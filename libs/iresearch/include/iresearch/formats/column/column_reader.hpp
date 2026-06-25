@@ -211,12 +211,10 @@ class ColumnReader final {
       //    output. dict_fsst is VARCHAR-only, so the codec flag alone gates it;
       //    for every other codec the helper returns a null dict and the output
       //    just rides on the pin.
-#if 0  // TEMP no-fix A/B: disable keepalive to confirm the UAF fires
       if (_is_dict_fsst || _pin) {
         out_vec.BufferMutable().AddAuxiliaryData(std::make_unique<SharedPinHolder>(
           _pin, DictFsstScanDictionary(_state, _is_dict_fsst)));
       }
-#endif
     }
 
     uint64_t Position() const noexcept { return _cursor; }

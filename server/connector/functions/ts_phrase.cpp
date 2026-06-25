@@ -22,13 +22,16 @@
 
 #include <cstdint>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
+#include <iresearch/analysis/shingle_analyzer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/search/phrase_filter.hpp>
+#include <iresearch/search/phrase_ngram_filter.hpp>
 #include <iresearch/search/phrase_query.hpp>
 #include <iresearch/search/range_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
 #include "basics/assert.h"
+#include "basics/down_cast.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "search.h"
@@ -90,6 +93,65 @@ PhraseGap ParsePhraseGap(const duckdb::Value& val, std::string_view label,
           .max = static_cast<size_t>(raw) + 1};
 }
 
+bool IsShingleColumn(const SearchColumnInfo& column_info) {
+  return column_info.tokenizer.analyzer &&
+         column_info.tokenizer.analyzer->type() ==
+           irs::Type<irs::analysis::ShingleAnalyzer>::id();
+}
+
+// Build a position-free shingle phrase filter (irs::ByPhraseNgram) for a column
+// indexed with the shingle analyzer. Candidate documents come from the phrase's
+// shingle terms; unless the match is exact by construction they are verified
+// against the stored token stream.
+void BuildShingleNgram(irs::BooleanFilter& parent, const FilterContext& ctx,
+                       const SearchColumnInfo& column_info,
+                       std::string_view phrase_text) {
+  auto& filter = ctx.negated ? Negate<irs::ByPhraseNgram>(parent)
+                             : AddFilter<irs::ByPhraseNgram>(parent);
+  filter.boost(ctx.boost);
+  *filter.mutable_field_id() =
+    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
+  auto* opts = filter.mutable_options();
+  *opts = irs::ByPhraseNgramOptions{
+    phrase_text, basics::downCast<irs::analysis::ShingleAnalyzer>(
+                   *column_info.tokenizer.analyzer.get())};
+  if (opts->query_tokens.empty()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("ts_phrase text produced no searchable terms"),
+      ERR_HINT("All tokens were stripped (e.g. all-stopword input). Provide "
+               "at least one searchable term."));
+  }
+  // Position-free (Strategy A, verify) vs positional (Strategy B, no verify) is
+  // chosen here from the indexed field's features and passed to the filter; the
+  // per-segment prepare model has no access to the whole index, and catalog
+  // features are uniform across segments. An exact plan (a single
+  // shingle/unigram term) needs neither positions nor the stored token stream.
+  opts->positional = (column_info.tokenizer.features & irs::IndexFeatures::Pos) ==
+                     irs::IndexFeatures::Pos;
+  if (irs::field_limits::valid(column_info.tokenizer.tokenizer_column)) {
+    opts->store_field_id = column_info.tokenizer.tokenizer_column;
+  } else if (!opts->exact && !opts->positional) {
+    if (column_info.tokenizer.store_values && column_info.tokenizer.config) {
+      // No token blob, but the raw column values are stored in the index:
+      // verify by re-tokenizing each candidate's value.
+      opts->store_field_id = column_info.field_id;
+      opts->raw_store = true;
+      opts->verify_config = column_info.tokenizer.config;
+    } else {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("ts_phrase of ", opts->query_tokens.size(),
+                " words needs verification, which this shingle index cannot "
+                "provide (no positions and no stored values)"),
+        ERR_HINT("Raise maxshinglesize to cover the phrase, set "
+                 "storetokens=true, store the column values (list the column "
+                 "again with included() in the index), or add position=true "
+                 "to the dictionary."));
+    }
+  }
+}
+
 }  // namespace
 
 void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
@@ -105,6 +167,47 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ts_phrase field is not VARCHAR"),
                     ERR_HINT(kSyntaxHint));
+  }
+
+  if (IsShingleColumn(column_info)) {
+    bool has_gap = false;
+    std::string phrase_text;
+    for (size_t i = 0; i < func.GetChildren().size(); ++i) {
+      const auto* const_val = TryGetConstant(*func.GetChildren()[i]);
+      if (!const_val) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("ts_phrase argument ", i, " must be a constant"),
+                        ERR_HINT(kSyntaxHint));
+      }
+      const auto id = const_val->type().id();
+      if (id != duckdb::LogicalTypeId::VARCHAR &&
+          id != duckdb::LogicalTypeId::BLOB) {
+        has_gap = true;
+        continue;
+      }
+      if (!phrase_text.empty()) {
+        phrase_text.push_back(' ');
+      }
+      phrase_text += duckdb::StringValue::Get(*const_val);
+    }
+    if (!has_gap) {
+      BuildShingleNgram(filter, ctx, column_info, phrase_text);
+      return;
+    }
+    // A shingle term exists only for adjacent tokens, so a gap cannot ride
+    // the shingle fast path. With positions the classic path below expresses
+    // it exactly: ctx.tokenizer is the shingle analyzer's base (one token
+    // per position) and the token loop is increment-aware.
+    if ((column_info.tokenizer.features & irs::IndexFeatures::Pos) !=
+        irs::IndexFeatures::Pos) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("ts_phrase gap/slop on a shingle column requires the "
+                "Positions feature"),
+        ERR_HINT("Add position=true (with frequency=true) to the shingle "
+                 "dictionary and recreate the index, or drop the gap "
+                 "arguments."));
+    }
   }
 
   if ((column_info.tokenizer.features &
@@ -126,6 +229,7 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
   auto* opts = phrase.mutable_options();
   auto& analyzer = ctx.tokenizer;
   const irs::TermAttr* token = irs::get<irs::TermAttr>(analyzer);
+  const irs::IncAttr* inc_attr = irs::get<irs::IncAttr>(analyzer);
 
   std::optional<PhraseGap> pending_gap;
 
@@ -141,15 +245,21 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
       auto text = duckdb::StringValue::Get(*const_val);
       analyzer.reset(std::string_view{text});
       while (analyzer.next()) {
+        const uint32_t inc = inc_attr != nullptr ? inc_attr->value : 1;
+        if (inc == 0) {
+          continue;  // co-located term (stacked token): not a phrase slot
+        }
         if (pending_gap) {
           // First token of a new text pattern: apply pending gap.
           opts
             ->push_back<irs::ByTermOptions>(pending_gap->min, pending_gap->max)
             .term.assign(token->value);
         } else {
-          // No pending gap: first term or adjacent token within same
-          // pattern.
-          opts->push_back<irs::ByTermOptions>().term.assign(token->value);
+          // No explicit gap: the analyzer's position increment is the slot
+          // delta, so a removed stopword keeps its position (PG semantics);
+          // adjacent tokens have inc == 1. push_back adds the implicit +1.
+          opts->push_back<irs::ByTermOptions>(inc - 1).term.assign(
+            token->value);
         }
         pending_gap.reset();
       }
@@ -196,9 +306,16 @@ void EmitPhraseTokens(irs::ByPhraseOptions& options, const FilterContext& ctx,
                     ERR_HINT("The column's analyzer rejected the input text."));
   }
   const auto* token = irs::get<irs::TermAttr>(analyzer);
+  const auto* inc_attr = irs::get<irs::IncAttr>(analyzer);
   bool first = true;
   while (analyzer.next()) {
-    const PhraseGap g = first ? base_gap : PhraseGap{1, 1};
+    const uint32_t inc = inc_attr != nullptr ? inc_attr->value : 1;
+    if (inc == 0) {
+      continue;  // co-located term (stacked token): not a phrase slot
+    }
+    // The analyzer's position increment is the slot delta for tokens after
+    // the first, so a removed stopword keeps its position (PG semantics).
+    const PhraseGap g = first ? base_gap : PhraseGap{inc, inc};
     auto& part = options.push_back<irs::ByTermOptions>(g.min, g.max);
     part.term.assign(token->value);
     first = false;
@@ -221,6 +338,10 @@ void BuildFtsPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
       column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ts_phrase field is not VARCHAR"));
+  }
+  if (IsShingleColumn(column_info)) {
+    BuildShingleNgram(parent, ctx, column_info, text);
+    return;
   }
   if ((column_info.tokenizer.features &
        irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures) !=
@@ -419,6 +540,14 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
   if ((column_info.tokenizer.features &
        irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures) !=
       irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures) {
+    if (IsShingleColumn(column_info)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("## on a shingle column requires the Positions feature"),
+        ERR_HINT("Add position=true (with frequency=true) to the shingle "
+                 "dictionary and recreate the index, or use ts_phrase "
+                 "without gaps."));
+    }
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("## field should have Positions and Frequency features "

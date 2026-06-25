@@ -1,0 +1,85 @@
+# sdb_term_stats: per-segment term statistics of an inverted index's string
+# fields. Primary consumer: corpus-driven dictionary tuning (deriving a
+# shingle dictionary's `frequentwords` from document-frequency ratios).
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ts_stats_dict(
+    template = 'shingle',
+    minshinglesize = 2,
+    maxshinglesize = 2,
+    frequency = true,
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+);
+
+statement ok
+CREATE TABLE ts_stats(id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX ts_stats_idx ON ts_stats USING inverted(id, body ts_stats_dict);
+
+statement ok
+INSERT INTO ts_stats VALUES
+  (1, 'the quick brown fox'),
+  (2, 'the lazy dog'),
+  (3, 'the quick dog');
+
+statement ok
+VACUUM (REFRESH_TABLE) ts_stats;
+
+# Unigram terms decode into term_text; shingle terms (0xFF-joined, not valid
+# UTF-8) keep term_text NULL and are reachable via the raw BLOB.
+query
+SELECT term_text, sum(doc_freq) AS df, sum(total_term_freq) AS ttf
+FROM sdb_term_stats('ts_stats_idx')
+WHERE term_text IS NOT NULL
+GROUP BY term_text
+ORDER BY df DESC, term_text;
+----
+term_text	df	ttf
+the	3	3
+dog	2	2
+quick	2	2
+brown	1	1
+fox	1	1
+lazy	1	1
+
+# Shingle rows exist as BLOBs (one per adjacent pair).
+query
+SELECT count(*) AS shingles FROM sdb_term_stats('ts_stats_idx') WHERE term_text IS NULL;
+----
+shingles
+6
+
+# The frequentwords derivation: words present in at least half the documents.
+query
+SELECT term_text AS word
+FROM sdb_term_stats('ts_stats_idx')
+WHERE term_text IS NOT NULL
+GROUP BY word
+HAVING sum(doc_freq) >= (SELECT 0.5 * count(*) FROM ts_stats)
+ORDER BY sum(doc_freq) DESC, word;
+----
+word
+the
+dog
+quick
+
+# Schema-qualified resolution.
+query
+SELECT count(*) > 0 AS ok FROM sdb_term_stats('public.ts_stats_idx');
+----
+ok
+t
+
+statement error
+SELECT * FROM sdb_term_stats('no_such_idx');
+----
+db error: ERROR: inverted index 'no_such_idx' not found.
+
+
+statement ok
+DROP TABLE ts_stats;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ts_stats_dict;

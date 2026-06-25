@@ -647,7 +647,13 @@ void FieldData::compute_features() const {
       &_col_writer->OpenNormColumn(_meta.norm, _norm_row_group_size);
   }
   const auto target_row = static_cast<uint64_t>(_last_doc) - doc_limits::min();
-  _norm_writer->Append(target_row, _stats.len);
+  // The norm is the document's length in POSITIONS: terms stacked at an
+  // already-counted position (inc == 0 -- synonyms, co-located shingles) do
+  // not make the document longer, so they are discounted (Lucene's
+  // discountOverlaps). Counting them would skew length normalization by the
+  // stacking density rather than the content length.
+  SDB_ASSERT(_stats.len >= _stats.num_overlap);
+  _norm_writer->Append(target_row, _stats.len - _stats.num_overlap);
 }
 
 void FieldData::reset(doc_id_t doc_id) {

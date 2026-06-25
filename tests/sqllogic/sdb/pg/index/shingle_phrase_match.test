@@ -1,0 +1,625 @@
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS shingle_dict;
+
+statement ok
+DROP TABLE IF EXISTS test_shingle;
+
+# Position-free phrase search: a shingle (word n-gram) analyzer over a
+# whitespace-delimited base. Frequency only -- no positions are stored.
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_dict(
+    template = 'shingle',
+    minshinglesize = 2,
+    maxshinglesize = 2,
+    frequency = true,
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+);
+
+statement ok
+CREATE TABLE test_shingle (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX test_shingle_idx ON test_shingle USING inverted(id, body shingle_dict);
+
+statement ok
+INSERT INTO test_shingle VALUES (1, 'the quick brown fox');
+
+statement ok
+INSERT INTO test_shingle VALUES (2, 'quick brown dog');
+
+statement ok
+INSERT INTO test_shingle VALUES (3, 'brown fox quick');
+
+statement ok
+INSERT INTO test_shingle VALUES (4, 'fox quick brown');
+
+# id 5 contains both bigrams of "quick brown fox" (quick|brown and brown|fox)
+# but not contiguously -- the verifier must reject it.
+statement ok
+INSERT INTO test_shingle VALUES (5, 'quick brown cat brown fox');
+
+statement ok
+VACUUM (REFRESH_TABLE) test_shingle;
+
+# 3-token phrase: AND of overlapping bigrams + per-candidate verification.
+# Only id 1 has "quick brown fox" contiguously; id 5 is a verified-away false
+# positive.
+query
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY id;
+----
+id
+1
+
+# 2-token phrase == shingle width: a single exact bigram lookup, no verify.
+query
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id;
+----
+id
+1
+2
+4
+5
+
+query
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('brown fox') ORDER BY id;
+----
+id
+1
+3
+5
+
+# Single token: a plain unigram lookup.
+query
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
+----
+id
+1
+3
+4
+5
+
+# An empty phrase has no searchable terms and matches nothing.
+query
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('') ORDER BY id;
+----
+id
+
+# A phrase whose words are absent from the index yields no candidates.
+query
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('purple monkey dishwasher') ORDER BY id;
+----
+id
+
+# phraseto_tsquery routes through the same shingle path.
+query
+SELECT id FROM test_shingle_idx WHERE body @@ phraseto_tsquery('quick brown fox') ORDER BY id;
+----
+id
+1
+
+# Combined with AND on a non-FTS predicate.
+query
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick brown') AND id < 2 ORDER BY id;
+----
+id
+1
+
+# The 3-token verify path also composes with a non-FTS predicate.
+query
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick brown fox') AND id > 0 ORDER BY id;
+----
+id
+1
+
+# plainto_tsquery is bag-of-words: the shingle terms never leak into the AND,
+# so non-adjacent co-occurrence matches.
+query
+SELECT id FROM test_shingle_idx WHERE body @@ plainto_tsquery('quick fox') ORDER BY id;
+----
+id
+1
+3
+4
+5
+
+# A repeated word must not make the AND unsatisfiable (min_match counts
+# distinct terms).
+query
+SELECT id FROM test_shingle_idx WHERE body @@ plainto_tsquery('quick quick brown') ORDER BY id;
+----
+id
+1
+2
+3
+4
+5
+
+# Gap / slop needs positions: a shingle term exists only for adjacent tokens.
+statement error
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick', 1, 'fox') ORDER BY id;
+----
+db error: ERROR: ts_phrase gap/slop on a shingle column requires the Positions feature
+HINT: Add position=true (with frequency=true) to the shingle dictionary and recreate the index, or drop the gap arguments.
+
+
+# Likewise the ## (phrase-sequence) operator.
+statement error
+SELECT id FROM test_shingle_idx WHERE body @@ (ts_phrase('quick') ## ts_phrase('fox')) ORDER BY id;
+----
+db error: ERROR: ## on a shingle column requires the Positions feature
+HINT: Add position=true (with frequency=true) to the shingle dictionary and recreate the index, or use ts_phrase without gaps.
+
+
+statement ok
+DROP TABLE test_shingle;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_dict;
+
+# --- Strategy B: positional shingle index ---
+# With positions stored, a phrase over the positional shingle terms is exact by
+# construction, so no per-candidate verification runs. (position=true is now
+# accepted on a shingle dictionary; it selected Strategy B.)
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_pos(
+    template = 'shingle',
+    minshinglesize = 2,
+    maxshinglesize = 2,
+    frequency = true,
+    position = true,
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+);
+
+statement ok
+CREATE TABLE test_shingle_pos (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX test_shingle_pos_idx ON test_shingle_pos USING inverted(id, body shingle_pos);
+
+statement ok
+INSERT INTO test_shingle_pos VALUES
+  (1, 'the quick brown fox'),
+  (2, 'quick brown dog'),
+  (3, 'brown fox quick'),
+  (4, 'fox quick brown'),
+  (5, 'quick brown cat brown fox');
+
+statement ok
+VACUUM (REFRESH_TABLE) test_shingle_pos;
+
+# Exact by position: id 5 holds both bigrams but not adjacently and is rejected
+# with no store fetch.
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('brown fox') ORDER BY id;
+----
+id
+1
+3
+5
+
+# With positions, gaps work on shingle columns: the classic positional path
+# runs over the analyzer's unigram view. quick <1 token> cat.
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('quick', 1, 'cat') ORDER BY id;
+----
+id
+5
+
+# quick <exactly 1 token> fox: id 1 (quick brown fox); id 5 has fox 4 away.
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('quick', 1, 'fox') ORDER BY id;
+----
+id
+1
+
+# The ## operator works on positional shingle columns.
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('quick') ## ts_phrase('brown')) ORDER BY id;
+----
+id
+1
+2
+4
+5
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('quick') ## 1 ## ts_phrase('cat')) ORDER BY id;
+----
+id
+5
+
+# Multi-token ## parts route through the increment-aware token emission.
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('the') ## ts_phrase('quick brown')) ORDER BY id;
+----
+id
+1
+
+statement ok
+DROP TABLE test_shingle_pos;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_pos;
+
+# --- Scoring: phrase matches are ranked by frequency (BM25). ---
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_score(
+    template = 'shingle',
+    minshinglesize = 2,
+    maxshinglesize = 2,
+    frequency = true,
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+);
+
+statement ok
+CREATE TABLE test_shingle_score (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX test_shingle_score_idx ON test_shingle_score USING inverted(id, body shingle_score);
+
+statement ok
+INSERT INTO test_shingle_score VALUES
+  (1, 'brown fox'),
+  (2, 'brown fox brown fox'),
+  (3, 'the brown fox jumped over things');
+
+statement ok
+VACUUM (REFRESH_TABLE) test_shingle_score;
+
+# id 2 contains the phrase twice, so BM25 ranks it first.
+query
+SELECT id FROM test_shingle_score_idx WHERE body @@ ts_phrase('brown fox') ORDER BY BM25(test_shingle_score_idx.tableoid) DESC, id;
+----
+id
+2
+1
+3
+
+statement ok
+DROP TABLE test_shingle_score;
+
+# The verify path (phrase longer than maxshinglesize) scores against the
+# underlying shingle conjunction, not the verified phrase count: id 2 carries
+# stray copies of both bigrams and so ties id 3 (two of each, tie broken by
+# id) even though its phrase occurs only once; id 4 holds both bigrams but
+# never the phrase and is rejected by verification.
+statement ok
+CREATE TABLE test_shingle_vscore (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX test_shingle_vscore_idx ON test_shingle_vscore USING inverted(id, body shingle_score);
+
+statement ok
+INSERT INTO test_shingle_vscore VALUES
+  (1, 'quick brown fox'),
+  (2, 'quick brown z brown fox y quick brown fox'),
+  (3, 'quick brown fox quick brown fox'),
+  (4, 'quick brown only and brown fox only');
+
+statement ok
+VACUUM (REFRESH_TABLE) test_shingle_vscore;
+
+query
+SELECT id FROM test_shingle_vscore_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY BM25(test_shingle_vscore_idx.tableoid) DESC, id;
+----
+id
+2
+3
+1
+
+statement ok
+DROP TABLE test_shingle_vscore;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_score;
+
+# A shingle must span at least two tokens.
+statement error
+CREATE TEXT SEARCH DICTIONARY shingle_min1(
+    template = 'shingle',
+    minshinglesize = 1,
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+);
+----
+db error: ERROR: "minshinglesize" must be between 2 and 16
+
+
+# Phrase planning relies on unigram terms.
+statement error
+CREATE TEXT SEARCH DICTIONARY shingle_nouni(
+    template = 'shingle',
+    outputunigrams = false,
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+);
+----
+db error: ERROR: "outputunigrams" = false is not supported for shingle dictionaries
+HINT: Phrase planning requires the individual tokens to be indexed alongside the shingles.
+
+
+# A frequent-words entry must normalize to exactly one base-analyzer token.
+statement error
+CREATE TEXT SEARCH DICTIONARY shingle_badfreq(
+    template = 'shingle',
+    frequency = true,
+    frequentwords = '"of the"',
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+);
+----
+db error: ERROR: "frequentwords" entry "of the" splits into multiple tokens under the base analyzer
+
+
+# A custom filler token (stands in for base-analyzer-removed positions in
+# the stored token stream) is accepted and the dictionary works end-to-end.
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_filler(
+    template = 'shingle',
+    frequency = true,
+    fillertoken = '<gap>',
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+);
+
+statement ok
+CREATE TABLE test_shingle_filler (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX test_shingle_filler_idx ON test_shingle_filler USING inverted(id, body shingle_filler);
+
+statement ok
+INSERT INTO test_shingle_filler VALUES (1, 'quick brown fox'), (2, 'brown quick fox');
+
+statement ok
+VACUUM (REFRESH_TABLE) test_shingle_filler;
+
+query
+SELECT id FROM test_shingle_filler_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY id;
+----
+id
+1
+
+statement ok
+DROP TABLE test_shingle_filler;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_filler;
+
+# The shingle term encoding is only unambiguous for UTF-8 content.
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_varchar_only(
+    template = 'shingle',
+    frequency = true,
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+);
+
+statement ok
+CREATE TABLE test_shingle_blob (id INTEGER PRIMARY KEY, body BLOB);
+
+statement error
+CREATE INDEX test_shingle_blob_idx ON test_shingle_blob USING inverted(id, body shingle_varchar_only);
+----
+db error: ERROR: Column 'body' uses a shingle analyzer; the column must be VARCHAR
+
+
+statement ok
+DROP TABLE test_shingle_blob;
+
+# --- Terms-only dictionary: storetokens=false drops the verification blob ---
+# Every phrase up to maxshinglesize stays an exact single-term lookup; longer
+# phrases are rejected with an actionable error.
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_terms_only(
+    template = 'shingle',
+    minshinglesize = 2,
+    maxshinglesize = 3,
+    frequency = true,
+    storetokens = false,
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+);
+
+statement ok
+CREATE TABLE test_shingle_terms (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX test_shingle_terms_idx ON test_shingle_terms USING inverted(id, body shingle_terms_only);
+
+statement ok
+INSERT INTO test_shingle_terms VALUES
+  (1, 'the quick brown fox jumps'),
+  (2, 'quick brown dog'),
+  (3, 'brown fox quick');
+
+statement ok
+VACUUM (REFRESH_TABLE) test_shingle_terms;
+
+query
+SELECT id FROM test_shingle_terms_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM test_shingle_terms_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id;
+----
+id
+1
+2
+
+statement error
+SELECT id FROM test_shingle_terms_idx WHERE body @@ ts_phrase('quick brown fox jumps') ORDER BY id;
+----
+db error: ERROR: ts_phrase of 4 words needs verification, which this shingle index cannot provide (no positions and no stored values)
+HINT: Raise maxshinglesize to cover the phrase, set storetokens=true, store the column values (list the column again with included() in the index), or add position=true to the dictionary.
+
+
+statement ok
+DROP TABLE test_shingle_terms;
+
+# Listing the column again with included() lands the raw values in the index
+# columnstore, and longer phrases verify by re-tokenizing them on the fly.
+statement ok
+CREATE TABLE test_shingle_raw (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX test_shingle_raw_idx ON test_shingle_raw USING inverted(id, body shingle_terms_only, body included());
+
+statement ok
+INSERT INTO test_shingle_raw VALUES
+  (1, 'the quick brown fox jumps far'),
+  (2, 'quick brown fox elsewhere and brown fox jumps later'),
+  (3, 'quick brown dog');
+
+statement ok
+VACUUM (REFRESH_TABLE) test_shingle_raw;
+
+# Up to maxshinglesize stays an exact single-term lookup.
+query
+SELECT id FROM test_shingle_raw_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY id;
+----
+id
+1
+2
+
+# A 4-word phrase verifies against the raw stored value: id 2 holds both
+# trigrams but not adjacently and is re-tokenized away.
+query
+SELECT id FROM test_shingle_raw_idx WHERE body @@ ts_phrase('quick brown fox jumps') ORDER BY id;
+----
+id
+1
+
+statement ok
+DROP TABLE test_shingle_raw;
+
+# Mention order does not matter: included() before the dictionary merges into
+# the same entry. The stored values also serve covering reads.
+statement ok
+CREATE TABLE test_shingle_raw2 (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX test_shingle_raw2_idx ON test_shingle_raw2 USING inverted(id, body included(), body shingle_terms_only);
+
+statement ok
+INSERT INTO test_shingle_raw2 VALUES
+  (1, 'the quick brown fox jumps far'),
+  (2, 'quick brown fox elsewhere and brown fox jumps later'),
+  (3, 'quick brown dog');
+
+statement ok
+VACUUM (REFRESH_TABLE) test_shingle_raw2;
+
+query
+SELECT id, body FROM test_shingle_raw2_idx WHERE body @@ ts_phrase('quick brown fox jumps') ORDER BY id;
+----
+id body
+1 the quick brown fox jumps far
+
+statement ok
+DROP TABLE test_shingle_raw2;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_terms_only;
+
+# --- Norm: BM25 length normalization. The norm and the stored token stream
+# share the index's synthetic column, so a position-free norm dictionary
+# requires storetokens = false; longer phrases verify via included() raws.
+statement error
+CREATE TEXT SEARCH DICTIONARY shingle_norm_bad(
+    template = 'shingle',
+    frequency = true,
+    norm = true,
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+);
+----
+db error: ERROR: "norm" = true on a position-free shingle dictionary requires "storetokens" = false
+HINT: The norm and the stored token stream share the index's synthetic column. Phrases longer than maxshinglesize can still verify against the raw values (list the column again with included() in the index).
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_norm(
+    template = 'shingle',
+    minshinglesize = 2,
+    maxshinglesize = 3,
+    frequency = true,
+    norm = true,
+    storetokens = false,
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+);
+
+statement ok
+CREATE TABLE test_shingle_norm (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX test_shingle_norm_idx ON test_shingle_norm USING inverted(id, body shingle_norm, body included());
+
+statement ok
+INSERT INTO test_shingle_norm VALUES
+  (1, 'quick brown fox'),
+  (2, 'quick brown fox plus many many extra trailing words here making this document much longer than the first'),
+  (3, 'unrelated words entirely');
+
+statement ok
+VACUUM (REFRESH_TABLE) test_shingle_norm;
+
+# Same phrase count, shorter document -> higher BM25 (norms discount the
+# co-located shingle terms, so the norm is the true token count).
+query
+SELECT id FROM test_shingle_norm_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY BM25(test_shingle_norm_idx.tableoid) DESC, id;
+----
+id
+1
+2
+
+# The verify path (raw stored values) scores with norms too.
+query
+SELECT id FROM test_shingle_norm_idx WHERE body @@ ts_phrase('quick brown fox plus') ORDER BY id;
+----
+id
+2
+
+statement ok
+DROP TABLE test_shingle_norm;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_norm;
+
+# Escalation needs the stored token stream for rare spans.
+statement error
+CREATE TEXT SEARCH DICTIONARY shingle_terms_freq(
+    template = 'shingle',
+    storetokens = false,
+    frequency = true,
+    frequentwords = '"the"',
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+);
+----
+db error: ERROR: "storetokens" = false cannot be combined with "frequentwords"
+HINT: Without the stored token stream every shingle size must be dense so phrases up to maxshinglesize stay exact.
+
+
+# Highlighting needs offsets, which the shingle analyzer does not produce.
+statement error
+SELECT ts_offsets('shingle_varchar_only', 'quick brown', 'quick');
+----
+db error: ERROR: ts_offsets(): shingle dictionaries are not supported
+HINT: Highlighting needs token offsets, which the shingle analyzer does not produce.
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_varchar_only;

@@ -1310,7 +1310,7 @@ statement error
 CREATE INDEX inc_e_dict_with_opts ON inc_e_num USING inverted(
     id, (a + b) verbatim_dict (compression='zstd'));
 ----
-db error: ERROR: Unknown built-in opclass 'verbatim_dict' on '(a + b)' (known: included, ivf)
+db error: ERROR: Column '(a + b)' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
 
 
 # --- IVF on an indexed expression: `(expr) ivf(metric='l2')` builds an ANN graph over the expression's value.

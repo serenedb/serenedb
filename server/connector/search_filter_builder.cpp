@@ -35,6 +35,7 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
+#include <iresearch/analysis/shingle_analyzer.hpp>
 #include <iresearch/analysis/wildcard_analyzer.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/iterators.hpp>
@@ -68,6 +69,7 @@
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/node_hash_map.h"
+#include "basics/down_cast.h"
 #include "basics/string_utils.h"
 #include "basics/system-compiler.h"
 #include "comparison_op.hpp"
@@ -1168,6 +1170,17 @@ void FromTSQueryMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("@@ column has no analyzer (not a text-indexed column)"),
       ERR_HINT("Reindex the VARCHAR column with a text-search analyzer."));
+  }
+  if (tokenizer->type() == irs::Type<irs::analysis::ShingleAnalyzer>::id()) {
+    // Non-phrase builders assume one token per position; give them the base
+    // analyzer's stream (gaps surface as position increments), which is the
+    // shingle analyzer's unigram view. Shingle terms are an indexing detail
+    // consumed by ByPhraseNgram, which decomposes the phrase through the
+    // column's analyzer itself. The pooled analyzer is never reconfigured:
+    // its behavior is fixed by its options at construction.
+    tokenizer =
+      &basics::downCast<irs::analysis::ShingleAnalyzer>(*tokenizer)
+         .BaseAnalyzer();
   }
   BuildTSQuery(filter, ctx.WithTokenizer(*tokenizer), *column_info, expr);
 }

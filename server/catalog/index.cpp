@@ -31,6 +31,7 @@
 #include <duckdb/function/compression_function.hpp>
 #include <duckdb/main/config.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
+#include <iresearch/analysis/shingle_analyzer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/attribute_provider.hpp>
@@ -116,10 +117,6 @@ double GetIndexDoubleOption(std::string_view index_kind,
                                 duckdb::LogicalTypeId::DOUBLE, "a number");
 }
 
-constexpr std::array<std::string_view, 2> kKnownOpclassTypes{
-  kIncludedKind,
-  kIVFKind,
-};
 constexpr std::string_view kCompressionField = "compression";
 constexpr std::string_view kRowGroupSizeField = "row_group_size";
 constexpr std::string_view kHyperLogLogField = "hyperloglog";
@@ -260,17 +257,6 @@ duckdb::CompressionType ParseCompressionOption(
   auto parsed = ParseCompressionName(owner_label, str);
   ValidateColumnCompression(context, owner_label, parsed, value_type);
   return parsed;
-}
-
-std::string DescribeKnownOpclassTypes() {
-  std::string out;
-  for (size_t i = 0; i < kKnownOpclassTypes.size(); ++i) {
-    if (i) {
-      out += ", ";
-    }
-    out += kKnownOpclassTypes[i];
-  }
-  return out;
 }
 
 std::string DescribeIVFOptions() {
@@ -463,13 +449,6 @@ void ValidateInvertedIndexColumns(
       continue;
     }
 
-    if (c.HasParentheses()) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-        ERR_MSG("Unknown built-in opclass '", c.opclass, "' on '", label,
-                "' (known: ", DescribeKnownOpclassTypes(), ")"));
-    }
-
     term_dict::Validate(label, type, c.opclass);
   }
 }
@@ -657,8 +636,14 @@ void FillEntryFromTokenizer(const Tokenizer& dict,
                             InvertedIndexEntryInfo& entry) {
   entry.text_dictionary = dict.GetId();
   entry.features = dict.GetFeatures();
+  // A positional shingle column answers phrases via the positional shingle
+  // terms; the verifier (and so the stored token stream) is never consulted.
+  const bool positional_shingle =
+    analyzer.type() == irs::Type<irs::analysis::ShingleAnalyzer>::id() &&
+    entry.features.HasFeatures(irs::IndexFeatures::Pos);
   const bool wants_store = irs::get<irs::StoreAttr>(analyzer) != nullptr &&
-                           !IsGeoSourceAnalyzer(analyzer);
+                           !IsGeoSourceAnalyzer(analyzer) &&
+                           !positional_shingle;
   const bool wants_norm = entry.features.HasFeatures(irs::IndexFeatures::Norm);
   SDB_ASSERT(!(wants_store && wants_norm),
              "tokenizer-store and norm should be mutually exclusive");
@@ -704,11 +689,35 @@ void ApplyOpclassToEntry(duckdb::ClientContext& context,
   }
   auto analyzer = dict->GetTokenizer();
   ValidateTokenizerVsColumn(owner_label, value_type, *analyzer);
+  if (analyzer->type() == irs::Type<irs::analysis::ShingleAnalyzer>::id() &&
+      value_type.id() != duckdb::LogicalTypeId::VARCHAR) {
+    // The shingle term encoding joins tokens with a 0xFF separator, which is
+    // unambiguous only for UTF-8 content; the exact/positional paths never
+    // re-verify, so a BLOB token containing the separator could false-match.
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+      ERR_MSG("Column '", owner_label,
+              "' uses a shingle analyzer; the column must be VARCHAR"));
+  }
   FillEntryFromTokenizer(*dict, *analyzer, value_type, entry);
+  // Source-coding geo analyzers force-include the indexed source column (its
+  // own field id) into the columnstore so the filter can re-parse it at query
+  // time, mirroring the included force-include. Accept the same
+  // compression / row_group_size knobs. Other dictionary opclasses take no
+  // options: storing the raw values is requested by mentioning the column
+  // again with the `included(...)` opclass, which merges into the same entry.
   if (IsGeoSourceAnalyzer(*analyzer)) {
     ApplyIncludedOpclass(context, owner_label, value_type, c.opclass_options,
                          entry);
     entry.store_values = true;
+  } else if (c.opclass_options && !c.opclass_options->empty()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("Column '", owner_label,
+              "': unknown text search dictionary opclass option '",
+              c.opclass_options->begin()->first,
+              "'; dictionary opclasses take no options. To store the column "
+              "values, list the column again with 'included(...)'"));
   }
 }
 

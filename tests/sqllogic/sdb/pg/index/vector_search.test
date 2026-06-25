@@ -887,19 +887,19 @@ HINT: 'ivf' is a built-in opclass; use the options form 'ivf (...)'
 statement error
 CREATE INDEX m_fake_empty ON t_err USING inverted(emb fake_idx ());
 ----
-db error: ERROR: Unknown built-in opclass 'fake_idx' on 'emb' (known: included, ivf)
+db error: ERROR: Unknown opclass 'fake_idx' on column 'emb': no text dictionary by that name in schema 'public'
 
 
 statement error
 CREATE INDEX m_fake_real ON t_err USING inverted(emb fake_idx (m = 16));
 ----
-db error: ERROR: Unknown built-in opclass 'fake_idx' on 'emb' (known: included, ivf)
+db error: ERROR: Unknown opclass 'fake_idx' on column 'emb': no text dictionary by that name in schema 'public'
 
 
 statement error
 CREATE INDEX m_fake_fake ON t_err USING inverted(emb fake_idx (foo = 1));
 ----
-db error: ERROR: Unknown built-in opclass 'fake_idx' on 'emb' (known: included, ivf)
+db error: ERROR: Unknown opclass 'fake_idx' on column 'emb': no text dictionary by that name in schema 'public'
 
 
 statement error

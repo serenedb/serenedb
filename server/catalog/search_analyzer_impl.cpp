@@ -23,6 +23,7 @@
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
+#include <iresearch/analysis/shingle_analyzer.hpp>
 #include <iresearch/analysis/sparse_ngram_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
@@ -81,6 +82,17 @@ void Features::Validate(std::string_view type) const {
   const auto supported_features = [&] {
     if (type == irs::analysis::WildcardAnalyzer::type_name()) {
       return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
+    }
+    if (type == irs::analysis::ShingleAnalyzer::type_name()) {
+      // Two phrase strategies share the analyzer, chosen by the column's
+      // features. Frequency-only (Strategy A) generates shingle candidates and
+      // verifies contiguity against the stored token stream. Adding Positions
+      // (Strategy B) makes a phrase over the positional shingle terms exact by
+      // construction, so no per-candidate verification is needed. Norm rides
+      // the synthetic column, so it excludes the stored token stream
+      // (storetokens = false; enforced at CREATE TEXT SEARCH DICTIONARY).
+      return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
+             irs::IndexFeatures::Norm;
     }
     if (IsGeoAnalyzer(type)) {
       return irs::IndexFeatures::None;

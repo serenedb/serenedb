@@ -35,10 +35,12 @@
 #include <iresearch/search/nested_filter.hpp>
 #include <iresearch/search/ngram_similarity_filter.hpp>
 #include <iresearch/search/phrase_filter.hpp>
+#include <iresearch/search/phrase_ngram_filter.hpp>
 #include <iresearch/search/prefix_filter.hpp>
 #include <iresearch/search/proxy_filter.hpp>
 #include <iresearch/search/range_filter.hpp>
 #include <iresearch/search/regexp_filter.hpp>
+#include <iresearch/search/regexp_ngram_filter.hpp>
 #include <iresearch/search/search_range.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
@@ -135,6 +137,32 @@ std::string RangeValue(const SearchRange<T>& range, Kind kind) {
                     TermValue(range.max, kind));
   }
   return s;
+}
+
+std::string RegexpNgramTree(const ByRegexpNgramOptions::Node& node) {
+  using Kind = ByRegexpNgramOptions::Node::Kind;
+  switch (node.kind) {
+    case Kind::kAll:
+      return "ALL";
+    case Kind::kNone:
+      return "NONE";
+    case Kind::kTerms: {
+      std::string terms;
+      for (const auto& term : node.terms) {
+        absl::StrAppend(&terms, TermToString(term), " ");
+      }
+      return absl::StrCat("{", terms, "}");
+    }
+    case Kind::kAnd:
+    case Kind::kOr: {
+      std::string subs;
+      for (const auto& sub : node.subs) {
+        absl::StrAppend(&subs, RegexpNgramTree(sub), " ");
+      }
+      return absl::StrCat(node.kind == Kind::kAnd ? "AND[" : "OR[", subs, "]");
+    }
+  }
+  return "?";
 }
 
 // Renders one phrase-part option variant. Shared between Phrase and
@@ -298,6 +326,13 @@ struct FilterPrinter {
     return absl::StrJoin(filter.options().ngrams, "",
                          [](std::string* o, const auto& ngram) {
                            absl::StrAppend(o, TermToString(ngram));
+                         });
+  }
+
+  std::string PhraseNgramShingles(const ByPhraseNgram& filter) const {
+    return absl::StrJoin(filter.options().shingles, "; ",
+                         [](std::string* o, const auto& shingle) {
+                           absl::StrAppend(o, TermToString(shingle));
                          });
   }
 
@@ -495,6 +530,24 @@ struct FilterPrinter {
       node.attributes["Token"] = TermToString(f.options().token);
       node.attributes["Has Pos"] = f.options().has_pos ? "true" : "false";
       node.attributes["Parts"] = WildcardNgramParts(f);
+      return node;
+    }
+    if (type == Type<ByPhraseNgram>::id()) {
+      const auto& f = downCast<const ByPhraseNgram>(filter);
+      ExplainNode node{"Phrase Ngram"};
+      node.attributes["Field"] = FieldName(f.field_id());
+      node.attributes["Exact"] = f.options().exact ? "true" : "false";
+      node.attributes["Shingles"] = PhraseNgramShingles(f);
+      return node;
+    }
+    if (type == Type<ByRegexpNgram>::id()) {
+      const auto& f = downCast<const ByRegexpNgram>(filter);
+      const auto& o = f.options();
+      ExplainNode node{"Regexp Ngram"};
+      node.attributes["Field"] = FieldName(f.field_id());
+      node.attributes["Pattern"] =
+        o.matcher ? o.matcher->pattern() : std::string{};
+      node.attributes["Ngrams"] = RegexpNgramTree(o.root);
       return node;
     }
     if (type == Type<Empty>::id()) {

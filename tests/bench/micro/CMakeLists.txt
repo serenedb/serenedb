@@ -41,6 +41,8 @@ add_bench(socket_write)
 add_bench(duckdb_collector)
 add_bench(columnstore_vs_duckdb)
 add_bench(select_thresholds)
+add_bench(phrase_search)
+add_bench(regex_search)
 target_include_directories(
     serenedb-bench-micro-ci_hash
     SYSTEM

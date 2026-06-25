@@ -31,6 +31,7 @@
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
+#include <iresearch/analysis/shingle_analyzer.hpp>
 #include <iresearch/analysis/sparse_ngram_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/union_tokenizer.hpp>
@@ -379,6 +380,14 @@ duckdb::unique_ptr<duckdb::FunctionData> OffsetsStandaloneBind(
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("ts_offsets(): text search dictionary not found: ", dict_name));
+  }
+  if (std::holds_alternative<irs::analysis::ShingleAnalyzer::Options>(
+        dict->Config().config)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("ts_offsets(): shingle dictionaries are not supported"),
+      ERR_HINT("Highlighting needs token offsets, which the shingle analyzer "
+               "does not produce."));
   }
 
   auto bind = duckdb::make_uniq<OffsetsBindData>();

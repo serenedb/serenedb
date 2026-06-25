@@ -1,0 +1,41 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_RAW
+#| CREATE SECRET (
+#|     TYPE r2,
+#|     KEY_ID '⟨AKIAIOSFODNN7EXAMPLE⟩',
+#|     SECRET '⟨wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY⟩',
+#|     ACCOUNT_ID '⟨your-33-character-hexadecimal-account-ID⟩'
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE OR REPLACE SECRET (
+    TYPE r2,
+    KEY_ID 'AKIAIOSFODNN7EXAMPLE',
+    SECRET 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+    ACCOUNT_ID 'abc123'
+);
+
+# DOCS_TEST: example_002
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/cookbook_network_cloud_storage_cloudflare_r2_import_example_002_1_file.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| SELECT * FROM read_parquet('r2://⟨r2-bucket-name⟩/⟨file⟩');
+
+# DOCS_TEST_BODY
+
+query
+SELECT * FROM read_parquet('${__TEST_DIR__}/cookbook_network_cloud_storage_cloudflare_r2_import_example_002_1_file.parquet');
+----
+id	name	value
+1	alpha	10
+2	beta	20

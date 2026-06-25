@@ -49,6 +49,7 @@
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/common/types/uhugeint.hpp>
 #include <duckdb/common/types/uuid.hpp>
+#include <duckdb/inet/inet_ipaddress.hpp>
 #include <limits>
 #include <string_view>
 #include <type_traits>
@@ -1445,6 +1446,68 @@ struct RecordBinCore {
   }
 };
 
+// PG `inet` (OID 869). STRUCT entries: [0]=ip_type (1=IPv4, 2=IPv6),
+// [1]=address (signed hugeint, IPv6 top bit flipped for sort order), [2]=mask.
+IRS_FORCE_INLINE void ReadInet(
+  const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row,
+  INET_IPAddress& inet) {
+  const auto& c0 = vdata.children[0].unified;
+  const auto& c1 = vdata.children[1].unified;
+  const auto& c2 = vdata.children[2].unified;
+  const auto ip_type =
+    duckdb::UnifiedVectorFormat::GetData<uint8_t>(c0)[c0.sel->get_index(row)];
+  const auto stored = duckdb::UnifiedVectorFormat::GetData<duckdb::hugeint_t>(
+    c1)[c1.sel->get_index(row)];
+  const auto mask =
+    duckdb::UnifiedVectorFormat::GetData<uint16_t>(c2)[c2.sel->get_index(row)];
+  inet.type = static_cast<INET_IPAddressType>(ip_type);
+  inet.address.lower = stored.lower;
+  inet.address.upper = static_cast<uint64_t>(stored.upper);
+  if (inet.type == INET_IP_ADDRESS_V6) {
+    inet.address.upper ^= (uint64_t{1} << 63);  // undo IPv6 sort-order flip
+  }
+  inet.mask = mask;
+}
+
+struct InetTextCore {
+  static constexpr uint32_t kMaxBytes = 64;
+  IRS_FORCE_INLINE static size_t Render(
+    uint8_t* dst, SerializationContext&,
+    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row) {
+    INET_IPAddress inet;
+    ReadInet(vdata, row, inet);
+    // Reuse the extension's formatter (IPv6 canonicalization + "/mask" rules)
+    // so output matches host()/::varchar.
+    return ipaddress_to_string(&inet, reinterpret_cast<char*>(dst), kMaxBytes);
+  }
+};
+
+struct InetBinCore {
+  static constexpr uint32_t kMaxBytes = 4 + 16;
+  IRS_FORCE_INLINE static size_t Render(
+    uint8_t* dst, SerializationContext&,
+    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row) {
+    INET_IPAddress inet;
+    ReadInet(vdata, row, inet);
+    // PG binary inet bytes: [0]=family, [1]=bits, [2]=is_cidr, [3]=nb (4 or
+    // 16), then nb big-endian addr bytes.
+    const bool is_v6 = inet.type == INET_IP_ADDRESS_V6;
+    const uint8_t nb = is_v6 ? 16 : 4;
+    dst[0] = is_v6 ? 3 : 2;
+    dst[1] = static_cast<uint8_t>(inet.mask);
+    dst[2] = 0;
+    dst[3] = nb;
+    if (is_v6) {
+      absl::big_endian::Store64(dst + 4, inet.address.upper);
+      absl::big_endian::Store64(dst + 12, inet.address.lower);
+    } else {
+      absl::big_endian::Store32(dst + 4,
+                                static_cast<uint32_t>(inet.address.lower));
+    }
+    return size_t{4} + nb;
+  }
+};
+
 using RUVF = duckdb::RecursiveUnifiedVectorFormat;
 
 template<typename C>
@@ -2125,6 +2188,10 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
       return MakeArraySerializer<BitTextCore, BitBinCore, kVarbit>(
         format, context, kind);
     case STRUCT:
+      if (IsInet(type)) {
+        return MakeArraySerializer<InetTextCore, InetBinCore, kInet>(
+          format, context, kind);
+      }
       // Element OID is resolved per-row by Type2Oid: anonymous ROW(...) yields
       // kRecord, named record types yield their pg_type OID.
       return MakeArraySerializer<RecordTextCore<WrapContext::Array>,
@@ -2362,6 +2429,10 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
                                    EnumTextCore<WrapContext::Record>,
                                    EnumBinCore>(format, context);
     case STRUCT:
+      if (IsInet(type)) {
+        return SelectFieldSerializer<InetTextCore, InetTextCore, InetBinCore>(
+          format, context);
+      }
       return SelectFieldSerializer<RecordTextCore<WrapContext::None>,
                                    RecordTextCore<WrapContext::Record>,
                                    RecordBinCore>(format, context);

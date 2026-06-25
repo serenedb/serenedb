@@ -1,0 +1,25 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY minhash_delim (
+    template = 'minhash',
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ',',
+    numhashes = 2
+);
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY minhash_text (
+    template = 'minhash',
+    tokenizer_template = 'text',
+    tokenizer_locale = 'en_US.UTF-8',
+    tokenizer_case = 'lower',
+    tokenizer_stemming = false,
+    numhashes = 6
+);

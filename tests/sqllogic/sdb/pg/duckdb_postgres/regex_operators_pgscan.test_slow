@@ -1,0 +1,32 @@
+control substitution on
+
+# SereneDB's POSIX regular-expression match operators (~, ~*, !~, !~*) follow
+# PostgreSQL's partial-match semantics. This test attaches a real postgres (the
+# _pgscan suffix brings one up) and asserts SereneDB and PostgreSQL agree across
+# a range of patterns. If they ever diverge, the mismatch count is non-zero.
+# (Relocated here from the docs "PostgreSQL Compatibility" page, where the old
+# hand-written table claimed a difference that no longer exists.)
+
+statement ok
+DETACH IF EXISTS pg;
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pg (TYPE postgres);
+
+query I
+SELECT count(*) FROM (
+  SELECT (SELECT r FROM postgres_query('pg', 'SELECT (''aaa'' ~ ''(a|b)'')::text r'))   AS pg, ('aaa' ~ '(a|b)')::text   AS sdb
+  UNION ALL SELECT (SELECT r FROM postgres_query('pg', 'SELECT (''AAA'' ~* ''(a|b)'')::text r')),  ('AAA' ~* '(a|b)')::text
+  UNION ALL SELECT (SELECT r FROM postgres_query('pg', 'SELECT (''aaa'' !~ ''(a|b)'')::text r')),  ('aaa' !~ '(a|b)')::text
+  UNION ALL SELECT (SELECT r FROM postgres_query('pg', 'SELECT (''AAA'' !~* ''(a|b)'')::text r')), ('AAA' !~* '(a|b)')::text
+  UNION ALL SELECT (SELECT r FROM postgres_query('pg', 'SELECT (''abc'' ~ ''b'')::text r')),       ('abc' ~ 'b')::text
+  UNION ALL SELECT (SELECT r FROM postgres_query('pg', 'SELECT (''abc'' ~ ''^a'')::text r')),      ('abc' ~ '^a')::text
+  UNION ALL SELECT (SELECT r FROM postgres_query('pg', 'SELECT (''abc'' ~* ''B'')::text r')),      ('abc' ~* 'B')::text
+) t
+WHERE pg IS DISTINCT FROM sdb;
+----
+count
+0
+
+statement ok
+DETACH pg;

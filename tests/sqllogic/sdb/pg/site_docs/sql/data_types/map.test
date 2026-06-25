@@ -1,0 +1,109 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT MAP {'key1': 10, 'key2': 20, 'key3': 30};
+----
+map
+{"(key1,10)","(key2,20)","(key3,30)"}
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT map_from_entries([('key1', 10), ('key2', 20), ('key3', 30)]);
+----
+map_from_entries
+{"(key1,10)","(key2,20)","(key3,30)"}
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT MAP(['key1', 'key2', 'key3'], [10, 20, 30]);
+----
+map
+{"(key1,10)","(key2,20)","(key3,30)"}
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT MAP {1: 42.001, 5: -32.1};
+----
+map
+{"(1,42.001)","(5,-32.100)"}
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT MAP {['a', 'b']: [1.1, 2.2], ['c', 'd']: [3.3, 4.4]};
+----
+map
+{"(\\"{a,b}\\",\\"{1.1,2.2}\\")","(\\"{c,d}\\",\\"{3.3,4.4}\\")"}
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE tbl (col MAP(INTEGER, DOUBLE));
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+SELECT MAP {'key1': 5, 'key2': 43}['key1'];
+----
+map
+5
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query error
+SELECT MAP {'key1': 5, 'key2': 43}[123];
+----
+db error: ERROR: Cannot deduce template type 'K' in function: 'map_extract_value(MAP(K, V), K) -> V'
+Type 'K' was inferred to be:
+ - 'VARCHAR', from first occurrence
+ - 'INTEGER_LITERAL', which is incompatible with previously inferred type!
+
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+query
+SELECT MAP {'key1': 5, 'key2': 43}['key3'];
+----
+map
+NULL
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query
+SELECT map_extract(MAP {'key1': 5, 'key2': 43}, 'key1');
+----
+map_extract
+{5}
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+query
+SELECT map_extract(MAP {'key1': 5, 'key2': 43}, 'key3');
+----
+map_extract
+{}

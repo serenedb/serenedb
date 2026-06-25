@@ -85,4 +85,12 @@ for extra in test_copy test_shell_copy test_psql_mode; do
 	fi
 done
 
+# CLI help reference: parse `serened --help` and diff against the committed
+# fixture (consumed by the docs site). Drift fails the suite. Skips cleanly
+# when the binary isn't present. Regenerate with: cli_help.py override.
+echo "[python][cli_help] check"
+if ! python3 "${SCRIPT_DIR}/cli_help.py" check; then
+	final=1
+fi
+
 exit "$final"

@@ -1,0 +1,109 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT 'Math' IN ('CS', 'Math');
+----
+?column?
+t
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT 'English' IN ('CS', 'Math');
+----
+?column?
+f
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT 'Math' IN ('CS', 'Math', NULL);
+----
+?column?
+t
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT 'English' IN ('CS', 'Math', NULL);
+----
+?column?
+NULL
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT 'Math' IN ['CS', 'Math', NULL];
+----
+contains
+t
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+SELECT 'English' IN ['CS', 'Math', NULL];
+----
+contains
+f
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+SELECT 'key1' IN MAP {'key1': 50, 'key2': 75};
+----
+contains
+t
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query
+SELECT 'key3' IN MAP {'key1': 50, 'key2': 75};
+----
+contains
+f
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query
+SELECT 42 IN (SELECT unnest([32, 42, 52]) AS x);
+----
+?column?
+t
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+statement error
+SELECT 42 IN (SELECT unnest([32, 42, 52]) AS x, 'a' AS y);
+----
+db error: ERROR: Subquery returns 2 columns - expected 1
+
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+query
+SELECT 'Hello' IN 'Hello World';
+----
+contains
+t

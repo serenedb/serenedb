@@ -1,0 +1,126 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE scores (
+    team VARCHAR,
+    player VARCHAR,
+    points INTEGER
+);
+
+statement ok
+INSERT INTO scores VALUES
+    ('Hawks', 'Ann', 30),
+    ('Hawks', 'Bob', 22),
+    ('Hawks', 'Cyd', 18),
+    ('Owls', 'Dan', 27),
+    ('Owls', 'Eve', 25),
+    ('Owls', 'Fay', 15);
+
+# DOCS_TEST_BODY
+
+query ??? rowsort
+SELECT
+    team,
+    player,
+    -- In this example the player_rank column in the select clause is for reference
+    row_number() OVER (PARTITION BY team ORDER BY points DESC) AS player_rank
+FROM scores
+QUALIFY
+    row_number() OVER (PARTITION BY team ORDER BY points DESC) < 3;
+----
+team	player	player_rank
+Hawks	Ann	1
+Hawks	Bob	2
+Owls	Dan	1
+Owls	Eve	2
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query ??? rowsort
+SELECT
+    team,
+    player,
+    row_number() OVER (PARTITION BY team ORDER BY points DESC) AS player_rank
+FROM scores
+QUALIFY
+    player_rank < 3;
+----
+team	player	player_rank
+Hawks	Ann	1
+Hawks	Bob	2
+Owls	Dan	1
+Owls	Eve	2
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query ??? rowsort
+SELECT
+    team,
+    player,
+    -- In this example the player_rank column in the select clause is for reference
+    row_number() OVER my_window AS player_rank
+FROM scores
+WINDOW
+    my_window AS (PARTITION BY team ORDER BY points DESC)
+QUALIFY
+    row_number() OVER my_window < 3;
+----
+team	player	player_rank
+Hawks	Ann	1
+Hawks	Bob	2
+Owls	Dan	1
+Owls	Eve	2
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query ??? rowsort
+SELECT
+    team,
+    player,
+    row_number() OVER my_window AS player_rank
+FROM scores
+WINDOW
+    my_window AS (PARTITION BY team ORDER BY points DESC)
+QUALIFY
+    player_rank < 3;
+----
+team	player	player_rank
+Hawks	Ann	1
+Hawks	Bob	2
+Owls	Dan	1
+Owls	Eve	2
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query ??? rowsort
+WITH ranked_players AS (
+    SELECT
+        team,
+        player,
+        row_number() OVER (PARTITION BY team ORDER BY points DESC) AS player_rank
+    FROM scores
+)
+SELECT
+    *
+FROM ranked_players
+WHERE
+    player_rank < 3;
+----
+team	player	player_rank
+Hawks	Ann	1
+Hawks	Bob	2
+Owls	Dan	1
+Owls	Eve	2

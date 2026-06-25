@@ -1,0 +1,50 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT TIME '1992-09-20 11:30:00.123456';
+----
+time
+11:30:00.123456
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT TIMETZ '1992-09-20 11:30:00.123456';
+----
+time with time zone
+11:30:00.123456+00:00
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT TIMETZ '1992-09-20 11:30:00.123456-02:00';
+----
+time with time zone
+13:30:00.123456+00:00
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT TIMETZ '1992-09-20 11:30:00.123456+05:30';
+----
+time with time zone
+06:00:00.123456+00:00
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+skipif pg-wire-extended
+query
+SELECT '15:30:00.123456789'::TIME_NS;
+----
+time_ns
+15:30:00.123456789

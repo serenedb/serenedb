@@ -1,0 +1,119 @@
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE bits (A BITSTRING);
+
+statement ok
+INSERT INTO bits VALUES ('10101'::BITSTRING), ('11001'::BITSTRING), ('00110'::BITSTRING);
+
+statement ok
+CREATE TABLE nums (A INTEGER);
+
+statement ok
+INSERT INTO nums VALUES (1), (3), (5), (8);
+
+# DOCS_TEST: bit_count
+# DOCS_TEST_BODY
+query
+SELECT bit_count('1101011'::BITSTRING) AS bit_count;
+----
+bit_count
+5
+
+# DOCS_TEST: bit_length
+# DOCS_TEST_BODY
+query
+SELECT bit_length('1101011'::BITSTRING) AS bit_length;
+----
+bit_length
+7
+
+# DOCS_TEST: bit_position
+# DOCS_TEST_BODY
+query
+SELECT bit_position('010'::BITSTRING, '1110101'::BITSTRING) AS bit_position;
+----
+bit_position
+4
+
+# DOCS_TEST: bitstring
+# DOCS_TEST_BODY
+query
+SELECT bitstring('1010'::BITSTRING, 7) AS bitstring;
+----
+bitstring
+0001010
+
+# DOCS_TEST: get_bit
+# DOCS_TEST_BODY
+query
+SELECT get_bit('0110010'::BITSTRING, 2) AS get_bit;
+----
+get_bit
+1
+
+# DOCS_TEST: length
+# DOCS_TEST_BODY
+query
+SELECT length('1101011'::BITSTRING) AS length;
+----
+length
+7
+
+# DOCS_TEST: octet_length
+# DOCS_TEST_BODY
+query
+SELECT octet_length('1101011'::BITSTRING) AS octet_length;
+----
+octet_length
+1
+
+# DOCS_TEST: set_bit
+# DOCS_TEST_BODY
+query
+SELECT set_bit('0110010'::BITSTRING, 2, 0) AS set_bit;
+----
+set_bit
+0100010
+
+# DOCS_TEST: bit_and
+# DOCS_TEST_BODY
+query
+SELECT bit_and(A) AS bit_and FROM bits;
+----
+bit_and
+00000
+
+# DOCS_TEST: bit_or
+# DOCS_TEST_BODY
+query
+SELECT bit_or(A) AS bit_or FROM bits;
+----
+bit_or
+11111
+
+# DOCS_TEST: bit_xor
+# DOCS_TEST_BODY
+query
+SELECT bit_xor(A) AS bit_xor FROM bits;
+----
+bit_xor
+01010
+
+# DOCS_TEST: bitstring_agg
+# DOCS_TEST_BODY
+query
+SELECT bitstring_agg(A) AS bitstring_agg FROM nums;
+----
+bitstring_agg
+10101001
+
+# DOCS_TEST: bitstring_agg_min_max
+# DOCS_TEST_BODY
+query
+SELECT bitstring_agg(A, 1, 42) AS bitstring_agg FROM nums;
+----
+bitstring_agg
+101010010000000000000000000000000000000000

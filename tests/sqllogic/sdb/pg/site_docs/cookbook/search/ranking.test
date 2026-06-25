@@ -1,0 +1,207 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE movies (
+    id INTEGER PRIMARY KEY,
+    title VARCHAR,
+    description VARCHAR,
+    genre VARCHAR,
+    runtime INTEGER,
+    year INTEGER
+);
+
+statement ok
+INSERT INTO movies VALUES
+(1, 'The Matrix', 'A computer hacker learns about the true nature of reality and his role in the war against its controllers.', 'sci-fi', 136, 1999),
+(2, 'The Matrix Reloaded', 'Neo and the rebel leaders estimate they have 72 hours until Zion falls to the machine army.', 'sci-fi', 138, 2003),
+(3, 'The Matrix Revolutions', 'The human city of Zion defends itself against the massive machine invasion.', 'sci-fi', 129, 2003),
+(4, 'Jurassic Park', 'A pragmatic paleontologist touring an almost complete theme park on an island is tasked with protecting a group of children after the biggest blockbuster creatures break free.', 'adventure', 127, 1993),
+(5, 'Harry Potter and the Order of the Phoenix', 'With their warning about Lord Voldemorts return scoffed at, Harry and Dumbledore are targeted by the Wizard Authoritys new combative leader.', 'fantasy', 138, 2007),
+(6, 'Scary Movie', 'A year after disposing of the body of a man they accidentally killed, a group of dumb teenagers are stalked by a bumbling serial killer in the biggest blockbuster parody.', 'comedy', 88, 2000),
+(7, 'Star Trek: The Motion Picture', 'When an alien spacecraft of enormous power is spotted approaching Earth, Admiral James T. Kirk resumes command of the overhauled USS Enterprise to intercept the galaxy threat.', 'sci-fi', 132, 1979),
+(8, 'Alien', 'After investigating a mysterious transmission of unknown origin, the crew of a commercial spacecraft encounters a deadly lifeform in the dark galaxy of space.', 'sci-fi', 117, 1979),
+(9, 'Café Society', 'A young man arrives in Hollywood during the 1930s hoping to work in the film industry, falls in love, and finds himself swept up in the café culture and glamour of the era.', 'drama', 96, 2016),
+(10, 'The Grand Budapest Hotel', 'A writer encounters the owner of an aging high-class hotel who tells of his early years serving as a lobby boy in the legendary establishment.', 'comedy', 99, 2014);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY basic_dict (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE INDEX movies_idx ON movies
+    USING inverted (id, title basic_dict, description basic_dict, genre);
+
+statement ok
+VACUUM (REFRESH_TABLE) movies;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title, BM25(movies_idx.tableoid) AS relevance
+FROM movies_idx
+WHERE description @@ ts_phrase('alien')
+ORDER BY relevance DESC, id;
+----
+id	title	relevance
+7	Star Trek: The Motion Picture	3.2757118
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title, BM25(movies_idx.tableoid, 1.2, 0.75) AS relevance
+FROM movies_idx
+WHERE description @@ ts_phrase('galaxy')
+ORDER BY relevance DESC, id;
+----
+id	title	relevance
+7	Star Trek: The Motion Picture	2.4358742
+8	Alien	2.4358742
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title, BM25(movies_idx.tableoid, 0.5, 0) AS relevance
+FROM movies_idx
+WHERE description @@ ts_phrase('alien')
+ORDER BY relevance DESC, id;
+----
+id	title	relevance
+7	Star Trek: The Motion Picture	1.9924302
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title, BM25(movies_idx.tableoid, 2.0, 0.75) AS relevance
+FROM movies_idx
+WHERE description @@ ts_phrase('film')
+ORDER BY relevance DESC, id;
+----
+id	title	relevance
+9	Café Society	3.8228743
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+-- BM15: no length normalization (b = 0)
+SELECT id, title, BM25(movies_idx.tableoid, 1.2, 0) AS relevance
+FROM movies_idx
+WHERE description @@ ts_phrase('alien')
+ORDER BY relevance DESC, id;
+----
+id	title	relevance
+7	Star Trek: The Motion Picture	1.9924302
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title, genre, BM25(movies_idx.tableoid) AS relevance
+FROM movies_idx
+WHERE description @@ ts_phrase('film') AND genre @@ 'drama'
+ORDER BY relevance DESC, id;
+----
+id	title	genre	relevance
+9	Café Society	drama	3.2757118
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+SELECT genre, COUNT(*) AS matches, ROUND(AVG(relevance)::NUMERIC, 3) AS avg_relevance
+FROM (
+    SELECT genre, BM25(movies_idx.tableoid) AS relevance
+    FROM movies_idx
+    WHERE description @@ ts_phrase('biggest blockbuster')
+) ranked
+GROUP BY genre
+ORDER BY avg_relevance DESC, genre;
+----
+genre	matches	avg_relevance
+adventure	1	4.872
+comedy	1	4.872
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title, BM25(movies_idx.tableoid) AS relevance
+FROM movies_idx
+WHERE description @@ ts_phrase('alien')
+ORDER BY relevance DESC, id
+LIMIT 10 OFFSET 0;
+----
+id	title	relevance
+7	Star Trek: The Motion Picture	3.2757118
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title, TFIDF(movies_idx.tableoid) AS relevance
+FROM movies_idx
+WHERE description @@ ts_phrase('alien')
+ORDER BY relevance DESC, id;
+----
+id	title	relevance
+7	Star Trek: The Motion Picture	1.8718022
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title, TFIDF(movies_idx.tableoid, true) AS relevance
+FROM movies_idx
+WHERE description @@ ts_phrase('alien')
+ORDER BY relevance DESC, id;
+----
+id	title	relevance
+7	Star Trek: The Motion Picture	1.8718022
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title, BM25(movies_idx.tableoid) AS relevance, runtime,
+       BM25(movies_idx.tableoid) * LOG(runtime + 1) AS custom_score
+FROM movies_idx
+WHERE description @@ ts_phrase('alien')
+ORDER BY custom_score DESC, id;
+----
+id	title	relevance	runtime	custom_score
+7	Star Trek: The Motion Picture	3.2757118	132	6.957125828299511
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ranking_dict (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = true,
+    accent = false,
+    frequency = true,
+    position = true
+);

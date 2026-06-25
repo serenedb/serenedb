@@ -1,0 +1,165 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+statement ok
+CREATE MACRO fn() AS 1;
+
+statement ok
+CREATE TABLE idx_tbl (id INTEGER);
+
+statement ok
+CREATE INDEX idx ON idx_tbl (id);
+
+statement ok
+CREATE SCHEMA sch;
+
+statement ok
+CREATE SEQUENCE seq;
+
+statement ok
+CREATE MACRO mcr() AS 1;
+
+statement ok
+CREATE MACRO mt() AS TABLE SELECT 1 AS value;
+
+statement ok
+CREATE TYPE typ AS ENUM ('value');
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP TABLE tbl;
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP VIEW IF EXISTS view1;
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP FUNCTION fn;
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP INDEX idx;
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP SCHEMA sch;
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP SEQUENCE seq;
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP MACRO mcr;
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP MACRO TABLE mt;
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP TYPE typ;
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE SCHEMA myschema;
+
+statement ok
+CREATE TABLE myschema.t1 (i INTEGER);
+
+statement error (?i)cannot drop schema myschema because other objects depend on it
+DROP SCHEMA myschema;
+
+# DOCS_TEST: example_011
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP SCHEMA IF EXISTS myschema CASCADE;
+
+statement ok
+DROP TABLE IF EXISTS myschema;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE SCHEMA myschema;
+
+statement ok
+CREATE TABLE myschema.t1 (i INTEGER);
+
+statement ok
+DROP SCHEMA myschema CASCADE;
+
+# DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
+
+statement ok
+PRAGMA database_size;
+
+# DOCS_TEST: example_014
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY dict (template = 'text', locale = 'en_US.UTF-8');
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP TEXT SEARCH DICTIONARY dict;

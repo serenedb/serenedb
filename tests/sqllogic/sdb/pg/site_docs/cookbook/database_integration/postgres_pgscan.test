@@ -1,0 +1,95 @@
+control substitution on
+
+# Doc examples for the cookbook "Query PostgreSQL" page. The `_pgscan` filename
+# suffix tells tests/sqllogic/run.sh to bring up a real postgres backend at
+# ${PGHOST}:${PGPORT}. Display SQL (DOCS_TEST_RAW, the `#|` lines) uses the
+# friendly alias `pg` and localhost; the runnable body uses the substituted
+# host/port/user and a per-run unique alias so concurrent runs don't collide.
+
+# DOCS_TEST: example_001
+
+statement ok
+DETACH IF EXISTS pg_${__DATABASE__};
+
+# DOCS_TEST_RAW
+#| ATTACH 'host=localhost port=5432 dbname=mydb user=postgres' AS pg (TYPE postgres);
+
+# DOCS_TEST_BODY
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pg_${__DATABASE__} (TYPE postgres);
+
+# DOCS_TEST: example_002
+
+statement ok
+CREATE SCHEMA pg_${__DATABASE__}.${__DATABASE__}_app;
+
+statement ok
+CREATE TABLE pg_${__DATABASE__}.${__DATABASE__}_app.users (
+  id      INTEGER PRIMARY KEY,
+  name    TEXT,
+  signups INTEGER
+);
+
+statement ok
+INSERT INTO pg_${__DATABASE__}.${__DATABASE__}_app.users VALUES
+  (1, 'alice', 12),
+  (2, 'bob',   7),
+  (3, 'carol', 23);
+
+# DOCS_TEST_RAW
+#| SELECT id, name, signups FROM pg.app.users ORDER BY id;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, name, signups FROM pg_${__DATABASE__}.${__DATABASE__}_app.users ORDER BY id;
+----
+id	name	signups
+1	alice	12
+2	bob	7
+3	carol	23
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_RAW
+#| -- Read a single table without attaching the whole database
+#| SELECT id, name FROM postgres_scan('host=localhost port=5432 dbname=mydb', 'app', 'users');
+
+# DOCS_TEST_BODY
+
+query rowsort
+SELECT id, name
+FROM postgres_scan('host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}', '${__DATABASE__}_app', 'users');
+----
+id	name
+1	alice
+2	bob
+3	carol
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_RAW
+#| -- An attached database is read-write: write to it like a local table
+#| INSERT INTO pg.app.users VALUES (4, 'dave', 5);
+
+# DOCS_TEST_BODY
+
+statement ok
+INSERT INTO pg_${__DATABASE__}.${__DATABASE__}_app.users VALUES (4, 'dave', 5);
+
+# DOCS_TEST: example_004
+
+statement ok
+DROP TABLE pg_${__DATABASE__}.${__DATABASE__}_app.users;
+
+statement ok
+DROP SCHEMA pg_${__DATABASE__}.${__DATABASE__}_app;
+
+# DOCS_TEST_RAW
+#| DETACH pg;
+
+# DOCS_TEST_BODY
+
+statement ok
+DETACH pg_${__DATABASE__};

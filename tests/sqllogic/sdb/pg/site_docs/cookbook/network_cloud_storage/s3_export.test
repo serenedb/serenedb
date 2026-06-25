@@ -1,0 +1,77 @@
+# DOCS_TEST: example_003
+
+# DOCS_TEST_RAW
+#| CREATE SECRET (
+#|     TYPE s3,
+#|     KEY_ID '⟨AKIAIOSFODNN7EXAMPLE⟩',
+#|     SECRET '⟨wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY⟩',
+#|     REGION '⟨us-east-1⟩'
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE OR REPLACE SECRET (
+    TYPE s3,
+    KEY_ID 'AKIAIOSFODNN7EXAMPLE',
+    SECRET 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+    REGION 'us-east-1'
+);
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_RAW
+#| CREATE SECRET (
+#|     TYPE s3,
+#|     PROVIDER credential_chain
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE OR REPLACE SECRET (
+    TYPE s3,
+    KEY_ID 'AKIAIOSFODNN7EXAMPLE',
+    SECRET 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+    REGION 'us-east-1'
+);
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE table_name (id INTEGER);
+
+statement error
+COPY table_name TO 's3://s3-bucket/filename.parquet';
+----
+db error: ERROR: Unable to connect to URL s3://s3-bucket/filename.parquet: <slt:ignore>
+
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_RAW
+#| CREATE SECRET (
+#|     TYPE gcs,
+#|     KEY_ID '⟨AKIAIOSFODNN7EXAMPLE⟩',
+#|     SECRET '⟨wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY⟩'
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE OR REPLACE SECRET (
+    TYPE gcs,
+    KEY_ID 'AKIAIOSFODNN7EXAMPLE',
+    SECRET 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
+);
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+statement error
+COPY table_name TO 'gs://gcs_bucket/filename.parquet';
+----
+db error: ERROR: Unable to connect to URL gs://gcs_bucket/filename.parquet: <slt:ignore>

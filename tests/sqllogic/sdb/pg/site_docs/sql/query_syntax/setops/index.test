@@ -1,0 +1,121 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query ? rowsort
+SELECT * FROM range(2) t1(x)
+UNION
+SELECT * FROM range(3) t2(x);
+----
+x
+0
+1
+2
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query ? rowsort
+SELECT * FROM range(2) t1(x)
+UNION ALL
+SELECT * FROM range(3) t2(x);
+----
+x
+0
+0
+1
+1
+2
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE capitals (city VARCHAR, country VARCHAR);
+
+statement ok
+INSERT INTO capitals VALUES
+    ('Amsterdam', 'NL'),
+    ('Berlin', 'Germany');
+
+statement ok
+CREATE TABLE weather (city VARCHAR, degrees INTEGER, date DATE);
+
+statement ok
+INSERT INTO weather VALUES
+    ('Amsterdam', 10, '2022-10-14'),
+    ('Seattle', 8, '2022-10-12');
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query ???? rowsort
+SELECT * FROM capitals
+UNION BY NAME
+SELECT * FROM weather;
+----
+city	country	degrees	date
+Amsterdam	NL	NULL	NULL
+Amsterdam	NULL	10	2022-10-14
+Berlin	Germany	NULL	NULL
+Seattle	NULL	8	2022-10-12
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query ? rowsort
+SELECT * FROM range(2) t1(x)
+INTERSECT
+SELECT * FROM range(6) t2(x);
+----
+x
+0
+1
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query ? rowsort
+SELECT unnest([5, 5, 6, 6, 6, 6, 7, 8]) AS x
+INTERSECT ALL
+SELECT unnest([5, 6, 6, 7, 7, 9]);
+----
+x
+5
+6
+6
+7
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query ? rowsort
+SELECT * FROM range(5) t1(x)
+EXCEPT
+SELECT * FROM range(2) t2(x);
+----
+x
+2
+3
+4
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query ? rowsort
+SELECT unnest([5, 5, 6, 6, 6, 6, 7, 8]) AS x
+EXCEPT ALL
+SELECT unnest([5, 6, 6, 7, 7, 9]);
+----
+x
+5
+6
+6
+8

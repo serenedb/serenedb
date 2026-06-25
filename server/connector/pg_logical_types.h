@@ -21,6 +21,7 @@
 #pragma once
 
 #include <duckdb/common/types.hpp>
+#include <duckdb/inet/inet_type.hpp>
 #include <string_view>
 
 #include "basics/containers/flat_hash_set.h"
@@ -115,5 +116,16 @@ inline bool IsOidLike(const duckdb::LogicalType& type) {
 }
 
 #undef DECLARE_PG_TYPE
+
+inline constexpr std::string_view kInetAlias = duckdb::INET_TYPE_NAME;
+
+inline bool IsInet(const duckdb::LogicalType& type) {
+  return type.id() == duckdb::LogicalTypeId::STRUCT &&
+         type.GetAlias() == kInetAlias;
+}
+
+#ifndef SDB_PG_LOGICAL_TYPES_NO_FACTORY
+inline duckdb::LogicalType INET() { return duckdb::make_inet_type(); }
+#endif
 
 }  // namespace sdb::pg

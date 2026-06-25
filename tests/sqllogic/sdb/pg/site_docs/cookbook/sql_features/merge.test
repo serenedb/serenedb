@@ -1,0 +1,301 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE IF NOT EXISTS incoming_employees (
+    employee_id     INTEGER,
+    employee_name   VARCHAR,
+    department       VARCHAR,
+    office    VARCHAR,
+    begin_date  DATE,
+    end_date    DATE,
+    is_current  BOOLEAN
+);
+
+statement ok
+INSERT INTO incoming_employees VALUES
+    (101, 'Alice',   'Sales',       'Office B',      DATE '2025-11-25', NULL, true),
+    (102, 'Bob',    'Engineering',         'Office A',      DATE '2025-11-25', NULL, true),
+    (104, 'Dave',     'Support',       'Office C',      DATE '2025-11-25', NULL, true),
+    (105, 'Erin',    'Marketing', 'Remote',   DATE '2025-11-25', NULL, true);
+
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE IF NOT EXISTS master_employees (
+    record_id   INTEGER PRIMARY KEY,
+    employee_id     INTEGER NOT NULL,
+    employee_name   VARCHAR,
+    department       VARCHAR,
+    office    VARCHAR,
+    begin_date  DATE NOT NULL,
+    end_date    DATE,
+    is_current  BOOLEAN NOT NULL DEFAULT true
+);
+
+statement ok
+CREATE SEQUENCE IF NOT EXISTS employee_record_seq START 1;
+
+statement ok
+INSERT INTO master_employees VALUES
+    (nextval('employee_record_seq'), 101, 'Alice', 'Sales',       'Office A', DATE '2025-11-24', NULL, true),
+    (nextval('employee_record_seq'), 102, 'Bob',  'Engineering',         'Office A', DATE '2025-11-24', NULL, true),
+    (nextval('employee_record_seq'), 103, 'Carol', 'Finance',         'Office B', DATE '2025-11-24', NULL, true),
+    (nextval('employee_record_seq'), 105, 'Erin',  'Marketing', 'Office A', DATE '2025-11-24', NULL, true);
+
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+MERGE INTO master_employees AS target
+USING incoming_employees AS source
+ON target.employee_id = source.employee_id AND target.is_current = true
+WHEN MATCHED AND (
+       target.employee_name <> source.employee_name OR
+       target.department     <> source.department     OR
+       target.office  <> source.office
+) THEN UPDATE SET
+    end_date    = DATE '2025-11-24',
+    is_current  = false
+WHEN NOT MATCHED BY SOURCE AND target.is_current = true THEN UPDATE SET
+    end_date    = DATE '2025-11-24',
+    is_current  = false
+WHEN NOT MATCHED BY TARGET THEN INSERT (
+    record_id, employee_id, employee_name, department, office,
+    begin_date, end_date, is_current
+) VALUES (
+    nextval('employee_record_seq'),
+    source.employee_id, source.employee_name, source.department, source.office,
+    source.begin_date, source.end_date, source.is_current
+)
+RETURNING merge_action, *;
+
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+INSERT INTO master_employees (
+    record_id, employee_id, employee_name, department, office,
+    begin_date, end_date, is_current
+)
+SELECT
+    nextval('employee_record_seq'),
+    source.employee_id,
+    source.employee_name,
+    source.department,
+    source.office,
+    DATE '2025-11-25' AS begin_date,
+    NULL AS end_date,
+    true AS is_current
+FROM incoming_employees AS source
+INNER JOIN master_employees AS target
+    ON source.employee_id = target.employee_id
+WHERE target.is_current = false
+  AND target.end_date = DATE '2025-11-24';
+
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+    record_id,
+    employee_id,
+    employee_name,
+    department,
+    office,
+    CAST(begin_date AS VARCHAR) AS begin_date,
+    COALESCE(CAST(end_date AS VARCHAR), 'NULL') AS end_date,
+    CAST(is_current AS VARCHAR) AS is_current
+FROM master_employees
+ORDER BY employee_id, begin_date DESC;
+----
+record_id	employee_id	employee_name	department	office	begin_date	end_date	is_current
+10	101	Alice	Sales	Office B	2025-11-25	NULL	true
+1	101	Alice	Sales	Office A	2025-11-24	2025-11-24	false
+2	102	Bob	Engineering	Office A	2025-11-24	NULL	true
+3	103	Carol	Finance	Office B	2025-11-24	2025-11-24	false
+9	104	Dave	Support	Office C	2025-11-25	NULL	true
+11	105	Erin	Marketing	Remote	2025-11-25	NULL	true
+4	105	Erin	Marketing	Office A	2025-11-24	2025-11-24	false
+
+query
+SELECT
+    record_id,
+    employee_id,
+    employee_name,
+    department,
+    office,
+    CAST(begin_date AS VARCHAR) AS begin_date,
+    COALESCE(CAST(end_date AS VARCHAR), 'NULL') AS end_date,
+    CAST(is_current AS VARCHAR) AS is_current
+FROM master_employees
+WHERE is_current = true
+ORDER BY employee_id;
+----
+record_id	employee_id	employee_name	department	office	begin_date	end_date	is_current
+10	101	Alice	Sales	Office B	2025-11-25	NULL	true
+2	102	Bob	Engineering	Office A	2025-11-24	NULL	true
+9	104	Dave	Support	Office C	2025-11-25	NULL	true
+11	105	Erin	Marketing	Remote	2025-11-25	NULL	true
+
+query
+SELECT
+    record_id,
+    employee_id,
+    employee_name,
+    department,
+    office,
+    CAST(begin_date AS VARCHAR) AS begin_date,
+    COALESCE(CAST(end_date AS VARCHAR), 'NULL') AS end_date,
+    CAST(is_current AS VARCHAR) AS is_current
+FROM master_employees
+WHERE is_current = false
+ORDER BY employee_id, begin_date DESC;
+----
+record_id	employee_id	employee_name	department	office	begin_date	end_date	is_current
+1	101	Alice	Sales	Office A	2025-11-24	2025-11-24	false
+3	103	Carol	Finance	Office B	2025-11-24	2025-11-24	false
+4	105	Erin	Marketing	Office A	2025-11-24	2025-11-24	false
+
+# DOCS_TEST: example_006
+
+statement ok
+DROP TABLE IF EXISTS master_employees;
+
+statement ok
+CREATE TABLE master_employees (
+    record_id   INTEGER PRIMARY KEY,
+    employee_id     INTEGER NOT NULL,
+    employee_name   VARCHAR,
+    department       VARCHAR,
+    office    VARCHAR,
+    begin_date  DATE NOT NULL,
+    end_date    DATE,
+    is_current  BOOLEAN NOT NULL DEFAULT true
+);
+
+statement ok
+INSERT INTO master_employees VALUES
+    (1, 101, 'Alice', 'Sales', 'Office A', DATE '2025-11-24', DATE '2025-11-25', false),
+    (10, 101, 'Alice', 'Sales', 'Office B', DATE '2025-11-26', NULL, true);
+
+# DOCS_TEST_RAW
+#| SELECT * FROM master_employees WHERE employee_name = 'Alice' AND is_current = false;
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+    record_id,
+    employee_id,
+    employee_name,
+    department,
+    office,
+    CAST(begin_date AS VARCHAR) AS begin_date,
+    COALESCE(CAST(end_date AS VARCHAR), 'NULL') AS end_date,
+    CAST(is_current AS VARCHAR) AS is_current
+FROM master_employees
+WHERE employee_name = 'Alice'
+  AND is_current = false;
+----
+record_id	employee_id	employee_name	department	office	begin_date	end_date	is_current
+1	101	Alice	Sales	Office A	2025-11-24	2025-11-25	false
+
+# DOCS_TEST: example_007
+
+statement ok
+DROP TABLE IF EXISTS master_employees;
+
+statement ok
+CREATE TABLE master_employees (
+    record_id   INTEGER PRIMARY KEY,
+    employee_id     INTEGER NOT NULL,
+    employee_name   VARCHAR,
+    department       VARCHAR,
+    office    VARCHAR,
+    begin_date  DATE NOT NULL,
+    end_date    DATE,
+    is_current  BOOLEAN NOT NULL DEFAULT true
+);
+
+statement ok
+INSERT INTO master_employees VALUES
+    (1, 101, 'Alice', 'Sales', 'Office A', DATE '2025-11-24', DATE '2025-11-25', false),
+    (10, 101, 'Alice', 'Sales', 'Office B', DATE '2025-11-26', NULL, true);
+
+# DOCS_TEST_RAW
+#| SELECT * FROM master_employees WHERE employee_name = 'Alice' AND is_current = true;
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+    record_id,
+    employee_id,
+    employee_name,
+    department,
+    office,
+    CAST(begin_date AS VARCHAR) AS begin_date,
+    COALESCE(CAST(end_date AS VARCHAR), 'NULL') AS end_date,
+    CAST(is_current AS VARCHAR) AS is_current
+FROM master_employees
+WHERE employee_name = 'Alice'
+  AND is_current = true;
+----
+record_id	employee_id	employee_name	department	office	begin_date	end_date	is_current
+10	101	Alice	Sales	Office B	2025-11-26	NULL	true
+
+# DOCS_TEST: example_008
+
+statement ok
+DROP TABLE IF EXISTS master_employees;
+
+statement ok
+CREATE TABLE master_employees (
+    record_id   INTEGER PRIMARY KEY,
+    employee_id     INTEGER NOT NULL,
+    employee_name   VARCHAR,
+    department       VARCHAR,
+    office    VARCHAR,
+    begin_date  DATE NOT NULL,
+    end_date    DATE,
+    is_current  BOOLEAN NOT NULL DEFAULT true
+);
+
+statement ok
+INSERT INTO master_employees VALUES
+    (1, 101, 'Alice', 'Sales', 'Office A', DATE '2025-11-24', DATE '2025-11-25', false),
+    (10, 101, 'Alice', 'Sales', 'Office B', DATE '2025-11-26', NULL, true);
+
+# DOCS_TEST_RAW
+#| SELECT * FROM master_employees WHERE employee_name = 'Alice';
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+    record_id,
+    employee_id,
+    employee_name,
+    department,
+    office,
+    CAST(begin_date AS VARCHAR) AS begin_date,
+    COALESCE(CAST(end_date AS VARCHAR), 'NULL') AS end_date,
+    CAST(is_current AS VARCHAR) AS is_current
+FROM master_employees
+WHERE employee_name = 'Alice'
+ORDER BY record_id;
+----
+record_id	employee_id	employee_name	department	office	begin_date	end_date	is_current
+1	101	Alice	Sales	Office A	2025-11-24	2025-11-25	false
+10	101	Alice	Sales	Office B	2025-11-26	NULL	true

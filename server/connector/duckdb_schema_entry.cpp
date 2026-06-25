@@ -75,8 +75,10 @@
 namespace sdb::connector {
 namespace {
 
-// Extracts column names from `[a, b, c]` -- the only accepted shape. Anything
-// else (row, single ref, string) throws.
+[[noreturn]] void ThrowCreateUnsupported(std::string_view what) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  ERR_MSG("CREATE ", what, " is not supported"));
+}
 
 // The single column a CHECK expression references, or empty if it references
 // zero or multiple distinct columns. Drives PostgreSQL-style auto naming
@@ -759,29 +761,25 @@ duckdb::optional_ptr<duckdb::CatalogEntry>
 SereneDBSchemaEntry::CreateTableFunction(
   duckdb::CatalogTransaction transaction,
   duckdb::CreateTableFunctionInfo& info) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                  ERR_MSG("CREATE TABLE FUNCTION is not supported"));
+  ThrowCreateUnsupported("TABLE FUNCTION");
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry>
 SereneDBSchemaEntry::CreateCopyFunction(duckdb::CatalogTransaction transaction,
                                         duckdb::CreateCopyFunctionInfo& info) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                  ERR_MSG("CREATE COPY FUNCTION is not supported"));
+  ThrowCreateUnsupported("COPY FUNCTION");
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry>
 SereneDBSchemaEntry::CreatePragmaFunction(
   duckdb::CatalogTransaction transaction,
   duckdb::CreatePragmaFunctionInfo& info) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                  ERR_MSG("CREATE PRAGMA FUNCTION is not supported"));
+  ThrowCreateUnsupported("PRAGMA FUNCTION");
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateCollation(
   duckdb::CatalogTransaction transaction, duckdb::CreateCollationInfo& info) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                  ERR_MSG("CREATE COLLATION is not supported"));
+  ThrowCreateUnsupported("COLLATION");
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateType(
@@ -844,6 +842,16 @@ void HandleRenameRelationError(Result r, std::string_view name,
                     ERR_MSG("relation \"", new_name, "\" already exists"));
   }
   SDB_THROW(std::move(r));
+}
+
+// Maps a "relation not found" result from a table-level catalog op to the PG
+// "relation does not exist" error. DuckDB's binder already enforces IF EXISTS,
+// so reaching here means a race with a concurrent DROP -- handle defensively.
+void ThrowIfTableMissing(const Result& r, std::string_view table_name) {
+  if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation \"", table_name, "\" does not exist"));
+  }
 }
 
 }  // namespace
@@ -1022,13 +1030,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
           ERR_DETAIL("This operation is not supported for ", actual_type, "."));
       }
 
-      if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-        // Table not found -- DuckDB's binder already handles IF EXISTS,
-        // so if we reach here the table should exist.
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-          ERR_MSG("relation \"", table_name, "\" does not exist"));
-      }
+      ThrowIfTableMissing(r, table_name);
 
       if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
         if (!drop_info.if_constraint_not_found) {
@@ -1076,11 +1078,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
                   table_name, "\" does not exist"));
       }
 
-      if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-          ERR_MSG("relation \"", table_name, "\" does not exist"));
-      }
+      ThrowIfTableMissing(r, table_name);
 
       if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
         THROW_SQL_ERROR(
@@ -1112,11 +1110,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
           ERR_MSG("cannot rename columns of a non-table relation"));
       }
 
-      if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-          ERR_MSG("relation \"", table_name, "\" does not exist"));
-      }
+      ThrowIfTableMissing(r, table_name);
 
       if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
         THROW_SQL_ERROR(
@@ -1327,11 +1321,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
                         ERR_MSG("column \"", cd.Name(), "\" of relation \"",
                                 table_name, "\" already exists"));
       }
-      if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-          ERR_MSG("relation \"", table_name, "\" does not exist"));
-      }
+      ThrowIfTableMissing(r, table_name);
       if (!r.ok()) {
         SDB_THROW(std::move(r));
       }
@@ -1343,11 +1333,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       Result r = catalog_impl.DropTableColumn(db, name, table_name,
                                               remove_info.removed_column,
                                               remove_info.if_column_exists);
-      if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-          ERR_MSG("relation \"", table_name, "\" does not exist"));
-      }
+      ThrowIfTableMissing(r, table_name);
       if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
@@ -1395,6 +1381,65 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
                                 table_name, "\" does not exist"));
       }
 
+      // The remap below ignores IF [NOT] EXISTS, so short-circuit the no-op
+      // (Add of an existing field / Drop of a missing one) here.
+      auto field_exists = [](const duckdb::LogicalType& root,
+                             const duckdb::vector<duckdb::string>& path,
+                             size_t path_end, const std::string& leaf) -> bool {
+        // Direct child of struct `type` named `name` (case-insensitive), or
+        // null.
+        auto child = [](const duckdb::LogicalType& type,
+                        std::string_view name) -> const duckdb::LogicalType* {
+          if (type.id() != duckdb::LogicalTypeId::STRUCT) {
+            return nullptr;
+          }
+          const auto& children = duckdb::StructType::GetChildTypes(type);
+          auto found = absl::c_find_if(children, [&](const auto& field) {
+            return duckdb::StringUtil::CIEquals(field.first, name);
+          });
+          return found == children.end() ? nullptr : &found->second;
+        };
+        // Walk path[1..path_end) into nested structs; bail if a segment is
+        // absent.
+        const duckdb::LogicalType* current = &root;
+        for (size_t depth = 1; depth < path_end; ++depth) {
+          current = child(*current, path[depth]);
+          if (!current) {
+            return false;
+          }
+        }
+        return child(*current, leaf) != nullptr;
+      };
+      // A struct-field op requires the root column to be a struct.
+      if (col_it->type.id() != duckdb::LogicalTypeId::STRUCT) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+                        ERR_MSG("field \"", root_column, "\" is not a struct"));
+      }
+      if (table_info.alter_table_type == duckdb::AlterTableType::ADD_FIELD) {
+        const auto& add_field = table_info.Cast<duckdb::AddFieldInfo>();
+        if (field_exists(col_it->type, *column_path, column_path->size(),
+                         add_field.new_field.Name())) {
+          if (add_field.if_field_not_exists) {
+            return;
+          }
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
+            ERR_MSG("field already exists in column \"", root_column, "\""));
+        }
+      } else if (table_info.alter_table_type ==
+                 duckdb::AlterTableType::REMOVE_FIELD) {
+        const auto& remove_field = table_info.Cast<duckdb::RemoveFieldInfo>();
+        if (!field_exists(col_it->type, *column_path, column_path->size() - 1,
+                          column_path->back())) {
+          if (remove_field.if_column_exists) {
+            return;
+          }
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                          ERR_MSG("column or field of \"", root_column,
+                                  "\" does not exist in \"", table_name, "\""));
+        }
+      }
+
       duckdb::StructFieldRemap remap;
       try {
         if (table_info.alter_table_type == duckdb::AlterTableType::ADD_FIELD) {
@@ -1439,11 +1484,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       Result r = catalog_impl.ChangeColumnType(
         db, name, table_name, type_info.column_name, type_info.target_type,
         std::move(using_sql));
-      if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-          ERR_MSG("relation \"", table_name, "\" does not exist"));
-      }
+      ThrowIfTableMissing(r, table_name);
       if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_UNDEFINED_COLUMN),

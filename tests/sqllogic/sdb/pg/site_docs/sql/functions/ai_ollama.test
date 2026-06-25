@@ -1,0 +1,104 @@
+control substitution on
+
+# DOCS_TEST: secret
+
+# DOCS_TEST_RAW
+#| CREATE SECRET local_ai (
+#|     TYPE openai,
+#|     base_url 'http://localhost:11434',
+#|     embeddings_path '/v1/embeddings'
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE OR REPLACE SECRET local_ai_${__DATABASE__} (
+    TYPE openai,
+    base_url 'http://${OLLAMA_HOST}:${OLLAMA_PORT}',
+    embeddings_path '/v1/embeddings'
+);
+
+# DOCS_TEST: embed_dim
+
+# DOCS_TEST_RAW
+#| SELECT array_length(ai_embed('space exploration', 'all-minilm', 'local_ai'), 1) AS dims;
+
+# DOCS_TEST_BODY
+
+query
+SELECT array_length(ai_embed('space exploration', '${OLLAMA_MODEL}', 'local_ai_${__DATABASE__}'), 1) AS dims;
+----
+dims
+384
+
+# DOCS_TEST: embed_null
+
+# DOCS_TEST_RAW
+#| SELECT ai_embed(NULL, 'all-minilm', 'local_ai') IS NULL AS is_null;
+
+# DOCS_TEST_BODY
+
+query
+SELECT ai_embed(NULL, '${OLLAMA_MODEL}', 'local_ai_${__DATABASE__}') IS NULL AS is_null;
+----
+is_null
+t
+
+# DOCS_TEST: embed_table
+
+statement ok
+CREATE TABLE fruits (id INTEGER PRIMARY KEY, name VARCHAR);
+
+statement ok
+INSERT INTO fruits VALUES (1, 'apple'), (2, 'orange'), (3, NULL), (4, 'banana'), (5, 'pear');
+
+# DOCS_TEST_RAW
+#| SELECT
+#|     count(*) FILTER (WHERE e IS NOT NULL) AS embedded,
+#|     count(*) FILTER (WHERE e IS NULL)     AS skipped
+#| FROM (
+#|     SELECT ai_embed(name, 'all-minilm', 'local_ai') AS e
+#|     FROM fruits
+#| ) t;
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+    count(*) FILTER (WHERE e IS NOT NULL) AS embedded,
+    count(*) FILTER (WHERE e IS NULL)     AS skipped
+FROM (
+    SELECT ai_embed(name, '${OLLAMA_MODEL}', 'local_ai_${__DATABASE__}') AS e
+    FROM fruits
+) t;
+----
+embedded	skipped
+4	1
+
+# DOCS_TEST: build_index
+
+# DOCS_TEST_RAW
+#| CREATE TABLE catalog (id INTEGER PRIMARY KEY, name VARCHAR, embedding FLOAT[384]);
+#|
+#| INSERT INTO catalog
+#| SELECT id, name, ai_embed(name, 'all-minilm', 'local_ai')::FLOAT[384]
+#| FROM fruits
+#| WHERE name IS NOT NULL;
+#|
+#| CREATE INDEX catalog_idx ON catalog
+#|     USING inverted (id, name, embedding hnsw (metric = 'cosine'));
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE catalog (id INTEGER PRIMARY KEY, name VARCHAR, embedding FLOAT[384]);
+
+statement ok
+INSERT INTO catalog
+SELECT id, name, ai_embed(name, '${OLLAMA_MODEL}', 'local_ai_${__DATABASE__}')::FLOAT[384]
+FROM fruits
+WHERE name IS NOT NULL;
+
+statement ok
+CREATE INDEX catalog_idx ON catalog
+    USING inverted (id, name, embedding hnsw (metric = 'cosine'));

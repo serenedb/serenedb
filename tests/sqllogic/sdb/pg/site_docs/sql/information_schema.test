@@ -1,0 +1,63 @@
+# Shared setup for the information_schema examples below (executed, not displayed).
+
+statement ok
+CREATE OR REPLACE TABLE is_demo(id INTEGER PRIMARY KEY, name VARCHAR, score DOUBLE, CHECK (score >= 0));
+
+statement ok
+CREATE OR REPLACE VIEW is_demo_v AS SELECT id, name FROM is_demo;
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT column_name, data_type
+FROM information_schema.columns
+WHERE table_name = 'is_demo'
+ORDER BY ordinal_position;
+----
+column_name	data_type
+id	integer
+name	text
+score	double precision
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT table_name, table_type
+FROM information_schema.tables
+WHERE table_name LIKE 'is_demo%'
+ORDER BY table_name;
+----
+table_name	table_type
+is_demo	BASE TABLE
+is_demo_v	VIEW
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT constraint_type
+FROM information_schema.table_constraints
+WHERE table_name = 'is_demo'
+ORDER BY constraint_type;
+----
+constraint_type
+CHECK
+CHECK
+PRIMARY KEY
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT table_name, view_definition
+FROM information_schema.views
+WHERE table_name = 'is_demo_v';
+----
+table_name	view_definition
+is_demo_v	SELECT id, "name" FROM is_demo;

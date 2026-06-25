@@ -1,0 +1,11 @@
+control substitution on
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement error
+ATTACH 'host=localhost user=root port=0 database=mysqlscanner' AS mysql_db (TYPE mysql, READ_ONLY);
+----
+db error: ERROR: LOAD is not supported by SereneDB: extensions are compiled into the server binary and cannot be loaded at runtime.
+If you need the "mysql_scanner" extension, please open an issue at https://github.com/serenedb/serenedb/issues.

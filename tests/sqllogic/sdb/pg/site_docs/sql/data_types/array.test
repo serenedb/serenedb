@@ -1,0 +1,135 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT array_value(1, 2, 3);
+----
+array_value
+{1,2,3}
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT array_value(1, 2, 3)[2];
+----
+array_value
+2
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT [3, 2, 1]::INTEGER[3];
+----
+list_value
+{3,2,1}
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT array_value(array_value(1, 2), array_value(3, 4), array_value(5, 6));
+----
+array_value
+{{1,2},{3,4},{5,6}}
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT array_value({'a': 1, 'b': 2}, {'a': 3, 'b': 4});
+----
+array_value
+{"(1,2)","(3,4)"}
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE array_table (id INTEGER, arr INTEGER[3]);
+
+statement ok
+INSERT INTO array_table VALUES (10, [1, 2, 3]), (20, [4, 5, 6]);
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, arr[1] AS element FROM array_table;
+----
+id	element
+10	1
+20	4
+
+query
+SELECT id, list_extract(arr, 1) AS element FROM array_table;
+----
+id	element
+10	1
+20	4
+
+query
+SELECT id, array_extract(arr, 1) AS element FROM array_table;
+----
+id	element
+10	1
+20	4
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, arr[1:2] AS elements FROM array_table;
+----
+id	elements
+10	{1,2}
+20	{4,5}
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE x (i INTEGER, v FLOAT[3]);
+
+statement ok
+CREATE TABLE y (i INTEGER, v FLOAT[3]);
+
+statement ok
+INSERT INTO x VALUES (1, array_value(1.0::FLOAT, 2.0::FLOAT, 3.0::FLOAT));
+
+statement ok
+INSERT INTO y VALUES (1, array_value(2.0::FLOAT, 3.0::FLOAT, 4.0::FLOAT));
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+query
+SELECT array_cross_product(x.v, y.v)
+FROM x, y
+WHERE x.i = y.i;
+----
+array_cross_product
+{-1,2,-1}
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+query
+SELECT array_cosine_similarity(x.v, y.v)
+FROM x, y
+WHERE x.i = y.i;
+----
+array_cosine_similarity
+0.9925834

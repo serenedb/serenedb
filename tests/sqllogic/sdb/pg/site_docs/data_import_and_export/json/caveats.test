@@ -1,0 +1,14 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+    '[1,2]'::JSON = '[1, 2]'::JSON                 AS whitespace_differs,    -- f: the extra space is part of the physical text
+    '1'::JSON = '1.0'::JSON                        AS number_format_differs, -- f: 1 and 1.0 are not textually equal
+    '{"a":1,"b":2}'::JSON = '{"b":2,"a":1}'::JSON  AS key_order_differs,     -- f: object key order is physical
+    ('[10,20,30]'::JSON)[1]                        AS element_by_index,      -- 20: array subscript extracts by position
+    ('{"a":42}'::JSON)['a']                        AS field_by_key;          -- 42: object subscript extracts by key
+----
+whitespace_differs	number_format_differs	key_order_differs	element_by_index	field_by_key
+f	f	f	20	42

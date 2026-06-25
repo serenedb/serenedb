@@ -1,0 +1,45 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wildcard_dict (
+    template = 'wildcard',
+    ngramsize = 3,
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+);
+
+statement ok
+CREATE TABLE terms (id INTEGER PRIMARY KEY, term VARCHAR);
+
+statement ok
+INSERT INTO terms VALUES
+    (1, 'search'),
+    (2, 'research'),
+    (3, 'seabird'),
+    (4, 'plain');
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX terms_idx ON terms USING inverted (id, term wildcard_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) terms;
+
+query
+SELECT id, term FROM terms_idx WHERE term @@ ts_like('%ear%') ORDER BY id;
+----
+id	term
+1	search
+2	research
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, term FROM terms_idx WHERE term @@ ts_like('sea%') ORDER BY id;
+----
+id	term
+1	search
+3	seabird

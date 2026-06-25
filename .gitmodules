@@ -198,3 +198,7 @@
 	path = third_party/ada
 	url = https://github.com/serenedb/ada.git
 	shallow = true
+[submodule "third_party/duckdb_inet"]
+	path = third_party/duckdb_inet
+	url = https://github.com/serenedb/duckdb-inet.git
+	shallow = true

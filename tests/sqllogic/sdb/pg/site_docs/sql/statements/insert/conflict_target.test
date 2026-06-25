@@ -1,0 +1,16 @@
+# DOCS_TEST: example_023
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE tbl (i INTEGER PRIMARY KEY, j INTEGER UNIQUE, k INTEGER);
+
+statement ok
+INSERT INTO tbl
+    VALUES (1, 20, 300);
+
+query
+SELECT * FROM tbl;
+----
+i	j	k
+1	20	300

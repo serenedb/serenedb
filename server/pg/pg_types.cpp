@@ -180,17 +180,25 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
       return make(kUuid, kUuidArray, 16);
     case ENUM: {
       auto ext = type.GetExtensionInfo();
-      SDB_ASSERT(ext);
-      auto it = ext->properties.find(catalog::kPgSqlTypeOidProp);
-      SDB_ASSERT(it != ext->properties.end());
-      const ObjectId oid{it->second.GetValue<uint64_t>()};
-      // Enum types are int4-backed (typlen 4).
-      return {static_cast<int32_t>(
-                (in_array ? catalog::PgSqlType::ToArrayOid(oid) : oid).id()),
-              in_array ? static_cast<int16_t>(-1) : static_cast<int16_t>(4),
-              -1};
+      // null for anonymous/derived enums not registered as a pg custom type
+      // (e.g. enum_range); their value is just the string label on the wire.
+      if (ext) {
+        auto it = ext->properties.find(catalog::kPgSqlTypeOidProp);
+        if (it != ext->properties.end()) {
+          const ObjectId oid{it->second.GetValue<uint64_t>()};
+          // Enum types are int4-backed (typlen 4).
+          return {
+            static_cast<int32_t>(
+              (in_array ? catalog::PgSqlType::ToArrayOid(oid) : oid).id()),
+            in_array ? static_cast<int16_t>(-1) : static_cast<int16_t>(4), -1};
+        }
+      }
+      return make(kText, kTextArray, -1);
     }
     case STRUCT: {
+      if (IsInet(type)) {
+        return make(kInet, kInetArray, -1);
+      }
       auto ext = type.GetExtensionInfo();
       // null in case of anonymous record types (e.g. SELECT ROW(1, 2))
       if (ext) {
@@ -275,6 +283,7 @@ duckdb::LogicalType Oid2Type(int32_t oid, const catalog::Snapshot& snapshot) {
     SDB_OID2TYPE(kRegrole, REGROLE())
     SDB_OID2TYPE(kRegnamespace, REGNAMESPACE())
     SDB_OID2TYPE(kUuid, LogicalType::UUID)
+    SDB_OID2TYPE(kInet, INET())
     SDB_OID2TYPE(kRegconfig, REGCONFIG())
     SDB_OID2TYPE(kRegdictionary, REGDICTIONARY())
     SDB_OID2TYPE(kVariant, LogicalType::VARIANT())
@@ -406,144 +415,144 @@ std::string RegtypeOut(uint64_t oid) {
   return absl::StrCat(oid);
 }
 
+static const containers::FlatHashMap<std::string_view, PgTypeOID>
+  kTypeNameToOid = [] {
+    struct Builder {
+      absl::flat_hash_map<std::string_view, PgTypeOID> map;
+      Builder& Case(std::string_view name, PgTypeOID oid) {
+        map.emplace(name, oid);
+        return *this;
+      }
+    } builder;
+    using enum PgTypeOID;
+    builder.SDB_REGTYPE_WITH_ARRAY_IN("bool", kBool)
+      .SDB_REGTYPE_WITH_ARRAY_IN("boolean", kBool)
+      .SDB_REGTYPE_WITH_ARRAY_IN("bytea", kBytea)
+      .SDB_REGTYPE_WITH_ARRAY_IN("char", kChar)
+      .SDB_REGTYPE_WITH_ARRAY_IN("name", kName)
+      .SDB_REGTYPE_WITH_ARRAY_IN("int8", kInt8)
+      .SDB_REGTYPE_WITH_ARRAY_IN("bigint", kInt8)
+      .SDB_REGTYPE_WITH_ARRAY_IN("int2", kInt2)
+      .SDB_REGTYPE_WITH_ARRAY_IN("smallint", kInt2)
+      .SDB_REGTYPE_WITH_ARRAY_IN("int2vector", kInt2Vector)
+      .SDB_REGTYPE_WITH_ARRAY_IN("int", kInt4)
+      .SDB_REGTYPE_WITH_ARRAY_IN("int4", kInt4)
+      .SDB_REGTYPE_WITH_ARRAY_IN("integer", kInt4)
+      .SDB_REGTYPE_WITH_ARRAY_IN("regproc", kRegproc)
+      .SDB_REGTYPE_WITH_ARRAY_IN("text", kText)
+      .SDB_REGTYPE_WITH_ARRAY_IN("oid", kOid)
+      .SDB_REGTYPE_WITH_ARRAY_IN("tid", kTid)
+      .SDB_REGTYPE_WITH_ARRAY_IN("xid", kXid)
+      .SDB_REGTYPE_WITH_ARRAY_IN("cid", kCid)
+      .SDB_REGTYPE_WITH_ARRAY_IN("oidvector", kOidvector)
+      .SDB_REGTYPE_WITH_ARRAY_IN("pg_type", kPgType)
+      .SDB_REGTYPE_WITH_ARRAY_IN("pg_attribute", kPgAttribute)
+      .SDB_REGTYPE_WITH_ARRAY_IN("pg_proc", kPgProc)
+      .SDB_REGTYPE_WITH_ARRAY_IN("pg_class", kPgClass)
+      .SDB_REGTYPE_WITH_ARRAY_IN("json", kJson)
+      .SDB_REGTYPE_WITH_ARRAY_IN("xml", kXml)
+      .SDB_REGTYPE_IN("pg_node_tree", kPgNodeTree)
+      .SDB_REGTYPE_IN("pg_ndistinct", kPgNdistinct)
+      .SDB_REGTYPE_IN("pg_dependencies", kPgDependencies)
+      .SDB_REGTYPE_IN("pg_mcv_list", kPgMcvList)
+      .SDB_REGTYPE_IN("pg_ddl_command", kPgDdlCommand)
+      .SDB_REGTYPE_WITH_ARRAY_IN("xid8", kXid8)
+      .SDB_REGTYPE_WITH_ARRAY_IN("point", kPoint)
+      .SDB_REGTYPE_WITH_ARRAY_IN("lseg", kLseg)
+      .SDB_REGTYPE_WITH_ARRAY_IN("path", kPath)
+      .SDB_REGTYPE_WITH_ARRAY_IN("box", kBox)
+      .SDB_REGTYPE_WITH_ARRAY_IN("polygon", kPolygon)
+      .SDB_REGTYPE_WITH_ARRAY_IN("float4", kFloat4)
+      .SDB_REGTYPE_WITH_ARRAY_IN("real", kFloat4)
+      .SDB_REGTYPE_WITH_ARRAY_IN("float8", kFloat8)
+      .SDB_REGTYPE_WITH_ARRAY_IN("double precision", kFloat8)
+      .SDB_REGTYPE_IN("unknown", kUnknown)
+      .SDB_REGTYPE_WITH_ARRAY_IN("circle", kCircle)
+      .SDB_REGTYPE_WITH_ARRAY_IN("money", kMoney)
+      .SDB_REGTYPE_WITH_ARRAY_IN("macaddr", kMacaddr)
+      .SDB_REGTYPE_WITH_ARRAY_IN("inet", kInet)
+      .SDB_REGTYPE_WITH_ARRAY_IN("cidr", kCidr)
+      .SDB_REGTYPE_WITH_ARRAY_IN("macaddr8", kMacaddr8)
+      .SDB_REGTYPE_WITH_ARRAY_IN("aclitem", kAclitem)
+      .SDB_REGTYPE_WITH_ARRAY_IN("bpchar", kBpchar)
+      .SDB_REGTYPE_WITH_ARRAY_IN("character", kBpchar)
+      .SDB_REGTYPE_WITH_ARRAY_IN("varchar", kVarchar)
+      .SDB_REGTYPE_WITH_ARRAY_IN("character varying", kVarchar)
+      .SDB_REGTYPE_WITH_ARRAY_IN("date", kDate)
+      .SDB_REGTYPE_WITH_ARRAY_IN("timestamp", kTimestamp)
+      .SDB_REGTYPE_WITH_ARRAY_IN("timestamp without time zone", kTimestamp)
+      .SDB_REGTYPE_WITH_ARRAY_IN("timestamptz", kTimestampTz)
+      .SDB_REGTYPE_WITH_ARRAY_IN("timestamp with time zone", kTimestampTz)
+      .SDB_REGTYPE_WITH_ARRAY_IN("time", kTime)
+      .SDB_REGTYPE_WITH_ARRAY_IN("time without time zone", kTime)
+      .SDB_REGTYPE_WITH_ARRAY_IN("timetz", kTimeTz)
+      .SDB_REGTYPE_WITH_ARRAY_IN("time with time zone", kTimeTz)
+      .SDB_REGTYPE_WITH_ARRAY_IN("interval", kInterval)
+      .SDB_REGTYPE_WITH_ARRAY_IN("bit", kBit)
+      .SDB_REGTYPE_WITH_ARRAY_IN("varbit", kVarbit)
+      .SDB_REGTYPE_WITH_ARRAY_IN("numeric", kNumeric)
+      .SDB_REGTYPE_WITH_ARRAY_IN("refcursor", kRefcursor)
+      .SDB_REGTYPE_WITH_ARRAY_IN("regprocedure", kRegprocedure)
+      .SDB_REGTYPE_WITH_ARRAY_IN("regoper", kRegoper)
+      .SDB_REGTYPE_WITH_ARRAY_IN("regoperator", kRegoperator)
+      .SDB_REGTYPE_WITH_ARRAY_IN("regclass", kRegclass)
+      .SDB_REGTYPE_WITH_ARRAY_IN("regcollation", kRegcollation)
+      .SDB_REGTYPE_WITH_ARRAY_IN("regtype", kRegtype)
+      .SDB_REGTYPE_WITH_ARRAY_IN("regrole", kRegrole)
+      .SDB_REGTYPE_WITH_ARRAY_IN("regnamespace", kRegnamespace)
+      .SDB_REGTYPE_WITH_ARRAY_IN("uuid", kUuid)
+      .SDB_REGTYPE_WITH_ARRAY_IN("pg_lsn", kPgLsn)
+      .SDB_REGTYPE_WITH_ARRAY_IN("tsvector", kTsvector)
+      .SDB_REGTYPE_WITH_ARRAY_IN("gtsvector", kGtsvector)
+      .SDB_REGTYPE_WITH_ARRAY_IN("tsquery", kTsquery)
+      .SDB_REGTYPE_WITH_ARRAY_IN("regconfig", kRegconfig)
+      .SDB_REGTYPE_WITH_ARRAY_IN("regdictionary", kRegdictionary)
+      .SDB_REGTYPE_WITH_ARRAY_IN("jsonb", kJsonb)
+      .SDB_REGTYPE_WITH_ARRAY_IN("jsonpath", kJsonpath)
+      .SDB_REGTYPE_WITH_ARRAY_IN("txid_snapshot", kTxidSnapshot)
+      .SDB_REGTYPE_WITH_ARRAY_IN("pg_snapshot", kPgSnapshot)
+      .SDB_REGTYPE_WITH_ARRAY_IN("int4range", kInt4Range)
+      .SDB_REGTYPE_WITH_ARRAY_IN("numrange", kNumrange)
+      .SDB_REGTYPE_WITH_ARRAY_IN("tsrange", kTsrange)
+      .SDB_REGTYPE_WITH_ARRAY_IN("tstzrange", kTstzrange)
+      .SDB_REGTYPE_WITH_ARRAY_IN("daterange", kDaterange)
+      .SDB_REGTYPE_WITH_ARRAY_IN("int8range", kInt8Range)
+      .SDB_REGTYPE_WITH_ARRAY_IN("int4multirange", kInt4Multirange)
+      .SDB_REGTYPE_WITH_ARRAY_IN("nummultirange", kNummultirange)
+      .SDB_REGTYPE_WITH_ARRAY_IN("tsmultirange", kTsmultirange)
+      .SDB_REGTYPE_WITH_ARRAY_IN("tstzmultirange", kTstzmultirange)
+      .SDB_REGTYPE_WITH_ARRAY_IN("datemultirange", kDatemultirange)
+      .SDB_REGTYPE_WITH_ARRAY_IN("int8multirange", kInt8Multirange)
+      .SDB_REGTYPE_WITH_ARRAY_IN("record", kRecord)
+      .SDB_REGTYPE_WITH_ARRAY_IN("cstring", kCstring)
+      .SDB_REGTYPE_IN("any", kAny)
+      .SDB_REGTYPE_IN("anyarray", kAnyarray)
+      .SDB_REGTYPE_IN("void", kVoid)
+      .SDB_REGTYPE_IN("trigger", kTrigger)
+      .SDB_REGTYPE_IN("event_trigger", kEventTrigger)
+      .SDB_REGTYPE_IN("language_handler", kLanguageHandler)
+      .SDB_REGTYPE_IN("internal", kInternal)
+      .SDB_REGTYPE_IN("anyelement", kAnyelement)
+      .SDB_REGTYPE_IN("anynonarray", kAnynonarray)
+      .SDB_REGTYPE_IN("anyenum", kAnyenum)
+      .SDB_REGTYPE_IN("fdw_handler", kFdwHandler)
+      .SDB_REGTYPE_IN("index_am_handler", kIndexAmHandler)
+      .SDB_REGTYPE_IN("tsm_handler", kTsmHandler)
+      .SDB_REGTYPE_IN("table_am_handler", kTableAmHandler)
+      .SDB_REGTYPE_IN("anyrange", kAnyrange)
+      .SDB_REGTYPE_IN("anycompatible", kAnycompatible)
+      .SDB_REGTYPE_IN("anycompatiblearray", kAnycompatiblearray)
+      .SDB_REGTYPE_IN("anycompatiblenonarray", kAnycompatiblenonarray)
+      .SDB_REGTYPE_IN("anycompatiblerange", kAnycompatiblerange)
+      .SDB_REGTYPE_IN("anymultirange", kAnymultirange)
+      .SDB_REGTYPE_IN("anycompatiblemultirange", kAnycompatiblemultirange)
+      .SDB_REGTYPE_IN("pg_brin_bloom_summary", kPgBrinBloomSummary)
+      .SDB_REGTYPE_IN("pg_brin_minmax_multi_summary", kPgBrinMinmaxMultiSummary)
+      .SDB_REGTYPE_WITH_ARRAY_IN("variant", kVariant);
+    return std::move(builder.map);
+  }();
+
 uint64_t RegtypeIn(std::string_view name) {
-  static const absl::flat_hash_map<std::string_view, PgTypeOID> kTypeNameToOid =
-    [] {
-      struct Builder {
-        absl::flat_hash_map<std::string_view, PgTypeOID> map;
-        Builder& Case(std::string_view name, PgTypeOID oid) {
-          map.emplace(name, oid);
-          return *this;
-        }
-      } builder;
-      using enum PgTypeOID;
-      builder.SDB_REGTYPE_WITH_ARRAY_IN("bool", kBool)
-        .SDB_REGTYPE_WITH_ARRAY_IN("boolean", kBool)
-        .SDB_REGTYPE_WITH_ARRAY_IN("bytea", kBytea)
-        .SDB_REGTYPE_WITH_ARRAY_IN("char", kChar)
-        .SDB_REGTYPE_WITH_ARRAY_IN("name", kName)
-        .SDB_REGTYPE_WITH_ARRAY_IN("int8", kInt8)
-        .SDB_REGTYPE_WITH_ARRAY_IN("bigint", kInt8)
-        .SDB_REGTYPE_WITH_ARRAY_IN("int2", kInt2)
-        .SDB_REGTYPE_WITH_ARRAY_IN("smallint", kInt2)
-        .SDB_REGTYPE_WITH_ARRAY_IN("int2vector", kInt2Vector)
-        .SDB_REGTYPE_WITH_ARRAY_IN("int", kInt4)
-        .SDB_REGTYPE_WITH_ARRAY_IN("int4", kInt4)
-        .SDB_REGTYPE_WITH_ARRAY_IN("integer", kInt4)
-        .SDB_REGTYPE_WITH_ARRAY_IN("regproc", kRegproc)
-        .SDB_REGTYPE_WITH_ARRAY_IN("text", kText)
-        .SDB_REGTYPE_WITH_ARRAY_IN("oid", kOid)
-        .SDB_REGTYPE_WITH_ARRAY_IN("tid", kTid)
-        .SDB_REGTYPE_WITH_ARRAY_IN("xid", kXid)
-        .SDB_REGTYPE_WITH_ARRAY_IN("cid", kCid)
-        .SDB_REGTYPE_WITH_ARRAY_IN("oidvector", kOidvector)
-        .SDB_REGTYPE_WITH_ARRAY_IN("pg_type", kPgType)
-        .SDB_REGTYPE_WITH_ARRAY_IN("pg_attribute", kPgAttribute)
-        .SDB_REGTYPE_WITH_ARRAY_IN("pg_proc", kPgProc)
-        .SDB_REGTYPE_WITH_ARRAY_IN("pg_class", kPgClass)
-        .SDB_REGTYPE_WITH_ARRAY_IN("json", kJson)
-        .SDB_REGTYPE_WITH_ARRAY_IN("xml", kXml)
-        .SDB_REGTYPE_IN("pg_node_tree", kPgNodeTree)
-        .SDB_REGTYPE_IN("pg_ndistinct", kPgNdistinct)
-        .SDB_REGTYPE_IN("pg_dependencies", kPgDependencies)
-        .SDB_REGTYPE_IN("pg_mcv_list", kPgMcvList)
-        .SDB_REGTYPE_IN("pg_ddl_command", kPgDdlCommand)
-        .SDB_REGTYPE_WITH_ARRAY_IN("xid8", kXid8)
-        .SDB_REGTYPE_WITH_ARRAY_IN("point", kPoint)
-        .SDB_REGTYPE_WITH_ARRAY_IN("lseg", kLseg)
-        .SDB_REGTYPE_WITH_ARRAY_IN("path", kPath)
-        .SDB_REGTYPE_WITH_ARRAY_IN("box", kBox)
-        .SDB_REGTYPE_WITH_ARRAY_IN("polygon", kPolygon)
-        .SDB_REGTYPE_WITH_ARRAY_IN("float4", kFloat4)
-        .SDB_REGTYPE_WITH_ARRAY_IN("real", kFloat4)
-        .SDB_REGTYPE_WITH_ARRAY_IN("float8", kFloat8)
-        .SDB_REGTYPE_WITH_ARRAY_IN("double precision", kFloat8)
-        .SDB_REGTYPE_IN("unknown", kUnknown)
-        .SDB_REGTYPE_WITH_ARRAY_IN("circle", kCircle)
-        .SDB_REGTYPE_WITH_ARRAY_IN("money", kMoney)
-        .SDB_REGTYPE_WITH_ARRAY_IN("macaddr", kMacaddr)
-        .SDB_REGTYPE_WITH_ARRAY_IN("inet", kInet)
-        .SDB_REGTYPE_WITH_ARRAY_IN("cidr", kCidr)
-        .SDB_REGTYPE_WITH_ARRAY_IN("macaddr8", kMacaddr8)
-        .SDB_REGTYPE_WITH_ARRAY_IN("aclitem", kAclitem)
-        .SDB_REGTYPE_WITH_ARRAY_IN("bpchar", kBpchar)
-        .SDB_REGTYPE_WITH_ARRAY_IN("character", kBpchar)
-        .SDB_REGTYPE_WITH_ARRAY_IN("varchar", kVarchar)
-        .SDB_REGTYPE_WITH_ARRAY_IN("character varying", kVarchar)
-        .SDB_REGTYPE_WITH_ARRAY_IN("date", kDate)
-        .SDB_REGTYPE_WITH_ARRAY_IN("timestamp", kTimestamp)
-        .SDB_REGTYPE_WITH_ARRAY_IN("timestamp without time zone", kTimestamp)
-        .SDB_REGTYPE_WITH_ARRAY_IN("timestamptz", kTimestampTz)
-        .SDB_REGTYPE_WITH_ARRAY_IN("timestamp with time zone", kTimestampTz)
-        .SDB_REGTYPE_WITH_ARRAY_IN("time", kTime)
-        .SDB_REGTYPE_WITH_ARRAY_IN("time without time zone", kTime)
-        .SDB_REGTYPE_WITH_ARRAY_IN("timetz", kTimeTz)
-        .SDB_REGTYPE_WITH_ARRAY_IN("time with time zone", kTimeTz)
-        .SDB_REGTYPE_WITH_ARRAY_IN("interval", kInterval)
-        .SDB_REGTYPE_WITH_ARRAY_IN("bit", kBit)
-        .SDB_REGTYPE_WITH_ARRAY_IN("varbit", kVarbit)
-        .SDB_REGTYPE_WITH_ARRAY_IN("numeric", kNumeric)
-        .SDB_REGTYPE_WITH_ARRAY_IN("refcursor", kRefcursor)
-        .SDB_REGTYPE_WITH_ARRAY_IN("regprocedure", kRegprocedure)
-        .SDB_REGTYPE_WITH_ARRAY_IN("regoper", kRegoper)
-        .SDB_REGTYPE_WITH_ARRAY_IN("regoperator", kRegoperator)
-        .SDB_REGTYPE_WITH_ARRAY_IN("regclass", kRegclass)
-        .SDB_REGTYPE_WITH_ARRAY_IN("regcollation", kRegcollation)
-        .SDB_REGTYPE_WITH_ARRAY_IN("regtype", kRegtype)
-        .SDB_REGTYPE_WITH_ARRAY_IN("regrole", kRegrole)
-        .SDB_REGTYPE_WITH_ARRAY_IN("regnamespace", kRegnamespace)
-        .SDB_REGTYPE_WITH_ARRAY_IN("uuid", kUuid)
-        .SDB_REGTYPE_WITH_ARRAY_IN("pg_lsn", kPgLsn)
-        .SDB_REGTYPE_WITH_ARRAY_IN("tsvector", kTsvector)
-        .SDB_REGTYPE_WITH_ARRAY_IN("gtsvector", kGtsvector)
-        .SDB_REGTYPE_WITH_ARRAY_IN("tsquery", kTsquery)
-        .SDB_REGTYPE_WITH_ARRAY_IN("regconfig", kRegconfig)
-        .SDB_REGTYPE_WITH_ARRAY_IN("regdictionary", kRegdictionary)
-        .SDB_REGTYPE_WITH_ARRAY_IN("jsonb", kJsonb)
-        .SDB_REGTYPE_WITH_ARRAY_IN("jsonpath", kJsonpath)
-        .SDB_REGTYPE_WITH_ARRAY_IN("txid_snapshot", kTxidSnapshot)
-        .SDB_REGTYPE_WITH_ARRAY_IN("pg_snapshot", kPgSnapshot)
-        .SDB_REGTYPE_WITH_ARRAY_IN("int4range", kInt4Range)
-        .SDB_REGTYPE_WITH_ARRAY_IN("numrange", kNumrange)
-        .SDB_REGTYPE_WITH_ARRAY_IN("tsrange", kTsrange)
-        .SDB_REGTYPE_WITH_ARRAY_IN("tstzrange", kTstzrange)
-        .SDB_REGTYPE_WITH_ARRAY_IN("daterange", kDaterange)
-        .SDB_REGTYPE_WITH_ARRAY_IN("int8range", kInt8Range)
-        .SDB_REGTYPE_WITH_ARRAY_IN("int4multirange", kInt4Multirange)
-        .SDB_REGTYPE_WITH_ARRAY_IN("nummultirange", kNummultirange)
-        .SDB_REGTYPE_WITH_ARRAY_IN("tsmultirange", kTsmultirange)
-        .SDB_REGTYPE_WITH_ARRAY_IN("tstzmultirange", kTstzmultirange)
-        .SDB_REGTYPE_WITH_ARRAY_IN("datemultirange", kDatemultirange)
-        .SDB_REGTYPE_WITH_ARRAY_IN("int8multirange", kInt8Multirange)
-        .SDB_REGTYPE_WITH_ARRAY_IN("record", kRecord)
-        .SDB_REGTYPE_WITH_ARRAY_IN("cstring", kCstring)
-        .SDB_REGTYPE_IN("any", kAny)
-        .SDB_REGTYPE_IN("anyarray", kAnyarray)
-        .SDB_REGTYPE_IN("void", kVoid)
-        .SDB_REGTYPE_IN("trigger", kTrigger)
-        .SDB_REGTYPE_IN("event_trigger", kEventTrigger)
-        .SDB_REGTYPE_IN("language_handler", kLanguageHandler)
-        .SDB_REGTYPE_IN("internal", kInternal)
-        .SDB_REGTYPE_IN("anyelement", kAnyelement)
-        .SDB_REGTYPE_IN("anynonarray", kAnynonarray)
-        .SDB_REGTYPE_IN("anyenum", kAnyenum)
-        .SDB_REGTYPE_IN("fdw_handler", kFdwHandler)
-        .SDB_REGTYPE_IN("index_am_handler", kIndexAmHandler)
-        .SDB_REGTYPE_IN("tsm_handler", kTsmHandler)
-        .SDB_REGTYPE_IN("table_am_handler", kTableAmHandler)
-        .SDB_REGTYPE_IN("anyrange", kAnyrange)
-        .SDB_REGTYPE_IN("anycompatible", kAnycompatible)
-        .SDB_REGTYPE_IN("anycompatiblearray", kAnycompatiblearray)
-        .SDB_REGTYPE_IN("anycompatiblenonarray", kAnycompatiblenonarray)
-        .SDB_REGTYPE_IN("anycompatiblerange", kAnycompatiblerange)
-        .SDB_REGTYPE_IN("anymultirange", kAnymultirange)
-        .SDB_REGTYPE_IN("anycompatiblemultirange", kAnycompatiblemultirange)
-        .SDB_REGTYPE_IN("pg_brin_bloom_summary", kPgBrinBloomSummary)
-        .SDB_REGTYPE_IN("pg_brin_minmax_multi_summary",
-                        kPgBrinMinmaxMultiSummary)
-        .SDB_REGTYPE_WITH_ARRAY_IN("variant", kVariant);
-      return std::move(builder.map);
-    }();
   if (auto it = kTypeNameToOid.find(name); it != kTypeNameToOid.end()) {
     return static_cast<uint64_t>(it->second);
   }

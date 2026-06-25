@@ -214,7 +214,7 @@ extern "C" const duckdb::DefaultType* duckdb_external_types(
 }
 
 ABSL_FLAG(uint64_t, cpu_threads, 0,
-          "DuckDB executor pool size at process start. 0 = let DuckDB "
+          "Executor pool size at process start. 0 = let DuckDB "
           "auto-detect from cpu_count. The SQL-level `SET threads = N` "
           "continues to win at runtime.");
 

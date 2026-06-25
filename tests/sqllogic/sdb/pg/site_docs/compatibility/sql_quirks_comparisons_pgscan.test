@@ -1,0 +1,72 @@
+control substitution on
+
+# Doc examples for the "Results That May Surprise You" table on the
+# compatibility/sql_quirks page. The `_pgscan` suffix brings up a real postgres
+# at ${PGHOST}:${PGPORT}. Each expression is evaluated on BOTH engines: the
+# PostgreSQL column runs it on the attached postgres via postgres_query(), the
+# SereneDB column locally. The two casts PostgreSQL rejects are written as the
+# literal 'error' (postgres_query aborts the statement on a PostgreSQL error).
+
+# DOCS_TEST: example_001
+
+statement ok
+DETACH IF EXISTS pg_${__DATABASE__};
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pg_${__DATABASE__} (TYPE postgres);
+
+# DOCS_TEST_RAW
+#| ATTACH 'host=localhost port=5432 dbname=mydb user=postgres' AS pg (TYPE postgres);
+#|
+#| SELECT '-2^2' AS "Expression", (SELECT r FROM postgres_query('pg', 'SELECT (-2^2)::text r')) AS "PostgreSQL", (-2^2)::VARCHAR AS "SereneDB"
+#| UNION ALL SELECT '''t'' = true',  (SELECT r FROM postgres_query('pg', 'SELECT (''t'' = true)::text r')),  ('t' = true)::VARCHAR
+#| UNION ALL SELECT '1 = ''1''',     (SELECT r FROM postgres_query('pg', 'SELECT (1 = ''1'')::text r')),     (1 = '1')::VARCHAR
+#| UNION ALL SELECT '1 = '' 1''',    (SELECT r FROM postgres_query('pg', 'SELECT (1 = '' 1'')::text r')),    (1 = ' 1')::VARCHAR
+#| UNION ALL SELECT '1 = ''01''',    (SELECT r FROM postgres_query('pg', 'SELECT (1 = ''01'')::text r')),    (1 = '01')::VARCHAR
+#| UNION ALL SELECT '1 = '' 01 ''',  (SELECT r FROM postgres_query('pg', 'SELECT (1 = '' 01 '')::text r')),  (1 = ' 01 ')::VARCHAR
+#| UNION ALL SELECT '1 = true',      'error',                                                                (1 = true)::VARCHAR
+#| UNION ALL SELECT '1 = ''1.1''',   'error',                                                                (1 = '1.1')::VARCHAR
+#| UNION ALL SELECT '1 IN (0, NULL)',(SELECT r FROM postgres_query('pg', 'SELECT (1 IN (0, NULL))::text r')),(1 IN (0, NULL))::VARCHAR
+#| UNION ALL SELECT 'concat(''abc'', NULL)', (SELECT r FROM postgres_query('pg', 'SELECT concat(''abc'', NULL) r')), concat('abc', NULL)::VARCHAR
+#| UNION ALL SELECT '''abc'' || NULL',(SELECT r FROM postgres_query('pg', 'SELECT (''abc'' || NULL)::text r')),('abc' || NULL)::VARCHAR;
+
+# DOCS_TEST_BODY
+
+query
+SELECT '-2^2' AS "Expression", (SELECT r FROM postgres_query('pg_${__DATABASE__}', 'SELECT (-2^2)::text AS r')) AS "PostgreSQL", (-2^2)::VARCHAR AS "SereneDB"
+UNION ALL SELECT '''t'' = true', (SELECT r FROM postgres_query('pg_${__DATABASE__}', 'SELECT (''t'' = true)::text AS r')), ('t' = true)::VARCHAR
+UNION ALL SELECT '1 = ''1''', (SELECT r FROM postgres_query('pg_${__DATABASE__}', 'SELECT (1 = ''1'')::text AS r')), (1 = '1')::VARCHAR
+UNION ALL SELECT '1 = '' 1''', (SELECT r FROM postgres_query('pg_${__DATABASE__}', 'SELECT (1 = '' 1'')::text AS r')), (1 = ' 1')::VARCHAR
+UNION ALL SELECT '1 = ''01''', (SELECT r FROM postgres_query('pg_${__DATABASE__}', 'SELECT (1 = ''01'')::text AS r')), (1 = '01')::VARCHAR
+UNION ALL SELECT '1 = '' 01 ''', (SELECT r FROM postgres_query('pg_${__DATABASE__}', 'SELECT (1 = '' 01 '')::text AS r')), (1 = ' 01 ')::VARCHAR
+UNION ALL SELECT '1 = true', 'error', (1 = true)::VARCHAR
+UNION ALL SELECT '1 = ''1.1''', 'error', (1 = '1.1')::VARCHAR
+UNION ALL SELECT '1 IN (0, NULL)', (SELECT r FROM postgres_query('pg_${__DATABASE__}', 'SELECT (1 IN (0, NULL))::text AS r')), (1 IN (0, NULL))::VARCHAR
+UNION ALL SELECT 'concat(''abc'', NULL)', (SELECT r FROM postgres_query('pg_${__DATABASE__}', 'SELECT concat(''abc'', NULL) AS r')), concat('abc', NULL)::VARCHAR
+UNION ALL SELECT '''abc'' || NULL', (SELECT r FROM postgres_query('pg_${__DATABASE__}', 'SELECT (''abc'' || NULL)::text AS r')), ('abc' || NULL)::VARCHAR;
+----
+Expression	PostgreSQL	SereneDB
+-2^2	4	4
+'t' = true	true	true
+1 = '1'	true	true
+1 = ' 1'	true	true
+1 = '01'	true	true
+1 = ' 01 '	true	true
+1 = true	error	true
+1 = '1.1'	error	true
+1 IN (0, NULL)	NULL	NULL
+concat('abc', NULL)	abc	abc
+'abc' || NULL	NULL	NULL
+
+statement ok
+DETACH pg_${__DATABASE__};
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT 1 IN (0, NULL) AS "IN (set)", 1 IN [0, NULL] AS "IN [list]";
+----
+IN (set)	IN [list]
+NULL	f

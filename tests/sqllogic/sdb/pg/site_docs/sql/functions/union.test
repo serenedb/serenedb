@@ -1,0 +1,23 @@
+# DOCS_TEST: uniontag
+# DOCS_TEST_BODY
+query
+SELECT (union_value(k := 'hello')).k AS k;
+----
+k
+hello
+
+# DOCS_TEST: union_extract
+# DOCS_TEST_BODY
+query
+SELECT union_extract(union_value(k := 'hello'), 'k') AS k;
+----
+k
+hello
+
+# DOCS_TEST: union_tag
+# DOCS_TEST_BODY
+query
+SELECT union_tag(union_value(k := 'foo')) AS union_tag;
+----
+union_tag
+k

@@ -1,0 +1,12 @@
+# DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE SEQUENCE serial START 1;
+
+query ?
+SELECT nextval('serial') AS nextval;
+----
+nextval
+1

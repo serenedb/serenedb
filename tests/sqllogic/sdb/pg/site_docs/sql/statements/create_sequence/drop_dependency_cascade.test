@@ -1,0 +1,24 @@
+# DOCS_TEST: example_018
+
+statement ok
+CREATE SEQUENCE id_sequence START 1;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER DEFAULT nextval('id_sequence'),
+    s VARCHAR
+);
+
+statement ok
+INSERT INTO tbl(s) VALUES ('default is the next value from id_sequence');
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP SEQUENCE id_sequence CASCADE;
+
+query ??
+SELECT * FROM tbl;
+----
+id	s
+1	default is the next value from id_sequence

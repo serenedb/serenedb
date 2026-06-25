@@ -1,0 +1,114 @@
+# DOCS_TEST: example_001
+# DOCS_TEST_BODY
+query
+SELECT '2022-10-08 13:13:34-07'::TIMESTAMPTZ;
+----
+timestamptz
+2022-10-08 20:13:34+00
+
+# DOCS_TEST: example_003
+# DOCS_TEST_BODY
+query
+SELECT TIMESTAMP '2001-02-16 20:38:40' AT TIME ZONE 'America/Denver' AS ts;
+----
+ts
+2001-02-17 03:38:40+00
+
+# DOCS_TEST: example_004
+# DOCS_TEST_BODY
+query error syntax error at or near "WITH"
+SELECT TIMESTAMP WITH TIME ZONE '2001-02-16 20:38:40-05' AT TIME ZONE 'America/Denver' AS ts;
+
+# DOCS_TEST: example_005
+# DOCS_TEST_BODY
+query error Unknown TimeZone '0200'
+SELECT TIMESTAMP '2001-02-16 20:38:40-05' AT TIME ZONE '0200' AS ts;
+
+# DOCS_TEST: greatest
+# DOCS_TEST_BODY
+query
+SELECT greatest(TIMESTAMPTZ '1992-09-20 20:38:48', TIMESTAMPTZ '1992-03-22 01:02:03.1234') AS greatest;
+----
+greatest
+1992-09-20 20:38:48+00
+
+# DOCS_TEST: isfinite
+# DOCS_TEST_BODY
+query
+SELECT isfinite(TIMESTAMPTZ '1992-03-07') AS isfinite;
+----
+isfinite
+t
+
+# DOCS_TEST: isinf
+# DOCS_TEST_BODY
+query
+SELECT isinf(TIMESTAMPTZ '-infinity') AS isinf;
+----
+isinf
+t
+
+# DOCS_TEST: least
+# DOCS_TEST_BODY
+query
+SELECT least(TIMESTAMPTZ '1992-09-20 20:38:48', TIMESTAMPTZ '1992-03-22 01:02:03.1234') AS least;
+----
+least
+1992-03-22 01:02:03.1234+00
+
+# DOCS_TEST: timetz_byte_comparable
+# DOCS_TEST_BODY
+query
+SELECT timetz_byte_comparable('18:18:16.21-07:00'::TIMETZ) AS sort_key;
+----
+sort_key
+2494691656335442799
+
+# DOCS_TEST: to_timestamp
+# DOCS_TEST_BODY
+query
+SELECT to_timestamp(1284352323.5) AS ts;
+----
+ts
+2010-09-13 04:32:03.5+00
+
+# DOCS_TEST: epoch_ns
+# DOCS_TEST_BODY
+query
+SELECT epoch_ns('2022-11-07 08:43:04.123456+00'::TIMESTAMPTZ) AS ns;
+----
+ns
+1667810584123456000
+
+# DOCS_TEST: epoch_us
+# DOCS_TEST_BODY
+query
+SELECT epoch_us('2022-11-07 08:43:04.123456+00'::TIMESTAMPTZ) AS us;
+----
+us
+1667810584123456
+
+# DOCS_TEST: strftime
+# DOCS_TEST_BODY
+query
+SELECT strftime(TIMESTAMPTZ '1992-01-01 20:38:40', '%a, %-d %B %Y - %I:%M:%S %p') AS formatted;
+----
+formatted
+Wed, 1 January 1992 - 08:38:40 PM
+
+# DOCS_TEST: strptime
+# DOCS_TEST_BODY
+query
+SELECT strptime('Wed, 1 January 1992 - 08:38:40 PST', '%a, %-d %B %Y - %H:%M:%S %Z') AS ts;
+----
+ts
+1992-01-01 16:38:40+00
+
+# DOCS_TEST: example_006
+# DOCS_TEST_BODY
+query
+SELECT (TIMESTAMPTZ '2025-03-29 02:30:00+01' + INTERVAL '1 day')
+           AT TIME ZONE 'Europe/Amsterdam' AS amsterdam_wall;
+----
+amsterdam_wall
+2025-03-30 03:30:00

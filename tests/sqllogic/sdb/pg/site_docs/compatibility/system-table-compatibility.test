@@ -1,0 +1,6 @@
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT * FROM information_schema.tables;

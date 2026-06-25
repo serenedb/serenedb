@@ -1,0 +1,61 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE addresses (
+    address VARCHAR,
+    city VARCHAR,
+    street_name VARCHAR,
+    income DOUBLE,
+    zip VARCHAR,
+    country VARCHAR,
+    population INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO addresses VALUES
+    ('123 Spruce Blvd', 'Linden', 'Spruce Blvd', 50000, '11111', 'NL', 100, 1, 10),
+    ('111 Birch Ln', 'Linden', 'Birch Ln', 60000, '11111', 'NL', 100, 2, 20),
+    ('111 Birch Ln', 'Lakeside', 'Birch Ln', 70000, '11111', 'US', 50, 3, 30),
+    ('111 Birch Ln', 'Lakeside', 'Birch Ln', 80000, '11111-0001', 'US', 50, 4, 40),
+    ('5 Pond Road', 'Mallard', 'Pond Road', 90000, '22222', 'UK', 25, 5, 50),
+    ('9 Lake View', 'Mallard', 'Lake View', 40000, '33333', 'UK', 25, 6, 60);
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT *
+FROM addresses
+USING SAMPLE 1%;
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT *
+FROM addresses
+USING SAMPLE 1% (bernoulli);
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query ????????? rowsort
+SELECT *
+FROM (SELECT * FROM addresses)
+USING SAMPLE 10 ROWS;
+----
+address	city	street_name	income	zip	country	population	number1	number2
+111 Birch Ln	Lakeside	Birch Ln	70000	11111	US	50	3	30
+111 Birch Ln	Lakeside	Birch Ln	80000	11111-0001	US	50	4	40
+111 Birch Ln	Linden	Birch Ln	60000	11111	NL	100	2	20
+123 Spruce Blvd	Linden	Spruce Blvd	50000	11111	NL	100	1	10
+5 Pond Road	Mallard	Pond Road	90000	22222	UK	25	5	50
+9 Lake View	Mallard	Lake View	40000	33333	UK	25	6	60

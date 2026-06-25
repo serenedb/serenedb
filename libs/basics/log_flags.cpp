@@ -23,11 +23,11 @@
 #include <string>
 
 ABSL_FLAG(std::string, log_storage, "stdout",
-          "DuckDB log destination at process start: 'stdout' (default; "
+          "Log destination at process start: 'stdout' (default; "
           "container log drivers capture it), 'memory' (queryable via "
           "SELECT * FROM duckdb_logs()), or 'file://<path>'. Override at "
           "runtime with `SET logging_storage = '<value>'`.");
 ABSL_FLAG(std::string, log_level, "info",
-          "DuckDB minimum log severity at process start: trace | debug | "
+          "Minimum log severity at process start: trace | debug | "
           "info | warning | error | fatal. Override at runtime with "
           "`SET logging_level = '<value>'`.");

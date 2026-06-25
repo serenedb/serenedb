@@ -1,0 +1,133 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY english_dict (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = true,
+    accent = true,
+    frequency = true,
+    position = true
+);
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY exact_dict (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY autocomplete_dict (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    mingram = 2,
+    maxgram = 5,
+    PRESERVEORIGINAL = true
+);
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY filtered_dict (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = true,
+    stopwords = '"the","a","an","is","at"'
+);
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tok_text_stem (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = true,
+    accent = true
+);
+
+query ?
+SELECT ts_lexize('tok_text_stem', 'The runners were running quickly');
+----
+ts_lexize
+{the,runner,were,run,quick}
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tok_text_exact (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = true
+);
+
+query ?
+SELECT ts_lexize('tok_text_exact', 'The Runners Café');
+----
+ts_lexize
+{The,Runners,Café}
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tok_text_stop (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = true,
+    stopwords = '"the","a","an","is"'
+);
+
+query ?
+SELECT ts_lexize('tok_text_stop', 'The cat is a hunter');
+----
+ts_lexize
+{cat,hunter}
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tok_text_edge (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    mingram = 2,
+    maxgram = 4,
+    preserveoriginal = true
+);
+
+query ?
+SELECT ts_lexize('tok_text_edge', 'Search');
+----
+ts_lexize
+{se,sea,sear,search}

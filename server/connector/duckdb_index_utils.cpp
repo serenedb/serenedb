@@ -80,7 +80,7 @@ std::unique_ptr<DuckDBSinkIndexWriter> CreateInvertedIndexWriter(
       writer =
         MakeDuckDBSearchWriter(Kind, index_txn, std::move(tokenizer_provider),
                                std::move(entry_info_provider),
-                               index.GetColumnIds(), std::move(indexed_exprs));
+                               index.GetColumns(), std::move(indexed_exprs));
     });
   return writer;
 }

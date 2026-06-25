@@ -1,0 +1,98 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST_RAW
+#| COPY tbl TO 'output.json';
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY tbl TO '${__TEST_DIR__}/cookbook_file_formats_json_export_example_001_1_output_json.json';
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_RAW
+#| COPY (SELECT * FROM range(3) tbl(n)) TO 'output.json';
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY (SELECT * FROM range(3) tbl(n)) TO '${__TEST_DIR__}/cookbook_file_formats_json_export_example_002_1_output_json.json';
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_RAW
+#| COPY (SELECT * FROM range(3) tbl(n)) TO 'output.json' (ARRAY);
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY (SELECT * FROM range(3) tbl(n)) TO '${__TEST_DIR__}/cookbook_file_formats_json_export_example_003_1_output_json.json' (ARRAY);
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_RAW
+#| SELECT unnest(string_split(rtrim(content, chr(10)), chr(10))) AS line
+#| FROM read_text('output.json');
+#| ----
+#| line
+#| {"n":0}
+#| {"n":1}
+#| {"n":2}
+
+# DOCS_TEST_BODY
+
+query
+SELECT unnest(string_split(rtrim(content, chr(10)), chr(10))) AS line
+FROM read_text('${__TEST_DIR__}/cookbook_file_formats_json_export_example_002_1_output_json.json');
+----
+line
+{"n":0}
+{"n":1}
+{"n":2}
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_RAW
+#| SELECT n FROM read_json('output.json') ORDER BY n;
+#| ----
+#| n
+#| 0
+#| 1
+#| 2
+
+# DOCS_TEST_BODY
+
+query
+SELECT n FROM read_json('${__TEST_DIR__}/cookbook_file_formats_json_export_example_003_1_output_json.json') ORDER BY n;
+----
+n
+0
+1
+2

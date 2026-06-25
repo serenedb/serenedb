@@ -1,0 +1,295 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement error
+UNPIVOT ⟨dataset⟩
+ON ⟨column(s)⟩
+INTO
+    NAME ⟨name_column_name⟩
+    VALUE ⟨value_column_name(s)⟩
+ORDER BY ⟨column(s)_with_order_direction(s)⟩
+LIMIT ⟨number_of_rows⟩;
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE OR REPLACE TABLE monthly_sales
+    (empid INTEGER, dept TEXT, Jan INTEGER, Feb INTEGER, Mar INTEGER, Apr INTEGER, May INTEGER, Jun INTEGER);
+
+statement ok
+INSERT INTO monthly_sales VALUES
+    (1, 'electronics', 1, 2, 3, 4, 5, 6),
+    (2, 'clothes', 10, 20, 30, 40, 50, 60),
+    (3, 'cars', 100, 200, 300, 400, 500, 600);
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+FROM monthly_sales;
+----
+empid	dept	jan	feb	mar	apr	may	jun
+1	electronics	1	2	3	4	5	6
+2	clothes	10	20	30	40	50	60
+3	cars	100	200	300	400	500	600
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query ???? rowsort
+UNPIVOT monthly_sales
+ON jan, feb, mar, apr, may, jun
+INTO
+    NAME month
+    VALUE sales;
+----
+empid	dept	month	sales
+1	electronics	apr	4
+1	electronics	feb	2
+1	electronics	jan	1
+1	electronics	jun	6
+1	electronics	mar	3
+1	electronics	may	5
+2	clothes	apr	40
+2	clothes	feb	20
+2	clothes	jan	10
+2	clothes	jun	60
+2	clothes	mar	30
+2	clothes	may	50
+3	cars	apr	400
+3	cars	feb	200
+3	cars	jan	100
+3	cars	jun	600
+3	cars	mar	300
+3	cars	may	500
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query ???? rowsort
+UNPIVOT monthly_sales
+ON COLUMNS(* EXCLUDE (empid, dept))
+INTO
+    NAME month
+    VALUE sales;
+----
+empid	dept	month	sales
+1	electronics	apr	4
+1	electronics	feb	2
+1	electronics	jan	1
+1	electronics	jun	6
+1	electronics	mar	3
+1	electronics	may	5
+2	clothes	apr	40
+2	clothes	feb	20
+2	clothes	jan	10
+2	clothes	jun	60
+2	clothes	mar	30
+2	clothes	may	50
+3	cars	apr	400
+3	cars	feb	200
+3	cars	jan	100
+3	cars	jun	600
+3	cars	mar	300
+3	cars	may	500
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query ?????? rowsort
+UNPIVOT monthly_sales
+    ON (jan, feb, mar) AS q1, (apr, may, jun) AS q2
+    INTO
+        NAME quarter
+        VALUE month_1_sales, month_2_sales, month_3_sales;
+----
+empid	dept	quarter	month_1_sales	month_2_sales	month_3_sales
+1	electronics	q1	1	2	3
+1	electronics	q2	4	5	6
+2	clothes	q1	10	20	30
+2	clothes	q2	40	50	60
+3	cars	q1	100	200	300
+3	cars	q2	400	500	600
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+WITH unpivot_alias AS (
+    UNPIVOT monthly_sales
+    ON COLUMNS(* EXCLUDE (empid, dept))
+    INTO
+        NAME month
+        VALUE sales
+)
+SELECT * FROM unpivot_alias;
+----
+empid	dept	month	sales
+1	electronics	jan	1
+1	electronics	feb	2
+1	electronics	mar	3
+1	electronics	apr	4
+1	electronics	may	5
+1	electronics	jun	6
+2	clothes	jan	10
+2	clothes	feb	20
+2	clothes	mar	30
+2	clothes	apr	40
+2	clothes	may	50
+2	clothes	jun	60
+3	cars	jan	100
+3	cars	feb	200
+3	cars	mar	300
+3	cars	apr	400
+3	cars	may	500
+3	cars	jun	600
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM (
+    UNPIVOT monthly_sales
+    ON COLUMNS(* EXCLUDE (empid, dept))
+    INTO
+        NAME month
+        VALUE sales
+) unpivot_alias;
+----
+empid	dept	month	sales
+1	electronics	jan	1
+1	electronics	feb	2
+1	electronics	mar	3
+1	electronics	apr	4
+1	electronics	may	5
+1	electronics	jun	6
+2	clothes	jan	10
+2	clothes	feb	20
+2	clothes	mar	30
+2	clothes	apr	40
+2	clothes	may	50
+2	clothes	jun	60
+3	cars	jan	100
+3	cars	feb	200
+3	cars	mar	300
+3	cars	apr	400
+3	cars	may	500
+3	cars	jun	600
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query ?? rowsort
+UNPIVOT
+    (SELECT 42 AS col1, 'woot' AS col2)
+    ON
+        (col1 * 2)::VARCHAR,
+        col2;
+----
+name	value
+col1	84
+col2	woot
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+statement error
+FROM [dataset]
+UNPIVOT [INCLUDE NULLS] (
+    [value-column-name(s)]
+    FOR [name-column-name] IN [column(s)]
+);
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+query ???? rowsort
+FROM monthly_sales UNPIVOT (
+    sales
+    FOR month IN (jan, feb, mar, apr, may, jun)
+);
+----
+empid	dept	month	sales
+1	electronics	apr	4
+1	electronics	feb	2
+1	electronics	jan	1
+1	electronics	jun	6
+1	electronics	mar	3
+1	electronics	may	5
+2	clothes	apr	40
+2	clothes	feb	20
+2	clothes	jan	10
+2	clothes	jun	60
+2	clothes	mar	30
+2	clothes	may	50
+3	cars	apr	400
+3	cars	feb	200
+3	cars	jan	100
+3	cars	jun	600
+3	cars	mar	300
+3	cars	may	500
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+query ???? rowsort
+FROM monthly_sales UNPIVOT (
+    sales
+    FOR month IN (columns(* EXCLUDE (empid, dept)))
+);
+----
+empid	dept	month	sales
+1	electronics	apr	4
+1	electronics	feb	2
+1	electronics	jan	1
+1	electronics	jun	6
+1	electronics	mar	3
+1	electronics	may	5
+2	clothes	apr	40
+2	clothes	feb	20
+2	clothes	jan	10
+2	clothes	jun	60
+2	clothes	mar	30
+2	clothes	may	50
+3	cars	apr	400
+3	cars	feb	200
+3	cars	jan	100
+3	cars	jun	600
+3	cars	mar	300
+3	cars	may	500
+
+# DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
+
+query ?????? rowsort
+FROM monthly_sales
+UNPIVOT (
+    (month_1_sales, month_2_sales, month_3_sales)
+    FOR quarter IN (
+        (jan, feb, mar) AS q1,
+        (apr, may, jun) AS q2
+    )
+);
+----
+empid	dept	quarter	month_1_sales	month_2_sales	month_3_sales
+1	electronics	q1	1	2	3
+1	electronics	q2	4	5	6
+2	clothes	q1	10	20	30
+2	clothes	q2	40	50	60
+3	cars	q1	100	200	300
+3	cars	q2	400	500	600

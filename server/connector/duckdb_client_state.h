@@ -24,6 +24,7 @@
 #include <duckdb/main/client_context_state.hpp>
 #include <memory>
 
+#include "connector/duckdb_access_check.h"
 #include "pg/progress_tracker.h"
 
 namespace sdb {
@@ -65,6 +66,8 @@ class SereneDBClientState final : public duckdb::ClientContextState {
 
   ConnectionContext& GetConnectionContext() const { return *_connection_ctx; }
 
+  AccessRecord& Access() { return _access; }
+
   std::unique_ptr<pg::ProgressReporter> progress;
 
   // COPY FROM STDIN state shared across handles within a single query. The
@@ -105,8 +108,12 @@ class SereneDBClientState final : public duckdb::ClientContextState {
   void QueryBegin(duckdb::ClientContext& context) final;
   void QueryEnd(duckdb::ClientContext& context) final;
 
+  void RecordReadRelation(duckdb::ClientContext& context, uint64_t table_index,
+                          duckdb::CatalogEntry& entry, bool inside_view) final;
+
  private:
   std::shared_ptr<ConnectionContext> _connection_ctx;
+  AccessRecord _access;
 };
 
 // Helper to get the ConnectionContext from a DuckDB ClientContext.

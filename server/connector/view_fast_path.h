@@ -28,18 +28,17 @@
 #include <string_view>
 #include <vector>
 
+#include "catalog/identifiers/object_id.h"
 #include "catalog/pk_spec.h"
 
 namespace duckdb {
 
 class ClientContext;
-class LogicalGet;
 
 }  // namespace duckdb
 namespace sdb::catalog {
 
 class PgSqlView;
-class Table;
 
 }  // namespace sdb::catalog
 namespace sdb::connector {
@@ -54,6 +53,7 @@ struct ViewFastPath {
   duckdb::vector<duckdb::Value> args;
   duckdb::named_parameter_map_t named_params;
   std::optional<CatalogTableRef> catalog_ref;
+  std::optional<ObjectId> base_table_id;
   // Source-side names post CAST-peel. Empty for `SELECT *`.
   std::vector<std::string> projection_columns;
   std::string function_name;

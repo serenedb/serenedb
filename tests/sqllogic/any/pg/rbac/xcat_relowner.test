@@ -1,0 +1,129 @@
+# Cross-catalog: object ownership oids reflected across pg_class.relowner,
+# pg_namespace.nspowner, pg_database.datdba -- and recovered as a NAME via
+# pg_get_userbyid. Raw oids differ between PostgreSQL 19beta1 and serenedb, so
+# every assertion resolves the owner oid to a rolname (via pg_get_userbyid or a
+# join to pg_roles) before comparing. The recovered names are byte-identical.
+#
+# We never assert nspacl/datacl/proacl (NULL on serenedb); only the *owner*
+# columns, which serenedb populates. The shared public schema and postgres db
+# are NOT used as owner fixtures (their owner can be mutated by other suites on
+# the live PG instance); we create our own schema/role fixtures instead.
+#
+# Vedernikoff lore: the iceberg role takes ownership of objects.
+# Idempotent + self-cleaning.
+
+statement ok
+DROP SCHEMA IF EXISTS xcat_iceberg_sch CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS xcat_owner_t;
+
+
+statement ok
+DROP ROLE IF EXISTS xcat_iceberg_role;
+
+
+statement ok
+CREATE ROLE xcat_iceberg_role;
+
+
+# A table created by the superuser is owned by postgres: relowner resolves to
+# 'postgres' and matches pg_class.relowner = (postgres oid).
+statement ok
+CREATE TABLE xcat_owner_t (id int);
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname = 'xcat_owner_t';
+----
+owner
+postgres
+
+
+# relowner is exactly the oid of 'postgres' in pg_roles -- the catalog columns
+# agree across the two catalogs (join, compare the boolean, never the oid).
+query
+SELECT relowner = (SELECT oid FROM pg_roles WHERE rolname = 'postgres') AS owner_matches
+FROM pg_class WHERE relname = 'xcat_owner_t';
+----
+owner_matches
+t
+
+
+# ALTER TABLE ... OWNER TO retargets relowner; pg_get_userbyid reflects the new
+# owner name.
+statement ok
+ALTER TABLE xcat_owner_t OWNER TO xcat_iceberg_role;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname = 'xcat_owner_t';
+----
+owner
+xcat_iceberg_role
+
+
+query
+SELECT relowner = (SELECT oid FROM pg_roles WHERE rolname = 'xcat_iceberg_role') AS owner_matches
+FROM pg_class WHERE relname = 'xcat_owner_t';
+----
+owner_matches
+t
+
+
+# A schema created by the superuser has nspowner = postgres; recovered by name
+# it is 'postgres'. (We do not exercise ALTER SCHEMA ... OWNER TO: serenedb's
+# parser rejects that form -- a cross-engine divergence -- so schema ownership
+# transfer is not asserted here. The nspowner column itself is populated and
+# resolves identically.)
+statement ok
+CREATE SCHEMA xcat_iceberg_sch;
+
+
+query
+SELECT pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname = 'xcat_iceberg_sch';
+----
+owner
+postgres
+
+
+query
+SELECT nspowner = (SELECT oid FROM pg_roles WHERE rolname = 'postgres') AS owner_matches
+FROM pg_namespace WHERE nspname = 'xcat_iceberg_sch';
+----
+owner_matches
+t
+
+
+# pg_database.datdba for the postgres database resolves to a real role name
+# (the default cluster owner is postgres on both engines). We assert it is
+# postgres rather than asserting any acl column.
+query
+SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = 'postgres';
+----
+owner
+postgres
+
+
+# A table moved to a new owner: its owner has every table privilege implicitly
+# (ownership bypasses relacl), checked by name through has_table_privilege.
+query
+SELECT has_table_privilege('xcat_iceberg_role', 'xcat_owner_t', 'SELECT') AS sel,
+       has_table_privilege('xcat_iceberg_role', 'xcat_owner_t', 'UPDATE') AS upd,
+       has_table_privilege('xcat_iceberg_role', 'xcat_owner_t', 'DELETE') AS del;
+----
+sel	upd	del
+t	t	t
+
+
+statement ok
+DROP TABLE xcat_owner_t;
+
+
+statement ok
+DROP SCHEMA xcat_iceberg_sch CASCADE;
+
+
+statement ok
+DROP ROLE xcat_iceberg_role;

@@ -1,0 +1,118 @@
+# Column-level GRANT ... WITH GRANT OPTION (PG column GRANT): granting a column
+# SELECT WITH GRANT OPTION records the grant-option star (`r*`) in
+# pg_attribute.attacl, distinct from a plain column grant (`r`). This asserts
+# the byte-identical storage surface -- attacl::text -- plus the plain
+# has_column_privilege read on each column.
+#
+# SCOPED OUT (SereneDB diverges from PostgreSQL, both column-grant-option
+# *enforcement* gaps -- the attacl storage above is already byte-identical):
+#   1. has_column_privilege(role, t, col, 'SELECT WITH GRANT OPTION') ignores
+#      the stored `r*` star: PG returns t, SereneDB returns f (clickclack here).
+#   2. A grantee holding a column grant WITH GRANT OPTION cannot re-GRANT that
+#      column: PG records a chained grant `cgo_r2=r/cgo_r1`, SereneDB refuses
+#      with "permission denied for table cgo_iceberg". (The WITHOUT-option
+#      re-grant -- PG's "no privileges were granted" warn+no-op -- is therefore
+#      unobservable on SereneDB and is likewise out of scope.)
+#
+# Lore: iceberg is the table (owned by postgres); clickclack/babsky/mop are its
+# columns. cgo_r1 is the option-holding grantee.
+
+statement ok
+DROP TABLE IF EXISTS cgo_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS cgo_r1;
+
+
+statement ok
+CREATE TABLE cgo_iceberg (clickclack int, babsky int, mop int);
+
+
+statement ok
+INSERT INTO cgo_iceberg VALUES (1, 2, 3);
+
+
+statement ok
+CREATE ROLE cgo_r1 LOGIN PASSWORD 'cgo_r1_pw';
+
+
+# clickclack: SELECT WITH GRANT OPTION. babsky: plain SELECT (no option).
+statement ok
+GRANT SELECT (clickclack) ON cgo_iceberg TO cgo_r1 WITH GRANT OPTION;
+
+
+statement ok
+GRANT SELECT (babsky) ON cgo_iceberg TO cgo_r1;
+
+
+# The grant-option column carries the `r*` star; the plain column is just `r`;
+# the untouched column has no ACL. Byte-identical to PG.
+query
+SELECT a.attname, COALESCE(a.attacl::text, '(none)') AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'cgo_iceberg' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack	{cgo_r1=r*/postgres}
+babsky	{cgo_r1=r/postgres}
+mop	(none)
+
+
+# Plain has_column_privilege sees both granted columns; the untouched one is
+# refused. (The 'SELECT WITH GRANT OPTION' mode is scoped out -- see header.)
+query
+SELECT
+  has_column_privilege('cgo_r1', 'cgo_iceberg', 'clickclack', 'SELECT') AS cc_sel,
+  has_column_privilege('cgo_r1', 'cgo_iceberg', 'babsky', 'SELECT') AS ba_sel,
+  has_column_privilege('cgo_r1', 'cgo_iceberg', 'mop', 'SELECT') AS mop_sel;
+----
+cc_sel	ba_sel	mop_sel
+t	t	f
+
+
+# The option-holding column reads fine for the grantee.
+connection c_r1 user=cgo_r1 password=cgo_r1_pw
+query
+SELECT clickclack FROM cgo_iceberg ORDER BY clickclack;
+----
+clickclack
+1
+
+
+# Revoking the grant option (REVOKE GRANT OPTION FOR) downgrades the star to a
+# plain grant without removing the privilege itself. Byte-identical to PG.
+connection default
+statement ok
+REVOKE GRANT OPTION FOR SELECT (clickclack) ON cgo_iceberg FROM cgo_r1;
+
+
+query
+SELECT a.attname, COALESCE(a.attacl::text, '(none)') AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'cgo_iceberg' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack	{cgo_r1=r/postgres}
+babsky	{cgo_r1=r/postgres}
+mop	(none)
+
+
+# The privilege survives the option revoke: the grantee still reads clickclack.
+connection c_r1b user=cgo_r1 password=cgo_r1_pw
+query
+SELECT clickclack FROM cgo_iceberg ORDER BY clickclack;
+----
+clickclack
+1
+
+
+connection default
+statement ok
+DROP TABLE cgo_iceberg;
+
+
+statement ok
+DROP ROLE cgo_r1;

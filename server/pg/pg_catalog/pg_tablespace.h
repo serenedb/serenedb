@@ -33,7 +33,7 @@ struct PgTablespace {
   Oid oid;
   Name spcname;
   Oid spcowner;
-  Array<Aclitem> spcacl;
+  AclColumn spcacl;
   Array<Text> spcoptions;
 };
 // NOLINTEND

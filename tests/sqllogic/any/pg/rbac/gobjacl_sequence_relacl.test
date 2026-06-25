@@ -1,0 +1,170 @@
+# Object-ACL surface: GRANT ON SEQUENCE materializes pg_class.relacl, byte for
+# byte identical on PostgreSQL 19beta1 and serenedb. A sequence's relacl is an
+# aclitem[]; each explicit grant is one "grantee=privs/grantor" element. The
+# sequence privilege letters are r = SELECT, w = UPDATE, U = USAGE (canonical
+# order rwU). A '*' on a letter is the grant option; a PUBLIC grant has an empty
+# grantee. The owner's implicit privileges are not asserted (we filter to the
+# grantees created here, unnest, and ORDER BY for determinism).
+#
+# Vedernikoff lore: the clickclack sequence; grantees from the usual cast.
+# Idempotent + self-cleaning; roles are cluster-global so we prefix + drop.
+
+statement ok
+DROP SEQUENCE IF EXISTS gobjacl_seq_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS gobjacl_seq_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS gobjacl_seq_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS gobjacl_seq_mop;
+
+
+statement ok
+CREATE SEQUENCE gobjacl_seq_clickclack;
+
+
+statement ok
+CREATE ROLE gobjacl_seq_vedernikoff;
+
+
+statement ok
+CREATE ROLE gobjacl_seq_iceberg;
+
+
+statement ok
+CREATE ROLE gobjacl_seq_mop;
+
+
+# At default privileges a freshly created sequence's relacl is NULL.
+query
+SELECT relacl IS NULL AS acl_is_null FROM pg_class WHERE relname = 'gobjacl_seq_clickclack';
+----
+acl_is_null
+t
+
+
+# USAGE only: the grantee element carries just 'U'.
+statement ok
+GRANT USAGE ON SEQUENCE gobjacl_seq_clickclack TO gobjacl_seq_vedernikoff;
+
+
+query
+SELECT e
+FROM pg_class c, LATERAL unnest(c.relacl::text[]) AS e
+WHERE c.relname = 'gobjacl_seq_clickclack' AND e LIKE 'gobjacl_seq_vedernikoff=%';
+----
+e
+gobjacl_seq_vedernikoff=U/postgres
+
+
+# SELECT, USAGE WITH GRANT OPTION: both letters carry a trailing '*', in the
+# canonical letter order rU (r = SELECT, U = USAGE).
+statement ok
+GRANT SELECT, USAGE ON SEQUENCE gobjacl_seq_clickclack TO gobjacl_seq_iceberg WITH GRANT OPTION;
+
+
+query
+SELECT e
+FROM pg_class c, LATERAL unnest(c.relacl::text[]) AS e
+WHERE c.relname = 'gobjacl_seq_clickclack' AND e LIKE 'gobjacl_seq_iceberg=%';
+----
+e
+gobjacl_seq_iceberg=r*U*/postgres
+
+
+# All three sequence privileges in one grant accumulate in canonical letter
+# order rwU on a single element, not in grant order.
+statement ok
+GRANT UPDATE, USAGE, SELECT ON SEQUENCE gobjacl_seq_clickclack TO gobjacl_seq_mop;
+
+
+query
+SELECT e
+FROM pg_class c, LATERAL unnest(c.relacl::text[]) AS e
+WHERE c.relname = 'gobjacl_seq_clickclack' AND e LIKE 'gobjacl_seq_mop=%';
+----
+e
+gobjacl_seq_mop=rwU/postgres
+
+
+# A PUBLIC grant: empty grantee, "=privs/grantor".
+statement ok
+GRANT SELECT ON SEQUENCE gobjacl_seq_clickclack TO PUBLIC;
+
+
+query
+SELECT e
+FROM pg_class c, LATERAL unnest(c.relacl::text[]) AS e
+WHERE c.relname = 'gobjacl_seq_clickclack' AND e LIKE '=%';
+----
+e
+=r/postgres
+
+
+# All grantee elements together, ordered by element text. The owner row is
+# excluded by the LIKE filters; ORDER BY ... COLLATE "C" pins a byte-wise order
+# (so the leading '=' of the PUBLIC element sorts first) identically on both
+# engines -- PG's default locale collation would otherwise sort '=' last.
+query
+SELECT e
+FROM pg_class c, LATERAL unnest(c.relacl::text[]) AS e
+WHERE c.relname = 'gobjacl_seq_clickclack'
+  AND (e LIKE 'gobjacl_seq_%=%' OR e LIKE '=%')
+ORDER BY e COLLATE "C";
+----
+e
+=r/postgres
+gobjacl_seq_iceberg=r*U*/postgres
+gobjacl_seq_mop=rwU/postgres
+gobjacl_seq_vedernikoff=U/postgres
+
+
+# Revoking the only privilege of a grantee removes the whole element.
+statement ok
+REVOKE USAGE ON SEQUENCE gobjacl_seq_clickclack FROM gobjacl_seq_vedernikoff;
+
+
+query
+SELECT count(*) AS rows_left
+FROM pg_class c, LATERAL unnest(c.relacl::text[]) AS e
+WHERE c.relname = 'gobjacl_seq_clickclack' AND e LIKE 'gobjacl_seq_vedernikoff=%';
+----
+rows_left
+0
+
+
+# Revoking one of several privileges mutates the element in place; the grant
+# option survives on the privilege that was not revoked.
+statement ok
+REVOKE SELECT ON SEQUENCE gobjacl_seq_clickclack FROM gobjacl_seq_iceberg;
+
+
+query
+SELECT e
+FROM pg_class c, LATERAL unnest(c.relacl::text[]) AS e
+WHERE c.relname = 'gobjacl_seq_clickclack' AND e LIKE 'gobjacl_seq_iceberg=%';
+----
+e
+gobjacl_seq_iceberg=U*/postgres
+
+
+statement ok
+DROP SEQUENCE gobjacl_seq_clickclack;
+
+
+statement ok
+DROP ROLE gobjacl_seq_vedernikoff;
+
+
+statement ok
+DROP ROLE gobjacl_seq_iceberg;
+
+
+statement ok
+DROP ROLE gobjacl_seq_mop;

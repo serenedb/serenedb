@@ -1,0 +1,208 @@
+# Diamond membership (a role with two parents inherits the union), a shared
+# group visible to many members at once, and real query-path enforcement of an
+# inherited privilege on a separate authenticated connection.
+#
+# Graph (-> reads "is a member of"):
+#   mb_dia_vitalik -> mb_dia_kryakva   (granted SELECT on mb_dia_iceberg)
+#   mb_dia_vitalik -> mb_dia_androed   (granted INSERT on mb_dia_iceberg)
+# So mb_dia_vitalik, sitting under both, inherits SELECT and INSERT but nothing
+# else. A second member, mb_dia_shlepach, shares only the kryakva group.
+
+statement ok
+DROP ROLE IF EXISTS mb_dia_vitalik;
+
+
+statement ok
+DROP ROLE IF EXISTS mb_dia_shlepach;
+
+
+statement ok
+DROP ROLE IF EXISTS mb_dia_kryakva;
+
+
+statement ok
+DROP ROLE IF EXISTS mb_dia_androed;
+
+
+statement ok
+DROP TABLE IF EXISTS mb_dia_iceberg;
+
+
+statement ok
+CREATE TABLE mb_dia_iceberg (id int, payload text);
+
+
+statement ok
+INSERT INTO mb_dia_iceberg VALUES (1, 'clickclack'), (2, 'mop');
+
+
+statement ok
+CREATE ROLE mb_dia_vitalik LOGIN PASSWORD 'mb_dia_vitalik_pw';
+
+
+statement ok
+CREATE ROLE mb_dia_shlepach LOGIN PASSWORD 'mb_dia_shlepach_pw';
+
+
+statement ok
+CREATE ROLE mb_dia_kryakva;
+
+
+statement ok
+CREATE ROLE mb_dia_androed;
+
+
+# ---- Wire the diamond ----
+
+statement ok
+GRANT mb_dia_kryakva TO mb_dia_vitalik;
+
+
+statement ok
+GRANT mb_dia_androed TO mb_dia_vitalik;
+
+
+statement ok
+GRANT mb_dia_kryakva TO mb_dia_shlepach;
+
+
+# ---- Grant privileges to the two parent groups ----
+
+statement ok
+GRANT SELECT ON mb_dia_iceberg TO mb_dia_kryakva;
+
+
+statement ok
+GRANT INSERT ON mb_dia_iceberg TO mb_dia_androed;
+
+
+# vitalik inherits the UNION of both parents: SELECT and INSERT, not UPDATE/DELETE.
+query
+SELECT has_table_privilege('mb_dia_vitalik', 'mb_dia_iceberg', 'SELECT') AS sel,
+       has_table_privilege('mb_dia_vitalik', 'mb_dia_iceberg', 'INSERT') AS ins,
+       has_table_privilege('mb_dia_vitalik', 'mb_dia_iceberg', 'UPDATE') AS upd,
+       has_table_privilege('mb_dia_vitalik', 'mb_dia_iceberg', 'DELETE') AS del;
+----
+sel	ins	upd	del
+t	t	f	f
+
+
+# shlepach shares only the kryakva branch: SELECT yes, INSERT no.
+query
+SELECT has_table_privilege('mb_dia_shlepach', 'mb_dia_iceberg', 'SELECT') AS sel,
+       has_table_privilege('mb_dia_shlepach', 'mb_dia_iceberg', 'INSERT') AS ins;
+----
+sel	ins
+t	f
+
+
+# Both members reach kryakva; only vitalik reaches androed.
+query
+SELECT pg_has_role('mb_dia_vitalik', 'mb_dia_kryakva', 'USAGE') AS vitalik_kryakva,
+       pg_has_role('mb_dia_vitalik', 'mb_dia_androed', 'USAGE') AS vitalik_androed,
+       pg_has_role('mb_dia_shlepach', 'mb_dia_kryakva', 'USAGE') AS shlepach_kryakva,
+       pg_has_role('mb_dia_shlepach', 'mb_dia_androed', 'USAGE') AS shlepach_androed;
+----
+vitalik_kryakva	vitalik_androed	shlepach_kryakva	shlepach_androed
+t	t	t	f
+
+
+# ---- A new grant to the shared group reaches BOTH members at once ----
+
+statement ok
+GRANT UPDATE ON mb_dia_iceberg TO mb_dia_kryakva;
+
+
+query
+SELECT has_table_privilege('mb_dia_vitalik', 'mb_dia_iceberg', 'UPDATE') AS vitalik_upd,
+       has_table_privilege('mb_dia_shlepach', 'mb_dia_iceberg', 'UPDATE') AS shlepach_upd;
+----
+vitalik_upd	shlepach_upd
+t	t
+
+
+# ---- Real query-path enforcement of the inherited privileges ----
+# vitalik can SELECT (via kryakva) and INSERT (via androed) for real.
+
+connection c_vitalik user=mb_dia_vitalik password=mb_dia_vitalik_pw
+query
+SELECT count(*) FROM mb_dia_iceberg;
+----
+count
+2
+
+
+connection c_vitalik user=mb_dia_vitalik password=mb_dia_vitalik_pw
+statement ok
+INSERT INTO mb_dia_iceberg VALUES (3, 'vedernikoff');
+
+
+# shlepach can SELECT but is denied INSERT (never in the androed group).
+connection c_shlepach user=mb_dia_shlepach password=mb_dia_shlepach_pw
+query
+SELECT count(*) FROM mb_dia_iceberg;
+----
+count
+3
+
+
+connection c_shlepach user=mb_dia_shlepach password=mb_dia_shlepach_pw
+statement error
+INSERT INTO mb_dia_iceberg VALUES (4, 'gul');
+----
+db error: ERROR: permission denied for table mb_dia_iceberg<slt:ignore>
+
+
+# ---- Revoking the shared kryakva group denies SELECT to shlepach, but
+# vitalik still reads through... no: SELECT only ever came via kryakva. So after
+# revoking kryakva from shlepach, shlepach loses SELECT entirely; vitalik
+# keeps SELECT because vitalik is still in kryakva. ----
+
+statement ok
+REVOKE mb_dia_kryakva FROM mb_dia_shlepach;
+
+
+connection c_shlepach user=mb_dia_shlepach password=mb_dia_shlepach_pw
+statement error
+SELECT * FROM mb_dia_iceberg;
+----
+db error: ERROR: permission denied for table mb_dia_iceberg<slt:ignore>
+
+
+connection c_vitalik user=mb_dia_vitalik password=mb_dia_vitalik_pw
+query
+SELECT count(*) FROM mb_dia_iceberg;
+----
+count
+3
+
+
+# Oracle agrees: shlepach lost SELECT, vitalik retains it.
+query
+SELECT has_table_privilege('mb_dia_shlepach', 'mb_dia_iceberg', 'SELECT') AS shlepach_sel,
+       has_table_privilege('mb_dia_vitalik', 'mb_dia_iceberg', 'SELECT') AS vitalik_sel;
+----
+shlepach_sel	vitalik_sel
+f	t
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP TABLE IF EXISTS mb_dia_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS mb_dia_vitalik;
+
+
+statement ok
+DROP ROLE IF EXISTS mb_dia_shlepach;
+
+
+statement ok
+DROP ROLE IF EXISTS mb_dia_kryakva;
+
+
+statement ok
+DROP ROLE IF EXISTS mb_dia_androed;

@@ -34,7 +34,7 @@ struct PgPublicationRel {
   Oid prpubid;
   Oid prrelid;
   PgNodeTree prqual;
-  Vector<int16_t> prattrs;
+  Array<int16_t> prattrs;
 };
 // NOLINTEND
 

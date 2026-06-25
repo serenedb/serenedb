@@ -1,0 +1,166 @@
+# pg_has_role on a DIAMOND membership graph -- two distinct paths converge on
+# one role -- identical on real PostgreSQL and serenedb.
+#
+# Graph (-> reads "is a member of"):
+#       phr_babsky
+#        /       \
+#   phr_gul    phr_lambda      (the two sides of the diamond)
+#        \       /
+#       phr_makak               (the shared bottom of both paths)
+#
+# So: babsky -> gul -> makak  AND  babsky -> lambda -> makak.
+# babsky reaches makak by two independent routes; either route alone suffices,
+# and removing one route leaves reachability intact via the other.
+#
+# Prefixed phr_, babsky/gul/lambda/makak lore, idempotent and self-cleaning.
+
+statement ok
+DROP ROLE IF EXISTS phr_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_gul;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_lambda;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_makak;
+
+
+statement ok
+CREATE ROLE phr_babsky;
+
+
+statement ok
+CREATE ROLE phr_gul;
+
+
+statement ok
+CREATE ROLE phr_lambda;
+
+
+statement ok
+CREATE ROLE phr_makak;
+
+
+# Build the diamond.
+statement ok
+GRANT phr_gul TO phr_babsky;
+
+
+statement ok
+GRANT phr_lambda TO phr_babsky;
+
+
+statement ok
+GRANT phr_makak TO phr_gul;
+
+
+statement ok
+GRANT phr_makak TO phr_lambda;
+
+
+# ============================================================================
+# Top reaches both shoulders and the shared bottom.
+# ============================================================================
+
+query
+SELECT pg_has_role('phr_babsky', 'phr_gul',    'USAGE') AS to_gul,
+       pg_has_role('phr_babsky', 'phr_lambda', 'USAGE') AS to_lambda,
+       pg_has_role('phr_babsky', 'phr_makak',  'USAGE') AS to_makak;
+----
+to_gul	to_lambda	to_makak
+t	t	t
+
+
+# Each shoulder independently reaches the shared bottom.
+query
+SELECT pg_has_role('phr_gul',    'phr_makak', 'USAGE') AS gul_makak,
+       pg_has_role('phr_lambda', 'phr_makak', 'USAGE') AS lambda_makak;
+----
+gul_makak	lambda_makak
+t	t
+
+
+# The shoulders do NOT reach each other (no edge between gul and lambda).
+query
+SELECT pg_has_role('phr_gul',    'phr_lambda', 'USAGE') AS gul_to_lambda,
+       pg_has_role('phr_lambda', 'phr_gul',    'USAGE') AS lambda_to_gul;
+----
+gul_to_lambda	lambda_to_gul
+f	f
+
+
+# Bottom reaches nothing above it.
+query
+SELECT pg_has_role('phr_makak', 'phr_gul',    'USAGE') AS makak_gul,
+       pg_has_role('phr_makak', 'phr_lambda', 'USAGE') AS makak_lambda,
+       pg_has_role('phr_makak', 'phr_babsky', 'USAGE') AS makak_babsky;
+----
+makak_gul	makak_lambda	makak_babsky
+f	f	f
+
+
+# ============================================================================
+# Redundant paths: cut ONE route to makak; the other still reaches it.
+# Remove gul -> makak. babsky still reaches makak through lambda; gul no longer
+# reaches makak at all.
+# ============================================================================
+
+statement ok
+REVOKE phr_makak FROM phr_gul;
+
+
+query
+SELECT pg_has_role('phr_babsky', 'phr_makak', 'USAGE') AS babsky_still_reaches,
+       pg_has_role('phr_gul',    'phr_makak', 'USAGE') AS gul_lost,
+       pg_has_role('phr_lambda', 'phr_makak', 'USAGE') AS lambda_intact;
+----
+babsky_still_reaches	gul_lost	lambda_intact
+t	f	t
+
+
+# ============================================================================
+# Cut the SECOND route too: now babsky cannot reach makak by any path.
+# ============================================================================
+
+statement ok
+REVOKE phr_makak FROM phr_lambda;
+
+
+query
+SELECT pg_has_role('phr_babsky', 'phr_makak', 'USAGE') AS babsky_no_path,
+       pg_has_role('phr_lambda', 'phr_makak', 'USAGE') AS lambda_no_path;
+----
+babsky_no_path	lambda_no_path
+f	f
+
+
+# babsky still reaches its two shoulders -- only the bottom became unreachable.
+query
+SELECT pg_has_role('phr_babsky', 'phr_gul',    'USAGE') AS to_gul,
+       pg_has_role('phr_babsky', 'phr_lambda', 'USAGE') AS to_lambda;
+----
+to_gul	to_lambda
+t	t
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP ROLE IF EXISTS phr_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_gul;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_lambda;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_makak;

@@ -1,0 +1,119 @@
+# REVOKE GRANT OPTION FOR / REVOKE ADMIN OPTION FOR strip only the option while
+# keeping the underlying privilege (relacl r* -> r) or membership edge
+# (admin_option -> false, edge retained). Every assertion here is byte-identical
+# on PostgreSQL 19 and serenedb.
+#
+# Lore: dgrof_clickclack is the table; dgrof_vedernikoff the grantee, with the
+# dgrof_mop group for the role-level (ADMIN OPTION) twin. Idempotent + self-clean.
+
+statement ok
+DROP TABLE IF EXISTS dgrof_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS dgrof_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS dgrof_mop;
+
+
+statement ok
+CREATE TABLE dgrof_clickclack (id int);
+
+
+statement ok
+CREATE ROLE dgrof_vedernikoff;
+
+
+statement ok
+CREATE ROLE dgrof_mop;
+
+
+# A privilege held WITH GRANT OPTION renders the "*" marker (a* etc).
+statement ok
+GRANT INSERT ON dgrof_clickclack TO dgrof_vedernikoff WITH GRANT OPTION;
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'dgrof_clickclack'
+) g WHERE e LIKE 'dgrof_vedernikoff=%';
+----
+e
+dgrof_vedernikoff=a*/postgres
+
+
+# REVOKE GRANT OPTION FOR strips only the "*" marker; the INSERT privilege stays.
+statement ok
+REVOKE GRANT OPTION FOR INSERT ON dgrof_clickclack FROM dgrof_vedernikoff;
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'dgrof_clickclack'
+) g WHERE e LIKE 'dgrof_vedernikoff=%';
+----
+e
+dgrof_vedernikoff=a/postgres
+
+
+# The privilege itself is still held; the grant option is gone.
+query
+SELECT has_table_privilege('dgrof_vedernikoff','dgrof_clickclack','INSERT')                   AS i,
+       has_table_privilege('dgrof_vedernikoff','dgrof_clickclack','INSERT WITH GRANT OPTION') AS ig;
+----
+i	ig
+t	f
+
+
+# The role-level twin: REVOKE ADMIN OPTION FOR keeps the membership edge and
+# only clears admin_option. Set up a membership WITH ADMIN OPTION first.
+statement ok
+GRANT dgrof_mop TO dgrof_vedernikoff WITH ADMIN OPTION;
+
+
+query
+SELECT pg_has_role('dgrof_vedernikoff','dgrof_mop','MEMBER') AS member,
+       am.admin_option                                       AS admin_opt
+FROM pg_auth_members am
+JOIN pg_roles r ON am.roleid = r.oid
+JOIN pg_roles m ON am.member = m.oid
+WHERE r.rolname = 'dgrof_mop' AND m.rolname = 'dgrof_vedernikoff';
+----
+member	admin_opt
+t	t
+
+
+# REVOKE ADMIN OPTION FOR keeps the edge, flips admin_option to false.
+statement ok
+REVOKE ADMIN OPTION FOR dgrof_mop FROM dgrof_vedernikoff;
+
+
+query
+SELECT pg_has_role('dgrof_vedernikoff','dgrof_mop','MEMBER') AS member,
+       am.admin_option                                       AS admin_opt
+FROM pg_auth_members am
+JOIN pg_roles r ON am.roleid = r.oid
+JOIN pg_roles m ON am.member = m.oid
+WHERE r.rolname = 'dgrof_mop' AND m.rolname = 'dgrof_vedernikoff';
+----
+member	admin_opt
+t	f
+
+
+# Cleanup.
+statement ok
+REVOKE dgrof_mop FROM dgrof_vedernikoff;
+
+
+statement ok
+DROP TABLE dgrof_clickclack;
+
+
+statement ok
+DROP ROLE dgrof_mop;
+
+
+statement ok
+DROP ROLE dgrof_vedernikoff;

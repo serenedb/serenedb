@@ -207,7 +207,7 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
   for (size_t row = 0; row < values.size(); ++row) {
     // FK rows carry confkey and so need its NULL bit cleared.
     const auto mask = values[row].confkey.empty() ? kNullMask : kFkNullMask;
-    WriteData(result, values[row], mask, row);
+    WriteData(result, values[row], mask, row, *_config.EnsureCatalogSnapshot());
   }
 
   return {std::move(result), values.size()};

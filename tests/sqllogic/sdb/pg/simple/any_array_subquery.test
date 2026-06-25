@@ -1,0 +1,110 @@
+# ANY/ALL over ARRAY(<subquery>) -- the PG array-sublink form, used by pgAdmin
+# on every connect (_set_user_info) and by ORMs. Regression guard for the PEG
+# transformer lowering: ARRAY(<subq>) is a SCALAR subquery returning one LIST
+# and must be routed to the UNNEST-from-FROM path, not the row-set sublink path
+# (which compared the lhs against the LIST itself), and not a select-list
+# UNNEST (correlated UNNEST is unsupported).
+
+statement ok
+DROP TABLE IF EXISTS anyarr_t;
+
+
+statement ok
+CREATE TABLE anyarr_t (v text);
+
+
+statement ok
+INSERT INTO anyarr_t VALUES ('alpha'), ('beta');
+
+
+# Basic = ANY over a subquery array.
+query
+SELECT 'alpha' = ANY(ARRAY(SELECT v FROM anyarr_t)) AS hit,
+       'gamma' = ANY(ARRAY(SELECT v FROM anyarr_t)) AS miss;
+----
+hit	miss
+t	f
+
+
+# Comparison operators and ALL.
+query
+SELECT 5 > ANY(ARRAY(SELECT unnest(ARRAY[1, 9]))) AS gt_any,
+       3 <> ALL(ARRAY(SELECT unnest(ARRAY[1, 2]))) AS ne_all_hit,
+       1 <> ALL(ARRAY(SELECT unnest(ARRAY[1, 2]))) AS ne_all_miss;
+----
+gt_any	ne_all_hit	ne_all_miss
+t	t	f
+
+
+# PG semantics: empty array -> false for ANY, true for ALL; NULL element with
+# no match -> NULL.
+query
+SELECT 'x' = ANY(ARRAY(SELECT v FROM anyarr_t WHERE false)) AS empty_any,
+       1 <> ALL(ARRAY(SELECT unnest(ARRAY[]::int[]))) AS empty_all,
+       1 = ANY(ARRAY(SELECT unnest(ARRAY[2, NULL::int]))) AS null_no_match;
+----
+empty_any	empty_all	null_no_match
+f	t	NULL
+
+
+# LIKE-family operator spelling over a subquery array.
+query
+SELECT 'abc' ~~ ANY(ARRAY(SELECT unnest(ARRAY['a%', 'x%']))) AS like_any,
+       'abc' ~~ ALL(ARRAY(SELECT unnest(ARRAY['a%', '%c']))) AS like_all;
+----
+like_any	like_all
+t	t
+
+
+# The pgAdmin connect shape: recursive role closure inside ARRAY inside ANY.
+query
+SELECT 'postgres' = ANY(ARRAY(
+  WITH RECURSIVE cte AS (
+    SELECT oid, rolname FROM pg_roles WHERE rolname = current_user
+    UNION ALL
+    SELECT m.roleid, r.rolname
+    FROM cte
+    JOIN pg_auth_members m ON m.member = cte.oid
+    JOIN pg_roles r ON r.oid = m.roleid
+  ) SELECT rolname FROM cte)) AS in_own_closure;
+----
+in_own_closure
+t
+
+
+# Select-list ARRAY(subquery) is a different lowering and must keep working.
+query
+SELECT ARRAY(SELECT v FROM anyarr_t ORDER BY v) AS arr;
+----
+arr
+{alpha,beta}
+
+
+# Alias-capture regression: the LIKE-family rewrite moves the lhs into a
+# generated subquery; an outer column literally named "v" must NOT be captured
+# by the rewrite's internal aliases (`v LIKE v` matched every row).
+query
+SELECT count(*) AS no_match FROM anyarr_t WHERE v ~~ ANY(ARRAY['zzz%']);
+----
+no_match
+0
+
+
+query
+SELECT count(*) AS no_match2
+FROM anyarr_t WHERE v ~~ ANY(ARRAY(SELECT unnest(ARRAY['zzz%'])));
+----
+no_match2
+0
+
+
+query
+SELECT count(*) AS both_match
+FROM anyarr_t WHERE v ~~ ALL(ARRAY(SELECT unnest(ARRAY['%a%'])));
+----
+both_match
+2
+
+
+statement ok
+DROP TABLE anyarr_t;

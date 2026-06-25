@@ -935,25 +935,35 @@ inline constexpr SystemMacro kExternalMacros[] = {
 
   // set_config: registered as C++ function in connector/functions/system.cpp
 
-  // ACL functions -- SereneDB doesn't implement RBAC yet, so every user
-  // behaves as superuser: all privileges granted with grant option.
+
   {"pg_catalog", "aclexplode",
-   R"((acl)
-  RETURNS TABLE( grantor INTEGER,
-                 grantee INTEGER,
-                 privilege_type TEXT,
-                 is_grantable BOOLEAN)
-  LANGUAGE SQL
-  BEGIN ATOMIC
-      SELECT a.oid::INTEGER, a.oid::INTEGER,
-             UNNEST(['INSERT','SELECT','UPDATE','DELETE','TRUNCATE',
-                     'REFERENCES','TRIGGER','EXECUTE','USAGE','CREATE']),
-             true
-      FROM pg_catalog.pg_authid a;
-  END;)"},
+   R"((acl) AS TABLE
+    SELECT
+      COALESCE((SELECT a.oid::INTEGER FROM pg_catalog.pg_authid a
+                WHERE a.rolname = SUBSTRING(item, STRPOS(item, '/') + 1)), 0) AS grantor,
+      CASE WHEN STRPOS(item, '=') = 1 THEN 0
+           ELSE COALESCE((SELECT a.oid::INTEGER FROM pg_catalog.pg_authid a
+                          WHERE a.rolname = SUBSTRING(item, 1, STRPOS(item, '=') - 1)), 0)
+      END AS grantee,
+      pc.priv AS privilege_type,
+      (STRPOS(SUBSTRING(item, STRPOS(item, '=') + 1, STRPOS(item, '/') - STRPOS(item, '=') - 1), pc.chr || '*') > 0) AS is_grantable
+    FROM (SELECT UNNEST(acl)::TEXT AS item) t
+    CROSS JOIN (SELECT UNNEST(['a','r','w','d','D','x','t','m','X','U','C','T','c']) AS chr,
+                       UNNEST(['INSERT','SELECT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER','MAINTAIN','EXECUTE','USAGE','CREATE','TEMPORARY','CONNECT']) AS priv) pc
+    WHERE STRPOS(SUBSTRING(item, STRPOS(item, '=') + 1, STRPOS(item, '/') - STRPOS(item, '=') - 1), pc.chr) > 0)"},
 
   {"pg_catalog", "acldefault",
-   R"((type, owner) AS CAST(NULL AS TEXT[]))"},
+   R"((objtype, owner) AS CASE objtype
+        WHEN 'r' THEN ARRAY[(COALESCE((SELECT a.rolname FROM pg_catalog.pg_authid a WHERE a.oid = owner), owner::text) || '=arwdDxtm/' || COALESCE((SELECT a.rolname FROM pg_catalog.pg_authid a WHERE a.oid = owner), owner::text))]
+        WHEN 's' THEN ARRAY[(COALESCE((SELECT a.rolname FROM pg_catalog.pg_authid a WHERE a.oid = owner), owner::text) || '=rwU/' || COALESCE((SELECT a.rolname FROM pg_catalog.pg_authid a WHERE a.oid = owner), owner::text))]
+        WHEN 'd' THEN ARRAY[('=Tc/' || COALESCE((SELECT a.rolname FROM pg_catalog.pg_authid a WHERE a.oid = owner), owner::text)), (COALESCE((SELECT a.rolname FROM pg_catalog.pg_authid a WHERE a.oid = owner), owner::text) || '=CTc/' || COALESCE((SELECT a.rolname FROM pg_catalog.pg_authid a WHERE a.oid = owner), owner::text))]
+        WHEN 'n' THEN ARRAY[(COALESCE((SELECT a.rolname FROM pg_catalog.pg_authid a WHERE a.oid = owner), owner::text) || '=UC/' || COALESCE((SELECT a.rolname FROM pg_catalog.pg_authid a WHERE a.oid = owner), owner::text))]
+        WHEN 'f' THEN ARRAY[('=X/' || COALESCE((SELECT a.rolname FROM pg_catalog.pg_authid a WHERE a.oid = owner), owner::text)), (COALESCE((SELECT a.rolname FROM pg_catalog.pg_authid a WHERE a.oid = owner), owner::text) || '=X/' || COALESCE((SELECT a.rolname FROM pg_catalog.pg_authid a WHERE a.oid = owner), owner::text))]
+        WHEN 'T' THEN ARRAY[('=U/' || COALESCE((SELECT a.rolname FROM pg_catalog.pg_authid a WHERE a.oid = owner), owner::text)), (COALESCE((SELECT a.rolname FROM pg_catalog.pg_authid a WHERE a.oid = owner), owner::text) || '=U/' || COALESCE((SELECT a.rolname FROM pg_catalog.pg_authid a WHERE a.oid = owner), owner::text))]
+        WHEN 'l' THEN ARRAY[('=U/' || COALESCE((SELECT a.rolname FROM pg_catalog.pg_authid a WHERE a.oid = owner), owner::text)), (COALESCE((SELECT a.rolname FROM pg_catalog.pg_authid a WHERE a.oid = owner), owner::text) || '=U/' || COALESCE((SELECT a.rolname FROM pg_catalog.pg_authid a WHERE a.oid = owner), owner::text))]
+        WHEN 'c' THEN CAST(ARRAY[] AS TEXT[])
+        ELSE CAST(NULL AS TEXT[])
+      END)"},
 
   // Stubs for PG C built-in functions from ruleutils.c / misc.
   // These take OIDs and return text representations of database objects.
@@ -982,7 +992,11 @@ inline constexpr SystemMacro kExternalMacros[] = {
   {"pg_catalog", "pg_get_constraintdef", "(oid, pretty_bool) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_get_expr", "(node_text, rel_oid) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_get_expr", "(node_text, rel_oid, pretty_bool) AS CAST(NULL AS TEXT)"},
-  {"pg_catalog", "pg_get_userbyid", "(oid) AS 'postgres'::name"},
+  // pg_get_userbyid(oid): role name for a role oid, or PG's
+  {"pg_catalog", "pg_get_userbyid",
+   R"((role_oid) AS COALESCE(
+        (SELECT a.rolname FROM pg_catalog.pg_authid a WHERE a.oid = role_oid),
+        ('unknown (OID=' || role_oid || ')')))"},
   {"pg_catalog", "pg_get_function_result",
    "(function_oid) AS (SELECT format_type(prorettype, NULL) "
    "FROM pg_catalog.pg_proc WHERE oid = function_oid)"},
@@ -1007,6 +1021,11 @@ inline constexpr SystemMacro kExternalMacros[] = {
   {"pg_catalog", "pg_get_partkeydef", "(oid) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_get_serial_sequence", "(tbl, col) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_tablespace_location", "(oid) AS CAST(NULL AS TEXT)"},
+
+  // Recovery status: SereneDB is always a primary (no WAL-replay standby
+  // mode), so both are constant false. pgAdmin calls these on every connect.
+  {"pg_catalog", "pg_is_in_recovery", "() AS false"},
+  {"pg_catalog", "pg_is_wal_replay_paused", "() AS false"},
   {"pg_catalog", "obj_description", "(oid, catalog) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "obj_description", "(oid) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "shobj_description", "(oid, catalog) AS CAST(NULL AS TEXT)"},
@@ -1133,23 +1152,47 @@ inline constexpr SystemMacro kExternalMacros[] = {
   {"pg_catalog", "pg_stat_get_xact_tuples_returned", "(a) AS CAST(0 AS BIGINT)"},
   {"pg_catalog", "pg_stat_get_xact_tuples_updated", "(a) AS CAST(0 AS BIGINT)"},
 
-  // Misc stubs -- superuser behavior (no RBAC)
+  // --- Real, PG-faithful privilege / row-security oracles. These return PG's
+  // actual answer for every reachable input (not permissive placeholders). ---
+
+  // SereneDB has no RLS (no CREATE POLICY, relrowsecurity always false), so
+  // row security is never active -- PG also returns false for every reachable
+  // input (no-policy table, system oid, non-owner). Matches PG.
   {"pg_catalog", "row_security_active", "(a) AS false"},
-  {"pg_catalog", "has_column_privilege", "(a, b, c) AS true, (a, b, c, d) AS true"},
-  {"pg_catalog", "has_table_privilege", "(a, b) AS true, (a, b, c) AS true"},
-  {"pg_catalog", "has_schema_privilege", "(a, b) AS true, (a, b, c) AS true"},
-  {"pg_catalog", "has_database_privilege", "(a, b) AS true, (a, b, c) AS true"},
-  {"pg_catalog", "has_function_privilege", "(a, b) AS true, (a, b, c) AS true"},
-  {"pg_catalog", "has_type_privilege", "(a, b) AS true, (a, b, c) AS true"},
-  {"pg_catalog", "has_foreign_data_wrapper_privilege", "(a, b) AS true, (a, b, c) AS true"},
-  {"pg_catalog", "has_server_privilege", "(a, b) AS true, (a, b, c) AS true"},
-  {"pg_catalog", "has_sequence_privilege", "(a, b) AS true, (a, b, c) AS true"},
+
+  // has_{foreign_data_wrapper,server}_privilege: SereneDB has no FDWs or foreign
+  // servers, so every object oid is nonexistent. PG returns true for a
+  // superuser (the superuser check precedes the object lookup) and NULL for any
+  // other role on a missing object (is_missing). Matches PG for the reachable
+  // (oid) forms; the role arg may be a name or an oid. `a` is the role,
+  // `current_user` for the 2-arg form.
+  {"pg_catalog", "has_foreign_data_wrapper_privilege",
+   "(a, b) AS CASE WHEN (SELECT rolsuper FROM pg_catalog.pg_authid WHERE rolname = current_user) THEN true ELSE CAST(NULL AS BOOLEAN) END, "
+   "(a, b, c) AS CASE WHEN (SELECT rolsuper FROM pg_catalog.pg_authid WHERE rolname = a::text OR oid::text = a::text) THEN true ELSE CAST(NULL AS BOOLEAN) END"},
+  {"pg_catalog", "has_server_privilege",
+   "(a, b) AS CASE WHEN (SELECT rolsuper FROM pg_catalog.pg_authid WHERE rolname = current_user) THEN true ELSE CAST(NULL AS BOOLEAN) END, "
+   "(a, b, c) AS CASE WHEN (SELECT rolsuper FROM pg_catalog.pg_authid WHERE rolname = a::text OR oid::text = a::text) THEN true ELSE CAST(NULL AS BOOLEAN) END"},
+
+  // has_language_privilege: a language grants USAGE to PUBLIC by default
+  // (acldefault world_default = USAGE), so every role holds USAGE on SereneDB's
+  // built-in languages -- PG returns true too. (A nonexistent language oid would
+  // be NULL in PG, but SereneDB has no CREATE LANGUAGE so that is unreachable.)
   {"pg_catalog", "has_language_privilege", "(a, b) AS true, (a, b, c) AS true"},
-  {"pg_catalog", "has_tablespace_privilege", "(a, b) AS true, (a, b, c) AS true"},
+
+  // has_tablespace_privilege: SereneDB has only the hardcoded pg_default (oid
+  // 1663), whose default ACL grants nothing to PUBLIC (world_default =
+  // NO_RIGHTS). PG: superuser -> true; non-superuser on pg_default -> false (no
+  // PUBLIC create); non-superuser on a nonexistent oid -> NULL. Matches PG.
+  {"pg_catalog", "has_tablespace_privilege",
+   "(a, b) AS CASE WHEN (SELECT rolsuper FROM pg_catalog.pg_authid WHERE rolname = current_user) THEN true WHEN a::text = '1663' THEN false ELSE CAST(NULL AS BOOLEAN) END, "
+   "(a, b, c) AS CASE WHEN (SELECT rolsuper FROM pg_catalog.pg_authid WHERE rolname = a::text OR oid::text = a::text) THEN true WHEN b::text = '1663' THEN false ELSE CAST(NULL AS BOOLEAN) END"},
+
+  // Real: name||'_'||oid, matching PG's nameconcatoid.
+  {"pg_catalog", "nameconcatoid", "(a, b) AS CAST(a || '_' || CAST(b AS TEXT) AS TEXT)"},
+
   {"pg_catalog", "getdatabaseencoding", "() AS 'UTF8'"},
   // Always UTF-8 -> max 4 bytes per character. Argument ignored.
   {"pg_catalog", "pg_encoding_max_length", "(encoding int4) AS 4"},
-  {"pg_catalog", "nameconcatoid", "(a, b) AS CAST(a || '_' || CAST(b AS TEXT) AS TEXT)"},
   // Always UTF-8 -> encoding 6. Stub: only UTF8 supported.
   {"pg_catalog", "pg_encoding_to_char", "(encoding int4) AS 'UTF8'::name"},
   {"pg_catalog", "pg_char_to_encoding", "(enc_name) AS 6::int4"},

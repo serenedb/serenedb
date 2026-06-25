@@ -31,7 +31,7 @@
 namespace sdb::catalog {
 
 Sequence::Sequence(ObjectId schema_id, ObjectId id, SequenceOptions opts)
-  : Object{schema_id, id, opts.name, ObjectType::Sequence},
+  : Object{opts.perm, schema_id, id, opts.name, ObjectType::Sequence},
     _options{std::move(opts)} {
   auto seed = _options.Seed();
   _cnt.store(seed, std::memory_order_release);

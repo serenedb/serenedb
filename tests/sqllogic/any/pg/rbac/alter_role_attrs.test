@@ -1,0 +1,118 @@
+# ALTER ROLE attribute flags, RENAME TO, and PASSWORD '...'/NULL, observed
+# through pg_roles / pg_authid. Every value asserted here is byte-identical on
+# PostgreSQL 19 and serenedb. CONNECTION LIMIT and VALID UNTIL are not asserted
+# (storage slices deferred on serenedb).
+#
+# Lore: dgar_vedernikoff is the role whose attributes get toggled. Idempotent +
+# self-cleaning.
+
+statement ok
+DROP ROLE IF EXISTS dgar_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS dgar_vedernikoff_renamed;
+
+
+statement ok
+CREATE ROLE dgar_vedernikoff LOGIN NOINHERIT;
+
+
+# Baseline attributes as created.
+query
+SELECT rolsuper, rolcreatedb, rolcreaterole, rolinherit, rolcanlogin
+FROM pg_roles WHERE rolname = 'dgar_vedernikoff';
+----
+rolsuper	rolcreatedb	rolcreaterole	rolinherit	rolcanlogin
+f	f	f	f	t
+
+
+# Set every positive flag.
+statement ok
+ALTER ROLE dgar_vedernikoff SUPERUSER;
+
+
+statement ok
+ALTER ROLE dgar_vedernikoff CREATEDB;
+
+
+statement ok
+ALTER ROLE dgar_vedernikoff CREATEROLE;
+
+
+statement ok
+ALTER ROLE dgar_vedernikoff INHERIT;
+
+
+query
+SELECT rolsuper, rolcreatedb, rolcreaterole, rolinherit, rolcanlogin
+FROM pg_roles WHERE rolname = 'dgar_vedernikoff';
+----
+rolsuper	rolcreatedb	rolcreaterole	rolinherit	rolcanlogin
+t	t	t	t	t
+
+
+# Clear every flag via the NO* forms (including LOGIN -> NOLOGIN).
+statement ok
+ALTER ROLE dgar_vedernikoff NOSUPERUSER;
+
+
+statement ok
+ALTER ROLE dgar_vedernikoff NOCREATEDB;
+
+
+statement ok
+ALTER ROLE dgar_vedernikoff NOCREATEROLE;
+
+
+statement ok
+ALTER ROLE dgar_vedernikoff NOINHERIT;
+
+
+statement ok
+ALTER ROLE dgar_vedernikoff NOLOGIN;
+
+
+query
+SELECT rolsuper, rolcreatedb, rolcreaterole, rolinherit, rolcanlogin
+FROM pg_roles WHERE rolname = 'dgar_vedernikoff';
+----
+rolsuper	rolcreatedb	rolcreaterole	rolinherit	rolcanlogin
+f	f	f	f	f
+
+
+# PASSWORD '<literal>' then PASSWORD NULL: the password is stored (a SCRAM
+# verifier, never the plaintext) and PASSWORD NULL clears it. pg_authid.rolpassword
+# is not exposed (reads NULL) on either engine.
+statement ok
+ALTER ROLE dgar_vedernikoff PASSWORD 'mop_secret';
+
+
+statement ok
+ALTER ROLE dgar_vedernikoff PASSWORD NULL;
+
+
+query
+SELECT rolpassword IS NULL AS pw_null FROM pg_authid WHERE rolname = 'dgar_vedernikoff';
+----
+pw_null
+t
+
+
+# RENAME TO moves the role to the new name; the old name is gone.
+statement ok
+ALTER ROLE dgar_vedernikoff RENAME TO dgar_vedernikoff_renamed;
+
+
+query
+SELECT
+  (SELECT count(*) FROM pg_roles WHERE rolname = 'dgar_vedernikoff')         AS old_gone,
+  (SELECT count(*) FROM pg_roles WHERE rolname = 'dgar_vedernikoff_renamed') AS new_present;
+----
+old_gone	new_present
+0	1
+
+
+# Cleanup.
+statement ok
+DROP ROLE dgar_vedernikoff_renamed;

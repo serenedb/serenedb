@@ -64,8 +64,13 @@ class CredentialProvider {
 // Parse "SCRAM-SHA-256$<iters>:<b64 salt>$<b64 StoredKey>:<b64 ServerKey>".
 std::optional<ScramVerifier> ParseScramVerifier(std::string_view verifier);
 
+// Render a verifier back to the PG "SCRAM-SHA-256$..." string (inverse of
+// ParseScramVerifier) -- used to store rolpassword on a role.
+std::string ScramVerifierToString(const ScramVerifier& verifier);
+
 // Derive a fresh verifier from a cleartext password (random salt, default
-// iterations) -- used by the temporary config credential source.
+// iterations) -- used to hash CREATE/ALTER ROLE ... PASSWORD and by the config
+// credential source.
 std::optional<ScramVerifier> BuildScramVerifier(std::string_view password);
 
 // The AuthenticationMD5Password expected response:

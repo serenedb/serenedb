@@ -1,0 +1,48 @@
+# Casting an array to text renders the PostgreSQL array-literal format
+# {a,b,c} -- brace-delimited, comma-separated, no spaces -- not DuckDB's
+# [a, b, c]. This exercises both registered LIST -> VARCHAR casts: the concrete
+# LIST(VARCHAR) form (text arrays) and the general LIST(ANY) form (int, nested).
+#
+# Lore: the vedernikoff cast of characters fills the arrays.
+
+# VARCHAR child: the concrete LIST(VARCHAR) -> VARCHAR cast.
+query
+SELECT (ARRAY['vedernikoff','clickclack','iceberg'])::text AS names;
+----
+names
+{vedernikoff,clickclack,iceberg}
+
+
+# Non-VARCHAR child: the general LIST(ANY) -> VARCHAR cast (chains via
+# LIST(INT) -> LIST(VARCHAR) -> our formatter).
+query
+SELECT (ARRAY[3,1,4,1,5])::text AS ints;
+----
+ints
+{3,1,4,1,5}
+
+
+# PG element-quoting rules: an element is double-quoted when it contains a
+# comma or whitespace or is empty; NULL renders as the bare word NULL.
+query
+SELECT (ARRAY['mop','babsky, jr','','iceberg lake',NULL])::text AS quoted;
+----
+quoted
+{mop,"babsky, jr","","iceberg lake",NULL}
+
+
+# Nested arrays recurse: {{...},{...}}, inner elements unquoted.
+query
+SELECT (ARRAY[ARRAY['tick','clack'],ARRAY['mop','babsky']])::text AS nested;
+----
+nested
+{{tick,clack},{mop,babsky}}
+
+
+# Round-trip: a PG array literal parsed to text[] and cast back to text is
+# unchanged.
+query
+SELECT ('{vedernikoff,mop}'::text[])::text AS roundtrip;
+----
+roundtrip
+{vedernikoff,mop}

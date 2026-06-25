@@ -1,0 +1,104 @@
+control substitution on
+
+# A REVOKE must survive a crash + WAL recovery: the privilege removed before
+# the crash stays removed after recovery, and the privileges left untouched
+# survive. The relacl re-renders with exactly the remaining bits, and
+# has_table_privilege agrees.
+#
+# Vedernikoff was granted SELECT,INSERT,UPDATE on the clickclack ledger, then
+# had UPDATE revoked. After recovery he must still hold SELECT,INSERT and still
+# lack UPDATE: relacl drops from arw to ar.
+
+statement ok
+DROP TABLE IF EXISTS rbac_acl_rv_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS rbac_acl_rv_vedernikoff;
+
+
+statement ok
+CREATE TABLE rbac_acl_rv_ledger (id INTEGER);
+
+
+statement ok
+CREATE ROLE rbac_acl_rv_vedernikoff;
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE ON rbac_acl_rv_ledger TO rbac_acl_rv_vedernikoff;
+
+
+# Granted three -> grantee entry is arw.
+query
+SELECT unnest(relacl::text[]) AS e FROM pg_class
+WHERE relname = 'rbac_acl_rv_ledger' ORDER BY e;
+----
+e
+postgres=arwdDxtm/postgres
+rbac_acl_rv_vedernikoff=arw/postgres
+
+
+# Revoke exactly one: UPDATE. Grantee entry drops to ar.
+statement ok
+REVOKE UPDATE ON rbac_acl_rv_ledger FROM rbac_acl_rv_vedernikoff;
+
+
+query
+SELECT unnest(relacl::text[]) AS e FROM pg_class
+WHERE relname = 'rbac_acl_rv_ledger' ORDER BY e;
+----
+e
+postgres=arwdDxtm/postgres
+rbac_acl_rv_vedernikoff=ar/postgres
+
+
+query
+SELECT
+  has_table_privilege('rbac_acl_rv_vedernikoff', 'rbac_acl_rv_ledger', 'SELECT') AS sel,
+  has_table_privilege('rbac_acl_rv_vedernikoff', 'rbac_acl_rv_ledger', 'INSERT') AS ins,
+  has_table_privilege('rbac_acl_rv_vedernikoff', 'rbac_acl_rv_ledger', 'UPDATE') AS upd;
+----
+sel	ins	upd
+t	t	f
+
+
+# ====================== CRASH ======================
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+# --- restart ---
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# ====================== POST-RECOVERY ======================
+
+# The REVOKE survived: UPDATE is still gone, SELECT/INSERT still present. The
+# relacl re-renders with exactly ar (no stray w that a missed-persistence bug
+# would resurrect from the pre-revoke definition).
+connection after_crash
+query
+SELECT unnest(relacl::text[]) AS e FROM pg_class
+WHERE relname = 'rbac_acl_rv_ledger' ORDER BY e;
+----
+e
+postgres=arwdDxtm/postgres
+rbac_acl_rv_vedernikoff=ar/postgres
+
+
+connection after_crash
+query
+SELECT
+  has_table_privilege('rbac_acl_rv_vedernikoff', 'rbac_acl_rv_ledger', 'SELECT') AS sel,
+  has_table_privilege('rbac_acl_rv_vedernikoff', 'rbac_acl_rv_ledger', 'INSERT') AS ins,
+  has_table_privilege('rbac_acl_rv_vedernikoff', 'rbac_acl_rv_ledger', 'UPDATE') AS upd;
+----
+sel	ins	upd
+t	t	f

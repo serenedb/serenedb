@@ -1,0 +1,208 @@
+# Session identity functions reported as the CONNECTED role. current_user,
+# session_user, current_role and the bare SQL keyword spellings (CURRENT_USER,
+# SESSION_USER, CURRENT_ROLE, USER) all resolve to the login role on the wire,
+# byte-identical on real PostgreSQL and serenedb. We drive second connections
+# authenticated as non-superuser lore roles and prove every spelling agrees.
+#
+# We deliberately do NOT exercise SET ROLE here: it is accepted but NOT enforced
+# on serenedb (current_user does not change), so any post-SET-ROLE identity
+# assertion would diverge. That divergence is reported separately.
+#
+# All objects are prefixed ident_ (vedernikoff/clickclack lore); the file is
+# idempotent (DROP ... IF EXISTS up front) and self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS ident_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS ident_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS ident_deadinside;
+
+
+statement ok
+CREATE TABLE ident_iceberg (id int, mop text);
+
+
+statement ok
+INSERT INTO ident_iceberg VALUES (1, 'clickclack'), (2, 'vedernikoff');
+
+
+statement ok
+CREATE ROLE ident_kostya LOGIN PASSWORD 'ident_kostya_pw';
+
+
+statement ok
+CREATE ROLE ident_deadinside LOGIN PASSWORD 'ident_deadinside_pw';
+
+
+# ============================================================================
+# As the default superuser connection the three identity functions all report
+# the bootstrap role 'postgres' -- the same on both engines.
+# ============================================================================
+
+query
+SELECT current_user AS cu, session_user AS su, current_role AS cr;
+----
+cu	su	cr
+postgres	postgres	postgres
+
+
+# The bare-keyword spellings (no parentheses) match the lowercase function
+# spellings; USER is an alias for CURRENT_USER.
+
+query
+SELECT CURRENT_USER AS cu, SESSION_USER AS su, CURRENT_ROLE AS cr, USER AS u;
+----
+cu	su	cr	u
+postgres	postgres	postgres	postgres
+
+
+# ============================================================================
+# A non-superuser login role sees ITS OWN name from every identity function.
+# current_user == session_user == current_role for a freshly-connected role
+# (nobody has done SET ROLE), so all equal the login name.
+# ============================================================================
+
+connection c_kostya user=ident_kostya password=ident_kostya_pw
+query
+SELECT current_user AS cu, session_user AS su, current_role AS cr;
+----
+cu	su	cr
+ident_kostya	ident_kostya	ident_kostya
+
+
+connection c_kostya user=ident_kostya password=ident_kostya_pw
+query
+SELECT CURRENT_USER AS cu, SESSION_USER AS su, CURRENT_ROLE AS cr, USER AS u;
+----
+cu	su	cr	u
+ident_kostya	ident_kostya	ident_kostya	ident_kostya
+
+
+# Identity functions are usable inside predicates: the connected role equals
+# its own name; session_user equals current_user with no SET ROLE in play.
+
+connection c_kostya user=ident_kostya password=ident_kostya_pw
+query
+SELECT current_user = 'ident_kostya'      AS is_self,
+       session_user  = current_user        AS su_eq_cu,
+       current_role  = current_user         AS cr_eq_cu,
+       current_user  = 'ident_deadinside'   AS is_other;
+----
+is_self	su_eq_cu	cr_eq_cu	is_other
+t	t	t	f
+
+
+# ============================================================================
+# A SECOND distinct login role reports its OWN identity on its own connection,
+# fully independent of the kostya connection above.
+# ============================================================================
+
+connection c_dead user=ident_deadinside password=ident_deadinside_pw
+query
+SELECT current_user AS cu, session_user AS su, current_role AS cr;
+----
+cu	su	cr
+ident_deadinside	ident_deadinside	ident_deadinside
+
+
+# The two live connections disagree about who they are: each sees itself.
+
+connection c_dead user=ident_deadinside password=ident_deadinside_pw
+query
+SELECT current_user = 'ident_deadinside' AS is_self,
+       current_user = 'ident_kostya'      AS is_kostya;
+----
+is_self	is_kostya
+t	f
+
+
+# ============================================================================
+# Two-argument has_table_privilege uses CURRENT_USER implicitly. We grant
+# SELECT to kostya only; on kostya's connection the implicit-self oracle shows
+# SELECT t / INSERT f, matching the explicit three-arg form for its name.
+# ============================================================================
+
+statement ok
+GRANT SELECT ON ident_iceberg TO ident_kostya;
+
+
+# Explicit three-arg oracle from the superuser connection.
+
+query
+SELECT has_table_privilege('ident_kostya','ident_iceberg','SELECT') AS sel,
+       has_table_privilege('ident_kostya','ident_iceberg','INSERT') AS ins;
+----
+sel	ins
+t	f
+
+
+# Implicit-self two-arg oracle evaluated ON kostya's own connection: identical.
+
+connection c_kostya user=ident_kostya password=ident_kostya_pw
+query
+SELECT has_table_privilege('ident_iceberg','SELECT') AS sel,
+       has_table_privilege('ident_iceberg','INSERT') AS ins;
+----
+sel	ins
+t	f
+
+
+# The real query path on that same connection agrees: SELECT works...
+
+connection c_kostya user=ident_kostya password=ident_kostya_pw
+query
+SELECT id, mop FROM ident_iceberg ORDER BY id;
+----
+id	mop
+1	clickclack
+2	vedernikoff
+
+
+# ...while INSERT is denied. The trailing marker swallows serenedb's extra
+# DETAIL line so the block is green on both engines.
+
+connection c_kostya user=ident_kostya password=ident_kostya_pw
+statement error
+INSERT INTO ident_iceberg VALUES (3, 'pudge');
+----
+db error: ERROR: permission denied for table ident_iceberg<slt:ignore>
+
+
+# deadinside has no grants: implicit-self oracle is all f on its own connection,
+# and the real SELECT is refused.
+
+connection c_dead user=ident_deadinside password=ident_deadinside_pw
+query
+SELECT has_table_privilege('ident_iceberg','SELECT') AS sel,
+       has_table_privilege('ident_iceberg','INSERT') AS ins;
+----
+sel	ins
+f	f
+
+
+connection c_dead user=ident_deadinside password=ident_deadinside_pw
+statement error
+SELECT * FROM ident_iceberg;
+----
+db error: ERROR: permission denied for table ident_iceberg<slt:ignore>
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE ident_iceberg;
+
+
+statement ok
+DROP ROLE ident_kostya;
+
+
+statement ok
+DROP ROLE ident_deadinside;

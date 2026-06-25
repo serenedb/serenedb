@@ -43,7 +43,8 @@ namespace sdb {
 class ConnectionContext final : public query::Transaction {
  public:
   ConnectionContext(duckdb::ClientContext& duckdb_ctx, std::string_view user,
-                    std::string_view dbname, ObjectId database_id,
+                    ObjectId role_id, std::string_view dbname,
+                    ObjectId database_id,
                     std::shared_ptr<catalog::Database> database,
                     message::Buffer* send_buffer,
                     pg::CopyMessagesQueue* copy_queue, int32_t backend_pid,
@@ -67,6 +68,8 @@ class ConnectionContext final : public query::Transaction {
   std::string GetCurrentSchema() const;
   std::string GetCurrentSchemaFromSnapshot(
     std::shared_ptr<const catalog::Snapshot> snapshot) const;
+
+  ObjectId GetRoleId() const { return _role_id; }
 
   const auto& GetDatabasePtr() const { return _database; }
 
@@ -132,6 +135,7 @@ class ConnectionContext final : public query::Transaction {
   std::shared_ptr<catalog::Database> _database;
   message::Buffer* const _send_buffer;
   pg::CopyMessagesQueue* const _copy_queue;
+  const ObjectId _role_id;
   pg::CopyInBridge* _copy_in_bridge = nullptr;
   std::string* _response_sink = nullptr;
   std::atomic<NoticeNode*> _notices{nullptr};

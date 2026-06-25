@@ -28,10 +28,13 @@
 #include <duckdb/main/database.hpp>
 #include <iresearch/utils/index_utils.hpp>
 
+#include "auth/privilege.h"
 #include "catalog/catalog.h"
 #include "catalog/store/store.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
@@ -149,17 +152,18 @@ ResolvedName ResolveName(const VacuumBindData& bind, Scope scope,
   switch (scope) {
     case Scope::Database: {
       if (!bind.schema.empty() || !bind.catalog.empty()) {
-        throw duckdb::BinderException(
-          "VACUUM (REFRESH_DATABASE|COMPACT_DATABASE) "
-          "expects a single database name");
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG("VACUUM (REFRESH_DATABASE|COMPACT_DATABASE) "
+                                "expects a single database name"));
       }
       out.database = bind.name;
     } break;
     case Scope::Schema: {
       if (!bind.catalog.empty()) {
-        throw duckdb::BinderException(
-          "VACUUM (REFRESH_SCHEMA|COMPACT_SCHEMA) expects "
-          "[<database>.]<schema>");
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+          ERR_MSG("VACUUM (REFRESH_SCHEMA|COMPACT_SCHEMA) expects "
+                  "[<database>.]<schema>"));
       }
       out.database = bind.schema;
       out.schema = bind.name;
@@ -180,9 +184,9 @@ ResolvedName ResolveName(const VacuumBindData& bind, Scope scope,
         out.object = bind.schema;
         out.column = bind.name;
       } else {
-        throw duckdb::BinderException(
-          "VACUUM (RECOMPUTE_STATS_COLUMN) expects "
-          "[<schema>.]<table>.<column>");
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG("VACUUM (RECOMPUTE_STATS_COLUMN) expects "
+                                "[<schema>.]<table>.<column>"));
       }
     } break;
     case Scope::All:
@@ -206,8 +210,8 @@ ObjectId LookupDatabaseId(const catalog::Snapshot& snapshot,
                           std::string_view name) {
   auto db = snapshot.GetDatabase(name);
   if (!db) {
-    throw duckdb::CatalogException("database '%s' does not exist.",
-                                   std::string{name});
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
+                    ERR_MSG("database \"", name, "\" does not exist"));
   }
   return db->GetId();
 }
@@ -225,8 +229,9 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
     const auto [res, _] =
       inverted.CompactUnsafe(kPolicy, kProgress, empty_compaction, &index);
     if (!res.ok()) {
-      throw duckdb::InternalException("compact_index: compaction failed: %s",
-                                      res.errorMessage());
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INTERNAL_ERROR),
+        ERR_MSG("compact_index: compaction failed: ", res.errorMessage()));
     }
     inverted.Refresh();
     if (empty_compaction) {
@@ -252,7 +257,20 @@ void ForEachInvertedStorage(
   }
 }
 
-void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
+bool MayMaintain(ConnectionContext& conn_ctx, const catalog::Snapshot& snapshot,
+                 const catalog::Table& table, std::string_view verb) {
+  if (auth::HasPrivilege(snapshot, conn_ctx.GetRoleId(), table,
+                         catalog::AclMode::Maintain)) {
+    return true;
+  }
+  conn_ctx.AddNotice(SQL_ERROR_DATA(
+    ERR_CODE(ERRCODE_WARNING), ERR_MSG("permission denied to ", verb, " \"",
+                                       table.GetName(), "\", skipping it")));
+  return false;
+}
+
+void DispatchInverted(ConnectionContext& conn_ctx,
+                      const catalog::Snapshot& snapshot, Action action,
                       Scope scope, const ResolvedName& target) {
   auto apply = [action](search::InvertedIndexStorage& s,
                         const catalog::InvertedIndex& index) {
@@ -263,8 +281,13 @@ void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
     }
   };
 
+  const std::string_view verb =
+    action == Action::Refresh ? "refresh" : "compact";
   auto walk_schema = [&](ObjectId db_id, std::string_view schema) {
     for (auto& table : snapshot.GetTables(db_id, schema)) {
+      if (!MayMaintain(conn_ctx, snapshot, *table, verb)) {
+        continue;
+      }
       ForEachInvertedStorage(snapshot, table->GetId(), apply);
     }
   };
@@ -286,6 +309,11 @@ void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
             index->GetName() != target.object) {
           continue;
         }
+        // An index has no owner of its own; maintenance rides on its table.
+        auto table = snapshot.GetObject<catalog::Table>(index->GetRelationId());
+        if (table && !MayMaintain(conn_ctx, snapshot, *table, verb)) {
+          return;
+        }
         const auto& inverted =
           basics::downCast<const catalog::InvertedIndex>(*index);
         auto storage = inverted.GetData();
@@ -295,23 +323,30 @@ void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
         apply(*storage, inverted);
         return;
       }
-      throw duckdb::CatalogException("inverted index '%s' not found.",
-                                     target.object);
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+        ERR_MSG("relation \"", target.object, "\" does not exist"));
     }
     case Scope::Table: {
       auto db_id = LookupDatabaseId(snapshot, target.database);
-      auto table = snapshot.GetTable(db_id, target.schema, target.object);
+      auto table = snapshot.GetTable(catalog::NoAccessCheck(), db_id,
+                                     target.schema, target.object);
       if (!table) {
-        throw duckdb::CatalogException("relation '%s' not found.",
-                                       target.object);
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+          ERR_MSG("relation \"", target.object, "\" does not exist"));
+      }
+      if (!MayMaintain(conn_ctx, snapshot, *table, verb)) {
+        return;
       }
       ForEachInvertedStorage(snapshot, table->GetId(), apply);
     } break;
     case Scope::Schema: {
       auto db_id = LookupDatabaseId(snapshot, target.database);
       if (!snapshot.GetSchema(db_id, target.schema)) {
-        throw duckdb::CatalogException("schema '%s' does not exist.",
-                                       target.schema);
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
+          ERR_MSG("schema \"", target.schema, "\" does not exist"));
       }
       walk_schema(db_id, target.schema);
     } break;
@@ -331,6 +366,7 @@ void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
 // serenedb tables in scope, by running DuckDB's `VACUUM ANALYZE` on each store
 // table. The user names serenedb tables; the hidden store is never exposed.
 void DispatchRecomputeStats(duckdb::ClientContext& context,
+                            ConnectionContext& conn_ctx,
                             const catalog::Snapshot& snapshot, Scope scope,
                             const ResolvedName& target) {
   duckdb::Connection conn(*context.db);
@@ -339,6 +375,9 @@ void DispatchRecomputeStats(duckdb::ClientContext& context,
                      std::string_view column = {}) {
     if (table.GetEngine() != catalog::TableEngine::Transactional ||
         table.Tombstoned()) {
+      return;
+    }
+    if (!MayMaintain(conn_ctx, snapshot, table, "analyze")) {
       return;
     }
     auto store_name =
@@ -353,8 +392,8 @@ void DispatchRecomputeStats(duckdb::ClientContext& context,
       conn.Query(absl::StrCat("VACUUM ANALYZE \"", catalog::kStoreDatabaseName,
                               "\".main.\"", quoted, "\"", column_clause));
     if (result->HasError()) {
-      throw duckdb::InternalException("recompute_stats failed: %s",
-                                      result->GetError());
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                      ERR_MSG("recompute_stats failed: ", result->GetError()));
     }
   };
   auto walk_schema = [&](ObjectId db_id, std::string_view db_name,
@@ -372,18 +411,21 @@ void DispatchRecomputeStats(duckdb::ClientContext& context,
   switch (scope) {
     case Scope::Table: {
       auto db_id = LookupDatabaseId(snapshot, target.database);
-      auto table = snapshot.GetTable(db_id, target.schema, target.object);
+      auto table = snapshot.GetTable(catalog::NoAccessCheck(), db_id,
+                                     target.schema, target.object);
       if (!table) {
-        throw duckdb::CatalogException("relation '%s' not found.",
-                                       target.object);
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+          ERR_MSG("relation \"", target.object, "\" does not exist"));
       }
       analyze(target.database, target.schema, *table);
     } break;
     case Scope::Schema: {
       auto db_id = LookupDatabaseId(snapshot, target.database);
       if (!snapshot.GetSchema(db_id, target.schema)) {
-        throw duckdb::CatalogException("schema '%s' does not exist.",
-                                       target.schema);
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
+          ERR_MSG("schema \"", target.schema, "\" does not exist"));
       }
       walk_schema(db_id, target.database, target.schema);
     } break;
@@ -398,10 +440,12 @@ void DispatchRecomputeStats(duckdb::ClientContext& context,
       break;
     case Scope::Column: {
       auto db_id = LookupDatabaseId(snapshot, target.database);
-      auto table = snapshot.GetTable(db_id, target.schema, target.object);
+      auto table = snapshot.GetTable(catalog::NoAccessCheck(), db_id,
+                                     target.schema, target.object);
       if (!table) {
-        throw duckdb::CatalogException("relation '%s' not found.",
-                                       target.object);
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+          ERR_MSG("relation \"", target.object, "\" does not exist"));
       }
       analyze(target.database, target.schema, *table, target.column);
     } break;
@@ -420,18 +464,21 @@ void VacuumExecute(duckdb::ClientContext& context,
 
   auto verb = ParseOption(bind_data.option);
   if (!verb) {
-    throw duckdb::BinderException("unknown serenedb VACUUM option '%s'",
-                                  bind_data.option);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_SYNTAX_ERROR),
+      ERR_MSG("unknown serenedb VACUUM option \"", bind_data.option, "\""));
   }
 
   const bool needs_name = verb->scope != Scope::All;
   if (needs_name && bind_data.name.empty()) {
-    throw duckdb::BinderException("VACUUM (%s) requires an object name",
-                                  bind_data.option);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_SYNTAX_ERROR),
+      ERR_MSG("VACUUM (", bind_data.option, ") requires an object name"));
   }
   if (!needs_name && !bind_data.name.empty()) {
-    throw duckdb::BinderException("VACUUM (%s) does not take an argument",
-                                  bind_data.option);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_SYNTAX_ERROR),
+      ERR_MSG("VACUUM (", bind_data.option, ") does not take an argument"));
   }
 
   auto target = ResolveName(bind_data, verb->scope, conn_ctx, *snapshot);
@@ -439,10 +486,10 @@ void VacuumExecute(duckdb::ClientContext& context,
   switch (verb->action) {
     case Action::Refresh:
     case Action::Compact:
-      DispatchInverted(*snapshot, verb->action, verb->scope, target);
+      DispatchInverted(conn_ctx, *snapshot, verb->action, verb->scope, target);
       break;
     case Action::RecomputeStats:
-      DispatchRecomputeStats(context, *snapshot, verb->scope, target);
+      DispatchRecomputeStats(context, conn_ctx, *snapshot, verb->scope, target);
       break;
   }
 

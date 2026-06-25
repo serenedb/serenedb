@@ -51,7 +51,7 @@ struct PgTrigger {
   bool tgdeferrable;
   bool tginitdeferred;
   int16_t tgnargs;
-  Vector<int16_t> tgattr;
+  Array<int16_t> tgattr;
   Bytea tgargs;
   PgNodeTree tgqual;
   Name tgoldtable;

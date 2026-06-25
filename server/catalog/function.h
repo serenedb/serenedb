@@ -32,7 +32,8 @@ namespace sdb::catalog {
 // blob -- same shape as PgSqlView.
 class PgSqlFunction final : public Object {
  public:
-  PgSqlFunction(ObjectId schema_id, ObjectId id, std::string_view name,
+  PgSqlFunction(Permissions perm, ObjectId schema_id, ObjectId id,
+                std::string_view name,
                 duckdb::unique_ptr<duckdb::CreateMacroInfo> info);
 
   static std::shared_ptr<PgSqlFunction> Deserialize(duckdb::Deserializer& src,

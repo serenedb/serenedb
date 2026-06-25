@@ -49,7 +49,8 @@ std::shared_ptr<catalog::Tokenizer> LookupTokenizerDict(
   const catalog::Snapshot& snapshot, sdb::ObjectId db_id,
   std::string_view current_schema, std::string_view dict_name) {
   auto name = pg::ParseObjectName(dict_name, current_schema);
-  auto dict = snapshot.GetTokenizer(db_id, name.schema, name.relation);
+  auto dict = snapshot.GetTokenizer(catalog::NoAccessCheck(), db_id,
+                                    name.schema, name.relation);
   if (!dict) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

@@ -21,6 +21,11 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
+#include <memory>
+#include <vector>
+
 #include "basics/containers/flat_hash_map.h"
 #include "catalog/object.h"
 #include "catalog/table_options.h"
@@ -35,8 +40,9 @@ namespace sdb::catalog {
 
 class Table final : public Object {
  public:
-  Table(ObjectId schema_id, ObjectId id, std::string_view name,
-        std::vector<Column> columns, std::vector<Column::Id> pk_columns,
+  Table(Permissions perm, ObjectId schema_id, ObjectId id,
+        std::string_view name, std::vector<Column> columns,
+        std::vector<Column::Id> pk_columns,
         std::vector<CheckConstraint> check_constraints,
         ObjectId generated_pk_seq_id,
         TableEngine engine = TableEngine::Transactional,
@@ -106,11 +112,11 @@ class Table final : public Object {
   Result ChangeColumnType(std::shared_ptr<Table>& result,
                           std::string_view column_name,
                           duckdb::LogicalType new_type) const;
-  // Sets the table-level comment (empty string clears it).
+  Result ChangeColumnAcl(std::shared_ptr<Table>& result,
+                         std::string_view column_name,
+                         absl::FunctionRef<void(Acl&)> mutate) const;
   Result SetComment(std::shared_ptr<Table>& result,
                     std::string_view comment) const;
-  // Sets a column's comment (empty clears). ERROR_SERVER_ILLEGAL_NAME if the
-  // column does not exist.
   Result SetColumnComment(std::shared_ptr<Table>& result,
                           std::string_view column_name,
                           std::string_view comment) const;

@@ -1,0 +1,92 @@
+# Regression: DELETE on a table that has a unique index (PRIMARY KEY) or is the
+# parent of a foreign key. The delete binder must add the indexed columns to the
+# scan so the executor can maintain the unique index / check FK references --
+# otherwise the physical delete has nothing to identify the deleted keys with.
+# (Bug: the binder consulted the catalog-resolved facade entry, which carries no
+# storage/indexes, instead of the scan-bound storage table, so DELETE on any
+# PK/unique-indexed table failed.)
+
+statement ok
+DROP TABLE IF EXISTS dit_fk;
+
+
+statement ok
+DROP TABLE IF EXISTS dit_pk;
+
+
+# === DELETE on a plain PRIMARY KEY table ===
+
+statement ok
+CREATE TABLE dit_pk (id int primary key, payload int);
+
+
+statement ok
+INSERT INTO dit_pk VALUES (1, 10), (2, 20), (3, 30);
+
+
+# Predicate delete on the PK table removes the matching row.
+statement ok
+DELETE FROM dit_pk WHERE id = 2;
+
+
+query
+SELECT id FROM dit_pk ORDER BY id;
+----
+id
+1
+3
+
+
+# Blind delete (no predicate) on the PK table clears it.
+statement ok
+DELETE FROM dit_pk;
+
+
+query
+SELECT count(*) AS n FROM dit_pk;
+----
+n
+0
+
+
+# === DELETE on a foreign-key parent ===
+
+statement ok
+INSERT INTO dit_pk VALUES (1, 10), (2, 20), (3, 30);
+
+
+statement ok
+CREATE TABLE dit_fk (fid int REFERENCES dit_pk(id));
+
+
+statement ok
+INSERT INTO dit_fk VALUES (1);
+
+
+# Deleting a parent row that is still referenced is refused (FK violation). The
+# message text differs across engines; the refusal is what matters.
+statement error
+DELETE FROM dit_pk WHERE id = 1;
+----
+db error: ERROR: <slt:ignore>
+
+
+# A parent row that is NOT referenced deletes fine.
+statement ok
+DELETE FROM dit_pk WHERE id = 3;
+
+
+query
+SELECT id FROM dit_pk ORDER BY id;
+----
+id
+1
+2
+
+
+statement ok
+DROP TABLE dit_fk;
+
+
+statement ok
+DROP TABLE dit_pk;

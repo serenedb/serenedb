@@ -1,0 +1,91 @@
+# pg_has_role: handling of UNKNOWN role arguments, identical on real PostgreSQL
+# and serenedb.
+#
+# Two distinct contracts, both byte-identical across the engines:
+#   - an unknown role NAME (either argument position) raises the exact error
+#     'role "..." does not exist';
+#   - an unknown role OID (either position) does NOT error -- it simply
+#     evaluates to f, the safe lookup-by-oid path.
+#
+# A single real role phr_pavel anchors the "known" side of each pair.
+# Prefixed phr_, pavel/gul lore, idempotent and self-cleaning.
+
+statement ok
+DROP ROLE IF EXISTS phr_pavel;
+
+
+statement ok
+CREATE ROLE phr_pavel;
+
+
+# ============================================================================
+# Unknown role NAME -> exact 'does not exist' error (identical on both engines).
+# ============================================================================
+
+# Unknown member name (first argument).
+statement error
+SELECT pg_has_role('phr_gul_missing', 'phr_pavel', 'USAGE');
+----
+db error: ERROR: role "phr_gul_missing" does not exist
+
+
+# Unknown target name (second argument).
+statement error
+SELECT pg_has_role('phr_pavel', 'phr_gul_missing', 'USAGE');
+----
+db error: ERROR: role "phr_gul_missing" does not exist
+
+
+# ============================================================================
+# Unknown role OID -> no error, evaluates to f (the safe path).
+# ============================================================================
+
+# Unknown member oid (first argument): not a real role, holds nothing -> f.
+query
+SELECT pg_has_role(9999999,
+                   (SELECT oid FROM pg_roles WHERE rolname='phr_pavel'),
+                   'USAGE') AS unknown_member_oid;
+----
+unknown_member_oid
+f
+
+
+# Unknown target oid (second argument): a real role is not a member of a
+# non-existent role -> f.
+query
+SELECT pg_has_role((SELECT oid FROM pg_roles WHERE rolname='phr_pavel'),
+                   9999999,
+                   'USAGE') AS unknown_target_oid;
+----
+unknown_target_oid
+f
+
+
+# Both arguments unknown oids -> still f, still no error.
+query
+SELECT pg_has_role(9999999, 9999998, 'USAGE') AS both_unknown;
+----
+both_unknown
+f
+
+
+# The unknown-oid contract holds for every keyword, not just USAGE.
+query
+SELECT pg_has_role(9999999,
+                   (SELECT oid FROM pg_roles WHERE rolname='phr_pavel'),
+                   'MEMBER') AS member,
+       pg_has_role(9999999,
+                   (SELECT oid FROM pg_roles WHERE rolname='phr_pavel'),
+                   'SET') AS set_,
+       pg_has_role(9999999,
+                   (SELECT oid FROM pg_roles WHERE rolname='phr_pavel'),
+                   'USAGE, MEMBER, SET') AS list;
+----
+member	set_	list
+f	f	f
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP ROLE IF EXISTS phr_pavel;

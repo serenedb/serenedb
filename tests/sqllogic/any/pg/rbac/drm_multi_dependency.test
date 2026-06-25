@@ -1,0 +1,283 @@
+# DROP ROLE when a single role carries SEVERAL dependencies at once. The role
+# drm_vedernikoff simultaneously
+#   (dep1) OWNS a table          -- drm_iceberg
+#   (dep2) is GRANTED a privilege on another table   -- SELECT on drm_clickclack
+#   (dep3) is the GRANTOR of a grant on a third table -- SELECT on drm_mop, held
+#          WITH GRANT OPTION and re-granted to drm_kostya GRANTED BY vedernikoff.
+#
+# PostgreSQL refuses DROP ROLE while ANY of these survive (error 2BP01, "cannot
+# be dropped because some objects depend on it"; the DETAIL enumerates every
+# remaining dependency, so it is swallowed with <slt:ignore>). The role only
+# drops once ALL THREE are cleared. We remove them one at a time and confirm the
+# drop stays refused until the very last dependency is gone, in two independent
+# removal ORDERS to show the result is order-independent.
+#
+# The grantor dependency is built WITHOUT SET ROLE (mirroring
+# grant_revoke_cascade.test): vedernikoff is given the option, then the
+# dependent grant to kostya is recorded with GRANTED BY vedernikoff. Removing it
+# needs either REVOKE ... CASCADE (tears down vedernikoff's option grant AND the
+# downstream grant in one shot) or a two-step REVOKE of the downstream grant
+# followed by vedernikoff's own grant.
+#
+# Lore: vedernikoff the multiply-entangled role, kostya the downstream grantee,
+# babsky the reassign target; iceberg/clickclack/mop the three tables.
+# Idempotent setup + full teardown.
+
+statement ok
+DROP TABLE IF EXISTS drm_iceberg;
+
+
+statement ok
+DROP TABLE IF EXISTS drm_clickclack;
+
+
+statement ok
+DROP TABLE IF EXISTS drm_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS drm_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS drm_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS drm_babsky;
+
+
+statement ok
+CREATE ROLE drm_vedernikoff;
+
+
+statement ok
+CREATE ROLE drm_kostya;
+
+
+statement ok
+CREATE ROLE drm_babsky;
+
+
+# ---- dep1: vedernikoff OWNS drm_iceberg ----
+statement ok
+CREATE TABLE drm_iceberg (id int);
+
+
+statement ok
+ALTER TABLE drm_iceberg OWNER TO drm_vedernikoff;
+
+
+# ---- dep2: vedernikoff is GRANTED SELECT on drm_clickclack (owned by postgres) ----
+statement ok
+CREATE TABLE drm_clickclack (id int);
+
+
+statement ok
+GRANT SELECT ON drm_clickclack TO drm_vedernikoff;
+
+
+# ---- dep3: vedernikoff is GRANTOR of a grant on drm_mop ----
+# postgres grants vedernikoff SELECT WITH GRANT OPTION, then the dependent grant
+# to kostya is recorded attributed to vedernikoff via GRANTED BY.
+statement ok
+CREATE TABLE drm_mop (id int);
+
+
+statement ok
+GRANT SELECT ON drm_mop TO drm_vedernikoff WITH GRANT OPTION;
+
+
+statement ok
+GRANT SELECT ON drm_mop TO drm_kostya GRANTED BY drm_vedernikoff;
+
+
+# The grantor relationship is recorded: vedernikoff holds the option (r*),
+# kostya's grant is attributed to vedernikoff (/drm_vedernikoff).
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'drm_mop'
+) g WHERE e LIKE 'drm_%' ORDER BY e;
+----
+e
+drm_kostya=r/drm_vedernikoff
+drm_vedernikoff=r*/postgres
+
+
+# === ROUND 1: remove deps in the order owns -> granted -> grantor ===
+
+# All three dependencies present -> DROP ROLE refused.
+statement error
+DROP ROLE drm_vedernikoff;
+----
+db error: ERROR: role "drm_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Clear dep1 by transferring ownership of drm_iceberg to babsky. Two deps remain.
+statement ok
+ALTER TABLE drm_iceberg OWNER TO drm_babsky;
+
+
+# Still refused -- the granted privilege and the grantor relationship remain.
+statement error
+DROP ROLE drm_vedernikoff;
+----
+db error: ERROR: role "drm_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Clear dep2 by revoking the SELECT grant on drm_clickclack. One dep remains.
+statement ok
+REVOKE SELECT ON drm_clickclack FROM drm_vedernikoff;
+
+
+# Still refused -- vedernikoff is still the grantor of kostya's grant on drm_mop.
+statement error
+DROP ROLE drm_vedernikoff;
+----
+db error: ERROR: role "drm_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# A plain (RESTRICT) revoke of vedernikoff's own grant is itself refused while the
+# dependent grant to kostya exists -- so it cannot clear the dependency alone.
+statement error
+REVOKE SELECT ON drm_mop FROM drm_vedernikoff RESTRICT;
+----
+db error: ERROR: dependent privileges exist<slt:ignore>
+
+
+# DROP ROLE is therefore still refused after the failed revoke (nothing changed).
+statement error
+DROP ROLE drm_vedernikoff;
+----
+db error: ERROR: role "drm_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# CASCADE clears dep3: it revokes vedernikoff's option grant AND tears down the
+# downstream grant to kostya in one shot.
+statement ok
+REVOKE SELECT ON drm_mop FROM drm_vedernikoff CASCADE;
+
+
+# drm_mop now carries no drm_* grants at all.
+query
+SELECT count(*) AS n FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'drm_mop'
+) g WHERE e LIKE 'drm_%';
+----
+n
+0
+
+
+# With all three dependencies removed, the role finally drops.
+statement ok
+DROP ROLE drm_vedernikoff;
+
+
+# === ROUND 2: rebuild the SAME three deps, remove them in a DIFFERENT order ===
+# grantor -> granted -> owns, and the grantor dep is cleared in two REVOKE steps
+# (downstream first, then vedernikoff's own grant) instead of one CASCADE.
+
+statement ok
+CREATE ROLE drm_vedernikoff;
+
+
+# Rebuild dep1 (owns drm_iceberg; currently owned by babsky from round 1).
+statement ok
+ALTER TABLE drm_iceberg OWNER TO drm_vedernikoff;
+
+
+# Rebuild dep2 (granted SELECT on drm_clickclack).
+statement ok
+GRANT SELECT ON drm_clickclack TO drm_vedernikoff;
+
+
+# Rebuild dep3 (grantor of kostya's grant on drm_mop).
+statement ok
+GRANT SELECT ON drm_mop TO drm_vedernikoff WITH GRANT OPTION;
+
+
+statement ok
+GRANT SELECT ON drm_mop TO drm_kostya GRANTED BY drm_vedernikoff;
+
+
+# All three present again -> refused.
+statement error
+DROP ROLE drm_vedernikoff;
+----
+db error: ERROR: role "drm_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Clear dep3 step 1: revoke the downstream grant to kostya (attributed to
+# vedernikoff). Vedernikoff still holds its own option grant on drm_mop, so the
+# 'privileges for table drm_mop' dependency PERSISTS.
+statement ok
+REVOKE SELECT ON drm_mop FROM drm_kostya GRANTED BY drm_vedernikoff;
+
+
+# drm_mop still shows vedernikoff's own option grant (kostya's row is gone).
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'drm_mop'
+) g WHERE e LIKE 'drm_%' ORDER BY e;
+----
+e
+drm_vedernikoff=r*/postgres
+
+
+# Still refused -- dep3 not fully cleared (own grant remains), plus dep1, dep2.
+statement error
+DROP ROLE drm_vedernikoff;
+----
+db error: ERROR: role "drm_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Clear dep3 step 2: now that no dependent grant remains, a plain RESTRICT revoke
+# of vedernikoff's own grant succeeds.
+statement ok
+REVOKE SELECT ON drm_mop FROM drm_vedernikoff;
+
+
+# Still refused -- dep1 (owns iceberg) and dep2 (granted on clickclack) remain.
+statement error
+DROP ROLE drm_vedernikoff;
+----
+db error: ERROR: role "drm_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Clear dep2: revoke the SELECT grant on drm_clickclack. Only ownership remains.
+statement ok
+REVOKE SELECT ON drm_clickclack FROM drm_vedernikoff;
+
+
+# Still refused -- vedernikoff still owns drm_iceberg.
+statement error
+DROP ROLE drm_vedernikoff;
+----
+db error: ERROR: role "drm_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Clear dep1 by DROPPING the owned table outright (vs. reassigning). Last dep gone.
+statement ok
+DROP TABLE drm_iceberg;
+
+
+# All dependencies cleared -> the role drops.
+statement ok
+DROP ROLE drm_vedernikoff;
+
+
+# Cleanup.
+statement ok
+DROP TABLE IF EXISTS drm_clickclack;
+
+
+statement ok
+DROP TABLE IF EXISTS drm_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS drm_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS drm_babsky;

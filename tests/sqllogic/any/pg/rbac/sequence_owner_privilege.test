@@ -1,0 +1,88 @@
+# has_sequence_privilege is ownership/ACL-aware and tracks ALTER SEQUENCE ...
+# OWNER TO, identically on PostgreSQL and serenedb: the current owner reads true,
+# an unrelated bystander reads false, and after a transfer the new owner reads
+# true while the old owner reads false. (serenedb previously stubbed this to true
+# for everyone; it now matches PG.)
+#
+# Lore: the mop_seq sequence passes from clickclack (old owner) to iceberg;
+# babsky is an unrelated bystander that was never granted anything.
+
+statement ok
+DROP SEQUENCE IF EXISTS xao_spd_mop_seq;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_spd_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_spd_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_spd_babsky;
+
+
+statement ok
+CREATE ROLE xao_spd_clickclack;
+
+
+statement ok
+CREATE ROLE xao_spd_iceberg;
+
+
+statement ok
+CREATE ROLE xao_spd_babsky;
+
+
+statement ok
+CREATE SEQUENCE xao_spd_mop_seq;
+
+
+statement ok
+ALTER SEQUENCE xao_spd_mop_seq OWNER TO xao_spd_clickclack;
+
+
+# The owner reads true; the unrelated bystander reads false.
+query
+SELECT
+  has_sequence_privilege('xao_spd_clickclack','xao_spd_mop_seq','USAGE') AS owner_usage,
+  has_sequence_privilege('xao_spd_babsky','xao_spd_mop_seq','USAGE')     AS bystander_usage;
+----
+owner_usage	bystander_usage
+t	f
+
+
+statement ok
+ALTER SEQUENCE xao_spd_mop_seq OWNER TO xao_spd_iceberg;
+
+
+# After the transfer: the new owner reads true across USAGE/SELECT/UPDATE; the
+# old owner and the bystander read false.
+query
+SELECT
+  has_sequence_privilege('xao_spd_iceberg','xao_spd_mop_seq','USAGE')      AS new_usage,
+  has_sequence_privilege('xao_spd_iceberg','xao_spd_mop_seq','SELECT')     AS new_select,
+  has_sequence_privilege('xao_spd_iceberg','xao_spd_mop_seq','UPDATE')     AS new_update,
+  has_sequence_privilege('xao_spd_clickclack','xao_spd_mop_seq','USAGE')   AS prev_usage,
+  has_sequence_privilege('xao_spd_clickclack','xao_spd_mop_seq','SELECT')  AS prev_select,
+  has_sequence_privilege('xao_spd_babsky','xao_spd_mop_seq','USAGE')       AS bystander_usage;
+----
+new_usage	new_select	new_update	prev_usage	prev_select	bystander_usage
+t	t	t	f	f	f
+
+
+statement ok
+DROP SEQUENCE xao_spd_mop_seq;
+
+
+statement ok
+DROP ROLE xao_spd_clickclack;
+
+
+statement ok
+DROP ROLE xao_spd_iceberg;
+
+
+statement ok
+DROP ROLE xao_spd_babsky;

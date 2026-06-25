@@ -1,0 +1,130 @@
+# GRANTED BY membership rule for COLUMN grants. A non-superuser issuing
+# `GRANT ... GRANTED BY r` must be a member of r (PG: you can only attribute a
+# grant to a role whose privileges you inherit). The table-level path enforced
+# this; the column-level path (GRANT SELECT (col) ... GRANTED BY r) previously
+# skipped the check and rejected with the WRONG error ("permission denied for
+# table") instead of the membership error. Both paths now charge the same rule.
+#
+# Lives in sdb/ (not any/pg/): uses serenedb's Trust-stub `connection ... user=`
+# auth, and serenedb's membership-error wording is "must be member of role"
+# whereas PostgreSQL 19 says "must inherit privileges of role" -- the rule is
+# PG-faithful, only the message text diverges.
+#
+# Lore: vedernikoff tries to attribute a grant to the mop committee he is not in.
+
+statement ok
+DROP TABLE IF EXISTS gbm_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS gbm_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS gbm_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS gbm_clickclack;
+
+
+statement ok
+CREATE TABLE gbm_ledger (id int, secret int);
+
+
+statement ok
+INSERT INTO gbm_ledger VALUES (1, 42);
+
+
+statement ok
+CREATE ROLE gbm_vedernikoff LOGIN;
+
+
+statement ok
+CREATE ROLE gbm_mop LOGIN;
+
+
+statement ok
+CREATE ROLE gbm_clickclack LOGIN;
+
+
+# mop owns nothing here; postgres (superuser) owns the table and confers the
+# grant option to mop on both the table and the secret column, so mop *could*
+# re-grant. vedernikoff is NOT a member of mop.
+statement ok
+GRANT SELECT ON gbm_ledger TO gbm_mop WITH GRANT OPTION;
+
+
+statement ok
+GRANT SELECT (secret) ON gbm_ledger TO gbm_mop WITH GRANT OPTION;
+
+
+# === the bug: column GRANTED BY by a non-member is rejected for the RIGHT
+# reason (membership), not "permission denied for table". ===
+connection c_ved user=gbm_vedernikoff
+statement error
+GRANT SELECT (secret) ON gbm_ledger TO gbm_clickclack GRANTED BY gbm_mop;
+----
+db error: ERROR: must be member of role "gbm_mop"<slt:ignore>
+
+
+# Parity check: the table-level path rejects with the same membership error.
+connection c_ved user=gbm_vedernikoff
+statement error
+GRANT SELECT ON gbm_ledger TO gbm_clickclack GRANTED BY gbm_mop;
+----
+db error: ERROR: must be member of role "gbm_mop"<slt:ignore>
+
+
+# An unknown GRANTED BY role still errors on the missing role first.
+connection c_ved2 user=gbm_vedernikoff
+statement error
+GRANT SELECT (secret) ON gbm_ledger TO gbm_clickclack GRANTED BY gbm_ghost;
+----
+db error: ERROR: role "gbm_ghost" does not exist<slt:ignore>
+
+
+# === positive control: once vedernikoff IS a member of mop, the column GRANTED
+# BY succeeds (membership satisfied; mop holds SELECT(secret) WITH GRANT OPTION).
+connection default
+statement ok
+GRANT gbm_mop TO gbm_vedernikoff;
+
+
+connection c_ved3 user=gbm_vedernikoff
+statement ok
+GRANT SELECT (secret) ON gbm_ledger TO gbm_clickclack GRANTED BY gbm_mop;
+
+
+# clickclack can now read the column it was granted, and the grant is attributed
+# to mop (the GRANTED BY grantor), so revoking mop's membership does not strip it.
+connection c_cc user=gbm_clickclack
+query
+SELECT secret FROM gbm_ledger;
+----
+secret
+42
+
+
+# superuser can attribute to any role regardless of membership (control).
+connection default
+statement ok
+GRANT SELECT (secret) ON gbm_ledger TO gbm_clickclack GRANTED BY gbm_mop;
+
+
+# ---- cleanup ----
+connection default
+statement ok
+DROP TABLE gbm_ledger;
+
+
+statement ok
+DROP ROLE gbm_vedernikoff;
+
+
+statement ok
+DROP ROLE gbm_mop;
+
+
+statement ok
+DROP ROLE gbm_clickclack;

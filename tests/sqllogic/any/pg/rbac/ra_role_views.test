@@ -1,0 +1,203 @@
+# The role catalog views, read side. pg_roles lists every role; pg_user is the
+# login-only projection; pg_group exposes group roles by name; pg_auth_members
+# carries the membership edges with their inherit/set/admin options. Every value
+# here was dual-checked byte-identical on PostgreSQL 19beta1 and serenedb.
+#
+# Idempotent: drop everything first, recreate, assert, drop again.
+
+statement ok
+DROP ROLE IF EXISTS ra_clickclack_login;
+
+
+statement ok
+DROP ROLE IF EXISTS ra_clickclack_nologin;
+
+
+statement ok
+DROP ROLE IF EXISTS ra_mop_group;
+
+
+statement ok
+DROP ROLE IF EXISTS ra_mop_member;
+
+
+# ----------------------------------------------------------------------
+# pg_roles vs pg_user: a login role appears in both views; a nologin role
+# appears only in pg_roles. pg_user is exactly the rolcanlogin projection.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE ROLE ra_clickclack_login LOGIN;
+
+
+statement ok
+CREATE ROLE ra_clickclack_nologin NOLOGIN;
+
+
+# Both roles are present in pg_roles.
+query
+SELECT rolname, rolcanlogin FROM pg_roles
+WHERE rolname IN ('ra_clickclack_login', 'ra_clickclack_nologin') ORDER BY rolname;
+----
+rolname	rolcanlogin
+ra_clickclack_login	t
+ra_clickclack_nologin	f
+
+
+# Only the login role is visible in pg_user.
+query
+SELECT usename FROM pg_user
+WHERE usename IN ('ra_clickclack_login', 'ra_clickclack_nologin') ORDER BY usename;
+----
+usename
+ra_clickclack_login
+
+
+# The nologin role is absent from pg_user (count 0); the login role present once.
+query
+SELECT count(*) FROM pg_user WHERE usename = 'ra_clickclack_nologin';
+----
+count
+0
+
+
+query
+SELECT count(*) FROM pg_user WHERE usename = 'ra_clickclack_login';
+----
+count
+1
+
+
+# pg_user surfaces the superuser / createdb flags as booleans; a plain LOGIN
+# role has neither.
+query
+SELECT usename, usesuper, usecreatedb FROM pg_user WHERE usename = 'ra_clickclack_login';
+----
+usename	usesuper	usecreatedb
+ra_clickclack_login	f	f
+
+
+# ----------------------------------------------------------------------
+# pg_group: a group role is listed by name. After granting membership, the
+# member's name shows up resolved through the grolist -> pg_roles join.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE ROLE ra_mop_group;
+
+
+statement ok
+CREATE ROLE ra_mop_member LOGIN;
+
+
+query
+SELECT groname FROM pg_group WHERE groname = 'ra_mop_group';
+----
+groname
+ra_mop_group
+
+
+# Before any GRANT the group has no members.
+query
+SELECT count(*) FROM pg_group g, unnest(g.grolist) AS u WHERE g.groname = 'ra_mop_group';
+----
+count
+0
+
+
+statement ok
+GRANT ra_mop_group TO ra_mop_member;
+
+
+# After GRANT the membership edge resolves the member name through pg_roles.
+query
+SELECT r.rolname AS member
+FROM pg_group g, unnest(g.grolist) AS u(memid)
+JOIN pg_roles r ON r.oid = u.memid
+WHERE g.groname = 'ra_mop_group'
+ORDER BY r.rolname;
+----
+member
+ra_mop_member
+
+
+# ----------------------------------------------------------------------
+# pg_auth_members: the edge is keyed by oid; joining roleid and member back to
+# pg_roles recovers both names. The default option flags after GRANT role TO
+# role are admin=f, inherit=t, set=t.
+# ----------------------------------------------------------------------
+
+query
+SELECT g.rolname AS grantor_role, v.rolname AS member_role
+FROM pg_auth_members m
+JOIN pg_roles g ON g.oid = m.roleid
+JOIN pg_roles v ON v.oid = m.member
+WHERE g.rolname = 'ra_mop_group' AND v.rolname = 'ra_mop_member';
+----
+grantor_role	member_role
+ra_mop_group	ra_mop_member
+
+
+query
+SELECT m.admin_option, m.inherit_option, m.set_option
+FROM pg_auth_members m
+JOIN pg_roles g ON g.oid = m.roleid
+JOIN pg_roles v ON v.oid = m.member
+WHERE g.rolname = 'ra_mop_group' AND v.rolname = 'ra_mop_member';
+----
+admin_option	inherit_option	set_option
+f	t	t
+
+
+# pg_has_role reads the same edge: the member has MEMBER and USAGE of the group.
+query
+SELECT pg_has_role('ra_mop_member', 'ra_mop_group', 'MEMBER') AS is_member,
+       pg_has_role('ra_mop_member', 'ra_mop_group', 'USAGE') AS has_usage;
+----
+is_member	has_usage
+t	t
+
+
+# ----------------------------------------------------------------------
+# REVOKE removes the edge: pg_auth_members loses the row and pg_has_role flips.
+# ----------------------------------------------------------------------
+
+statement ok
+REVOKE ra_mop_group FROM ra_mop_member;
+
+
+query
+SELECT count(*) FROM pg_auth_members m
+JOIN pg_roles g ON g.oid = m.roleid
+JOIN pg_roles v ON v.oid = m.member
+WHERE g.rolname = 'ra_mop_group' AND v.rolname = 'ra_mop_member';
+----
+count
+0
+
+
+query
+SELECT pg_has_role('ra_mop_member', 'ra_mop_group', 'MEMBER') AS is_member;
+----
+is_member
+f
+
+
+# ----------------------------------------------------------------------
+# Cleanup.
+# ----------------------------------------------------------------------
+
+statement ok
+DROP ROLE ra_clickclack_login;
+
+
+statement ok
+DROP ROLE ra_clickclack_nologin;
+
+
+statement ok
+DROP ROLE ra_mop_member;
+
+
+statement ok
+DROP ROLE ra_mop_group;

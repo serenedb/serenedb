@@ -407,6 +407,14 @@ struct TokenizerDependency : ObjectDependencyBase {
   }
 };
 
+struct RoleDependency : ObjectDependencyBase {
+  containers::FlatHashSet<ObjectId> referencing_objects;
+  std::shared_ptr<ObjectDependencyBase> Clone() const final {
+    return std::make_shared<RoleDependency>(*this);
+  }
+  void Emit(DropEmitter&, ObjectId) const final {}
+};
+
 inline DropPlan DropEmitter::ComputePlan() && {
   while (!_stack.empty()) {
     auto cur = _stack.back();

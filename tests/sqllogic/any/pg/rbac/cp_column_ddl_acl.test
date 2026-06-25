@@ -1,0 +1,144 @@
+# Column-level privileges (PG column GRANT) across column DDL. attacl lives in
+# pg_attribute keyed by (attrelid, attnum), independent of the column name, so:
+#   RENAME COLUMN  -> the grant follows the rename (same attnum, new attname).
+#   DROP COLUMN    -> the column's attacl is gone with it; other columns intact.
+#   ADD COLUMN     -> the fresh column carries no attacl (NULL); grantee cannot
+#                     read it.
+# attacl is rendered byte-identically to PG. The ACL probe filters out dropped
+# columns (NOT attisdropped): real PG keeps a `........pg.dropped.N........`
+# tombstone row in pg_attribute, SereneDB does not, so the filter normalizes
+# both to the live columns.
+#
+# Lore: vedernikoff holds column-scoped grants on clickclack/babsky/mop.
+
+statement ok
+DROP TABLE IF EXISTS cda_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS cda_vedernikoff;
+
+
+statement ok
+CREATE TABLE cda_iceberg (clickclack int, babsky int, mop int);
+
+
+statement ok
+INSERT INTO cda_iceberg VALUES (1, 2, 3);
+
+
+statement ok
+CREATE ROLE cda_vedernikoff LOGIN PASSWORD 'cda_vedernikoff_pw';
+
+
+statement ok
+GRANT SELECT (clickclack) ON cda_iceberg TO cda_vedernikoff;
+
+
+statement ok
+GRANT UPDATE (babsky) ON cda_iceberg TO cda_vedernikoff;
+
+
+# Baseline: SELECT(clickclack)=r, UPDATE(babsky)=w, mop ungranted.
+query
+SELECT a.attname, a.attacl::text AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'cda_iceberg' AND a.attnum > 0 AND NOT a.attisdropped
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack	{cda_vedernikoff=r/postgres}
+babsky	{cda_vedernikoff=w/postgres}
+mop	NULL
+
+
+# === RENAME COLUMN: grant follows the rename ===
+
+statement ok
+ALTER TABLE cda_iceberg RENAME COLUMN clickclack TO clickclack2;
+
+
+# attacl is keyed on attnum, not name -> the SELECT grant rides along to
+# clickclack2, byte-identical to before the rename.
+query
+SELECT a.attname, a.attacl::text AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'cda_iceberg' AND a.attnum > 0 AND NOT a.attisdropped
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack2	{cda_vedernikoff=r/postgres}
+babsky	{cda_vedernikoff=w/postgres}
+mop	NULL
+
+
+# The grantee reads the renamed column with the inherited SELECT grant.
+connection c_ved user=cda_vedernikoff password=cda_vedernikoff_pw
+query
+SELECT clickclack2 FROM cda_iceberg ORDER BY clickclack2;
+----
+clickclack2
+1
+
+
+# === DROP COLUMN: its attacl disappears with the column ===
+
+statement ok
+ALTER TABLE cda_iceberg DROP COLUMN babsky;
+
+
+# babsky's UPDATE grant is gone with the column; the other column grants
+# (clickclack2=r, mop ungranted) are untouched.
+query
+SELECT a.attname, a.attacl::text AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'cda_iceberg' AND a.attnum > 0 AND NOT a.attisdropped
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack2	{cda_vedernikoff=r/postgres}
+mop	NULL
+
+
+# === ADD COLUMN: fresh column has no attacl ===
+
+statement ok
+ALTER TABLE cda_iceberg ADD COLUMN dollarsky int;
+
+
+# dollarsky carries NULL attacl; existing grants are unchanged.
+query
+SELECT a.attname, a.attacl::text AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'cda_iceberg' AND a.attnum > 0 AND NOT a.attisdropped
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack2	{cda_vedernikoff=r/postgres}
+mop	NULL
+dollarsky	NULL
+
+
+# No grant on the new column -> the grantee is refused.
+connection c_ved2 user=cda_vedernikoff password=cda_vedernikoff_pw
+statement error
+SELECT dollarsky FROM cda_iceberg;
+----
+db error: ERROR: permission denied for table cda_iceberg<slt:ignore>
+
+
+# The grant that survived the rename still works.
+connection c_ved3 user=cda_vedernikoff password=cda_vedernikoff_pw
+query
+SELECT clickclack2 FROM cda_iceberg ORDER BY clickclack2;
+----
+clickclack2
+1
+
+
+statement ok
+DROP TABLE cda_iceberg;
+
+
+statement ok
+DROP ROLE cda_vedernikoff;

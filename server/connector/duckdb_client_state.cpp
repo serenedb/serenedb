@@ -23,6 +23,7 @@
 #include <absl/container/flat_hash_set.h>
 #include <absl/strings/match.h>
 
+#include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -30,20 +31,28 @@
 #include <duckdb/main/prepared_statement_data.hpp>
 #include <utility>
 
+#include "auth/role_closure.h"
 #include "basics/assert.h"
 #include "basics/system-compiler.h"
+#include "catalog/catalog.h"
 #include "catalog/database.h"
 #include "catalog/store/store.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_physical_progress.h"
+#include "connector/duckdb_table_entry.h"
 #include "pg/connection_context.h"
 #include "pg/copy_messages_queue.h"
 #include "pg/errcodes.h"
 #include "pg/progress_tracker.h"
 #include "pg/sql_exception_macro.h"
+#include "pg/sql_utils.h"
 
 namespace sdb::connector {
 namespace {
+
+bool IsSuperuserOnlySystemRelation(const std::string& name) {
+  return name == "pg_authid" || name == "pg_shadow";
+}
 
 std::unique_ptr<pg::ProgressReporter> MakeProgressReporter(
   ObjectId datid, const duckdb::PreparedStatementData& prepared) {
@@ -277,6 +286,7 @@ duckdb::RebindQueryInfo SereneDBClientState::OnExecutePrepared(
 }
 
 void SereneDBClientState::QueryBegin(duckdb::ClientContext& context) {
+  _access.Clear();
   _connection_ctx->OnStatementBegin();
 }
 
@@ -287,7 +297,33 @@ void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {
   copy_stdin_open_count = 0;
   copy_stdin_done = false;
   progress.reset();
+  _access.Clear();
   _connection_ctx->OnStatementEnd();
+}
+
+void SereneDBClientState::RecordReadRelation(duckdb::ClientContext& context,
+                                             uint64_t table_index,
+                                             duckdb::CatalogEntry& entry,
+                                             bool inside_view) {
+  _access.BeginStatement(context.transaction.GetActiveQuery());
+  if (auto* facade = dynamic_cast<SereneDBTableEntry*>(&entry)) {
+    auto& rel = _access.ForTable(table_index);
+    rel.table = facade->GetSereneDBTable();
+    rel.table_read = true;
+    rel.inside_view = inside_view;
+    return;
+  }
+  if (!inside_view && IsSuperuserOnlySystemRelation(entry.name)) {
+    const auto& closure =
+      _connection_ctx->EnsureCatalogSnapshot()->EffectiveRoleClosure(
+        _connection_ctx->GetRoleId());
+    if (!closure.is_superuser) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+        ERR_MSG("permission denied for ", pg::ToPgObjectTypeName(entry.type),
+                " ", entry.name));
+    }
+  }
 }
 
 ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context) {

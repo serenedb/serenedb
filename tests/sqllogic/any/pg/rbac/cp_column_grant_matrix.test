@@ -1,0 +1,123 @@
+# Column-level privileges (PG column GRANT): GRANT SELECT (a,b) / UPDATE (c) /
+# INSERT (a) ON t restricts the privilege to named columns. A read/write that
+# touches an ungranted column is refused; one touching only granted columns
+# succeeds. Mirrors PostgreSQL's pg_attribute.attacl enforcement exactly
+# (ExecCheckOneRelPerms: relation-level satisfies all, else per-column).
+#
+# Lore: vedernikoff gets column-scoped grants; clickclack/babsky columns.
+
+statement ok
+DROP TABLE IF EXISTS cgm_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS cgm_vedernikoff;
+
+
+statement ok
+CREATE TABLE cgm_iceberg (clickclack int, babsky int, mop int);
+
+
+statement ok
+INSERT INTO cgm_iceberg VALUES (1, 2, 3);
+
+
+statement ok
+CREATE ROLE cgm_vedernikoff LOGIN PASSWORD 'cgm_vedernikoff_pw';
+
+
+statement ok
+GRANT SELECT (clickclack, babsky) ON cgm_iceberg TO cgm_vedernikoff;
+
+
+statement ok
+GRANT UPDATE (mop) ON cgm_iceberg TO cgm_vedernikoff;
+
+
+# attacl reflects the column grants, byte-identical to PG.
+query
+SELECT a.attname, a.attacl::text AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'cgm_iceberg' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack	{cgm_vedernikoff=r/postgres}
+babsky	{cgm_vedernikoff=r/postgres}
+mop	{cgm_vedernikoff=w/postgres}
+
+
+# === Reads ===
+
+# Granted columns read fine.
+connection c_ved user=cgm_vedernikoff password=cgm_vedernikoff_pw
+query
+SELECT clickclack, babsky FROM cgm_iceberg ORDER BY clickclack;
+----
+clickclack	babsky
+1	2
+
+
+# An ungranted column (mop has only UPDATE) is refused.
+connection c_ved2 user=cgm_vedernikoff password=cgm_vedernikoff_pw
+statement error
+SELECT mop FROM cgm_iceberg;
+----
+db error: ERROR: permission denied for table cgm_iceberg<slt:ignore>
+
+
+# SELECT * touches mop -> refused.
+connection c_ved3 user=cgm_vedernikoff password=cgm_vedernikoff_pw
+statement error
+SELECT * FROM cgm_iceberg;
+----
+db error: ERROR: permission denied for table cgm_iceberg<slt:ignore>
+
+
+# A WHERE predicate on an ungranted column is refused.
+connection c_ved4 user=cgm_vedernikoff password=cgm_vedernikoff_pw
+statement error
+SELECT clickclack FROM cgm_iceberg WHERE mop = 3;
+----
+db error: ERROR: permission denied for table cgm_iceberg<slt:ignore>
+
+
+# count(*) reads no specific column; SELECT on any one granted column suffices.
+connection c_ved5 user=cgm_vedernikoff password=cgm_vedernikoff_pw
+query
+SELECT count(*) AS n FROM cgm_iceberg;
+----
+n
+1
+
+
+# === Writes ===
+
+# UPDATE of the granted column with a constant reads nothing -> only UPDATE(mop).
+connection c_ved6 user=cgm_vedernikoff password=cgm_vedernikoff_pw
+statement ok
+UPDATE cgm_iceberg SET mop = 9;
+
+
+# UPDATE of an ungranted column is refused.
+connection c_ved7 user=cgm_vedernikoff password=cgm_vedernikoff_pw
+statement error
+UPDATE cgm_iceberg SET clickclack = 9;
+----
+db error: ERROR: permission denied for table cgm_iceberg<slt:ignore>
+
+
+# UPDATE mop = mop + 1 reads mop, which the role lacks SELECT on -> refused.
+connection c_ved8 user=cgm_vedernikoff password=cgm_vedernikoff_pw
+statement error
+UPDATE cgm_iceberg SET mop = mop + 1;
+----
+db error: ERROR: permission denied for table cgm_iceberg<slt:ignore>
+
+
+statement ok
+DROP TABLE cgm_iceberg;
+
+
+statement ok
+DROP ROLE cgm_vedernikoff;

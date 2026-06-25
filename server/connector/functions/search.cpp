@@ -1037,7 +1037,8 @@ std::shared_ptr<catalog::Tokenizer> ResolveCatalogTokenizer(
   if (!snapshot) {
     return nullptr;
   }
-  return snapshot->GetTokenizer(db_id, qualified.schema, qualified.relation);
+  return snapshot->GetTokenizer(catalog::NoAccessCheck(), db_id,
+                                qualified.schema, qualified.relation);
 }
 
 void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {

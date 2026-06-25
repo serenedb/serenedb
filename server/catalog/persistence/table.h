@@ -23,6 +23,7 @@
 #include <string>
 #include <vector>
 
+#include "catalog/object.h"
 #include "catalog/table_options.h"
 
 namespace sdb::catalog::persistence {
@@ -36,6 +37,7 @@ struct TableData {
   TableEngine engine = TableEngine::Transactional;
   std::vector<std::vector<Column::Id>> unique_constraints;
   std::vector<TableForeignKey> foreign_keys;
+  Permissions perm;
   std::string comment;
 };
 

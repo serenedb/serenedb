@@ -27,6 +27,9 @@
 #include <string>
 #include <string_view>
 
+#include "catalog/identifiers/object_id.h"
+#include "catalog/object.h"
+
 namespace sdb::catalog {
 
 template<typename Info>
@@ -53,6 +56,7 @@ template<typename Info>
 struct CreateInfoWriteData {
   std::string_view name;
   CreateInfoRef<Info> info;
+  Permissions perm;
 };
 
 // Persistent on-disk catalog format.
@@ -60,6 +64,7 @@ template<typename Info>
 struct CreateInfoReadData {
   std::string name;
   CreateInfoOwned<Info> info;
+  Permissions perm;
 };
 
 }  // namespace sdb::catalog

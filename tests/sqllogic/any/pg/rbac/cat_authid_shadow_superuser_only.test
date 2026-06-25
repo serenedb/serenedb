@@ -1,0 +1,103 @@
+# pg_authid (the password-bearing role catalog) and pg_shadow (the password
+# view over it) are superuser-only on PostgreSQL: neither carries a SELECT grant
+# to PUBLIC, so a non-superuser reading either directly is refused with
+# "permission denied for table pg_authid" / "permission denied for view
+# pg_shadow". serenedb matches this.
+#
+# The trap: pg_authid is read internally by pg_roles, pg_user, pg_group and many
+# other catalog views/functions. Those reads run with the view's rights on PG
+# (definer rights), so they keep working for everyone -- the guard fires only on
+# a relation referenced *directly* in the user's statement, never on a read
+# expanded out of a view body. pg_roles (the non-password projection) therefore
+# stays readable by all roles.
+#
+# Lore: vedernikoff the intern, who should not see the shadow file.
+# Idempotent + self-cleaning; the intern role is file-unique.
+
+statement ok
+DROP ROLE IF EXISTS cat_authid_intern;
+
+
+statement ok
+CREATE ROLE cat_authid_intern LOGIN PASSWORD 'cat_authid_intern_pw';
+
+
+# Sanity: the intern really is a non-superuser.
+connection c_intern user=cat_authid_intern password=cat_authid_intern_pw
+query
+SELECT rolsuper FROM pg_roles WHERE rolname = current_user;
+----
+rolsuper
+f
+
+
+# Direct read of pg_authid by the non-superuser is refused.
+connection c_intern user=cat_authid_intern password=cat_authid_intern_pw
+statement error
+SELECT count(*) FROM pg_authid;
+----
+db error: ERROR: permission denied for table pg_authid<slt:ignore>
+
+
+# Even naming the role itself does not help -- the whole table is off limits.
+connection c_intern user=cat_authid_intern password=cat_authid_intern_pw
+statement error
+SELECT rolname FROM pg_authid WHERE rolname = 'cat_authid_intern';
+----
+db error: ERROR: permission denied for table pg_authid<slt:ignore>
+
+
+# Direct read of pg_shadow (the password view) is refused too.
+connection c_intern user=cat_authid_intern password=cat_authid_intern_pw
+statement error
+SELECT count(*) FROM pg_shadow;
+----
+db error: ERROR: permission denied for view pg_shadow<slt:ignore>
+
+
+# pg_roles is the non-password projection of the role catalog and carries a
+# PUBLIC SELECT grant: the intern reads it fine (it reads pg_authid internally,
+# which bypasses the guard).
+connection c_intern user=cat_authid_intern password=cat_authid_intern_pw
+query
+SELECT count(*) >= 2 AS readable FROM pg_roles;
+----
+readable
+t
+
+
+# pg_user reads pg_shadow internally; pg_group reads pg_authid internally. Both
+# carry PUBLIC SELECT and stay readable for the non-superuser.
+connection c_intern user=cat_authid_intern password=cat_authid_intern_pw
+query
+SELECT count(*) >= 1 AS readable FROM pg_user;
+----
+readable
+t
+
+
+connection c_intern user=cat_authid_intern password=cat_authid_intern_pw
+query
+SELECT count(*) >= 0 AS readable FROM pg_group;
+----
+readable
+t
+
+
+# The superuser owner reads pg_authid and pg_shadow directly without error.
+query
+SELECT count(*) >= 2 AS authid_readable FROM pg_authid;
+----
+authid_readable
+t
+
+
+query
+SELECT count(*) >= 1 AS shadow_readable FROM pg_shadow;
+----
+shadow_readable
+t
+
+
+statement ok
+DROP ROLE cat_authid_intern;

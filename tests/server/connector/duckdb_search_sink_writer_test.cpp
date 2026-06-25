@@ -130,8 +130,8 @@ class DuckDBSearchSinkWriterTest : public ::testing::Test {
  public:
   static catalog::ColumnTokenizer AnalyzerProvider(irs::field_id) {
     static catalog::Tokenizer gStringTokenizer(
-      ObjectId{0}, ObjectId{12345}, "test_string_verbartim", {},
-      DEFAULT_ROW_GROUP_SIZE,
+      catalog::Permissions{}, ObjectId{0}, ObjectId{12345},
+      "test_string_verbartim", {}, DEFAULT_ROW_GROUP_SIZE,
       irs::analysis::TokenizerConfig{.config =
                                        irs::StringTokenizer::Options{}});
     auto tokenizer = gStringTokenizer.GetTokenizer();

@@ -1,0 +1,252 @@
+# Column-level GRANT re-grant chain (PG column GRANT WITH GRANT OPTION): a column
+# SELECT granted WITH GRANT OPTION lets the grantee re-GRANT that column to a
+# third role, recording a chained grant whose grantor is the re-granting role
+# (`r2=r/r1`), not the table owner. A grantee WITHOUT the option cannot re-grant
+# -- PG (and SereneDB) warn "no privileges were granted" and no-op. The grantor
+# can tear its own chained grant down again, after which REVOKE GRANT OPTION FOR
+# downgrades the option star (`r*`) back to a plain grant (`r`) while keeping the
+# privilege itself. This asserts the full chain byte-identically: attacl::text
+# storage, has_column_privilege reads (plain and the grant-option mode), and the
+# live read each role can or cannot perform.
+#
+# SCOPED OUT (SereneDB diverges from PostgreSQL -- dependent-privilege tracking
+# on the grant-option revoke):
+#   With the dependent chained grant (r2) still in place, PG refuses a bare
+#   REVOKE GRANT OPTION FOR with "ERROR: dependent privileges exist" (HINT: use
+#   CASCADE), and CASCADE then drops r2's grant along with the downgrade.
+#   SereneDB tracks no such dependency: the bare revoke succeeds, downgrades the
+#   star, and leaves r2's grant orphaned. To stay byte-identical the chain below
+#   first has the grantor (r1) revoke its own grant to r2 -- which both engines
+#   honour, since r1 is that grant's grantor -- so no dependent grant remains
+#   when the option is revoked.
+#
+# Lore: iceberg is the table (owned by postgres); clickclack/babsky/mop are its
+# columns. vedernikoff is the option-holding grantee (r1); babsky is the role
+# vedernikoff re-grants to (r2); mop is the role babsky fails to grant to (r3).
+
+statement ok
+DROP TABLE IF EXISTS crg_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS crg_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS crg_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS crg_mop;
+
+
+statement ok
+CREATE TABLE crg_iceberg (clickclack int, babsky int, mop int);
+
+
+statement ok
+INSERT INTO crg_iceberg VALUES (1, 2, 3);
+
+
+statement ok
+CREATE ROLE crg_vedernikoff LOGIN PASSWORD 'crg_vedernikoff_pw';
+
+
+statement ok
+CREATE ROLE crg_babsky LOGIN PASSWORD 'crg_babsky_pw';
+
+
+statement ok
+CREATE ROLE crg_mop LOGIN PASSWORD 'crg_mop_pw';
+
+
+# === r1 receives the column SELECT WITH GRANT OPTION ===
+
+statement ok
+GRANT SELECT (clickclack) ON crg_iceberg TO crg_vedernikoff WITH GRANT OPTION;
+
+
+# The grant-option column carries the `r*` star, owned by postgres.
+query
+SELECT a.attname, COALESCE(a.attacl::text, '(none)') AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'crg_iceberg' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack	{crg_vedernikoff=r*/postgres}
+babsky	(none)
+mop	(none)
+
+
+# r1 sees both the plain SELECT and the grant-option mode.
+query
+SELECT
+  has_column_privilege('crg_vedernikoff', 'crg_iceberg', 'clickclack', 'SELECT') AS sel,
+  has_column_privilege('crg_vedernikoff', 'crg_iceberg', 'clickclack', 'SELECT WITH GRANT OPTION') AS sel_go;
+----
+sel	sel_go
+t	t
+
+
+# === r1 re-grants the column to r2 (no option) ===
+
+connection c_r1 user=crg_vedernikoff password=crg_vedernikoff_pw
+statement ok
+GRANT SELECT (clickclack) ON crg_iceberg TO crg_babsky;
+
+
+# The chained grant records r1 as the grantor (`r/crg_vedernikoff`); r1's own
+# star entry is untouched.
+connection default
+query
+SELECT a.attname, COALESCE(a.attacl::text, '(none)') AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'crg_iceberg' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack	{crg_vedernikoff=r*/postgres,crg_babsky=r/crg_vedernikoff}
+babsky	(none)
+mop	(none)
+
+
+# r2 has the plain privilege but not the grant-option mode.
+query
+SELECT
+  has_column_privilege('crg_babsky', 'crg_iceberg', 'clickclack', 'SELECT') AS sel,
+  has_column_privilege('crg_babsky', 'crg_iceberg', 'clickclack', 'SELECT WITH GRANT OPTION') AS sel_go;
+----
+sel	sel_go
+t	f
+
+
+# r2 reads the granted column.
+connection c_r2 user=crg_babsky password=crg_babsky_pw
+query
+SELECT clickclack FROM crg_iceberg ORDER BY clickclack;
+----
+clickclack
+1
+
+
+# === r2 (no option) cannot re-grant the column to r3 ===
+# PG warns "no privileges were granted" and no-ops -- it is not an error. The
+# attacl is left exactly as it was and r3 gains nothing.
+connection c_r2b user=crg_babsky password=crg_babsky_pw
+statement ok
+GRANT SELECT (clickclack) ON crg_iceberg TO crg_mop;
+
+
+connection default
+query
+SELECT a.attname, COALESCE(a.attacl::text, '(none)') AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'crg_iceberg' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack	{crg_vedernikoff=r*/postgres,crg_babsky=r/crg_vedernikoff}
+babsky	(none)
+mop	(none)
+
+
+# r3 gained no privilege from the failed re-grant.
+query
+SELECT has_column_privilege('crg_mop', 'crg_iceberg', 'clickclack', 'SELECT') AS sel;
+----
+sel
+f
+
+
+# r3 still cannot read the column.
+connection c_r3 user=crg_mop password=crg_mop_pw
+statement error
+SELECT clickclack FROM crg_iceberg;
+----
+db error: ERROR: permission denied for table crg_iceberg<slt:ignore>
+
+
+# === r1 tears down its own chained grant to r2 ===
+# r1 is the grantor of r2's grant, so r1 may revoke it; the chained entry clears
+# and r1's own star entry is left intact.
+connection c_r1c user=crg_vedernikoff password=crg_vedernikoff_pw
+statement ok
+REVOKE SELECT (clickclack) ON crg_iceberg FROM crg_babsky;
+
+
+connection default
+query
+SELECT a.attname, COALESCE(a.attacl::text, '(none)') AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'crg_iceberg' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack	{crg_vedernikoff=r*/postgres}
+babsky	(none)
+mop	(none)
+
+
+# r2 can no longer read the column once its grant is gone.
+connection c_r2d user=crg_babsky password=crg_babsky_pw
+statement error
+SELECT clickclack FROM crg_iceberg;
+----
+db error: ERROR: permission denied for table crg_iceberg<slt:ignore>
+
+
+# === REVOKE GRANT OPTION FOR downgrades the star ===
+# With no dependent grant left, the option revoke downgrades r1's star
+# (`r*` -> `r`) without removing the privilege itself.
+connection default
+statement ok
+REVOKE GRANT OPTION FOR SELECT (clickclack) ON crg_iceberg FROM crg_vedernikoff;
+
+
+query
+SELECT a.attname, COALESCE(a.attacl::text, '(none)') AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'crg_iceberg' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack	{crg_vedernikoff=r/postgres}
+babsky	(none)
+mop	(none)
+
+
+# r1 keeps the plain SELECT but loses the grant-option mode.
+query
+SELECT
+  has_column_privilege('crg_vedernikoff', 'crg_iceberg', 'clickclack', 'SELECT') AS sel,
+  has_column_privilege('crg_vedernikoff', 'crg_iceberg', 'clickclack', 'SELECT WITH GRANT OPTION') AS sel_go;
+----
+sel	sel_go
+t	f
+
+
+# r1 still reads the column after the option revoke.
+connection c_r1d user=crg_vedernikoff password=crg_vedernikoff_pw
+query
+SELECT clickclack FROM crg_iceberg ORDER BY clickclack;
+----
+clickclack
+1
+
+
+connection default
+statement ok
+DROP TABLE crg_iceberg;
+
+
+statement ok
+DROP ROLE crg_vedernikoff;
+
+
+statement ok
+DROP ROLE crg_babsky;
+
+
+statement ok
+DROP ROLE crg_mop;

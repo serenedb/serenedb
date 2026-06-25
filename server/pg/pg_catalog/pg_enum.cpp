@@ -68,7 +68,7 @@ catalog::MaterializedData SystemTableSnapshot<PgEnum>::GetTableData() {
 
   auto result = CreateColumns<PgEnum>(rows.size());
   for (size_t i = 0; i < rows.size(); ++i) {
-    WriteData(result, rows[i], kNullMask, i);
+    WriteData(result, rows[i], kNullMask, i, *_config.EnsureCatalogSnapshot());
   }
   return {std::move(result), rows.size()};
 }

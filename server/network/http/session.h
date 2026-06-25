@@ -145,11 +145,16 @@ class HttpSession final
       const auto database_id = database->GetId();
       const std::string_view user =
         _user.empty() ? StaticStrings::kDefaultUser : _user;
+      auto role = snapshot->GetRole(user);
+      SDB_ENSURE(role, ERROR_FORBIDDEN, "role \"", user, "\" does not exist");
+      SDB_ENSURE(role->CanLogin(), ERROR_FORBIDDEN, "role \"", user,
+                 "\" is not permitted to log in");
 
       _conn = DuckDBEngine::Instance().CreateConnection();
       _connection_ctx = std::make_shared<ConnectionContext>(
-        *_conn->context, user, dbname, database_id, std::move(database),
-        nullptr, nullptr, /*backend_pid=*/0, /*cancel_registry=*/nullptr);
+        *_conn->context, user, role->GetId(), dbname, database_id,
+        std::move(database), nullptr, nullptr, /*backend_pid=*/0,
+        /*cancel_registry=*/nullptr);
       connector::SereneDBClientState::Register(*_conn->context,
                                                _connection_ctx);
       _conn->context->session_user = std::string{user};

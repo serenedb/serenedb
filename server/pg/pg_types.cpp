@@ -580,8 +580,9 @@ uint64_t RegclassIn(const ConnectionContext& ctx, std::string_view name) {
   auto snapshot = ctx.EnsureCatalogSnapshot();
   auto current_schema = ctx.GetCurrentSchema();
   auto object_name = ParseObjectName(name, current_schema);
-  auto relation = snapshot->GetRelation(ctx.GetDatabaseId(), object_name.schema,
-                                        object_name.relation);
+  auto relation =
+    snapshot->GetRelation(catalog::NoAccessCheck(), ctx.GetDatabaseId(),
+                          object_name.schema, object_name.relation);
   if (relation) {
     return relation->GetId();
   }

@@ -1,0 +1,146 @@
+# Cross-catalog CONSISTENCY: the three privilege surfaces -- pg_class.relacl,
+# information_schema.table_privileges, and has_table_privilege -- must agree
+# about the SAME grant matrix across MULTIPLE tables. One grantee receives
+# different privilege sets on two tables; we read each privilege from all three
+# surfaces and assert they tell the same story, byte-identical on PostgreSQL 19
+# beta1 and serenedb. This is the load-bearing invariant: the catalog text, the
+# SQL-standard view, and the boolean oracle never disagree.
+#
+# Vedernikoff lore: clickclack and mop tables; vedernikoff the grantee.
+# Idempotent + self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS xcat_xc_clickclack;
+
+
+statement ok
+DROP TABLE IF EXISTS xcat_xc_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xcat_xc_vedernikoff;
+
+
+statement ok
+CREATE TABLE xcat_xc_clickclack (id int);
+
+
+statement ok
+CREATE TABLE xcat_xc_mop (id int);
+
+
+statement ok
+CREATE ROLE xcat_xc_vedernikoff;
+
+
+# On clickclack the grantee gets SELECT + UPDATE; on mop only INSERT.
+statement ok
+GRANT SELECT, UPDATE ON xcat_xc_clickclack TO xcat_xc_vedernikoff;
+
+
+statement ok
+GRANT INSERT ON xcat_xc_mop TO xcat_xc_vedernikoff;
+
+
+# Surface 1 -- relacl text: clickclack shows rw, mop shows a, both grantor
+# postgres. ORDER BY table makes the two rows deterministic.
+query
+SELECT c.relname AS tbl, e
+FROM pg_class c, LATERAL unnest(c.relacl::text[]) AS e
+WHERE c.relname IN ('xcat_xc_clickclack', 'xcat_xc_mop')
+  AND e LIKE 'xcat_xc_vedernikoff=%'
+ORDER BY c.relname;
+----
+tbl	e
+xcat_xc_clickclack	xcat_xc_vedernikoff=rw/postgres
+xcat_xc_mop	xcat_xc_vedernikoff=a/postgres
+
+
+# Surface 2 -- information_schema.table_privileges: one row per (table,
+# privilege), ordered by table then privilege.
+query
+SELECT table_name, privilege_type, is_grantable
+FROM information_schema.table_privileges
+WHERE grantee = 'xcat_xc_vedernikoff'
+  AND table_name IN ('xcat_xc_clickclack', 'xcat_xc_mop')
+ORDER BY table_name, privilege_type;
+----
+table_name	privilege_type	is_grantable
+xcat_xc_clickclack	SELECT	NO
+xcat_xc_clickclack	UPDATE	NO
+xcat_xc_mop	INSERT	NO
+
+
+# Surface 3 -- has_table_privilege oracle: the booleans for both tables match
+# surfaces 1 and 2 exactly (clickclack SELECT/UPDATE yes, INSERT no; mop INSERT
+# yes, SELECT no).
+query
+SELECT has_table_privilege('xcat_xc_vedernikoff', 'xcat_xc_clickclack', 'SELECT') AS cc_sel,
+       has_table_privilege('xcat_xc_vedernikoff', 'xcat_xc_clickclack', 'UPDATE') AS cc_upd,
+       has_table_privilege('xcat_xc_vedernikoff', 'xcat_xc_clickclack', 'INSERT') AS cc_ins,
+       has_table_privilege('xcat_xc_vedernikoff', 'xcat_xc_mop', 'INSERT') AS mop_ins,
+       has_table_privilege('xcat_xc_vedernikoff', 'xcat_xc_mop', 'SELECT') AS mop_sel;
+----
+cc_sel	cc_upd	cc_ins	mop_ins	mop_sel
+t	t	f	t	f
+
+
+# A direct correlation check: for every privilege the grantee holds in
+# table_privileges, has_table_privilege returns true -- counting the rows where
+# the two surfaces AGREE must equal the total privilege-row count (no surface
+# disagrees). The aggregate is the same on both engines.
+query
+SELECT count(*) AS total_rows,
+       count(*) FILTER (
+         WHERE has_table_privilege('xcat_xc_vedernikoff', table_name, privilege_type)
+       ) AS oracle_agrees
+FROM information_schema.table_privileges
+WHERE grantee = 'xcat_xc_vedernikoff'
+  AND table_name IN ('xcat_xc_clickclack', 'xcat_xc_mop');
+----
+total_rows	oracle_agrees
+3	3
+
+
+# After a REVOKE the same agreement holds: revoke UPDATE on clickclack, then all
+# three surfaces drop it together. relacl now shows only r on clickclack.
+statement ok
+REVOKE UPDATE ON xcat_xc_clickclack FROM xcat_xc_vedernikoff;
+
+
+query
+SELECT c.relname AS tbl, e
+FROM pg_class c, LATERAL unnest(c.relacl::text[]) AS e
+WHERE c.relname = 'xcat_xc_clickclack' AND e LIKE 'xcat_xc_vedernikoff=%';
+----
+tbl	e
+xcat_xc_clickclack	xcat_xc_vedernikoff=r/postgres
+
+
+query
+SELECT privilege_type FROM information_schema.table_privileges
+WHERE grantee = 'xcat_xc_vedernikoff' AND table_name = 'xcat_xc_clickclack'
+ORDER BY privilege_type;
+----
+privilege_type
+SELECT
+
+
+query
+SELECT has_table_privilege('xcat_xc_vedernikoff', 'xcat_xc_clickclack', 'UPDATE') AS upd_gone,
+       has_table_privilege('xcat_xc_vedernikoff', 'xcat_xc_clickclack', 'SELECT') AS sel_kept;
+----
+upd_gone	sel_kept
+f	t
+
+
+statement ok
+DROP TABLE xcat_xc_clickclack;
+
+
+statement ok
+DROP TABLE xcat_xc_mop;
+
+
+statement ok
+DROP ROLE xcat_xc_vedernikoff;

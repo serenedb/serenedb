@@ -1,0 +1,183 @@
+# WITH GRANT OPTION *enforcement*: a non-owner may re-GRANT a privilege only if
+# it holds that privilege WITH GRANT OPTION. PG does not error when the actor
+# lacks the option -- it warns "no privileges were granted" and grants nothing.
+# So we assert the EFFECT on the byte-identical has_table_privilege surface,
+# across real connections.
+#
+# IMPORTANT: privileges used here are NEVER granted to PUBLIC, so the only way a
+# target can hold one is a direct/inherited grant -- that is what makes the
+# no-op observable.
+#
+# Lore: iceberg is the table (owned by postgres). mop holds SELECT WITH GRANT
+# OPTION; clickclack holds UPDATE WITHOUT the option; babsky is the target.
+
+statement ok
+DROP TABLE IF EXISTS goe_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS goe_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS goe_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS goe_babsky;
+
+
+statement ok
+CREATE TABLE goe_iceberg (id int);
+
+
+statement ok
+CREATE ROLE goe_mop LOGIN PASSWORD 'goe_mop_pw';
+
+
+statement ok
+CREATE ROLE goe_clickclack LOGIN PASSWORD 'goe_clickclack_pw';
+
+
+statement ok
+CREATE ROLE goe_babsky LOGIN PASSWORD 'goe_babsky_pw';
+
+
+# mop gets SELECT WITH GRANT OPTION; clickclack gets plain UPDATE (no option).
+statement ok
+GRANT SELECT ON goe_iceberg TO goe_mop WITH GRANT OPTION;
+
+
+statement ok
+GRANT UPDATE ON goe_iceberg TO goe_clickclack;
+
+
+# ---- The option holder (mop) can re-GRANT SELECT to babsky ----
+
+connection c_mop user=goe_mop password=goe_mop_pw
+statement ok
+GRANT SELECT ON goe_iceberg TO goe_babsky;
+
+
+# Effect: babsky now holds SELECT (it was never SELECT-able via PUBLIC).
+query
+SELECT has_table_privilege('goe_babsky', 'goe_iceberg', 'SELECT') AS sel;
+----
+sel
+t
+
+
+# ---- The plain holder (clickclack) cannot confer UPDATE: PG warns and grants
+#      nothing, so a fresh target stays without it. ----
+
+statement ok
+DROP ROLE IF EXISTS goe_target2;
+
+
+statement ok
+CREATE ROLE goe_target2;
+
+
+connection c_click user=goe_clickclack password=goe_clickclack_pw
+statement ok
+GRANT UPDATE ON goe_iceberg TO goe_target2;
+
+
+# Effect: the grant was a no-op -- goe_target2 still lacks UPDATE.
+query
+SELECT has_table_privilege('goe_target2', 'goe_iceberg', 'UPDATE') AS upd;
+----
+upd
+f
+
+
+# ---- A role that holds a privilege only via PUBLIC cannot re-grant it.
+#      DELETE is granted to PUBLIC, so clickclack holds it -- but without any
+#      grant option, so it still cannot confer DELETE on a specific role beyond
+#      what PUBLIC already gives. We observe this through a fresh grantor that
+#      has DELETE only via PUBLIC trying to pass GRANT OPTION onward. ----
+
+statement ok
+GRANT DELETE ON goe_iceberg TO PUBLIC;
+
+
+statement ok
+DROP ROLE IF EXISTS goe_target3;
+
+
+statement ok
+CREATE ROLE goe_target3;
+
+
+# clickclack holds DELETE only through PUBLIC -> no grant option. A re-GRANT
+# WITH GRANT OPTION cannot confer the option (target3's option stays false even
+# though it gets DELETE via PUBLIC anyway).
+connection c_click user=goe_clickclack password=goe_clickclack_pw
+statement ok
+GRANT DELETE ON goe_iceberg TO goe_target3 WITH GRANT OPTION;
+
+
+query
+SELECT has_table_privilege('goe_target3', 'goe_iceberg', 'DELETE WITH GRANT OPTION') AS del_opt;
+----
+del_opt
+f
+
+
+# ---- The grantee of a WITH GRANT OPTION grant can pass the option onward,
+#      forming a chain. mop re-grants SELECT to babsky WITH GRANT OPTION; babsky
+#      then grants SELECT onward to a fresh role. ----
+
+connection c_mop user=goe_mop password=goe_mop_pw
+statement ok
+GRANT SELECT ON goe_iceberg TO goe_babsky WITH GRANT OPTION;
+
+
+statement ok
+DROP ROLE IF EXISTS goe_target4;
+
+
+statement ok
+CREATE ROLE goe_target4;
+
+
+connection c_babsky user=goe_babsky password=goe_babsky_pw
+statement ok
+GRANT SELECT ON goe_iceberg TO goe_target4;
+
+
+query
+SELECT has_table_privilege('goe_target4', 'goe_iceberg', 'SELECT') AS sel;
+----
+sel
+t
+
+
+# ---- Cleanup (drop table first so role grants vanish). ----
+
+statement ok
+DROP TABLE goe_iceberg;
+
+
+statement ok
+DROP ROLE goe_target4;
+
+
+statement ok
+DROP ROLE goe_target3;
+
+
+statement ok
+DROP ROLE goe_target2;
+
+
+statement ok
+DROP ROLE goe_babsky;
+
+
+statement ok
+DROP ROLE goe_clickclack;
+
+
+statement ok
+DROP ROLE goe_mop;

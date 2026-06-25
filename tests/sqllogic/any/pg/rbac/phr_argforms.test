@@ -1,0 +1,153 @@
+# pg_has_role: every argument FORM agrees on real PostgreSQL and serenedb.
+#
+# pg_has_role accepts the member by NAME or by OID, and the target role by NAME
+# or by OID -- four 3-arg combinations -- plus a 2-arg form that uses the
+# current session user as the implicit member. This file pins all of them on a
+# single one-hop membership and proves the forms agree byte-for-byte.
+#
+# Graph (-> reads "is a member of"):
+#   phr_androed -> phr_abramov
+# androed is the member; abramov is the group it joins.
+#
+# Everything is prefixed phr_ and lives under the androed/abramov lore. The file
+# is idempotent (DROP ... IF EXISTS up front) and self-cleaning.
+
+statement ok
+DROP ROLE IF EXISTS phr_androed;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_abramov;
+
+
+statement ok
+CREATE ROLE phr_androed;
+
+
+statement ok
+CREATE ROLE phr_abramov;
+
+
+statement ok
+GRANT phr_abramov TO phr_androed;
+
+
+# ---- (name, name): the canonical spelling ----
+
+query
+SELECT pg_has_role('phr_androed', 'phr_abramov', 'USAGE') AS name_name;
+----
+name_name
+t
+
+
+# ---- (oid, oid): both arguments addressed by catalog oid ----
+
+query
+SELECT pg_has_role((SELECT oid FROM pg_roles WHERE rolname='phr_androed'),
+                   (SELECT oid FROM pg_roles WHERE rolname='phr_abramov'),
+                   'USAGE') AS oid_oid;
+----
+oid_oid
+t
+
+
+# ---- (name, oid): member by name, target by oid ----
+
+query
+SELECT pg_has_role('phr_androed',
+                   (SELECT oid FROM pg_roles WHERE rolname='phr_abramov'),
+                   'USAGE') AS name_oid;
+----
+name_oid
+t
+
+
+# ---- (oid, name): member by oid, target by name ----
+
+query
+SELECT pg_has_role((SELECT oid FROM pg_roles WHERE rolname='phr_androed'),
+                   'phr_abramov',
+                   'USAGE') AS oid_name;
+----
+oid_name
+t
+
+
+# ---- All four forms agree in one query ----
+# Each is t and each equals the canonical (name, name) result.
+
+query
+SELECT pg_has_role('phr_androed', 'phr_abramov', 'USAGE') AS nn,
+       pg_has_role((SELECT oid FROM pg_roles WHERE rolname='phr_androed'),
+                   (SELECT oid FROM pg_roles WHERE rolname='phr_abramov'),
+                   'USAGE') AS oo,
+       pg_has_role('phr_androed',
+                   (SELECT oid FROM pg_roles WHERE rolname='phr_abramov'),
+                   'USAGE') AS no,
+       pg_has_role((SELECT oid FROM pg_roles WHERE rolname='phr_androed'),
+                   'phr_abramov',
+                   'USAGE') AS on_;
+----
+nn	oo	no	on_
+t	t	t	t
+
+
+# The forms are pairwise equal -- not just all true, but identical results.
+query
+SELECT (pg_has_role('phr_androed', 'phr_abramov', 'USAGE')
+        = pg_has_role((SELECT oid FROM pg_roles WHERE rolname='phr_androed'),
+                      (SELECT oid FROM pg_roles WHERE rolname='phr_abramov'),
+                      'USAGE')) AS nn_eq_oo,
+       (pg_has_role('phr_androed',
+                    (SELECT oid FROM pg_roles WHERE rolname='phr_abramov'),
+                    'USAGE')
+        = pg_has_role((SELECT oid FROM pg_roles WHERE rolname='phr_androed'),
+                      'phr_abramov',
+                      'USAGE')) AS no_eq_on;
+----
+nn_eq_oo	no_eq_on
+t	t
+
+
+# ---- The same four forms on the NEGATIVE (reversed) direction: all f ----
+# abramov is NOT a member of androed; every form must report f.
+
+query
+SELECT pg_has_role('phr_abramov', 'phr_androed', 'USAGE') AS nn,
+       pg_has_role((SELECT oid FROM pg_roles WHERE rolname='phr_abramov'),
+                   (SELECT oid FROM pg_roles WHERE rolname='phr_androed'),
+                   'USAGE') AS oo,
+       pg_has_role('phr_abramov',
+                   (SELECT oid FROM pg_roles WHERE rolname='phr_androed'),
+                   'USAGE') AS no,
+       pg_has_role((SELECT oid FROM pg_roles WHERE rolname='phr_abramov'),
+                   'phr_androed',
+                   'USAGE') AS on_;
+----
+nn	oo	no	on_
+f	f	f	f
+
+
+# ---- 2-arg form (implicit current_user as the member) ----
+# The session runs as superuser postgres, which holds every role; so the 2-arg
+# form reports t for both target roles regardless of the explicit membership.
+# (This is the documented "is the current user a member of role X" shorthand.)
+
+query
+SELECT pg_has_role('phr_abramov', 'USAGE') AS by_name,
+       pg_has_role((SELECT oid FROM pg_roles WHERE rolname='phr_abramov'),
+                   'USAGE') AS by_oid;
+----
+by_name	by_oid
+t	t
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP ROLE IF EXISTS phr_androed;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_abramov;

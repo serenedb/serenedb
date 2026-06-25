@@ -1,0 +1,107 @@
+# Cross-actor GRANT/REVOKE attribution: every authorized grantor (owner,
+# superuser, member-of-owner) acts AS the table owner, so grants are recorded
+# with the owner as grantor (PG select_best_grantor) and any authorized
+# revoker can undo any authorized actor's grant. Regression guard: acl items
+# are (grantee, grantor)-keyed, and revokes used to record the ACTING role as
+# grantor -- a REVOKE by a different authorized role then silently no-opped,
+# reporting success while the grantee kept the privilege.
+
+statement ok
+DROP TABLE IF EXISTS clickclack_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS mop_deputy;
+
+
+statement ok
+DROP ROLE IF EXISTS mop_reader;
+
+
+statement ok
+CREATE TABLE clickclack_ledger (id int);
+
+
+statement ok
+CREATE ROLE mop_deputy LOGIN PASSWORD 'mop_deputy_pw';
+
+
+statement ok
+CREATE ROLE mop_reader;
+
+
+# Deputy is a member of the owning role (postgres), authorized to grant.
+statement ok
+GRANT postgres TO mop_deputy;
+
+
+# ---- deputy grants, superuser revokes ----
+
+connection c_deputy user=mop_deputy password=mop_deputy_pw
+statement ok
+GRANT SELECT ON clickclack_ledger TO mop_reader;
+
+
+
+query
+SELECT has_table_privilege('mop_reader', 'clickclack_ledger', 'SELECT');
+----
+has_table_privilege
+t
+
+
+# The superuser is not the role that executed the GRANT; the revoke must
+# still take effect because both acted as the owner.
+
+statement ok
+REVOKE SELECT ON clickclack_ledger FROM mop_reader;
+
+
+
+query
+SELECT has_table_privilege('mop_reader', 'clickclack_ledger', 'SELECT');
+----
+has_table_privilege
+f
+
+
+# ---- the mirror: superuser grants, deputy revokes ----
+
+
+statement ok
+GRANT INSERT ON clickclack_ledger TO mop_reader;
+
+
+
+query
+SELECT has_table_privilege('mop_reader', 'clickclack_ledger', 'INSERT');
+----
+has_table_privilege
+t
+
+
+connection c_deputy user=mop_deputy password=mop_deputy_pw
+statement ok
+REVOKE INSERT ON clickclack_ledger FROM mop_reader;
+
+
+
+query
+SELECT has_table_privilege('mop_reader', 'clickclack_ledger', 'INSERT');
+----
+has_table_privilege
+f
+
+
+# ---- cleanup ----
+
+statement ok
+DROP TABLE clickclack_ledger;
+
+
+statement ok
+DROP ROLE mop_deputy;
+
+
+statement ok
+DROP ROLE mop_reader;

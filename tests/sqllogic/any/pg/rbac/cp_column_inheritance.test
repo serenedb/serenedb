@@ -1,0 +1,215 @@
+# Column-level privileges inherited through role membership and PUBLIC.
+#
+# A column GRANT (pg_attribute.attacl) is resolved exactly like a table grant:
+# the privilege is held if the checking role holds it directly, through a role
+# it is a member of, or through PUBLIC. This file proves the REAL query path:
+#   - GRANT SELECT (clickclack) to a group role grp; a member (vedernikoff)
+#     inherits column SELECT and can read clickclack but not the other columns.
+#   - GRANT SELECT (babsky) TO PUBLIC; every role can read babsky but no role
+#     gains the ungranted columns through it.
+# Read outcomes and has_column_privilege are byte-identical on real PostgreSQL
+# and serenedb: the oracle resolves a per-column attacl grant the same way it
+# resolves a table grant -- directly, through role membership, and through
+# PUBLIC.
+#
+# Lore: clickclack/babsky/mop are columns; vedernikoff/babsky the roles, grp the
+# group. Objects prefixed cci2_; idempotent and self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS cci2_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS cci2_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS cci2_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS cci2_grp;
+
+
+statement ok
+CREATE TABLE cci2_iceberg (clickclack int, babsky int, mop int);
+
+
+statement ok
+INSERT INTO cci2_iceberg VALUES (1, 2, 3);
+
+
+statement ok
+CREATE ROLE cci2_vedernikoff LOGIN PASSWORD 'cci2_vedernikoff_pw';
+
+
+statement ok
+CREATE ROLE cci2_babsky LOGIN PASSWORD 'cci2_babsky_pw';
+
+
+statement ok
+CREATE ROLE cci2_grp;
+
+
+# ============================================================================
+# Column GRANT to a group role, then membership: the member inherits the
+# column-level SELECT on exactly the granted column.
+# ============================================================================
+
+statement ok
+GRANT SELECT (clickclack) ON cci2_iceberg TO cci2_grp;
+
+
+statement ok
+GRANT cci2_grp TO cci2_vedernikoff;
+
+
+# attacl records the grant against the group role, byte-identical to PG.
+query
+SELECT a.attname, a.attacl::text AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'cci2_iceberg' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack	{cci2_grp=r/postgres}
+babsky	NULL
+mop	NULL
+
+
+# Member reads the granted column through grp membership.
+connection c_ved user=cci2_vedernikoff password=cci2_vedernikoff_pw
+query
+SELECT clickclack FROM cci2_iceberg ORDER BY clickclack;
+----
+clickclack
+1
+
+
+# A column the group was never granted is refused for the member.
+connection c_ved2 user=cci2_vedernikoff password=cci2_vedernikoff_pw
+statement error
+SELECT babsky FROM cci2_iceberg;
+----
+db error: ERROR: permission denied for table cci2_iceberg<slt:ignore>
+
+
+# SELECT * touches mop -> refused.
+connection c_ved3 user=cci2_vedernikoff password=cci2_vedernikoff_pw
+statement error
+SELECT * FROM cci2_iceberg;
+----
+db error: ERROR: permission denied for table cci2_iceberg<slt:ignore>
+
+
+# has_column_privilege resolves the column grant through grp membership: t on
+# the granted column, f on the ungranted ones.
+query
+SELECT has_column_privilege('cci2_vedernikoff','cci2_iceberg','clickclack','SELECT') AS ved_click,
+       has_column_privilege('cci2_vedernikoff','cci2_iceberg','babsky','SELECT')     AS ved_babsky,
+       has_column_privilege('cci2_vedernikoff','cci2_iceberg','mop','SELECT')        AS ved_mop;
+----
+ved_click	ved_babsky	ved_mop
+t	f	f
+
+
+# babsky is not a member of grp and holds no grant: it lacks the column.
+query
+SELECT has_column_privilege('cci2_babsky','cci2_iceberg','clickclack','SELECT') AS bab_click;
+----
+bab_click
+f
+
+
+connection c_bab user=cci2_babsky password=cci2_babsky_pw
+statement error
+SELECT clickclack FROM cci2_iceberg;
+----
+db error: ERROR: permission denied for table cci2_iceberg<slt:ignore>
+
+
+# ============================================================================
+# Column GRANT to PUBLIC: every role can read that column, but not the others.
+# ============================================================================
+
+statement ok
+GRANT SELECT (babsky) ON cci2_iceberg TO PUBLIC;
+
+
+# attacl shows the PUBLIC grant on babsky (empty grantee) alongside grp's.
+query
+SELECT a.attname, a.attacl::text AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'cci2_iceberg' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack	{cci2_grp=r/postgres}
+babsky	{=r/postgres}
+mop	NULL
+
+
+# babsky (no direct grant, not in grp) reads the PUBLIC-granted column.
+connection c_bab2 user=cci2_babsky password=cci2_babsky_pw
+query
+SELECT babsky FROM cci2_iceberg ORDER BY babsky;
+----
+babsky
+2
+
+
+# But an ungranted column is still refused via PUBLIC.
+connection c_bab3 user=cci2_babsky password=cci2_babsky_pw
+statement error
+SELECT clickclack FROM cci2_iceberg;
+----
+db error: ERROR: permission denied for table cci2_iceberg<slt:ignore>
+
+
+# vedernikoff now reads clickclack (grp) and babsky (PUBLIC) together.
+connection c_ved4 user=cci2_vedernikoff password=cci2_vedernikoff_pw
+query
+SELECT clickclack, babsky FROM cci2_iceberg ORDER BY clickclack;
+----
+clickclack	babsky
+1	2
+
+
+# mop was never granted to anyone -> still refused for the member.
+connection c_ved5 user=cci2_vedernikoff password=cci2_vedernikoff_pw
+statement error
+SELECT mop FROM cci2_iceberg;
+----
+db error: ERROR: permission denied for table cci2_iceberg<slt:ignore>
+
+
+# has_column_privilege resolves the PUBLIC column grant: babsky reads the
+# PUBLIC-granted column (t) but not clickclack (grp-only) or mop (ungranted).
+query
+SELECT has_column_privilege('cci2_babsky','cci2_iceberg','babsky','SELECT')     AS bab_babsky,
+       has_column_privilege('cci2_babsky','cci2_iceberg','clickclack','SELECT') AS bab_click,
+       has_column_privilege('cci2_babsky','cci2_iceberg','mop','SELECT')        AS bab_mop,
+       has_column_privilege('cci2_vedernikoff','cci2_iceberg','mop','SELECT')   AS ved_mop;
+----
+bab_babsky	bab_click	bab_mop	ved_mop
+t	f	f	f
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE cci2_iceberg;
+
+
+statement ok
+DROP ROLE cci2_vedernikoff;
+
+
+statement ok
+DROP ROLE cci2_babsky;
+
+
+statement ok
+DROP ROLE cci2_grp;

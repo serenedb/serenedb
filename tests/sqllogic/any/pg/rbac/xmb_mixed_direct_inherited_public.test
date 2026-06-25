@@ -1,0 +1,155 @@
+# Cross-membership: the effective privilege set is the UNION of three sources
+#   1. a DIRECT grant to the member       (UPDATE)
+#   2. an INHERITED grant via a group      (INSERT, through xmb_mdp_iceberg)
+#   3. a PUBLIC grant                       (SELECT)
+# asserted across all seven table privileges. Then we peel the sources off one
+# at a time and watch only the matching privilege disappear: revoking the group
+# keeps the direct + PUBLIC privileges; revoking PUBLIC keeps the direct one.
+#
+# Byte-identical on real PostgreSQL and serenedb.
+
+statement ok
+DROP ROLE IF EXISTS xmb_mdp_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_mdp_iceberg;
+
+
+statement ok
+DROP TABLE IF EXISTS xmb_mdp_clickclack;
+
+
+statement ok
+CREATE TABLE xmb_mdp_clickclack (id int, payload text);
+
+
+statement ok
+INSERT INTO xmb_mdp_clickclack VALUES (1, 'babsky');
+
+
+statement ok
+CREATE ROLE xmb_mdp_mop LOGIN PASSWORD 'xmb_mdp_mop_pw';
+
+
+statement ok
+CREATE ROLE xmb_mdp_iceberg;
+
+
+statement ok
+GRANT xmb_mdp_iceberg TO xmb_mdp_mop;
+
+
+# Three independent sources of privilege.
+statement ok
+GRANT UPDATE ON xmb_mdp_clickclack TO xmb_mdp_mop;
+
+
+statement ok
+GRANT INSERT ON xmb_mdp_clickclack TO xmb_mdp_iceberg;
+
+
+statement ok
+GRANT SELECT ON xmb_mdp_clickclack TO PUBLIC;
+
+
+# Full 7-privilege union: SELECT(public) + INSERT(group) + UPDATE(direct); the
+# other four were never granted from any source.
+query
+SELECT has_table_privilege('xmb_mdp_mop', 'xmb_mdp_clickclack', 'SELECT') AS sel,
+       has_table_privilege('xmb_mdp_mop', 'xmb_mdp_clickclack', 'INSERT') AS ins,
+       has_table_privilege('xmb_mdp_mop', 'xmb_mdp_clickclack', 'UPDATE') AS upd,
+       has_table_privilege('xmb_mdp_mop', 'xmb_mdp_clickclack', 'DELETE') AS del,
+       has_table_privilege('xmb_mdp_mop', 'xmb_mdp_clickclack', 'TRUNCATE') AS trunc,
+       has_table_privilege('xmb_mdp_mop', 'xmb_mdp_clickclack', 'REFERENCES') AS refs,
+       has_table_privilege('xmb_mdp_mop', 'xmb_mdp_clickclack', 'TRIGGER') AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	f	f	f	f
+
+
+# Real query path exercises all three sources at once.
+connection c_mop user=xmb_mdp_mop password=xmb_mdp_mop_pw
+query
+SELECT count(*) FROM xmb_mdp_clickclack;
+----
+count
+1
+
+
+connection c_mop user=xmb_mdp_mop password=xmb_mdp_mop_pw
+statement ok
+INSERT INTO xmb_mdp_clickclack VALUES (2, 'vedernikoff');
+
+
+connection c_mop user=xmb_mdp_mop password=xmb_mdp_mop_pw
+statement ok
+UPDATE xmb_mdp_clickclack SET payload = 'iceberg' WHERE id = 1;
+
+
+# ---- Peel off the GROUP: INSERT vanishes; direct UPDATE + PUBLIC SELECT stay ----
+
+statement ok
+REVOKE xmb_mdp_iceberg FROM xmb_mdp_mop;
+
+
+query
+SELECT has_table_privilege('xmb_mdp_mop', 'xmb_mdp_clickclack', 'SELECT') AS sel,
+       has_table_privilege('xmb_mdp_mop', 'xmb_mdp_clickclack', 'INSERT') AS ins,
+       has_table_privilege('xmb_mdp_mop', 'xmb_mdp_clickclack', 'UPDATE') AS upd;
+----
+sel	ins	upd
+t	f	t
+
+
+connection c_mop2 user=xmb_mdp_mop password=xmb_mdp_mop_pw
+statement error
+INSERT INTO xmb_mdp_clickclack VALUES (3, 'gone');
+----
+db error: ERROR: permission denied for table xmb_mdp_clickclack<slt:ignore>
+
+
+# ---- Peel off PUBLIC: SELECT vanishes; direct UPDATE survives ----
+
+statement ok
+REVOKE SELECT ON xmb_mdp_clickclack FROM PUBLIC;
+
+
+query
+SELECT has_table_privilege('xmb_mdp_mop', 'xmb_mdp_clickclack', 'SELECT') AS sel,
+       has_table_privilege('xmb_mdp_mop', 'xmb_mdp_clickclack', 'UPDATE') AS upd;
+----
+sel	upd
+f	t
+
+
+connection c_mop3 user=xmb_mdp_mop password=xmb_mdp_mop_pw
+statement error
+SELECT * FROM xmb_mdp_clickclack;
+----
+db error: ERROR: permission denied for table xmb_mdp_clickclack<slt:ignore>
+
+
+# The direct UPDATE grant is still recorded on the catalog surface (a real
+# UPDATE statement is not exercised here: with SELECT now gone, a WHERE clause
+# would need SELECT to read rows, and serenedb additionally requires SELECT even
+# for a bare UPDATE -- so the real-DML check would diverge from PostgreSQL).
+query
+SELECT has_table_privilege('xmb_mdp_mop', 'xmb_mdp_clickclack', 'UPDATE') AS upd;
+----
+upd
+t
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP TABLE IF EXISTS xmb_mdp_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_mdp_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_mdp_iceberg;

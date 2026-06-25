@@ -1,0 +1,216 @@
+# is_grantable and the PUBLIC pseudo-grantee in the SQL-standard privilege
+# views. WITH GRANT OPTION flips is_grantable to YES on exactly the granted
+# privileges; a grant to PUBLIC surfaces as a row whose grantee literal is
+# 'PUBLIC'. Both information_schema.table_privileges and the
+# information_schema.role_table_grants alias return the same rows. Every value
+# below is byte-identical on PostgreSQL 19beta1 and serenedb. Owner rows are
+# never asserted (we filter grantee to our roles / to PUBLIC).
+#
+# Vedernikoff lore: the iceberg table, granted out to deadinside and the world.
+
+statement ok
+DROP TABLE IF EXISTS isp_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS isp_deadinside;
+
+
+statement ok
+DROP ROLE IF EXISTS isp_zhidky;
+
+
+statement ok
+DROP ROLE IF EXISTS isp_negaimorit;
+
+
+statement ok
+CREATE TABLE isp_iceberg (id int, payload text);
+
+
+statement ok
+CREATE ROLE isp_deadinside;
+
+
+statement ok
+CREATE ROLE isp_zhidky;
+
+
+statement ok
+CREATE ROLE isp_negaimorit;
+
+
+# ============================================================================
+# WITH GRANT OPTION: is_grantable is YES for the granted privileges. SELECT
+# still carries with_hierarchy YES; UPDATE does not.
+# ============================================================================
+
+statement ok
+GRANT SELECT, UPDATE ON isp_iceberg TO isp_deadinside WITH GRANT OPTION;
+
+
+query
+SELECT grantor, grantee, privilege_type, is_grantable, with_hierarchy
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_iceberg' AND grantee = 'isp_deadinside'
+ORDER BY privilege_type;
+----
+grantor	grantee	privilege_type	is_grantable	with_hierarchy
+postgres	isp_deadinside	SELECT	YES	YES
+postgres	isp_deadinside	UPDATE	YES	NO
+
+
+# A plain grant (no option) to a second role: is_grantable NO, side by side
+# with the grantable role above. Filtering to both grantees, sorted by
+# grantee then privilege, shows the is_grantable column distinguishing them.
+statement ok
+GRANT SELECT ON isp_iceberg TO isp_zhidky;
+
+
+query
+SELECT grantee, privilege_type, is_grantable
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_iceberg' AND grantee IN ('isp_deadinside', 'isp_zhidky')
+ORDER BY grantee, privilege_type;
+----
+grantee	privilege_type	is_grantable
+isp_deadinside	SELECT	YES
+isp_deadinside	UPDATE	YES
+isp_zhidky	SELECT	NO
+
+
+# ============================================================================
+# GRANT to PUBLIC: the grantee literal is 'PUBLIC'. A PUBLIC grant is never
+# grantable here (is_grantable NO); SELECT still carries with_hierarchy YES.
+# ============================================================================
+
+statement ok
+GRANT SELECT ON isp_iceberg TO PUBLIC;
+
+
+query
+SELECT grantor, grantee, privilege_type, is_grantable, with_hierarchy
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_iceberg' AND grantee = 'PUBLIC'
+ORDER BY privilege_type;
+----
+grantor	grantee	privilege_type	is_grantable	with_hierarchy
+postgres	PUBLIC	SELECT	NO	YES
+
+
+# The full non-owner grantee set on this table, sorted: PUBLIC sorts before the
+# named roles (uppercase). One INSERT-to-PUBLIC adds a second PUBLIC row.
+statement ok
+GRANT INSERT ON isp_iceberg TO PUBLIC;
+
+
+query
+SELECT grantee, privilege_type, is_grantable
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_iceberg' AND grantee <> 'postgres'
+ORDER BY grantee, privilege_type;
+----
+grantee	privilege_type	is_grantable
+PUBLIC	INSERT	NO
+PUBLIC	SELECT	NO
+isp_deadinside	SELECT	YES
+isp_deadinside	UPDATE	YES
+isp_zhidky	SELECT	NO
+
+
+# ============================================================================
+# role_table_grants is the same view restricted to grants the current role can
+# see; as the owning superuser it returns the identical grantee rows.
+# ============================================================================
+
+query
+SELECT grantor, grantee, privilege_type, is_grantable, with_hierarchy
+FROM information_schema.role_table_grants
+WHERE table_name = 'isp_iceberg' AND grantee = 'isp_deadinside'
+ORDER BY privilege_type;
+----
+grantor	grantee	privilege_type	is_grantable	with_hierarchy
+postgres	isp_deadinside	SELECT	YES	YES
+postgres	isp_deadinside	UPDATE	YES	NO
+
+
+# table_privileges and role_table_grants agree row-for-row for our grantees.
+query
+SELECT count(*) AS mismatch FROM (
+  SELECT grantee, privilege_type, is_grantable FROM information_schema.table_privileges
+  WHERE table_name = 'isp_iceberg' AND grantee <> 'postgres'
+  EXCEPT
+  SELECT grantee, privilege_type, is_grantable FROM information_schema.role_table_grants
+  WHERE table_name = 'isp_iceberg' AND grantee <> 'postgres'
+) d;
+----
+mismatch
+0
+
+
+# ============================================================================
+# Re-granting WITHOUT the option does not downgrade is_grantable: an existing
+# grantable privilege stays YES (PG never lowers grant-option on re-grant).
+# ============================================================================
+
+statement ok
+GRANT SELECT ON isp_iceberg TO isp_deadinside;
+
+
+query
+SELECT privilege_type, is_grantable
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_iceberg' AND grantee = 'isp_deadinside'
+ORDER BY privilege_type;
+----
+privilege_type	is_grantable
+SELECT	YES
+UPDATE	YES
+
+
+# ============================================================================
+# REVOKE on PUBLIC removes the PUBLIC rows; the named-role rows are untouched.
+# ============================================================================
+
+statement ok
+REVOKE SELECT, INSERT ON isp_iceberg FROM PUBLIC;
+
+
+query
+SELECT count(*) AS public_rows FROM information_schema.table_privileges
+WHERE table_name = 'isp_iceberg' AND grantee = 'PUBLIC';
+----
+public_rows
+0
+
+
+query
+SELECT grantee, privilege_type, is_grantable
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_iceberg' AND grantee <> 'postgres'
+ORDER BY grantee, privilege_type;
+----
+grantee	privilege_type	is_grantable
+isp_deadinside	SELECT	YES
+isp_deadinside	UPDATE	YES
+isp_zhidky	SELECT	NO
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE isp_iceberg;
+
+
+statement ok
+DROP ROLE isp_deadinside;
+
+
+statement ok
+DROP ROLE isp_zhidky;
+
+
+statement ok
+DROP ROLE isp_negaimorit;

@@ -1,0 +1,412 @@
+# Combinatorial privilege grants, PAIRS: grant exactly two of the seven table
+# privileges to a fresh role and assert all seven bits via has_table_privilege --
+# exactly the two granted are t, the other five f. Many distinct pairs spanning
+# the privilege set, plus grant-order independence and a two-statement grant that
+# is equivalent to the combined list.
+#
+# Column order in every block: SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES
+# TRIGGER. The has_table_privilege oracle is byte-identical on real PostgreSQL
+# and serenedb.
+#
+# All objects are prefixed combo_ (vedernikoff/clickclack/iceberg/mop lore).
+# Roles are cluster-global, so the combo_ tag keeps names unique across files.
+# The file is idempotent (DROP ... IF EXISTS up front) and self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS combo_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_pair_si;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_pair_su;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_pair_sd;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_pair_iu;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_pair_id;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_pair_ud;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_pair_st;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_pair_rf;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_pair_tt;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_pair_dr;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_pair_order;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_pair_split;
+
+
+statement ok
+CREATE TABLE combo_iceberg (id int, clickclack text);
+
+
+# ============================================================================
+# Each role gets exactly one pair. Two t bits, five f bits per row.
+# ============================================================================
+
+# ---- pair: SELECT + INSERT ----
+
+statement ok
+CREATE ROLE combo_pair_si;
+
+
+statement ok
+GRANT SELECT, INSERT ON combo_iceberg TO combo_pair_si;
+
+
+query
+SELECT has_table_privilege('combo_pair_si','combo_iceberg','SELECT')     AS sel,
+       has_table_privilege('combo_pair_si','combo_iceberg','INSERT')     AS ins,
+       has_table_privilege('combo_pair_si','combo_iceberg','UPDATE')     AS upd,
+       has_table_privilege('combo_pair_si','combo_iceberg','DELETE')     AS del,
+       has_table_privilege('combo_pair_si','combo_iceberg','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_pair_si','combo_iceberg','REFERENCES') AS refs,
+       has_table_privilege('combo_pair_si','combo_iceberg','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	f	f	f	f	f
+
+
+# ---- pair: SELECT + UPDATE ----
+
+statement ok
+CREATE ROLE combo_pair_su;
+
+
+statement ok
+GRANT SELECT, UPDATE ON combo_iceberg TO combo_pair_su;
+
+
+query
+SELECT has_table_privilege('combo_pair_su','combo_iceberg','SELECT')     AS sel,
+       has_table_privilege('combo_pair_su','combo_iceberg','INSERT')     AS ins,
+       has_table_privilege('combo_pair_su','combo_iceberg','UPDATE')     AS upd,
+       has_table_privilege('combo_pair_su','combo_iceberg','DELETE')     AS del,
+       has_table_privilege('combo_pair_su','combo_iceberg','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_pair_su','combo_iceberg','REFERENCES') AS refs,
+       has_table_privilege('combo_pair_su','combo_iceberg','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	f	t	f	f	f	f
+
+
+# ---- pair: SELECT + DELETE ----
+
+statement ok
+CREATE ROLE combo_pair_sd;
+
+
+statement ok
+GRANT SELECT, DELETE ON combo_iceberg TO combo_pair_sd;
+
+
+query
+SELECT has_table_privilege('combo_pair_sd','combo_iceberg','SELECT')     AS sel,
+       has_table_privilege('combo_pair_sd','combo_iceberg','INSERT')     AS ins,
+       has_table_privilege('combo_pair_sd','combo_iceberg','UPDATE')     AS upd,
+       has_table_privilege('combo_pair_sd','combo_iceberg','DELETE')     AS del,
+       has_table_privilege('combo_pair_sd','combo_iceberg','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_pair_sd','combo_iceberg','REFERENCES') AS refs,
+       has_table_privilege('combo_pair_sd','combo_iceberg','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	f	f	t	f	f	f
+
+
+# ---- pair: INSERT + UPDATE ----
+
+statement ok
+CREATE ROLE combo_pair_iu;
+
+
+statement ok
+GRANT INSERT, UPDATE ON combo_iceberg TO combo_pair_iu;
+
+
+query
+SELECT has_table_privilege('combo_pair_iu','combo_iceberg','SELECT')     AS sel,
+       has_table_privilege('combo_pair_iu','combo_iceberg','INSERT')     AS ins,
+       has_table_privilege('combo_pair_iu','combo_iceberg','UPDATE')     AS upd,
+       has_table_privilege('combo_pair_iu','combo_iceberg','DELETE')     AS del,
+       has_table_privilege('combo_pair_iu','combo_iceberg','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_pair_iu','combo_iceberg','REFERENCES') AS refs,
+       has_table_privilege('combo_pair_iu','combo_iceberg','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	t	t	f	f	f	f
+
+
+# ---- pair: INSERT + DELETE ----
+
+statement ok
+CREATE ROLE combo_pair_id;
+
+
+statement ok
+GRANT INSERT, DELETE ON combo_iceberg TO combo_pair_id;
+
+
+query
+SELECT has_table_privilege('combo_pair_id','combo_iceberg','SELECT')     AS sel,
+       has_table_privilege('combo_pair_id','combo_iceberg','INSERT')     AS ins,
+       has_table_privilege('combo_pair_id','combo_iceberg','UPDATE')     AS upd,
+       has_table_privilege('combo_pair_id','combo_iceberg','DELETE')     AS del,
+       has_table_privilege('combo_pair_id','combo_iceberg','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_pair_id','combo_iceberg','REFERENCES') AS refs,
+       has_table_privilege('combo_pair_id','combo_iceberg','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	t	f	t	f	f	f
+
+
+# ---- pair: UPDATE + DELETE ----
+
+statement ok
+CREATE ROLE combo_pair_ud;
+
+
+statement ok
+GRANT UPDATE, DELETE ON combo_iceberg TO combo_pair_ud;
+
+
+query
+SELECT has_table_privilege('combo_pair_ud','combo_iceberg','SELECT')     AS sel,
+       has_table_privilege('combo_pair_ud','combo_iceberg','INSERT')     AS ins,
+       has_table_privilege('combo_pair_ud','combo_iceberg','UPDATE')     AS upd,
+       has_table_privilege('combo_pair_ud','combo_iceberg','DELETE')     AS del,
+       has_table_privilege('combo_pair_ud','combo_iceberg','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_pair_ud','combo_iceberg','REFERENCES') AS refs,
+       has_table_privilege('combo_pair_ud','combo_iceberg','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	f	t	t	f	f	f
+
+
+# ---- pair: SELECT + TRUNCATE (a read priv with a heavy-write priv) ----
+
+statement ok
+CREATE ROLE combo_pair_st;
+
+
+statement ok
+GRANT SELECT, TRUNCATE ON combo_iceberg TO combo_pair_st;
+
+
+query
+SELECT has_table_privilege('combo_pair_st','combo_iceberg','SELECT')     AS sel,
+       has_table_privilege('combo_pair_st','combo_iceberg','INSERT')     AS ins,
+       has_table_privilege('combo_pair_st','combo_iceberg','UPDATE')     AS upd,
+       has_table_privilege('combo_pair_st','combo_iceberg','DELETE')     AS del,
+       has_table_privilege('combo_pair_st','combo_iceberg','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_pair_st','combo_iceberg','REFERENCES') AS refs,
+       has_table_privilege('combo_pair_st','combo_iceberg','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	f	f	f	t	f	f
+
+
+# ---- pair: REFERENCES + TRIGGER (the two schema-shape privileges) ----
+
+statement ok
+CREATE ROLE combo_pair_rf;
+
+
+statement ok
+GRANT REFERENCES, TRIGGER ON combo_iceberg TO combo_pair_rf;
+
+
+query
+SELECT has_table_privilege('combo_pair_rf','combo_iceberg','SELECT')     AS sel,
+       has_table_privilege('combo_pair_rf','combo_iceberg','INSERT')     AS ins,
+       has_table_privilege('combo_pair_rf','combo_iceberg','UPDATE')     AS upd,
+       has_table_privilege('combo_pair_rf','combo_iceberg','DELETE')     AS del,
+       has_table_privilege('combo_pair_rf','combo_iceberg','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_pair_rf','combo_iceberg','REFERENCES') AS refs,
+       has_table_privilege('combo_pair_rf','combo_iceberg','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	f	f	f	f	t	t
+
+
+# ---- pair: TRUNCATE + TRIGGER ----
+
+statement ok
+CREATE ROLE combo_pair_tt;
+
+
+statement ok
+GRANT TRUNCATE, TRIGGER ON combo_iceberg TO combo_pair_tt;
+
+
+query
+SELECT has_table_privilege('combo_pair_tt','combo_iceberg','SELECT')     AS sel,
+       has_table_privilege('combo_pair_tt','combo_iceberg','INSERT')     AS ins,
+       has_table_privilege('combo_pair_tt','combo_iceberg','UPDATE')     AS upd,
+       has_table_privilege('combo_pair_tt','combo_iceberg','DELETE')     AS del,
+       has_table_privilege('combo_pair_tt','combo_iceberg','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_pair_tt','combo_iceberg','REFERENCES') AS refs,
+       has_table_privilege('combo_pair_tt','combo_iceberg','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	f	f	f	t	f	t
+
+
+# ---- pair: DELETE + REFERENCES (cross-category, non-adjacent bits) ----
+
+statement ok
+CREATE ROLE combo_pair_dr;
+
+
+statement ok
+GRANT DELETE, REFERENCES ON combo_iceberg TO combo_pair_dr;
+
+
+query
+SELECT has_table_privilege('combo_pair_dr','combo_iceberg','SELECT')     AS sel,
+       has_table_privilege('combo_pair_dr','combo_iceberg','INSERT')     AS ins,
+       has_table_privilege('combo_pair_dr','combo_iceberg','UPDATE')     AS upd,
+       has_table_privilege('combo_pair_dr','combo_iceberg','DELETE')     AS del,
+       has_table_privilege('combo_pair_dr','combo_iceberg','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_pair_dr','combo_iceberg','REFERENCES') AS refs,
+       has_table_privilege('combo_pair_dr','combo_iceberg','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	f	f	t	f	t	f
+
+
+# ============================================================================
+# Grant-order independence: granting B,A yields the same bitset as A,B.
+# combo_pair_order receives TRIGGER first, then SELECT -- the same two bits
+# as combo_pair_st minus TRUNCATE; here we confirm reversed list order is moot.
+# ============================================================================
+
+statement ok
+CREATE ROLE combo_pair_order;
+
+
+statement ok
+GRANT TRIGGER, SELECT ON combo_iceberg TO combo_pair_order;
+
+
+query
+SELECT has_table_privilege('combo_pair_order','combo_iceberg','SELECT')     AS sel,
+       has_table_privilege('combo_pair_order','combo_iceberg','INSERT')     AS ins,
+       has_table_privilege('combo_pair_order','combo_iceberg','TRIGGER')    AS trig,
+       has_table_privilege('combo_pair_order','combo_iceberg','TRUNCATE')   AS trunc;
+----
+sel	ins	trig	trunc
+t	f	t	f
+
+
+# ============================================================================
+# Two separate single-priv grants are equivalent to one combined-list grant.
+# combo_pair_split gets UPDATE then REFERENCES via two statements.
+# ============================================================================
+
+statement ok
+CREATE ROLE combo_pair_split;
+
+
+statement ok
+GRANT UPDATE ON combo_iceberg TO combo_pair_split;
+
+
+statement ok
+GRANT REFERENCES ON combo_iceberg TO combo_pair_split;
+
+
+query
+SELECT has_table_privilege('combo_pair_split','combo_iceberg','SELECT')     AS sel,
+       has_table_privilege('combo_pair_split','combo_iceberg','INSERT')     AS ins,
+       has_table_privilege('combo_pair_split','combo_iceberg','UPDATE')     AS upd,
+       has_table_privilege('combo_pair_split','combo_iceberg','DELETE')     AS del,
+       has_table_privilege('combo_pair_split','combo_iceberg','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_pair_split','combo_iceberg','REFERENCES') AS refs,
+       has_table_privilege('combo_pair_split','combo_iceberg','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	f	t	f	f	t	f
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE combo_iceberg;
+
+
+statement ok
+DROP ROLE combo_pair_si;
+
+
+statement ok
+DROP ROLE combo_pair_su;
+
+
+statement ok
+DROP ROLE combo_pair_sd;
+
+
+statement ok
+DROP ROLE combo_pair_iu;
+
+
+statement ok
+DROP ROLE combo_pair_id;
+
+
+statement ok
+DROP ROLE combo_pair_ud;
+
+
+statement ok
+DROP ROLE combo_pair_st;
+
+
+statement ok
+DROP ROLE combo_pair_rf;
+
+
+statement ok
+DROP ROLE combo_pair_tt;
+
+
+statement ok
+DROP ROLE combo_pair_dr;
+
+
+statement ok
+DROP ROLE combo_pair_order;
+
+
+statement ok
+DROP ROLE combo_pair_split;

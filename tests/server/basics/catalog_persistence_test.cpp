@@ -46,6 +46,7 @@
 #include "catalog/persistence/database.h"
 #include "catalog/persistence/index.h"
 #include "catalog/persistence/inverted_index.h"
+#include "catalog/persistence/role.h"
 #include "catalog/persistence/schema.h"
 #include "catalog/persistence/scorer_options.h"
 #include "catalog/persistence/secondary_index.h"
@@ -130,25 +131,43 @@ TEST(CatalogPersistence, secondary_index) {
 }
 
 TEST(CatalogPersistence, table) {
-  CheckFixture("table.bin", TableData{
-                              .name = "t",
-                              .columns = {Column{ObjectId{}, ObjectId{1}, "a",
-                                                 duckdb::LogicalType::INTEGER},
-                                          Column{ObjectId{}, ObjectId{2}, "b",
-                                                 duckdb::LogicalType::VARCHAR}},
-                              .pk_columns = {ObjectId{1}},
-                              .check_constraints = {},
-                              .generated_pk_seq_id = ObjectId{9},
-                            });
+  // Column "a" carries a per-column ACL (pg_attribute.attacl), so the golden
+  // bytes exercise column-level GRANT persistence; column "b" stays default.
+  Column col_a{ObjectId{}, ObjectId{1}, "a", duckdb::LogicalType::INTEGER};
+  col_a.SetPermissions(Permissions{ObjectId{},
+                                   {AclItem{.grantee = ObjectId{7},
+                                            .grantor = ObjectId{42},
+                                            .privs = AclMode::Select}}});
+  CheckFixture(
+    "table.bin",
+    TableData{
+      .name = "t",
+      .columns = {std::move(col_a), Column{ObjectId{}, ObjectId{2}, "b",
+                                           duckdb::LogicalType::VARCHAR}},
+      .pk_columns = {ObjectId{1}},
+      .check_constraints = {},
+      .generated_pk_seq_id = ObjectId{9},
+      // RBAC: a non-default owner + an acl item, so the golden bytes
+      // actually exercise creator-owns persistence (not just defaults).
+      .perm = Permissions{ObjectId{42},
+                          {AclItem{.grantee = ObjectId{7},
+                                   .grantor = ObjectId{42},
+                                   .privs = AclMode::Select}}},
+    });
 }
 
 TEST(CatalogPersistence, tokenizer) {
-  CheckFixture("tokenizer.bin", TokenizerData{
-                                  .name = "tok",
-                                  .config = {},
-                                  .features = search::Features{},
-                                  .norm_row_group_size = 7,
-                                });
+  CheckFixture("tokenizer.bin",
+               TokenizerData{
+                 .name = "tok",
+                 .config = {},
+                 .features = search::Features{},
+                 .norm_row_group_size = 7,
+                 .perm = Permissions{ObjectId{42},
+                                     {AclItem{.grantee = ObjectId{7},
+                                              .grantor = ObjectId{42},
+                                              .privs = AclMode::Usage}}},
+               });
 }
 
 // Every TokenizerConfig variant arm must serialize and re-serialize stably,
@@ -213,25 +232,78 @@ TEST(CatalogPersistence, inverted_index) {
 }
 
 TEST(CatalogPersistence, database_options) {
-  CheckFixture("database_options.bin", DatabaseOptions{.name = "db"});
+  CheckFixture("database_options.bin",
+               DatabaseOptions{
+                 .name = "db",
+                 .perm = Permissions{ObjectId{42},
+                                     {AclItem{.grantee = ObjectId{7},
+                                              .grantor = ObjectId{42},
+                                              .privs = AclMode::Connect}}},
+               });
 }
 
 TEST(CatalogPersistence, schema_options) {
   CheckFixture("schema_options.bin",
-               SchemaOptions{.id = ObjectId{4}, .name = "public"});
+               SchemaOptions{
+                 .name = "public",
+                 .perm = Permissions{ObjectId{42},
+                                     {AclItem{.grantee = ObjectId{7},
+                                              .grantor = ObjectId{42},
+                                              .privs = AclMode::Usage}}},
+               });
 }
 
 TEST(CatalogPersistence, sequence_options) {
-  CheckFixture("sequence_options.bin", SequenceOptions{
-                                         .name = "seq",
-                                         .start_value = 10,
-                                         .increment = 2,
-                                         .min_value = 1,
-                                         .max_value = 1000,
-                                         .cache = 5,
-                                         .owner_table_id = 3,
-                                         .cycle = true,
-                                       });
+  CheckFixture("sequence_options.bin",
+               SequenceOptions{
+                 .name = "seq",
+                 .start_value = 10,
+                 .increment = 2,
+                 .min_value = 1,
+                 .max_value = 1000,
+                 .cache = 5,
+                 .owner_table_id = 3,
+                 .cycle = true,
+                 .perm = Permissions{ObjectId{42},
+                                     {AclItem{.grantee = ObjectId{7},
+                                              .grantor = ObjectId{42},
+                                              .privs = AclMode::Usage}}},
+               });
+}
+
+TEST(CatalogPersistence, role_data) {
+  // Single-entry db_access: the map is unordered, so >1 entry would not
+  // serialize to stable bytes.
+  CheckFixture(
+    "role_data.bin",
+    RoleData{
+      .id = ObjectId{2},
+      .name = "alice",
+      .active = true,
+      // RBAC: attribute bitmask + a membership edge with non-default per-edge
+      // options, so the golden bytes exercise MembershipData round-trip.
+      .options = 0b0110,  // Login | Inherit
+      .member_of = {MembershipData{.role = ObjectId{5},
+                                   .admin_option = true,
+                                   .inherit_option = false,
+                                   .set_option = true}},
+      // RBAC attrs surfaced via pg_authid / pg_roles, plus per-role GUC config
+      // and ALTER DEFAULT PRIVILEGES targets.
+      .conn_limit = 5,
+      .valid_until = "2030-01-01 00:00:00+00",
+      .config = {"search_path=clickclack"},
+      .default_acls = {DefaultAclData{
+        .schema = ObjectId{7},
+        .objtype = 'r',
+        .acl = {AclItem{.grantee = ObjectId{5},
+                        .grantor = ObjectId{2},
+                        .privs = AclMode::Select}}}},
+      // rolpassword: a stored SCRAM verifier, so the golden bytes exercise the
+      // password round-trip.
+      .password_verifier = "SCRAM-SHA-256$4096:c2FsdHNhbHQ=$"
+                           "c3RvcmVka2V5c3RvcmVka2V5c3RvcmVka2V5c3Q=:"
+                           "c2VydmVya2V5c2VydmVya2V5c2VydmVya2V5c2U=",
+    });
 }
 
 TEST(CatalogPersistence, inverted_index_options) {

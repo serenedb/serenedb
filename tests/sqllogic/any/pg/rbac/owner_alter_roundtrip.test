@@ -1,0 +1,70 @@
+# ALTER OWNER TO is a faithful round-trip and CURRENT_USER resolves to the
+# session role. Superuser-driven, byte-identical on PG and serenedb.
+
+statement ok
+DROP TABLE IF EXISTS oar_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS oar_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS oar_iceberg;
+
+
+statement ok
+CREATE ROLE oar_mop;
+
+
+statement ok
+CREATE ROLE oar_iceberg;
+
+
+statement ok
+CREATE TABLE oar_clickclack (id int);
+
+
+# Hand it around the houses, then back.
+statement ok
+ALTER TABLE oar_clickclack OWNER TO oar_mop;
+
+
+statement ok
+ALTER TABLE oar_clickclack OWNER TO oar_iceberg;
+
+
+statement ok
+ALTER TABLE oar_clickclack OWNER TO CURRENT_USER;
+
+
+# CURRENT_USER is the superuser running this, so ownership returns to postgres.
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='oar_clickclack';
+----
+owner
+postgres
+
+
+# Re-granting to the same owner is a no-op (still owned by postgres).
+statement ok
+ALTER TABLE oar_clickclack OWNER TO postgres;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='oar_clickclack';
+----
+owner
+postgres
+
+
+statement ok
+DROP TABLE oar_clickclack;
+
+
+statement ok
+DROP ROLE oar_mop;
+
+
+statement ok
+DROP ROLE oar_iceberg;

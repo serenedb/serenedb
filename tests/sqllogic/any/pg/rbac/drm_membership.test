@@ -1,0 +1,271 @@
+# DROP ROLE and role-membership edges (GRANT roleA TO roleB), validated against
+# PostgreSQL. Unlike privilege/ownership dependencies, a plain role membership is
+# NOT a drop-blocking dependency in PG: DROP ROLE silently auto-drops every
+# membership edge that touches the role, in BOTH directions --
+#   * the dropped role as the MEMBER  (GRANT group TO dropped)
+#   * the dropped role as the GROUP   (GRANT dropped TO member)
+# and at any position in a membership chain. The neighbouring roles survive; only
+# the pg_auth_members rows that reference the dropped role disappear. So these
+# DROP ROLE statements SUCCEED.
+#
+# (PG does refuse DROP ROLE when the role is the GRANTOR of a membership still
+# held by a live role -- DETAIL "privileges for membership of role X in role Y".
+# Reproducing that requires CREATE ROLE ... WITH ADMIN <role> and
+# REVOKE ... GRANTED BY, neither of which serenedb parses (syntax error), and
+# SET ROLE is not enforced, so a non-bootstrap grantor cannot be established.
+# That edge is therefore out of scope here -- see the report.)
+#
+# The one membership operation PG (and serenedb) reject is creating a cycle:
+# GRANT a TO b then GRANT b TO a -> ERROR 0LP01.
+#
+# Fixture prefix: drmm_ (drm_membership).
+
+
+statement ok
+DROP ROLE IF EXISTS drmm_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS drmm_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS drmm_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS drmm_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS drmm_babsky;
+
+
+statement ok
+CREATE ROLE drmm_vedernikoff;
+
+
+statement ok
+CREATE ROLE drmm_clickclack;
+
+
+statement ok
+CREATE ROLE drmm_mop;
+
+
+statement ok
+CREATE ROLE drmm_iceberg;
+
+
+statement ok
+CREATE ROLE drmm_babsky;
+
+
+# ===========================================================================
+# 1 -- dropped role is the MEMBER.  vedernikoff is a member of clickclack;
+# dropping vedernikoff just removes the edge -> succeeds, clickclack survives.
+# ===========================================================================
+
+statement ok
+GRANT drmm_clickclack TO drmm_vedernikoff;
+
+
+statement ok
+DROP ROLE drmm_vedernikoff;
+
+
+statement ok
+CREATE ROLE drmm_vedernikoff;
+
+
+# ===========================================================================
+# 2 -- dropped role is the GROUP.  vedernikoff is a member of clickclack;
+# dropping clickclack (the group) auto-drops the edge -> succeeds, the member
+# vedernikoff survives.
+# ===========================================================================
+
+statement ok
+GRANT drmm_clickclack TO drmm_vedernikoff;
+
+
+statement ok
+DROP ROLE drmm_clickclack;
+
+
+statement ok
+CREATE ROLE drmm_clickclack;
+
+
+# ===========================================================================
+# 3 -- REVOKE the membership first, then drop.  No edge remains either way, so
+# the drop is trivially allowed (sanity check that REVOKE clears the edge).
+# ===========================================================================
+
+statement ok
+GRANT drmm_clickclack TO drmm_vedernikoff;
+
+
+statement ok
+REVOKE drmm_clickclack FROM drmm_vedernikoff;
+
+
+statement ok
+DROP ROLE drmm_vedernikoff;
+
+
+statement ok
+CREATE ROLE drmm_vedernikoff;
+
+
+# ===========================================================================
+# 4 -- WITH ADMIN OPTION does not change the picture: the edge still auto-drops
+# when the member role is dropped.
+# ===========================================================================
+
+statement ok
+GRANT drmm_clickclack TO drmm_vedernikoff WITH ADMIN OPTION;
+
+
+statement ok
+DROP ROLE drmm_vedernikoff;
+
+
+statement ok
+CREATE ROLE drmm_vedernikoff;
+
+
+# ===========================================================================
+# 5 -- membership CHAIN, drop the MIDDLE role.
+#   vedernikoff  -member of->  clickclack  -member of->  mop
+# Dropping clickclack removes both edges it participates in; the endpoints
+# vedernikoff and mop both survive (PG does NOT splice the chain).
+# ===========================================================================
+
+statement ok
+GRANT drmm_clickclack TO drmm_vedernikoff;
+
+
+statement ok
+GRANT drmm_mop TO drmm_clickclack;
+
+
+statement ok
+DROP ROLE drmm_clickclack;
+
+
+query
+SELECT string_agg(rolname, ',' ORDER BY rolname) AS survivors
+FROM pg_roles WHERE rolname IN ('drmm_vedernikoff', 'drmm_mop');
+----
+survivors
+drmm_mop,drmm_vedernikoff
+
+
+statement ok
+CREATE ROLE drmm_clickclack;
+
+
+# ===========================================================================
+# 6 -- a membership CYCLE is rejected (PG 0LP01).  vedernikoff is already a
+# member of clickclack; granting clickclack membership in vedernikoff would
+# close the loop.  Note the message names the existing edge, not the new one.
+# ===========================================================================
+
+statement ok
+GRANT drmm_clickclack TO drmm_vedernikoff;
+
+
+statement error
+GRANT drmm_vedernikoff TO drmm_clickclack;
+----
+db error: ERROR: role "drmm_vedernikoff" is a member of role "drmm_clickclack"
+
+
+statement ok
+REVOKE drmm_clickclack FROM drmm_vedernikoff;
+
+
+# ===========================================================================
+# 7 -- dropped role is a GROUP with MANY members.  mop, iceberg, babsky are all
+# members of vedernikoff; dropping vedernikoff auto-drops all three edges and
+# every member survives.
+# ===========================================================================
+
+statement ok
+GRANT drmm_vedernikoff TO drmm_mop;
+
+
+statement ok
+GRANT drmm_vedernikoff TO drmm_iceberg;
+
+
+statement ok
+GRANT drmm_vedernikoff TO drmm_babsky;
+
+
+statement ok
+DROP ROLE drmm_vedernikoff;
+
+
+query
+SELECT string_agg(rolname, ',' ORDER BY rolname) AS survivors
+FROM pg_roles WHERE rolname IN ('drmm_mop', 'drmm_iceberg', 'drmm_babsky');
+----
+survivors
+drmm_babsky,drmm_iceberg,drmm_mop
+
+
+statement ok
+CREATE ROLE drmm_vedernikoff;
+
+
+# ===========================================================================
+# 8 -- dropped role is SIMULTANEOUSLY a member and a group.
+#   clickclack  -member of->  vedernikoff           (clickclack is a member)
+#   mop         -member of->  clickclack            (clickclack is a group)
+# Dropping clickclack auto-drops both edges; the role above (vedernikoff) and
+# the role below (mop) both survive.
+# ===========================================================================
+
+statement ok
+GRANT drmm_vedernikoff TO drmm_clickclack;
+
+
+statement ok
+GRANT drmm_clickclack TO drmm_mop;
+
+
+statement ok
+DROP ROLE drmm_clickclack;
+
+
+query
+SELECT string_agg(rolname, ',' ORDER BY rolname) AS survivors
+FROM pg_roles WHERE rolname IN ('drmm_vedernikoff', 'drmm_mop');
+----
+survivors
+drmm_mop,drmm_vedernikoff
+
+
+# ===========================================================================
+# Cleanup -- remove every fixture so the file leaves no residue.
+# ===========================================================================
+
+statement ok
+DROP ROLE IF EXISTS drmm_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS drmm_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS drmm_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS drmm_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS drmm_babsky;

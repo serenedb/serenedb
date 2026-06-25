@@ -32,6 +32,8 @@
 #include "basics/debugging.h"
 #include "catalog/catalog.h"
 #include "catalog/store/store.h"
+#include "connector/duckdb_client_state.h"
+#include "pg/connection_context.h"
 
 namespace sdb::connector {
 namespace {
@@ -77,7 +79,8 @@ struct CTASGlobalSinkState final : public duckdb::GlobalSinkState {
     if (table_created && !finalized) {
       try {
         std::ignore = catalog::GetCatalog().DropTable(
-          database_name, schema_name, table_name, true);
+          catalog::NoAccessCheck(), database_name, schema_name, table_name,
+          true);
       } catch (...) {
       }
     }
@@ -138,9 +141,12 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   // contract as a fresh CTAS. Done at execution (once), not plan time.
   if (_on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT) {
     auto snapshot = catalog_impl.GetCatalogSnapshot();
-    if (snapshot->GetTable(_database_id, _schema_name, _options.name)) {
-      auto drop_result = catalog_impl.DropTable(
-        _database_name, _schema_name, _options.name, /*cascade=*/true);
+    if (snapshot->GetTable(catalog::NoAccessCheck(), _database_id, _schema_name,
+                           _options.name)) {
+      auto drop_result =
+        catalog_impl.DropTable(catalog::RequireOwnership(context),
+                               _database_name, _schema_name, _options.name,
+                               /*cascade=*/true);
       if (!drop_result.ok()) {
         SDB_THROW(std::move(drop_result));
       }
@@ -149,8 +155,14 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   // A valid table id puts CreateTable in CTAS mode: tombstoned, no store table.
   catalog::CreateTableOperationOptions op_options;
   op_options.table_id = _table_id;
+  // Attribute ownership to the creating role (RBAC). Planning is side-effect
+  // free and may run more than once, so owner is stamped here at execution,
+  // where the session role is available, rather than in PlanCreateTableAs.
+  catalog::CreateTableOptions options = _options;
+  options.owner = GetSereneDBContext(context).GetRoleId();
   auto create_result =
-    catalog_impl.CreateTable(_database_id, _schema_name, _options, op_options);
+    catalog_impl.CreateTable(catalog::RequireOwnership(context), _database_id,
+                             _schema_name, std::move(options), op_options);
   if (!create_result.ok()) {
     SDB_THROW(std::move(create_result));
   }

@@ -345,10 +345,27 @@ bool PgWireSession<Kind>::SetupConnection() {
   }
   const auto database_id = database->GetId();
 
+  const std::string_view user = UserName();
+  auto role = snapshot->GetRole(user);
+  if (!role) {
+    WriteFatalResponse(
+      this->_send,
+      SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
+                     ERR_MSG("role \"", user, "\" does not exist")));
+    return false;
+  }
+  if (!role->CanLogin()) {
+    WriteFatalResponse(
+      this->_send,
+      SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
+                     ERR_MSG("role \"", user, "\" is not permitted to log in")));
+    return false;
+  }
+
   _conn = DuckDBEngine::Instance().CreateConnection();
   _txn_state.emplace(_conn->context->transaction);
   _connection_ctx = std::make_shared<ConnectionContext>(
-    *_conn->context, UserName(), DatabaseName(), database_id,
+    *_conn->context, user, role->GetId(), DatabaseName(), database_id,
     std::move(database), &this->_send, nullptr,
     static_cast<int32_t>(_cancel_key >> 32), _cancel);
   _client_state =
@@ -368,7 +385,8 @@ bool PgWireSession<Kind>::SetupConnection() {
 
   _connection_ctx->SetSetting("session_authorization", std::string{UserName()},
                               false);
-  _connection_ctx->SetSetting("is_superuser", "on", false);
+  _connection_ctx->SetSetting("is_superuser",
+                              role->IsSuperuser() ? "on" : "off", false);
 
   for (const auto& [name, value] : _params) {
     // user/database are consumed by the connection identity; replication and
@@ -1274,13 +1292,15 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
     const auto db_id = _connection_ctx->GetDatabaseId();
     std::shared_ptr<catalog::Table> table;
     if (!copy_info.schema.empty()) {
-      table = snapshot->GetTable(db_id, copy_info.schema, copy_info.table);
+      table = snapshot->GetTable(catalog::NoAccessCheck(), db_id,
+                                 copy_info.schema, copy_info.table);
     } else {
       // Unqualified target: resolve across the search path by presence (the
       // schema that CONTAINS the table, as the binder does) -- the current
       // schema alone would miss a table in a later search-path schema.
       for (const auto& schema : _connection_ctx->GetSearchPath()) {
-        table = snapshot->GetTable(db_id, schema, copy_info.table);
+        table = snapshot->GetTable(catalog::NoAccessCheck(), db_id, schema,
+                                   copy_info.table);
         if (table) {
           break;
         }

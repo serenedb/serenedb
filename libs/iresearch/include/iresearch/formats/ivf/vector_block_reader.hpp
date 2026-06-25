@@ -20,28 +20,24 @@
 
 #pragma once
 
-#include "iresearch/formats/seek_cookie.hpp"
+#include <cstdint>
+#include <span>
+
 #include "iresearch/index/column_info.hpp"
-#include "iresearch/search/cost.hpp"
+#include "iresearch/types.hpp"
 
 namespace irs {
 
-struct TermReader;
-class ColumnReader;
+class VectorBlockReader {
+ public:
+  virtual ~VectorBlockReader() = default;
 
-struct VectorState {
-  explicit VectorState(IResourceManager& memory) noexcept
-    : cookies{{memory}}, pay_starts{{memory}}, cluster_counts{{memory}} {}
+  virtual void SetQuery(std::span<const float> query, VectorMetric metric) = 0;
 
-  const TermReader* reader = nullptr;
-  const ColumnReader* vector_column = nullptr;
-  ManagedVector<SeekCookie::ptr> cookies;
-  CostAttr::Type estimation = 0;
+  virtual void StartCluster(uint64_t pay_start, size_t num_docs) = 0;
 
-  VectorQuantization quant = VectorQuantization::None;
-  uint32_t d = 0;
-  ManagedVector<uint64_t> pay_starts;
-  ManagedVector<uint32_t> cluster_counts;
+  virtual void ComputeBlock(const doc_id_t* docs, uint32_t base_ordinal,
+                            size_t count, score_t boost, score_t* out) = 0;
 };
 
 }  // namespace irs

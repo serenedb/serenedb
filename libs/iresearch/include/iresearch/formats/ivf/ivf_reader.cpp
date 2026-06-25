@@ -22,6 +22,9 @@
 
 #include <cmath>
 #include <cstring>
+#include <memory>
+#include <span>
+#include <vector>
 
 #include "basics/assert.h"
 #include "basics/exceptions.h"
@@ -32,16 +35,44 @@
 namespace irs {
 namespace {
 
-float Dot(const byte_type* l, const byte_type* r, uint16_t d) {
-  return vector::DotProductImpl<float, float>::Compute(l, r, d);
-}
-
 float CosineSimilarity(const byte_type* l, const byte_type* r, uint16_t d) {
   const auto [ll, lr, rr] =
     vector::CosineDistanceImpl<float, float, float>::Compute(l, r, d);
   const float denom = std::sqrt(ll) * std::sqrt(rr);
   return denom == 0.f ? 0.f : lr / denom;
 }
+
+class RawVectorReader final : public VectorBlockReader {
+ public:
+  RawVectorReader(const ColumnReader& vector_column,
+                  const ColReader& col_reader, uint32_t d)
+    : _read_ctx{col_reader}, _vreader{vector_column, _read_ctx}, _d{d} {}
+
+  void SetQuery(std::span<const float> query, VectorMetric metric) final {
+    _query.assign(query.begin(), query.end());
+    _dist = ResolveVectorDistance(metric);
+  }
+
+  void StartCluster(uint64_t, size_t) final {}
+
+  void ComputeBlock(const doc_id_t* docs, uint32_t, size_t count, score_t boost,
+                    score_t* out) final {
+    SDB_ASSERT(_dist);
+    const auto* q = reinterpret_cast<const byte_type*>(_query.data());
+    const auto d = static_cast<uint16_t>(_d);
+    for (size_t i = 0; i < count; ++i) {
+      const float* v = _vreader.ReadDoc(docs[i]);
+      out[i] = _dist(q, reinterpret_cast<const byte_type*>(v), d) * boost;
+    }
+  }
+
+ private:
+  ReadContext _read_ctx;
+  IvfVectorReader _vreader;
+  VectorDistanceFn _dist = nullptr;
+  std::vector<float> _query;
+  uint32_t _d;
+};
 
 }  // namespace
 
@@ -52,7 +83,7 @@ VectorDistanceFn ResolveVectorDistance(VectorMetric metric) {
     case VectorMetric::L1:
       return &vector::L1Space<float, float, float>::Dist;
     case VectorMetric::InnerProduct:
-      return &Dot;
+      return &vector::DotProductImpl<float, float>::Compute;
     case VectorMetric::Cosine:
       return &CosineSimilarity;
   }
@@ -86,6 +117,11 @@ const float* IvfVectorReader::ReadDoc(doc_id_t doc) {
   const float* p = duckdb::FlatVector::GetData<float>(_buf);
   std::memcpy(_scratch.data(), p, static_cast<size_t>(_d) * sizeof(float));
   return _scratch.data();
+}
+
+std::unique_ptr<VectorBlockReader> MakeRawVectorReader(
+  const ColumnReader& vector_column, const ColReader& col_reader, uint32_t d) {
+  return std::make_unique<RawVectorReader>(vector_column, col_reader, d);
 }
 
 }  // namespace irs

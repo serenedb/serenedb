@@ -163,7 +163,10 @@ struct SubReader : public IndexReader, public NormProvider {
   virtual const ColumnReader* Column(field_id /*field*/) const {
     return nullptr;
   }
-  virtual const FlatCentroids* Ivf(field_id /*field*/) const { return nullptr; }
+  virtual const TwoLayerCentroids* Ivf(field_id /*field*/) const {
+    return nullptr;
+  }
+  virtual IndexInput::ptr ReopenIvf() const { return nullptr; }
 };
 
 template<typename Visitor, typename FilterVisitor>

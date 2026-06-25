@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <limits>
 #include <vector>
 
@@ -54,12 +55,32 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
     return QueryBuilder::Empty();
   }
 
-  std::vector<uint32_t> probes;
-  ivf->Search(opts.query, opts.nprobe, probes);
-  if (probes.empty()) {
+  const uint32_t n1 = static_cast<uint32_t>(std::max<double>(
+    1.0, std::ceil(std::sqrt(static_cast<double>(opts.nprobe)))));
+  const uint32_t n2 = n1;
+
+  std::vector<uint32_t> l1_ids;
+  ivf->SearchL1(opts.query, n1, l1_ids);
+  if (l1_ids.empty()) {
     return QueryBuilder::Empty();
   }
-  std::sort(probes.begin(), probes.end());
+
+  auto idx_in = segment.ReopenIvf();
+  if (!idx_in) {
+    return QueryBuilder::Empty();
+  }
+
+  std::vector<uint32_t> fine_ids;
+  L2BodyView body;
+  for (const uint32_t l1 : l1_ids) {
+    ivf->ReadL2Body(*idx_in, l1, body);
+    ivf->SearchL2(opts.query, body, n2, fine_ids);
+  }
+  std::sort(fine_ids.begin(), fine_ids.end());
+  fine_ids.erase(std::unique(fine_ids.begin(), fine_ids.end()), fine_ids.end());
+  if (fine_ids.empty()) {
+    return QueryBuilder::Empty();
+  }
 
   auto terms = postings->iterator(SeekMode::NORMAL);
   if (!terms) {
@@ -83,7 +104,7 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
 
   std::array<byte_type, kCentroidTermWidth> term_buf{};
   CostAttr::Type estimation = 0;
-  for (const uint32_t c : probes) {
+  for (const uint32_t c : fine_ids) {
     EncodeCentroidTerm(c, term_buf.data());
     if (!terms->seek(bytes_view{term_buf.data(), term_buf.size()})) {
       continue;
@@ -95,6 +116,7 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
     if (quant != VectorQuantization::None) {
       state.pay_starts.push_back(
         static_cast<const TermMetaImpl*>(term_meta)->pay_start);
+      state.cluster_counts.push_back(term_meta->docs_count);
     }
     state.cookies.emplace_back(terms->cookie());
   }

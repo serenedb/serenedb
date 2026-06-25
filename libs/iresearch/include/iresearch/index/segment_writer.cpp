@@ -31,6 +31,7 @@
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
+#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/formats/ivf/ivf_writer.hpp"
@@ -163,14 +164,9 @@ void SegmentWriter::FlushFields(FlushState& state,
 
   std::unique_ptr<IvfWriter> ivf_writer;
   if (_col_writer) {
-    _col_writer->Commit(buffered_docs());
+    _col_writer->Commit(buffered_docs(), &idx);
     ivf_writer = _col_writer->TakeIvf();
     _col_writer.reset();
-    if (ivf_writer) {
-      for (auto& c : ivf_writer->TakeBuiltCentroids()) {
-        idx.AddCentroids(c.centroids_id, std::move(c.index));
-      }
-    }
   }
 
   if (state.doc_count != 0) {
@@ -180,8 +176,10 @@ void SegmentWriter::FlushFields(FlushState& state,
   if (state.doc_count != 0) {
     _field_writer->SetIdxWriter(idx);
     std::span<const BasicTermReader* const> cluster_readers;
+    std::optional<ReadContext> ivf_ctx;
     if (ivf_writer) {
-      cluster_readers = ivf_writer->ClusterReaders();
+      ivf_ctx.emplace(*_col_reader);
+      cluster_readers = ivf_writer->ClusterReaders(*ivf_ctx);
     }
     FlushFields(state, cluster_readers);
   }

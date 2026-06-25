@@ -27,7 +27,7 @@
 #include <limits>
 #include <vector>
 
-#include "iresearch/index/iterators.hpp"
+#include "basics/assert.h"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
 
@@ -94,7 +94,7 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
   mutable std::vector<uint8_t> _code;
 };
 
-class ScalarQuantizerReader final : public QuantizerReader {
+class ScalarQuantizerReader final : public VectorBlockReader {
  public:
   ScalarQuantizerReader(std::unique_ptr<IndexInput> pay_in, uint32_t d)
     : _pay_in{std::move(pay_in)},
@@ -103,34 +103,38 @@ class ScalarQuantizerReader final : public QuantizerReader {
 
   void SetQuery(std::span<const float> query, VectorMetric metric) final {
     _query.assign(query.begin(), query.end());
+    SDB_ASSERT(metric == VectorMetric::L2Sqr ||
+               metric == VectorMetric::InnerProduct);
     _faiss_metric = metric == VectorMetric::L2Sqr
                       ? faiss::MetricType::METRIC_L2
                       : faiss::MetricType::METRIC_INNER_PRODUCT;
   }
 
-  void Search(uint64_t pay_start, std::span<const doc_id_t> docs, score_t boost,
-              ScoreCollector& collector) final {
-    const size_t n = docs.size();
-    if (n == 0) {
+  void StartCluster(uint64_t pay_start, size_t num_docs) final {
+    _n = num_docs;
+    if (_n == 0) {
       return;
     }
-    _codes.resize(n * _d);
+    _codes.resize(_n * _d);
     _stat.resize(2 * static_cast<size_t>(_d));
     _pay_in->ReadData(pay_start, _codes.data(), _codes.size());
     _pay_in->ReadData(pay_start + _codes.size(),
                       reinterpret_cast<byte_type*>(_stat.data()),
                       _stat.size() * sizeof(float));
     _sq.trained = _stat;
-    std::unique_ptr<faiss::ScalarQuantizer::SQDistanceComputer> dc{
-      _sq.get_distance_computer(_faiss_metric)};
-    dc->set_query(_query.data());
-    for (size_t i = 0; i < n; ++i) {
-      collector.Add(dc->query_to_code(_codes.data() + i * _d) * boost, docs[i]);
-    }
+    _dc.reset(_sq.get_distance_computer(_faiss_metric));
+    _dc->set_query(_query.data());
   }
 
-  VectorQuantization Kind() const noexcept final {
-    return VectorQuantization::SQ8;
+  void ComputeBlock(const doc_id_t* /*docs*/, uint32_t base_ordinal,
+                    size_t count, score_t boost, score_t* out) final {
+    SDB_ASSERT(_dc);
+    SDB_ASSERT(static_cast<size_t>(base_ordinal) + count <= _n);
+    for (size_t i = 0; i < count; ++i) {
+      out[i] = static_cast<score_t>(
+                 _dc->query_to_code(_codes.data() + (base_ordinal + i) * _d)) *
+               boost;
+    }
   }
 
  private:
@@ -139,8 +143,10 @@ class ScalarQuantizerReader final : public QuantizerReader {
   std::vector<float> _query;
   faiss::MetricType _faiss_metric = faiss::MetricType::METRIC_L2;
   faiss::ScalarQuantizer _sq;
+  std::unique_ptr<faiss::ScalarQuantizer::SQDistanceComputer> _dc;
   std::vector<uint8_t> _codes;
   std::vector<float> _stat;
+  size_t _n = 0;
 };
 
 }  // namespace
@@ -157,7 +163,7 @@ std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(VectorQuantization quant,
   return nullptr;
 }
 
-std::unique_ptr<QuantizerReader> MakeQuantizerReader(
+std::unique_ptr<VectorBlockReader> MakeQuantizerReader(
   VectorQuantization quant, std::unique_ptr<IndexInput> pay_in, uint32_t d) {
   switch (quant) {
     case VectorQuantization::None:

@@ -37,7 +37,8 @@
 namespace irs {
 
 class Directory;
-class FlatCentroids;
+class TwoLayerCentroids;
+struct IResourceManager;
 
 struct TermDictMeta {
   IndexFeatures features{IndexFeatures::None};
@@ -68,7 +69,7 @@ class IdxReader final {
   IdxReader& operator=(const IdxReader&) = delete;
 
   bool HasIvf(field_id id) const noexcept;
-  const FlatCentroids* Ivf(field_id id) const noexcept;
+  const TwoLayerCentroids* Ivf(field_id id) const noexcept;
 
   const TermDictMeta* TermDict(field_id id) const noexcept;
 

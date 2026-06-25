@@ -46,6 +46,7 @@ class ColumnWriter;
 class NormColumnWriter;
 class ReadContext;
 class IvfWriter;
+class IdxWriter;
 
 class ColWriter final {
  public:
@@ -74,7 +75,7 @@ class ColWriter final {
 
   std::unique_ptr<IvfWriter> TakeIvf() noexcept;
 
-  void Commit(uint64_t target_row);
+  void Commit(uint64_t target_row, IdxWriter* idx = nullptr);
   void Rollback() noexcept;
 
  private:

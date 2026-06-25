@@ -42,6 +42,7 @@
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/format_utils.hpp"
+#include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/formats/ivf/ivf_writer.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
@@ -254,7 +255,7 @@ NormColumnWriter& ColWriter::OpenNormColumn(field_id id,
   return back;
 }
 
-void ColWriter::Commit(uint64_t target_row) {
+void ColWriter::Commit(uint64_t target_row, IdxWriter* idx) {
   if (Empty() && !_impl->out) {
     return;
   }
@@ -289,7 +290,10 @@ void ColWriter::Commit(uint64_t target_row) {
       column_ids.push_back(e->id);
     }
     const size_t before = _impl->column_writers.size();
-    _impl->ivf->OnCommit(*this, column_ids);
+    SDB_ASSERT(idx,
+               "ColWriter::Commit requires an IdxWriter when an IVF "
+               "column is present");
+    _impl->ivf->OnCommit(*this, *idx, column_ids);
     for (size_t i = before; i < _impl->column_writers.size(); ++i) {
       _impl->column_writers[i]->Finalize();
     }

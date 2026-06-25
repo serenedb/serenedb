@@ -22,10 +22,9 @@
 
 #include <cstdint>
 #include <memory>
-#include <span>
 
+#include "iresearch/formats/ivf/vector_block_reader.hpp"
 #include "iresearch/index/column_info.hpp"
-#include "iresearch/types.hpp"
 
 namespace irs {
 
@@ -33,7 +32,6 @@ class ColumnReader;
 class ReadContext;
 class IndexOutput;
 class IndexInput;
-class ScoreCollector;
 
 class QuantizerWriter {
  public:
@@ -51,23 +49,11 @@ class QuantizerWriter {
   virtual uint32_t CodeSize() const noexcept = 0;
 };
 
-class QuantizerReader {
- public:
-  virtual ~QuantizerReader() = default;
-
-  virtual void SetQuery(std::span<const float> query, VectorMetric metric) = 0;
-
-  virtual void Search(uint64_t pay_start, std::span<const doc_id_t> docs,
-                      score_t boost, ScoreCollector& collector) = 0;
-
-  virtual VectorQuantization Kind() const noexcept = 0;
-};
-
 std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(VectorQuantization quant,
                                                      uint32_t d,
                                                      VectorMetric metric);
 
-std::unique_ptr<QuantizerReader> MakeQuantizerReader(
+std::unique_ptr<VectorBlockReader> MakeQuantizerReader(
   VectorQuantization quant, std::unique_ptr<IndexInput> pay_in, uint32_t d);
 
 }  // namespace irs

@@ -39,7 +39,6 @@ namespace irs {
 
 class Directory;
 class IndexOutput;
-class FlatCentroids;
 
 class IdxWriter final {
  public:
@@ -52,7 +51,7 @@ class IdxWriter final {
 
   IndexOutput& BlocksOut();
 
-  void AddCentroids(field_id id, FlatCentroids index);
+  void AddCentroidsEntry(field_id id, uint64_t offset, uint64_t byte_size);
 
   void AddTermDictEntry(field_id id, TermDictMeta meta);
 

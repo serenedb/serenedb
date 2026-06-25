@@ -20,12 +20,14 @@
 
 #include "iresearch/search/vector_similarity_query.hpp"
 
+#include <array>
 #include <cmath>
 #include <memory>
 #include <span>
 #include <vector>
 
 #include "basics/assert.h"
+#include "basics/containers/bitset.hpp"
 #include "basics/memory.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
@@ -184,21 +186,27 @@ class VectorSimilarityDocIterator : public DocIterator {
   score_t _cached_score = 0.f;
 };
 
-class QuantizedVectorDocIterator : public DocIterator {
+class VectorBlockScanDocIterator : public DocIterator {
  public:
-  QuantizedVectorDocIterator(const TermReader& reader,
+  static constexpr size_t kBlock = doc_limits::kBlockSize;  // 128
+
+  VectorBlockScanDocIterator(const TermReader& reader,
                              std::vector<PostingCookie>&& cookies,
                              std::vector<uint64_t>&& pay_starts,
-                             std::unique_ptr<QuantizerReader> qr, score_t boost,
+                             std::vector<uint32_t>&& cluster_counts,
+                             std::unique_ptr<VectorBlockReader> vr,
+                             bitset&& inner_bits, bool has_inner, score_t boost,
                              CostAttr::Type estimation)
     : _reader{reader},
       _cookies{std::move(cookies)},
       _pay_starts{std::move(pay_starts)},
-      _qr{std::move(qr)},
+      _cluster_counts{std::move(cluster_counts)},
+      _vr{std::move(vr)},
+      _inner_bits{std::move(inner_bits)},
+      _has_inner{has_inner},
       _boost{boost},
       _cost{estimation} {
-    SDB_ASSERT(_qr);
-    SDB_ASSERT(_cookies.size() == _pay_starts.size());
+    SDB_ASSERT(_vr);
   }
 
   doc_id_t advance() final {
@@ -236,12 +244,40 @@ class QuantizedVectorDocIterator : public DocIterator {
       if (!it) {
         continue;
       }
-      _docs.clear();
-      for (auto doc = it->advance(); !doc_limits::eof(doc);
-           doc = it->advance()) {
-        _docs.push_back(doc);
+      _vr->StartCluster(_pay_starts.empty() ? 0 : _pay_starts[c],
+                        _cluster_counts.empty() ? 0 : _cluster_counts[c]);
+      uint32_t base = 0;
+      for (;;) {
+        size_t got = 0;
+        for (; got < kBlock; ++got) {
+          const auto doc = it->advance();
+          if (doc_limits::eof(doc)) {
+            break;
+          }
+          _docs[got] = doc;
+        }
+        if (got == 0) {
+          break;
+        }
+        _vr->ComputeBlock(_docs.data(), base, got, _boost, _dist.data());
+        base += static_cast<uint32_t>(got);
+
+        if (!_has_inner) {
+          collector.AddDocs(_docs.data(), got, _dist.data());
+          continue;
+        }
+        size_t k = 0;
+        for (size_t i = 0; i < got; ++i) {
+          if (_inner_bits.test(_docs[i])) {
+            _keep_docs[k] = _docs[i];
+            _keep_dist[k] = _dist[i];
+            ++k;
+          }
+        }
+        if (k != 0) {
+          collector.AddDocs(_keep_docs.data(), k, _keep_dist.data());
+        }
       }
-      _qr->Search(_pay_starts[c], _docs, _boost, collector);
     }
   }
 
@@ -253,10 +289,16 @@ class QuantizedVectorDocIterator : public DocIterator {
   const TermReader& _reader;
   std::vector<PostingCookie> _cookies;
   std::vector<uint64_t> _pay_starts;
-  std::unique_ptr<QuantizerReader> _qr;
+  std::vector<uint32_t> _cluster_counts;
+  std::unique_ptr<VectorBlockReader> _vr;
+  bitset _inner_bits;
+  bool _has_inner;
   score_t _boost;
   CostAttr _cost;
-  std::vector<doc_id_t> _docs;
+  std::array<doc_id_t, kBlock> _docs;
+  std::array<score_t, kBlock> _dist;
+  std::array<doc_id_t, kBlock> _keep_docs;
+  std::array<score_t, kBlock> _keep_dist;
   DocIterator::ptr _cur;
   size_t _cluster = 0;
 };
@@ -283,18 +325,40 @@ DocIterator::ptr VectorSimilarityQuery::Execute(
     cookies.push_back({.cookie = cookie.get(), .field = _state.reader->meta()});
   }
 
-  if (_state.quant != VectorQuantization::None && !_inner) {
-    if (auto pay_in = _state.reader->ReopenPayload()) {
-      if (auto qr =
-            MakeQuantizerReader(_state.quant, std::move(pay_in), _state.d)) {
-        qr->SetQuery(std::span{_query}, _metric);
-        return memory::make_managed<QuantizedVectorDocIterator>(
-          *_state.reader, std::move(cookies),
-          std::vector<uint64_t>{_state.pay_starts.begin(),
-                                _state.pay_starts.end()},
-          std::move(qr), _boost, _state.estimation);
+  if (std::isinf(_radius)) {
+    std::unique_ptr<VectorBlockReader> vr;
+    if (_state.quant != VectorQuantization::None) {
+      if (auto pay_in = _state.reader->ReopenPayload()) {
+        vr = MakeQuantizerReader(_state.quant, std::move(pay_in), _state.d);
       }
     }
+    if (!vr) {
+      vr = MakeRawVectorReader(*_state.vector_column, *col_reader, _state.d);
+    }
+    vr->SetQuery(std::span{_query}, _metric);
+
+    bitset inner_bits;
+    bool has_inner = false;
+    if (_inner) {
+      auto inner_it = _inner->Execute(ctx, stats);
+      if (!inner_it) {
+        return DocIterator::empty();
+      }
+      inner_bits.reset(_segment.docs_count() + doc_limits::min());
+      for (auto d = inner_it->advance(); !doc_limits::eof(d);
+           d = inner_it->advance()) {
+        inner_bits.set(d);
+      }
+      has_inner = true;
+    }
+
+    return memory::make_managed<VectorBlockScanDocIterator>(
+      *_state.reader, std::move(cookies),
+      std::vector<uint64_t>{_state.pay_starts.begin(), _state.pay_starts.end()},
+      std::vector<uint32_t>{_state.cluster_counts.begin(),
+                            _state.cluster_counts.end()},
+      std::move(vr), std::move(inner_bits), has_inner, _boost,
+      _state.estimation);
   }
 
   auto approx = _state.reader->Iterator(IndexFeatures::None, cookies, ctx.wand,

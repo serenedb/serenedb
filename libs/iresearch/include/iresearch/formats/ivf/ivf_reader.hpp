@@ -22,15 +22,18 @@
 
 #include <cstdint>
 #include <duckdb/common/types/vector.hpp>
+#include <memory>
 #include <vector>
 
 #include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/ivf/vector_block_reader.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
 
 class ReadContext;
+class ColReader;
 
 inline constexpr size_t kCentroidTermWidth = 4;
 
@@ -62,5 +65,8 @@ class IvfVectorReader {
   duckdb::Vector _buf;
   std::vector<float> _scratch;
 };
+
+std::unique_ptr<VectorBlockReader> MakeRawVectorReader(
+  const ColumnReader& vector_column, const ColReader& col_reader, uint32_t d);
 
 }  // namespace irs

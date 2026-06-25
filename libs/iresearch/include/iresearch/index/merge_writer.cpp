@@ -27,6 +27,7 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/internal/resize_uninitialized.h>
 
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -39,6 +40,7 @@
 #include "iresearch/formats/column/merge.hpp"
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
+#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/index/burst_trie.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
@@ -775,23 +777,22 @@ bool MergeWriter::Flush(SegmentMeta& segment,
   MergedNormProvider norm_provider;
   IdxWriter idx{track_dir, segment.name, _db};
 
-  col_writer->Commit(segment.docs_count);
+  col_writer->Commit(segment.docs_count, &idx);
   auto ivf_writer = col_writer->TakeIvf();
+  if (segment.docs_count != 0) {
+    col_reader = std::make_unique<ColReader>(track_dir, segment.name, _db);
+    norm_provider.reader = col_reader.get();
+  }
   std::span<const BasicTermReader* const> cluster_readers;
-  if (ivf_writer) {
-    for (auto& c : ivf_writer->TakeBuiltCentroids()) {
-      idx.AddCentroids(c.centroids_id, std::move(c.index));
-    }
-    cluster_readers = ivf_writer->ClusterReaders();
+  std::optional<ReadContext> ivf_ctx;
+  if (ivf_writer && col_reader) {
+    ivf_ctx.emplace(*col_reader);
+    cluster_readers = ivf_writer->ClusterReaders(*ivf_ctx);
     // Extra cluster readers contribute their features (e.g. IndexFeatures::Pay
     // for quantized codes) so the ".pay" stream is opened during flush.
     for (const auto* reader : cluster_readers) {
       index_features |= reader->properties().index_features;
     }
-  }
-  if (segment.docs_count != 0) {
-    col_reader = std::make_unique<ColReader>(track_dir, segment.name, _db);
-    norm_provider.reader = col_reader.get();
   }
 
   if (!progress_callback()) {

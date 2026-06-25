@@ -43,9 +43,11 @@ const ColumnReader* SegmentReader::Column(field_id field) const {
   return _impl->Column(field);
 }
 
-const FlatCentroids* SegmentReader::Ivf(field_id field) const {
+const TwoLayerCentroids* SegmentReader::Ivf(field_id field) const {
   return _impl->Ivf(field);
 }
+
+IndexInput::ptr SegmentReader::ReopenIvf() const { return _impl->ReopenIvf(); }
 
 const ColReader* SegmentReader::GetColReader() const {
   return _impl ? _impl->GetColReader() : nullptr;

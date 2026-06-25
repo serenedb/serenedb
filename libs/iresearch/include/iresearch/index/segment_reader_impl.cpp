@@ -252,11 +252,18 @@ const ColumnReader* SegmentReaderImpl::Column(field_id field) const {
   return _data->col_reader->Column(field);
 }
 
-const FlatCentroids* SegmentReaderImpl::Ivf(field_id field) const {
+const TwoLayerCentroids* SegmentReaderImpl::Ivf(field_id field) const {
   if (!_data || !_data->idx_reader) {
     return nullptr;
   }
   return _data->idx_reader->Ivf(field);
+}
+
+IndexInput::ptr SegmentReaderImpl::ReopenIvf() const {
+  if (!_data || !_data->idx_reader) {
+    return nullptr;
+  }
+  return _data->idx_reader->ReopenIn();
 }
 
 DocIterator::ptr SegmentReaderImpl::docs_iterator() const {

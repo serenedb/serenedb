@@ -66,7 +66,7 @@ struct IdxReader::Impl {
   Encryption::Stream::ptr cipher;
   IndexInput::ptr in;
   uint64_t body_start{};
-  std::vector<std::pair<field_id, FlatCentroids>> ivf_entries;
+  std::vector<std::pair<field_id, TwoLayerCentroids>> ivf_entries;
   sdb::containers::FlatHashMap<field_id, size_t> ivf_by_id;
   std::vector<std::pair<field_id, TermDictMeta>> term_dicts;
   sdb::containers::FlatHashMap<field_id, size_t> term_dict_by_id;
@@ -145,6 +145,7 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
         _impl->term_dict_by_id.emplace(id, idx);
       });
     });
+  uint64_t terms_start = _impl->body_start;
   deserializer.ReadList(
     kFooterSlotIvf, "ivf",
     [&](duckdb::Deserializer::List& list, duckdb::idx_t /*i*/) {
@@ -155,7 +156,11 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
 
         auto body = _impl->in->Dup();
         body->Seek(offset);
-        auto entry = FlatCentroids::Deserialize(*body, byte_size);
+        auto entry = TwoLayerCentroids::Deserialize(*body, byte_size);
+
+        if (offset + byte_size > terms_start) {
+          terms_start = offset + byte_size;
+        }
 
         const size_t idx = _impl->ivf_entries.size();
         _impl->ivf_entries.emplace_back(id, std::move(entry));
@@ -163,6 +168,7 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
       });
     });
   deserializer.End();
+  _impl->body_start = terms_start;
 }
 
 IdxReader::~IdxReader() = default;
@@ -171,7 +177,7 @@ bool IdxReader::HasIvf(field_id id) const noexcept {
   return _impl->ivf_by_id.contains(id);
 }
 
-const FlatCentroids* IdxReader::Ivf(field_id id) const noexcept {
+const TwoLayerCentroids* IdxReader::Ivf(field_id id) const noexcept {
   auto it = _impl->ivf_by_id.find(id);
   return it == _impl->ivf_by_id.end() ? nullptr
                                       : &_impl->ivf_entries[it->second].second;

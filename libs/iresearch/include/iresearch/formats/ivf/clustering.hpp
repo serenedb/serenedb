@@ -20,28 +20,25 @@
 
 #pragma once
 
-#include "iresearch/formats/seek_cookie.hpp"
+#include <cstddef>
+#include <cstdint>
+#include <vector>
+
 #include "iresearch/index/column_info.hpp"
-#include "iresearch/search/cost.hpp"
 
 namespace irs {
 
-struct TermReader;
-class ColumnReader;
+void NormalizeRows(float* data, size_t n, uint32_t d);
 
-struct VectorState {
-  explicit VectorState(IResourceManager& memory) noexcept
-    : cookies{{memory}}, pay_starts{{memory}}, cluster_counts{{memory}} {}
+std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
+                                  size_t n, uint32_t k, uint32_t d,
+                                  uint32_t seed);
 
-  const TermReader* reader = nullptr;
-  const ColumnReader* vector_column = nullptr;
-  ManagedVector<SeekCookie::ptr> cookies;
-  CostAttr::Type estimation = 0;
+uint32_t NearestCentroid(VectorMetric metric, const float* v,
+                         const float* centroids, uint32_t k, uint32_t d);
 
-  VectorQuantization quant = VectorQuantization::None;
-  uint32_t d = 0;
-  ManagedVector<uint64_t> pay_starts;
-  ManagedVector<uint32_t> cluster_counts;
-};
+void AssignNearest(VectorMetric metric, const float* data, size_t n,
+                   const float* centroids, uint32_t k, uint32_t d,
+                   std::vector<uint32_t>& out);
 
 }  // namespace irs

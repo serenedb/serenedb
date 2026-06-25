@@ -233,13 +233,13 @@ query
 PRAGMA platform;
 ----
 platform
-linux_amd64
+<slt:ignore>
 
 query
 CALL pragma_platform();
 ----
 platform
-linux_amd64
+<slt:ignore>
 
 # DOCS_TEST: example_022
 

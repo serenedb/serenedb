@@ -27,10 +27,11 @@
 #include <algorithm>
 #include <array>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
-#include "basics/containers/trivial_map.h"
+#include "basics/containers/flat_hash_map.h"
 #include "basics/system-compiler.h"
 
 namespace sdb::auth {
@@ -40,10 +41,16 @@ using catalog::AclItem;
 using catalog::AclMode;
 using catalog::ObjectType;
 
-// In canonical PG print order.
-constexpr containers::TrivialBiMap kPrivNames{[](auto selector) {
-  return selector()
-    .Case("select", AclMode::Select)
+// Lowercase keyword -> AclMode; callers lowercase the input before lookup.
+const containers::FlatHashMap<std::string_view, AclMode> kPrivNames = [] {
+  struct Builder {
+    absl::flat_hash_map<std::string_view, AclMode> map;
+    Builder& Case(std::string_view name, AclMode mode) {
+      map.emplace(name, mode);
+      return *this;
+    }
+  } builder;
+  builder.Case("select", AclMode::Select)
     .Case("insert", AclMode::Insert)
     .Case("update", AclMode::Update)
     .Case("delete", AclMode::Delete)
@@ -57,7 +64,9 @@ constexpr containers::TrivialBiMap kPrivNames{[](auto selector) {
     .Case("temporary", AclMode::CreateTemp)
     .Case("temp", AclMode::CreateTemp)
     .Case("connect", AclMode::Connect);
-}};
+  return containers::FlatHashMap<std::string_view, AclMode>{
+    std::move(builder.map)};
+}();
 
 AclMode ClassPrivs(ObjectType type) noexcept {
   switch (type) {
@@ -340,11 +349,13 @@ std::optional<AclMode> TryParseAclKeyword(std::string_view keyword,
   if (absl::EqualsIgnoreCase(keyword, "ALL")) {
     return allowed;
   }
-  const auto mode = kPrivNames.TryFindICaseByFirst(keyword);
-  if (!mode || (allowed & *mode) != *mode) {
+  std::string lowered{keyword};
+  absl::AsciiStrToLower(&lowered);
+  const auto it = kPrivNames.find(lowered);
+  if (it == kPrivNames.end() || (allowed & it->second) != it->second) {
     return std::nullopt;
   }
-  return *mode;
+  return it->second;
 }
 
 namespace {

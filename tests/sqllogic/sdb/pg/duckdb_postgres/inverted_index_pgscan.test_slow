@@ -4,16 +4,16 @@ hash-threshold 100
 
 # Inverted index built directly on a VIEW over an ATTACH'd postgres table.
 #
-# Partial support today:
+# The postgres table is a recognised fast-path source: serenedb reads its PK
+# from pg_constraint metadata (surfaced as a standard PRIMARY KEY constraint on
+# the attached table entry) and keys the index on it (PkSpec::ExternalDBKey).
 #   - CREATE INDEX succeeds (iresearch ingests rows at create time).
-#   - count(*) and BM25 score queries work (served from iresearch alone).
-#   - Selecting real source columns fails with the documented
-#     "not yet supported" error -- postgres_scan isn't in the fast-path
-#     registry yet (see server/connector/view_fast_path.cpp, the
-#     `// TODO: read_avro, postgres_scan / postgres_query` comment).
-#
-# When postgres_scan joins the fast-path registry, flip the `statement error`
-# block to `query` with the expected rows.
+#   - count(*) / BM25 are served from iresearch alone.
+#   - INCLUDE'd columns come from the iresearch columnstore.
+#   - Real (non-INCLUDE'd) source columns are MATERIALISED by re-fetching the
+#     matched rows from postgres via `WHERE pk IN (...)` through the connector.
+# No WITH (pk = ...) anywhere -- the key comes purely from metadata. v1 supports
+# a single BIGINT primary key.
 
 
 statement ok
@@ -26,7 +26,7 @@ CREATE SCHEMA pg_${__DATABASE__}.${__DATABASE__}_docs;
 
 statement ok
 CREATE TABLE pg_${__DATABASE__}.${__DATABASE__}_docs.articles (
-  id    INTEGER PRIMARY KEY,
+  id    BIGINT PRIMARY KEY,
   body  TEXT,
   tag   TEXT,
   views INTEGER
@@ -64,8 +64,7 @@ statement ok
 CREATE INDEX pg_articles_v_idx_${__DATABASE__}
   ON pg_articles_v_${__DATABASE__}
   USING inverted(id, body pg_en_${__DATABASE__})
-  INCLUDE (tag, views)
-  WITH (pk = 'id');
+  INCLUDE (tag, views);
 
 
 # count(*) over the view-backed index -- flows from iresearch, no source touch.
@@ -114,11 +113,17 @@ sum
 2082
 
 
-# Selecting real (non-indexed, non-INCLUDE'd) source columns fails because
-# postgres_scan isn't a fast-path source. Pin the documented error so
-# flipping the behaviour requires touching this assertion.
-statement error materialising real columns from this view-backed inverted index is not yet supported
-SELECT id, body FROM pg_articles_v_idx_${__DATABASE__} WHERE body @@ ts_phrase('pudge');
+# Selecting real (non-indexed, non-INCLUDE'd) source columns: the postgres table
+# is a fast-path source now (PkSpec::ExternalDBKey -- PK from pg_constraint
+# metadata), so matched rows are re-fetched from postgres via `WHERE id IN (...)`
+# and mapped back to output slots by key.
+query
+SELECT id, body FROM pg_articles_v_idx_${__DATABASE__} WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge goes mid and dominates the lane
+3	pudge plays again in a ranked match
+5	mom reviews pudge highlight reel
 
 
 statement ok

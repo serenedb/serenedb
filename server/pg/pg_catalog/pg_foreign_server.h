@@ -46,4 +46,7 @@ struct PgForeignServer {
 };
 // NOLINTEND
 
+template<>
+catalog::MaterializedData SystemTableSnapshot<PgForeignServer>::GetTableData();
+
 }  // namespace sdb::pg

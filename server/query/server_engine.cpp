@@ -31,6 +31,7 @@
 #include "basics/number_of_cores.h"
 #include "catalog/store/store.h"
 #include "connector/duckdb_copy_filesystem.h"
+#include "connector/duckdb_foreign_server_function.h"
 #include "connector/duckdb_pg_binary_copy.h"
 #include "connector/duckdb_pg_text_copy.h"
 #include "connector/duckdb_physical_create_index.h"
@@ -246,6 +247,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   catalog::RegisterCatalogStoreFunctions(db);
 
   connector::RegisterTokenizerPragma(db);
+
+  connector::RegisterForeignServerPragma(db);
 
   connector::RegisterPgMathFunctions(db);
 

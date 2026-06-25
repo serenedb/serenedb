@@ -1,0 +1,4 @@
+{
+  "description": "SereneDB test-config for duckdb_clickhouse's own .test files. The static read fixtures are pre-seeded by the container init script (fixtures/01_init.sql) -- including complex types (Array/Map/UUID/Decimal/Nullable) the connector cannot yet INSERT -- so there is nothing to provision per-test and no tests to skip. The connector is read+write; write tests create/drop their own tables at runtime.",
+  "skip_tests": []
+}

@@ -29,6 +29,7 @@
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/multi_file/multi_file_states.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/expression/cast_expression.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/comparison_expression.hpp>
@@ -317,6 +318,61 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       out.projection_columns = std::move(projection_columns);
       return out;
     }
+    if (cat_type == "clickhouse" || cat_type == "postgres") {
+      // Attached external DB whose connector records its PK as a standard
+      // primary-key constraint on the table entry (postgres_scanner from
+      // pg_constraint; clickhouse from system.columns.is_in_primary_key). Take
+      // the PK from that metadata -- read via the engine-agnostic catalog API,
+      // so this body is identical for both. v1: a single 64-bit integer column;
+      // anything else -> no fast path -> materialisation stays unsupported.
+      // NB: a postgres PRIMARY KEY is a true uniqueness guarantee; clickhouse's
+      // is only the MergeTree sorting prefix (correctness assumes uniqueness).
+      std::optional<std::string> pk_name;
+      for (const auto& constraint : entry.GetConstraints()) {
+        if (constraint->type != duckdb::ConstraintType::UNIQUE) {
+          continue;
+        }
+        const auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
+        if (!unique.IsPrimaryKey()) {
+          continue;
+        }
+        if (unique.GetColumnNames().size() != 1) {
+          return std::nullopt;
+        }
+        pk_name = unique.GetColumnNames()[0];
+      }
+      if (!pk_name) {
+        return std::nullopt;
+      }
+      std::optional<duckdb::column_t> pk_index;
+      duckdb::idx_t pos = 0;
+      for (const auto& col : entry.GetColumns().Logical()) {
+        if (col.Name() == *pk_name) {
+          // v1: a signed 64-bit key. The index keys postings via the int64
+          // primary-key encoding and the materialiser renders the value back
+          // into a `WHERE pk IN (...)` list -- both exact only for BIGINT.
+          if (col.GetType().id() != duckdb::LogicalTypeId::BIGINT) {
+            return std::nullopt;
+          }
+          pk_index = static_cast<duckdb::column_t>(pos);
+          break;
+        }
+        ++pos;
+      }
+      if (!pk_index) {
+        return std::nullopt;
+      }
+      ViewFastPath out;
+      out.catalog_ref =
+        CatalogTableRef{.catalog = entry.ParentCatalog().GetName(),
+                        .schema = entry.ParentSchema().name,
+                        .table = entry.name};
+      out.pk_spec = catalog::PkSpec::ExternalDBKey;
+      out.pk_column_index = *pk_index;
+      out.pk_column_name = std::move(*pk_name);
+      out.projection_columns = std::move(projection_columns);
+      return out;
+    }
     return std::nullopt;
   }
   if (select_node.from_table->type !=
@@ -449,6 +505,11 @@ std::optional<ViewFastPath> ResolveViewFastPath(
 }
 
 std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp) {
+  if (fp.pk_spec == catalog::PkSpec::ExternalDBKey) {
+    // The PK is a real source column (not a virtual one); project it so the
+    // index sink can key postings by its value.
+    return {fp.pk_column_index};
+  }
   if (fp.pk_spec == catalog::PkSpec::DuckDBRowId) {
     return {duckdb::COLUMN_IDENTIFIER_ROW_ID};
   }

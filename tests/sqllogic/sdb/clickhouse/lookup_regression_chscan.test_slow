@@ -1,0 +1,90 @@
+control substitution on
+
+# Regression for the metadata-PK lookup materialiser
+# (server/connector/index_source_external_db_key.cpp).
+#
+# A source row deleted AFTER an inverted index was built leaves a stale posting
+# in the iresearch index. When the lookup re-fetches matched rows by PK
+# (`WHERE pk IN (...)`), the deleted row is absent from the result; its output
+# slot must read NULL -- never stale/garbage data left in a recycled chunk. The
+# fix pre-nulls every real-column slot before mapping returned rows back by PK.
+#
+# Unique attach name (chreg) + object names (reg_*) for parallel safety.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chreg (TYPE clickhouse);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY reg_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE chreg.default.reg_lk (id BIGINT PRIMARY KEY, val VARCHAR);
+
+statement ok
+INSERT INTO chreg.default.reg_lk VALUES (1, 'alpha unique'), (2, 'beta shared'), (3, 'gamma shared');
+
+statement ok
+CREATE VIEW reg_v AS SELECT * FROM chreg.default.reg_lk;
+
+statement ok
+CREATE INDEX reg_idx ON reg_v USING inverted(id, val reg_en);
+
+# Baseline: 'shared' matches ids 2 and 3, both materialise from the source.
+query
+SELECT id, val FROM reg_idx WHERE val @@ ts_phrase('shared') ORDER BY id;
+----
+id	val
+2	beta shared
+3	gamma shared
+
+# Delete id=2 from the SOURCE table. The inverted index is not maintained, so its
+# posting for id=2 remains.
+statement ok
+DELETE FROM chreg.default.reg_lk WHERE id = 2;
+
+# count(*) still reports 2 -- it flows off the (stale) iresearch postings without
+# touching the source.
+query
+SELECT count(*) FROM reg_idx WHERE val @@ ts_phrase('shared');
+----
+count
+2
+
+# Materialisation: the deleted row's slot reads NULL (the WHERE id IN (2,3)
+# re-fetch returns only id=3), NOT garbage; the surviving row is intact.
+query
+SELECT id, val FROM reg_idx WHERE val @@ ts_phrase('shared') ORDER BY id NULLS FIRST;
+----
+id	val
+NULL	NULL
+3	gamma shared
+
+# Searching for the still-present unique row materialises normally.
+query
+SELECT id, val FROM reg_idx WHERE val @@ ts_phrase('alpha') ORDER BY id;
+----
+id	val
+1	alpha unique
+
+statement ok
+DROP INDEX reg_idx;
+
+statement ok
+DROP VIEW reg_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY reg_en;
+
+statement ok
+DROP TABLE chreg.default.reg_lk;
+
+statement ok
+DETACH chreg;

@@ -27,6 +27,7 @@
 #include "catalog/view.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
+#include "connector/index_source_external_db_key.h"
 #include "connector/index_source_view_file.h"
 #include "connector/index_source_view_table.h"
 #include "connector/view_fast_path.h"
@@ -61,6 +62,11 @@ std::unique_ptr<IndexSource> MakeIndexSource(
     }
     if (fp->catalog_ref && fp->pk_spec == catalog::PkSpec::DuckDBRowId) {
       return std::make_unique<ViewTableIndexSource>(
+        context, std::move(*fp), projected_columns, projected_types,
+        bind_column_ids);
+    }
+    if (fp->catalog_ref && fp->pk_spec == catalog::PkSpec::ExternalDBKey) {
+      return std::make_unique<ExternalDBKeyIndexSource>(
         context, std::move(*fp), projected_columns, projected_types,
         bind_column_ids);
     }

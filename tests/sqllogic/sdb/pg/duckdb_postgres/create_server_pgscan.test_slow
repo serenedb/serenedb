@@ -1,0 +1,233 @@
+control substitution on
+
+# Foreign Data Wrapper DDL over the postgres_scanner (postgres_fdw): CREATE
+# SERVER + CREATE USER MAPPING, the postgres counterpart of
+# sdb/clickhouse/create_server_chscan.test_slow. This is the only test of the
+# postgres branch of catalog::BuildForeignServerAttachSql -- it exercises the
+# fdw-name map (postgres_fdw -> storage "postgres") AND the `database` -> `dbname`
+# option rename: the server below declares `database 'postgres'`, and
+# CreateForeignServer attaches eagerly (RunAttach) to validate connectivity
+# BEFORE persisting. libpq only accepts `dbname=`, never `database=`, so a green
+# CREATE SERVER proves the rename happened. Unlike ClickHouse (whose default user
+# needs no auth, so a no-user CREATE SERVER attaches), postgres requires a real
+# role even for this initial probe, so `user` is in the server OPTIONS. Needs a
+# postgres backend at ${PGHOST}:${PGPORT}; the _pgscan suffix tells run.sh to
+# bring one up.
+#
+# Unique server + schema names (${__DATABASE__}): tests run in parallel against
+# one serened and the ATTACH alias is instance-global, so a shared name collides.
+
+statement ok
+CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (host '${PGHOST}', port '${PGPORT}', database 'postgres', user '${PGUSER}');
+
+
+# PUBLIC mapping drives the live attach; its options are merged over the
+# server's and validated by a probe-ATTACH (ProbeAttach) before persisting.
+statement ok
+CREATE USER MAPPING FOR PUBLIC SERVER srv_${__DATABASE__} OPTIONS (user '${PGUSER}');
+
+
+# The server is visible in pg_foreign_server. (count, not the name: ${__DATABASE__}
+# is substituted in SQL but NOT in expected rows, so echoing the name can't match.)
+query
+SELECT count(*) AS n FROM pg_foreign_server WHERE srvname = 'srv_${__DATABASE__}';
+----
+n
+1
+
+
+# Seed the vedernikoff table on the remote postgres THROUGH the named server
+# (postgres_scanner supports writes), then read it back through the same server.
+statement ok
+CREATE SCHEMA srv_${__DATABASE__}.${__DATABASE__}_ved;
+
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}_ved.vedernikoff (
+  id  INTEGER PRIMARY KEY,
+  val TEXT
+);
+
+
+statement count 6
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}_ved.vedernikoff VALUES
+  (1, 'clickclack babsky'),
+  (2, 'deadinside kostya'),
+  (3, 'vedernikoff pudge'),
+  (4, 'pudge goes mid'),
+  (5, 'vedernikoff kostya'),
+  (6, 'anchin reads manga');
+
+
+# Full scan through the server, ordered for determinism.
+query
+SELECT id, val FROM srv_${__DATABASE__}.${__DATABASE__}_ved.vedernikoff ORDER BY id;
+----
+id	val
+1	clickclack babsky
+2	deadinside kostya
+3	vedernikoff pudge
+4	pudge goes mid
+5	vedernikoff kostya
+6	anchin reads manga
+
+
+# Equality pushdown through the server.
+query
+SELECT id FROM srv_${__DATABASE__}.${__DATABASE__}_ved.vedernikoff
+WHERE val = 'vedernikoff pudge';
+----
+id
+3
+
+
+# IN pushdown through the server.
+query
+SELECT val FROM srv_${__DATABASE__}.${__DATABASE__}_ved.vedernikoff
+WHERE id IN (5, 6)
+ORDER BY id;
+----
+val
+vedernikoff kostya
+anchin reads manga
+
+
+# A per-user mapping is stored (visible, not enforced at runtime in 2a). The
+# join confirms pg_user_mapping.umserver resolves to the server's oid; two
+# mappings now exist (PUBLIC + vedernikoff).
+statement ok
+CREATE USER MAPPING FOR vedernikoff SERVER srv_${__DATABASE__}
+  OPTIONS (user 'ved_pg', password 'pudge');
+
+
+query
+SELECT count(*) FROM pg_user_mapping um
+JOIN pg_foreign_server s ON um.umserver = s.oid
+WHERE s.srvname = 'srv_${__DATABASE__}';
+----
+count
+2
+
+
+# The per-user mapping's password is redacted in the catalog: no mapping row for
+# this server leaks the 'pudge' password value (checked across both mappings).
+query
+SELECT count(*) FROM pg_user_mapping um
+JOIN pg_foreign_server s ON um.umserver = s.oid
+WHERE s.srvname = 'srv_${__DATABASE__}'
+  AND array_to_string(umoptions, ' ') LIKE '%pudge%';
+----
+count
+0
+
+
+# IF NOT EXISTS is a no-op on an existing server. (OPTIONS kept identical to the
+# original CREATE: CreateForeignServer short-circuits when the server already
+# exists, BEFORE RunAttach, so any OPTIONS here are inert -- matching them keeps
+# the line readable as the pure no-op it is, with no false hint of new coverage.)
+statement ok
+CREATE SERVER IF NOT EXISTS srv_${__DATABASE__} FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (host '${PGHOST}', port '${PGPORT}', database 'postgres', user '${PGUSER}');
+
+
+# Clean up the remote objects through the server before detaching.
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}_ved.vedernikoff;
+
+
+statement ok
+DROP SCHEMA srv_${__DATABASE__}.${__DATABASE__}_ved;
+
+
+# DROP SERVER cascades its USER MAPPINGs and detaches.
+statement ok
+DROP SERVER srv_${__DATABASE__};
+
+
+# Gone from the catalog after drop.
+query
+SELECT count(*) FROM pg_foreign_server WHERE srvname = 'srv_${__DATABASE__}';
+----
+count
+0
+
+
+# The mappings were cascaded too (no orphan rows survive the DROP).
+query
+SELECT count(*) FROM pg_user_mapping um
+JOIN pg_foreign_server s ON um.umserver = s.oid
+WHERE s.srvname = 'srv_${__DATABASE__}';
+----
+count
+0
+
+
+# DROP SERVER detached the attachment: the alias is gone from the database list.
+# (This isolates the DETACH from the remote table, which was already dropped, so
+# it is the assertion that actually proves detachment.)
+query
+SELECT count(*) AS n FROM (SHOW DATABASES) WHERE database_name = 'srv_${__DATABASE__}';
+----
+n
+0
+
+
+# Querying the dropped server errors (it was detached) -- a secondary check.
+statement error
+SELECT id FROM srv_${__DATABASE__}.${__DATABASE__}_ved.vedernikoff LIMIT 1;
+
+
+# The DROP cascaded the mapping with no orphan left behind: re-creating the
+# same-named server plus a fresh PUBLIC mapping succeeds. An orphaned public@srv
+# mapping would make the second statement fail with "already exists".
+statement ok
+CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (host '${PGHOST}', port '${PGPORT}', database 'postgres', user '${PGUSER}');
+
+statement ok
+CREATE USER MAPPING FOR PUBLIC SERVER srv_${__DATABASE__} OPTIONS (user '${PGUSER}');
+
+statement ok
+DROP SERVER srv_${__DATABASE__};
+
+
+# DROP SERVER IF EXISTS on a missing server is a no-op.
+statement ok
+DROP SERVER IF EXISTS srv_${__DATABASE__};
+
+
+# ===== error path: a bad PUBLIC mapping is rejected and the working server
+# survives -- the postgres mirror of fdw_creds_chscan test C (atomic ProbeAttach
+# before the live DETACH+ATTACH swap). =====
+statement ok
+CREATE SERVER atomic_${__DATABASE__} FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (host '${PGHOST}', port '${PGPORT}', database 'postgres', user '${PGUSER}');
+
+
+# It attached live at CREATE time -- its alias is in the database list.
+query
+SELECT count(*) AS n FROM (SHOW DATABASES) WHERE database_name = 'atomic_${__DATABASE__}';
+----
+n
+1
+
+
+# A PUBLIC mapping whose role does not exist fails the probe-ATTACH and is
+# rejected. (Trust auth accepts any password, so a nonexistent ROLE -- not a bad
+# password -- is what forces the connection failure.)
+statement error
+CREATE USER MAPPING FOR PUBLIC SERVER atomic_${__DATABASE__}
+  OPTIONS (user 'sdb_nosuchrole_${__DATABASE__}');
+
+
+# The rejected mapping did NOT detach the working server: its alias is still here.
+query
+SELECT count(*) AS n FROM (SHOW DATABASES) WHERE database_name = 'atomic_${__DATABASE__}';
+----
+n
+1
+
+
+statement ok
+DROP SERVER atomic_${__DATABASE__};

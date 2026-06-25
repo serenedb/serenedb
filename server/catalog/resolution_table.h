@@ -41,6 +41,8 @@ enum class ResolveType {
   Function,
   Relation,
   Tokenizer,
+  ForeignServer,
+  UserMapping,
   Type,
 };
 
@@ -53,6 +55,8 @@ class ResolutionTable {
     _relations = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
     _functions = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
     _tokenizers = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
+    _foreign_servers = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
+    _user_mappings = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
     _types = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
   }
   template<ResolveType Type>
@@ -86,6 +90,10 @@ class ResolutionTable {
         return resolve(_relations, parent_id, object_name);
       } else if constexpr (Type == ResolveType::Tokenizer) {
         return resolve(_tokenizers, parent_id, object_name);
+      } else if constexpr (Type == ResolveType::ForeignServer) {
+        return resolve(_foreign_servers, parent_id, object_name);
+      } else if constexpr (Type == ResolveType::UserMapping) {
+        return resolve(_user_mappings, parent_id, object_name);
       } else if constexpr (Type == ResolveType::Type) {
         return resolve(_types, parent_id, object_name);
       } else {
@@ -157,11 +165,19 @@ class ResolutionTable {
           auto [_, insert_tokenizer] =
             CloneData(_tokenizers)
               .try_emplace(object_id, std::make_shared<MapByName<ObjectId>>());
+          auto [_, insert_foreign_server] =
+            CloneData(_foreign_servers)
+              .try_emplace(object_id, std::make_shared<MapByName<ObjectId>>());
+          auto [_, insert_user_mapping] =
+            CloneData(_user_mappings)
+              .try_emplace(object_id, std::make_shared<MapByName<ObjectId>>());
           auto [_, insert_type] = CloneData(_types).try_emplace(
             object_id, std::make_shared<MapByName<ObjectId>>());
           SDB_ASSERT(insert_relation);
           SDB_ASSERT(insert_function);
           SDB_ASSERT(insert_tokenizer);
+          SDB_ASSERT(insert_foreign_server);
+          SDB_ASSERT(insert_user_mapping);
           SDB_ASSERT(insert_type);
         }
         return {};
@@ -171,6 +187,14 @@ class ResolutionTable {
                  : Result{ERROR_SERVER_DUPLICATE_NAME};
       } else if constexpr (Type == ResolveType::Tokenizer) {
         return insert(_tokenizers, parent_id, object_name, object_id)
+                 ? Result{}
+                 : Result{ERROR_SERVER_DUPLICATE_NAME};
+      } else if constexpr (Type == ResolveType::ForeignServer) {
+        return insert(_foreign_servers, parent_id, object_name, object_id)
+                 ? Result{}
+                 : Result{ERROR_SERVER_DUPLICATE_NAME};
+      } else if constexpr (Type == ResolveType::UserMapping) {
+        return insert(_user_mappings, parent_id, object_name, object_id)
                  ? Result{}
                  : Result{ERROR_SERVER_DUPLICATE_NAME};
       } else if constexpr (Type == ResolveType::Type) {
@@ -199,6 +223,8 @@ class ResolutionTable {
         CloneData(_relations).erase(id);
         CloneData(_functions).erase(id);
         CloneData(_tokenizers).erase(id);
+        CloneData(_foreign_servers).erase(id);
+        CloneData(_user_mappings).erase(id);
         CloneData(_types).erase(id);
       }
       return {id};
@@ -233,6 +259,8 @@ class ResolutionTable {
           CloneData(_relations).erase(*result);
           CloneData(_functions).erase(*result);
           CloneData(_tokenizers).erase(*result);
+          CloneData(_foreign_servers).erase(*result);
+          CloneData(_user_mappings).erase(*result);
           CloneData(_types).erase(*result);
         }
         return result;
@@ -240,6 +268,10 @@ class ResolutionTable {
         return remove(_relations, parent_id, object_name);
       } else if constexpr (Type == ResolveType::Tokenizer) {
         return remove(_tokenizers, parent_id, object_name);
+      } else if constexpr (Type == ResolveType::ForeignServer) {
+        return remove(_foreign_servers, parent_id, object_name);
+      } else if constexpr (Type == ResolveType::UserMapping) {
+        return remove(_user_mappings, parent_id, object_name);
       } else if constexpr (Type == ResolveType::Type) {
         return remove(_types, parent_id, object_name);
       } else {
@@ -261,6 +293,18 @@ class ResolutionTable {
   auto GetTokenizerIds(ObjectId schema_id) const {
     auto it = _tokenizers->find(schema_id);
     SDB_ASSERT(it != _tokenizers->end());
+    return *it->second | std::views::values;
+  }
+
+  auto GetForeignServerIds(ObjectId schema_id) const {
+    auto it = _foreign_servers->find(schema_id);
+    SDB_ASSERT(it != _foreign_servers->end());
+    return *it->second | std::views::values;
+  }
+
+  auto GetUserMappingIds(ObjectId schema_id) const {
+    auto it = _user_mappings->find(schema_id);
+    SDB_ASSERT(it != _user_mappings->end());
     return *it->second | std::views::values;
   }
 
@@ -307,6 +351,10 @@ class ResolutionTable {
   MapByIdPtr<MapByNamePtr<ObjectId>> _functions;
   // schema_id -> (tokenizer_name -> object_id)
   MapByIdPtr<MapByNamePtr<ObjectId>> _tokenizers;
+  // schema_id -> (foreign_server_name -> object_id)
+  MapByIdPtr<MapByNamePtr<ObjectId>> _foreign_servers;
+  // schema_id -> (user_mapping_name -> object_id)
+  MapByIdPtr<MapByNamePtr<ObjectId>> _user_mappings;
   // schema_id -> (type_name -> object_id)
   MapByIdPtr<MapByNamePtr<ObjectId>> _types;
 };

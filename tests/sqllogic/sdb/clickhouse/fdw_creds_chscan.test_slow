@@ -1,0 +1,147 @@
+control substitution on
+
+# FDW credential-handling regression tests for the review fixes:
+#  A) a connection-option VALUE containing a space (a password) round-trips
+#     through the connstr instead of corrupting it;
+#  B) secret values are redacted in pg_user_mapping case-insensitively (quoted
+#     "PASSWORD") and for the clickhouse `passwd` alias;
+#  C) a PUBLIC mapping with bad credentials is rejected AND does not detach a
+#     currently-working server (atomic re-attach);
+#  D) DROP SERVER cascades to its USER MAPPINGs (no orphan a future same-named
+#     server would silently inherit).
+#
+# Uses the fixture user `scanner` (password 'pass word'); the default user
+# (opened password-less by CLICKHOUSE_SKIP_USER_SETUP) rejects a non-empty
+# password, so it cannot exercise the password paths. Unique server names
+# (fc_*): tests run in parallel against one serened.
+
+# ===== A: a space in an option value round-trips through the connstr =====
+statement ok
+CREATE SERVER fc_space FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+
+statement ok
+CREATE USER MAPPING FOR PUBLIC SERVER fc_space OPTIONS (user 'scanner', password 'pass word');
+
+query
+SELECT count(*) FROM fc_space.chtest.vedernikoff;
+----
+count
+6
+
+# ===== B: the password value is redacted (gone), order-independent check =====
+query
+SELECT array_to_string(umoptions, ' ') NOT LIKE '%pass word%' AS redacted
+FROM pg_user_mapping um JOIN pg_foreign_server fs ON um.umserver = fs.oid
+WHERE fs.srvname = 'fc_space';
+----
+redacted
+t
+
+# A quoted "PASSWORD" key (mixed case) is still redacted (normalised + matched
+# case-insensitively), and the server still connects.
+statement ok
+CREATE SERVER fc_pwkey FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+
+statement ok
+CREATE USER MAPPING FOR PUBLIC SERVER fc_pwkey OPTIONS (user 'scanner', "PASSWORD" 'pass word');
+
+query
+SELECT array_to_string(umoptions, ' ') NOT LIKE '%pass word%' AS redacted
+FROM pg_user_mapping um JOIN pg_foreign_server fs ON um.umserver = fs.oid
+WHERE fs.srvname = 'fc_pwkey';
+----
+redacted
+t
+
+query
+SELECT count(*) FROM fc_pwkey.chtest.vedernikoff;
+----
+count
+6
+
+# The `passwd` alias (a valid clickhouse password key) is also redacted and connects.
+statement ok
+CREATE SERVER fc_passwd FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+
+statement ok
+CREATE USER MAPPING FOR PUBLIC SERVER fc_passwd OPTIONS (user 'scanner', passwd 'pass word');
+
+query
+SELECT array_to_string(umoptions, ' ') NOT LIKE '%pass word%' AS redacted
+FROM pg_user_mapping um JOIN pg_foreign_server fs ON um.umserver = fs.oid
+WHERE fs.srvname = 'fc_passwd';
+----
+redacted
+t
+
+query
+SELECT count(*) FROM fc_passwd.chtest.vedernikoff;
+----
+count
+6
+
+# ===== C: a bad PUBLIC mapping is rejected and does NOT detach the server =====
+statement ok
+CREATE SERVER fc_atomic FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner', password 'pass word');
+
+query
+SELECT count(*) FROM fc_atomic.chtest.vedernikoff;
+----
+count
+6
+
+statement error
+CREATE USER MAPPING FOR PUBLIC SERVER fc_atomic OPTIONS (user 'nosuchuser', password 'bad');
+
+# The working attachment survived the failed re-attach.
+query
+SELECT count(*) FROM fc_atomic.chtest.vedernikoff;
+----
+count
+6
+
+# ===== D: DROP SERVER cascades to its USER MAPPINGs (no orphan) =====
+statement ok
+CREATE SERVER fc_drop FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner', password 'pass word');
+
+statement ok
+CREATE USER MAPPING FOR PUBLIC SERVER fc_drop OPTIONS (user 'scanner', password 'pass word');
+
+query
+SELECT count(*) FROM pg_user_mapping um JOIN pg_foreign_server fs ON um.umserver = fs.oid WHERE fs.srvname = 'fc_drop';
+----
+count
+1
+
+statement ok
+DROP SERVER fc_drop;
+
+# Re-create the server + a fresh PUBLIC mapping. This succeeds only if the DROP
+# cascaded; an orphaned public@fc_drop mapping would make this "already exists".
+statement ok
+CREATE SERVER fc_drop FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner', password 'pass word');
+
+statement ok
+CREATE USER MAPPING FOR PUBLIC SERVER fc_drop OPTIONS (user 'scanner', password 'pass word');
+
+# ===== cleanup (DROP SERVER cascades the mappings) =====
+statement ok
+DROP SERVER fc_space;
+
+statement ok
+DROP SERVER fc_pwkey;
+
+statement ok
+DROP SERVER fc_passwd;
+
+statement ok
+DROP SERVER fc_atomic;
+
+statement ok
+DROP SERVER fc_drop;

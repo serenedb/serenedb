@@ -31,6 +31,7 @@ add_library(
     inverted_store_index.cpp
     index_source_view_file.cpp
     index_source_view_table.cpp
+    index_source_external_db_key.cpp
     view_fast_path.cpp
     duckdb_copy_filesystem.cpp
     duckdb_physical_search_insert.cpp
@@ -39,6 +40,7 @@ add_library(
     duckdb_physical_ctas.cpp
     duckdb_tokenizer_function.cpp
     duckdb_rbac_function.cpp
+    duckdb_foreign_server_function.cpp
     duckdb_physical_create_index.cpp
     duckdb_index_utils.cpp
     duckdb_search_sink_writer.cpp

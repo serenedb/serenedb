@@ -352,11 +352,14 @@ struct SchemaDependency : ObjectDependencyBase {
   containers::FlatHashSet<ObjectId> functions;
   containers::FlatHashSet<ObjectId> views;
   containers::FlatHashSet<ObjectId> tokenizers;
+  containers::FlatHashSet<ObjectId> foreign_servers;
+  containers::FlatHashSet<ObjectId> user_mappings;
   containers::FlatHashSet<ObjectId> types;
   containers::FlatHashSet<ObjectId> sequences;
   bool Empty() const {
     return tables.empty() && functions.empty() && views.empty() &&
-           tokenizers.empty() && types.empty() && sequences.empty();
+           tokenizers.empty() && foreign_servers.empty() &&
+           user_mappings.empty() && types.empty() && sequences.empty();
   }
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<SchemaDependency>(*this);
@@ -378,6 +381,12 @@ struct SchemaDependency : ObjectDependencyBase {
       e.EmitAutoDrop(id);
     }
     for (auto id : tokenizers) {
+      e.EmitAutoDrop(id);
+    }
+    for (auto id : foreign_servers) {
+      e.EmitAutoDrop(id);
+    }
+    for (auto id : user_mappings) {
       e.EmitAutoDrop(id);
     }
   }
@@ -413,6 +422,20 @@ struct RoleDependency : ObjectDependencyBase {
     return std::make_shared<RoleDependency>(*this);
   }
   void Emit(DropEmitter&, ObjectId) const final {}
+};
+
+struct ForeignServerDependency : ObjectDependencyBase {
+  std::shared_ptr<ObjectDependencyBase> Clone() const final {
+    return std::make_shared<ForeignServerDependency>(*this);
+  }
+  void Emit(DropEmitter& e, ObjectId self) const final {}
+};
+
+struct UserMappingDependency : ObjectDependencyBase {
+  std::shared_ptr<ObjectDependencyBase> Clone() const final {
+    return std::make_shared<UserMappingDependency>(*this);
+  }
+  void Emit(DropEmitter& e, ObjectId self) const final {}
 };
 
 inline DropPlan DropEmitter::ComputePlan() && {

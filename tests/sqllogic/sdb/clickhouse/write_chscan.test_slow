@@ -1,0 +1,104 @@
+control substitution on
+
+# Write path over an ATTACHed ClickHouse database: CREATE TABLE, INSERT,
+# UPDATE, DELETE, CREATE TABLE AS, ALTER and DROP, mirroring the postgres
+# connector's write support. ClickHouse has no physical rowid, so UPDATE/DELETE
+# key off a single integer PRIMARY KEY (the MergeTree sorting prefix) and run as
+# synchronous `ALTER ... UPDATE/DELETE WHERE pk IN (...)` mutations. Tables
+# without such a key reject UPDATE/DELETE but still accept INSERT.
+#
+# Unique attach + table names: tests run in parallel against one serened/CH.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chwr (TYPE clickhouse);
+
+statement ok
+CREATE TABLE chwr.default.wr_pudge (id BIGINT PRIMARY KEY, handle VARCHAR, mmr DOUBLE);
+
+statement ok
+INSERT INTO chwr.default.wr_pudge VALUES (1, 'clickclack', 3000), (2, 'deadinside', 4500), (3, 'vedernikoff', 9000);
+
+query
+SELECT id, handle, mmr FROM chwr.default.wr_pudge ORDER BY id;
+----
+id	handle	mmr
+1	clickclack	3000
+2	deadinside	4500
+3	vedernikoff	9000
+
+# UPDATE with a constant and an expression referencing the existing column.
+statement ok
+UPDATE chwr.default.wr_pudge SET handle = 'pudge', mmr = mmr + 1000 WHERE id = 2;
+
+query
+SELECT id, handle, mmr FROM chwr.default.wr_pudge ORDER BY id;
+----
+id	handle	mmr
+1	clickclack	3000
+2	pudge	5500
+3	vedernikoff	9000
+
+# DELETE by predicate (resolved to the PK and pushed as a mutation).
+statement ok
+DELETE FROM chwr.default.wr_pudge WHERE id = 1;
+
+query
+SELECT id, handle FROM chwr.default.wr_pudge ORDER BY id;
+----
+id	handle
+2	pudge
+3	vedernikoff
+
+# CREATE TABLE AS round-trips the data back into a fresh ClickHouse table.
+statement ok
+CREATE TABLE chwr.default.wr_pudge_ctas AS SELECT id, mmr FROM chwr.default.wr_pudge;
+
+query
+SELECT id, mmr FROM chwr.default.wr_pudge_ctas ORDER BY id;
+----
+id	mmr
+2	5500
+3	9000
+
+# ALTER: add and rename columns.
+statement ok
+ALTER TABLE chwr.default.wr_pudge ADD COLUMN role INTEGER;
+
+statement ok
+ALTER TABLE chwr.default.wr_pudge RENAME COLUMN role TO position;
+
+query
+SELECT id, handle, position FROM chwr.default.wr_pudge ORDER BY id;
+----
+id	handle	position
+2	pudge	NULL
+3	vedernikoff	NULL
+
+# A table with no integer primary key cannot be a row-identifier target:
+# INSERT works, UPDATE/DELETE raise a clean error.
+statement ok
+CREATE TABLE chwr.default.wr_anchin (mmr INTEGER, handle VARCHAR);
+
+statement ok
+INSERT INTO chwr.default.wr_anchin VALUES (1000, 'anchin'), (2000, 'babsky');
+
+query
+SELECT count(*) FROM chwr.default.wr_anchin;
+----
+count
+2
+
+statement error
+UPDATE chwr.default.wr_anchin SET handle = 'zhidky' WHERE mmr = 1000;
+
+statement error
+DELETE FROM chwr.default.wr_anchin WHERE mmr = 1000;
+
+statement ok
+DROP TABLE chwr.default.wr_pudge_ctas;
+
+statement ok
+DROP TABLE chwr.default.wr_anchin;
+
+statement ok
+DROP TABLE chwr.default.wr_pudge;

@@ -1,0 +1,80 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include "pg/pg_catalog/pg_foreign_server.h"
+
+#include <absl/strings/ascii.h>
+
+#include <deque>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "catalog/catalog.h"
+#include "catalog/foreign_server.h"
+#include "catalog/identifiers/object_id.h"
+#include "pg/pg_catalog/fwd.h"
+#include "pg/pg_catalog/make_options.h"
+
+namespace sdb::pg {
+namespace {
+
+constexpr uint64_t kNullMask = MaskFromNulls({
+  GetIndex(&PgForeignServer::srvtype),
+  GetIndex(&PgForeignServer::srvversion),
+  GetIndex(&PgForeignServer::srvacl),
+});
+
+}  // namespace
+
+template<>
+catalog::MaterializedData SystemTableSnapshot<PgForeignServer>::GetTableData() {
+  auto catalog = _config.EnsureCatalogSnapshot();
+  const auto database_id = GetDatabaseId();
+
+  std::vector<PgForeignServer> values;
+  std::deque<std::string> option_storage;
+  std::deque<std::vector<std::string_view>> option_spans;
+
+  for (const auto& schema : catalog->GetSchemas(database_id)) {
+    for (const auto& server :
+         catalog->GetForeignServers(database_id, schema->GetName())) {
+      PgForeignServer row{
+        .oid = server->GetId().id(),
+        .srvname = server->GetName(),
+        .srvowner = id::kRootUser.id(),
+        .srvfdw = 0,
+        .srvtype = {},
+        .srvversion = {},
+        .srvacl = {},
+        .srvoptions = MakeOptions(*server, option_storage, option_spans),
+      };
+      values.push_back(std::move(row));
+    }
+  }
+
+  auto result = CreateColumns<PgForeignServer>(values.size());
+  for (size_t row = 0; row < values.size(); ++row) {
+    WriteData(result, values[row], kNullMask, row);
+  }
+  return {std::move(result), values.size()};
+}
+
+}  // namespace sdb::pg

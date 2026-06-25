@@ -112,4 +112,12 @@ include(UpdateModule)
 
 sdb_update_module(${GIT_EXECUTABLE} "llvm-project" ${CMAKE_SOURCE_DIR}/third_party "LICENSE.TXT")
 
+# The runtimes are configured before the top-level -nostdinc++ (see the root
+# CMakeLists), so set it here too: build libc++/libc++abi/libunwind against
+# their own in-tree headers (passed via -isystem) rather than the system
+# libstdc++. Without this, clang's default search reaches GCC's
+# /usr/include/c++/NN and libc++'s own `#include_next <stdlib.h>` resolves to
+# libstdc++'s stdlib.h (`using std::abort;`), which fails to compile.
+add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-nostdinc++>)
+
 add_subdirectory(third_party/llvm-project/runtimes EXCLUDE_FROM_ALL)

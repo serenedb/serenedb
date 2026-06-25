@@ -510,6 +510,42 @@ set(CURL_LIBRARIES CURL::libcurl CACHE INTERNAL "")
 set(CURL_LIBRARY CURL::libcurl CACHE INTERNAL "")
 
 ################################################################################
+## clickhouse-cpp (compiled into our own static lib; do NOT add_subdirectory
+## its CMakeLists -- that bundles contrib/{absl,lz4,zstd} and collides with ours)
+################################################################################
+
+# TODO: register third_party/clickhouse-cpp as a git submodule
+
+file(
+    GLOB_RECURSE CLICKHOUSE_CPP_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/clickhouse-cpp/clickhouse/*.cpp"
+)
+list(
+    APPEND CLICKHOUSE_CPP_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/clickhouse-cpp/contrib/cityhash/cityhash/city.cc"
+)
+
+add_library(clickhouse_cpp STATIC ${CLICKHOUSE_CPP_SOURCES})
+
+target_include_directories(
+    clickhouse_cpp
+    SYSTEM
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/clickhouse-cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/clickhouse-cpp/contrib/cityhash/cityhash"
+)
+
+target_compile_definitions(
+    clickhouse_cpp
+    PUBLIC WITH_OPENSSL=1 CH_MAP_BOOL_TO_UINT8=1
+)
+
+target_link_libraries(
+    clickhouse_cpp
+    PUBLIC lz4::lz4 zstd::zstd absl::int128 OpenSSL::SSL OpenSSL::Crypto
+)
+
+################################################################################
 ## IMMER
 ################################################################################
 
@@ -670,7 +706,7 @@ set(LATEST_STORAGE TRUE CACHE BOOL "" FORCE)
 # Suppress the per-extension "vcpkg.json present but VCPKG_BUILD not set" warning.
 set(VCPKG_BUILD ON CACHE BOOL "" FORCE)
 set(BUILD_EXTENSIONS
-    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet"
+    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;clickhouse_scanner;autocomplete;icu;inet"
     CACHE STRING
     ""
     FORCE
@@ -710,6 +746,7 @@ target_link_libraries(
         avro_extension
         iceberg_extension
         postgres_scanner_extension
+        clickhouse_scanner_extension
         autocomplete_extension
         icu_extension
         inet_extension

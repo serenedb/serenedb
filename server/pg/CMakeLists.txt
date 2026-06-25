@@ -16,6 +16,7 @@ target_sources(
         pg_catalog/pg_enum.cpp
         pg_catalog/pg_extension.cpp
         pg_catalog/pg_hba_file_rules.cpp
+        pg_catalog/pg_foreign_server.cpp
         pg_catalog/pg_index.cpp
         pg_catalog/pg_language.cpp
         pg_catalog/pg_namespace.cpp
@@ -25,6 +26,7 @@ target_sources(
         pg_catalog/pg_ts_dict.cpp
         pg_catalog/sdb_progress.cpp
         pg_catalog/pg_type.cpp
+        pg_catalog/pg_user_mapping.cpp
         information_schema/sql_implementation_info.cpp
         information_schema/sql_parts.cpp
         information_schema/sql_sizing.cpp

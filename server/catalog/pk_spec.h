@@ -32,6 +32,8 @@ enum class PkSpec : uint8_t {
   // Native duckdb files read via read_duckdb: the duckdb rowid is the PK.
   DuckDBRowId,
   FileIndexPlusDuckDBRowId,
+  // External DB
+  ExternalDBKey,
 };
 
 constexpr bool IsGlobPK(PkSpec spec) noexcept {

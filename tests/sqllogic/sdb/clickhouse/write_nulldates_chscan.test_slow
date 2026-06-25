@@ -1,0 +1,52 @@
+control substitution on
+
+# Regression for the INSERT-NULL date/time abort: a NULL row in a
+# Nullable(Date)/Nullable(DateTime)/Nullable(DateTime64) ClickHouse column must
+# NOT run the value range / overflow checks against the (uninitialized) NULL
+# slot. Before the fix the garbage in a NULL slot frequently failed those checks
+# and aborted an otherwise-legal INSERT with "Date/Timestamp out of range".
+# vedernikoff theme. Unique attach + table names: tests run in parallel.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chnd (TYPE clickhouse);
+
+# No NOT NULL -> the connector emits Nullable(Date)/Nullable(DateTime64) columns.
+statement ok
+CREATE TABLE chnd.default.nd_pudge (
+  id BIGINT PRIMARY KEY,
+  d  DATE,
+  ts TIMESTAMP
+);
+
+# A mix of NULL and real values: the NULL rows must insert cleanly (this is the
+# statement that aborted before the fix).
+statement ok
+INSERT INTO chnd.default.nd_pudge VALUES
+  (1, NULL, NULL),
+  (2, DATE '2021-06-19', TIMESTAMP '2021-06-19 12:00:00'),
+  (3, NULL, TIMESTAMP '2022-01-02 03:04:05');
+
+query
+SELECT count(*) AS n FROM chnd.default.nd_pudge WHERE d IS NULL;
+----
+n
+2
+
+query
+SELECT count(*) AS n FROM chnd.default.nd_pudge WHERE ts IS NULL;
+----
+n
+1
+
+# The non-NULL date round-trips intact (the NULL rows did not corrupt it).
+query
+SELECT id, d FROM chnd.default.nd_pudge WHERE id = 2;
+----
+id	d
+2	2021-06-19
+
+statement ok
+DROP TABLE chnd.default.nd_pudge;
+
+statement ok
+DETACH chnd;

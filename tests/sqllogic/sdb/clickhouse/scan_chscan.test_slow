@@ -1,0 +1,68 @@
+control substitution on
+
+# Exercises the ClickHouse connector's table functions against the
+# pre-seeded chtest.widgets fixture (created by the container init script;
+# the connector is read-only and cannot create CH tables/data).
+#
+# clickhouse_query(<conn>, <SQL>) runs arbitrary SQL on the CH server.
+# clickhouse_scan(<conn>, <database>, <table>) scans a table with
+# projection + filter pushdown.
+
+# Full scan via clickhouse_query, ordered for determinism.
+query
+SELECT id, name, price, stock
+FROM clickhouse_query('host=${CHHOST} port=${CHPORT} user=default', 'SELECT id, name, price, stock FROM chtest.widgets ORDER BY id')
+ORDER BY id;
+----
+id	name	price	stock
+1	gadget	9.99	10
+2	gizmo	19.99	0
+3	thingamajig	4.50	5
+4	gadget	14.99	3
+5	widget	99.95	42
+
+
+# count(*) over the full table via clickhouse_query.
+query
+SELECT count(*)
+FROM clickhouse_query('host=${CHHOST} port=${CHPORT} user=default', 'SELECT id FROM chtest.widgets');
+----
+count
+5
+
+
+# count(*) over a clickhouse_scan of the table.
+query
+SELECT count(*)
+FROM clickhouse_scan('host=${CHHOST} port=${CHPORT} user=default', 'chtest', 'widgets');
+----
+count
+5
+
+
+# Projection pushdown: select a subset of 2 columns via clickhouse_scan.
+query
+SELECT name, stock
+FROM clickhouse_scan('host=${CHHOST} port=${CHPORT} user=default', 'chtest', 'widgets')
+ORDER BY name, stock;
+----
+name	stock
+gadget	3
+gadget	10
+gizmo	0
+thingamajig	5
+widget	42
+
+
+# Projection of a different 2-column subset via clickhouse_scan, ordered by id.
+query
+SELECT id, price
+FROM clickhouse_scan('host=${CHHOST} port=${CHPORT} user=default', 'chtest', 'widgets')
+ORDER BY id;
+----
+id	price
+1	9.99
+2	19.99
+3	4.50
+4	14.99
+5	99.95

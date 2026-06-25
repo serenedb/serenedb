@@ -59,6 +59,11 @@ struct ViewFastPath {
   // 0 = not pinned. Set at query time from the index's commit payload.
   int64_t pinned_iceberg_snapshot_id = 0;
   catalog::PkSpec pk_spec;
+  // For PkSpec::ExternalDBKey: the engine-metadata PK column the index keys on
+  // and re-fetches by (`WHERE pk_column_name IN (...)`). pk_column_index is the
+  // column's position in the source table (for BackfillPkVirtualColumns).
+  duckdb::column_t pk_column_index = 0;
+  std::string pk_column_name;
 };
 
 std::optional<ViewFastPath> ResolveViewFastPath(duckdb::ClientContext& context,

@@ -70,6 +70,7 @@
 #include "catalog/column_expr.h"
 #include "catalog/database.h"
 #include "catalog/drop_task.h"
+#include "catalog/foreign_server.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/index.h"
@@ -86,6 +87,7 @@
 #include "catalog/table_options.h"
 #include "catalog/tokenizer.h"
 #include "catalog/types.h"
+#include "catalog/user_mapping.h"
 #include "catalog/user_type.h"
 #include "catalog/view.h"
 #include "connector/duckdb_client_state.h"
@@ -372,6 +374,20 @@ Result Snapshot::RegisterObject(std::shared_ptr<T> object, ObjectId parent_id,
       return r;
     }
     return AddObjectDefinition<TokenizerDependency>(parent_id, object);
+  } else if constexpr (std::is_same_v<T, ForeignServer>) {
+    auto r = AddToResolution<ResolveType::ForeignServer>(
+      parent_id, object->GetId(), object->GetName(), replace);
+    if (!r.ok()) {
+      return r;
+    }
+    return AddObjectDefinition<ForeignServerDependency>(parent_id, object);
+  } else if constexpr (std::is_same_v<T, UserMapping>) {
+    auto r = AddToResolution<ResolveType::UserMapping>(
+      parent_id, object->GetId(), object->GetName(), replace);
+    if (!r.ok()) {
+      return r;
+    }
+    return AddObjectDefinition<UserMappingDependency>(parent_id, object);
   } else if constexpr (std::is_same_v<T, PgSqlType>) {
     auto r = AddToResolution<ResolveType::Type>(parent_id, object->GetId(),
                                                 object->GetName(), replace);
@@ -430,6 +446,12 @@ void Snapshot::UnregisterObject(std::shared_ptr<T> object, ObjectId parent_id,
   } else if constexpr (std::is_same_v<T, Tokenizer>) {
     RemoveFromResolution<ResolveType::Tokenizer>(parent_id, object->GetName(),
                                                  maybe_not_found);
+  } else if constexpr (std::is_same_v<T, ForeignServer>) {
+    RemoveFromResolution<ResolveType::ForeignServer>(
+      parent_id, object->GetName(), maybe_not_found);
+  } else if constexpr (std::is_same_v<T, UserMapping>) {
+    RemoveFromResolution<ResolveType::UserMapping>(parent_id, object->GetName(),
+                                                   maybe_not_found);
   } else if constexpr (std::is_same_v<T, PgSqlType>) {
     RemoveFromResolution<ResolveType::Type>(parent_id, object->GetName(),
                                             maybe_not_found);
@@ -757,6 +779,14 @@ void Snapshot::AddDependencies(ObjectId parent_id, const Object& obj) {
     case ObjectType::Tokenizer:
       GetDependencyForWrite<SchemaDependency>(parent_id)->tokenizers.insert(id);
       break;
+    case ObjectType::ForeignServer:
+      GetDependencyForWrite<SchemaDependency>(parent_id)
+        ->foreign_servers.insert(id);
+      break;
+    case ObjectType::UserMapping:
+      GetDependencyForWrite<SchemaDependency>(parent_id)->user_mappings.insert(
+        id);
+      break;
     case ObjectType::Table: {
       GetDependencyForWrite<SchemaDependency>(parent_id)->tables.insert(id);
       const auto& table = basics::downCast<Table>(obj);
@@ -1047,6 +1077,34 @@ std::vector<std::shared_ptr<Tokenizer>> Snapshot::GetTokenizers(
     .value_or(std::vector<std::shared_ptr<Tokenizer>>{});
 }
 
+std::vector<std::shared_ptr<ForeignServer>> Snapshot::GetForeignServers(
+  ObjectId db_id, std::string_view schema) const {
+  return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
+    .transform([&](ObjectId schema_id) {
+      return _resolution_table.GetForeignServerIds(schema_id) |
+             std::views::transform(
+               [&](ObjectId server_id) -> std::shared_ptr<ForeignServer> {
+                 return GetObject<ForeignServer>(server_id);
+               }) |
+             std::ranges::to<std::vector>();
+    })
+    .value_or(std::vector<std::shared_ptr<ForeignServer>>{});
+}
+
+std::vector<std::shared_ptr<UserMapping>> Snapshot::GetUserMappings(
+  ObjectId db_id, std::string_view schema) const {
+  return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
+    .transform([&](ObjectId schema_id) {
+      return _resolution_table.GetUserMappingIds(schema_id) |
+             std::views::transform(
+               [&](ObjectId mapping_id) -> std::shared_ptr<UserMapping> {
+                 return GetObject<UserMapping>(mapping_id);
+               }) |
+             std::ranges::to<std::vector>();
+    })
+    .value_or(std::vector<std::shared_ptr<UserMapping>>{});
+}
+
 std::vector<std::shared_ptr<PgSqlType>> Snapshot::GetTypes(
   ObjectId db_id, std::string_view schema) const {
   return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
@@ -1200,6 +1258,36 @@ std::shared_ptr<Tokenizer> Snapshot::GetTokenizer(const AccessContext& ax,
     }
   }
   return EnforceRead(ax, std::move(tok));
+}
+
+std::shared_ptr<ForeignServer> Snapshot::GetForeignServer(
+  ObjectId db_id, std::string_view schema, std::string_view name) const {
+  auto schema_id =
+    _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema);
+  if (!schema_id) {
+    return nullptr;
+  }
+  auto id = _resolution_table.ResolveObject<ResolveType::ForeignServer>(
+    *schema_id, name);
+  if (!id) {
+    return nullptr;
+  }
+  return GetObject<ForeignServer>(*id);
+}
+
+std::shared_ptr<UserMapping> Snapshot::GetUserMapping(
+  ObjectId db_id, std::string_view schema, std::string_view name) const {
+  auto schema_id =
+    _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema);
+  if (!schema_id) {
+    return nullptr;
+  }
+  auto id =
+    _resolution_table.ResolveObject<ResolveType::UserMapping>(*schema_id, name);
+  if (!id) {
+    return nullptr;
+  }
+  return GetObject<UserMapping>(*id);
 }
 
 std::shared_ptr<Table> Snapshot::GetTable(const AccessContext& ax,
@@ -1600,6 +1688,14 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
         GetDependencyForWrite<SchemaDependency>(parent_id)->tokenizers.erase(
           id);
         break;
+      case ObjectType::ForeignServer:
+        GetDependencyForWrite<SchemaDependency>(parent_id)
+          ->foreign_servers.erase(id);
+        break;
+      case ObjectType::UserMapping:
+        GetDependencyForWrite<SchemaDependency>(parent_id)->user_mappings.erase(
+          id);
+        break;
       case ObjectType::Table: {
         GetDependencyForWrite<SchemaDependency>(parent_id)->tables.erase(id);
         const auto& t = basics::downCast<Table>(*obj);
@@ -1659,6 +1755,8 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
       drop_childs(schema_deps->tables);
       drop_childs(schema_deps->sequences);
       drop_childs(schema_deps->tokenizers);
+      drop_childs(schema_deps->foreign_servers);
+      drop_childs(schema_deps->user_mappings);
     } break;
     case ObjectType::Table:
     case ObjectType::PgSqlView: {
@@ -1697,6 +1795,8 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
     case ObjectType::PgSqlFunction:
     case ObjectType::PgSqlType:
     case ObjectType::Tokenizer:
+    case ObjectType::ForeignServer:
+    case ObjectType::UserMapping:
     case ObjectType::Sequence:
       break;
     case ObjectType::Invalid:
@@ -1803,6 +1903,23 @@ Result Catalog::RegisterTokenizer(ObjectId database_id, ObjectId schema_id,
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     return clone->RegisterObject(std::move(tokenizer), schema_id, false);
+  });
+}
+
+Result Catalog::RegisterForeignServer(
+  ObjectId database_id, ObjectId schema_id,
+  std::shared_ptr<ForeignServer> foreign_server) {
+  absl::MutexLock lock{&_mutex};
+  return Apply(_snapshot, _snapshot_mutex, [&](auto& clone) {
+    return clone->RegisterObject(std::move(foreign_server), schema_id, false);
+  });
+}
+
+Result Catalog::RegisterUserMapping(ObjectId database_id, ObjectId schema_id,
+                                    std::shared_ptr<UserMapping> user_mapping) {
+  absl::MutexLock lock{&_mutex};
+  return Apply(_snapshot, _snapshot_mutex, [&](auto& clone) {
+    return clone->RegisterObject(std::move(user_mapping), schema_id, false);
   });
 }
 
@@ -2736,6 +2853,61 @@ Result Catalog::CreateTokenizer(const AccessContext& ax, ObjectId database_id,
     },
     [&](auto& clone) {
       return clone->UnregisterObject(dict, *schema_id, true);
+    });
+}
+
+Result Catalog::CreateForeignServer(
+  ObjectId database_id, std::string_view schema,
+  std::shared_ptr<ForeignServer> foreign_server) {
+  absl::MutexLock lock{&_mutex};
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  foreign_server->SetParentId(*schema_id);
+
+  return Apply(
+    _snapshot, _snapshot_mutex,
+    [&](std::shared_ptr<Snapshot>& clone) {
+      auto r = clone->RegisterObject(foreign_server, *schema_id, false);
+      if (!r.ok()) {
+        return r;
+      }
+      duckdb::MemoryStream stream;
+      auto bytes = catalog::SerializeObject(*foreign_server, stream);
+      return _engine->CreateDefinition(*schema_id, ObjectType::ForeignServer,
+                                       foreign_server->GetId(), bytes);
+    },
+    [&](auto& clone) {
+      return clone->UnregisterObject(foreign_server, *schema_id, true);
+    });
+}
+
+Result Catalog::CreateUserMapping(ObjectId database_id, std::string_view schema,
+                                  std::shared_ptr<UserMapping> user_mapping) {
+  absl::MutexLock lock{&_mutex};
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  user_mapping->SetParentId(*schema_id);
+
+  return Apply(
+    _snapshot, _snapshot_mutex,
+    [&](std::shared_ptr<Snapshot>& clone) {
+      auto r = clone->RegisterObject(user_mapping, *schema_id, false);
+      if (!r.ok()) {
+        return r;
+      }
+      duckdb::MemoryStream stream;
+      auto bytes = catalog::SerializeObject(*user_mapping, stream);
+      return _engine->CreateDefinition(*schema_id, ObjectType::UserMapping,
+                                       user_mapping->GetId(), bytes);
+    },
+    [&](auto& clone) {
+      return clone->UnregisterObject(user_mapping, *schema_id, true);
     });
 }
 
@@ -4415,6 +4587,102 @@ Result Catalog::DropTokenizer(std::string_view database,
   });
 }
 
+Result Catalog::DropForeignServer(std::string_view database,
+                                  std::string_view schema,
+                                  std::string_view name, bool cascade) {
+  absl::MutexLock lock{&_mutex};
+
+  const auto database_id =
+    _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, database);
+  if (!database_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  const auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(*database_id, schema);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  const auto foreign_server_id =
+    _snapshot->GetObjectId<ResolveType::ForeignServer>(*schema_id, name);
+  if (!foreign_server_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
+  auto plan = _snapshot->ComputeDropPlan(*foreign_server_id);
+  if (!cascade && plan.IsCascade()) {
+    return Result{ERROR_BAD_PARAMETER,
+                  plan.FormatDependentsDetail(*_snapshot, "server", name)};
+  }
+
+  return Apply(
+    _snapshot, _snapshot_mutex, [&](std::shared_ptr<Snapshot>& clone) {
+      SDB_ASSERT(clone);
+      auto foreign_server = clone->GetObject<ForeignServer>(*foreign_server_id);
+      SDB_ASSERT(foreign_server);
+
+      auto wr = _engine->Write([&](auto& ctx) {
+        ctx.DropDefinition(*schema_id, ObjectType::ForeignServer,
+                           *foreign_server_id);
+        clone->CommitDropPlan(ctx, plan);
+      });
+      if (!wr.ok()) {
+        return wr;
+      }
+
+      clone->UnregisterObject(std::move(foreign_server), *schema_id);
+      clone->ApplyDropPlan(*database_id, plan);
+      return Result{};
+    });
+}
+
+Result Catalog::DropUserMapping(std::string_view database,
+                                std::string_view schema, std::string_view name,
+                                bool cascade) {
+  absl::MutexLock lock{&_mutex};
+
+  const auto database_id =
+    _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, database);
+  if (!database_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  const auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(*database_id, schema);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  const auto user_mapping_id =
+    _snapshot->GetObjectId<ResolveType::UserMapping>(*schema_id, name);
+  if (!user_mapping_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
+  auto plan = _snapshot->ComputeDropPlan(*user_mapping_id);
+  if (!cascade && plan.IsCascade()) {
+    return Result{ERROR_BAD_PARAMETER, plan.FormatDependentsDetail(
+                                         *_snapshot, "user mapping", name)};
+  }
+
+  return Apply(
+    _snapshot, _snapshot_mutex, [&](std::shared_ptr<Snapshot>& clone) {
+      SDB_ASSERT(clone);
+      auto user_mapping = clone->GetObject<UserMapping>(*user_mapping_id);
+      SDB_ASSERT(user_mapping);
+
+      auto wr = _engine->Write([&](auto& ctx) {
+        ctx.DropDefinition(*schema_id, ObjectType::UserMapping,
+                           *user_mapping_id);
+        clone->CommitDropPlan(ctx, plan);
+      });
+      if (!wr.ok()) {
+        return wr;
+      }
+
+      clone->UnregisterObject(std::move(user_mapping), *schema_id);
+      clone->ApplyDropPlan(*database_id, plan);
+      return Result{};
+    });
+}
+
 Result Catalog::FinalizeLoad() {
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) -> Result {
@@ -4566,6 +4834,8 @@ class OpenDatabase {
   Result RegisterSchemas(ObjectId database_id);
   Result RegisterFunctions(ObjectId database_id, ObjectId schema_id);
   Result RegisterTokenizers(ObjectId database_id, ObjectId schema_id);
+  Result RegisterForeignServers(ObjectId database_id, ObjectId schema_id);
+  Result RegisterUserMappings(ObjectId database_id, ObjectId schema_id);
   Result RegisterViews(ObjectId database_id, ObjectId schema_id);
   // Sequences load in two passes: standalone before tables/views (so refs
   // to them resolve at the referrer's own registration), owned after
@@ -4719,6 +4989,44 @@ Result OpenDatabase::RegisterTokenizers(ObjectId db_id, ObjectId schema_id) {
         return Result{ERROR_INTERNAL, "Failed to read tokenizer definition"};
       }
       return _catalog.RegisterTokenizer(db_id, schema_id, std::move(tokenizer));
+    });
+}
+
+Result OpenDatabase::RegisterForeignServers(ObjectId db_id,
+                                            ObjectId schema_id) {
+  return GetCatalogStore().VisitBoot(
+    schema_id, ObjectType::ForeignServer,
+    [&](CatalogStore::Key key, std::string_view bytes) -> Result {
+      auto foreign_server = catalog::DeserializeObject<ForeignServer>(
+        bytes, {
+                 .id = key.id,
+                 .database_id = db_id,
+                 .schema_id = schema_id,
+               });
+      if (!foreign_server) {
+        return Result{ERROR_INTERNAL,
+                      "Failed to read foreign server definition"};
+      }
+      return _catalog.RegisterForeignServer(db_id, schema_id,
+                                            std::move(foreign_server));
+    });
+}
+
+Result OpenDatabase::RegisterUserMappings(ObjectId db_id, ObjectId schema_id) {
+  return GetCatalogStore().VisitBoot(
+    schema_id, ObjectType::UserMapping,
+    [&](CatalogStore::Key key, std::string_view bytes) -> Result {
+      auto user_mapping =
+        catalog::DeserializeObject<UserMapping>(bytes, {
+                                                         .id = key.id,
+                                                         .database_id = db_id,
+                                                         .schema_id = schema_id,
+                                                       });
+      if (!user_mapping) {
+        return Result{ERROR_INTERNAL, "Failed to read user mapping definition"};
+      }
+      return _catalog.RegisterUserMapping(db_id, schema_id,
+                                          std::move(user_mapping));
     });
 }
 
@@ -4947,6 +5255,12 @@ Result OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
   if (auto r = RegisterTokenizers(db_id, schema_id); !r.ok()) {
     return r;
   }
+  if (auto r = RegisterForeignServers(db_id, schema_id); !r.ok()) {
+    return r;
+  }
+  if (auto r = RegisterUserMappings(db_id, schema_id); !r.ok()) {
+    return r;
+  }
   if (auto r = RegisterTypes(db_id, schema_id); !r.ok()) {
     return r;
   }
@@ -5040,6 +5354,34 @@ void InitCatalog() {
       if (result->HasError()) {
         SDB_FATAL(GENERAL, "Failed to attach database ", db->GetName(), ": ",
                   result->GetError());
+      }
+    }
+  }
+
+  // Re-attach persisted foreign servers (external DBs: clickhouse/postgres) so
+  // they survive restart, the same way the databases above do. Unlike a local
+  // database, a remote being unreachable must NOT abort startup -- warn and
+  // continue; the server stays defined and a later access will surface it.
+  {
+    auto snapshot = GetCatalog().GetCatalogSnapshot();
+    auto conn = sdb::DuckDBEngine::Instance().CreateConnection();
+    for (auto& db : snapshot->GetDatabases()) {
+      for (auto& schema : snapshot->GetSchemas(db->GetId())) {
+        for (auto& server :
+             snapshot->GetForeignServers(db->GetId(), schema->GetName())) {
+          auto pub = snapshot->GetUserMapping(
+            db->GetId(), schema->GetName(),
+            MakeUserMappingName("public", server->GetName()));
+          auto query = BuildForeignServerAttachSql(*server, pub.get());
+          if (query.empty()) {
+            continue;
+          }
+          auto result = conn->Query(query);
+          if (result->HasError()) {
+            SDB_WARN(GENERAL, "Failed to re-attach foreign server ",
+                     server->GetName(), ": ", result->GetError());
+          }
+        }
       }
     }
   }

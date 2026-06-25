@@ -1,0 +1,252 @@
+control substitution on
+
+# INSERT -> SELECT type round-trips through the ClickHouse write path. For each
+# DuckDB type the connector can map to a ClickHouse column (see
+# LogicalTypeToClickHouseType), this creates a fresh CH table with that column
+# type plus a BIGINT PRIMARY KEY, INSERTs representative values (negatives, zero,
+# min/max-ish, empty/unicode strings, a NULL through a Nullable column) and
+# asserts they come back unchanged.
+#
+# Notes baked into the expectations:
+#   * A non-PK column without NOT NULL becomes Nullable(...) in ClickHouse; PK /
+#     NOT NULL columns become the plain base type. The NULL round-trip therefore
+#     uses Nullable *numeric* columns -- the vendored clickhouse-cpp mis-decodes
+#     the Nullable(String) null bitmap against CH 24.8 (see attach_chscan), so
+#     VARCHAR round-trips are kept NOT NULL.
+#   * Complex / nested types (Array/Map/Tuple/UUID/Enum/LowCardinality) are out of
+#     scope: they cannot even be mapped to a CH column type, so CREATE TABLE
+#     rejects them (one negative scenario pins that boundary).
+#
+# Unique attach name (chwt) + table prefix (wt_): tests run in parallel against
+# one serened + one ClickHouse.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chwt (TYPE clickhouse);
+
+# ---------------------------------------------------------------------
+# Signed integers: TINYINT/SMALLINT/INTEGER/BIGINT, incl. min/max, zero, -1.
+# ---------------------------------------------------------------------
+statement ok
+CREATE TABLE chwt.default.wt_sint (id BIGINT PRIMARY KEY, v_tiny TINYINT NOT NULL, v_small SMALLINT NOT NULL, v_int INTEGER NOT NULL, v_big BIGINT NOT NULL);
+
+statement ok
+INSERT INTO chwt.default.wt_sint VALUES
+  (1, 127, 32767, 2147483647, 9223372036854775807),
+  (2, -128, -32768, -2147483648, -9223372036854775808),
+  (3, 0, 0, 0, 0),
+  (4, -1, -1, -1, -1);
+
+query
+SELECT id, v_tiny, v_small, v_int, v_big FROM chwt.default.wt_sint ORDER BY id;
+----
+id	v_tiny	v_small	v_int	v_big
+1	127	32767	2147483647	9223372036854775807
+2	-128	-32768	-2147483648	-9223372036854775808
+3	0	0	0	0
+4	-1	-1	-1	-1
+
+# ---------------------------------------------------------------------
+# Unsigned integers: UTINYINT/USMALLINT/UINTEGER/UBIGINT, incl. zero and max.
+# ---------------------------------------------------------------------
+statement ok
+CREATE TABLE chwt.default.wt_uint (id BIGINT PRIMARY KEY, v_utiny UTINYINT NOT NULL, v_usmall USMALLINT NOT NULL, v_uint UINTEGER NOT NULL, v_ubig UBIGINT NOT NULL);
+
+statement ok
+INSERT INTO chwt.default.wt_uint VALUES
+  (1, 0, 0, 0, 0),
+  (2, 255, 65535, 4294967295, 18446744073709551615),
+  (3, 42, 1500, 3000000, 9000000000);
+
+query
+SELECT id, v_utiny, v_usmall, v_uint, v_ubig FROM chwt.default.wt_uint ORDER BY id;
+----
+id	v_utiny	v_usmall	v_uint	v_ubig
+1	0	0	0	0
+2	255	65535	4294967295	18446744073709551615
+3	42	1500	3000000	9000000000
+
+# ---------------------------------------------------------------------
+# Floating point: FLOAT (single) + DOUBLE, incl. negative and zero.
+# Values chosen to be exactly representable so the text round-trips.
+# ---------------------------------------------------------------------
+statement ok
+CREATE TABLE chwt.default.wt_float (id BIGINT PRIMARY KEY, v_float FLOAT NOT NULL, v_double DOUBLE NOT NULL);
+
+statement ok
+INSERT INTO chwt.default.wt_float VALUES
+  (1, 1.5, 3.141592653589793),
+  (2, -2.25, -0.001),
+  (3, 0, 0);
+
+query
+SELECT id, v_float, v_double FROM chwt.default.wt_float ORDER BY id;
+----
+id	v_float	v_double
+1	1.5	3.141592653589793
+2	-2.25	-0.001
+3	0	0
+
+# ---------------------------------------------------------------------
+# Boolean: true/false round-trip. The ClickHouse connector surfaces Bool back
+# through serened as 1/0 on this path.
+# ---------------------------------------------------------------------
+statement ok
+CREATE TABLE chwt.default.wt_bool (id BIGINT PRIMARY KEY, v_flag BOOLEAN NOT NULL);
+
+statement ok
+INSERT INTO chwt.default.wt_bool VALUES (1, true), (2, false);
+
+query
+SELECT id, v_flag FROM chwt.default.wt_bool ORDER BY id;
+----
+id	v_flag
+1	1
+2	0
+
+# ---------------------------------------------------------------------
+# VARCHAR (NOT NULL -> plain String): a plain handle, the empty string, an
+# embedded single quote, and unicode.
+# ---------------------------------------------------------------------
+statement ok
+CREATE TABLE chwt.default.wt_text (id BIGINT PRIMARY KEY, v_str VARCHAR NOT NULL);
+
+statement ok
+INSERT INTO chwt.default.wt_text VALUES
+  (1, 'vedernikoff'),
+  (2, ''),
+  (3, 'kostya ''the pudge'' babsky'),
+  (4, 'клик-клак ❤');
+
+query
+SELECT id, v_str FROM chwt.default.wt_text ORDER BY id;
+----
+id	v_str
+1	vedernikoff
+2	(empty)
+3	kostya 'the pudge' babsky
+4	клик-клак ❤
+
+# ---------------------------------------------------------------------
+# DATE (mapped to Date32): a few calendar dates.
+# ---------------------------------------------------------------------
+statement ok
+CREATE TABLE chwt.default.wt_date (id BIGINT PRIMARY KEY, v_date DATE NOT NULL);
+
+statement ok
+INSERT INTO chwt.default.wt_date VALUES
+  (1, DATE '2021-01-01'),
+  (2, DATE '1999-12-31'),
+  (3, DATE '2026-06-19');
+
+query
+SELECT id, v_date FROM chwt.default.wt_date ORDER BY id;
+----
+id	v_date
+1	2021-01-01
+2	1999-12-31
+3	2026-06-19
+
+# ---------------------------------------------------------------------
+# TIMESTAMP (mapped to DateTime64(6)): second precision and a microsecond
+# fraction, both retained on the round-trip.
+# ---------------------------------------------------------------------
+statement ok
+CREATE TABLE chwt.default.wt_ts (id BIGINT PRIMARY KEY, v_ts TIMESTAMP NOT NULL);
+
+statement ok
+INSERT INTO chwt.default.wt_ts VALUES
+  (1, TIMESTAMP '2021-01-01 12:00:00'),
+  (2, TIMESTAMP '2022-12-31 23:59:59.123456'),
+  (3, TIMESTAMP '2026-06-19 08:30:00');
+
+query
+SELECT id, v_ts FROM chwt.default.wt_ts ORDER BY id;
+----
+id	v_ts
+1	2021-01-01 12:00:00
+2	2022-12-31 23:59:59.123456
+3	2026-06-19 08:30:00
+
+# ---------------------------------------------------------------------
+# DECIMAL(10,2): positive, negative, zero (renders with scale), and the
+# largest value the precision allows.
+# ---------------------------------------------------------------------
+statement ok
+CREATE TABLE chwt.default.wt_dec (id BIGINT PRIMARY KEY, v_dec DECIMAL(10,2) NOT NULL);
+
+statement ok
+INSERT INTO chwt.default.wt_dec VALUES
+  (1, 9.99),
+  (2, -1234.56),
+  (3, 0),
+  (4, 99999999.99);
+
+query
+SELECT id, v_dec FROM chwt.default.wt_dec ORDER BY id;
+----
+id	v_dec
+1	9.99
+2	-1234.56
+3	0.00
+4	99999999.99
+
+# ---------------------------------------------------------------------
+# NULL round-trip through Nullable *numeric* columns (INTEGER + DOUBLE left
+# nullable -> Nullable(Int32) / Nullable(Float64)): a genuine NULL on row 2.
+# ---------------------------------------------------------------------
+statement ok
+CREATE TABLE chwt.default.wt_nullable (id BIGINT PRIMARY KEY, v_int INTEGER, v_dbl DOUBLE);
+
+statement ok
+INSERT INTO chwt.default.wt_nullable VALUES
+  (1, 100, 1.5),
+  (2, NULL, NULL),
+  (3, -7, -2.5);
+
+query
+SELECT id, v_int, v_dbl FROM chwt.default.wt_nullable ORDER BY id;
+----
+id	v_int	v_dbl
+1	100	1.5
+2	NULL	NULL
+3	-7	-2.5
+
+# ---------------------------------------------------------------------
+# Out-of-scope boundary: a complex/nested column type cannot be mapped to a
+# ClickHouse column, so CREATE TABLE rejects it (no INSERT is attempted).
+# ---------------------------------------------------------------------
+statement error
+CREATE TABLE chwt.default.wt_complex (id BIGINT PRIMARY KEY, tags INTEGER[]);
+
+# ---------------------------------------------------------------------
+# Cleanup.
+# ---------------------------------------------------------------------
+statement ok
+DROP TABLE chwt.default.wt_sint;
+
+statement ok
+DROP TABLE chwt.default.wt_uint;
+
+statement ok
+DROP TABLE chwt.default.wt_float;
+
+statement ok
+DROP TABLE chwt.default.wt_bool;
+
+statement ok
+DROP TABLE chwt.default.wt_text;
+
+statement ok
+DROP TABLE chwt.default.wt_date;
+
+statement ok
+DROP TABLE chwt.default.wt_ts;
+
+statement ok
+DROP TABLE chwt.default.wt_dec;
+
+statement ok
+DROP TABLE chwt.default.wt_nullable;
+
+statement ok
+DETACH chwt;

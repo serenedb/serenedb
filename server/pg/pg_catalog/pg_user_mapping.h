@@ -38,4 +38,7 @@ struct PgUserMapping {
 };
 // NOLINTEND
 
+template<>
+catalog::MaterializedData SystemTableSnapshot<PgUserMapping>::GetTableData();
+
 }  // namespace sdb::pg

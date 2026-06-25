@@ -1,0 +1,82 @@
+control substitution on
+
+# Foreign Data Wrapper DDL over the ClickHouse connector: CREATE SERVER +
+# CREATE USER MAPPING. Unlike ATTACH (in-memory, lost on restart), a SERVER is
+# persisted catalog DDL that survives restart and auto-attaches on boot.
+# Restart-survival is covered by recovery/catalog_foreign_server_chscan.test_slow
+# (it crashes serened and asserts the server + mapping persist and boot replay
+# re-attaches to the same ClickHouse container). A PUBLIC user mapping's options
+# override the server's for the live (instance-global) attach; per-user mappings
+# are stored and visible but not enforced at runtime (Phase 2a). No WITH/ATTACH
+# credentials in SQL -- it's all metadata.
+#
+# Unique server name (chsrv): tests run in parallel against one serened and the
+# ATTACH alias is global, so a shared name would collide with other tests.
+
+statement ok
+CREATE SERVER chsrv FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+
+statement ok
+CREATE USER MAPPING FOR PUBLIC SERVER chsrv OPTIONS (user 'default');
+
+# Query the remote table through the named server.
+query
+SELECT id, val FROM chsrv.chtest.vedernikoff ORDER BY id;
+----
+id	val
+1	clickclack babsky
+2	deadinside kostya
+3	vedernikoff pudge
+4	pudge goes mid
+5	vedernikoff kostya
+6	anchin reads manga
+
+# The server is visible in pg_foreign_server.
+query
+SELECT srvname FROM pg_foreign_server WHERE srvname = 'chsrv';
+----
+srvname
+chsrv
+
+# A per-user mapping is stored (visible, not enforced at runtime in 2a). The
+# join confirms pg_user_mapping.umserver resolves to the server's oid.
+statement ok
+CREATE USER MAPPING FOR alice SERVER chsrv OPTIONS (user 'alice_ch', password 'secret');
+
+query
+SELECT count(*) FROM pg_user_mapping um
+JOIN pg_foreign_server s ON um.umserver = s.oid
+WHERE s.srvname = 'chsrv';
+----
+count
+2
+
+# IF NOT EXISTS is a no-op on an existing server.
+statement ok
+CREATE SERVER IF NOT EXISTS chsrv FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}');
+
+statement ok
+DROP USER MAPPING FOR alice SERVER chsrv;
+
+statement ok
+DROP USER MAPPING FOR PUBLIC SERVER chsrv;
+
+statement ok
+DROP SERVER chsrv;
+
+# Gone from the catalog after drop.
+query
+SELECT count(*) FROM pg_foreign_server WHERE srvname = 'chsrv';
+----
+count
+0
+
+# And the attachment is detached (querying the dropped server errors).
+statement error
+SELECT id FROM chsrv.chtest.vedernikoff LIMIT 1;
+
+# DROP SERVER IF EXISTS on a missing server is a no-op.
+statement ok
+DROP SERVER IF EXISTS chsrv;

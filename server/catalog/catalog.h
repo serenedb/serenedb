@@ -37,6 +37,7 @@
 #include "catalog/column_expr.h"
 #include "catalog/database.h"
 #include "catalog/drop_task.h"
+#include "catalog/foreign_server.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/index.h"
@@ -51,6 +52,7 @@
 #include "catalog/table_options.h"
 #include "catalog/tokenizer.h"
 #include "catalog/types.h"
+#include "catalog/user_mapping.h"
 #include "catalog/user_type.h"
 #include "catalog/view.h"
 #include "connector/duckdb_entry_cache.h"
@@ -97,6 +99,10 @@ constexpr ObjectType GetObjectType() noexcept {
     return ObjectType::InvertedIndex;
   } else if constexpr (std::is_same_v<T, Tokenizer>) {
     return ObjectType::Tokenizer;
+  } else if constexpr (std::is_same_v<T, ForeignServer>) {
+    return ObjectType::ForeignServer;
+  } else if constexpr (std::is_same_v<T, UserMapping>) {
+    return ObjectType::UserMapping;
   } else if constexpr (std::is_same_v<T, Sequence>) {
     return ObjectType::Sequence;
   } else if constexpr (std::is_same_v<T, Role>) {
@@ -161,6 +167,10 @@ struct Snapshot {
     ObjectId database, std::string_view schema) const;
   std::vector<std::shared_ptr<Tokenizer>> GetTokenizers(
     ObjectId database, std::string_view schema) const;
+  std::vector<std::shared_ptr<ForeignServer>> GetForeignServers(
+    ObjectId database, std::string_view schema) const;
+  std::vector<std::shared_ptr<UserMapping>> GetUserMappings(
+    ObjectId database, std::string_view schema) const;
   std::vector<std::shared_ptr<PgSqlType>> GetTypes(
     ObjectId database, std::string_view schema) const;
 
@@ -194,6 +204,12 @@ struct Snapshot {
                                           ObjectId database,
                                           std::string_view schema,
                                           std::string_view name) const;
+  std::shared_ptr<ForeignServer> GetForeignServer(ObjectId database,
+                                                  std::string_view schema,
+                                                  std::string_view name) const;
+  std::shared_ptr<UserMapping> GetUserMapping(ObjectId database,
+                                              std::string_view schema,
+                                              std::string_view name) const;
   std::shared_ptr<PgSqlType> GetType(const AccessContext& ax, ObjectId database,
                                      std::string_view schema,
                                      std::string_view name) const;
@@ -413,6 +429,10 @@ class Catalog final {
                           std::shared_ptr<PgSqlFunction> function);
   Result RegisterTokenizer(ObjectId database_id, ObjectId schema_id,
                            std::shared_ptr<Tokenizer> tokenizer);
+  Result RegisterForeignServer(ObjectId database_id, ObjectId schema_id,
+                               std::shared_ptr<ForeignServer> foreign_server);
+  Result RegisterUserMapping(ObjectId database_id, ObjectId schema_id,
+                             std::shared_ptr<UserMapping> user_mapping);
   Result RegisterType(ObjectId database_id, ObjectId schema_id,
                       std::shared_ptr<PgSqlType> type);
   Result RegisterTable(ObjectId database_id, ObjectId schema_id,
@@ -453,6 +473,10 @@ class Catalog final {
   Result CreateTokenizer(const AccessContext& ax, ObjectId database_id,
                          std::string_view schema,
                          std::shared_ptr<Tokenizer> dict);
+  Result CreateForeignServer(ObjectId database_id, std::string_view schema,
+                             std::shared_ptr<ForeignServer> foreign_server);
+  Result CreateUserMapping(ObjectId database_id, std::string_view schema,
+                           std::shared_ptr<UserMapping> user_mapping);
   Result CreateType(const AccessContext& ax, ObjectId database_id,
                     std::string_view schema, std::shared_ptr<PgSqlType> type);
 
@@ -514,6 +538,10 @@ class Catalog final {
                       bool cascade);
   Result DropTokenizer(std::string_view database, std::string_view schema,
                        std::string_view name, bool cascade);
+  Result DropForeignServer(std::string_view database, std::string_view schema,
+                           std::string_view name, bool cascade);
+  Result DropUserMapping(std::string_view database, std::string_view schema,
+                         std::string_view name, bool cascade);
   Result DropTable(const AccessContext& ax, std::string_view database,
                    std::string_view schema, std::string_view name,
                    bool cascade);

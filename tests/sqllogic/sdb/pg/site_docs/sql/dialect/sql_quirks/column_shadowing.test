@@ -1,0 +1,12 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE tbl AS SELECT 1 AS a;
+
+query
+SELECT a FROM (SELECT *, 2 AS a FROM tbl);
+----
+a
+1

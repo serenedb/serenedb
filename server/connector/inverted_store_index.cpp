@@ -21,7 +21,6 @@
 #include "connector/inverted_store_index.h"
 
 #include <absl/cleanup/cleanup.h>
-#include <absl/container/flat_hash_set.h>
 
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/main/connection.hpp>
@@ -128,6 +127,10 @@ struct InvertedStoreIndex::ReplaySession {
       trx{storage->GetTransaction()},
       delete_writer{trx} {
     expr_conn.BeginTransaction();
+    // Replay encodes recovered rows against this replay session's snapshot
+    // index (the index IS the per-column options); `index` co-owns the catalog
+    // object so the segment writer can pin it until flush.
+    trx.SetFieldOptions(index);
   }
 };
 
@@ -198,13 +201,9 @@ void InvertedStoreIndex::ReplayAppend(duckdb::DataChunk& chunk,
     // The replay chunk has one slot per non-generated-PK column but only the
     // index's referenced columns are populated. Record exactly those positions.
     auto chunk_column_ids = TableChunkColumnIds(*session.table);
-    absl::flat_hash_set<catalog::Column::Id> referenced;
-    for (auto id : inverted.GetReferencedColumnIds()) {
-      referenced.insert(id);
-    }
     for (duckdb::idx_t pos = 0;
          pos < chunk.ColumnCount() && pos < chunk_column_ids.size(); ++pos) {
-      if (!referenced.contains(chunk_column_ids[pos])) {
+      if (!inverted.ReferencesColumn(chunk_column_ids[pos])) {
         continue;
       }
       session.ref_positions.push_back(pos);
@@ -212,7 +211,7 @@ void InvertedStoreIndex::ReplayAppend(duckdb::DataChunk& chunk,
     }
     session.insert_writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
       session.trx, MakeTokenizerProvider(session.snapshot, inverted),
-      inverted.GetColumnIds(), MakeEntryInfoProvider(inverted),
+      inverted.GetColumns(), MakeEntryInfoProvider(inverted),
       MakeIndexedExpressions(inverted, *session.expr_conn.context));
   }
 
@@ -228,16 +227,14 @@ void InvertedStoreIndex::ReplayAppend(duckdb::DataChunk& chunk,
   }
 
   auto& ins = *session.insert_writer;
-  const auto& columns = session.table->Columns();
   ins.Init(count, chunk);
   for (duckdb::idx_t k = 0; k < session.ref_positions.size(); ++k) {
     auto col_id = session.ref_col_ids[k];
-    auto it = std::ranges::find_if(
-      columns, [&](const auto& c) { return c.GetId() == col_id; });
-    if (it == columns.end()) {
+    const auto* col = session.table->ColumnById(col_id);
+    if (!col) {
       continue;
     }
-    const ColumnDescriptor desc{col_id, it->type};
+    const ColumnDescriptor desc{col_id, col->type};
     ins.SwitchColumn(desc, chunk.data[session.ref_positions[k]], key_views,
                      count);
   }
@@ -373,12 +370,11 @@ duckdb::ErrorData InvertedStoreIndex::AppendRows(
   for (duckdb::idx_t pos = 0;
        pos < chunk.ColumnCount() && pos < chunk_column_ids.size(); ++pos) {
     auto col_id = chunk_column_ids[pos];
-    auto it = std::ranges::find_if(
-      table->Columns(), [&](const auto& c) { return c.GetId() == col_id; });
-    if (it == table->Columns().end()) {
+    const auto* col = table->ColumnById(col_id);
+    if (!col) {
       continue;
     }
-    const ColumnDescriptor desc{col_id, it->type};
+    const ColumnDescriptor desc{col_id, col->type};
     writer->SwitchColumn(desc, chunk.data[pos], key_views, count);
   }
   if (auto indexed_exprs = writer->IndexedExpressions();

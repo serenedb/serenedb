@@ -181,7 +181,7 @@ class Object {
   ObjectId GetParentId() const noexcept { return _parent_id; }
   auto GetAcl() const noexcept { return std::span{_perm.acl}; }
   ObjectType GetType() const noexcept { return _type; }
-  std::string_view GetName() const noexcept { return _name; }
+  const auto& GetName() const noexcept { return _name; }
   ObjectId GetId() const noexcept { return _id; }
 
   ObjectId GetOwner() const noexcept { return _perm.owner; }

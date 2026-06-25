@@ -26,6 +26,7 @@
 #include <absl/container/flat_hash_map.h>
 
 #include <deque>
+#include <memory>
 #include <vector>
 
 #include "basics/memory.hpp"
@@ -36,6 +37,7 @@
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/index/burst_trie.hpp"
+#include "iresearch/index/column_info.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/iterators.hpp"
@@ -128,11 +130,12 @@ class FieldsData : util::Noncopyable {
 
   FieldsData(IResourceManager& rm, IndexFeatures scorers_features);
 
-  void SetColWriter(
-    ColWriter* w,
-    const NormColumnOptionsProvider* norm_column_options) noexcept {
-    _col_writer = w;
-    _norm_column_options = norm_column_options;
+  void SetColWriter(ColWriter* w) noexcept { _col_writer = w; }
+
+  // Set on open, re-pointed on an equal resume (see
+  // ColWriter::SetFieldOptions).
+  void SetFieldOptions(const IndexFieldOptions* field_options) noexcept {
+    _field_options = field_options;
   }
 
   FieldData* emplace(field_id id, IndexFeatures index_features);
@@ -155,7 +158,7 @@ class FieldsData : util::Noncopyable {
   int_block_pool::inserter _int_writer;
   IndexFeatures _scorers_features;
   ColWriter* _col_writer = nullptr;
-  const NormColumnOptionsProvider* _norm_column_options = nullptr;
+  const IndexFieldOptions* _field_options = nullptr;
 };
 
 }  // namespace irs

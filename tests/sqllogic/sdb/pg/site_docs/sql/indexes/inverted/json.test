@@ -1,0 +1,250 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY logmsg (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false
+);
+
+statement ok
+CREATE TABLE logs (
+    id INTEGER PRIMARY KEY,
+    doc VARIANT
+);
+
+statement ok
+-- Parse JSON text into a shredded VARIANT with the ::JSON::VARIANT cast
+INSERT INTO logs VALUES
+    (1, '{"host": "web-01", "msg": "disk error"}'::JSON::VARIANT),
+    (2, '{"host": "web-02", "msg": "all good"}'::JSON::VARIANT);
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX logs_idx ON logs
+    USING inverted ((doc['msg']::VARCHAR) logmsg);
+
+query
+SELECT id, doc['host']::VARCHAR AS host
+FROM logs_idx
+WHERE (doc['msg']::VARCHAR) @@ 'error'
+ORDER BY id;
+----
+id	host
+1	web-01
+
+# DOCS_TEST: example_002
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY jlow (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false
+);
+
+statement ok
+CREATE TABLE tickets (
+    id INTEGER PRIMARY KEY,
+    doc VARIANT
+);
+
+statement ok
+INSERT INTO tickets VALUES
+    (1, '{"title": "Disk Error", "priority": 5, "tags": ["ops", "urgent"]}'::JSON::VARIANT),
+    (2, '{"title": "All Good", "priority": 1, "tags": ["ops"]}'::JSON::VARIANT);
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX tickets_idx ON tickets
+    USING inverted (
+        id,
+        (doc['title']::VARCHAR) jlow,
+        (doc['priority']::INTEGER),
+        (doc['tags']::VARCHAR[]) jlow
+    );
+
+query
+SELECT id, doc['title']::VARCHAR AS title
+FROM tickets_idx
+WHERE (doc['title']::VARCHAR) @@ 'error'
+  AND (doc['priority']::INTEGER) @@ ts_ge(3)
+  AND (doc['tags']::VARCHAR[]) @@ 'urgent'
+ORDER BY id;
+----
+id	title
+1	Disk Error
+
+# DOCS_TEST: example_003
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE documents (
+    id INTEGER PRIMARY KEY,
+    body TEXT,
+    payload VARIANT
+);
+
+statement ok
+INSERT INTO documents VALUES
+    (1, 'alpha cat', '{"views": 42}'::JSON::VARIANT),
+    (2, 'beta dog', '{"views": 7}'::JSON::VARIANT);
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX documents_idx ON documents
+    USING inverted (id, body en) INCLUDE (payload);
+
+query
+SELECT id, payload FROM documents_idx WHERE body @@ 'cat' ORDER BY id;
+----
+id	payload
+1	{"views":42}
+
+# DOCS_TEST: example_004
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY kw (template = 'keyword');
+
+statement ok
+CREATE TABLE events (
+    id INTEGER PRIMARY KEY,
+    doc JSON
+);
+
+statement ok
+INSERT INTO events VALUES
+    (1, '{"host": "web-01"}'),
+    (2, '{"host": "web-02"}');
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX events_idx ON events
+    USING inverted (id, (doc ->> 'host') kw);
+
+query
+SELECT id, doc ->> 'host' AS host FROM events_idx WHERE doc ->> 'host' @@ 'web-02' ORDER BY id;
+----
+id	host
+2	web-02
+
+# DOCS_TEST: example_005
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY jtext (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false
+);
+
+statement ok
+CREATE TABLE events_json (
+    id INTEGER PRIMARY KEY,
+    doc JSON
+);
+
+statement ok
+INSERT INTO events_json VALUES
+    (1, '{"title": "Disk Error", "priority": 5}'),
+    (2, '{"title": "All Good", "priority": 1}');
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX events_json_idx ON events_json
+    USING inverted (
+        id,
+        ((doc::VARIANT)['title']::VARCHAR) jtext,
+        ((doc::VARIANT)['priority']::INTEGER)
+    );
+
+query
+SELECT id, (doc::VARIANT)['title']::VARCHAR AS title
+FROM events_json_idx
+WHERE ((doc::VARIANT)['title']::VARCHAR) @@ 'error'
+  AND ((doc::VARIANT)['priority']::INTEGER) @@ ts_ge(3)
+ORDER BY id;
+----
+id	title
+1	Disk Error
+
+# DOCS_TEST: example_006
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY cat_dict (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false
+);
+
+statement ok
+CREATE TABLE catalog (
+    id INTEGER PRIMARY KEY,
+    doc VARIANT
+);
+
+statement ok
+INSERT INTO catalog VALUES
+    (1, '{"name": "Laptop", "attrs": {"brand": "Acme"}, "tags": ["sale", "new"]}'::JSON::VARIANT),
+    (2, '{"name": "Mouse", "attrs": {"brand": "Globex"}, "tags": ["new"]}'::JSON::VARIANT),
+    (3, '{"name": "Cable", "attrs": {"brand": "Acme"}, "tags": ["clearance", "sale"]}'::JSON::VARIANT);
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX catalog_idx ON catalog
+    USING inverted (
+        id,
+        (doc['attrs']['brand']::VARCHAR) cat_dict,
+        (doc['tags']::VARCHAR[]) cat_dict
+    );
+
+query
+SELECT id, doc['name']::VARCHAR AS name
+FROM catalog_idx
+WHERE (doc['attrs']['brand']::VARCHAR) @@ 'acme'
+ORDER BY id;
+----
+id	name
+1	Laptop
+3	Cable
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, doc['name']::VARCHAR AS name
+FROM catalog_idx
+WHERE (doc['tags']::VARCHAR[]) @@ 'sale'
+ORDER BY id;
+----
+id	name
+1	Laptop
+3	Cable
+
+query
+SELECT id, doc['name']::VARCHAR AS name
+FROM catalog_idx
+WHERE (doc['tags']::VARCHAR[]) @@ ts_all(['sale', 'new'])
+ORDER BY id;
+----
+id	name
+1	Laptop

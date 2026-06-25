@@ -33,7 +33,6 @@
 
 #include "basics/bit_utils.hpp"
 #include "basics/files.h"
-#include "basics/math_utils.hpp"
 #include "basics/serializer.h"
 #include "basics/simdjson_sink.h"
 #include "executor.h"
@@ -42,6 +41,7 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/bm25.hpp"
 #include "iresearch/search/term_filter.hpp"
+#include "search/filter_test_case_base.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -194,8 +194,15 @@ IteratorFactory QueryIterator(bench::Executor& executor,
         const irs::DirectoryReader& reader, const irs::SubReader& segment) {
         auto filter = executor.ParseFilter(query);
         SDB_ASSERT(filter);
-        auto prepared = filter->prepare({.index = reader});
-        return prepared->execute({.segment = segment});
+        tests::PreparedFilter prepared{*filter, reader};
+        size_t i = 0;
+        for (const auto& sub : reader) {
+          if (&sub == &segment) {
+            break;
+          }
+          ++i;
+        }
+        return prepared.Execute(i);
       },
   };
 }
@@ -779,16 +786,17 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
 
     std::map<irs::doc_id_t, irs::score_t> reference_scores;
 
-    for (auto& segment : reader) {
+    for (size_t segment_idx = 0; auto& segment : reader) {
       for (auto term_str : terms) {
-        auto filter = irs::ByTerm::prepare(
-          {.index = reader, .scorer = &scorer}, bench::kTextFieldId,
+        irs::ByTerm filter;
+        *filter.mutable_field_id() = bench::kTextFieldId;
+        filter.mutable_options()->term =
           irs::ViewCast<irs::byte_type>(irs::bytes_view{
             reinterpret_cast<const irs::byte_type*>(term_str.data()),
-            term_str.size()}));
-        ASSERT_TRUE(filter);
+            term_str.size()});
+        tests::PreparedFilter prepared{filter, reader, &scorer};
 
-        auto it = filter->execute({.segment = segment, .scorer = &scorer});
+        auto it = prepared.Execute(segment_idx);
         ASSERT_TRUE(it);
 
         irs::ColumnArgsFetcher fetcher;
@@ -808,21 +816,21 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
           reference_scores[doc] += s;
         }
       }
+      ++segment_idx;
     }
     ASSERT_GT(reference_scores.size(), 0u) << "No reference docs found";
 
     auto filter = gExecutor->ParseFilter(std::string{query});
     ASSERT_TRUE(filter);
 
-    auto prepared = filter->prepare({.index = reader, .scorer = &scorer});
-    ASSERT_TRUE(prepared);
+    tests::PreparedFilter prepared{*filter, reader, &scorer};
 
     // 1) Compare via advance + Score
     {
       std::map<irs::doc_id_t, irs::score_t> bd_scores;
-      for (auto& segment : reader) {
+      for (size_t i = 0; auto& segment : reader) {
         irs::ColumnArgsFetcher fetcher;
-        auto it = prepared->execute({.segment = segment, .scorer = &scorer});
+        auto it = prepared.Execute(i);
         auto score_func = it->PrepareScore({
           .scorer = &scorer,
           .segment = &segment,
@@ -836,6 +844,7 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
           irs::score_t s = score_func.Score();
           bd_scores[doc] = s;
         }
+        ++i;
       }
 
       EXPECT_EQ(bd_scores.size(), reference_scores.size())
@@ -845,9 +854,8 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
         auto it = bd_scores.find(doc);
         ASSERT_NE(it, bd_scores.end())
           << "advance: ref doc " << doc << " missing from BD";
-        EXPECT_TRUE(irs::math::ApproxEquals(it->second, ref_score))
-          << "advance: score mismatch doc " << doc << ": BD=" << it->second
-          << " ref=" << ref_score;
+        EXPECT_FLOAT_EQ(it->second, ref_score)
+          << "advance: score mismatch doc " << doc;
       }
     }
 
@@ -878,9 +886,8 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
       for (size_t i = 0; i < result_count; ++i) {
         EXPECT_EQ(hits[i].doc, ref_top[i].doc)
           << "Collect: rank " << i << " doc mismatch";
-        EXPECT_TRUE(irs::math::ApproxEquals(hits[i].score, ref_top[i].score))
-          << "Collect: rank " << i << " score mismatch doc " << hits[i].doc
-          << ": collect=" << hits[i].score << " ref=" << ref_top[i].score;
+        EXPECT_FLOAT_EQ(hits[i].score, ref_top[i].score)
+          << "Collect: rank " << i << " score mismatch doc " << hits[i].doc;
       }
     }
 
@@ -896,14 +903,9 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
 
       const size_t result_count = std::min<size_t>(kCount, ref_top.size());
 
-      // FP accumulation order differs between WAND and non-WAND paths,
-      // so allow a wider epsilon than the default single-ULP tolerance.
-      static constexpr float kEps = 1e-5f;
       for (size_t i = 0; i < result_count; ++i) {
-        EXPECT_TRUE(
-          irs::math::ApproxEquals(hits[i].score, ref_top[i].score, kEps))
-          << "WAND: rank " << i << " score mismatch doc " << hits[i].doc
-          << ": wand=" << hits[i].score << " ref=" << ref_top[i].score;
+        EXPECT_FLOAT_EQ(hits[i].score, ref_top[i].score)
+          << "WAND: rank " << i << " score mismatch doc " << hits[i].doc;
       }
     }
   }

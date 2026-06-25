@@ -1,0 +1,123 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY kw_dict(template = 'keyword');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ng_dict(template = 'ngram', mingram = 2,
+    maxgram = 3, preserveoriginal = false, frequency = true, position = true);
+
+
+# ============================================================================
+# BLOB scalar
+# ============================================================================
+
+statement ok
+CREATE TABLE m_b(pk INTEGER PRIMARY KEY, b BLOB);
+
+statement ok
+CREATE INDEX m_b_col_text_st  ON m_b USING inverted(pk, b kw_dict) INCLUDE (b);
+
+statement ok
+CREATE INDEX m_b_col_text_ns  ON m_b USING inverted(pk, b kw_dict);
+
+statement ok
+CREATE INDEX m_b_expr_text_ns ON m_b USING inverted(pk,
+    (decode(encode(b, 'hex'), 'hex')) kw_dict);
+
+statement ok
+INSERT INTO m_b VALUES
+    (1, '\x68656c6c6f'::BLOB),
+    (2, '\x776f726c64'::BLOB),
+    (3, '\xdeadbeef'::BLOB);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_b;
+
+query
+SELECT pk FROM m_b_col_text_st  WHERE b @@ ts_like('\xdeadbeef'::BLOB) ORDER BY pk;
+----
+pk
+3
+
+query
+SELECT pk FROM m_b_col_text_ns  WHERE b @@ ts_like('\xdeadbeef'::BLOB) ORDER BY pk;
+----
+pk
+3
+
+query
+SELECT pk FROM m_b_expr_text_ns
+WHERE decode(encode(b, 'hex'), 'hex') @@ ts_like('\xdeadbeef'::BLOB)
+ORDER BY pk;
+----
+pk
+3
+
+
+# ============================================================================
+# BLOB list / array (text), BLOB scalar ngram.
+# ============================================================================
+
+statement ok
+CREATE TABLE m_bla(pk INTEGER PRIMARY KEY, bs BLOB[], ba BLOB[3], b BLOB);
+
+statement ok
+CREATE INDEX m_bla_bs ON m_bla USING inverted(pk, bs kw_dict);
+
+statement ok
+CREATE INDEX m_bla_ba ON m_bla USING inverted(pk, ba kw_dict);
+
+statement ok
+CREATE INDEX m_bla_b_wild ON m_bla USING inverted(pk, b ng_dict);
+
+statement ok
+INSERT INTO m_bla VALUES
+    (1, ['hello'::BLOB, 'world'::BLOB],
+        ['aaa'::BLOB, 'bbb'::BLOB, 'ccc'::BLOB],
+        '\x68656c6c6f'::BLOB),
+    (2, ['deadbeef'::BLOB],
+        ['ddd'::BLOB, 'eee'::BLOB, 'fff'::BLOB],
+        '\x776f726c64'::BLOB);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_bla;
+
+query
+SELECT pk FROM m_bla_bs WHERE bs @@ ts_like('hello');
+----
+pk
+1
+
+query
+SELECT pk FROM m_bla_bs WHERE bs @@ ts_like('deadbeef');
+----
+pk
+2
+
+query
+SELECT pk FROM m_bla_ba WHERE ba @@ ts_like('eee');
+----
+pk
+2
+
+query
+SELECT pk FROM m_bla_b_wild WHERE b @@ ts_ngram('\x68656c'::BLOB, 0.5);
+----
+pk
+1
+
+
+# --- teardown ---------------------------------------------------------------
+
+statement ok
+DROP TABLE m_b;
+
+statement ok
+DROP TABLE m_bla;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY kw_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ng_dict;

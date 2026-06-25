@@ -32,11 +32,65 @@ if ! test -f "$WORKSPACE/docker.env"; then
 	touch "$WORKSPACE/docker.env"
 fi
 
+# Local sanitizer runs (run_in_docker.sh outside CI) skip the CI's
+# 01-ci-set-sanitizer-options step, so docker.env carries no *_OPTIONS and the
+# suppressions files are never loaded. If the built serened is a sanitizer binary
+# and the matching *_OPTIONS isn't already provided, append the same options CI
+# uses so a local run matches CI behaviour. Paths are the in-container ones
+# (/serenedb is the mounted WORKSPACE). LSan runs under ASan, so an ASan binary
+# also gets LSAN_OPTIONS.
+if test -x "$WORKSPACE/$BUILD_DIR/bin/serened"; then
+	sdb_syms=$(nm -D "$WORKSPACE/$BUILD_DIR/bin/serened" 2>/dev/null)
+
+	if ! grep -q '^TSAN_OPTIONS=' "$WORKSPACE/docker.env" 2>/dev/null &&
+		grep -q '__tsan_init' <<<"$sdb_syms"; then
+		sdb_opts="detect_deadlocks=true:second_deadlock_stack=1:history_size=0"
+		if test -f "$WORKSPACE/resources/suppressions/tsan.txt"; then
+			sdb_opts="${sdb_opts}:suppressions=/serenedb/resources/suppressions/tsan.txt"
+		fi
+		echo "TSAN_OPTIONS=${sdb_opts}" >>"$WORKSPACE/docker.env"
+	fi
+
+	if grep -q '__asan_init' <<<"$sdb_syms"; then
+		if ! grep -q '^ASAN_OPTIONS=' "$WORKSPACE/docker.env" 2>/dev/null; then
+			sdb_opts="handle_ioctl=true:check_initialization_order=true:detect_odr_violation=1:strict_init_order=true"
+			if test -f "$WORKSPACE/resources/suppressions/asan.txt"; then
+				sdb_opts="${sdb_opts}:suppressions=/serenedb/resources/suppressions/asan.txt"
+			fi
+			echo "ASAN_OPTIONS=${sdb_opts}" >>"$WORKSPACE/docker.env"
+		fi
+		if ! grep -q '^LSAN_OPTIONS=' "$WORKSPACE/docker.env" 2>/dev/null &&
+			test -f "$WORKSPACE/resources/suppressions/lsan.txt"; then
+			echo "LSAN_OPTIONS=suppressions=/serenedb/resources/suppressions/lsan.txt" >>"$WORKSPACE/docker.env"
+		fi
+	fi
+
+	if ! grep -q '^UBSAN_OPTIONS=' "$WORKSPACE/docker.env" 2>/dev/null &&
+		grep -q '__ubsan_handle' <<<"$sdb_syms"; then
+		sdb_opts="print_stacktrace=1"
+		if test -f "$WORKSPACE/resources/suppressions/ubsan.txt"; then
+			sdb_opts="${sdb_opts}:suppressions=/serenedb/resources/suppressions/ubsan.txt"
+		fi
+		echo "UBSAN_OPTIONS=${sdb_opts}" >>"$WORKSPACE/docker.env"
+	fi
+
+	if ! grep -q '^MSAN_OPTIONS=' "$WORKSPACE/docker.env" 2>/dev/null &&
+		grep -q '__msan_init' <<<"$sdb_syms"; then
+		sdb_opts="poison_in_dtor=1"
+		if test -f "$WORKSPACE/resources/suppressions/msan.txt"; then
+			sdb_opts="${sdb_opts}:suppressions=/serenedb/resources/suppressions/msan.txt"
+		fi
+		echo "MSAN_OPTIONS=${sdb_opts}" >>"$WORKSPACE/docker.env"
+	fi
+
+	unset sdb_syms sdb_opts
+fi
+
 mkdir -p "$WORKSPACE"/out/sanitizers/{leak,undefined,address,memory,thread}
 mkdir -p "$WORKSPACE/out/coverage/profiles"
 mkdir -p "$WORKSPACE/out/logs"
-mkdir -p "$WORKSPACE/out/test-tmp"
 mkdir -p "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}"
+mkdir -p "${CARGO_HOME_CACHE:-${HOME}/.cache/serenedb-cargo-home}"
 mkdir -p "${SDB_TIMING_CACHE:-${HOME}/.cache/serenedb-timing-cache}"
 
 if test -z "$BUILD_IMAGE"; then

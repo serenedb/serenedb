@@ -1,0 +1,81 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+SET memory_limit = '10GB';
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_RAW
+#| SET threads = 1;
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT 1;
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_RAW
+#| SET threads TO 1;
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT 1;
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+RESET threads;
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT current_setting('threads');
+----
+current_setting
+<slt:ignore>
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement ok
+SET SESSION default_collation = 'nocase';
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+statement ok
+SET GLOBAL default_order = 'desc';
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_RAW
+#| SET GLOBAL threads = 4;
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT 1;
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+statement ok
+RESET GLOBAL default_order;
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+statement ok
+RESET GLOBAL threads;

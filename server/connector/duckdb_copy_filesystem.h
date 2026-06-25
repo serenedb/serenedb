@@ -68,6 +68,14 @@ class SereneDBCopyFileSystem final : public duckdb::FileSystem {
 
   int64_t GetFileSize(duckdb::FileHandle& handle) final;
   bool CanSeek() final { return false; }
+  bool OnDiskFile(duckdb::FileHandle& handle) final { return false; }
+  // Mirror PipeFileSystem: the base versions throw NotImplemented, so a reader
+  // or writer that probes a stream handle would fail. A wire stream has no
+  // durability barrier (FileSync no-op) and no meaningful mtime (epoch).
+  void FileSync(duckdb::FileHandle& handle) final {}
+  duckdb::timestamp_t GetLastModifiedTime(duckdb::FileHandle& handle) final {
+    return duckdb::timestamp_t(0);
+  }
   void Seek(duckdb::FileHandle& handle, duckdb::idx_t location) final;
   void Reset(duckdb::FileHandle& handle) final;
   duckdb::idx_t SeekPosition(duckdb::FileHandle& handle) final;

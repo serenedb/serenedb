@@ -31,7 +31,7 @@ ALTER TABLE ac_t DROP COLUMN tag;
 
 # Post-ALTER write with the index commit faulted -> store WAL only.
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement count 1
 INSERT INTO ac_t VALUES (2, 'charlie delta', 9);

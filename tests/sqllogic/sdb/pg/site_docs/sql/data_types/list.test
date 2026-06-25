@@ -1,0 +1,131 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT [1, 2, 3];
+----
+list_value
+{1,2,3}
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT ['alpha', 'beta', NULL, 'gamma'];
+----
+list_value
+{alpha,beta,NULL,gamma}
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+skipif pg-wire-extended
+query
+SELECT [['alpha', 'beta', 'gamma'], NULL, ['delta', 'epsilon'], []];
+----
+list_value
+{{alpha,beta,gamma},NULL,{delta,epsilon},{}}
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT list_value(1, 2, 3);
+----
+list_value
+{1,2,3}
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE list_table (int_list INTEGER[], varchar_list VARCHAR[]);
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+SELECT [1, 2] < [1, 3] AS result;
+----
+result
+t
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+SELECT [[1], [2, 4, 5]] < [[2]] AS result;
+----
+result
+t
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query
+SELECT [ ] < [1] AS result;
+----
+result
+t
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query
+SELECT [ ] < [ ] AS result;
+----
+result
+f
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+query
+SELECT [1, 2] < [1] AS result;
+----
+result
+f
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+query
+SELECT [1, 2] < [1, NULL, 4] AS result;
+----
+result
+t
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+query
+SELECT $$['a', 'b', 'c'][3]$$                AS "Example", (['a', 'b', 'c'][3])::VARCHAR                AS "Result"
+UNION ALL SELECT $$['a', 'b', 'c'][-1]$$,                  (['a', 'b', 'c'][-1])::VARCHAR
+UNION ALL SELECT $$['a', 'b', 'c'][2 + 1]$$,               (['a', 'b', 'c'][2 + 1])::VARCHAR
+UNION ALL SELECT $$list_extract(['a', 'b', 'c'], 3)$$,     (list_extract(['a', 'b', 'c'], 3))::VARCHAR
+UNION ALL SELECT $$['a', 'b', 'c'][1:2]$$,                 (['a', 'b', 'c'][1:2])::VARCHAR
+UNION ALL SELECT $$['a', 'b', 'c'][:2]$$,                  (['a', 'b', 'c'][:2])::VARCHAR
+UNION ALL SELECT $$['a', 'b', 'c'][-2:]$$,                 (['a', 'b', 'c'][-2:])::VARCHAR
+UNION ALL SELECT $$list_slice(['a', 'b', 'c'], 2, 3)$$,    (list_slice(['a', 'b', 'c'], 2, 3))::VARCHAR;
+----
+Example	Result
+['a', 'b', 'c'][3]	c
+['a', 'b', 'c'][-1]	c
+['a', 'b', 'c'][2 + 1]	c
+list_extract(['a', 'b', 'c'], 3)	c
+['a', 'b', 'c'][1:2]	[a, b]
+['a', 'b', 'c'][:2]	[a, b]
+['a', 'b', 'c'][-2:]	[b, c]
+list_slice(['a', 'b', 'c'], 2, 3)	[b, c]

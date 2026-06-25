@@ -28,14 +28,11 @@
 #include <ranges>
 #include <string_view>
 
-#include "app/app_server.h"
 #include "auth/acl.h"
 #include "basics/serializer.h"
 #include "basics/static_strings.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"
-#include "general_server/general_server_feature.h"
-#include "general_server/state.h"
 
 namespace sdb::catalog {
 

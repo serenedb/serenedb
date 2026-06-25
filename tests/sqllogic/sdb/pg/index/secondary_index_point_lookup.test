@@ -1,0 +1,123 @@
+# A selective equality on an ART-indexed column uses a runtime Index Scan on a
+# facade table, exactly as on a native duckdb table: duckdb switches to an index
+# scan when fewer than index_scan_max_count (default 2048) rows match, else a
+# Sequential Scan. The choice is made at INIT (runtime), so it shows only under
+# EXPLAIN ANALYZE -- plain EXPLAIN always prints "Sequential Scan". <slt:ignore>
+# skips the volatile optimizer-timing section and each operator's timing line.
+#
+# NOTE: this matches a filter on the raw indexed COLUMN. A filter on an indexed
+# EXPRESSION (e.g. WHERE (j + k) = 30) is not pushed as a column filter, so it
+# stays a Sequential Scan -- a duckdb-core limitation (TryScanIndex matches a
+# single indexed column), see secondary_index_expression_scale.test.
+
+
+statement ok
+CREATE TABLE pudge_pt(a INTEGER, b INTEGER);
+
+
+statement ok
+INSERT INTO pudge_pt SELECT i, i FROM range(100000) s(i);
+
+
+statement ok
+CREATE INDEX pudge_pt_b ON pudge_pt(b);
+
+
+# Selective equality (1 row << 2048) -> runtime Index Scan.
+query
+EXPLAIN ANALYZE SELECT a FROM pudge_pt WHERE b = 12345;
+----
+QUERY PLAN
+┌─────────────────────────────────────┐
+│┌───────────────────────────────────┐│
+││    Query Profiling Information    ││
+│└───────────────────────────────────┘│
+└─────────────────────────────────────┘
+EXPLAIN ANALYZE SELECT a FROM pudge_pt WHERE b = 12345;
+<slt:ignore>
+┌───────────────────────────┐
+│      RESULT_COLLECTOR     │
+│    ────────────────────   │
+│                           │
+│           0 rows          │
+<slt:ignore>
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│      EXPLAIN_ANALYZE      │
+│    ────────────────────   │
+│                           │
+│           0 rows          │
+<slt:ignore>
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         TABLE_SCAN        │
+│    ────────────────────   │
+│      Table: pudge_pt      │
+│      Type: Index Scan     │
+│       Projections: a      │
+│    Filters: (b = 12345)   │
+│                           │
+│                           │
+│                           │
+│           1 row           │
+<slt:ignore>
+└───────────────────────────┘
+
+
+query
+SELECT a FROM pudge_pt WHERE b = 12345;
+----
+a
+12345
+
+
+# Non-selective (60000 rows >> 2048) -> Sequential Scan.
+query
+EXPLAIN ANALYZE SELECT a FROM pudge_pt WHERE b < 60000;
+----
+QUERY PLAN
+┌─────────────────────────────────────┐
+│┌───────────────────────────────────┐│
+││    Query Profiling Information    ││
+│└───────────────────────────────────┘│
+└─────────────────────────────────────┘
+EXPLAIN ANALYZE SELECT a FROM pudge_pt WHERE b < 60000;
+<slt:ignore>
+┌───────────────────────────┐
+│      RESULT_COLLECTOR     │
+│    ────────────────────   │
+│                           │
+│           0 rows          │
+<slt:ignore>
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│      EXPLAIN_ANALYZE      │
+│    ────────────────────   │
+│                           │
+│           0 rows          │
+<slt:ignore>
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         TABLE_SCAN        │
+│    ────────────────────   │
+│      Table: pudge_pt      │
+│   Type: Sequential Scan   │
+│       Projections: a      │
+│    Filters: (b < 60000)   │
+│                           │
+│                           │
+│                           │
+│        60,000 rows        │
+<slt:ignore>
+└───────────────────────────┘
+
+
+query
+SELECT count(*) FROM pudge_pt WHERE b < 60000;
+----
+count
+60000
+
+
+statement ok
+DROP TABLE pudge_pt;

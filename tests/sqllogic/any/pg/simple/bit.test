@@ -1,0 +1,62 @@
+# BIT wire round-trip.
+#
+# Regression for the binary (extended-protocol) bit wire format: PG sends the
+# bits MSB-first, left-aligned, with trailing pad in the last byte. Sub-byte and
+# multi-byte values must render identically in pg-wire-simple (text) and
+# pg-wire-extended (binary), and identically on PostgreSQL and SereneDB.
+
+# sub-byte (the failing case: BIT(3) '101' -> byte 0xA0)
+query
+SELECT '101'::BIT(3) AS b
+----
+b
+101
+
+# exactly one byte
+query
+SELECT '10110011'::BIT(8) AS b
+----
+b
+10110011
+
+# spans two bytes (exercises left-alignment across a byte boundary)
+query
+SELECT '1011001110'::BIT(10) AS b
+----
+b
+1011001110
+
+# odd two-byte width (11 bits, 5 trailing pad)
+query
+SELECT '11001010111'::BIT(11) AS b
+----
+b
+11001010111
+
+# all ones / all zeros at a sub-byte width
+query
+SELECT '111'::BIT(3) AS ones, '000'::BIT(3) AS zeros
+----
+ones zeros
+111 000
+
+
+# stored round-trip (value flows through the result serializer per row)
+statement ok
+CREATE TABLE bit_rt (id INT PRIMARY KEY, b BIT(10))
+
+
+statement count 3
+INSERT INTO bit_rt VALUES
+  (1, '0000000001'::BIT(10)),
+  (2, '1011001110'::BIT(10)),
+  (3, '1111111111'::BIT(10))
+
+
+query
+SELECT id, b FROM bit_rt ORDER BY id
+----
+id b
+1 0000000001
+2 1011001110
+3 1111111111

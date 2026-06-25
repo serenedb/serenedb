@@ -41,7 +41,7 @@ count
 # Suppress index commits, then truncate and re-insert reusing the same id
 # values (the freed rowids get reused by the store table).
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 TRUNCATE tr_t;

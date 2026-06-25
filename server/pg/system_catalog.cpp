@@ -32,13 +32,12 @@
 #include "app/app_server.h"
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
-#include "basics/containers/trivial_map.h"
+#include "basics/containers/flat_hash_set.h"
 #include "basics/serializer.h"
 #include "basics/static_strings.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/view.h"
-#include "general_server/state.h"
 #include "pg/information_schema/sql_features.h"
 #include "pg/information_schema/sql_implementation_info.h"
 #include "pg/information_schema/sql_parts.h"
@@ -108,8 +107,8 @@
 #include "pg/pg_catalog/pg_ts_template.h"
 #include "pg/pg_catalog/pg_type.h"
 #include "pg/pg_catalog/pg_user_mapping.h"
-#include "pg/pg_feature.h"
-#include "pg/sdb_catalog/sdb_search_tasks_status.h"
+#include "pg/sdb_catalog/sdb_metrics.h"
+#include "pg/sdb_catalog/sdb_settings.h"
 #include "pg/system_functions.h"
 #include "pg/system_table.h"
 #include "pg/system_views.h"
@@ -213,7 +212,8 @@ const PgSystemSchema kPgCatalog{
   MakeTable<SystemTable<PgTsTemplate>>(),
   MakeTable<SystemTable<PgType>>(),
   MakeTable<SystemTable<PgUserMapping>>(),
-  MakeTable<SystemTable<SdbSearchTasksStatus>>(),
+  MakeTable<SystemTable<SdbMetrics>>(),
+  MakeTable<SystemTable<SdbSettings>>(),
 };
 
 const PgSystemSchema kInformationSchema{

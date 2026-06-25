@@ -94,7 +94,7 @@ pk	b
 
 # Freeze iresearch commits before the post-crash batch.
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO wal_wild_t VALUES (2, 'percent_beta_two'),

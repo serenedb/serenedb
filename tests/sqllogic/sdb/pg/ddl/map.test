@@ -140,3 +140,30 @@ drug_id	schedule
 
 statement ok
 DROP TABLE pudge_drug_doses;
+
+
+# --- LIST containing MAP values: regression for issue #826. A list whose
+# elements are MAPs used to corrupt the wire framing and drop the connection
+# ("lost synchronization with server"). A MAP is physically LIST(STRUCT(k,v)),
+# so LIST(MAP) serializes as a 2-D record array. ---
+
+query
+SELECT [MAP([1, 5], [42.1, 45])] AS lm;
+----
+lm
+{{"(1,42.1)","(5,45.0)"}}
+
+
+query
+SELECT [MAP([1], [10]), MAP([2], [20])] AS lm;
+----
+lm
+{{"(1,10)"},{"(2,20)"}}
+
+
+# MAP nested under a STRUCT field (issue #826 second repro).
+query
+SELECT {'test': [MAP([1, 5], [42.1, 45])]} AS s;
+----
+s
+("{{""(1,42.1)"",""(5,45.0)""}}")

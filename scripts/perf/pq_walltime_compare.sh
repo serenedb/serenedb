@@ -19,7 +19,7 @@ bench_one() {
 	rm -rf "$data"
 	mkdir -p "$data"
 
-	"$bin" "$data" --server_endpoints="pgsql+tcp://0.0.0.0:${port}" \
+	"$bin" "$data" --listen="postgres://0.0.0.0:${port}" \
 		>"/tmp/pqw-${USER}-${label}-${case}.log" 2>&1 &
 	local sp=$!
 	for _ in $(seq 1 60); do

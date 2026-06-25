@@ -1,7 +1,3 @@
-[submodule "third_party/icu"]
-	path = third_party/icu
-	url = https://github.com/serenedb/icu.git
-	shallow = true
 [submodule "third_party/boost"]
 	path = third_party/boost
 	url = https://github.com/serenedb/boost.git
@@ -14,18 +10,9 @@
 	path = third_party/llvm-project
 	url = https://github.com/serenedb/llvm-project.git
 	shallow = true
-	shallow = true
-[submodule "third_party/folly"]
-	path = third_party/folly
-	url = https://github.com/serenedb/folly.git
-	shallow = true
 [submodule "third_party/simdjson"]
 	path = third_party/simdjson
 	url = https://github.com/serenedb/simdjson.git
-	shallow = true
-[submodule "third_party/double-conversion"]
-	path = third_party/double-conversion
-	url = https://github.com/serenedb/double-conversion.git
 	shallow = true
 [submodule "third_party/abseil-cpp"]
 	path = third_party/abseil-cpp
@@ -38,10 +25,6 @@
 [submodule "third_party/zlib-ng"]
 	path = third_party/zlib-ng
 	url = https://github.com/serenedb/zlib-ng.git
-	shallow = true
-[submodule "third_party/nghttp2/nghttp2-lib"]
-	path = third_party/nghttp2/nghttp2-lib
-	url = https://github.com/serenedb/nghttp2.git
 	shallow = true
 [submodule "third_party/immer"]
 	path = third_party/immer
@@ -74,10 +57,6 @@
 [submodule "third_party/lz4"]
 	path = third_party/lz4
 	url = https://github.com/serenedb/lz4.git
-	shallow = true
-[submodule "third_party/date"]
-	path = third_party/date
-	url = https://github.com/serenedb/date.git
 	shallow = true
 [submodule "third_party/re2"]
 	path = third_party/re2
@@ -130,6 +109,7 @@
 [submodule "third_party/croaring"]
 	path = third_party/croaring
 	url = https://github.com/RoaringBitmap/CRoaring.git
+	shallow = true
 [submodule "third_party/aws-c-auth"]
 	path = third_party/aws-c-auth
 	url = https://github.com/serenedb/aws-c-auth.git
@@ -201,10 +181,24 @@
 [submodule "third_party/duckdb_postgres"]
 	path = third_party/duckdb_postgres
 	url = https://github.com/serenedb/duckdb-postgres.git
-	branch = v2026.05.19
+	shallow = true
 [submodule "third_party/postgres"]
 	path = third_party/postgres
 	url = https://github.com/serenedb/postgres.git
+	shallow = true
 [submodule "third_party/database-connector"]
 	path = third_party/database-connector
 	url = https://github.com/serenedb/database-connector.git
+	shallow = true
+[submodule "third_party/simdutf"]
+	path = third_party/simdutf
+	url = https://github.com/serenedb/simdutf.git
+	shallow = true
+[submodule "third_party/ada"]
+	path = third_party/ada
+	url = https://github.com/serenedb/ada.git
+	shallow = true
+[submodule "third_party/duckdb_inet"]
+	path = third_party/duckdb_inet
+	url = https://github.com/serenedb/duckdb-inet.git
+	shallow = true

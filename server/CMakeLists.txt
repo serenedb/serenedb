@@ -33,26 +33,20 @@ target_link_libraries(
         serene
         serene_geo
         serene_connector
-        # TODO
-        date_interface
         llhttp
-        nghttp2::nghttp2
         duckdb_static
-        Folly::folly
 )
 
 target_include_directories(sereneserver PUBLIC ${CMAKE_SOURCE_DIR}/server)
-
-add_dependencies(sereneserver tzdata)
 
 add_subdirectory(auth)
 add_subdirectory(catalog)
 add_subdirectory(connector)
 add_subdirectory(database)
-add_subdirectory(general_server)
+add_subdirectory(network)
 add_subdirectory(pg)
 add_subdirectory(query)
 add_subdirectory(rest_server)
+add_subdirectory(scheduler)
 add_subdirectory(storage_engine)
-add_subdirectory(utils)
 add_subdirectory(search)

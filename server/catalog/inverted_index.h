@@ -25,6 +25,8 @@
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <optional>
+#include <ranges>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -127,6 +129,7 @@ Result Validate(std::string_view label, const duckdb::LogicalType& type);
 
 }  // namespace hnsw
 
+using persistence::ExpressionKey;
 using persistence::HNSWColumnConfig;
 
 struct InvertedIndexEntryInfo {
@@ -142,17 +145,9 @@ struct InvertedIndexEntryInfo {
   std::optional<HNSWColumnConfig> hnsw_config;
   uint32_t row_group_size = 0;
 
-  std::optional<ExpressionData> expression;
-
   irs::field_id null_field_id = irs::field_limits::invalid();
   irs::field_id bool_field_id = irs::field_limits::invalid();
   irs::field_id numeric_field_id = irs::field_limits::invalid();
-
-  bool IsExpression() const noexcept { return expression.has_value(); }
-  bool IsColumn() const noexcept { return !expression.has_value(); }
-  const ExpressionData* GetExpressionData() const noexcept {
-    return expression ? &*expression : nullptr;
-  }
 
   bool IsHNSW() const noexcept { return hnsw_config.has_value(); }
   bool HasTextDictionary() const noexcept { return text_dictionary.isSet(); }
@@ -172,26 +167,42 @@ struct ColumnTokenizer {
   irs::field_id tokenizer_column = irs::field_limits::invalid();
 };
 
-class InvertedIndex final : public Index {
+// Also an irs::IndexFieldOptions: the index IS the per-column physical-encoding
+// config the iresearch writer consults at flush/merge. A write or compaction
+// hands the writer the index from its own DDL snapshot, so the long-lived
+// writer never reaches into the live catalog. Copy-on-write means an unchanged
+// index is the same object across snapshots, so the inherited EqualOptions
+// (pointer identity) is the cheap segment-reuse check.
+class InvertedIndex final : public Index, public irs::IndexFieldOptions {
  public:
   using Entries =
     containers::NodeHashMap<irs::field_id, InvertedIndexEntryInfo>;
 
+  // `columns` are the de-duped plain-column keys (each key's field_id is its
+  // column id). `expression_keys` carry each expression's payload + its
+  // allocated field_id as one unit. `entries` is the per-field config keyed by
+  // field_id.
   InvertedIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
                 ObjectId relation_id, std::string name,
-                std::vector<Column::Id> column_ids, Entries entries,
+                std::vector<Column::Id> columns,
+                std::vector<ExpressionKey> expression_keys, Entries entries,
                 InvertedIndexOptions options)
     : Index{database_id,
             schema_id,
             id,
             relation_id,
             std::move(name),
-            std::move(column_ids),
+            DeriveIds(columns,
+                      std::views::transform(expression_keys,
+                                            [](const auto& key) -> const auto& {
+                                              return key.data;
+                                            })),
             ObjectType::InvertedIndex},
       _entries{std::move(entries)},
+      _expression_keys{std::move(expression_keys)},
       _options{std::move(options)} {
+    BuildExprByFieldIdIndex();
     BuildSerializedExprIndex();
-    BuildSyntheticFeaturesIndex();
     BuildFieldLookupIndex();
     BumpTickServerForEntryIds();
   }
@@ -207,6 +218,17 @@ class InvertedIndex final : public Index {
   const InvertedIndexEntryInfo* FindColumnInfo(
     catalog::Column::Id column_id) const noexcept;
 
+  // The expression key owning `field_id`, or nullptr if `field_id` is a plain
+  // column key (or unknown). Pointer is stable for the index's lifetime (into
+  // the immutable _expression_keys vector).
+  const ExpressionData* ExpressionByFieldId(irs::field_id id) const noexcept;
+
+  // The expression keys (payload + allocated field_id), one self-contained unit
+  // each.
+  const std::vector<ExpressionKey>& ExpressionKeys() const noexcept {
+    return _expression_keys;
+  }
+
   struct FieldLookup {
     const InvertedIndexEntryInfo* entry = nullptr;
     irs::field_id entry_field_id = irs::field_limits::invalid();
@@ -214,12 +236,6 @@ class InvertedIndex final : public Index {
   FieldLookup LookupField(irs::field_id id) const noexcept;
   static void AppendKindSuffix(std::string& out,
                                const duckdb::LogicalType& type);
-  const search::Features* FindSyntheticFeatures(
-    irs::field_id synthetic_id) const noexcept;
-
-  std::vector<Column::Id> GetReferencedColumnIds() const final;
-
-  const Entries& GetEntries() const noexcept { return _entries; }
 
   ColumnTokenizer GetTokenizer(const std::shared_ptr<const Snapshot>& snapshot,
                                irs::field_id field_id) const;
@@ -230,6 +246,29 @@ class InvertedIndex final : public Index {
   std::optional<irs::HNSWInfo> GetHNSWInfo(irs::field_id field_id) const;
 
   const InvertedIndexOptions& GetOptions() const noexcept { return _options; }
+
+  // irs::IndexFieldOptions: the per-field encoding config the writer asks for
+  // at flush/merge, resolved against this index's own entries (no catalog
+  // lookup).
+  irs::ColumnOptions GetColumnOptions(irs::field_id id) const final;
+  irs::NormColumnOptions GetNormColumnOptions(irs::field_id id) const final;
+
+  // Segment-reuse homogeneity gate: any two incarnations of an inverted index
+  // produce identical column encodings, so a write may always resume a segment
+  // opened by another incarnation. A DROP COLUMN that truly changes the
+  // physical layout recreates the storage (new index id -> new writer), so a
+  // single writer's pooled segments only ever see encoding-equivalent
+  // incarnations; RENAME -- the one in-place mutation -- leaves column options
+  // untouched. A serenedb writer's gate only ever compares two InvertedIndex
+  // options (the other concrete IndexFieldOptions, FunctionFieldOptions, is
+  // iresearch-test- only and never mixed onto the same writer), so equality
+  // reduces to "same type" -- which is an invariant here, asserted rather than
+  // branched on.
+  bool EqualOptions(const irs::IndexFieldOptions& other) const noexcept final {
+    SDB_ASSERT(dynamic_cast<const InvertedIndex*>(&other) != nullptr,
+               "EqualOptions across IndexFieldOptions types");
+    return true;
+  }
 
   const std::optional<ScorerOptions>& GetTopKScorer() const noexcept {
     return _options.topk_scorer;
@@ -252,18 +291,20 @@ class InvertedIndex final : public Index {
   }
 
  private:
+  void BuildExprByFieldIdIndex();
   void BuildSerializedExprIndex();
-  void BuildSyntheticFeaturesIndex();
   void BuildFieldLookupIndex();
   void BumpTickServerForEntryIds();
 
   Entries _entries;
-  // Reverse map: serialized expression -> field_id.
-  // Views point into the durable storage in entries
+  std::vector<ExpressionKey> _expression_keys;
+  // Bridge: field_id -> the owning expression key's payload (nullptr-absent for
+  // column keys). Pointers are stable (into the immutable _expression_keys).
+  containers::FlatHashMap<irs::field_id, const ExpressionData*>
+    _expr_by_field_id;
+  // Reverse map: serialized expression -> field_id. Views point into the
+  // durable storage in _expression_keys.
   containers::FlatHashMap<std::string_view, irs::field_id> _expr_to_field;
-  // Reverse map: synthetic field_id -> owner entry's features.
-  containers::FlatHashMap<irs::field_id, search::Features>
-    _synthetic_to_features;
   containers::FlatHashMap<irs::field_id, FieldLookup> _field_lookup;
   InvertedIndexOptions _options;
   mutable std::shared_ptr<search::InvertedIndexStorage> _data;

@@ -105,17 +105,14 @@ void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
     context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);
 
   auto ax = catalog::NoAccessCheck();
-  const ExecContext* exec_ctx = &ExecContext::superuser();
   if (state) {
     auto& conn_ctx = state->GetConnectionContext();
     ax = catalog::RequireOwnership(conn_ctx.GetRoleId());
-    exec_ctx = &conn_ctx;
     conn_ctx.DropCatalogSnapshot();
   }
 
   duckdb::shared_ptr<void> keep_alive = GetAttached().shared_from_this();
-  auto r =
-    catalog::DropDatabase(*exec_ctx, ax, GetName(), std::move(keep_alive));
+  auto r = catalog::DropDatabase(ax, GetName(), std::move(keep_alive));
   SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
   if (!r.ok()) {
     SDB_THROW(std::move(r));

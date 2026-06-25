@@ -1,0 +1,439 @@
+# DOCS_TEST: abs
+# DOCS_TEST_BODY
+query
+SELECT abs(-17.4) AS abs;
+----
+abs
+17.4
+
+# DOCS_TEST: acos
+# DOCS_TEST_BODY
+query
+SELECT acos(0.5) AS acos;
+----
+acos
+1.0471975511965979
+
+# DOCS_TEST: acosh
+# DOCS_TEST_BODY
+query
+SELECT acosh(1.5) AS acosh;
+----
+acosh
+0.9624236501192069
+
+# DOCS_TEST: add
+# DOCS_TEST_BODY
+query
+SELECT add(2, 3) AS add;
+----
+add
+5
+
+# DOCS_TEST: asin
+# DOCS_TEST_BODY
+query
+SELECT asin(0.5) AS asin;
+----
+asin
+0.5235987755982989
+
+# DOCS_TEST: asinh
+# DOCS_TEST_BODY
+query
+SELECT asinh(0.5) AS asinh;
+----
+asinh
+0.48121182505960347
+
+# DOCS_TEST: atan
+# DOCS_TEST_BODY
+query
+SELECT atan(0.5) AS atan;
+----
+atan
+0.4636476090008061
+
+# DOCS_TEST: atanh
+# DOCS_TEST_BODY
+query
+SELECT atanh(0.5) AS atanh;
+----
+atanh
+0.5493061443340548
+
+# DOCS_TEST: atan2
+# DOCS_TEST_BODY
+query
+SELECT atan2(0.5, 0.5) AS atan2;
+----
+atan2
+0.7853981633974483
+
+# DOCS_TEST: bit_count
+# DOCS_TEST_BODY
+query
+SELECT bit_count(31) AS bit_count;
+----
+bit_count
+5
+
+# DOCS_TEST: cbrt
+# DOCS_TEST_BODY
+query
+SELECT cbrt(8) AS cbrt;
+----
+cbrt
+2
+
+# DOCS_TEST: ceil
+# DOCS_TEST_BODY
+query
+SELECT ceil(17.4) AS ceil;
+----
+ceil
+18
+
+# DOCS_TEST: ceiling
+# DOCS_TEST_BODY
+query
+SELECT ceiling(17.4) AS ceiling;
+----
+ceiling
+18
+
+# DOCS_TEST: cos
+# DOCS_TEST_BODY
+query
+SELECT cos(pi() / 3) AS cos;
+----
+cos
+0.5000000000000001
+
+# DOCS_TEST: cot
+# DOCS_TEST_BODY
+query
+SELECT cot(0.5) AS cot;
+----
+cot
+1.830487721712452
+
+# DOCS_TEST: degrees
+# DOCS_TEST_BODY
+query
+SELECT degrees(pi()) AS degrees;
+----
+degrees
+180
+
+# DOCS_TEST: divide
+# DOCS_TEST_BODY
+query
+SELECT divide(5, 2) AS divide;
+----
+divide
+2
+
+# DOCS_TEST: even
+# DOCS_TEST_BODY
+query
+SELECT even(2.9) AS even;
+----
+even
+4
+
+# DOCS_TEST: exp
+# DOCS_TEST_BODY
+query
+SELECT exp(0.693) AS exp;
+----
+exp
+1.9997056605411638
+
+# DOCS_TEST: factorial
+# DOCS_TEST_BODY
+query
+SELECT factorial(4) AS factorial;
+----
+factorial
+24
+
+# DOCS_TEST: fdiv
+# DOCS_TEST_BODY
+query
+SELECT fdiv(5, 2) AS fdiv;
+----
+fdiv
+2
+
+# DOCS_TEST: floor
+# DOCS_TEST_BODY
+query
+SELECT floor(17.4) AS floor;
+----
+floor
+17
+
+# DOCS_TEST: fmod
+# DOCS_TEST_BODY
+query
+SELECT fmod(5, 2) AS fmod;
+----
+fmod
+1
+
+# DOCS_TEST: gamma
+# DOCS_TEST_BODY
+query
+SELECT gamma(5.5) AS gamma;
+----
+gamma
+52.34277778455352
+
+# DOCS_TEST: gcd
+# DOCS_TEST_BODY
+query
+SELECT gcd(42, 57) AS gcd;
+----
+gcd
+3
+
+# DOCS_TEST: greatest_common_divisor
+# DOCS_TEST_BODY
+query
+SELECT greatest_common_divisor(42, 57) AS greatest_common_divisor;
+----
+greatest_common_divisor
+3
+
+# DOCS_TEST: greatest
+# DOCS_TEST_BODY
+query
+SELECT greatest(3, 2, 4, 4) AS greatest;
+----
+greatest
+4
+
+# DOCS_TEST: isfinite
+# DOCS_TEST_BODY
+query
+SELECT isfinite(5.5) AS isfinite;
+----
+isfinite
+t
+
+# DOCS_TEST: isinf
+# DOCS_TEST_BODY
+query
+SELECT isinf('Infinity'::FLOAT) AS isinf;
+----
+isinf
+t
+
+# DOCS_TEST: isnan
+# DOCS_TEST_BODY
+query
+SELECT isnan('NaN'::FLOAT) AS isnan;
+----
+isnan
+t
+
+# DOCS_TEST: lcm
+# DOCS_TEST_BODY
+query
+SELECT lcm(42, 57) AS lcm;
+----
+lcm
+798
+
+# DOCS_TEST: least_common_multiple
+# DOCS_TEST_BODY
+query
+SELECT least_common_multiple(42, 57) AS least_common_multiple;
+----
+least_common_multiple
+798
+
+# DOCS_TEST: least
+# DOCS_TEST_BODY
+query
+SELECT least(3, 2, 4, 4) AS least;
+----
+least
+2
+
+# DOCS_TEST: lgamma
+# DOCS_TEST_BODY
+query
+SELECT lgamma(2) AS lgamma;
+----
+lgamma
+0
+
+# DOCS_TEST: ln
+# DOCS_TEST_BODY
+query
+SELECT ln(2) AS ln;
+----
+ln
+0.6931471805599453
+
+# DOCS_TEST: log
+# DOCS_TEST_BODY
+query
+SELECT log(100) AS log;
+----
+log
+2
+
+# DOCS_TEST: log10
+# DOCS_TEST_BODY
+query
+SELECT log10(1000) AS log10;
+----
+log10
+3
+
+# DOCS_TEST: log2
+# DOCS_TEST_BODY
+query
+SELECT log2(8) AS log2;
+----
+log2
+3
+
+# DOCS_TEST: multiply
+# DOCS_TEST_BODY
+query
+SELECT multiply(2, 3) AS multiply;
+----
+multiply
+6
+
+# DOCS_TEST: nextafter
+# DOCS_TEST_BODY
+query
+SELECT nextafter(1::FLOAT, 2::FLOAT) AS nextafter;
+----
+nextafter
+1.0000001
+
+# DOCS_TEST: pi
+# DOCS_TEST_BODY
+query
+SELECT pi() AS pi;
+----
+pi
+3.141592653589793
+
+# DOCS_TEST: pow
+# DOCS_TEST_BODY
+query
+SELECT pow(2, 3) AS pow;
+----
+pow
+8
+
+# DOCS_TEST: power
+# DOCS_TEST_BODY
+query
+SELECT power(2, 3) AS power;
+----
+power
+8
+
+# DOCS_TEST: radians
+# DOCS_TEST_BODY
+query
+SELECT radians(90) AS radians;
+----
+radians
+1.5707963267948966
+
+# DOCS_TEST: round_even
+# DOCS_TEST_BODY
+query
+SELECT round_even(24.5, 0) AS round_even;
+----
+round_even
+24
+
+# DOCS_TEST: roundbankers
+# DOCS_TEST_BODY
+query
+SELECT roundbankers(24.5, 0) AS roundbankers;
+----
+roundbankers
+24
+
+# DOCS_TEST: round
+# DOCS_TEST_BODY
+query
+SELECT round(42.4332, 2) AS round;
+----
+round
+42.43
+
+# DOCS_TEST: sign
+# DOCS_TEST_BODY
+query
+SELECT sign(-349) AS sign;
+----
+sign
+-1
+
+# DOCS_TEST: signbit
+# DOCS_TEST_BODY
+query
+SELECT signbit(-1.0) AS signbit;
+----
+signbit
+t
+
+# DOCS_TEST: sin
+# DOCS_TEST_BODY
+query
+SELECT sin(pi() / 6) AS sin;
+----
+sin
+0.49999999999999994
+
+# DOCS_TEST: sqrt
+# DOCS_TEST_BODY
+query
+SELECT sqrt(9) AS sqrt;
+----
+sqrt
+3
+
+# DOCS_TEST: subtract
+# DOCS_TEST_BODY
+query
+SELECT subtract(2, 3) AS subtract;
+----
+subtract
+-1
+
+# DOCS_TEST: tan
+# DOCS_TEST_BODY
+query
+SELECT tan(pi() / 4) AS tan;
+----
+tan
+0.9999999999999999
+
+# DOCS_TEST: trunc
+# DOCS_TEST_BODY
+query
+SELECT trunc(17.4) AS trunc;
+----
+trunc
+17
+
+# DOCS_TEST: xor
+# DOCS_TEST_BODY
+query
+SELECT xor(17, 5) AS xor;
+----
+xor
+20

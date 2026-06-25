@@ -1,0 +1,108 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE notes (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY notes_en (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE INDEX notes_idx ON notes USING inverted (id, body notes_en);
+
+statement ok
+INSERT INTO notes VALUES
+    (1, 'quick brown fox'),
+    (2, 'lazy dog sleeps'),
+    (3, 'quick red fox');
+
+statement ok
+VACUUM (REFRESH_TABLE) notes;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, body FROM notes_idx WHERE body @@ ts_phrase('quick') ORDER BY id;
+----
+id	body
+1	quick brown fox
+3	quick red fox
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, body FROM notes_idx
+WHERE body @@ (ts_phrase('brown fox') || ts_phrase('lazy dog'))
+ORDER BY id;
+----
+id	body
+1	quick brown fox
+2	lazy dog sleeps
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, body FROM notes_idx
+WHERE body @@ (ts_phrase('quick') && ts_phrase('fox'))
+ORDER BY id;
+----
+id	body
+1	quick brown fox
+3	quick red fox
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, body FROM notes_idx WHERE body @@ ('brown' ## 'fox') ORDER BY id;
+----
+id	body
+1	quick brown fox
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, body FROM notes_idx WHERE body @@ 'fox'::tokenize('keyword') ORDER BY id;
+----
+id	body
+1	quick brown fox
+3	quick red fox
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, body FROM notes_idx
+WHERE body @@ (ts_phrase('fox') || ts_phrase('quick') ^ 2.0)
+ORDER BY id;
+----
+id	body
+1	quick brown fox
+3	quick red fox
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, body FROM notes_idx
+WHERE body @@ (ts_phrase('quick') && !!ts_phrase('brown'))
+ORDER BY id;
+----
+id	body
+3	quick red fox

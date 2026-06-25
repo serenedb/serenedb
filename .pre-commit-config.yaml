@@ -72,15 +72,25 @@ repos:
         language: python
         entry: python3 scripts/check_no_anon_namespace_in_headers.py
         files: \.(hpp|hh|h)$
-      - id: check-no-fault-injection-outside-recovery
-        name: Check no fault injection outside recovery folder
+      - id: check-fault-points
+        name: Check fault-injection points (tests <-> source)
         language: python
-        entry: python3 scripts/check_no_fault_injection_outside_recovery.py
-        files: \.test
+        entry: python3 scripts/check_fault_points.py
+        # Cross-references the whole tree (a source change must be validated
+        # against all tests and vice versa), so the script scans the trees
+        # itself instead of the staged files -- but only when a file that can
+        # affect the result changed.
+        files: \.(test|test_slow|cpp|cc|c|hpp|hh|h|ipp|tpp)$
+        pass_filenames: false
       - id: check-substitution-directive
         name: Check sqllogic substitution directive
         language: python
         entry: python3 scripts/check_substitution_directive.py
+        files: ^tests/sqllogic/.*\.test
+      - id: check-no-tmp-in-sqllogic
+        name: Check no /tmp paths in sqllogic tests
+        language: python
+        entry: python3 scripts/check_no_tmp_in_sqllogic.py
         files: ^tests/sqllogic/.*\.test
       - id: check-snake-case-filenames
         name: Check C++ filenames are snake_case

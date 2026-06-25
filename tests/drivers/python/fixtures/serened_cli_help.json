@@ -1,0 +1,339 @@
+{
+  "generatedFrom": "serened --help",
+  "title": "serened -- SereneDB pg-wire server",
+  "usage": [
+    "serened <data-dir> [--flag=value ...]",
+    "serened shell [duckdb-shell args ...]",
+    "serened psql  [psql args ...]"
+  ],
+  "commands": [
+    {
+      "command": "serened <data-dir> [--flag=value ...]",
+      "description": "Start the SereneDB pg-wire server, using the optional data directory and flags."
+    },
+    {
+      "command": "serened shell [duckdb-shell args ...]",
+      "description": "Open the embedded DuckDB shell without starting the SereneDB server."
+    },
+    {
+      "command": "serened psql  [psql args ...]",
+      "description": "Open the psql-compatible shell subcommand without starting the SereneDB server."
+    }
+  ],
+  "flagSources": [
+    {
+      "flag": "--flagfile=path1,path2",
+      "description": "Read flags from one or more files (one '--flag=value' per line, '#' comments OK)."
+    },
+    {
+      "flag": "--fromenv=name1,name2",
+      "description": "Read each listed flag from FLAGS_<name>; missing env vars are an error."
+    },
+    {
+      "flag": "--tryfromenv=name1,name2",
+      "description": "Same as --fromenv but silently skip flags whose env var is unset."
+    },
+    {
+      "flag": "--undefok=name1,name2",
+      "description": "Tolerate '--name1=...' even when no flag with that name exists (useful for shared flagfiles across binaries)."
+    }
+  ],
+  "helpVariants": [
+    {
+      "flag": "--help",
+      "description": "This filtered banner."
+    },
+    {
+      "flag": "--helpfull",
+      "description": "Every absl-managed flag."
+    },
+    {
+      "flag": "--help=<substring>",
+      "description": "Flags whose name or description matches."
+    },
+    {
+      "flag": "--helpshort",
+      "description": "Project-defined flags only (no absl/gtest)."
+    },
+    {
+      "flag": "--helppackage",
+      "description": "Flags grouped by source-tree location."
+    },
+    {
+      "flag": "--version",
+      "description": "Print the build banner and exit."
+    }
+  ],
+  "flagGroups": [
+    {
+      "id": "server",
+      "label": "Server",
+      "flags": [
+        {
+          "name": "server_directory",
+          "flag": "--server_directory",
+          "type": "",
+          "defaultValue": "serenedb-data",
+          "description": "Path to the database directory. A positional argument, if given, takes precedence.",
+          "source": "server",
+          "category": "server",
+          "categoryLabel": "Server"
+        }
+      ]
+    },
+    {
+      "id": "log",
+      "label": "Logging",
+      "flags": [
+        {
+          "name": "log_level",
+          "flag": "--log_level",
+          "type": "",
+          "defaultValue": "info",
+          "description": "Minimum log severity at process start: trace | debug | info | warning | error | fatal. Override at runtime with `SET logging_level = '<value>'`.",
+          "source": "log",
+          "category": "log",
+          "categoryLabel": "Logging"
+        },
+        {
+          "name": "log_storage",
+          "flag": "--log_storage",
+          "type": "",
+          "defaultValue": "stdout",
+          "description": "Log destination at process start: 'stdout' (default; container log drivers capture it), 'memory' (queryable via SELECT * FROM duckdb_logs()), or 'file://<path>'. Override at runtime with `SET logging_storage = '<value>'`.",
+          "source": "log",
+          "category": "log",
+          "categoryLabel": "Logging"
+        }
+      ]
+    },
+    {
+      "id": "server/network/server.cpp",
+      "label": "server/network/server.cpp",
+      "flags": [
+        {
+          "name": "auth_api_key",
+          "flag": "--auth_api_key",
+          "type": "",
+          "defaultValue": "",
+          "description": "Static HTTP ApiKey credential as id:key (empty = ApiKey rejected).",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "auth_bearer_token",
+          "flag": "--auth_bearer_token",
+          "type": "",
+          "defaultValue": "",
+          "description": "Static HTTP Bearer token (empty = Bearer rejected).",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "auth_method",
+          "flag": "--auth_method",
+          "type": "",
+          "defaultValue": "scram",
+          "description": "Password auth method for --auth_password: scram (SCRAM-SHA-256, default), md5, or password (cleartext; requires TLS).",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "auth_password",
+          "flag": "--auth_password",
+          "type": "",
+          "defaultValue": "",
+          "description": "Temporary single-user password (empty = trust). Placeholder until RBAC; SCRAM-SHA-256 by default. Cleartext password auth requires TLS.",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "auth_timeout",
+          "flag": "--auth_timeout",
+          "type": "",
+          "defaultValue": "30s",
+          "description": "Max time from connect to authenticated, per connection (0 = off). pg: covers TLS+startup+auth; http: the request-header read deadline.",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "auth_user",
+          "flag": "--auth_user",
+          "type": "",
+          "defaultValue": "postgres",
+          "description": "User the temporary --auth_password / token credentials apply to.",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "http_body_timeout",
+          "flag": "--http_body_timeout",
+          "type": "",
+          "defaultValue": "30s",
+          "description": "Max time to read one HTTP request body.",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "http_cors_origins",
+          "flag": "--http_cors_origins",
+          "type": "",
+          "defaultValue": "",
+          "description": "CORS allow-origin list for the HTTP/ES API: comma-separated origins or '*' (empty disables CORS). Echoes an allowed Origin and answers preflight OPTIONS.",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "idle_session_timeout",
+          "flag": "--idle_session_timeout",
+          "type": "",
+          "defaultValue": "1m15s",
+          "description": "Close a session idle (between requests) longer than this. Drives the HTTP keep-alive idle timeout.",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "io_threads",
+          "flag": "--io_threads",
+          "type": "",
+          "defaultValue": "0",
+          "description": "IO threads for HTTP and pg-wire connections (0 = max(1, cpu_count / 4)).",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "listen",
+          "flag": "--listen",
+          "type": "",
+          "defaultValue": "postgres://127.0.0.1:7890",
+          "description": "Listener URL(s), comma-separated or repeated (last-wins). Each is one listener: postgres://host:port[?sslmode=...], http(s)://host:port?api=es, postgres:///path/to.sock (unix).",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "max_connections",
+          "flag": "--max_connections",
+          "type": "",
+          "defaultValue": "0",
+          "description": "Max concurrent client connections across all listeners (0 = unlimited). Over-cap connections get 53300 (pg) / 503 (http) then close. Per-listener override via ?max_connections=.",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "pg_max_message_bytes",
+          "flag": "--pg_max_message_bytes",
+          "type": "",
+          "defaultValue": "67108864",
+          "description": "Maximum size of a single pg-wire message (statement text / bound parameter value). Bulk data should use COPY, which streams.",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "tls_ca",
+          "flag": "--tls_ca",
+          "type": "",
+          "defaultValue": "",
+          "description": "Default PEM CA bundle to verify client certificates (sslmode=verify-ca/verify-full).",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "tls_cert",
+          "flag": "--tls_cert",
+          "type": "",
+          "defaultValue": "",
+          "description": "Default PEM server certificate chain for TLS listeners (a listener may override with ?cert=).",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "tls_ciphers",
+          "flag": "--tls_ciphers",
+          "type": "",
+          "defaultValue": "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305",
+          "description": "OpenSSL TLS 1.2 cipher list (forward-secret AEAD, Mozilla intermediate); TLS 1.3 suites are fixed by OpenSSL.",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "tls_groups",
+          "flag": "--tls_groups",
+          "type": "",
+          "defaultValue": "X25519:P-256",
+          "description": "TLS key-exchange groups, colon-separated.",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "tls_key",
+          "flag": "--tls_key",
+          "type": "",
+          "defaultValue": "",
+          "description": "Default PEM private key for --tls_cert.",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        },
+        {
+          "name": "tls_min_version",
+          "flag": "--tls_min_version",
+          "type": "",
+          "defaultValue": "1.2",
+          "description": "Minimum TLS version: 1.2 or 1.3 (legacy TLS is not supported).",
+          "source": "server/network/server.cpp",
+          "category": "server/network/server.cpp",
+          "categoryLabel": "server/network/server.cpp"
+        }
+      ]
+    },
+    {
+      "id": "server/query/server_engine.cpp",
+      "label": "server/query/server_engine.cpp",
+      "flags": [
+        {
+          "name": "cpu_threads",
+          "flag": "--cpu_threads",
+          "type": "",
+          "defaultValue": "0",
+          "description": "Executor pool size at process start. 0 = let DuckDB auto-detect from cpu_count. The SQL-level `SET threads = N` continues to win at runtime.",
+          "source": "server/query/server_engine.cpp",
+          "category": "server/query/server_engine.cpp",
+          "categoryLabel": "server/query/server_engine.cpp"
+        }
+      ]
+    },
+    {
+      "id": "server/scheduler/background_scheduler.cpp",
+      "label": "server/scheduler/background_scheduler.cpp",
+      "flags": [
+        {
+          "name": "background_threads",
+          "flag": "--background_threads",
+          "type": "",
+          "defaultValue": "0",
+          "description": "Number of background worker threads (drop / cleanup / maintenance tasks; later object-store prefetch). 0 = auto-detect.",
+          "source": "server/scheduler/background_scheduler.cpp",
+          "category": "server/scheduler/background_scheduler.cpp",
+          "categoryLabel": "server/scheduler/background_scheduler.cpp"
+        }
+      ]
+    }
+  ]
+}

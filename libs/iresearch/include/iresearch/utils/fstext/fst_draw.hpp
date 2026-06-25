@@ -145,7 +145,7 @@ class FstDrawer {
       }
       PrintString(Escape(symbol));
     } else {
-      PrintString(std::to_string(id));
+      PrintString(absl::StrCat(id));
     }
   }
 

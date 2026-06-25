@@ -1,0 +1,17 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE tbl AS
+    SELECT *
+    FROM (VALUES (1, 'a'), (2, 'b'), (3, 'c')) t(x, y);
+
+query
+SELECT *
+FROM tbl;
+----
+x	y
+1	a
+2	b
+3	c

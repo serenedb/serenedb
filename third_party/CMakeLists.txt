@@ -168,17 +168,29 @@ set(Boost_INCLUDE_DIRS "${Boost_INCLUDE_DIRS}" PARENT_SCOPE)
 add_library(Boost::headers ALIAS boost_boost)
 
 ################################################################################
-### icu library
+### icu library (provided by duckdb's bundled ICU 78.3)
 ################################################################################
 
-if(NOT TARGET ICU::uc)
-    sdb_update_module(${GIT_EXECUTABLE} "icu" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-    add_subdirectory(icu)
+# serenedb links a single ICU: the one vendored inside duckdb's icu extension
+# (compiled into icu_extension -> duckdb_static). This target only carries the
+# ICU 78 headers; the ICU symbols are resolved at final-executable link time
+# from icu_extension (pulled in via duckdb_static). We deliberately do NOT add a
+# link edge to duckdb_static here: duckdb links serenedb's shared `re2`, and re2
+# links ICU::uc, so a link edge would create a dependency cycle
+# (re2 -> ICU::uc -> duckdb_static -> re2). Header-only avoids that; every
+# executable that uses ICU already links duckdb_static.
+add_library(sdb_icu INTERFACE)
+target_include_directories(
+    sdb_icu
+    SYSTEM
+    INTERFACE
+        ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/extension/icu/third_party/icu/common
+        ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/extension/icu/third_party/icu/i18n
+)
 
-    # For re2
-    add_library(icu-uc ALIAS _icuuc)
-    add_library(ICU::uc ALIAS _icuuc)
-endif()
+add_library(icu ALIAS sdb_icu)
+add_library(icu-uc ALIAS sdb_icu)
+add_library(ICU::uc ALIAS sdb_icu)
 
 ################################################################################
 ### abseil-cpp library
@@ -436,12 +448,6 @@ target_include_directories(
 )
 
 ################################################################################
-## NGHTTP2
-################################################################################
-
-add_subdirectory(nghttp2)
-
-################################################################################
 ## CURL (required by DuckDB's httpfs extension for S3 I/O)
 ################################################################################
 
@@ -455,6 +461,9 @@ set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(CURL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
 set(CURL_ENABLE_EXPORT_TARGET OFF CACHE BOOL "" FORCE)
 set(HTTP_ONLY ON CACHE BOOL "" FORCE)
+# nghttp2 was removed from third_party; force HTTP/2 off so curl does not pick
+# up a system libnghttp2.
+set(USE_NGHTTP2 OFF CACHE BOOL "" FORCE)
 set(CURL_USE_OPENSSL ON CACHE BOOL "" FORCE)
 set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
 set(CURL_USE_LIBSSH2 OFF CACHE BOOL "" FORCE)
@@ -513,83 +522,10 @@ set(immer_BUILD_DOCS OFF CACHE BOOL "don't docs")
 add_subdirectory(immer)
 
 ################################################################################
-## DATE
-################################################################################
-
-sdb_update_module(${GIT_EXECUTABLE} "date" ${CMAKE_CURRENT_SOURCE_DIR} "LICENSE.txt")
-add_library(date_interface INTERFACE)
-target_include_directories(
-    date_interface
-    SYSTEM
-    INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/date/include
-)
-target_link_libraries(date_interface INTERFACE absl::base)
-
-################################################################################
 ## LINK_DIRECTORIES
 ################################################################################
 
 set(LINK_DIRECTORIES "${LINK_DIRECTORIES}" PARENT_SCOPE)
-
-################################################################################
-## tzdata
-################################################################################
-
-list(
-    APPEND TZ_DATA_FILES
-    "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/africa"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/antarctica"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/asia"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/australasia"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/backward"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/backzone"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/calendars"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/etcetera"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/europe"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/NEWS"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/northamerica"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/southamerica"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/version"
-    # "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/windowsZones.xml"
-)
-
-set(TZ_DATA_FILES ${TZ_DATA_FILES} PARENT_SCOPE)
-
-add_custom_target(tzdata)
-
-if(MSVC)
-    add_custom_command(
-        TARGET tzdata
-        POST_BUILD
-        COMMAND
-            ${CMAKE_COMMAND} -E make_directory
-            ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/tzdata
-        COMMAND
-            ${CMAKE_COMMAND} -E make_directory
-            ${CMAKE_BINARY_DIR}/tests/$<CONFIG>/tzdata
-        COMMAND
-            ${CMAKE_COMMAND} -E copy ${TZ_DATA_FILES}
-            ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/tzdata
-        COMMAND
-            ${CMAKE_COMMAND} -E copy ${TZ_DATA_FILES}
-            ${CMAKE_BINARY_DIR}/tests/$<CONFIG>/tzdata
-    )
-else()
-    add_custom_command(
-        TARGET tzdata
-        POST_BUILD
-        COMMAND
-            ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/bin/tzdata
-        COMMAND
-            ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/tests/tzdata
-        COMMAND
-            ${CMAKE_COMMAND} -E copy ${TZ_DATA_FILES}
-            ${CMAKE_BINARY_DIR}/bin/tzdata
-        COMMAND
-            ${CMAKE_COMMAND} -E copy ${TZ_DATA_FILES}
-            ${CMAKE_BINARY_DIR}/tests/tzdata
-    )
-endif()
 
 ###############################################################################
 ## simdjson
@@ -599,6 +535,31 @@ set(SIMDJSON_ENABLE_THREADS OFF CACHE BOOL "" FORCE)
 set(SIMDJSON_CXX_STANDARD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
 sdb_update_module(${GIT_EXECUTABLE} "simdjson" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(simdjson)
+
+###############################################################################
+## simdutf (SIMD UTF-8 validation + base64)
+################################################################################
+
+set(SIMDUTF_TESTS OFF CACHE BOOL "" FORCE)
+set(SIMDUTF_BENCHMARKS OFF CACHE BOOL "" FORCE)
+set(SIMDUTF_TOOLS OFF CACHE BOOL "" FORCE)
+set(SIMDUTF_ICONV OFF CACHE BOOL "" FORCE)
+set(SIMDUTF_FUZZERS OFF CACHE BOOL "" FORCE)
+sdb_update_module(${GIT_EXECUTABLE} "simdutf" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+add_subdirectory(simdutf)
+
+###############################################################################
+## ada (WHATWG URL parsing) -- comes after simdutf (ADA_USE_SIMDUTF can use it)
+################################################################################
+
+set(ADA_TESTING OFF CACHE BOOL "" FORCE)
+set(ADA_BENCHMARKS OFF CACHE BOOL "" FORCE)
+set(ADA_TOOLS OFF CACHE BOOL "" FORCE)
+#[[ ADA_USE_SIMDUTF stays OFF for now: enabling it couples ada's CMake to the
+    simdutf target and only accelerates IDNA (a missed optimization, not a bug). ]]
+set(ADA_USE_SIMDUTF OFF CACHE BOOL "" FORCE)
+sdb_update_module(${GIT_EXECUTABLE} "ada" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+add_subdirectory(ada)
 
 ###############################################################################
 ## croaring
@@ -624,49 +585,11 @@ sdb_update_module(${GIT_EXECUTABLE} "fast_float" ${CMAKE_CURRENT_SOURCE_DIR} "RE
 add_subdirectory(fast_float)
 
 ################################################################################
-## double-conversion
-################################################################################
-
-sdb_update_module(${GIT_EXECUTABLE} "double-conversion" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-add_subdirectory(double-conversion)
-add_library(double-conversion::double-conversion ALIAS double-conversion)
-
-################################################################################
 ## fmt
 ################################################################################
 
-if(NOT SDB_FAKE_FMT)
-    sdb_update_module(${GIT_EXECUTABLE} "fmt" ${CMAKE_CURRENT_SOURCE_DIR} "LICENSE")
-    add_subdirectory(fmt)
-endif()
-
-################################################################################
-## fake libraries (fmt, gflags, glog, folly)
-################################################################################
-
-add_subdirectory(fake)
-
-################################################################################
-## folly
-################################################################################
-
-set(FOLLY_HAVE_INT128_T ON)
-set(FOLLY_HAVE_EXTRANDOM_SFMT19937 OFF)
-set(FOLLY_HAVE_LIBGFLAGS ON)
-set(FOLLY_HAVE_LIBGLOG ON)
-# TODO(mbkkt) FOLLY_LIBRARY_SANITIZE_ADDRESS
-set(FOLLY_USE_SYMBOLIZER OFF)
-set(FOLLY_HAVE_LIBUNWIND OFF)
-set(FOLLY_HAVE_ELF OFF)
-set(FOLLY_HAVE_DWARF OFF)
-sdb_update_module(${GIT_EXECUTABLE} "folly" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-add_subdirectory(folly)
-target_include_directories(folly PUBLIC ${OPENSSL_INCLUDE_DIR})
-target_link_libraries(folly PUBLIC ${OPENSSL_LIBRARIES})
-# folly-deps.cmake consumes OPENSSL_LIBRARIES as plain file paths (our vendored
-# libssl.a / libcrypto.a via the pre-seeded cache vars above). Build system does not
-# infer a build-order dependency from a raw path, so wire it explicitly.
-add_dependencies(folly ssl crypto)
+sdb_update_module(${GIT_EXECUTABLE} "fmt" ${CMAKE_CURRENT_SOURCE_DIR} "LICENSE")
+add_subdirectory(fmt)
 
 ################################################################################
 ## jansson
@@ -733,6 +656,10 @@ set(BUILD_EXTENSIONS_ONLY FALSE CACHE BOOL "" FORCE)
 # Keep builtin extensions (core_functions, parquet, json, etc.)
 set(ENABLE_EXTENSION_AUTOLOADING FALSE CACHE BOOL "" FORCE)
 set(ENABLE_EXTENSION_AUTOINSTALL FALSE CACHE BOOL "" FORCE)
+# No dynamic extension load/install (we link a fixed BUILD_EXTENSIONS set). Drops
+# the load/install machinery and, via -DDUCKDB_DISABLE_EXTENSION_LOAD, lets the
+# read-mostly registries take shared_ptr_ipp.hpp's lock-free plain_load() path.
+set(DISABLE_EXTENSION_LOAD TRUE CACHE BOOL "" FORCE)
 set(EXTENSION_STATIC_BUILD TRUE CACHE BOOL "" FORCE)
 set(ENABLE_SANITIZER FALSE CACHE BOOL "" FORCE)
 set(ENABLE_UBSAN FALSE CACHE BOOL "" FORCE)
@@ -743,7 +670,7 @@ set(LATEST_STORAGE TRUE CACHE BOOL "" FORCE)
 # Suppress the per-extension "vcpkg.json present but VCPKG_BUILD not set" warning.
 set(VCPKG_BUILD ON CACHE BOOL "" FORCE)
 set(BUILD_EXTENSIONS
-    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete"
+    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet"
     CACHE STRING
     ""
     FORCE
@@ -754,6 +681,7 @@ sdb_update_module(${GIT_EXECUTABLE} "duckdb_httpfs" ${CMAKE_CURRENT_SOURCE_DIR} 
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_avro" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_iceberg" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_postgres" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "duckdb_inet" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
 add_subdirectory(duckdb)
 
@@ -783,6 +711,8 @@ target_link_libraries(
         iceberg_extension
         postgres_scanner_extension
         autocomplete_extension
+        icu_extension
+        inet_extension
 )
 
 # !!! KEEP THIS LAST !!!

@@ -1,0 +1,97 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+DETACH IF EXISTS stations_fixture;
+
+statement ok
+ATTACH '${__TEST_DIR__}/cookbook_network_cloud_storage_duckdb_over_https_or_s3_example_001_stations.duckdb' AS stations_fixture;
+
+statement ok
+DROP TABLE IF EXISTS stations_fixture.stations;
+
+statement ok
+CREATE TABLE stations_fixture.stations AS SELECT * FROM (VALUES
+    (1, 'Amsterdam Centraal'),
+    (2, 'Rotterdam Centraal')
+) AS t(station_id, station_name);
+
+statement ok
+DETACH stations_fixture;
+
+# DOCS_TEST_RAW
+#| ATTACH 'https://blobs.duckdb.org/databases/stations.duckdb' AS stations_db;
+
+# DOCS_TEST_BODY
+
+statement ok
+DETACH IF EXISTS stations_db;
+
+statement ok
+ATTACH '${__TEST_DIR__}/cookbook_network_cloud_storage_duckdb_over_https_or_s3_example_001_stations.duckdb' AS stations_db;
+
+# DOCS_TEST: example_002
+
+statement ok
+DETACH IF EXISTS stations_db;
+
+statement ok
+ATTACH '${__TEST_DIR__}/cookbook_network_cloud_storage_duckdb_over_https_or_s3_example_001_stations.duckdb' AS stations_db;
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) AS num_stations
+FROM stations_db.stations;
+----
+num_stations
+2
+
+# DOCS_TEST: example_003
+
+statement ok
+DETACH IF EXISTS stations_db;
+
+statement ok
+DETACH IF EXISTS stations_fixture;
+
+statement ok
+ATTACH '${__TEST_DIR__}/cookbook_network_cloud_storage_duckdb_over_https_or_s3_example_003_stations.duckdb' AS stations_fixture;
+
+statement ok
+DROP TABLE IF EXISTS stations_fixture.stations;
+
+statement ok
+CREATE TABLE stations_fixture.stations AS SELECT * FROM (VALUES
+    (1, 'Amsterdam Centraal'),
+    (2, 'Rotterdam Centraal')
+) AS t(station_id, station_name);
+
+statement ok
+DETACH stations_fixture;
+
+# DOCS_TEST_RAW
+#| ATTACH 's3://my-bucket/stations.duckdb' AS stations_db;
+
+# DOCS_TEST_BODY
+
+statement ok
+ATTACH '${__TEST_DIR__}/cookbook_network_cloud_storage_duckdb_over_https_or_s3_example_003_stations.duckdb' AS stations_db;
+
+# DOCS_TEST: example_004
+
+statement ok
+DETACH IF EXISTS stations_db;
+
+statement ok
+ATTACH '${__TEST_DIR__}/cookbook_network_cloud_storage_duckdb_over_https_or_s3_example_003_stations.duckdb' AS stations_db;
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) AS num_stations
+FROM stations_db.stations;
+----
+num_stations
+2

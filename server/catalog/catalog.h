@@ -25,7 +25,6 @@
 
 #include <expected>
 #include <memory>
-#include <shared_mutex>
 #include <vector>
 
 #include "auth/role_closure.h"
@@ -65,7 +64,13 @@ class SecondaryIndex;
 class InvertedIndex;
 
 struct CreateTableOperationOptions {
-  bool create_with_tombstone = false;
+  // A valid id puts CreateTable in CTAS mode: the entry is created with this
+  // pre-allocated id, tombstoned, and WITHOUT a backing store table (the data
+  // side creates the store table itself, under its own transaction). CTAS
+  // pre-allocates the id at plan time so the store table name is known to the
+  // insert operator. An invalid (default) id creates a regular, immediately
+  // visible table with a freshly allocated id and its store table.
+  ObjectId table_id;
 };
 
 struct CreateIndexOperationOptions {
@@ -80,8 +85,6 @@ constexpr ObjectType GetObjectType() noexcept {
     return ObjectType::Database;
   } else if constexpr (std::is_same_v<T, Schema>) {
     return ObjectType::Schema;
-  } else if constexpr (std::is_same_v<T, Role>) {
-    return ObjectType::Role;
   } else if constexpr (std::is_same_v<T, PgSqlFunction>) {
     return ObjectType::PgSqlFunction;
   } else if constexpr (std::is_same_v<T, PgSqlType>) {
@@ -96,6 +99,8 @@ constexpr ObjectType GetObjectType() noexcept {
     return ObjectType::Tokenizer;
   } else if constexpr (std::is_same_v<T, Sequence>) {
     return ObjectType::Sequence;
+  } else if constexpr (std::is_same_v<T, Role>) {
+    return ObjectType::Role;
   } else {
     static_assert(false);
   }
@@ -117,6 +122,9 @@ AccessContext RequireOwnership(duckdb::ClientContext& context);
 inline AccessContext RequireOwnership(ObjectId role) { return {role}; }
 
 inline AccessContext NoAccessCheck() { return {id::kRootUser}; }
+
+using PendingDrops =
+  containers::FlatHashMap<ObjectId, std::vector<std::weak_ptr<DropTask>>>;
 
 struct Snapshot {
   Snapshot();
@@ -250,15 +258,17 @@ struct Snapshot {
   void EndLoad() noexcept;
 
   std::shared_ptr<DatabaseDrop> CreateDatabaseDrop(
-    const std::shared_ptr<Database>& db, duckdb::shared_ptr<void> keep_alive);
+    PendingDrops& pending_drops, const std::shared_ptr<Database>& db,
+    duckdb::shared_ptr<void> keep_alive);
   std::shared_ptr<SchemaDrop> CreateSchemaDrop(
-    ObjectId db_id, const std::shared_ptr<Schema>& schema, bool is_root);
+    PendingDrops& pending_drops, ObjectId db_id,
+    const std::shared_ptr<Schema>& schema, bool is_root);
   std::shared_ptr<TableDrop> CreateTableDrop(
-    ObjectId db_id, ObjectId schema_id, const std::shared_ptr<Table>& table,
-    bool is_root);
+    PendingDrops& pending_drops, ObjectId db_id, ObjectId schema_id,
+    const std::shared_ptr<Table>& table, bool is_root);
   std::shared_ptr<IndexDrop> CreateIndexDrop(
-    ObjectId db_id, ObjectId schema_id, ObjectId table_id,
-    const std::shared_ptr<Index>& index, bool is_root);
+    PendingDrops& pending_drops, ObjectId db_id, ObjectId schema_id,
+    ObjectId table_id, const std::shared_ptr<Index>& index, bool is_root);
 
   // Store-table name of `table_id` ("db.schema.table"), or nullopt when
   // the id is unset (self-referencing FK) or not resolvable.
@@ -273,7 +283,8 @@ struct Snapshot {
                       const DropPlan& plan) const;
   // Apply cross-tree mutations in-memory; schedule IndexDrop tasks for
   // cascade-dropped indexes (column->index cascade).
-  void ApplyDropPlan(ObjectId db_id, DropPlan& plan);
+  void ApplyDropPlan(PendingDrops& pending_drops, ObjectId db_id,
+                     DropPlan& plan);
 
   bool CheckSchemaEmptyDependency(ObjectId schema_id) const;
 
@@ -508,6 +519,10 @@ class Catalog final {
   Result DropIndex(const AccessContext& ax, std::string_view database,
                    std::string_view schema, std::string_view name,
                    bool cascade);
+  // Drop an index by its stable ObjectId rather than by name. Used by the
+  // CREATE INDEX failure path, where a concurrent rename could otherwise make a
+  // by-name lookup resolve to (and drop) the wrong index.
+  Result DropIndexById(ObjectId database_id, ObjectId index_id, bool cascade);
   Result DropTableColumn(const AccessContext& ax, ObjectId database_id,
                          std::string_view schema, std::string_view table,
                          std::string_view column, bool if_exists);
@@ -528,6 +543,10 @@ class Catalog final {
   Result CreateIndexImpl(std::string_view schema, std::shared_ptr<Index> index,
                          CreateIndexOperationOptions operation_options);
 
+  // Shared core of DropIndex / DropIndexById; assumes `_mutex` is held.
+  Result DropIndexByIdLocked(ObjectId database_id, ObjectId index_id,
+                             bool cascade);
+
   template<typename T>
   Result RenameObjectImpl(const AccessContext& ax, ObjectId database_id,
                           std::string_view schema, std::string_view name,
@@ -539,13 +558,16 @@ class Catalog final {
                           std::string_view new_name, std::shared_ptr<T> object);
 
   mutable absl::Mutex _mutex;
-  mutable std::shared_mutex _snapshot_mutex;
+  // Accessed only via std::atomic_load/std::atomic_store (libc++ lacks
+  // std::atomic<std::shared_ptr>): a leaf with no lock ordering -- mutations
+  // build a clone off to the side and atomically swap it in.
   std::shared_ptr<const Snapshot> _snapshot;
+  PendingDrops _pending_drops;
   CatalogStore* _engine;
 };
 
-// Builds the single in-process catalog, loads boot state, bootstraps the
-// default role, and attaches the databases. Throws on failure.
+// Builds the single in-process catalog, loads boot state, and attaches the
+// databases. Throws on failure.
 void InitCatalog();
 void ShutdownCatalog();
 

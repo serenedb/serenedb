@@ -1,0 +1,137 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE integers (i INTEGER);
+
+statement ok
+INSERT INTO integers VALUES (NULL);
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT NULL = NULL;
+----
+?column?
+NULL
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT NULL IS NOT DISTINCT FROM NULL;
+----
+?column?
+t
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT NULL IS NULL;
+----
+?column?
+t
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT cos(NULL);
+----
+cos
+NULL
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+SELECT coalesce(NULL, NULL, 1);
+----
+coalesce
+1
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+SELECT coalesce(10, 20);
+----
+coalesce
+10
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query
+SELECT coalesce(NULL, NULL);
+----
+coalesce
+NULL
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query
+SELECT ifnull(NULL, 'default_string');
+----
+coalesce
+default_string
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+query
+SELECT ifnull(1, 'default_string');
+----
+coalesce
+1
+
+# DOCS_TEST: example_011
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS integers;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE integers (i INTEGER);
+
+statement ok
+INSERT INTO integers VALUES (1), (10), (NULL);
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+query
+SELECT min(i) FROM integers;
+----
+min
+1
+
+# DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
+
+query
+SELECT max(i) FROM integers;
+----
+max
+10

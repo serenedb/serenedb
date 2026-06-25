@@ -320,7 +320,7 @@ void SearchScan::AppendSummary(
     out.insert("Score", text_scorer->ToString());
   }
   if (score_top_k) {
-    std::string topk_val = std::to_string(*score_top_k);
+    std::string topk_val = absl::StrCat(*score_top_k);
     if (WandEnabled(bind.inverted_index.get(), text_scorer)) {
       absl::StrAppend(&topk_val, ", optimized");
     }
@@ -328,9 +328,9 @@ void SearchScan::AppendSummary(
   }
   if (vector_scorer) {
     if (vector_scorer->radius != std::numeric_limits<float>::max()) {
-      out.insert("Radius", std::to_string(vector_scorer->radius));
+      out.insert("Radius", absl::StrCat(vector_scorer->radius));
     }
-    out.insert("Dims", std::to_string(vector_scorer->query_vector.size()));
+    out.insert("Dims", absl::StrCat(vector_scorer->query_vector.size()));
     if (stored_filter && bind.inverted_index) {
       out.insert(
         "TextFilter",
@@ -359,6 +359,12 @@ std::string ProjectionDisplayName(const SereneDBScanBindData& bind,
                                   const duckdb::vector<std::string>& names) {
   const auto col_id = column_index.GetPrimaryIndex();
   if (col_id < names.size()) {
+    if (column_index.IsPushdownExtract() && column_index.HasChildren() &&
+        col_id < bind.column_types.size()) {
+      std::vector<std::string_view> path{names[col_id]};
+      DecodeExtractPath(column_index, bind.column_types[col_id], path);
+      return absl::StrJoin(path, ".");
+    }
     return names[col_id];
   }
   if (const auto pk_idx = SereneDBTableEntry::VirtualToPKColumnIndex(col_id);
@@ -586,8 +592,12 @@ bool IResearchSupportsPushdownExtract(const duckdb::FunctionData& bind_data_p,
     return false;
   }
   const auto bind_col = col_idx.index;
-  if (bind_col >= bind.column_ids.size() ||
-      bind.column_types[bind_col].id() != duckdb::LogicalTypeId::VARIANT) {
+  if (bind_col >= bind.column_ids.size()) {
+    return false;
+  }
+  const auto type_id = bind.column_types[bind_col].id();
+  if (type_id != duckdb::LogicalTypeId::VARIANT &&
+      type_id != duckdb::LogicalTypeId::STRUCT) {
     return false;
   }
   const auto* info =

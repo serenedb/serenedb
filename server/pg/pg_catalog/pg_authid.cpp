@@ -23,8 +23,9 @@
 #include <duckdb/common/types/timestamp.hpp>
 
 #include "app/app_server.h"
+#include "basics/static_strings.h"
 #include "catalog/catalog.h"
-#include "catalog/role.h"
+#include "catalog/identifiers/object_id.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -46,9 +47,8 @@ Timestamptz ParseValidUntil(std::string_view ts) {
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgAuthid>::GetTableData() {
-  auto catalog = _config.EnsureCatalogSnapshot();
-
   std::vector<PgAuthid> values;
+  auto catalog = _config.EnsureCatalogSnapshot();
   for (const auto& role : catalog->GetRoles()) {
     using catalog::RoleOption;
     PgAuthid row{

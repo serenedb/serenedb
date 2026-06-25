@@ -56,6 +56,7 @@
 #include "catalog/table.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/pg_logical_types.h"
+#include "network/pg/cancel_registry.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/pg_types.h"
@@ -128,6 +129,79 @@ void CurrentUserFunction(duckdb::DataChunk& args,
   auto& context = state.GetContext();
   const auto& conn_ctx = GetSereneDBContext(context);
   result.Reference(conn_ctx.user(), duckdb::count_t(args.size()));
+}
+
+// pg_backend_pid() -> int4: this connection's backend PID, the same value sent
+// in BackendKeyData (the high 32 bits of the random cancel key) so cancellation
+// and pg_backend_pid() agree.
+void PgBackendPidFunction(duckdb::DataChunk& args,
+                          duckdb::ExpressionState& state,
+                          duckdb::Vector& result) {
+  const auto& conn_ctx = GetSereneDBContext(state.GetContext());
+  result.Reference(duckdb::Value::INTEGER(conn_ctx.GetBackendPid()),
+                   duckdb::count_t(args.size()));
+}
+
+// Cancel each requested backend's running query by pid -> BOOLEAN per row (true
+// if the pid matched a live backend). Shared by pg_cancel_backend and
+// pg_terminate_backend. Authorised by being a session (single superuser), so it
+// matches on the pid half of the cancel key alone, no secret.
+void CancelBackendsByPid(duckdb::DataChunk& args,
+                         duckdb::ExpressionState& state,
+                         duckdb::Vector& result) {
+  auto& conn_ctx = GetSereneDBContext(state.GetContext());
+  auto* registry = conn_ctx.GetCancelRegistry();
+  duckdb::UnifiedVectorFormat pids;
+  args.data[0].ToUnifiedFormat(pids);
+  const auto* pid = duckdb::UnifiedVectorFormat::GetData<int32_t>(pids);
+  auto* out = duckdb::FlatVector::GetDataMutable<bool>(result);
+  auto& validity = duckdb::FlatVector::ValidityMutable(result);
+  using CancelResult = network::pg::CancelRegistry::CancelResult;
+  for (duckdb::idx_t i = 0; i < args.size(); ++i) {
+    const auto idx = pids.sel->get_index(i);
+    if (!pids.validity.RowIsValid(idx)) {
+      validity.SetInvalid(i);
+      continue;
+    }
+    const auto target = static_cast<uint32_t>(pid[idx]);
+    const auto outcome =
+      registry ? registry->CancelByPid(target) : CancelResult::NotFound;
+    out[i] = outcome == CancelResult::Cancelled;
+    if (outcome == CancelResult::Ambiguous) {
+      // The pid is the high half of a random key, not a unique OS pid; two
+      // backends collided on it, so cancelling either could hit the wrong one.
+      conn_ctx.AddNotice(SQL_ERROR_DATA(
+        ERR_CODE(ERRCODE_WARNING),
+        ERR_MSG("PID ", target,
+                " matches more than one backend; not cancelling any")));
+    } else if (outcome == CancelResult::NotFound) {
+      conn_ctx.AddNotice(SQL_ERROR_DATA(
+        ERR_CODE(ERRCODE_WARNING),
+        ERR_MSG("PID ", target, " is not a PostgreSQL backend process")));
+    }
+  }
+}
+
+// pg_cancel_backend(pid) -> bool: interrupt the target backend's current query.
+void PgCancelBackendFunction(duckdb::DataChunk& args,
+                             duckdb::ExpressionState& state,
+                             duckdb::Vector& result) {
+  CancelBackendsByPid(args, state, result);
+}
+
+// pg_terminate_backend(pid) -> bool: SereneDB cannot drop another session's
+// connection, only interrupt its current query, so this degrades to a cancel
+// and warns. Returns whether the backend was found (its query signalled).
+void PgTerminateBackendFunction(duckdb::DataChunk& args,
+                                duckdb::ExpressionState& state,
+                                duckdb::Vector& result) {
+  GetSereneDBContext(state.GetContext())
+    .AddNotice(sdb::pg::SqlErrorData{
+      .errcode = ERRCODE_WARNING,
+      .errmsg = "terminating connections is not supported; "
+                "pg_terminate_backend only cancels the backend's current "
+                "query"});
+  CancelBackendsByPid(args, state, result);
 }
 
 // set_config(name, value, is_local) -> text
@@ -1497,6 +1571,21 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
   // version() -> text (overrides DuckDB's built-in)
   loader.RegisterFunction(duckdb::ScalarFunction{
     "version", {}, duckdb::LogicalType::VARCHAR, VersionFunction});
+
+  // pg_backend_pid() -> int4 (this connection's backend PID)
+  loader.RegisterFunction(duckdb::ScalarFunction{
+    "pg_backend_pid", {}, duckdb::LogicalType::INTEGER, PgBackendPidFunction});
+
+  // pg_cancel_backend(pid) / pg_terminate_backend(pid) -> bool: cancel another
+  // backend's query by pid (terminate degrades to cancel + a warning).
+  loader.RegisterFunction(duckdb::ScalarFunction{"pg_cancel_backend",
+                                                 {duckdb::LogicalType::INTEGER},
+                                                 duckdb::LogicalType::BOOLEAN,
+                                                 PgCancelBackendFunction});
+  loader.RegisterFunction(duckdb::ScalarFunction{"pg_terminate_backend",
+                                                 {duckdb::LogicalType::INTEGER},
+                                                 duckdb::LogicalType::BOOLEAN,
+                                                 PgTerminateBackendFunction});
 
   // num_nonnulls(...) -> int
   {

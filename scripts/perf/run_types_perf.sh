@@ -76,7 +76,7 @@ start_server() {
 	killall -9 serened >/dev/null 2>&1 || true
 	sleep 1
 	"${SERENED_BIN}" "${SERENED_DATA_DIR}" \
-		--server_endpoints "pgsql+tcp://0.0.0.0:${PORT}" \
+		--listen "postgres://0.0.0.0:${PORT}" \
 		>"${LOG}" 2>&1 &
 	disown
 	for _ in $(seq 1 30); do
@@ -207,7 +207,7 @@ if [[ "${NEED_PARQUET}" == "1" ]]; then
 
 	echo "generating ${PARQUET_FILE} (${N} rows) via temporary serened"
 	"${SERENED_BIN}" "${RESULTS_DIR}/types_genparquet_data" \
-		--server_endpoints "pgsql+tcp://0.0.0.0:${PORT}" \
+		--listen "postgres://0.0.0.0:${PORT}" \
 		>"${LOG}" 2>&1 &
 	disown
 	for _ in $(seq 1 30); do
@@ -215,24 +215,29 @@ if [[ "${NEED_PARQUET}" == "1" ]]; then
 		sleep 0.5
 	done
 
+	# rnd(i, salt): deterministic pseudo-random DOUBLE in [0, 1). hash() kills
+	# the periodicity that aliases with codec analyzers' sampling strides,
+	# while staying reproducible across regens and thread counts (unlike
+	# random()).
 	run_setup "generate_parquet" "${BUILD_THREADS}" "
+CREATE MACRO rnd(x, salt) AS
+  (hash(x * 1000003 + salt) % 1048576) / 1048576.0;
 COPY (
   SELECT i AS pk,
          ((i * 3) % 200 - 100)::TINYINT AS i8,
          ((i * 5) % 60000 - 30000)::SMALLINT AS i16,
          ((i * 7) % 1000000) AS i32,
          (i * 1009)::BIGINT AS i64,
-         (((i * 13) % 1000) / 7.0)::FLOAT AS f32,
-         (((i * 17) % 10000) / 13.0)::DOUBLE AS f64,
+         rnd(i, 1)::FLOAT AS f32,
+         rnd(i, 2)::DOUBLE AS f64,
          'str-' || (i % 1024)::VARCHAR AS s,
          (i % 2 = 0) AS bool_col,
          [(i + 0) % 50, (i + 1) % 50, (i + 2) % 50]::INTEGER[3] AS arr_i32,
-         [(i + 0) % 50 + 0.5, (i + 1) % 50 + 0.5,
-          (i + 2) % 50 + 0.5]::DOUBLE[3] AS arr_f64,
+         [rnd(i, 3), rnd(i, 4), rnd(i, 5)]::DOUBLE[3] AS arr_f64,
          [(i + 0) % 30, (i + 1) % 30, (i + 2) % 30, (i + 3) % 30] AS lst_i32,
          ROW(i * 2, 'b-' || (i % 100)::VARCHAR)
            ::STRUCT(a INTEGER, b VARCHAR) AS struct_basic,
-         ROW((i * 0.5)::DOUBLE, 'b-' || (i % 100)::VARCHAR)
+         ROW(rnd(i, 6)::DOUBLE, 'b-' || (i % 100)::VARCHAR)
            ::STRUCT(a DOUBLE, b VARCHAR) AS struct_f64,
          MAP {'k1': i, 'k2': i * 2, 'k3': i * 3} AS map_i32,
          [ROW('p1', i)::STRUCT(k VARCHAR, v INTEGER),
@@ -243,23 +248,23 @@ COPY (
            ::STRUCT(name VARCHAR, vals STRUCT(k VARCHAR, v INTEGER)[]) AS deep,
          {'a': i * 2, 'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
            AS variant_obj,
-         {'a': (i * 0.5)::DOUBLE, 'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
+         {'a': rnd(i, 6)::DOUBLE, 'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
            AS variant_f64,
          CASE
            WHEN i < 1000 AND i % 100 = 0
-             THEN {'a': (i * 0.5)::DOUBLE,
+             THEN {'a': rnd(i, 8)::DOUBLE,
                    'b': 'b-' || (i % 100)::VARCHAR, 'rare': i}::VARIANT
            WHEN i % 1000 = 0
-             THEN {'a': (i * 1.5)::DOUBLE, 'b': i}::VARIANT
+             THEN {'a': rnd(i, 9)::DOUBLE, 'b': i}::VARIANT
            WHEN i % 9999 = 3
              THEN {'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
-           ELSE {'a': (i * 3.1415)::DOUBLE,
+           ELSE {'a': rnd(i, 10)::DOUBLE,
                  'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
          END AS variant_messy,
          {'outer': {'mid': {'a': i * 2,
                             'b': 'n-' || (i % 100)::VARCHAR}}}::VARIANT
            AS variant_nested,
-         {'outer': {'mid': {'a': (i * 0.5)::DOUBLE,
+         {'outer': {'mid': {'a': rnd(i, 11)::DOUBLE,
                             'b': 'n-' || (i % 100)::VARCHAR}}}::VARIANT
            AS variant_nested_f64
   FROM range(${N}) t(i)
@@ -593,9 +598,8 @@ ratio() {
 		printf "%-12s %12s %12s %8s | %12s %12s %8s\n" \
 			"------------" "------------" "------------" "--------" \
 			"------------" "------------" "--------"
-		for q in count i8 i16 i32 i64 f32 f64 varchar bool boolCast boolFilt \
-			array arrayF list struct structF map lstStr deep \
-			variant variantF variantMsg variantNest variantNestF; do
+		for q in "${QUERIES[@]}"; do
+			q="${q%%|*}"
 			ci="${TIMINGS[cold_${q}_indexed]:-}"
 			cn="${TIMINGS[cold_${q}_native]:-}"
 			hi="${TIMINGS[hot_${q}_indexed]:-}"
@@ -613,9 +617,8 @@ ratio() {
 			"query" "cs hot" "native hot" "hot x"
 		printf "%-12s %12s %12s %8s\n" \
 			"------------" "------------" "------------" "--------"
-		for q in count i8 i16 i32 i64 f32 f64 varchar bool boolCast boolFilt \
-			array arrayF list struct structF map lstStr deep \
-			variant variantF variantMsg variantNest variantNestF; do
+		for q in "${QUERIES[@]}"; do
+			q="${q%%|*}"
 			hi="${TIMINGS[hot_${q}_indexed]:-}"
 			hn="${TIMINGS[hot_${q}_native]:-}"
 			printf "%-12s %12s %12s %8s\n" "${q}" \

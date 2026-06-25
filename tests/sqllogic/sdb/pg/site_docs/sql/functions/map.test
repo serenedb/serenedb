@@ -1,0 +1,111 @@
+# DOCS_TEST: cardinality
+# DOCS_TEST_BODY
+query
+SELECT cardinality(map([4, 2], ['a', 'b'])) AS cardinality;
+----
+cardinality
+2
+
+# DOCS_TEST: element_at
+# DOCS_TEST_BODY
+query
+SELECT element_at(map([100, 5], [42, 43]), 100) AS element_at;
+----
+element_at
+{42}
+
+# DOCS_TEST: map_concat
+# DOCS_TEST_BODY
+query
+SELECT map_concat(MAP {'key1': 10, 'key2': 20}, MAP {'key3': 30}, MAP {'key2': 5}) AS map_concat;
+----
+map_concat
+{"(key1,10)","(key2,5)","(key3,30)"}
+
+# DOCS_TEST: map_contains
+# DOCS_TEST_BODY
+query
+SELECT map_contains(MAP {'key1': 10, 'key2': 20, 'key3': 30}, 'key2') AS map_contains;
+----
+map_contains
+t
+
+# DOCS_TEST: map_contains_entry
+# DOCS_TEST_BODY
+query
+SELECT map_contains_entry(MAP {'key1': 10, 'key2': 20, 'key3': 30}, 'key2', 20) AS map_contains_entry;
+----
+map_contains_entry
+t
+
+# DOCS_TEST: map_contains_value
+# DOCS_TEST_BODY
+query
+SELECT map_contains_value(MAP {'key1': 10, 'key2': 20, 'key3': 30}, 20) AS map_contains_value;
+----
+map_contains_value
+t
+
+# DOCS_TEST: map_entries
+# DOCS_TEST_BODY
+query
+SELECT map_entries(map([100, 5], [42, 43])) AS map_entries;
+----
+map_entries
+{"(100,42)","(5,43)"}
+
+# DOCS_TEST: map_extract
+# DOCS_TEST_BODY
+query
+SELECT map_extract(map([100, 5], [42, 43]), 100) AS map_extract;
+----
+map_extract
+{42}
+
+# DOCS_TEST: map_extract_value
+# DOCS_TEST_BODY
+query
+SELECT map_extract_value(map([100, 5], [42, 43]), 100) AS map_extract_value;
+----
+map_extract_value
+42
+
+# DOCS_TEST: map_from_entries
+# DOCS_TEST_BODY
+query
+SELECT map_from_entries([{k: 5, v: 'val1'}, {k: 3, v: 'val2'}]) AS map_from_entries;
+----
+map_from_entries
+{"(5,val1)","(3,val2)"}
+
+# DOCS_TEST: map_keys
+# DOCS_TEST_BODY
+query
+SELECT map_keys(map([100, 5], [42, 43])) AS map_keys;
+----
+map_keys
+{100,5}
+
+# DOCS_TEST: map_values
+# DOCS_TEST_BODY
+query
+SELECT map_values(map([100, 5], [42, 43])) AS map_values;
+----
+map_values
+{42,43}
+
+# DOCS_TEST: map
+# DOCS_TEST_BODY
+query
+SELECT map() AS map;
+----
+map
+{}
+
+# DOCS_TEST: map_entry
+# DOCS_TEST_BODY
+query
+SELECT map([100, 5], ['a', 'b'])[100] AS map_entry;
+----
+map_entry
+a

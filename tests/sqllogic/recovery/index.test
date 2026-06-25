@@ -239,8 +239,12 @@ sleep 2
 
 connection new2
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT * FROM sdb_search_tasks_status;
+SELECT metric, value FROM sdb_metrics WHERE metric IN ('refresh_active', 'refresh_pending', 'compaction_active', 'compaction_pending', 'cleanup_active', 'cleanup_pending') ORDER BY metric;
 ----
-task_type	active_tasks	pending_tasks	threads
-Refresh	0	0	<slt:ignore>
-Compaction	0	0	<slt:ignore>
+metric	value
+cleanup_active	0
+cleanup_pending	0
+compaction_active	0
+compaction_pending	0
+refresh_active	0
+refresh_pending	0

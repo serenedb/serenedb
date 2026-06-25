@@ -1,0 +1,10 @@
+# DOCS_TEST: example_016
+
+statement ok
+CREATE TABLE integers (i INTEGER);
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER TABLE integers
+RENAME i TO j;

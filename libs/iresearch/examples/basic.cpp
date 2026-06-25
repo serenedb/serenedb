@@ -136,7 +136,8 @@ void IndexDocument(irs::IndexWriter::Transaction& ctx, TextField& title_field,
 //                   (term~N), ranges ([min TO max]).
 irs::Filter::ptr ParseQuery(std::string_view query_str,
                             irs::field_id default_field,
-                            irs::analysis::Analyzer& tokenizer) {
+                            irs::analysis::Analyzer& tokenizer,
+                            bool scored = false) {
   auto root = std::make_unique<irs::MixedBooleanFilter>();
   sdb::ParserContext context{*root, default_field, tokenizer};
   auto result = sdb::ParseQuery(context, query_str);
@@ -148,20 +149,29 @@ irs::Filter::ptr ParseQuery(std::string_view query_str,
     return {};
   }
   irs::Filter::ptr filter = std::move(root);
-  irs::Optimize(filter);
+  irs::Optimize(filter, {.scored = scored});
   return filter;
 }
 
 // Helper: count documents matching a filter across all segments.
 size_t CountMatches(const irs::DirectoryReader& reader,
                     const irs::Filter& filter) {
-  auto prepared = filter.prepare({.index = reader});
-  size_t count = 0;
+  auto collector = filter.MakeCollector(nullptr);
+  std::vector<irs::QueryBuilder::ptr> queries;
+  queries.reserve(reader.size());
   for (auto& segment : reader) {
-    auto docs = prepared->execute({.segment = segment});
-    while (docs->next()) {
-      ++count;
+    queries.emplace_back(
+      filter.PrepareSegment(segment, {.collector = collector.get()}));
+  }
+  const auto stats = collector->Finish(irs::IResourceManager::gNoop);
+
+  size_t count = 0;
+  for (auto& query : queries) {
+    if (!query) {
+      continue;
     }
+    auto docs = query->Execute({}, stats);
+    count += docs->count();
   }
   return count;
 }
@@ -241,7 +251,7 @@ void QuerySingleTerm(const irs::DirectoryReader& reader,
 void QueryTopK(const irs::DirectoryReader& reader, const irs::Scorer& scorer,
                irs::analysis::Analyzer& tokenizer) {
   std::cout << "=== Top-K with BM25 Scoring ===\n";
-  auto filter = ParseQuery("search", kBodyColumnId, tokenizer);
+  auto filter = ParseQuery("search", kBodyColumnId, tokenizer, /*scored=*/true);
 
   constexpr size_t kTopK = 3;
   std::vector<irs::ScoreDoc> results(irs::BlockSize(kTopK));

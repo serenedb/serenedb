@@ -23,15 +23,13 @@
 #include <duckdb/main/database_manager.hpp>
 
 #include "basics/result.h"
-#include "utils/exec_context.h"
 
 namespace sdb::catalog {
 
 struct AccessContext;
 
 Result CreateDatabase(const AccessContext& ax, std::string_view name);
-Result DropDatabase(const ExecContext& exec, const AccessContext& ax,
-                    std::string_view db_name,
+Result DropDatabase(const AccessContext& ax, std::string_view db_name,
                     duckdb::shared_ptr<void> keep_alive = {});
 
 }  // namespace sdb::catalog

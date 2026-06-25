@@ -40,7 +40,11 @@ class AppServer {
   AppServer(const AppServer&) = delete;
   AppServer& operator=(const AppServer&) = delete;
 
-  void parseOptions(int argc, char* argv[]);
+  // Parses the CLI (absl flags + the single positional data-dir). Static and
+  // free of SDB_* logging so it can run in main() BEFORE the DuckDB engine is
+  // brought up -- ConfigureServerDBConfig reads flags (e.g. --cpu_threads)
+  // while sizing the pool, which happens during engine init.
+  static void parseOptions(int argc, char* argv[]);
 
   void wait();
 

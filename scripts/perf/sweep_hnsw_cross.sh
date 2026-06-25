@@ -31,7 +31,7 @@ run_test() {
 	rm -rf /tmp/serened_perf_6161
 	cd "$REPO"
 	./build_perf/bin/serened /tmp/serened_perf_6161 \
-		--server_endpoints pgsql+tcp://0.0.0.0:6161 \
+		--listen postgres://0.0.0.0:6161 \
 		sleep 4
 
 	local out

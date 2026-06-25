@@ -1,0 +1,260 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY kw_dict(template = 'keyword');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geo_s2_dict(template = 'geojson',
+    coding = 's2point');
+
+
+# ============================================================================
+# Expression source + INCLUDE(other_col): mirror of column-with-INCLUDE for
+# every scalar cluster. Wrapper expressions are identity-equivalent so the
+# query side stays straightforward; INCLUDE flips store_values on for the
+# sibling column without changing the indexed expression.
+# ============================================================================
+
+statement ok
+CREATE TABLE g3_f(pk INTEGER PRIMARY KEY, n FLOAT, tag VARCHAR);
+
+statement ok
+CREATE INDEX g3_f_expr_st ON g3_f USING inverted(pk, (n * 1.0::FLOAT)) INCLUDE (tag);
+
+statement ok
+INSERT INTO g3_f VALUES (1, 1.5::FLOAT, 'a'), (2, 2.5::FLOAT, 'b'), (3, -0.5::FLOAT, 'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) g3_f;
+
+query
+SELECT pk FROM g3_f_expr_st WHERE n * 1.0::FLOAT @@ ts_between(2.0::FLOAT, 3.0::FLOAT, true, true) ORDER BY pk;
+----
+pk
+2
+
+
+statement ok
+CREATE TABLE g3_i(pk INTEGER PRIMARY KEY, n INTEGER, tag VARCHAR);
+
+statement ok
+CREATE INDEX g3_i_expr_st ON g3_i USING inverted(pk, (n * 2)) INCLUDE (tag);
+
+statement ok
+INSERT INTO g3_i VALUES (1, 10, 'a'), (2, 20, 'b'), (3, 30, 'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) g3_i;
+
+query
+SELECT pk FROM g3_i_expr_st WHERE n * 2 @@ ts_between(35, 45, true, true) ORDER BY pk;
+----
+pk
+2
+
+
+statement ok
+CREATE TABLE g3_l(pk INTEGER PRIMARY KEY, n BIGINT, tag VARCHAR);
+
+statement ok
+CREATE INDEX g3_l_expr_st ON g3_l USING inverted(pk, (n * 2::BIGINT)) INCLUDE (tag);
+
+statement ok
+INSERT INTO g3_l VALUES (1, 100::BIGINT, 'a'), (2, 200::BIGINT, 'b'), (3, 300::BIGINT, 'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) g3_l;
+
+query
+SELECT pk FROM g3_l_expr_st WHERE n * 2::BIGINT @@ ts_between(350::BIGINT, 450::BIGINT, true, true) ORDER BY pk;
+----
+pk
+2
+
+
+statement ok
+CREATE TABLE g3_d(pk INTEGER PRIMARY KEY, n DOUBLE, tag VARCHAR);
+
+statement ok
+CREATE INDEX g3_d_expr_st ON g3_d USING inverted(pk, (n * 2.0::DOUBLE)) INCLUDE (tag);
+
+statement ok
+INSERT INTO g3_d VALUES (1, 1.5, 'a'), (2, 2.5, 'b'), (3, 3.5, 'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) g3_d;
+
+query
+SELECT pk FROM g3_d_expr_st WHERE n * 2.0::DOUBLE @@ ts_between(4.0::DOUBLE, 6.0::DOUBLE, true, true) ORDER BY pk;
+----
+pk
+2
+
+
+statement ok
+CREATE TABLE g3_dt(pk INTEGER PRIMARY KEY, d DATE, tag VARCHAR);
+
+statement ok
+CREATE INDEX g3_dt_expr_st ON g3_dt USING inverted(pk, (d + INTERVAL '1 day')) INCLUDE (tag);
+
+statement ok
+INSERT INTO g3_dt VALUES (1, DATE '2024-01-01', 'a'), (2, DATE '2024-06-15', 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) g3_dt;
+
+query
+SELECT pk FROM g3_dt_expr_st
+WHERE d + INTERVAL '1 day' @@ ts_between(DATE '2024-03-01', DATE '2024-12-31', true, true) ORDER BY pk;
+----
+pk
+2
+
+
+statement ok
+CREATE TABLE g3_ts(pk INTEGER PRIMARY KEY, ts TIMESTAMP, tag VARCHAR);
+
+statement ok
+CREATE INDEX g3_ts_expr_st ON g3_ts USING inverted(pk, (ts + INTERVAL '1 hour')) INCLUDE (tag);
+
+statement ok
+INSERT INTO g3_ts VALUES
+    (1, TIMESTAMP '2024-01-01 00:00:00', 'a'),
+    (2, TIMESTAMP '2024-06-15 12:00:00', 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) g3_ts;
+
+query
+SELECT pk FROM g3_ts_expr_st
+WHERE ts + INTERVAL '1 hour' @@ ts_between(TIMESTAMP '2024-03-01', TIMESTAMP '2024-12-31', true, true) ORDER BY pk;
+----
+pk
+2
+
+
+statement ok
+CREATE TABLE g3_bool(pk INTEGER PRIMARY KEY, x BOOLEAN, tag VARCHAR);
+
+statement ok
+CREATE INDEX g3_bool_expr_st ON g3_bool USING inverted(pk, (NOT x)) INCLUDE (tag);
+
+statement ok
+INSERT INTO g3_bool VALUES (1, true, 'a'), (2, false, 'b'), (3, true, 'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) g3_bool;
+
+query
+SELECT pk FROM g3_bool_expr_st WHERE NOT x = true ORDER BY pk;
+----
+pk
+2
+
+
+statement ok
+CREATE TABLE g3_b(pk INTEGER PRIMARY KEY, b BLOB, tag VARCHAR);
+
+statement ok
+CREATE INDEX g3_b_expr_st ON g3_b USING inverted(pk,
+    (decode(encode(b, 'hex'), 'hex')) kw_dict) INCLUDE (tag);
+
+statement ok
+INSERT INTO g3_b VALUES
+    (1, '\x68656c6c6f'::BLOB, 'a'),
+    (2, '\x776f726c64'::BLOB, 'b'),
+    (3, '\xdeadbeef'::BLOB,   'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) g3_b;
+
+query
+SELECT pk FROM g3_b_expr_st
+WHERE decode(encode(b, 'hex'), 'hex') @@ ts_like('\xdeadbeef'::BLOB) ORDER BY pk;
+----
+pk
+3
+
+
+statement ok
+CREATE TABLE g3_g(pk INTEGER PRIMARY KEY, g GEOMETRY('OGC:CRS84'), tag VARCHAR);
+
+statement ok
+CREATE INDEX g3_g_expr_st ON g3_g USING inverted(pk, (g) geo_s2_dict) INCLUDE (tag);
+
+statement ok
+INSERT INTO g3_g VALUES
+    (1, 'POINT(0 0)'::GEOMETRY('OGC:CRS84'),   'a'),
+    (2, 'POINT(10 20)'::GEOMETRY('OGC:CRS84'), 'b'),
+    (3, 'POINT(-5 47)'::GEOMETRY('OGC:CRS84'), 'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) g3_g;
+
+query
+SELECT count(*) FROM g3_g_expr_st;
+----
+count
+3
+
+
+statement ok
+CREATE TABLE g3_j(pk INTEGER PRIMARY KEY, j JSON, tag VARCHAR);
+
+statement ok
+CREATE INDEX g3_j_expr_st ON g3_j USING inverted(pk, (j->>'type') kw_dict) INCLUDE (tag);
+
+statement ok
+INSERT INTO g3_j VALUES
+    (1, '{"type":"Point","coordinates":[0.0, 0.0]}',   'a'),
+    (2, '{"type":"Point","coordinates":[10.0, 20.0]}', 'b'),
+    (3, '{"type":"LineString","coordinates":[[0,0],[1,1]]}', 'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) g3_j;
+
+query
+SELECT pk FROM g3_j_expr_st WHERE j->>'type' @@ ts_like('Point') ORDER BY pk;
+----
+pk
+1
+2
+
+
+# --- teardown ---------------------------------------------------------------
+
+statement ok
+DROP TABLE g3_f;
+
+statement ok
+DROP TABLE g3_i;
+
+statement ok
+DROP TABLE g3_l;
+
+statement ok
+DROP TABLE g3_d;
+
+statement ok
+DROP TABLE g3_dt;
+
+statement ok
+DROP TABLE g3_ts;
+
+statement ok
+DROP TABLE g3_bool;
+
+statement ok
+DROP TABLE g3_b;
+
+statement ok
+DROP TABLE g3_g;
+
+statement ok
+DROP TABLE g3_j;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY kw_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY geo_s2_dict;

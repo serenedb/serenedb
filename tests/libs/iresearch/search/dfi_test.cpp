@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <map>
 
+#include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -145,17 +146,10 @@ TEST_P(DFIIndexTest, scores_nonnegative_and_only_fire_above_expected) {
     irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
   MaxMemoryCounter counter;
-  auto prepared = filter.prepare({
-    .index = *index,
-    .memory = counter,
-    .scorer = impl.get(),
-  });
+  tests::PreparedFilter prepared{filter, *index, impl.get(), counter};
 
   irs::ColumnArgsFetcher fetcher;
-  auto docs = prepared->execute({
-    .segment = segment,
-    .scorer = impl.get(),
-  });
+  auto docs = prepared.Execute(0);
   auto score = docs->PrepareScore({
     .scorer = impl.get(),
     .segment = &segment,

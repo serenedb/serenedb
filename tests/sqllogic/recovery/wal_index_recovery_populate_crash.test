@@ -35,7 +35,7 @@ statement ok
 VACUUM (REFRESH_TABLE) pop_t;
 
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # 10k rows. Every row's a/b carry a unique token so we can probe specific docs
 # after recovery without scanning everything.

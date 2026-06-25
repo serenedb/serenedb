@@ -59,9 +59,10 @@ void AttachTextFilter(Lstate& lstate, const SearchAnnScanGlobalState& gstate) {
   if (!gstate.scan->stored_filter) {
     return;
   }
-  lstate.text_filter_query = gstate.scan->stored_filter->prepare(
-    {.index = *gstate.reader, .scorer = nullptr});
-  lstate.text_filter.emplace(*lstate.text_filter_query);
+  lstate.text_filter_collector =
+    gstate.scan->stored_filter->MakeCollector(nullptr);
+  lstate.text_filter.emplace(*gstate.scan->stored_filter,
+                             *lstate.text_filter_collector);
 }
 
 template<typename Buf>

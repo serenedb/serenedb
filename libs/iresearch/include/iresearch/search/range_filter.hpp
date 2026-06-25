@@ -34,9 +34,6 @@ struct FilterVisitor;
 struct ByRangeFilterOptions {
   using range_type = SearchRange<bstring>;
 
-  //////////////////////////////////////////////////////////////////////////////
-  /// @brief search range
-  //////////////////////////////////////////////////////////////////////////////
   range_type range;
 
   bool operator==(const ByRangeFilterOptions& rhs) const noexcept {
@@ -44,17 +41,10 @@ struct ByRangeFilterOptions {
   }
 };
 
-////////////////////////////////////////////////////////////////////////////////
-/// @struct ByPrefixOptions
-/// @brief options for prefix filter
-////////////////////////////////////////////////////////////////////////////////
 struct ByRangeOptions : ByRangeFilterOptions {
   using FilterType = ByRange;
   using filter_options = ByRangeFilterOptions;
 
-  //////////////////////////////////////////////////////////////////////////////
-  /// @brief the maximum number of most frequent terms to consider for scoring
-  //////////////////////////////////////////////////////////////////////////////
   size_t scored_terms_limit{1024};
 
   bool operator==(const ByRangeOptions& rhs) const noexcept {
@@ -63,27 +53,21 @@ struct ByRangeOptions : ByRangeFilterOptions {
   }
 };
 
-//////////////////////////////////////////////////////////////////////////////
-/// @class by_range
-/// @brief user-side term range filter
-//////////////////////////////////////////////////////////////////////////////
 class ByRange : public FilterWithField<ByRangeOptions> {
  public:
-  static Query::ptr prepare(const PrepareContext& ctx, irs::field_id id,
-                            const options_type::range_type& rng,
-                            size_t scored_terms_limit);
-
   static void visit(const SubReader& segment, const TermReader& reader,
                     const options_type::range_type& rng,
                     FilterVisitor& visitor);
 
-  Query::ptr prepare(const PrepareContext& ctx) const final {
-    SDB_ASSERT(options().range.min_type == BoundType::Unbounded ||
-               options().range.max_type == BoundType::Unbounded ||
-               options().range.min != options().range.max);
-    return prepare(ctx.Boost(Boost()), field_id(), options().range,
-                   options().scored_terms_limit);
-  }
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
+  static QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                          const PrepareContext& ctx,
+                                          const irs::field_id field,
+                                          const options_type::range_type& rng,
+                                          score_t boost);
+
+  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 };
 
 }  // namespace irs

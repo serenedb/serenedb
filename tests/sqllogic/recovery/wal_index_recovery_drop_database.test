@@ -34,7 +34,7 @@ VACUUM (REFRESH_TABLE) dd_t;
 
 # Block search commits.
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # Index falls behind — these writes only land in rocksdb.
 statement ok

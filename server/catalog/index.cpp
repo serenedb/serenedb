@@ -369,7 +369,7 @@ Result ValidateInvertedIndexColumns(
   for (const auto& c : indexed_columns) {
     const auto& type = c.IsIndexedExpression()
                          ? c.GetIndexedExpression().return_type
-                         : c.catalog_column->type;
+                         : c.GetCatalogColumn().type;
     const auto label = c.name;
 
     if (c.IsBuiltin(kHNSWKind)) {
@@ -468,25 +468,6 @@ Result ValidateTokenizerVsColumn(std::string_view column_name,
           "VARCHAR/BLOB (got ",
           col_type.ToString(),
           ")"};
-}
-
-std::vector<Column::Id> ExtractColumnIds(
-  std::span<const CreateIndexColumn> columns) {
-  std::vector<Column::Id> ids;
-  ids.reserve(columns.size());
-  containers::FlatHashSet<Column::Id> seen;
-  seen.reserve(columns.size());
-  for (const auto& c : columns) {
-    if (c.IsIndexedExpression()) {
-      continue;
-    }
-    SDB_ASSERT(c.catalog_column);
-    auto id = c.catalog_column->GetId();
-    if (seen.insert(id).second) {
-      ids.push_back(id);
-    }
-  }
-  return ids;
 }
 
 Result ApplyIncludedOpclass(
@@ -732,9 +713,20 @@ ResultOr<std::shared_ptr<SecondaryIndex>> CreateSecondaryIndex(
   ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
   std::string name, std::vector<catalog::CreateIndexColumn> columns,
   bool unique) {
-  return std::make_shared<SecondaryIndex>(database_id, schema_id, id,
-                                          relation_id, std::move(name),
-                                          ExtractColumnIds(columns), unique);
+  std::vector<Column::Id> key_columns;
+  std::vector<ExpressionData> key_expressions;
+  key_columns.reserve(columns.size());
+  for (const auto& c : columns) {
+    if (c.IsIndexedExpression()) {
+      key_columns.push_back(Column::kInvalidId);  // expression-key slot
+      key_expressions.push_back(c.GetIndexedExpression());
+    } else {
+      key_columns.push_back(c.GetCatalogColumn().GetId());
+    }
+  }
+  return std::make_shared<SecondaryIndex>(
+    database_id, schema_id, id, relation_id, std::move(name),
+    std::move(key_columns), std::move(key_expressions), unique);
 }
 
 ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
@@ -752,6 +744,9 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
   }
 
   InvertedIndex::Entries entries;
+  std::vector<Column::Id> key_columns;
+  std::vector<ExpressionKey> expression_keys;
+  key_columns.reserve(columns.size());
   const uint64_t expressions_cnt = std::ranges::count_if(
     columns, [](const auto& c) { return c.IsIndexedExpression(); });
   irs::field_id next_expr_field_id = expressions_cnt > 0
@@ -777,7 +772,6 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
       }
       const auto field_id = next_expr_field_id++;
       InvertedIndexEntryInfo expr_info;
-      expr_info.expression = expr_data;
       if (auto r = ApplyOpclassToEntry(context, c, expr_data.pretty_printed,
                                        expr_data.return_type, *snapshot,
                                        database_id, schema_name, expr_info);
@@ -785,17 +779,22 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
         return std::unexpected<Result>(std::move(r));
       }
       entries.emplace(field_id, std::move(expr_info));
+      expression_keys.emplace_back(expr_data, field_id);
       continue;
     }
     const auto col_field_id =
-      static_cast<irs::field_id>(c.catalog_column->GetId());
-    auto& index_col =
-      entries.try_emplace(col_field_id, InvertedIndexEntryInfo{}).first->second;
+      static_cast<irs::field_id>(c.GetCatalogColumn().GetId());
+    auto [col_it, col_inserted] =
+      entries.try_emplace(col_field_id, InvertedIndexEntryInfo{});
+    auto& index_col = col_it->second;
+    if (col_inserted) {
+      key_columns.push_back(c.GetCatalogColumn().GetId());
+    }
     if (!c.IsBuiltin(kIncludedKind) && !c.IsBuiltin(kHNSWKind)) {
       index_col.indexed_term_dict = true;
     }
     if (IsTokenizerOpclass(c) &&
-        !tokenized_cols.insert(c.catalog_column->GetId()).second) {
+        !tokenized_cols.insert(c.GetCatalogColumn().GetId()).second) {
       return std::unexpected<Result>{
         std::in_place, ERROR_BAD_PARAMETER, "Column '", c.name,
         "' is listed more than once with a tokenizer opclass; the catalog "
@@ -803,7 +802,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
         "on the same column instead, or remove the duplicate."};
     }
     if (auto r =
-          ApplyOpclassToEntry(context, c, c.name, c.catalog_column->type,
+          ApplyOpclassToEntry(context, c, c.name, c.GetCatalogColumn().type,
                               *snapshot, database_id, schema_name, index_col);
         r.fail()) {
       return std::unexpected<Result>(std::move(r));
@@ -822,17 +821,37 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
   }
   return std::make_shared<InvertedIndex>(
     database_id, schema_id, id, relation_id, std::move(name),
-    ExtractColumnIds(columns), std::move(entries), std::move(options));
+    std::move(key_columns), std::move(expression_keys), std::move(entries),
+    std::move(options));
 }
 
 Index::Index(ObjectId database_id, ObjectId schema_id, ObjectId id,
-             ObjectId relation_id, std::string name,
-             std::vector<Column::Id> column_ids, ObjectType type)
+             ObjectId relation_id, std::string name, DerivedColumnIds derived,
+             ObjectType type)
   : Object{Permissions{}, schema_id, id, std::move(name), type},
     _database_id{database_id},
     _relation_id{relation_id},
-    _column_ids{std::move(column_ids)} {
+    _columns{std::move(derived.columns)},
+    _referenced_columns{std::move(derived.referenced_columns)},
+    _referenced_columns_set{std::move(derived.referenced_columns_set)} {
   SDB_ASSERT(GetId().isSet());
+}
+
+std::pair<std::vector<Column::Id>, containers::FlatHashSet<Column::Id>>
+Index::DedupColumns(std::span<const Column::Id> columns) {
+  std::vector<Column::Id> ids;
+  ids.reserve(columns.size());
+  containers::FlatHashSet<Column::Id> seen;
+  seen.reserve(columns.size());
+  for (auto column : columns) {
+    if (column == Column::kInvalidId) {
+      continue;  // expression-slot sentinel
+    }
+    if (seen.insert(column).second) {
+      ids.push_back(column);
+    }
+  }
+  return {std::move(ids), std::move(seen)};
 }
 
 }  // namespace sdb::catalog

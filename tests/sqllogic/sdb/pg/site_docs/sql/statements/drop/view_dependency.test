@@ -1,0 +1,23 @@
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE tbl (i INTEGER);
+
+statement ok
+CREATE VIEW view1 AS
+    SELECT i FROM tbl;
+
+statement error
+DROP TABLE tbl RESTRICT;
+----
+db error: ERROR: cannot drop table tbl because other objects depend on it
+DETAIL: view view1 depends on table tbl
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+query
+SELECT * FROM view1;
+----
+i

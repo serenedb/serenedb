@@ -1,0 +1,21 @@
+# DOCS_TEST: example_006
+
+statement ok
+CREATE SEQUENCE serial START WITH 1 MAXVALUE 3 CYCLE;
+
+statement ok
+SELECT nextval('serial');
+
+statement ok
+SELECT nextval('serial');
+
+statement ok
+SELECT nextval('serial');
+
+# DOCS_TEST_BODY
+
+query ?
+SELECT nextval('serial') AS nextval;
+----
+nextval
+1

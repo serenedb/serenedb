@@ -28,7 +28,8 @@
 
 namespace irs {
 
-Filter::Query::ptr ByRegexp::prepare(const PrepareContext&) const {
+QueryBuilder::ptr ByRegexp::PrepareSegment(const SubReader&,
+                                           const PrepareContext&) const {
   SDB_THROW(sdb::ERROR_INTERNAL,
             "ByRegexp must be lowered by the optimizer before prepare");
 }

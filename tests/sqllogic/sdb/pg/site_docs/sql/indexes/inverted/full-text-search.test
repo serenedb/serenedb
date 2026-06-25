@@ -1,0 +1,458 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE sentences (a INTEGER PRIMARY KEY, b VARCHAR, c VARCHAR);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sentences_en (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE INDEX sentences_idx ON sentences
+    USING inverted (a, b sentences_en, c sentences_en);
+
+statement ok
+INSERT INTO sentences VALUES
+    (1, 'quick brown fox jumps over lazy dog', 'hello world'),
+    (2, 'quick red fox jumps over lazy dog', 'hello moon'),
+    (3, 'slow grey turtle sleeps', 'goodbye world'),
+    (4, 'something else entirely', 'bar'),
+    (5, 'plain note', NULL);
+
+statement ok
+VACUUM (REFRESH_TABLE) sentences;
+
+# DOCS_TEST_BODY
+
+query
+SELECT a, b FROM sentences_idx WHERE b @@ 'fox' ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+2	quick red fox jumps over lazy dog
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT a, b FROM sentences_idx WHERE b @@ ts_phrase('over lazy dog') ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+2	quick red fox jumps over lazy dog
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT a, b FROM sentences_idx
+WHERE b @@ (ts_phrase('quick brown') || ts_phrase('grey turtle'))
+ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+3	slow grey turtle sleeps
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT a, b FROM sentences_idx
+WHERE b @@ (ts_phrase('quick') && ts_phrase('brown fox'))
+ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT a, b FROM sentences_idx
+WHERE b @@ (ts_phrase('quick') && !!ts_phrase('brown fox'))
+ORDER BY a;
+----
+a	b
+2	quick red fox jumps over lazy dog
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+SELECT a, b FROM sentences_idx
+WHERE b @@ ts_any([ts_phrase('red fox'), ts_phrase('grey turtle')])
+ORDER BY a;
+----
+a	b
+2	quick red fox jumps over lazy dog
+3	slow grey turtle sleeps
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+SELECT a, b FROM sentences_idx
+WHERE b @@ ts_all([ts_phrase('quick'), ts_phrase('brown fox')])
+ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query
+SELECT a, b FROM sentences_idx
+WHERE b @@ ts_any(['quick', 'brown', 'turtle'], 2)
+ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query
+SELECT a, b FROM sentences_idx WHERE b @@ ts_starts_with('turt') ORDER BY a;
+----
+a	b
+3	slow grey turtle sleeps
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+query
+SELECT a, b FROM sentences_idx WHERE b @@ ts_like('quic%') ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+2	quick red fox jumps over lazy dog
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+query
+SELECT a, b FROM sentences_idx WHERE b @@ ts_regexp('qu.*ck') ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+2	quick red fox jumps over lazy dog
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+query
+SELECT a, b FROM sentences_idx WHERE b @@ ('quick' ## 'brown') ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+
+# DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
+
+query
+SELECT a, b FROM sentences_idx WHERE b @@ ('quick' ## 1 ## 'fox') ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+2	quick red fox jumps over lazy dog
+
+# DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
+
+query
+SELECT a FROM sentences_idx WHERE a @@ ts_between(2, 3, true, true) ORDER BY a;
+----
+a
+2
+3
+
+# DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
+
+query
+SELECT a FROM sentences_idx WHERE a @@ ts_le(2) ORDER BY a;
+----
+a
+1
+2
+
+# DOCS_TEST: example_016
+
+# DOCS_TEST_BODY
+
+query
+SELECT a, b FROM sentences_idx WHERE b @@ ('quick' ## [0, 2] ## 'fox') ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+2	quick red fox jumps over lazy dog
+
+# DOCS_TEST: example_017
+
+# DOCS_TEST_BODY
+
+query
+SELECT a, b FROM sentences_idx WHERE b @@ plainto_tsquery('Quick Brown') ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+
+# DOCS_TEST: example_018
+
+# DOCS_TEST_BODY
+
+query
+SELECT a, b FROM sentences_idx WHERE b @@ phraseto_tsquery('over lazy dog') ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+2	quick red fox jumps over lazy dog
+
+# DOCS_TEST: example_019
+
+# DOCS_TEST_BODY
+
+query
+SELECT a, b FROM sentences_idx WHERE b @@ to_tsquery('quick AND brown') ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+
+# DOCS_TEST: example_020
+
+# DOCS_TEST_BODY
+
+query
+SELECT a, b FROM sentences_idx
+WHERE b @@ websearch_to_tsquery('"quick brown" OR "grey turtle"')
+ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+3	slow grey turtle sleeps
+
+# DOCS_TEST: example_021
+
+# DOCS_TEST_BODY
+
+query
+SELECT a, b FROM sentences_idx
+WHERE b @@ ts_compound(
+    ts_phrase('quick'),
+    ts_phrase('grey'),
+    [ts_phrase('lazy'), ts_phrase('big')]
+)
+ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+2	quick red fox jumps over lazy dog
+
+# DOCS_TEST: example_022
+
+statement ok
+CREATE TABLE products (id INTEGER PRIMARY KEY, name VARCHAR);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY fuzzy_dict (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false
+);
+
+statement ok
+CREATE INDEX products_idx ON products USING inverted (id, name fuzzy_dict);
+
+statement ok
+INSERT INTO products VALUES
+    (1, 'cat'), (2, 'bat'), (3, 'car'),
+    (4, 'dog'), (5, 'cats'), (6, 'act');
+
+statement ok
+VACUUM (REFRESH_TABLE) products;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, name FROM products_idx WHERE name @@ ts_levenshtein('cat', 1) ORDER BY id;
+----
+id	name
+1	cat
+2	bat
+3	car
+5	cats
+6	act
+
+# DOCS_TEST: example_023
+
+statement ok
+CREATE TABLE titles (id INTEGER PRIMARY KEY, title VARCHAR);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY bigram_dict (
+    template = 'ngram',
+    mingram = 2,
+    maxgram = 2,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE INDEX titles_idx ON titles USING inverted (id, title bigram_dict);
+
+statement ok
+INSERT INTO titles VALUES
+    (1, 'hello'), (2, 'help'), (3, 'world'),
+    (4, 'held'), (5, 'hero');
+
+statement ok
+VACUUM (REFRESH_TABLE) titles;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title FROM titles_idx WHERE title @@ ts_ngram('hello', 0.3) ORDER BY id;
+----
+id	title
+1	hello
+2	help
+4	held
+
+# DOCS_TEST: example_024
+
+statement ok
+CREATE TABLE movies (
+    id INTEGER PRIMARY KEY,
+    title VARCHAR,
+    description VARCHAR,
+    genre VARCHAR,
+    runtime INTEGER,
+    year INTEGER
+);
+
+statement ok
+INSERT INTO movies VALUES
+(1, 'The Matrix', 'A computer hacker learns about the true nature of reality and his role in the war against its controllers.', 'sci-fi', 136, 1999),
+(2, 'The Matrix Reloaded', 'Neo and the rebel leaders estimate they have 72 hours until Zion falls to the machine army.', 'sci-fi', 138, 2003),
+(3, 'The Matrix Revolutions', 'The human city of Zion defends itself against the massive machine invasion.', 'sci-fi', 129, 2003),
+(4, 'Jurassic Park', 'A pragmatic paleontologist touring an almost complete theme park on an island is tasked with protecting a group of children after the biggest blockbuster creatures break free.', 'adventure', 127, 1993),
+(5, 'Harry Potter and the Order of the Phoenix', 'With their warning about Lord Voldemorts return scoffed at, Harry and Dumbledore are targeted by the Wizard Authoritys new combative leader.', 'fantasy', 138, 2007),
+(6, 'Scary Movie', 'A year after disposing of the body of a man they accidentally killed, a group of dumb teenagers are stalked by a bumbling serial killer in the biggest blockbuster parody.', 'comedy', 88, 2000),
+(7, 'Star Trek: The Motion Picture', 'When an alien spacecraft of enormous power is spotted approaching Earth, Admiral James T. Kirk resumes command of the overhauled USS Enterprise to intercept the galaxy threat.', 'sci-fi', 132, 1979),
+(8, 'Alien', 'After investigating a mysterious transmission of unknown origin, the crew of a commercial spacecraft encounters a deadly lifeform in the dark galaxy of space.', 'sci-fi', 117, 1979),
+(9, 'Café Society', 'A young man arrives in Hollywood during the 1930s hoping to work in the film industry, falls in love, and finds himself swept up in the café culture and glamour of the era.', 'drama', 96, 2016),
+(10, 'The Grand Budapest Hotel', 'A writer encounters the owner of an aging high-class hotel who tells of his early years serving as a lobby boy in the legendary establishment.', 'comedy', 99, 2014);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY basic_dict (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE INDEX movies_idx ON movies
+    USING inverted (id, title basic_dict, description basic_dict, genre);
+
+statement ok
+VACUUM (REFRESH_TABLE) movies;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title, BM25(movies_idx.tableoid) AS relevance
+FROM movies_idx
+WHERE description @@ ts_phrase('alien')
+ORDER BY relevance DESC, id;
+----
+id	title	relevance
+7	Star Trek: The Motion Picture	3.2757118
+
+# DOCS_TEST: example_025
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title, TFIDF(movies_idx.tableoid) AS relevance
+FROM movies_idx
+WHERE description @@ ts_phrase('alien')
+ORDER BY relevance DESC, id;
+----
+id	title	relevance
+7	Star Trek: The Motion Picture	1.8718022
+
+# DOCS_TEST: example_026
+
+# DOCS_TEST_BODY
+
+query
+SELECT ts_highlight('the quick brown fox jumps over the lazy dog', [4, 9]) AS snippet;
+----
+snippet
+the <b>quick</b> brown fox jumps over the lazy dog
+
+# DOCS_TEST: example_027
+
+statement ok
+CREATE TABLE docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY offsets_en (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    offset = true
+);
+
+statement ok
+CREATE INDEX docs_idx ON docs USING inverted (id, body offsets_en);
+
+statement ok
+INSERT INTO docs VALUES (1, 'quick fox jumps'), (2, 'fox runs fast');
+
+statement ok
+VACUUM (REFRESH_TABLE) docs;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, ts_offsets(docs_idx.body) AS offsets
+FROM docs_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY id;
+----
+id	offsets
+1	{6,9}
+2	{0,3}

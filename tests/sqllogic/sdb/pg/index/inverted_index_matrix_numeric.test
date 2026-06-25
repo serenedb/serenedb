@@ -1,0 +1,282 @@
+control substitution on
+
+# ============================================================================
+# BOOLEAN scalar / list / array
+# ============================================================================
+
+statement ok
+CREATE TABLE m_bool(pk INTEGER PRIMARY KEY, x BOOLEAN, xs BOOLEAN[], xa BOOLEAN[3]);
+
+statement ok
+CREATE INDEX m_bool_scalar_col_st  ON m_bool USING inverted(pk, x) INCLUDE (x);
+
+statement ok
+CREATE INDEX m_bool_scalar_col_ns  ON m_bool USING inverted(pk, x);
+
+statement ok
+CREATE INDEX m_bool_list_col_st    ON m_bool USING inverted(pk, xs) INCLUDE (xs);
+
+statement ok
+CREATE INDEX m_bool_list_col_ns    ON m_bool USING inverted(pk, xs);
+
+statement ok
+CREATE INDEX m_bool_array_col_st   ON m_bool USING inverted(pk, xa) INCLUDE (xa);
+
+statement ok
+CREATE INDEX m_bool_array_col_ns   ON m_bool USING inverted(pk, xa);
+
+statement ok
+CREATE INDEX m_bool_expr_ns        ON m_bool USING inverted(pk, (NOT x));
+
+statement ok
+INSERT INTO m_bool VALUES
+    (1, true,  [true,  false, true],  [true,  false, true]),
+    (2, false, [false, false, false], [false, false, false]),
+    (3, true,  [true],                 [true,  true,  true]);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_bool;
+
+query
+SELECT pk FROM m_bool_scalar_col_st WHERE x = true  ORDER BY pk;
+----
+pk
+1
+3
+
+query
+SELECT pk FROM m_bool_scalar_col_ns WHERE x = false ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_bool_expr_ns WHERE NOT x = true ORDER BY pk;
+----
+pk
+2
+
+# Drive the list/array indexes through `<val> = ANY(col)` so the term_dict
+# path is exercised end-to-end (not just create+insert). `@@ true/false` are
+# the trivial MATCH-ALL / MATCH-NONE tsquery constants, so they don't probe
+# the per-value postings for boolean lists.
+query
+SELECT pk FROM m_bool_list_col_st WHERE false = ANY(xs) ORDER BY pk;
+----
+pk
+1
+2
+
+query
+SELECT pk FROM m_bool_list_col_ns WHERE true = ANY(xs) ORDER BY pk;
+----
+pk
+1
+3
+
+query
+SELECT pk FROM m_bool_array_col_st WHERE false = ANY(xa) ORDER BY pk;
+----
+pk
+1
+2
+
+query
+SELECT pk FROM m_bool_array_col_ns WHERE true = ANY(xa) ORDER BY pk;
+----
+pk
+1
+3
+
+
+# ============================================================================
+# INTEGER scalar / list / array  (one int type stands for the family)
+# ============================================================================
+
+statement ok
+CREATE TABLE m_i(pk INTEGER PRIMARY KEY, n INTEGER, ns INTEGER[], na INTEGER[3]);
+
+statement ok
+CREATE INDEX m_i_scalar_col_st  ON m_i USING inverted(pk, n) INCLUDE (n);
+
+statement ok
+CREATE INDEX m_i_scalar_col_ns  ON m_i USING inverted(pk, n);
+
+statement ok
+CREATE INDEX m_i_list_col_st    ON m_i USING inverted(pk, ns) INCLUDE (ns);
+
+statement ok
+CREATE INDEX m_i_list_col_ns    ON m_i USING inverted(pk, ns);
+
+statement ok
+CREATE INDEX m_i_array_col_st   ON m_i USING inverted(pk, na) INCLUDE (na);
+
+statement ok
+CREATE INDEX m_i_array_col_ns   ON m_i USING inverted(pk, na);
+
+statement ok
+CREATE INDEX m_i_expr_ns        ON m_i USING inverted(pk, (n * 2));
+
+statement ok
+INSERT INTO m_i VALUES
+    (1, 10, [10, 20, 30],    [10, 20, 30]),
+    (2, 20, [20, 30],        [20, 30, 40]),
+    (3, 30, [30],            [30, 30, 30]);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_i;
+
+query
+SELECT pk FROM m_i_scalar_col_st WHERE n @@ ts_between(15, 25, true, true) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_i_scalar_col_ns WHERE n @@ ts_between(15, 25, true, true) ORDER BY pk;
+----
+pk
+2
+
+# Exercise list/array @@ for INTEGER too.
+query
+SELECT pk FROM m_i_list_col_st WHERE ns @@ ts_between(15, 25, true, true) ORDER BY pk;
+----
+pk
+1
+2
+
+query
+SELECT pk FROM m_i_array_col_ns WHERE na @@ ts_between(35, 45, true, true) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_i_expr_ns WHERE n * 2 @@ ts_between(15, 25, true, true) ORDER BY pk;
+----
+pk
+1
+
+
+# ============================================================================
+# BIGINT scalar / list / array
+# ============================================================================
+
+statement ok
+CREATE TABLE m_l(pk INTEGER PRIMARY KEY, n BIGINT, ns BIGINT[], na BIGINT[3]);
+
+statement ok
+CREATE INDEX m_l_scalar_col_st ON m_l USING inverted(pk, n)  INCLUDE (n);
+
+statement ok
+CREATE INDEX m_l_list_col_ns   ON m_l USING inverted(pk, ns);
+
+statement ok
+CREATE INDEX m_l_array_col_st  ON m_l USING inverted(pk, na) INCLUDE (na);
+
+statement ok
+CREATE INDEX m_l_expr_ns       ON m_l USING inverted(pk, (n * 2::BIGINT));
+
+statement ok
+INSERT INTO m_l VALUES
+    (1, 100::BIGINT, [100::BIGINT, 200::BIGINT], [100::BIGINT, 200::BIGINT, 300::BIGINT]),
+    (2, 200::BIGINT, [200::BIGINT],              [200::BIGINT, 300::BIGINT, 400::BIGINT]);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_l;
+
+query
+SELECT pk FROM m_l_scalar_col_st WHERE n @@ ts_between(150::BIGINT, 250::BIGINT, true, true) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_l_expr_ns WHERE n * 2::BIGINT @@ ts_between(150::BIGINT, 250::BIGINT, true, true) ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM m_l_list_col_ns WHERE ns @@ ts_between(150::BIGINT, 250::BIGINT, true, true) ORDER BY pk;
+----
+pk
+1
+2
+
+query
+SELECT pk FROM m_l_array_col_st WHERE na @@ ts_between(250::BIGINT, 350::BIGINT, true, true) ORDER BY pk;
+----
+pk
+1
+2
+
+
+# ============================================================================
+# DOUBLE scalar / list / array
+# ============================================================================
+
+statement ok
+CREATE TABLE m_d(pk INTEGER PRIMARY KEY, n DOUBLE, ns DOUBLE[], na DOUBLE[3]);
+
+statement ok
+CREATE INDEX m_d_scalar_col_st ON m_d USING inverted(pk, n)  INCLUDE (n);
+
+statement ok
+CREATE INDEX m_d_list_col_st   ON m_d USING inverted(pk, ns) INCLUDE (ns);
+
+statement ok
+CREATE INDEX m_d_array_col_ns  ON m_d USING inverted(pk, na);
+
+statement ok
+CREATE INDEX m_d_expr_ns       ON m_d USING inverted(pk, (n * 2.0::DOUBLE));
+
+statement ok
+INSERT INTO m_d VALUES
+    (1, 1.5, [1.5, 2.5, 3.5], [1.5, 2.5, 3.5]),
+    (2, 2.5, [2.5, 3.5],      [2.5, 3.5, 4.5]);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_d;
+
+query
+SELECT pk FROM m_d_scalar_col_st WHERE n @@ ts_between(2.0::DOUBLE, 3.0::DOUBLE, true, true) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_d_expr_ns WHERE n * 2.0::DOUBLE @@ ts_between(4.0::DOUBLE, 6.0::DOUBLE, true, true) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_d_list_col_st WHERE ns @@ ts_between(2.0::DOUBLE, 3.0::DOUBLE, true, true) ORDER BY pk;
+----
+pk
+1
+2
+
+query
+SELECT pk FROM m_d_array_col_ns WHERE na @@ ts_between(3.0::DOUBLE, 4.0::DOUBLE, true, true) ORDER BY pk;
+----
+pk
+1
+2
+
+
+# --- teardown ---------------------------------------------------------------
+
+statement ok
+DROP TABLE m_bool;
+
+statement ok
+DROP TABLE m_i;
+
+statement ok
+DROP TABLE m_l;
+
+statement ok
+DROP TABLE m_d;

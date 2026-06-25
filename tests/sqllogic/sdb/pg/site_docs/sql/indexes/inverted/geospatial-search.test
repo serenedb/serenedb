@@ -1,0 +1,165 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE geo_data (id INTEGER PRIMARY KEY, geo JSON);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geojson_shape (template = 'geojson');
+
+statement ok
+CREATE INDEX geo_idx ON geo_data USING inverted (id, geo geojson_shape);
+
+statement ok
+INSERT INTO geo_data VALUES
+    (1, '{"type":"Point","coordinates":[37.615895,55.703900]}'),
+    (2, '{"type":"Point","coordinates":[37.616297,55.704831]}'),
+    (3, '{"type":"Point","coordinates":[37.617053,55.704610]}'),
+    (4, '{"type":"Point","coordinates":[37.559509,55.715895]}'),
+    (5, '{"type":"Point","coordinates":[37.701645,55.832144]}'),
+    (6, '{"type":"Polygon","coordinates":[[[37.614323,55.705898],[37.615825,55.705898],[37.615825,55.706520],[37.614323,55.706520],[37.614323,55.705898]]]}');
+
+statement ok
+VACUUM (REFRESH_TABLE) geo_data;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id FROM geo_idx
+WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
+ORDER BY id;
+----
+id
+1
+2
+3
+6
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT id FROM geo_idx
+WHERE ST_Intersects(geo, '{"type":"Point","coordinates":[37.615,55.706]}')
+ORDER BY id;
+----
+id
+6
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT id FROM geo_idx
+WHERE ST_Contains('{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}', geo)
+ORDER BY id;
+----
+id
+1
+2
+3
+6
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT id FROM geo_idx
+WHERE ST_Contains(geo, '{"type":"Point","coordinates":[37.615,55.706]}')
+ORDER BY id;
+----
+id
+6
+
+# DOCS_TEST: example_005
+
+statement ok
+CREATE TABLE geo_shapes (id INTEGER PRIMARY KEY, geo GEOMETRY('OGC:CRS84'));
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geojson_s2 (template = 'geojson', coding = 's2point');
+
+statement ok
+CREATE INDEX geo_shapes_idx ON geo_shapes USING inverted (id, geo geojson_s2);
+
+statement ok
+INSERT INTO geo_shapes VALUES
+    (1, 'POINT(37.615895 55.703900)'::GEOMETRY('OGC:CRS84')),
+    (2, 'POINT(37.616297 55.704831)'::GEOMETRY('OGC:CRS84')),
+    (3, 'POINT(37.617053 55.704610)'::GEOMETRY('OGC:CRS84')),
+    (4, 'POINT(37.559509 55.715895)'::GEOMETRY('OGC:CRS84')),
+    (6, 'POLYGON((37.614323 55.705898, 37.615825 55.705898, 37.615825 55.706520, 37.614323 55.706520, 37.614323 55.705898))'::GEOMETRY('OGC:CRS84'));
+
+statement ok
+VACUUM (REFRESH_TABLE) geo_shapes;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id FROM geo_shapes_idx
+WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
+ORDER BY id;
+----
+id
+1
+2
+3
+6
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+SELECT id FROM geo_shapes_idx
+WHERE ST_Distance_Centroid(geo, 'POINT(37.616 55.704)'::GEOMETRY('OGC:CRS84')) < 500.0
+ORDER BY id;
+----
+id
+1
+2
+3
+6
+
+# DOCS_TEST: example_007
+
+statement ok
+CREATE TABLE places (id INTEGER PRIMARY KEY, loc JSON);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geopoint_dict (
+    template = 'geopoint',
+    latitude = 'lat',
+    longitude = 'lng'
+);
+
+statement ok
+CREATE INDEX places_idx ON places USING inverted (id, loc geopoint_dict);
+
+statement ok
+INSERT INTO places VALUES
+    (1, '{"lat":55.703900,"lng":37.615895}'),
+    (2, '{"lat":55.704831,"lng":37.616297}'),
+    (3, '{"lat":55.704610,"lng":37.617053}'),
+    (4, '{"lat":55.715895,"lng":37.559509}');
+
+statement ok
+VACUUM (REFRESH_TABLE) places;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id
+FROM places_idx
+WHERE ST_Intersects(
+        loc,
+        '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}'
+     )
+ORDER BY id;
+----
+id
+1
+2
+3

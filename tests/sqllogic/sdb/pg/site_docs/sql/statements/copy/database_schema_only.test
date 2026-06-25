@@ -1,0 +1,26 @@
+control substitution on
+
+# DOCS_TEST: example_012
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DETACH IF EXISTS db1;
+
+statement ok
+DETACH IF EXISTS db2;
+
+statement ok
+ATTACH ':memory:' AS db1;
+
+statement ok
+ATTACH ':memory:' AS db2;
+
+statement ok
+CREATE TABLE db1.tbl1 AS SELECT 42 AS x, 3 AS y;
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY FROM DATABASE db1 TO db2 (SCHEMA);

@@ -21,31 +21,19 @@
 #include "databases.h"
 
 #include "app/app_server.h"
-#include "app/name_validator.h"
 #include "catalog/catalog.h"
 #include "catalog/database.h"
 
 namespace sdb::catalog {
 
 Result CreateDatabase(const AccessContext& ax, std::string_view name) {
-  if (auto r = DatabaseNameValidator::validateName(/*allowSystem*/ false, name);
-      r.fail()) {
-    return r;
-  }
-
   auto database =
-    std::make_shared<catalog::Database>(ax.role, ObjectId{}, name);
-
+    std::make_shared<catalog::Database>(Permissions{ax.role}, ObjectId{}, name);
   return catalog::GetCatalog().CreateDatabase(ax, std::move(database));
 }
 
-Result DropDatabase(const ExecContext& exec, const AccessContext& ax,
-                    std::string_view db_name,
+Result DropDatabase(const AccessContext& ax, std::string_view db_name,
                     duckdb::shared_ptr<void> keep_alive) {
-  if (exec.systemAuthLevel() != auth::Level::RW) {
-    return {ERROR_FORBIDDEN};
-  }
-
   return catalog::GetCatalog().DropDatabase(ax, db_name, std::move(keep_alive));
 }
 

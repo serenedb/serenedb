@@ -1,13 +1,26 @@
 services:
+  # Fresh named volumes are created root:root 0755, so the non-root (user-mapped)
+  # services below cannot create their per-test dirs in /test-tmp. This one-shot
+  # root service makes the shared scratch world-writable before they start.
+  test-tmp-init:
+    image: ${BUILD_IMAGE}
+    user: "0:0"
+    volumes:
+      - "sdb-test-tmp:/test-tmp"
+    command: ["sh", "-c", "chmod 0777 /test-tmp"]
+
   serenedb-single:
     image: ${BUILD_IMAGE}
     user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+    depends_on:
+      test-tmp-init:
+        condition: service_completed_successfully
     security_opt:
       - seccomp:unconfined
     volumes:
       - "${WORKSPACE}:/serenedb"
       - "${WORKSPACE}/out/logs:/var/log/serenedb"
-      - "${WORKSPACE}/out/test-tmp:/test-tmp"
+      - "sdb-test-tmp:/test-tmp"
     env_file:
       - "${WORKSPACE}/docker.env"
     environment:
@@ -18,8 +31,7 @@ services:
     command: >
       sh -c '
         exec /serenedb/${BUILD_DIR}/bin/serened /tmp/serenedb_datadir \
-          --server_endpoints pgsql+tcp://0.0.0.0:7777,pgsql+ssl://0.0.0.0:7778 \
-          --ssl_keyfile /serenedb/resources/ca.pem
+          --listen "postgres://0.0.0.0:7777,postgres://0.0.0.0:7778?sslmode=require&cert=/serenedb/resources/ca.pem&key=/serenedb/resources/ca.pem"
       '
 
   tests:
@@ -32,8 +44,9 @@ services:
       - "${WORKSPACE}/third_party/sqllogictest-rs:/sqllogictest-rs"
       - "${WORKSPACE}/out/logs:/logs"
       - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
+      - "${CARGO_HOME_CACHE:-${HOME}/.cache/serenedb-cargo-home}:/cargo-home"
       - "${SDB_TIMING_CACHE:-${HOME}/.cache/serenedb-timing-cache}:/timing-cache"
-      - "${WORKSPACE}/out/test-tmp:/test-tmp"
+      - "sdb-test-tmp:/test-tmp"
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - serenedb-single
@@ -44,7 +57,7 @@ services:
       - HOME=/sqllogic
       - TMPDIR=/test-tmp
       - SLT_TEST_DIR_SHARED=1
-      - CARGO_HOME=/tmp/cargo
+      - CARGO_HOME=/cargo-home
       - CARGO_TARGET_DIR=/cargo-target
       - SDB_TIMING_CACHE_DIR=/timing-cache
       - SDB_TIMING_KEY
@@ -66,3 +79,6 @@ networks:
   test-network:
     driver: bridge
     name: ${COMPOSE_PROJECT_NAME}_test-network
+
+volumes:
+  sdb-test-tmp:

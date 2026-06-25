@@ -25,6 +25,7 @@
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string_view>
 
@@ -73,5 +74,54 @@ struct NormColumnOptions {
 };
 
 using NormColumnOptionsProvider = std::function<NormColumnOptions(field_id)>;
+
+// Per-column encoding config the writer consults at flush + merge time. The
+// host supplies one per operation, so a long-lived writer is never coupled to
+// its mutable metadata.
+class IndexFieldOptions {
+ public:
+  virtual ~IndexFieldOptions() = default;
+  virtual ColumnOptions GetColumnOptions(field_id id) const = 0;
+  virtual NormColumnOptions GetNormColumnOptions(field_id id) const = 0;
+
+  // Segment reuse gate: two writes share a segment only if their options are
+  // equal (a segment must not mix encodings). Default is pointer identity --
+  // COW means an unchanged config is the same object.
+  virtual bool EqualOptions(const IndexFieldOptions& other) const noexcept {
+    return this == &other;
+  }
+};
+
+// May `next` resume a segment opened under `prev`? nullptr `next` is the
+// fallback path that never varies, so it always matches.
+inline bool CompatibleFieldOptions(const IndexFieldOptions* prev,
+                                   const IndexFieldOptions* next) noexcept {
+  if (next == nullptr || prev == next) {
+    return true;
+  }
+  return prev != nullptr && prev->EqualOptions(*next);
+}
+
+// Adapts the std::function providers to IndexFieldOptions; the writer's
+// fallback.
+class FunctionFieldOptions final : public IndexFieldOptions {
+ public:
+  FunctionFieldOptions(ColumnOptionsProvider column_options,
+                       NormColumnOptionsProvider norm_column_options) noexcept
+    : _column_options{std::move(column_options)},
+      _norm_column_options{std::move(norm_column_options)} {}
+
+  ColumnOptions GetColumnOptions(field_id id) const final {
+    return _column_options ? _column_options(id) : ColumnOptions{};
+  }
+  NormColumnOptions GetNormColumnOptions(field_id id) const final {
+    return _norm_column_options ? _norm_column_options(id)
+                                : NormColumnOptions{};
+  }
+
+ private:
+  ColumnOptionsProvider _column_options;
+  NormColumnOptionsProvider _norm_column_options;
+};
 
 }  // namespace irs

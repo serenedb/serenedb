@@ -1,0 +1,44 @@
+# DOCS_TEST: example_007
+
+statement ok
+SET preserve_identifier_case = true;
+
+# DOCS_TEST_RAW
+#| CREATE TABLE MyOtheRTaBLe (x INTEGER);
+#|
+#| SELECT * FROM "MyOtheRTaBLe";
+#|
+#| CREATE TABLE "PreservedCase" (x INTEGER);
+#|
+#| SELECT * FROM PreservedCase;
+#|
+#| SELECT tablename FROM pg_tables;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE MyOtheRTaBLe (x INTEGER);
+
+query ?
+SELECT * FROM "MyOtheRTaBLe";
+----
+x
+
+
+statement ok
+CREATE TABLE "PreservedCase" (x INTEGER);
+
+query ?
+SELECT * FROM PreservedCase;
+----
+x
+
+
+query ? rowsort
+SELECT DISTINCT tablename
+FROM pg_tables
+WHERE tablename IN ('MyOtheRTaBLe', 'PreservedCase');
+----
+tablename
+MyOtheRTaBLe
+PreservedCase

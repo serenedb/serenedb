@@ -1,0 +1,67 @@
+# CREATE OR REPLACE TABLE [AS] drops + recreates an existing table, matching
+# native duckdb. (OR REPLACE for tables is duckdb syntax; PostgreSQL rejects it,
+# so this stays in the sdb subtree.) Replace is not transactional with the load
+# -- the drop commits first -- consistent with serenedb's CTAS atomicity model.
+
+# CTAS OR REPLACE over an existing table replaces its data/schema.
+statement ok
+CREATE TABLE cor_t (id INTEGER, v TEXT);
+
+
+statement count 2
+INSERT INTO cor_t VALUES (1, 'a'), (2, 'b');
+
+
+statement ok
+CREATE OR REPLACE TABLE cor_t AS SELECT 7 AS n;
+
+
+query
+SELECT n FROM cor_t ORDER BY n;
+----
+n
+7
+
+
+# CTAS OR REPLACE when the name does not exist is a plain create.
+statement ok
+CREATE OR REPLACE TABLE cor_fresh AS SELECT 1 AS id, 'x' AS v;
+
+
+query
+SELECT id, v FROM cor_fresh;
+----
+id	v
+1	x
+
+
+# Plain (non-AS) CREATE OR REPLACE TABLE replaces the schema.
+statement ok
+CREATE TABLE cor_plain (id INTEGER);
+
+
+statement ok
+CREATE OR REPLACE TABLE cor_plain (id INTEGER, v TEXT);
+
+
+statement count 1
+INSERT INTO cor_plain VALUES (1, 'a');
+
+
+query
+SELECT id, v FROM cor_plain;
+----
+id	v
+1	a
+
+
+statement ok
+DROP TABLE cor_t;
+
+
+statement ok
+DROP TABLE cor_fresh;
+
+
+statement ok
+DROP TABLE cor_plain;

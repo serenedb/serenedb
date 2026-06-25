@@ -300,19 +300,19 @@ statement count 3
 COPY (SELECT 1::int4 AS id, 'pudge alpha' AS body
       UNION ALL SELECT 2, 'manga beta'
       UNION ALL SELECT 3, 'pudge gamma')
-TO '${__TEST_DIR__}/csv_a.csv';
+TO '${__TEST_DIR__}/csv_a.csv' HEADER;
 
 statement count 4
 COPY (SELECT 4::int4 AS id, 'sql delta' AS body
       UNION ALL SELECT 5, 'pudge epsilon'
       UNION ALL SELECT 6, 'clickclack zeta'
       UNION ALL SELECT 7, 'mass effect eta')
-TO '${__TEST_DIR__}/csv_b.csv';
+TO '${__TEST_DIR__}/csv_b.csv' HEADER;
 
 statement count 2
 COPY (SELECT 8::int4 AS id, 'pudge theta' AS body
       UNION ALL SELECT 9, '3am iota')
-TO '${__TEST_DIR__}/csv_c.csv';
+TO '${__TEST_DIR__}/csv_c.csv' HEADER;
 
 
 statement ok

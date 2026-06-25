@@ -41,7 +41,7 @@ count
 200
 
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # round 1
 statement count 800

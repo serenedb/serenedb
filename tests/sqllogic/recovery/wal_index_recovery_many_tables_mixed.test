@@ -89,7 +89,7 @@ VACUUM (REFRESH_TABLE) mt_epsilon;
 # mt_epsilon must NOT receive any writes — it stays caught up.
 
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # alpha + delta + gamma writes interleaved.
 statement ok

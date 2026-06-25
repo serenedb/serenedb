@@ -1,0 +1,59 @@
+hash-threshold 100
+
+control substitution on
+
+# Nested-type round-trip through CSV COPY. `COPY ... TO (FORMAT csv)` emits
+# DuckDB-dialect text (`[1, 2, 3]`, `{'k': 5}`); `COPY ... FROM (FORMAT csv)`
+# re-parses it through the VARCHAR->LIST cast. Regression for the round-trip
+# that used to fail with "malformed array literal" / a cast null-deref on
+# list-of-struct and struct-with-list-field columns.
+
+statement ok
+CREATE TABLE csv_rt_src (
+  ia INTEGER[],
+  st STRUCT(k INTEGER, w INTEGER),
+  sa STRUCT(k INTEGER, w INTEGER)[],
+  sv STRUCT(k INTEGER, v INTEGER[])[]
+);
+
+
+statement count 1
+INSERT INTO csv_rt_src VALUES (
+  '{1,2,3}',
+  ROW(9, 10),
+  ARRAY[ROW(5, 6), ROW(7, 8)]::STRUCT(k INTEGER, w INTEGER)[],
+  ARRAY[ROW(1, '{1,2}'), ROW(2, '{3,4}')]::STRUCT(k INTEGER, v INTEGER[])[]
+);
+
+
+statement count 1
+COPY csv_rt_src TO '${__TEST_DIR__}/csv_rt.csv' (FORMAT csv);
+
+
+statement ok
+CREATE TABLE csv_rt_dst (
+  ia INTEGER[],
+  st STRUCT(k INTEGER, w INTEGER),
+  sa STRUCT(k INTEGER, w INTEGER)[],
+  sv STRUCT(k INTEGER, v INTEGER[])[]
+);
+
+
+statement count 1
+COPY csv_rt_dst FROM '${__TEST_DIR__}/csv_rt.csv' (FORMAT csv);
+
+
+# Re-parsed values are byte-identical to the originals.
+query
+SELECT ia, st, sa, sv FROM csv_rt_dst;
+----
+ia	st	sa	sv
+{1,2,3}	(9,10)	{"(5,6)","(7,8)"}	{"(1,\\"{1,2}\\")","(2,\\"{3,4}\\")"}
+
+
+statement ok
+DROP TABLE csv_rt_src;
+
+
+statement ok
+DROP TABLE csv_rt_dst;

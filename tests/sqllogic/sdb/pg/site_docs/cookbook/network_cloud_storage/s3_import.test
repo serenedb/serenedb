@@ -1,0 +1,59 @@
+control substitution on
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_RAW
+#| CREATE SECRET (
+#|     TYPE s3,
+#|     KEY_ID '⟨AKIAIOSFODNN7EXAMPLE⟩',
+#|     SECRET '⟨wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY⟩',
+#|     REGION '⟨us-east-1⟩'
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE OR REPLACE SECRET (
+    TYPE s3,
+    KEY_ID 'AKIAIOSFODNN7EXAMPLE',
+    SECRET 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+    REGION 'us-east-1'
+);
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_RAW
+#| CREATE SECRET (
+#|     TYPE s3,
+#|     PROVIDER credential_chain
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE OR REPLACE SECRET (
+    TYPE s3,
+    KEY_ID 'AKIAIOSFODNN7EXAMPLE',
+    SECRET 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+    REGION 'us-east-1'
+);
+
+# DOCS_TEST: example_005
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/cookbook_network_cloud_storage_s3_import_example_005_1_file.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| SELECT * FROM read_parquet('s3://⟨bucket⟩/⟨file⟩');
+
+# DOCS_TEST_BODY
+
+query
+SELECT * FROM read_parquet('${__TEST_DIR__}/cookbook_network_cloud_storage_s3_import_example_005_1_file.parquet');
+----
+id	name	value
+1	alpha	10
+2	beta	20

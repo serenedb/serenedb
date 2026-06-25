@@ -42,7 +42,7 @@ id	payload
 # Post-crash rows: suppress the index commit so they land only in the store
 # WAL, post-refresh and not yet durable in the segments.
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO var_rec_t VALUES

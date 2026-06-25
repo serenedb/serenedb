@@ -35,8 +35,9 @@
 #include "basics/operating-system.h"
 #include "basics/string_utils.h"
 
-ABSL_FLAG(std::string, server_directory, "",
-          "Path to the database directory. Overrides any positional arg.");
+ABSL_FLAG(std::string, server_directory, "serenedb-data",
+          "Path to the database directory. A positional argument, if given, "
+          "takes precedence.");
 
 using namespace sdb::basics;
 
@@ -48,12 +49,6 @@ DatabasePathFeature::DatabasePathFeature()
   // AppServer::parseOptions).
   if (auto p = lifecycle::DataDirArg(); !p.empty()) {
     _directory = std::string(p);
-  }
-
-  if (_directory.empty()) {
-    _directory = "serenedb-data";
-    SDB_INFO(GENERAL, "no database path has been supplied, using default '",
-             _directory, "'");
   }
 
   // strip trailing separators and make the path absolute so log lines and

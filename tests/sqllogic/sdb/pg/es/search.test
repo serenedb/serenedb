@@ -1,0 +1,68 @@
+hash-threshold 200
+
+# The SQL surface behind ES _search: text properties are indexed through the
+# es."standard" tokenizer (lowercase, no stemming), match queries are
+# @@ ts_tokenize/plainto_tsquery against the "<index>$text" relation, filters
+# compose as ordinary predicates.
+
+statement ok
+CALL es_create_index('slt_es_s', '{"mappings":{"properties":{"title":{"type":"text"},"author":{"type":"keyword"},"year":{"type":"integer"}}}}');
+
+statement count 3
+INSERT INTO es.slt_es_s SELECT * FROM es_bulk('slt_es_s', '{"index":{"_id":"1"}}
+{"title":"The Quick Brown Fox","author":"aesop","year":1900}
+{"index":{"_id":"2"}}
+{"title":"The lazy dog sleeps","author":"aesop","year":1950}
+{"index":{"_id":"3"}}
+{"title":"quick thinking saves the day","author":"verne","year":1950}
+');
+
+query
+CALL es_refresh('slt_es_s');
+----
+acknowledged
+t
+
+# match operator=or, analysis case-insensitive (ES standard analyzer)
+query
+SELECT "_id" FROM es."slt_es_s$text" WHERE "title" @@ ts_tokenize('QUICK dog') ORDER BY "_id";
+----
+_id
+1
+2
+3
+
+# match operator=and
+query
+SELECT "_id" FROM es."slt_es_s$text" WHERE "title" @@ plainto_tsquery('quick fox');
+----
+_id
+1
+
+# bool: must (match) + must_not (term) + filter (range) in one scan
+query
+SELECT "_id" FROM es."slt_es_s$text" WHERE ("title" @@ ts_tokenize('quick')) AND NOT ("author" = 'verne') AND "year" >= 1900;
+----
+_id
+1
+
+query
+SELECT count(*) FROM es."slt_es_s$text" WHERE "title" @@ ts_tokenize('quick');
+----
+count
+2
+
+# Relevance order: real BM25 over the index scan (the shorter matching field
+# scores higher).
+query
+SELECT "_id" FROM es."slt_es_s$text" AS t WHERE "title" @@ ts_tokenize('quick') ORDER BY BM25(t.tableoid) DESC, "_id";
+----
+_id
+1
+3
+
+query
+CALL es_drop_index('slt_es_s');
+----
+acknowledged
+t

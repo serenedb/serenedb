@@ -1,14 +1,26 @@
 services:
+  # Make the root:root 0755 named volume world-writable before the non-root
+  # services create their per-test dirs in /test-tmp.
+  test-tmp-init:
+    image: ${BUILD_IMAGE}
+    user: "0:0"
+    volumes:
+      - "sdb-test-tmp:/test-tmp"
+    command: ["sh", "-c", "chmod 0777 /test-tmp"]
+
   serenedb:
     image: ${BUILD_IMAGE}
     user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+    depends_on:
+      test-tmp-init:
+        condition: service_completed_successfully
     tmpfs:
       - /var/lib/serenedb
       - /var/log/serenedb
     volumes:
       - "${WORKSPACE}:/workspace:ro"
       - "${WORKSPACE}/out/logs:/logs"
-      - "${WORKSPACE}/out/test-tmp:/test-tmp"
+      - "sdb-test-tmp:/test-tmp"
     environment:
       - HOME=/tmp
       - TARBALL_NAME
@@ -20,7 +32,7 @@ services:
         tar -xzf /workspace/$TARBALL_NAME -C /tmp/serenedb --strip-components=1 &&
         exec /tmp/serenedb/usr/bin/serened \
           --flagfile=/tmp/serenedb/etc/serenedb/serened.conf \
-          --server_endpoints pgsql+tcp://0.0.0.0:7890 \
+          --listen postgres://0.0.0.0:7890 \
       '
 
   tests:
@@ -32,13 +44,14 @@ services:
       - "${WORKSPACE}/tests/sqllogic:/sqllogic"
       - "${WORKSPACE}/third_party/sqllogictest-rs:/sqllogictest-rs"
       - "${WORKSPACE}/out/logs:/logs"
-      - "${WORKSPACE}/out/test-tmp:/test-tmp"
+      - "sdb-test-tmp:/test-tmp"
       - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
+      - "${CARGO_HOME_CACHE:-${HOME}/.cache/serenedb-cargo-home}:/cargo-home"
     environment:
       - HOME=/sqllogic
       - TMPDIR=/test-tmp
       - SLT_TEST_DIR_SHARED=1
-      - CARGO_HOME=/tmp/cargo
+      - CARGO_HOME=/cargo-home
       - CARGO_TARGET_DIR=/cargo-target
     networks:
       - rta-network
@@ -65,3 +78,6 @@ networks:
   rta-network:
     driver: bridge
     name: ${COMPOSE_PROJECT_NAME}_rta-network
+
+volumes:
+  sdb-test-tmp:

@@ -1,0 +1,32 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE employees (name VARCHAR, department VARCHAR, salary INTEGER);
+
+statement ok
+INSERT INTO employees VALUES
+    ('Alice', 'Engineering', 150),
+    ('Bob',   'Engineering', 150),
+    ('Carol', 'Engineering', 120),
+    ('Dave',  'Sales',       100),
+    ('Eve',   'Sales',        90);
+
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+    name,
+    department,
+    rank() OVER w       AS rank,
+    dense_rank() OVER w AS dense_rank
+FROM employees
+WINDOW w AS (PARTITION BY department ORDER BY salary DESC)
+ORDER BY department, salary DESC, name;
+----
+name	department	rank	dense_rank
+Alice	Engineering	1	1
+Bob	Engineering	1	1
+Carol	Engineering	3	2
+Dave	Sales	1	1
+Eve	Sales	2	2

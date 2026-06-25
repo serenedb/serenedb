@@ -10,14 +10,13 @@ function(add_bench FILE_NAME)
     add_dependencies(serenedb-bench-micro ${NAME})
 endfunction()
 
-add_bench(call_once)
 add_bench(crc32c)
 add_bench(function)
 add_bench(hash_map)
 add_bench(lower_bound)
 add_bench(memory_file)
 add_bench(segmentation_stream)
-add_bench(top_term_collector)
+add_bench(top_term_selector)
 add_bench(random)
 add_bench(io_buffers)
 add_bench(fp_neg_zero_cmp)
@@ -29,11 +28,36 @@ add_bench(path_hierarchy_tokenizer)
 add_bench(regexp_vs_wildcard)
 add_bench(filter_prepare)
 add_bench(consecutive_run_length)
+add_bench(parse_query)
+add_bench(literal_lookup)
+add_bench(ci_hash)
+add_bench(ci_lower)
+add_bench(ci_fold128)
+add_bench(ci_compare)
+add_bench(socket_write)
+add_bench(duckdb_collector)
+target_include_directories(
+    serenedb-bench-micro-ci_hash
+    SYSTEM
+    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/lz4/lib
+)
 
 target_include_directories(
     serenedb-bench-micro-regexp_vs_wildcard
     SYSTEM
     PRIVATE $<TARGET_PROPERTY:iresearch-utfcpp,INTERFACE_INCLUDE_DIRECTORIES>
+)
+
+target_include_directories(
+    serenedb-bench-micro-literal_lookup
+    SYSTEM
+    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/frozen/include
+)
+# frozen's compile-time perfect-hash construction at N=1000 exceeds the default
+# constexpr step budget.
+target_compile_options(
+    serenedb-bench-micro-literal_lookup
+    PRIVATE -fconstexpr-steps=200000000
 )
 
 # vector distances

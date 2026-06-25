@@ -31,6 +31,12 @@ namespace sdb {
 
 class ConnectionContext;
 }
+
+namespace sdb::network::pg {
+
+class WireSinkContext;
+}
+
 namespace sdb::connector {
 
 inline constexpr const char* kSereneDBClientStateKey = "serenedb";
@@ -48,8 +54,11 @@ class SereneDBClientState final : public duckdb::ClientContextState {
  public:
   // Creates a SereneDBClientState, registers it in the ClientContext, and wires
   // up per-connection hooks (e.g. transaction isolation level validator).
-  static void Register(duckdb::ClientContext& client_ctx,
-                       std::shared_ptr<ConnectionContext> connection_ctx);
+  // Returns the registered state so the caller can cache it and skip the keyed
+  // (locked, case-insensitive) registry lookup on every query.
+  static SereneDBClientState& Register(
+    duckdb::ClientContext& client_ctx,
+    std::shared_ptr<ConnectionContext> connection_ctx);
 
   explicit SereneDBClientState(
     std::shared_ptr<ConnectionContext> connection_ctx)
@@ -61,13 +70,20 @@ class SereneDBClientState final : public duckdb::ClientContextState {
 
   std::unique_ptr<pg::ProgressReporter> progress;
 
-  // COPY FROM STDIN state shared across handles within a single query.
-  // DuckDB may open /dev/stdin more than once (CSV sniff then real read);
-  // the buffer captures what the first open drains so later opens replay
-  // it, and the done flag short-circuits reads after CopyDone.
-  std::shared_ptr<std::string> copy_stdin_buffer;
+  // COPY FROM STDIN state shared across handles within a single query. The
+  // non-seekable wire stream is read SINGLE-PASS: our binary/text functions
+  // stream straight off the bridge, and DuckDB's csv/json readers sniff+scan
+  // over one buffer-manager pass (no re-open). So there is no replay buffer.
+  // open_count lets the handle reject an unexpected re-open; done
+  // short-circuits reads after CopyDone.
   int copy_stdin_open_count = 0;
   bool copy_stdin_done = false;
+
+  // Armed by the pg-wire session around PendingQuery for row-returning
+  // statements: the get_result_collector hook reads it to install the
+  // encode-in-Sink wire collector. Shared so the executor's sink state keeps
+  // it alive on every error/teardown path.
+  std::shared_ptr<network::pg::WireSinkContext> wire_sink;
 
   void TransactionPreCommit(duckdb::MetaTransaction& transaction,
                             duckdb::ClientContext& context) final;
@@ -90,7 +106,6 @@ class SereneDBClientState final : public duckdb::ClientContextState {
     duckdb::RebindQueryInfo current_rebind) final;
 
   void QueryBegin(duckdb::ClientContext& context) final;
-
   void QueryEnd(duckdb::ClientContext& context) final;
 
   void RecordReadRelation(duckdb::ClientContext& context, uint64_t table_index,

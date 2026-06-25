@@ -1,0 +1,124 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+SET default_null_order = 'NULLS_FIRST';
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+SET default_order = 'DESC';
+
+# DOCS_TEST: example_003
+
+statement ok
+RESET default_null_order;
+
+statement ok
+RESET default_order;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE OR REPLACE TABLE planets AS
+    SELECT 'Mars' AS planet, 'terrestrial' AS kind, 2 AS moons
+    UNION ALL
+    SELECT 'Mercury', 'terrestrial', 0
+    UNION ALL
+    SELECT 'Neptune', 'ice giant', 14
+    UNION ALL
+    SELECT 'Jupiter', 'gas giant', 95;
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM planets
+ORDER BY kind;
+----
+planet	kind	moons
+Jupiter	gas giant	95
+Neptune	ice giant	14
+Mars	terrestrial	2
+Mercury	terrestrial	0
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM planets
+ORDER BY kind DESC NULLS LAST;
+----
+planet	kind	moons
+Mars	terrestrial	2
+Mercury	terrestrial	0
+Neptune	ice giant	14
+Jupiter	gas giant	95
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM planets
+ORDER BY kind, planet;
+----
+planet	kind	moons
+Jupiter	gas giant	95
+Neptune	ice giant	14
+Mars	terrestrial	2
+Mercury	terrestrial	0
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+SELECT word
+FROM (VALUES ('apfel'), ('zebra'), ('äpfel'), ('birne')) AS t(word)
+ORDER BY word COLLATE DE;
+----
+word
+apfel
+äpfel
+birne
+zebra
+
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM planets
+ORDER BY ALL;
+----
+planet	kind	moons
+Jupiter	gas giant	95
+Mars	terrestrial	2
+Mercury	terrestrial	0
+Neptune	ice giant	14
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM planets
+ORDER BY ALL DESC;
+----
+planet	kind	moons
+Neptune	ice giant	14
+Mercury	terrestrial	0
+Mars	terrestrial	2
+Jupiter	gas giant	95

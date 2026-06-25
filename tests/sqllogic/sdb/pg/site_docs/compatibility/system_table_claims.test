@@ -1,0 +1,652 @@
+# Auto-generated existence claims for system-table-compatibility.md
+# Every listed pg_catalog / information_schema relation is queryable.
+
+control substitution on
+
+# sys_tables: pg_aggregate (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_aggregate" LIMIT 0;
+
+# sys_tables: pg_am (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_am" LIMIT 0;
+
+# sys_tables: pg_amop (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_amop" LIMIT 0;
+
+# sys_tables: pg_amproc (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_amproc" LIMIT 0;
+
+# sys_tables: pg_attrdef (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_attrdef" LIMIT 0;
+
+# sys_tables: pg_attribute (🟢)
+statement ok
+SELECT * FROM pg_catalog."pg_attribute" LIMIT 0;
+
+# sys_tables: pg_authid (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_authid" LIMIT 0;
+
+# sys_tables: pg_auth_members (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_auth_members" LIMIT 0;
+
+# sys_tables: pg_cast (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_cast" LIMIT 0;
+
+# sys_tables: pg_class (🟢)
+statement ok
+SELECT * FROM pg_catalog."pg_class" LIMIT 0;
+
+# sys_tables: pg_collation (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_collation" LIMIT 0;
+
+# sys_tables: pg_constraint (🟢)
+statement ok
+SELECT * FROM pg_catalog."pg_constraint" LIMIT 0;
+
+# sys_tables: pg_conversion (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_conversion" LIMIT 0;
+
+# sys_tables: pg_database (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_database" LIMIT 0;
+
+# sys_tables: pg_db_role_setting (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_db_role_setting" LIMIT 0;
+
+# sys_tables: pg_default_acl (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_default_acl" LIMIT 0;
+
+# sys_tables: pg_depend (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_depend" LIMIT 0;
+
+# sys_tables: pg_description (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_description" LIMIT 0;
+
+# sys_tables: pg_enum (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_enum" LIMIT 0;
+
+# sys_tables: pg_event_trigger (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_event_trigger" LIMIT 0;
+
+# sys_tables: pg_extension (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_extension" LIMIT 0;
+
+# sys_tables: pg_foreign_data_wrapper (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_foreign_data_wrapper" LIMIT 0;
+
+# sys_tables: pg_foreign_server (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_foreign_server" LIMIT 0;
+
+# sys_tables: pg_foreign_table (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_foreign_table" LIMIT 0;
+
+# sys_tables: pg_index (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_index" LIMIT 0;
+
+# sys_tables: pg_inherits (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_inherits" LIMIT 0;
+
+# sys_tables: pg_init_privs (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_init_privs" LIMIT 0;
+
+# sys_tables: pg_language (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_language" LIMIT 0;
+
+# sys_tables: pg_largeobject (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_largeobject" LIMIT 0;
+
+# sys_tables: pg_largeobject_metadata (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_largeobject_metadata" LIMIT 0;
+
+# sys_tables: pg_namespace (🟢)
+statement ok
+SELECT * FROM pg_catalog."pg_namespace" LIMIT 0;
+
+# sys_tables: pg_opclass (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_opclass" LIMIT 0;
+
+# sys_tables: pg_operator (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_operator" LIMIT 0;
+
+# sys_tables: pg_opfamily (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_opfamily" LIMIT 0;
+
+# sys_tables: pg_parameter_acl (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_parameter_acl" LIMIT 0;
+
+# sys_tables: pg_partitioned_table (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_partitioned_table" LIMIT 0;
+
+# sys_tables: pg_policy (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_policy" LIMIT 0;
+
+# sys_tables: pg_proc (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_proc" LIMIT 0;
+
+# sys_tables: pg_publication (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_publication" LIMIT 0;
+
+# sys_tables: pg_publication_namespace (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_publication_namespace" LIMIT 0;
+
+# sys_tables: pg_publication_rel (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_publication_rel" LIMIT 0;
+
+# sys_tables: pg_range (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_range" LIMIT 0;
+
+# sys_tables: pg_replication_origin (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_replication_origin" LIMIT 0;
+
+# sys_tables: pg_rewrite (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_rewrite" LIMIT 0;
+
+# sys_tables: pg_seclabel (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_seclabel" LIMIT 0;
+
+# sys_tables: pg_sequence (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_sequence" LIMIT 0;
+
+# sys_tables: pg_shdepend (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_shdepend" LIMIT 0;
+
+# sys_tables: pg_shdescription (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_shdescription" LIMIT 0;
+
+# sys_tables: pg_shseclabel (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_shseclabel" LIMIT 0;
+
+# sys_tables: pg_statistic (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_statistic" LIMIT 0;
+
+# sys_tables: pg_statistic_ext (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_statistic_ext" LIMIT 0;
+
+# sys_tables: pg_statistic_ext_data (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_statistic_ext_data" LIMIT 0;
+
+# sys_tables: pg_subscription (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_subscription" LIMIT 0;
+
+# sys_tables: pg_subscription_rel (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_subscription_rel" LIMIT 0;
+
+# sys_tables: pg_tablespace (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_tablespace" LIMIT 0;
+
+# sys_tables: pg_transform (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_transform" LIMIT 0;
+
+# sys_tables: pg_trigger (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_trigger" LIMIT 0;
+
+# sys_tables: pg_ts_config (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_ts_config" LIMIT 0;
+
+# sys_tables: pg_ts_config_map (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_ts_config_map" LIMIT 0;
+
+# sys_tables: pg_ts_dict (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_ts_dict" LIMIT 0;
+
+# sys_tables: pg_ts_parser (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_ts_parser" LIMIT 0;
+
+# sys_tables: pg_ts_template (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_ts_template" LIMIT 0;
+
+# sys_tables: pg_type (🟢)
+statement ok
+SELECT * FROM pg_catalog."pg_type" LIMIT 0;
+
+# sys_tables: pg_user_mapping (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_user_mapping" LIMIT 0;
+
+# sys_views: pg_available_extensions (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_available_extensions" LIMIT 0;
+
+# sys_views: pg_available_extension_versions (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_available_extension_versions" LIMIT 0;
+
+# sys_views: pg_backend_memory_contexts (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_backend_memory_contexts" LIMIT 0;
+
+# sys_views: pg_config (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_config" LIMIT 0;
+
+# sys_views: pg_cursors (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_cursors" LIMIT 0;
+
+# sys_views: pg_file_settings (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_file_settings" LIMIT 0;
+
+# sys_views: pg_group (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_group" LIMIT 0;
+
+# sys_views: pg_hba_file_rules (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_hba_file_rules" LIMIT 0;
+
+# sys_views: pg_ident_file_mappings (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_ident_file_mappings" LIMIT 0;
+
+# sys_views: pg_indexes (🟢)
+statement ok
+SELECT * FROM pg_catalog."pg_indexes" LIMIT 0;
+
+# sys_views: pg_locks (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_locks" LIMIT 0;
+
+# sys_views: pg_matviews (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_matviews" LIMIT 0;
+
+# sys_views: pg_policies (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_policies" LIMIT 0;
+
+# sys_views: pg_prepared_statements (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_prepared_statements" LIMIT 0;
+
+# sys_views: pg_prepared_xacts (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_prepared_xacts" LIMIT 0;
+
+# sys_views: pg_publication_tables (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_publication_tables" LIMIT 0;
+
+# sys_views: pg_replication_origin_status (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_replication_origin_status" LIMIT 0;
+
+# sys_views: pg_replication_slots (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_replication_slots" LIMIT 0;
+
+# sys_views: pg_roles (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_roles" LIMIT 0;
+
+# sys_views: pg_rules (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_rules" LIMIT 0;
+
+# sys_views: pg_seclabels (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_seclabels" LIMIT 0;
+
+# sys_views: pg_sequences (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_sequences" LIMIT 0;
+
+# sys_views: pg_settings (🟢)
+statement ok
+SELECT * FROM pg_catalog."pg_settings" LIMIT 0;
+
+# sys_views: pg_shadow (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_shadow" LIMIT 0;
+
+# sys_views: pg_shmem_allocations (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_shmem_allocations" LIMIT 0;
+
+# sys_views: pg_stats (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_stats" LIMIT 0;
+
+# sys_views: pg_stats_ext (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_stats_ext" LIMIT 0;
+
+# sys_views: pg_stats_ext_exprs (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_stats_ext_exprs" LIMIT 0;
+
+# sys_views: pg_tables (🟢)
+statement ok
+SELECT * FROM pg_catalog."pg_tables" LIMIT 0;
+
+# sys_views: pg_timezone_abbrevs (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_timezone_abbrevs" LIMIT 0;
+
+# sys_views: pg_timezone_names (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_timezone_names" LIMIT 0;
+
+# sys_views: pg_user (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_user" LIMIT 0;
+
+# sys_views: pg_user_mappings (🟡)
+statement ok
+SELECT * FROM pg_catalog."pg_user_mappings" LIMIT 0;
+
+# sys_views: pg_views (🟢)
+statement ok
+SELECT * FROM pg_catalog."pg_views" LIMIT 0;
+
+# sys_infoschema: information_schema_catalog_name (🟡)
+statement ok
+SELECT * FROM information_schema."information_schema_catalog_name" LIMIT 0;
+
+# sys_infoschema: administrable_role_authorizations (🟡)
+statement ok
+SELECT * FROM information_schema."administrable_role_authorizations" LIMIT 0;
+
+# sys_infoschema: applicable_roles (🟡)
+statement ok
+SELECT * FROM information_schema."applicable_roles" LIMIT 0;
+
+# sys_infoschema: attributes (🟡)
+statement ok
+SELECT * FROM information_schema."attributes" LIMIT 0;
+
+# sys_infoschema: character_sets (🟡)
+statement ok
+SELECT * FROM information_schema."character_sets" LIMIT 0;
+
+# sys_infoschema: check_constraint_routine_usage (🟡)
+statement ok
+SELECT * FROM information_schema."check_constraint_routine_usage" LIMIT 0;
+
+# sys_infoschema: check_constraints (🟢)
+statement ok
+SELECT * FROM information_schema."check_constraints" LIMIT 0;
+
+# sys_infoschema: collations (🟡)
+statement ok
+SELECT * FROM information_schema."collations" LIMIT 0;
+
+# sys_infoschema: collation_character_set_applicability (🟡)
+statement ok
+SELECT * FROM information_schema."collation_character_set_applicability" LIMIT 0;
+
+# sys_infoschema: column_column_usage (🟡)
+statement ok
+SELECT * FROM information_schema."column_column_usage" LIMIT 0;
+
+# sys_infoschema: column_domain_usage (🟡)
+statement ok
+SELECT * FROM information_schema."column_domain_usage" LIMIT 0;
+
+# sys_infoschema: column_options (🟡)
+statement ok
+SELECT * FROM information_schema."column_options" LIMIT 0;
+
+# sys_infoschema: column_privileges (🟢)
+statement ok
+SELECT * FROM information_schema."column_privileges" LIMIT 0;
+
+# sys_infoschema: column_udt_usage (🟢)
+statement ok
+SELECT * FROM information_schema."column_udt_usage" LIMIT 0;
+
+# sys_infoschema: columns (🟢)
+statement ok
+SELECT * FROM information_schema."columns" LIMIT 0;
+
+# sys_infoschema: constraint_column_usage (🟢)
+statement ok
+SELECT * FROM information_schema."constraint_column_usage" LIMIT 0;
+
+# sys_infoschema: constraint_table_usage (🟢)
+statement ok
+SELECT * FROM information_schema."constraint_table_usage" LIMIT 0;
+
+# sys_infoschema: data_type_privileges (🟢)
+statement ok
+SELECT * FROM information_schema."data_type_privileges" LIMIT 0;
+
+# sys_infoschema: domain_constraints (🟡)
+statement ok
+SELECT * FROM information_schema."domain_constraints" LIMIT 0;
+
+# sys_infoschema: domain_udt_usage (🟡)
+statement ok
+SELECT * FROM information_schema."domain_udt_usage" LIMIT 0;
+
+# sys_infoschema: domains (🟡)
+statement ok
+SELECT * FROM information_schema."domains" LIMIT 0;
+
+# sys_infoschema: element_types (🟡)
+statement ok
+SELECT * FROM information_schema."element_types" LIMIT 0;
+
+# sys_infoschema: enabled_roles (🟡)
+statement ok
+SELECT * FROM information_schema."enabled_roles" LIMIT 0;
+
+# sys_infoschema: foreign_data_wrapper_options (🟡)
+statement ok
+SELECT * FROM information_schema."foreign_data_wrapper_options" LIMIT 0;
+
+# sys_infoschema: foreign_data_wrappers (🟡)
+statement ok
+SELECT * FROM information_schema."foreign_data_wrappers" LIMIT 0;
+
+# sys_infoschema: foreign_server_options (🟡)
+statement ok
+SELECT * FROM information_schema."foreign_server_options" LIMIT 0;
+
+# sys_infoschema: foreign_servers (🟡)
+statement ok
+SELECT * FROM information_schema."foreign_servers" LIMIT 0;
+
+# sys_infoschema: foreign_table_options (🟡)
+statement ok
+SELECT * FROM information_schema."foreign_table_options" LIMIT 0;
+
+# sys_infoschema: foreign_tables (🟡)
+statement ok
+SELECT * FROM information_schema."foreign_tables" LIMIT 0;
+
+# sys_infoschema: key_column_usage (🟢)
+statement ok
+SELECT * FROM information_schema."key_column_usage" LIMIT 0;
+
+# sys_infoschema: parameters (🟡)
+statement ok
+SELECT * FROM information_schema."parameters" LIMIT 0;
+
+# sys_infoschema: referential_constraints (🟡)
+statement ok
+SELECT * FROM information_schema."referential_constraints" LIMIT 0;
+
+# sys_infoschema: role_column_grants (🟢)
+statement ok
+SELECT * FROM information_schema."role_column_grants" LIMIT 0;
+
+# sys_infoschema: role_routine_grants (🟡)
+statement ok
+SELECT * FROM information_schema."role_routine_grants" LIMIT 0;
+
+# sys_infoschema: role_table_grants (🟢)
+statement ok
+SELECT * FROM information_schema."role_table_grants" LIMIT 0;
+
+# sys_infoschema: role_udt_grants (🟡)
+statement ok
+SELECT * FROM information_schema."role_udt_grants" LIMIT 0;
+
+# sys_infoschema: role_usage_grants (🟡)
+statement ok
+SELECT * FROM information_schema."role_usage_grants" LIMIT 0;
+
+# sys_infoschema: routine_column_usage (🟡)
+statement ok
+SELECT * FROM information_schema."routine_column_usage" LIMIT 0;
+
+# sys_infoschema: routine_privileges (🟡)
+statement ok
+SELECT * FROM information_schema."routine_privileges" LIMIT 0;
+
+# sys_infoschema: routine_routine_usage (🟡)
+statement ok
+SELECT * FROM information_schema."routine_routine_usage" LIMIT 0;
+
+# sys_infoschema: routine_sequence_usage (🟡)
+statement ok
+SELECT * FROM information_schema."routine_sequence_usage" LIMIT 0;
+
+# sys_infoschema: routine_table_usage (🟡)
+statement ok
+SELECT * FROM information_schema."routine_table_usage" LIMIT 0;
+
+# sys_infoschema: routines (🟡)
+statement ok
+SELECT * FROM information_schema."routines" LIMIT 0;
+
+# sys_infoschema: schemata (🟢)
+statement ok
+SELECT * FROM information_schema."schemata" LIMIT 0;
+
+# sys_infoschema: sequences (🟡)
+statement ok
+SELECT * FROM information_schema."sequences" LIMIT 0;
+
+# sys_infoschema: sql_features (🟡)
+statement ok
+SELECT * FROM information_schema."sql_features" LIMIT 0;
+
+# sys_infoschema: sql_implementation_info (🟡)
+statement ok
+SELECT * FROM information_schema."sql_implementation_info" LIMIT 0;
+
+# sys_infoschema: sql_parts (🟡)
+statement ok
+SELECT * FROM information_schema."sql_parts" LIMIT 0;
+
+# sys_infoschema: sql_sizing (🟡)
+statement ok
+SELECT * FROM information_schema."sql_sizing" LIMIT 0;
+
+# sys_infoschema: table_constraints (🟢)
+statement ok
+SELECT * FROM information_schema."table_constraints" LIMIT 0;
+
+# sys_infoschema: table_privileges (🟢)
+statement ok
+SELECT * FROM information_schema."table_privileges" LIMIT 0;
+
+# sys_infoschema: tables (🟢)
+statement ok
+SELECT * FROM information_schema."tables" LIMIT 0;
+
+# sys_infoschema: transforms (🟡)
+statement ok
+SELECT * FROM information_schema."transforms" LIMIT 0;
+
+# sys_infoschema: triggered_update_columns (🟡)
+statement ok
+SELECT * FROM information_schema."triggered_update_columns" LIMIT 0;
+
+# sys_infoschema: triggers (🟡)
+statement ok
+SELECT * FROM information_schema."triggers" LIMIT 0;
+
+# sys_infoschema: udt_privileges (🟡)
+statement ok
+SELECT * FROM information_schema."udt_privileges" LIMIT 0;
+
+# sys_infoschema: usage_privileges (🟡)
+statement ok
+SELECT * FROM information_schema."usage_privileges" LIMIT 0;
+
+# sys_infoschema: user_defined_types (🟡)
+statement ok
+SELECT * FROM information_schema."user_defined_types" LIMIT 0;
+
+# sys_infoschema: user_mapping_options (🟡)
+statement ok
+SELECT * FROM information_schema."user_mapping_options" LIMIT 0;
+
+# sys_infoschema: user_mappings (🟡)
+statement ok
+SELECT * FROM information_schema."user_mappings" LIMIT 0;
+
+# sys_infoschema: view_column_usage (🟡)
+statement ok
+SELECT * FROM information_schema."view_column_usage" LIMIT 0;
+
+# sys_infoschema: view_routine_usage (🟡)
+statement ok
+SELECT * FROM information_schema."view_routine_usage" LIMIT 0;
+
+# sys_infoschema: view_table_usage (🟡)
+statement ok
+SELECT * FROM information_schema."view_table_usage" LIMIT 0;
+
+# sys_infoschema: views (🟢)
+statement ok
+SELECT * FROM information_schema."views" LIMIT 0;

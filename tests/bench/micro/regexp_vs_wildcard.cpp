@@ -441,7 +441,11 @@ void BenchPrepare(benchmark::State& state, const irs::DirectoryReader& rdr,
   // the real prepare pipeline.
   {
     auto q = make();
-    auto check = q.prepare({.index = rdr});
+    auto collector = q.MakeCollector(nullptr);
+    irs::QueryBuilder::ptr check;
+    for (const auto& sub : rdr) {
+      check = q.PrepareSegment(sub, {.collector = collector.get()});
+    }
     if (!check) {
       state.SkipWithError("prepare returned null");
       return;
@@ -450,7 +454,11 @@ void BenchPrepare(benchmark::State& state, const irs::DirectoryReader& rdr,
 
   for (auto _ : state) {
     auto q = make();
-    auto prepared = q.prepare({.index = rdr});
+    auto collector = q.MakeCollector(nullptr);
+    irs::QueryBuilder::ptr prepared;
+    for (const auto& sub : rdr) {
+      prepared = q.PrepareSegment(sub, {.collector = collector.get()});
+    }
     benchmark::DoNotOptimize(prepared);
   }
 }
@@ -459,8 +467,14 @@ template<typename MakeFn>
 void BenchExecuteOnly(benchmark::State& state, const irs::DirectoryReader& rdr,
                       MakeFn make) {
   auto q = make();
-  auto prepared = q.prepare({.index = rdr});
-  if (!prepared) {
+  auto collector = q.MakeCollector(nullptr);
+  std::vector<irs::QueryBuilder::ptr> prepared;
+  for (const auto& sub : rdr) {
+    prepared.emplace_back(
+      q.PrepareSegment(sub, {.collector = collector.get()}));
+  }
+  const auto stats = collector->Finish(irs::IResourceManager::gNoop);
+  if (prepared.empty() || !prepared.front()) {
     state.SkipWithError("prepare returned null");
     return;
   }
@@ -468,8 +482,13 @@ void BenchExecuteOnly(benchmark::State& state, const irs::DirectoryReader& rdr,
   size_t per_iter = 0;
   for (auto _ : state) {
     per_iter = 0;
-    for (const auto& sub : rdr) {
-      auto docs = prepared->execute({.segment = sub});
+    size_t seg_idx = 0;
+    for ([[maybe_unused]] const auto& sub : rdr) {
+      auto& p = prepared[seg_idx++];
+      if (!p) {
+        continue;
+      }
+      auto docs = p->Execute({}, stats);
       while (docs->next()) {
         ++per_iter;
       }

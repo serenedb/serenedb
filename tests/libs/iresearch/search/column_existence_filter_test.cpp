@@ -155,10 +155,8 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       irs::ByColumnExistence filter = MakeFilter(id);
 
       {
-        auto prepared = tests::FilterWrapper{filter}.prepare({
-          .index = *rdr,
-          .memory = counter,
-        });
+        tests::FilterWrapper wrapper{filter};
+        tests::PreparedFilter prepared{wrapper, *rdr, nullptr, counter};
 
         ASSERT_EQ(1, rdr->size());
         auto& segment = (*rdr)[0];
@@ -167,7 +165,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
         ASSERT_NE(nullptr, column);
         const auto expected = ExpectedDocs(segment, *column);
 
-        auto filter_it = prepared->execute({.segment = segment});
+        auto filter_it = prepared.Execute(0);
         ASSERT_LE(expected.size(), irs::CostAttr::extract(*filter_it));
 
         const auto actual = DrainIterator(*filter_it);
@@ -186,13 +184,10 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
     {
       irs::ByColumnExistence filter = MakeFilter(kInvalidColumn);
       {
-        auto prepared = tests::FilterWrapper{filter}.prepare({
-          .index = *rdr,
-          .memory = counter,
-        });
+        tests::FilterWrapper wrapper{filter};
+        tests::PreparedFilter prepared{wrapper, *rdr, nullptr, counter};
         ASSERT_EQ(1, rdr->size());
-        auto& segment = (*rdr)[0];
-        auto filter_it = prepared->execute({.segment = segment});
+        auto filter_it = prepared.Execute(0);
         ASSERT_EQ(0, irs::CostAttr::extract(*filter_it));
         ASSERT_EQ(irs::doc_limits::eof(), filter_it->value());
         ASSERT_FALSE(filter_it->next());
@@ -272,11 +267,8 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
         *score = irs::score_t(cur_doc & 0xAAAAAAAA);
       };
 
-      auto prepared_filter = tests::FilterWrapper{filter}.prepare({
-        .index = *rdr,
-        .memory = counter,
-        .scorer = &sort,
-      });
+      tests::FilterWrapper wrapper{filter};
+      tests::PreparedFilter prepared_filter{wrapper, *rdr, &sort, counter};
       std::multimap<irs::score_t, irs::doc_id_t> scored_result;
 
       ASSERT_EQ(1, rdr->size());
@@ -286,8 +278,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_NE(nullptr, column);
       const auto expected_docs = ExpectedDocs(segment, *column);
 
-      auto filter_itr =
-        prepared_filter->execute({.segment = segment, .scorer = &sort});
+      auto filter_itr = prepared_filter.Execute(0);
       ASSERT_LE(expected_docs.size(), irs::CostAttr::extract(*filter_itr));
 
       while (filter_itr->next()) {
@@ -791,10 +782,8 @@ TEST_P(ColumnExistenceLongFilterTestCase, mixed_seeks) {
   {
     irs::ByColumnExistence filter = MakeFilter(kTarget);
 
-    auto prepared = tests::FilterWrapper{filter}.prepare({
-      .index = *rdr,
-      .memory = counter,
-    });
+    tests::FilterWrapper wrapper{filter};
+    tests::PreparedFilter prepared{wrapper, *rdr, nullptr, counter};
 
     ASSERT_EQ(1, rdr->size());
     auto& segment = (*rdr)[0];
@@ -803,7 +792,7 @@ TEST_P(ColumnExistenceLongFilterTestCase, mixed_seeks) {
     ASSERT_NE(nullptr, column);
     const auto expected_docs = ExpectedDocs(segment, *column);
 
-    auto filter_it = prepared->execute({.segment = segment});
+    auto filter_it = prepared.Execute(0);
 
     ASSERT_LE(expected_docs.size(), irs::CostAttr::extract(*filter_it));
     for (auto& seek : seeks) {
@@ -819,10 +808,8 @@ TEST_P(ColumnExistenceLongFilterTestCase, mixed_seeks) {
   {
     irs::ByColumnExistence filter = MakeFilter(kTarget);
 
-    auto prepared = tests::FilterWrapper{filter}.prepare({
-      .index = *rdr,
-      .memory = counter,
-    });
+    tests::FilterWrapper wrapper{filter};
+    tests::PreparedFilter prepared{wrapper, *rdr, nullptr, counter};
 
     ASSERT_EQ(1, rdr->size());
     auto& segment = (*rdr)[0];
@@ -831,7 +818,7 @@ TEST_P(ColumnExistenceLongFilterTestCase, mixed_seeks) {
     ASSERT_NE(nullptr, column);
     const auto expected_docs = ExpectedDocs(segment, *column);
 
-    auto filter_it = prepared->execute({.segment = segment});
+    auto filter_it = prepared.Execute(0);
 
     ASSERT_LE(expected_docs.size(), irs::CostAttr::extract(*filter_it));
     for (auto& seek : seeks) {

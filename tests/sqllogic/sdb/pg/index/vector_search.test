@@ -180,7 +180,7 @@ QUERY PLAN
 │    l2_index (ANN range)   │
 │                           │
 │       Lookup: table       │
-│      Radius: 0.700000     │
+│        Radius: 0.7        │
 │          Dims: 3          │
 │      Projections: id      │
 │                           │
@@ -240,7 +240,7 @@ QUERY PLAN
 │    l2_index (ANN range)   │
 │                           │
 │       Lookup: table       │
-│      Radius: 1.000000     │
+│         Radius: 1         │
 │          Dims: 3          │
 │      Projections: id      │
 │                           │
@@ -274,7 +274,7 @@ QUERY PLAN
 │    l2_index (ANN range)   │
 │                           │
 │       Lookup: table       │
-│     Radius: 100.000000    │
+│        Radius: 100        │
 │          Dims: 3          │
 │      Projections: id      │
 │                           │
@@ -330,7 +330,7 @@ QUERY PLAN
 │    l2_index (ANN range)   │
 │                           │
 │       Lookup: table       │
-│      Radius: 0.700000     │
+│        Radius: 0.7        │
 │          Dims: 3          │
 │      Projections: id      │
 │                           │
@@ -675,7 +675,7 @@ QUERY PLAN
 │   cos_index (ANN range)   │
 │                           │
 │       Lookup: table       │
-│      Radius: 0.500000     │
+│        Radius: 0.5        │
 │          Dims: 3          │
 │      Projections: id      │
 │                           │
@@ -834,7 +834,7 @@ QUERY PLAN
 │    ip_index (ANN range)   │
 │                           │
 │       Lookup: table       │
-│      Radius: 0.000000     │
+│         Radius: 0         │
 │          Dims: 3          │
 │      Projections: id      │
 │                           │
@@ -1160,7 +1160,7 @@ QUERY PLAN
 │    l2_index (ANN range)   │
 │                           │
 │       Lookup: table       │
-│     Radius: 200.000000    │
+│        Radius: 200        │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -1197,7 +1197,7 @@ QUERY PLAN
 │    l2_index (ANN range)   │
 │                           │
 │       Lookup: table       │
-│     Radius: 200.000000    │
+│        Radius: 200        │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -1233,7 +1233,7 @@ QUERY PLAN
 │    proj_idx (ANN range)   │
 │                           │
 │       Lookup: table       │
-│     Radius: 200.000000    │
+│        Radius: 200        │
 │          Dims: 3          │
 │                           │
 │        Projections:       │

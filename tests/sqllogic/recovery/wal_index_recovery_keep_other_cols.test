@@ -55,7 +55,7 @@ id
 1
 
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # Update ONLY column b on row 1. a and c not touched.
 statement ok

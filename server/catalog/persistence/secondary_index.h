@@ -20,18 +20,24 @@
 
 #pragma once
 
+#include <optional>
 #include <string>
 #include <vector>
 
-#include "catalog/object.h"
+#include "catalog/persistence/index.h"
 #include "catalog/table_options.h"
 
 namespace sdb::catalog::persistence {
 
 struct SecondaryIndexData {
   std::string name;
-  std::vector<Column::Id> column_ids;
   bool unique = false;
+  // Positional key list, in source order. A Column::kInvalidId slot is an
+  // expression key whose payload is the next unconsumed entry in `expressions`.
+  // Key order (and column/expression interleaving) is load-bearing: it is the
+  // duckdb ART key list, an ordered prefix index.
+  std::vector<Column::Id> columns;
+  std::vector<ExpressionData> expressions;
 };
 
 }  // namespace sdb::catalog::persistence

@@ -195,14 +195,16 @@ void RemoveFromExistingSegment(DocumentMask& deleted_docs,
     return;
   }
 
-  auto prepared = query.filter->prepare({.index = reader});
+  auto collector = query.filter->MakeCollector(nullptr);
+  auto prepared =
+    query.filter->PrepareSegment(reader, {.collector = collector.get()});
 
   if (!prepared) [[unlikely]] {
     return;  // skip invalid prepared filters
   }
 
-  auto itr =
-    prepared->execute({.segment = reader, .pending_docs_mask = &deleted_docs});
+  auto itr = prepared->Execute({.pending_docs_mask = &deleted_docs},
+                               StatsBuffer::Empty());
 
   if (!itr) [[unlikely]] {
     return;  // skip invalid iterators
@@ -229,13 +231,15 @@ bool RemoveFromImportedSegment(DocumentMask& deleted_docs,
     return false;
   }
 
-  auto prepared = query.filter->prepare({.index = reader});
+  auto collector = query.filter->MakeCollector(nullptr);
+  auto prepared =
+    query.filter->PrepareSegment(reader, {.collector = collector.get()});
   if (!prepared) [[unlikely]] {
     return false;  // skip invalid prepared filters
   }
 
-  auto itr =
-    prepared->execute({.segment = reader, .pending_docs_mask = &deleted_docs});
+  auto itr = prepared->Execute({.pending_docs_mask = &deleted_docs},
+                               StatsBuffer::Empty());
   if (!itr) [[unlikely]] {
     return false;  // skip invalid iterators
   }
@@ -268,14 +272,16 @@ void FlushedSegmentContext::Remove(IndexWriter::QueryContext& query) {
 
   auto& document_mask = flushed.document_mask;
 
-  auto prepared = query.filter->prepare({.index = *reader});
+  auto collector = query.filter->MakeCollector(nullptr);
+  auto prepared =
+    query.filter->PrepareSegment(*reader, {.collector = collector.get()});
 
   if (!prepared) [[unlikely]] {
     return;  // Skip invalid prepared filters
   }
 
-  auto itr = prepared->execute(
-    {.segment = *reader, .pending_docs_mask = &document_mask});
+  auto itr = prepared->Execute({.pending_docs_mask = &document_mask},
+                               StatsBuffer::Empty());
 
   if (!itr) [[unlikely]] {
     return;  // Skip invalid iterators
@@ -717,15 +723,30 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush) {
   auto& writer = *segment.writer;
 
   if (writer.initialized()) [[likely]] {
-    if (disable_flush || !_writer->FlushRequired(writer)) {
+    // The delete path encodes nothing, so resume unconditionally; the gate
+    // below does not apply.
+    if (disable_flush) {
       return;
     }
-    // Force flush of a full segment
+    // A pooled segment may be resumed by a later transaction, but only under
+    // equal options -- a segment must never mix encodings. Mismatch (or a full
+    // segment) forces a flush so the new options start fresh.
+    const bool options_match =
+      CompatibleFieldOptions(writer.ActiveFieldOptions(), _field_options.get());
+    if (options_match && !_writer->FlushRequired(writer)) {
+      // Re-point at this transaction's snapshot: the opener may have released
+      // its own, so its shared_ptr in the writer could be the last (stale)
+      // owner.
+      writer.SetFieldOptions(_field_options);
+      return;
+    }
+    // Force flush of a full segment (or one whose options no longer match).
     SDB_TRACE(IRESEARCH, "Flushing segment '", writer.name(),
               "', docs=", writer.buffered_docs(),
               ", memory=", writer.memory_active(),
               ", docs limit=", _writer->_segment_limits.Docs(),
-              ", memory limit=", _writer->_segment_limits.Memory());
+              ", memory limit=", _writer->_segment_limits.Memory(),
+              ", options_match=", options_match);
 
     try {
       segment.Flush();
@@ -739,6 +760,9 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush) {
       throw;
     }
   }
+  // Hand the per-op options to the (pooled) writer before it materializes a
+  // segment; a forced flush above reset it to the fallback, so set after it.
+  writer.SetFieldOptions(_field_options);
   segment.Prepare();
 }
 
@@ -910,6 +934,11 @@ void IndexWriter::SegmentContext::Flush() {
   if (!writer->initialized() || writer->buffered_docs() == 0) {
     flushed_queries = queries.size();
     SDB_ASSERT(committed_buffered_docs == 0);
+    // Leave the writer un-initialized like the flushing path below, so a caller
+    // can Prepare a fresh segment without an extra reset.
+    if (writer->initialized()) {
+      writer->reset();
+    }
     return;  // Skip flushing an empty writer
   }
   SDB_ASSERT(writer->buffered_docs() <= doc_limits::eof());
@@ -1228,8 +1257,11 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
     std::move(codec), options.segment_pool_size, SegmentOptions{options},
     options.comparator, options.meta_payload_provider, std::move(reader));
   writer->_db = options.db;
-  writer->_column_options = options.column_options;
-  writer->_norm_column_options = options.norm_column_options;
+  // Wrap the provider callbacks into the fallback options (tests).
+  if (options.column_options || options.norm_column_options) {
+    writer->_field_options = std::make_shared<const FunctionFieldOptions>(
+      options.column_options, options.norm_column_options);
+  }
   // Remove non-index files from directory
   directory_utils::RemoveAllUnreferenced(dir);
 
@@ -1269,8 +1301,8 @@ uint64_t IndexWriter::CurrentSegmentId() const noexcept {
 }
 
 CompactionResult IndexWriter::Compact(
-  const CompactionPolicy& policy, Format::ptr codec,
-  const MergeWriter::FlushProgress& progress) {
+  const CompactionPolicy& policy, const IndexFieldOptions* field_options,
+  Format::ptr codec, const MergeWriter::FlushProgress& progress) {
   if (!codec) {
     // use default codec if not specified
     codec = _codec;
@@ -1366,7 +1398,7 @@ CompactionResult IndexWriter::Compact(
 
   RefTrackingDirectory dir{_dir};  // Track references for new segment
 
-  MergeWriter merger{dir, GetSegmentWriterOptions(true)};
+  MergeWriter merger{dir, GetSegmentWriterOptions(true, field_options)};
   merger.Reset(candidates.begin(), candidates.end());
 
   // We do not persist segment meta since some removals may come later
@@ -1523,7 +1555,8 @@ bool IndexWriter::Import(const IndexReader& reader,
   segment.meta.name = FileName(NextSegmentId());
   segment.meta.codec = codec;
 
-  MergeWriter merger{dir, GetSegmentWriterOptions(true)};
+  MergeWriter merger{dir,
+                     GetSegmentWriterOptions(true, /*field_options=*/nullptr)};
   merger.Reset(reader.begin(), reader.end());
 
   if (!merger.Flush(segment.meta, progress)) {
@@ -1623,7 +1656,8 @@ IndexWriter::ActiveSegmentContext IndexWriter::GetSegmentContext() try {
     }
   }
 
-  const auto options = GetSegmentWriterOptions(false);
+  const auto options =
+    GetSegmentWriterOptions(false, /*field_options=*/nullptr);
 
   // should allocate a new segment_context from the pool
   std::shared_ptr<SegmentContext> segment_ctx = _segment_writer_pool.emplace(
@@ -1647,7 +1681,9 @@ IndexWriter::ActiveSegmentContext IndexWriter::GetSegmentContext() try {
 }
 
 SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
-  bool compaction) const noexcept {
+  bool compaction, const IndexFieldOptions* field_options) const noexcept {
+  // The merge passes its own view; a segment write installs its owning override
+  // later via SetFieldOptions, so non-owning here.
   return {
     .scorers_features = _wand_features,
     .scorer = _topk_scorer,
@@ -1655,8 +1691,7 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
     .resource_manager = compaction ? *_dir.ResourceManager().compactions
                                    : *_dir.ResourceManager().transactions,
     .db = _db,
-    .column_options = &_column_options,
-    .norm_column_options = &_norm_column_options,
+    .field_options = field_options ? field_options : _field_options.get(),
   };
 }
 

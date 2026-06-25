@@ -15,12 +15,13 @@ fi
 
 echo "=== Tarball RTA: $(basename "$TARBALL") ==="
 mkdir -p "${WORKSPACE}/out/logs"
-mkdir -p "${WORKSPACE}/out/test-tmp"
 
 export TARBALL_NAME="$(basename "$TARBALL")"
 export DOCKER_UID="$(id -u)"
 export DOCKER_GID="$(id -g)"
 export CARGO_TARGET_CACHE="${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}"
+export CARGO_HOME_CACHE="${CARGO_HOME_CACHE:-${HOME}/.cache/serenedb-cargo-home}"
+mkdir -p "$CARGO_TARGET_CACHE" "$CARGO_HOME_CACHE"
 
 PREFIX="tarball-rta-$$"
 COMPOSE_FILE="${CI_DIR}/docker-compose.tarball-rta.yml"

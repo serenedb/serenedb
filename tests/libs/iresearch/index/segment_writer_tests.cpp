@@ -229,10 +229,7 @@ struct StoredField {
 
 TEST_F(SegmentWriterTests, memory_store_field_unsorted) {
   const irs::SegmentWriterOptions options{
-    .scorers_features = {},
-    .db = &::sdb::DuckDBEngine::Instance().instance(),
-    .column_options = nullptr,
-    .norm_column_options = nullptr};
+    .scorers_features = {}, .db = &::sdb::DuckDBEngine::Instance().instance()};
 
   StoredField field{.name_ = "test_field", .value_ = "hello"};
 
@@ -293,10 +290,7 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
   // the cs blob column. Same setup as memory_store_field_unsorted but
   // with a real tokenizer-bearing field driven through insert().
   const irs::SegmentWriterOptions options{
-    .scorers_features = {},
-    .db = &::sdb::DuckDBEngine::Instance().instance(),
-    .column_options = nullptr,
-    .norm_column_options = nullptr};
+    .scorers_features = {}, .db = &::sdb::DuckDBEngine::Instance().instance()};
 
   struct IndexedField {
     irs::Tokenizer& token_stream;

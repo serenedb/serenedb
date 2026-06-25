@@ -1,0 +1,291 @@
+# ALTER TABLE ... ADD PRIMARY KEY
+#
+# SereneDB enforces the primary key in the underlying store (see
+# Catalog::AddPrimaryKey). DuckCatalog would turn ADD PRIMARY KEY into a
+# CREATE INDEX over an ART; SereneDBCatalog::BindAlterAddIndex instead routes
+# it through the normal LOGICAL_ALTER dispatch, which mirrors the constraint to
+# the store table and records it (plus the implied NOT NULL) in the catalog.
+# Only ADD PRIMARY KEY is supported; ADD CONSTRAINT for UNIQUE / CHECK /
+# FOREIGN KEY is rejected (matching upstream DuckDB, which lacks them too).
+
+
+# ---------------------------------------------------------------------------
+# Single-column primary key on a populated table.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE pk1 (i INTEGER, j INTEGER);
+
+
+statement ok
+INSERT INTO pk1 VALUES (1, 10), (2, 20);
+
+
+statement ok
+ALTER TABLE pk1 ADD PRIMARY KEY (i);
+
+
+# Uniqueness is enforced from this point on.
+statement error (?i)duplicate key
+INSERT INTO pk1 VALUES (1, 30);
+
+
+# A PK column is implicitly NOT NULL.
+statement error (?i)not null constraint failed
+INSERT INTO pk1 VALUES (NULL, 30);
+
+
+# Non-conflicting rows still insert, and earlier data is intact.
+statement ok
+INSERT INTO pk1 VALUES (3, 30);
+
+
+query
+SELECT i, j FROM pk1 ORDER BY i;
+----
+i	j
+1	10
+2	20
+3	30
+
+
+# The PK powers point lookups and row identity for UPDATE / DELETE.
+statement ok
+UPDATE pk1 SET j = 99 WHERE i = 2;
+
+
+query
+SELECT j FROM pk1 WHERE i = 2;
+----
+j
+99
+
+
+statement ok
+DELETE FROM pk1 WHERE i = 3;
+
+
+query
+SELECT count(*) FROM pk1;
+----
+count
+2
+
+
+# ---------------------------------------------------------------------------
+# Catalog metadata reflects the primary key.
+# ---------------------------------------------------------------------------
+
+query
+SELECT column_name, is_nullable
+FROM information_schema.columns
+WHERE table_name = 'pk1'
+ORDER BY column_name;
+----
+column_name	is_nullable
+i	NO
+j	YES
+
+
+query
+SELECT contype
+FROM pg_constraint c
+JOIN pg_class r ON r.oid = c.conrelid
+WHERE r.relname = 'pk1' AND c.contype = 'p';
+----
+contype
+p
+
+
+# ---------------------------------------------------------------------------
+# Multi-column (composite) primary key, mixed types.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE pk_multi (a INTEGER, b VARCHAR, c INTEGER);
+
+
+statement ok
+ALTER TABLE pk_multi ADD PRIMARY KEY (a, b);
+
+
+# Same (a, b) is rejected; differing b is fine.
+statement ok
+INSERT INTO pk_multi VALUES (1, 'x', 100), (1, 'y', 100);
+
+
+statement error (?i)duplicate key
+INSERT INTO pk_multi VALUES (1, 'x', 999);
+
+
+query
+SELECT count(*) FROM pk_multi;
+----
+count
+2
+
+
+# ---------------------------------------------------------------------------
+# Adding a PK on an empty table.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE pk_empty (id INTEGER, payload VARCHAR);
+
+
+statement ok
+ALTER TABLE pk_empty ADD PRIMARY KEY (id);
+
+
+statement ok
+INSERT INTO pk_empty VALUES (1, 'a');
+
+
+statement error (?i)duplicate key
+INSERT INTO pk_empty VALUES (1, 'b');
+
+
+# ---------------------------------------------------------------------------
+# Existing data that would violate the constraint blocks the ALTER.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE pk_dups (i INTEGER);
+
+
+statement ok
+INSERT INTO pk_dups VALUES (1), (1), (2);
+
+
+statement error (?i)data contains duplicates|duplicate
+ALTER TABLE pk_dups ADD PRIMARY KEY (i);
+
+
+# The table is unchanged -- no PK was recorded, duplicates are still allowed.
+query
+SELECT contype
+FROM pg_constraint c
+JOIN pg_class r ON r.oid = c.conrelid
+WHERE r.relname = 'pk_dups' AND c.contype = 'p';
+----
+contype
+
+
+statement ok
+INSERT INTO pk_dups VALUES (2);
+
+
+statement ok
+CREATE TABLE pk_nulls (i INTEGER);
+
+
+statement ok
+INSERT INTO pk_nulls VALUES (1), (NULL);
+
+
+statement error (?i)not null|null
+ALTER TABLE pk_nulls ADD PRIMARY KEY (i);
+
+
+# ---------------------------------------------------------------------------
+# A table can have only one primary key.
+# ---------------------------------------------------------------------------
+
+statement error
+ALTER TABLE pk1 ADD PRIMARY KEY (j);
+----
+db error: ERROR: duplicate name
+
+
+# ---------------------------------------------------------------------------
+# The key columns must exist.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE pk_badcol (i INTEGER);
+
+
+statement error (?i)does not have a column named|does not exist
+ALTER TABLE pk_badcol ADD PRIMARY KEY (nope);
+
+
+# ---------------------------------------------------------------------------
+# Dependent-index guard: adding a PK would change which columns provide row
+# identity, invalidating existing indexes. It is refused while any depend on
+# the table, and succeeds once the index is dropped.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE pk_idx (a INTEGER, b INTEGER);
+
+
+statement ok
+CREATE INDEX pk_idx_b ON pk_idx (b);
+
+
+statement error (?i)cannot alter entry .* because there are entries that depend on it
+ALTER TABLE pk_idx ADD PRIMARY KEY (a);
+
+
+statement ok
+DROP INDEX pk_idx_b;
+
+
+statement ok
+ALTER TABLE pk_idx ADD PRIMARY KEY (a);
+
+
+statement error (?i)duplicate key
+INSERT INTO pk_idx VALUES (1, 1), (1, 2);
+
+
+# ---------------------------------------------------------------------------
+# ADD CONSTRAINT supports UNIQUE and CHECK (FOREIGN KEY is not supported).
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE pk_ac (a INTEGER, b INTEGER);
+
+
+statement ok
+ALTER TABLE pk_ac ADD CONSTRAINT uq UNIQUE (a);
+
+
+statement ok
+ALTER TABLE pk_ac ADD CONSTRAINT ck CHECK (a > 0);
+
+
+# ---------------------------------------------------------------------------
+# Cleanup.
+# ---------------------------------------------------------------------------
+
+statement ok
+DROP TABLE pk1;
+
+
+statement ok
+DROP TABLE pk_multi;
+
+
+statement ok
+DROP TABLE pk_empty;
+
+
+statement ok
+DROP TABLE pk_dups;
+
+
+statement ok
+DROP TABLE pk_nulls;
+
+
+statement ok
+DROP TABLE pk_badcol;
+
+
+statement ok
+DROP TABLE pk_idx;
+
+
+statement ok
+DROP TABLE pk_ac;

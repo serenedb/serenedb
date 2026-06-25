@@ -23,11 +23,42 @@
 #include <iresearch/index/index_reader.hpp>
 
 namespace sdb::connector {
+namespace {
 
-irs::DocIterator::ptr SearchRemoveFilterBase::execute(
-  const irs::ExecutionContext& ctx) const {
-  _segment = &ctx.segment;
-  _segment_mask = ctx.segment.docs_mask();
+class SearchRemoveQuery : public irs::QueryBuilder {
+ public:
+  SearchRemoveQuery(const irs::SubReader& segment,
+                    const SearchRemoveFilterBase& filter)
+    : irs::QueryBuilder{segment}, _filter{filter} {}
+
+  irs::DocIterator::ptr Execute(const irs::ExecutionContext& ctx,
+                                const irs::StatsBuffer&) const final {
+    return _filter.MakeIterator(_segment, ctx);
+  }
+
+  void Visit(irs::PreparedStateVisitor&, irs::score_t) const final {}
+
+  irs::score_t Boost() const noexcept final { return irs::kNoBoost; }
+
+ private:
+  const SearchRemoveFilterBase& _filter;
+};
+
+}  // namespace
+
+irs::QueryBuilder::ptr SearchRemoveFilterBase::PrepareSegment(
+  const irs::SubReader& segment, const irs::PrepareContext& ctx) const {
+  if (_pks.empty()) {
+    return irs::QueryBuilder::Empty();
+  }
+  return irs::memory::make_tracked<SearchRemoveQuery>(ctx.memory, segment,
+                                                      *this);
+}
+
+irs::DocIterator::ptr SearchRemoveFilterBase::MakeIterator(
+  const irs::SubReader& segment, const irs::ExecutionContext& ctx) const {
+  _segment = &segment;
+  _segment_mask = segment.docs_mask();
   _pending_mask = ctx.pending_docs_mask;
   _pk_field = _segment->field(_pk_field_id);
   SDB_ASSERT(_pk_field);

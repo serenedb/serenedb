@@ -1,0 +1,157 @@
+control substitution on
+
+# ============================================================================
+# any-class text-family analyzer  --  scalar / LIST / ARRAY accepted shapes,
+# expression source, and validator rejections (INTEGER scalar, JSON inside
+# LIST, GEOMETRY scalar).
+# ============================================================================
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY any_text_dict(template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false, accent = false, frequency = true, position = true);
+
+statement ok
+CREATE TABLE g1_v(pk INTEGER PRIMARY KEY, v VARCHAR);
+
+statement ok
+CREATE INDEX g1_v_col_text_st ON g1_v USING inverted(pk, v any_text_dict) INCLUDE (v);
+
+statement ok
+CREATE INDEX g1_v_expr_text_ns ON g1_v USING inverted(pk, (upper(v)) any_text_dict);
+
+statement ok
+INSERT INTO g1_v VALUES (1, 'alpha beta'), (2, 'gamma delta');
+
+statement ok
+VACUUM (REFRESH_TABLE) g1_v;
+
+query
+SELECT pk FROM g1_v_col_text_st WHERE v @@ ts_like('beta') ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM g1_v_expr_text_ns WHERE upper(v) @@ ts_like('GAMMA') ORDER BY pk;
+----
+pk
+2
+
+statement ok
+CREATE TABLE g1_b(pk INTEGER PRIMARY KEY, b BLOB);
+
+statement ok
+CREATE INDEX g1_b_col_text_st ON g1_b USING inverted(pk, b any_text_dict) INCLUDE (b);
+
+statement ok
+INSERT INTO g1_b VALUES (1, '\\x68656c6c6f'::BLOB), (2, '\\x776f726c64'::BLOB);
+
+statement ok
+VACUUM (REFRESH_TABLE) g1_b;
+
+query
+SELECT count(*) FROM g1_b_col_text_st;
+----
+count
+2
+
+statement ok
+CREATE TABLE g1_vla(pk INTEGER PRIMARY KEY, vs VARCHAR[], va VARCHAR[3]);
+
+statement ok
+CREATE INDEX g1_vla_vs_text_list ON g1_vla USING inverted(pk, vs any_text_dict);
+
+statement ok
+CREATE INDEX g1_vla_va_text_array ON g1_vla USING inverted(pk, va any_text_dict);
+
+statement ok
+INSERT INTO g1_vla VALUES
+    (1, ['alpha', 'beta'],  ['alpha', 'beta', 'gamma']),
+    (2, ['delta'],          ['delta', 'epsilon', 'zeta']);
+
+statement ok
+VACUUM (REFRESH_TABLE) g1_vla;
+
+query
+SELECT count(*) FROM g1_vla_vs_text_list;
+----
+count
+2
+
+query
+SELECT count(*) FROM g1_vla_va_text_array;
+----
+count
+2
+
+statement ok
+CREATE TABLE g1_bla(pk INTEGER PRIMARY KEY, bs BLOB[], ba BLOB[3]);
+
+statement ok
+CREATE INDEX g1_bla_bs_text_list ON g1_bla USING inverted(pk, bs any_text_dict);
+
+statement ok
+CREATE INDEX g1_bla_ba_text_array ON g1_bla USING inverted(pk, ba any_text_dict);
+
+statement ok
+INSERT INTO g1_bla VALUES
+    (1, ['hello'::BLOB, 'world'::BLOB], ['aaa'::BLOB, 'bbb'::BLOB, 'ccc'::BLOB]),
+    (2, ['deadbeef'::BLOB],             ['ddd'::BLOB, 'eee'::BLOB, 'fff'::BLOB]);
+
+statement ok
+VACUUM (REFRESH_TABLE) g1_bla;
+
+query
+SELECT count(*) FROM g1_bla_bs_text_list;
+----
+count
+2
+
+query
+SELECT count(*) FROM g1_bla_ba_text_array;
+----
+count
+2
+
+statement ok
+CREATE TABLE g1_reject(pk INTEGER PRIMARY KEY,
+                       i INTEGER,
+                       js JSON[],
+                       g GEOMETRY('OGC:CRS84'));
+
+statement error
+CREATE INDEX g1_reject_text_i ON g1_reject USING inverted(pk, i any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
+
+
+statement error
+CREATE INDEX g1_reject_text_js ON g1_reject USING inverted(pk, js any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'js' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[])
+
+
+statement error
+CREATE INDEX g1_reject_text_g ON g1_reject USING inverted(pk, g any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
+
+
+# --- teardown ---------------------------------------------------------------
+
+statement ok
+DROP TABLE g1_v;
+
+statement ok
+DROP TABLE g1_b;
+
+statement ok
+DROP TABLE g1_vla;
+
+statement ok
+DROP TABLE g1_bla;
+
+statement ok
+DROP TABLE g1_reject;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY any_text_dict;

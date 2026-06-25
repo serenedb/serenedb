@@ -35,6 +35,7 @@
 #include <duckdb/parser/parsed_data/create_type_info.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
+#include <shared_mutex>
 
 #include "basics/down_cast.h"
 #include "basics/static_strings.h"
@@ -210,6 +211,11 @@ TableInfoAndIndices BuildTableInfoAndIndices(
   out.info = duckdb::make_uniq<duckdb::CreateTableInfo>();
   out.info->table = name;
   out.info->schema = schema_name;
+  // Surface the table-level comment (empty == none) so duckdb_tables().comment
+  // reflects COMMENT ON TABLE.
+  if (!table.Comment().empty()) {
+    out.info->comment = duckdb::Value(std::string{table.Comment()});
+  }
 
   for (const auto& col : table.Columns()) {
     // Skip internal generated PK column -- it's not part of the user-visible
@@ -219,6 +225,9 @@ TableInfoAndIndices BuildTableInfoAndIndices(
       continue;
     }
     auto cd = duckdb::ColumnDefinition(std::string{col.GetName()}, col.type);
+    if (!col.comment.empty()) {
+      cd.SetComment(duckdb::Value(col.comment));
+    }
     if (col.IsGenerated() && col.expr && col.expr->HasExpr()) {
       cd.SetGeneratedExpression(
         col.expr->GetExpr().Copy(),
@@ -247,6 +256,26 @@ TableInfoAndIndices BuildTableInfoAndIndices(
       duckdb::make_uniq<duckdb::UniqueConstraint>(std::move(pk_names), true));
   }
 
+  // Non-PK UNIQUE constraints -- surface them so the binder can resolve a
+  // FOREIGN KEY that references a UNIQUE (non-PK) column and ON CONFLICT can
+  // target it, matching a native duckdb table.
+  for (const auto& unique_col_ids : table.UniqueConstraints()) {
+    duckdb::vector<duckdb::string> unique_names;
+    for (auto uid : unique_col_ids) {
+      for (const auto& col : table.Columns()) {
+        if (col.GetId() == uid) {
+          unique_names.emplace_back(col.GetName());
+          break;
+        }
+      }
+    }
+    if (!unique_names.empty()) {
+      out.info->constraints.push_back(
+        duckdb::make_uniq<duckdb::UniqueConstraint>(std::move(unique_names),
+                                                    false));
+    }
+  }
+
   // CHECK and NOT NULL constraints.
   for (const auto& check : table.CheckConstraints()) {
     if (auto idx = check.IsNotNull(table.Columns())) {
@@ -265,12 +294,10 @@ TableInfoAndIndices BuildTableInfoAndIndices(
   const auto& cols = table.Columns();
   containers::FlatHashSet<size_t> idx_set;
   for (auto& index : indexes) {
-    for (auto col_id : index->GetReferencedColumnIds()) {
-      for (size_t i = 0; i < cols.size(); ++i) {
-        if (cols[i].GetId() == col_id) {
-          idx_set.insert(i);
-          break;
-        }
+    for (auto col_id : index->GetReferencedColumns()) {
+      const auto pos = table.ColumnPosById(col_id);
+      if (pos < cols.size()) {
+        idx_set.insert(pos);
       }
     }
   }
@@ -316,7 +343,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
       info->columns.AddColumn(
         duckdb::ColumnDefinition(vinfo.names[i], vinfo.types[i]));
     }
-    auto col_ids = index.GetColumnIds();
+    const auto& col_ids = index.GetColumns();
     std::vector<size_t> indexed_col_indices(col_ids.begin(), col_ids.end());
     if (index.GetType() == catalog::ObjectType::InvertedIndex) {
       auto inverted_index_ptr =
@@ -629,11 +656,11 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
           // We only need enough metadata for DropObject to route by name;
           // the actual storage cleanup happens in catalog.DropIndex.
           auto& index = basics::downCast<const catalog::Index>(*relation);
-          auto table =
-            snapshot.GetObject<catalog::Table>(index.GetRelationId());
+          auto index_relation = snapshot.GetObject(index.GetRelationId());
           auto info = duckdb::make_uniq<duckdb::CreateIndexInfo>();
           info->schema = schema;
-          info->table = table ? table->GetName() : std::string{};
+          info->table = index_relation ? std::string{index_relation->GetName()}
+                                       : std::string{};
           info->index_name = name;
           info->index_type =
             relation->GetType() == catalog::ObjectType::InvertedIndex

@@ -31,7 +31,7 @@ count
 0
 
 statement ok
-SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # Bulk-load into the empty index, all of which goes only to RocksDB.
 statement ok

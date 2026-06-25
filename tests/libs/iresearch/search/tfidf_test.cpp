@@ -21,6 +21,7 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -43,13 +44,6 @@
 namespace {
 
 using namespace tests;
-
-template<typename F>
-auto PrepareOptimized(const F& filter, const irs::PrepareContext& ctx) {
-  irs::Filter::ptr f = std::make_unique<F>(filter);
-  irs::Optimize(f);
-  return f->prepare(ctx);
-}
 
 // Stable per-name field ids, sourced from `tests::FieldIdFor` so the
 // canonical JSON factories and these tests agree on the id-per-name.
@@ -81,6 +75,13 @@ auto StoreName() {
       irs::tests::StoreFieldAt(*doc.GetColWriter(), kName, doc.DocId(), *name);
     }
   };
+}
+
+irs::Filter::ptr Lower(std::unique_ptr<irs::ByPhrase> q,
+                       const irs::Scorer* scorer = nullptr) {
+  irs::Filter::ptr f = std::move(q);
+  irs::Optimize(f, {.scored = scorer != nullptr});
+  return f;
 }
 
 // Freq | Term
@@ -162,17 +163,10 @@ void TfidfTestCase::TestQueryNorms() {
     };
 
     irs::BytesViewInput in;
-    auto prepared_filter = filter.prepare({
-      .index = reader,
-      .memory = counter,
-      .scorer = &scorer,
-    });
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
 
     fetcher.Clear();
-    auto docs = prepared_filter->execute({
-      .segment = segment,
-      .scorer = &scorer,
-    });
+    auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
       .segment = &segment,
@@ -221,17 +215,10 @@ void TfidfTestCase::TestQueryNorms() {
     };
 
     irs::BytesViewInput in;
-    auto prepared_filter = filter.prepare({
-      .index = reader,
-      .memory = counter,
-      .scorer = &scorer,
-    });
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
 
     fetcher.Clear();
-    auto docs = prepared_filter->execute({
-      .segment = segment,
-      .scorer = &scorer,
-    });
+    auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
       .segment = &segment,
@@ -396,17 +383,10 @@ TEST_P(TfidfTestCase, test_phrase) {
       "R"   // jumps high jumps left jumps right walks down walks back
     };
 
-    auto prepared_filter = filter.prepare({
-      .index = *index,
-      .memory = counter,
-      .scorer = &scorer,
-    });
+    tests::PreparedFilter prepared_filter{filter, *index, &scorer, counter};
 
     fetcher.Clear();
-    auto docs = prepared_filter->execute({
-      .segment = segment,
-      .scorer = &scorer,
-    });
+    auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
       .segment = &segment,
@@ -441,9 +421,9 @@ TEST_P(TfidfTestCase, test_phrase) {
 
   // "cookies ca* p_e bisKuit meringue|marshmallows" with order
   {
-    irs::ByPhrase filter;
-    *filter.mutable_field_id() = kPhraseAnl;
-    auto& phrase = *filter.mutable_options();
+    auto filter = std::make_unique<irs::ByPhrase>();
+    *filter->mutable_field_id() = kPhraseAnl;
+    auto& phrase = *filter->mutable_options();
     phrase.push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("cookies"));
     phrase.push_back<irs::ByPrefixOptions>().term =
@@ -469,17 +449,11 @@ TEST_P(TfidfTestCase, test_phrase) {
       "SPWLC3"   // cookies cake pie biscuet marshmallows cake meringue
     };
 
-    auto prepared_filter = PrepareOptimized(filter, {
-                                                      .index = *index,
-                                                      .memory = counter,
-                                                      .scorer = &scorer,
-                                                    });
+    tests::PreparedFilter prepared_filter{*Lower(std::move(filter), &scorer),
+                                          *index, &scorer, counter};
 
     fetcher.Clear();
-    auto docs = prepared_filter->execute({
-      .segment = segment,
-      .scorer = &scorer,
-    });
+    auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
       .segment = &segment,
@@ -558,17 +532,10 @@ TEST_P(TfidfTestCase, test_query) {
     std::vector<uint64_t> expected{0, 1, 5, 7};
 
     irs::BytesViewInput in;
-    auto prepared_filter = filter.prepare({
-      .index = reader,
-      .memory = counter,
-      .scorer = &scorer,
-    });
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
 
     fetcher.Clear();
-    auto docs = prepared_filter->execute({
-      .segment = segment,
-      .scorer = &scorer,
-    });
+    auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
       .segment = &segment,
@@ -672,21 +639,14 @@ TEST_P(TfidfTestCase, test_query) {
     };
 
     irs::BytesViewInput in;
-    auto prepared_filter = filter.prepare({
-      .index = reader,
-      .memory = counter,
-      .scorer = &scorer,
-    });
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
 
-    for (auto& segment : reader) {
+    for (size_t i = 0; auto& segment : reader) {
       const auto* column = segment.Column(kSeq);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       fetcher.Clear();
-      auto docs = prepared_filter->execute({
-        .segment = segment,
-        .scorer = &scorer,
-      });
+      auto docs = prepared_filter.Execute(i);
       auto score = docs->PrepareScore({
         .scorer = &scorer,
         .segment = &segment,
@@ -703,6 +663,7 @@ TEST_P(TfidfTestCase, test_query) {
         score.Score(&score_value, 1);
         sorted.emplace(score_value, seq);
       }
+      ++i;
     }
 
     ASSERT_EQ(expected.size(), sorted.size());
@@ -801,22 +762,14 @@ TEST_P(TfidfTestCase, test_query) {
     };
 
     irs::BytesViewInput in;
-    auto prepared_filter = filter.prepare({
-      .index = reader,
-      .memory = counter,
-      .scorer = &scorer,
-    });
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
 
-    for (auto& segment : reader) {
+    for (size_t i = 0; auto& segment : reader) {
       const auto* column = segment.Column(kSeq);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       fetcher.Clear();
-      auto docs = prepared_filter->execute({
-        .segment = segment,
-        .scorer = &scorer,
-
-      });
+      auto docs = prepared_filter.Execute(i);
       auto score = docs->PrepareScore({
         .scorer = &scorer,
         .segment = &segment,
@@ -835,6 +788,7 @@ TEST_P(TfidfTestCase, test_query) {
         auto seq = strtoull(str_seq.c_str(), nullptr, 10);
         sorted.emplace(score_value, seq);
       }
+      ++i;
     }
 
     ASSERT_EQ(expected.size(), sorted.size());
@@ -923,22 +877,14 @@ TEST_P(TfidfTestCase, test_query) {
     };
 
     irs::BytesViewInput in;
-    auto prepared_filter = filter.prepare({
-      .index = reader,
-      .memory = counter,
-      .scorer = &scorer,
-    });
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
 
-    for (auto& segment : reader) {
+    for (size_t i = 0; auto& segment : reader) {
       const auto* column = segment.Column(kSeq);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       fetcher.Clear();
-      auto docs = prepared_filter->execute({
-        .segment = segment,
-        .scorer = &scorer,
-
-      });
+      auto docs = prepared_filter.Execute(i);
       auto score = docs->PrepareScore({
         .scorer = &scorer,
         .segment = &segment,
@@ -957,6 +903,7 @@ TEST_P(TfidfTestCase, test_query) {
         auto seq = strtoull(str_seq.c_str(), nullptr, 10);
         sorted.emplace(score_value, seq);
       }
+      ++i;
     }
 
     ASSERT_EQ(expected.size(), sorted.size());
@@ -987,16 +934,9 @@ TEST_P(TfidfTestCase, test_query) {
     std::vector<uint64_t> expected{0, 1, 5, 7};
 
     irs::BytesViewInput in;
-    auto prepared_filter = filter.prepare({
-      .index = reader,
-      .memory = counter,
-      .scorer = &scorer,
-    });
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
     fetcher.Clear();
-    auto docs = prepared_filter->execute({
-      .segment = segment,
-      .scorer = &scorer,
-    });
+    auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
       .segment = &segment,
@@ -1044,16 +984,9 @@ TEST_P(TfidfTestCase, test_query) {
     std::vector<uint64_t> expected{3, 7};
 
     irs::BytesViewInput in;
-    auto prepared_filter = filter.prepare({
-      .index = reader,
-      .memory = counter,
-      .scorer = &scorer,
-    });
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
     fetcher.Clear();
-    auto docs = prepared_filter->execute({
-      .segment = segment,
-      .scorer = &scorer,
-    });
+    auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
       .segment = &segment,
@@ -1099,16 +1032,9 @@ TEST_P(TfidfTestCase, test_query) {
     std::vector<uint64_t> expected{7, 0, 1, 3, 5};
 
     irs::BytesViewInput in;
-    auto prepared_filter = filter.prepare({
-      .index = reader,
-      .memory = counter,
-      .scorer = &scorer,
-    });
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
     fetcher.Clear();
-    auto docs = prepared_filter->execute({
-      .segment = segment,
-      .scorer = &scorer,
-    });
+    auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
       .segment = &segment,
@@ -1154,16 +1080,9 @@ TEST_P(TfidfTestCase, test_query) {
     std::vector<uint64_t> expected{0, 7, 5, 1, 3, 2};
 
     irs::BytesViewInput in;
-    auto prepared_filter = filter.prepare({
-      .index = reader,
-      .memory = counter,
-      .scorer = &scorer,
-    });
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
     fetcher.Clear();
-    auto docs = prepared_filter->execute({
-      .segment = segment,
-      .scorer = &scorer,
-    });
+    auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
       .segment = &segment,
@@ -1211,16 +1130,9 @@ TEST_P(TfidfTestCase, test_query) {
     };
 
     irs::BytesViewInput in;
-    auto prepared_filter = filter.prepare({
-      .index = reader,
-      .memory = counter,
-      .scorer = &scorer,
-    });
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
     fetcher.Clear();
-    auto docs = prepared_filter->execute({
-      .segment = segment,
-      .scorer = &scorer,
-    });
+    auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
       .segment = &segment,
@@ -1257,16 +1169,9 @@ TEST_P(TfidfTestCase, test_query) {
     irs::All filter;
     filter.boost(1.5f);
 
-    auto prepared_filter = filter.prepare({
-      .index = reader,
-      .memory = counter,
-      .scorer = &scorer,
-    });
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
     fetcher.Clear();
-    auto docs = prepared_filter->execute({
-      .segment = segment,
-      .scorer = &scorer,
-    });
+    auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
       .segment = &segment,
@@ -1298,16 +1203,9 @@ TEST_P(TfidfTestCase, test_query) {
     irs::All filter;
     filter.boost(0.f);
 
-    auto prepared_filter = filter.prepare({
-      .index = reader,
-      .memory = counter,
-      .scorer = &scorer,
-    });
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
     fetcher.Clear();
-    auto docs = prepared_filter->execute({
-      .segment = segment,
-      .scorer = &scorer,
-    });
+    auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
       .segment = &segment,
@@ -1339,16 +1237,9 @@ TEST_P(TfidfTestCase, test_query) {
     irs::ByColumnExistence filter;
     *filter.mutable_id() = kSeq;
 
-    auto prepared_filter = filter.prepare({
-      .index = reader,
-      .memory = counter,
-      .scorer = &scorer,
-    });
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
     fetcher.Clear();
-    auto docs = prepared_filter->execute({
-      .segment = segment,
-      .scorer = &scorer,
-    });
+    auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
       .segment = &segment,
@@ -1382,16 +1273,9 @@ TEST_P(TfidfTestCase, test_query) {
     *filter.mutable_id() = kSeq;
     filter.boost(0.f);
 
-    auto prepared_filter = filter.prepare({
-      .index = reader,
-      .memory = counter,
-      .scorer = &scorer,
-    });
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
     fetcher.Clear();
-    auto docs = prepared_filter->execute({
-      .segment = segment,
-      .scorer = &scorer,
-    });
+    auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
       .segment = &segment,
@@ -1485,16 +1369,9 @@ TEST_P(TfidfTestCase, test_order) {
     std::vector<uint64_t> expected{0, 1, 5, 7};
 
     irs::BytesViewInput in;
-    auto prepared = query.prepare({
-      .index = reader,
-      .memory = counter,
-      .scorer = &scorer,
-    });
+    tests::PreparedFilter prepared{query, reader, &scorer, counter};
     fetcher.Clear();
-    auto docs = prepared->execute({
-      .segment = segment,
-      .scorer = &scorer,
-    });
+    auto docs = prepared.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
       .segment = &segment,

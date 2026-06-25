@@ -54,7 +54,6 @@
 #include "catalog/scorer_options.h"
 #include "catalog/store/store.h"
 #include "query/transaction.h"
-#include "search/task.h"
 #include "search/tick_domain.h"
 #include "search/wal_recovery.h"
 #include "storage_engine/search_engine.h"
@@ -106,8 +105,7 @@ WalCursor InvertedIndexStorage::CursorAtOrBelow(Tick tick) noexcept {
 std::filesystem::path InvertedIndexStorage::GetPath(ObjectId db_id,
                                                     ObjectId schema_id,
                                                     ObjectId table_id,
-                                                    ObjectId index_id,
-                                                    ObjectId storage_id) {
+                                                    ObjectId index_id) {
   SDB_ASSERT(db_id.isSet());
   auto path = search::GetSearchEngine().GetPersistedPath(db_id);
   if (schema_id.isSet()) {
@@ -121,10 +119,6 @@ std::filesystem::path InvertedIndexStorage::GetPath(ObjectId db_id,
     SDB_ASSERT(table_id.isSet());
     path /= absl::StrCat(index_id);
   }
-  if (storage_id.isSet()) {
-    SDB_ASSERT(index_id.isSet());
-    path /= absl::StrCat(storage_id);
-  }
   return path;
 }
 
@@ -136,9 +130,7 @@ std::shared_ptr<InvertedIndexStorage> InvertedIndexStorage::Create(
 InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
                                            const catalog::InvertedIndex& index,
                                            bool is_new)
-  : _index_id{index.GetId()},
-    _search{GetSearchEngine()},
-    _state{std::make_shared<ThreadPoolState>()} {
+  : _index_id{index.GetId()}, _search{GetSearchEngine()} {
   const auto& options = index.GetOptions();
   _tasks_settings.refresh_interval_msec = options.refresh_interval_ms;
   _tasks_settings.compaction_interval_msec = options.compaction_interval_ms;
@@ -150,7 +142,7 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
   const auto index_id = index.GetId();
   SDB_ASSERT(index_id.isSet());
   std::filesystem::path path =
-    GetPath(db_id, schema_id, index.GetRelationId(), index_id, GetId());
+    GetPath(db_id, schema_id, index.GetRelationId(), index_id);
   // TODO(mbkkt) maybe we should use create_directories result instead of
   // exists?
   std::error_code ec;
@@ -187,48 +179,22 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
 
   irs::IndexWriterOptions writer_options;
   writer_options.segment_memory_max = 256 * (size_t{1} << 20);  // 256MB
+#ifdef SDB_DEV
+  // Dev safety net: a second IndexWriter opening the same index directory (a
+  // lifecycle bug -- two storages/loops on one dir) fails to acquire the lock
+  // with a clean error instead of silently corrupting segment files.
+  writer_options.lock_repository = true;
+#else
   writer_options.lock_repository = false;  // single-process server owns the dir
+#endif
   writer_options.db = &sdb::DuckDBEngine::Instance().instance();
   writer_options.reader_options.db = writer_options.db;
-  writer_options.column_options = [&](irs::field_id id) -> irs::ColumnOptions {
-    if (const auto* entry = index.FindEntry(id)) {
-      return {
-        .row_group_size = entry->row_group_size,
-        .compression = entry->compression,
-        .hnsw_info = index.GetHNSWInfo(id),
-        .hyperloglog = entry->hyperloglog,
-      };
-    }
-    if (static_cast<catalog::Column::Id>(id) ==
-        catalog::Column::kGeneratedPKId) {
-      return {
-        .skip_validity = true,
-        .row_group_size = index.GetOptions().row_group_size,
-      };
-    }
-    const auto* features = index.FindSyntheticFeatures(id);
-    SDB_ASSERT(features, "column callback for unknown column: ", id);
-    SDB_ASSERT(!features->HasFeatures(irs::IndexFeatures::Norm),
-               "norm-role synthetic id must not reach column callback: ", id);
-    return {
-      .skip_validity = true,
-      .row_group_size = index.GetOptions().row_group_size,
-    };
-  };
-  writer_options.norm_column_options =
-    [&](irs::field_id id) -> irs::NormColumnOptions {
-    const auto* entry = index.FindEntry(id);
-    SDB_ASSERT(entry != nullptr, ERROR_INTERNAL,
-               "norm callback for unknown id: ", id);
-    SDB_ASSERT(irs::field_limits::valid(entry->synthetic_column),
-               "norm callback fired without a catalog reservation; id: ", id);
-    SDB_ASSERT(entry->features.HasFeatures(irs::IndexFeatures::Norm),
-               "norm callback fired but catalog features lack Norm; id: ", id);
-    return {
-      .id = entry->synthetic_column,
-      .row_group_size = entry->norm_row_group_size,
-    };
-  };
+  // No column/norm options are configured on the writer: the per-column
+  // encoding config travels with each operation instead. A write hands its own
+  // DDL snapshot's InvertedIndex (SegmentWriter::SetFieldOptions, via the
+  // serenedb transaction) and a merge hands the compaction task's snapshot
+  // index (CompactUnsafe). The long-lived writer therefore never reaches into
+  // the live catalog, so a concurrent DROP can no longer dangle it.
 
   if (const auto& options = index.GetTopKScorer()) {
     _topk_scorer = catalog::MakeScorer(*options);
@@ -300,7 +266,8 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
       _last_durable_tick = _recovery_tick;
     }
   }
-  _snapshot = std::make_shared<InvertedIndexSnapshot>(std::move(reader));
+  std::atomic_store(&_snapshot,
+                    std::make_shared<InvertedIndexSnapshot>(std::move(reader)));
 }
 
 void InvertedIndexStorage::TruncateCommit(TruncateGuard&& guard, Tick tick,
@@ -358,18 +325,8 @@ void InvertedIndexStorage::TruncateCommit(TruncateGuard&& guard, Tick tick,
   }
 }
 
-void InvertedIndexStorage::ScheduleCompaction(absl::Duration delay) {
-  CompactionTask task{shared_from_this(), [] { return /* TODO */ true; }};
-
-  _state->pending_compactions.fetch_add(1, std::memory_order_release);
-  std::move(task).Schedule(delay).Detach();
-}
-
-void InvertedIndexStorage::ScheduleRefresh(absl::Duration delay) {
-  RefreshTask task{shared_from_this(), false};
-
-  _state->pending_refreshes.fetch_add(1, std::memory_order_release);
-  std::move(task).Schedule(delay).Detach();
+void InvertedIndexStorage::StartTasks() {
+  _search.StartTasks(shared_from_this());
 }
 
 void InvertedIndexStorage::Refresh() {
@@ -427,9 +384,11 @@ Result InvertedIndexStorage::CleanupUnsafeImpl() {
 
 InvertedIndexStorage::ResultWithTime InvertedIndexStorage::CompactUnsafe(
   const irs::CompactionPolicy& policy,
-  const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction) {
+  const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
+  const irs::IndexFieldOptions* field_options) {
   auto begin = std::chrono::steady_clock::now();
-  auto result = CompactUnsafeImpl(policy, progress, empty_compaction);
+  auto result =
+    CompactUnsafeImpl(policy, progress, empty_compaction, field_options);
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - begin)
                        .count();
@@ -453,7 +412,8 @@ InvertedIndexStorage::ResultWithTime InvertedIndexStorage::RefreshUnsafe(
 
 Result InvertedIndexStorage::CompactUnsafeImpl(
   const irs::CompactionPolicy& policy,
-  const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction) {
+  const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
+  const irs::IndexFieldOptions* field_options) {
   empty_compaction = false;
 
   if (!policy) {
@@ -464,7 +424,7 @@ Result InvertedIndexStorage::CompactUnsafeImpl(
   }
 
   try {
-    const auto res = _writer->Compact(policy, nullptr, progress);
+    const auto res = _writer->Compact(policy, field_options, nullptr, progress);
     if (!res) {
       return {ERROR_INTERNAL,
               "failure while executing compaction policy on Search index '",

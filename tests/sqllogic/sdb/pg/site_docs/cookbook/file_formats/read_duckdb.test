@@ -1,0 +1,186 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+DETACH IF EXISTS read_duckdb_intro_${__RUN_ID__};
+
+statement ok
+ATTACH '${__TEST_DIR__}/${__RUN_ID__}_cookbook_file_formats_read_duckdb_example_001_database.duckdb' AS read_duckdb_intro_${__RUN_ID__};
+
+statement ok
+DROP TABLE IF EXISTS read_duckdb_intro_${__RUN_ID__}.region;
+
+statement ok
+CREATE TABLE read_duckdb_intro_${__RUN_ID__}.region AS SELECT * FROM (VALUES
+    (0, 'AFRICA'),
+    (1, 'AMERICA'),
+    (2, 'ASIA'),
+    (3, 'EUROPE'),
+    (4, 'MIDDLE EAST')
+) AS t(r_regionkey, r_name);
+
+statement ok
+DETACH read_duckdb_intro_${__RUN_ID__};
+
+# DOCS_TEST_RAW
+#| FROM read_duckdb('path_to_database', table_name = 'table_to_read');
+
+# DOCS_TEST_BODY
+
+query
+FROM read_duckdb('${__TEST_DIR__}/${__RUN_ID__}_cookbook_file_formats_read_duckdb_example_001_database.duckdb', table_name = 'region');
+----
+r_regionkey	r_name
+0	AFRICA
+1	AMERICA
+2	ASIA
+3	EUROPE
+4	MIDDLE EAST
+
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_RAW
+#| SELECT r_regionkey, r_name
+#| FROM read_duckdb('https://blobs.duckdb.org/data/tpch-sf10.db', table_name = 'region');
+
+# DOCS_TEST_BODY
+
+statement ok
+DETACH IF EXISTS read_duckdb_region_${__RUN_ID__};
+
+statement ok
+ATTACH '${__TEST_DIR__}/${__RUN_ID__}_cookbook_file_formats_read_duckdb_example_002_tpch_sf10.duckdb' AS read_duckdb_region_${__RUN_ID__};
+
+statement ok
+DROP TABLE IF EXISTS read_duckdb_region_${__RUN_ID__}.region;
+
+statement ok
+CREATE TABLE read_duckdb_region_${__RUN_ID__}.region AS SELECT * FROM (VALUES
+    (0, 'AFRICA'),
+    (1, 'AMERICA'),
+    (2, 'ASIA'),
+    (3, 'EUROPE'),
+    (4, 'MIDDLE EAST')
+) AS t(r_regionkey, r_name);
+
+statement ok
+DETACH read_duckdb_region_${__RUN_ID__};
+
+query
+SELECT r_regionkey, r_name
+FROM read_duckdb('${__TEST_DIR__}/${__RUN_ID__}_cookbook_file_formats_read_duckdb_example_002_tpch_sf10.duckdb', table_name = 'region');
+----
+r_regionkey	r_name
+0	AFRICA
+1	AMERICA
+2	ASIA
+3	EUROPE
+4	MIDDLE EAST
+
+# DOCS_TEST: example_003
+
+statement ok
+DETACH IF EXISTS read_duckdb_numbers_1_${__RUN_ID__};
+
+statement ok
+DETACH IF EXISTS read_duckdb_numbers_2_${__RUN_ID__};
+
+statement ok
+ATTACH '${__TEST_DIR__}/${__RUN_ID__}_cookbook_file_formats_read_duckdb_example_003_my_1.duckdb' AS read_duckdb_numbers_1_${__RUN_ID__};
+
+statement ok
+DROP TABLE IF EXISTS read_duckdb_numbers_1_${__RUN_ID__}.numbers;
+
+statement ok
+CREATE TABLE read_duckdb_numbers_1_${__RUN_ID__}.numbers AS SELECT 42 AS x;
+
+statement ok
+DROP TABLE IF EXISTS read_duckdb_numbers_1_${__RUN_ID__}.letters;
+
+statement ok
+CREATE TABLE read_duckdb_numbers_1_${__RUN_ID__}.letters AS SELECT 'm' AS a;
+
+statement ok
+DETACH read_duckdb_numbers_1_${__RUN_ID__};
+
+statement ok
+ATTACH '${__TEST_DIR__}/${__RUN_ID__}_cookbook_file_formats_read_duckdb_example_003_my_2.duckdb' AS read_duckdb_numbers_2_${__RUN_ID__};
+
+statement ok
+DROP TABLE IF EXISTS read_duckdb_numbers_2_${__RUN_ID__}.numbers;
+
+statement ok
+CREATE TABLE read_duckdb_numbers_2_${__RUN_ID__}.numbers AS SELECT 43 AS x;
+
+statement ok
+DETACH read_duckdb_numbers_2_${__RUN_ID__};
+
+# DOCS_TEST_RAW
+#| SELECT x FROM read_duckdb('my-*.duckdb', table_name = 'numbers');
+
+# DOCS_TEST_BODY
+
+query ? rowsort
+SELECT x FROM read_duckdb('${__TEST_DIR__}/${__RUN_ID__}_cookbook_file_formats_read_duckdb_example_003_my_*.duckdb', table_name = 'numbers');
+----
+x
+42
+43
+
+# DOCS_TEST: example_004
+
+statement ok
+DETACH IF EXISTS read_duckdb_single_4_${__RUN_ID__};
+
+statement ok
+ATTACH '${__TEST_DIR__}/${__RUN_ID__}_cookbook_file_formats_read_duckdb_example_004_my_2.duckdb' AS read_duckdb_single_4_${__RUN_ID__};
+
+statement ok
+DROP TABLE IF EXISTS read_duckdb_single_4_${__RUN_ID__}.numbers;
+
+statement ok
+CREATE TABLE read_duckdb_single_4_${__RUN_ID__}.numbers AS SELECT 43 AS x;
+
+statement ok
+DETACH read_duckdb_single_4_${__RUN_ID__};
+
+# DOCS_TEST_RAW
+#| FROM read_duckdb('my-2.duckdb');
+
+# DOCS_TEST_BODY
+
+query
+FROM read_duckdb('${__TEST_DIR__}/${__RUN_ID__}_cookbook_file_formats_read_duckdb_example_004_my_2.duckdb');
+----
+x
+43
+
+# DOCS_TEST: example_005
+
+statement ok
+DETACH IF EXISTS read_duckdb_single_5_${__RUN_ID__};
+
+statement ok
+ATTACH '${__TEST_DIR__}/${__RUN_ID__}_cookbook_file_formats_read_duckdb_example_005_my_2.duckdb' AS read_duckdb_single_5_${__RUN_ID__};
+
+statement ok
+DROP TABLE IF EXISTS read_duckdb_single_5_${__RUN_ID__}.numbers;
+
+statement ok
+CREATE TABLE read_duckdb_single_5_${__RUN_ID__}.numbers AS SELECT 43 AS x;
+
+statement ok
+DETACH read_duckdb_single_5_${__RUN_ID__};
+
+# DOCS_TEST_RAW
+#| FROM 'my-2.duckdb';
+
+# DOCS_TEST_BODY
+
+query
+SELECT #1 AS "my-2" FROM '${__TEST_DIR__}/${__RUN_ID__}_cookbook_file_formats_read_duckdb_example_005_my_2.duckdb';
+----
+my-2
+43

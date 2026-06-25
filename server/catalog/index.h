@@ -23,7 +23,9 @@
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <optional>
+#include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "basics/containers/flat_hash_set.h"
@@ -45,15 +47,18 @@ using persistence::ExpressionData;
 using persistence::InvertedIndexOptions;
 
 struct CreateIndexColumn {
-  const catalog::Column* catalog_column = nullptr;
   std::string_view name;
-  std::string opclass;
+  const catalog::Column* catalog_column = nullptr;
   std::optional<ExpressionData> indexed_expr;
+  std::string opclass;
   // nullopt = no parentheses in source SQL; an (empty or non-empty) map means
   // parens were present, distinguishing `col opclass` from `col opclass ()`.
   std::optional<duckdb::case_insensitive_map_t<duckdb::Value>> opclass_options;
 
-  bool IsIndexedExpression() const noexcept { return indexed_expr.has_value(); }
+  bool IsIndexedExpression() const noexcept {
+    SDB_ASSERT(!catalog_column != !indexed_expr);
+    return !catalog_column;
+  }
 
   bool HasParentheses() const noexcept { return opclass_options.has_value(); }
 
@@ -61,14 +66,14 @@ struct CreateIndexColumn {
     return HasParentheses() && opclass == name;
   }
 
-  const ExpressionData& GetIndexedExpression() const {
+  const ExpressionData& GetIndexedExpression() const noexcept {
     SDB_ASSERT(IsIndexedExpression());
     return *indexed_expr;
   }
 
-  const catalog::Column* GetCatalogColumn() const noexcept {
+  const catalog::Column& GetCatalogColumn() const noexcept {
     SDB_ASSERT(!IsIndexedExpression());
-    return catalog_column;
+    return *catalog_column;
   }
 };
 
@@ -76,24 +81,77 @@ class Index : public Object {
  public:
   ObjectId GetDatabaseId() const noexcept { return _database_id; }
   auto GetRelationId() const noexcept { return _relation_id; }
-  std::span<const Column::Id> GetColumnIds() const noexcept {
-    return _column_ids;
+
+  // Plain-column key ids, de-duped in first-seen order (expression keys
+  // excluded). Returns a reference; the subclass computes it once at
+  // construction, no per-call allocation.
+  const std::vector<Column::Id>& GetColumns() const noexcept {
+    return _columns;
+  }
+  // GetColumns() plus each expression key's dependent columns (de-duped).
+  const std::vector<Column::Id>& GetReferencedColumns() const noexcept {
+    return _referenced_columns;
   }
 
-  virtual std::vector<Column::Id> GetReferencedColumnIds() const = 0;
+  // O(1) membership: does this index reference `id` as a plain-column key or
+  // an expression-key dependency? (Backed by a set built at construction --
+  // use this instead of scanning GetReferencedColumns().)
+  bool ReferencesColumn(Column::Id id) const noexcept {
+    return _referenced_columns_set.contains(id);
+  }
 
   virtual containers::FlatHashSet<ObjectId> GetTokenizers() const { return {}; }
 
   virtual ~Index() = default;
 
  protected:
+  // The base's common query surface, derived once by the subclass from its key
+  // storage. `columns` = de-duped plain-column key ids (first-seen order);
+  // `referenced_columns` = `columns` followed by each expression's dependent
+  // columns, de-duped; `referenced_columns_set` = its membership set.
+  struct DerivedColumnIds {
+    std::vector<Column::Id> columns;
+    std::vector<Column::Id> referenced_columns;
+    containers::FlatHashSet<Column::Id> referenced_columns_set;
+  };
+
+  // The subclass owns its key storage (secondary: ordered sentinel list;
+  // inverted: column ids + expression keys) and hands the base the derived id
+  // surface (computed once via DeriveIds/the subclass equivalent).
   Index(ObjectId database_id, ObjectId schema_id, ObjectId id,
-        ObjectId relation_id, std::string name,
-        std::vector<Column::Id> column_ids, ObjectType type);
+        ObjectId relation_id, std::string name, DerivedColumnIds derived,
+        ObjectType type);
+
+  // De-duped plain-column ids in first-seen order (Column::kInvalidId
+  // expression sentinels skipped), AND the membership set used to de-dup them.
+  // Returning the set lets the caller extend it with expression dependent
+  // columns without building a second hash set.
+  static std::pair<std::vector<Column::Id>, containers::FlatHashSet<Column::Id>>
+  DedupColumns(std::span<const Column::Id> columns);
+  // One pass (single hash set): de-dup `columns` and append each expression's
+  // dependent columns. `expressions` is any range whose elements expose a
+  // `dependent_columns` member -- an ExpressionData range directly, or a
+  // projection onto one (e.g. inverted index keys onto their `.data`).
+  template<typename Expressions>
+  static DerivedColumnIds DeriveIds(std::span<const Column::Id> columns,
+                                    Expressions&& expressions) {
+    auto [column_ids, seen] = DedupColumns(columns);
+    auto referenced = column_ids;
+    for (const auto& expression : expressions) {
+      for (const auto dep : expression.dependent_columns) {
+        if (seen.emplace(dep).second) {  // reuse the column dedup set
+          referenced.push_back(dep);
+        }
+      }
+    }
+    return {std::move(column_ids), std::move(referenced), std::move(seen)};
+  }
 
   ObjectId _database_id;
   ObjectId _relation_id;
-  std::vector<Column::Id> _column_ids;
+  std::vector<Column::Id> _columns;
+  std::vector<Column::Id> _referenced_columns;
+  containers::FlatHashSet<Column::Id> _referenced_columns_set;
 };
 
 ResultOr<std::shared_ptr<SecondaryIndex>> CreateSecondaryIndex(

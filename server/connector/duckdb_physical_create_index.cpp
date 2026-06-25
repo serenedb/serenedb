@@ -74,9 +74,10 @@ struct InsertColumnMeta {
 struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   bool created = false;
   bool finalized = false;
-  // TODO(mbkkt) fix this, drop by object id! Otherwise rename can break this
   ObjectId database_id;
-  std::string database_name;
+  // Set once the catalog entry exists; the failure rollback drops by this id
+  // (not by name) so a concurrent rename can't redirect it to another index.
+  ObjectId index_id;
   std::string schema_name;
   std::string table_name;
   std::string index_name;
@@ -116,8 +117,7 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
     if (created && !finalized) {
       try {
         auto& catalog = catalog::GetCatalog();
-        std::ignore = catalog.DropIndex(catalog::NoAccessCheck(), database_name,
-                                        schema_name, index_name, true);
+        std::ignore = catalog.DropIndexById(database_id, index_id, true);
       } catch (...) {
       }
     }
@@ -177,7 +177,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<CreateIndexGlobalState>();
   state->database_id = _database_id;
-  state->database_name = _schema_entry.catalog.GetName();
   state->schema_name = _schema_entry.name;
   state->table_name = std::string{_relation->GetName()};
   state->index_name = _info->index_name;
@@ -249,12 +248,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
           ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
           ERR_MSG("column \"", col_name, "\" not found in table"));
       }
-      idx_columns.emplace_back(catalog::CreateIndexColumn{
-        .catalog_column = cat_col,
-        .name = cat_col->GetName(),
-        .opclass = std::move(opclass),
-        .opclass_options = std::move(opclass_options),
-      });
+      idx_columns.emplace_back(cat_col->GetName(), cat_col, std::nullopt,
+                               std::move(opclass), std::move(opclass_options));
       continue;
     }
 
@@ -274,14 +269,14 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     }
     auto return_type = normalized->GetReturnType();
     auto& indexed_column = idx_columns.emplace_back(
-      nullptr, "", std::move(opclass),
+      "", nullptr,
       catalog::ExpressionData{
         .serialized_expr = std::move(serialized),
         .dependent_columns = std::move(dependent_columns),
         .return_type = std::move(return_type),
         .pretty_printed = expr->ToString(),
       },
-      std::move(opclass_options));
+      std::move(opclass), std::move(opclass_options));
     indexed_column.name = indexed_column.indexed_expr->pretty_printed;
   }
 
@@ -351,6 +346,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     snapshot->GetRelation(catalog::NoAccessCheck(), _database_id,
                           _schema_entry.name, _info->index_name);
   SDB_ASSERT(catalog_index);
+  state->index_id = catalog_index->GetId();
   if (state->progress) {
     state->progress->SetPhase(pg::create_index_progress::Phase::BuildingIndex);
   }
@@ -477,6 +473,11 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
   auto lstate = duckdb::make_uniq<CreateIndexLocalState>();
   lstate->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
     inverted_storage.GetTransaction());
+  // Encode the built segments against the index being created (the index IS the
+  // per-column options); co-owned via the gstate's snapshot so the segment
+  // writer can pin it until flush.
+  lstate->search_trx->SetFieldOptions(
+    basics::downCast<const catalog::InvertedIndex>(gstate.index_for_providers));
 
   auto tokenizer_provider =
     MakeTokenizerProvider(gstate.snapshot_for_providers, inverted_index);
@@ -484,7 +485,7 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
   auto indexed_exprs = MakeIndexedExpressions(inverted_index, context.client);
   lstate->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
     *lstate->search_trx, std::move(tokenizer_provider),
-    gstate.index_for_providers->GetColumnIds(), std::move(entry_info_provider),
+    gstate.index_for_providers->GetColumns(), std::move(entry_info_provider),
     std::move(indexed_exprs));
 
   return lstate;

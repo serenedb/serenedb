@@ -8,15 +8,18 @@
 control substitution on
 
 statement ok
-ATTACH '${__TEST_DIR__}/view_duckdb_single.db' AS ext_single;
+DETACH IF EXISTS db6;
+
+statement ok
+ATTACH '${__TEST_DIR__}/db6.db' AS db6;
 
 
 statement ok
-CREATE OR REPLACE TABLE ext_single.main.docs(id INTEGER, body TEXT, score INTEGER);
+CREATE OR REPLACE TABLE db6.main.docs(id INTEGER, body TEXT, score INTEGER);
 
 
 statement ok
-INSERT INTO ext_single.main.docs VALUES
+INSERT INTO db6.main.docs VALUES
   (1, 'alpha cat runs', 10),
   (2, 'beta dog sleeps', 20),
   (3, 'gamma cat jumps', 30),
@@ -24,44 +27,50 @@ INSERT INTO ext_single.main.docs VALUES
 
 
 statement ok
-DETACH ext_single;
+DETACH db6;
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/view_duckdb_glob_a.db' AS ext_a;
+DETACH IF EXISTS db7_a;
+
+statement ok
+ATTACH '${__TEST_DIR__}/db7_a.db' AS db7_a;
 
 
 statement ok
-CREATE OR REPLACE TABLE ext_a.main.docs(id INTEGER, body TEXT, score INTEGER);
+CREATE OR REPLACE TABLE db7_a.main.docs(id INTEGER, body TEXT, score INTEGER);
 
 
 statement ok
-INSERT INTO ext_a.main.docs VALUES
+INSERT INTO db7_a.main.docs VALUES
   (1, 'alpha cat runs', 10),
   (2, 'beta dog sleeps', 20),
   (3, 'gamma cat jumps', 30);
 
 
 statement ok
-DETACH ext_a;
+DETACH db7_a;
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/view_duckdb_glob_b.db' AS ext_b;
+DETACH IF EXISTS db7_b;
+
+statement ok
+ATTACH '${__TEST_DIR__}/db7_b.db' AS db7_b;
 
 
 statement ok
-CREATE OR REPLACE TABLE ext_b.main.docs(id INTEGER, body TEXT, score INTEGER);
+CREATE OR REPLACE TABLE db7_b.main.docs(id INTEGER, body TEXT, score INTEGER);
 
 
 statement ok
-INSERT INTO ext_b.main.docs VALUES
+INSERT INTO db7_b.main.docs VALUES
   (10, 'epsilon cat purrs', 100),
   (11, 'zeta dog barks', 110);
 
 
 statement ok
-DETACH ext_b;
+DETACH db7_b;
 
 
 statement ok
@@ -78,12 +87,12 @@ CREATE TEXT SEARCH DICTIONARY view_duckdb_en(
 
 statement ok
 CREATE VIEW v_single AS
-SELECT * FROM read_duckdb('${__TEST_DIR__}/view_duckdb_single.db', table_name='docs');
+SELECT * FROM read_duckdb('${__TEST_DIR__}/db6.db', table_name='docs');
 
 
 statement ok
 CREATE VIEW v_glob AS
-SELECT * FROM read_duckdb('${__TEST_DIR__}/view_duckdb_glob_*.db', table_name='docs');
+SELECT * FROM read_duckdb('${__TEST_DIR__}/db7_*.db', table_name='docs');
 
 
 query
@@ -140,15 +149,18 @@ id
 # Source mutation after CREATE INDEX: the stale posting materializes as
 # NULLs instead of garbage.
 statement ok
-ATTACH '${__TEST_DIR__}/view_duckdb_single.db' AS ext_mut;
+DETACH IF EXISTS db6;
+
+statement ok
+ATTACH '${__TEST_DIR__}/db6.db' AS db6;
 
 
 statement ok
-DELETE FROM ext_mut.main.docs WHERE id = 3;
+DELETE FROM db6.main.docs WHERE id = 3;
 
 
 statement ok
-DETACH ext_mut;
+DETACH db6;
 
 
 query
@@ -170,3 +182,13 @@ DROP VIEW v_glob CASCADE;
 
 statement ok
 DROP TEXT SEARCH DICTIONARY view_duckdb_en;
+
+
+statement ok
+DETACH IF EXISTS db6;
+
+statement ok
+DETACH IF EXISTS db7_a;
+
+statement ok
+DETACH IF EXISTS db7_b;

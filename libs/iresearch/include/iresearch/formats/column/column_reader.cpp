@@ -31,6 +31,7 @@
 #include <duckdb/storage/buffer/buffer_handle.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
+#include <duckdb/storage/compression/dict_fsst/decompression.hpp>
 #include <duckdb/storage/segment/uncompressed.hpp>
 #include <duckdb/storage/statistics/array_stats.hpp>
 #include <duckdb/storage/statistics/list_stats.hpp>
@@ -44,6 +45,15 @@
 #include "iresearch/store/data_input.hpp"
 
 namespace irs {
+
+duckdb::buffer_ptr<duckdb::DictionaryEntry> DictFsstScanDictionary(
+  duckdb::ColumnScanState& state, bool is_dict_fsst) {
+  if (!is_dict_fsst || !state.scan_state) {
+    return nullptr;
+  }
+  return state.scan_state->Cast<duckdb::dict_fsst::CompressedStringScanState>()
+    .dictionary;
+}
 
 std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
                                                PersistentColumnData&& node) {

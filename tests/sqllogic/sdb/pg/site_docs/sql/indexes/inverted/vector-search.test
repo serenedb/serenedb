@@ -1,10 +1,14 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TABLE vectors (id INTEGER, emb FLOAT[3]);
 
 statement ok
 CREATE INDEX l2_index ON vectors USING inverted (id, emb hnsw (metric = 'l2'));
+
+# DOCS_TEST: example_004
 
 statement ok
 INSERT INTO vectors VALUES

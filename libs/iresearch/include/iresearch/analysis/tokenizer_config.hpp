@@ -40,6 +40,7 @@
 #include "pattern_tokenizer.hpp"
 #include "pipeline_tokenizer.hpp"
 #include "segmentation_tokenizer.hpp"
+#include "shingle_analyzer.hpp"
 #include "solr_synonyms_tokenizer.hpp"
 #include "sparse_ngram_tokenizer.hpp"
 #include "stemming_tokenizer.hpp"
@@ -64,7 +65,10 @@ struct TokenizerConfig {
                NearestNeighborsTokenizer::Options, GeoPointAnalyzer::Options,
                GeoJsonAnalyzer::Options, WildcardAnalyzer::Options,
                MinHashTokenizer::Options, PipelineTokenizer::Options,
-               UnionTokenizer::Options, SparseNGramTokenizer::Options>
+               UnionTokenizer::Options, SparseNGramTokenizer::Options,
+               // Appended last: the serialized form records the variant
+               // index, so existing persisted configs must keep theirs.
+               ShingleAnalyzer::Options>
     config;
 };
 
@@ -108,6 +112,18 @@ inline TokenizerConfig Clone(const TokenizerConfig& cfg) {
         Options copy;
         copy.ngram_size = opts.ngram_size;
         copy.base_analyzer = detail::CloneChild(opts.base_analyzer);
+        out.config = std::move(copy);
+      } else if constexpr (std::is_same_v<Options, ShingleAnalyzer::Options>) {
+        Options copy;
+        copy.base_analyzer = detail::CloneChild(opts.base_analyzer);
+        copy.min_shingle_size = opts.min_shingle_size;
+        copy.max_shingle_size = opts.max_shingle_size;
+        copy.output_unigrams = opts.output_unigrams;
+        copy.output_unigrams_if_no_shingles = opts.output_unigrams_if_no_shingles;
+        copy.token_separator = opts.token_separator;
+        copy.filler_token = opts.filler_token;
+        copy.frequent_words = opts.frequent_words;
+        copy.store_tokens = opts.store_tokens;
         out.config = std::move(copy);
       } else if constexpr (std::is_same_v<Options, MinHashTokenizer::Options>) {
         Options copy;

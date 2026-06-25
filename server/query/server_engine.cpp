@@ -35,6 +35,7 @@
 #include "connector/duckdb_pg_text_copy.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_storage_extension.h"
+#include "connector/duckdb_term_stats_function.h"
 #include "connector/duckdb_tokenizer_function.h"
 #include "connector/duckdb_vacuum_function.h"
 #include "connector/functions/array.h"
@@ -269,6 +270,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterPgBinaryCopyFunction(db);
 
   connector::RegisterPgTextCopyFunction(db);
+
+  connector::RegisterTermStatsFunction(db);
 
   connector::RegisterSearchFunctions(db);
 

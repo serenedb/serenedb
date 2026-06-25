@@ -165,6 +165,12 @@ struct ColumnTokenizer {
   Tokenizer::TokenizerWrapper analyzer;
   irs::IndexFeatures features = irs::IndexFeatures::None;
   irs::field_id tokenizer_column = irs::field_limits::invalid();
+  // Raw column values live in the index columnstore (the column is also
+  // listed with included()): a verifier can re-tokenize them per candidate.
+  bool store_values = false;
+  // The analyzer's configuration, for query-time consumers that must build
+  // their own instances (per-segment verification analyzers).
+  std::shared_ptr<const irs::analysis::TokenizerConfig> config;
 };
 
 // Also an irs::IndexFieldOptions: the index IS the per-column physical-encoding

@@ -39,10 +39,12 @@
 #include <iresearch/search/nested_filter.hpp>
 #include <iresearch/search/ngram_similarity_filter.hpp>
 #include <iresearch/search/phrase_filter.hpp>
+#include <iresearch/search/phrase_ngram_filter.hpp>
 #include <iresearch/search/prefix_filter.hpp>
 #include <iresearch/search/proxy_filter.hpp>
 #include <iresearch/search/range_filter.hpp>
 #include <iresearch/search/regexp_filter.hpp>
+#include <iresearch/search/regexp_ngram_filter.hpp>
 #include <iresearch/search/search_range.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
@@ -224,6 +226,40 @@ std::string WildcardNgramPartsString(const ByWildcardNgram& filter) {
     absl::StrAppend(&s, ">; ");
   }
   return s;
+}
+
+std::string PhraseNgramShinglesString(const ByPhraseNgram& filter) {
+  std::string s;
+  for (const auto& shingle : filter.options().shingles) {
+    absl::StrAppend(&s, TermToString(shingle), "; ");
+  }
+  return s;
+}
+
+std::string RegexpNgramTree(const ByRegexpNgramOptions::Node& node) {
+  using Kind = ByRegexpNgramOptions::Node::Kind;
+  switch (node.kind) {
+    case Kind::kAll:
+      return "ALL";
+    case Kind::kNone:
+      return "NONE";
+    case Kind::kTerms: {
+      std::string terms;
+      for (const auto& term : node.terms) {
+        absl::StrAppend(&terms, TermToString(term), " ");
+      }
+      return absl::StrCat("{", terms, "}");
+    }
+    case Kind::kAnd:
+    case Kind::kOr: {
+      std::string subs;
+      for (const auto& sub : node.subs) {
+        absl::StrAppend(&subs, RegexpNgramTree(sub), " ");
+      }
+      return absl::StrCat(node.kind == Kind::kAnd ? "AND[" : "OR[", subs, "]");
+    }
+  }
+  return "?";
 }
 
 std::string TermsListString(const ByTerms& filter) {
@@ -411,6 +447,22 @@ FilterNode BuildNode(const Filter& filter, const FieldResolver& field) {
               field(f.field_id()), " '", TermToString(f.options().token),
               "' has_pos=", f.options().has_pos, " parts=[",
               WildcardNgramPartsString(f), "]")};
+  }
+  if (type == Type<ByPhraseNgram>::id()) {
+    const auto& f = downCast<const ByPhraseNgram>(filter);
+    return {.label = "PHRASE_NGRAM",
+            .detail = absl::StrCat(field(f.field_id()),
+                                   " exact=", f.options().exact, " shingles=[",
+                                   PhraseNgramShinglesString(f), "]")};
+  }
+  if (type == Type<ByRegexpNgram>::id()) {
+    const auto& f = downCast<const ByRegexpNgram>(filter);
+    return {
+      .label = "REGEXP_NGRAM",
+      .detail = absl::StrCat(
+        field(f.field_id()), " /",
+        f.options().matcher ? f.options().matcher->pattern() : std::string{},
+        "/ ngrams=", RegexpNgramTree(f.options().root))};
   }
   if (type == Type<Empty>::id()) {
     return {.label = "EMPTY"};

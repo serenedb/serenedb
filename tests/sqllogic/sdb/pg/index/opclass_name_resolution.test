@@ -298,8 +298,8 @@ db error: ERROR: Unknown opclass 'included' on column '(a + b)': no text diction
 HINT: 'included' is a built-in opclass; use the options form 'included (...)'
 
 
-# A non-built-in name with parens is rejected regardless of whether a
-# dict exists -- the options form is reserved for built-ins.
+# Dictionary opclasses take no options; storing the raw values is requested
+# by listing the column again with included(...).
 statement ok
 CREATE TEXT SEARCH DICTIONARY hint_only_dict(template = 'keyword');
 
@@ -307,7 +307,7 @@ statement error
 CREATE INDEX hint_parens_dict ON hint_hnsw_col USING inverted(
     id, s hint_only_dict (compression = 'zstd'));
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'hint_only_dict' on 's' (known: included, hnsw)
+db error: ERROR: Failed to create index: Column 's': unknown text search dictionary opclass option 'compression'; dictionary opclasses take no options. To store the column values, list the column again with 'included(...)'
 
 
 # A non-built-in name with no dict by that name: bare-name lookup misses,

@@ -386,6 +386,13 @@ ColumnTokenizer InvertedIndex::GetTokenizer(
       irs::field_limits::valid(entry->synthetic_column)) {
     tokenizer->tokenizer_column = entry->synthetic_column;
   }
+  tokenizer->store_values = entry->store_values;
+  if (entry->store_values && entry->text_dictionary.isSet()) {
+    if (auto dict = snapshot->GetObject<Tokenizer>(entry->text_dictionary)) {
+      tokenizer->config = std::make_shared<irs::analysis::TokenizerConfig>(
+        irs::analysis::Clone(dict->Config()));
+    }
+  }
   return *std::move(tokenizer);
 }
 

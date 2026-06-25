@@ -20,9 +20,12 @@
 
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/wildcard_analyzer.hpp>
 #include <iresearch/search/regexp_filter.hpp>
+#include <iresearch/search/regexp_ngram_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
+#include "basics/down_cast.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "ts_common.hpp"
@@ -87,6 +90,33 @@ void FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
       column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
     throw duckdb::InvalidInputException("ts_regexp field is not VARCHAR");
   }
+
+  // N-gram accelerated path: a column indexed with the char-ngram
+  // WildcardAnalyzer stores char n-grams as terms (not whole words), so the
+  // automaton ByRegexp below would match nothing on it. We MUST prefilter by
+  // the regex's required n-grams (RE2 Prefilter) and verify with RE2 on the
+  // stored original tokens -- exactly how LIKE chooses ByWildcardNgram. RE2
+  // covers both Perl and POSIX ERE.
+  if (column_info.tokenizer.analyzer &&
+      column_info.tokenizer.analyzer->type() ==
+        irs::Type<irs::analysis::WildcardAnalyzer>::id()) {
+    auto& f = ctx.negated ? Negate<irs::ByRegexpNgram>(parent)
+                          : AddFilter<irs::ByRegexpNgram>(parent);
+    f.boost(ctx.boost);
+    *f.mutable_field_id() =
+      PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
+    auto* nopts = f.mutable_options();
+    *nopts = irs::ByRegexpNgramOptions{
+      pattern,
+      basics::downCast<irs::analysis::WildcardAnalyzer>(
+        *column_info.tokenizer.analyzer.get()),
+      syntax == irs::RegexpSyntax::PosixEre};
+    SDB_ASSERT(
+      irs::field_limits::valid(column_info.tokenizer.tokenizer_column));
+    nopts->store_field_id = column_info.tokenizer.tokenizer_column;
+    return;
+  }
+
   auto regexp = irs::CreateByRegexp(
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
     irs::ViewCast<irs::byte_type>(std::string_view{pattern}), syntax,

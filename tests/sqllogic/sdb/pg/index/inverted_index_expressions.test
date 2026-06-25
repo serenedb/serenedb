@@ -1355,7 +1355,7 @@ statement error
 CREATE INDEX inc_e_dict_with_opts ON inc_e_num USING inverted(
     id, (a + b) verbatim_dict (compression='zstd'));
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'verbatim_dict' on '(a + b)' (known: included, hnsw)
+db error: ERROR: Failed to create index: Column '(a + b)': unknown text search dictionary opclass option 'compression'; dictionary opclasses take no options. To store the column values, list the column again with 'included(...)'
 
 
 # --- HNSW on an indexed expression: `(expr) hnsw(metric='l2', m=..., ef_construction=...)` builds an ANN graph over the expression's value.

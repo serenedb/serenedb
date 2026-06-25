@@ -37,6 +37,7 @@
 #include <iresearch/analysis/pattern_tokenizer.hpp>
 #include <iresearch/analysis/pipeline_tokenizer.hpp>
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/analysis/shingle_analyzer.hpp>
 #include <iresearch/analysis/solr_synonyms_tokenizer.hpp>
 #include <iresearch/analysis/sparse_ngram_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
@@ -781,6 +782,98 @@ class CreateTSDictionaryOptions : public OptionsParser {
     return opts;
   }
 
+  irs::analysis::ShingleAnalyzer::Options BuildShingle(
+    std::string_view prefix,
+    const irs::analysis::ShingleAnalyzer::Options* parent) {
+    irs::analysis::ShingleAnalyzer::Options opts;
+    opts.base_analyzer =
+      BuildSingleChild(prefix, parent ? parent->base_analyzer.get() : nullptr);
+    int parent_min = parent ? static_cast<int>(parent->min_shingle_size) : 2;
+    opts.min_shingle_size =
+      static_cast<uint32_t>(Resolve<tokenizer_options::kMinShingleSize>(
+        prefix, parent ? &parent_min : nullptr));
+    int parent_max = parent ? static_cast<int>(parent->max_shingle_size) : 2;
+    opts.max_shingle_size =
+      static_cast<uint32_t>(Resolve<tokenizer_options::kMaxShingleSize>(
+        prefix, parent ? &parent_max : nullptr));
+    if (opts.max_shingle_size < opts.min_shingle_size) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("\"maxshinglesize\" must be >= \"minshinglesize\""));
+    }
+    opts.output_unigrams = Resolve<tokenizer_options::kOutputUnigrams>(
+      prefix, parent ? &parent->output_unigrams : nullptr);
+    if (!opts.output_unigrams) {
+      // Phrase planning relies on unigram terms (single-word phrases, spans
+      // not covered by an indexed shingle, the positional cover fallback).
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("\"outputunigrams\" = false is not supported for shingle "
+                "dictionaries"),
+        ERR_HINT("Phrase planning requires the individual tokens to be "
+                 "indexed alongside the shingles."));
+    }
+    opts.output_unigrams_if_no_shingles =
+      Resolve<tokenizer_options::kOutputUnigramsIfNoShingles>(
+        prefix, parent ? &parent->output_unigrams_if_no_shingles : nullptr);
+    opts.store_tokens = Resolve<tokenizer_options::kStoreTokens>(
+      prefix, parent ? &parent->store_tokens : nullptr);
+    if (OptionsParser::HasOption(tokenizer_options::kFrequentWords, prefix)) {
+      auto raw =
+        OptionsParser::EraseOptionOrDefault<tokenizer_options::kFrequentWords>(
+          prefix);
+      // Normalize each word through the configured base analyzer so the
+      // frequency bound compares post-analysis token bytes (a lowercasing or
+      // stemming base would otherwise silently never match, dropping every
+      // shingle from the index).
+      auto base = irs::analysis::CreateAnalyzer(
+        opts.base_analyzer ? irs::analysis::Clone(*opts.base_analyzer)
+                           : irs::analysis::TokenizerConfig{});
+      const auto* token = base ? irs::get<irs::TermAttr>(*base) : nullptr;
+      ParseCommaSeparated(raw, [&](std::string_view w) {
+        if (!base || !token || !base->reset(w) || !base->next()) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+            ERR_MSG("\"frequentwords\" entry \"", w,
+                    "\" produces no token under the base analyzer"));
+        }
+        opts.frequent_words.emplace_back(token->value);
+        if (base->next()) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+            ERR_MSG("\"frequentwords\" entry \"", w,
+                    "\" splits into multiple tokens under the base "
+                    "analyzer"));
+        }
+      });
+    } else if (parent) {
+      opts.frequent_words = parent->frequent_words;
+    }
+    if (!opts.store_tokens && !opts.frequent_words.empty()) {
+      // Escalation leaves rare spans to dense shingles + verification, which
+      // a token-less index cannot provide -- the combination would make
+      // query support depend on word frequencies.
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("\"storetokens\" = false cannot be combined with "
+                "\"frequentwords\""),
+        ERR_HINT("Without the stored token stream every shingle size must be "
+                 "dense so phrases up to maxshinglesize stay exact."));
+    }
+    ResolveStringInto<tokenizer_options::kFillerToken>(
+      prefix, opts.filler_token, parent ? &parent->filler_token : nullptr);
+    if (opts.filler_token.find(irs::analysis::ShingleAnalyzer::
+                                 kDefaultSeparator) != irs::bstring::npos) {
+      // 0xFF is the shingle separator and invalid UTF-8; a filler containing
+      // it is certainly a mistake -- reject early.
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("\"fillertoken\" must not contain the shingle separator "
+                "byte (0xFF)"));
+    }
+    return opts;
+  }
+
   template<typename Opts>
   static const Opts* ParentOptions(const irs::analysis::TokenizerConfig* cfg) {
     if (!cfg) {
@@ -839,6 +932,9 @@ class CreateTSDictionaryOptions : public OptionsParser {
     } else if (type == WildcardAnalyzer::type_name()) {
       out.config = BuildWildcard(
         prefix, ParentOptions<WildcardAnalyzer::Options>(parent_cfg));
+    } else if (type == ShingleAnalyzer::type_name()) {
+      out.config = BuildShingle(
+        prefix, ParentOptions<ShingleAnalyzer::Options>(parent_cfg));
     } else if (type == NormalizingTokenizer::type_name()) {
       out.config = BuildNormalizing(
         prefix, ParentOptions<NormalizingTokenizer::Options>(parent_cfg));
@@ -950,6 +1046,24 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
       !irs::get<irs::OffsAttr>(*test_analyzer)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("Unsupported index features are specified"));
+  }
+
+  // A shingle column has one synthetic columnstore slot, which the stored
+  // token stream and the norm both need. Positional shingles never write the
+  // token stream, so only the position-free + storetokens combination clashes.
+  if (const auto* shingle =
+        std::get_if<irs::analysis::ShingleAnalyzer::Options>(&cfg.config);
+      shingle != nullptr && shingle->store_tokens &&
+      features.HasFeatures(irs::IndexFeatures::Norm) &&
+      !features.HasFeatures(irs::IndexFeatures::Pos)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("\"norm\" = true on a position-free shingle dictionary "
+              "requires \"storetokens\" = false"),
+      ERR_HINT("The norm and the stored token stream share the index's "
+               "synthetic column. Phrases longer than maxshinglesize can "
+               "still verify against the raw values (list the column again "
+               "with included() in the index)."));
   }
 
   auto tokenizer =

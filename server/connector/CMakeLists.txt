@@ -41,6 +41,7 @@ add_library(
     duckdb_index_utils.cpp
     duckdb_search_sink_writer.cpp
     duckdb_vacuum_function.cpp
+    duckdb_term_stats_function.cpp
     duckdb_transaction.cpp
     highlight/highlight_options.cpp
     highlight/memory_index.cpp

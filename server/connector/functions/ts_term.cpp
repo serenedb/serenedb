@@ -89,10 +89,12 @@ void BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
   terms.boost(ctx.boost);
   *terms.mutable_field_id() = field_id;
   auto& opts = *terms.mutable_options();
-  opts.min_match = require_all ? tokens.size() : 1;
   for (auto& t : tokens) {
     opts.terms.emplace(std::move(t));
   }
+  // Distinct count: `terms` is a set, so requiring the raw token count would
+  // make any query with a repeated word unsatisfiable.
+  opts.min_match = require_all ? opts.terms.size() : 1;
 }
 void FromTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
               const SearchColumnInfo& column_info,

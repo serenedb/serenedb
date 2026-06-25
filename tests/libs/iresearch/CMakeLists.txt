@@ -20,6 +20,7 @@ set(iresearch-tests_sources
     ./analysis/token_attributes_test.cpp
     ./analysis/tokenizer_tests.cpp
     ./analysis/pattern_tokenizer_tests.cpp
+    ./analysis/shingle_analyzer_test.cpp
     ./formats/column/columnstore_test.cpp
     ./formats/column/variant_shredding_test.cpp
     ./formats/column/test_cs_helpers.cpp
@@ -54,6 +55,8 @@ set(iresearch-tests_sources
     ./search/granular_range_filter_tests.cpp
     ./search/wildcard_filter_test.cpp
     ./search/wildcard_ngram_filter_test.cpp
+    ./search/phrase_ngram_filter_test.cpp
+    ./search/regexp_ngram_filter_test.cpp
     ./search/regexp_filter_test.cpp
     ./search/levenshtein_filter_test.cpp
     ./search/index_reader_test.cpp

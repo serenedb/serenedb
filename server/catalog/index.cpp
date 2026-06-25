@@ -29,6 +29,7 @@
 #include <duckdb/function/compression_function.hpp>
 #include <duckdb/main/config.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
+#include <iresearch/analysis/shingle_analyzer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/attribute_provider.hpp>
@@ -634,8 +635,14 @@ void FillEntryFromTokenizer(const Tokenizer& dict,
                             InvertedIndexEntryInfo& entry) {
   entry.text_dictionary = dict.GetId();
   entry.features = dict.GetFeatures();
+  // A positional shingle column answers phrases via the positional shingle
+  // terms; the verifier (and so the stored token stream) is never consulted.
+  const bool positional_shingle =
+    analyzer.type() == irs::Type<irs::analysis::ShingleAnalyzer>::id() &&
+    entry.features.HasFeatures(irs::IndexFeatures::Pos);
   const bool wants_store = irs::get<irs::StoreAttr>(analyzer) != nullptr &&
-                           !IsGeoSourceAnalyzer(analyzer);
+                           !IsGeoSourceAnalyzer(analyzer) &&
+                           !positional_shingle;
   const bool wants_norm = entry.features.HasFeatures(irs::IndexFeatures::Norm);
   SDB_ASSERT(!(wants_store && wants_norm),
              "tokenizer-store and norm should be mutually exclusive");
@@ -695,7 +702,21 @@ Result ApplyOpclassToEntry(duckdb::ClientContext& context,
       r.fail()) {
     return r;
   }
+  if ((*analyzer)->type() == irs::Type<irs::analysis::ShingleAnalyzer>::id() &&
+      value_type.id() != duckdb::LogicalTypeId::VARCHAR) {
+    // The shingle term encoding joins tokens with a 0xFF separator, which is
+    // unambiguous only for UTF-8 content; the exact/positional paths never
+    // re-verify, so a BLOB token containing the separator could false-match.
+    return {ERROR_BAD_PARAMETER, "Column '", owner_label,
+            "' uses a shingle analyzer; the column must be VARCHAR"};
+  }
   FillEntryFromTokenizer(*dict, **analyzer, value_type, entry);
+  // Source-coding geo analyzers force-include the indexed source column (its
+  // own field id) into the columnstore so the filter can re-parse it at query
+  // time, mirroring the HNSW/included force-include. Accept the same
+  // compression / row_group_size knobs. Other dictionary opclasses take no
+  // options: storing the raw values is requested by mentioning the column
+  // again with the `included(...)` opclass, which merges into the same entry.
   if (IsGeoSourceAnalyzer(**analyzer)) {
     if (auto r = ApplyIncludedOpclass(context, owner_label, value_type,
                                       c.opclass_options, entry);
@@ -703,6 +724,12 @@ Result ApplyOpclassToEntry(duckdb::ClientContext& context,
       return r;
     }
     entry.store_values = true;
+  } else if (c.opclass_options && !c.opclass_options->empty()) {
+    return {ERROR_BAD_PARAMETER, "Column '", owner_label,
+            "': unknown text search dictionary opclass option '",
+            c.opclass_options->begin()->first,
+            "'; dictionary opclasses take no options. To store the column "
+            "values, list the column again with 'included(...)'"};
   }
   return {};
 }

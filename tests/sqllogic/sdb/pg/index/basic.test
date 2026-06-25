@@ -21,10 +21,13 @@ statement ok
 CREATE INDEX index_t ON t USING inverted(r test_english);
 
 
-statement error
+# Empty options on a dictionary opclass are valid (the options form
+# is no longer reserved for built-ins).
+statement ok
 CREATE INDEX index_t_parens ON t USING inverted(r test_english ());
-----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'test_english' on 'r' (known: included, hnsw)
+
+statement ok
+DROP INDEX index_t_parens;
 
 
 statement error
@@ -264,7 +267,7 @@ db error: ERROR: Opclass option must be a constant value
 statement error
 CREATE INDEX index_ts on tstest USING inverted(c test_english ());
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'test_english' on 'c' (known: included, hnsw)
+db error: ERROR: Failed to create index: Unknown opclass 'test_english' on column 'c': no text dictionary by that name in schema 'public'
 
 
 

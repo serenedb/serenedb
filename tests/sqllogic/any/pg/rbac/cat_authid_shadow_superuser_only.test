@@ -19,11 +19,11 @@ DROP ROLE IF EXISTS cat_authid_intern;
 
 
 statement ok
-CREATE ROLE cat_authid_intern LOGIN;
+CREATE ROLE cat_authid_intern LOGIN PASSWORD 'cat_authid_intern_pw';
 
 
 # Sanity: the intern really is a non-superuser.
-connection c_intern user=cat_authid_intern
+connection c_intern user=cat_authid_intern password=cat_authid_intern_pw
 query
 SELECT rolsuper FROM pg_roles WHERE rolname = current_user;
 ----
@@ -32,7 +32,7 @@ f
 
 
 # Direct read of pg_authid by the non-superuser is refused.
-connection c_intern user=cat_authid_intern
+connection c_intern user=cat_authid_intern password=cat_authid_intern_pw
 statement error
 SELECT count(*) FROM pg_authid;
 ----
@@ -40,7 +40,7 @@ db error: ERROR: permission denied for table pg_authid<slt:ignore>
 
 
 # Even naming the role itself does not help -- the whole table is off limits.
-connection c_intern user=cat_authid_intern
+connection c_intern user=cat_authid_intern password=cat_authid_intern_pw
 statement error
 SELECT rolname FROM pg_authid WHERE rolname = 'cat_authid_intern';
 ----
@@ -48,7 +48,7 @@ db error: ERROR: permission denied for table pg_authid<slt:ignore>
 
 
 # Direct read of pg_shadow (the password view) is refused too.
-connection c_intern user=cat_authid_intern
+connection c_intern user=cat_authid_intern password=cat_authid_intern_pw
 statement error
 SELECT count(*) FROM pg_shadow;
 ----
@@ -58,7 +58,7 @@ db error: ERROR: permission denied for view pg_shadow<slt:ignore>
 # pg_roles is the non-password projection of the role catalog and carries a
 # PUBLIC SELECT grant: the intern reads it fine (it reads pg_authid internally,
 # which bypasses the guard).
-connection c_intern user=cat_authid_intern
+connection c_intern user=cat_authid_intern password=cat_authid_intern_pw
 query
 SELECT count(*) >= 2 AS readable FROM pg_roles;
 ----
@@ -68,7 +68,7 @@ t
 
 # pg_user reads pg_shadow internally; pg_group reads pg_authid internally. Both
 # carry PUBLIC SELECT and stay readable for the non-superuser.
-connection c_intern user=cat_authid_intern
+connection c_intern user=cat_authid_intern password=cat_authid_intern_pw
 query
 SELECT count(*) >= 1 AS readable FROM pg_user;
 ----
@@ -76,7 +76,7 @@ readable
 t
 
 
-connection c_intern user=cat_authid_intern
+connection c_intern user=cat_authid_intern password=cat_authid_intern_pw
 query
 SELECT count(*) >= 0 AS readable FROM pg_group;
 ----

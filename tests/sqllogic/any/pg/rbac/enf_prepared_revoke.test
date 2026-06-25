@@ -24,7 +24,7 @@ INSERT INTO mop_ledger VALUES (1, 10), (2, 20), (3, 30);
 
 
 statement ok
-CREATE ROLE ved_reader LOGIN;
+CREATE ROLE ved_reader LOGIN PASSWORD 'ved_reader_pw';
 
 
 statement ok
@@ -35,13 +35,13 @@ GRANT SELECT ON mop_ledger TO ved_reader;
 # lives on this connection for the rest of the test; the named connection is
 # reused (cached), so later EXECUTEs hit the same session without re-preparing.
 
-connection c_ved user=ved_reader
+connection c_ved user=ved_reader password=ved_reader_pw
 statement ok
 PREPARE p_ved AS SELECT clickclack FROM mop_ledger ORDER BY clickclack;
 
 
 # EXECUTE with the grant present -> allowed.
-connection c_ved user=ved_reader
+connection c_ved user=ved_reader password=ved_reader_pw
 query
 EXECUTE p_ved;
 ----
@@ -59,7 +59,7 @@ REVOKE SELECT ON mop_ledger FROM ved_reader;
 
 
 # Same prepared statement, re-checked on EXECUTE -> denied.
-connection c_ved user=ved_reader
+connection c_ved user=ved_reader password=ved_reader_pw
 statement error
 EXECUTE p_ved;
 ----
@@ -73,7 +73,7 @@ GRANT SELECT ON mop_ledger TO ved_reader;
 
 
 # The same prepared statement works again without being re-prepared.
-connection c_ved user=ved_reader
+connection c_ved user=ved_reader password=ved_reader_pw
 query
 EXECUTE p_ved;
 ----

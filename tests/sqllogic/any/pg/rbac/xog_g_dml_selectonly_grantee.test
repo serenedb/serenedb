@@ -24,7 +24,7 @@ INSERT INTO xog_g_clickclack VALUES (1, 'iceberg'), (2, 'mop');
 
 
 statement ok
-CREATE ROLE xog_g_vedernikoff LOGIN;
+CREATE ROLE xog_g_vedernikoff LOGIN PASSWORD 'xog_g_vedernikoff_pw';
 
 
 statement ok
@@ -43,7 +43,7 @@ t	f	f	f
 
 
 # Real query path: SELECT works.
-connection c_v user=xog_g_vedernikoff
+connection c_v user=xog_g_vedernikoff password=xog_g_vedernikoff_pw
 query
 SELECT count(*) AS n FROM xog_g_clickclack;
 ----
@@ -52,7 +52,7 @@ n
 
 
 # INSERT is denied for real.
-connection c_v user=xog_g_vedernikoff
+connection c_v user=xog_g_vedernikoff password=xog_g_vedernikoff_pw
 statement error
 INSERT INTO xog_g_clickclack VALUES (3, 'nope');
 ----
@@ -60,7 +60,7 @@ db error: ERROR: permission denied for table xog_g_clickclack<slt:ignore>
 
 
 # UPDATE is denied for real.
-connection c_v user=xog_g_vedernikoff
+connection c_v user=xog_g_vedernikoff password=xog_g_vedernikoff_pw
 statement error
 UPDATE xog_g_clickclack SET payload = 'nope' WHERE id = 1;
 ----
@@ -68,7 +68,7 @@ db error: ERROR: permission denied for table xog_g_clickclack<slt:ignore>
 
 
 # DELETE is denied for real.
-connection c_v user=xog_g_vedernikoff
+connection c_v user=xog_g_vedernikoff password=xog_g_vedernikoff_pw
 statement error
 DELETE FROM xog_g_clickclack WHERE id = 1;
 ----
@@ -80,13 +80,13 @@ statement ok
 GRANT INSERT ON xog_g_clickclack TO xog_g_vedernikoff;
 
 
-connection c_v user=xog_g_vedernikoff
+connection c_v user=xog_g_vedernikoff password=xog_g_vedernikoff_pw
 statement ok
 INSERT INTO xog_g_clickclack VALUES (3, 'babsky');
 
 
 # The newly inserted row is visible to the same grantee on SELECT.
-connection c_v user=xog_g_vedernikoff
+connection c_v user=xog_g_vedernikoff password=xog_g_vedernikoff_pw
 query
 SELECT count(*) AS n FROM xog_g_clickclack;
 ----
@@ -95,7 +95,7 @@ n
 
 
 # UPDATE still denied -- INSERT did not confer it.
-connection c_v user=xog_g_vedernikoff
+connection c_v user=xog_g_vedernikoff password=xog_g_vedernikoff_pw
 statement error
 UPDATE xog_g_clickclack SET payload = 'nope' WHERE id = 2;
 ----
@@ -103,7 +103,7 @@ db error: ERROR: permission denied for table xog_g_clickclack<slt:ignore>
 
 
 # DELETE still denied.
-connection c_v user=xog_g_vedernikoff
+connection c_v user=xog_g_vedernikoff password=xog_g_vedernikoff_pw
 statement error
 DELETE FROM xog_g_clickclack WHERE id = 2;
 ----

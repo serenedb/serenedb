@@ -33,7 +33,7 @@ INSERT INTO xmb_atg_clickclack VALUES (1, 'iceberg');
 
 
 statement ok
-CREATE ROLE xmb_atg_mop LOGIN;
+CREATE ROLE xmb_atg_mop LOGIN PASSWORD 'xmb_atg_mop_pw';
 
 
 statement ok
@@ -72,7 +72,7 @@ t	t	f	f
 
 
 # Real query path: both SELECT and INSERT succeed.
-connection c_mop user=xmb_atg_mop
+connection c_mop user=xmb_atg_mop password=xmb_atg_mop_pw
 query
 SELECT count(*) FROM xmb_atg_clickclack;
 ----
@@ -80,7 +80,7 @@ count
 1
 
 
-connection c_mop user=xmb_atg_mop
+connection c_mop user=xmb_atg_mop password=xmb_atg_mop_pw
 statement ok
 INSERT INTO xmb_atg_clickclack VALUES (2, 'babsky');
 
@@ -99,14 +99,14 @@ sel	ins
 f	t
 
 
-connection c_mop2 user=xmb_atg_mop
+connection c_mop2 user=xmb_atg_mop password=xmb_atg_mop_pw
 statement error
 SELECT * FROM xmb_atg_clickclack;
 ----
 db error: ERROR: permission denied for table xmb_atg_clickclack<slt:ignore>
 
 
-connection c_mop2 user=xmb_atg_mop
+connection c_mop2 user=xmb_atg_mop password=xmb_atg_mop_pw
 statement ok
 INSERT INTO xmb_atg_clickclack VALUES (3, 'kostya');
 

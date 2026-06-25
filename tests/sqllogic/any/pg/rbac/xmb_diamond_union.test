@@ -41,7 +41,7 @@ INSERT INTO xmb_diu_clickclack VALUES (1, 'mop'), (2, 'babsky');
 
 
 statement ok
-CREATE ROLE xmb_diu_vitalik LOGIN;
+CREATE ROLE xmb_diu_vitalik LOGIN PASSWORD 'xmb_diu_vitalik_pw';
 
 
 statement ok
@@ -110,7 +110,7 @@ t	t	t
 
 
 # Real query path: SELECT (top), INSERT (kryakva), UPDATE (androed) all work.
-connection c_vitalik user=xmb_diu_vitalik
+connection c_vitalik user=xmb_diu_vitalik password=xmb_diu_vitalik_pw
 query
 SELECT count(*) FROM xmb_diu_clickclack;
 ----
@@ -118,18 +118,18 @@ count
 2
 
 
-connection c_vitalik user=xmb_diu_vitalik
+connection c_vitalik user=xmb_diu_vitalik password=xmb_diu_vitalik_pw
 statement ok
 INSERT INTO xmb_diu_clickclack VALUES (3, 'vedernikoff');
 
 
-connection c_vitalik user=xmb_diu_vitalik
+connection c_vitalik user=xmb_diu_vitalik password=xmb_diu_vitalik_pw
 statement ok
 UPDATE xmb_diu_clickclack SET payload = 'iceberg' WHERE id = 1;
 
 
 # DELETE is not in the union -> denied for real.
-connection c_vitalik user=xmb_diu_vitalik
+connection c_vitalik user=xmb_diu_vitalik password=xmb_diu_vitalik_pw
 statement error
 DELETE FROM xmb_diu_clickclack WHERE id = 2;
 ----
@@ -161,7 +161,7 @@ to_top	to_androed
 t	f
 
 
-connection c_vitalik2 user=xmb_diu_vitalik
+connection c_vitalik2 user=xmb_diu_vitalik password=xmb_diu_vitalik_pw
 query
 SELECT count(*) FROM xmb_diu_clickclack;
 ----
@@ -169,7 +169,7 @@ count
 3
 
 
-connection c_vitalik2 user=xmb_diu_vitalik
+connection c_vitalik2 user=xmb_diu_vitalik password=xmb_diu_vitalik_pw
 statement error
 UPDATE xmb_diu_clickclack SET payload = 'gone' WHERE id = 1;
 ----

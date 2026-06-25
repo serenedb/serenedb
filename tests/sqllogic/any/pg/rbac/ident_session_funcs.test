@@ -32,11 +32,11 @@ INSERT INTO ident_iceberg VALUES (1, 'clickclack'), (2, 'vedernikoff');
 
 
 statement ok
-CREATE ROLE ident_kostya LOGIN;
+CREATE ROLE ident_kostya LOGIN PASSWORD 'ident_kostya_pw';
 
 
 statement ok
-CREATE ROLE ident_deadinside LOGIN;
+CREATE ROLE ident_deadinside LOGIN PASSWORD 'ident_deadinside_pw';
 
 
 # ============================================================================
@@ -67,7 +67,7 @@ postgres	postgres	postgres	postgres
 # (nobody has done SET ROLE), so all equal the login name.
 # ============================================================================
 
-connection c_kostya user=ident_kostya
+connection c_kostya user=ident_kostya password=ident_kostya_pw
 query
 SELECT current_user AS cu, session_user AS su, current_role AS cr;
 ----
@@ -75,7 +75,7 @@ cu	su	cr
 ident_kostya	ident_kostya	ident_kostya
 
 
-connection c_kostya user=ident_kostya
+connection c_kostya user=ident_kostya password=ident_kostya_pw
 query
 SELECT CURRENT_USER AS cu, SESSION_USER AS su, CURRENT_ROLE AS cr, USER AS u;
 ----
@@ -86,7 +86,7 @@ ident_kostya	ident_kostya	ident_kostya	ident_kostya
 # Identity functions are usable inside predicates: the connected role equals
 # its own name; session_user equals current_user with no SET ROLE in play.
 
-connection c_kostya user=ident_kostya
+connection c_kostya user=ident_kostya password=ident_kostya_pw
 query
 SELECT current_user = 'ident_kostya'      AS is_self,
        session_user  = current_user        AS su_eq_cu,
@@ -102,7 +102,7 @@ t	t	t	f
 # fully independent of the kostya connection above.
 # ============================================================================
 
-connection c_dead user=ident_deadinside
+connection c_dead user=ident_deadinside password=ident_deadinside_pw
 query
 SELECT current_user AS cu, session_user AS su, current_role AS cr;
 ----
@@ -112,7 +112,7 @@ ident_deadinside	ident_deadinside	ident_deadinside
 
 # The two live connections disagree about who they are: each sees itself.
 
-connection c_dead user=ident_deadinside
+connection c_dead user=ident_deadinside password=ident_deadinside_pw
 query
 SELECT current_user = 'ident_deadinside' AS is_self,
        current_user = 'ident_kostya'      AS is_kostya;
@@ -143,7 +143,7 @@ t	f
 
 # Implicit-self two-arg oracle evaluated ON kostya's own connection: identical.
 
-connection c_kostya user=ident_kostya
+connection c_kostya user=ident_kostya password=ident_kostya_pw
 query
 SELECT has_table_privilege('ident_iceberg','SELECT') AS sel,
        has_table_privilege('ident_iceberg','INSERT') AS ins;
@@ -154,7 +154,7 @@ t	f
 
 # The real query path on that same connection agrees: SELECT works...
 
-connection c_kostya user=ident_kostya
+connection c_kostya user=ident_kostya password=ident_kostya_pw
 query
 SELECT id, mop FROM ident_iceberg ORDER BY id;
 ----
@@ -166,7 +166,7 @@ id	mop
 # ...while INSERT is denied. The trailing marker swallows serenedb's extra
 # DETAIL line so the block is green on both engines.
 
-connection c_kostya user=ident_kostya
+connection c_kostya user=ident_kostya password=ident_kostya_pw
 statement error
 INSERT INTO ident_iceberg VALUES (3, 'pudge');
 ----
@@ -176,7 +176,7 @@ db error: ERROR: permission denied for table ident_iceberg<slt:ignore>
 # deadinside has no grants: implicit-self oracle is all f on its own connection,
 # and the real SELECT is refused.
 
-connection c_dead user=ident_deadinside
+connection c_dead user=ident_deadinside password=ident_deadinside_pw
 query
 SELECT has_table_privilege('ident_iceberg','SELECT') AS sel,
        has_table_privilege('ident_iceberg','INSERT') AS ins;
@@ -185,7 +185,7 @@ sel	ins
 f	f
 
 
-connection c_dead user=ident_deadinside
+connection c_dead user=ident_deadinside password=ident_deadinside_pw
 statement error
 SELECT * FROM ident_iceberg;
 ----

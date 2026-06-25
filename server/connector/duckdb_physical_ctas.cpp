@@ -160,9 +160,9 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   // where the session role is available, rather than in PlanCreateTableAs.
   catalog::CreateTableOptions options = _options;
   options.owner = GetSereneDBContext(context).GetRoleId();
-  auto create_result = catalog_impl.CreateTable(
-    catalog::RequireOwnership(context), _database_id, _schema_name,
-    std::move(options), op_options);
+  auto create_result =
+    catalog_impl.CreateTable(catalog::RequireOwnership(context), _database_id,
+                             _schema_name, std::move(options), op_options);
   if (!create_result.ok()) {
     SDB_THROW(std::move(create_result));
   }

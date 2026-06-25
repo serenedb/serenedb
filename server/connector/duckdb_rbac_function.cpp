@@ -104,8 +104,9 @@ void CreateRolePragma(duckdb::ClientContext& context,
   options.superuser = ArgBool(params, 2, "superuser");
   options.inherit = ArgBool(params, 3, "inherit");
   options.has_password = ArgBool(params, 4, "has_password");
-  options.has_conn_limit = ArgBool(params, 5, "has_conn_limit");
-  options.has_valid_until = ArgBool(params, 6, "has_valid_until");
+  options.password = ArgStr(params, 5, "password");
+  options.has_conn_limit = ArgBool(params, 6, "has_conn_limit");
+  options.has_valid_until = ArgBool(params, 7, "has_valid_until");
 
   pg::CreateRole(conn_ctx, ArgStr(params, 0, "name"), options);
 }
@@ -133,8 +134,9 @@ void AlterRolePragma(duckdb::ClientContext& context,
   opts.createrole = ArgInt(params, 4, "createrole");
   opts.inherit = ArgInt(params, 5, "inherit");
   opts.has_password = ArgBool(params, 6, "has_password");
-  opts.has_conn_limit = ArgBool(params, 7, "has_conn_limit");
-  opts.has_valid_until = ArgBool(params, 8, "has_valid_until");
+  opts.password = ArgStr(params, 7, "password");
+  opts.has_conn_limit = ArgBool(params, 8, "has_conn_limit");
+  opts.has_valid_until = ArgBool(params, 9, "has_valid_until");
   pg::AlterRole(conn_ctx, ArgStr(params, 0, "name"), opts);
 }
 
@@ -249,8 +251,8 @@ void RegisterRbacPragmas(duckdb::DatabaseInstance& db) {
   loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
     "serenedb_create_role", CreateRolePragma,
     {LogicalType::VARCHAR, LogicalType::BOOLEAN, LogicalType::BOOLEAN,
-     LogicalType::BOOLEAN, LogicalType::BOOLEAN, LogicalType::BOOLEAN,
-     LogicalType::BOOLEAN}));
+     LogicalType::BOOLEAN, LogicalType::BOOLEAN, LogicalType::VARCHAR,
+     LogicalType::BOOLEAN, LogicalType::BOOLEAN}));
 
   loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
     "serenedb_drop_role", DropRolePragma,
@@ -260,7 +262,8 @@ void RegisterRbacPragmas(duckdb::DatabaseInstance& db) {
     "serenedb_alter_role", AlterRolePragma,
     {LogicalType::VARCHAR, LogicalType::INTEGER, LogicalType::INTEGER,
      LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::INTEGER,
-     LogicalType::BOOLEAN, LogicalType::BOOLEAN, LogicalType::BOOLEAN}));
+     LogicalType::BOOLEAN, LogicalType::VARCHAR, LogicalType::BOOLEAN,
+     LogicalType::BOOLEAN}));
 
   loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
     "serenedb_alter_role_config", AlterRoleConfigPragma,

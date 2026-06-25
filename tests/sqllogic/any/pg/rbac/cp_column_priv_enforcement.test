@@ -41,7 +41,7 @@ INSERT INTO cp_kostya VALUES (1, 'iceberg', 4), (2, 'vedernikoff', 8);
 # ============================================================================
 
 statement ok
-CREATE ROLE cp_abramov LOGIN;
+CREATE ROLE cp_abramov LOGIN PASSWORD 'cp_abramov_pw';
 
 
 statement ok
@@ -59,7 +59,7 @@ t	t	t
 
 
 # Query path agrees: the reader can really select every one of those columns.
-connection c_abramov user=cp_abramov
+connection c_abramov user=cp_abramov password=cp_abramov_pw
 query
 SELECT id AS row_id, payload AS row_payload, headcount AS row_headcount
 FROM cp_kostya ORDER BY id;
@@ -75,7 +75,7 @@ row_id	row_payload	row_headcount
 # ============================================================================
 
 statement ok
-CREATE ROLE cp_zhidky LOGIN;
+CREATE ROLE cp_zhidky LOGIN PASSWORD 'cp_zhidky_pw';
 
 
 statement ok
@@ -93,7 +93,7 @@ t	t	t
 
 
 # Query path agrees: the writer can really insert a full row.
-connection c_zhidky user=cp_zhidky
+connection c_zhidky user=cp_zhidky password=cp_zhidky_pw
 statement ok
 INSERT INTO cp_kostya VALUES (3, 'pudge', 5);
 
@@ -112,7 +112,7 @@ n
 # ============================================================================
 
 statement ok
-CREATE ROLE cp_salam LOGIN;
+CREATE ROLE cp_salam LOGIN PASSWORD 'cp_salam_pw';
 
 
 statement ok
@@ -129,7 +129,7 @@ t	t
 
 
 # Query path agrees: the PUBLIC grant lets cp_salam really read.
-connection c_salam user=cp_salam
+connection c_salam user=cp_salam password=cp_salam_pw
 query
 SELECT count(*) AS n FROM cp_kostya;
 ----
@@ -159,12 +159,12 @@ t	t
 
 
 # Query path agrees: the writer can really update.
-connection c_zhidky user=cp_zhidky
+connection c_zhidky user=cp_zhidky password=cp_zhidky_pw
 statement ok
 UPDATE cp_kostya SET payload = 'babsky' WHERE id = 3;
 
 
-connection c_zhidky user=cp_zhidky
+connection c_zhidky user=cp_zhidky password=cp_zhidky_pw
 query
 SELECT payload AS row_payload FROM cp_kostya WHERE id = 3;
 ----

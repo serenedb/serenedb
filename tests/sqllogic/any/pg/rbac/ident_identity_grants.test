@@ -38,14 +38,14 @@ CREATE TABLE ident_kryakva (id int);
 
 
 statement ok
-CREATE ROLE "ident_Pavel" LOGIN;
+CREATE ROLE "ident_Pavel" LOGIN PASSWORD 'ident_Pavel_pw';
 
 
 # ============================================================================
 # Identity: on its own connection the MixedCase role reports its exact name.
 # ============================================================================
 
-connection c_pavel user=ident_Pavel
+connection c_pavel user=ident_Pavel password=ident_Pavel_pw
 query
 SELECT current_user AS cu, session_user AS su, current_role AS cr;
 ----
@@ -76,7 +76,7 @@ sel	ins
 f	f
 
 
-connection c_pavel user=ident_Pavel
+connection c_pavel user=ident_Pavel password=ident_Pavel_pw
 statement error
 SELECT * FROM ident_shlepach;
 ----
@@ -100,7 +100,7 @@ sel	ins
 t	f
 
 
-connection c_pavel user=ident_Pavel
+connection c_pavel user=ident_Pavel password=ident_Pavel_pw
 query
 SELECT has_table_privilege('ident_shlepach','SELECT') AS sel,
        has_table_privilege('ident_shlepach','INSERT') AS ins;
@@ -109,7 +109,7 @@ sel	ins
 t	f
 
 
-connection c_pavel user=ident_Pavel
+connection c_pavel user=ident_Pavel password=ident_Pavel_pw
 query
 SELECT id, salam FROM ident_shlepach ORDER BY id;
 ----
@@ -118,7 +118,7 @@ id	salam
 2	iceberg
 
 
-connection c_pavel user=ident_Pavel
+connection c_pavel user=ident_Pavel password=ident_Pavel_pw
 statement error
 INSERT INTO ident_shlepach VALUES (3, 'pudge');
 ----
@@ -142,12 +142,12 @@ sel	ins
 t	t
 
 
-connection c_pavel user=ident_Pavel
+connection c_pavel user=ident_Pavel password=ident_Pavel_pw
 statement ok
 INSERT INTO ident_shlepach VALUES (3, 'clickclack');
 
 
-connection c_pavel user=ident_Pavel
+connection c_pavel user=ident_Pavel password=ident_Pavel_pw
 query
 SELECT count(*) AS n FROM ident_shlepach;
 ----
@@ -172,14 +172,14 @@ sel	ins
 f	t
 
 
-connection c_pavel user=ident_Pavel
+connection c_pavel user=ident_Pavel password=ident_Pavel_pw
 statement error
 SELECT * FROM ident_shlepach;
 ----
 db error: ERROR: permission denied for table ident_shlepach<slt:ignore>
 
 
-connection c_pavel user=ident_Pavel
+connection c_pavel user=ident_Pavel password=ident_Pavel_pw
 statement ok
 INSERT INTO ident_shlepach VALUES (4, 'babsky');
 
@@ -203,7 +203,7 @@ t	f
 
 # The PUBLIC-derived read works on the live MixedCase connection too.
 
-connection c_pavel user=ident_Pavel
+connection c_pavel user=ident_Pavel password=ident_Pavel_pw
 query
 SELECT count(*) AS n FROM ident_kryakva;
 ----
@@ -230,7 +230,7 @@ sel	ins	upd	del
 f	f	f	f
 
 
-connection c_pavel user=ident_Pavel
+connection c_pavel user=ident_Pavel password=ident_Pavel_pw
 statement error
 INSERT INTO ident_shlepach VALUES (5, 'zhidky');
 ----

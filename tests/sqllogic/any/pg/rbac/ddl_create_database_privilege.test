@@ -19,11 +19,11 @@ DROP ROLE IF EXISTS cdb_babsky;
 
 
 statement ok
-CREATE ROLE cdb_vedernikoff LOGIN;
+CREATE ROLE cdb_vedernikoff LOGIN PASSWORD 'cdb_vedernikoff_pw';
 
 
 statement ok
-CREATE ROLE cdb_babsky LOGIN;
+CREATE ROLE cdb_babsky LOGIN PASSWORD 'cdb_babsky_pw';
 
 
 statement ok
@@ -31,7 +31,7 @@ ALTER ROLE cdb_babsky CREATEDB;
 
 
 # A plain role (no CREATEDB) is refused.
-connection c_ved user=cdb_vedernikoff
+connection c_ved user=cdb_vedernikoff password=cdb_vedernikoff_pw
 statement error
 CREATE DATABASE cdb_clickclack;
 ----
@@ -48,7 +48,7 @@ n
 
 
 # A role with CREATEDB succeeds.
-connection c_bab user=cdb_babsky
+connection c_bab user=cdb_babsky password=cdb_babsky_pw
 statement ok
 CREATE DATABASE cdb_clickclack;
 

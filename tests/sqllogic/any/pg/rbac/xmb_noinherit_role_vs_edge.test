@@ -38,11 +38,11 @@ GRANT SELECT ON xmb_nre_mop TO xmb_nre_iceberg;
 
 
 statement ok
-CREATE ROLE xmb_nre_vedernikoff LOGIN NOINHERIT;
+CREATE ROLE xmb_nre_vedernikoff LOGIN NOINHERIT PASSWORD 'xmb_nre_vedernikoff_pw';
 
 
 statement ok
-CREATE ROLE xmb_nre_clickclack LOGIN INHERIT;
+CREATE ROLE xmb_nre_clickclack LOGIN INHERIT PASSWORD 'xmb_nre_clickclack_pw';
 
 
 # ---- Default edge for both: rolinherit decides ----
@@ -75,14 +75,14 @@ f	t
 
 
 # Real query path: NOINHERIT member denied, INHERIT member allowed.
-connection c_ved user=xmb_nre_vedernikoff
+connection c_ved user=xmb_nre_vedernikoff password=xmb_nre_vedernikoff_pw
 statement error
 SELECT * FROM xmb_nre_mop;
 ----
 db error: ERROR: permission denied for table xmb_nre_mop<slt:ignore>
 
 
-connection c_click user=xmb_nre_clickclack
+connection c_click user=xmb_nre_clickclack password=xmb_nre_clickclack_pw
 query
 SELECT count(*) FROM xmb_nre_mop;
 ----
@@ -104,7 +104,7 @@ ved_usage	ved_sel
 t	t
 
 
-connection c_ved2 user=xmb_nre_vedernikoff
+connection c_ved2 user=xmb_nre_vedernikoff password=xmb_nre_vedernikoff_pw
 query
 SELECT count(*) FROM xmb_nre_mop;
 ----
@@ -126,7 +126,7 @@ click_usage	click_sel
 f	f
 
 
-connection c_click2 user=xmb_nre_clickclack
+connection c_click2 user=xmb_nre_clickclack password=xmb_nre_clickclack_pw
 statement error
 SELECT * FROM xmb_nre_mop;
 ----

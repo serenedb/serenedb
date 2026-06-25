@@ -24,7 +24,7 @@ INSERT INTO crc_iceberg VALUES (1, 2, 3), (4, 5, 6);
 
 
 statement ok
-CREATE ROLE crc_vedernikoff LOGIN;
+CREATE ROLE crc_vedernikoff LOGIN PASSWORD 'crc_vedernikoff_pw';
 
 
 statement ok
@@ -39,13 +39,13 @@ GRANT SELECT (clickclack) ON crc_iceberg TO crc_vedernikoff;
 # === INSERT ... RETURNING ===
 
 # Bare INSERT assigning the granted column (no RETURNING) -> allowed.
-connection c_ved user=crc_vedernikoff
+connection c_ved user=crc_vedernikoff password=crc_vedernikoff_pw
 statement ok
 INSERT INTO crc_iceberg (clickclack) VALUES (7);
 
 
 # RETURNING the granted column -> allowed (column-level SELECT).
-connection c_ved_ret user=crc_vedernikoff
+connection c_ved_ret user=crc_vedernikoff password=crc_vedernikoff_pw
 query
 INSERT INTO crc_iceberg (clickclack) VALUES (70) RETURNING clickclack;
 ----
@@ -54,7 +54,7 @@ clickclack
 
 
 # RETURNING an ungranted column is refused.
-connection c_ved2 user=crc_vedernikoff
+connection c_ved2 user=crc_vedernikoff password=crc_vedernikoff_pw
 statement error
 INSERT INTO crc_iceberg (clickclack) VALUES (8) RETURNING mop;
 ----
@@ -62,7 +62,7 @@ db error: ERROR: permission denied for table crc_iceberg<slt:ignore>
 
 
 # RETURNING * touches every column -> refused (mop is ungranted).
-connection c_ved3 user=crc_vedernikoff
+connection c_ved3 user=crc_vedernikoff password=crc_vedernikoff_pw
 statement error
 INSERT INTO crc_iceberg (clickclack) VALUES (9) RETURNING *;
 ----
@@ -73,13 +73,13 @@ db error: ERROR: permission denied for table crc_iceberg<slt:ignore>
 
 # Bare UPDATE, constant SET, WHERE reads the granted column (no RETURNING)
 # -> allowed.
-connection c_ved4 user=crc_vedernikoff
+connection c_ved4 user=crc_vedernikoff password=crc_vedernikoff_pw
 statement ok
 UPDATE crc_iceberg SET babsky = 100 WHERE clickclack = 1;
 
 
 # RETURNING the granted column -> allowed (column-level SELECT).
-connection c_ved_uret user=crc_vedernikoff
+connection c_ved_uret user=crc_vedernikoff password=crc_vedernikoff_pw
 query
 UPDATE crc_iceberg SET babsky = 101 WHERE clickclack = 1 RETURNING clickclack;
 ----
@@ -88,7 +88,7 @@ clickclack
 
 
 # RETURNING an ungranted column -> refused.
-connection c_ved5 user=crc_vedernikoff
+connection c_ved5 user=crc_vedernikoff password=crc_vedernikoff_pw
 statement error
 UPDATE crc_iceberg SET babsky = 100 WHERE clickclack = 1 RETURNING mop;
 ----
@@ -96,7 +96,7 @@ db error: ERROR: permission denied for table crc_iceberg<slt:ignore>
 
 
 # RETURNING * -> refused (touches ungranted columns).
-connection c_ved6 user=crc_vedernikoff
+connection c_ved6 user=crc_vedernikoff password=crc_vedernikoff_pw
 statement error
 UPDATE crc_iceberg SET babsky = 100 WHERE clickclack = 1 RETURNING *;
 ----
@@ -106,20 +106,20 @@ db error: ERROR: permission denied for table crc_iceberg<slt:ignore>
 # === DELETE ... WHERE false RETURNING ===
 
 # Bare DELETE (WHERE false) reads no column (no RETURNING) -> allowed.
-connection c_ved7 user=crc_vedernikoff
+connection c_ved7 user=crc_vedernikoff password=crc_vedernikoff_pw
 statement ok
 DELETE FROM crc_iceberg WHERE false;
 
 
 # RETURNING the granted column -> allowed (column-level SELECT). WHERE false
 # returns no rows, so the projection is empty but the privilege check passes.
-connection c_ved_dret user=crc_vedernikoff
+connection c_ved_dret user=crc_vedernikoff password=crc_vedernikoff_pw
 statement ok
 DELETE FROM crc_iceberg WHERE false RETURNING clickclack;
 
 
 # RETURNING an ungranted column -> refused.
-connection c_ved8 user=crc_vedernikoff
+connection c_ved8 user=crc_vedernikoff password=crc_vedernikoff_pw
 statement error
 DELETE FROM crc_iceberg WHERE false RETURNING mop;
 ----
@@ -127,7 +127,7 @@ db error: ERROR: permission denied for table crc_iceberg<slt:ignore>
 
 
 # RETURNING * -> refused (touches ungranted columns).
-connection c_ved9 user=crc_vedernikoff
+connection c_ved9 user=crc_vedernikoff password=crc_vedernikoff_pw
 statement error
 DELETE FROM crc_iceberg WHERE false RETURNING *;
 ----

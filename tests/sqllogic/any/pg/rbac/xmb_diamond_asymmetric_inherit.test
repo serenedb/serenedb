@@ -41,7 +41,7 @@ INSERT INTO xmb_dai_clickclack VALUES (1, 'mop');
 
 
 statement ok
-CREATE ROLE xmb_dai_vitalik LOGIN;
+CREATE ROLE xmb_dai_vitalik LOGIN PASSWORD 'xmb_dai_vitalik_pw';
 
 
 statement ok
@@ -107,7 +107,7 @@ t	f	t
 
 
 # Real query path: SELECT + INSERT succeed, UPDATE denied.
-connection c_vitalik user=xmb_dai_vitalik
+connection c_vitalik user=xmb_dai_vitalik password=xmb_dai_vitalik_pw
 query
 SELECT count(*) FROM xmb_dai_clickclack;
 ----
@@ -115,12 +115,12 @@ count
 1
 
 
-connection c_vitalik user=xmb_dai_vitalik
+connection c_vitalik user=xmb_dai_vitalik password=xmb_dai_vitalik_pw
 statement ok
 INSERT INTO xmb_dai_clickclack VALUES (2, 'babsky');
 
 
-connection c_vitalik user=xmb_dai_vitalik
+connection c_vitalik user=xmb_dai_vitalik password=xmb_dai_vitalik_pw
 statement error
 UPDATE xmb_dai_clickclack SET payload = 'x' WHERE id = 1;
 ----
@@ -141,7 +141,7 @@ upd	usage_androed
 t	t
 
 
-connection c_vitalik2 user=xmb_dai_vitalik
+connection c_vitalik2 user=xmb_dai_vitalik password=xmb_dai_vitalik_pw
 statement ok
 UPDATE xmb_dai_clickclack SET payload = 'iceberg' WHERE id = 1;
 

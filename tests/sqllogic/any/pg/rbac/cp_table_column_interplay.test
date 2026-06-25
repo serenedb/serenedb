@@ -44,7 +44,7 @@ INSERT INTO tci_iceberg VALUES (1, 2, 3);
 
 
 statement ok
-CREATE ROLE tci_vedernikoff LOGIN;
+CREATE ROLE tci_vedernikoff LOGIN PASSWORD 'tci_vedernikoff_pw';
 
 
 statement ok
@@ -80,7 +80,7 @@ mop	(none)
 
 # The table grant covers EVERY column, including babsky/mop which have no column
 # grant of their own.
-connection c_ved user=tci_vedernikoff
+connection c_ved user=tci_vedernikoff password=tci_vedernikoff_pw
 query
 SELECT clickclack, babsky, mop FROM tci_iceberg ORDER BY clickclack;
 ----
@@ -120,7 +120,7 @@ mop	(none)
 
 
 # Even the once-column-granted clickclack is now refused.
-connection c_ved2 user=tci_vedernikoff
+connection c_ved2 user=tci_vedernikoff password=tci_vedernikoff_pw
 statement error
 SELECT clickclack FROM tci_iceberg;
 ----
@@ -140,7 +140,7 @@ INSERT INTO tci_clickclack VALUES (10, 20, 30);
 
 
 statement ok
-CREATE ROLE tci_babsky LOGIN;
+CREATE ROLE tci_babsky LOGIN PASSWORD 'tci_babsky_pw';
 
 
 # Column grant first: relacl carries no grantee element yet, only attacl does.
@@ -213,7 +213,7 @@ mop	(none)
 
 
 # The surviving table grant still lets every column be read.
-connection c_bab user=tci_babsky
+connection c_bab user=tci_babsky password=tci_babsky_pw
 query
 SELECT clickclack, babsky, mop FROM tci_clickclack ORDER BY clickclack;
 ----
@@ -230,7 +230,7 @@ CREATE TABLE tci_mop (clickclack int, babsky int, mop int);
 
 
 statement ok
-CREATE ROLE tci_kalganov LOGIN;
+CREATE ROLE tci_kalganov LOGIN PASSWORD 'tci_kalganov_pw';
 
 
 statement ok
@@ -291,7 +291,7 @@ mop	(none)
 
 
 # With both INSERT grants gone, the grantee can no longer insert.
-connection c_kal user=tci_kalganov
+connection c_kal user=tci_kalganov password=tci_kalganov_pw
 statement error
 INSERT INTO tci_mop (clickclack) VALUES (99);
 ----

@@ -48,7 +48,7 @@ CREATE VIEW vdr_clickclack AS SELECT id, av FROM vdr_iceberg;
 
 
 statement ok
-CREATE ROLE vdr_vedernikoff LOGIN;
+CREATE ROLE vdr_vedernikoff LOGIN PASSWORD 'vdr_vedernikoff_pw';
 
 
 # Grant SELECT on the VIEW only -- vedernikoff gets nothing on vdr_iceberg.
@@ -71,7 +71,7 @@ f
 # === B1: read through the view -> PG ALLOWS (definer rights) ===
 # SereneDB DENIES this today ("permission denied for table vdr_iceberg"); the
 # redesign must make it succeed with the view owner's rights.
-connection c_ved user=vdr_vedernikoff
+connection c_ved user=vdr_vedernikoff password=vdr_vedernikoff_pw
 query
 SELECT id, av FROM vdr_clickclack ORDER BY id;
 ----
@@ -81,7 +81,7 @@ id	av
 
 
 # Aggregate through the view is likewise allowed under definer rights.
-connection c_ved2 user=vdr_vedernikoff
+connection c_ved2 user=vdr_vedernikoff password=vdr_vedernikoff_pw
 query
 SELECT count(*) AS n FROM vdr_clickclack;
 ----
@@ -91,7 +91,7 @@ n
 
 # === Control (byte-identical on PG and SereneDB): the view grant does NOT leak
 # the base table -- reading vdr_iceberg directly is still refused. ===
-connection c_ved3 user=vdr_vedernikoff
+connection c_ved3 user=vdr_vedernikoff password=vdr_vedernikoff_pw
 statement error
 SELECT id FROM vdr_iceberg;
 ----

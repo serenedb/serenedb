@@ -63,7 +63,7 @@ CREATE TABLE cp_iceberg (id int, payload text, tagline text, headcount int);
 # ============================================================================
 
 statement ok
-CREATE ROLE cp_clickclack LOGIN;
+CREATE ROLE cp_clickclack LOGIN PASSWORD 'cp_clickclack_pw';
 
 
 statement ok
@@ -85,7 +85,7 @@ t	t	t	t
 # ============================================================================
 
 statement ok
-CREATE ROLE cp_kostya LOGIN;
+CREATE ROLE cp_kostya LOGIN PASSWORD 'cp_kostya_pw';
 
 
 statement ok
@@ -254,7 +254,7 @@ statement ok
 INSERT INTO cp_iceberg VALUES (1, 'mop', 'iceberg', 7), (2, 'pavel', 'salam', 3);
 
 
-connection c_clickclack user=cp_clickclack
+connection c_clickclack user=cp_clickclack password=cp_clickclack_pw
 query
 SELECT id AS row_id, payload AS row_payload FROM cp_iceberg ORDER BY id;
 ----
@@ -263,7 +263,7 @@ row_id	row_payload
 2	pavel
 
 
-connection c_kostya user=cp_kostya
+connection c_kostya user=cp_kostya password=cp_kostya_pw
 statement ok
 INSERT INTO cp_iceberg VALUES (3, 'gul', 'kryakva', 9);
 

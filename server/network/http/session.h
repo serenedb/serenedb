@@ -143,14 +143,10 @@ class HttpSession final
       auto database = snapshot->GetDatabase(dbname);
       SDB_ENSURE(database, ERROR_INTERNAL);
       const auto database_id = database->GetId();
-      std::string_view user =
+      const std::string_view user =
         _user.empty() ? StaticStrings::kDefaultUser : _user;
       auto role = snapshot->GetRole(user);
-      if (!role) {
-        user = StaticStrings::kDefaultUser;
-        role = snapshot->GetRole(user);
-      }
-      SDB_ENSURE(role, ERROR_INTERNAL);
+      SDB_ENSURE(role, ERROR_FORBIDDEN, "role \"", user, "\" does not exist");
 
       _conn = DuckDBEngine::Instance().CreateConnection();
       _connection_ctx = std::make_shared<ConnectionContext>(

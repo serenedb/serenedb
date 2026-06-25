@@ -38,7 +38,7 @@ INSERT INTO ccr_clickclack VALUES (1, 5, 999), (2, 6, 888);
 
 
 statement ok
-CREATE ROLE ccr_vedernikoff LOGIN;
+CREATE ROLE ccr_vedernikoff LOGIN PASSWORD 'ccr_vedernikoff_pw';
 
 
 # iceberg: SELECT on (id, babsky) only -- mop is ungranted.
@@ -54,7 +54,7 @@ GRANT SELECT (id, weight) ON ccr_clickclack TO ccr_vedernikoff;
 # === JOIN: every referenced column across the statement is checked ===
 
 # Join on granted keys (id=id), project granted columns from each side -> OK.
-connection c_ved user=ccr_vedernikoff
+connection c_ved user=ccr_vedernikoff password=ccr_vedernikoff_pw
 query
 SELECT i.babsky, c.weight FROM ccr_iceberg i JOIN ccr_clickclack c ON i.id = c.id ORDER BY i.babsky;
 ----
@@ -64,7 +64,7 @@ babsky	weight
 
 
 # Join KEY uses an ungranted column (i.mop) -> refused on ccr_iceberg.
-connection c_ved2 user=ccr_vedernikoff
+connection c_ved2 user=ccr_vedernikoff password=ccr_vedernikoff_pw
 statement error
 SELECT i.id FROM ccr_iceberg i JOIN ccr_clickclack c ON i.mop = c.id;
 ----
@@ -72,7 +72,7 @@ db error: ERROR: permission denied for table ccr_iceberg<slt:ignore>
 
 
 # Projection references an ungranted column (c.secret) -> refused on ccr_clickclack.
-connection c_ved3 user=ccr_vedernikoff
+connection c_ved3 user=ccr_vedernikoff password=ccr_vedernikoff_pw
 statement error
 SELECT i.id, c.secret FROM ccr_iceberg i JOIN ccr_clickclack c ON i.id = c.id;
 ----
@@ -80,7 +80,7 @@ db error: ERROR: permission denied for table ccr_clickclack<slt:ignore>
 
 
 # WHERE predicate on an ungranted column (i.mop) -> refused on ccr_iceberg.
-connection c_ved4 user=ccr_vedernikoff
+connection c_ved4 user=ccr_vedernikoff password=ccr_vedernikoff_pw
 statement error
 SELECT i.id FROM ccr_iceberg i JOIN ccr_clickclack c ON i.id = c.id WHERE i.mop > 0;
 ----
@@ -88,7 +88,7 @@ db error: ERROR: permission denied for table ccr_iceberg<slt:ignore>
 
 
 # ORDER BY on an ungranted column (c.secret) -> refused on ccr_clickclack.
-connection c_ved5 user=ccr_vedernikoff
+connection c_ved5 user=ccr_vedernikoff password=ccr_vedernikoff_pw
 statement error
 SELECT i.id FROM ccr_iceberg i JOIN ccr_clickclack c ON i.id = c.id ORDER BY c.secret;
 ----
@@ -96,7 +96,7 @@ db error: ERROR: permission denied for table ccr_clickclack<slt:ignore>
 
 
 # GROUP BY on an ungranted column (i.mop) -> refused on ccr_iceberg.
-connection c_ved6 user=ccr_vedernikoff
+connection c_ved6 user=ccr_vedernikoff password=ccr_vedernikoff_pw
 statement error
 SELECT i.mop, count(*) FROM ccr_iceberg i JOIN ccr_clickclack c ON i.id = c.id GROUP BY i.mop;
 ----
@@ -104,7 +104,7 @@ db error: ERROR: permission denied for table ccr_iceberg<slt:ignore>
 
 
 # Aggregate argument is an ungranted column (c.secret) -> refused on ccr_clickclack.
-connection c_ved7 user=ccr_vedernikoff
+connection c_ved7 user=ccr_vedernikoff password=ccr_vedernikoff_pw
 statement error
 SELECT sum(c.secret) FROM ccr_iceberg i JOIN ccr_clickclack c ON i.id = c.id;
 ----
@@ -114,7 +114,7 @@ db error: ERROR: permission denied for table ccr_clickclack<slt:ignore>
 # === Subqueries / CTEs: inner relation columns are checked too ===
 
 # Subquery reads only granted columns (id, babsky) -> OK.
-connection c_ved8 user=ccr_vedernikoff
+connection c_ved8 user=ccr_vedernikoff password=ccr_vedernikoff_pw
 query
 SELECT id FROM ccr_clickclack WHERE id IN (SELECT id FROM ccr_iceberg WHERE babsky > 5) ORDER BY id;
 ----
@@ -124,7 +124,7 @@ id
 
 
 # Subquery reads an ungranted column (mop) -> refused on ccr_iceberg.
-connection c_ved9 user=ccr_vedernikoff
+connection c_ved9 user=ccr_vedernikoff password=ccr_vedernikoff_pw
 statement error
 SELECT id FROM ccr_clickclack WHERE id IN (SELECT id FROM ccr_iceberg WHERE mop > 50);
 ----
@@ -132,7 +132,7 @@ db error: ERROR: permission denied for table ccr_iceberg<slt:ignore>
 
 
 # CTE reads only a granted column (weight) -> OK.
-connection c_ved10 user=ccr_vedernikoff
+connection c_ved10 user=ccr_vedernikoff password=ccr_vedernikoff_pw
 query
 WITH w AS (SELECT weight FROM ccr_clickclack) SELECT count(*) AS n FROM w;
 ----
@@ -141,7 +141,7 @@ n
 
 
 # CTE reads an ungranted column (secret) -> refused on ccr_clickclack.
-connection c_ved11 user=ccr_vedernikoff
+connection c_ved11 user=ccr_vedernikoff password=ccr_vedernikoff_pw
 statement error
 WITH w AS (SELECT secret FROM ccr_clickclack) SELECT count(*) FROM w;
 ----
@@ -151,7 +151,7 @@ db error: ERROR: permission denied for table ccr_clickclack<slt:ignore>
 # === Aggregates and count(*) ===
 
 # SUM over a granted column (babsky) -> OK.
-connection c_ved12 user=ccr_vedernikoff
+connection c_ved12 user=ccr_vedernikoff password=ccr_vedernikoff_pw
 query
 SELECT sum(babsky) AS s FROM ccr_iceberg;
 ----
@@ -160,7 +160,7 @@ s
 
 
 # SUM over an ungranted column (mop) -> refused on ccr_iceberg.
-connection c_ved13 user=ccr_vedernikoff
+connection c_ved13 user=ccr_vedernikoff password=ccr_vedernikoff_pw
 statement error
 SELECT sum(mop) FROM ccr_iceberg;
 ----
@@ -168,7 +168,7 @@ db error: ERROR: permission denied for table ccr_iceberg<slt:ignore>
 
 
 # count(*) reads no specific column; a grant on any one column suffices -> OK.
-connection c_ved14 user=ccr_vedernikoff
+connection c_ved14 user=ccr_vedernikoff password=ccr_vedernikoff_pw
 query
 SELECT count(*) AS n FROM ccr_iceberg;
 ----
@@ -177,7 +177,7 @@ n
 
 
 # count(*) over a join where each relation has at least one granted column -> OK.
-connection c_ved15 user=ccr_vedernikoff
+connection c_ved15 user=ccr_vedernikoff password=ccr_vedernikoff_pw
 query
 SELECT count(*) AS n FROM ccr_iceberg i JOIN ccr_clickclack c ON i.id = c.id;
 ----

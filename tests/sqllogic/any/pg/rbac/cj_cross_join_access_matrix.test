@@ -23,7 +23,7 @@ DROP ROLE IF EXISTS cj_vedernikoff;
 
 
 statement ok
-CREATE ROLE cj_vedernikoff LOGIN;
+CREATE ROLE cj_vedernikoff LOGIN PASSWORD 'cj_vedernikoff_pw';
 
 
 statement ok
@@ -62,7 +62,7 @@ t	f	f
 # ---- As cj_vedernikoff ----
 
 # Reading only granted columns of the one accessible table: allowed.
-connection c_cj user=cj_vedernikoff
+connection c_cj user=cj_vedernikoff password=cj_vedernikoff_pw
 query
 SELECT id, payload FROM cj_clickclack ORDER BY id;
 ----
@@ -72,7 +72,7 @@ id	payload
 
 
 # Cross join referencing BOTH tables' columns: denied on the un-granted mop.
-connection c_cj user=cj_vedernikoff
+connection c_cj user=cj_vedernikoff password=cj_vedernikoff_pw
 statement error
 SELECT a.payload, b.label FROM cj_clickclack a, cj_mop b;
 ----
@@ -80,7 +80,7 @@ db error: ERROR: permission denied for table cj_mop<slt:ignore>
 
 
 # Explicit JOIN whose ON references mop.id: denied on mop.
-connection c_cj user=cj_vedernikoff
+connection c_cj user=cj_vedernikoff password=cj_vedernikoff_pw
 statement error
 SELECT a.payload FROM cj_clickclack a JOIN cj_mop b ON a.id = b.id;
 ----
@@ -88,7 +88,7 @@ db error: ERROR: permission denied for table cj_mop<slt:ignore>
 
 
 # Self cross join over only the granted columns: allowed.
-connection c_cj user=cj_vedernikoff
+connection c_cj user=cj_vedernikoff password=cj_vedernikoff_pw
 query
 SELECT x.payload FROM cj_clickclack x, cj_clickclack y WHERE x.id = y.id ORDER BY x.payload;
 ----
@@ -99,7 +99,7 @@ p2
 
 # A join that references a DENIED COLUMN (secret) of an otherwise-accessible
 # table: denied on that table.
-connection c_cj user=cj_vedernikoff
+connection c_cj user=cj_vedernikoff password=cj_vedernikoff_pw
 statement error
 SELECT a.secret FROM cj_clickclack a, cj_clickclack y;
 ----
@@ -107,7 +107,7 @@ db error: ERROR: permission denied for table cj_clickclack<slt:ignore>
 
 
 # Subquery referencing mop's column: denied on mop.
-connection c_cj user=cj_vedernikoff
+connection c_cj user=cj_vedernikoff password=cj_vedernikoff_pw
 statement error
 SELECT a.payload FROM cj_clickclack a WHERE a.id IN (SELECT id FROM cj_mop);
 ----
@@ -120,7 +120,7 @@ statement ok
 GRANT SELECT ON cj_mop TO cj_vedernikoff;
 
 
-connection c_cj2 user=cj_vedernikoff
+connection c_cj2 user=cj_vedernikoff password=cj_vedernikoff_pw
 query
 SELECT a.payload, b.label FROM cj_clickclack a JOIN cj_mop b ON a.id = b.id ORDER BY a.payload;
 ----
@@ -130,7 +130,7 @@ p2	m2
 
 
 # clickclack.secret is still denied even with mop fully granted (column-level).
-connection c_cj2 user=cj_vedernikoff
+connection c_cj2 user=cj_vedernikoff password=cj_vedernikoff_pw
 statement error
 SELECT a.secret, b.label FROM cj_clickclack a, cj_mop b;
 ----

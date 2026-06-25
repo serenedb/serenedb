@@ -30,7 +30,7 @@ INSERT INTO revx_vitalik VALUES (1, 'iceberg'), (2, 'vedernikoff');
 
 
 statement ok
-CREATE ROLE revx_shlepach LOGIN;
+CREATE ROLE revx_shlepach LOGIN PASSWORD 'revx_shlepach_pw';
 
 
 # ============================================================================
@@ -58,7 +58,7 @@ t	t	f
 
 
 # Real path agrees: the read works.
-connection c_shlepach user=revx_shlepach
+connection c_shlepach user=revx_shlepach password=revx_shlepach_pw
 query
 SELECT id, mop FROM revx_vitalik ORDER BY id;
 ----
@@ -68,7 +68,7 @@ id	mop
 
 
 # And the insert works.
-connection c_shlepach user=revx_shlepach
+connection c_shlepach user=revx_shlepach password=revx_shlepach_pw
 statement ok
 INSERT INTO revx_vitalik VALUES (3, 'pudge');
 
@@ -92,7 +92,7 @@ f	t
 
 
 # Read denied now.
-connection c_shlepach user=revx_shlepach
+connection c_shlepach user=revx_shlepach password=revx_shlepach_pw
 statement error
 SELECT * FROM revx_vitalik;
 ----
@@ -100,7 +100,7 @@ db error: ERROR: permission denied for table revx_vitalik<slt:ignore>
 
 
 # Insert still allowed -- only SELECT was actually held-and-stripped.
-connection c_shlepach user=revx_shlepach
+connection c_shlepach user=revx_shlepach password=revx_shlepach_pw
 statement ok
 INSERT INTO revx_vitalik VALUES (4, 'babsky');
 
@@ -128,14 +128,14 @@ f	f
 
 
 # Both reads and writes are denied.
-connection c_shlepach user=revx_shlepach
+connection c_shlepach user=revx_shlepach password=revx_shlepach_pw
 statement error
 SELECT * FROM revx_vitalik;
 ----
 db error: ERROR: permission denied for table revx_vitalik<slt:ignore>
 
 
-connection c_shlepach user=revx_shlepach
+connection c_shlepach user=revx_shlepach password=revx_shlepach_pw
 statement error
 INSERT INTO revx_vitalik VALUES (5, 'zhidky');
 ----
@@ -160,7 +160,7 @@ t	f
 
 
 # Read works again after the re-grant.
-connection c_shlepach user=revx_shlepach
+connection c_shlepach user=revx_shlepach password=revx_shlepach_pw
 query
 SELECT count(*) AS n FROM revx_vitalik;
 ----
@@ -169,7 +169,7 @@ n
 
 
 # Write still refused -- only SELECT was re-granted.
-connection c_shlepach user=revx_shlepach
+connection c_shlepach user=revx_shlepach password=revx_shlepach_pw
 statement error
 INSERT INTO revx_vitalik VALUES (6, 'makak');
 ----
@@ -194,7 +194,7 @@ sel	ins	upd	del
 f	f	f	f
 
 
-connection c_shlepach user=revx_shlepach
+connection c_shlepach user=revx_shlepach password=revx_shlepach_pw
 statement error
 SELECT * FROM revx_vitalik;
 ----

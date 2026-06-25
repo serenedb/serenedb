@@ -39,6 +39,7 @@
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/table.h"
+#include "network/credentials.h"
 #include "pg/errcodes.h"
 #include "pg/pg_types.h"
 #include "pg/sql_exception_macro.h"
@@ -64,12 +65,7 @@ ObjectId CurrentRoleId(const catalog::Snapshot& snapshot,
   return role->GetId();
 }
 
-void RejectUnsupportedRoleOptions(bool has_password, bool has_conn_limit,
-                                  bool has_valid_until) {
-  if (has_password) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("PASSWORD is not supported"));
-  }
+void RejectUnsupportedRoleOptions(bool has_conn_limit, bool has_valid_until) {
   if (has_conn_limit) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("CONNECTION LIMIT is not supported"));
@@ -80,12 +76,25 @@ void RejectUnsupportedRoleOptions(bool has_password, bool has_conn_limit,
   }
 }
 
+// Hash a cleartext password into the PG-format SCRAM verifier string stored as
+// rolpassword. Empty input clears the password (login under trust).
+std::string MakePasswordVerifier(std::string_view password) {
+  if (password.empty()) {
+    return {};
+  }
+  auto verifier = network::BuildScramVerifier(password);
+  if (!verifier) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("could not derive password verifier"));
+  }
+  return network::ScramVerifierToString(*verifier);
+}
+
 }  // namespace
 
 void CreateRole(ConnectionContext& ctx, std::string_view name,
                 const CreateRoleOptions& options) {
-  RejectUnsupportedRoleOptions(options.has_password, options.has_conn_limit,
-                               options.has_valid_until);
+  RejectUnsupportedRoleOptions(options.has_conn_limit, options.has_valid_until);
 
   auto& catalog = GlobalCatalog();
   catalog::RoleOption opts = catalog::RoleOption::None;
@@ -101,6 +110,8 @@ void CreateRole(ConnectionContext& ctx, std::string_view name,
   auto role = std::make_shared<catalog::Role>(catalog::RoleData{
     .name = std::string{name},
     .options = static_cast<uint32_t>(opts),
+    .password_verifier =
+      options.has_password ? MakePasswordVerifier(options.password) : "",
   });
 
   auto r = catalog.CreateRole(catalog::RequireOwnership(ctx.GetRoleId()),
@@ -149,8 +160,11 @@ catalog::RoleOption SetBit(catalog::RoleOption options, catalog::RoleOption bit,
 
 void AlterRole(ConnectionContext& ctx, std::string_view name,
                const AlterRoleOptions& opts) {
-  RejectUnsupportedRoleOptions(opts.has_password, opts.has_conn_limit,
-                               opts.has_valid_until);
+  RejectUnsupportedRoleOptions(opts.has_conn_limit, opts.has_valid_until);
+
+  // Hash outside the mutate lambda (which runs under the catalog lock).
+  const std::string verifier =
+    opts.has_password ? MakePasswordVerifier(opts.password) : "";
 
   auto& catalog = GlobalCatalog();
   auto r = catalog.ChangeRole(
@@ -166,6 +180,9 @@ void AlterRole(ConnectionContext& ctx, std::string_view name,
       o = SetBit(o, catalog::RoleOption::CreateRole, opts.createrole);
       o = SetBit(o, catalog::RoleOption::Inherit, opts.inherit);
       new_role->SetOptions(o);
+      if (opts.has_password) {
+        new_role->SetPasswordVerifier(verifier);
+      }
       return {};
     });
   if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {

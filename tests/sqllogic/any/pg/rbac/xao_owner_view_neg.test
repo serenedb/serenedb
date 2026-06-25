@@ -28,7 +28,7 @@ DROP ROLE IF EXISTS xao_ovn_vedernikoff;
 
 
 statement ok
-CREATE ROLE xao_ovn_mop LOGIN;
+CREATE ROLE xao_ovn_mop LOGIN PASSWORD 'xao_ovn_mop_pw';
 
 
 statement ok
@@ -40,7 +40,7 @@ CREATE ROLE xao_ovn_babsky;
 
 
 statement ok
-CREATE ROLE xao_ovn_vedernikoff LOGIN;
+CREATE ROLE xao_ovn_vedernikoff LOGIN PASSWORD 'xao_ovn_vedernikoff_pw';
 
 
 statement ok
@@ -67,7 +67,7 @@ xao_ovn_mop
 
 
 # (a) non-owner cannot transfer
-connection cveder user=xao_ovn_vedernikoff
+connection cveder user=xao_ovn_vedernikoff password=xao_ovn_vedernikoff_pw
 statement error
 ALTER VIEW xao_ovn_iceberg OWNER TO xao_ovn_vedernikoff;
 ----
@@ -75,7 +75,7 @@ db error: ERROR: must be owner of view xao_ovn_iceberg<slt:ignore>
 
 
 # (b) owner cannot transfer to a role it cannot SET ROLE to
-connection cmop user=xao_ovn_mop
+connection cmop user=xao_ovn_mop password=xao_ovn_mop_pw
 statement error
 ALTER VIEW xao_ovn_iceberg OWNER TO xao_ovn_babsky;
 ----
@@ -83,7 +83,7 @@ db error: ERROR: must be able to SET ROLE "xao_ovn_babsky"<slt:ignore>
 
 
 # (c) owner cannot transfer to a nonexistent role
-connection cmop2 user=xao_ovn_mop
+connection cmop2 user=xao_ovn_mop password=xao_ovn_mop_pw
 statement error
 ALTER VIEW xao_ovn_iceberg OWNER TO xao_ovn_ghost;
 ----
@@ -91,7 +91,7 @@ db error: ERROR: role "xao_ovn_ghost" does not exist<slt:ignore>
 
 
 # (d) owner -> CURRENT_USER no-op success
-connection cmop3 user=xao_ovn_mop
+connection cmop3 user=xao_ovn_mop password=xao_ovn_mop_pw
 statement ok
 ALTER VIEW xao_ovn_iceberg OWNER TO CURRENT_USER;
 

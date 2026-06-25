@@ -80,11 +80,11 @@ INSERT INTO wide_mg_iceberg VALUES (1, 'clickclack'), (2, 'mop'), (3, 'pudge');
 
 
 statement ok
-CREATE ROLE wide_mg_vedernikoff LOGIN;
+CREATE ROLE wide_mg_vedernikoff LOGIN PASSWORD 'wide_mg_vedernikoff_pw';
 
 
 statement ok
-CREATE ROLE wide_mg_kostya LOGIN;
+CREATE ROLE wide_mg_kostya LOGIN PASSWORD 'wide_mg_kostya_pw';
 
 
 statement ok
@@ -324,7 +324,7 @@ t	t	t
 # ---- Real query-path enforcement of the unioned privileges ----
 # kostya still has SELECT and INSERT through its three groups.
 
-connection c_kostya user=wide_mg_kostya
+connection c_kostya user=wide_mg_kostya password=wide_mg_kostya_pw
 query
 SELECT count(*) FROM wide_mg_iceberg;
 ----
@@ -332,13 +332,13 @@ count
 3
 
 
-connection c_kostya user=wide_mg_kostya
+connection c_kostya user=wide_mg_kostya password=wide_mg_kostya_pw
 statement ok
 INSERT INTO wide_mg_iceberg VALUES (4, 'vedernikoff');
 
 
 # kostya never had DELETE (not in the delete group): denied for real.
-connection c_kostya user=wide_mg_kostya
+connection c_kostya user=wide_mg_kostya password=wide_mg_kostya_pw
 statement error
 DELETE FROM wide_mg_iceberg WHERE id = 1;
 ----
@@ -346,7 +346,7 @@ db error: ERROR: permission denied for table wide_mg_iceberg<slt:ignore>
 
 
 # vedernikoff lost SELECT entirely above: real SELECT is denied.
-connection c_ved user=wide_mg_vedernikoff
+connection c_ved user=wide_mg_vedernikoff password=wide_mg_vedernikoff_pw
 statement error
 SELECT * FROM wide_mg_iceberg;
 ----
@@ -354,7 +354,7 @@ db error: ERROR: permission denied for table wide_mg_iceberg<slt:ignore>
 
 
 # vedernikoff still has INSERT (through the insert group and extra2).
-connection c_ved user=wide_mg_vedernikoff
+connection c_ved user=wide_mg_vedernikoff password=wide_mg_vedernikoff_pw
 statement ok
 INSERT INTO wide_mg_iceberg VALUES (5, 'pudge');
 

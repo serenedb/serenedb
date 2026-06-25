@@ -24,15 +24,15 @@ DROP ROLE IF EXISTS xog_n_writer;
 
 
 statement ok
-CREATE ROLE xog_n_mop LOGIN;
+CREATE ROLE xog_n_mop LOGIN PASSWORD 'xog_n_mop_pw';
 
 
 statement ok
-CREATE ROLE xog_n_reader LOGIN;
+CREATE ROLE xog_n_reader LOGIN PASSWORD 'xog_n_reader_pw';
 
 
 statement ok
-CREATE ROLE xog_n_writer LOGIN;
+CREATE ROLE xog_n_writer LOGIN PASSWORD 'xog_n_writer_pw';
 
 
 statement ok
@@ -60,12 +60,12 @@ t
 
 # ---- The non-super owner grants on its own connection: SELECT to reader,
 # SELECT+INSERT to writer. ----
-connection c_mop user=xog_n_mop
+connection c_mop user=xog_n_mop password=xog_n_mop_pw
 statement ok
 GRANT SELECT ON xog_n_iceberg TO xog_n_reader;
 
 
-connection c_mop user=xog_n_mop
+connection c_mop user=xog_n_mop password=xog_n_mop_pw
 statement ok
 GRANT SELECT, INSERT ON xog_n_iceberg TO xog_n_writer;
 
@@ -93,7 +93,7 @@ t	f	t	t
 
 
 # ---- Real DML: reader can SELECT but not INSERT; writer can do both. ----
-connection c_rd user=xog_n_reader
+connection c_rd user=xog_n_reader password=xog_n_reader_pw
 query
 SELECT count(*) AS n FROM xog_n_iceberg;
 ----
@@ -101,19 +101,19 @@ n
 1
 
 
-connection c_rd user=xog_n_reader
+connection c_rd user=xog_n_reader password=xog_n_reader_pw
 statement error
 INSERT INTO xog_n_iceberg VALUES (2, 'nope');
 ----
 db error: ERROR: permission denied for table xog_n_iceberg<slt:ignore>
 
 
-connection c_wr user=xog_n_writer
+connection c_wr user=xog_n_writer password=xog_n_writer_pw
 statement ok
 INSERT INTO xog_n_iceberg VALUES (2, 'babsky');
 
 
-connection c_wr user=xog_n_writer
+connection c_wr user=xog_n_writer password=xog_n_writer_pw
 query
 SELECT count(*) AS n FROM xog_n_iceberg;
 ----
@@ -122,7 +122,7 @@ n
 
 
 # ---- The non-super owner can REVOKE what it granted, on its own connection. ----
-connection c_mop user=xog_n_mop
+connection c_mop user=xog_n_mop password=xog_n_mop_pw
 statement ok
 REVOKE INSERT ON xog_n_iceberg FROM xog_n_writer;
 
@@ -137,7 +137,7 @@ t	f
 
 
 # And the revoke is enforced on the real path.
-connection c_wr user=xog_n_writer
+connection c_wr user=xog_n_writer password=xog_n_writer_pw
 statement error
 INSERT INTO xog_n_iceberg VALUES (3, 'gone');
 ----
@@ -145,7 +145,7 @@ db error: ERROR: permission denied for table xog_n_iceberg<slt:ignore>
 
 
 # The owner drops its own table to clean up.
-connection c_mop user=xog_n_mop
+connection c_mop user=xog_n_mop password=xog_n_mop_pw
 statement ok
 DROP TABLE xog_n_iceberg;
 

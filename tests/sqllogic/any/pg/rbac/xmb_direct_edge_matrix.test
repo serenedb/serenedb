@@ -26,7 +26,7 @@ CREATE TABLE xmb_dem_clickclack (id int, payload text);
 
 
 statement ok
-CREATE ROLE xmb_dem_mop LOGIN;
+CREATE ROLE xmb_dem_mop LOGIN PASSWORD 'xmb_dem_mop_pw';
 
 
 statement ok
@@ -53,7 +53,7 @@ t	t	t
 
 
 # Real query path agrees: the member can SELECT through the inherited edge.
-connection c_mop user=xmb_dem_mop
+connection c_mop user=xmb_dem_mop password=xmb_dem_mop_pw
 query
 SELECT count(*) FROM xmb_dem_clickclack;
 ----
@@ -77,7 +77,7 @@ t	f	f
 
 
 # Real query path agrees: SELECT is now denied.
-connection c_mop2 user=xmb_dem_mop
+connection c_mop2 user=xmb_dem_mop password=xmb_dem_mop_pw
 statement error
 SELECT * FROM xmb_dem_clickclack;
 ----
@@ -98,7 +98,7 @@ usage	sel
 t	t
 
 
-connection c_mop3 user=xmb_dem_mop
+connection c_mop3 user=xmb_dem_mop password=xmb_dem_mop_pw
 query
 SELECT count(*) FROM xmb_dem_clickclack;
 ----

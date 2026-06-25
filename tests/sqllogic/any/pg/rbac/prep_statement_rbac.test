@@ -31,7 +31,7 @@ INSERT INTO prep_ledger VALUES (1, 10, 100), (2, 20, 200), (3, 30, 300);
 
 
 statement ok
-CREATE ROLE prep_vedernikoff LOGIN;
+CREATE ROLE prep_vedernikoff LOGIN PASSWORD 'prep_vedernikoff_pw';
 
 
 statement ok
@@ -43,12 +43,12 @@ GRANT SELECT (id, amt) ON prep_ledger TO prep_vedernikoff;
 # this session for the rest of the test; later EXECUTEs hit it without a
 # re-prepare on the role side.
 
-connection c_ved user=prep_vedernikoff
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
 statement ok
 PREPARE p_read AS SELECT amt FROM prep_ledger ORDER BY id;
 
 
-connection c_ved user=prep_vedernikoff
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
 query
 EXECUTE p_read;
 ----
@@ -59,7 +59,7 @@ amt
 
 
 # EXECUTE again on the same prepared statement -> still allowed.
-connection c_ved user=prep_vedernikoff
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
 query
 EXECUTE p_read;
 ----
@@ -79,7 +79,7 @@ REVOKE SELECT (id, amt) ON prep_ledger FROM prep_vedernikoff;
 
 
 # Same prepared statement, re-checked on EXECUTE -> denied.
-connection c_ved user=prep_vedernikoff
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
 statement error
 EXECUTE p_read;
 ----
@@ -92,7 +92,7 @@ statement ok
 GRANT SELECT (id, amt) ON prep_ledger TO prep_vedernikoff;
 
 
-connection c_ved user=prep_vedernikoff
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
 query
 EXECUTE p_read;
 ----
@@ -104,12 +104,12 @@ amt
 
 # ---- CASE 4: prepared statement WITH PARAMETERS, re-checked across REVOKE ----
 
-connection c_ved user=prep_vedernikoff
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
 statement ok
 PREPARE p_param AS SELECT amt FROM prep_ledger WHERE id = $1;
 
 
-connection c_ved user=prep_vedernikoff
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
 query
 EXECUTE p_param(1);
 ----
@@ -117,7 +117,7 @@ amt
 10
 
 
-connection c_ved user=prep_vedernikoff
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
 query
 EXECUTE p_param(2);
 ----
@@ -131,7 +131,7 @@ statement ok
 REVOKE SELECT (id, amt) ON prep_ledger FROM prep_vedernikoff;
 
 
-connection c_ved user=prep_vedernikoff
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
 statement error
 EXECUTE p_param(1);
 ----
@@ -144,7 +144,7 @@ statement ok
 GRANT SELECT (id, amt) ON prep_ledger TO prep_vedernikoff;
 
 
-connection c_ved user=prep_vedernikoff
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
 query
 EXECUTE p_param(3);
 ----
@@ -162,23 +162,23 @@ statement ok
 GRANT UPDATE, DELETE ON prep_ledger TO prep_vedernikoff;
 
 
-connection c_ved user=prep_vedernikoff
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
 statement ok
 PREPARE p_upd AS UPDATE prep_ledger SET amt = $1 WHERE id = $2;
 
 
-connection c_ved user=prep_vedernikoff
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
 statement ok
 PREPARE p_del AS DELETE FROM prep_ledger WHERE id = $1;
 
 
 # Both work while the action privileges are held.
-connection c_ved user=prep_vedernikoff
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
 statement ok
 EXECUTE p_upd(99, 1);
 
 
-connection c_ved user=prep_vedernikoff
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
 statement ok
 EXECUTE p_del(3);
 
@@ -189,7 +189,7 @@ statement ok
 REVOKE UPDATE ON prep_ledger FROM prep_vedernikoff;
 
 
-connection c_ved user=prep_vedernikoff
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
 statement error
 EXECUTE p_upd(88, 2);
 ----
@@ -202,7 +202,7 @@ statement ok
 REVOKE DELETE ON prep_ledger FROM prep_vedernikoff;
 
 
-connection c_ved user=prep_vedernikoff
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
 statement error
 EXECUTE p_del(1);
 ----
@@ -214,17 +214,17 @@ db error: ERROR: permission denied for table prep_ledger<slt:ignore>
 # current grants. The role still holds SELECT (id, amt), so a read re-prepares
 # and executes cleanly under the reused name.
 
-connection c_ved user=prep_vedernikoff
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
 statement ok
 DEALLOCATE p_read;
 
 
-connection c_ved user=prep_vedernikoff
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
 statement ok
 PREPARE p_read AS SELECT id FROM prep_ledger ORDER BY id;
 
 
-connection c_ved user=prep_vedernikoff
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
 query
 EXECUTE p_read;
 ----

@@ -19,11 +19,11 @@ DROP ROLE IF EXISTS cr_babsky;
 
 
 statement ok
-CREATE ROLE cr_vedernikoff LOGIN;
+CREATE ROLE cr_vedernikoff LOGIN PASSWORD 'cr_vedernikoff_pw';
 
 
 statement ok
-CREATE ROLE cr_babsky LOGIN;
+CREATE ROLE cr_babsky LOGIN PASSWORD 'cr_babsky_pw';
 
 
 statement ok
@@ -31,7 +31,7 @@ ALTER ROLE cr_babsky CREATEROLE;
 
 
 # A plain role (no CREATEROLE) is refused.
-connection c_ved user=cr_vedernikoff
+connection c_ved user=cr_vedernikoff password=cr_vedernikoff_pw
 statement error
 CREATE ROLE cr_clickclack;
 ----
@@ -48,7 +48,7 @@ n
 
 
 # A role with CREATEROLE succeeds.
-connection c_bab user=cr_babsky
+connection c_bab user=cr_babsky password=cr_babsky_pw
 statement ok
 CREATE ROLE cr_clickclack;
 

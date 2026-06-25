@@ -34,7 +34,7 @@ CREATE TABLE xmb_iont_clickclack (id int);
 
 
 statement ok
-CREATE ROLE xmb_iont_mop NOINHERIT LOGIN;
+CREATE ROLE xmb_iont_mop NOINHERIT LOGIN PASSWORD 'xmb_iont_mop_pw';
 
 
 statement ok
@@ -79,7 +79,7 @@ mop_usage_kostya	mop_member_iceberg	mop_usage_iceberg
 t	t	f
 
 
-connection c_mop user=xmb_iont_mop
+connection c_mop user=xmb_iont_mop password=xmb_iont_mop_pw
 statement error
 SELECT * FROM xmb_iont_clickclack;
 ----
@@ -101,7 +101,7 @@ mop_sel	kostya_sel	mop_usage_iceberg
 t	t	t
 
 
-connection c_mop2 user=xmb_iont_mop
+connection c_mop2 user=xmb_iont_mop password=xmb_iont_mop_pw
 query
 SELECT count(*) FROM xmb_iont_clickclack;
 ----

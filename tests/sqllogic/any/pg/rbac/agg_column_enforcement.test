@@ -27,7 +27,7 @@ INSERT INTO agg_clickclack VALUES (1, 10, 100), (2, 20, 200), (3, 30, 300);
 
 
 statement ok
-CREATE ROLE agg_vedernikoff LOGIN;
+CREATE ROLE agg_vedernikoff LOGIN PASSWORD 'agg_vedernikoff_pw';
 
 
 # Granted SELECT on (id, av) only -- secret is ungranted throughout.
@@ -38,7 +38,7 @@ GRANT SELECT (id, av) ON agg_clickclack TO agg_vedernikoff;
 # === count(*) and aggregate arguments ===
 
 # count(*) reads no specific column; the (id, av) grant suffices -> OK.
-connection c_ved1 user=agg_vedernikoff
+connection c_ved1 user=agg_vedernikoff password=agg_vedernikoff_pw
 query
 SELECT count(*) AS n FROM agg_clickclack;
 ----
@@ -47,7 +47,7 @@ n
 
 
 # count() over the ungranted secret column -> refused.
-connection c_ved2 user=agg_vedernikoff
+connection c_ved2 user=agg_vedernikoff password=agg_vedernikoff_pw
 statement error
 SELECT count(secret) FROM agg_clickclack;
 ----
@@ -55,7 +55,7 @@ db error: ERROR: permission denied for table agg_clickclack<slt:ignore>
 
 
 # sum() over the granted av column -> OK.
-connection c_ved3 user=agg_vedernikoff
+connection c_ved3 user=agg_vedernikoff password=agg_vedernikoff_pw
 query
 SELECT sum(av) AS s FROM agg_clickclack;
 ----
@@ -64,7 +64,7 @@ s
 
 
 # sum() over the ungranted secret column -> refused.
-connection c_ved4 user=agg_vedernikoff
+connection c_ved4 user=agg_vedernikoff password=agg_vedernikoff_pw
 statement error
 SELECT sum(secret) FROM agg_clickclack;
 ----
@@ -74,7 +74,7 @@ db error: ERROR: permission denied for table agg_clickclack<slt:ignore>
 # === GROUP BY ===
 
 # GROUP BY a granted column (av) -> OK.
-connection c_ved5 user=agg_vedernikoff
+connection c_ved5 user=agg_vedernikoff password=agg_vedernikoff_pw
 query
 SELECT av FROM agg_clickclack GROUP BY av ORDER BY av;
 ----
@@ -88,7 +88,7 @@ av
 # statement semantically valid so the only failure is the privilege check; a bare
 # `SELECT av ... GROUP BY secret` would instead trip PG's "must appear in GROUP BY"
 # analyzer error, which fires before permission checks.)
-connection c_ved6 user=agg_vedernikoff
+connection c_ved6 user=agg_vedernikoff password=agg_vedernikoff_pw
 statement error
 SELECT count(*) FROM agg_clickclack GROUP BY secret;
 ----
@@ -98,7 +98,7 @@ db error: ERROR: permission denied for table agg_clickclack<slt:ignore>
 # === HAVING ===
 
 # HAVING references the ungranted secret column -> refused.
-connection c_ved7 user=agg_vedernikoff
+connection c_ved7 user=agg_vedernikoff password=agg_vedernikoff_pw
 statement error
 SELECT av, count(*) FROM agg_clickclack GROUP BY av HAVING sum(secret) > 0;
 ----
@@ -108,7 +108,7 @@ db error: ERROR: permission denied for table agg_clickclack<slt:ignore>
 # === ORDER BY ===
 
 # ORDER BY the ungranted secret column -> refused.
-connection c_ved8 user=agg_vedernikoff
+connection c_ved8 user=agg_vedernikoff password=agg_vedernikoff_pw
 statement error
 SELECT av FROM agg_clickclack ORDER BY secret;
 ----
@@ -116,7 +116,7 @@ db error: ERROR: permission denied for table agg_clickclack<slt:ignore>
 
 
 # ORDER BY an ordinal (1) references no extra column -> OK.
-connection c_ved9 user=agg_vedernikoff
+connection c_ved9 user=agg_vedernikoff password=agg_vedernikoff_pw
 query
 SELECT av FROM agg_clickclack ORDER BY 1;
 ----
@@ -129,7 +129,7 @@ av
 # === DISTINCT / DISTINCT ON ===
 
 # DISTINCT over a granted column (av) -> OK.
-connection c_ved10 user=agg_vedernikoff
+connection c_ved10 user=agg_vedernikoff password=agg_vedernikoff_pw
 query
 SELECT DISTINCT av FROM agg_clickclack ORDER BY av;
 ----
@@ -140,7 +140,7 @@ av
 
 
 # DISTINCT ON the ungranted secret column -> refused.
-connection c_ved11 user=agg_vedernikoff
+connection c_ved11 user=agg_vedernikoff password=agg_vedernikoff_pw
 statement error
 SELECT DISTINCT ON (secret) av FROM agg_clickclack;
 ----
@@ -150,7 +150,7 @@ db error: ERROR: permission denied for table agg_clickclack<slt:ignore>
 # === Window functions: PARTITION / ORDER inside the frame are checked ===
 
 # Window ORDER BY the ungranted secret column -> refused.
-connection c_ved12 user=agg_vedernikoff
+connection c_ved12 user=agg_vedernikoff password=agg_vedernikoff_pw
 statement error
 SELECT av, row_number() OVER (ORDER BY secret) FROM agg_clickclack;
 ----
@@ -158,7 +158,7 @@ db error: ERROR: permission denied for table agg_clickclack<slt:ignore>
 
 
 # Window ORDER BY a granted column (av) -> OK.
-connection c_ved13 user=agg_vedernikoff
+connection c_ved13 user=agg_vedernikoff password=agg_vedernikoff_pw
 query
 SELECT av, row_number() OVER (ORDER BY av) AS rn FROM agg_clickclack ORDER BY av;
 ----
@@ -171,7 +171,7 @@ av	rn
 # === Positive controls ===
 
 # max() over the granted av column -> OK.
-connection c_ved14 user=agg_vedernikoff
+connection c_ved14 user=agg_vedernikoff password=agg_vedernikoff_pw
 query
 SELECT max(av) AS m FROM agg_clickclack;
 ----
@@ -180,7 +180,7 @@ m
 
 
 # Grouped read touching only granted columns -> OK.
-connection c_ved15 user=agg_vedernikoff
+connection c_ved15 user=agg_vedernikoff password=agg_vedernikoff_pw
 query
 SELECT av, count(*) AS n FROM agg_clickclack GROUP BY av ORDER BY av;
 ----

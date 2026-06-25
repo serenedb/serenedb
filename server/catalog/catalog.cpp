@@ -3092,18 +3092,17 @@ Result Catalog::ChangeOwner(const AccessContext& ax, ObjectId database_id,
     require_owner_change(*obj);
     auto cloned = obj->Clone();
     TransferOwner(*cloned, new_owner);
-    return Apply(_snapshot,
-                 [&](std::shared_ptr<Snapshot>& clone) -> Result {
-                   duckdb::MemoryStream stream;
-                   auto bytes = catalog::SerializeObject(*cloned, stream);
-                   if (auto r = clone->ReplaceObject<ResolveType::Schema>(
-                         database_id, cloned->GetName(), cloned);
-                       !r.ok()) {
-                     return r;
-                   }
-                   return _engine->CreateDefinition(
-                     database_id, ObjectType::Schema, cloned->GetId(), bytes);
-                 });
+    return Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) -> Result {
+      duckdb::MemoryStream stream;
+      auto bytes = catalog::SerializeObject(*cloned, stream);
+      if (auto r = clone->ReplaceObject<ResolveType::Schema>(
+            database_id, cloned->GetName(), cloned);
+          !r.ok()) {
+        return r;
+      }
+      return _engine->CreateDefinition(database_id, ObjectType::Schema,
+                                       cloned->GetId(), bytes);
+    });
   }
 
   // Types live in their own per-schema namespace, separate from relations.
@@ -3124,18 +3123,17 @@ Result Catalog::ChangeOwner(const AccessContext& ax, ObjectId database_id,
     require_owner_change(*obj);
     auto cloned = obj->Clone();
     TransferOwner(*cloned, new_owner);
-    return Apply(_snapshot,
-                 [&](std::shared_ptr<Snapshot>& clone) -> Result {
-                   duckdb::MemoryStream stream;
-                   auto bytes = catalog::SerializeObject(*cloned, stream);
-                   if (auto r = clone->ReplaceObject<ResolveType::Type>(
-                         *schema_id, cloned->GetName(), cloned);
-                       !r.ok()) {
-                     return r;
-                   }
-                   return _engine->CreateDefinition(
-                     *schema_id, ObjectType::PgSqlType, cloned->GetId(), bytes);
-                 });
+    return Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) -> Result {
+      duckdb::MemoryStream stream;
+      auto bytes = catalog::SerializeObject(*cloned, stream);
+      if (auto r = clone->ReplaceObject<ResolveType::Type>(
+            *schema_id, cloned->GetName(), cloned);
+          !r.ok()) {
+        return r;
+      }
+      return _engine->CreateDefinition(*schema_id, ObjectType::PgSqlType,
+                                       cloned->GetId(), bytes);
+    });
   }
 
   // Relations (table / view / sequence) live under a schema.
@@ -3172,33 +3170,31 @@ Result Catalog::ChangeOwner(const AccessContext& ax, ObjectId database_id,
       std::ranges::to<std::vector<std::shared_ptr<Object>>>();
   }
 
-  return Apply(
-    _snapshot,
-    [&](std::shared_ptr<Snapshot>& clone) -> Result {
-      auto restamp = [&](const std::shared_ptr<Object>& original) -> Result {
-        auto cloned = original->Clone();
-        TransferOwner(*cloned, new_owner);
-        duckdb::MemoryStream stream;
-        auto bytes = catalog::SerializeObject(*cloned, stream);
-        if (auto r = clone->ReplaceObject<ResolveType::Relation>(
-              cloned->GetParentId(), cloned->GetName(), cloned);
-            !r.ok()) {
-          return r;
-        }
-        return _engine->CreateDefinition(
-          cloned->GetParentId(), cloned->GetType(), cloned->GetId(), bytes);
-      };
-
-      if (auto r = restamp(obj); !r.ok()) {
+  return Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) -> Result {
+    auto restamp = [&](const std::shared_ptr<Object>& original) -> Result {
+      auto cloned = original->Clone();
+      TransferOwner(*cloned, new_owner);
+      duckdb::MemoryStream stream;
+      auto bytes = catalog::SerializeObject(*cloned, stream);
+      if (auto r = clone->ReplaceObject<ResolveType::Relation>(
+            cloned->GetParentId(), cloned->GetName(), cloned);
+          !r.ok()) {
         return r;
       }
-      for (const auto& dep : cascade) {
-        if (auto r = restamp(dep); !r.ok()) {
-          return r;
-        }
+      return _engine->CreateDefinition(cloned->GetParentId(), cloned->GetType(),
+                                       cloned->GetId(), bytes);
+    };
+
+    if (auto r = restamp(obj); !r.ok()) {
+      return r;
+    }
+    for (const auto& dep : cascade) {
+      if (auto r = restamp(dep); !r.ok()) {
+        return r;
       }
-      return Result{};
-    });
+    }
+    return Result{};
+  });
 }
 
 Result Catalog::ChangeAcl(ObjectId database_id, std::string_view schema,
@@ -3264,47 +3260,46 @@ Result Catalog::ChangeAcl(ObjectId database_id, std::string_view schema,
   auto cloned = obj->Clone();
   cloned->SetPermissions({owner, std::move(acl)});
 
-  return Apply(_snapshot,
-               [&](std::shared_ptr<Snapshot>& clone) -> Result {
-                 duckdb::MemoryStream stream;
-                 auto bytes = catalog::SerializeObject(*cloned, stream);
-                 if (type == ObjectType::Database) {
-                   if (auto r = clone->ReplaceObject<ResolveType::Database>(
-                         {}, cloned->GetName(), cloned);
-                       !r.ok()) {
-                     return r;
-                   }
-                   return _engine->Write([&](auto& ctx) {
-                     ctx.PutDefinition(id::kInstance, ObjectType::Database,
+  return Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) -> Result {
+    duckdb::MemoryStream stream;
+    auto bytes = catalog::SerializeObject(*cloned, stream);
+    if (type == ObjectType::Database) {
+      if (auto r = clone->ReplaceObject<ResolveType::Database>(
+            {}, cloned->GetName(), cloned);
+          !r.ok()) {
+        return r;
+      }
+      return _engine->Write([&](auto& ctx) {
+        ctx.PutDefinition(id::kInstance, ObjectType::Database, cloned->GetId(),
+                          bytes);
+      });
+    }
+    if (type == ObjectType::Schema) {
+      if (auto r = clone->ReplaceObject<ResolveType::Schema>(
+            parent, cloned->GetName(), cloned);
+          !r.ok()) {
+        return r;
+      }
+      return _engine->CreateDefinition(parent, ObjectType::Schema,
                                        cloned->GetId(), bytes);
-                   });
-                 }
-                 if (type == ObjectType::Schema) {
-                   if (auto r = clone->ReplaceObject<ResolveType::Schema>(
-                         parent, cloned->GetName(), cloned);
-                       !r.ok()) {
-                     return r;
-                   }
-                   return _engine->CreateDefinition(parent, ObjectType::Schema,
-                                                    cloned->GetId(), bytes);
-                 }
-                 Result r;
-                 if (type == ObjectType::PgSqlFunction) {
-                   r = clone->ReplaceObject<ResolveType::Function>(
-                     parent, cloned->GetName(), cloned);
-                 } else if (type == ObjectType::PgSqlType) {
-                   r = clone->ReplaceObject<ResolveType::Type>(
-                     parent, cloned->GetName(), cloned);
-                 } else {
-                   r = clone->ReplaceObject<ResolveType::Relation>(
-                     parent, cloned->GetName(), cloned);
-                 }
-                 if (!r.ok()) {
-                   return r;
-                 }
-                 return _engine->CreateDefinition(parent, cloned->GetType(),
-                                                  cloned->GetId(), bytes);
-               });
+    }
+    Result r;
+    if (type == ObjectType::PgSqlFunction) {
+      r = clone->ReplaceObject<ResolveType::Function>(parent, cloned->GetName(),
+                                                      cloned);
+    } else if (type == ObjectType::PgSqlType) {
+      r = clone->ReplaceObject<ResolveType::Type>(parent, cloned->GetName(),
+                                                  cloned);
+    } else {
+      r = clone->ReplaceObject<ResolveType::Relation>(parent, cloned->GetName(),
+                                                      cloned);
+    }
+    if (!r.ok()) {
+      return r;
+    }
+    return _engine->CreateDefinition(parent, cloned->GetType(), cloned->GetId(),
+                                     bytes);
+  });
 }
 
 Result Catalog::ChangeColumnAcl(ObjectId database_id, std::string_view schema,
@@ -3342,18 +3337,17 @@ Result Catalog::ChangeColumnAcl(ObjectId database_id, std::string_view schema,
                             table_name, "\" does not exist"));
   }
 
-  return Apply(_snapshot,
-               [&](std::shared_ptr<Snapshot>& clone) -> Result {
-                 duckdb::MemoryStream stream;
-                 auto bytes = catalog::SerializeObject(*cloned, stream);
-                 if (auto r = clone->ReplaceObject<ResolveType::Relation>(
-                       *schema_id, cloned->GetName(), cloned);
-                     !r.ok()) {
-                   return r;
-                 }
-                 return _engine->CreateDefinition(*schema_id, cloned->GetType(),
-                                                  cloned->GetId(), bytes);
-               });
+  return Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) -> Result {
+    duckdb::MemoryStream stream;
+    auto bytes = catalog::SerializeObject(*cloned, stream);
+    if (auto r = clone->ReplaceObject<ResolveType::Relation>(
+          *schema_id, cloned->GetName(), cloned);
+        !r.ok()) {
+      return r;
+    }
+    return _engine->CreateDefinition(*schema_id, cloned->GetType(),
+                                     cloned->GetId(), bytes);
+  });
 }
 
 Result Catalog::ChangeView(ObjectId database_id, std::string_view schema,
@@ -3679,17 +3673,16 @@ Result Catalog::DropRole(const AccessContext& ax, std::string_view role) {
               "\" cannot be dropped because some objects depend on it"),
       ERR_DETAIL(deps, " object(s) in database depend on role \"", role, "\""));
   }
-  return Apply(_snapshot,
-               [&](std::shared_ptr<Snapshot>& clone) {
-                 clone->UnregisterObject(role_ptr, id::kInstance);
-                 if (auto r = _engine->DropDefinition(
-                       id::kInstance, ObjectType::Role, role_ptr->GetId());
-                     !r.ok()) {
-                   return r;
-                 }
-                 clone->RebuildRoleClosures();
-                 return Result{};
-               });
+  return Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
+    clone->UnregisterObject(role_ptr, id::kInstance);
+    if (auto r = _engine->DropDefinition(id::kInstance, ObjectType::Role,
+                                         role_ptr->GetId());
+        !r.ok()) {
+      return r;
+    }
+    clone->RebuildRoleClosures();
+    return Result{};
+  });
 }
 
 Result Catalog::DropDatabase(const AccessContext& ax, std::string_view name,

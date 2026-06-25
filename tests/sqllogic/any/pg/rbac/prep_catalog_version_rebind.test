@@ -26,7 +26,7 @@ INSERT INTO pcv_ledger VALUES (1, 10, 100);
 
 
 statement ok
-CREATE ROLE pcv_vedernikoff LOGIN;
+CREATE ROLE pcv_vedernikoff LOGIN PASSWORD 'pcv_vedernikoff_pw';
 
 
 statement ok
@@ -34,12 +34,12 @@ GRANT SELECT, INSERT ON pcv_ledger TO pcv_vedernikoff;
 
 
 # === A: control -- no catalog change between executes => no spurious failure ===
-connection c_ved user=pcv_vedernikoff
+connection c_ved user=pcv_vedernikoff password=pcv_vedernikoff_pw
 statement ok
 PREPARE pcv_sel AS SELECT clickclack FROM pcv_ledger;
 
 
-connection c_ved user=pcv_vedernikoff
+connection c_ved user=pcv_vedernikoff password=pcv_vedernikoff_pw
 query
 EXECUTE pcv_sel;
 ----
@@ -48,7 +48,7 @@ clickclack
 
 
 # Re-execute, still no change -> still allowed.
-connection c_ved user=pcv_vedernikoff
+connection c_ved user=pcv_vedernikoff password=pcv_vedernikoff_pw
 query
 EXECUTE pcv_sel;
 ----
@@ -62,7 +62,7 @@ statement ok
 REVOKE SELECT ON pcv_ledger FROM pcv_vedernikoff;
 
 
-connection c_ved user=pcv_vedernikoff
+connection c_ved user=pcv_vedernikoff password=pcv_vedernikoff_pw
 statement error
 EXECUTE pcv_sel;
 ----
@@ -75,7 +75,7 @@ statement ok
 GRANT SELECT ON pcv_ledger TO pcv_vedernikoff;
 
 
-connection c_ved user=pcv_vedernikoff
+connection c_ved user=pcv_vedernikoff password=pcv_vedernikoff_pw
 query
 EXECUTE pcv_sel;
 ----
@@ -84,12 +84,12 @@ clickclack
 
 
 # === C: prepared INSERT re-checks after REVOKE INSERT (the catalog-version fix) ===
-connection c_ved2 user=pcv_vedernikoff
+connection c_ved2 user=pcv_vedernikoff password=pcv_vedernikoff_pw
 statement ok
 PREPARE pcv_ins AS INSERT INTO pcv_ledger VALUES ($1, $2, $3);
 
 
-connection c_ved2 user=pcv_vedernikoff
+connection c_ved2 user=pcv_vedernikoff password=pcv_vedernikoff_pw
 statement ok
 EXECUTE pcv_ins(2, 20, 200);
 
@@ -99,7 +99,7 @@ statement ok
 REVOKE INSERT ON pcv_ledger FROM pcv_vedernikoff;
 
 
-connection c_ved2 user=pcv_vedernikoff
+connection c_ved2 user=pcv_vedernikoff password=pcv_vedernikoff_pw
 statement error
 EXECUTE pcv_ins(3, 30, 300);
 ----
@@ -112,12 +112,12 @@ GRANT INSERT ON pcv_ledger TO pcv_vedernikoff;
 
 
 # === D: ALTER TABLE DROP COLUMN advances the version => prepared read re-binds ===
-connection c_ved3 user=pcv_vedernikoff
+connection c_ved3 user=pcv_vedernikoff password=pcv_vedernikoff_pw
 statement ok
 PREPARE pcv_selmop AS SELECT mop FROM pcv_ledger;
 
 
-connection c_ved3 user=pcv_vedernikoff
+connection c_ved3 user=pcv_vedernikoff password=pcv_vedernikoff_pw
 query rowsort
 EXECUTE pcv_selmop;
 ----
@@ -134,7 +134,7 @@ ALTER TABLE pcv_ledger DROP COLUMN mop;
 # The prepared statement re-binds against the new schema and the dropped column
 # is gone. (PG raises "column \"mop\" does not exist"; both engines re-bind and
 # error -- the point is that the prepared plan is NOT served stale.)
-connection c_ved3 user=pcv_vedernikoff
+connection c_ved3 user=pcv_vedernikoff password=pcv_vedernikoff_pw
 statement error
 EXECUTE pcv_selmop;
 ----
@@ -148,12 +148,12 @@ ALTER TABLE pcv_ledger ADD COLUMN mop int;
 
 
 # === E: an UNRELATED ALTER ADD COLUMN does not break a still-valid prepared read ===
-connection c_ved4 user=pcv_vedernikoff
+connection c_ved4 user=pcv_vedernikoff password=pcv_vedernikoff_pw
 statement ok
 PREPARE pcv_selcc AS SELECT clickclack FROM pcv_ledger;
 
 
-connection c_ved4 user=pcv_vedernikoff
+connection c_ved4 user=pcv_vedernikoff password=pcv_vedernikoff_pw
 query rowsort
 EXECUTE pcv_selcc;
 ----
@@ -168,7 +168,7 @@ ALTER TABLE pcv_ledger ADD COLUMN extra int;
 
 
 # Re-binds (version moved), but the read of clickclack is still authorized + valid.
-connection c_ved4 user=pcv_vedernikoff
+connection c_ved4 user=pcv_vedernikoff password=pcv_vedernikoff_pw
 query rowsort
 EXECUTE pcv_selcc;
 ----
@@ -190,7 +190,7 @@ statement ok
 GRANT SELECT (clickclack) ON pcv_ledger TO pcv_vedernikoff;
 
 
-connection c_ved4 user=pcv_vedernikoff
+connection c_ved4 user=pcv_vedernikoff password=pcv_vedernikoff_pw
 query rowsort
 EXECUTE pcv_selcc;
 ----
@@ -199,7 +199,7 @@ clickclack
 2
 
 
-connection c_ved5 user=pcv_vedernikoff
+connection c_ved5 user=pcv_vedernikoff password=pcv_vedernikoff_pw
 statement error
 SELECT secret FROM pcv_ledger;
 ----

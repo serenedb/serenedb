@@ -21,7 +21,7 @@ DROP ROLE IF EXISTS enf_fnx_vedernikoff;
 
 
 statement ok
-CREATE ROLE enf_fnx_vedernikoff LOGIN;
+CREATE ROLE enf_fnx_vedernikoff LOGIN PASSWORD 'enf_fnx_vedernikoff_pw';
 
 
 statement ok
@@ -37,7 +37,7 @@ t
 
 
 # The unprivileged role can CALL the fresh function (PUBLIC default EXECUTE).
-connection c_fnx user=enf_fnx_vedernikoff
+connection c_fnx user=enf_fnx_vedernikoff password=enf_fnx_vedernikoff_pw
 query
 SELECT enf_fnx_secret(41) AS result;
 ----
@@ -61,7 +61,7 @@ f
 
 
 # The non-owner call is now denied.
-connection c_fnx2 user=enf_fnx_vedernikoff
+connection c_fnx2 user=enf_fnx_vedernikoff password=enf_fnx_vedernikoff_pw
 statement error
 SELECT enf_fnx_secret(41) AS result;
 ----

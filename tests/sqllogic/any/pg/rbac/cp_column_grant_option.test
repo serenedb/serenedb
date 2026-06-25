@@ -34,7 +34,7 @@ INSERT INTO cgo_iceberg VALUES (1, 2, 3);
 
 
 statement ok
-CREATE ROLE cgo_r1 LOGIN;
+CREATE ROLE cgo_r1 LOGIN PASSWORD 'cgo_r1_pw';
 
 
 # clickclack: SELECT WITH GRANT OPTION. babsky: plain SELECT (no option).
@@ -73,7 +73,7 @@ t	t	f
 
 
 # The option-holding column reads fine for the grantee.
-connection c_r1 user=cgo_r1
+connection c_r1 user=cgo_r1 password=cgo_r1_pw
 query
 SELECT clickclack FROM cgo_iceberg ORDER BY clickclack;
 ----
@@ -101,7 +101,7 @@ mop	(none)
 
 
 # The privilege survives the option revoke: the grantee still reads clickclack.
-connection c_r1b user=cgo_r1
+connection c_r1b user=cgo_r1 password=cgo_r1_pw
 query
 SELECT clickclack FROM cgo_iceberg ORDER BY clickclack;
 ----

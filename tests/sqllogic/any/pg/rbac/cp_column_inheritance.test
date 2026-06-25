@@ -40,11 +40,11 @@ INSERT INTO cci2_iceberg VALUES (1, 2, 3);
 
 
 statement ok
-CREATE ROLE cci2_vedernikoff LOGIN;
+CREATE ROLE cci2_vedernikoff LOGIN PASSWORD 'cci2_vedernikoff_pw';
 
 
 statement ok
-CREATE ROLE cci2_babsky LOGIN;
+CREATE ROLE cci2_babsky LOGIN PASSWORD 'cci2_babsky_pw';
 
 
 statement ok
@@ -78,7 +78,7 @@ mop	NULL
 
 
 # Member reads the granted column through grp membership.
-connection c_ved user=cci2_vedernikoff
+connection c_ved user=cci2_vedernikoff password=cci2_vedernikoff_pw
 query
 SELECT clickclack FROM cci2_iceberg ORDER BY clickclack;
 ----
@@ -87,7 +87,7 @@ clickclack
 
 
 # A column the group was never granted is refused for the member.
-connection c_ved2 user=cci2_vedernikoff
+connection c_ved2 user=cci2_vedernikoff password=cci2_vedernikoff_pw
 statement error
 SELECT babsky FROM cci2_iceberg;
 ----
@@ -95,7 +95,7 @@ db error: ERROR: permission denied for table cci2_iceberg<slt:ignore>
 
 
 # SELECT * touches mop -> refused.
-connection c_ved3 user=cci2_vedernikoff
+connection c_ved3 user=cci2_vedernikoff password=cci2_vedernikoff_pw
 statement error
 SELECT * FROM cci2_iceberg;
 ----
@@ -121,7 +121,7 @@ bab_click
 f
 
 
-connection c_bab user=cci2_babsky
+connection c_bab user=cci2_babsky password=cci2_babsky_pw
 statement error
 SELECT clickclack FROM cci2_iceberg;
 ----
@@ -150,7 +150,7 @@ mop	NULL
 
 
 # babsky (no direct grant, not in grp) reads the PUBLIC-granted column.
-connection c_bab2 user=cci2_babsky
+connection c_bab2 user=cci2_babsky password=cci2_babsky_pw
 query
 SELECT babsky FROM cci2_iceberg ORDER BY babsky;
 ----
@@ -159,7 +159,7 @@ babsky
 
 
 # But an ungranted column is still refused via PUBLIC.
-connection c_bab3 user=cci2_babsky
+connection c_bab3 user=cci2_babsky password=cci2_babsky_pw
 statement error
 SELECT clickclack FROM cci2_iceberg;
 ----
@@ -167,7 +167,7 @@ db error: ERROR: permission denied for table cci2_iceberg<slt:ignore>
 
 
 # vedernikoff now reads clickclack (grp) and babsky (PUBLIC) together.
-connection c_ved4 user=cci2_vedernikoff
+connection c_ved4 user=cci2_vedernikoff password=cci2_vedernikoff_pw
 query
 SELECT clickclack, babsky FROM cci2_iceberg ORDER BY clickclack;
 ----
@@ -176,7 +176,7 @@ clickclack	babsky
 
 
 # mop was never granted to anyone -> still refused for the member.
-connection c_ved5 user=cci2_vedernikoff
+connection c_ved5 user=cci2_vedernikoff password=cci2_vedernikoff_pw
 statement error
 SELECT mop FROM cci2_iceberg;
 ----

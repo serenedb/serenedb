@@ -17,7 +17,7 @@ DROP ROLE IF EXISTS enf_sq_vedernikoff;
 
 
 statement ok
-CREATE ROLE enf_sq_vedernikoff LOGIN;
+CREATE ROLE enf_sq_vedernikoff LOGIN PASSWORD 'enf_sq_vedernikoff_pw';
 
 
 statement ok
@@ -36,7 +36,7 @@ f	f	f
 
 
 # Unprivileged nextval is refused.
-connection c_sq user=enf_sq_vedernikoff
+connection c_sq user=enf_sq_vedernikoff password=enf_sq_vedernikoff_pw
 statement error
 SELECT nextval('enf_sq_mop_counter');
 ----
@@ -44,7 +44,7 @@ db error: ERROR: permission denied for sequence enf_sq_mop_counter<slt:ignore>
 
 
 # Unprivileged currval is refused.
-connection c_sq user=enf_sq_vedernikoff
+connection c_sq user=enf_sq_vedernikoff password=enf_sq_vedernikoff_pw
 statement error
 SELECT currval('enf_sq_mop_counter');
 ----
@@ -52,7 +52,7 @@ db error: ERROR: permission denied for sequence enf_sq_mop_counter<slt:ignore>
 
 
 # Unprivileged setval is refused.
-connection c_sq user=enf_sq_vedernikoff
+connection c_sq user=enf_sq_vedernikoff password=enf_sq_vedernikoff_pw
 statement error
 SELECT setval('enf_sq_mop_counter', 5);
 ----
@@ -79,7 +79,7 @@ t	t	t
 
 # With USAGE granted the role advances the sequence; currval (same connection,
 # after nextval) reads it back with SELECT/USAGE.
-connection c_sq_ok user=enf_sq_vedernikoff
+connection c_sq_ok user=enf_sq_vedernikoff password=enf_sq_vedernikoff_pw
 query
 SELECT nextval('enf_sq_mop_counter') AS n1;
 ----
@@ -87,7 +87,7 @@ n1
 1
 
 
-connection c_sq_ok user=enf_sq_vedernikoff
+connection c_sq_ok user=enf_sq_vedernikoff password=enf_sq_vedernikoff_pw
 query
 SELECT currval('enf_sq_mop_counter') AS cur;
 ----
@@ -96,7 +96,7 @@ cur
 
 
 # With UPDATE granted the role can setval.
-connection c_sq_ok user=enf_sq_vedernikoff
+connection c_sq_ok user=enf_sq_vedernikoff password=enf_sq_vedernikoff_pw
 query
 SELECT setval('enf_sq_mop_counter', 10) AS sv;
 ----

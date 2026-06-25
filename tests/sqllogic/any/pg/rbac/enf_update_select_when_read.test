@@ -16,7 +16,7 @@ DROP ROLE IF EXISTS enf_us_vedernikoff;
 
 
 statement ok
-CREATE ROLE enf_us_vedernikoff LOGIN;
+CREATE ROLE enf_us_vedernikoff LOGIN PASSWORD 'enf_us_vedernikoff_pw';
 
 
 statement ok
@@ -32,19 +32,19 @@ GRANT UPDATE ON enf_us_ledger TO enf_us_vedernikoff;
 
 
 # Constant SET, no WHERE: reads nothing -> UPDATE alone suffices.
-connection c_us user=enf_us_vedernikoff
+connection c_us user=enf_us_vedernikoff password=enf_us_vedernikoff_pw
 statement ok
 UPDATE enf_us_ledger SET amount = 99;
 
 
 # Constant SET, constant predicate (no column read): UPDATE alone suffices.
-connection c_us user=enf_us_vedernikoff
+connection c_us user=enf_us_vedernikoff password=enf_us_vedernikoff_pw
 statement ok
 UPDATE enf_us_ledger SET amount = 88 WHERE true;
 
 
 # WHERE reads a column -> SELECT is required, which vedernikoff lacks.
-connection c_us user=enf_us_vedernikoff
+connection c_us user=enf_us_vedernikoff password=enf_us_vedernikoff_pw
 statement error
 UPDATE enf_us_ledger SET amount = 77 WHERE id = 1;
 ----
@@ -52,7 +52,7 @@ db error: ERROR: permission denied for table enf_us_ledger<slt:ignore>
 
 
 # SET RHS reads a column -> SELECT is required.
-connection c_us user=enf_us_vedernikoff
+connection c_us user=enf_us_vedernikoff password=enf_us_vedernikoff_pw
 statement error
 UPDATE enf_us_ledger SET amount = amount + 1;
 ----
@@ -60,7 +60,7 @@ db error: ERROR: permission denied for table enf_us_ledger<slt:ignore>
 
 
 # RETURNING reads a column -> SELECT is required.
-connection c_us user=enf_us_vedernikoff
+connection c_us user=enf_us_vedernikoff password=enf_us_vedernikoff_pw
 statement error
 UPDATE enf_us_ledger SET amount = 5 RETURNING amount;
 ----
@@ -72,12 +72,12 @@ statement ok
 GRANT SELECT ON enf_us_ledger TO enf_us_vedernikoff;
 
 
-connection c_us2 user=enf_us_vedernikoff
+connection c_us2 user=enf_us_vedernikoff password=enf_us_vedernikoff_pw
 statement ok
 UPDATE enf_us_ledger SET amount = 77 WHERE id = 1;
 
 
-connection c_us2 user=enf_us_vedernikoff
+connection c_us2 user=enf_us_vedernikoff password=enf_us_vedernikoff_pw
 statement ok
 UPDATE enf_us_ledger SET amount = amount + 1;
 
@@ -89,7 +89,7 @@ DROP ROLE IF EXISTS enf_us_pudge;
 
 
 statement ok
-CREATE ROLE enf_us_pudge LOGIN;
+CREATE ROLE enf_us_pudge LOGIN PASSWORD 'enf_us_pudge_pw';
 
 
 statement ok
@@ -97,7 +97,7 @@ GRANT DELETE ON enf_us_ledger TO enf_us_pudge;
 
 
 # DELETE with no predicate: needs only DELETE.
-connection c_del user=enf_us_pudge
+connection c_del user=enf_us_pudge password=enf_us_pudge_pw
 statement ok
 DELETE FROM enf_us_ledger;
 
@@ -107,7 +107,7 @@ INSERT INTO enf_us_ledger VALUES (1, 10), (2, 20);
 
 
 # DELETE with a column-reading predicate: needs SELECT, which pudge lacks.
-connection c_del user=enf_us_pudge
+connection c_del user=enf_us_pudge password=enf_us_pudge_pw
 statement error
 DELETE FROM enf_us_ledger WHERE id = 1;
 ----
@@ -120,10 +120,10 @@ DROP ROLE IF EXISTS enf_us_nobody;
 
 
 statement ok
-CREATE ROLE enf_us_nobody LOGIN;
+CREATE ROLE enf_us_nobody LOGIN PASSWORD 'enf_us_nobody_pw';
 
 
-connection c_nobody user=enf_us_nobody
+connection c_nobody user=enf_us_nobody password=enf_us_nobody_pw
 statement error
 UPDATE enf_us_ledger SET amount = 1;
 ----
@@ -131,7 +131,7 @@ db error: ERROR: permission denied for table enf_us_ledger<slt:ignore>
 
 
 # Plain SELECT still requires the SELECT privilege.
-connection c_nobody user=enf_us_nobody
+connection c_nobody user=enf_us_nobody password=enf_us_nobody_pw
 statement error
 SELECT * FROM enf_us_ledger;
 ----

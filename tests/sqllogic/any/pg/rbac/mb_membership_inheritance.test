@@ -30,7 +30,7 @@ CREATE TABLE mb_mop_pudge (id int, amount int);
 
 
 statement ok
-CREATE ROLE mb_mop_negaimorit LOGIN;
+CREATE ROLE mb_mop_negaimorit LOGIN PASSWORD 'mb_mop_negaimorit_pw';
 
 
 statement ok
@@ -172,12 +172,12 @@ f	t
 # After the revoke negaimorit has INSERT (via babsky) and DELETE (direct), but
 # no SELECT. Inserting is allowed; selecting is denied.
 
-connection c_mop user=mb_mop_negaimorit
+connection c_mop user=mb_mop_negaimorit password=mb_mop_negaimorit_pw
 statement ok
 INSERT INTO mb_mop_pudge VALUES (1, 100);
 
 
-connection c_mop user=mb_mop_negaimorit
+connection c_mop user=mb_mop_negaimorit password=mb_mop_negaimorit_pw
 statement error
 SELECT * FROM mb_mop_pudge;
 ----
@@ -189,7 +189,7 @@ statement ok
 GRANT mb_mop_zhidky TO mb_mop_negaimorit;
 
 
-connection c_mop user=mb_mop_negaimorit
+connection c_mop user=mb_mop_negaimorit password=mb_mop_negaimorit_pw
 query
 SELECT count(*) FROM mb_mop_pudge;
 ----

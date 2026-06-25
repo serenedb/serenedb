@@ -13,11 +13,11 @@ DROP ROLE IF EXISTS enf_ct_vedernikoff;
 
 
 statement ok
-CREATE ROLE enf_ct_vedernikoff LOGIN;
+CREATE ROLE enf_ct_vedernikoff LOGIN PASSWORD 'enf_ct_vedernikoff_pw';
 
 
 # Without CREATE on the schema, CREATE TYPE is refused.
-connection c_ved user=enf_ct_vedernikoff
+connection c_ved user=enf_ct_vedernikoff password=enf_ct_vedernikoff_pw
 statement error
 CREATE TYPE enf_ct_clickclack AS (id int, payload text);
 ----
@@ -38,7 +38,7 @@ statement ok
 GRANT CREATE ON SCHEMA public TO enf_ct_vedernikoff;
 
 
-connection c_ved2 user=enf_ct_vedernikoff
+connection c_ved2 user=enf_ct_vedernikoff password=enf_ct_vedernikoff_pw
 statement ok
 CREATE TYPE enf_ct_clickclack AS (id int, payload text);
 

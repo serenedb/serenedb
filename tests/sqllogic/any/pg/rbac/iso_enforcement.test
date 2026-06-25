@@ -53,7 +53,7 @@ INSERT INTO iso_pavel VALUES (100, 'babsky'), (200, 'pudge');
 
 
 statement ok
-CREATE ROLE iso_negaimorit LOGIN;
+CREATE ROLE iso_negaimorit LOGIN PASSWORD 'iso_negaimorit_pw';
 
 
 # ============================================================================
@@ -92,7 +92,7 @@ t	f	f	t	f	t	f
 # Real query path: SELECT works on iso_zhidky (the table it was granted on).
 # ============================================================================
 
-connection c_neg user=iso_negaimorit
+connection c_neg user=iso_negaimorit password=iso_negaimorit_pw
 query
 SELECT id, mop FROM iso_zhidky ORDER BY id;
 ----
@@ -102,7 +102,7 @@ id	mop
 
 
 # But SELECT on iso_gul is denied: the INSERT grant there does not imply read.
-connection c_neg user=iso_negaimorit
+connection c_neg user=iso_negaimorit password=iso_negaimorit_pw
 statement error
 SELECT * FROM iso_gul;
 ----
@@ -110,7 +110,7 @@ db error: ERROR: permission denied for table iso_gul<slt:ignore>
 
 
 # And SELECT on iso_pavel is denied: the DELETE grant there does not imply read.
-connection c_neg user=iso_negaimorit
+connection c_neg user=iso_negaimorit password=iso_negaimorit_pw
 statement error
 SELECT * FROM iso_pavel;
 ----
@@ -122,19 +122,19 @@ db error: ERROR: permission denied for table iso_pavel<slt:ignore>
 # there) and on iso_pavel (only DELETE there).
 # ============================================================================
 
-connection c_neg user=iso_negaimorit
+connection c_neg user=iso_negaimorit password=iso_negaimorit_pw
 statement ok
 INSERT INTO iso_gul VALUES (11, 'deadinside');
 
 
-connection c_neg user=iso_negaimorit
+connection c_neg user=iso_negaimorit password=iso_negaimorit_pw
 statement error
 INSERT INTO iso_zhidky VALUES (3, 'androed');
 ----
 db error: ERROR: permission denied for table iso_zhidky<slt:ignore>
 
 
-connection c_neg user=iso_negaimorit
+connection c_neg user=iso_negaimorit password=iso_negaimorit_pw
 statement error
 INSERT INTO iso_pavel VALUES (300, 'abramov');
 ----
@@ -148,14 +148,14 @@ db error: ERROR: permission denied for table iso_pavel<slt:ignore>
 # check, identical on both engines.
 # ============================================================================
 
-connection c_neg user=iso_negaimorit
+connection c_neg user=iso_negaimorit password=iso_negaimorit_pw
 statement error
 DELETE FROM iso_zhidky WHERE id = 1;
 ----
 db error: ERROR: permission denied for table iso_zhidky<slt:ignore>
 
 
-connection c_neg user=iso_negaimorit
+connection c_neg user=iso_negaimorit password=iso_negaimorit_pw
 statement error
 DELETE FROM iso_gul WHERE id = 10;
 ----
@@ -181,7 +181,7 @@ gu_ins	zh_sel	pa_del
 f	t	t
 
 
-connection c_neg user=iso_negaimorit
+connection c_neg user=iso_negaimorit password=iso_negaimorit_pw
 statement error
 INSERT INTO iso_gul VALUES (12, 'myasnig');
 ----
@@ -189,7 +189,7 @@ db error: ERROR: permission denied for table iso_gul<slt:ignore>
 
 
 # iso_zhidky SELECT still works after the unrelated revoke on iso_gul.
-connection c_neg user=iso_negaimorit
+connection c_neg user=iso_negaimorit password=iso_negaimorit_pw
 query
 SELECT count(*) AS n FROM iso_zhidky;
 ----

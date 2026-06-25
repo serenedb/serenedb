@@ -23,7 +23,7 @@ DROP ROLE IF EXISTS xao_oog_babsky;
 
 
 statement ok
-CREATE ROLE xao_oog_mop LOGIN;
+CREATE ROLE xao_oog_mop LOGIN PASSWORD 'xao_oog_mop_pw';
 
 
 statement ok
@@ -47,7 +47,7 @@ ALTER TABLE xao_oog_clickclack OWNER TO xao_oog_vedernikoff;
 
 
 # The old owner mop no longer holds any privilege, so the GRANT is refused.
-connection cmop user=xao_oog_mop
+connection cmop user=xao_oog_mop password=xao_oog_mop_pw
 statement error
 GRANT INSERT ON xao_oog_clickclack TO xao_oog_babsky;
 ----

@@ -261,7 +261,7 @@ f	t	f	f	f	t	f
 # ============================================================================
 
 statement ok
-CREATE ROLE combo_enforce LOGIN;
+CREATE ROLE combo_enforce LOGIN PASSWORD 'combo_enforce_pw';
 
 
 statement ok
@@ -279,7 +279,7 @@ t	f	t
 
 
 # Real read works.
-connection c_enforce user=combo_enforce
+connection c_enforce user=combo_enforce password=combo_enforce_pw
 query
 SELECT count(*) AS n FROM combo_pudge;
 ----
@@ -288,7 +288,7 @@ n
 
 
 # Real INSERT is denied -- it is not in the granted pair.
-connection c_enforce user=combo_enforce
+connection c_enforce user=combo_enforce password=combo_enforce_pw
 statement error
 INSERT INTO combo_pudge VALUES (3, 'pudge');
 ----
@@ -296,7 +296,7 @@ db error: ERROR: permission denied for table combo_pudge<slt:ignore>
 
 
 # Real DELETE works -- it is in the granted pair.
-connection c_enforce user=combo_enforce
+connection c_enforce user=combo_enforce password=combo_enforce_pw
 statement ok
 DELETE FROM combo_pudge WHERE id = 2;
 

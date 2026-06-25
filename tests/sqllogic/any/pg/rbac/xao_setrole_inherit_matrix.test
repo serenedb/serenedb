@@ -29,7 +29,7 @@ DROP ROLE IF EXISTS xao_sim_mop;
 
 
 statement ok
-CREATE ROLE xao_sim_vedernikoff LOGIN;
+CREATE ROLE xao_sim_vedernikoff LOGIN PASSWORD 'xao_sim_vedernikoff_pw';
 
 
 statement ok
@@ -67,7 +67,7 @@ ALTER SEQUENCE xao_sim_seq OWNER TO xao_sim_vedernikoff;
 
 
 # (table) INHERIT-only owner cannot transfer to mop
-connection ctab user=xao_sim_vedernikoff
+connection ctab user=xao_sim_vedernikoff password=xao_sim_vedernikoff_pw
 statement error
 ALTER TABLE xao_sim_clickclack OWNER TO xao_sim_mop;
 ----
@@ -75,7 +75,7 @@ db error: ERROR: must be able to SET ROLE "xao_sim_mop"<slt:ignore>
 
 
 # (view) same
-connection cview user=xao_sim_vedernikoff
+connection cview user=xao_sim_vedernikoff password=xao_sim_vedernikoff_pw
 statement error
 ALTER VIEW xao_sim_iceberg OWNER TO xao_sim_mop;
 ----
@@ -83,7 +83,7 @@ db error: ERROR: must be able to SET ROLE "xao_sim_mop"<slt:ignore>
 
 
 # (sequence) same
-connection cseq user=xao_sim_vedernikoff
+connection cseq user=xao_sim_vedernikoff password=xao_sim_vedernikoff_pw
 statement error
 ALTER SEQUENCE xao_sim_seq OWNER TO xao_sim_mop;
 ----

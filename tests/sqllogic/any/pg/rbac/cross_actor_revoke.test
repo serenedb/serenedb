@@ -23,7 +23,7 @@ CREATE TABLE clickclack_ledger (id int);
 
 
 statement ok
-CREATE ROLE mop_deputy LOGIN;
+CREATE ROLE mop_deputy LOGIN PASSWORD 'mop_deputy_pw';
 
 
 statement ok
@@ -37,7 +37,7 @@ GRANT postgres TO mop_deputy;
 
 # ---- deputy grants, superuser revokes ----
 
-connection c_deputy user=mop_deputy
+connection c_deputy user=mop_deputy password=mop_deputy_pw
 statement ok
 GRANT SELECT ON clickclack_ledger TO mop_reader;
 
@@ -80,7 +80,7 @@ has_table_privilege
 t
 
 
-connection c_deputy user=mop_deputy
+connection c_deputy user=mop_deputy password=mop_deputy_pw
 statement ok
 REVOKE INSERT ON clickclack_ledger FROM mop_reader;
 

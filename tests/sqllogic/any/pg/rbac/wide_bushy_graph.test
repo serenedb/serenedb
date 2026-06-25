@@ -72,7 +72,7 @@ INSERT INTO wide_bg_iceberg VALUES (1, 'clickclack'), (2, 'mop');
 
 
 statement ok
-CREATE ROLE wide_bg_apex LOGIN;
+CREATE ROLE wide_bg_apex LOGIN PASSWORD 'wide_bg_apex_pw';
 
 
 statement ok
@@ -301,7 +301,7 @@ t	t	t
 # ---- Real enforcement at the apex: SELECT was cut above the spine break ----
 # apex is denied a real read (it lost SELECT when the s2 -> s3 edge was severed).
 
-connection c_apex user=wide_bg_apex
+connection c_apex user=wide_bg_apex password=wide_bg_apex_pw
 statement error
 SELECT * FROM wide_bg_iceberg;
 ----

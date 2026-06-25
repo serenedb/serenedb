@@ -35,7 +35,7 @@ CREATE TABLE xmb_cib_makak (id int);
 
 
 statement ok
-CREATE ROLE xmb_cib_babsky LOGIN;
+CREATE ROLE xmb_cib_babsky LOGIN PASSWORD 'xmb_cib_babsky_pw';
 
 
 statement ok
@@ -78,7 +78,7 @@ a	b	c	d
 t	t	t	t
 
 
-connection c_babsky user=xmb_cib_babsky
+connection c_babsky user=xmb_cib_babsky password=xmb_cib_babsky_pw
 query
 SELECT count(*) FROM xmb_cib_makak;
 ----
@@ -116,7 +116,7 @@ member_leaf	usage_leaf	usage_kostya
 t	f	t
 
 
-connection c_babsky2 user=xmb_cib_babsky
+connection c_babsky2 user=xmb_cib_babsky password=xmb_cib_babsky_pw
 statement error
 SELECT * FROM xmb_cib_makak;
 ----
@@ -137,7 +137,7 @@ a	usage_leaf
 t	t
 
 
-connection c_babsky3 user=xmb_cib_babsky
+connection c_babsky3 user=xmb_cib_babsky password=xmb_cib_babsky_pw
 query
 SELECT count(*) FROM xmb_cib_makak;
 ----

@@ -22,11 +22,11 @@ CREATE TABLE irs_kostya (id int, secret text);
 
 
 statement ok
-CREATE ROLE irs_insonly LOGIN;
+CREATE ROLE irs_insonly LOGIN PASSWORD 'irs_insonly_pw';
 
 
 statement ok
-CREATE ROLE irs_full LOGIN;
+CREATE ROLE irs_full LOGIN PASSWORD 'irs_full_pw';
 
 
 statement ok
@@ -38,13 +38,13 @@ GRANT INSERT, SELECT ON irs_kostya TO irs_full;
 
 
 # Plain INSERT (no RETURNING) works with INSERT alone.
-connection c_ins user=irs_insonly
+connection c_ins user=irs_insonly password=irs_insonly_pw
 statement ok
 INSERT INTO irs_kostya VALUES (1, 'mop');
 
 
 # INSERT ... RETURNING by the INSERT-only role is refused (needs SELECT).
-connection c_ins user=irs_insonly
+connection c_ins user=irs_insonly password=irs_insonly_pw
 statement error
 INSERT INTO irs_kostya VALUES (2, 'iceberg') RETURNING id;
 ----
@@ -52,7 +52,7 @@ db error: ERROR: permission denied for table irs_kostya<slt:ignore>
 
 
 # RETURNING a text column (the crash trigger) is refused the same way.
-connection c_ins user=irs_insonly
+connection c_ins user=irs_insonly password=irs_insonly_pw
 statement error
 INSERT INTO irs_kostya (id, secret) VALUES (3, 'topsecret') RETURNING id, secret;
 ----
@@ -63,7 +63,7 @@ db error: ERROR: permission denied for table irs_kostya<slt:ignore>
 # statement ok -- only that authorization passes; the returned values are not
 # checked because serenedb has a separate, unrelated bug where RETURNING
 # projects integer columns incorrectly (out of scope for this privilege test).
-connection c_full user=irs_full
+connection c_full user=irs_full password=irs_full_pw
 statement ok
 INSERT INTO irs_kostya VALUES (9, 'clickclack') RETURNING secret;
 

@@ -45,7 +45,7 @@ INSERT INTO cju_mop VALUES (1, 5), (2, 6);
 
 
 statement ok
-CREATE ROLE cju_vedernikoff LOGIN;
+CREATE ROLE cju_vedernikoff LOGIN PASSWORD 'cju_vedernikoff_pw';
 
 
 # SELECT on (id, av) of cju_iceberg only; NOTHING on cju_mop.
@@ -56,7 +56,7 @@ GRANT SELECT (id, av) ON cju_iceberg TO cju_vedernikoff;
 # === C4: LEFT JOIN brings cju_mop into the range table via the ON key ===
 # Only cju_iceberg.av is projected; cju_mop contributes only its join key, but
 # that is a column reference on an ungranted relation -> refused on cju_mop.
-connection c_ved user=cju_vedernikoff
+connection c_ved user=cju_vedernikoff password=cju_vedernikoff_pw
 statement error
 SELECT cju_iceberg.av FROM cju_iceberg LEFT JOIN cju_mop ON cju_iceberg.id = cju_mop.id;
 ----
@@ -66,7 +66,7 @@ db error: ERROR: permission denied for table cju_mop<slt:ignore>
 # Control: drop cju_mop from the query entirely and the same projection of the
 # granted table succeeds -- it is specifically the cju_mop reference that is
 # refused above, not the av projection.
-connection c_ved2 user=cju_vedernikoff
+connection c_ved2 user=cju_vedernikoff password=cju_vedernikoff_pw
 query
 SELECT cju_iceberg.av FROM cju_iceberg ORDER BY av;
 ----

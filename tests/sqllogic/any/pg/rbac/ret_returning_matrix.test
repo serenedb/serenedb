@@ -35,7 +35,7 @@ INSERT INTO ret_ledger VALUES (1, 10, 100);
 
 
 statement ok
-CREATE ROLE ret_vedernikoff LOGIN;
+CREATE ROLE ret_vedernikoff LOGIN PASSWORD 'ret_vedernikoff_pw';
 
 
 # === CASE 1: INSERT(id, amt) only, no SELECT ===
@@ -45,13 +45,13 @@ GRANT INSERT (id, amt) ON ret_ledger TO ret_vedernikoff;
 
 
 # Bare INSERT assigns the granted columns without reading any -> allowed.
-connection c_ins user=ret_vedernikoff
+connection c_ins user=ret_vedernikoff password=ret_vedernikoff_pw
 statement ok
 INSERT INTO ret_ledger(id, amt) VALUES (2, 20);
 
 
 # RETURNING amt reads the row back, but the role has no SELECT -> refused.
-connection c_ins2 user=ret_vedernikoff
+connection c_ins2 user=ret_vedernikoff password=ret_vedernikoff_pw
 statement error
 INSERT INTO ret_ledger(id, amt) VALUES (3, 30) RETURNING amt;
 ----
@@ -59,7 +59,7 @@ db error: ERROR: permission denied for table ret_ledger<slt:ignore>
 
 
 # RETURNING id is likewise refused: INSERT(id) is a write grant, not a read one.
-connection c_ins3 user=ret_vedernikoff
+connection c_ins3 user=ret_vedernikoff password=ret_vedernikoff_pw
 statement error
 INSERT INTO ret_ledger(id, amt) VALUES (4, 40) RETURNING id;
 ----
@@ -73,7 +73,7 @@ GRANT SELECT (amt) ON ret_ledger TO ret_vedernikoff;
 
 
 # RETURNING amt now has the matching column SELECT -> allowed.
-connection c_sel user=ret_vedernikoff
+connection c_sel user=ret_vedernikoff password=ret_vedernikoff_pw
 query
 INSERT INTO ret_ledger(id, amt) VALUES (5, 50) RETURNING amt;
 ----
@@ -82,7 +82,7 @@ amt
 
 
 # RETURNING note is still refused: note has no SELECT grant.
-connection c_sel2 user=ret_vedernikoff
+connection c_sel2 user=ret_vedernikoff password=ret_vedernikoff_pw
 statement error
 INSERT INTO ret_ledger(id, amt) VALUES (6, 60) RETURNING note;
 ----
@@ -108,13 +108,13 @@ GRANT SELECT (id) ON ret_ledger TO ret_vedernikoff;
 
 
 # Constant SET over a WHERE that reads the SELECT-granted id -> allowed.
-connection c_upd user=ret_vedernikoff
+connection c_upd user=ret_vedernikoff password=ret_vedernikoff_pw
 statement ok
 UPDATE ret_ledger SET amt = 5 WHERE id = 1;
 
 
 # RETURNING id is the SELECT-granted column -> allowed.
-connection c_upd2 user=ret_vedernikoff
+connection c_upd2 user=ret_vedernikoff password=ret_vedernikoff_pw
 query
 UPDATE ret_ledger SET amt = 5 WHERE id = 1 RETURNING id;
 ----
@@ -123,7 +123,7 @@ id
 
 
 # RETURNING note is the ungranted column -> refused.
-connection c_upd3 user=ret_vedernikoff
+connection c_upd3 user=ret_vedernikoff password=ret_vedernikoff_pw
 statement error
 UPDATE ret_ledger SET amt = 5 WHERE id = 1 RETURNING note;
 ----
@@ -131,7 +131,7 @@ db error: ERROR: permission denied for table ret_ledger<slt:ignore>
 
 
 # Self-referencing SET reads amt, which has no SELECT grant -> refused.
-connection c_upd4 user=ret_vedernikoff
+connection c_upd4 user=ret_vedernikoff password=ret_vedernikoff_pw
 statement error
 UPDATE ret_ledger SET amt = amt + 1;
 ----
@@ -149,7 +149,7 @@ GRANT DELETE ON ret_ledger TO ret_vedernikoff;
 
 
 # DELETE with a WHERE over the granted id, RETURNING the granted id -> allowed.
-connection c_del user=ret_vedernikoff
+connection c_del user=ret_vedernikoff password=ret_vedernikoff_pw
 query
 DELETE FROM ret_ledger WHERE id = 1 RETURNING id;
 ----
@@ -158,7 +158,7 @@ id
 
 
 # RETURNING note is the ungranted column -> refused.
-connection c_del2 user=ret_vedernikoff
+connection c_del2 user=ret_vedernikoff password=ret_vedernikoff_pw
 statement error
 DELETE FROM ret_ledger WHERE id = 2 RETURNING note;
 ----
@@ -166,7 +166,7 @@ db error: ERROR: permission denied for table ret_ledger<slt:ignore>
 
 
 # WHERE reads the ungranted note -> refused before any row is touched.
-connection c_del3 user=ret_vedernikoff
+connection c_del3 user=ret_vedernikoff password=ret_vedernikoff_pw
 statement error
 DELETE FROM ret_ledger WHERE note = 1;
 ----
@@ -176,7 +176,7 @@ db error: ERROR: permission denied for table ret_ledger<slt:ignore>
 # === CASE 5: RETURNING * needs SELECT on every column ===
 
 # With only SELECT(id), RETURNING * touches amt and note too -> refused.
-connection c_star user=ret_vedernikoff
+connection c_star user=ret_vedernikoff password=ret_vedernikoff_pw
 statement error
 DELETE FROM ret_ledger WHERE false RETURNING *;
 ----
@@ -190,7 +190,7 @@ GRANT SELECT (amt, note) ON ret_ledger TO ret_vedernikoff;
 
 # RETURNING * over WHERE false reads no row, but the column privilege check
 # passes for every column -> allowed (empty result).
-connection c_star2 user=ret_vedernikoff
+connection c_star2 user=ret_vedernikoff password=ret_vedernikoff_pw
 statement ok
 DELETE FROM ret_ledger WHERE false RETURNING *;
 

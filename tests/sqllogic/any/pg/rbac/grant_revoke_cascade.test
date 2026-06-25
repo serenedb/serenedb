@@ -39,7 +39,7 @@ CREATE ROLE dgrc_alice LOGIN;
 
 
 statement ok
-CREATE ROLE dgrc_bob LOGIN;
+CREATE ROLE dgrc_bob LOGIN PASSWORD 'dgrc_bob_pw';
 
 
 # Owner grants alice SELECT WITH GRANT OPTION...
@@ -64,7 +64,7 @@ dgrc_bob=r/dgrc_alice
 
 
 # bob can read the table from his own session (the dependent grant is live).
-connection c_bob user=dgrc_bob
+connection c_bob user=dgrc_bob password=dgrc_bob_pw
 query
 SELECT count(*) AS n FROM dgrc_clickclack;
 ----
@@ -117,7 +117,7 @@ f	f
 
 # bob's read is now denied. serenedb appends a DETAIL line PG does not, so the
 # expected block ends with an ignore marker that matches both engines.
-connection c_bob2 user=dgrc_bob
+connection c_bob2 user=dgrc_bob password=dgrc_bob_pw
 statement error
 SELECT count(*) FROM dgrc_clickclack;
 ----

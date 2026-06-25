@@ -22,26 +22,26 @@ INSERT INTO ddlo_kostya VALUES (1, 'mop');
 
 
 statement ok
-CREATE ROLE ddlo_vedernikoff LOGIN;
+CREATE ROLE ddlo_vedernikoff LOGIN PASSWORD 'ddlo_vedernikoff_pw';
 
 
 # ---- non-owner DDL must be refused (PG: "must be owner of table/...") ----
 
-connection c_ved user=ddlo_vedernikoff
+connection c_ved user=ddlo_vedernikoff password=ddlo_vedernikoff_pw
 statement error
 DROP TABLE ddlo_kostya;
 ----
 db error: ERROR: must be owner of table ddlo_kostya<slt:ignore>
 
 
-connection c_ved user=ddlo_vedernikoff
+connection c_ved user=ddlo_vedernikoff password=ddlo_vedernikoff_pw
 statement error
 ALTER TABLE ddlo_kostya ADD COLUMN sneaky int;
 ----
 db error: ERROR: must be owner of table ddlo_kostya<slt:ignore>
 
 
-connection c_ved user=ddlo_vedernikoff
+connection c_ved user=ddlo_vedernikoff password=ddlo_vedernikoff_pw
 statement error
 ALTER TABLE ddlo_kostya RENAME TO ddlo_pwned;
 ----

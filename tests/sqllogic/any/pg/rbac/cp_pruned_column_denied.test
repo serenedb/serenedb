@@ -30,7 +30,7 @@ INSERT INTO prn_iceberg VALUES (1, 10, 100), (2, 20, 200);
 
 
 statement ok
-CREATE ROLE prn_vedernikoff LOGIN;
+CREATE ROLE prn_vedernikoff LOGIN PASSWORD 'prn_vedernikoff_pw';
 
 
 # SELECT on (id, av) only -- secret stays ungranted.
@@ -41,7 +41,7 @@ GRANT SELECT (id, av) ON prn_iceberg TO prn_vedernikoff;
 # === Positive controls: reads touching only granted columns succeed ===
 
 # A single granted column.
-connection c_ved user=prn_vedernikoff
+connection c_ved user=prn_vedernikoff password=prn_vedernikoff_pw
 query
 SELECT av FROM prn_iceberg ORDER BY av;
 ----
@@ -51,7 +51,7 @@ av
 
 
 # Both granted columns.
-connection c_ved2 user=prn_vedernikoff
+connection c_ved2 user=prn_vedernikoff password=prn_vedernikoff_pw
 query
 SELECT id, av FROM prn_iceberg ORDER BY id;
 ----
@@ -61,7 +61,7 @@ id	av
 
 
 # count(*) reads no specific column; the grant on (id, av) suffices (C7).
-connection c_ved3 user=prn_vedernikoff
+connection c_ved3 user=prn_vedernikoff password=prn_vedernikoff_pw
 query
 SELECT count(*) AS n FROM prn_iceberg;
 ----
@@ -70,7 +70,7 @@ n
 
 
 # Direct reference to the ungranted column -> refused.
-connection c_ved4 user=prn_vedernikoff
+connection c_ved4 user=prn_vedernikoff password=prn_vedernikoff_pw
 statement error
 SELECT secret FROM prn_iceberg;
 ----
@@ -80,7 +80,7 @@ db error: ERROR: permission denied for table prn_iceberg<slt:ignore>
 # === C1: secret projected in a subquery, then PRUNED by the outer SELECT ===
 # The optimizer would drop secret (only av survives the outer projection), but
 # it is referenced in the subquery target list -> refused.
-connection c_ved5 user=prn_vedernikoff
+connection c_ved5 user=prn_vedernikoff password=prn_vedernikoff_pw
 statement error
 SELECT av FROM (SELECT av, secret FROM prn_iceberg) s;
 ----
@@ -90,7 +90,7 @@ db error: ERROR: permission denied for table prn_iceberg<slt:ignore>
 # === C2: SELECT * inside a subquery expands to secret, then pruned ===
 # The wildcard expands to (id, av, secret); the outer query keeps only av, but
 # secret was referenced by the expansion -> refused.
-connection c_ved6 user=prn_vedernikoff
+connection c_ved6 user=prn_vedernikoff password=prn_vedernikoff_pw
 statement error
 SELECT s.av FROM (SELECT * FROM prn_iceberg) s;
 ----
@@ -98,7 +98,7 @@ db error: ERROR: permission denied for table prn_iceberg<slt:ignore>
 
 
 # === C3: secret projected in a CTE, then pruned by the outer SELECT ===
-connection c_ved7 user=prn_vedernikoff
+connection c_ved7 user=prn_vedernikoff password=prn_vedernikoff_pw
 statement error
 WITH c AS (SELECT av, secret FROM prn_iceberg) SELECT av FROM c;
 ----
@@ -108,7 +108,7 @@ db error: ERROR: permission denied for table prn_iceberg<slt:ignore>
 # === C6: secret referenced ONLY in a foldable WHERE predicate ===
 # `secret != secret` is constant-false and the optimizer could fold it away
 # entirely, but secret is referenced -> refused.
-connection c_ved8 user=prn_vedernikoff
+connection c_ved8 user=prn_vedernikoff password=prn_vedernikoff_pw
 statement error
 SELECT av FROM prn_iceberg WHERE secret != secret;
 ----

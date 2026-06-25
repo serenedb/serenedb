@@ -53,18 +53,18 @@ CREATE VIEW vcr_clickclack AS SELECT a, b FROM vcr_iceberg;
 
 
 statement ok
-CREATE ROLE vcr_vedernikoff LOGIN;
+CREATE ROLE vcr_vedernikoff LOGIN PASSWORD 'vcr_vedernikoff_pw';
 
 
 statement ok
-CREATE ROLE vcr_babsky LOGIN;
+CREATE ROLE vcr_babsky LOGIN PASSWORD 'vcr_babsky_pw';
 
 
 # === Base table is enforced per referenced relation ===
 
 # No grant of any kind -> reading the base table directly is refused, naming the
 # table. Byte-identical on PG and SereneDB.
-connection c_ved user=vcr_vedernikoff
+connection c_ved user=vcr_vedernikoff password=vcr_vedernikoff_pw
 statement error
 SELECT a FROM vcr_iceberg;
 ----
@@ -78,7 +78,7 @@ GRANT SELECT (a) ON vcr_iceberg TO vcr_vedernikoff;
 
 
 # The granted column reads fine.
-connection c_ved2 user=vcr_vedernikoff
+connection c_ved2 user=vcr_vedernikoff password=vcr_vedernikoff_pw
 query
 SELECT a FROM vcr_iceberg ORDER BY a;
 ----
@@ -88,7 +88,7 @@ a
 
 
 # An ungranted column (c) is refused -- column grant does not cover it.
-connection c_ved3 user=vcr_vedernikoff
+connection c_ved3 user=vcr_vedernikoff password=vcr_vedernikoff_pw
 statement error
 SELECT c FROM vcr_iceberg;
 ----
@@ -96,7 +96,7 @@ db error: ERROR: permission denied for table vcr_iceberg<slt:ignore>
 
 
 # SELECT * touches the ungranted column c -> refused.
-connection c_ved4 user=vcr_vedernikoff
+connection c_ved4 user=vcr_vedernikoff password=vcr_vedernikoff_pw
 statement error
 SELECT * FROM vcr_iceberg;
 ----
@@ -104,7 +104,7 @@ db error: ERROR: permission denied for table vcr_iceberg<slt:ignore>
 
 
 # A WHERE predicate on an ungranted column is refused.
-connection c_ved5 user=vcr_vedernikoff
+connection c_ved5 user=vcr_vedernikoff password=vcr_vedernikoff_pw
 statement error
 SELECT a FROM vcr_iceberg WHERE c = 3;
 ----
@@ -112,7 +112,7 @@ db error: ERROR: permission denied for table vcr_iceberg<slt:ignore>
 
 
 # count(*) reads no specific column; SELECT on one granted column suffices.
-connection c_ved6 user=vcr_vedernikoff
+connection c_ved6 user=vcr_vedernikoff password=vcr_vedernikoff_pw
 query
 SELECT count(*) AS n FROM vcr_iceberg;
 ----
@@ -129,7 +129,7 @@ GRANT SELECT ON vcr_clickclack TO vcr_babsky;
 
 # Reading the base table directly is still refused: the view grant did not leak
 # onto vcr_iceberg. Byte-identical on PG and SereneDB.
-connection c_bab user=vcr_babsky
+connection c_bab user=vcr_babsky password=vcr_babsky_pw
 statement error
 SELECT a FROM vcr_iceberg;
 ----
@@ -138,7 +138,7 @@ db error: ERROR: permission denied for table vcr_iceberg<slt:ignore>
 
 # The column grant on the base table did not leak onto babsky either: babsky
 # never received SELECT (a) ON vcr_iceberg, so the base table stays refused.
-connection c_bab2 user=vcr_babsky
+connection c_bab2 user=vcr_babsky password=vcr_babsky_pw
 statement error
 SELECT a, b FROM vcr_iceberg;
 ----

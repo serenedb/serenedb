@@ -30,7 +30,7 @@ GRANT SELECT, INSERT ON ni_mop_iceberg TO public;
 
 # A NOINHERIT login role and a group holding privileges on the table.
 statement ok
-CREATE ROLE ni_mop_vedernikoff LOGIN NOINHERIT;
+CREATE ROLE ni_mop_vedernikoff LOGIN NOINHERIT PASSWORD 'ni_mop_vedernikoff_pw';
 
 
 statement ok
@@ -63,7 +63,7 @@ t	f	f
 
 
 # Real query path agrees: SELECT is denied for the NOINHERIT member.
-connection c_ved user=ni_mop_vedernikoff
+connection c_ved user=ni_mop_vedernikoff password=ni_mop_vedernikoff_pw
 statement error
 SELECT * FROM ni_mop_iceberg;
 ----
@@ -85,7 +85,7 @@ usage	sel
 t	t
 
 
-connection c_ved user=ni_mop_vedernikoff
+connection c_ved user=ni_mop_vedernikoff password=ni_mop_vedernikoff_pw
 query
 SELECT count(*) FROM ni_mop_iceberg;
 ----

@@ -31,7 +31,7 @@ DROP ROLE IF EXISTS xao_otn_babsky;
 
 
 statement ok
-CREATE ROLE xao_otn_vedernikoff LOGIN;
+CREATE ROLE xao_otn_vedernikoff LOGIN PASSWORD 'xao_otn_vedernikoff_pw';
 
 
 statement ok
@@ -43,7 +43,7 @@ CREATE ROLE xao_otn_iceberg;
 
 
 statement ok
-CREATE ROLE xao_otn_babsky LOGIN;
+CREATE ROLE xao_otn_babsky LOGIN PASSWORD 'xao_otn_babsky_pw';
 
 
 # vedernikoff can SET ROLE to mop (default GRANT carries the set option) but
@@ -73,7 +73,7 @@ xao_otn_vedernikoff
 
 
 # (a) non-owner (babsky) cannot transfer
-connection cbabsky user=xao_otn_babsky
+connection cbabsky user=xao_otn_babsky password=xao_otn_babsky_pw
 statement error
 ALTER TABLE xao_otn_clickclack OWNER TO xao_otn_babsky;
 ----
@@ -81,7 +81,7 @@ db error: ERROR: must be owner of table xao_otn_clickclack<slt:ignore>
 
 
 # (b) owner cannot transfer to a role it cannot SET ROLE to (iceberg)
-connection cowner user=xao_otn_vedernikoff
+connection cowner user=xao_otn_vedernikoff password=xao_otn_vedernikoff_pw
 statement error
 ALTER TABLE xao_otn_clickclack OWNER TO xao_otn_iceberg;
 ----
@@ -89,7 +89,7 @@ db error: ERROR: must be able to SET ROLE "xao_otn_iceberg"<slt:ignore>
 
 
 # (c) owner cannot transfer to a nonexistent role
-connection cowner2 user=xao_otn_vedernikoff
+connection cowner2 user=xao_otn_vedernikoff password=xao_otn_vedernikoff_pw
 statement error
 ALTER TABLE xao_otn_clickclack OWNER TO xao_otn_ghost;
 ----
@@ -98,7 +98,7 @@ db error: ERROR: role "xao_otn_ghost" does not exist<slt:ignore>
 
 # (d) owner -> CURRENT_USER is a no-op success (no real owner change, so the
 # new-owner schema check is skipped on both engines).
-connection cowner3 user=xao_otn_vedernikoff
+connection cowner3 user=xao_otn_vedernikoff password=xao_otn_vedernikoff_pw
 statement ok
 ALTER TABLE xao_otn_clickclack OWNER TO CURRENT_USER;
 

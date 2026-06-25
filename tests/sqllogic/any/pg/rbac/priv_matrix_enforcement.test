@@ -27,7 +27,7 @@ INSERT INTO pm_kostya VALUES (1, 'iceberg'), (2, 'vedernikoff');
 
 
 statement ok
-CREATE ROLE pm_negaimorit LOGIN;
+CREATE ROLE pm_negaimorit LOGIN PASSWORD 'pm_negaimorit_pw';
 
 
 # ---- Baseline: oracle says no privileges for a fresh role ----
@@ -42,14 +42,14 @@ f	f
 
 # ---- And the real query path agrees: both SELECT and INSERT are denied ----
 
-connection c_negaimorit user=pm_negaimorit
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
 statement error
 SELECT * FROM pm_kostya;
 ----
 db error: ERROR: permission denied for table pm_kostya<slt:ignore>
 
 
-connection c_negaimorit user=pm_negaimorit
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
 statement error
 INSERT INTO pm_kostya VALUES (3, 'pudge');
 ----
@@ -70,7 +70,7 @@ sel	ins
 t	f
 
 
-connection c_negaimorit user=pm_negaimorit
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
 query
 SELECT id, mop FROM pm_kostya ORDER BY id;
 ----
@@ -80,7 +80,7 @@ id	mop
 
 
 # INSERT is still refused -- the SELECT grant does not leak into write access.
-connection c_negaimorit user=pm_negaimorit
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
 statement error
 INSERT INTO pm_kostya VALUES (3, 'babsky');
 ----
@@ -101,13 +101,13 @@ sel	ins
 t	t
 
 
-connection c_negaimorit user=pm_negaimorit
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
 statement ok
 INSERT INTO pm_kostya VALUES (3, 'clickclack');
 
 
 # The row pm_negaimorit just inserted is visible to pm_negaimorit's own SELECT.
-connection c_negaimorit user=pm_negaimorit
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
 query
 SELECT count(*) AS n FROM pm_kostya;
 ----
@@ -130,14 +130,14 @@ sel	ins
 f	t
 
 
-connection c_negaimorit user=pm_negaimorit
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
 statement error
 SELECT * FROM pm_kostya;
 ----
 db error: ERROR: permission denied for table pm_kostya<slt:ignore>
 
 
-connection c_negaimorit user=pm_negaimorit
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
 statement ok
 INSERT INTO pm_kostya VALUES (4, 'myasnig');
 
@@ -158,7 +158,7 @@ sel	ins	upd	del
 t	t	t	t
 
 
-connection c_negaimorit user=pm_negaimorit
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
 query
 SELECT count(*) AS n FROM pm_kostya;
 ----
@@ -166,7 +166,7 @@ n
 4
 
 
-connection c_negaimorit user=pm_negaimorit
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
 statement ok
 DELETE FROM pm_kostya WHERE id = 4;
 
@@ -187,14 +187,14 @@ sel	ins	upd	del
 f	f	f	f
 
 
-connection c_negaimorit user=pm_negaimorit
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
 statement error
 SELECT * FROM pm_kostya;
 ----
 db error: ERROR: permission denied for table pm_kostya<slt:ignore>
 
 
-connection c_negaimorit user=pm_negaimorit
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
 statement error
 INSERT INTO pm_kostya VALUES (5, 'zhidky');
 ----

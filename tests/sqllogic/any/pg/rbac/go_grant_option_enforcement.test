@@ -32,15 +32,15 @@ CREATE TABLE goe_iceberg (id int);
 
 
 statement ok
-CREATE ROLE goe_mop LOGIN;
+CREATE ROLE goe_mop LOGIN PASSWORD 'goe_mop_pw';
 
 
 statement ok
-CREATE ROLE goe_clickclack LOGIN;
+CREATE ROLE goe_clickclack LOGIN PASSWORD 'goe_clickclack_pw';
 
 
 statement ok
-CREATE ROLE goe_babsky LOGIN;
+CREATE ROLE goe_babsky LOGIN PASSWORD 'goe_babsky_pw';
 
 
 # mop gets SELECT WITH GRANT OPTION; clickclack gets plain UPDATE (no option).
@@ -54,7 +54,7 @@ GRANT UPDATE ON goe_iceberg TO goe_clickclack;
 
 # ---- The option holder (mop) can re-GRANT SELECT to babsky ----
 
-connection c_mop user=goe_mop
+connection c_mop user=goe_mop password=goe_mop_pw
 statement ok
 GRANT SELECT ON goe_iceberg TO goe_babsky;
 
@@ -78,7 +78,7 @@ statement ok
 CREATE ROLE goe_target2;
 
 
-connection c_click user=goe_clickclack
+connection c_click user=goe_clickclack password=goe_clickclack_pw
 statement ok
 GRANT UPDATE ON goe_iceberg TO goe_target2;
 
@@ -112,7 +112,7 @@ CREATE ROLE goe_target3;
 # clickclack holds DELETE only through PUBLIC -> no grant option. A re-GRANT
 # WITH GRANT OPTION cannot confer the option (target3's option stays false even
 # though it gets DELETE via PUBLIC anyway).
-connection c_click user=goe_clickclack
+connection c_click user=goe_clickclack password=goe_clickclack_pw
 statement ok
 GRANT DELETE ON goe_iceberg TO goe_target3 WITH GRANT OPTION;
 
@@ -128,7 +128,7 @@ f
 #      forming a chain. mop re-grants SELECT to babsky WITH GRANT OPTION; babsky
 #      then grants SELECT onward to a fresh role. ----
 
-connection c_mop user=goe_mop
+connection c_mop user=goe_mop password=goe_mop_pw
 statement ok
 GRANT SELECT ON goe_iceberg TO goe_babsky WITH GRANT OPTION;
 
@@ -141,7 +141,7 @@ statement ok
 CREATE ROLE goe_target4;
 
 
-connection c_babsky user=goe_babsky
+connection c_babsky user=goe_babsky password=goe_babsky_pw
 statement ok
 GRANT SELECT ON goe_iceberg TO goe_target4;
 

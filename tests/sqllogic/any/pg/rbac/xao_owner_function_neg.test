@@ -27,11 +27,11 @@ DROP ROLE IF EXISTS xao_ofn_babsky;
 
 
 statement ok
-CREATE ROLE xao_ofn_vedernikoff LOGIN;
+CREATE ROLE xao_ofn_vedernikoff LOGIN PASSWORD 'xao_ofn_vedernikoff_pw';
 
 
 statement ok
-CREATE ROLE xao_ofn_babsky LOGIN;
+CREATE ROLE xao_ofn_babsky LOGIN PASSWORD 'xao_ofn_babsky_pw';
 
 
 statement ok
@@ -47,25 +47,25 @@ GRANT USAGE, CREATE ON SCHEMA xao_ofn_mop TO xao_ofn_babsky;
 
 
 # vedernikoff owns two function overloads plus a same-named procedure.
-connection cowner user=xao_ofn_vedernikoff
+connection cowner user=xao_ofn_vedernikoff password=xao_ofn_vedernikoff_pw
 statement ok
 CREATE FUNCTION xao_ofn_mop.clickclack(int) RETURNS int LANGUAGE sql AS 'SELECT $1';
 
 
-connection cowner user=xao_ofn_vedernikoff
+connection cowner user=xao_ofn_vedernikoff password=xao_ofn_vedernikoff_pw
 statement ok
 CREATE FUNCTION xao_ofn_mop.clickclack(text) RETURNS text LANGUAGE sql AS 'SELECT $1';
 
 
 # (a) non-owner cannot drop a single (non-last) overload by signature.
-connection cbabsky user=xao_ofn_babsky
+connection cbabsky user=xao_ofn_babsky password=xao_ofn_babsky_pw
 statement error
 DROP FUNCTION xao_ofn_mop.clickclack(int);
 
 
 # (b) non-owner cannot replace an overload's body (same unqualified-name form on
 # both engines, so the exact message is pinned here).
-connection cbabsky2 user=xao_ofn_babsky
+connection cbabsky2 user=xao_ofn_babsky password=xao_ofn_babsky_pw
 statement error
 CREATE OR REPLACE FUNCTION xao_ofn_mop.clickclack(int) RETURNS int LANGUAGE sql AS 'SELECT $1 + 99';
 ----
@@ -81,17 +81,17 @@ count
 
 
 # (c) non-owner cannot drop by kind on a mixed function/procedure name.
-connection cowner2 user=xao_ofn_vedernikoff
+connection cowner2 user=xao_ofn_vedernikoff password=xao_ofn_vedernikoff_pw
 statement ok
 CREATE PROCEDURE xao_ofn_mop.babsky(text) LANGUAGE sql AS 'SELECT 1';
 
 
-connection cowner3 user=xao_ofn_vedernikoff
+connection cowner3 user=xao_ofn_vedernikoff password=xao_ofn_vedernikoff_pw
 statement ok
 CREATE FUNCTION xao_ofn_mop.babsky(int) RETURNS int LANGUAGE sql AS 'SELECT $1';
 
 
-connection cbabsky3 user=xao_ofn_babsky
+connection cbabsky3 user=xao_ofn_babsky password=xao_ofn_babsky_pw
 statement error
 DROP FUNCTION xao_ofn_mop.babsky;
 
@@ -104,7 +104,7 @@ count
 
 
 # The owner can still selectively drop an overload (leaves one behind).
-connection cowner4 user=xao_ofn_vedernikoff
+connection cowner4 user=xao_ofn_vedernikoff password=xao_ofn_vedernikoff_pw
 statement ok
 DROP FUNCTION xao_ofn_mop.clickclack(int);
 

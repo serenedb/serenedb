@@ -98,6 +98,13 @@ class Role final : public catalog::Object {
   void AddMembership(const Membership& edge);
   void RemoveMembership(ObjectId role);
 
+  std::string_view PasswordVerifier() const noexcept {
+    return _password_verifier;
+  }
+  void SetPasswordVerifier(std::string verifier) {
+    _password_verifier = std::move(verifier);
+  }
+
  private:
   RoleData BuildData() const;
 
@@ -108,6 +115,7 @@ class Role final : public catalog::Object {
   std::string _valid_until;
   std::vector<std::string> _config;
   std::vector<persistence::DefaultAclData> _default_acls;
+  std::string _password_verifier;
 };
 
 }  // namespace sdb::catalog

@@ -29,7 +29,7 @@ CREATE ROLE xmb_sa_iceberg;
 
 
 statement ok
-CREATE ROLE xmb_sa_mop LOGIN;
+CREATE ROLE xmb_sa_mop LOGIN PASSWORD 'xmb_sa_mop_pw';
 
 
 statement ok
@@ -37,7 +37,7 @@ CREATE ROLE xmb_sa_babsky;
 
 
 statement ok
-CREATE ROLE xmb_sa_vedernikoff LOGIN;
+CREATE ROLE xmb_sa_vedernikoff LOGIN PASSWORD 'xmb_sa_vedernikoff_pw';
 
 
 # (1) WITH SET FALSE: SET is false, MEMBER and USAGE unaffected.
@@ -68,7 +68,7 @@ t	t
 
 
 # (3) mop, holding ADMIN OPTION on iceberg, may grant it onward to babsky.
-connection c_mop user=xmb_sa_mop
+connection c_mop user=xmb_sa_mop password=xmb_sa_mop_pw
 statement ok
 GRANT xmb_sa_iceberg TO xmb_sa_babsky;
 
@@ -82,7 +82,7 @@ t
 
 
 # A plain non-superuser without ADMIN OPTION may not grant the role.
-connection c_ved user=xmb_sa_vedernikoff
+connection c_ved user=xmb_sa_vedernikoff password=xmb_sa_vedernikoff_pw
 statement error
 GRANT xmb_sa_iceberg TO xmb_sa_babsky;
 ----

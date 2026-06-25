@@ -135,19 +135,11 @@ db error: ERROR: role "nonesuch" does not exist
 
 
 # ----------------------------------------------------------------------
-# ALTER ROLE password: PostgreSQL stores it; serenedb rejects PASSWORD.
+# ALTER ROLE password: the password is stored (as a SCRAM verifier).
 # ----------------------------------------------------------------------
 
-skipif serenedb
 statement ok
 ALTER ROLE role_ved PASSWORD 'newclickclack';
-
-
-onlyif serenedb
-statement error
-ALTER ROLE role_ved PASSWORD 'newclickclack';
-----
-db error: ERROR: PASSWORD is not supported<slt:ignore>
 
 
 # ----------------------------------------------------------------------

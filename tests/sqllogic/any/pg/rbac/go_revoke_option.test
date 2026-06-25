@@ -22,7 +22,7 @@ INSERT INTO go_mop_deadinside VALUES (1, 'clickclack'), (2, 'iceberg');
 
 
 statement ok
-CREATE ROLE go_rev_vedernikoff LOGIN;
+CREATE ROLE go_rev_vedernikoff LOGIN PASSWORD 'go_rev_vedernikoff_pw';
 
 
 # ---- Grant SELECT WITH GRANT OPTION: both the privilege and its option held.
@@ -40,7 +40,7 @@ t	t
 
 # ---- Holding the grant option does not change DML reach: the role can read,
 #      because it holds SELECT. (Real query path, separate connection.) ----
-connection c_ved user=go_rev_vedernikoff
+connection c_ved user=go_rev_vedernikoff password=go_rev_vedernikoff_pw
 query
 SELECT id, payload FROM go_mop_deadinside ORDER BY id;
 ----
@@ -78,7 +78,7 @@ f	f
 # ---- With SELECT fully revoked, the real read is denied. serenedb appends a
 #      DETAIL line PG does not, so the expected block ends with an ignore
 #      marker that matches both engines. ----
-connection c_ved user=go_rev_vedernikoff
+connection c_ved user=go_rev_vedernikoff password=go_rev_vedernikoff_pw
 statement error
 SELECT id FROM go_mop_deadinside;
 ----
@@ -99,7 +99,7 @@ t	f
 
 
 # read works again, grant option absent.
-connection c_ved user=go_rev_vedernikoff
+connection c_ved user=go_rev_vedernikoff password=go_rev_vedernikoff_pw
 query
 SELECT count(*) FROM go_mop_deadinside;
 ----

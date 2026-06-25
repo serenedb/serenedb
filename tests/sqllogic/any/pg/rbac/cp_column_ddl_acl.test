@@ -28,7 +28,7 @@ INSERT INTO cda_iceberg VALUES (1, 2, 3);
 
 
 statement ok
-CREATE ROLE cda_vedernikoff LOGIN;
+CREATE ROLE cda_vedernikoff LOGIN PASSWORD 'cda_vedernikoff_pw';
 
 
 statement ok
@@ -73,7 +73,7 @@ mop	NULL
 
 
 # The grantee reads the renamed column with the inherited SELECT grant.
-connection c_ved user=cda_vedernikoff
+connection c_ved user=cda_vedernikoff password=cda_vedernikoff_pw
 query
 SELECT clickclack2 FROM cda_iceberg ORDER BY clickclack2;
 ----
@@ -120,7 +120,7 @@ dollarsky	NULL
 
 
 # No grant on the new column -> the grantee is refused.
-connection c_ved2 user=cda_vedernikoff
+connection c_ved2 user=cda_vedernikoff password=cda_vedernikoff_pw
 statement error
 SELECT dollarsky FROM cda_iceberg;
 ----
@@ -128,7 +128,7 @@ db error: ERROR: permission denied for table cda_iceberg<slt:ignore>
 
 
 # The grant that survived the rename still works.
-connection c_ved3 user=cda_vedernikoff
+connection c_ved3 user=cda_vedernikoff password=cda_vedernikoff_pw
 query
 SELECT clickclack2 FROM cda_iceberg ORDER BY clickclack2;
 ----

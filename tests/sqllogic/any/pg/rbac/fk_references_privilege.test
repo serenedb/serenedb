@@ -24,7 +24,7 @@ CREATE TABLE fkr_roster (id int PRIMARY KEY, badge int);
 
 
 statement ok
-CREATE ROLE fkr_vedernikoff LOGIN;
+CREATE ROLE fkr_vedernikoff LOGIN PASSWORD 'fkr_vedernikoff_pw';
 
 
 # vedernikoff may create objects in the schema but holds nothing on fkr_roster.
@@ -33,7 +33,7 @@ GRANT CREATE ON SCHEMA public TO fkr_vedernikoff;
 
 
 # === no REFERENCES on the parent -> the FK is refused ===
-connection c_ved user=fkr_vedernikoff
+connection c_ved user=fkr_vedernikoff password=fkr_vedernikoff_pw
 statement error
 CREATE TABLE fkr_child (id int, ref int REFERENCES fkr_roster(id));
 ----
@@ -46,12 +46,12 @@ statement ok
 GRANT REFERENCES ON fkr_roster TO fkr_vedernikoff;
 
 
-connection c_ved2 user=fkr_vedernikoff
+connection c_ved2 user=fkr_vedernikoff password=fkr_vedernikoff_pw
 statement ok
 CREATE TABLE fkr_child (id int, ref int REFERENCES fkr_roster(id));
 
 
-connection c_ved2 user=fkr_vedernikoff
+connection c_ved2 user=fkr_vedernikoff password=fkr_vedernikoff_pw
 statement ok
 DROP TABLE fkr_child;
 
@@ -68,12 +68,12 @@ statement ok
 GRANT REFERENCES (id) ON fkr_roster TO fkr_vedernikoff;
 
 
-connection c_ved3 user=fkr_vedernikoff
+connection c_ved3 user=fkr_vedernikoff password=fkr_vedernikoff_pw
 statement ok
 CREATE TABLE fkr_child (id int, ref int REFERENCES fkr_roster(id));
 
 
-connection c_ved3 user=fkr_vedernikoff
+connection c_ved3 user=fkr_vedernikoff password=fkr_vedernikoff_pw
 statement ok
 DROP TABLE fkr_child;
 

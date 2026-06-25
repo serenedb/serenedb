@@ -37,7 +37,7 @@ INSERT INTO cag_iceberg VALUES (1, 2);
 
 
 statement ok
-CREATE ROLE cag_vedernikoff LOGIN;
+CREATE ROLE cag_vedernikoff LOGIN PASSWORD 'cag_vedernikoff_pw';
 
 
 statement ok
@@ -64,7 +64,7 @@ b	NULL
 
 
 # The grantee can SELECT the granted column (SELECT bit present).
-connection c_ved user=cag_vedernikoff
+connection c_ved user=cag_vedernikoff password=cag_vedernikoff_pw
 query
 SELECT a FROM cag_iceberg ORDER BY a;
 ----
@@ -73,13 +73,13 @@ a
 
 
 # And UPDATE it with a constant (UPDATE bit present, reads nothing).
-connection c_ved2 user=cag_vedernikoff
+connection c_ved2 user=cag_vedernikoff password=cag_vedernikoff_pw
 statement ok
 UPDATE cag_iceberg SET a = 9;
 
 
 # But is refused on the ungranted column b.
-connection c_ved3 user=cag_vedernikoff
+connection c_ved3 user=cag_vedernikoff password=cag_vedernikoff_pw
 statement error
 SELECT b FROM cag_iceberg;
 ----
@@ -153,7 +153,7 @@ b	NULL
 
 
 # REFERENCES is not SELECT: the role cannot read the column it can reference.
-connection c_ved4 user=cag_vedernikoff
+connection c_ved4 user=cag_vedernikoff password=cag_vedernikoff_pw
 statement error
 SELECT a FROM cag_mop;
 ----

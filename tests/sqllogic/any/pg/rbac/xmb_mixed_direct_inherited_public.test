@@ -29,7 +29,7 @@ INSERT INTO xmb_mdp_clickclack VALUES (1, 'babsky');
 
 
 statement ok
-CREATE ROLE xmb_mdp_mop LOGIN;
+CREATE ROLE xmb_mdp_mop LOGIN PASSWORD 'xmb_mdp_mop_pw';
 
 
 statement ok
@@ -69,7 +69,7 @@ t	t	t	f	f	f	f
 
 
 # Real query path exercises all three sources at once.
-connection c_mop user=xmb_mdp_mop
+connection c_mop user=xmb_mdp_mop password=xmb_mdp_mop_pw
 query
 SELECT count(*) FROM xmb_mdp_clickclack;
 ----
@@ -77,12 +77,12 @@ count
 1
 
 
-connection c_mop user=xmb_mdp_mop
+connection c_mop user=xmb_mdp_mop password=xmb_mdp_mop_pw
 statement ok
 INSERT INTO xmb_mdp_clickclack VALUES (2, 'vedernikoff');
 
 
-connection c_mop user=xmb_mdp_mop
+connection c_mop user=xmb_mdp_mop password=xmb_mdp_mop_pw
 statement ok
 UPDATE xmb_mdp_clickclack SET payload = 'iceberg' WHERE id = 1;
 
@@ -102,7 +102,7 @@ sel	ins	upd
 t	f	t
 
 
-connection c_mop2 user=xmb_mdp_mop
+connection c_mop2 user=xmb_mdp_mop password=xmb_mdp_mop_pw
 statement error
 INSERT INTO xmb_mdp_clickclack VALUES (3, 'gone');
 ----
@@ -123,7 +123,7 @@ sel	upd
 f	t
 
 
-connection c_mop3 user=xmb_mdp_mop
+connection c_mop3 user=xmb_mdp_mop password=xmb_mdp_mop_pw
 statement error
 SELECT * FROM xmb_mdp_clickclack;
 ----

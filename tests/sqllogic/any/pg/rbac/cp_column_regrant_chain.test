@@ -49,15 +49,15 @@ INSERT INTO crg_iceberg VALUES (1, 2, 3);
 
 
 statement ok
-CREATE ROLE crg_vedernikoff LOGIN;
+CREATE ROLE crg_vedernikoff LOGIN PASSWORD 'crg_vedernikoff_pw';
 
 
 statement ok
-CREATE ROLE crg_babsky LOGIN;
+CREATE ROLE crg_babsky LOGIN PASSWORD 'crg_babsky_pw';
 
 
 statement ok
-CREATE ROLE crg_mop LOGIN;
+CREATE ROLE crg_mop LOGIN PASSWORD 'crg_mop_pw';
 
 
 # === r1 receives the column SELECT WITH GRANT OPTION ===
@@ -91,7 +91,7 @@ t	t
 
 # === r1 re-grants the column to r2 (no option) ===
 
-connection c_r1 user=crg_vedernikoff
+connection c_r1 user=crg_vedernikoff password=crg_vedernikoff_pw
 statement ok
 GRANT SELECT (clickclack) ON crg_iceberg TO crg_babsky;
 
@@ -122,7 +122,7 @@ t	f
 
 
 # r2 reads the granted column.
-connection c_r2 user=crg_babsky
+connection c_r2 user=crg_babsky password=crg_babsky_pw
 query
 SELECT clickclack FROM crg_iceberg ORDER BY clickclack;
 ----
@@ -133,7 +133,7 @@ clickclack
 # === r2 (no option) cannot re-grant the column to r3 ===
 # PG warns "no privileges were granted" and no-ops -- it is not an error. The
 # attacl is left exactly as it was and r3 gains nothing.
-connection c_r2b user=crg_babsky
+connection c_r2b user=crg_babsky password=crg_babsky_pw
 statement ok
 GRANT SELECT (clickclack) ON crg_iceberg TO crg_mop;
 
@@ -160,7 +160,7 @@ f
 
 
 # r3 still cannot read the column.
-connection c_r3 user=crg_mop
+connection c_r3 user=crg_mop password=crg_mop_pw
 statement error
 SELECT clickclack FROM crg_iceberg;
 ----
@@ -170,7 +170,7 @@ db error: ERROR: permission denied for table crg_iceberg<slt:ignore>
 # === r1 tears down its own chained grant to r2 ===
 # r1 is the grantor of r2's grant, so r1 may revoke it; the chained entry clears
 # and r1's own star entry is left intact.
-connection c_r1c user=crg_vedernikoff
+connection c_r1c user=crg_vedernikoff password=crg_vedernikoff_pw
 statement ok
 REVOKE SELECT (clickclack) ON crg_iceberg FROM crg_babsky;
 
@@ -189,7 +189,7 @@ mop	(none)
 
 
 # r2 can no longer read the column once its grant is gone.
-connection c_r2d user=crg_babsky
+connection c_r2d user=crg_babsky password=crg_babsky_pw
 statement error
 SELECT clickclack FROM crg_iceberg;
 ----
@@ -227,7 +227,7 @@ t	f
 
 
 # r1 still reads the column after the option revoke.
-connection c_r1d user=crg_vedernikoff
+connection c_r1d user=crg_vedernikoff password=crg_vedernikoff_pw
 query
 SELECT clickclack FROM crg_iceberg ORDER BY clickclack;
 ----

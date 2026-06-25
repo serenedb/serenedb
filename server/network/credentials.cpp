@@ -21,6 +21,7 @@
 #include "network/credentials.h"
 
 #include <absl/strings/escaping.h>
+#include <absl/strings/str_cat.h>
 #include <fast_float/fast_float.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
@@ -135,6 +136,19 @@ std::optional<ScramVerifier> ParseScramVerifier(std::string_view verifier) {
   std::memcpy(result.stored_key.data(), stored->data(), kScramKeyLen);
   std::memcpy(result.server_key.data(), server->data(), kScramKeyLen);
   return result;
+}
+
+std::string ScramVerifierToString(const ScramVerifier& verifier) {
+  return absl::StrCat(
+    "SCRAM-SHA-256$", verifier.iterations, ":",
+    absl::Base64Escape(verifier.salt), "$",
+    absl::Base64Escape(std::string_view{
+      reinterpret_cast<const char*>(verifier.stored_key.data()),
+      verifier.stored_key.size()}),
+    ":",
+    absl::Base64Escape(std::string_view{
+      reinterpret_cast<const char*>(verifier.server_key.data()),
+      verifier.server_key.size()}));
 }
 
 bool ConstantTimeEqual(std::span<const uint8_t> a, std::span<const uint8_t> b) {

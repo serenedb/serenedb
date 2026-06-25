@@ -48,7 +48,8 @@ Role::Role(RoleData data)
     _conn_limit{data.conn_limit},
     _valid_until{std::move(data.valid_until)},
     _config{std::move(data.config)},
-    _default_acls{std::move(data.default_acls)} {
+    _default_acls{std::move(data.default_acls)},
+    _password_verifier{std::move(data.password_verifier)} {
   if (_name == StaticStrings::kDefaultUser) {
     _options |= RoleOption::Superuser;
   }
@@ -65,6 +66,7 @@ RoleData Role::BuildData() const {
     .valid_until = _valid_until,
     .config = _config,
     .default_acls = _default_acls,
+    .password_verifier = _password_verifier,
   };
   return data;
 }

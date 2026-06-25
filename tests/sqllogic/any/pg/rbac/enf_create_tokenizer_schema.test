@@ -14,11 +14,11 @@ DROP ROLE IF EXISTS enf_tk_vedernikoff;
 
 
 statement ok
-CREATE ROLE enf_tk_vedernikoff LOGIN;
+CREATE ROLE enf_tk_vedernikoff LOGIN PASSWORD 'enf_tk_vedernikoff_pw';
 
 
 # Without CREATE on the schema, creating the dictionary is refused.
-connection c_ved user=enf_tk_vedernikoff
+connection c_ved user=enf_tk_vedernikoff password=enf_tk_vedernikoff_pw
 statement error
 CREATE TEXT SEARCH DICTIONARY enf_tk_clickclack(template = 'keyword');
 ----
@@ -31,7 +31,7 @@ statement ok
 GRANT CREATE ON SCHEMA public TO enf_tk_vedernikoff;
 
 
-connection c_ved2 user=enf_tk_vedernikoff
+connection c_ved2 user=enf_tk_vedernikoff password=enf_tk_vedernikoff_pw
 statement ok
 CREATE TEXT SEARCH DICTIONARY enf_tk_clickclack(template = 'keyword');
 

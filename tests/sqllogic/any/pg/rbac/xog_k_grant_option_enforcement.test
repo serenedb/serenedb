@@ -32,11 +32,11 @@ CREATE TABLE xog_k_mop (id int);
 
 
 statement ok
-CREATE ROLE xog_k_go LOGIN;
+CREATE ROLE xog_k_go LOGIN PASSWORD 'xog_k_go_pw';
 
 
 statement ok
-CREATE ROLE xog_k_no LOGIN;
+CREATE ROLE xog_k_no LOGIN PASSWORD 'xog_k_no_pw';
 
 
 statement ok
@@ -74,7 +74,7 @@ f	f
 
 
 # ---- The grant-option holder re-grants SELECT to t1, on its own connection. ----
-connection c_go user=xog_k_go
+connection c_go user=xog_k_go password=xog_k_go_pw
 statement ok
 GRANT SELECT ON xog_k_mop TO xog_k_t1;
 
@@ -100,7 +100,7 @@ xog_k_t1=r/xog_k_go
 # ---- The plain-SELECT holder tries to re-grant to t2: this is a no-op (a
 # warning, no privilege passed). The statement itself returns success, but t2
 # gains nothing and no ACL row appears for it. ----
-connection c_no user=xog_k_no
+connection c_no user=xog_k_no password=xog_k_no_pw
 statement ok
 GRANT SELECT ON xog_k_mop TO xog_k_t2;
 

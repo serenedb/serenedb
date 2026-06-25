@@ -33,15 +33,15 @@ INSERT INTO cmg_iceberg VALUES (10, 20);
 
 
 statement ok
-CREATE ROLE cmg_vedernikoff LOGIN;
+CREATE ROLE cmg_vedernikoff LOGIN PASSWORD 'cmg_vedernikoff_pw';
 
 
 statement ok
-CREATE ROLE cmg_babsky LOGIN;
+CREATE ROLE cmg_babsky LOGIN PASSWORD 'cmg_babsky_pw';
 
 
 statement ok
-CREATE ROLE cmg_clickclack LOGIN;
+CREATE ROLE cmg_clickclack LOGIN PASSWORD 'cmg_clickclack_pw';
 
 
 # Two grantees read the same column; one of them also gets UPDATE on it.
@@ -71,7 +71,7 @@ drift	(none)
 
 
 # vedernikoff reads mop (granted SELECT).
-connection c_ved user=cmg_vedernikoff
+connection c_ved user=cmg_vedernikoff password=cmg_vedernikoff_pw
 query
 SELECT mop FROM cmg_iceberg ORDER BY mop;
 ----
@@ -80,13 +80,13 @@ mop
 
 
 # vedernikoff updates mop with a constant (granted UPDATE, reads nothing).
-connection c_ved2 user=cmg_vedernikoff
+connection c_ved2 user=cmg_vedernikoff password=cmg_vedernikoff_pw
 statement ok
 UPDATE cmg_iceberg SET mop = 11;
 
 
 # babsky reads mop (granted SELECT).
-connection c_bab user=cmg_babsky
+connection c_bab user=cmg_babsky password=cmg_babsky_pw
 query
 SELECT mop FROM cmg_iceberg ORDER BY mop;
 ----
@@ -95,7 +95,7 @@ mop
 
 
 # babsky has only SELECT on mop, not UPDATE -> refused.
-connection c_bab2 user=cmg_babsky
+connection c_bab2 user=cmg_babsky password=cmg_babsky_pw
 statement error
 UPDATE cmg_iceberg SET mop = 99;
 ----
@@ -120,7 +120,7 @@ drift	(none)
 
 
 # clickclack was never granted mop directly, yet reads it via PUBLIC.
-connection c_click user=cmg_clickclack
+connection c_click user=cmg_clickclack password=cmg_clickclack_pw
 query
 SELECT mop FROM cmg_iceberg ORDER BY mop;
 ----
@@ -146,7 +146,7 @@ drift	(none)
 
 
 # vedernikoff still reads and updates mop after the unrelated revoke.
-connection c_ved3 user=cmg_vedernikoff
+connection c_ved3 user=cmg_vedernikoff password=cmg_vedernikoff_pw
 query
 SELECT mop FROM cmg_iceberg ORDER BY mop;
 ----
@@ -154,13 +154,13 @@ mop
 11
 
 
-connection c_ved4 user=cmg_vedernikoff
+connection c_ved4 user=cmg_vedernikoff password=cmg_vedernikoff_pw
 statement ok
 UPDATE cmg_iceberg SET mop = 12;
 
 
 # clickclack still reads mop via the surviving PUBLIC element.
-connection c_click2 user=cmg_clickclack
+connection c_click2 user=cmg_clickclack password=cmg_clickclack_pw
 query
 SELECT mop FROM cmg_iceberg ORDER BY mop;
 ----
@@ -204,7 +204,7 @@ drift	{cmg_babsky=r/postgres}
 
 
 # vedernikoff reads mop (granted).
-connection c_ved5 user=cmg_vedernikoff
+connection c_ved5 user=cmg_vedernikoff password=cmg_vedernikoff_pw
 query
 SELECT mop FROM cmg_split ORDER BY mop;
 ----
@@ -213,7 +213,7 @@ mop
 
 
 # vedernikoff has no grant on drift -> refused.
-connection c_ved6 user=cmg_vedernikoff
+connection c_ved6 user=cmg_vedernikoff password=cmg_vedernikoff_pw
 statement error
 SELECT drift FROM cmg_split;
 ----
@@ -221,7 +221,7 @@ db error: ERROR: permission denied for table cmg_split<slt:ignore>
 
 
 # babsky reads drift (granted).
-connection c_bab3 user=cmg_babsky
+connection c_bab3 user=cmg_babsky password=cmg_babsky_pw
 query
 SELECT drift FROM cmg_split ORDER BY drift;
 ----
@@ -230,7 +230,7 @@ drift
 
 
 # babsky has no grant on mop -> refused.
-connection c_bab4 user=cmg_babsky
+connection c_bab4 user=cmg_babsky password=cmg_babsky_pw
 statement error
 SELECT mop FROM cmg_split;
 ----

@@ -42,11 +42,11 @@ INSERT INTO esm_mop VALUES (1, 5), (2, 6);
 
 
 statement ok
-CREATE ROLE esm_vedernikoff LOGIN;
+CREATE ROLE esm_vedernikoff LOGIN PASSWORD 'esm_vedernikoff_pw';
 
 
 statement ok
-CREATE ROLE esm_babsky LOGIN;
+CREATE ROLE esm_babsky LOGIN PASSWORD 'esm_babsky_pw';
 
 
 statement ok
@@ -54,7 +54,7 @@ CREATE ROLE esm_grp;
 
 
 # No grant yet -> refused.
-connection c_ved user=esm_vedernikoff
+connection c_ved user=esm_vedernikoff password=esm_vedernikoff_pw
 statement error
 SELECT id FROM esm_clickclack;
 ----
@@ -67,7 +67,7 @@ statement ok
 GRANT SELECT ON esm_clickclack TO esm_vedernikoff;
 
 
-connection c_ved2 user=esm_vedernikoff
+connection c_ved2 user=esm_vedernikoff password=esm_vedernikoff_pw
 query
 SELECT id FROM esm_clickclack ORDER BY id;
 ----
@@ -86,7 +86,7 @@ statement ok
 GRANT esm_grp TO esm_babsky;
 
 
-connection c_bab user=esm_babsky
+connection c_bab user=esm_babsky password=esm_babsky_pw
 query
 SELECT count(*) AS n FROM esm_clickclack;
 ----
@@ -100,7 +100,7 @@ statement ok
 GRANT SELECT ON esm_mop TO PUBLIC;
 
 
-connection c_bab2 user=esm_babsky
+connection c_bab2 user=esm_babsky password=esm_babsky_pw
 query
 SELECT count(*) AS n FROM esm_mop;
 ----
@@ -109,7 +109,7 @@ n
 
 
 # A join reads BOTH tables; babsky lacks nothing here (grp+PUBLIC), so it works.
-connection c_bab3 user=esm_babsky
+connection c_bab3 user=esm_babsky password=esm_babsky_pw
 query
 SELECT count(*) AS n
 FROM esm_clickclack c JOIN esm_mop m ON c.id = m.id;
@@ -119,7 +119,7 @@ n
 
 
 # vedernikoff has clickclack (direct) + mop (PUBLIC) -> join works.
-connection c_ved3 user=esm_vedernikoff
+connection c_ved3 user=esm_vedernikoff password=esm_vedernikoff_pw
 query
 SELECT count(*) AS n
 FROM esm_clickclack c JOIN esm_mop m ON c.id = m.id;
@@ -135,7 +135,7 @@ statement ok
 REVOKE SELECT ON esm_mop FROM PUBLIC;
 
 
-connection c_ved4 user=esm_vedernikoff
+connection c_ved4 user=esm_vedernikoff password=esm_vedernikoff_pw
 statement error
 SELECT id FROM esm_clickclack WHERE id IN (SELECT id FROM esm_mop);
 ----

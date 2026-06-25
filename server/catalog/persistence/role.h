@@ -57,15 +57,11 @@ struct RoleData {
   absl::node_hash_map<std::string, auth::Level> db_access;
   uint32_t options = 0;
   std::vector<MembershipData> member_of;
-  // pg_authid attributes that are stored & surfaced but not enforced at
-  // runtime.
-  int32_t conn_limit = -1;  // rolconnlimit (-1 = unlimited)
-  std::string valid_until;  // rolvaliduntil; empty -> NULL (no expiry)
-  // Per-role GUC settings (pg_db_role_setting / pg_roles.rolconfig), each
-  // rendered as "guc=value" exactly as PostgreSQL stores them.
-  std::vector<std::string> config;
-  // ALTER DEFAULT PRIVILEGES targets owned by this role (pg_default_acl rows).
+
+  int32_t conn_limit = -1;
+  std::string valid_until;
   std::vector<DefaultAclData> default_acls;
+  std::string password_verifier;
 };
 
 }  // namespace sdb::catalog::persistence

@@ -23,7 +23,7 @@ INSERT INTO cgm_iceberg VALUES (1, 2, 3);
 
 
 statement ok
-CREATE ROLE cgm_vedernikoff LOGIN;
+CREATE ROLE cgm_vedernikoff LOGIN PASSWORD 'cgm_vedernikoff_pw';
 
 
 statement ok
@@ -50,7 +50,7 @@ mop	{cgm_vedernikoff=w/postgres}
 # === Reads ===
 
 # Granted columns read fine.
-connection c_ved user=cgm_vedernikoff
+connection c_ved user=cgm_vedernikoff password=cgm_vedernikoff_pw
 query
 SELECT clickclack, babsky FROM cgm_iceberg ORDER BY clickclack;
 ----
@@ -59,7 +59,7 @@ clickclack	babsky
 
 
 # An ungranted column (mop has only UPDATE) is refused.
-connection c_ved2 user=cgm_vedernikoff
+connection c_ved2 user=cgm_vedernikoff password=cgm_vedernikoff_pw
 statement error
 SELECT mop FROM cgm_iceberg;
 ----
@@ -67,7 +67,7 @@ db error: ERROR: permission denied for table cgm_iceberg<slt:ignore>
 
 
 # SELECT * touches mop -> refused.
-connection c_ved3 user=cgm_vedernikoff
+connection c_ved3 user=cgm_vedernikoff password=cgm_vedernikoff_pw
 statement error
 SELECT * FROM cgm_iceberg;
 ----
@@ -75,7 +75,7 @@ db error: ERROR: permission denied for table cgm_iceberg<slt:ignore>
 
 
 # A WHERE predicate on an ungranted column is refused.
-connection c_ved4 user=cgm_vedernikoff
+connection c_ved4 user=cgm_vedernikoff password=cgm_vedernikoff_pw
 statement error
 SELECT clickclack FROM cgm_iceberg WHERE mop = 3;
 ----
@@ -83,7 +83,7 @@ db error: ERROR: permission denied for table cgm_iceberg<slt:ignore>
 
 
 # count(*) reads no specific column; SELECT on any one granted column suffices.
-connection c_ved5 user=cgm_vedernikoff
+connection c_ved5 user=cgm_vedernikoff password=cgm_vedernikoff_pw
 query
 SELECT count(*) AS n FROM cgm_iceberg;
 ----
@@ -94,13 +94,13 @@ n
 # === Writes ===
 
 # UPDATE of the granted column with a constant reads nothing -> only UPDATE(mop).
-connection c_ved6 user=cgm_vedernikoff
+connection c_ved6 user=cgm_vedernikoff password=cgm_vedernikoff_pw
 statement ok
 UPDATE cgm_iceberg SET mop = 9;
 
 
 # UPDATE of an ungranted column is refused.
-connection c_ved7 user=cgm_vedernikoff
+connection c_ved7 user=cgm_vedernikoff password=cgm_vedernikoff_pw
 statement error
 UPDATE cgm_iceberg SET clickclack = 9;
 ----
@@ -108,7 +108,7 @@ db error: ERROR: permission denied for table cgm_iceberg<slt:ignore>
 
 
 # UPDATE mop = mop + 1 reads mop, which the role lacks SELECT on -> refused.
-connection c_ved8 user=cgm_vedernikoff
+connection c_ved8 user=cgm_vedernikoff password=cgm_vedernikoff_pw
 statement error
 UPDATE cgm_iceberg SET mop = mop + 1;
 ----

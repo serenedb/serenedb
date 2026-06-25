@@ -37,11 +37,11 @@ INSERT INTO mb_dia_iceberg VALUES (1, 'clickclack'), (2, 'mop');
 
 
 statement ok
-CREATE ROLE mb_dia_vitalik LOGIN;
+CREATE ROLE mb_dia_vitalik LOGIN PASSWORD 'mb_dia_vitalik_pw';
 
 
 statement ok
-CREATE ROLE mb_dia_shlepach LOGIN;
+CREATE ROLE mb_dia_shlepach LOGIN PASSWORD 'mb_dia_shlepach_pw';
 
 
 statement ok
@@ -124,7 +124,7 @@ t	t
 # ---- Real query-path enforcement of the inherited privileges ----
 # vitalik can SELECT (via kryakva) and INSERT (via androed) for real.
 
-connection c_vitalik user=mb_dia_vitalik
+connection c_vitalik user=mb_dia_vitalik password=mb_dia_vitalik_pw
 query
 SELECT count(*) FROM mb_dia_iceberg;
 ----
@@ -132,13 +132,13 @@ count
 2
 
 
-connection c_vitalik user=mb_dia_vitalik
+connection c_vitalik user=mb_dia_vitalik password=mb_dia_vitalik_pw
 statement ok
 INSERT INTO mb_dia_iceberg VALUES (3, 'vedernikoff');
 
 
 # shlepach can SELECT but is denied INSERT (never in the androed group).
-connection c_shlepach user=mb_dia_shlepach
+connection c_shlepach user=mb_dia_shlepach password=mb_dia_shlepach_pw
 query
 SELECT count(*) FROM mb_dia_iceberg;
 ----
@@ -146,7 +146,7 @@ count
 3
 
 
-connection c_shlepach user=mb_dia_shlepach
+connection c_shlepach user=mb_dia_shlepach password=mb_dia_shlepach_pw
 statement error
 INSERT INTO mb_dia_iceberg VALUES (4, 'gul');
 ----
@@ -162,14 +162,14 @@ statement ok
 REVOKE mb_dia_kryakva FROM mb_dia_shlepach;
 
 
-connection c_shlepach user=mb_dia_shlepach
+connection c_shlepach user=mb_dia_shlepach password=mb_dia_shlepach_pw
 statement error
 SELECT * FROM mb_dia_iceberg;
 ----
 db error: ERROR: permission denied for table mb_dia_iceberg<slt:ignore>
 
 
-connection c_vitalik user=mb_dia_vitalik
+connection c_vitalik user=mb_dia_vitalik password=mb_dia_vitalik_pw
 query
 SELECT count(*) FROM mb_dia_iceberg;
 ----

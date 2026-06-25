@@ -24,11 +24,11 @@ INSERT INTO pub_kostya VALUES (1, 'clickclack ships'), (2, 'mop deployed');
 
 
 statement ok
-CREATE ROLE pub_vedernikoff LOGIN;
+CREATE ROLE pub_vedernikoff LOGIN PASSWORD 'pub_vedernikoff_pw';
 
 
 # Before the PUBLIC grant the fresh role cannot even read.
-connection c_pub user=pub_vedernikoff
+connection c_pub user=pub_vedernikoff password=pub_vedernikoff_pw
 statement error
 SELECT * FROM pub_kostya;
 ----
@@ -50,7 +50,7 @@ t	f
 
 
 # Real enforcement: the fresh login can now SELECT the PUBLIC-granted table.
-connection c_pub user=pub_vedernikoff
+connection c_pub user=pub_vedernikoff password=pub_vedernikoff_pw
 query
 SELECT id, headline FROM pub_kostya ORDER BY id;
 ----
@@ -59,7 +59,7 @@ id	headline
 2	mop deployed
 
 
-connection c_pub user=pub_vedernikoff
+connection c_pub user=pub_vedernikoff password=pub_vedernikoff_pw
 query
 SELECT count(*) AS n FROM pub_kostya;
 ----
@@ -68,7 +68,7 @@ n
 
 
 # ...but is still denied INSERT, since INSERT was never granted to PUBLIC.
-connection c_pub user=pub_vedernikoff
+connection c_pub user=pub_vedernikoff password=pub_vedernikoff_pw
 statement error
 INSERT INTO pub_kostya VALUES (3, 'deadinside denied');
 ----
@@ -87,7 +87,7 @@ sel
 f
 
 
-connection c_pub user=pub_vedernikoff
+connection c_pub user=pub_vedernikoff password=pub_vedernikoff_pw
 statement error
 SELECT * FROM pub_kostya;
 ----

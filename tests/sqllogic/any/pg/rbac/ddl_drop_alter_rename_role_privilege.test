@@ -28,7 +28,7 @@ DROP ROLE IF EXISTS dar_mop;
 
 
 statement ok
-CREATE ROLE dar_babsky LOGIN;
+CREATE ROLE dar_babsky LOGIN PASSWORD 'dar_babsky_pw';
 
 
 statement ok
@@ -36,7 +36,7 @@ ALTER ROLE dar_babsky CREATEROLE;
 
 
 statement ok
-CREATE ROLE dar_vedernikoff LOGIN;
+CREATE ROLE dar_vedernikoff LOGIN PASSWORD 'dar_vedernikoff_pw';
 
 
 statement ok
@@ -49,7 +49,7 @@ ALTER ROLE dar_mop SUPERUSER;
 
 # A plain role (no CREATEROLE) is refused outright with the generic DETAIL: the
 # target name is not even resolved.
-connection c_ved user=dar_vedernikoff
+connection c_ved user=dar_vedernikoff password=dar_vedernikoff_pw
 statement error
 DROP ROLE dar_mop;
 ----
@@ -59,7 +59,7 @@ DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on the tar
 
 # The CREATEROLE gate fires before existence: dropping a role that does not even
 # exist still reports the permission error, not "does not exist".
-connection c_ved user=dar_vedernikoff
+connection c_ved user=dar_vedernikoff password=dar_vedernikoff_pw
 statement error
 DROP ROLE dar_ghost;
 ----
@@ -69,7 +69,7 @@ DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on the tar
 
 # The gate also fires before the IF EXISTS skip: a plain role gets the permission
 # error rather than the "does not exist, skipping" notice.
-connection c_ved user=dar_vedernikoff
+connection c_ved user=dar_vedernikoff password=dar_vedernikoff_pw
 statement error
 DROP ROLE IF EXISTS dar_ghost;
 ----
@@ -79,7 +79,7 @@ DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on the tar
 
 # The gate fires before the self-check: a plain role dropping itself sees the
 # permission error, not "current user cannot be dropped".
-connection c_ved user=dar_vedernikoff
+connection c_ved user=dar_vedernikoff password=dar_vedernikoff_pw
 statement error
 DROP ROLE dar_vedernikoff;
 ----
@@ -89,7 +89,7 @@ DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on the tar
 
 # A CREATEROLE holder without ADMIN on the target is refused with the specific
 # DETAIL naming the target.
-connection c_bab user=dar_babsky
+connection c_bab user=dar_babsky password=dar_babsky_pw
 statement error
 DROP ROLE dar_vedernikoff;
 ----
@@ -97,7 +97,7 @@ db error: ERROR: permission denied to drop role
 DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on role "dar_vedernikoff" may drop this role.
 
 
-connection c_bab user=dar_babsky
+connection c_bab user=dar_babsky password=dar_babsky_pw
 statement error
 ALTER ROLE dar_vedernikoff LOGIN;
 ----
@@ -105,7 +105,7 @@ db error: ERROR: permission denied to alter role
 DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on role "dar_vedernikoff" may alter this role.
 
 
-connection c_bab user=dar_babsky
+connection c_bab user=dar_babsky password=dar_babsky_pw
 statement error
 ALTER ROLE dar_vedernikoff RENAME TO dar_renamed;
 ----
@@ -115,7 +115,7 @@ DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on role "d
 
 # A non-superuser may not touch a SUPERUSER target -- this fires before the
 # admin-option check.
-connection c_bab user=dar_babsky
+connection c_bab user=dar_babsky password=dar_babsky_pw
 statement error
 ALTER ROLE dar_mop LOGIN;
 ----
@@ -125,34 +125,34 @@ DETAIL: Only roles with the SUPERUSER attribute may alter roles with the SUPERUS
 
 # A CREATEROLE holder gets ADMIN on the roles it creates, so it can administer
 # them freely.
-connection c_bab2 user=dar_babsky
+connection c_bab2 user=dar_babsky password=dar_babsky_pw
 statement ok
 CREATE ROLE dar_clickclack LOGIN;
 
 
-connection c_bab3 user=dar_babsky
+connection c_bab3 user=dar_babsky password=dar_babsky_pw
 statement ok
 ALTER ROLE dar_clickclack LOGIN;
 
 
-connection c_bab4 user=dar_babsky
+connection c_bab4 user=dar_babsky password=dar_babsky_pw
 statement ok
 ALTER ROLE dar_clickclack RENAME TO dar_clickclack2;
 
 
-connection c_bab5 user=dar_babsky
+connection c_bab5 user=dar_babsky password=dar_babsky_pw
 statement ok
 DROP ROLE dar_clickclack2;
 
 
 # Self-exceptions: a plain role may change its own per-role GUCs, but not its own
 # attributes.
-connection c_ved3 user=dar_vedernikoff
+connection c_ved3 user=dar_vedernikoff password=dar_vedernikoff_pw
 statement ok
 ALTER ROLE dar_vedernikoff SET search_path TO public;
 
 
-connection c_ved4 user=dar_vedernikoff
+connection c_ved4 user=dar_vedernikoff password=dar_vedernikoff_pw
 statement error
 ALTER ROLE dar_vedernikoff LOGIN;
 ----

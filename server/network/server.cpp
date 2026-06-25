@@ -31,6 +31,8 @@
 
 #include "basics/log.h"
 #include "basics/number_of_cores.h"
+#include "catalog/catalog.h"
+#include "catalog/role.h"
 #include "network/connection.h"
 #include "network/credentials.h"
 #include "network/http/es/handlers.h"
@@ -139,6 +141,34 @@ class ConfigCredentialProvider final : public network::CredentialProvider {
   network::Credential _credential;
 };
 
+// Per-role credential source: looks the connecting user up in the catalog and,
+// if the role carries a stored SCRAM verifier (rolpassword), returns it so the
+// connection must authenticate. A role with no stored password returns nullopt
+// -> the pg-wire/http layer treats that as trust (logs in without a password),
+// matching PostgreSQL's "no password set" behaviour.
+class CatalogCredentialProvider final : public network::CredentialProvider {
+ public:
+  std::optional<network::Credential> LookupCredential(
+    std::string_view username) const override {
+    auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
+    auto role = snapshot->GetRole(username);
+    if (!role) {
+      return std::nullopt;
+    }
+    const auto stored = role->PasswordVerifier();
+    if (stored.empty()) {
+      return std::nullopt;
+    }
+    auto verifier = network::ParseScramVerifier(stored);
+    if (!verifier) {
+      return std::nullopt;
+    }
+    network::Credential credential;
+    credential.scram = std::move(*verifier);
+    return credential;
+  }
+};
+
 }  // namespace
 
 Server::Server()
@@ -212,6 +242,13 @@ void Server::SetupAuth() {
                                                      : "cleartext";
     SDB_INFO(GENERAL, "network auth enabled for user '", _auth_user, "' (",
              method_name, ")");
+  } else {
+    // No flag-configured credential: authenticate against per-role passwords
+    // stored in the catalog (CREATE ROLE ... PASSWORD). Roles without a stored
+    // password log in under trust.
+    _auth_method = network::pg::AuthMethod::Scram;
+    _credentials = std::make_unique<CatalogCredentialProvider>();
+    SDB_INFO(GENERAL, "network auth using per-role catalog passwords");
   }
   if (!_api_key.empty()) {
     const auto colon = _api_key.find(':');

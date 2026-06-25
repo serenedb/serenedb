@@ -32,7 +32,6 @@
 #include "basics/assert.h"
 #include "basics/debugging.h"
 #include "basics/metrics.h"
-#include "basics/static_strings.h"
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
 #include "catalog/table.h"
@@ -346,13 +345,15 @@ bool PgWireSession<Kind>::SetupConnection() {
   }
   const auto database_id = database->GetId();
 
-  std::string_view user = UserName();
+  const std::string_view user = UserName();
   auto role = snapshot->GetRole(user);
   if (!role) {
-    user = StaticStrings::kDefaultUser;
-    role = snapshot->GetRole(user);
+    WriteFatalResponse(
+      this->_send,
+      SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
+                     ERR_MSG("role \"", user, "\" does not exist")));
+    return false;
   }
-  SDB_ASSERT(role);
 
   _conn = DuckDBEngine::Instance().CreateConnection();
   _txn_state.emplace(_conn->context->transaction);

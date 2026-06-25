@@ -21,7 +21,7 @@ DROP ROLE IF EXISTS enf_sc_vedernikoff;
 
 
 statement ok
-CREATE ROLE enf_sc_vedernikoff LOGIN;
+CREATE ROLE enf_sc_vedernikoff LOGIN PASSWORD 'enf_sc_vedernikoff_pw';
 
 
 statement ok
@@ -39,7 +39,7 @@ f	f
 
 
 # Non-owner CREATE in a foreign schema is refused.
-connection c_sc user=enf_sc_vedernikoff
+connection c_sc user=enf_sc_vedernikoff password=enf_sc_vedernikoff_pw
 statement error
 CREATE TABLE enf_sc_mop.intruder (x int);
 ----
@@ -48,7 +48,7 @@ db error: ERROR: permission denied for schema enf_sc_mop<slt:ignore>
 
 # Non-owner CREATE in public is refused (PG >= 15 does not grant CREATE on
 # public to PUBLIC).
-connection c_sc user=enf_sc_vedernikoff
+connection c_sc user=enf_sc_vedernikoff password=enf_sc_vedernikoff_pw
 statement error
 CREATE TABLE public.enf_sc_vedernikoff_pub (x int);
 ----

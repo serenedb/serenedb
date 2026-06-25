@@ -274,13 +274,6 @@ struct Snapshot {
   std::shared_ptr<T> EnforceRead(const AccessContext& ax,
                                  std::shared_ptr<T> obj) const;
 
-  void ReplaceObjectBody(const std::shared_ptr<Object>& new_object);
-  // In-place body swap of a database/schema (name unchanged): swaps the
-  // _objects entry and rebinds the name-resolution key onto the new body,
-  // leaving child namespaces (keyed by the stable id) reachable.
-  void ReplaceDatabaseBody(const std::shared_ptr<Object>& new_database);
-  void ReplaceSchemaBody(ObjectId db_id,
-                         const std::shared_ptr<Object>& new_schema);
 
   void EndLoad() noexcept;
 

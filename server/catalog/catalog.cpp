@@ -1213,29 +1213,6 @@ std::shared_ptr<Database> Snapshot::GetDatabase(ObjectId database) const {
   return basics::downCast<Database>(obj);
 }
 
-void Snapshot::ReplaceObjectBody(const std::shared_ptr<Object>& new_object) {
-  auto it = _objects.find(new_object->GetId());
-  SDB_ASSERT(it != _objects.end());
-  // Owner/ACL may have changed (ALTER OWNER, GRANT/REVOKE); refresh role edges.
-  ModifyRoleDependencies(**it, EdgeAction::Delete);
-  const_cast<std::shared_ptr<Object>&>(*it) = new_object;
-  ModifyRoleDependencies(*new_object, EdgeAction::Add);
-}
-
-void Snapshot::ReplaceDatabaseBody(
-  const std::shared_ptr<Object>& new_database) {
-  ReplaceObjectBody(new_database);
-  _resolution_table.RefreshDatabaseName(new_database->GetName(),
-                                        new_database->GetId());
-}
-
-void Snapshot::ReplaceSchemaBody(ObjectId db_id,
-                                 const std::shared_ptr<Object>& new_schema) {
-  ReplaceObjectBody(new_schema);
-  _resolution_table.RefreshSchemaName(db_id, new_schema->GetName(),
-                                      new_schema->GetId());
-}
-
 template<ResolveType Type>
 Result Snapshot::ReplaceObject(ObjectId parent_id, std::string_view old_name,
                                std::shared_ptr<Object> new_object) {
@@ -3031,7 +3008,11 @@ Result Catalog::ChangeOwner(const AccessContext& ax, ObjectId database_id,
                  [&](std::shared_ptr<Snapshot>& clone) -> Result {
                    duckdb::MemoryStream stream;
                    auto bytes = catalog::SerializeObject(*cloned, stream);
-                   clone->ReplaceSchemaBody(database_id, cloned);
+                   if (auto r = clone->ReplaceObject<ResolveType::Schema>(
+                         database_id, cloned->GetName(), cloned);
+                       !r.ok()) {
+                     return r;
+                   }
                    return _engine->CreateDefinition(
                      database_id, ObjectType::Schema, cloned->GetId(), bytes);
                  });
@@ -3200,14 +3181,22 @@ Result Catalog::ChangeAcl(ObjectId database_id, std::string_view schema,
                  duckdb::MemoryStream stream;
                  auto bytes = catalog::SerializeObject(*cloned, stream);
                  if (type == ObjectType::Database) {
-                   clone->ReplaceDatabaseBody(cloned);
+                   if (auto r = clone->ReplaceObject<ResolveType::Database>(
+                         {}, cloned->GetName(), cloned);
+                       !r.ok()) {
+                     return r;
+                   }
                    return _engine->Write([&](auto& ctx) {
                      ctx.PutDefinition(id::kInstance, ObjectType::Database,
                                        cloned->GetId(), bytes);
                    });
                  }
                  if (type == ObjectType::Schema) {
-                   clone->ReplaceSchemaBody(parent, cloned);
+                   if (auto r = clone->ReplaceObject<ResolveType::Schema>(
+                         parent, cloned->GetName(), cloned);
+                       !r.ok()) {
+                     return r;
+                   }
                    return _engine->CreateDefinition(parent, ObjectType::Schema,
                                                     cloned->GetId(), bytes);
                  }

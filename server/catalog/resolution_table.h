@@ -104,12 +104,12 @@ class ResolutionTable {
         if (!inserted) {
           return {ERROR_SERVER_DUPLICATE_NAME};
         }
+        auto [_, schemas] = CloneData(_schemas).try_emplace(
+          object_id, std::make_shared<MapByName<ObjectId>>());
+        SDB_ASSERT(schemas);
       } else {
-        databases.insert_or_assign(object_name, object_id);
+        InsertOrRebind(databases, object_name, object_id);
       }
-      auto [_, inserted] = CloneData(_schemas).try_emplace(
-        object_id, std::make_shared<MapByName<ObjectId>>());
-      SDB_ASSERT(inserted);
       return {};
     } else if constexpr (Type == ResolveType::Role) {
       auto& roles = CloneData(_roles);
@@ -119,8 +119,7 @@ class ResolutionTable {
           return {ERROR_USER_DUPLICATE};
         }
       } else {
-        roles.erase(object_name);
-        roles.emplace(object_name, object_id);
+        InsertOrRebind(roles, object_name, object_id);
       }
       return {};
     } else {
@@ -136,8 +135,7 @@ class ResolutionTable {
           auto [_, inserted] = inner.try_emplace(object_name, object_id);
           return inserted;
         }
-        inner.erase(object_name);
-        inner.emplace(object_name, object_id);
+        InsertOrRebind(inner, object_name, object_id);
         return true;
       };
       if constexpr (Type == ResolveType::Function) {
@@ -146,25 +144,29 @@ class ResolutionTable {
                  : Result{ERROR_SERVER_DUPLICATE_NAME};
       } else if constexpr (Type == ResolveType::Schema) {
         auto inserted = insert(_schemas, parent_id, object_name, object_id);
-        if (inserted) {
+        if (!inserted) {
+          return {ERROR_SERVER_DUPLICATE_NAME};
+        }
+        // A new schema starts with empty child namespaces; on a body swap
+        // (replace) they already exist, keyed by the stable id.
+        if (!replace) {
           auto [_, insert_relation] =
             CloneData(_relations)
               .try_emplace(object_id, std::make_shared<MapByName<ObjectId>>());
-          auto [_, insert_function] =
+          auto [_2, insert_function] =
             CloneData(_functions)
               .try_emplace(object_id, std::make_shared<MapByName<ObjectId>>());
-          auto [_, insert_tokenizer] =
+          auto [_3, insert_tokenizer] =
             CloneData(_tokenizers)
               .try_emplace(object_id, std::make_shared<MapByName<ObjectId>>());
-          auto [_, insert_type] = CloneData(_types).try_emplace(
+          auto [_4, insert_type] = CloneData(_types).try_emplace(
             object_id, std::make_shared<MapByName<ObjectId>>());
           SDB_ASSERT(insert_relation);
           SDB_ASSERT(insert_function);
           SDB_ASSERT(insert_tokenizer);
           SDB_ASSERT(insert_type);
-          return {};
         }
-        return {ERROR_SERVER_DUPLICATE_NAME};
+        return {};
       } else if constexpr (Type == ResolveType::Relation) {
         return insert(_relations, parent_id, object_name, object_id)
                  ? Result{}
@@ -248,32 +250,6 @@ class ResolutionTable {
     }
   }
 
-  // Re-point a schema's name key onto fresh backing storage without touching
-  // its child namespaces (relations/functions/tokenizers/types). Used by an
-  // in-place schema body swap (GRANT/REVOKE ON SCHEMA, ALTER SCHEMA OWNER):
-  // the old schema object is freed, so its _name -- which the _schemas key is a
-  // string_view into -- would dangle; this rebinds the key to new_name.
-  void RefreshSchemaName(ObjectId db_id, std::string_view new_name,
-                         ObjectId schema_id) {
-    auto& outer = CloneData(_schemas);
-    auto it = outer.find(db_id);
-    SDB_ASSERT(it != outer.end());
-    auto& inner = CloneData(it->second);
-    inner.erase(new_name);
-    inner.emplace(new_name, schema_id);
-  }
-
-  // Re-point a database's name key onto fresh backing storage. Used by an
-  // in-place database body swap (GRANT/REVOKE ON DATABASE): the old database
-  // object is freed once no snapshot references it, so its _name -- which the
-  // _databases key is a string_view into -- would dangle; this rebinds the key
-  // to new_name.
-  void RefreshDatabaseName(std::string_view new_name, ObjectId database_id) {
-    auto& databases = CloneData(_databases);
-    databases.erase(new_name);
-    databases.emplace(new_name, database_id);
-  }
-
   auto GetDatabaseIds() const { return *_databases | std::views::values; }
 
   auto GetRoleIds() const { return *_roles | std::views::values; }
@@ -311,6 +287,19 @@ class ResolutionTable {
     auto clone = std::make_shared<T>(*ptr);
     ptr = clone;
     return *clone;
+  }
+
+  // insert_or_assign into a name->id map, but on an in-place body swap also
+  // refresh the stored key's backing. The key is a string_view into the
+  // object's _name; insert_or_assign keeps the existing (now-dangling) key when
+  // the name compares equal, so re-point it at `name`, which views the new
+  // object's _name. Safe: same content => same hash/bucket, only .data() moves.
+  static void InsertOrRebind(MapByName<ObjectId>& map, std::string_view name,
+                             ObjectId id) {
+    auto [it, inserted] = map.insert_or_assign(name, id);
+    if (!inserted) {
+      const_cast<std::string_view&>(it->first) = name;
+    }
   }
 
   // role_name -> role_id

@@ -50,15 +50,6 @@ struct DefaultAclData {
   Acl acl;
 };
 
-// A GRANT on a built-in/system type (which has no catalog object), keyed by its
-// fixed pg_type OID. Stored on the root role (the implicit owner of built-in
-// types) so pg_type can surface typacl for e.g. int4. `acl` is the stored
-// (non-default) grant set, exactly like a per-object relacl/proacl.
-struct TypeAclData {
-  uint64_t type_oid = 0;
-  Acl acl;
-};
-
 struct RoleData {
   ObjectId id;
   std::string name;
@@ -75,9 +66,6 @@ struct RoleData {
   std::vector<std::string> config;
   // ALTER DEFAULT PRIVILEGES targets owned by this role (pg_default_acl rows).
   std::vector<DefaultAclData> default_acls;
-  // GRANTs on built-in types (only the root role carries these). pg_type reads
-  // these to surface typacl for built-in types like int4.
-  std::vector<TypeAclData> builtin_type_acls;
 };
 
 }  // namespace sdb::catalog::persistence

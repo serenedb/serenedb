@@ -29,6 +29,7 @@
 #include "pg/commands/rbac.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
+#include "pg/sql_utils.h"
 
 namespace sdb::connector {
 namespace {
@@ -173,26 +174,6 @@ void RenameRolePragma(duckdb::ClientContext& context,
                  ArgStr(params, 1, "new_name"));
 }
 
-// Map the grammar's GrantObjType keyword to a catalog object type.
-catalog::ObjectType GrantObjTypeOf(std::string_view word) {
-  if (word == "SEQUENCE") {
-    return catalog::ObjectType::Sequence;
-  }
-  if (word == "FUNCTION") {
-    return catalog::ObjectType::PgSqlFunction;
-  }
-  if (word == "DATABASE") {
-    return catalog::ObjectType::Database;
-  }
-  if (word == "SCHEMA") {
-    return catalog::ObjectType::Schema;
-  }
-  if (word == "TYPE") {
-    return catalog::ObjectType::PgSqlType;
-  }
-  return catalog::ObjectType::Table;  // default + 'TABLE'
-}
-
 // The bulk GRANT ... ON ALL <kind> IN SCHEMA forms carry a marker objtype
 // string. Returns the per-object catalog type, or nullopt for a single object.
 std::optional<catalog::ObjectType> BulkObjTypeOf(std::string_view word) {
@@ -226,9 +207,13 @@ void GrantTablePragma(duckdb::ClientContext& context,
       ArgStr(params, 2, "grantee"), ArgBool(params, 3, "revoke"), opts);
     return;
   }
-  pg::GrantObject(conn_ctx, GrantObjTypeOf(objtype), privileges,
-                  ArgStr(params, 1, "name"), ArgStr(params, 2, "grantee"),
-                  ArgBool(params, 3, "revoke"), opts);
+  auto type = pg::FromPgObjectTypeName(objtype);
+  if (type == catalog::ObjectType::Invalid) {
+    type = catalog::ObjectType::Table;
+  }
+  pg::GrantObject(conn_ctx, type, privileges, ArgStr(params, 1, "name"),
+                  ArgStr(params, 2, "grantee"), ArgBool(params, 3, "revoke"),
+                  opts);
 }
 
 // PRAGMA serenedb_alter_owner('objtype', 'name', 'new_owner')

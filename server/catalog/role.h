@@ -107,15 +107,6 @@ class Role final : public catalog::Object {
   // redundant).
   void RemoveDefaultAcl(ObjectId schema, char objtype);
 
-  // Built-in type GRANTs (only meaningful on the root role). The Acl for a
-  // built-in type OID, or an empty span if it carries no stored grant.
-  using TypeAclData = persistence::TypeAclData;
-  AclView BuiltinTypeAcl(uint64_t type_oid) const noexcept;
-  // Locate (or create) the built-in type ACL entry, returning a mutable ref.
-  Acl& MutableBuiltinTypeAcl(uint64_t type_oid);
-  // Drop the built-in type ACL entry once its Acl is empty.
-  void RemoveBuiltinTypeAcl(uint64_t type_oid);
-
   std::span<const Membership> MemberOf() const noexcept { return _member_of; }
 
   void AddMembership(const Membership& edge);
@@ -136,7 +127,6 @@ class Role final : public catalog::Object {
   std::string _valid_until;
   std::vector<std::string> _config;
   std::vector<persistence::DefaultAclData> _default_acls;
-  std::vector<persistence::TypeAclData> _builtin_type_acls;
   struct DBAuthContext {
     auth::Level database_auth_level = auth::Level::Undefined;
   };

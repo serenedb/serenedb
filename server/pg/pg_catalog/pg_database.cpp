@@ -24,7 +24,6 @@
 #include <vector>
 
 #include "app/app_server.h"
-#include "auth/acl.h"
 #include "basics/assert.h"
 #include "catalog/catalog.h"
 #include "catalog/database.h"

@@ -27,6 +27,7 @@
 #include <span>
 #include <string>
 #include <type_traits>
+#include <vector>
 
 namespace sdb::pg {
 

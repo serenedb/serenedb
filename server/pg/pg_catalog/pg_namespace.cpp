@@ -20,7 +20,6 @@
 
 #include "pg/pg_catalog/pg_namespace.h"
 
-#include "auth/acl.h"
 #include "basics/assert.h"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"

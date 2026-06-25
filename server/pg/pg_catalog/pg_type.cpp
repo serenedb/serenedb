@@ -24,7 +24,6 @@
 #include <string>
 #include <vector>
 
-#include "auth/acl.h"
 #include "basics/containers/flat_hash_set.h"
 #include "catalog/catalog.h"
 #include "catalog/role.h"
@@ -1484,17 +1483,10 @@ catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
   auto snapshot = _config.EnsureCatalogSnapshot();
   auto database_id = GetDatabaseId();
 
-  auto root = snapshot->GetObject<catalog::Role>(id::kRootUser);
-
   std::vector<PgType> rows;
   rows.reserve(kSampleData.size() * 2);
   for (const auto& row : kSampleData) {
     rows.push_back(row);
-    if (root) {
-      if (auto acl = root->BuiltinTypeAcl(row.oid); !acl.empty()) {
-        rows.back().typacl = AclColumn{acl};
-      }
-    }
   }
 
   containers::FlatHashSet<std::string_view> taken;
@@ -1573,6 +1565,7 @@ catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
       const auto namespace_oid = schema->GetId().id();
       const auto array_oid = type->GetArrayOid().id();
       const auto array_name = make_array_name(type->GetName());
+      const AclColumn type_acl{type->GetAcl()};
 
       auto make_row = [&](bool as_array) {
         return PgType{
@@ -1616,7 +1609,7 @@ catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
           .typdefault = {},
           // Only the scalar type carries an ACL; the array type's typacl is
           // NULL in PG.
-          .typacl = as_array ? AclColumn{} : AclColumn{type->GetAcl()},
+          .typacl = as_array ? AclColumn{} : type_acl,
         };
       };
 

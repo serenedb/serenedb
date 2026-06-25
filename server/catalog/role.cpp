@@ -51,8 +51,7 @@ Role::Role(RoleData data)
     _conn_limit{data.conn_limit},
     _valid_until{std::move(data.valid_until)},
     _config{std::move(data.config)},
-    _default_acls{std::move(data.default_acls)},
-    _builtin_type_acls{std::move(data.builtin_type_acls)} {
+    _default_acls{std::move(data.default_acls)} {
   for (const auto& [db_name, level] : data.db_access) {
     try {
       GrantDatabase(db_name, level);
@@ -80,7 +79,6 @@ RoleData Role::BuildData() const {
     .valid_until = _valid_until,
     .config = _config,
     .default_acls = _default_acls,
-    .builtin_type_acls = _builtin_type_acls,
   };
   for (const auto& [db_name, context] : _db_access) {
     data.db_access.emplace(db_name, context.database_auth_level);
@@ -187,27 +185,6 @@ void catalog::Role::RemoveDefaultAcl(ObjectId schema, char objtype) {
   std::erase_if(_default_acls, [&](const DefaultAclData& d) {
     return d.schema == schema && d.objtype == objtype;
   });
-}
-
-catalog::AclView catalog::Role::BuiltinTypeAcl(
-  uint64_t type_oid) const noexcept {
-  auto it =
-    std::ranges::find(_builtin_type_acls, type_oid, &TypeAclData::type_oid);
-  return it != _builtin_type_acls.end() ? AclView{it->acl} : AclView{};
-}
-
-catalog::Acl& catalog::Role::MutableBuiltinTypeAcl(uint64_t type_oid) {
-  auto it =
-    std::ranges::find(_builtin_type_acls, type_oid, &TypeAclData::type_oid);
-  if (it != _builtin_type_acls.end()) {
-    return it->acl;
-  }
-  return _builtin_type_acls.emplace_back(TypeAclData{.type_oid = type_oid}).acl;
-}
-
-void catalog::Role::RemoveBuiltinTypeAcl(uint64_t type_oid) {
-  std::erase_if(_builtin_type_acls,
-                [&](const TypeAclData& t) { return t.type_oid == type_oid; });
 }
 
 std::shared_ptr<Object> Role::Clone() const {

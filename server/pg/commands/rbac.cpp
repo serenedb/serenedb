@@ -231,19 +231,6 @@ void AlterRoleConfig(ConnectionContext& ctx, std::string_view name,
 
 namespace {
 
-bool AclItemEq(const catalog::AclItem& a, const catalog::AclItem& b) {
-  return a.grantee == b.grantee && a.grantor == b.grantor &&
-         a.privs == b.privs && a.grant_option == b.grant_option;
-}
-
-// True when `acl` carries nothing beyond the implicit owner default (PG removes
-// the pg_default_acl row in that case).
-bool AclMatchesDefault(const catalog::Acl& acl, const catalog::Acl& def) {
-  return std::ranges::equal(acl, def, AclItemEq);
-}
-
-// pg_default_acl objtype char -> catalog::ObjectType (for acldefault seeding /
-// privilege validation).
 catalog::ObjectType DefaultAclObjType(std::string_view objtype_char) {
   if (objtype_char == "S") {
     return catalog::ObjectType::Sequence;
@@ -257,42 +244,25 @@ catalog::ObjectType DefaultAclObjType(std::string_view objtype_char) {
   if (objtype_char == "n") {
     return catalog::ObjectType::Schema;
   }
-  return catalog::ObjectType::Table;  // 'r'
-}
-
-catalog::AclMode ParseAclModeOrThrow(std::string_view privileges,
-                                     catalog::ObjectType type) {
-  try {
-    return auth::ParseAclMode(privileges, type);
-  } catch (const basics::Exception& e) {
-    // PG's GRANT statement rejects an unknown privilege keyword with
-    // 42601 / unrecognized privilege type "<lower>" (the keyword is downcased,
-    // no colon -- distinct from the has_*_privilege function path which keeps
-    // the colon and SQLSTATE 22023). A keyword valid elsewhere but not for this
-    // object's class is the "invalid privilege type ..." form (0LP01).
-    const auto msg = e.message();
-    if (absl::StartsWith(msg, "unrecognized privilege type:")) {
-      auto open = msg.find('"');
-      auto close = msg.rfind('"');
-      std::string tok = (open != std::string::npos && close > open)
-                          ? msg.substr(open + 1, close - open - 1)
-                          : std::string{};
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                      ERR_MSG("unrecognized privilege type \"",
-                              absl::AsciiStrToLower(tok), "\""));
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_GRANT_OPERATION), ERR_MSG(msg));
-  }
+  return catalog::ObjectType::Table;
 }
 
 catalog::AclMode ParseAclModeOrThrow(std::span<const ParsedPriv> privileges,
                                      catalog::ObjectType type) {
-  std::vector<std::string_view> keywords;
-  keywords.reserve(privileges.size());
+  const std::string_view object_word =
+    type == catalog::ObjectType::Table ? "relation" : ToPgObjectTypeName(type);
+  catalog::AclMode out = catalog::AclMode::NoRights;
   for (const auto& p : privileges) {
-    keywords.push_back(p.keyword);
+    auto parsed = auth::TryParseAclKeyword(p.keyword, type);
+    if (!parsed) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_GRANT_OPERATION),
+        ERR_MSG("invalid privilege type ", absl::AsciiStrToUpper(p.keyword),
+                " for ", object_word));
+    }
+    out |= *parsed;
   }
-  return ParseAclModeOrThrow(absl::StrJoin(keywords, ","), type);
+  return out;
 }
 
 bool AnyColumnPrivs(std::span<const ParsedPriv> parsed) {
@@ -300,8 +270,6 @@ bool AnyColumnPrivs(std::span<const ParsedPriv> parsed) {
     parsed, [](const ParsedPriv& p) { return !p.columns.empty(); });
 }
 
-// Resolve a grantee name to a role id, mapping PUBLIC to the public pseudo-id
-// and throwing on an unknown role.
 ObjectId ResolveGranteeId(const catalog::Snapshot& snap,
                           std::string_view grantee) {
   if (grantee == "PUBLIC" || grantee == "public") {
@@ -315,10 +283,6 @@ ObjectId ResolveGranteeId(const catalog::Snapshot& snap,
   return grantee_role->GetId();
 }
 
-// Apply a GRANT/REVOKE to `acl` for the full requested `privs` (no grant-option
-// narrowing). Used by the default-privileges and built-in-type paths; the
-// object GRANT path in GrantObject does its own narrowing and dependent-priv
-// handling and does not share this.
 void ApplyAclChange(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,
                     catalog::AclMode privs, bool revoke, bool with_grant_option,
                     bool grant_option_only, bool cascade) {
@@ -345,7 +309,6 @@ void AlterDefaultPrivileges(ConnectionContext& ctx,
   auto& catalog = GlobalCatalog();
   auto snapshot = FreshSnapshot();
 
-  // FOR ROLE defaults to the current user (PG: the role running the command).
   const std::string_view defacl_role_name =
     opts.for_role.empty() ? ctx.user() : opts.for_role;
   auto defacl_role = snapshot->GetRole(defacl_role_name);
@@ -357,7 +320,6 @@ void AlterDefaultPrivileges(ConnectionContext& ctx,
 
   const ObjectId grantee_id = ResolveGranteeId(*snapshot, grantee);
 
-  // IN SCHEMA: id::kInvalid means "all schemas" (PG defaclnamespace = 0).
   ObjectId schema_id = id::kInvalid;
   if (!opts.in_schema.empty()) {
     auto schema = snapshot->GetSchema(ctx.GetDatabaseId(), opts.in_schema);
@@ -380,18 +342,22 @@ void AlterDefaultPrivileges(ConnectionContext& ctx,
         std::shared_ptr<catalog::Role>& new_role) -> Result {
       new_role = std::static_pointer_cast<catalog::Role>(old_role.Clone());
       auto& entry = new_role->MutableDefaultAcl(schema_id, objtype_c);
-      // Seed an empty entry from the implicit owner default (PG's acldefault),
-      // so the rendered defaclacl carries the owner self-grant just like PG.
+      // PG materializes the owner default into defaclacl on the first grant
+      // (e.g. {postgres=arwdDxtm/postgres, grantee=.../postgres}), then deletes
+      // the whole pg_default_acl row once the last explicit grant is revoked --
+      // the bare owner default is never persisted on its own.
       if (entry.acl.empty()) {
         entry.acl = auth::AclDefault(type, defacl_role_id);
       }
       ApplyAclChange(entry.acl, grantee_id, defacl_role_id, privs, revoke,
                      opts.with_grant_option, opts.grant_option_only,
                      opts.cascade);
-      // PG drops the pg_default_acl row when its ACL collapses back to the bare
-      // owner default (nothing extra granted).
-      if (AclMatchesDefault(entry.acl,
-                            auth::AclDefault(type, defacl_role_id))) {
+      const bool only_owner =
+        std::ranges::all_of(entry.acl, [&](const catalog::AclItem& item) {
+          return item.grantee == defacl_role_id &&
+                 item.grantor == defacl_role_id;
+        });
+      if (only_owner) {
         new_role->RemoveDefaultAcl(schema_id, objtype_c);
       }
       return {};
@@ -419,8 +385,6 @@ std::shared_ptr<catalog::Object> ResolveGrantTarget(
     out_name = std::string{raw_name};
     return snap.GetSchema(ctx.GetDatabaseId(), raw_name);
   }
-  // Keep the current-schema string alive: ParseObjectName returns string_views,
-  // and an unqualified name's schema view points into `current_schema`.
   const std::string current_schema = ctx.GetCurrentSchema();
   const auto parsed = ParseObjectName(raw_name, current_schema);
   out_schema = parsed.schema;
@@ -435,45 +399,6 @@ std::shared_ptr<catalog::Object> ResolveGrantTarget(
   }
   return snap.GetRelation(catalog::NoAccessCheck(), ctx.GetDatabaseId(),
                           parsed.schema, parsed.relation);
-}
-
-// GRANT/REVOKE ... ON TYPE <builtin> -> store the grant on the root role's
-// built-in-type ACL map (built-in types own no catalog object). The stored Acl
-// is the non-default grant set; pg_type seeds the owner default when rendering.
-void GrantBuiltinType(ConnectionContext& ctx, uint64_t type_oid,
-                      std::span<const ParsedPriv> privileges,
-                      std::string_view grantee, bool revoke,
-                      const GrantObjectOptions& opts) {
-  auto& catalog = GlobalCatalog();
-  auto snapshot = FreshSnapshot();
-
-  const ObjectId grantee_id = ResolveGranteeId(*snapshot, grantee);
-
-  const catalog::AclMode privs =
-    ParseAclModeOrThrow(privileges, catalog::ObjectType::PgSqlType);
-
-  // Built-in types are implicitly owned by the root role; the grantor is root.
-  const ObjectId owner = id::kRootUser;
-  auto root = snapshot->GetObject<catalog::Role>(owner);
-  const std::string root_name{root ? root->GetName() : std::string{}};
-
-  auto r = catalog.ChangeRole(
-    root_name,
-    [&](const catalog::Role& old_role,
-        std::shared_ptr<catalog::Role>& new_role) -> Result {
-      new_role = std::static_pointer_cast<catalog::Role>(old_role.Clone());
-      auto& acl = new_role->MutableBuiltinTypeAcl(type_oid);
-      ApplyAclChange(acl, grantee_id, owner, privs, revoke,
-                     opts.with_grant_option, opts.grant_option_only,
-                     opts.cascade);
-      if (acl.empty()) {
-        new_role->RemoveBuiltinTypeAcl(type_oid);
-      }
-      return {};
-    });
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
 }
 
 }  // namespace
@@ -536,9 +461,6 @@ void ApplyAclGrant(const catalog::Snapshot& live, ObjectId owner,
   }
 }
 
-// Column-level GRANT/REVOKE (PG column privileges). Only tables carry
-// per-column ACLs; `privileges` is the parsed list, each entry naming its own
-// columns.
 void GrantObjectColumns(ConnectionContext& ctx, catalog::ObjectType type,
                         std::span<const ParsedPriv> parsed,
                         std::string_view obj_name, std::string_view grantee,
@@ -571,16 +493,13 @@ void GrantObjectColumns(ConnectionContext& ctx, catalog::ObjectType type,
   bool nothing_applied = false;
   bool dependents_block = false;
   bool not_member = false;
-  // PG column-applicable privileges: GRANT ALL (col) confers only these (a
-  // column has no DELETE/TRUNCATE/TRIGGER/MAINTAIN of its own).
   constexpr catalog::AclMode kColumnPrivs =
     catalog::AclMode::Select | catalog::AclMode::Insert |
     catalog::AclMode::Update | catalog::AclMode::References;
   for (const auto& p : parsed) {
     catalog::AclMode privs =
-      ParseAclModeOrThrow(p.keyword, catalog::ObjectType::Table);
-    // PG: an explicit non-column-applicable privilege named with a column list
-    // (e.g. GRANT DELETE (a)) is a hard error; ALL silently narrows.
+      auth::TryParseAclKeyword(p.keyword, catalog::ObjectType::Table)
+        .value_or(catalog::AclMode::NoRights);
     const bool is_all = absl::EqualsIgnoreCase(p.keyword, "ALL");
     if (!is_all && (privs & ~kColumnPrivs) != catalog::AclMode::NoRights) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_GRANT_OPERATION),
@@ -631,7 +550,6 @@ void GrantObject(ConnectionContext& ctx, catalog::ObjectType type,
                  std::span<const ParsedPriv> privileges,
                  std::string_view obj_name, std::string_view grantee,
                  bool revoke, const GrantObjectOptions& opts) {
-  // Column-level GRANT (SELECT (a,b) ON t) takes the per-column path.
   if (AnyColumnPrivs(privileges)) {
     GrantObjectColumns(ctx, type, privileges, obj_name, grantee, revoke, opts);
     return;
@@ -645,13 +563,11 @@ void GrantObject(ConnectionContext& ctx, catalog::ObjectType type,
   auto target =
     ResolveGrantTarget(ctx, *snapshot, type, obj_name, schema_name, rel_name);
   if (!target) {
-    // A GRANT ON TYPE that names a built-in/system type (no catalog object, but
-    // a fixed pg_type OID) is valid in PG and sets pg_type.typacl.
-    if (type == catalog::ObjectType::PgSqlType) {
-      if (auto oid = RegtypeIn(rel_name); oid != kInvalidOid) {
-        GrantBuiltinType(ctx, oid, privileges, grantee, revoke, opts);
-        return;
-      }
+    if (type == catalog::ObjectType::PgSqlType &&
+        RegtypeIn(rel_name) != kInvalidOid) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("cannot change privileges of built-in type ", rel_name));
     }
     const bool is_relation = type == catalog::ObjectType::Table ||
                              type == catalog::ObjectType::PgSqlView ||
@@ -681,11 +597,6 @@ void GrantObject(ConnectionContext& ctx, catalog::ObjectType type,
   bool nothing_applied = false;
   bool dependents_block = false;
   bool not_member = false;
-  // For a Database target ChangeAcl looks up the object by `database_id`
-  // directly, so it must be the *target* database -- not the connection's
-  // current database, which may differ (GRANT ON DATABASE postgres while
-  // connected to another db). Every other target resolves its schema/relation
-  // within the connection's database.
   const ObjectId acl_database_id = type == catalog::ObjectType::Database
                                      ? target->GetId()
                                      : ctx.GetDatabaseId();
@@ -723,9 +634,6 @@ void GrantObject(ConnectionContext& ctx, catalog::ObjectType type,
               rel_name, "\"")));
   }
 
-  // PG: a table-level REVOKE of a privilege also strips that privilege from
-  // every column-level grant of the same grantee (the column entry cannot
-  // outlive its table-level counterpart). Cascade the revoke to each column.
   if (revoke && type == catalog::ObjectType::Table) {
     auto fresh = FreshSnapshot();
     if (auto tbl = fresh->GetObject<catalog::Table>(target->GetId())) {
@@ -758,9 +666,6 @@ void GrantObjectAllInSchema(ConnectionContext& ctx, catalog::ObjectType type,
                     ERR_MSG("schema \"", schema_name, "\" does not exist"));
   }
 
-  // Collect the object names first; each GrantObject call takes a fresh
-  // snapshot, so resolve names up front. PG applies to every existing object
-  // (an empty schema is a no-op, not an error).
   std::vector<std::string> names;
   const ObjectId db = ctx.GetDatabaseId();
   if (type == catalog::ObjectType::PgSqlFunction) {
@@ -825,33 +730,10 @@ void GrantRole(ConnectionContext& ctx, std::string_view role,
   }
 }
 
-namespace {
-
-catalog::ObjectType OwnerObjType(std::string_view word) {
-  if (word == "TABLE") {
-    return catalog::ObjectType::Table;
-  }
-  if (word == "VIEW") {
-    return catalog::ObjectType::PgSqlView;
-  }
-  if (word == "SEQUENCE") {
-    return catalog::ObjectType::Sequence;
-  }
-  if (word == "SCHEMA") {
-    return catalog::ObjectType::Schema;
-  }
-  if (word == "TYPE") {
-    return catalog::ObjectType::PgSqlType;
-  }
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                  ERR_MSG("ALTER ", word, " ... OWNER TO is not supported"));
-}
-
-}  // namespace
-
 void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
                 std::string_view name, std::string_view new_owner) {
-  const auto type = OwnerObjType(obj_type);
+  const auto type = FromPgObjectTypeName(obj_type);
+  SDB_ASSERT(type != catalog::ObjectType::Invalid);
   auto& catalog = GlobalCatalog();
   auto snapshot = FreshSnapshot();
 

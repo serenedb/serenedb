@@ -23,16 +23,14 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
-#include <absl/strings/str_split.h>
 
 #include <algorithm>
 #include <array>
-#include <ranges>
+#include <expected>
 #include <utility>
 #include <vector>
 
 #include "basics/containers/trivial_map.h"
-#include "basics/exceptions.h"
 #include "basics/system-compiler.h"
 
 namespace sdb::auth {
@@ -57,6 +55,7 @@ constexpr containers::TrivialBiMap kPrivNames{[](auto selector) {
     .Case("usage", AclMode::Usage)
     .Case("create", AclMode::Create)
     .Case("temporary", AclMode::CreateTemp)
+    .Case("temp", AclMode::CreateTemp)
     .Case("connect", AclMode::Connect);
 }};
 
@@ -167,8 +166,14 @@ catalog::Acl AclDefault(ObjectType type, ObjectId owner) {
   return acl;
 }
 
-catalog::Acl AclEffective(catalog::AclView stored, ObjectType type,
-                          ObjectId owner) {
+catalog::Acl AclForStorage(catalog::AclView stored, ObjectType type,
+                           ObjectId owner) {
+  // An empty stored ACL means "never touched": the implicit default (owner +
+  // PUBLIC) applies. The first GRANT/REVOKE must materialize that default so it
+  // becomes explicit, editable rows -- otherwise a REVOKE FROM PUBLIC would
+  // collapse back to empty and read as "never touched" again. This mirrors PG's
+  // acldefault() materialization; the owner row also keeps the ACL non-NULL
+  // after a revoke (PG's relacl is {owner=.../owner}, not NULL).
   if (stored.empty()) {
     return AclDefault(type, owner);
   }
@@ -184,20 +189,21 @@ bool AclCheckSorted(catalog::AclView stored, ObjectType type, ObjectId owner,
     return any_of ? (have & need) != AclMode::NoRights : Has(have, need);
   };
 
-  if (stored.empty()) {
-    // NULL acl -> acldefault, evaluated inline.
-    AclMode have = AclMode::NoRights;
-    if (RolesContain(roles, owner)) {
-      have |= ClassPrivs(type);
-      if (done(have)) {
-        return true;
-      }
+  // The owner's privileges are derived from ownership, never stored as an ACL
+  // row, so they are always the current full class set (and cannot be revoked).
+  AclMode have = AclMode::NoRights;
+  if (RolesContain(roles, owner)) {
+    have |= ClassPrivs(type);
+    if (done(have)) {
+      return true;
     }
+  }
+
+  if (stored.empty()) {
     have |= PublicDefaultPrivs(type);
     return done(have);
   }
 
-  AclMode have = AclMode::NoRights;
   for (const auto& item : stored) {
     if (item.grantee != catalog::kPublicGrantee &&
         !RolesContain(roles, item.grantee)) {
@@ -317,53 +323,20 @@ void AclRevokeCascade(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,
   }
 }
 
-AclMode ParseAclMode(std::string_view privileges, ObjectType type) {
+std::expected<AclMode, AclKeywordError> TryParseAclKeyword(
+  std::string_view keyword, ObjectType type) {
   const AclMode allowed = ClassPrivs(type);
-  AclMode out = AclMode::NoRights;
-  for (std::string_view tok :
-       absl::StrSplit(privileges, ',', absl::SkipEmpty())) {
-    const auto stripped = absl::StripAsciiWhitespace(tok);
-    if (stripped.empty()) {
-      continue;
-    }
-    if (absl::EqualsIgnoreCase(stripped, "ALL")) {
-      out |= allowed;
-      continue;
-    }
-    // PG accepts TEMP as a synonym for TEMPORARY.
-    const auto lookup = absl::EqualsIgnoreCase(stripped, "TEMP")
-                          ? std::string_view{"temporary"}
-                          : stripped;
-    const auto mode = kPrivNames.TryFindICaseByFirst(lookup);
-    if (!mode) {
-      SDB_THROW(sdb::ERROR_BAD_PARAMETER, "unrecognized privilege type: \"",
-                tok, "\"");
-    }
-    if ((allowed & *mode) != *mode) {
-      // PG names the GRANT object class: a plain relation target is "relation",
-      // others use their object keyword.
-      const auto object_word = [type] -> std::string_view {
-        switch (type) {
-          case ObjectType::Sequence:
-            return "sequence";
-          case ObjectType::PgSqlFunction:
-            return "function";
-          case ObjectType::PgSqlType:
-            return "type";
-          case ObjectType::Schema:
-            return "schema";
-          case ObjectType::Database:
-            return "database";
-          default:
-            return "relation";
-        }
-      }();
-      SDB_THROW(sdb::ERROR_BAD_PARAMETER, "invalid privilege type ", stripped,
-                " for ", object_word);
-    }
-    out |= *mode;
+  if (absl::EqualsIgnoreCase(keyword, "ALL")) {
+    return allowed;
   }
-  return out;
+  const auto mode = kPrivNames.TryFindICaseByFirst(keyword);
+  if (!mode) {
+    return std::unexpected{AclKeywordError::Unrecognized};
+  }
+  if ((allowed & *mode) != *mode) {
+    return std::unexpected{AclKeywordError::WrongClass};
+  }
+  return *mode;
 }
 
 namespace {
@@ -408,15 +381,15 @@ void PutId(std::string& out, std::string_view name) {
 
 }  // namespace
 
+// Render one aclitem to PG's text form: "grantee=privchars/grantor" ("" grantee
+// for PUBLIC), each priv char optionally followed by '*' for the grant option.
 std::string AclItemToText(
   const AclItem& item, absl::FunctionRef<std::string_view(ObjectId)> name_of) {
   std::string out;
-  // grantee ("" for PUBLIC).
   if (item.grantee != catalog::kPublicGrantee) {
     PutId(out, name_of(item.grantee));
   }
   out.push_back('=');
-  // privilege chars, each optionally followed by '*' for the grant option.
   for (const auto& p : kPrivChars) {
     if ((item.privs & p.mode) == p.mode) {
       out.push_back(p.chr);

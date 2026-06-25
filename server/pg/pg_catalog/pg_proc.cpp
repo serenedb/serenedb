@@ -26,7 +26,6 @@
 #include <vector>
 
 #include "app/app_server.h"
-#include "auth/acl.h"
 #include "catalog/catalog.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"

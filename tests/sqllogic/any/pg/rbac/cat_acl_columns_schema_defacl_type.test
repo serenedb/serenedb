@@ -1,8 +1,9 @@
-# GRANT ON SCHEMA, ALTER DEFAULT PRIVILEGES, and GRANT ON a built-in TYPE each
-# populate their per-object ACL catalog column (pg_namespace.nspacl,
-# pg_default_acl.defaclacl, pg_type.typacl) exactly like PostgreSQL (verified on
-# PG18). ACL arrays are asserted per-element (LIKE / unnest) so the assertions
-# are portable across engines.
+# GRANT ON SCHEMA and ALTER DEFAULT PRIVILEGES each populate their per-object
+# ACL catalog column (pg_namespace.nspacl, pg_default_acl.defaclacl) exactly
+# like PostgreSQL (verified on PG18). ACL arrays are asserted per-element
+# (LIKE / unnest) so the assertions are portable across engines. SereneDB
+# diverges from PG on GRANT ... ON TYPE <built-in>: PG mutates pg_type.typacl,
+# SereneDB refuses (built-in type privileges are not changeable).
 #
 # Lore: the clickclack schema, the cast as roles. Idempotent + self-cleaning.
 
@@ -64,28 +65,18 @@ ord	e
 2	catacl_vedernikoff=r/postgres
 
 
-# GRANT USAGE ON a built-in TYPE (int4) sets pg_type.typacl.
-statement ok
+# GRANT USAGE ON a built-in TYPE: PG mutates pg_type.typacl, SereneDB refuses.
+onlyif serenedb
+statement error
 GRANT USAGE ON TYPE int4 TO catacl_vedernikoff;
-
-
-query
-SELECT e
-FROM pg_type t, LATERAL unnest(t.typacl::text[]) AS e
-WHERE t.typname = 'int4' AND e LIKE 'catacl_vedernikoff=%';
 ----
-e
-catacl_vedernikoff=U/postgres
+db error: ERROR: cannot change privileges of built-in type int4
 
 
-# Cleanup: revoke the default-priv and type grants so the global catalog is
-# left as found (the schema/role drops handle nspacl).
+# Cleanup: revoke the default-priv grant so the global catalog is left as found
+# (the schema/role drops handle nspacl).
 statement ok
 ALTER DEFAULT PRIVILEGES REVOKE SELECT ON TABLES FROM catacl_vedernikoff;
-
-
-statement ok
-REVOKE USAGE ON TYPE int4 FROM catacl_vedernikoff;
 
 
 statement ok

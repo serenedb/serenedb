@@ -3186,9 +3186,10 @@ Result Catalog::ChangeAcl(ObjectId database_id, std::string_view schema,
       ERR_MSG(pg::ToPgObjectTypeName(type), " \"", name, "\" does not exist"));
   }
 
-  // Mutate the effective ACL (NULL/empty -> acldefault) under the lock.
+  // The stored ACL holds only non-owner grants; the owner's privileges are
+  // derived from ownership at check time and synthesized at render time.
   const auto owner = obj->GetOwner();
-  auto acl = auth::AclEffective(obj->GetAcl(), type, owner);
+  auto acl = auth::AclForStorage(obj->GetAcl(), type, owner);
   mutate(*_snapshot, owner, acl);
 
   auto cloned = obj->Clone();

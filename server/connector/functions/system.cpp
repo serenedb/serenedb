@@ -453,6 +453,16 @@ struct PrivCheckModes {
   catalog::AclMode grant_options = catalog::AclMode::NoRights;
 };
 
+catalog::AclMode PrivCheckKeyword(std::string_view keyword,
+                                  catalog::ObjectType type) {
+  auto parsed = auth::TryParseAclKeyword(keyword, type);
+  if (!parsed) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("unrecognized privilege type: \"", keyword, "\""));
+  }
+  return *parsed;
+}
+
 PrivCheckModes ParsePrivCheckText(std::string_view priv_text,
                                   catalog::ObjectType type) {
   constexpr std::string_view kSuffix = " WITH GRANT OPTION";
@@ -463,10 +473,10 @@ PrivCheckModes ParsePrivCheckText(std::string_view priv_text,
     if (stripped.size() > kSuffix.size() &&
         absl::EqualsIgnoreCase(
           stripped.substr(stripped.size() - kSuffix.size()), kSuffix)) {
-      out.grant_options |= auth::ParseAclMode(
+      out.grant_options |= PrivCheckKeyword(
         stripped.substr(0, stripped.size() - kSuffix.size()), type);
     } else {
-      out.privs |= auth::ParseAclMode(stripped, type);
+      out.privs |= PrivCheckKeyword(stripped, type);
     }
   }
   return out;

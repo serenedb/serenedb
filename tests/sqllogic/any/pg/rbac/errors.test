@@ -75,12 +75,22 @@ GRANT EXECUTE ON err_tbl TO err_role;
 db error: ERROR: invalid privilege type EXECUTE for relation
 
 
-# An unknown privilege keyword is parsed as an identifier and rejected
-# semantically: PG downcases it and omits the colon (SQLSTATE 42601).
+# An unknown privilege keyword diverges by engine: PG accepts any identifier in
+# the privilege slot and rejects it semantically ("unrecognized privilege type",
+# 42601), while serenedb's grammar only admits the fixed keyword set, so it is a
+# parser syntax error.
+skipif serenedb
 statement error
 GRANT FLY ON err_tbl TO err_role;
 ----
 db error: ERROR: unrecognized privilege type "fly"
+
+
+onlyif serenedb
+statement error
+GRANT FLY ON err_tbl TO err_role;
+----
+db error: ERROR: syntax error at or near "ON"<slt:ignore>
 
 
 # ---- GRANT ROLE ----

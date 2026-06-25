@@ -71,6 +71,33 @@ constexpr std::string_view ToPgObjectTypeName(catalog::ObjectType t) noexcept {
   }
 }
 
+constexpr catalog::ObjectType FromPgObjectTypeName(
+  std::string_view word) noexcept {
+  using enum catalog::ObjectType;
+  if (word == "TABLE") {
+    return Table;
+  }
+  if (word == "VIEW") {
+    return PgSqlView;
+  }
+  if (word == "SEQUENCE") {
+    return Sequence;
+  }
+  if (word == "FUNCTION") {
+    return PgSqlFunction;
+  }
+  if (word == "DATABASE") {
+    return Database;
+  }
+  if (word == "SCHEMA") {
+    return Schema;
+  }
+  if (word == "TYPE") {
+    return PgSqlType;
+  }
+  return Invalid;
+}
+
 static constexpr size_t kSqlStateSize = 5;
 
 // Unpack MAKE_SQLSTATE code.

@@ -196,7 +196,7 @@ class ColumnReader final {
       // is a heap-use-after-free (ASAN-confirmed via SearchFullScanFunction ->
       // AppendPrimaryKey<PrimaryKeyI64I64>). The block is pinned once when the
       // cursor opens the segment; each chunk just shares that pin.
-      
+
       // TEMP FIX: copy each non-inline string into the output's own heap so it
       // owns its bytes (inline <=12B strings are self-contained). This adds a
       // memcpy per long string on every scan. The intended fix is to keep the

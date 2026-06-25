@@ -6,21 +6,24 @@ statement ok
 USE $__DATABASE__;
 
 statement ok
-DETACH IF EXISTS db1;
+DETACH IF EXISTS db1_${__DATABASE__};
 
 statement ok
-DETACH IF EXISTS db2;
+DETACH IF EXISTS db2_${__DATABASE__};
 
 statement ok
-ATTACH ':memory:' AS db1;
+ATTACH ':memory:' AS db1_${__DATABASE__};
 
 statement ok
-ATTACH ':memory:' AS db2;
+ATTACH ':memory:' AS db2_${__DATABASE__};
 
 statement ok
-CREATE TABLE db1.tbl1 AS SELECT 42 AS x, 3 AS y;
+CREATE TABLE db1_${__DATABASE__}.tbl1 AS SELECT 42 AS x, 3 AS y;
+
+# DOCS_TEST_RAW
+#| COPY FROM DATABASE db1 TO db2 (SCHEMA);
 
 # DOCS_TEST_BODY
 
 statement ok
-COPY FROM DATABASE db1 TO db2 (SCHEMA);
+COPY FROM DATABASE db1_${__DATABASE__} TO db2_${__DATABASE__} (SCHEMA);

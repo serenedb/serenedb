@@ -6,10 +6,10 @@ statement ok
 USE $__DATABASE__;
 
 statement ok
-DETACH IF EXISTS db1;
+DETACH IF EXISTS db1_${__DATABASE__};
 
 statement ok
-DETACH IF EXISTS db2;
+DETACH IF EXISTS db2_${__DATABASE__};
 
 # DOCS_TEST_RAW
 #| ATTACH 'db1.db' AS db1;
@@ -27,24 +27,24 @@ DETACH IF EXISTS db2;
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '${__TEST_DIR__}/sql_statements_copy_copy_database_full_example_037_1_db1.db' AS db1;
+ATTACH '${__TEST_DIR__}/sql_statements_copy_copy_database_full_example_037_1_db1.db' AS db1_${__DATABASE__};
 
 statement ok
-CREATE TABLE db1.tbl AS SELECT 42 AS x, 3 AS y;
+CREATE TABLE db1_${__DATABASE__}.tbl AS SELECT 42 AS x, 3 AS y;
 
 statement ok
-CREATE MACRO db1.two_x_plus_y(x, y) AS 2 * x + y;
+CREATE MACRO db1_${__DATABASE__}.two_x_plus_y(x, y) AS 2 * x + y;
 
 statement ok
-ATTACH '${__TEST_DIR__}/sql_statements_copy_copy_database_full_example_037_1_db2.db' AS db2;
+ATTACH '${__TEST_DIR__}/sql_statements_copy_copy_database_full_example_037_1_db2.db' AS db2_${__DATABASE__};
 
 skipif pg-wire-extended
 statement ok
-COPY FROM DATABASE db1 TO db2;
+COPY FROM DATABASE db1_${__DATABASE__} TO db2_${__DATABASE__};
 
 skipif pg-wire-extended
 query ?
-SELECT db2.two_x_plus_y(x, y) AS z FROM db2.tbl;
+SELECT db2_${__DATABASE__}.two_x_plus_y(x, y) AS z FROM db2_${__DATABASE__}.tbl;
 ----
 z
 87

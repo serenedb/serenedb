@@ -24,6 +24,8 @@
 #include <cstdint>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector_buffer.hpp>
+#include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/storage/buffer/buffer_handle.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/data_pointer.hpp>
@@ -194,7 +196,26 @@ class ColumnReader final {
       // is a heap-use-after-free (ASAN-confirmed via SearchFullScanFunction ->
       // AppendPrimaryKey<PrimaryKeyI64I64>). The block is pinned once when the
       // cursor opens the segment; each chunk just shares that pin.
-      if (_pin) {
+      
+      // TEMP FIX: copy each non-inline string into the output's own heap so it
+      // owns its bytes (inline <=12B strings are self-contained). This adds a
+      // memcpy per long string on every scan. The intended fix is to keep the
+      // borrowed heap alive without copying -- hand the outgoing scan state to
+      // the output on a segment crossing -- which is to be wired in later.
+      // Fixed-width / non-flat output cannot borrow a heap, only the block, so
+      // it just needs the pin.
+      if (out_vec.GetType().InternalType() == duckdb::PhysicalType::VARCHAR &&
+          out_vec.GetVectorType() == duckdb::VectorType::FLAT_VECTOR) {
+        auto* sdata =
+          duckdb::FlatVector::GetDataMutable<duckdb::string_t>(out_vec);
+        for (duckdb::idx_t i = 0; i < count; ++i) {
+          auto& s = sdata[out_offset + i];
+          if (!s.IsInlined()) {
+            s = duckdb::StringVector::AddStringOrBlob(out_vec, s.GetData(),
+                                                      s.GetSize());
+          }
+        }
+      } else if (_pin) {
         out_vec.BufferMutable().AddAuxiliaryData(
           std::make_unique<SharedPinHolder>(_pin));
       }

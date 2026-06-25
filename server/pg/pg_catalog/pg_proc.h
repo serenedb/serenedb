@@ -73,7 +73,7 @@ struct PgProc {
   int16_t pronargs;
   int16_t pronargdefaults;
   Oid prorettype;
-  Vector<Oid> proargtypes;
+  Array<Oid> proargtypes;
   Array<Oid> proallargtypes;
   Array<Proargmode> proargmodes;
   Array<Text> proargnames;

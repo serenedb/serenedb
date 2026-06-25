@@ -97,9 +97,6 @@ namespace {
 // use the Table privilege class (SELECT/INSERT/UPDATE share the relation bits).
 bool ColumnGrants(const catalog::Column& column, ObjectId owner,
                   RoleIdSpan closure, catalog::AclMode need) {
-  if (std::ranges::binary_search(closure, owner)) {
-    return true;
-  }
   return AclCheckSorted(column.GetAcl(), catalog::ObjectType::Table, owner,
                         closure, need, /*any_of=*/false);
 }

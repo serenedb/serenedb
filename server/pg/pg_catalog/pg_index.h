@@ -77,10 +77,10 @@ struct PgIndex {
   bool indisready;
   bool indislive;
   bool indisreplident;
-  Vector<int16_t> indkey;
-  Vector<Oid> indcollation;
-  Vector<Oid> indclass;
-  Vector<int16_t> indoption;
+  Array<int16_t> indkey;
+  Array<Oid> indcollation;
+  Array<Oid> indclass;
+  Array<int16_t> indoption;
   PgNodeTree indexprs;
   PgNodeTree indpred;
 };

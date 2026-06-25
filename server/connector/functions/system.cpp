@@ -41,6 +41,7 @@
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <optional>
+#include <ranges>
 
 #include "auth/acl.h"
 #include "auth/privilege.h"
@@ -501,13 +502,8 @@ bool HasAnyObjectPrivilegeText(const catalog::Snapshot& snapshot,
       std::ranges::binary_search(rc.closure, object.GetOwner())) {
     return true;
   }
-  catalog::AclMode held = catalog::AclMode::NoRights;
-  for (const auto& item : object.GetAcl()) {
-    if (item.grantee == catalog::kPublicGrantee ||
-        std::ranges::binary_search(rc.closure, item.grantee)) {
-      held |= item.grant_option;
-    }
-  }
+  const catalog::AclMode held =
+    auth::AclGrantOptionHeld(object.GetAcl(), rc.closure);
   return (held & modes.grant_options) != catalog::AclMode::NoRights;
 }
 
@@ -1013,7 +1009,8 @@ bool PgHasRoleImpl(const catalog::Snapshot& snapshot, ObjectId member,
   }
   bool ok = false;
   if (mask.usage) {
-    ok = ok || auth::ComputeEffectiveRoles(snapshot, member).contains(target);
+    ok = ok || std::ranges::binary_search(
+                 snapshot.EffectiveRoleClosure(member).closure, target);
   }
   if (mask.member) {
     ok =
@@ -1127,17 +1124,17 @@ void PgHasRoleOid2Function(duckdb::DataChunk& args,
     });
 }
 
+auto UserColumns(const catalog::Table& table) {
+  return table.Columns() | std::views::filter([](const catalog::Column& c) {
+           return c.GetId() != catalog::Column::kGeneratedPKId;
+         });
+}
+
 bool AttnumExists(const catalog::Table& table, int64_t attnum) {
   if (attnum < 1) {
     return false;
   }
-  int64_t n = 0;
-  for (const auto& c : table.Columns()) {
-    if (c.GetId() != catalog::Column::kGeneratedPKId) {
-      ++n;
-    }
-  }
-  return attnum <= n;
+  return attnum <= std::ranges::distance(UserColumns(table));
 }
 
 // Whether `role_id` holds `priv` on `column` of `table`. PG resolves a column
@@ -1156,26 +1153,13 @@ bool ColumnPrivHeld(const catalog::Snapshot& snapshot, ObjectId role_id,
   if (modes.grant_options == catalog::AclMode::NoRights) {
     return false;
   }
-  // Grant-option check: reuse the cached inherit-closure (superuser bit +
-  // sorted role ids) instead of recomputing it.
   const auto& rc = snapshot.EffectiveRoleClosure(role_id);
   if (rc.is_superuser ||
       std::ranges::binary_search(rc.closure, table.GetOwner())) {
     return true;
   }
-  // Grant option held at table level OR on this column.
-  const auto held_grant_option = [&](catalog::AclView acl) {
-    catalog::AclMode held = catalog::AclMode::NoRights;
-    for (const auto& item : acl) {
-      if (item.grantee == catalog::kPublicGrantee ||
-          std::ranges::binary_search(rc.closure, item.grantee)) {
-        held |= item.grant_option;
-      }
-    }
-    return held;
-  };
-  const auto held =
-    held_grant_option(table.GetAcl()) | held_grant_option(column.GetAcl());
+  const auto held = auth::AclGrantOptionHeld(table.GetAcl(), rc.closure) |
+                    auth::AclGrantOptionHeld(column.GetAcl(), rc.closure);
   return (held & modes.grant_options) != catalog::AclMode::NoRights;
 }
 
@@ -1183,10 +1167,7 @@ bool HasColumnPrivByName(const catalog::Snapshot& snapshot, ObjectId role_id,
                          const catalog::Table& table, std::string_view col,
                          std::string_view priv) {
   const catalog::Column* column = nullptr;
-  for (const auto& c : table.Columns()) {
-    if (c.GetId() == catalog::Column::kGeneratedPKId) {
-      continue;
-    }
+  for (const auto& c : UserColumns(table)) {
     if (c.GetName() == col) {
       column = &c;
       break;
@@ -1207,10 +1188,7 @@ bool HasColumnPrivByAttnum(const catalog::Snapshot& snapshot, ObjectId role_id,
                            std::string_view priv) {
   const catalog::Column* column = nullptr;
   int64_t n = 0;
-  for (const auto& c : table.Columns()) {
-    if (c.GetId() == catalog::Column::kGeneratedPKId) {
-      continue;
-    }
+  for (const auto& c : UserColumns(table)) {
     if (++n == attnum) {
       column = &c;
       break;

@@ -53,14 +53,15 @@ std::shared_ptr<const catalog::Snapshot> FreshSnapshot() {
   return GlobalCatalog().GetCatalogSnapshot();
 }
 
-std::shared_ptr<catalog::Role> CurrentRole(ConnectionContext& ctx) {
-  auto role = FreshSnapshot()->GetRole(ctx.user());
+ObjectId CurrentRoleId(const catalog::Snapshot& snapshot,
+                       ConnectionContext& ctx) {
+  auto role = snapshot.GetRole(ctx.user());
   if (!role) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
       ERR_MSG("current role \"", ctx.user(), "\" does not exist"));
   }
-  return role;
+  return role->GetId();
 }
 
 void RejectUnsupportedRoleOptions(bool has_password, bool has_conn_limit,
@@ -154,7 +155,7 @@ void AlterRole(ConnectionContext& ctx, std::string_view name,
   auto& catalog = GlobalCatalog();
   auto r = catalog.ChangeRole(
     catalog::RequireOwnership(ctx.GetRoleId()), name, "alter",
-    /*skip_admin_check=*/false,
+    /*allow_self=*/false,
     [&](const catalog::Role& old_role,
         std::shared_ptr<catalog::Role>& new_role) -> Result {
       new_role = std::static_pointer_cast<catalog::Role>(old_role.Clone());
@@ -180,11 +181,12 @@ void RenameRole(ConnectionContext& ctx, std::string_view name,
                 std::string_view new_name) {
   auto& catalog = GlobalCatalog();
   auto r = catalog.ChangeRole(
-    catalog::RequireOwnership(ctx.GetRoleId()), name, "rename", false,
+    catalog::RequireOwnership(ctx.GetRoleId()), name, "rename",
+    /*allow_self=*/false,
     [&](const catalog::Role& old_role,
         std::shared_ptr<catalog::Role>& new_role) -> Result {
       new_role = std::static_pointer_cast<catalog::Role>(old_role.Clone());
-      new_role->UpdateName(new_name);
+      new_role->SetName(new_name);
       return {};
     });
   if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
@@ -207,7 +209,8 @@ void AlterRoleConfig(ConnectionContext& ctx, std::string_view name,
 
   auto& catalog = GlobalCatalog();
   auto r = catalog.ChangeRole(
-    catalog::RequireOwnership(ctx.GetRoleId()), name, "alter", is_self,
+    catalog::RequireOwnership(ctx.GetRoleId()), name, "alter",
+    /*allow_self=*/is_self,
     [&](const catalog::Role& old_role,
         std::shared_ptr<catalog::Role>& new_role) -> Result {
       new_role = std::static_pointer_cast<catalog::Role>(old_role.Clone());
@@ -283,6 +286,19 @@ ObjectId ResolveGranteeId(const catalog::Snapshot& snap,
   return grantee_role->GetId();
 }
 
+ObjectId ResolveGrantedBy(const catalog::Snapshot& snap,
+                          std::string_view granted_by) {
+  if (granted_by.empty()) {
+    return id::kInvalid;
+  }
+  auto gb = snap.GetRole(granted_by);
+  if (!gb) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("role \"", granted_by, "\" does not exist"));
+  }
+  return gb->GetId();
+}
+
 void ApplyAclChange(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,
                     catalog::AclMode privs, bool revoke, bool with_grant_option,
                     bool grant_option_only, bool cascade) {
@@ -336,31 +352,12 @@ void AlterDefaultPrivileges(ConnectionContext& ctx,
 
   const catalog::AclMode privs = ParseAclModeOrThrow(privileges, type);
 
-  auto r = catalog.ChangeRole(
-    defacl_role_name,
-    [&](const catalog::Role& old_role,
-        std::shared_ptr<catalog::Role>& new_role) -> Result {
-      new_role = std::static_pointer_cast<catalog::Role>(old_role.Clone());
-      auto& entry = new_role->MutableDefaultAcl(schema_id, objtype_c);
-      // PG materializes the owner default into defaclacl on the first grant
-      // (e.g. {postgres=arwdDxtm/postgres, grantee=.../postgres}), then deletes
-      // the whole pg_default_acl row once the last explicit grant is revoked --
-      // the bare owner default is never persisted on its own.
-      if (entry.acl.empty()) {
-        entry.acl = auth::AclDefault(type, defacl_role_id);
-      }
-      ApplyAclChange(entry.acl, grantee_id, defacl_role_id, privs, revoke,
+  auto r = catalog.ChangeDefaultAcl(
+    catalog::RequireOwnership(ctx.GetRoleId()), defacl_role_name, schema_id,
+    objtype_c, type, [&](catalog::Acl& acl) {
+      ApplyAclChange(acl, grantee_id, defacl_role_id, privs, revoke,
                      opts.with_grant_option, opts.grant_option_only,
                      opts.cascade);
-      const bool only_owner =
-        std::ranges::all_of(entry.acl, [&](const catalog::AclItem& item) {
-          return item.grantee == defacl_role_id &&
-                 item.grantor == defacl_role_id;
-        });
-      if (only_owner) {
-        new_role->RemoveDefaultAcl(schema_id, objtype_c);
-      }
-      return {};
     });
   if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
@@ -476,18 +473,10 @@ void GrantObjectColumns(ConnectionContext& ctx, catalog::ObjectType type,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("relation \"", rel_name, "\" does not exist"));
   }
-  const ObjectId current_id = CurrentRole(ctx)->GetId();
+  const ObjectId current_id = CurrentRoleId(*snapshot, ctx);
   const ObjectId grantee_id = ResolveGranteeId(*snapshot, grantee);
 
-  ObjectId granted_by_id = id::kInvalid;
-  if (!opts.granted_by.empty()) {
-    auto gb = snapshot->GetRole(opts.granted_by);
-    if (!gb) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                      ERR_MSG("role \"", opts.granted_by, "\" does not exist"));
-    }
-    granted_by_id = gb->GetId();
-  }
+  const ObjectId granted_by_id = ResolveGrantedBy(*snapshot, opts.granted_by);
 
   bool no_authority = false;
   bool nothing_applied = false;
@@ -577,19 +566,11 @@ void GrantObject(ConnectionContext& ctx, catalog::ObjectType type,
                             " \"", rel_name, "\" does not exist"));
   }
 
-  const ObjectId current_id = CurrentRole(ctx)->GetId();
+  const ObjectId current_id = CurrentRoleId(*snapshot, ctx);
 
   const ObjectId grantee_id = ResolveGranteeId(*snapshot, grantee);
 
-  ObjectId granted_by_id = id::kInvalid;
-  if (!opts.granted_by.empty()) {
-    auto gb = snapshot->GetRole(opts.granted_by);
-    if (!gb) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                      ERR_MSG("role \"", opts.granted_by, "\" does not exist"));
-    }
-    granted_by_id = gb->GetId();
-  }
+  const ObjectId granted_by_id = ResolveGrantedBy(*snapshot, opts.granted_by);
 
   const catalog::AclMode privs = ParseAclModeOrThrow(privileges, type);
 
@@ -737,7 +718,7 @@ void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
   auto& catalog = GlobalCatalog();
   auto snapshot = FreshSnapshot();
 
-  const ObjectId current_id = CurrentRole(ctx)->GetId();
+  const ObjectId current_id = CurrentRoleId(*snapshot, ctx);
 
   std::string_view new_owner_name = new_owner;
   if (new_owner == "CURRENT_USER" || new_owner == "SESSION_USER" ||

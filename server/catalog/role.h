@@ -21,16 +21,14 @@
 
 #pragma once
 
-#include <absl/container/node_hash_map.h>
+#include <absl/functional/function_ref.h>
 
 #include <set>
 #include <span>
 #include <string>
 #include <vector>
 
-#include "auth/common.h"
 #include "basics/bit_utils.hpp"
-#include "basics/containers/node_hash_map.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"
 #include "catalog/persistence/role.h"
@@ -68,9 +66,6 @@ class Role final : public catalog::Object {
   static std::shared_ptr<Role> Deserialize(duckdb::Deserializer& src,
                                            ReadContext ctx);
 
-  std::string_view Username() const { return GetName(); }
-  bool IsActive() const { return _active; }
-
   RoleOption Options() const noexcept { return _options; }
   bool Has(RoleOption o) const noexcept {
     return (_options & o) != RoleOption::None;
@@ -87,35 +82,21 @@ class Role final : public catalog::Object {
 
   // Per-role GUC settings surfaced as pg_roles.rolconfig ("guc=value" each).
   std::span<const std::string> Config() const noexcept { return _config; }
-  // SET guc=value: replace any existing entry for the same GUC, else append.
   void SetConfig(std::string_view guc, std::string_view value);
-  // RESET guc: drop the entry for the GUC (no-op if absent).
   void ResetConfig(std::string_view guc);
-  // RESET ALL: clear every per-role GUC setting.
   void ResetAllConfig() noexcept { _config.clear(); }
 
-  // ALTER DEFAULT PRIVILEGES targets (pg_default_acl rows owned by this role).
   using DefaultAclData = persistence::DefaultAclData;
   std::span<const DefaultAclData> DefaultAcls() const noexcept {
     return _default_acls;
   }
-  // Locate (or create) the default-ACL entry for (schema, objtype) and return a
-  // mutable reference so the caller can apply grants/revokes to its Acl.
-  DefaultAclData& MutableDefaultAcl(ObjectId schema, char objtype);
-  // Drop a default-ACL entry once its Acl no longer differs from the implicit
-  // owner default (PG removes the pg_default_acl row when it becomes
-  // redundant).
-  void RemoveDefaultAcl(ObjectId schema, char objtype);
+  void ChangeDefaultAcl(ObjectId schema, char objtype, ObjectType type,
+                        absl::FunctionRef<void(Acl&)> mutate);
 
   std::span<const Membership> MemberOf() const noexcept { return _member_of; }
 
   void AddMembership(const Membership& edge);
-  bool RemoveMembership(ObjectId role);
-
-  void UpdateName(std::string_view name) { _name = name; }
-  void UpdateActive(bool active) { _active = active; }
-
-  void GrantDatabase(std::string_view database, auth::Level level);
+  void RemoveMembership(ObjectId role);
 
  private:
   RoleData BuildData() const;
@@ -127,10 +108,6 @@ class Role final : public catalog::Object {
   std::string _valid_until;
   std::vector<std::string> _config;
   std::vector<persistence::DefaultAclData> _default_acls;
-  struct DBAuthContext {
-    auth::Level database_auth_level = auth::Level::Undefined;
-  };
-  containers::NodeHashMap<std::string, DBAuthContext> _db_access;
 };
 
 }  // namespace sdb::catalog

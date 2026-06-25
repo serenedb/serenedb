@@ -1824,7 +1824,7 @@ Result Catalog::CreateRole(const AccessContext& ax,
   RequireRoleAttribute(
     *_snapshot, ax.role, RoleOption::CreateRole, "create role",
     "Only roles with the CREATEROLE attribute may create roles.");
-  auto r = Apply(
+  return Apply(
     _snapshot, _snapshot_mutex,
     [&](auto& clone) {
       auto r = clone->RegisterObject(role, id::kInstance, false);
@@ -1864,12 +1864,6 @@ Result Catalog::CreateRole(const AccessContext& ax,
       return Result{};
     },
     [&](auto& clone) { clone->UnregisterObject(role, id::kInstance, true); });
-
-  if (!r.ok()) {
-    return r;
-  }
-
-  return {};
 }
 
 Result Catalog::RegisterIndex(ObjectId database_id, ObjectId schema_id,
@@ -2028,6 +2022,19 @@ void RequireObjectOwner(const Snapshot& snapshot, ObjectId role,
   if (auto obj = snapshot.GetObject(object_id)) {
     RequireObjectOwner(snapshot, role, object_id, *obj);
   }
+}
+
+void RequireRoleMembership(const Snapshot& snapshot, ObjectId actor_id,
+                           const Role& target) {
+  const auto& rc = snapshot.EffectiveRoleClosure(actor_id);
+  if (rc.is_superuser ||
+      std::ranges::binary_search(rc.closure, target.GetId())) {
+    return;
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                  ERR_MSG("permission denied"),
+                  ERR_DETAIL("Must be a member of role \"", target.GetName(),
+                             "\" to alter its default privileges."));
 }
 
 void RequireRoleAdmin(const Snapshot& snapshot, ObjectId actor_id,
@@ -2796,17 +2803,16 @@ Result Catalog::RenameRelation(const AccessContext& ax, ObjectId database_id,
   }
 }
 
-Result Catalog::ChangeRole(const AccessContext& ax, std::string_view name,
-                           std::string_view verb, bool skip_admin_check,
-                           ChangeCallback<Role> callback) {
+Result Catalog::ChangeRoleImpl(
+  std::string_view name,
+  absl::FunctionRef<void(const Snapshot&, const Role&)> check,
+  ChangeCallback<Role> callback) {
   absl::MutexLock lock{&_mutex};
   auto role = _snapshot->GetRole(name);
   if (!role) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  if (!skip_admin_check) {
-    RequireRoleAdmin(*_snapshot, ax.role, *role, verb);
-  }
+  check(*_snapshot, *role);  // op-specific access check, on the live snapshot
   std::shared_ptr<Role> new_role_ptr;
   auto r = callback(*role, new_role_ptr);
   if (!r.ok()) {
@@ -2838,18 +2844,37 @@ Result Catalog::ChangeRole(const AccessContext& ax, std::string_view name,
         SDB_ASSERT(r.ok());
       }
     });
-
-  if (!r.ok()) {
-    return r;
-  }
-
-  return {};
+  return r;
 }
 
-Result Catalog::ChangeRole(std::string_view name,
-                           ChangeCallback<Role> new_role) {
-  return ChangeRole(AccessContext{}, name, {}, /*skip_admin_check=*/true,
-                    std::move(new_role));
+Result Catalog::ChangeRole(const AccessContext& ax, std::string_view name,
+                           std::string_view verb, bool allow_self,
+                           ChangeCallback<Role> callback) {
+  return ChangeRoleImpl(
+    name,
+    [&](const Snapshot& snap, const Role& role) {
+      if (allow_self && ax.role == role.GetId()) {
+        return;  // a role may change its own entry (e.g. SET config)
+      }
+      RequireRoleAdmin(snap, ax.role, role, verb);
+    },
+    std::move(callback));
+}
+
+Result Catalog::ChangeDefaultAcl(const AccessContext& ax,
+                                 std::string_view role_name, ObjectId schema,
+                                 char objtype, ObjectType type,
+                                 absl::FunctionRef<void(Acl&)> mutate) {
+  return ChangeRoleImpl(
+    role_name,
+    [&](const Snapshot& snap, const Role& role) {
+      RequireRoleMembership(snap, ax.role, role);
+    },
+    [&](const Role& old_role, std::shared_ptr<Role>& new_role) -> Result {
+      new_role = basics::downCast<Role>(old_role.Clone());
+      new_role->ChangeDefaultAcl(schema, objtype, type, mutate);
+      return {};
+    });
 }
 
 Result Catalog::ChangeMembership(const AccessContext& ax, ObjectId role,
@@ -2957,16 +2982,12 @@ Result Catalog::ChangeOwner(const AccessContext& ax, ObjectId database_id,
   absl::MutexLock lock{&_mutex};
 
   auto require_owner_change = [&](const Object& obj) {
-    if (ax.role == id::kRootUser) {
-      return;
-    }
-    auto actor = _snapshot->GetObject<Role>(ax.role);
-    if (actor && actor->IsSuperuser()) {
+    const auto& rc = _snapshot->EffectiveRoleClosure(ax.role);
+    if (rc.is_superuser) {
       return;
     }
     const ObjectId real_owner = obj.GetOwner();
-    if (!auth::ComputeEffectiveRoles(*_snapshot, ax.role)
-           .contains(real_owner)) {
+    if (!std::ranges::binary_search(rc.closure, real_owner)) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
         ERR_MSG("must be owner of ", pg::ToPgObjectTypeName(type), " ", name));
@@ -3479,23 +3500,17 @@ Result Catalog::DropRole(const AccessContext& ax, std::string_view role) {
               "\" cannot be dropped because some objects depend on it"),
       ERR_DETAIL(deps, " object(s) in database depend on role \"", role, "\""));
   }
-  auto r =
-    Apply(_snapshot, _snapshot_mutex, [&](std::shared_ptr<Snapshot>& clone) {
-      clone->UnregisterObject(role_ptr, id::kInstance);
-      if (auto r = _engine->DropDefinition(id::kInstance, ObjectType::Role,
-                                           role_ptr->GetId());
-          !r.ok()) {
-        return r;
-      }
-      clone->RebuildRoleClosures();
-      return Result{};
-    });
-
-  if (!r.ok()) {
-    return r;
-  }
-
-  return {};
+  return Apply(_snapshot, _snapshot_mutex,
+               [&](std::shared_ptr<Snapshot>& clone) {
+                 clone->UnregisterObject(role_ptr, id::kInstance);
+                 if (auto r = _engine->DropDefinition(
+                       id::kInstance, ObjectType::Role, role_ptr->GetId());
+                     !r.ok()) {
+                   return r;
+                 }
+                 clone->RebuildRoleClosures();
+                 return Result{};
+               });
 }
 
 Result Catalog::DropDatabase(const AccessContext& ax, std::string_view name,

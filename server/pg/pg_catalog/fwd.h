@@ -79,9 +79,6 @@ template<typename T>
 using Array = std::span<const T>;
 
 template<typename T>
-using Vector = Array<T>;
-
-template<typename T>
 struct IsArray : std::false_type {};
 
 template<typename T>

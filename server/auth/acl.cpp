@@ -26,7 +26,7 @@
 
 #include <algorithm>
 #include <array>
-#include <expected>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -228,6 +228,17 @@ AclMode AclGrantOptionHeld(catalog::AclView acl, const RoleIdSet& roles) {
   return held;
 }
 
+AclMode AclGrantOptionHeld(catalog::AclView acl, RoleIdSpan roles) {
+  AclMode held = AclMode::NoRights;
+  for (const auto& item : acl) {
+    if (item.grantee == catalog::kPublicGrantee ||
+        std::ranges::binary_search(roles, item.grantee)) {
+      held |= item.grant_option;
+    }
+  }
+  return held;
+}
+
 AclMode AclPrivsHeld(catalog::AclView acl, const RoleIdSet& roles) {
   AclMode held = AclMode::NoRights;
   for (const auto& item : acl) {
@@ -323,18 +334,15 @@ void AclRevokeCascade(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,
   }
 }
 
-std::expected<AclMode, AclKeywordError> TryParseAclKeyword(
-  std::string_view keyword, ObjectType type) {
+std::optional<AclMode> TryParseAclKeyword(std::string_view keyword,
+                                          ObjectType type) {
   const AclMode allowed = ClassPrivs(type);
   if (absl::EqualsIgnoreCase(keyword, "ALL")) {
     return allowed;
   }
   const auto mode = kPrivNames.TryFindICaseByFirst(keyword);
-  if (!mode) {
-    return std::unexpected{AclKeywordError::Unrecognized};
-  }
-  if ((allowed & *mode) != *mode) {
-    return std::unexpected{AclKeywordError::WrongClass};
+  if (!mode || (allowed & *mode) != *mode) {
+    return std::nullopt;
   }
   return *mode;
 }

@@ -29,7 +29,7 @@
 #include <string_view>
 
 #include "app/app_server.h"
-#include "basics/log.h"
+#include "auth/acl.h"
 #include "basics/serializer.h"
 #include "basics/static_strings.h"
 #include "catalog/identifiers/object_id.h"
@@ -52,18 +52,7 @@ Role::Role(RoleData data)
     _valid_until{std::move(data.valid_until)},
     _config{std::move(data.config)},
     _default_acls{std::move(data.default_acls)} {
-  for (const auto& [db_name, level] : data.db_access) {
-    try {
-      GrantDatabase(db_name, level);
-    } catch (const basics::Exception& e) {
-      SDB_DEBUG(GENERAL, e.message());
-    }
-  }
-  // The default user always retains RW on the default database and is a
-  // superuser -- enforced at load time so a tampered or downgraded grant can't
-  // lock it out.
   if (_name == StaticStrings::kDefaultUser) {
-    GrantDatabase(StaticStrings::kDefaultDatabase, auth::Level::RW);
     _options |= RoleOption::Superuser;
   }
 }
@@ -80,9 +69,6 @@ RoleData Role::BuildData() const {
     .config = _config,
     .default_acls = _default_acls,
   };
-  for (const auto& [db_name, context] : _db_access) {
-    data.db_access.emplace(db_name, context.database_auth_level);
-  }
   return data;
 }
 
@@ -95,31 +81,6 @@ std::shared_ptr<Role> Role::Deserialize(duckdb::Deserializer& src,
   RoleData data;
   basics::ReadTuple(src, data);
   return std::make_shared<catalog::Role>(std::move(data));
-}
-
-void catalog::Role::GrantDatabase(std::string_view database,
-                                  auth::Level level) {
-  if (database.empty() || level == auth::Level::Undefined) {
-    SDB_THROW(ERROR_BAD_PARAMETER, "Cannot set rights for empty db name");
-  }
-  if (_name == StaticStrings::kDefaultUser &&
-      database == StaticStrings::kDefaultDatabase && level != auth::Level::RW) {
-    SDB_THROW(ERROR_FORBIDDEN, "Cannot lower access level of '",
-              StaticStrings::kDefaultUser, "' to ",
-              StaticStrings::kDefaultDatabase);
-  }
-  SDB_DEBUG(GENERAL, _name, ": Granting ", ConvertFromAuthLevel(level), " on ",
-            database);
-
-  auto it = _db_access.find(database);
-  if (it != _db_access.end()) {
-    it->second.database_auth_level = level;
-  } else {
-    // GrantDatabase is not supposed to change any rights on the
-    // collection level code which relies on the old behavior
-    // will need to be adjusted
-    _db_access.try_emplace(database, DBAuthContext(level));
-  }
 }
 
 void catalog::Role::AddMembership(const Membership& edge) {
@@ -135,13 +96,11 @@ void catalog::Role::AddMembership(const Membership& edge) {
   }
 }
 
-bool catalog::Role::RemoveMembership(ObjectId role) {
-  auto it = std::ranges::find(_member_of, role, &Membership::role);
-  if (it == _member_of.end()) {
-    return false;
+void catalog::Role::RemoveMembership(ObjectId role) {
+  if (auto it = std::ranges::find(_member_of, role, &Membership::role);
+      it != _member_of.end()) {
+    _member_of.erase(it);
   }
-  _member_of.erase(it);
-  return true;
 }
 
 namespace {
@@ -169,22 +128,29 @@ void catalog::Role::ResetConfig(std::string_view guc) {
                 [&](const std::string& e) { return ConfigKey(e) == guc; });
 }
 
-catalog::Role::DefaultAclData& catalog::Role::MutableDefaultAcl(ObjectId schema,
-                                                                char objtype) {
-  auto it = std::ranges::find_if(_default_acls, [&](const DefaultAclData& d) {
+void catalog::Role::ChangeDefaultAcl(ObjectId schema, char objtype,
+                                     ObjectType type,
+                                     absl::FunctionRef<void(Acl&)> mutate) {
+  const auto matches = [&](const DefaultAclData& d) {
     return d.schema == schema && d.objtype == objtype;
-  });
-  if (it != _default_acls.end()) {
-    return *it;
+  };
+  auto it = std::ranges::find_if(_default_acls, matches);
+  if (it == _default_acls.end()) {
+    it = _default_acls.insert(
+      _default_acls.end(),
+      DefaultAclData{.schema = schema, .objtype = objtype});
   }
-  return _default_acls.emplace_back(
-    DefaultAclData{.schema = schema, .objtype = objtype});
-}
-
-void catalog::Role::RemoveDefaultAcl(ObjectId schema, char objtype) {
-  std::erase_if(_default_acls, [&](const DefaultAclData& d) {
-    return d.schema == schema && d.objtype == objtype;
-  });
+  if (it->acl.empty()) {
+    it->acl = auth::AclDefault(type, GetId());
+  }
+  mutate(it->acl);
+  const bool only_owner =
+    std::ranges::all_of(it->acl, [id = GetId()](const AclItem& item) {
+      return item.grantee == id && item.grantor == id;
+    });
+  if (only_owner) {
+    _default_acls.erase(it);
+  }
 }
 
 std::shared_ptr<Object> Role::Clone() const {

@@ -22,7 +22,6 @@
 #pragma once
 
 #include <cstdint>
-#include <string_view>
 
 #include "basics/common.h"
 
@@ -34,7 +33,5 @@ enum class Level : uint8_t {
   RO = 2,
   RW = 3,
 };
-
-std::string_view ConvertFromAuthLevel(auth::Level lvl);
 
 }  // namespace sdb::auth

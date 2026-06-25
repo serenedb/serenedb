@@ -461,10 +461,12 @@ class Catalog final {
   Result ChangeTable(const AccessContext& ax, ObjectId database_id,
                      std::string_view schema, std::string_view name,
                      ChangeCallback<Table> callback);
-  Result ChangeRole(std::string_view name, ChangeCallback<Role> callback);
   Result ChangeRole(const AccessContext& ax, std::string_view name,
-                    std::string_view verb, bool skip_admin_check,
+                    std::string_view verb, bool allow_self,
                     ChangeCallback<Role> callback);
+  Result ChangeDefaultAcl(const AccessContext& ax, std::string_view role_name,
+                          ObjectId schema, char objtype, ObjectType type,
+                          absl::FunctionRef<void(Acl&)> mutate);
   Result ChangeMembership(const AccessContext& ax, ObjectId role,
                           std::string_view role_name, ObjectId member,
                           std::string_view member_name, const Membership& edge,
@@ -518,6 +520,11 @@ class Catalog final {
   std::shared_ptr<const Snapshot> GetCatalogSnapshot() const noexcept;
 
  private:
+  Result ChangeRoleImpl(
+    std::string_view name,
+    absl::FunctionRef<void(const Snapshot&, const Role&)> check,
+    ChangeCallback<Role> callback);
+
   Result CreateIndexImpl(std::string_view schema, std::shared_ptr<Index> index,
                          CreateIndexOperationOptions operation_options);
 

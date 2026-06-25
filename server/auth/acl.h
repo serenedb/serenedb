@@ -22,7 +22,7 @@
 
 #include <absl/functional/function_ref.h>
 
-#include <expected>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -51,6 +51,7 @@ bool AclCheckSorted(catalog::AclView stored, catalog::ObjectType type,
 
 catalog::AclMode AclGrantOptionHeld(catalog::AclView acl,
                                     const RoleIdSet& roles);
+catalog::AclMode AclGrantOptionHeld(catalog::AclView acl, RoleIdSpan roles);
 
 catalog::AclMode AclPrivsHeld(catalog::AclView acl, const RoleIdSet& roles);
 
@@ -71,13 +72,9 @@ catalog::AclMode AclDependentPrivs(catalog::AclView acl, ObjectId grantee,
 void AclRevokeCascade(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,
                       catalog::AclMode privs);
 
-enum class AclKeywordError { Unrecognized, WrongClass };
+std::optional<catalog::AclMode> TryParseAclKeyword(std::string_view keyword,
+                                                   catalog::ObjectType type);
 
-std::expected<catalog::AclMode, AclKeywordError> TryParseAclKeyword(
-  std::string_view keyword, catalog::ObjectType type);
-
-// Render one aclitem to PG's text form ("grantee=privchars/grantor", "" grantee
-// for PUBLIC). name_of resolves a role id to its name.
 std::string AclItemToText(
   const catalog::AclItem& item,
   absl::FunctionRef<std::string_view(ObjectId)> name_of);

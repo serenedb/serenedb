@@ -208,8 +208,16 @@ class ColumnReader final {
           out_vec.GetVectorType() == duckdb::VectorType::FLAT_VECTOR) {
         auto* sdata =
           duckdb::FlatVector::GetDataMutable<duckdb::string_t>(out_vec);
+        const auto& validity = duckdb::FlatVector::Validity(out_vec);
         for (duckdb::idx_t i = 0; i < count; ++i) {
-          auto& s = sdata[out_offset + i];
+          const duckdb::idx_t idx = out_offset + i;
+          // A NULL slot's string_t is uninitialized; reading GetData() (when its
+          // length field happens to be > 12, so IsInlined() is false) would
+          // dereference a wild pointer. Only touch valid rows.
+          if (!validity.RowIsValid(idx)) {
+            continue;
+          }
+          auto& s = sdata[idx];
           if (!s.IsInlined()) {
             s = duckdb::StringVector::AddStringOrBlob(out_vec, s.GetData(),
                                                       s.GetSize());

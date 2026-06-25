@@ -101,9 +101,6 @@ constexpr ObjectType GetObjectType() noexcept {
   }
 }
 
-// RBAC read intent threaded into catalog getters. `need == NoRights` (the
-// default / NoAccessCheck) bypasses the check; `RequireAccess(role, need)`
-// asks the getter to enforce `need` for `role` and throw 42501 on failure.
 struct AccessContext {
   ObjectId role;
   AclMode need = AclMode::NoRights;
@@ -129,28 +126,12 @@ struct Snapshot {
 
   connector::DuckDBEntryCache& GetDuckDBEntryCache() const;
 
-  // Sorted inherit-closure of `role` ({role} + roles reachable via inherit
-  // edges) plus its superuser bit. Built eagerly for every role at snapshot
-  // publish (RebuildRoleClosures) and read lock-free here; an unknown role
-  // yields an empty closure -> deny. The reference is stable for the snapshot's
-  // lifetime.
   const auth::RoleClosure& EffectiveRoleClosure(ObjectId role) const;
 
-  // Materialize the closure of every role. Called once by Catalog::Apply on the
-  // not-yet-published clone, before the snapshot swap; never after.
   void RebuildRoleClosures();
 
-  // RBAC enforcement, owned by the catalog (it holds the ACL data + closure
-  // cache). These throw the PG-exact SQL error (42501) directly on failure --
-  // there is no Result to inspect.
-
-  // Throw "permission denied for <type> <name>" unless `role` holds `need` on
-  // `object`. `need == NoRights` is a no-op.
   void RequireAccess(ObjectId role, const Object& object, AclMode need) const;
 
-  // Number of objects that reference `role` as owner or via an ACL entry
-  // (grantee/grantor), across every object type. Used by DROP ROLE to refuse a
-  // role that still has dependents (PG: pg_shdepend). 0 if none.
   std::size_t RoleDependentCount(ObjectId role) const;
 
   std::vector<std::shared_ptr<Role>> GetRoles() const;
@@ -191,10 +172,6 @@ struct Snapshot {
   std::shared_ptr<Schema> GetSchema(ObjectId database,
                                     std::string_view schema) const;
 
-  // Resolve a relation/function/tokenizer/type/table/sequence, then enforce
-  // RBAC read access: throw 42501 when `ax.need != NoRights` and the role lacks
-  // the privilege. `NoAccessCheck()` (root) bypasses the check for internal
-  // callers.
   std::shared_ptr<Object> GetRelation(const AccessContext& ax,
                                       ObjectId database,
                                       std::string_view schema,
@@ -266,14 +243,9 @@ struct Snapshot {
 
   enum class EdgeAction : uint8_t { Add, Delete };
 
-  // Throws 42501 when `ax.need` is a real privilege and `ax.role` lacks any of
-  // it on `obj`; root (NoAccessCheck) and NoRights bypass. Returns `obj` so it
-  // can wrap a resolution inline. Defined in catalog.cpp (uses pg error
-  // macros).
   template<typename T>
   std::shared_ptr<T> EnforceRead(const AccessContext& ax,
                                  std::shared_ptr<T> obj) const;
-
 
   void EndLoad() noexcept;
 
@@ -316,9 +288,6 @@ struct Snapshot {
                                   EdgeAction action);
   void ModifyInvertedIndexDependencies(const InvertedIndex& index,
                                        ObjectId index_id, EdgeAction action);
-  // Add/remove the role-dependency edges (owner + ACL grantee/grantor, incl.
-  // column ACLs) for `obj`. Called wherever an object enters, leaves, or has
-  // its body replaced in the graph, so DROP ROLE sees an exact dependent set.
   void ModifyRoleDependencies(const Object& obj, EdgeAction action);
 
   template<typename T>

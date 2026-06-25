@@ -58,7 +58,7 @@ TEST(sparse_ngram_tokenizer_test, attributes) {
             stream->type());
   ASSERT_NE(nullptr, irs::get<irs::TermAttr>(*stream));
   ASSERT_NE(nullptr, irs::get<irs::IncAttr>(*stream));
-  ASSERT_EQ(nullptr, irs::get<irs::OffsAttr>(*stream));
+  ASSERT_NE(nullptr, irs::get<irs::OffsAttr>(*stream));
 }
 
 TEST(sparse_ngram_tokenizer_test, all_ngrams_simple) {

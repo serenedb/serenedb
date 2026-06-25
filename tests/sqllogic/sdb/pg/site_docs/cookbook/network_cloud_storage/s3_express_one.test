@@ -1,0 +1,55 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement error
+s3express-⟨availability_zone⟩.⟨region⟩.amazonaws.com
+----
+db error: ERROR: Referenced column "s3express" was not found because the FROM clause is missing
+
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_RAW
+#| CREATE SECRET (
+#|     TYPE s3,
+#|     KEY_ID '⟨AKIAIOSFODNN7EXAMPLE⟩',
+#|     SECRET '⟨wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY⟩',
+#|     REGION '⟨us-east-1⟩',
+#|     ENDPOINT 's3express-⟨use1-az5⟩.⟨us-east-1⟩.amazonaws.com'
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE OR REPLACE SECRET (
+    TYPE s3,
+    KEY_ID 'AKIAIOSFODNN7EXAMPLE',
+    SECRET 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+    REGION 'us-east-1',
+    ENDPOINT 's3express-use1-az5.us-east-1.amazonaws.com'
+);
+
+# DOCS_TEST: example_003
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/cookbook_network_cloud_storage_s3_express_one_example_003_1_my_file_parquet.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM 's3://express-bucket-name--use1-az5--x-s3/my-file.parquet';
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM '${__TEST_DIR__}/cookbook_network_cloud_storage_s3_express_one_example_003_1_my_file_parquet.parquet';
+----
+id	name	value
+1	alpha	10
+2	beta	20

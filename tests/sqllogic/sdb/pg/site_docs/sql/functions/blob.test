@@ -1,0 +1,142 @@
+control substitution on
+
+# DOCS_TEST: string_concat_op
+# DOCS_TEST_BODY
+query
+SELECT 'Serene' || 'DB' AS string_concat, [1, 2, 3] || [4, 5, 6] AS list_concat, '\xAA'::BLOB || '\xBB'::BLOB AS blob_concat;
+----
+string_concat	list_concat	blob_concat
+SereneDB	{1,2,3,4,5,6}	\\xaabb
+
+# DOCS_TEST: decode
+# DOCS_TEST_BODY
+query
+SELECT decode('\xC3BC'::BLOB) AS decode, decode('\xAA'::BLOB, 'replace') AS decode_replace;
+----
+decode	decode_replace
+ü	?
+
+# DOCS_TEST: encode
+# DOCS_TEST_BODY
+query
+SELECT encode('my_string_with_ü') AS encode;
+----
+encode
+\\x6d795f737472696e675f776974685fc3bc
+
+# DOCS_TEST: from_base64
+# DOCS_TEST_BODY
+query
+SELECT from_base64('QQ==') AS from_base64;
+----
+from_base64
+\\x41
+
+# DOCS_TEST: hex
+# DOCS_TEST_BODY
+query
+SELECT hex('\xAABB'::BLOB) AS hex;
+----
+hex
+AABB
+
+# DOCS_TEST: md5
+# DOCS_TEST_BODY
+query
+SELECT md5('\xAABB'::BLOB) AS md5;
+----
+md5
+58cea1f6b2b06520613e09af90dc1c47
+
+# DOCS_TEST: octet_length
+# DOCS_TEST_BODY
+query
+SELECT octet_length('\xAABB'::BLOB) AS octet_length;
+----
+octet_length
+2
+
+# DOCS_TEST: repeat
+# DOCS_TEST_BODY
+query
+SELECT repeat('\xAABB'::BLOB, 5) AS repeat;
+----
+repeat
+\\xaabbaabbaabbaabbaabb
+
+# DOCS_TEST: sha1
+# DOCS_TEST_BODY
+query
+SELECT sha1('\xAABB'::BLOB) AS sha1;
+----
+sha1
+65b1e351a6cbfeb41c927222bc9ef53aad3396b0
+
+# DOCS_TEST: sha256
+# DOCS_TEST_BODY
+query
+SELECT sha256('\xAABB'::BLOB) AS sha256;
+----
+sha256
+d798d1fac6bd4bb1c11f50312760351013379a0ab6f0a8c0af8a506b96b2525a
+
+# DOCS_TEST: to_base64
+# DOCS_TEST_BODY
+query
+SELECT to_base64('A'::BLOB) AS to_base64;
+----
+to_base64
+QQ==
+
+# DOCS_TEST: unbin
+# DOCS_TEST_BODY
+query
+SELECT unbin('0110') AS unbin;
+----
+unbin
+\\x06
+
+# DOCS_TEST: unhex
+# DOCS_TEST_BODY
+query
+SELECT unhex('2A') AS unhex;
+----
+unhex
+\\x2a
+
+# DOCS_TEST: md5_number
+
+# The result is a HUGEINT, which the pg-wire extended protocol cannot transmit;
+# cast it to VARCHAR for the runnable body while the RAW block shows the natural
+# call and its decimal value.
+
+# DOCS_TEST_RAW
+#| SELECT md5_number('\xAABB'::BLOB) AS md5_number;
+#| ----
+#| md5_number
+#| 94525045605907259200829535064523132504
+
+# DOCS_TEST_BODY
+query
+SELECT md5_number('\xAABB'::BLOB)::VARCHAR AS md5_number;
+----
+md5_number
+94525045605907259200829535064523132504
+
+# DOCS_TEST: read_blob
+
+statement ok
+COPY (SELECT 'hello') TO '${__TEST_DIR__}/sdb_docs_read_blob_fixture.bin' (FORMAT csv, HEADER false);
+
+# DOCS_TEST_RAW
+#| SELECT content FROM read_blob('hello.bin');
+#| ----
+#| content
+#| \x68656c6c6f0a
+
+# DOCS_TEST_BODY
+query
+SELECT content FROM read_blob('${__TEST_DIR__}/sdb_docs_read_blob_fixture.bin');
+----
+content
+\\x68656c6c6f0a

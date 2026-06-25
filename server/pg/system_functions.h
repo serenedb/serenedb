@@ -960,9 +960,20 @@ inline constexpr SystemMacro kExternalMacros[] = {
   // TODO(mbkkt): implement properly -- currently return NULL.
   {"pg_catalog", "pg_get_ruledef", "(oid) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_get_ruledef", "(oid, pretty_bool) AS CAST(NULL AS TEXT)"},
-  {"pg_catalog", "pg_get_viewdef", "(oid) AS CAST(NULL AS TEXT)"},
-  {"pg_catalog", "pg_get_viewdef", "(oid, pretty_bool) AS CAST(NULL AS TEXT)"},
-  {"pg_catalog", "pg_get_viewdef", "(oid, wrap_column) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "pg_get_viewdef",
+   "(relid) AS (SELECT regexp_replace(vd_view.sql, '^CREATE VIEW [^ ]+ "
+   "([(][^)]*[)] )?AS ', '') FROM pg_catalog.pg_class vd_class JOIN "
+   "duckdb_views() vd_view ON vd_view.view_name = vd_class.relname AND "
+   "vd_view.database_name = current_database() JOIN pg_catalog.pg_namespace "
+   "vd_ns ON vd_ns.oid = vd_class.relnamespace AND vd_ns.nspname = "
+   "vd_view.schema_name WHERE vd_class.oid = relid)"},
+  {"pg_catalog", "pg_get_viewdef",
+   "(relid, flag) AS (SELECT regexp_replace(vd_view.sql, '^CREATE VIEW "
+   "[^ ]+ ([(][^)]*[)] )?AS ', '') FROM pg_catalog.pg_class vd_class JOIN "
+   "duckdb_views() vd_view ON vd_view.view_name = vd_class.relname AND "
+   "vd_view.database_name = current_database() JOIN pg_catalog.pg_namespace "
+   "vd_ns ON vd_ns.oid = vd_class.relnamespace AND vd_ns.nspname = "
+   "vd_view.schema_name WHERE vd_class.oid = relid)"},
   {"pg_catalog", "pg_get_indexdef", "(oid) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_get_indexdef", "(oid, col, pretty_bool) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_get_triggerdef", "(oid) AS CAST(NULL AS TEXT)"},

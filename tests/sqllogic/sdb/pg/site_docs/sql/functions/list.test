@@ -1,0 +1,1167 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT [lower(x) FOR x IN strings] AS strings
+FROM (VALUES (['Hello', '', 'World'])) t(strings);
+----
+strings
+{hello,"",world}
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT [upper(x) FOR x IN strings IF len(x) > 0] AS strings
+FROM (VALUES (['Hello', '', 'World'])) t(strings);
+----
+strings
+{HELLO,WORLD}
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT [4, 5, 6] AS l, [x FOR x, i IN l IF i != 2] AS filtered;
+----
+l	filtered
+{4,5,6}	{4,6}
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement error
+l.list_apply(lambda x, i: {'filter': g(x, i), 'result': f(x, i)})
+    .list_filter(lambda x: x.filter)
+    .list_apply(lambda x: x.result)
+----
+db error: ERROR: Referenced column "l" was not found because the FROM clause is missing
+
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT range(5);
+----
+range
+{0,1,2,3,4}
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+SELECT range(2, 5);
+----
+range
+{2,3,4}
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+SELECT range(2, 5, 3);
+----
+range
+{2}
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query
+SELECT generate_series(5);
+----
+generate_series
+0
+1
+2
+3
+4
+5
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query
+SELECT generate_series(2, 5);
+----
+generate_series
+2
+3
+4
+5
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+query
+SELECT generate_series(2, 5, 3);
+----
+generate_series
+2
+5
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+query
+SELECT generate_subscripts([4, 5, 6], 1) AS i;
+----
+i
+1
+2
+3
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM range(DATE '1992-01-01', DATE '1992-03-01', INTERVAL '1' MONTH);
+----
+range
+1992-01-01 00:00:00
+1992-02-01 00:00:00
+
+# DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM generate_series(DATE '1992-01-01', DATE '1992-03-01', INTERVAL '1' MONTH);
+----
+generate_series
+1992-01-01 00:00:00
+1992-02-01 00:00:00
+1992-03-01 00:00:00
+
+# DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
+
+query
+SELECT list_slice([1, 2, 3, 4, 5], 2, 4);
+----
+list_slice
+{2,3,4}
+
+# DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
+
+query
+SELECT ([1, 2, 3, 4, 5])[2:4:2];
+----
+?column?
+{2,4}
+
+# DOCS_TEST: example_016
+
+# DOCS_TEST_BODY
+
+query
+SELECT([1, 2, 3, 4, 5])[4:2:-2];
+----
+?column?
+{4,2}
+
+# DOCS_TEST: example_017
+
+# DOCS_TEST_BODY
+
+query
+SELECT ([1, 2, 3, 4, 5])[:];
+----
+?column?
+{1,2,3,4,5}
+
+# DOCS_TEST: example_018
+
+# DOCS_TEST_BODY
+
+query
+SELECT ([1, 2, 3, 4, 5])[:-:2];
+----
+?column?
+{1,3,5}
+
+# DOCS_TEST: example_019
+
+# DOCS_TEST_BODY
+
+query
+SELECT ([1, 2, 3, 4, 5])[:-:-2];
+----
+?column?
+{5,3,1}
+
+# DOCS_TEST: example_020
+
+# DOCS_TEST_BODY
+
+query
+SELECT list_aggregate([1, 2, -4, NULL], 'min');
+----
+list_aggregate
+-4
+
+# DOCS_TEST: example_021
+
+# DOCS_TEST_BODY
+
+query
+SELECT list_aggregate([2, 4, 8, 42], 'sum');
+----
+list_aggregate
+56
+
+# DOCS_TEST: example_022
+
+# DOCS_TEST_BODY
+
+query
+SELECT list_aggregate([[1, 2], [NULL], [2, 10, 3]], 'last');
+----
+list_aggregate
+{2,10,3}
+
+# DOCS_TEST: example_023
+
+# DOCS_TEST_BODY
+
+query
+SELECT list_aggregate([2, 4, 8, 42], 'string_agg', '|');
+----
+list_aggregate
+2|4|8|42
+
+# DOCS_TEST: example_024
+
+# DOCS_TEST_BODY
+
+query
+SELECT list_min([1, 2, -4, NULL]);
+----
+list_min
+-4
+
+# DOCS_TEST: example_025
+
+# DOCS_TEST_BODY
+
+query
+SELECT list_sum([2, 4, 8, 42]);
+----
+list_sum
+56
+
+# DOCS_TEST: example_026
+
+# DOCS_TEST_BODY
+
+query
+SELECT list_last([[1, 2], [NULL], [2, 10, 3]]);
+----
+list_last
+{2,10,3}
+
+# DOCS_TEST: example_027
+
+# DOCS_TEST_BODY
+
+query
+SELECT array_to_string([1, 2, 3], '-') AS str;
+----
+str
+1-2-3
+
+# DOCS_TEST: example_028
+
+# DOCS_TEST_BODY
+
+query
+SELECT list_aggr([1, 2, 3], 'string_agg', '-') AS str;
+----
+str
+1-2-3
+
+# DOCS_TEST: example_029
+
+# DOCS_TEST_BODY
+
+query
+SELECT list_sort([1, 3, NULL, 5, NULL, -5]);
+----
+list_sort
+{-5,1,3,5,NULL,NULL}
+
+# DOCS_TEST: example_030
+
+# DOCS_TEST_BODY
+
+query
+[-5, 1, 3, 5, NULL, NULL]
+----
+list_value
+{-5,1,3,5,NULL,NULL}
+
+# DOCS_TEST: example_031
+
+# DOCS_TEST_BODY
+
+query
+SELECT list_sort([1, 3, NULL, 2], 'ASC');
+----
+list_sort
+{1,2,3,NULL}
+
+# DOCS_TEST: example_032
+
+# DOCS_TEST_BODY
+
+query
+[1, 2, 3, NULL]
+----
+list_value
+{1,2,3,NULL}
+
+# DOCS_TEST: example_033
+
+# DOCS_TEST_BODY
+
+query
+SELECT list_sort([1, 3, NULL, 2], 'DESC', 'NULLS FIRST');
+----
+list_sort
+{NULL,3,2,1}
+
+# DOCS_TEST: example_034
+
+# DOCS_TEST_BODY
+
+query
+[NULL, 3, 2, 1]
+----
+list_value
+{NULL,3,2,1}
+
+# DOCS_TEST: example_035
+
+# DOCS_TEST_BODY
+
+query
+SELECT list_sort([1, 3, NULL, 5, NULL, -5]);
+----
+list_sort
+{-5,1,3,5,NULL,NULL}
+
+# DOCS_TEST: example_036
+
+# DOCS_TEST_BODY
+
+query
+[-5, 1, 3, 5, NULL, NULL]
+----
+list_value
+{-5,1,3,5,NULL,NULL}
+
+# DOCS_TEST: example_037
+
+# DOCS_TEST_BODY
+
+query
+SELECT list_reverse_sort([1, 3, NULL, 2], 'NULLS LAST');
+----
+list_reverse_sort
+{3,2,1,NULL}
+
+# DOCS_TEST: example_038
+
+# DOCS_TEST_BODY
+
+query
+[3, 2, 1, NULL]
+----
+list_value
+{3,2,1,NULL}
+
+# DOCS_TEST: example_039
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+    flatten([
+        [1, 2],
+        [3, 4]
+    ]);
+----
+flatten
+{1,2,3,4}
+
+# DOCS_TEST: example_040
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+    flatten([
+        [
+            [1, 2],
+            [3, 4],
+        ],
+        [
+            [5, 6],
+            [7, 8],
+        ]
+    ]);
+----
+flatten
+{{1,2},{3,4},{5,6},{7,8}}
+
+# DOCS_TEST: example_041
+
+# DOCS_TEST_BODY
+
+query
+SELECT flatten([]);
+----
+flatten
+{}
+
+# DOCS_TEST: example_042
+
+# DOCS_TEST_BODY
+
+query
+SELECT flatten(NULL);
+----
+flatten
+NULL
+
+# DOCS_TEST: example_043
+
+# DOCS_TEST_BODY
+
+query
+SELECT flatten([NULL]);
+----
+flatten
+{}
+
+# DOCS_TEST: example_044
+
+# DOCS_TEST_BODY
+
+query
+-- (Note the extra set of parentheses vs. the prior example)
+SELECT flatten([[NULL]]);
+----
+flatten
+{NULL}
+
+# DOCS_TEST: example_045
+
+# DOCS_TEST_BODY
+
+query
+SELECT flatten([[NULL], [NULL]]);
+----
+flatten
+{NULL,NULL}
+
+# DOCS_TEST: list_index
+# DOCS_TEST_BODY
+query
+SELECT [4, 5, 6][3] AS list_index;
+----
+list_index
+6
+
+# DOCS_TEST: list_slice_bracket
+# DOCS_TEST_BODY
+query
+SELECT [4, 5, 6][3] AS list_slice_bracket;
+----
+list_slice_bracket
+6
+
+# DOCS_TEST: string_concat_op_1
+# DOCS_TEST_BODY
+query
+SELECT 'Serene' || 'DB' AS concat;
+----
+concat
+SereneDB
+
+# DOCS_TEST: string_concat_op_2
+# DOCS_TEST_BODY
+query
+SELECT [1, 2, 3] || [4, 5, 6] AS concat;
+----
+concat
+{1,2,3,4,5,6}
+
+# DOCS_TEST: string_concat_op_3
+# DOCS_TEST_BODY
+query
+SELECT '\xAA'::BLOB || '\xBB'::BLOB AS concat;
+----
+concat
+\\xaabb
+
+# DOCS_TEST: array_extract
+# DOCS_TEST_BODY
+query
+SELECT array_extract([4, 5, 6], 3) AS array_extract;
+----
+array_extract
+6
+
+# DOCS_TEST: array_pop_back
+# DOCS_TEST_BODY
+query
+SELECT array_pop_back([4, 5, 6]) AS array_pop_back;
+----
+array_pop_back
+{4,5}
+
+# DOCS_TEST: array_pop_front
+# DOCS_TEST_BODY
+query
+SELECT array_pop_front([4, 5, 6]) AS array_pop_front;
+----
+array_pop_front
+{5,6}
+
+# DOCS_TEST: array_push_front
+# DOCS_TEST_BODY
+query
+SELECT array_push_front([4, 5, 6], 3) AS array_push_front;
+----
+array_push_front
+{3,4,5,6}
+
+# DOCS_TEST: array_to_string_1
+# DOCS_TEST_BODY
+query
+SELECT array_to_string([1, 2, 3], '-') AS str;
+----
+str
+1-2-3
+
+# DOCS_TEST: array_to_string_2
+# DOCS_TEST_BODY
+query
+SELECT array_to_string(['aa', 'bb', 'cc'], '') AS str;
+----
+str
+aabbcc
+
+# DOCS_TEST: array_to_string_comma_default
+# DOCS_TEST_BODY
+query
+SELECT array_to_string_comma_default(['Banana', 'Apple', 'Melon']) AS str;
+----
+str
+Banana,Apple,Melon
+
+# DOCS_TEST: concat_1
+# DOCS_TEST_BODY
+query
+SELECT concat('Hello', ' ', 'World') AS concat;
+----
+concat
+Hello World
+
+# DOCS_TEST: concat_2
+# DOCS_TEST_BODY
+query
+SELECT concat([1, 2, 3], NULL, [4, 5, 6]) AS concat;
+----
+concat
+{1,2,3,4,5,6}
+
+# DOCS_TEST: contains
+# DOCS_TEST_BODY
+query
+SELECT contains([1, 2, NULL], 1) AS contains;
+----
+contains
+t
+
+# DOCS_TEST: flatten
+# DOCS_TEST_BODY
+query
+SELECT flatten([[1, 2, 3], [4, 5]]) AS flatten;
+----
+flatten
+{1,2,3,4,5}
+
+# DOCS_TEST: generate_series
+# DOCS_TEST_BODY
+query
+SELECT generate_series(2, 5, 3) AS generate_series;
+----
+generate_series
+2
+5
+
+# DOCS_TEST: length
+# DOCS_TEST_BODY
+query
+SELECT length([1, 2, 3]) AS length;
+----
+length
+3
+
+# DOCS_TEST: list_aggregate
+# DOCS_TEST_BODY
+query
+SELECT list_aggregate([1, 2, NULL], 'min') AS list_aggregate;
+----
+list_aggregate
+1
+
+# DOCS_TEST: list_any_value
+# DOCS_TEST_BODY
+query
+SELECT list_any_value([3, 3, 9]) AS list_any_value;
+----
+list_any_value
+3
+
+# DOCS_TEST: list_append
+# DOCS_TEST_BODY
+query
+SELECT list_append([2, 3], 4) AS list_append;
+----
+list_append
+{2,3,4}
+
+# DOCS_TEST: list_approx_count_distinct
+# DOCS_TEST_BODY
+query
+SELECT list_approx_count_distinct([3, 3, 9]) AS list_approx_count_distinct;
+----
+list_approx_count_distinct
+2
+
+# DOCS_TEST: list_avg
+# DOCS_TEST_BODY
+query
+SELECT list_avg([3, 3, 9]) AS list_avg;
+----
+list_avg
+5
+
+# DOCS_TEST: list_bit_and
+# DOCS_TEST_BODY
+query
+SELECT list_bit_and([3, 3, 9]) AS list_bit_and;
+----
+list_bit_and
+1
+
+# DOCS_TEST: list_bit_or
+# DOCS_TEST_BODY
+query
+SELECT list_bit_or([3, 3, 9]) AS list_bit_or;
+----
+list_bit_or
+11
+
+# DOCS_TEST: list_bit_xor
+# DOCS_TEST_BODY
+query
+SELECT list_bit_xor([3, 3, 9]) AS list_bit_xor;
+----
+list_bit_xor
+9
+
+# DOCS_TEST: list_bool_and
+# DOCS_TEST_BODY
+query
+SELECT list_bool_and([true, false]) AS list_bool_and;
+----
+list_bool_and
+f
+
+# DOCS_TEST: list_bool_or
+# DOCS_TEST_BODY
+query
+SELECT list_bool_or([true, false]) AS list_bool_or;
+----
+list_bool_or
+t
+
+# DOCS_TEST: list_concat
+# DOCS_TEST_BODY
+query
+SELECT list_concat([2, 3], [4, 5, 6], [7]) AS list_concat;
+----
+list_concat
+{2,3,4,5,6,7}
+
+# DOCS_TEST: list_contains
+# DOCS_TEST_BODY
+query
+SELECT list_contains([1, 2, NULL], 1) AS list_contains;
+----
+list_contains
+t
+
+# DOCS_TEST: list_cosine_distance
+# DOCS_TEST_BODY
+query
+SELECT list_cosine_distance([1, 2, 3], [1, 2, 3]) AS list_cosine_distance;
+----
+list_cosine_distance
+0
+
+# DOCS_TEST: list_cosine_similarity
+# DOCS_TEST_BODY
+query
+SELECT list_cosine_similarity([1, 2, 3], [1, 2, 3]) AS list_cosine_similarity;
+----
+list_cosine_similarity
+1
+
+# DOCS_TEST: list_count
+# DOCS_TEST_BODY
+query
+SELECT list_count([3, 3, 9]) AS list_count;
+----
+list_count
+3
+
+# DOCS_TEST: list_distance
+# DOCS_TEST_BODY
+query
+SELECT list_distance([1, 2, 3], [1, 2, 5]) AS list_distance;
+----
+list_distance
+2
+
+# DOCS_TEST: list_distinct
+# DOCS_TEST_BODY
+query
+SELECT list_sort(list_distinct([1, 1, NULL, -3, 1, 5])) AS list_distinct;
+----
+list_distinct
+{-3,1,5}
+
+# DOCS_TEST: list_entropy
+# DOCS_TEST_BODY
+query
+SELECT round(list_entropy([3, 3, 9]), 10) AS list_entropy;
+----
+list_entropy
+0.9182958341
+
+# DOCS_TEST: list_extract
+# DOCS_TEST_BODY
+query
+SELECT list_extract([4, 5, 6], 3) AS list_extract;
+----
+list_extract
+6
+
+# DOCS_TEST: list_first
+# DOCS_TEST_BODY
+query
+SELECT list_first([3, 3, 9]) AS list_first;
+----
+list_first
+3
+
+# DOCS_TEST: list_grade_up
+# DOCS_TEST_BODY
+query
+SELECT list_grade_up([3, 6, 1, 2]) AS list_grade_up;
+----
+list_grade_up
+{3,4,1,2}
+
+# DOCS_TEST: list_has_all
+# DOCS_TEST_BODY
+query
+SELECT list_has_all([1, 2, 3], [2, 3]) AS list_has_all;
+----
+list_has_all
+t
+
+# DOCS_TEST: list_has_any
+# DOCS_TEST_BODY
+query
+SELECT list_has_any([1, 2, 3], [2, 3, 4]) AS list_has_any;
+----
+list_has_any
+t
+
+# DOCS_TEST: list_histogram
+# DOCS_TEST_BODY
+query
+SELECT list_histogram([3, 3, 9]) AS list_histogram;
+----
+list_histogram
+{"(3,2)","(9,1)"}
+
+# DOCS_TEST: list_inner_product
+# DOCS_TEST_BODY
+query
+SELECT list_inner_product([1, 2, 3], [1, 2, 3]) AS list_inner_product;
+----
+list_inner_product
+14
+
+# DOCS_TEST: list_intersect
+# DOCS_TEST_BODY
+query
+SELECT list_sort(list_intersect([1, 2, 3], [2, 3, 4])) AS list_intersect;
+----
+list_intersect
+{2,3}
+
+# DOCS_TEST: list_kurtosis
+# DOCS_TEST_BODY
+query
+SELECT list_kurtosis([3, 3, 9]) AS list_kurtosis;
+----
+list_kurtosis
+NULL
+
+# DOCS_TEST: list_kurtosis_pop
+# DOCS_TEST_BODY
+query
+SELECT list_kurtosis_pop([3, 3, 9]) AS list_kurtosis_pop;
+----
+list_kurtosis_pop
+-1.4999999999999978
+
+# DOCS_TEST: list_last
+# DOCS_TEST_BODY
+query
+SELECT list_last([3, 3, 9]) AS list_last;
+----
+list_last
+9
+
+# DOCS_TEST: list_mad
+# DOCS_TEST_BODY
+query
+SELECT list_mad([3, 3, 9]) AS list_mad;
+----
+list_mad
+0
+
+# DOCS_TEST: list_max
+# DOCS_TEST_BODY
+query
+SELECT list_max([3, 3, 9]) AS list_max;
+----
+list_max
+9
+
+# DOCS_TEST: list_median
+# DOCS_TEST_BODY
+query
+SELECT list_median([3, 3, 9]) AS list_median;
+----
+list_median
+3
+
+# DOCS_TEST: list_min
+# DOCS_TEST_BODY
+query
+SELECT list_min([3, 3, 9]) AS list_min;
+----
+list_min
+3
+
+# DOCS_TEST: list_mode
+# DOCS_TEST_BODY
+query
+SELECT list_mode([3, 3, 9]) AS list_mode;
+----
+list_mode
+3
+
+# DOCS_TEST: list_negative_inner_product
+# DOCS_TEST_BODY
+query
+SELECT list_negative_inner_product([1, 2, 3], [1, 2, 3]) AS list_negative_inner_product;
+----
+list_negative_inner_product
+-14
+
+# DOCS_TEST: list_position
+# DOCS_TEST_BODY
+query
+SELECT list_position([1, 2, NULL], 2) AS list_position;
+----
+list_position
+2
+
+# DOCS_TEST: list_prepend
+# DOCS_TEST_BODY
+query
+SELECT list_prepend(3, [4, 5, 6]) AS list_prepend;
+----
+list_prepend
+{3,4,5,6}
+
+# DOCS_TEST: list_product
+# DOCS_TEST_BODY
+query
+SELECT list_product([3, 3, 9]) AS list_product;
+----
+list_product
+81
+
+# DOCS_TEST: list_resize
+# DOCS_TEST_BODY
+query
+SELECT list_resize([1, 2, 3], 5, 0) AS list_resize;
+----
+list_resize
+{1,2,3,0,0}
+
+# DOCS_TEST: list_reverse
+# DOCS_TEST_BODY
+query
+SELECT list_reverse([3, 6, 1, 2]) AS list_reverse;
+----
+list_reverse
+{2,1,6,3}
+
+# DOCS_TEST: list_reverse_sort
+# DOCS_TEST_BODY
+query
+SELECT list_reverse_sort([3, 6, 1, 2]) AS list_reverse_sort;
+----
+list_reverse_sort
+{6,3,2,1}
+
+# DOCS_TEST: list_select
+# DOCS_TEST_BODY
+query
+SELECT list_select([10, 20, 30, 40], [1, 4]) AS list_select;
+----
+list_select
+{10,40}
+
+# DOCS_TEST: list_sem
+# DOCS_TEST_BODY
+query
+SELECT list_sem([3, 3, 9]) AS list_sem;
+----
+list_sem
+1.6329931618554523
+
+# DOCS_TEST: list_skewness
+# DOCS_TEST_BODY
+query
+SELECT list_skewness([3, 3, 9]) AS list_skewness;
+----
+list_skewness
+1.7320508075688796
+
+# DOCS_TEST: list_slice_3
+# DOCS_TEST_BODY
+query
+SELECT list_slice([4, 5, 6], 2, 3) AS list_slice;
+----
+list_slice
+{5,6}
+
+# DOCS_TEST: list_slice_4
+# DOCS_TEST_BODY
+query
+SELECT list_slice([4, 5, 6], 1, 3, 2) AS list_slice;
+----
+list_slice
+{4,6}
+
+# DOCS_TEST: list_sort
+# DOCS_TEST_BODY
+query
+SELECT list_sort([3, 6, 1, 2]) AS list_sort;
+----
+list_sort
+{1,2,3,6}
+
+# DOCS_TEST: list_stddev_pop
+# DOCS_TEST_BODY
+query
+SELECT list_stddev_pop([3, 3, 9]) AS list_stddev_pop;
+----
+list_stddev_pop
+2.8284271247461903
+
+# DOCS_TEST: list_stddev_samp
+# DOCS_TEST_BODY
+query
+SELECT list_stddev_samp([3, 3, 9]) AS list_stddev_samp;
+----
+list_stddev_samp
+3.4641016151377544
+
+# DOCS_TEST: list_string_agg
+# DOCS_TEST_BODY
+query
+SELECT list_string_agg([3, 3, 9]) AS list_string_agg;
+----
+list_string_agg
+3,3,9
+
+# DOCS_TEST: list_sum
+# DOCS_TEST_BODY
+query
+SELECT list_sum([3, 3, 9]) AS list_sum;
+----
+list_sum
+15
+
+# DOCS_TEST: list_unique
+# DOCS_TEST_BODY
+query
+SELECT list_unique([1, 1, NULL, -3, 1, 5]) AS list_unique;
+----
+list_unique
+3
+
+# DOCS_TEST: list_value
+# DOCS_TEST_BODY
+query
+SELECT list_value(4, 5, 6) AS list_value;
+----
+list_value
+{4,5,6}
+
+# DOCS_TEST: list_var_pop
+# DOCS_TEST_BODY
+query
+SELECT list_var_pop([3, 3, 9]) AS list_var_pop;
+----
+list_var_pop
+8
+
+# DOCS_TEST: list_var_samp
+# DOCS_TEST_BODY
+query
+SELECT list_var_samp([3, 3, 9]) AS list_var_samp;
+----
+list_var_samp
+12
+
+# DOCS_TEST: list_where
+# DOCS_TEST_BODY
+query
+SELECT list_where([10, 20, 30, 40], [true, false, false, true]) AS list_where;
+----
+list_where
+{10,40}
+
+# DOCS_TEST: list_zip_1
+# DOCS_TEST_BODY
+query
+SELECT list_zip([1, 2], [3, 4], [5, 6]) AS list_zip;
+----
+list_zip
+{"(1,3,5)","(2,4,6)"}
+
+# DOCS_TEST: list_zip_2
+# DOCS_TEST_BODY
+query
+SELECT list_zip([1, 2], [3, 4], [5, 6, 7]) AS list_zip;
+----
+list_zip
+{"(1,3,5)","(2,4,6)","(,,7)"}
+
+# DOCS_TEST: list_zip_3
+# DOCS_TEST_BODY
+query
+SELECT list_zip([1, 2], [3, 4], [5, 6, 7], true) AS list_zip;
+----
+list_zip
+{"(1,3,5)","(2,4,6)"}
+
+# DOCS_TEST: range
+# DOCS_TEST_BODY
+query
+SELECT range(2, 5, 3) AS range;
+----
+range
+{2}
+
+# DOCS_TEST: repeat
+# DOCS_TEST_BODY
+query
+SELECT repeat([1, 2, 3], 5) AS repeat;
+----
+repeat
+{1,2,3,1,2,3,1,2,3,1,2,3,1,2,3}
+
+# DOCS_TEST: unpivot_list
+# DOCS_TEST_BODY
+query
+SELECT unpivot_list(4, 5, 6) AS unpivot_list;
+----
+unpivot_list
+{4,5,6}
+
+# DOCS_TEST: list_filter
+
+# DOCS_TEST_BODY
+
+query
+SELECT list_filter([3, 4, 5], lambda x : x > 4) AS list_filter;
+----
+list_filter
+{5}
+
+# DOCS_TEST: list_reduce
+
+# DOCS_TEST_BODY
+
+query
+SELECT list_reduce([1, 2, 3], lambda x, y : x + y) AS list_reduce;
+----
+list_reduce
+6
+
+# DOCS_TEST: list_transform
+
+# DOCS_TEST_BODY
+
+query
+SELECT list_transform([1, 2, 3], lambda x : x + 1) AS list_transform;
+----
+list_transform
+{2,3,4}
+
+# DOCS_TEST: unnest
+
+# DOCS_TEST_BODY
+
+query
+SELECT unnest([1, 2, 3]) AS x ORDER BY x;
+----
+x
+1
+2
+3

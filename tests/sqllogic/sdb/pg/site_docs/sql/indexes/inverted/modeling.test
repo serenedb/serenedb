@@ -1,0 +1,98 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY kw (template = 'keyword');
+
+statement ok
+CREATE TABLE notes (
+    id INTEGER PRIMARY KEY,
+    s VARCHAR
+);
+
+statement ok
+INSERT INTO notes VALUES (1, 'HELLO'), (2, 'World');
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX notes_idx ON notes
+    USING inverted (id, (lower(s)) kw);
+
+query
+SELECT id, s FROM notes_idx WHERE lower(s) @@ 'hello' ORDER BY id;
+----
+id	s
+1	HELLO
+
+# DOCS_TEST: example_002
+
+statement ok
+CREATE TABLE line_items (
+    id INTEGER PRIMARY KEY,
+    price INTEGER,
+    price_with_tax INTEGER GENERATED ALWAYS AS (price * 110 / 100) STORED
+);
+
+statement ok
+INSERT INTO line_items (id, price) VALUES (1, 100), (2, 200);
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX line_items_idx ON line_items
+    USING inverted (id, price_with_tax);
+
+query
+SELECT id, price_with_tax FROM line_items_idx
+WHERE price_with_tax @@ ts_le(150)
+ORDER BY id;
+----
+id	price_with_tax
+1	110
+
+# DOCS_TEST: example_004
+
+statement ok
+CREATE TABLE articles_tags (
+    id INTEGER PRIMARY KEY,
+    tags TEXT[]
+);
+
+statement ok
+INSERT INTO articles_tags VALUES
+    (1, ARRAY['red', 'blue']),
+    (2, ARRAY['green']);
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX articles_tags_idx ON articles_tags
+    USING inverted (id, tags kw);
+
+query
+SELECT id, tags FROM articles_tags_idx WHERE tags @@ 'blue' ORDER BY id;
+----
+id	tags
+1	{red,blue}
+
+# DOCS_TEST: example_006
+
+statement ok
+CREATE TABLE metrics (id INTEGER PRIMARY KEY, n INTEGER);
+
+# DOCS_TEST_BODY
+
+statement error
+CREATE INDEX metrics_idx ON metrics USING inverted (id, (sum(n)));
+----
+db error: ERROR: aggregate functions are not allowed in index expressions
+
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+statement error
+CREATE INDEX metrics_idx2 ON metrics USING inverted (id, (n + random()));
+----
+db error: ERROR: Index keys cannot contain expressions with side effects.

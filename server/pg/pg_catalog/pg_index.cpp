@@ -68,7 +68,7 @@ catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
          catalog->GetIndexes(GetDatabaseId(), schema->GetName())) {
       SDB_ASSERT(index_ptr);
       auto& index = *index_ptr;
-      const auto& column_ids = index.GetColumnIds();
+      const auto& column_ids = index.GetColumns();
       auto natts = static_cast<int16_t>(column_ids.size());
 
       // Build indkey: map column IDs to 1-based attnum in the parent table

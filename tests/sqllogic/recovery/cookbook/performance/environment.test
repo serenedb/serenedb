@@ -1,0 +1,16 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_RAW
+#| SET threads = 4;
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT 1;
+
+# DOCS_TEST: example_002
+
+# Reset engine-global thread count so SET threads above does not leak into
+# other tests sharing this server (not rendered in the docs).
+statement ok
+RESET threads;

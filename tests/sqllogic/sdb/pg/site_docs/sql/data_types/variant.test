@@ -1,0 +1,74 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE events (id INTEGER, data VARIANT);
+
+statement ok
+INSERT INTO events VALUES
+    (1, 42::VARIANT),
+    (2, 'hello world'::VARIANT),
+    (3, [1, 2, 3]::VARIANT),
+    (4, {'name': 'Alice', 'age': 30}::VARIANT);
+
+query
+SELECT * FROM events;
+----
+id	data
+1	42
+2	"hello world"
+3	[1,2,3]
+4	{"age":30,"name":"Alice"}
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, data, variant_typeof(data) AS vtype
+FROM events;
+----
+id	data	vtype
+1	42	INT32
+2	"hello world"	VARCHAR
+3	[1,2,3]	ARRAY(3)
+4	{"age":30,"name":"Alice"}	OBJECT(age, name)
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT data.name FROM events WHERE id = 4;
+----
+name
+"Alice"
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT variant_extract(data, 'name') AS name FROM events WHERE id = 4;
+----
+name
+"Alice"
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_RAW
+#| COPY events TO 'events.parquet' (
+#|     FORMAT parquet,
+#|     SHREDDING {'data': 'STRUCT(name VARCHAR, age INTEGER)'}
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY events TO '${__TEST_DIR__}/sql_data_types_variant_example_005_1_events_parquet.parquet' (
+    FORMAT parquet,
+    SHREDDING {'data': 'STRUCT(name VARCHAR, age INTEGER)'}
+);

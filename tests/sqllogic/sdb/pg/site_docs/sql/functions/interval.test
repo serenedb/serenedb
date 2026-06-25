@@ -1,0 +1,135 @@
+# DOCS_TEST: date_part
+# DOCS_TEST_BODY
+query
+SELECT date_part('year', INTERVAL '14 months') AS years;
+----
+years
+1
+
+# DOCS_TEST: datepart
+# DOCS_TEST_BODY
+query
+SELECT datepart('year', INTERVAL '14 months') AS years;
+----
+years
+1
+
+# DOCS_TEST: extract
+# DOCS_TEST_BODY
+query
+SELECT extract('month' FROM INTERVAL '14 months') AS months;
+----
+months
+2
+
+# DOCS_TEST: epoch
+# DOCS_TEST_BODY
+query
+SELECT epoch(INTERVAL 5 HOUR) AS seconds;
+----
+seconds
+18000
+
+# DOCS_TEST: to_centuries
+# DOCS_TEST_BODY
+query
+SELECT to_centuries(5) AS result;
+----
+result
+500 years
+
+# DOCS_TEST: to_days
+# DOCS_TEST_BODY
+query
+SELECT to_days(5) AS result;
+----
+result
+5 days
+
+# DOCS_TEST: to_decades
+# DOCS_TEST_BODY
+query
+SELECT to_decades(5) AS result;
+----
+result
+50 years
+
+# DOCS_TEST: to_hours
+# DOCS_TEST_BODY
+query
+SELECT to_hours(5) AS result;
+----
+result
+05:00:00
+
+# DOCS_TEST: to_microseconds
+# DOCS_TEST_BODY
+query
+SELECT to_microseconds(5) AS result;
+----
+result
+00:00:00.000005
+
+# DOCS_TEST: to_millennia
+# DOCS_TEST_BODY
+query
+SELECT to_millennia(5) AS result;
+----
+result
+5000 years
+
+# DOCS_TEST: to_milliseconds
+# DOCS_TEST_BODY
+query
+SELECT to_milliseconds(5) AS result;
+----
+result
+00:00:00.005
+
+# DOCS_TEST: to_minutes
+# DOCS_TEST_BODY
+query
+SELECT to_minutes(5) AS result;
+----
+result
+00:05:00
+
+# DOCS_TEST: to_months
+# DOCS_TEST_BODY
+query
+SELECT to_months(5) AS result;
+----
+result
+5 mons
+
+# DOCS_TEST: to_quarters
+# DOCS_TEST_BODY
+query
+SELECT to_quarters(5) AS result;
+----
+result
+1 year 3 mons
+
+# DOCS_TEST: to_seconds
+# DOCS_TEST_BODY
+query
+SELECT to_seconds(5) AS result;
+----
+result
+00:00:05
+
+# DOCS_TEST: to_weeks
+# DOCS_TEST_BODY
+query
+SELECT to_weeks(5) AS result;
+----
+result
+35 days
+
+# DOCS_TEST: to_years
+# DOCS_TEST_BODY
+query
+SELECT to_years(5) AS result;
+----
+result
+5 years

@@ -1,0 +1,46 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy', 'anxious');
+
+# DOCS_TEST: enum_code
+# DOCS_TEST_BODY
+query
+SELECT enum_code('happy'::mood) AS enum_code;
+----
+enum_code
+2
+
+# DOCS_TEST: enum_first
+# DOCS_TEST_BODY
+query
+SELECT enum_first(NULL::mood) AS enum_first;
+----
+enum_first
+sad
+
+# DOCS_TEST: enum_last
+# DOCS_TEST_BODY
+query
+SELECT enum_last(NULL::mood) AS enum_last;
+----
+enum_last
+anxious
+
+# DOCS_TEST: enum_range
+# DOCS_TEST_BODY
+query
+SELECT enum_range(NULL::mood) AS enum_range;
+----
+enum_range
+{sad,ok,happy,anxious}
+
+# DOCS_TEST: enum_range_boundary
+# DOCS_TEST_BODY
+query
+SELECT enum_range_boundary(NULL, 'happy'::mood) AS enum_range_boundary;
+----
+enum_range_boundary
+{sad,ok,happy}

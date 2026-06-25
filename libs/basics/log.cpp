@@ -35,10 +35,10 @@ duckdb::Logger* gLogger = nullptr;
 
 void SetLogger(duckdb::Logger* logger) noexcept { gLogger = logger; }
 
-bool IsEnabled(duckdb::LogLevel level, std::string_view topic) noexcept {
-  // Every topic constant in topic.h is initialized from a string literal
-  // (.data() is NUL-terminated, see invariant in topic.h).
+bool IsEnabled(duckdb::LogLevel level, std::string_view topic) noexcept try {
   return gLogger->ShouldLog(topic.data(), level);
+} catch (...) {
+  return false;
 }
 
 void Log(duckdb::LogLevel level, std::string_view topic,

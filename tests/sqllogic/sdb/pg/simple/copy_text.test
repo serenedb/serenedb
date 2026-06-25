@@ -25,11 +25,11 @@ INSERT INTO tsrc VALUES (1, 'vedernikoff'), (2, 'pavelvi'), (3, 'babsky');
 
 
 statement count 3
-COPY tsrc TO '/tmp/${__DATABASE__}_copy_text.txt' (FORMAT text);
+COPY tsrc TO '${__TEST_DIR__}/copy_text.txt' (FORMAT text);
 
 
 statement count 3
-COPY tdst FROM '/tmp/${__DATABASE__}_copy_text.txt' (FORMAT text);
+COPY tdst FROM '${__TEST_DIR__}/copy_text.txt' (FORMAT text);
 
 
 query
@@ -59,7 +59,7 @@ INSERT INTO esrc VALUES
 
 
 statement count 5
-COPY esrc TO '/tmp/${__DATABASE__}_copy_text_esc.txt' (FORMAT text);
+COPY esrc TO '${__TEST_DIR__}/copy_text_esc.txt' (FORMAT text);
 
 
 statement ok
@@ -67,7 +67,7 @@ CREATE TABLE edst (id INTEGER, s TEXT);
 
 
 statement count 5
-COPY edst FROM '/tmp/${__DATABASE__}_copy_text_esc.txt' (FORMAT text);
+COPY edst FROM '${__TEST_DIR__}/copy_text_esc.txt' (FORMAT text);
 
 
 query
@@ -111,7 +111,7 @@ FROM generate_series(1, 20000) g;
 
 
 statement count 20000
-COPY bsrc TO '/tmp/${__DATABASE__}_copy_text_multi.txt' (FORMAT text);
+COPY bsrc TO '${__TEST_DIR__}/copy_text_multi.txt' (FORMAT text);
 
 
 statement ok
@@ -127,7 +127,7 @@ CREATE TABLE bdst
 
 
 statement count 20000
-COPY bdst FROM '/tmp/${__DATABASE__}_copy_text_multi.txt' (FORMAT text);
+COPY bdst FROM '${__TEST_DIR__}/copy_text_multi.txt' (FORMAT text);
 
 
 query

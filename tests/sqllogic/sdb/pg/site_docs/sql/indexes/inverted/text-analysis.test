@@ -1,0 +1,126 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ta_text (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false
+);
+
+query ?
+SELECT ts_lexize('ta_text', 'Quick BROWN Fox');
+----
+ts_lexize
+{quick,brown,fox}
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ta_keyword (template = 'keyword');
+
+query ?
+SELECT ts_lexize('ta_keyword', 'Hello World');
+----
+ts_lexize
+{"Hello World"}
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ta_ngram (
+    template = 'ngram',
+    mingram = 2,
+    maxgram = 3
+);
+
+query ?
+SELECT ts_lexize('ta_ngram', 'cat');
+----
+ts_lexize
+{ca,cat,at}
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ta_stem (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = true,
+    accent = false
+);
+
+query ?
+SELECT ts_lexize('ta_stem', 'running runners ran');
+----
+ts_lexize
+{run,runner,ran}
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ta_stopwords (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    stopwords = '"the", "of"'
+);
+
+query ?
+SELECT ts_lexize('ta_stopwords', 'the speed of light');
+----
+ts_lexize
+{speed,light}
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ta_accent (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false
+);
+
+query ?
+SELECT ts_lexize('ta_accent', 'Café');
+----
+ts_lexize
+{cafe}
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ta_pipeline (
+    template = 'pipeline',
+    step1_template = 'delimiter',
+    step1_delimiter = ',',
+    step2_template = 'norm',
+    step2_locale = 'en_US.UTF-8',
+    step2_case = 'lower'
+);
+
+query ?
+SELECT ts_lexize('ta_pipeline', 'RED,Green,BLUE');
+----
+ts_lexize
+{red,green,blue}

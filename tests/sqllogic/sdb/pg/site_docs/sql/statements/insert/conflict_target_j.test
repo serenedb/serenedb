@@ -1,0 +1,14 @@
+# DOCS_TEST: example_025
+
+statement ok
+CREATE TABLE tbl (i INTEGER PRIMARY KEY, j INTEGER UNIQUE, k INTEGER);
+
+statement ok
+INSERT INTO tbl VALUES (1, 20, 300);
+
+# DOCS_TEST_BODY
+
+statement ok
+INSERT INTO tbl
+    VALUES (1, 20, 900)
+    ON CONFLICT (j) DO UPDATE SET k = 5 * EXCLUDED.k;

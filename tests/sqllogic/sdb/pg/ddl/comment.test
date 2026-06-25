@@ -44,6 +44,8 @@ NULL
 # comment on a non-existent column errors
 statement error
 COMMENT ON COLUMN cmt_t.nope IS 'x';
+----
+db error: ERROR: column "nope" of relation "cmt_t" does not exist
 
 
 # the table comment survives an unrelated ALTER
@@ -56,6 +58,18 @@ SELECT comment FROM duckdb_tables() WHERE table_name = 'cmt_t';
 ----
 comment
 my table
+
+
+# IS NULL clears the table-level comment too
+statement ok
+COMMENT ON TABLE cmt_t IS NULL;
+
+
+query
+SELECT comment FROM duckdb_tables() WHERE table_name = 'cmt_t';
+----
+comment
+NULL
 
 
 statement ok

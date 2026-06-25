@@ -1,0 +1,89 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+SET timezone = 'America/Los_Angeles';
+
+statement ok
+CREATE OR REPLACE TABLE times AS
+    FROM range('2025-08-30'::TIMESTAMPTZ, '2025-08-31'::TIMESTAMPTZ, INTERVAL 1 HOUR) tbl(t);
+
+query ?
+SELECT count(*) AS matching_rows
+FROM times
+WHERE t <= '2025-08-30';
+----
+matching_rows
+1
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+SET timezone = 'HST';
+
+query ?
+SELECT count(*) AS matching_rows
+FROM times
+WHERE t <= '2025-08-30';
+----
+matching_rows
+4
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+SET timezone = 'America/New_York';
+
+query ?
+SELECT count(*) AS matching_rows
+FROM times
+WHERE t <= '2025-08-30';
+----
+matching_rows
+0
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE OR REPLACE TABLE hourly AS
+    SELECT
+        ts,
+        year::SMALLINT AS year,
+        month::TINYINT AS month,
+        day::TINYINT AS day,
+        hour::TINYINT AS hour,
+    FROM (
+        SELECT ts, unnest(date_part(['year', 'month', 'day', 'hour'], ts))
+        FROM generate_series(
+            '2020-01-01'::DATE::TIMESTAMP,
+            '2100-01-01'::DATE::TIMESTAMP,
+            INTERVAL 1 HOUR) tbl(ts)
+    ) parts;
+
+query ?
+SELECT count(*) AS rows FROM hourly;
+----
+rows
+701281
+
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query ??
+SELECT
+    TIMESTAMP '2025-08-31 00:00:00'
+        BETWEEN TIMESTAMP '2025-08-30' AND TIMESTAMP '2025-08-31' AS between_closed,
+    TIMESTAMP '2025-08-31 00:00:00' >= TIMESTAMP '2025-08-30'
+        AND TIMESTAMP '2025-08-31 00:00:00' < TIMESTAMP '2025-08-31' AS half_open;
+----
+between_closed	half_open
+t	f

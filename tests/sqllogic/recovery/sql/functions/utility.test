@@ -1,0 +1,536 @@
+control substitution on
+
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE t1 (x INTEGER);
+
+statement ok
+INSERT INTO t1 VALUES (1), (2);
+
+statement ok
+CREATE TABLE t2 (x INTEGER);
+
+statement ok
+INSERT INTO t2 VALUES (3);
+
+# DOCS_TEST: alias
+# DOCS_TEST_BODY
+query
+SELECT alias(column1) FROM (SELECT 1 AS column1) t;
+----
+alias
+column1
+
+# DOCS_TEST: can_cast_implicitly
+# DOCS_TEST_BODY
+query
+SELECT can_cast_implicitly(1::BIGINT, 1::SMALLINT) AS can_cast_implicitly;
+----
+can_cast_implicitly
+f
+
+# DOCS_TEST: coalesce
+# DOCS_TEST_BODY
+query
+SELECT coalesce(NULL, NULL, 'default_string') AS coalesce;
+----
+coalesce
+default_string
+
+# DOCS_TEST: constant_or_null
+# DOCS_TEST_BODY
+query
+SELECT constant_or_null(42, NULL) AS constant_or_null;
+----
+constant_or_null
+NULL
+
+# DOCS_TEST: create_sort_key
+# DOCS_TEST_BODY
+query
+SELECT create_sort_key('abc', 'ASC NULLS FIRST') AS create_sort_key;
+----
+create_sort_key
+\\x0262636400
+
+# DOCS_TEST: current_schema
+# DOCS_TEST_BODY
+query
+SELECT current_schema() AS current_schema;
+----
+current_schema
+public
+
+# DOCS_TEST: current_schemas
+# DOCS_TEST_BODY
+query
+SELECT current_schemas(true) AS current_schemas;
+----
+current_schemas
+{pg_catalog,public}
+
+# DOCS_TEST: current_setting
+# DOCS_TEST_BODY
+query
+SELECT current_setting('access_mode') AS current_setting;
+----
+current_setting
+automatic
+
+# DOCS_TEST: equi_width_bins
+# DOCS_TEST_BODY
+query
+SELECT equi_width_bins(0.1, 2.7, 4, true) AS equi_width_bins;
+----
+equi_width_bins
+{0.5,1,1.5,2,2.5,3}
+
+# DOCS_TEST: hash
+# DOCS_TEST_BODY
+query
+SELECT hash('🌊') AS hash;
+----
+hash
+12255790945742965276
+
+# DOCS_TEST: if
+# DOCS_TEST_BODY
+query
+SELECT if(2 > 1, 3, 4) AS if;
+----
+if
+3
+
+# DOCS_TEST: ifnull
+# DOCS_TEST_BODY
+query
+SELECT ifnull(NULL, 'default_string') AS ifnull;
+----
+ifnull
+default_string
+
+# DOCS_TEST: is_histogram_other_bin
+# DOCS_TEST_BODY
+query
+SELECT is_histogram_other_bin('') AS is_histogram_other_bin;
+----
+is_histogram_other_bin
+t
+
+# DOCS_TEST: md5
+# DOCS_TEST_BODY
+query
+SELECT md5('abc') AS md5;
+----
+md5
+900150983cd24fb0d6963f7d28e17f72
+
+# DOCS_TEST: md5_number_lower
+# DOCS_TEST_BODY
+query
+SELECT md5_number_lower('abc') AS md5_number_lower;
+----
+md5_number_lower
+8250560606382298838
+
+# DOCS_TEST: md5_number_upper
+# DOCS_TEST_BODY
+query
+SELECT md5_number_upper('abc') AS md5_number_upper;
+----
+md5_number_upper
+12704604231530709392
+
+# DOCS_TEST: nullif
+# DOCS_TEST_BODY
+query
+SELECT nullif(1 + 1, 2) AS nullif;
+----
+nullif
+NULL
+
+# DOCS_TEST: parse_formatted_bytes
+# DOCS_TEST_BODY
+query
+SELECT parse_formatted_bytes('1.5 GiB') AS parse_formatted_bytes;
+----
+parse_formatted_bytes
+1610612736
+
+# DOCS_TEST: pg_typeof
+# DOCS_TEST_BODY
+query
+SELECT pg_typeof('abc') AS pg_typeof;
+----
+pg_typeof
+text
+
+# DOCS_TEST: query
+# DOCS_TEST_BODY
+query
+SELECT * FROM query('SELECT 42 AS x');
+----
+x
+42
+
+# DOCS_TEST: query_table
+# DOCS_TEST_BODY
+query
+SELECT * FROM query_table('t1') ORDER BY x;
+----
+x
+1
+2
+
+# DOCS_TEST: query_table_union
+# DOCS_TEST_BODY
+query
+SELECT * FROM query_table(['t1', 't2'], true) ORDER BY x;
+----
+x
+1
+2
+3
+
+# DOCS_TEST: sha1
+# DOCS_TEST_BODY
+query
+SELECT sha1('🌊') AS sha1;
+----
+sha1
+be25fe9cf30cf5c01ae2054b60a5e5511e966d98
+
+# DOCS_TEST: sha256
+# DOCS_TEST_BODY
+query
+SELECT sha256('🌊') AS sha256;
+----
+sha256
+8db6bed4743d5a6159e0742df0fded8377d1250420aeda292e41ffa20eba806e
+
+# DOCS_TEST: stats
+# DOCS_TEST_BODY
+query
+SELECT stats(5) AS stats;
+----
+stats
+{"approx_unique":1,"has_no_null":true,"has_null":false,"max":5,"min":5}
+
+# DOCS_TEST: typeof
+# DOCS_TEST_BODY
+query
+SELECT typeof('abc') AS typeof;
+----
+typeof
+VARCHAR
+
+# DOCS_TEST: repeat_row
+# DOCS_TEST_BODY
+query
+SELECT * FROM repeat_row(1, 2, 'foo', num_rows = 3);
+----
+column0	column1	column2
+1	2	foo
+1	2	foo
+1	2	foo
+
+# DOCS_TEST: checkpoint
+# DOCS_TEST_BODY
+statement ok
+SELECT checkpoint();
+
+# DOCS_TEST: count_if
+# DOCS_TEST_BODY
+query
+SELECT count_if(x > 1) AS count_if FROM (VALUES (1), (2), (3)) t(x);
+----
+count_if
+2
+
+# DOCS_TEST: current_catalog
+
+# The catalog name depends on the active database, so the body just confirms the
+# call runs while the RAW block shows a representative value.
+
+# DOCS_TEST_RAW
+#| SELECT current_catalog();
+#| ----
+#| current_catalog
+#| postgres
+
+# DOCS_TEST_BODY
+query
+SELECT current_catalog() AS current_catalog;
+----
+current_catalog
+<slt:ignore>
+
+# DOCS_TEST: current_database
+
+# DOCS_TEST_RAW
+#| SELECT current_database();
+#| ----
+#| current_database
+#| postgres
+
+# DOCS_TEST_BODY
+query
+SELECT current_database() AS current_database;
+----
+current_database
+<slt:ignore>
+
+# DOCS_TEST: current_query
+# DOCS_TEST_BODY
+query
+SELECT current_query() AS current_query;
+----
+current_query
+SELECT current_query() AS current_query;
+
+# DOCS_TEST: currval
+
+statement ok
+CREATE SEQUENCE seq_currval;
+
+statement ok
+SELECT nextval('seq_currval');
+
+# DOCS_TEST_BODY
+query
+SELECT currval('seq_currval') AS currval;
+----
+currval
+1
+
+# DOCS_TEST: error
+# DOCS_TEST_BODY
+query error
+SELECT error('access_mode');
+----
+db error: ERROR: access_mode
+
+
+# DOCS_TEST: force_checkpoint
+# DOCS_TEST_BODY
+statement ok
+SELECT force_checkpoint();
+
+# DOCS_TEST: gen_random_uuid
+
+# The value is random; the body confirms the call runs while the RAW block shows
+# a representative UUID.
+
+# DOCS_TEST_RAW
+#| SELECT gen_random_uuid();
+#| ----
+#| gen_random_uuid
+#| 6b8b6e47-bbf9-4808-a8ef-725a1469564d
+
+# DOCS_TEST_BODY
+statement ok
+SELECT gen_random_uuid();
+
+# DOCS_TEST: getenv
+
+# getenv is only available in the command line client (serened shell), not over
+# the server protocol, so this example is illustrative.
+
+# DOCS_TEST_RAW
+#| SELECT getenv('HOME');
+#| ----
+#| getenv
+#| /path/to/user/home
+
+# DOCS_TEST_BODY
+statement ok
+CREATE TEMP TABLE IF NOT EXISTS __docs_utility_getenv (i INTEGER);
+
+# DOCS_TEST: icu_sort_key
+# DOCS_TEST_BODY
+query
+SELECT icu_sort_key('a', 'DE') < icu_sort_key('b', 'DE') AS icu_sort_key;
+----
+icu_sort_key
+t
+
+
+# DOCS_TEST: md5_number
+
+# The result is a UHUGEINT, which the pg-wire extended protocol cannot transmit;
+# cast it to VARCHAR for the runnable body while the RAW block shows the natural
+# call and its decimal value.
+
+# DOCS_TEST_RAW
+#| SELECT md5_number('abc');
+#| ----
+#| md5_number
+#| 152195979970564155685860391459828531600
+
+# DOCS_TEST_BODY
+query
+SELECT md5_number('abc')::VARCHAR AS md5_number;
+----
+md5_number
+152195979970564155685860391459828531600
+
+# DOCS_TEST: nextval
+
+statement ok
+CREATE SEQUENCE seq_nextval;
+
+statement ok
+SELECT nextval('seq_nextval');
+
+# DOCS_TEST_BODY
+query
+SELECT nextval('seq_nextval') AS nextval;
+----
+nextval
+2
+
+# DOCS_TEST: read_blob
+
+statement ok
+COPY (SELECT 'hello') TO '${__TEST_DIR__}/sdb_docs_utility_read_blob.bin' (FORMAT csv, HEADER false);
+
+# DOCS_TEST_RAW
+#| SELECT content FROM read_blob('hello.bin');
+#| ----
+#| content
+#| \x68656c6c6f0a
+
+# DOCS_TEST_BODY
+query
+SELECT content FROM read_blob('${__TEST_DIR__}/sdb_docs_utility_read_blob.bin');
+----
+content
+\\x68656c6c6f0a
+
+# DOCS_TEST: read_text
+
+statement ok
+COPY (SELECT 'hello') TO '${__TEST_DIR__}/sdb_docs_utility_read_text.txt' (FORMAT csv, HEADER false);
+
+# DOCS_TEST_RAW
+#| SELECT content FROM read_text('hello.txt');
+#| ----
+#| content
+#| hello
+
+# DOCS_TEST_BODY
+query
+SELECT content FROM read_text('${__TEST_DIR__}/sdb_docs_utility_read_text.txt');
+----
+content
+<slt:ignore>
+
+# DOCS_TEST: sleep_ms
+# DOCS_TEST_BODY
+query
+SELECT sleep_ms(1) AS sleep_ms;
+----
+sleep_ms
+NULL
+
+# DOCS_TEST: txid_current
+
+# txid_current is documented for PostgreSQL compatibility; its value varies per
+# transaction.
+
+# DOCS_TEST_RAW
+#| SELECT txid_current();
+#| ----
+#| txid_current
+#| 1234
+
+# DOCS_TEST_BODY
+statement ok
+CREATE TEMP TABLE IF NOT EXISTS __docs_utility_txid (i INTEGER);
+
+# DOCS_TEST: uuid
+
+# DOCS_TEST_RAW
+#| SELECT uuid();
+#| ----
+#| uuid
+#| eeccb8c5-9943-b2bb-bb5e-222f4e14b687
+
+# DOCS_TEST_BODY
+statement ok
+SELECT uuid();
+
+# DOCS_TEST: uuidv4
+
+# DOCS_TEST_RAW
+#| SELECT uuidv4();
+#| ----
+#| uuidv4
+#| eeccb8c5-9943-b2bb-bb5e-222f4e14b687
+
+# DOCS_TEST_BODY
+statement ok
+SELECT uuidv4();
+
+# DOCS_TEST: uuidv7
+
+# DOCS_TEST_RAW
+#| SELECT uuidv7();
+#| ----
+#| uuidv7
+#| 81964ebe-00b1-7e1d-b0f9-43c29b6fb8f5
+
+# DOCS_TEST_BODY
+statement ok
+SELECT uuidv7();
+
+# DOCS_TEST: uuid_extract_timestamp
+
+# DOCS_TEST_RAW
+#| SELECT uuid_extract_timestamp(uuidv7());
+#| ----
+#| uuid_extract_timestamp
+#| 2025-04-19 15:51:20.07+00
+
+# DOCS_TEST_BODY
+statement ok
+SELECT uuid_extract_timestamp(uuidv7());
+
+# DOCS_TEST: uuid_extract_version
+# DOCS_TEST_BODY
+query
+SELECT uuid_extract_version(uuidv7()) AS uuid_extract_version;
+----
+uuid_extract_version
+7
+
+# DOCS_TEST: version
+
+# DOCS_TEST_RAW
+#| SELECT version();
+#| ----
+#| version
+#| PostgreSQL 18.3 (SereneDB 26.06.0)
+
+# DOCS_TEST_BODY
+statement ok
+SELECT version();
+
+# DOCS_TEST: glob
+
+# glob returns the files found in the server's working directory, so the listing
+# is illustrative.
+
+# DOCS_TEST_RAW
+#| SELECT * FROM glob('*');
+#| ----
+#| file
+#| data.csv
+#| data.parquet
+
+# DOCS_TEST_BODY
+statement ok
+SELECT * FROM glob('*');

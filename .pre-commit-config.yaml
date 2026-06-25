@@ -87,6 +87,11 @@ repos:
         language: python
         entry: python3 scripts/check_substitution_directive.py
         files: ^tests/sqllogic/.*\.test
+      - id: check-no-tmp-in-sqllogic
+        name: Check no /tmp paths in sqllogic tests
+        language: python
+        entry: python3 scripts/check_no_tmp_in_sqllogic.py
+        files: ^tests/sqllogic/.*\.test
       - id: check-snake-case-filenames
         name: Check C++ filenames are snake_case
         language: python

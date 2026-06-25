@@ -1,0 +1,49 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY seg_dict (
+    template = 'segmentation',
+    case = 'lower',
+    BREAK = 'alpha'
+);
+
+query ?
+SELECT ts_lexize('seg_dict', 'The Quick fox-trot.');
+----
+ts_lexize
+{the,quick,fox,trot}
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY seg_all (
+    template = 'segmentation',
+    case = 'upper',
+    BREAK = 'all'
+);
+
+query ?
+SELECT ts_lexize('seg_all', 'The Quick fox-trot.');
+----
+ts_lexize
+{THE," ",QUICK," ",FOX,-,TROT,.}
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY seg_graphic (
+    template = 'segmentation',
+    BREAK = 'graphic'
+);
+
+query ?
+SELECT ts_lexize('seg_graphic', 'The Quick fox-trot.');
+----
+ts_lexize
+{The,Quick,fox,-,trot,.}

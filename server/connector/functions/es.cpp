@@ -451,7 +451,7 @@ void EsMappingExecute(duckdb::ClientContext& context,
     if (index->GetType() != catalog::ObjectType::InvertedIndex) {
       continue;
     }
-    for (const auto id : index->GetColumnIds()) {
+    for (const auto id : index->GetColumns()) {
       inverted_columns.insert(id);
     }
   }

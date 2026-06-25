@@ -1,0 +1,43 @@
+control substitution on
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_RAW
+#| CREATE SECRET (
+#|     TYPE s3,
+#|     KEY_ID '⟨AKIAIOSFODNN7EXAMPLE⟩',
+#|     SECRET '⟨wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY⟩',
+#|     REGION '⟨us-east-1⟩'
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE OR REPLACE SECRET (
+    TYPE s3,
+    KEY_ID 'AKIAIOSFODNN7EXAMPLE',
+    SECRET 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+    REGION 'us-east-1'
+);
+
+# DOCS_TEST: example_005
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/cookbook_network_cloud_storage_s3_iceberg_import_example_005_1_iceberg_table_file.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM iceberg_scan('s3://⟨bucket⟩/⟨iceberg_table_folder⟩/metadata/⟨id⟩.metadata.json');
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM read_parquet('${__TEST_DIR__}/cookbook_network_cloud_storage_s3_iceberg_import_example_005_1_iceberg_table_file.parquet');
+----
+id	name	value
+1	alpha	10
+2	beta	20

@@ -138,24 +138,9 @@ std::shared_ptr<InvertedIndex> InvertedIndex::Deserialize(
   return UnpackEntries(std::move(data), ctx);
 }
 
-InvertedIndex::DerivedColumnIds InvertedIndex::DeriveFromKeys(
-  std::span<const Column::Id> columns,
-  std::span<const ExpressionKey> expression_keys) {
-  auto [column_ids, seen] = DedupColumns(columns);
-  auto referenced = column_ids;
-  for (const auto& key : expression_keys) {
-    for (auto dep : key.data.dependent_columns) {
-      if (seen.insert(dep).second) {  // reuse the column dedup set
-        referenced.push_back(dep);
-      }
-    }
-  }
-  return {std::move(column_ids), std::move(referenced)};
-}
-
 void InvertedIndex::Serialize(duckdb::Serializer& sink) const {
-  auto data = PackEntries(GetName(), GetColumnIds(), _expression_keys, _entries,
-                          _options);
+  auto data =
+    PackEntries(GetName(), GetColumns(), _expression_keys, _entries, _options);
   basics::WriteTuple(sink, data);
 }
 

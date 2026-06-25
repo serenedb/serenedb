@@ -1,0 +1,72 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE my_table (i INTEGER PRIMARY KEY);
+
+statement ok
+INSERT INTO my_table SELECT range FROM range(3_000);
+
+statement error
+UPDATE my_table SET i = i + 1;
+----
+db error: ERROR: Duplicate key "i: 2048" violates primary key constraint.
+
+
+# DOCS_TEST: example_002
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS my_table;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE my_table (i INTEGER PRIMARY KEY);
+
+statement ok
+INSERT INTO my_table SELECT range FROM range(3_000);
+
+statement ok
+BEGIN;
+
+statement ok
+CREATE TEMP TABLE tmp AS SELECT i FROM my_table;
+
+statement ok
+DELETE FROM my_table;
+
+statement ok
+INSERT INTO my_table SELECT i FROM tmp;
+
+statement ok
+DROP TABLE tmp;
+
+statement ok
+COMMIT;
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE pk_table (id INTEGER PRIMARY KEY, payload VARCHAR[]);
+
+statement ok
+INSERT INTO pk_table VALUES (1, ['hello']);
+
+statement ok
+CREATE TABLE fk_table (id INTEGER REFERENCES pk_table(id));
+
+statement ok
+INSERT INTO fk_table VALUES (1);
+
+statement error
+UPDATE pk_table SET payload = ['world'] WHERE id = 1;
+----
+db error: ERROR: Violates foreign key constraint because key "id: 1" is still referenced by a foreign key in a different table. If this is an unexpected constraint violation, please refer to our foreign key limitations in the documentation

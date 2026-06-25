@@ -1,0 +1,93 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+SET disabled_optimizers = 'join_order,build_side_probe_side';
+
+# DOCS_TEST: example_002
+
+statement ok
+CREATE OR REPLACE TABLE regions (region_id INTEGER, region_name VARCHAR);
+
+statement ok
+CREATE OR REPLACE TABLE customers (customer_id INTEGER, region_id INTEGER, name VARCHAR);
+
+statement ok
+CREATE OR REPLACE TABLE orders (order_id INTEGER, customer_id INTEGER, amount DOUBLE);
+
+statement ok
+INSERT INTO regions VALUES (1, 'North'), (2, 'South');
+
+statement ok
+INSERT INTO customers VALUES (10, 1, 'Alice'), (20, 2, 'Bob');
+
+statement ok
+INSERT INTO orders VALUES (100, 10, 50.0), (101, 10, 75.0), (102, 20, 30.0);
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+    r.region_name,
+    c.name,
+    o.amount
+FROM regions AS r
+JOIN customers AS c ON c.region_id = r.region_id
+JOIN orders AS o ON o.customer_id = c.customer_id
+ORDER BY o.amount;
+----
+region_name	name	amount
+South	Bob	30
+North	Alice	50
+North	Alice	75
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+SET disabled_optimizers = '';
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE OR REPLACE TEMPORARY TABLE t1 AS
+    SELECT
+        r.region_id,
+        r.region_name,
+        c.customer_id,
+        c.name
+    FROM regions AS r
+    JOIN customers AS c ON c.region_id = r.region_id;
+
+statement ok
+CREATE OR REPLACE TEMPORARY TABLE t2 AS
+    SELECT
+        t1.region_name,
+        t1.name,
+        o.amount
+    FROM t1
+    JOIN orders AS o ON o.customer_id = t1.customer_id;
+
+query
+SELECT *
+FROM t2
+ORDER BY amount;
+----
+region_name	name	amount
+South	Bob	30
+North	Alice	50
+North	Alice	75
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP TABLE IF EXISTS t1;
+
+statement ok
+DROP TABLE IF EXISTS t2;

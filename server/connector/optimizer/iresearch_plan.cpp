@@ -536,17 +536,17 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("ts_offsets(): column '", col_name(), "' not found in table"));
   }
-  if (!found->bind_data->inverted_index->HasColumn(target_col_id)) {
+
+  const auto* col_info =
+    found->bind_data->inverted_index->FindColumnInfo(target_col_id);
+  if (!col_info) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("ts_offsets(): column '", col_name(), "' not found in index"));
   }
-
-  const auto* col_info =
-    found->bind_data->inverted_index->FindColumnInfo(target_col_id);
-  const bool is_text = col_info && col_info->text_dictionary.isSet();
+  const bool is_text = col_info->text_dictionary.isSet();
   const bool offs_stored =
-    col_info && col_info->features.HasFeatures(irs::IndexFeatures::Offs);
+    col_info->features.HasFeatures(irs::IndexFeatures::Offs);
 
   if (is_text && !offs_stored) {
     auto bind = duckdb::make_uniq<connector::OffsetsBindData>();
@@ -809,11 +809,11 @@ bool TryClaimSearchFilter(
     [&](const duckdb::BoundColumnRefExpression& ref)
     -> std::optional<connector::SearchColumnInfo> {
     const auto col_id = ResolveColumnId(ref.binding, bind_data, get);
-    if (col_id == catalog::Column::kInvalidId || !index.HasColumn(col_id)) {
+    if (col_id == catalog::Column::kInvalidId) {
       return std::nullopt;
     }
     const auto* info = index.FindColumnInfo(col_id);
-    if (info && !info->IsTermDict()) {
+    if (!info || !info->IsTermDict()) {
       return std::nullopt;
     }
     auto type = bind_data.ColumnTypeById(col_id);

@@ -1,0 +1,199 @@
+# Conformance: sub-second TEMPORAL types (TIMESTAMP, TIME, TIMESTAMPTZ, INTERVAL)
+# Covers fractional-second precision at ms / us / sub-us, make_timestamp/make_time,
+# fractional INTERVAL, epoch extraction. Render TIMESTAMPTZ under a fixed UTC session
+# so the textual offset is deterministic across both databases.
+
+statement ok
+SET TIME ZONE 'UTC';
+
+# ---------------------------------------------------------------------------
+# TIMESTAMP fractional precision: millisecond and microsecond AGREE on both DBs.
+# ---------------------------------------------------------------------------
+query
+SELECT TIMESTAMP '1992-09-20 11:30:00.123' AS ms;
+----
+ms
+1992-09-20 11:30:00.123
+
+query
+SELECT TIMESTAMP '1992-09-20 11:30:00.123456' AS us;
+----
+us
+1992-09-20 11:30:00.123456
+
+# DIVERGENCE: sub-microsecond TIMESTAMP literal.
+# PostgreSQL ROUNDS the 7th+ fractional digit into microseconds (.123456789 -> .123457).
+# SereneDB TRUNCATES to microseconds (.123456789 -> .123456). The binary
+# (pg-wire-extended) protocol carries the same truncated micros, so the divergence is
+# protocol-independent and keyed only on the database.
+onlyif postgres
+query
+SELECT TIMESTAMP '1992-09-20 11:30:00.123456789' AS subus;
+----
+subus
+1992-09-20 11:30:00.123457
+
+onlyif serenedb
+query
+SELECT TIMESTAMP '1992-09-20 11:30:00.123456789' AS subus;
+----
+subus
+1992-09-20 11:30:00.123456
+
+# ---------------------------------------------------------------------------
+# TIME fractional precision: ms / us AGREE; sub-us DIVERGES (round vs truncate).
+# ---------------------------------------------------------------------------
+query
+SELECT TIME '11:30:00.123' AS ms;
+----
+ms
+11:30:00.123
+
+query
+SELECT TIME '11:30:00.123456' AS us;
+----
+us
+11:30:00.123456
+
+# DIVERGENCE: sub-microsecond TIME literal. Same round-vs-truncate split as TIMESTAMP.
+onlyif postgres
+query
+SELECT TIME '11:30:00.123456789' AS subus;
+----
+subus
+11:30:00.123457
+
+onlyif serenedb
+query
+SELECT TIME '11:30:00.123456789' AS subus;
+----
+subus
+11:30:00.123456
+
+# ---------------------------------------------------------------------------
+# TIMESTAMPTZ: microsecond literal AGREES (rendered under the UTC session above).
+# ---------------------------------------------------------------------------
+query
+SELECT TIMESTAMPTZ '1992-09-20 11:30:00.123456+00' AS tz;
+----
+tz
+1992-09-20 11:30:00.123456+00
+
+query
+SELECT TIMESTAMPTZ '2020-01-01 12:00:00.5+05:30' AS halfsec;
+----
+halfsec
+2020-01-01 06:30:00.5+00
+
+# DIVERGENCE: sub-microsecond TIMESTAMPTZ literal, same round-vs-truncate split.
+onlyif postgres
+query
+SELECT TIMESTAMPTZ '1992-09-20 11:30:00.123456789+00' AS tzsub;
+----
+tzsub
+1992-09-20 11:30:00.123457+00
+
+onlyif serenedb
+query
+SELECT TIMESTAMPTZ '1992-09-20 11:30:00.123456789+00' AS tzsub;
+----
+tzsub
+1992-09-20 11:30:00.123456+00
+
+# ---------------------------------------------------------------------------
+# Epoch and boundary values: AGREE.
+# ---------------------------------------------------------------------------
+query
+SELECT TIMESTAMP '1970-01-01 00:00:00' AS epoch;
+----
+epoch
+1970-01-01 00:00:00
+
+query
+SELECT TIMESTAMP '9999-12-31 23:59:59.999999' AS y9999;
+----
+y9999
+9999-12-31 23:59:59.999999
+
+query
+SELECT EXTRACT(epoch FROM TIMESTAMP '1970-01-01 00:00:00.123456') AS ep;
+----
+ep
+0.123456
+
+query
+SELECT EXTRACT(microseconds FROM TIME '11:30:00.123456') AS micros;
+----
+micros
+123456
+
+# ---------------------------------------------------------------------------
+# make_time: rounds sub-us on BOTH DBs -> AGREE.
+# make_timestamp: PG rounds, SereneDB truncates -> DIVERGES (see below).
+# ---------------------------------------------------------------------------
+query
+SELECT make_time(11, 30, 0.123456) AS mt;
+----
+mt
+11:30:00.123456
+
+# make_time rounds the sub-microsecond digit identically on both databases.
+query
+SELECT make_time(11, 30, 0.123456789) AS mt_sub;
+----
+mt_sub
+11:30:00.123457
+
+# make_timestamp at exactly microsecond precision AGREES.
+query
+SELECT make_timestamp(1992, 9, 20, 11, 30, 0.123456) AS mts;
+----
+mts
+1992-09-20 11:30:00.123456
+
+# DIVERGENCE: make_timestamp with a sub-microsecond seconds argument.
+# PostgreSQL ROUNDS (.123456789 -> .123457); SereneDB TRUNCATES (-> .123456).
+# Note the asymmetry with make_time above, which rounds on both.
+onlyif postgres
+query
+SELECT make_timestamp(1992, 9, 20, 11, 30, 0.123456789) AS mts_sub;
+----
+mts_sub
+1992-09-20 11:30:00.123457
+
+onlyif serenedb
+query
+SELECT make_timestamp(1992, 9, 20, 11, 30, 0.123456789) AS mts_sub;
+----
+mts_sub
+1992-09-20 11:30:00.123456
+
+# ---------------------------------------------------------------------------
+# INTERVAL fractional seconds: AGREE, including the sub-us ROUND on both DBs.
+# ---------------------------------------------------------------------------
+query
+SELECT INTERVAL '1.5 seconds' AS i_half;
+----
+i_half
+00:00:01.5
+
+query
+SELECT INTERVAL '0.123456 seconds' AS i_us;
+----
+i_us
+00:00:00.123456
+
+# Fractional minutes spill into seconds; both databases agree.
+query
+SELECT INTERVAL '90.5 minutes' AS i_min;
+----
+i_min
+01:30:30
+
+# Sub-microsecond INTERVAL literal ROUNDS on BOTH databases (unlike the TIMESTAMP /
+# TIME literals above, where SereneDB truncates). Asserted as a shared value.
+query
+SELECT INTERVAL '0.123456789 seconds' AS i_sub;
+----
+i_sub
+00:00:00.123457

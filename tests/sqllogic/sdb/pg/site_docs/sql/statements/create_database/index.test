@@ -1,0 +1,23 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP DATABASE IF EXISTS app_production;
+
+statement ok
+CREATE DATABASE app_production;
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE DATABASE IF NOT EXISTS app_production;
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+USE app_production;

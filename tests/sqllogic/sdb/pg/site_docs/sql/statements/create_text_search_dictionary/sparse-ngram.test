@@ -1,0 +1,120 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY code_grams (
+    template = 'sparse_ngram',
+    frequency = true,
+    norm = true
+);
+
+query ?
+SELECT ts_lexize('code_grams', 'hello world');
+----
+ts_lexize
+{hel,ell,llo,"lo ","o w","lo w"," wo","lo wo",wor,orl,worl,rld}
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY code_grams_q (
+    template = 'sparse_ngram',
+    covering = true
+);
+
+query ?
+SELECT ts_lexize('code_grams_q', 'hello world');
+----
+ts_lexize
+{hel,ell,llo,rld,worl,"lo wo"}
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE snippets (id INT, code TEXT);
+
+statement ok
+INSERT INTO snippets VALUES
+    (1, 'for(int i=42; i<n; ++i) total += data[i];'),
+    (2, 'for(int j=0; j<n; ++j) total -= data[j];'),
+    (3, 'while(n--) { sum += *ptr++; }'),
+    (4, 'hello world');
+
+statement ok
+CREATE INDEX snippets_idx ON snippets USING inverted (id, code code_grams);
+
+query ??
+SELECT id, ts_highlight(code) AS match
+FROM snippets_idx
+WHERE code @@ ts_all(ts_lexize('code_grams_q', 'for(int i=42'))
+  AND code LIKE '%for(int i=42%'
+ORDER BY id;
+----
+id	match
+1	<b>for(int i=42</b>; i<n; ++i) total += data[i
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE ranked (id INT, code TEXT);
+
+statement ok
+INSERT INTO ranked VALUES
+    (1, 'while l < r: m = (l + r) // 2'),
+    (2, 'some noise prefix; m = (l + r) // 2'),
+    (3, 'much longer noise that matches nothing at all; r) // 2'),
+    (4, 'completely unrelated text');
+
+statement ok
+CREATE INDEX ranked_idx ON ranked USING inverted (id, code code_grams);
+
+query ??
+SELECT id, ts_highlight(code) AS match
+FROM ranked_idx
+WHERE code @@ ts_any(ts_lexize('code_grams_q', 'while l < r: m = (l + r) // 2'), 1)
+ORDER BY bm25(ranked_idx.tableoid) DESC;
+----
+id	match
+1	<b>while l < r: m = (l + r) // 2</b>
+2	some noise prefix; <b>m = (l + r) // 2</b>
+3	much longer noise that matches nothing at all; <b>r) // 2</b>
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY code_grams_q2 (
+    template = 'copy_from',
+    from = 'code_grams',
+    covering = true
+);
+
+query ?
+SELECT ts_lexize('code_grams_q2', 'for(int i=42');
+----
+ts_lexize
+{for(i,"(int i=4",=42}
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY code_grams_short (
+    template = 'sparse_ngram',
+    maxngramlength = 4
+);
+
+query ?
+SELECT ts_lexize('code_grams_short', 'hello world');
+----
+ts_lexize
+{hel,ell,llo,"lo ","o w","lo w"," wo",wor,orl,worl,rld}

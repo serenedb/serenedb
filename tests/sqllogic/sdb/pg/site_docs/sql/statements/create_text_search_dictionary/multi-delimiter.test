@@ -1,0 +1,25 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY multi_delim (
+    template = 'multi_delimiter',
+    delimiters = '":", ";", " ", ".", "|"'
+);
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tok_multi_delim (
+    template = 'multi_delimiter',
+    delimiters = '":", ";", " "'
+);
+
+query ?
+SELECT ts_lexize('tok_multi_delim', 'key:value; key2:value2');
+----
+ts_lexize
+{key,value,key2,value2}

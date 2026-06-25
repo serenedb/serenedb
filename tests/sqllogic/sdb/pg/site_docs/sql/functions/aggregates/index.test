@@ -1,0 +1,403 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE sales (
+    amount INTEGER,
+    region VARCHAR,
+    date DATE
+);
+
+statement ok
+INSERT INTO sales VALUES
+    (10, 'north', DATE '2024-01-01'),
+    (20, 'south', DATE '2024-01-02'),
+    (30, 'north', DATE '2024-01-03'),
+    (110, 'east', DATE '2024-01-04');
+
+# DOCS_TEST_BODY
+
+query
+SELECT sum(amount)
+FROM sales;
+----
+sum
+170
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query ?? rowsort
+SELECT region, sum(amount)
+FROM sales
+GROUP BY region;
+----
+region	sum
+east	110
+north	40
+south	20
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT region
+FROM sales
+GROUP BY region
+HAVING sum(amount) > 100;
+----
+region
+east
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(DISTINCT region)
+FROM sales;
+----
+count
+3
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT sum(amount), sum(amount) FILTER (region != 'north')
+FROM sales;
+----
+sum	sum
+170	130
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+SELECT list(region ORDER BY amount DESC)
+FROM sales;
+----
+list
+{east,north,south,north}
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+SELECT first(amount ORDER BY date ASC)
+FROM sales;
+----
+first
+10
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query
+SELECT string_agg(region, ', ' ORDER BY amount DESC) AS string_agg
+FROM sales;
+----
+string_agg
+east, north, south, north
+
+
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE agg_demo (a INTEGER, b INTEGER, s VARCHAR, w DOUBLE, bl BOOLEAN);
+
+statement ok
+INSERT INTO agg_demo VALUES
+    (10, 1, 'a', 1.0, true),
+    (20, 2, 'b', 2.0, false),
+    (30, 3, 'c', 3.0, true),
+    (40, 4, 'd', 4.0, true);
+
+# DOCS_TEST: any_value
+# DOCS_TEST_BODY
+query
+SELECT any_value(a ORDER BY a) AS any_value FROM agg_demo;
+----
+any_value
+10
+
+# DOCS_TEST: arg_max
+# DOCS_TEST_BODY
+query
+SELECT arg_max(a, b) AS arg_max FROM agg_demo;
+----
+arg_max
+40
+
+# DOCS_TEST: arg_max_n
+# DOCS_TEST_BODY
+query
+SELECT arg_max(a, b, 2) AS arg_max FROM agg_demo;
+----
+arg_max
+{40,30}
+
+# DOCS_TEST: arg_max_null
+# DOCS_TEST_BODY
+query
+SELECT arg_max_null(a, b) AS arg_max_null FROM agg_demo;
+----
+arg_max_null
+40
+
+# DOCS_TEST: arg_min
+# DOCS_TEST_BODY
+query
+SELECT arg_min(a, b) AS arg_min FROM agg_demo;
+----
+arg_min
+10
+
+# DOCS_TEST: arg_min_n
+# DOCS_TEST_BODY
+query
+SELECT arg_min(a, b, 2) AS arg_min FROM agg_demo;
+----
+arg_min
+{10,20}
+
+# DOCS_TEST: arg_min_null
+# DOCS_TEST_BODY
+query
+SELECT arg_min_null(a, b) AS arg_min_null FROM agg_demo;
+----
+arg_min_null
+10
+
+# DOCS_TEST: avg
+# DOCS_TEST_BODY
+query
+SELECT avg(a) AS avg FROM agg_demo;
+----
+avg
+25
+
+# DOCS_TEST: bit_and
+# DOCS_TEST_BODY
+query
+SELECT bit_and(a) AS bit_and FROM agg_demo;
+----
+bit_and
+0
+
+# DOCS_TEST: bit_or
+# DOCS_TEST_BODY
+query
+SELECT bit_or(a) AS bit_or FROM agg_demo;
+----
+bit_or
+62
+
+# DOCS_TEST: bit_xor
+# DOCS_TEST_BODY
+query
+SELECT bit_xor(a) AS bit_xor FROM agg_demo;
+----
+bit_xor
+40
+
+# DOCS_TEST: bitstring_agg
+# DOCS_TEST_BODY
+query
+SELECT bitstring_agg(a) AS bitstring_agg FROM agg_demo;
+----
+bitstring_agg
+1000000000100000000010000000001
+
+# DOCS_TEST: bool_and
+# DOCS_TEST_BODY
+query
+SELECT bool_and(bl) AS bool_and FROM agg_demo;
+----
+bool_and
+f
+
+# DOCS_TEST: bool_or
+# DOCS_TEST_BODY
+query
+SELECT bool_or(bl) AS bool_or FROM agg_demo;
+----
+bool_or
+t
+
+# DOCS_TEST: count_star
+# DOCS_TEST_BODY
+query
+SELECT count() AS count FROM agg_demo;
+----
+count
+4
+
+# DOCS_TEST: count
+# DOCS_TEST_BODY
+query
+SELECT count(a) AS count FROM agg_demo;
+----
+count
+4
+
+# DOCS_TEST: countif
+# DOCS_TEST_BODY
+query
+SELECT countif(bl) AS countif FROM agg_demo;
+----
+countif
+3
+
+# DOCS_TEST: favg
+# DOCS_TEST_BODY
+query
+SELECT favg(a) AS favg FROM agg_demo;
+----
+favg
+25
+
+# DOCS_TEST: first
+# DOCS_TEST_BODY
+query
+SELECT first(a ORDER BY a) AS first FROM agg_demo;
+----
+first
+10
+
+# DOCS_TEST: fsum
+# DOCS_TEST_BODY
+query
+SELECT fsum(a) AS fsum FROM agg_demo;
+----
+fsum
+100
+
+# DOCS_TEST: geometric_mean
+# DOCS_TEST_BODY
+query
+SELECT geometric_mean(a) AS geometric_mean FROM agg_demo;
+----
+geometric_mean
+22.133638394006436
+
+# DOCS_TEST: histogram
+# DOCS_TEST_BODY
+query
+SELECT histogram(a) AS histogram FROM agg_demo;
+----
+histogram
+{"(10,1)","(20,1)","(30,1)","(40,1)"}
+
+# DOCS_TEST: histogram_boundaries
+# DOCS_TEST_BODY
+query
+SELECT histogram(a, [0, 1, 10]) AS histogram FROM agg_demo;
+----
+histogram
+{"(0,0)","(1,0)","(10,1)","(2147483647,3)"}
+
+# DOCS_TEST: histogram_exact
+# DOCS_TEST_BODY
+query
+SELECT histogram_exact(s, ['a', 'b', 'c']) AS histogram_exact FROM agg_demo;
+----
+histogram_exact
+{"(a,1)","(b,1)","(c,1)","(\\"\\",1)"}
+
+# DOCS_TEST: last
+# DOCS_TEST_BODY
+query
+SELECT last(a ORDER BY a) AS last FROM agg_demo;
+----
+last
+40
+
+# DOCS_TEST: list
+# DOCS_TEST_BODY
+query
+SELECT list(a ORDER BY a) AS list FROM agg_demo;
+----
+list
+{10,20,30,40}
+
+# DOCS_TEST: max
+# DOCS_TEST_BODY
+query
+SELECT max(a) AS max FROM agg_demo;
+----
+max
+40
+
+# DOCS_TEST: max_n
+# DOCS_TEST_BODY
+query
+SELECT max(a, 2) AS max FROM agg_demo;
+----
+max
+{40,30}
+
+# DOCS_TEST: min
+# DOCS_TEST_BODY
+query
+SELECT min(a) AS min FROM agg_demo;
+----
+min
+10
+
+# DOCS_TEST: min_n
+# DOCS_TEST_BODY
+query
+SELECT min(a, 2) AS min FROM agg_demo;
+----
+min
+{10,20}
+
+# DOCS_TEST: product
+# DOCS_TEST_BODY
+query
+SELECT product(a) AS product FROM agg_demo;
+----
+product
+240000
+
+# DOCS_TEST: string_agg
+# DOCS_TEST_BODY
+query
+SELECT string_agg(s ORDER BY s) AS string_agg FROM agg_demo;
+----
+string_agg
+a,b,c,d
+
+# DOCS_TEST: string_agg_sep
+# DOCS_TEST_BODY
+query
+SELECT string_agg(s, '-' ORDER BY s) AS string_agg FROM agg_demo;
+----
+string_agg
+a-b-c-d
+
+# DOCS_TEST: sum
+# DOCS_TEST_BODY
+query
+SELECT sum(a) AS sum FROM agg_demo;
+----
+sum
+100
+
+# DOCS_TEST: weighted_avg
+# DOCS_TEST_BODY
+query
+SELECT weighted_avg(a, w) AS weighted_avg FROM agg_demo;
+----
+weighted_avg
+30

@@ -1,0 +1,90 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, TIMESTAMP '2025-01-01 10:00:00', 'ERROR', 'postgres', 'connection timeout to database'),
+    (2, TIMESTAMP '2025-01-01 11:00:00', 'INFO',  'api',      'startup complete'),
+    (3, TIMESTAMP '2025-01-01 12:00:00', 'ERROR', 'api',      'out of memory while indexing')
+) AS t(id, timestamp, level, service, message))
+TO '${__TEST_DIR__}/ext_logs.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| CREATE VIEW logs AS
+#|     SELECT * FROM read_parquet('s3://my-bucket/logs/2025/*.parquet');
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE VIEW logs AS
+    SELECT * FROM read_parquet('${__TEST_DIR__}/ext_logs.parquet');
+
+# DOCS_TEST: example_002
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'ERROR', 'postgres', 'connection timeout to database'),
+    (2, 'INFO',  'api',      'startup complete'),
+    (3, 'ERROR', 'api',      'out of memory while indexing')
+) AS t(id, level, service, message))
+TO '${__TEST_DIR__}/ext_logs.csv' (FORMAT csv, HEADER);
+
+# DOCS_TEST_RAW
+#| CREATE VIEW logs_csv AS
+#|     SELECT * FROM read_csv('/data/logs/*.csv');
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE VIEW logs_csv AS
+    SELECT * FROM read_csv('${__TEST_DIR__}/ext_logs.csv');
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY english_dict (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = true,
+    accent = false,
+    frequency = true,
+    position = true,
+    offset = true
+);
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX logs_idx ON logs
+    USING inverted (id, level, service, message english_dict);
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+-- Full-text search ranked by relevance, combined with an exact filter
+SELECT id, level, message
+FROM logs_idx
+WHERE message @@ ts_phrase('out of memory') AND level @@ 'ERROR'
+ORDER BY BM25(logs_idx.tableoid) DESC, id;
+----
+id	level	message
+3	ERROR	out of memory while indexing
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP INDEX logs_idx;
+
+statement ok
+CREATE INDEX logs_idx ON logs
+    USING inverted (id, level, service, message english_dict);

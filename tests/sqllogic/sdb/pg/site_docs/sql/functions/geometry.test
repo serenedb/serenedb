@@ -1,0 +1,47 @@
+# DOCS_TEST: st_geomfromwkb
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_GeomFromWKB('\x0101000000000000000000f03f0000000000000040'::BLOB)) AS geom;
+----
+geom
+POINT (1 2)
+
+# DOCS_TEST: st_aswkb
+# DOCS_TEST_BODY
+query
+SELECT ST_AsWKB('POINT(1 2)'::GEOMETRY) AS wkb;
+----
+wkb
+\\x0101000000000000000000f03f0000000000000040
+
+# DOCS_TEST: st_aswkt
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText('POINT(1 2)'::GEOMETRY) AS wkt;
+----
+wkt
+POINT (1 2)
+
+# DOCS_TEST: st_intersects_extent
+# DOCS_TEST_BODY
+query
+SELECT ST_Intersects_Extent('POINT(5 5)'::GEOMETRY, 'LINESTRING(0 0, 10 20)'::GEOMETRY) AS intersects;
+----
+intersects
+t
+
+# DOCS_TEST: st_crs
+# DOCS_TEST_BODY
+query
+SELECT ST_CRS('POINT(1 2)'::GEOMETRY('OGC:CRS84')) AS crs;
+----
+crs
+OGC:CRS84
+
+# DOCS_TEST: st_setcrs
+# DOCS_TEST_BODY
+query
+SELECT typeof(ST_SetCRS('POINT(1 2)'::GEOMETRY, 'OGC:CRS84')) AS type;
+----
+type
+GEOMETRY('OGC:CRS84')

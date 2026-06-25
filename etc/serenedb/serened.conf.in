@@ -22,6 +22,13 @@
 # Minimum log severity: trace | debug | info | warning | error | fatal.
 --log_level=info
 
-# Log destination: 'stdout', 'memory' (queryable via duckdb_logs()), or
-# 'file://<path>'.
-@COMMENT_LOGFILE@--log_storage=file://@LOCALSTATEDIR@/log/serenedb/serened.log
+# Log destination at process start:
+#   stdout  -- captured by systemd/journald (default)
+#   memory  -- queryable via SELECT * FROM duckdb_logs()
+#   file    -- written to --log_path below
+--log_storage=stdout
+
+# Filesystem destination, used only when --log_storage=file. A path ending in
+# '.csv' is written as a single log file; any other path is treated as a
+# directory that log CSVs are written into.
+# --log_path=@LOCALSTATEDIR@/log/serenedb

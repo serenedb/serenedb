@@ -1,11 +1,20 @@
-# Casting an array to text renders the PostgreSQL array-literal format
-# {a,b,c} -- brace-delimited, comma-separated, no spaces -- not DuckDB's
-# [a, b, c]. This exercises both registered LIST -> VARCHAR casts: the concrete
-# LIST(VARCHAR) form (text arrays) and the general LIST(ANY) form (int, nested).
+# Casting an array to text. SereneDB renders DuckDB's native bracket format
+# [a, b, c] -- bracket-delimited, space after comma; PostgreSQL renders the
+# array-literal brace format {a,b,c}. This exercises both registered LIST ->
+# VARCHAR casts: the concrete LIST(VARCHAR) form (text arrays) and the general
+# LIST(ANY) form (int, nested).
 #
 # Lore: the vedernikoff cast of characters fills the arrays.
 
 # VARCHAR child: the concrete LIST(VARCHAR) -> VARCHAR cast.
+onlyif serenedb
+query
+SELECT (ARRAY['vedernikoff','clickclack','iceberg'])::text AS names;
+----
+names
+[vedernikoff, clickclack, iceberg]
+
+onlyif postgres
 query
 SELECT (ARRAY['vedernikoff','clickclack','iceberg'])::text AS names;
 ----
@@ -15,6 +24,14 @@ names
 
 # Non-VARCHAR child: the general LIST(ANY) -> VARCHAR cast (chains via
 # LIST(INT) -> LIST(VARCHAR) -> our formatter).
+onlyif serenedb
+query
+SELECT (ARRAY[3,1,4,1,5])::text AS ints;
+----
+ints
+[3, 1, 4, 1, 5]
+
+onlyif postgres
 query
 SELECT (ARRAY[3,1,4,1,5])::text AS ints;
 ----
@@ -22,8 +39,17 @@ ints
 {3,1,4,1,5}
 
 
-# PG element-quoting rules: an element is double-quoted when it contains a
-# comma or whitespace or is empty; NULL renders as the bare word NULL.
+# Element quoting: SereneDB uses DuckDB's single-quote rules (quote on comma or
+# whitespace, empty string -> ''); PostgreSQL double-quotes on comma, whitespace
+# or empty, NULL renders bare on both.
+onlyif serenedb
+query
+SELECT (ARRAY['mop','babsky, jr','','iceberg lake',NULL])::text AS quoted;
+----
+quoted
+[mop, 'babsky, jr', '', iceberg lake, NULL]
+
+onlyif postgres
 query
 SELECT (ARRAY['mop','babsky, jr','','iceberg lake',NULL])::text AS quoted;
 ----
@@ -31,7 +57,15 @@ quoted
 {mop,"babsky, jr","","iceberg lake",NULL}
 
 
-# Nested arrays recurse: {{...},{...}}, inner elements unquoted.
+# Nested arrays recurse: [[...], [...]] on SereneDB, {{...},{...}} on PostgreSQL.
+onlyif serenedb
+query
+SELECT (ARRAY[ARRAY['tick','clack'],ARRAY['mop','babsky']])::text AS nested;
+----
+nested
+[[tick, clack], [mop, babsky]]
+
+onlyif postgres
 query
 SELECT (ARRAY[ARRAY['tick','clack'],ARRAY['mop','babsky']])::text AS nested;
 ----
@@ -39,8 +73,15 @@ nested
 {{tick,clack},{mop,babsky}}
 
 
-# Round-trip: a PG array literal parsed to text[] and cast back to text is
-# unchanged.
+# Round-trip: a PG array literal parsed to text[] and cast back to text.
+onlyif serenedb
+query
+SELECT ('{vedernikoff,mop}'::text[])::text AS roundtrip;
+----
+roundtrip
+[vedernikoff, mop]
+
+onlyif postgres
 query
 SELECT ('{vedernikoff,mop}'::text[])::text AS roundtrip;
 ----

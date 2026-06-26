@@ -25,7 +25,7 @@
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
-#include "absl/container/flat_hash_set.h"
+#include "basics/containers/flat_hash_set.h"
 #include "catalog/object.h"
 
 namespace sdb {
@@ -42,10 +42,10 @@ namespace sdb::connector {
 struct RelationAccess {
   std::shared_ptr<catalog::Table> table;
   catalog::AclMode action = catalog::AclMode::NoRights;
-  absl::flat_hash_set<uint64_t> selected;
-  absl::flat_hash_set<uint64_t> returned;
-  absl::flat_hash_set<uint64_t> updated;
-  absl::flat_hash_set<uint64_t> inserted;
+  containers::FlatHashSet<uint64_t> selected;
+  containers::FlatHashSet<uint64_t> returned;
+  containers::FlatHashSet<uint64_t> updated;
+  containers::FlatHashSet<uint64_t> inserted;
   bool table_read = false;
   bool inside_view = false;
   bool dml_projection = false;

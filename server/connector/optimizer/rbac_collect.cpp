@@ -33,7 +33,7 @@
 #include <optional>
 
 #include "absl/cleanup/cleanup.h"
-#include "absl/container/flat_hash_map.h"
+#include "basics/containers/flat_hash_map.h"
 #include "catalog/table.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_entry.h"
@@ -48,7 +48,7 @@ std::shared_ptr<catalog::Table> WriteTarget(duckdb::TableCatalogEntry& table) {
   return nullptr;
 }
 
-using GetMap = absl::flat_hash_map<uint64_t, const duckdb::LogicalGet*>;
+using GetMap = containers::FlatHashMap<uint64_t, const duckdb::LogicalGet*>;
 
 std::optional<uint64_t> ResolveLogicalColumn(
   const duckdb::BoundColumnRefExpression& col, const GetMap& gets) {

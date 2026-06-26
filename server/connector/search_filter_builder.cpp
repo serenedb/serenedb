@@ -21,7 +21,6 @@
 #include "search_filter_builder.hpp"
 
 #include <absl/algorithm/container.h>
-#include <absl/container/flat_hash_map.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
@@ -60,6 +59,7 @@
 #include <magic_enum/magic_enum.hpp>
 
 #include "basics/assert.h"
+#include "basics/containers/flat_hash_map.h"
 #include "basics/containers/node_hash_map.h"
 #include "basics/errors.h"
 #include "basics/string_utils.h"
@@ -745,7 +745,7 @@ duckdb::unique_ptr<duckdb::Expression> BuildAnyToken(
 using PredicateInnerBuilder = duckdb::unique_ptr<duckdb::Expression> (*)(
   std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args);
 
-const absl::flat_hash_map<std::string_view, PredicateInnerBuilder>
+const containers::FlatHashMap<std::string_view, PredicateInnerBuilder>
   kSugarBuilders = {
     {kPhraseMatches, BuildPassthrough<kTSQPhrase>},
     {kNgramMatches, BuildPassthrough<kTSQNgram>},
@@ -835,7 +835,7 @@ bool IsLikeCompatibleAnalyzer(irs::TypeInfo::type_id t) {
          t == irs::Type<irs::analysis::WildcardAnalyzer>::id();
 }
 
-const absl::flat_hash_map<std::string_view, StringBuiltinBuilder>
+const containers::FlatHashMap<std::string_view, StringBuiltinBuilder>
   kBuiltinBuilder = {
     {"contains", &BuildTSContainsLike},
     {"^@", &BuildTSStartsWith},

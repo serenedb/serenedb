@@ -81,7 +81,7 @@ column_name	column_type	min	max	approx_unique	avg	std	q25	q50	q75	count	null_per
 id	INTEGER	1	2	2	1.5	0.7071067811865476	1	2	2	2	0.00
 vr	VARIANT	{'a': 1}	{'a': 2.5}	2	NULL	NULL	NULL	NULL	NULL	2	0.00
 st	STRUCT(a INTEGER, b VARCHAR)	{'a': 1, 'b': x}	{'a': 2, 'b': y}	2	NULL	NULL	NULL	NULL	NULL	2	0.00
-ls	INTEGER[]	{1,2}	{3}	2	NULL	NULL	NULL	NULL	NULL	2	0.00
+ls	INTEGER[]	[1, 2]	[3]	2	NULL	NULL	NULL	NULL	NULL	2	0.00
 
 
 # Cleanup

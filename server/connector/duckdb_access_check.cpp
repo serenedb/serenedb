@@ -51,7 +51,8 @@ void RequireColumns(const catalog::Snapshot& snapshot, ObjectId role,
 // Resolve logical column indices (the position excluding the generated PK, as
 // the planner numbers them) to Column pointers in a single pass over the table.
 std::vector<const catalog::Column*> ResolveColumns(
-  const catalog::Table& table, const absl::flat_hash_set<uint64_t>& logical) {
+  const catalog::Table& table,
+  const containers::FlatHashSet<uint64_t>& logical) {
   std::vector<const catalog::Column*> out;
   out.reserve(logical.size());
   uint64_t visible = 0;
@@ -130,7 +131,7 @@ void AccessRecord::Enforce(ConnectionContext& ctx) const {
     // is the "read with no specific column" case (e.g. count(*)) ->
     // table-level.
     if (rel.table_read || !rel.selected.empty() || !rel.returned.empty()) {
-      absl::flat_hash_set<uint64_t> read = rel.selected;
+      containers::FlatHashSet<uint64_t> read = rel.selected;
       read.insert(rel.returned.begin(), rel.returned.end());
       RequireColumns(*snapshot, role, table, catalog::AclMode::Select,
                      ResolveColumns(table, read));

@@ -425,10 +425,14 @@ Result InvertedIndexStorage::CompactUnsafeImpl(
 
   try {
     const auto res = _writer->Compact(policy, field_options, nullptr, progress);
-    if (!res) {
+    if (res.error == irs::CompactionError::Fail) {
       return {ERROR_INTERNAL,
               "failure while executing compaction policy on Search index '",
               GetId().id(), "'"};
+    }
+    if (res.error == irs::CompactionError::Busy) {
+      empty_compaction = false;
+      return {};
     }
 
     empty_compaction = (res.size == 0);

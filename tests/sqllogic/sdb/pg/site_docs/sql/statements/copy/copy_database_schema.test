@@ -6,30 +6,30 @@ statement ok
 USE $__DATABASE__;
 
 statement ok
-DETACH IF EXISTS db11;
+DETACH IF EXISTS db31;
 
 statement ok
-DETACH IF EXISTS db22;
+DETACH IF EXISTS db32;
 
 statement ok
-ATTACH ':memory:' AS db11;
+ATTACH ':memory:' AS db31;
 
 statement ok
-ATTACH ':memory:' AS db22;
+ATTACH ':memory:' AS db32;
 
 statement ok
-CREATE TABLE db11.tbl AS SELECT 42 AS x, 3 AS y;
+CREATE TABLE db31.tbl AS SELECT 42 AS x, 3 AS y;
 
 statement ok
-CREATE MACRO db11.two_x_plus_y(x, y) AS 2 * x + y;
+CREATE MACRO db31.two_x_plus_y(x, y) AS 2 * x + y;
 
 # DOCS_TEST_BODY
 
 statement ok
-COPY FROM DATABASE db11 TO db22 (SCHEMA);
+COPY FROM DATABASE db31 TO db32 (SCHEMA);
 
 statement ok
-DETACH IF EXISTS db11;
+DETACH IF EXISTS db31;
 
 statement ok
-DETACH IF EXISTS db22;
+DETACH IF EXISTS db32;

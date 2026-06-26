@@ -10,12 +10,12 @@ SET preserve_insertion_order = false;
 # DOCS_TEST: example_002
 
 statement ok
-DETACH IF EXISTS db;
+DETACH IF EXISTS db151;
 
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '${__TEST_DIR__}/somefile.db' AS db (ROW_GROUP_SIZE 16384);
+ATTACH '${__TEST_DIR__}/db151.db' AS db151 (ROW_GROUP_SIZE 16384);
 
 # DOCS_TEST: example_003
 
@@ -40,3 +40,6 @@ FROM duckdb_external_file_cache();
 #| PRAGMA tpch(1);
 
 # DOCS_TEST_BODY
+
+statement ok
+DETACH IF EXISTS db151;

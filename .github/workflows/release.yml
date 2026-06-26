@@ -1,6 +1,6 @@
 name: serenedb | make release
 
-run-name: "serenedb | make release [${{ inputs.BUILD_AMD64 && inputs.BUILD_ARM64 && 'amd64+arm64' || inputs.BUILD_AMD64 && 'amd64' || 'arm64' }}]"
+run-name: "serenedb | make release [${{ inputs.BUILD_AMD64 && inputs.BUILD_ARM64 && 'amd64+arm64' || inputs.BUILD_AMD64 && 'amd64' || inputs.BUILD_ARM64 && 'arm64' || 'none' }}]"
 
 on:
   workflow_dispatch:
@@ -56,22 +56,26 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       patch: ${{ steps.version.outputs.patch }}
+      major: ${{ steps.version.outputs.major }}
+      minor: ${{ steps.version.outputs.minor }}
     steps:
       - name: Resolve version patch
         id: version
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          MAJOR=$(date -u +%y)
+          MINOR=$(date -u +%m)
           PATCH="${{ inputs.SERENEDB_VERSION_PATCH }}"
           if [[ -z "$PATCH" ]]; then
-            MAJOR=$(date -u +%y)
-            MINOR=$(date -u +%m)
-            LAST=$(gh release list --repo "${{ github.repository }}" --limit 100 --json tagName \
-              --jq "[.[] | .tagName | ltrimstr(\"v\") | select(startswith(\"${MAJOR}.${MINOR}.\")) | ltrimstr(\"${MAJOR}.${MINOR}.\") | select(test(\"^[0-9]+\")) | split(\"-\")[0]] | map(tonumber) | max // 0" \
+            LAST=$(gh release list --repo "${{ github.repository }}" --limit 100 --json tagName,isDraft \
+              --jq "[.[] | select(.isDraft | not) | .tagName | ltrimstr(\"v\") | select(startswith(\"${MAJOR}.${MINOR}.\")) | ltrimstr(\"${MAJOR}.${MINOR}.\") | select(test(\"^[0-9]+\")) | split(\"-\")[0]] | map(tonumber) | max // 0" \
               2>/dev/null || echo "0")
             PATCH=$(( LAST + 1 ))
           fi
           echo "patch=$PATCH" >> "$GITHUB_OUTPUT"
+          echo "major=$MAJOR" >> "$GITHUB_OUTPUT"
+          echo "minor=$MINOR" >> "$GITHUB_OUTPUT"
 
   build-amd64:
     if: inputs.BUILD_AMD64
@@ -121,9 +125,9 @@ jobs:
       - name: Set version
         run: |
           PATCH="${{ needs.resolve-version.outputs.patch }}"
+          MAJOR="${{ needs.resolve-version.outputs.major }}"
+          MINOR="${{ needs.resolve-version.outputs.minor }}"
           echo "SERENEDB_VERSION_PATCH=$PATCH" >> $GITHUB_ENV
-          MAJOR=$(date -u +%y)
-          MINOR=$(date -u +%m)
           echo "DOCKER_TAG=${MAJOR}.${MINOR}.${PATCH}" >> $GITHUB_ENV
 
       - name: Download amd64 packages
@@ -160,6 +164,12 @@ jobs:
           done
           echo "has_tarballs=$HAS_TARBALLS" >> "$GITHUB_OUTPUT"
 
+          if [ -e packages/tarball/install-amd64.tar.gz ]; then
+            echo "test_arch=amd64" >> "$GITHUB_OUTPUT"
+          elif [ -e packages/tarball/install-arm64.tar.gz ]; then
+            echo "test_arch=arm64" >> "$GITHUB_OUTPUT"
+          fi
+
           # Collect packages for GitHub release
           mkdir -p release-packages
           find packages/ -name "serenedb*.deb" -exec cp {} release-packages/ \;
@@ -187,7 +197,7 @@ jobs:
         if: inputs.RTA != 'off' && steps.docker_build.outcome == 'success'
         continue-on-error: ${{ inputs.RTA == 'test' }}
         env:
-          DOCKER_TEST_IMAGE: serenedb/serenedb:${{ env.DOCKER_TAG }}-amd64
+          DOCKER_TEST_IMAGE: serenedb/serenedb:${{ env.DOCKER_TAG }}-${{ steps.prepare.outputs.test_arch }}
           BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
           WORKSPACE: ${{ github.workspace }}
         run: ./scripts/ci/steps/08-ci-docker-rta.bash
@@ -237,6 +247,16 @@ jobs:
 
           if [ ${#ASSETS[@]} -eq 0 ]; then
             echo "::error::No packages found, skipping GitHub release"
+            exit 1
+          fi
+
+          EXISTING=$(gh release view "${TAG}" --json isDraft --jq '.isDraft' 2>/dev/null || echo "missing")
+          if [[ "$EXISTING" == "true" ]]; then
+            echo "Replacing existing draft release ${TAG}"
+            gh release delete "${TAG}" --yes
+            gh api -X DELETE "repos/${{ github.repository }}/git/refs/tags/${TAG}" 2>/dev/null || true
+          elif [[ "$EXISTING" == "false" ]]; then
+            echo "::error::Release ${TAG} already exists and is published; refusing to overwrite"
             exit 1
           fi
 

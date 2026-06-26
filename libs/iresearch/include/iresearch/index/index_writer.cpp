@@ -1346,7 +1346,9 @@ CompactionResult IndexWriter::Compact(
       SDB_ASSERT(candidate != nullptr);
       // TODO(mbkkt) Make this check assert in future
       if (_compacting.segments.contains(candidate->Meta().name)) {
-        return {0, CompactionError::Fail};
+        // A concurrent compaction already owns this candidate; not an error,
+        // the caller retries or lets the other compaction finish it.
+        return {0, CompactionError::Busy};
       }
     }
 
@@ -1439,6 +1441,7 @@ CompactionResult IndexWriter::Compact(
             IRESEARCH, "Failed to start compaction for index generation '",
             committed_reader->Meta().index_meta.gen, "', not found segment ",
             candidate->Meta().name, " in committed state");
+          result.error = CompactionError::Busy;
           return result;
         }
       }
@@ -1473,6 +1476,7 @@ CompactionResult IndexWriter::Compact(
                 "' for segment '", compaction_segment.meta.name,
                 "', found only '", count, "' out of '", candidates.size(),
                 "' candidates");
+      result.error = CompactionError::Busy;
       return result;
     }
 
@@ -1488,6 +1492,7 @@ CompactionResult IndexWriter::Compact(
                   "', due removed documents still present "
                   "the compaction candidates");
 
+        result.error = CompactionError::Busy;
         return result;
       }
 

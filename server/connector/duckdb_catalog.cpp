@@ -418,14 +418,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
       ERR_MSG("unacceptable schema name \"", info.schema, "\""),
       ERR_DETAIL("The prefix \"pg_\" is reserved for system schemas."));
   }
-  // SereneDBCatalog (unlike a DuckCatalog) has no SingleFileStorageManager, so
-  // it is never driven by WAL replay / checkpoint -- CreateSchema is only
-  // reached from a CREATE SCHEMA statement, which always carries a session.
+
   auto& client = transaction.GetContext();
 
-  // PG: schemas pre-populated by the system catalog (e.g. information_schema)
-  // shadow the user catalog. Reject creation if a system schema with the same
-  // name already exists.
   auto& system = duckdb::Catalog::GetSystemCatalog(client);
   bool if_not_exists =
     info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;

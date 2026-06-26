@@ -24,7 +24,6 @@
 #include <iresearch/search/filter.hpp>
 
 #include "basics/memory.hpp"
-#include "common.h"
 
 namespace sdb::connector {
 

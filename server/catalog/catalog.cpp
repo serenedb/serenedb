@@ -2513,9 +2513,10 @@ Result Catalog::CreateTable(const AccessContext& ax, ObjectId database_id,
   auto table_id = with_tombstone ? operation_options.table_id : NextId();
 
   // Generated serial/PK sequences are owned by the table owner too (PG: ALTER
-  // TABLE OWNER TO cascades to them, so they must start matching).
-  // options.owner defaults to root for internal/bootstrap callers.
-  const ObjectId owner = options.owner;
+  // TABLE OWNER TO cascades to them, so they must start matching). The owner is
+  // the acting role from the access context (root for internal/bootstrap
+  // callers via NoAccessCheck).
+  const ObjectId owner = ax.role;
 
   std::vector<std::shared_ptr<Sequence>> sequences;
   sequences.reserve(sequence_specs.size() + 1);

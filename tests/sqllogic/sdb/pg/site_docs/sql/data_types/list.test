@@ -125,7 +125,7 @@ Example	Result
 ['a', 'b', 'c'][-1]	c
 ['a', 'b', 'c'][2 + 1]	c
 list_extract(['a', 'b', 'c'], 3)	c
-['a', 'b', 'c'][1:2]	{a,b}
-['a', 'b', 'c'][:2]	{a,b}
-['a', 'b', 'c'][-2:]	{b,c}
-list_slice(['a', 'b', 'c'], 2, 3)	{b,c}
+['a', 'b', 'c'][1:2]	[a, b]
+['a', 'b', 'c'][:2]	[a, b]
+['a', 'b', 'c'][-2:]	[b, c]
+list_slice(['a', 'b', 'c'], 2, 3)	[b, c]

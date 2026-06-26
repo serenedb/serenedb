@@ -127,7 +127,8 @@ void AccessRecord::Enforce(ConnectionContext& ctx) const {
 
     // SELECT covers both the columns read directly (selected) and those a DML
     // RETURNING clause reads back (returned). An empty set with table_read set
-    // is the "read with no specific column" case (e.g. count(*)) -> table-level.
+    // is the "read with no specific column" case (e.g. count(*)) ->
+    // table-level.
     if (rel.table_read || !rel.selected.empty() || !rel.returned.empty()) {
       absl::flat_hash_set<uint64_t> read = rel.selected;
       read.insert(rel.returned.begin(), rel.returned.end());

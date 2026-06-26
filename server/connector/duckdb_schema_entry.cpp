@@ -458,10 +458,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     }
   }
 
-  // Creator owns the table (and its generated serial/PK sequences).
+  // Creator owns the table (and its generated serial/PK sequences) via the
+  // access context.
   const ObjectId role{GetSereneDBContext(transaction.GetContext()).GetRoleId()};
-  options.owner = role;
-
   auto r =
     catalog_impl.CreateTable(catalog::RequireOwnership(role), database_id, name,
                              std::move(options), op_options);

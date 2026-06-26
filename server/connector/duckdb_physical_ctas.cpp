@@ -155,14 +155,10 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   // A valid table id puts CreateTable in CTAS mode: tombstoned, no store table.
   catalog::CreateTableOperationOptions op_options;
   op_options.table_id = _table_id;
-  // Attribute ownership to the creating role (RBAC). Planning is side-effect
-  // free and may run more than once, so owner is stamped here at execution,
-  // where the session role is available, rather than in PlanCreateTableAs.
-  catalog::CreateTableOptions options = _options;
-  options.owner = GetSereneDBContext(context).GetRoleId();
+  // Ownership is attributed to the creating role via the access context.
   auto create_result =
     catalog_impl.CreateTable(catalog::RequireOwnership(context), _database_id,
-                             _schema_name, std::move(options), op_options);
+                             _schema_name, _options, op_options);
   if (!create_result.ok()) {
     SDB_THROW(std::move(create_result));
   }

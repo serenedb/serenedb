@@ -1675,8 +1675,10 @@ TEST_F(IRSColumnstoreTest, MergeSegmentBatchedTailValidityMatchesPointRead) {
     for (const auto sz : sizes) {
       uint64_t pos = 0;
       while (pos < sz) {
-        const auto take = std::min<duckdb::idx_t>(sz - pos, STANDARD_VECTOR_SIZE);
-        duckdb::Vector pk_batch{duckdb::LogicalType::BLOB, STANDARD_VECTOR_SIZE};
+        const auto take =
+          std::min<duckdb::idx_t>(sz - pos, STANDARD_VECTOR_SIZE);
+        duckdb::Vector pk_batch{duckdb::LogicalType::BLOB,
+                                STANDARD_VECTOR_SIZE};
         duckdb::Vector val_batch{type, STANDARD_VECTOR_SIZE};
         auto* pk_slots =
           duckdb::FlatVector::GetDataMutable<duckdb::string_t>(pk_batch);
@@ -1687,8 +1689,8 @@ TEST_F(IRSColumnstoreTest, MergeSegmentBatchedTailValidityMatchesPointRead) {
         for (duckdb::idx_t k = 0; k < take; ++k) {
           const auto g = out_row + k;
           const auto pk = "pk_" + std::to_string(g);
-          pk_slots[k] =
-            duckdb::StringVector::AddStringOrBlob(pk_batch, pk.data(), pk.size());
+          pk_slots[k] = duckdb::StringVector::AddStringOrBlob(
+            pk_batch, pk.data(), pk.size());
           if (is_valid(g)) {
             const auto v = value_of(g);
             val_slots[k] = duckdb::StringVector::AddStringOrBlob(

@@ -21,6 +21,8 @@
 #pragma once
 
 #include <iresearch/index/index_writer.hpp>
+#include <optional>
+#include <vector>
 #include <yaclib/async/future.hpp>
 
 #include "basics/containers/flat_hash_map.h"
@@ -29,6 +31,7 @@
 #include "catalog/catalog.h"
 #include "query/config.h"
 #include "search/inverted_index_storage.h"
+#include "search/search_table_transaction.h"
 
 namespace sdb::query {
 
@@ -42,6 +45,7 @@ class Transaction : public Config {
     // reasons) So if we get here explicit Commit/Rollback should be already
     // called. Otherwise we might have some unexpected data
     SDB_ASSERT(_search_transactions.empty());
+    SDB_ASSERT(!_search_txn || _search_txn->Empty());
   }
 #endif
 
@@ -66,6 +70,10 @@ class Transaction : public Config {
   Result Commit();
 
   Result Rollback();
+
+  void UpdateNumRows(ObjectId table_id, int64_t delta) noexcept {
+    _table_rows_deltas[table_id] += delta;
+  }
 
   // True once any statement that reads or writes the current database ran
   // inside the active explicit transaction; gates late SET TRANSACTION
@@ -107,6 +115,17 @@ class Transaction : public Config {
         entry.transaction->RegisterFlush();
       }
     }
+  }
+
+  // Lazily-created search-table (TableEngine::Search) transaction state +
+  // commit logic. Engaged on the first search-table write/scan; query::
+  // Transaction just delegates RegisterFlush/Commit/Abort to it (see Commit /
+  // Rollback). The operator and scan reach the per-shard mutators through here.
+  search::SearchTableTransaction& SearchTxn() {
+    if (!_search_txn) {
+      _search_txn.emplace();
+    }
+    return *_search_txn;
   }
 
   void Destroy() noexcept;
@@ -168,6 +187,13 @@ class Transaction : public Config {
   containers::FlatHashMap<ObjectId, SearchTransaction> _search_transactions;
   containers::FlatHashMap<ObjectId, search::InvertedIndexSnapshotPtr>
     _search_snapshots;
+  containers::FlatHashMap<ObjectId, int64_t> _table_rows_deltas;
+  void ApplyTableStatsDiffs() noexcept;
+  // All search-table (TableEngine::Search) state + WAL commit logic. Engaged
+  // lazily via SearchTxn(); reset in Destroy. The inverted-index trxs above
+  // stay here -- they commit on the store-table tick, not the engine WAL tick.
+  std::optional<search::SearchTableTransaction> _search_txn;
+  uint64_t _num_log_data_markers = 0;
   bool _had_query_in_transaction = false;
   // Set once a statement has performed uncommitted DML; pins all three views
   // for the rest of the transaction. Cleared at commit/rollback.

@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -18,31 +18,21 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "key_utils.hpp"
+#include "basics/zstd_context.hpp"
 
-#include "basics/assert.h"
-#include "catalog/identifiers/object_id.h"
-#include "catalog/table_options.h"
-#include "connector/key_concat.h"
+#include <zstd.h>
 
-namespace sdb::connector::key_utils {
+namespace sdb::basics {
 
-std::string PrepareTableKey(ObjectId id) {
-  std::string key;
-  AppendTableKey(key, id);
-  return key;
+void ZstdCCtxDeleter::operator()(ZSTD_CCtx_s* cctx) const noexcept {
+  ZSTD_freeCCtx(cctx);  // no-op on nullptr
 }
 
-std::string PrepareColumnKey(ObjectId id, catalog::Column::Id column_oid) {
-  SDB_ASSERT(id.isSet());
-  std::string key;
-  keyenc::Concat(key, id, column_oid);
-  return key;
+void ZstdDCtxDeleter::operator()(ZSTD_DCtx_s* dctx) const noexcept {
+  ZSTD_freeDCtx(dctx);  // no-op on nullptr
 }
 
-void AppendTableKey(std::string& key, ObjectId id) {
-  SDB_ASSERT(id.isSet());
-  keyenc::Concat(key, id);
-}
+ZstdCCtxPtr MakeZstdCCtx() { return ZstdCCtxPtr{ZSTD_createCCtx()}; }
+ZstdDCtxPtr MakeZstdDCtx() { return ZstdDCtxPtr{ZSTD_createDCtx()}; }
 
-}  // namespace sdb::connector::key_utils
+}  // namespace sdb::basics

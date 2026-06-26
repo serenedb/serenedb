@@ -160,7 +160,7 @@ struct TableDrop final : public DropTask {
       _indexes{std::move(indexes)},
       _owned_sequences{std::move(owned_sequences)} {}
 
-  TableDrop(const std::shared_ptr<Table>& table,
+  TableDrop(const std::shared_ptr<Table>& table, ObjectId db_id,
             std::vector<std::shared_ptr<IndexDrop>> indexes,
             std::vector<ObjectId> owned_sequences, ObjectId schema_id,
             std::string store_name,
@@ -170,7 +170,9 @@ struct TableDrop final : public DropTask {
       _store_name{std::move(store_name)},
       _fk_referenced_store_names{std::move(fk_referenced_store_names)},
       _indexes{std::move(indexes)},
-      _owned_sequences{std::move(owned_sequences)} {}
+      _owned_sequences{std::move(owned_sequences)},
+      _db_id{table->GetEngine() == TableEngine::Search ? db_id : ObjectId{}},
+      _search_data{table->GetData()} {}
 
   // FK linkage entries must go before ANY table drop in the transaction:
   // a live back-reference makes duckdb refuse dropping the main-key table,
@@ -189,7 +191,7 @@ struct TableDrop final : public DropTask {
   // Drops the store table synchronously in the same transaction that
   // tombstones the drop, freeing the public name immediately (renames are
   // unsafe for FK-involved tables: duckdb keeps back-references by name).
-  // No-op when the table has no store table (Fast engine) or lives under
+  // No-op when the table has no store table (Search engine) or lives under
   // the dropped name (CTAS); Finalize's drop-by-id covers the latter.
   void EmitStoreDrops(CatalogStore::WriteContext& ctx) const {
     if (!_store_name.empty()) {
@@ -219,6 +221,9 @@ struct TableDrop final : public DropTask {
   std::vector<std::string> _fk_referenced_store_names;
   std::vector<std::shared_ptr<IndexDrop>> _indexes;
   std::vector<ObjectId> _owned_sequences;
+  // Set (db_id + iresearch store weak) only for Search tables; see Execute.
+  ObjectId _db_id;
+  std::weak_ptr<search::SearchTable> _search_data;
 };
 
 struct SchemaDrop final : public DropTask {

@@ -26,6 +26,7 @@
 #include <absl/strings/escaping.h>
 
 #include <algorithm>
+#include <duckdb/common/file_system.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/fast_text_model.hpp>
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
@@ -36,7 +37,20 @@
 #include <yaclib/async/wait.hpp>
 
 #include "basics/assert.h"
+#include "basics/down_cast.h"
+#include "basics/duckdb_engine.h"
+#include "basics/exceptions.h"
+#include "basics/lifecycle.h"
+#include "basics/log.h"
+#include "basics/number_of_cores.h"
+#include "catalog/catalog.h"
+#include "catalog/index.h"
+#include "catalog/inverted_index.h"
+#include "catalog/view.h"
+#include "rest_server/database_path_feature.h"
 #include "search/inverted_index_storage.h"
+#include "search/search_db_wal.h"
+#include "search/search_table_recovery.h"
 #include "search/task.h"
 #include "search/wal_recovery.h"
 
@@ -75,6 +89,9 @@ int SearchEngine::MaxConcurrentCompactions() noexcept {
 
 void SearchEngine::start() {
   InitInvertedIndexes();
+  // Replay each database's search-table WAL into iresearch. Delta-based and
+  // unconditional, mirroring inverted-index recovery (no skip flag).
+  RunSearchTableRecovery(false);
   SDB_INFO(SEARCH, "Search maintenance: per-index refresh/compaction loops");
 }
 
@@ -90,6 +107,9 @@ void SearchEngine::stop() {
   if (!loops.empty()) {
     yaclib::Wait(loops.begin(), loops.end());
   }
+  // Close the per-database WALs (flush + release file handles) before shutdown.
+  absl::MutexLock lock(&_db_wals_mu);
+  _db_wals.clear();
 }
 
 void SearchEngine::StartTasks(
@@ -113,6 +133,23 @@ std::filesystem::path SearchEngine::GetPersistedPath(
   path /= kEngineDirRoot;
   path /= absl::StrCat(database_id);
   return path;
+}
+
+SearchDbWal& SearchEngine::GetDbWal(ObjectId database_id) {
+  absl::MutexLock lock(&_db_wals_mu);
+  auto it = _db_wals.find(database_id);
+  if (it == _db_wals.end()) {
+    // Borrow the process-wide FileSystem (owned by the DuckDB instance, which
+    // outlives the engine). The WAL lives at GetPersistedPath(db)/wal/.
+    auto& fs = duckdb::FileSystem::GetFileSystem(
+      sdb::DuckDBEngine::Instance().instance());
+    auto wal_dir = GetPersistedPath(database_id) / "wal";
+    it = _db_wals
+           .emplace(database_id,
+                    std::make_unique<SearchDbWal>(fs, std::move(wal_dir)))
+           .first;
+  }
+  return *it->second;
 }
 
 }  // namespace sdb::search

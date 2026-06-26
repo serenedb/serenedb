@@ -52,7 +52,6 @@
 #include "connector/index_expression.hpp"
 #include "connector/inverted_store_index.h"
 #include "connector/json_extract_names.hpp"
-#include "connector/key_utils.hpp"
 #include "connector/primary_key.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/view_fast_path.h"
@@ -84,7 +83,6 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   catalog::ObjectType index_type = catalog::ObjectType::SecondaryIndex;
 
   ObjectId table_id;
-  std::string table_key;
   std::vector<InsertColumnMeta> columns;
 
   duckdb::idx_t file_row_number_col_idx = 0;
@@ -360,7 +358,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
 
   auto* table_ptr = TableOrNull();
   state->table_id = table_ptr ? table_ptr->GetId() : _relation->GetId();
-  state->table_key = key_utils::PrepareTableKey(state->table_id);
   // Populated only on the base-table branch; describes the chunk-order list
   // of catalog positions the scan projects. Reused below for PK chunk-index
   // resolution.
@@ -508,25 +505,16 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   auto* writer = parallel ? lstate->writer.get() : gstate.writer.get();
   auto& row_keys = parallel ? lstate->row_keys : gstate.row_keys;
 
-  // Row key layout: [ObjectId][ColumnId(reserved)][PK bytes].
   row_keys.clear();
   row_keys.reserve(num_rows);
   auto append_row_number_key = [&](int64_t row_number) {
     auto& key = row_keys.emplace_back();
-    basics::StrResize(key, sizeof(catalog::Column::Id) + sizeof(ObjectId));
-    std::memcpy(key.data() + sizeof(catalog::Column::Id),
-                gstate.table_key.data(), sizeof(ObjectId));
     primary_key::AppendSigned(key, row_number);
-    std::memcpy(key.data(), gstate.table_key.data(), sizeof(ObjectId));
   };
   auto append_glob_key = [&](int64_t file_index, int64_t row_number) {
     auto& key = row_keys.emplace_back();
-    basics::StrResize(key, sizeof(catalog::Column::Id) + sizeof(ObjectId));
-    std::memcpy(key.data() + sizeof(catalog::Column::Id),
-                gstate.table_key.data(), sizeof(ObjectId));
     primary_key::AppendSigned(key, file_index);
     primary_key::AppendSigned(key, row_number);
-    std::memcpy(key.data(), gstate.table_key.data(), sizeof(ObjectId));
   };
   if (gstate.is_glob_external) {
     SDB_ASSERT(gstate.file_index_col_idx < chunk.ColumnCount());

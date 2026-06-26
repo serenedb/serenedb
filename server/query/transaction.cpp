@@ -34,6 +34,7 @@
 #include "catalog/catalog.h"
 #include "catalog/store/store.h"
 #include "search/inverted_index_storage.h"
+#include "search/search_table.h"
 #include "search/tick_domain.h"
 
 namespace sdb::query {
@@ -135,6 +136,11 @@ void Transaction::OnStatementEnd() {
     // OnStatementBegin.
     DropCatalogSnapshot();
     _search_snapshots.clear();
+    // Search-table reads go through SearchTxn()'s reader cache, not the
+    // _search_snapshots above; reset on the same (non-pinned) boundary.
+    if (_search_txn) {
+      _search_txn->ResetReaders();
+    }
     return;
   }
   // Explicit REPEATABLE READ, no DML: the native read view and search readers
@@ -234,11 +240,32 @@ void Transaction::CommitSearch() noexcept {
 }
 
 Result Transaction::Commit() {
-  // Normally already settled inside the engine commit
-  // (TransactionPreCheckpoint, before the in-commit checkpoint); this is a
-  // no-op then, and the fallback for transactions that did not commit the store
-  // database.
+  // Search-table segments commit on the database WAL tick; register their flush
+  // up-front -- before any commit point -- so a concurrent background
+  // RefreshCommit waits for them. They commit in the WAL block below.
+  if (_search_txn) {
+    _search_txn->RegisterFlush();
+  }
+
+  // Inverted-index trxs: normally already settled inside the engine commit
+  // (TransactionPreCheckpoint); this is the fallback for transactions that did
+  // not commit the store database.
   CommitSearch();
+
+  // Search-table (TableEngine::Search) commit point (WAL_DESIGN.md §9): the §9
+  // crash boundaries + the single multi-shard WAL fsync that is the atomic
+  // commit point live in SearchTableTransaction::Commit.
+  if (_search_txn && !_search_txn->Empty()) {
+    try {
+      _search_txn->Commit();
+    } catch (const std::exception& e) {
+      _search_txn->Abort();
+      Destroy();
+      return {ERROR_INTERNAL, "Failed to commit search-table WAL: ", e.what()};
+    }
+  }
+
+  ApplyTableStatsDiffs();
   Destroy();
 
   return {};
@@ -247,6 +274,9 @@ Result Transaction::Commit() {
 Result Transaction::Rollback() {
   for (auto& search_transaction : _search_transactions) {
     search_transaction.second.transaction->Abort();
+  }
+  if (_search_txn) {
+    _search_txn->Abort();
   }
   RollbackVariables();
   Destroy();
@@ -273,10 +303,31 @@ void Transaction::Destroy() noexcept {
   DropCatalogSnapshot();
   _search_transactions.clear();
   _search_snapshots.clear();
+  _search_txn.reset();
+  _num_log_data_markers = 0;
   _had_query_in_transaction = false;
   _had_dml = false;
   _statement_is_dml = false;
   _statement_is_ddl = false;
+}
+
+void Transaction::ApplyTableStatsDiffs() noexcept {
+  if (_table_rows_deltas.empty()) {
+    return;
+  }
+  auto snapshot = EnsureCatalogSnapshot();
+  for (const auto& [table_id, delta] : _table_rows_deltas) {
+    auto table = snapshot->GetObject<catalog::Table>(table_id);
+    if (!table) {
+      continue;  // table dropped mid-transaction
+    }
+    // Only Search tables track row counts here; Transactional store tables
+    // maintain their own statistics. GetData() asserts the store is bound.
+    if (table->GetEngine() == catalog::TableEngine::Search) {
+      table->GetData()->UpdateNumRows(delta);
+    }
+  }
+  _table_rows_deltas.clear();
 }
 
 }  // namespace sdb::query

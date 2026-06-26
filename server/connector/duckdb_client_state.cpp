@@ -30,22 +30,17 @@
 #include <duckdb/main/prepared_statement_data.hpp>
 #include <utility>
 
-#include "auth/role_closure.h"
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/system-compiler.h"
-#include "catalog/catalog.h"
-#include "catalog/database.h"
 #include "catalog/store/store.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_physical_progress.h"
-#include "connector/duckdb_table_entry.h"
 #include "pg/connection_context.h"
 #include "pg/copy_messages_queue.h"
 #include "pg/errcodes.h"
 #include "pg/progress_tracker.h"
 #include "pg/sql_exception_macro.h"
-#include "pg/sql_utils.h"
 
 namespace sdb::connector {
 namespace {

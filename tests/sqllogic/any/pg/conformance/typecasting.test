@@ -250,15 +250,8 @@ r
 {-1,2,-3}
 
 
-# array -> VARCHAR text form: SereneDB renders DuckDB's native bracket form
-# "[1, 2, 3]"; PostgreSQL renders the brace form "{1,2,3}".
-onlyif serenedb
-query
-SELECT CAST(ARRAY[1, 2, 3] AS VARCHAR) AS r;
-----
-r
-[1, 2, 3]
-
+# DIVERGENCE: array -> VARCHAR text form. PostgreSQL emits the brace form
+# "{1,2,3}"; SereneDB emits the DuckDB bracket form "[1, 2, 3]".
 onlyif postgres
 query
 SELECT CAST(ARRAY[1, 2, 3] AS VARCHAR) AS r;
@@ -266,13 +259,13 @@ SELECT CAST(ARRAY[1, 2, 3] AS VARCHAR) AS r;
 r
 {1,2,3}
 
-
 onlyif serenedb
 query
-SELECT CAST(ARRAY['a', 'b'] AS VARCHAR) AS r;
+SELECT CAST(ARRAY[1, 2, 3] AS VARCHAR) AS r;
 ----
 r
-[a, b]
+[1, 2, 3]
+
 
 onlyif postgres
 query
@@ -280,6 +273,13 @@ SELECT CAST(ARRAY['a', 'b'] AS VARCHAR) AS r;
 ----
 r
 {a,b}
+
+onlyif serenedb
+query
+SELECT CAST(ARRAY['a', 'b'] AS VARCHAR) AS r;
+----
+r
+[a, b]
 
 
 # DIVERGENCE: bracket array literal '[1, 2, 3]'::INTEGER[]. PostgreSQL rejects

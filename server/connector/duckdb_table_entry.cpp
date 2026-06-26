@@ -37,7 +37,6 @@
 #include <duckdb/storage/table_storage_info.hpp>
 
 #include "basics/assert.h"
-#include "basics/containers/flat_hash_set.h"
 #include "catalog/store/store.h"
 #include "connector/duckdb_table_function.h"
 #include "pg/errcodes.h"

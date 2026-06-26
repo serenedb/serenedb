@@ -886,12 +886,8 @@ struct TimestampTzBinCore {
 
 template<WrapContext InContainer>
 struct TimestampTzNsTextCore {
-  IRS_FORCE_INLINE static void Render(
-    SerializationContext& ctx,
-    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto ts =
-      duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::timestamp_tz_ns_t>(
-        vdata.unified)[idx];
+  using Value = duckdb::timestamp_tz_ns_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value ts) {
     duckdb::StringHeap heap{duckdb::Allocator::DefaultAllocator()};
     const auto str = duckdb::StringCast::Operation(ts, heap);
     WithWrapIfNested<InContainer>(ctx, [&] {

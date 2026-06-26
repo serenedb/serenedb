@@ -171,6 +171,7 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
     case INTERVAL:
       return make(kInterval, kIntervalArray, sizeof(int64_t) + sizeof(int64_t));
     case TIMESTAMP_TZ:
+    case TIMESTAMP_TZ_NS:
       return make(kTimestampTz, kTimestampTzArray, sizeof(int64_t));
     case TIME_TZ:
       return make(kTimeTz, kTimeTzArray, sizeof(int64_t) + sizeof(int32_t));

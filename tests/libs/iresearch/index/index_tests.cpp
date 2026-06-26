@@ -6823,9 +6823,13 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     dir.intermediate_commits_lock.lock();
 
     std::thread compaction_thread([&writer]() {
-      // compaction will fail because of
-      ASSERT_FALSE(writer->Compact(irs::index_utils::MakePolicy(
-        irs::index_utils::CompactionCount())));  // compact
+      // A concurrent commit removed a doc from a candidate, so the merge can't
+      // be reconciled against the moved snapshot: transient Busy, not Fail.
+      ASSERT_EQ(irs::CompactionError::Busy,
+                writer
+                  ->Compact(irs::index_utils::MakePolicy(
+                    irs::index_utils::CompactionCount()))
+                  .error);  // compact
 
       auto check_compacting_segments =
         [](irs::Compaction& /*candidates*/, const irs::IndexReader& /*meta*/,
@@ -7480,9 +7484,14 @@ TEST_P(IndexTestCase, segment_compact_commit) {
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
-    // all segments are already marked for compaction
-    ASSERT_FALSE(writer->Compact(
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+    // Segments already marked for compaction are skipped by the policy, so
+    // there is nothing left to compact (Ok, no candidates).
+    {
+      const auto result = writer->Compact(
+        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      ASSERT_EQ(irs::CompactionError::Ok, result.error);
+      ASSERT_EQ(0, result.size);
+    }
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
@@ -7568,9 +7577,14 @@ TEST_P(IndexTestCase, segment_compact_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    // can't compact segments that are already marked for compaction
-    ASSERT_FALSE(writer->Compact(
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+    // Segments already marked for compaction are skipped by the policy, so
+    // there is nothing left to compact (Ok, no candidates).
+    {
+      const auto result = writer->Compact(
+        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      ASSERT_EQ(irs::CompactionError::Ok, result.error);
+      ASSERT_EQ(0, result.size);
+    }
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
@@ -7674,9 +7688,14 @@ TEST_P(IndexTestCase, segment_compact_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    // can't compact segments that are already marked for compaction
-    ASSERT_FALSE(writer->Compact(
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+    // Segments already marked for compaction are skipped by the policy, so
+    // there is nothing left to compact (Ok, no candidates).
+    {
+      const auto result = writer->Compact(
+        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      ASSERT_EQ(irs::CompactionError::Ok, result.error);
+      ASSERT_EQ(0, result.size);
+    }
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
@@ -7971,9 +7990,15 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
-    // all segments are already marked for compaction
-    ASSERT_FALSE(writer->Compact(
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+    // Both segments are already registered for compaction, so the policy skips
+    // them and finds nothing to compact (Ok, no candidates) instead of picking
+    // an in-flight segment.
+    {
+      const auto result = writer->Compact(
+        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      ASSERT_EQ(irs::CompactionError::Ok, result.error);
+      ASSERT_EQ(0, result.size);
+    }
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
@@ -8077,9 +8102,14 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    // can't compact segments that are already marked for compaction
-    ASSERT_FALSE(writer->Compact(
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+    // Segments already marked for compaction are skipped by the policy, so
+    // there is nothing left to compact (Ok, no candidates).
+    {
+      const auto result = writer->Compact(
+        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      ASSERT_EQ(irs::CompactionError::Ok, result.error);
+      ASSERT_EQ(0, result.size);
+    }
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
@@ -8207,9 +8237,14 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    // can't compact segments that are already marked for compaction
-    ASSERT_FALSE(writer->Compact(
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+    // Segments already marked for compaction are skipped by the policy, so
+    // there is nothing left to compact (Ok, no candidates).
+    {
+      const auto result = writer->Compact(
+        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      ASSERT_EQ(irs::CompactionError::Ok, result.error);
+      ASSERT_EQ(0, result.size);
+    }
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
@@ -8369,9 +8404,14 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    // can't compact segments that are already marked for compaction
-    ASSERT_FALSE(writer->Compact(
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+    // Segments already marked for compaction are skipped by the policy, so
+    // there is nothing left to compact (Ok, no candidates).
+    {
+      const auto result = writer->Compact(
+        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      ASSERT_EQ(irs::CompactionError::Ok, result.error);
+      ASSERT_EQ(0, result.size);
+    }
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
@@ -8507,9 +8547,14 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    // can't compact segments that are already marked for compaction
-    ASSERT_FALSE(writer->Compact(
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+    // Segments already marked for compaction are skipped by the policy, so
+    // there is nothing left to compact (Ok, no candidates).
+    {
+      const auto result = writer->Compact(
+        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      ASSERT_EQ(irs::CompactionError::Ok, result.error);
+      ASSERT_EQ(0, result.size);
+    }
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
@@ -8653,9 +8698,14 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments_name_only));
 
-    // can't compact segments that are already marked for compaction
-    ASSERT_FALSE(writer->Compact(
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+    // Segments already marked for compaction are skipped by the policy, so
+    // there is nothing left to compact (Ok, no candidates).
+    {
+      const auto result = writer->Compact(
+        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      ASSERT_EQ(irs::CompactionError::Ok, result.error);
+      ASSERT_EQ(0, result.size);
+    }
 
     tests::Remove(*writer, *query_doc4);
 
@@ -8805,9 +8855,14 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    // can't compact segments that are already marked for compaction
-    ASSERT_FALSE(writer->Compact(
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+    // Segments already marked for compaction are skipped by the policy, so
+    // there is nothing left to compact (Ok, no candidates).
+    {
+      const auto result = writer->Compact(
+        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      ASSERT_EQ(irs::CompactionError::Ok, result.error);
+      ASSERT_EQ(0, result.size);
+    }
 
     auto do_commit_and_compact_count =
       [&](irs::Compaction& candidates, const irs::IndexReader& reader,
@@ -8823,9 +8878,10 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
         sub_policy(candidates, reader, compacting_segments);
       };
 
-    // this should fail as segments 1 and 0 are actually compacted on
-    // previous  commit inside our test policy
-    ASSERT_FALSE(writer->Compact(do_commit_and_compact_count));
+    // The candidates were already compacted by the commit the test policy ran,
+    // so they are no longer in the merged snapshot: transient Busy, not Fail.
+    ASSERT_EQ(irs::CompactionError::Busy,
+              writer->Compact(do_commit_and_compact_count).error);
     ASSERT_NE(0, irs::DirectoryCleaner::clean(dir()));
     // check all data is deleted
     const auto one_segment_count = count;
@@ -8880,9 +8936,14 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    // can't compact segments that are already marked for compaction
-    ASSERT_FALSE(writer->Compact(
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+    // Segments already marked for compaction are skipped by the policy, so
+    // there is nothing left to compact (Ok, no candidates).
+    {
+      const auto result = writer->Compact(
+        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      ASSERT_EQ(irs::CompactionError::Ok, result.error);
+      ASSERT_EQ(0, result.size);
+    }
 
     auto do_commit_and_compact_count =
       [&](irs::Compaction& candidates, const irs::IndexReader& reader,
@@ -8901,9 +8962,10 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
         sub_policy(candidates, reader, compacting_segments);
       };
 
-    // this should fail as segments 1 and 0 are actually compacted on
-    // previous  commit inside our test policy
-    ASSERT_FALSE(writer->Compact(do_commit_and_compact_count));
+    // The candidates were already compacted by the commit the test policy ran,
+    // so they are no longer in the merged snapshot: transient Busy, not Fail.
+    ASSERT_EQ(irs::CompactionError::Busy,
+              writer->Compact(do_commit_and_compact_count).error);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_NE(0, irs::DirectoryCleaner::clean(dir()));
@@ -9031,9 +9093,14 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    // can't compact segments that are already marked for compaction
-    ASSERT_FALSE(writer->Compact(
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+    // Segments already marked for compaction are skipped by the policy, so
+    // there is nothing left to compact (Ok, no candidates).
+    {
+      const auto result = writer->Compact(
+        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      ASSERT_EQ(irs::CompactionError::Ok, result.error);
+      ASSERT_EQ(0, result.size);
+    }
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
@@ -9191,9 +9258,14 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    // can't compact segments that are already marked for compaction
-    ASSERT_FALSE(writer->Compact(
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+    // Segments already marked for compaction are skipped by the policy, so
+    // there is nothing left to compact (Ok, no candidates).
+    {
+      const auto result = writer->Compact(
+        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      ASSERT_EQ(irs::CompactionError::Ok, result.error);
+      ASSERT_EQ(0, result.size);
+    }
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
@@ -9367,9 +9439,14 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    // can't compact segments that are already marked for compaction
-    ASSERT_FALSE(writer->Compact(
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+    // Segments already marked for compaction are skipped by the policy, so
+    // there is nothing left to compact (Ok, no candidates).
+    {
+      const auto result = writer->Compact(
+        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      ASSERT_EQ(irs::CompactionError::Ok, result.error);
+      ASSERT_EQ(0, result.size);
+    }
 
     // check compacting segments
     expected_compacting_segments = {0, 1};

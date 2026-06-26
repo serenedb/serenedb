@@ -74,9 +74,6 @@ class Role final : public catalog::Object {
   bool CanLogin() const noexcept { return Has(RoleOption::Login) && _active; }
   void SetOptions(RoleOption o) noexcept { _options = o; }
 
-  // pg_authid attributes surfaced for catalog introspection. CONNECTION LIMIT
-  // and VALID UNTIL are unsupported (rejected when set), so these always carry
-  // their defaults; the getters exist for pg_authid rendering.
   int32_t ConnLimit() const noexcept { return _conn_limit; }
   std::string_view ValidUntil() const noexcept { return _valid_until; }
 

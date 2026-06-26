@@ -65,12 +65,9 @@ void RejectUnsupportedRoleOptions(bool has_conn_limit, bool has_valid_until) {
   }
 }
 
-// Hash a cleartext password into the PG-format SCRAM verifier string stored as
-// rolpassword. PASSWORD NULL (is_null) clears it -> login under trust. Any
-// non-null password, INCLUDING the empty string, hashes to a real verifier (an
-// empty password is then a valid password that no supplied secret matches).
-std::string MakePasswordVerifier(std::string_view password, bool is_null) {
-  if (is_null) {
+std::string MakePasswordVerifier(bool has_password, std::string_view password,
+                                 bool is_null) {
+  if (!has_password || is_null) {
     return {};
   }
   auto verifier = network::BuildScramVerifier(password);
@@ -103,10 +100,8 @@ void CreateRole(ConnectionContext& ctx, std::string_view name,
     .options = static_cast<uint32_t>(opts),
     // No PASSWORD clause -> no stored verifier. PASSWORD '<x>' (incl. '') ->
     // a real verifier. CREATE has no PASSWORD NULL form (is_null is false).
-    .password_verifier =
-      options.has_password
-        ? MakePasswordVerifier(options.password, options.password_is_null)
-        : "",
+    .password_verifier = MakePasswordVerifier(
+      options.has_password, options.password, options.password_is_null),
   });
 
   auto r = catalog.CreateRole(catalog::RequireOwnership(ctx.GetRoleId()),
@@ -158,10 +153,8 @@ void AlterRole(ConnectionContext& ctx, std::string_view name,
   RejectUnsupportedRoleOptions(opts.has_conn_limit, opts.has_valid_until);
 
   // Hash outside the mutate lambda (which runs under the catalog lock).
-  const std::string verifier =
-    opts.has_password
-      ? MakePasswordVerifier(opts.password, opts.password_is_null)
-      : "";
+  const std::string verifier = MakePasswordVerifier(
+    opts.has_password, opts.password, opts.password_is_null);
 
   auto& catalog = GlobalCatalog();
   auto r = catalog.ChangeRole(

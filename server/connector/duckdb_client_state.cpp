@@ -50,10 +50,6 @@
 namespace sdb::connector {
 namespace {
 
-bool IsSuperuserOnlySystemRelation(const std::string& name) {
-  return name == "pg_authid" || name == "pg_shadow";
-}
-
 std::unique_ptr<pg::ProgressReporter> MakeProgressReporter(
   ObjectId datid, const duckdb::PreparedStatementData& prepared) {
   if (!prepared.physical_plan) {
@@ -286,7 +282,6 @@ duckdb::RebindQueryInfo SereneDBClientState::OnExecutePrepared(
 }
 
 void SereneDBClientState::QueryBegin(duckdb::ClientContext& context) {
-  _access.Clear();
   _connection_ctx->OnStatementBegin();
 }
 
@@ -297,33 +292,7 @@ void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {
   copy_stdin_open_count = 0;
   copy_stdin_done = false;
   progress.reset();
-  _access.Clear();
   _connection_ctx->OnStatementEnd();
-}
-
-void SereneDBClientState::RecordReadRelation(duckdb::ClientContext& context,
-                                             uint64_t table_index,
-                                             duckdb::CatalogEntry& entry,
-                                             bool inside_view) {
-  _access.BeginStatement(context.transaction.GetActiveQuery());
-  if (auto* facade = dynamic_cast<SereneDBTableEntry*>(&entry)) {
-    auto& rel = _access.ForTable(table_index);
-    rel.table = facade->GetSereneDBTable();
-    rel.table_read = true;
-    rel.inside_view = inside_view;
-    return;
-  }
-  if (!inside_view && IsSuperuserOnlySystemRelation(entry.name)) {
-    const auto& closure =
-      _connection_ctx->EnsureCatalogSnapshot()->EffectiveRoleClosure(
-        _connection_ctx->GetRoleId());
-    if (!closure.is_superuser) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-        ERR_MSG("permission denied for ", pg::ToPgObjectTypeName(entry.type),
-                " ", entry.name));
-    }
-  }
 }
 
 ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context) {

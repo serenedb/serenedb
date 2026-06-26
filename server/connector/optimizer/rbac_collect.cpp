@@ -30,14 +30,184 @@
 #include <duckdb/planner/operator/logical_insert.hpp>
 #include <duckdb/planner/operator/logical_merge_into.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
+#include <memory>
 #include <optional>
+#include <span>
+#include <vector>
 
-#include "absl/cleanup/cleanup.h"
+#include "absl/container/flat_hash_map.h"
+#include "auth/privilege.h"
 #include "basics/containers/flat_hash_map.h"
+#include "basics/containers/flat_hash_set.h"
+#include "catalog/catalog.h"
+#include "catalog/object.h"
 #include "catalog/table.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_entry.h"
+#include "connector/duckdb_table_function.h"
+#include "pg/connection_context.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 
+namespace sdb::connector {
+
+struct RelationAccess {
+  std::shared_ptr<catalog::Table> table;
+  catalog::AclMode action = catalog::AclMode::NoRights;
+  containers::FlatHashSet<uint64_t> selected;
+  containers::FlatHashSet<uint64_t> returned;
+  containers::FlatHashSet<uint64_t> updated;
+  containers::FlatHashSet<uint64_t> inserted;
+  bool table_read = false;
+  bool inside_view = false;
+  bool dml_projection = false;
+};
+
+class AccessRecord {
+ public:
+  RelationAccess& ForTable(uint64_t table_index) {
+    return _by_table[table_index];
+  }
+
+  void MarkWriteTarget(uint64_t table_index,
+                       std::shared_ptr<catalog::Table> table,
+                       catalog::AclMode action,
+                       const std::vector<uint64_t>& write_columns = {});
+
+  template<typename Fn>
+  void ForEach(Fn&& fn) {
+    for (auto& [table_index, rel] : _by_table) {
+      fn(table_index, rel);
+    }
+  }
+
+  void Enforce(ConnectionContext& ctx) const;
+
+ private:
+  absl::flat_hash_map<uint64_t, RelationAccess> _by_table;
+};
+
+namespace {
+
+const catalog::Table& Current(const catalog::Snapshot& snapshot,
+                              const catalog::Table& recorded) {
+  if (auto current = snapshot.GetObject<catalog::Table>(recorded.GetId())) {
+    return *current;
+  }
+  return recorded;
+}
+
+void RequireColumns(const catalog::Snapshot& snapshot, ObjectId role,
+                    const catalog::Table& table, catalog::AclMode need,
+                    std::span<const catalog::Column* const> columns) {
+  if (auth::HasColumnPrivilege(snapshot, role, table, need, columns)) {
+    return;
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                  ERR_MSG("permission denied for table ", table.GetName()));
+}
+
+// Resolve logical column indices (the position excluding the generated PK, as
+// the planner numbers them) to Column pointers in a single pass over the table.
+std::vector<const catalog::Column*> ResolveColumns(
+  const catalog::Table& table,
+  const containers::FlatHashSet<uint64_t>& logical) {
+  std::vector<const catalog::Column*> out;
+  out.reserve(logical.size());
+  uint64_t visible = 0;
+  for (const auto& col : table.Columns()) {
+    if (col.GetId() == catalog::Column::kGeneratedPKId) {
+      continue;
+    }
+    if (logical.contains(visible)) {
+      out.push_back(&col);
+    }
+    ++visible;
+  }
+  return out;
+}
+
+}  // namespace
+
+void AccessRecord::MarkWriteTarget(uint64_t table_index,
+                                   std::shared_ptr<catalog::Table> table,
+                                   catalog::AclMode action,
+                                   const std::vector<uint64_t>& write_columns) {
+  if (!table) {
+    return;
+  }
+  const auto id = table->GetId();
+  uint64_t target_key = table_index;
+  for (const auto& [idx, rel] : _by_table) {
+    if (rel.table && rel.table->GetId() == id) {
+      target_key = idx;
+      break;
+    }
+  }
+  auto apply = [&](RelationAccess& rel) {
+    rel.table = table;
+    rel.action |= action;
+    rel.table_read = false;
+    if ((action & catalog::AclMode::Insert) != catalog::AclMode::NoRights) {
+      rel.inserted.insert(write_columns.begin(), write_columns.end());
+    }
+    if ((action & catalog::AclMode::Update) != catalog::AclMode::NoRights) {
+      rel.updated.insert(write_columns.begin(), write_columns.end());
+    }
+  };
+  {
+    auto& dml_entry = _by_table[table_index];
+    apply(dml_entry);
+    dml_entry.dml_projection = true;
+  }
+  if (target_key != table_index) {
+    apply(_by_table[target_key]);
+  }
+}
+
+void AccessRecord::Enforce(ConnectionContext& ctx) const {
+  if (_by_table.empty()) {
+    return;
+  }
+  const auto role = ctx.GetRoleId();
+  const auto snapshot = ctx.EnsureCatalogSnapshot();
+
+  for (const auto& [table_index, rel] : _by_table) {
+    if (rel.inside_view || !rel.table) {
+      continue;
+    }
+    const auto& table = Current(*snapshot, *rel.table);
+
+    constexpr auto kTableActions =
+      catalog::AclMode::Delete | catalog::AclMode::Truncate;
+    const auto table_action = rel.action & kTableActions;
+    if (table_action != catalog::AclMode::NoRights) {
+      snapshot->RequireAccess(role, table, table_action);
+    }
+
+    // SELECT covers both the columns read directly (selected) and those a DML
+    // RETURNING clause reads back (returned). An empty set with table_read set
+    // is the "read with no specific column" case (e.g. count(*)) ->
+    // table-level.
+    if (rel.table_read || !rel.selected.empty() || !rel.returned.empty()) {
+      containers::FlatHashSet<uint64_t> read = rel.selected;
+      read.insert(rel.returned.begin(), rel.returned.end());
+      RequireColumns(*snapshot, role, table, catalog::AclMode::Select,
+                     ResolveColumns(table, read));
+    }
+
+    if ((rel.action & catalog::AclMode::Update) != catalog::AclMode::NoRights) {
+      RequireColumns(*snapshot, role, table, catalog::AclMode::Update,
+                     ResolveColumns(table, rel.updated));
+    }
+    if ((rel.action & catalog::AclMode::Insert) != catalog::AclMode::NoRights) {
+      RequireColumns(*snapshot, role, table, catalog::AclMode::Insert,
+                     ResolveColumns(table, rel.inserted));
+    }
+  }
+}
+
+}  // namespace sdb::connector
 namespace sdb::optimizer {
 namespace {
 
@@ -70,8 +240,9 @@ std::optional<uint64_t> ResolveLogicalColumn(
 
 class RbacVisitor final : public duckdb::LogicalOperatorVisitor {
  public:
-  RbacVisitor(connector::AccessRecord& access, const GetMap& gets)
-    : _access{access}, _gets{gets} {}
+  RbacVisitor(connector::AccessRecord& access, const GetMap& gets,
+              const catalog::Snapshot& snapshot)
+    : _access{access}, _gets{gets}, _snapshot{snapshot} {}
 
   void VisitOperator(duckdb::LogicalOperator& op) override {
     using duckdb::LogicalOperatorType;
@@ -125,17 +296,35 @@ class RbacVisitor final : public duckdb::LogicalOperatorVisitor {
       }
       case LogicalOperatorType::LOGICAL_GET: {
         auto& get = op.Cast<duckdb::LogicalGet>();
-        _access.ForEach([&](uint64_t idx, connector::RelationAccess& rel) {
-          if (idx != get.table_index.index ||
-              rel.action != catalog::AclMode::NoRights) {
-            return;
-          }
+        // A SereneDB base-table scan is a native seq_scan over the store table,
+        // so get.GetTable() is the store entry, not the facade -- resolve the
+        // catalog table from the scan bind_data instead.
+        auto* bind =
+          dynamic_cast<connector::SereneDBScanBindData*>(get.bind_data.get());
+        auto table = bind
+                       ? _snapshot.GetObject<catalog::Table>(bind->RelationId())
+                       : nullptr;
+        fprintf(stderr,
+                "[RBACGET] ti=%llu raw_bd=%p sdb_bd=%p relid=%llu table=%p\n",
+                (unsigned long long)get.table_index.index,
+                (void*)get.bind_data.get(), (void*)bind,
+                bind ? (unsigned long long)bind->RelationId().id() : 0ULL,
+                (void*)table.get());
+        if (table) {
+          // The same table_index may already carry a write action stamped by
+          // MarkWriteTarget (the GET under a DML). Record the table, the
+          // view-provenance, that it is read, and the columns the scan
+          // projects.
+          auto& rel = _access.ForTable(get.table_index.index);
+          rel.table = table;
+          rel.table_read = true;
+          rel.inside_view = bind->bound_inside_view;
           for (const auto& col_id : get.GetColumnIds()) {
             if (!col_id.IsRowIdColumn() && !col_id.IsVirtualColumn()) {
               rel.selected.insert(col_id.GetPrimaryIndex());
             }
           }
-        });
+        }
         is_dml = false;
         break;
       }
@@ -178,6 +367,7 @@ class RbacVisitor final : public duckdb::LogicalOperatorVisitor {
  private:
   connector::AccessRecord& _access;
   const GetMap& _gets;
+  const catalog::Snapshot& _snapshot;
   bool _skip_next_projection = false;
 };
 
@@ -199,11 +389,11 @@ void CollectAndEnforce(duckdb::OptimizerExtensionInput& input,
   if (!state) {
     return;
   }
-  auto& access = state->Access();
-  absl::Cleanup clear_access = [&] { access.Clear(); };
+  auto snapshot = state->GetConnectionContext().EnsureCatalogSnapshot();
+  connector::AccessRecord access;
   GetMap gets;
   BuildGetMap(*plan, gets);
-  RbacVisitor{access, gets}.VisitOperator(*plan);
+  RbacVisitor{access, gets, *snapshot}.VisitOperator(*plan);
   access.Enforce(state->GetConnectionContext());
 }
 

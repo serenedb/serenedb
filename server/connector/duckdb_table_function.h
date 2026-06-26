@@ -284,7 +284,17 @@ inline bool IsSereneDBScan(const duckdb::LogicalGet& get) {
   return get.bind_data && get.function.bind == &SereneDBScanBind;
 }
 
+// Full-table scan for search-backed (TableEngine::Search) tables. Selected by
+// SereneDBTableEntry::GetScanFunction; iresearch columnstore -> DuckDB
+// DataChunk via ColumnstoreMaterializer::Scan.
+duckdb::TableFunction CreateSearchTableScanFunction();
+
 duckdb::TableFunction CreateIResearchScanFunction();
+
+// True when the scan projects no real columns (e.g. COUNT(*)), so the operator
+// can answer from the live row count instead of materialising columns.
+bool IsCountOnlyScan(const SereneDBScanBindData& bind_data,
+                     const duckdb::TableFunctionInitInput& input);
 
 inline auto MakeFieldNameResolver(const SereneDBScanBindData& bind_data,
                                   const catalog::InvertedIndex& index) {

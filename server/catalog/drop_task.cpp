@@ -39,6 +39,7 @@
 #include "catalog/types.h"
 #include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
+#include "search/search_table.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::catalog {
@@ -169,6 +170,18 @@ Result TableDrop::Finalize() {
 }
 
 AsyncResult TableDrop::Execute() {
+  if (_db_id.isSet()) {
+    // Search table: wait until every holder of the iresearch store has
+    // released it (mirrors IndexDrop's weak_ptr drain), then remove the
+    // directory + WAL chunks. _db_id is set only for Search tables.
+    if (!_search_data.expired()) {
+      co_return Result{ERROR_LOCKED};
+    }
+    if (auto r = search::SearchTable::DropArtifacts(_db_id, _id); !r.ok()) {
+      SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
+      co_return Result{ERROR_LOCKED};
+    }
+  }
   if (_is_root && !_indexes.empty()) {
     ObjectId db_id = _indexes.back()->GetDatabaseId();
     ObjectId schema_id = _parent_id;

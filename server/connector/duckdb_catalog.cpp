@@ -41,6 +41,7 @@
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
+#include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
@@ -77,9 +78,14 @@
 #include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_physical_ctas.h"
 #include "connector/duckdb_physical_progress.h"
+#include "connector/duckdb_physical_search_delete.h"
+#include "connector/duckdb_physical_search_insert.h"
+#include "connector/duckdb_physical_search_truncate.h"
+#include "connector/duckdb_physical_search_update.h"
 #include "connector/duckdb_schema_entry.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/duckdb_table_function.h"
+#include "connector/search_table_dispatch.h"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
@@ -488,9 +494,31 @@ void SereneDBCatalog::DropSchema(duckdb::ClientContext& context,
 duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalCreateTable& op, duckdb::PhysicalOperator& plan) {
+  auto& table_info = op.info->Base();
+
+  // Search CTAS routes to the iresearch insert operator: it builds the
+  // store-less facade and consumes the storage option in CreateCtasTable, so
+  // this is a read-only probe of the WITH options.
+  if (ReadStorageEngine(table_info.options) == catalog::TableEngine::Search) {
+    auto& search_ctas = planner.Make<SereneDBSearchInsert>(
+      std::move(op.info), op.schema, op.estimated_cardinality);
+    search_ctas.children.push_back(plan);
+    return search_ctas;
+  }
+
+  // Transactional CTAS. Planning is side-effect free (it can run more than once
+  // per statement, e.g. on rebind): pre-allocate the table id and build the
+  // operators only; the catalog entry is created at execution. The
+  // pre-allocated id names the store table so the CTAS-variant insert can
+  // encode it now.
   auto& schema_entry = op.schema.Cast<SereneDBSchemaEntry>();
   auto database_id = schema_entry.GetDatabaseId();
-  auto& table_info = op.info->Base();
+
+  catalog::CreateTableOptions options;
+  options.name = table_info.table;  // facade name (before the retarget below)
+  // Consume the storage WITH-option (Transactional on this path) so the
+  // unrecognized-parameter check does not reject it.
+  ApplyStorageKind(options, table_info.options);
 
   if (!table_info.options.empty()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -498,11 +526,6 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
                             table_info.options.begin()->first, "\""));
   }
 
-  // Planning is side-effect free (it can run more than once per statement, e.g.
-  // on rebind): pre-allocate the table id and build the operators only; the
-  // catalog entry is created at execution. The pre-allocated id names the store
-  // table so the CTAS-variant insert can encode it now.
-  const std::string facade_table_name = table_info.table;
   const auto table_id = catalog::NextId();
   // Capture before the store-table retarget below overwrites on_conflict to
   // ERROR_ON_CONFLICT. For CREATE OR REPLACE TABLE AS this is
@@ -510,8 +533,6 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   // execution.
   const auto on_conflict = table_info.on_conflict;
 
-  catalog::CreateTableOptions options;
-  options.name = facade_table_name;
   for (auto& col : table_info.columns.Logical()) {
     catalog::Column sdb_col{{}, catalog::NextId(), col.Name(), col.Type()};
     if (col.Generated()) {
@@ -662,6 +683,25 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   duckdb::LogicalInsert& op,
   duckdb::optional_ptr<duckdb::PhysicalOperator> plan) {
   auto& table_entry = RequireBaseTable(op.table);
+  auto sdb_table = table_entry.GetSereneDBTable();
+
+  // Search table: route to the iresearch insert operator. It has no store
+  // table to compute defaults/generated columns downstream, so resolve them
+  // into the plan here (ResolveDefaultsProjection two-passes STORED generated
+  // columns -- incl. the generated PK -- over a storage-ordered chunk).
+  if (sdb_table->GetEngine() == catalog::TableEngine::Search) {
+    if (plan && !op.column_index_map.empty()) {
+      plan = &planner.ResolveDefaultsProjection(op, *plan);
+      op.column_index_map.clear();
+    }
+    auto& insert = planner.Make<SereneDBSearchInsert>(
+      std::move(sdb_table), std::move(op.types), op.estimated_cardinality);
+    if (plan) {
+      insert.children.push_back(*plan);
+    }
+    return insert;
+  }
+
   auto& store_entry =
     table_entry.ResolveStoreEntry(context).Cast<duckdb::DuckTableEntry>();
 
@@ -690,9 +730,40 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
 duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalDelete& op, duckdb::PhysicalOperator& plan) {
-  auto& store_entry = RequireBaseTable(op.table)
-                        .ResolveStoreEntry(context)
-                        .Cast<duckdb::DuckTableEntry>();
+  auto& table_entry = RequireBaseTable(op.table);
+  auto sdb_table = table_entry.GetSereneDBTable();
+
+  if (sdb_table->GetEngine() == catalog::TableEngine::Search) {
+    // TRUNCATE (autocommit): fast iresearch Clear marker. In-transaction
+    // TRUNCATE has is_truncate but is not autocommit, so it falls through to
+    // the row-wise SereneDBSearchDelete below.
+    if (op.is_truncate && context.transaction.IsAutoCommit()) {
+      return planner.Make<SereneDBSearchTruncate>(std::move(sdb_table),
+                                                  op.estimated_cardinality);
+    }
+
+    // A Search table has no separate inverted indexes, so its scan appends only
+    // the PK virtuals (BuildRowIdColumns): [real..., pk_0..pk_{n-1}] for
+    // explicit-PK tables, or [real..., generated_pk] for generated-PK ones.
+    const auto& pk_col_ids = sdb_table->PKColumns();
+    const auto child_cols = plan.types.size();
+    std::vector<duckdb::idx_t> pk_indices;
+    if (pk_col_ids.empty()) {
+      pk_indices.push_back(child_cols - 1);  // generated-PK slot is last
+    } else {
+      const auto num_pk = pk_col_ids.size();
+      for (size_t i = 0; i < num_pk; ++i) {
+        pk_indices.push_back(child_cols - num_pk + i);
+      }
+    }
+    auto& search_del = planner.Make<SereneDBSearchDelete>(
+      std::move(sdb_table), std::move(pk_indices), op.estimated_cardinality);
+    search_del.children.push_back(plan);
+    return search_del;
+  }
+
+  auto& store_entry =
+    table_entry.ResolveStoreEntry(context).Cast<duckdb::DuckTableEntry>();
   op.bound_constraints =
     duckdb::Binder::BindConstraints(context, store_entry.GetConstraints(),
                                     store_entry.name, store_entry.GetColumns());
@@ -703,9 +774,73 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
 duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalUpdate& op, duckdb::PhysicalOperator& plan) {
-  auto& store_entry = RequireBaseTable(op.table)
-                        .ResolveStoreEntry(context)
-                        .Cast<duckdb::DuckTableEntry>();
+  auto& table_entry = RequireBaseTable(op.table);
+  auto sdb_table = table_entry.GetSereneDBTable();
+
+  if (sdb_table->GetEngine() == catalog::TableEngine::Search) {
+    // Wrap `plan` with a PhysicalProjection that resolves VALUE_DEFAULT and
+    // passes every projected new-row column through -- the SET values, duckdb's
+    // recomputed STORED generated columns, and the old-value passthroughs that
+    // BindUpdateConstraints added -- plus the PK virtuals, so
+    // SereneDBSearchUpdate sees [resolved new-row vals, pk_virtuals]. A Search
+    // table has no separate inverted indexes, so BuildRowIdColumns appends only
+    // the PK virtuals: [real..., pk_0..pk_{n-1}] / [real..., generated_pk].
+    const auto& pk_col_ids = sdb_table->PKColumns();
+    const auto num_pk = pk_col_ids.size();
+    const auto num_virtual = pk_col_ids.empty() ? 1 : num_pk;
+    const auto child_cols = plan.types.size();
+
+    const auto num_updates = op.expressions.size();
+    duckdb::vector<duckdb::LogicalType> proj_types;
+    duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> proj_exprs;
+    proj_types.reserve(num_updates + num_virtual);
+    proj_exprs.reserve(num_updates + num_virtual);
+
+    for (duckdb::idx_t i = 0; i < num_updates; ++i) {
+      auto& expr = op.expressions[i];
+      if (expr->GetExpressionType() == duckdb::ExpressionType::VALUE_DEFAULT) {
+        auto phys = op.columns[i].index;
+        SDB_ASSERT(phys < op.bound_defaults.size());
+        proj_types.push_back(op.bound_defaults[phys]->GetReturnType());
+        proj_exprs.push_back(op.bound_defaults[phys]->Copy());
+      } else {
+        proj_types.push_back(expr->GetReturnType());
+        proj_exprs.push_back(expr->Copy());
+      }
+    }
+
+    // Passthrough virtual columns (PKs / generated PK).
+    auto virt_start = child_cols - num_virtual;
+    for (duckdb::idx_t i = virt_start; i < child_cols; ++i) {
+      proj_types.push_back(plan.types[i]);
+      proj_exprs.push_back(
+        duckdb::make_uniq<duckdb::BoundReferenceExpression>(plan.types[i], i));
+    }
+
+    auto& proj = planner.Make<duckdb::PhysicalProjection>(
+      std::move(proj_types), std::move(proj_exprs), op.estimated_cardinality);
+    proj.children.push_back(plan);
+
+    std::vector<duckdb::idx_t> pk_indices;
+    if (pk_col_ids.empty()) {
+      // generated PK is the single virtual, after the SET vals.
+      pk_indices.push_back(num_updates + num_virtual - 1);
+    } else {
+      pk_indices.reserve(num_pk);
+      for (size_t i = 0; i < num_pk; ++i) {
+        pk_indices.push_back(num_updates + i);
+      }
+    }
+
+    auto& search_upd = planner.Make<SereneDBSearchUpdate>(
+      std::move(sdb_table), std::move(pk_indices), std::move(op.columns),
+      op.estimated_cardinality);
+    search_upd.children.push_back(proj);
+    return search_upd;
+  }
+
+  auto& store_entry =
+    table_entry.ResolveStoreEntry(context).Cast<duckdb::DuckTableEntry>();
   op.bound_constraints =
     RetargetStoreConstraints(context, store_entry, op.bound_constraints);
   return store_entry.ParentCatalog().Cast<duckdb::DuckCatalog>().PlanUpdate(
@@ -744,6 +879,13 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   duckdb::Binder& binder, duckdb::CreateStatement& stmt,
   duckdb::CatalogEntry& target,
   duckdb::unique_ptr<duckdb::LogicalOperator> plan) {
+  if (target.type != duckdb::CatalogType::VIEW_ENTRY) {
+    auto& table_entry =
+      RequireBaseTable(target.Cast<duckdb::TableCatalogEntry>());
+    auto sdb_table = table_entry.GetSereneDBTable();
+    RejectIfSearchTable(*sdb_table, "CREATE INDEX");
+  }
+
   // View-backed indexes are STATIC -- captured at CREATE INDEX, no DML refresh.
   duckdb::optional_ptr<duckdb::TableCatalogEntry> resolved_table;
   bool view_backed = false;

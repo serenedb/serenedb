@@ -1,0 +1,601 @@
+
+# Explicit transactional -- equivalent to default.
+statement ok
+CREATE TABLE storage_txn (a INTEGER PRIMARY KEY, b TEXT)
+  WITH (storage = 'transactional');
+
+statement ok
+DROP TABLE storage_txn;
+
+
+# Headline smoke: kSearch shard creates iresearch directory + empty writer,
+# dtor closes cleanly, drop wipes the directory.
+statement ok
+CREATE TABLE storage_search (a INTEGER PRIMARY KEY, b TEXT)
+  WITH (storage = 'search');
+
+statement ok
+DROP TABLE storage_search;
+
+
+statement ok
+CREATE TABLE storage_search_upper (a INTEGER PRIMARY KEY, b TEXT)
+  WITH (storage = 'SEARCH');
+
+statement ok
+DROP TABLE storage_search_upper;
+
+
+# Two search tables coexist in the same schema (independent directories).
+statement ok
+CREATE TABLE storage_search_a (a INTEGER PRIMARY KEY, b TEXT)
+  WITH (storage = 'search');
+
+statement ok
+CREATE TABLE storage_search_b (a INTEGER PRIMARY KEY, b TEXT)
+  WITH (storage = 'search');
+
+statement ok
+DROP TABLE storage_search_a;
+
+statement ok
+DROP TABLE storage_search_b;
+
+
+statement error
+CREATE TABLE storage_err1 (a INTEGER PRIMARY KEY)
+  WITH (storage = 'invalid_storage_type');
+----
+db error: ERROR: WITH option "storage" must be 'transactional' or 'search', got "invalid_storage_type"
+
+
+statement error
+CREATE TABLE storage_err2 (a INTEGER PRIMARY KEY)
+  WITH (storage = ['search']);
+----
+db error: ERROR: WITH option "storage" expects a string literal
+
+
+statement ok
+CREATE TABLE search_dml (a INTEGER PRIMARY KEY, b TEXT)
+  WITH (storage = 'search');
+
+statement ok
+INSERT INTO search_dml VALUES (1, 'x'), (2, 'y'), (3, 'z');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) search_dml;
+
+
+query
+SELECT * FROM search_dml ORDER BY a;
+----
+a	b
+1	x
+2	y
+3	z
+
+
+# COUNT(*) uses the count-only scan path (no real columns projected); it must
+# return the row count, not error on the virtual column.
+query
+SELECT COUNT(*) FROM search_dml;
+----
+count
+3
+
+
+query
+SELECT COUNT(*) FROM search_dml WHERE a >= 2;
+----
+count
+2
+
+
+# UPDATE is delete-old + insert-new on the shard's serial trx; the new value is
+# visible after the publish (VACUUM REFRESH_TABLE). Updating a non-PK column
+# keeps the row reachable by its unchanged PK.
+statement ok
+UPDATE search_dml SET b = 'X' WHERE a = 1;
+
+statement ok
+VACUUM (REFRESH_TABLE) search_dml;
+
+query
+SELECT a, b FROM search_dml ORDER BY a;
+----
+a	b
+1	X
+2	y
+3	z
+
+# Row count is unchanged by an UPDATE (one delete + one insert per row).
+query
+SELECT COUNT(*) FROM search_dml;
+----
+count
+3
+
+
+# DELETE removes rows by PK term; the removal is visible after the publish
+# (VACUUM REFRESH_TABLE), like inserts.
+statement ok
+DELETE FROM search_dml WHERE a = 1;
+
+statement ok
+VACUUM (REFRESH_TABLE) search_dml;
+
+query
+SELECT a, b FROM search_dml ORDER BY a;
+----
+a	b
+2	y
+3	z
+
+
+query
+SELECT COUNT(*) FROM search_dml;
+----
+count
+2
+
+
+# TRUNCATE (autocommit) wipes the table via an iresearch Clear. Unlike
+# INSERT/DELETE, the empty state is visible IMMEDIATELY -- no VACUUM needed
+# (Clear resets the writer; new snapshots see the empty index at once).
+statement ok
+TRUNCATE search_dml;
+
+# simple-protocol only. This asserts the autocommit TRUNCATE's fast iresearch
+# Clear is visible to the very next statement with NO VACUUM. On the extended
+# protocol the autocommit statements share one implicit transaction (one
+# MetaTransaction per Sync), so TRUNCATE runs with IsAutoCommit()=false, takes
+# the in-transaction (commit-time-only) path, and -- like any index queried
+# inside an uncommitted transaction -- this COUNT reads the pre-truncate
+# snapshot until that transaction commits. The re-insert + VACUUM below
+# reconciles regardless, so only this no-VACUUM immediate count is skipped.
+skipif pg-wire-extended
+query
+SELECT COUNT(*) FROM search_dml;
+----
+count
+0
+
+# Re-insert after a truncate works; an insert still needs a refresh to publish.
+statement ok
+INSERT INTO search_dml VALUES (5, 'five'), (6, 'six');
+
+statement ok
+VACUUM (REFRESH_TABLE) search_dml;
+
+query
+SELECT a, b FROM search_dml ORDER BY a;
+----
+a	b
+5	five
+6	six
+
+# TRUNCATE inside a transaction degrades to a per-row DELETE (a writer-level
+# Clear can't coexist with same-txn writes), so it composes with a following
+# INSERT and -- like any delete -- publishes only after VACUUM.
+statement ok
+BEGIN;
+
+statement ok
+TRUNCATE search_dml;
+
+statement ok
+INSERT INTO search_dml VALUES (9, 'nine');
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) search_dml;
+
+query
+SELECT a, b FROM search_dml ORDER BY a;
+----
+a	b
+9	nine
+
+
+# All access methods rejected (including USING inverted -- iresearch on
+# top of iresearch makes no sense).
+statement error
+CREATE INDEX search_dml_idx ON search_dml (b);
+----
+db error: ERROR: CREATE INDEX on a search-backed table is not yet supported
+
+
+statement error
+CREATE INDEX search_dml_inv_idx ON search_dml USING inverted (b);
+----
+db error: ERROR: CREATE INDEX on a search-backed table is not yet supported
+
+
+# Search tables have a fixed iresearch schema: structural ALTERs are rejected.
+# The guard runs before column/constraint resolution, so even a missing
+# constraint name reports the search-table rejection.
+statement error
+ALTER TABLE search_dml ADD COLUMN c INTEGER;
+----
+db error: ERROR: ALTER TABLE ADD COLUMN on a search-backed table is not yet supported
+
+
+statement error
+ALTER TABLE search_dml DROP COLUMN b;
+----
+db error: ERROR: ALTER TABLE DROP COLUMN on a search-backed table is not yet supported
+
+
+statement error
+ALTER TABLE search_dml ALTER COLUMN b TYPE VARCHAR;
+----
+db error: ERROR: ALTER TABLE ALTER COLUMN TYPE on a search-backed table is not yet supported
+
+
+statement error
+ALTER TABLE search_dml DROP CONSTRAINT search_dml_pkey;
+----
+db error: ERROR: ALTER TABLE DROP CONSTRAINT on a search-backed table is not yet supported
+
+
+# Renames are catalog-only metadata -- iresearch and the scan are keyed by
+# column id, not name -- so column/table renames stay allowed and queries see
+# the new names.
+statement ok
+ALTER TABLE search_dml RENAME COLUMN b TO b2;
+
+statement ok
+ALTER TABLE search_dml RENAME TO search_dml_renamed;
+
+query
+SELECT a, b2 FROM search_dml_renamed ORDER BY a;
+----
+a	b2
+9	nine
+
+
+statement ok
+DROP TABLE search_dml_renamed;
+
+
+## Generated-PK search table -- INSERT path reserves the sequence range
+statement ok
+CREATE TABLE search_genpk (a INTEGER, b TEXT) WITH (storage = 'search');
+
+statement ok
+INSERT INTO search_genpk VALUES (10, 'p'), (20, 'q'), (30, 'r');
+
+statement ok
+VACUUM (REFRESH_TABLE) search_genpk;
+
+query
+SELECT * FROM search_genpk ORDER BY a;
+----
+a	b
+10	p
+20	q
+30	r
+
+# UPDATE on a generated-PK table: the new row is minted a fresh generated PK
+# (the old row is removed by its old rowid). Rows stay reachable by value.
+statement ok
+UPDATE search_genpk SET b = 'Q' WHERE a = 20;
+
+statement ok
+VACUUM (REFRESH_TABLE) search_genpk;
+
+query
+SELECT * FROM search_genpk ORDER BY a;
+----
+a	b
+10	p
+20	Q
+30	r
+
+# DELETE on a generated-PK table: the rowid is the synthetic PK, materialised
+# from the stored kGeneratedPKId column for row identity.
+statement ok
+DELETE FROM search_genpk WHERE a >= 20;
+
+statement ok
+VACUUM (REFRESH_TABLE) search_genpk;
+
+query
+SELECT * FROM search_genpk ORDER BY a;
+----
+a	b
+10	p
+
+statement ok
+DROP TABLE search_genpk;
+
+
+## UPDATE on an explicit-PK search table -- multi-row and PK-changing.
+statement ok
+CREATE TABLE search_upd (id INTEGER PRIMARY KEY, grp TEXT, n INTEGER)
+  WITH (storage = 'search');
+
+statement ok
+INSERT INTO search_upd VALUES (1, 'a', 10), (2, 'a', 20), (3, 'b', 30),
+  (4, 'b', 40);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_upd;
+
+# Multi-row UPDATE: two rows match; non-matching rows are untouched.
+statement ok
+UPDATE search_upd SET n = n + 100 WHERE grp = 'a';
+
+statement ok
+VACUUM (REFRESH_TABLE) search_upd;
+
+query
+SELECT id, grp, n FROM search_upd ORDER BY id;
+----
+id	grp	n
+1	a	110
+2	a	120
+3	b	30
+4	b	40
+
+# PK-changing UPDATE: old PK term removed, the new row inserted under the new
+# PK. Reachable by the new PK; gone under the old.
+statement ok
+UPDATE search_upd SET id = 20 WHERE id = 2;
+
+statement ok
+VACUUM (REFRESH_TABLE) search_upd;
+
+query
+SELECT id, grp, n FROM search_upd ORDER BY id;
+----
+id	grp	n
+1	a	110
+3	b	30
+4	b	40
+20	a	120
+
+query
+SELECT n FROM search_upd WHERE id = 20;
+----
+n
+120
+
+query
+SELECT COUNT(*) FROM search_upd WHERE id = 2;
+----
+count
+0
+
+statement ok
+DROP TABLE search_upd;
+
+
+statement ok
+CREATE TABLE search_ctas WITH (storage = 'search') AS
+  SELECT * FROM (VALUES (1, 'a'), (2, 'b'), (3, 'c')) AS t(x, y);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_ctas;
+
+query
+SELECT * FROM search_ctas ORDER BY x;
+----
+x	y
+1	a
+2	b
+3	c
+
+statement ok
+DROP TABLE search_ctas;
+
+
+statement ok
+BEGIN;
+
+statement ok
+CREATE TABLE search_multi WITH (storage = 'search') AS
+  SELECT * FROM (VALUES (1, 'even'), (2, 'odd'), (3, 'even'), (4, 'odd'))
+    AS t(id, grp);
+
+statement ok
+INSERT INTO search_multi VALUES (10, 'even'), (11, 'odd'), (12, 'even');
+
+statement ok
+INSERT INTO search_multi VALUES (20, 'even');
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) search_multi;
+
+
+query
+SELECT id, grp FROM search_multi ORDER BY id;
+----
+id	grp
+1	even
+2	odd
+3	even
+4	odd
+10	even
+11	odd
+12	even
+20	even
+
+
+query
+SELECT id FROM search_multi WHERE grp = 'even' ORDER BY id;
+----
+id
+1
+3
+10
+12
+20
+
+statement ok
+DROP TABLE search_multi;
+
+
+# CREATE TABLE IF NOT EXISTS hitting an existing search table is a no-op: the
+# plan still runs SereneDBSearchInsert, but GetGlobalSinkState returns null, so
+# every sink thread gets a no-op local state and the SELECT's rows are never
+# inserted. The existing rows must survive untouched.
+statement ok
+CREATE TABLE search_ine (a INTEGER PRIMARY KEY, b TEXT) WITH (storage = 'search');
+
+statement ok
+INSERT INTO search_ine VALUES (1, 'keep'), (2, 'keep');
+
+statement ok
+VACUUM (REFRESH_TABLE) search_ine;
+
+statement ok
+CREATE TABLE IF NOT EXISTS search_ine WITH (storage = 'search') AS
+  SELECT * FROM (VALUES (99, 'nope')) AS t(a, b);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_ine;
+
+query
+SELECT a, b FROM search_ine ORDER BY a;
+----
+a	b
+1	keep
+2	keep
+
+statement ok
+DROP TABLE search_ine;
+
+
+## STORED generated columns on a search table. The INSERT path resolves them
+## through the two-pass ResolveDefaultsProjection: generated columns are
+## computed over the storage-ordered chunk, so the value is correct even when
+## the user inserts columns out of order and omits the generated column.
+statement ok
+CREATE TABLE search_gen (a INTEGER,
+  b INTEGER GENERATED ALWAYS AS (a + 1) STORED, note TEXT)
+  WITH (storage = 'search');
+
+statement ok
+INSERT INTO search_gen (note, a) VALUES ('x', 5), ('y', 7);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_gen;
+
+query
+SELECT a, b, note FROM search_gen ORDER BY a;
+----
+a	b	note
+5	6	x
+7	8	y
+
+statement ok
+DROP TABLE search_gen;
+
+
+# A generated column may depend on more than one stored column.
+statement ok
+CREATE TABLE search_gen_multi (w INTEGER, h INTEGER,
+  area INTEGER GENERATED ALWAYS AS (w * h) STORED) WITH (storage = 'search');
+
+statement ok
+INSERT INTO search_gen_multi (w, h) VALUES (3, 4), (5, 6);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_gen_multi;
+
+query
+SELECT w, h, area FROM search_gen_multi ORDER BY w;
+----
+w	h	area
+3	4	12
+5	6	30
+
+statement ok
+DROP TABLE search_gen_multi;
+
+
+## UPDATE recomputes STORED generated columns. Search UPDATE is delete+insert
+## at the index level; duckdb's update binder recomputes a generated column
+## when an assigned column feeds it, and untouched columns -- including the PK
+## and non-feeder columns -- pass through unchanged.
+statement ok
+CREATE TABLE search_gen_upd (id INTEGER PRIMARY KEY, w INTEGER, tag TEXT,
+  area INTEGER GENERATED ALWAYS AS (w * 10) STORED) WITH (storage = 'search');
+
+statement ok
+INSERT INTO search_gen_upd (id, w, tag) VALUES (1, 3, 'a'), (2, 5, 'b'),
+  (3, 8, 'a');
+
+statement ok
+VACUUM (REFRESH_TABLE) search_gen_upd;
+
+# Updating a non-feeder column leaves the generated column and the PK untouched.
+statement ok
+UPDATE search_gen_upd SET tag = 'z' WHERE id = 2;
+
+statement ok
+VACUUM (REFRESH_TABLE) search_gen_upd;
+
+query
+SELECT id, w, tag, area FROM search_gen_upd ORDER BY id;
+----
+id	w	tag	area
+1	3	a	30
+2	5	z	50
+3	8	a	80
+
+# Multi-row UPDATE of a feeder column recomputes the generated column for each
+# matched row; the PK is preserved.
+statement ok
+UPDATE search_gen_upd SET w = w + 1 WHERE tag = 'a';
+
+statement ok
+VACUUM (REFRESH_TABLE) search_gen_upd;
+
+query
+SELECT id, w, tag, area FROM search_gen_upd ORDER BY id;
+----
+id	w	tag	area
+1	4	a	40
+2	5	z	50
+3	9	a	90
+
+statement ok
+DROP TABLE search_gen_upd;
+
+
+# Generated-PK search table: UPDATE recomputes the generated column over the new
+# row (reinserted under a fresh generated PK).
+statement ok
+CREATE TABLE search_gen_upd_gpk (w INTEGER, h INTEGER,
+  area INTEGER GENERATED ALWAYS AS (w * h) STORED) WITH (storage = 'search');
+
+statement ok
+INSERT INTO search_gen_upd_gpk (w, h) VALUES (3, 4), (5, 6);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_gen_upd_gpk;
+
+statement ok
+UPDATE search_gen_upd_gpk SET h = 10 WHERE w = 3;
+
+statement ok
+VACUUM (REFRESH_TABLE) search_gen_upd_gpk;
+
+query
+SELECT w, h, area FROM search_gen_upd_gpk ORDER BY w;
+----
+w	h	area
+3	10	30
+5	6	30
+
+statement ok
+DROP TABLE search_gen_upd_gpk;

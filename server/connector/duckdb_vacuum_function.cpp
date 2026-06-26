@@ -28,11 +28,15 @@
 #include <duckdb/main/database.hpp>
 #include <iresearch/utils/index_utils.hpp>
 
+#include "basics/assert.h"
+#include "basics/down_cast.h"
 #include "catalog/catalog.h"
 #include "catalog/store/store.h"
+#include "catalog/table_options.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "search/inverted_index_storage.h"
+#include "search/search_table.h"
 
 namespace sdb::connector {
 namespace {
@@ -263,9 +267,21 @@ void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
     }
   };
 
+  auto sync_search_table = [&](auto& table) {
+    if (table->GetEngine() == catalog::TableEngine::Search) {
+      if (const auto& search = table->GetData()) {
+        search->Commit();
+      }
+    }
+  };
+
   auto walk_schema = [&](ObjectId db_id, std::string_view schema) {
     for (auto& table : snapshot.GetTables(db_id, schema)) {
       ForEachInvertedStorage(snapshot, table->GetId(), apply);
+      // SearchTable has no background commit thread yet, so VACUUM is currently
+      // the only way to flush a Search table's pending iresearch trxs into a
+      // segment visible to subsequent scans.
+      sync_search_table(table);
     }
   };
 
@@ -306,6 +322,7 @@ void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
                                        target.object);
       }
       ForEachInvertedStorage(snapshot, table->GetId(), apply);
+      sync_search_table(table);
     } break;
     case Scope::Schema: {
       auto db_id = LookupDatabaseId(snapshot, target.database);

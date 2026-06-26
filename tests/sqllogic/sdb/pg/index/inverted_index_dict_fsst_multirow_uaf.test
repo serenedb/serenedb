@@ -1,0 +1,67 @@
+# Reads a committed parquet fixture via ${RESOURCES}, so env substitution is on.
+control substitution on
+
+# Regression: a multi-row materialise of a dict_fsst-compressed INCLUDE column
+# that spans index segments must equal the source byte-for-byte.
+#
+# dict_fsst's DICT_FSST mode FSST-decodes each value into an arena owned by the
+# per-segment scan state's reusable dictionary, then hands out string_t that are
+# zero-copy views into that arena. A single output Vector can be filled from
+# several segments; crossing to the next segment frees the old dictionary and
+# dangles the earlier views -> heap-use-after-free: garbled bytes on a release
+# build, a server SIGSEGV under ASAN. The fix keeps the segment's decoded
+# dictionary (and block pin) alive on the output Vector for its lifetime
+# (ColumnReader::ScanCursor::Scan -> SharedPinHolder).
+#
+# Triggering needs the DICT_FSST sub-mode specifically (DICTIONARY views the
+# block, which the pin already covers; FSST_ONLY decodes into the output's own
+# arena, which is safe). dict_fsst only takes the safe FSST_ONLY path when a
+# segment is all-unique AND null-free -- so the fixture is distinct,
+# FSST-compressible source code with interleaved NULL bodies, which forces
+# DICT_FSST. The corpus is drawn from this repo's own (Apache-2.0) and vendored
+# DuckDB (MIT) sources -- no third-party data. Synthetic range()/repeat() data
+# never lands on this path, so a committed real-source corpus is the only
+# reproducer.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY uaf_words(
+    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
+    stemming = false, accent = false, frequency = true, position = true
+);
+
+statement ok
+CREATE VIEW uaf_src AS
+SELECT * FROM read_parquet('${RESOURCES}/tests/iresearch/dict_fsst_uaf_corpus.parquet');
+
+# Pin the codec so the test keeps exercising dict_fsst even if the auto-selection
+# heuristic changes; the corpus is large enough to span many segments.
+statement ok
+CREATE INDEX uaf_idx ON uaf_src USING inverted(id, body uaf_words)
+  INCLUDE (id, body) WITH (compression = 'dict_fsst');
+
+# Whole corpus is indexed.
+query
+SELECT count(*) AS n FROM uaf_idx;
+----
+n
+4659
+
+# The multi-row materialise of `body` across segments must match the source.
+# != 0 here is the dangling-view corruption; without the fix this faults under
+# ASAN while the scan crosses a dict_fsst segment.
+query
+SELECT count(*) AS mismatches
+FROM uaf_idx i
+JOIN read_parquet('${RESOURCES}/tests/iresearch/dict_fsst_uaf_corpus.parquet') s
+  ON i.id = s.id
+WHERE i.body IS DISTINCT FROM s.body;
+----
+mismatches
+0
+
+# The interleaved NULL bodies (which force the DICT_FSST mode) round-trip as NULL.
+query
+SELECT count(*) AS nulls FROM uaf_idx WHERE body IS NULL;
+----
+nulls
+776

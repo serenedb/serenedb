@@ -9,19 +9,19 @@
 control substitution on
 
 statement ok
-DETACH DATABASE IF EXISTS att_ext_${__DATABASE__};
+DETACH DATABASE IF EXISTS db172;
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/view_attached.db' AS att_ext_${__DATABASE__};
+ATTACH '${__TEST_DIR__}/db172.duckdb' AS db172;
 
 
 statement ok
-CREATE TABLE att_ext_${__DATABASE__}.main.docs(id INTEGER, body TEXT, score INTEGER);
+CREATE TABLE db172.main.docs(id INTEGER, body TEXT, score INTEGER);
 
 
 statement ok
-INSERT INTO att_ext_${__DATABASE__}.main.docs VALUES
+INSERT INTO db172.main.docs VALUES
   (1, 'alpha cat runs', 10),
   (2, 'beta dog sleeps', 20),
   (3, 'gamma cat jumps', 30),
@@ -29,15 +29,15 @@ INSERT INTO att_ext_${__DATABASE__}.main.docs VALUES
 
 
 statement ok
-CREATE SCHEMA att_ext_${__DATABASE__}.aux;
+CREATE SCHEMA db172.aux;
 
 
 statement ok
-CREATE TABLE att_ext_${__DATABASE__}.aux.notes(id INTEGER, body TEXT);
+CREATE TABLE db172.aux.notes(id INTEGER, body TEXT);
 
 
 statement ok
-INSERT INTO att_ext_${__DATABASE__}.aux.notes VALUES
+INSERT INTO db172.aux.notes VALUES
   (100, 'cat note one'),
   (200, 'dog note two');
 
@@ -56,14 +56,14 @@ CREATE TEXT SEARCH DICTIONARY view_attached_en(
 
 statement ok
 CREATE VIEW v_att AS
-SELECT * FROM att_ext_${__DATABASE__}.main.docs;
+SELECT * FROM db172.main.docs;
 
 
 # Projection + cast over a non-default schema: covers the name-based column
 # mapping and the cast pass of the lookup.
 statement ok
 CREATE VIEW v_att_notes AS
-SELECT id::BIGINT AS id_b, body FROM att_ext_${__DATABASE__}.aux.notes;
+SELECT id::BIGINT AS id_b, body FROM db172.aux.notes;
 
 
 query
@@ -109,7 +109,7 @@ BEGIN;
 
 
 statement ok
-DELETE FROM att_ext_${__DATABASE__}.main.docs WHERE id = 3;
+DELETE FROM db172.main.docs WHERE id = 3;
 
 
 query
@@ -138,7 +138,7 @@ id	body	score
 # The index is frozen at CREATE INDEX time: rows inserted into the source
 # afterwards exist in the view but produce no postings.
 statement ok
-INSERT INTO att_ext_${__DATABASE__}.main.docs VALUES (5, 'eta cat hides', 50);
+INSERT INTO db172.main.docs VALUES (5, 'eta cat hides', 50);
 
 
 query
@@ -159,7 +159,7 @@ id
 # Committed source deletion after CREATE INDEX: the stale posting
 # materializes as NULLs instead of garbage.
 statement ok
-DELETE FROM att_ext_${__DATABASE__}.main.docs WHERE id = 3;
+DELETE FROM db172.main.docs WHERE id = 3;
 
 
 query
@@ -174,7 +174,7 @@ NULL	NULL	NULL
 # DETACH: count-only queries are served by the index alone; materializing
 # real columns needs the source and errors until the database is re-attached.
 statement ok
-DETACH att_ext_${__DATABASE__};
+DETACH db172;
 
 
 query
@@ -191,7 +191,7 @@ db error: ERROR: materialising real columns from this view-backed inverted index
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/view_attached.db' AS att_ext_${__DATABASE__};
+ATTACH '${__TEST_DIR__}/db172.duckdb' AS db172;
 
 
 query
@@ -216,4 +216,4 @@ DROP TEXT SEARCH DICTIONARY view_attached_en;
 
 
 statement ok
-DETACH att_ext_${__DATABASE__};
+DETACH db172;

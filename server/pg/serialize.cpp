@@ -304,24 +304,16 @@ IRS_FORCE_INLINE void EmitTextItem(SerializationContext& ctx,
 
 template<WrapContext InContainer>
 struct VarcharTextCore {
-  IRS_FORCE_INLINE static void Render(
-    SerializationContext& ctx,
-    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto raw =
-      duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::string_t>(
-        vdata.unified)[idx];
+  using Value = duckdb::string_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value raw) {
     EmitTextItem<InContainer>(ctx,
                               std::string_view{raw.GetData(), raw.GetSize()});
   }
 };
 
 struct VarcharBinCore {
-  IRS_FORCE_INLINE static void Render(
-    SerializationContext& ctx,
-    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto raw =
-      duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::string_t>(
-        vdata.unified)[idx];
+  using Value = duckdb::string_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value raw) {
     ctx.writer->Write(std::string_view{raw.GetData(), raw.GetSize()});
   }
 };
@@ -519,67 +511,47 @@ struct DecimalBinCore {
 };
 
 struct UbigintBinCore {
-  IRS_FORCE_INLINE static void Render(
-    SerializationContext& ctx,
-    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    WriteAsNumericBinary(
-      ctx,
-      duckdb::UnifiedVectorFormat::GetDataUnsafe<uint64_t>(vdata.unified)[idx],
-      0);
+  using Value = uint64_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value v) {
+    WriteAsNumericBinary(ctx, v, 0);
   }
 };
 
 struct HugeintTextCore {
+  using Value = duckdb::hugeint_t;
   static constexpr uint32_t kMaxBytes =
     absl::numbers_internal::kFastToBuffer128Size;
-  IRS_FORCE_INLINE static size_t Render(
-    uint8_t* dst, SerializationContext&,
-    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto value =
-      duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::hugeint_t>(
-        vdata.unified)[idx];
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value v) {
     char* buf = reinterpret_cast<char*>(dst);
     char* ptr = absl::numbers_internal::FastIntToBuffer(
-      absl::MakeInt128(value.upper, value.lower), buf);
+      absl::MakeInt128(v.upper, v.lower), buf);
     return static_cast<size_t>(ptr - buf);
   }
 };
 
 struct HugeintBinCore {
-  IRS_FORCE_INLINE static void Render(
-    SerializationContext& ctx,
-    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto value =
-      duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::hugeint_t>(
-        vdata.unified)[idx];
-    WriteAsNumericBinary(ctx, absl::MakeInt128(value.upper, value.lower), 0);
+  using Value = duckdb::hugeint_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value v) {
+    WriteAsNumericBinary(ctx, absl::MakeInt128(v.upper, v.lower), 0);
   }
 };
 
 struct UhugeintTextCore {
+  using Value = duckdb::uhugeint_t;
   static constexpr uint32_t kMaxBytes =
     absl::numbers_internal::kFastToBuffer128Size;
-  IRS_FORCE_INLINE static size_t Render(
-    uint8_t* dst, SerializationContext&,
-    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto value =
-      duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::uhugeint_t>(
-        vdata.unified)[idx];
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value v) {
     char* buf = reinterpret_cast<char*>(dst);
     char* ptr = absl::numbers_internal::FastIntToBuffer(
-      absl::MakeUint128(value.upper, value.lower), buf);
+      absl::MakeUint128(v.upper, v.lower), buf);
     return static_cast<size_t>(ptr - buf);
   }
 };
 
 struct UhugeintBinCore {
-  IRS_FORCE_INLINE static void Render(
-    SerializationContext& ctx,
-    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto value =
-      duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::uhugeint_t>(
-        vdata.unified)[idx];
-    WriteAsNumericBinary(ctx, absl::MakeUint128(value.upper, value.lower), 0);
+  using Value = duckdb::hugeint_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value v) {
+    WriteAsNumericBinary(ctx, absl::MakeUint128(v.upper, v.lower), 0);
   }
 };
 
@@ -597,14 +569,9 @@ void ByteaOutHex(SerializationContext& ctx, std::string_view value) {
 
 template<WrapContext InContainer>
 struct ByteaHexTextCore {
-  IRS_FORCE_INLINE static void Render(
-    SerializationContext& ctx,
-    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto raw =
-      duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::string_t>(
-        vdata.unified)[idx];
-    const auto value = std::string_view{raw.GetData(), raw.GetSize()};
-
+  using Value = duckdb::string_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value raw) {
+    const std::string_view value{raw.GetData(), raw.GetSize()};
     // '\\xnnnn' always starts with '\\' which triggers wrap in both array and
     // record contexts.
     if constexpr (InContainer == WrapContext::None) {
@@ -655,13 +622,9 @@ void ByteaOutEscape(SerializationContext& ctx, std::string_view value) {
 
 template<WrapContext InContainer>
 struct ByteaEscapeTextCore {
-  IRS_FORCE_INLINE static void Render(
-    SerializationContext& ctx,
-    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto raw =
-      duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::string_t>(
-        vdata.unified)[idx];
-    const auto value = std::string_view{raw.GetData(), raw.GetSize()};
+  using Value = duckdb::string_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value raw) {
+    const std::string_view value{raw.GetData(), raw.GetSize()};
 
     if constexpr (InContainer == WrapContext::None) {
       ByteaOutEscape(ctx, value);
@@ -683,12 +646,8 @@ struct ByteaEscapeTextCore {
 };
 
 struct ByteaBinCore {
-  IRS_FORCE_INLINE static void Render(
-    SerializationContext& ctx,
-    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto raw =
-      duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::string_t>(
-        vdata.unified)[idx];
+  using Value = duckdb::string_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value raw) {
     ctx.writer->Write(std::string_view{raw.GetData(), raw.GetSize()});
   }
 };
@@ -696,7 +655,7 @@ struct ByteaBinCore {
 struct BoolTextCore {
   using Value = bool;
   static constexpr uint32_t kMaxBytes = 1;
-  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, bool v) {
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value v) {
     *dst = v ? 't' : 'f';
     return 1;
   }
@@ -705,7 +664,7 @@ struct BoolTextCore {
 struct BoolBinCore {
   using Value = bool;
   static constexpr uint32_t kMaxBytes = 1;
-  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, bool v) {
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value v) {
     *reinterpret_cast<bool*>(dst) = v;
     return 1;
   }
@@ -715,7 +674,7 @@ template<typename Read, typename Wire = Read>
 struct IntBinCore {
   using Value = Read;
   static constexpr uint32_t kMaxBytes = sizeof(Wire);
-  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, const Read& v) {
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value v) {
     absl::big_endian::Store(dst, static_cast<Wire>(v));
     return sizeof(Wire);
   }
@@ -725,7 +684,7 @@ template<typename Read>
 struct IntTextCore {
   using Value = Read;
   static constexpr uint32_t kMaxBytes = basics::kIntStrMaxLen;
-  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, const Read& v) {
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value v) {
     char* buf = reinterpret_cast<char*>(dst);
     char* end = absl::numbers_internal::FastIntToBuffer(v, buf);
     return static_cast<size_t>(end - buf);
@@ -735,7 +694,7 @@ struct IntTextCore {
 struct OidBinCore {
   using Value = int64_t;
   static constexpr uint32_t kMaxBytes = 4;
-  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, int64_t oid) {
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value oid) {
     if (oid != static_cast<int32_t>(oid)) {
       SDB_WARN(HTTP, "reg* OID ", oid,
                " truncated to 32-bit for binary wire protocol");
@@ -749,11 +708,11 @@ template<typename T>
 struct FloatBinCore {
   using Value = T;
   static constexpr uint32_t kMaxBytes = sizeof(T);
-  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, T value) {
-    if (value == 0) {  // postgres renders -0.0 as 0.0
-      value = 0;
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value v) {
+    if (v == 0) {  // postgres renders -0.0 as 0.0
+      v = 0;
     }
-    absl::big_endian::Store(dst, value);
+    absl::big_endian::Store(dst, v);
     return sizeof(T);
   }
 };
@@ -763,18 +722,17 @@ struct FloatTextCore {
   using Value = T;
   static constexpr uint32_t kMaxBytes = basics::kNumberStrMaxLen;
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, SerializationContext& ctx,
-                                        T value) {
+                                        Value v) {
     static_assert(std::is_same_v<T, float> || std::is_same_v<T, double>);
-    if (value == 0) {  // Postgres converts -0.0 as 0.0
-      value = 0;
+    if (v == 0) {  // Postgres converts -0.0 as 0.0
+      v = 0;
     }
     char* buf = reinterpret_cast<char*>(dst);
-    if (char* ptr =
-          basics::dtoa_literals<basics::kPgDtoaLiterals>(value, buf)) {
+    if (char* ptr = basics::dtoa_literals<basics::kPgDtoaLiterals>(v, buf)) {
       return static_cast<size_t>(ptr - buf);
     }
     if constexpr (Precise) {
-      char* ptr = basics::dtoa_fast(value, buf);
+      char* ptr = basics::dtoa_fast(v, buf);
       return static_cast<size_t>(ptr - buf);
     } else {
       int num_of_digits =
@@ -784,7 +742,7 @@ struct FloatTextCore {
       } else {
         SDB_ASSERT(num_of_digits >= 0);
       }
-      const auto r = std::to_chars(buf, buf + basics::kNumberStrMaxLen, value,
+      const auto r = std::to_chars(buf, buf + basics::kNumberStrMaxLen, v,
                                    std::chars_format::general, num_of_digits);
       SDB_ASSERT(r);
       return static_cast<size_t>(r.ptr - buf);
@@ -806,12 +764,9 @@ void WithWrapIfNested(SerializationContext& context, Body&& body) {
 
 template<WrapContext InContainer>
 struct TimestampSecTextCore {
-  IRS_FORCE_INLINE static void Render(
-    SerializationContext& ctx,
-    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto timestamp =
-      duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::timestamp_sec_t>(
-        vdata.unified)[idx];
+  using Value = duckdb::timestamp_sec_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx,
+                                      Value timestamp) {
     auto str = duckdb::Timestamp::ToString(
       duckdb::Timestamp::FromEpochSeconds(timestamp.value));
     WithWrapIfNested<InContainer>(ctx, [&] { ctx.writer->Write(str); });
@@ -829,12 +784,9 @@ struct TimestampSecBinCore {
 
 template<WrapContext InContainer>
 struct TimestampMsTextCore {
-  IRS_FORCE_INLINE static void Render(
-    SerializationContext& ctx,
-    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto timestamp =
-      duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::timestamp_ms_t>(
-        vdata.unified)[idx];
+  using Value = duckdb::timestamp_ms_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx,
+                                      Value timestamp) {
     auto str = duckdb::Timestamp::ToString(
       duckdb::Timestamp::FromEpochMs(timestamp.value));
     WithWrapIfNested<InContainer>(ctx, [&] { ctx.writer->Write(str); });
@@ -872,12 +824,9 @@ int32_t DateDaysToWire(int32_t days) {
 
 template<WrapContext InContainer>
 struct TimestampTextCore {
-  IRS_FORCE_INLINE static void Render(
-    SerializationContext& ctx,
-    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto timestamp =
-      duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::timestamp_t>(
-        vdata.unified)[idx];
+  using Value = duckdb::timestamp_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx,
+                                      Value timestamp) {
     auto str = duckdb::Timestamp::ToString(timestamp);
     WithWrapIfNested<InContainer>(ctx, [&] { ctx.writer->Write(str); });
   }
@@ -894,12 +843,9 @@ struct TimestampBinCore {
 
 template<WrapContext InContainer>
 struct TimestampNsTextCore {
-  IRS_FORCE_INLINE static void Render(
-    SerializationContext& ctx,
-    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto timestamp =
-      duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::timestamp_ns_t>(
-        vdata.unified)[idx];
+  using Value = duckdb::timestamp_ns_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx,
+                                      Value timestamp) {
     duckdb::StringHeap heap{duckdb::Allocator::DefaultAllocator()};
     const auto str = duckdb::StringCast::Operation(timestamp, heap);
     WithWrapIfNested<InContainer>(ctx, [&] {
@@ -919,13 +865,9 @@ struct TimestampNsBinCore {
 
 template<WrapContext InContainer>
 struct TimestampTzTextCore {
-  IRS_FORCE_INLINE static void Render(
-    SerializationContext& ctx,
-    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto ts =
-      duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::timestamp_tz_t>(
-        vdata.unified)[idx];
-    auto str = duckdb::Timestamp::ToString(duckdb::timestamp_t{ts});
+  using Value = duckdb::timestamp_tz_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value tz) {
+    auto str = duckdb::Timestamp::ToString(duckdb::timestamp_t{tz});
     WithWrapIfNested<InContainer>(ctx, [&] {
       ctx.writer->Write(str);
       ctx.writer->Write("+00");
@@ -936,8 +878,8 @@ struct TimestampTzTextCore {
 struct TimestampTzBinCore {
   using Value = duckdb::timestamp_tz_t;
   static constexpr uint32_t kMaxBytes = 8;
-  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value ts) {
-    absl::big_endian::Store64(dst, TimestampMicrosToWire(ts.value));
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value tz) {
+    absl::big_endian::Store64(dst, TimestampMicrosToWire(tz.value));
     return 8;
   }
 };
@@ -968,12 +910,8 @@ struct TimestampTzNsBinCore {
 };
 
 struct TimeTextCore {
-  IRS_FORCE_INLINE static void Render(
-    SerializationContext& ctx,
-    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto time =
-      duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::dtime_t>(
-        vdata.unified)[idx];
+  using Value = duckdb::dtime_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value time) {
     ctx.writer->Write(duckdb::Time::ToString(time));
   }
 };
@@ -988,12 +926,8 @@ struct TimeBinCore {
 };
 
 struct TimeNsTextCore {
-  IRS_FORCE_INLINE static void Render(
-    SerializationContext& ctx,
-    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto time =
-      duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::dtime_ns_t>(
-        vdata.unified)[idx];
+  using Value = duckdb::dtime_ns_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value time) {
     duckdb::StringHeap heap{duckdb::Allocator::DefaultAllocator()};
     const auto str = duckdb::StringCast::Operation(time, heap);
     ctx.writer->Write(std::string_view{str.GetData(), str.GetSize()});
@@ -1010,12 +944,8 @@ struct TimeNsBinCore {
 };
 
 struct TimeTzTextCore {
-  IRS_FORCE_INLINE static void Render(
-    SerializationContext& ctx,
-    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto tz =
-      duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::dtime_tz_t>(
-        vdata.unified)[idx];
+  using Value = duckdb::dtime_tz_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value tz) {
     // Format: HH:MM:SS[.mmm][±HH:MM]
     ctx.writer->Write(duckdb::Time::ToString(tz.time()));
     const auto offset_secs = tz.offset();
@@ -1049,24 +979,16 @@ struct TimeTzBinCore {
 };
 
 struct BitTextCore {
-  IRS_FORCE_INLINE static void Render(
-    SerializationContext& ctx,
-    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto raw =
-      duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::string_t>(
-        vdata.unified)[idx];
+  using Value = duckdb::string_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value raw) {
     // DuckDB Bit::ToString gives "01001..." string
     ctx.writer->Write(duckdb::Bit::ToString(raw));
   }
 };
 
 struct BitBinCore {
-  IRS_FORCE_INLINE static void Render(
-    SerializationContext& ctx,
-    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto raw =
-      duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::string_t>(
-        vdata.unified)[idx];
+  using Value = duckdb::string_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value raw) {
     // PG bit binary: int32 nBits + ceil(nBits/8) bytes, bits MSB-first from bit
     // 0 with trailing ZERO padding. DuckDB instead pads at the front of byte 0
     // with one-bits, so re-pack bit by bit rather than copying the raw bytes.
@@ -1087,25 +1009,25 @@ struct BitBinCore {
 struct DateTextCore {
   using Value = duckdb::date_t;
   static constexpr uint32_t kMaxBytes = 13;
-  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value days) {
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value date) {
     // days from 1970-01-01
     char* buf = reinterpret_cast<char*>(dst);
-    if (days.days == std::numeric_limits<int32_t>::max()) {
+    if (date.days == std::numeric_limits<int32_t>::max()) {
       std::memcpy(buf, "infinity", 8);
       return 8;
     }
-    if (days.days == -std::numeric_limits<int32_t>::max()) {
+    if (date.days == -std::numeric_limits<int32_t>::max()) {
       std::memcpy(buf, "-infinity", 9);
       return 9;
     }
     // TODO(mkornaukhov) support BC date and add some validation for dates
     // Format is "%04d-%02d-%02d", max year is 5874897
-    absl::CivilDay date{1970, 1, 1};
-    date += days.days;
+    absl::CivilDay days{1970, 1, 1};
+    days += date.days;
 
     char year_buf[absl::numbers_internal::kFastToBufferSize];
     auto* const year_end =
-      absl::numbers_internal::FastIntToBuffer(date.year(), year_buf);
+      absl::numbers_internal::FastIntToBuffer(days.year(), year_buf);
 
     const auto year_digits = year_end - year_buf;
     const auto extra_pad = 4 - year_digits;
@@ -1118,12 +1040,12 @@ struct DateTextCore {
     buf += year_digits;
     *buf++ = '-';
 
-    const auto month_div = std::div(date.month(), 10);
+    const auto month_div = std::div(days.month(), 10);
     *buf++ = '0' + month_div.quot;
     *buf++ = '0' + month_div.rem;
     *buf++ = '-';
 
-    const auto day_div = std::div(date.day(), 10);
+    const auto day_div = std::div(days.day(), 10);
     *buf++ = '0' + day_div.quot;
     *buf++ = '0' + day_div.rem;
 
@@ -1134,50 +1056,38 @@ struct DateTextCore {
 struct DateBinCore {
   using Value = duckdb::date_t;
   static constexpr uint32_t kMaxBytes = 4;
-  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value days) {
-    absl::big_endian::Store32(dst, DateDaysToWire(days.days));
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value date) {
+    absl::big_endian::Store32(dst, DateDaysToWire(date.days));
     return 4;
   }
 };
 
 struct RegtypeTextCore {
-  IRS_FORCE_INLINE static void Render(
-    SerializationContext& ctx,
-    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto oid =
-      duckdb::UnifiedVectorFormat::GetDataUnsafe<int64_t>(vdata.unified)[idx];
+  using Value = int64_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value oid) {
     EmitEscaped(ctx, RegtypeOut(oid));
   }
 };
 
 struct RegclassTextCore {
-  IRS_FORCE_INLINE static void Render(
-    SerializationContext& ctx,
-    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto oid =
-      duckdb::UnifiedVectorFormat::GetDataUnsafe<int64_t>(vdata.unified)[idx];
+  using Value = int64_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value oid) {
     EmitEscaped(ctx, RegclassOut(*ctx.snapshot, oid));
   }
 };
 
 struct RegnamespaceTextCore {
-  IRS_FORCE_INLINE static void Render(
-    SerializationContext& ctx,
-    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto oid =
-      duckdb::UnifiedVectorFormat::GetDataUnsafe<int64_t>(vdata.unified)[idx];
+  using Value = int64_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value oid) {
     EmitEscaped(ctx, RegnamespaceOut(*ctx.snapshot, oid));
   }
 };
 
 template<WrapContext InContainer>
 struct IntervalTextCore {
-  IRS_FORCE_INLINE static void Render(
-    SerializationContext& ctx,
-    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto interval =
-      duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::interval_t>(
-        vdata.unified)[idx];
+  using Value = duckdb::interval_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx,
+                                      Value interval) {
     auto str = duckdb::Interval::ToString(interval);
     EmitTextItem<InContainer>(ctx, std::string_view{str});
   }
@@ -1198,7 +1108,7 @@ struct IntervalBinCore {
 struct UuidTextCore {
   using Value = duckdb::hugeint_t;
   static constexpr uint32_t kMaxBytes = 36;  // 8-4-4-4-12
-  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, const Value& uuid) {
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value uuid) {
     duckdb::BaseUUID::ToString(uuid, reinterpret_cast<char*>(dst));
     return 36;
   }
@@ -1207,7 +1117,7 @@ struct UuidTextCore {
 struct UuidBinCore {
   using Value = duckdb::hugeint_t;
   static constexpr uint32_t kMaxBytes = 16;
-  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, const Value& uuid) {
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value uuid) {
     // Binary format: flip top bit back to get original UUID bytes
     const uint64_t high =
       static_cast<uint64_t>(uuid.upper) ^ (uint64_t{1} << 63);
@@ -1219,25 +1129,17 @@ struct UuidBinCore {
 
 template<WrapContext InContainer>
 struct JsonTextCore {
-  IRS_FORCE_INLINE static void Render(
-    SerializationContext& ctx,
-    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto& str =
-      duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::string_t>(
-        vdata.unified)[idx];
+  using Value = duckdb::string_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value raw) {
     EmitTextItem<InContainer>(ctx,
-                              std::string_view{str.GetData(), str.GetSize()});
+                              std::string_view{raw.GetData(), raw.GetSize()});
   }
 };
 
 struct JsonBinCore {
-  IRS_FORCE_INLINE static void Render(
-    SerializationContext& ctx,
-    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto str =
-      duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::string_t>(
-        vdata.unified)[idx];
-    ctx.writer->Write(std::string_view{str.GetData(), str.GetSize()});
+  using Value = duckdb::string_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value raw) {
+    ctx.writer->Write(std::string_view{raw.GetData(), raw.GetSize()});
   }
 };
 

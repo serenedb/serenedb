@@ -245,11 +245,15 @@ CompactionPolicy MakePolicy(const CompactionBytesAccum& options) {
 
 CompactionPolicy MakePolicy(const CompactionCount& options) {
   return [options](Compaction& candidates, const IndexReader& reader,
-                   const CompactingSegments& /*compacting_segments*/) {
-    // merge first 'threshold' segments
+                   const CompactingSegments& compacting_segments) {
+    // merge first 'threshold' segments not already owned by another compaction
     for (size_t i = 0, count = std::min(options.threshold, reader.size());
          i < count; ++i) {
-      candidates.emplace_back(&reader[i]);
+      auto& segment = reader[i];
+      if (compacting_segments.contains(segment.Meta().name)) {
+        continue;
+      }
+      candidates.emplace_back(&segment);
     }
   };
 }

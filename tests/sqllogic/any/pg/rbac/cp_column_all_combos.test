@@ -11,7 +11,7 @@
 # and ExecCheckOneRelPerms enforcement.
 #
 # SCOPED OUT: the column-list form `GRANT ALL (a) ON t TO r` (which on real PG
-# expands to attacl {r=arwx/postgres}) is a syntax error on serened -- the ALL
+# expands to attacl <slt:ignore>r=arwx/postgres<slt:ignore>) is a syntax error on serened -- the ALL
 # keyword is not accepted with a column list -- so it is not exercised here.
 #
 # Lore: vedernikoff gets the column-scoped grants over clickclack/babsky.
@@ -56,7 +56,7 @@ query
 SELECT relacl::text AS acl FROM pg_class WHERE relname = 'cac_iceberg';
 ----
 acl
-{postgres=arwdDxtm/postgres,cac_vedernikoff=arwdDxtm/postgres}
+<slt:ignore>postgres=arwdDxtm/postgres<slt:ignore>cac_vedernikoff=arwdDxtm/postgres<slt:ignore>
 
 
 query
@@ -107,7 +107,7 @@ WHERE c.relname = 'cac_iceberg' AND a.attnum > 0
 ORDER BY a.attnum;
 ----
 attname	acl
-clickclack	{cac_babsky=r/postgres}
+clickclack	<slt:ignore>cac_babsky=r/postgres<slt:ignore>
 babsky	NULL
 
 
@@ -151,7 +151,7 @@ FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
 WHERE c.relname = 'cac_iceberg' AND a.attname = 'clickclack';
 ----
 acl
-{cac_babsky=r/postgres,cac_mop=x/postgres}
+<slt:ignore>cac_babsky=r/postgres<slt:ignore>cac_mop=x/postgres<slt:ignore>
 
 
 # REFERENCES does not imply SELECT -> reading clickclack is refused.

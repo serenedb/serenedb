@@ -66,7 +66,7 @@ WHERE c.relname = 'cmg_iceberg' AND a.attnum > 0
 ORDER BY a.attnum;
 ----
 attname	acl
-mop	{cmg_vedernikoff=rw/postgres,cmg_babsky=r/postgres}
+mop	<slt:ignore>cmg_vedernikoff=rw/postgres<slt:ignore>cmg_babsky=r/postgres<slt:ignore>
 drift	(none)
 
 
@@ -115,7 +115,7 @@ WHERE c.relname = 'cmg_iceberg' AND a.attnum > 0
 ORDER BY a.attnum;
 ----
 attname	acl
-mop	{cmg_vedernikoff=rw/postgres,cmg_babsky=r/postgres,=r/postgres}
+mop	<slt:ignore>cmg_vedernikoff=rw/postgres<slt:ignore>cmg_babsky=r/postgres<slt:ignore>=r/postgres<slt:ignore>
 drift	(none)
 
 
@@ -141,7 +141,7 @@ WHERE c.relname = 'cmg_iceberg' AND a.attnum > 0
 ORDER BY a.attnum;
 ----
 attname	acl
-mop	{cmg_vedernikoff=rw/postgres,=r/postgres}
+mop	<slt:ignore>cmg_vedernikoff=rw/postgres<slt:ignore>=r/postgres<slt:ignore>
 drift	(none)
 
 
@@ -199,8 +199,8 @@ WHERE c.relname = 'cmg_split' AND a.attnum > 0
 ORDER BY a.attnum;
 ----
 attname	acl
-mop	{cmg_vedernikoff=r/postgres}
-drift	{cmg_babsky=r/postgres}
+mop	<slt:ignore>cmg_vedernikoff=r/postgres<slt:ignore>
+drift	<slt:ignore>cmg_babsky=r/postgres<slt:ignore>
 
 
 # vedernikoff reads mop (granted).

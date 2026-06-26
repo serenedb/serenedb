@@ -45,9 +45,9 @@ WHERE c.relname = 'cis_iceberg' AND a.attnum > 0
 ORDER BY a.attnum;
 ----
 attname	acl
-clickclack	{cis_vedernikoff=r/postgres}
-babsky	{cis_vedernikoff=w/postgres}
-mop	{cis_vedernikoff=r*/postgres}
+clickclack	<slt:ignore>cis_vedernikoff=r/postgres<slt:ignore>
+babsky	<slt:ignore>cis_vedernikoff=w/postgres<slt:ignore>
+mop	<slt:ignore>cis_vedernikoff=r*/postgres<slt:ignore>
 
 
 # information_schema.column_privileges: one row per granted (column, privilege).

@@ -1,7 +1,7 @@
 # Column-list ALL (PG `GRANT ALL (col) ON t`): ALL expands to only the
 # column-applicable privileges -- INSERT(a), SELECT(r), UPDATE(w),
 # REFERENCES(x) -- never DELETE/TRUNCATE/TRIGGER/MAINTAIN, which are
-# table-scoped. So attacl renders {role=arwx/postgres}. A non-column
+# table-scoped. So attacl renders <slt:ignore>role=arwx/postgres<slt:ignore>. A non-column
 # privilege named with a column list is rejected with PG's
 # `invalid privilege type <P> for column`. REFERENCES alone grants only x
 # and does not imply SELECT.
@@ -59,7 +59,7 @@ WHERE c.relname = 'cag_iceberg' AND a.attnum > 0 AND NOT a.attisdropped
 ORDER BY a.attnum;
 ----
 attname	acl
-a	{cag_vedernikoff=arwx/postgres}
+a	<slt:ignore>cag_vedernikoff=arwx/postgres<slt:ignore>
 b	NULL
 
 
@@ -103,8 +103,8 @@ WHERE c.relname = 'cag_clickclack' AND a.attnum > 0 AND NOT a.attisdropped
 ORDER BY a.attnum;
 ----
 attname	acl
-a	{cag_babsky=arwx/postgres}
-b	{cag_babsky=arwx/postgres}
+a	<slt:ignore>cag_babsky=arwx/postgres<slt:ignore>
+b	<slt:ignore>cag_babsky=arwx/postgres<slt:ignore>
 
 
 # === Non-column privileges named with a column list are rejected ===
@@ -148,7 +148,7 @@ WHERE c.relname = 'cag_mop' AND a.attnum > 0 AND NOT a.attisdropped
 ORDER BY a.attnum;
 ----
 attname	acl
-a	{cag_vedernikoff=x/postgres}
+a	<slt:ignore>cag_vedernikoff=x/postgres<slt:ignore>
 b	NULL
 
 

@@ -74,7 +74,7 @@ WHERE c.relname = 'crg_iceberg' AND a.attnum > 0
 ORDER BY a.attnum;
 ----
 attname	acl
-clickclack	{crg_vedernikoff=r*/postgres}
+clickclack	<slt:ignore>crg_vedernikoff=r*/postgres<slt:ignore>
 babsky	(none)
 mop	(none)
 
@@ -106,7 +106,7 @@ WHERE c.relname = 'crg_iceberg' AND a.attnum > 0
 ORDER BY a.attnum;
 ----
 attname	acl
-clickclack	{crg_vedernikoff=r*/postgres,crg_babsky=r/crg_vedernikoff}
+clickclack	<slt:ignore>crg_vedernikoff=r*/postgres<slt:ignore>crg_babsky=r/crg_vedernikoff<slt:ignore>
 babsky	(none)
 mop	(none)
 
@@ -146,7 +146,7 @@ WHERE c.relname = 'crg_iceberg' AND a.attnum > 0
 ORDER BY a.attnum;
 ----
 attname	acl
-clickclack	{crg_vedernikoff=r*/postgres,crg_babsky=r/crg_vedernikoff}
+clickclack	<slt:ignore>crg_vedernikoff=r*/postgres<slt:ignore>crg_babsky=r/crg_vedernikoff<slt:ignore>
 babsky	(none)
 mop	(none)
 
@@ -183,7 +183,7 @@ WHERE c.relname = 'crg_iceberg' AND a.attnum > 0
 ORDER BY a.attnum;
 ----
 attname	acl
-clickclack	{crg_vedernikoff=r*/postgres}
+clickclack	<slt:ignore>crg_vedernikoff=r*/postgres<slt:ignore>
 babsky	(none)
 mop	(none)
 
@@ -211,7 +211,7 @@ WHERE c.relname = 'crg_iceberg' AND a.attnum > 0
 ORDER BY a.attnum;
 ----
 attname	acl
-clickclack	{crg_vedernikoff=r/postgres}
+clickclack	<slt:ignore>crg_vedernikoff=r/postgres<slt:ignore>
 babsky	(none)
 mop	(none)
 

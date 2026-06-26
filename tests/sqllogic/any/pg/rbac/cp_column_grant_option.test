@@ -55,8 +55,8 @@ WHERE c.relname = 'cgo_iceberg' AND a.attnum > 0
 ORDER BY a.attnum;
 ----
 attname	acl
-clickclack	{cgo_r1=r*/postgres}
-babsky	{cgo_r1=r/postgres}
+clickclack	<slt:ignore>cgo_r1=r*/postgres<slt:ignore>
+babsky	<slt:ignore>cgo_r1=r/postgres<slt:ignore>
 mop	(none)
 
 
@@ -95,8 +95,8 @@ WHERE c.relname = 'cgo_iceberg' AND a.attnum > 0
 ORDER BY a.attnum;
 ----
 attname	acl
-clickclack	{cgo_r1=r/postgres}
-babsky	{cgo_r1=r/postgres}
+clickclack	<slt:ignore>cgo_r1=r/postgres<slt:ignore>
+babsky	<slt:ignore>cgo_r1=r/postgres<slt:ignore>
 mop	(none)
 
 

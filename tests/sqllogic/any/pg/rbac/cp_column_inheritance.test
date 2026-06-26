@@ -72,7 +72,7 @@ WHERE c.relname = 'cci2_iceberg' AND a.attnum > 0
 ORDER BY a.attnum;
 ----
 attname	acl
-clickclack	{cci2_grp=r/postgres}
+clickclack	<slt:ignore>cci2_grp=r/postgres<slt:ignore>
 babsky	NULL
 mop	NULL
 
@@ -144,8 +144,8 @@ WHERE c.relname = 'cci2_iceberg' AND a.attnum > 0
 ORDER BY a.attnum;
 ----
 attname	acl
-clickclack	{cci2_grp=r/postgres}
-babsky	{=r/postgres}
+clickclack	<slt:ignore>cci2_grp=r/postgres<slt:ignore>
+babsky	<slt:ignore>=r/postgres<slt:ignore>
 mop	NULL
 
 

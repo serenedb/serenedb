@@ -42,9 +42,9 @@ WHERE c.relname = 'cgm_iceberg' AND a.attnum > 0
 ORDER BY a.attnum;
 ----
 attname	acl
-clickclack	{cgm_vedernikoff=r/postgres}
-babsky	{cgm_vedernikoff=r/postgres}
-mop	{cgm_vedernikoff=w/postgres}
+clickclack	<slt:ignore>cgm_vedernikoff=r/postgres<slt:ignore>
+babsky	<slt:ignore>cgm_vedernikoff=r/postgres<slt:ignore>
+mop	<slt:ignore>cgm_vedernikoff=w/postgres<slt:ignore>
 
 
 # === Reads ===

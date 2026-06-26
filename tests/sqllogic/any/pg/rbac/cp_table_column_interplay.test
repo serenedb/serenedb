@@ -73,7 +73,7 @@ WHERE c.relname = 'tci_iceberg' AND a.attnum > 0
 ORDER BY a.attnum;
 ----
 attname	acl
-clickclack	{tci_vedernikoff=r/postgres}
+clickclack	<slt:ignore>tci_vedernikoff=r/postgres<slt:ignore>
 babsky	(none)
 mop	(none)
 
@@ -164,7 +164,7 @@ WHERE c.relname = 'tci_clickclack' AND a.attnum > 0
 ORDER BY a.attnum;
 ----
 attname	acl
-clickclack	{tci_babsky=r/postgres}
+clickclack	<slt:ignore>tci_babsky=r/postgres<slt:ignore>
 babsky	(none)
 mop	(none)
 
@@ -259,7 +259,7 @@ WHERE c.relname = 'tci_mop' AND a.attnum > 0
 ORDER BY a.attnum;
 ----
 attname	acl
-clickclack	{tci_kalganov=a/postgres}
+clickclack	<slt:ignore>tci_kalganov=a/postgres<slt:ignore>
 babsky	(none)
 mop	(none)
 

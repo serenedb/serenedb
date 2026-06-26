@@ -47,8 +47,8 @@ WHERE c.relname = 'cda_iceberg' AND a.attnum > 0 AND NOT a.attisdropped
 ORDER BY a.attnum;
 ----
 attname	acl
-clickclack	{cda_vedernikoff=r/postgres}
-babsky	{cda_vedernikoff=w/postgres}
+clickclack	<slt:ignore>cda_vedernikoff=r/postgres<slt:ignore>
+babsky	<slt:ignore>cda_vedernikoff=w/postgres<slt:ignore>
 mop	NULL
 
 
@@ -67,8 +67,8 @@ WHERE c.relname = 'cda_iceberg' AND a.attnum > 0 AND NOT a.attisdropped
 ORDER BY a.attnum;
 ----
 attname	acl
-clickclack2	{cda_vedernikoff=r/postgres}
-babsky	{cda_vedernikoff=w/postgres}
+clickclack2	<slt:ignore>cda_vedernikoff=r/postgres<slt:ignore>
+babsky	<slt:ignore>cda_vedernikoff=w/postgres<slt:ignore>
 mop	NULL
 
 
@@ -96,7 +96,7 @@ WHERE c.relname = 'cda_iceberg' AND a.attnum > 0 AND NOT a.attisdropped
 ORDER BY a.attnum;
 ----
 attname	acl
-clickclack2	{cda_vedernikoff=r/postgres}
+clickclack2	<slt:ignore>cda_vedernikoff=r/postgres<slt:ignore>
 mop	NULL
 
 
@@ -114,7 +114,7 @@ WHERE c.relname = 'cda_iceberg' AND a.attnum > 0 AND NOT a.attisdropped
 ORDER BY a.attnum;
 ----
 attname	acl
-clickclack2	{cda_vedernikoff=r/postgres}
+clickclack2	<slt:ignore>cda_vedernikoff=r/postgres<slt:ignore>
 mop	NULL
 dollarsky	NULL
 

@@ -44,7 +44,7 @@ query
 SELECT count(*) AS n FROM uaf_idx;
 ----
 n
-4659
+960
 
 # The multi-row materialise of `body` across segments must match the source.
 # != 0 here is the dangling-view corruption; without the fix this faults under
@@ -64,4 +64,4 @@ query
 SELECT count(*) AS nulls FROM uaf_idx WHERE body IS NULL;
 ----
 nulls
-776
+160

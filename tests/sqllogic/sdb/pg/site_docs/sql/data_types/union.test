@@ -15,7 +15,7 @@ INSERT INTO tbl1 VALUES (1), ('two'), (union_value(str := 'three'));
 query error
 SELECT u FROM tbl1;
 ----
-db error: ERROR: Such type is not supported
+db error: ERROR: Type 'UNION(num INTEGER, str VARCHAR)' is not supported
 
 
 # DOCS_TEST: example_003

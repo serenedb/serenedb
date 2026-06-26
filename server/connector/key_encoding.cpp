@@ -76,7 +76,9 @@ void AppendScalarValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
       key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
     } break;
     case duckdb::LogicalTypeId::TIMESTAMP:
-    case duckdb::LogicalTypeId::TIMESTAMP_TZ: {
+    case duckdb::LogicalTypeId::TIMESTAMP_TZ:
+    case duckdb::LogicalTypeId::TIMESTAMP_NS:
+    case duckdb::LogicalTypeId::TIMESTAMP_TZ_NS: {
       auto val =
         duckdb::UnifiedVectorFormat::GetData<duckdb::timestamp_t>(fmt)[idx]
           .value;

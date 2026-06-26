@@ -42,6 +42,7 @@
 #include "iresearch/formats/column/norm_reader.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/formats/column/scan.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/store/directory_cleaner.hpp"
 #include "iresearch/store/memory_directory.hpp"
@@ -1631,6 +1632,119 @@ TEST_F(IRSColumnstoreTest, LazyNormOpenSparseSchema) {
     } else {
       EXPECT_EQ(r.NormColumn(id), nullptr);
     }
+  }
+}
+
+// Reproduces the inverted-index merge validity drift. A merged segment carries
+// several columns in one `.col` file; an INCLUDE column larger than
+// STANDARD_VECTOR_SIZE is later materialized in vector-sized batches (the
+// MergeInto read shape) when that segment is re-merged. The second batch starts
+// at row STANDARD_VECTOR_SIZE, so RangeScan seeks forward before scanning the
+// tail. The batched validity read of that tail must match the per-row point
+// read; a mismatch is a dropped validity bit that surfaces as a spurious NULL
+// in the columnstore.
+TEST_F(IRSColumnstoreTest, MergeSegmentBatchedTailValidityMatchesPointRead) {
+  irs::MemoryDirectory dir{};
+  constexpr std::string_view kSegmentName = "merge_tail";
+  // 2052 = STANDARD_VECTOR_SIZE + 4: a full first batch then a 4-row tail.
+  constexpr uint64_t kHead = 4;
+  constexpr uint64_t kRowCount = STANDARD_VECTOR_SIZE + kHead;
+  const auto type = duckdb::LogicalType::VARCHAR;
+
+  // INCLUDE column under test (id 2). The crux: a row in the FIRST batch's
+  // [0, tail) window is NULL while the corresponding tail row in the SECOND
+  // batch is valid. The validity scan AND-combines into the reused out_vec, so
+  // a stale NULL from the first batch would spuriously clear the tail row. Here
+  // row 1 is the only NULL, so second-batch row STANDARD_VECTOR_SIZE+1 (valid)
+  // lands on the stale-NULL slot 1. Low-cardinality VARCHAR values mirror the
+  // FTS `note` column; a leading pk-like blob column (id 1) makes the `.col`
+  // multi-column, matching the FTS segment shape.
+  auto is_valid = [](uint64_t i) { return i != 1; };
+  auto value_of = [](uint64_t i) { return "n" + std::to_string(i % 16); };
+
+  // Write the merged segment the way MergeInto does: append source-by-source,
+  // so the second source (STANDARD_VECTOR_SIZE rows) lands at output row 4 and
+  // its batch spans the growing chunk-capacity boundaries.
+  {
+    irs::ColWriter w{dir, kSegmentName, Db()};
+    auto& cw_pk = w.OpenColumn(/*id=*/1, duckdb::LogicalType::BLOB);
+    auto& cw_val = w.OpenColumn(/*id=*/2, type);
+
+    const uint64_t sizes[] = {kHead, STANDARD_VECTOR_SIZE};
+    uint64_t out_row = 0;
+    for (const auto sz : sizes) {
+      uint64_t pos = 0;
+      while (pos < sz) {
+        const auto take =
+          std::min<duckdb::idx_t>(sz - pos, STANDARD_VECTOR_SIZE);
+        duckdb::Vector pk_batch{duckdb::LogicalType::BLOB,
+                                STANDARD_VECTOR_SIZE};
+        duckdb::Vector val_batch{type, STANDARD_VECTOR_SIZE};
+        auto* pk_slots =
+          duckdb::FlatVector::GetDataMutable<duckdb::string_t>(pk_batch);
+        auto* val_slots =
+          duckdb::FlatVector::GetDataMutable<duckdb::string_t>(val_batch);
+        auto& val_valid = duckdb::FlatVector::ValidityMutable(val_batch);
+        val_valid.Reset(STANDARD_VECTOR_SIZE);
+        for (duckdb::idx_t k = 0; k < take; ++k) {
+          const auto g = out_row + k;
+          const auto pk = "pk_" + std::to_string(g);
+          pk_slots[k] = duckdb::StringVector::AddStringOrBlob(
+            pk_batch, pk.data(), pk.size());
+          if (is_valid(g)) {
+            const auto v = value_of(g);
+            val_slots[k] = duckdb::StringVector::AddStringOrBlob(
+              val_batch, v.data(), v.size());
+            val_valid.SetValid(k);
+          } else {
+            val_valid.SetInvalid(k);
+          }
+        }
+        cw_pk.Append(out_row, pk_batch, take);
+        cw_val.Append(out_row, val_batch, take);
+        out_row += take;
+        pos += take;
+      }
+    }
+    ASSERT_EQ(out_row, kRowCount);
+    w.Commit(kRowCount);
+  }
+
+  irs::ColReader r{dir, std::string{kSegmentName}, Db()};
+  const auto* col = r.Column(2);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->RowCount(), kRowCount);
+
+  // Batched read in vector-sized chunks, reusing one MaterializeState across
+  // batches (the MergeInto read shape). The second chunk seeks past
+  // STANDARD_VECTOR_SIZE before scanning the tail.
+  irs::ReadContext ctx{r};
+  auto state = irs::MakeMaterializeState(*col, ctx);
+  std::vector<bool> batched(kRowCount, false);
+  duckdb::Vector batch{type, STANDARD_VECTOR_SIZE,
+                       duckdb::VectorDataInitialization::UNINITIALIZED};
+  uint64_t pos = 0;
+  while (pos < kRowCount) {
+    const auto take =
+      std::min<duckdb::idx_t>(kRowCount - pos, STANDARD_VECTOR_SIZE);
+    irs::MaterializeNode(*col, *state, irs::IotaRange{pos, take}, batch,
+                         /*output_start=*/0);
+    const auto& v = duckdb::FlatVector::Validity(batch);
+    for (duckdb::idx_t k = 0; k < take; ++k) {
+      batched[pos + k] = v.RowIsValid(k);
+    }
+    pos += take;
+  }
+
+  irs::ColumnReader::PointReader cursor{r, *col};
+  duckdb::Vector out{type, 1};
+  for (uint64_t i = 0; i < kRowCount; ++i) {
+    duckdb::FlatVector::ValidityMutable(out).Reset();
+    cursor.FetchRow(i, out, 0);
+    const bool point_valid = duckdb::FlatVector::Validity(out).RowIsValid(0);
+    EXPECT_EQ(point_valid, is_valid(i)) << "point read wrong at row " << i;
+    EXPECT_EQ(batched[i], point_valid)
+      << "batched validity != point validity at row " << i;
   }
 }
 

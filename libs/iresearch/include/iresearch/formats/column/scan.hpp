@@ -167,6 +167,15 @@ void MaterializeNode(const ColumnReader& reader, MaterializeState& state,
     return;
   }
   if (reader.HasValidity()) {
+    // The validity scan AND-combines into the destination mask
+    // (ValidityScanPartial does `result &= input`), so the target rows must
+    // start all-valid. A reused out_vec still carries the previous batch's
+    // mask, which would spuriously clear bits here; set the range valid first.
+    auto& validity = duckdb::FlatVector::ValidityMutable(out_vec);
+    validity.EnsureWritable();
+    for (size_t i = 0, n = doc_ids.size(); i < n; ++i) {
+      validity.SetValidUnsafe(output_start + i);
+    }
     ColumnReader::ScanRowsBatched(state.validity_scan, doc_ids, out_vec,
                                   output_start);
   }

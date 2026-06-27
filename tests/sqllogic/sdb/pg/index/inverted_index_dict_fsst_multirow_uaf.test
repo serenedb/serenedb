@@ -1,0 +1,75 @@
+# Regression: a multi-row materialise of a dict_fsst-compressed INCLUDE column
+# that spans index segments must equal the source byte-for-byte.
+#
+# dict_fsst's DICT_FSST mode FSST-decodes each value into an arena owned by the
+# per-segment scan state's reusable dictionary, then hands out string_t that are
+# zero-copy views into that arena. A single output Vector can be filled from
+# several segments; crossing to the next segment frees the old dictionary and
+# dangles the earlier views -> heap-use-after-free: garbled bytes on a release
+# build, a server SIGSEGV under ASAN. The fix keeps the segment's decoded
+# dictionary (and block pin) alive on the output Vector for its lifetime
+# (ColumnReader::ScanCursor::Scan -> SharedPinHolder).
+#
+# The data is generated inline (no fixture file). Hitting the DICT_FSST sub-mode
+# is what matters: DICTIONARY mode views the block (already covered by the pin)
+# and FSST_ONLY decodes into the output's own arena (safe). dict_fsst only takes
+# FSST_ONLY when a segment is all-unique AND null-free, so each body is a
+# distinct (unique "r<i>" prefix), FSST-compressible word-salad (small vocab ->
+# FSST wins) with interleaved NULLs -- that combination forces DICT_FSST. The row
+# count is high enough that the *compressed* column spans several segments so a
+# single scan crosses one. Synthetic range()/repeat() data never lands here.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY uaf_words(
+    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
+    stemming = false, accent = false, frequency = true, position = true
+);
+
+statement ok
+CREATE TABLE uaf_src AS
+SELECT CAST(i AS VARCHAR) AS id,
+       CASE WHEN i % 6 = 0 THEN NULL
+            ELSE 'r' || i || ' ' || (
+              SELECT string_agg(
+                (['function','return','value','const','static','template','typename',
+                  'struct','public','private','vector','string','buffer','pointer',
+                  'reference','iterator','segment','column','dictionary','compression',
+                  'decode','encode','scan','cursor','index','offset','length','count',
+                  'result','context','allocate','release','memory','arena','block',
+                  'handle','validity','nullable','default','override'])[1 + ((i*31 + j*17) % 40)],
+                ' ' ORDER BY j)
+              FROM generate_series(1, 110) g(j))
+       END AS body
+FROM generate_series(1, 5000) t(i);
+
+# Pin the codec so the test keeps exercising dict_fsst even if the auto-selection
+# heuristic changes.
+statement ok
+CREATE INDEX uaf_idx ON uaf_src USING inverted(id, body uaf_words)
+  INCLUDE (id, body) WITH (compression = 'dict_fsst');
+
+# Whole corpus is indexed.
+query
+SELECT count(*) AS n FROM uaf_idx;
+----
+n
+5000
+
+# The multi-row materialise of `body` across segments must match the source.
+# != 0 here is the dangling-view corruption; without the fix this faults under
+# ASAN while the scan crosses a dict_fsst segment.
+query
+SELECT count(*) AS mismatches
+FROM uaf_idx i
+JOIN uaf_src s ON i.id = s.id
+WHERE i.body IS DISTINCT FROM s.body;
+----
+mismatches
+0
+
+# The interleaved NULL bodies (which force the DICT_FSST mode) round-trip as NULL.
+query
+SELECT count(*) AS nulls FROM uaf_idx WHERE body IS NULL;
+----
+nulls
+833

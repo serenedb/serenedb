@@ -79,7 +79,7 @@ declare -A defaults=(
 	[engines]='pg-wire-simple,pg-wire-extended'
 	[test]='./tests/sqllogic/sdb/**/*.test*'
 	[junit]='./out/sqllogic-tests'
-	[runner]='./third_party/sqllogictest-rs'
+	[runner]="$SCRIPT_DIR/../../third_party/sqllogictest-rs"
 	[jobs]=$(nproc)
 	[debug]=false
 	[override]=false
@@ -441,23 +441,38 @@ launch_postgres() {
 
 launch_external() {
 	shopt -s globstar
-	local pattern test_files needs_s3=false needs_iceberg=false needs_ollama=false needs_postgres=false
+	local pattern test_files f
+	local needs_s3=false needs_iceberg=false needs_ollama=false needs_postgres=false
+	local -a misnamed=()
 	for pattern in "${tests[@]}"; do
 		test_files=$(compgen -G "$pattern" 2>/dev/null || true)
-		if echo "$test_files" | grep -q '_s3\.'; then
-			needs_s3=true
-		fi
-		if echo "$test_files" | grep -q 'iceberg'; then
-			needs_iceberg=true
-		fi
-		if echo "$test_files" | grep -q '_ollama\.'; then
-			needs_ollama=true
-		fi
-		if echo "$test_files" | grep -q '_pgscan\.'; then
-			needs_postgres=true
-		fi
+		[[ -n "$test_files" ]] || continue
+		while IFS= read -r f; do
+			[[ -n "$f" ]] || continue
+			case "$f" in
+			# A test that boots a docker-backed service (MinIO, iceberg-rest,
+			# ollama, postgres) MUST be .test_slow so --fast runs -- e.g. the
+			# package RTA, which has no docker -- exclude it. An external-service
+			# suffix on a plain .test is a mistake; fail loudly instead of
+			# letting the service launch blow up later.
+			*_s3.test | *_iceberg.test | *_ollama.test | *_pgscan.test)
+				misnamed+=("$f")
+				;;
+			*_s3.test_slow) needs_s3=true ;;
+			*_iceberg.test_slow) needs_iceberg=true ;;
+			*_ollama.test_slow) needs_ollama=true ;;
+			*_pgscan.test_slow) needs_postgres=true ;;
+			esac
+		done <<<"$test_files"
 	done
 	shopt -u globstar
+
+	if [[ ${#misnamed[@]} -gt 0 ]]; then
+		echo "ERROR: tests that launch an external service must be named *.test_slow so" >&2
+		echo "       --fast runs (e.g. the package RTA, which has no docker) exclude them:" >&2
+		printf '         %s\n' "${misnamed[@]}" >&2
+		exit 1
+	fi
 
 	# iceberg-rest's warehouse runs on MinIO (see launch_iceberg_rest), so any
 	# iceberg test transitively requires MinIO too.

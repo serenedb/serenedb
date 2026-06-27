@@ -7,19 +7,19 @@ control substitution on
 # rowids against the untouched source file.
 
 statement ok
-DETACH DATABASE IF EXISTS iva_att;
+DETACH DATABASE IF EXISTS db131;
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/iva_src.db' AS iva_att;
+ATTACH '${__TEST_DIR__}/db131.db' AS db131;
 
 
 statement ok
-CREATE TABLE iva_att.main.docs(id INTEGER, body TEXT);
+CREATE TABLE db131.main.docs(id INTEGER, body TEXT);
 
 
 statement ok
-INSERT INTO iva_att.main.docs VALUES
+INSERT INTO db131.main.docs VALUES
   (1, 'alpha cat runs'),
   (2, 'beta dog sleeps'),
   (3, 'gamma cat jumps');
@@ -38,7 +38,7 @@ CREATE TEXT SEARCH DICTIONARY iva_en(
 
 
 statement ok
-CREATE VIEW iva_view AS SELECT * FROM iva_att.main.docs;
+CREATE VIEW iva_view AS SELECT * FROM db131.main.docs;
 
 
 statement ok
@@ -71,7 +71,7 @@ SELECT 1;
 
 connection after_crash
 query
-SELECT count(*) FROM duckdb_databases() WHERE database_name = 'iva_att';
+SELECT count(*) FROM duckdb_databases() WHERE database_name = 'db131';
 ----
 count
 0
@@ -94,7 +94,7 @@ db error: ERROR: materialising real columns from this view-backed inverted index
 
 connection after_crash
 statement ok
-ATTACH '${__TEST_DIR__}/iva_src.db' AS iva_att;
+ATTACH '${__TEST_DIR__}/db131.db' AS db131;
 
 
 connection after_crash
@@ -118,4 +118,4 @@ DROP TEXT SEARCH DICTIONARY iva_en;
 
 connection after_crash
 statement ok
-DETACH iva_att;
+DETACH IF EXISTS db131;

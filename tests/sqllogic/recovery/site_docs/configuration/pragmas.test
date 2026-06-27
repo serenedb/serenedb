@@ -233,13 +233,13 @@ query
 PRAGMA platform;
 ----
 platform
-linux_amd64
+<slt:ignore>
 
 query
 CALL pragma_platform();
 ----
 platform
-linux_amd64
+<slt:ignore>
 
 # DOCS_TEST: example_022
 
@@ -260,13 +260,13 @@ user_agent
 # DOCS_TEST: example_023
 
 statement ok
-DETACH IF EXISTS metadata_info_fixture;
+DETACH IF EXISTS db171;
 
 statement ok
-ATTACH OR REPLACE '${__TEST_DIR__}/configuration_pragmas_example_023_metadata_info.db' AS metadata_info_fixture;
+ATTACH OR REPLACE '${__TEST_DIR__}/db171.db' AS db171;
 
 statement ok
-USE metadata_info_fixture;
+USE db171;
 
 statement ok
 CREATE OR REPLACE TABLE metadata_info_table AS
@@ -296,7 +296,7 @@ statement ok
 USE memory;
 
 statement ok
-DETACH metadata_info_fixture;
+DETACH db171;
 
 # DOCS_TEST_BODY
 
@@ -660,3 +660,6 @@ RESET temp_directory;
 
 statement ok
 RESET default_block_size;
+
+statement ok
+DETACH IF EXISTS db171;

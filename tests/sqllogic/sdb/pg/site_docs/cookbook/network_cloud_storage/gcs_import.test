@@ -48,26 +48,32 @@ id	name	value
 # DOCS_TEST_BODY
 
 statement ok
-DETACH IF EXISTS duckdb_database;
+DETACH IF EXISTS db51;
 
 statement ok
-DETACH IF EXISTS duckdb_database_fixture;
+DETACH IF EXISTS db52;
 
 statement ok
-ATTACH '${__TEST_DIR__}/cookbook_network_cloud_storage_gcs_import_example_003_file.duckdb' AS duckdb_database_fixture;
+ATTACH '${__TEST_DIR__}/db51.duckdb' AS db52;
 
 statement ok
-DROP TABLE IF EXISTS duckdb_database_fixture.items;
+DROP TABLE IF EXISTS db52.items;
 
 statement ok
-CREATE TABLE duckdb_database_fixture.items AS SELECT 1 AS id, 'alpha' AS name;
+CREATE TABLE db52.items AS SELECT 1 AS id, 'alpha' AS name;
 
 statement ok
-DETACH duckdb_database_fixture;
+DETACH db52;
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/cookbook_network_cloud_storage_gcs_import_example_003_file.duckdb' AS duckdb_database (READ_ONLY);
+ATTACH '${__TEST_DIR__}/db51.duckdb' AS db51 (READ_ONLY);
 
 statement ok
-DETACH duckdb_database;
+DETACH db51;
+
+statement ok
+DETACH IF EXISTS db51;
+
+statement ok
+DETACH IF EXISTS db52;

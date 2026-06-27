@@ -147,6 +147,25 @@ duckdb::unique_ptr<duckdb::CatalogEntry> MakeMacroEntry(
   }
 }
 
+bool ScanTypeAcceptsEntry(duckdb::CatalogType scan, duckdb::CatalogType entry) {
+  using enum duckdb::CatalogType;
+  auto group = [](duckdb::CatalogType t) {
+    switch (t) {
+      case SCALAR_FUNCTION_ENTRY:
+      case MACRO_ENTRY:
+      case AGGREGATE_FUNCTION_ENTRY:
+        return 1;
+      case TABLE_FUNCTION_ENTRY:
+      case TABLE_MACRO_ENTRY:
+        return 2;
+      default:
+        return 0;
+    }
+  };
+  const int g = group(scan);
+  return g == 0 ? entry == scan : group(entry) == g;
+}
+
 }  // namespace
 
 duckdb::optional_ptr<duckdb::SchemaCatalogEntry> DuckDBEntryCache::EnsureSchema(
@@ -450,7 +469,9 @@ void DuckDBEntryCache::ScanEntries(
           const auto& map = sc->MapForType(type);
           auto it = map.find(o.GetName());
           if (it != map.end()) {
-            callback(*it->second);
+            if (ScanTypeAcceptsEntry(type, it->second->type)) {
+              callback(*it->second);
+            }
             return;
           }
         }
@@ -476,7 +497,7 @@ void DuckDBEntryCache::ScanEntries(
         it->second = BuildEntry(type, catalog, sc.entry, database, schema,
                                 p->GetName(), snapshot);
       }
-      if (it->second) {
+      if (it->second && ScanTypeAcceptsEntry(type, it->second->type)) {
         callback(*it->second);
       }
     }

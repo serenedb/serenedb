@@ -1,0 +1,56 @@
+# ICU extension: casting TIMESTAMP_TZ_NS -> TIMESTAMP_NS goes through
+# ICUToNaiveTimestamp, which converts the instant to the session zone while
+# preserving sub-microsecond nanoseconds. A regression here recursed forever
+# (the ns overload called itself instead of the us overload) and crashed the
+# server; this test pins the conversion and the surviving nanosecond tail.
+#
+# Results are cast to VARCHAR so the full nanosecond precision is rendered
+# server-side and compared identically under both the simple and extended wire
+# protocols (TIMESTAMP_NS ships on the us-precision OID 1114, so the binary
+# extended path would otherwise truncate the sub-us digits).
+
+statement ok
+SET TimeZone = 'UTC';
+
+
+# UTC instant -> UTC naive: identity, nanoseconds preserved.
+query
+SELECT ('2023-01-01 12:00:00.123456789'::TIMESTAMPTZ_NS::TIMESTAMP_NS)::VARCHAR AS naive_ns;
+----
+naive_ns
+2023-01-01 12:00:00.123456789
+
+
+query
+SELECT pg_typeof('2023-01-01 12:00:00.123456789'::TIMESTAMPTZ_NS::TIMESTAMP_NS) AS ty;
+----
+ty
+timestamp without time zone
+
+
+# Whole-hour zone: the us conversion shifts the wall clock, the leftover 789 ns
+# is reattached unchanged.
+statement ok
+SET TimeZone = 'America/New_York';
+
+query
+SELECT ('2023-01-01 12:00:00.123456789+00'::TIMESTAMPTZ_NS::TIMESTAMP_NS)::VARCHAR AS naive_local;
+----
+naive_local
+2023-01-01 07:00:00.123456789
+
+
+# Half-hour zone exercises real ICU offset math (not just an hour shift) while
+# the nanosecond remainder still survives.
+statement ok
+SET TimeZone = 'Asia/Kolkata';
+
+query
+SELECT ('2023-01-01 12:00:00.123456789+00'::TIMESTAMPTZ_NS::TIMESTAMP_NS)::VARCHAR AS naive_kolkata;
+----
+naive_kolkata
+2023-01-01 17:30:00.123456789
+
+
+statement ok
+RESET TimeZone;

@@ -326,6 +326,7 @@ std::shared_ptr<Object> Table::Clone() const {
     _check_constraints, _generated_pk_seq_id, _engine, _unique_constraints,
     _foreign_keys);
   cloned->SetTombstoned(Tombstoned());
+  cloned->SetData(_data);
   cloned->_comment = _comment;
   return cloned;
 }

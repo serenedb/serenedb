@@ -31,6 +31,11 @@ class Serializer;
 class Deserializer;
 
 }  // namespace duckdb
+namespace sdb::search {
+
+class SearchTable;
+
+}  // namespace sdb::search
 namespace sdb::catalog {
 
 class Table final : public Object {
@@ -69,6 +74,17 @@ class Table final : public Object {
   TableEngine GetEngine() const noexcept { return _engine; }
   const auto& UniqueConstraints() const noexcept { return _unique_constraints; }
   const auto& ForeignKeys() const noexcept { return _foreign_keys; }
+
+  ObjectId GetGeneratedPkSeqId() const noexcept { return _generated_pk_seq_id; }
+
+  const std::shared_ptr<search::SearchTable>& GetData() const noexcept {
+    SDB_ASSERT((_data != nullptr) == (_engine == TableEngine::Search));
+    return _data;
+  }
+  void SetData(std::shared_ptr<search::SearchTable> data) const noexcept {
+    SDB_ASSERT(!data || _engine == TableEngine::Search);
+    _data = std::move(data);
+  }
 
   Result RenameColumn(std::shared_ptr<Table>& result, std::string_view old_name,
                       std::string_view new_name) const;
@@ -135,6 +151,7 @@ class Table final : public Object {
   TableEngine _engine = TableEngine::Transactional;
   std::vector<std::vector<Column::Id>> _unique_constraints;
   std::vector<TableForeignKey> _foreign_keys;
+  mutable std::shared_ptr<search::SearchTable> _data;
   std::string _comment;
 };
 

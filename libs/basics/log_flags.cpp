@@ -23,10 +23,15 @@
 #include <string>
 
 ABSL_FLAG(std::string, log_storage, "stdout",
-          "Log destination at process start: 'stdout' (default; "
-          "container log drivers capture it), 'memory' (queryable via "
-          "SELECT * FROM duckdb_logs()), or 'file://<path>'. Override at "
-          "runtime with `SET logging_storage = '<value>'`.");
+          "Log destination at process start. Accepted values: 'stdout' "
+          "(default; systemd/container log drivers capture it), 'memory' "
+          "(queryable via SELECT * FROM duckdb_logs()), or 'file' (uses "
+          "--log_path). Override at runtime with "
+          "`CALL enable_logging(storage='<value>', storage_path='<path>')`.");
+ABSL_FLAG(std::string, log_path, "",
+          "Path used by --log_storage, when it takes one. Its meaning is "
+          "storage-dependent (for 'file', the log file or directory); ignored "
+          "by storages that take no path, such as 'stdout' and 'memory'.");
 ABSL_FLAG(std::string, log_level, "info",
           "Minimum log severity at process start: trace | debug | "
           "info | warning | error | fatal. Override at runtime with "

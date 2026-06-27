@@ -102,6 +102,12 @@ enum class CompactionError : uint32_t {
 
   // Compaction was scheduled for the upcoming commit
   Pending,
+
+  // Candidates could not be merged right now because a concurrent compaction
+  // already owns them, or a concurrent commit moved them out of the snapshot
+  // being merged. Transient: the caller should retry or let the other
+  // compaction finish the work. Distinct from Fail (a genuine merge error).
+  Busy,
 };
 
 // Represents result of a compaction

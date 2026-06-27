@@ -65,12 +65,19 @@ class SereneDBTableEntry final : public duckdb::TableCatalogEntry {
 
   duckdb::virtual_column_map_t GetVirtualColumns() const override;
 
+  duckdb::vector<duckdb::column_t> GetRowIdColumns() const override;
+
   duckdb::Catalog& GetStorageCatalog(duckdb::ClientContext& context) override;
 
   duckdb::DuckTableEntry& GetStorageTableEntry(
     duckdb::ClientContext& context) override;
 
   duckdb::TableStorageInfo GetStorageInfo(duckdb::ClientContext& context) final;
+
+  void BindUpdateConstraints(duckdb::Binder& binder, duckdb::LogicalGet& get,
+                             duckdb::LogicalProjection& proj,
+                             duckdb::LogicalUpdate& update,
+                             duckdb::ClientContext& context) override;
 
   // Resolves the hidden store table backing this facade entry.
   duckdb::TableCatalogEntry& ResolveStoreEntry(

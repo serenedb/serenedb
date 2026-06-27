@@ -42,6 +42,7 @@
 #include "connector/duckdb_scan_base.hpp"
 #include "connector/duckdb_search_ann_scan.h"
 #include "connector/duckdb_search_full_scan.hpp"
+#include "connector/duckdb_search_table_scan.hpp"
 #include "connector/duckdb_table_entry.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/search_filter_printer.hpp"
@@ -583,6 +584,15 @@ static void SetCommonCallbacks(duckdb::TableFunction& func) {
   // global_initialization, but why?
 }
 
+duckdb::TableFunction CreateSearchTableScanFunction() {
+  duckdb::TableFunction func{
+    "search_table_fullscan",   {}, SearchTableScanFunction, SereneDBScanBind,
+    SearchTableScanInitGlobal,
+  };
+  SetCommonCallbacks(func);
+  return func;
+}
+
 namespace {
 
 bool IResearchSupportsPushdownExtract(const duckdb::FunctionData& bind_data_p,
@@ -642,21 +652,6 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
   return stats->ToUnique();
 }
 
-bool IsCountOnlyScan(const SereneDBScanBindData& bind_data,
-                     const duckdb::TableFunctionInitInput& input) {
-  return absl::c_none_of(input.column_ids, [&](auto col_id) {
-    if (col_id == duckdb::COLUMN_IDENTIFIER_EMPTY) {
-      return false;
-    }
-    if (col_id == kColumnIdentifierGeneratedPk ||
-        col_id == kColumnIdentifierTableOid ||
-        col_id >= duckdb::VIRTUAL_COLUMN_START) {
-      return true;
-    }
-    return col_id < bind_data.column_ids.size();
-  });
-}
-
 bool IsAnnScan(const SereneDBScanBindData& bind_data) {
   return !!bind_data.scan_source->Cast<SearchScan>().vector_scorer;
 }
@@ -707,6 +702,25 @@ void IResearchScanFunction(duckdb::ClientContext& context,
 }
 
 }  // namespace
+
+bool IsCountOnlyScan(const SereneDBScanBindData& bind_data,
+                     const duckdb::TableFunctionInitInput& input) {
+  return absl::c_none_of(input.column_ids, [&](auto col_id) {
+    // A column-less scan (COUNT(*)) projects a single placeholder: older DuckDB
+    // used COLUMN_IDENTIFIER_EMPTY, newer DuckDB uses COLUMN_IDENTIFIER_ROW_ID.
+    // Neither materialises a real column, so both keep the scan count-only.
+    if (col_id == duckdb::COLUMN_IDENTIFIER_EMPTY ||
+        col_id == duckdb::COLUMN_IDENTIFIER_ROW_ID) {
+      return false;
+    }
+    if (col_id == kColumnIdentifierGeneratedPk ||
+        col_id == kColumnIdentifierTableOid ||
+        col_id >= duckdb::VIRTUAL_COLUMN_START) {
+      return true;
+    }
+    return col_id < bind_data.column_ids.size();
+  });
+}
 
 duckdb::TableFunction CreateIResearchScanFunction() {
   duckdb::TableFunction func{

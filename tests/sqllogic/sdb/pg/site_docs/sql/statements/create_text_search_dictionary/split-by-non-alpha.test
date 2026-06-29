@@ -1,0 +1,46 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tags (
+    template = 'splitByNonAlpha'
+);
+
+query
+SELECT ts_lexize('tags', 'Hello, World! 123_abc');
+----
+ts_lexize
+{Hello,World,123,abc}
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tags_lower (
+    template = 'splitByNonAlpha',
+    to_lower = true
+);
+
+query
+SELECT ts_lexize('tags_lower', 'The Quick-Brown FOX');
+----
+ts_lexize
+{the,quick,brown,fox}
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ids (
+    template = 'splitByNonAlpha',
+    to_lower = true
+);
+
+query
+SELECT ts_lexize('ids', 'SereneDB-2024_v1.2 café');
+----
+ts_lexize
+{serenedb,2024,v1,2,caf}

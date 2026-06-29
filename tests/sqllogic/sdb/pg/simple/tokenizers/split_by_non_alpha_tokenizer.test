@@ -1,0 +1,119 @@
+control substitution on
+
+
+# SPLIT BY NON-ALPHA TOKENIZER
+
+# --- Basic split on non-alphanumeric runs (default: no lowercasing) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY split_basic(
+    template = 'splitByNonAlpha'
+)
+
+
+query
+SELECT ts_lexize('split_basic', 'Hello, World! 123_abc');
+----
+ts_lexize
+{Hello,World,123,abc}
+
+
+# --- Lowercasing each token: to_lower = true ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY split_lower(
+    template = 'splitByNonAlpha',
+    to_lower = true
+)
+
+
+query
+SELECT ts_lexize('split_lower', 'Hello, World! 123_abc');
+----
+ts_lexize
+{hello,world,123,abc}
+
+
+# --- Alphanumeric runs are kept intact (digits are not separators) ---
+
+query
+SELECT ts_lexize('split_basic', 'a1b2c3');
+----
+ts_lexize
+{a1b2c3}
+
+
+# --- Leading, trailing and repeated separators collapse, emit no empties ---
+
+query
+SELECT ts_lexize('split_basic', '  ...foo--bar..  ');
+----
+ts_lexize
+{foo,bar}
+
+
+# --- Underscores split (only [A-Za-z0-9] is kept) ---
+
+query
+SELECT ts_lexize('split_lower', 'snake_case_Name');
+----
+ts_lexize
+{snake,case,name}
+
+
+# --- Non-ASCII bytes act as separators (matches [^A-Za-z0-9]+) ---
+
+query
+SELECT ts_lexize('split_basic', 'café déjà');
+----
+ts_lexize
+{caf,d,j}
+
+
+# --- All-separator input yields an empty array ---
+
+query
+SELECT ts_lexize('split_basic', '---!!!   ');
+----
+ts_lexize
+{}
+
+
+# --- Empty input yields an empty array ---
+
+query
+SELECT ts_lexize('split_basic', '');
+----
+ts_lexize
+{}
+
+
+# --- to_lower defaults to false: case preserved ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY split_default(
+    template = 'splitByNonAlpha',
+    to_lower = false
+)
+
+
+query
+SELECT ts_lexize('split_default', 'MixedCase WORDS');
+----
+ts_lexize
+{MixedCase,WORDS}
+
+
+# ERROR CASES
+
+# --- Option not applicable to other tokenizers ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY split_err(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    to_lower = true
+)
+----
+db error: ERROR: option "to_lower" is not applicable in this context
+HINT: Use WITH (HELP) to see available options

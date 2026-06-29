@@ -42,6 +42,7 @@
 #include "segmentation_tokenizer.hpp"
 #include "solr_synonyms_tokenizer.hpp"
 #include "sparse_ngram_tokenizer.hpp"
+#include "split_by_non_alpha_tokenizer.hpp"
 #include "stemming_tokenizer.hpp"
 #include "stopwords_tokenizer.hpp"
 #include "text_tokenizer.hpp"
@@ -64,7 +65,8 @@ struct TokenizerConfig {
                NearestNeighborsTokenizer::Options, GeoPointAnalyzer::Options,
                GeoJsonAnalyzer::Options, WildcardAnalyzer::Options,
                MinHashTokenizer::Options, PipelineTokenizer::Options,
-               UnionTokenizer::Options, SparseNGramTokenizer::Options>
+               UnionTokenizer::Options, SparseNGramTokenizer::Options,
+               SplitByNonAlphaTokenizer::Options>
     config;
 };
 

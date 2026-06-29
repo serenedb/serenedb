@@ -41,6 +41,7 @@
 #include "catalog/scorer_options.h"
 #include "catalog/tokenizer.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/functions/split_by_non_alpha.h"
 #include "connector/functions/ts_highlight.h"
 #include "connector/functions/ts_lexize.h"
 #include "connector/functions/ts_offsets.h"
@@ -1046,6 +1047,7 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
   RegisterPositionFunctions(loader);
   RegisterGeoFunctions(loader);
   RegisterTsLexize(loader);
+  RegisterSplitByNonAlpha(loader);
   RegisterTsHighlight(loader);
   RegisterTSQuerySurface(loader);
 }

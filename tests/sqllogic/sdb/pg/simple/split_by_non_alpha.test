@@ -1,0 +1,114 @@
+control substitution on
+
+
+# split_by_non_alpha(text [, to_lower]) -- splits on runs of non-alphanumeric
+# characters, equivalent to a `[^A-Za-z0-9]+` split.
+
+
+# --- Basic split (default: keep case) ---
+
+query
+SELECT split_by_non_alpha('Hello, World! 123_abc');
+----
+split_by_non_alpha
+{Hello,World,123,abc}
+
+
+# --- Lowercasing each token: to_lower = true ---
+
+query
+SELECT split_by_non_alpha('Hello, World! 123_abc', true);
+----
+split_by_non_alpha
+{hello,world,123,abc}
+
+
+# --- to_lower = false is the default behaviour explicitly ---
+
+query
+SELECT split_by_non_alpha('MixedCase WORDS', false);
+----
+split_by_non_alpha
+{MixedCase,WORDS}
+
+
+# --- Alphanumeric runs are kept intact (digits are not separators) ---
+
+query
+SELECT split_by_non_alpha('a1b2c3');
+----
+split_by_non_alpha
+{a1b2c3}
+
+
+# --- Leading, trailing and repeated separators emit no empty tokens ---
+
+query
+SELECT split_by_non_alpha('  ...foo--bar..  ');
+----
+split_by_non_alpha
+{foo,bar}
+
+
+# --- Underscores split (only [A-Za-z0-9] is kept) ---
+
+query
+SELECT split_by_non_alpha('snake_case_Name', true);
+----
+split_by_non_alpha
+{snake,case,name}
+
+
+# --- Non-ASCII bytes act as separators (matches [^A-Za-z0-9]+) ---
+
+query
+SELECT split_by_non_alpha('café déjà');
+----
+split_by_non_alpha
+{caf,d,j}
+
+
+# --- All-separator input yields an empty array ---
+
+query
+SELECT split_by_non_alpha('---!!!   ');
+----
+split_by_non_alpha
+{}
+
+
+# --- Empty input yields an empty array ---
+
+query
+SELECT split_by_non_alpha('');
+----
+split_by_non_alpha
+{}
+
+
+# --- NULL input yields NULL ---
+
+query
+SELECT split_by_non_alpha(NULL);
+----
+split_by_non_alpha
+NULL
+
+
+# --- Per-row over a table, including a NULL row ---
+
+statement ok
+CREATE TABLE docs(id INT, body TEXT);
+
+
+statement ok
+INSERT INTO docs VALUES (1, 'The Quick-Brown FOX'), (2, '42 widgets!'), (3, NULL);
+
+
+query
+SELECT split_by_non_alpha(body, true) FROM docs ORDER BY id;
+----
+split_by_non_alpha
+{the,quick,brown,fox}
+{42,widgets}
+NULL

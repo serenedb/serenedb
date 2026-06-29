@@ -77,6 +77,7 @@
 #include "catalog/inverted_index.h"
 #include "catalog/object.h"
 #include "catalog/object_dependency.h"
+#include "catalog/persistence/role.h"
 #include "catalog/resolution_table.h"
 #include "catalog/role.h"
 #include "catalog/schema.h"

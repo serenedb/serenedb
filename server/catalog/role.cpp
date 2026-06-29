@@ -33,10 +33,11 @@
 #include "basics/static_strings.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"
+#include "catalog/persistence/role.h"
 
 namespace sdb::catalog {
 
-Role::Role(RoleData data)
+Role::Role(persistence::RoleData data)
   : catalog::Object{Permissions{},
                     {},
                     data.id,
@@ -55,29 +56,24 @@ Role::Role(RoleData data)
   }
 }
 
-RoleData Role::BuildData() const {
-  RoleData data{
-    .id = GetId(),
-    .name = std::string{GetName()},
-    .active = _active,
-    .options = static_cast<uint32_t>(_options),
-    .member_of = _member_of,
-    .conn_limit = _conn_limit,
-    .valid_until = _valid_until,
-    .config = _config,
-    .default_acls = _default_acls,
-    .password_verifier = _password_verifier,
-  };
-  return data;
-}
-
 void catalog::Role::Serialize(duckdb::Serializer& sink) const {
-  basics::WriteTuple(sink, BuildData());
+  basics::WriteTuple(sink, persistence::RoleData{
+                             .id = GetId(),
+                             .name = std::string{GetName()},
+                             .active = _active,
+                             .options = static_cast<uint32_t>(_options),
+                             .member_of = _member_of,
+                             .conn_limit = _conn_limit,
+                             .valid_until = _valid_until,
+                             .config = _config,
+                             .default_acls = _default_acls,
+                             .password_verifier = _password_verifier,
+                           });
 }
 
 std::shared_ptr<Role> Role::Deserialize(duckdb::Deserializer& src,
                                         ReadContext) {
-  RoleData data;
+  persistence::RoleData data;
   basics::ReadTuple(src, data);
   return std::make_shared<catalog::Role>(std::move(data));
 }
@@ -130,14 +126,13 @@ void catalog::Role::ResetConfig(std::string_view guc) {
 void catalog::Role::ChangeDefaultAcl(ObjectId schema, char objtype,
                                      ObjectType type,
                                      absl::FunctionRef<void(Acl&)> mutate) {
-  const auto matches = [&](const DefaultAclData& d) {
+  const auto matches = [&](const DefaultAcl& d) {
     return d.schema == schema && d.objtype == objtype;
   };
   auto it = std::ranges::find_if(_default_acls, matches);
   if (it == _default_acls.end()) {
-    it = _default_acls.insert(
-      _default_acls.end(),
-      DefaultAclData{.schema = schema, .objtype = objtype});
+    it = _default_acls.insert(_default_acls.end(),
+                              DefaultAcl{.schema = schema, .objtype = objtype});
   }
   if (it->acl.empty()) {
     it->acl = auth::AclDefault(type, GetId());
@@ -153,7 +148,18 @@ void catalog::Role::ChangeDefaultAcl(ObjectId schema, char objtype,
 }
 
 std::shared_ptr<Object> Role::Clone() const {
-  return std::make_shared<Role>(BuildData());
+  return std::make_shared<Role>(persistence::RoleData{
+    .id = GetId(),
+    .name = std::string{GetName()},
+    .active = _active,
+    .options = static_cast<uint32_t>(_options),
+    .member_of = _member_of,
+    .conn_limit = _conn_limit,
+    .valid_until = _valid_until,
+    .config = _config,
+    .default_acls = _default_acls,
+    .password_verifier = _password_verifier,
+  });
 }
 
 }  // namespace sdb::catalog

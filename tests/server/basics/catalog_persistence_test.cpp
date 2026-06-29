@@ -281,23 +281,22 @@ TEST(CatalogPersistence, role_data) {
       .name = "alice",
       .active = true,
       // RBAC: attribute bitmask + a membership edge with non-default per-edge
-      // options, so the golden bytes exercise MembershipData round-trip.
+      // options, so the golden bytes exercise Membership round-trip.
       .options = 0b0110,  // Login | Inherit
-      .member_of = {MembershipData{.role = ObjectId{5},
-                                   .admin_option = true,
-                                   .inherit_option = false,
-                                   .set_option = true}},
+      .member_of = {Membership{.role = ObjectId{5},
+                               .admin_option = true,
+                               .inherit_option = false,
+                               .set_option = true}},
       // RBAC attrs surfaced via pg_authid / pg_roles, plus per-role GUC config
       // and ALTER DEFAULT PRIVILEGES targets.
       .conn_limit = 5,
       .valid_until = "2030-01-01 00:00:00+00",
       .config = {"search_path=clickclack"},
-      .default_acls = {DefaultAclData{
-        .schema = ObjectId{7},
-        .objtype = 'r',
-        .acl = {AclItem{.grantee = ObjectId{5},
-                        .grantor = ObjectId{2},
-                        .privs = AclMode::Select}}}},
+      .default_acls = {DefaultAcl{.schema = ObjectId{7},
+                                  .objtype = 'r',
+                                  .acl = {AclItem{.grantee = ObjectId{5},
+                                                  .grantor = ObjectId{2},
+                                                  .privs = AclMode::Select}}}},
       // rolpassword: a stored SCRAM verifier, so the golden bytes exercise the
       // password round-trip.
       .password_verifier = "SCRAM-SHA-256$4096:c2FsdHNhbHQ=$"

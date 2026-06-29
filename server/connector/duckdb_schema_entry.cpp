@@ -703,6 +703,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateView(
   auto view_info =
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateViewInfo>(
       info.Copy());
+  view_info->tags["sdb_owner"] = std::to_string(role.id());
   auto view = std::make_shared<catalog::PgSqlView>(
     role, ObjectId{}, ObjectId{}, info.view_name, std::move(view_info));
 

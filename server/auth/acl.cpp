@@ -130,6 +130,44 @@ bool RolesContain(RoleIdSpan roles, ObjectId id) noexcept {
   return std::ranges::binary_search(roles, id);
 }
 
+// PG aclitem privilege characters, in postgres' canonical print order. Mirrors
+// the ACL_*_CHR table in src/include/utils/acl.h.
+struct PrivChar {
+  AclMode mode;
+  char chr;
+};
+constexpr std::array kPrivChars{
+  PrivChar{AclMode::Insert, 'a'},      PrivChar{AclMode::Select, 'r'},
+  PrivChar{AclMode::Update, 'w'},      PrivChar{AclMode::Delete, 'd'},
+  PrivChar{AclMode::Truncate, 'D'},    PrivChar{AclMode::References, 'x'},
+  PrivChar{AclMode::Trigger, 't'},     PrivChar{AclMode::Maintain, 'm'},
+  PrivChar{AclMode::Execute, 'X'},     PrivChar{AclMode::Usage, 'U'},
+  PrivChar{AclMode::Create, 'C'},      PrivChar{AclMode::CreateTemp, 'T'},
+  PrivChar{AclMode::Connect, 'c'},     PrivChar{AclMode::Set, 's'},
+  PrivChar{AclMode::AlterSystem, 'A'},
+};
+
+// PG putid() (src/backend/utils/adt/acl.c): append a role name to an aclitem
+// string, double-quoting it when any character is not ASCII alphanumeric or
+// '_' (high-bit-set chars always force quotes), and doubling embedded '"'.
+void PutId(std::string& out, std::string_view name) {
+  const bool safe = std::ranges::all_of(name, [](unsigned char c) {
+    return !(c & 0x80) && (absl::ascii_isalnum(c) || c == '_');
+  });
+  if (safe) {
+    out.append(name);
+    return;
+  }
+  out.push_back('"');
+  for (char c : name) {
+    if (c == '"') {
+      out.push_back('"');
+    }
+    out.push_back(c);
+  }
+  out.push_back('"');
+}
+
 }  // namespace
 
 catalog::Acl AclDefault(ObjectType type, ObjectId owner) {
@@ -210,48 +248,41 @@ bool AclCheckSorted(catalog::AclView stored, ObjectType type, ObjectId owner,
   return false;
 }
 
-AclMode AclGrantOptionHeld(catalog::AclView acl, const RoleIdSet& roles) {
+bool IsGranteeInRoles(ObjectId grantee, const RoleIdSet& roles) {
+  return grantee == catalog::kPublicGrantee || roles.contains(grantee);
+}
+
+bool IsGranteeInRoles(ObjectId grantee, RoleIdSpan roles) {
+  return grantee == catalog::kPublicGrantee ||
+         std::ranges::binary_search(roles, grantee);
+}
+
+template<typename Roles>
+AclMode AclModeHeld(catalog::AclView acl, const Roles& roles,
+                    AclMode AclItem::* field) {
   AclMode held = AclMode::NoRights;
   for (const auto& item : acl) {
-    if (item.grantee == catalog::kPublicGrantee ||
-        roles.contains(item.grantee)) {
-      held |= item.grant_option;
+    if (IsGranteeInRoles(item.grantee, roles)) {
+      held |= item.*field;
     }
   }
   return held;
+}
+
+AclMode AclGrantOptionHeld(catalog::AclView acl, const RoleIdSet& roles) {
+  return AclModeHeld(acl, roles, &AclItem::grant_option);
 }
 
 AclMode AclGrantOptionHeld(catalog::AclView acl, RoleIdSpan roles) {
-  AclMode held = AclMode::NoRights;
-  for (const auto& item : acl) {
-    if (item.grantee == catalog::kPublicGrantee ||
-        std::ranges::binary_search(roles, item.grantee)) {
-      held |= item.grant_option;
-    }
-  }
-  return held;
+  return AclModeHeld(acl, roles, &AclItem::grant_option);
 }
 
 AclMode AclPrivsHeld(catalog::AclView acl, const RoleIdSet& roles) {
-  AclMode held = AclMode::NoRights;
-  for (const auto& item : acl) {
-    if (item.grantee == catalog::kPublicGrantee ||
-        roles.contains(item.grantee)) {
-      held |= item.privs;
-    }
-  }
-  return held;
+  return AclModeHeld(acl, roles, &AclItem::privs);
 }
 
 AclMode AclPrivsHeld(catalog::AclView acl, RoleIdSpan roles) {
-  AclMode held = AclMode::NoRights;
-  for (const auto& item : acl) {
-    if (item.grantee == catalog::kPublicGrantee ||
-        std::ranges::binary_search(roles, item.grantee)) {
-      held |= item.privs;
-    }
-  }
-  return held;
+  return AclModeHeld(acl, roles, &AclItem::privs);
 }
 
 void AclGrant(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,
@@ -353,48 +384,6 @@ std::optional<AclMode> TryParseAclKeyword(std::string_view keyword,
   return it->second;
 }
 
-namespace {
-
-// PG aclitem privilege characters, in postgres' canonical print order. Mirrors
-// the ACL_*_CHR table in src/include/utils/acl.h.
-struct PrivChar {
-  AclMode mode;
-  char chr;
-};
-constexpr std::array kPrivChars{
-  PrivChar{AclMode::Insert, 'a'},      PrivChar{AclMode::Select, 'r'},
-  PrivChar{AclMode::Update, 'w'},      PrivChar{AclMode::Delete, 'd'},
-  PrivChar{AclMode::Truncate, 'D'},    PrivChar{AclMode::References, 'x'},
-  PrivChar{AclMode::Trigger, 't'},     PrivChar{AclMode::Maintain, 'm'},
-  PrivChar{AclMode::Execute, 'X'},     PrivChar{AclMode::Usage, 'U'},
-  PrivChar{AclMode::Create, 'C'},      PrivChar{AclMode::CreateTemp, 'T'},
-  PrivChar{AclMode::Connect, 'c'},     PrivChar{AclMode::Set, 's'},
-  PrivChar{AclMode::AlterSystem, 'A'},
-};
-
-// PG putid() (src/backend/utils/adt/acl.c): append a role name to an aclitem
-// string, double-quoting it when any character is not ASCII alphanumeric or
-// '_' (high-bit-set chars always force quotes), and doubling embedded '"'.
-void PutId(std::string& out, std::string_view name) {
-  const bool safe = std::ranges::all_of(name, [](unsigned char c) {
-    return !(c & 0x80) && (absl::ascii_isalnum(c) || c == '_');
-  });
-  if (safe) {
-    out.append(name);
-    return;
-  }
-  out.push_back('"');
-  for (char c : name) {
-    if (c == '"') {
-      out.push_back('"');
-    }
-    out.push_back(c);
-  }
-  out.push_back('"');
-}
-
-}  // namespace
-
 // Render one aclitem to PG's text form: "grantee=privchars/grantor" ("" grantee
 // for PUBLIC), each priv char optionally followed by '*' for the grant option.
 std::string AclItemToText(
@@ -405,9 +394,9 @@ std::string AclItemToText(
   }
   out.push_back('=');
   for (const auto& p : kPrivChars) {
-    if ((item.privs & p.mode) == p.mode) {
+    if (Has(item.privs, p.mode)) {
       out.push_back(p.chr);
-      if ((item.grant_option & p.mode) == p.mode) {
+      if (Has(item.grant_option, p.mode)) {
         out.push_back('*');
       }
     }

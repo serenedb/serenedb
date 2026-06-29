@@ -31,14 +31,21 @@
 #include "basics/bit_utils.hpp"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"
-#include "catalog/persistence/role.h"
 
 namespace sdb::catalog {
 
-using persistence::RoleData;
+struct Membership {
+  ObjectId role;
+  bool admin_option = false;
+  bool inherit_option = true;
+  bool set_option = true;
+};
 
-// One membership edge with its PG16 per-edge options.
-using Membership = persistence::MembershipData;
+struct DefaultAcl {
+  ObjectId schema;
+  char objtype = 'r';
+  Acl acl;
+};
 
 // pg_authid role attributes; checked directly, never inherited via membership.
 enum class RoleOption : uint32_t {
@@ -56,9 +63,14 @@ enum class RoleOption : uint32_t {
 
 ENABLE_BITMASK_ENUM(RoleOption);
 
+namespace persistence {
+
+struct RoleData;
+}
+
 class Role final : public catalog::Object {
  public:
-  explicit Role(RoleData data);
+  explicit Role(persistence::RoleData data);
 
   void Serialize(duckdb::Serializer& sink) const final;
   std::shared_ptr<Object> Clone() const final;
@@ -83,8 +95,7 @@ class Role final : public catalog::Object {
   void ResetConfig(std::string_view guc);
   void ResetAllConfig() noexcept { _config.clear(); }
 
-  using DefaultAclData = persistence::DefaultAclData;
-  std::span<const DefaultAclData> DefaultAcls() const noexcept {
+  std::span<const DefaultAcl> DefaultAcls() const noexcept {
     return _default_acls;
   }
   void ChangeDefaultAcl(ObjectId schema, char objtype, ObjectType type,
@@ -103,15 +114,13 @@ class Role final : public catalog::Object {
   }
 
  private:
-  RoleData BuildData() const;
-
   bool _active = true;
   RoleOption _options = RoleOption::None;
   std::vector<Membership> _member_of;
   int32_t _conn_limit = -1;
   std::string _valid_until;
   std::vector<std::string> _config;
-  std::vector<persistence::DefaultAclData> _default_acls;
+  std::vector<DefaultAcl> _default_acls;
   std::string _password_verifier;
 };
 

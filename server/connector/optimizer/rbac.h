@@ -27,6 +27,6 @@ class DatabaseInstance;
 }  // namespace duckdb
 namespace sdb::optimizer {
 
-void RegisterRbacCollectOptimizer(duckdb::DatabaseInstance& db);
+void RegisterRbacOptimizer(duckdb::DatabaseInstance& db);
 
 }  // namespace sdb::optimizer

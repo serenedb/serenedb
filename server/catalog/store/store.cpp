@@ -243,6 +243,7 @@ StoreTableDef MakeStoreTableDef(std::string_view database,
                                 std::string_view schema, const Table& table) {
   StoreTableDef def;
   def.name = StoreTableName(database, schema, table.GetName());
+  def.table_id = table.GetId();
   const auto& cols = table.Columns();
   std::vector<size_t> mirror_pos(cols.size(), SIZE_MAX);
   def.columns.reserve(cols.size());
@@ -959,6 +960,7 @@ Result CatalogStore::ExecuteCreateStoreTableImpl(const StoreTableDef& def,
   return basics::SafeCall([&]() -> Result {
     auto info = duckdb::make_uniq<duckdb::CreateTableInfo>(
       std::string{kStoreAlias}, "main", def.name);
+    info->tags["sdb_table_id"] = std::to_string(def.table_id.id());
     for (const auto& col : def.columns) {
       info->columns.AddColumn(duckdb::ColumnDefinition{col.name, col.type});
     }

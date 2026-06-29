@@ -25,34 +25,16 @@
 #include <vector>
 
 #include "catalog/identifiers/object_id.h"
-#include "catalog/object.h"
+#include "catalog/role.h"
 
 namespace sdb::catalog::persistence {
-
-struct MembershipData {
-  ObjectId role;
-  bool admin_option = false;
-  bool inherit_option = true;
-  bool set_option = true;
-};
-
-// One ALTER DEFAULT PRIVILEGES target: privileges to apply to future objects of
-// `objtype` ('r'/'S'/'f'/'T'/'n') created by this role, optionally restricted
-// to `schema` (id::kInvalid = all schemas, PG's defaclnamespace = 0). `acl` is
-// the fully rendered pg_default_acl.defaclacl value (owner self-grant
-// included).
-struct DefaultAclData {
-  ObjectId schema;
-  char objtype = 'r';
-  Acl acl;
-};
 
 struct RoleData {
   ObjectId id;
   std::string name;
   bool active = true;
   uint32_t options = 0;
-  std::vector<MembershipData> member_of;
+  std::vector<Membership> member_of;
   // pg_authid attributes that are stored & surfaced but not enforced at
   // runtime.
   int32_t conn_limit = -1;  // rolconnlimit (-1 = unlimited)
@@ -61,7 +43,7 @@ struct RoleData {
   // rendered as "guc=value" exactly as PostgreSQL stores them.
   std::vector<std::string> config;
   // ALTER DEFAULT PRIVILEGES targets owned by this role (pg_default_acl rows).
-  std::vector<DefaultAclData> default_acls;
+  std::vector<DefaultAcl> default_acls;
   // rolpassword: PG-format SCRAM verifier string; empty when no password.
   std::string password_verifier;
 };

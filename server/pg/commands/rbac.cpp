@@ -38,6 +38,7 @@
 #include "auth/privilege.h"
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "catalog/persistence/role.h"
 #include "catalog/table.h"
 #include "network/credentials.h"
 #include "pg/errcodes.h"
@@ -95,7 +96,7 @@ void CreateRole(ConnectionContext& ctx, std::string_view name,
   if (options.inherit) {
     opts |= catalog::RoleOption::Inherit;
   }
-  auto role = std::make_shared<catalog::Role>(catalog::RoleData{
+  auto role = std::make_shared<catalog::Role>(catalog::persistence::RoleData{
     .name = std::string{name},
     .options = static_cast<uint32_t>(opts),
     // No PASSWORD clause -> no stored verifier. PASSWORD '<x>' (incl. '') ->
@@ -146,6 +147,16 @@ catalog::RoleOption SetBit(catalog::RoleOption options, catalog::RoleOption bit,
   return options;
 }
 
+void CheckRoleChangeResult(const Result& r, std::string_view name) {
+  if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("role \"", name, "\" does not exist"));
+  }
+  if (!r.ok()) {
+    SDB_THROW(r.clone());
+  }
+}
+
 }  // namespace
 
 void AlterRole(ConnectionContext& ctx, std::string_view name,
@@ -175,13 +186,7 @@ void AlterRole(ConnectionContext& ctx, std::string_view name,
       }
       return {};
     });
-  if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("role \"", name, "\" does not exist"));
-  }
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
+  CheckRoleChangeResult(r, name);
 }
 
 void RenameRole(ConnectionContext& ctx, std::string_view name,
@@ -196,17 +201,11 @@ void RenameRole(ConnectionContext& ctx, std::string_view name,
       new_role->SetName(new_name);
       return {};
     });
-  if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("role \"", name, "\" does not exist"));
-  }
   if (r.is(ERROR_USER_DUPLICATE)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
                     ERR_MSG("role \"", new_name, "\" already exists"));
   }
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
+  CheckRoleChangeResult(r, name);
 }
 
 void AlterRoleConfig(ConnectionContext& ctx, std::string_view name,
@@ -230,13 +229,7 @@ void AlterRoleConfig(ConnectionContext& ctx, std::string_view name,
       }
       return {};
     });
-  if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("role \"", name, "\" does not exist"));
-  }
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
+  CheckRoleChangeResult(r, name);
 }
 
 namespace {
@@ -366,13 +359,7 @@ void AlterDefaultPrivileges(ConnectionContext& ctx,
                      opts.with_grant_option, opts.grant_option_only,
                      opts.cascade);
     });
-  if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("role \"", defacl_role_name, "\" does not exist"));
-  }
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
+  CheckRoleChangeResult(r, defacl_role_name);
 }
 
 namespace {

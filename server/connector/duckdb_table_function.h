@@ -195,15 +195,6 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   // EXPLAIN "Lookup:" label. Empty for non-index scans.
   std::string lookup_label;
 
-  // True when this scan was bound inside a view (or other definition body), so
-  // RBAC checks the underlying relation against the definition owner, not the
-  // caller (PG definer-rights view semantics). Stamped by the binder.
-  bool bound_inside_view = false;
-
-  void SetBoundInsideView(bool inside_view) final {
-    bound_inside_view = inside_view;
-  }
-
   Kind GetKind() const noexcept { return _kind; }
   bool IsViewBacked() const noexcept { return _kind == Kind::View; }
   bool IsInvertedIndexEntry() const noexcept {

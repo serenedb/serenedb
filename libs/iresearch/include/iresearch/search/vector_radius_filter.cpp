@@ -83,7 +83,7 @@ QueryBuilder::ptr ByRadius::PrepareSegment(const SubReader& segment,
     }
   }
 
-  return memory::make_tracked<VectorSimilarityQuery>(
+  return memory::make_tracked<RangeVectorQuery>(
     ctx.memory, segment, std::move(state), std::vector<float>{opts.query},
     opts.metric, opts.radius, opts.inclusive, ctx.boost * Boost(),
     std::move(inner));

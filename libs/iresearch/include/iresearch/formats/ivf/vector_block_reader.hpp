@@ -26,18 +26,4 @@
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
 
-namespace irs {
-
-class VectorBlockReader {
- public:
-  virtual ~VectorBlockReader() = default;
-
-  virtual void SetQuery(std::span<const float> query, VectorMetric metric) = 0;
-
-  virtual void StartCluster(uint64_t pay_start, size_t num_docs) = 0;
-
-  virtual void ComputeBlock(const doc_id_t* docs, uint32_t base_ordinal,
-                            size_t count, score_t boost, score_t* out) = 0;
-};
-
-}  // namespace irs
+namespace irs {}  // namespace irs

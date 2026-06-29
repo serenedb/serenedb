@@ -23,7 +23,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <limits>
 #include <vector>
 
 #include "basics/memory.hpp"
@@ -136,10 +135,9 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
     }
   }
 
-  return memory::make_tracked<VectorSimilarityQuery>(
+  return memory::make_tracked<KnnVectorQuery>(
     ctx.memory, segment, std::move(state), std::vector<float>{opts.query},
-    opts.metric, std::numeric_limits<float>::infinity(), /*inclusive=*/true,
-    ctx.boost * Boost(), std::move(inner));
+    opts.metric, ctx.boost * Boost(), std::move(inner));
 }
 
 }  // namespace irs

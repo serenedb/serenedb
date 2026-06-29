@@ -127,7 +127,6 @@ ColWriter::ColWriter(Directory& dir, std::string_view segment_name,
   _impl->dir = &dir;
   _impl->db = &db;
   _impl->filename = absl::StrCat(segment_name, ".", kColFormatExt);
-  _impl->ivf = std::make_unique<IvfWriter>();
 }
 
 void ColWriter::SetFieldOptions(
@@ -298,6 +297,7 @@ void ColWriter::Commit(uint64_t target_row, IdxWriter* idx) {
     SDB_ASSERT(idx,
                "ColWriter::Commit requires an IdxWriter when an IVF "
                "column is present");
+    _impl->ivf = std::make_unique<IvfWriter>();
     _impl->ivf->OnCommit(*this, *idx, column_ids, _impl->field_options);
     for (size_t i = before; i < _impl->column_writers.size(); ++i) {
       _impl->column_writers[i]->Finalize();

@@ -21,94 +21,72 @@
 #include "iresearch/search/vector_similarity_query.hpp"
 
 #include <array>
-#include <cmath>
 #include <memory>
 #include <span>
 #include <vector>
 
 #include "basics/assert.h"
-#include "basics/containers/bitset.hpp"
+#include "basics/down_cast.h"
 #include "basics/memory.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
-#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
-#include "iresearch/index/column_info.hpp"
+#include "iresearch/formats/posting/iterator_doc.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/conjunction.hpp"
 #include "iresearch/search/cost.hpp"
+#include "iresearch/search/make_disjunction.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
+#include "iresearch/utils/vector.hpp"
 
 namespace irs {
 namespace {
 
-// Wraps the cluster-union disjunction and scores every candidate by its exact
-// distance to the query vector. Per-doc scores are published through a
-// BoostBlockAttr that VectorSimilarityScorer reads back (mirrors how
-// NGramSimilarityDocIterator surfaces its filter boost).
-class VectorSimilarityDocIterator : public DocIterator {
+class RawVectorReader {
  public:
-  VectorSimilarityDocIterator(DocIterator::ptr&& approx,
-                              const ColReader& col_reader,
-                              const ColumnReader& vector_column,
-                              std::span<const float> query, VectorMetric metric,
-                              float radius, bool inclusive,
-                              CostAttr::Type estimation, score_t boost)
-    : _approx{std::move(approx)},
-      _read_ctx{col_reader},
-      _vreader{vector_column, _read_ctx},
-      _query{query},
-      _dist{ResolveVectorDistance(metric)},
-      _radius{radius},
-      _gated{std::isfinite(radius)},
-      _inclusive{inclusive},
-      _nearest_is_largest{VectorMetricNearestIsLargest(metric)},
-      _boost{boost},
-      _cost{estimation} {
-    SDB_ASSERT(_approx);
-    SDB_ASSERT(_query.size() == _vreader.Dimension());
+  RawVectorReader(const ColumnReader& vector_column,
+                  const ColReader& col_reader, uint32_t d)
+    : _read_ctx{col_reader}, _vreader{vector_column, _read_ctx}, _d{d} {}
+
+  void SetQuery(std::span<const float> query, VectorMetric metric) {
+    _query.assign(query.begin(), query.end());
+    _dist = ResolveVectorDistance(metric);
   }
 
-  ~VectorSimilarityDocIterator() {
-    if (_block) {
-      std::allocator<score_t>{}.deallocate(_block, kScoreBlock);
-    }
+  void ComputeDistance(doc_id_t doc, score_t boost, score_t& out) {
+    SDB_ASSERT(_dist);
+
+    const auto* q = reinterpret_cast<const byte_type*>(_query.data());
+    const auto d = static_cast<uint16_t>(_d);
+    const float* v = _vreader.ReadDoc(doc);
+    out = _dist(q, reinterpret_cast<const byte_type*>(v), d) * boost;
   }
 
-  doc_id_t advance() final {
-    if (!_gated) {
-      return _doc = _approx->advance();
-    }
-    for (;;) {
-      const auto doc = _approx->advance();
-      if (doc_limits::eof(doc) || Gate(doc)) {
-        return _doc = doc;
-      }
-    }
+ private:
+  ReadContext _read_ctx;
+  IvfVectorReader _vreader;
+  VectorDistanceFn _dist = nullptr;
+  std::vector<float> _query;
+  uint32_t _d;
+};
+
+class VectorDistanceIterator : public DocIterator {
+ public:
+  VectorDistanceIterator(DocIterator::ptr&& src, score_t boost,
+                         CostAttr::Type estimation)
+    : _src{std::move(src)}, _boost{boost}, _cost{estimation} {
+    SDB_ASSERT(_src);
+    _boosts.value = _scores.data();
   }
 
-  doc_id_t seek(doc_id_t target) final {
-    if (!_gated) {
-      return _doc = _approx->seek(target);
-    }
-    const auto doc = _approx->seek(target);
-    if (doc_limits::eof(doc) || Gate(doc)) {
-      return _doc = doc;
-    }
-    return advance();
-  }
+  score_t Distance() const noexcept { return _cur_dist; }
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
     SDB_ASSERT(ctx.scorer);
-    if (!_block) {
-      _block = std::allocator<score_t>{}.allocate(kScoreBlock);
-      _boosts.value = _block;
-    }
     return ctx.scorer->PrepareScorer({
       .segment = *ctx.segment,
       .field = _field,
@@ -120,8 +98,8 @@ class VectorSimilarityDocIterator : public DocIterator {
   }
 
   void FetchScoreArgs(uint16_t index) final {
-    SDB_ASSERT(_block);
-    _block[index] = _gated ? _cached_score : Score(value());
+    SDB_ASSERT(index < _scores.size());
+    _scores[index] = _cur_dist;
   }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
@@ -129,266 +107,343 @@ class VectorSimilarityDocIterator : public DocIterator {
       return &_cost;
     }
     if (type == irs::Type<BoostBlockAttr>::id()) {
-      return _block ? &_boosts : nullptr;
+      return &_boosts;
     }
-    return _approx->GetMutable(type);
+    return _src->GetMutable(type);
   }
 
-  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
-               ScoreCollector& collector) final {
-    CollectImpl(*this, scorer, fetcher, collector);
+ protected:
+  DocIterator::ptr _src;
+  score_t _boost;
+  FieldProperties _field;
+  CostAttr _cost;
+  BoostBlockAttr _boosts;
+  std::array<score_t, kScoreBlock> _scores;
+  score_t _cur_dist = .0f;
+};
+
+class RawVectorIterator : public VectorDistanceIterator {
+ public:
+  RawVectorIterator(DocIterator::ptr&& src, const ColumnReader& vector_column,
+                    const ColReader& col_reader, uint32_t d,
+                    std::span<const float> query, VectorMetric metric,
+                    score_t boost, CostAttr::Type estimation)
+    : VectorDistanceIterator{std::move(src), boost, estimation},
+      _reader{vector_column, col_reader, d} {
+    _reader.SetQuery(query, metric);
   }
 
-  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
-                                      uint64_t* mask,
-                                      FillBlockScoreContext score,
-                                      FillBlockMatchContext match) final {
-    return FillBlockImpl(*this, min, max, mask, score, match);
+  doc_id_t advance() final {
+    const auto doc = _src->advance();
+    if (doc_limits::eof(doc)) {
+      _cur_dist = .0f;
+      return _doc = doc;
+    }
+    _reader.ComputeDistance(doc, kNoBoost, _cur_dist);
+    return _doc = doc;
+  }
+
+  doc_id_t seek(doc_id_t target) final {
+    if (target <= _doc) {
+      return _doc;
+    }
+    const auto doc = _src->seek(target);
+    if (doc_limits::eof(doc)) {
+      _cur_dist = .0f;
+      return _doc = doc;
+    }
+    _reader.ComputeDistance(doc, kNoBoost, _cur_dist);
+    return _doc = doc;
   }
 
  private:
-  float Distance(doc_id_t doc) {
-    const float* v = _vreader.ReadDoc(doc);
-    return _dist(reinterpret_cast<const byte_type*>(_query.data()),
-                 reinterpret_cast<const byte_type*>(v),
-                 static_cast<uint16_t>(_query.size()));
+  RawVectorReader _reader;
+};
+
+class QVectorIterator : public VectorDistanceIterator {
+ public:
+  QVectorIterator(DocIterator::ptr&& src, std::unique_ptr<QuantizerReader> qr,
+                  score_t boost, CostAttr::Type estimation)
+    : VectorDistanceIterator{std::move(src), boost, estimation},
+      _qr{std::move(qr)},
+      _total{estimation} {
+    SDB_ASSERT(_qr);
+    _posting = sdb::basics::downCast<PostingIteratorBase>(_src.get());
   }
 
-  score_t Score(doc_id_t doc) { return Distance(doc); }
+  doc_id_t advance() final {
+    if (_pos == _len) {
+      _len = 0;
+      for (; _len < kPostingBlock; ++_len) {
+        const auto doc = _src->advance();
+        if (doc_limits::eof(doc)) {
+          break;
+        }
+        _docs[_len] = doc;
+      }
+      if (_len == 0) {
+        _cur_dist = .0f;
+        return _doc = doc_limits::eof();
+      }
+      FillDistancesBlock();
+      _pos = 0;
+    }
+    _cur_dist = _dist[_pos];
+    _doc = _docs[_pos];
+    ++_pos;
+    return _doc;
+  }
 
-  // Caches the (light) distance of `doc` and reports whether it is within the
-  // radius. The connector supplies `radius` in light space; for metrics where
-  // nearer means a larger light value (inner product, cosine similarity) the
-  // ball is `light >= radius`, otherwise `light <= radius`.
-  bool Gate(doc_id_t doc) {
-    const float dist = Distance(doc);
-    _cached_score = dist;
+  doc_id_t seek(doc_id_t target) final {
+    if (target <= _doc) {
+      return _doc;
+    }
+    const auto doc = _src->seek(target);
+    _pos = _len = 0;
+    if (doc_limits::eof(doc)) {
+      _cur_dist = .0f;
+      return _doc = doc;
+    }
+    const uint32_t remaining = _posting->RemainingDocs();
+    SDB_ASSERT(remaining < _total);
+    _base = static_cast<uint32_t>(_total - 1 - remaining);
+    _qr->ComputeBlock(_base, 1, kNoBoost, &_cur_dist);
+    ++_base;
+    return _doc = doc;
+  }
+
+ private:
+  void FillDistancesBlock() {
+    SDB_ASSERT(_len > 0);
+    SDB_ASSERT(_len <= _dist.size());
+    _qr->ComputeBlock(_base, _len, kNoBoost, _dist.data());
+    _base += _len;
+  }
+
+  std::unique_ptr<QuantizerReader> _qr;
+  PostingIteratorBase* _posting = nullptr;
+  CostAttr::Type _total;
+  std::array<doc_id_t, kPostingBlock> _docs;
+  std::array<score_t, kPostingBlock> _dist;
+  uint32_t _base = 0;
+  uint16_t _len = 0;
+  uint16_t _pos = 0;
+};
+
+class VectorRangeIterator : public DocIterator {
+ public:
+  VectorRangeIterator(memory::managed_ptr<VectorDistanceIterator>&& inner,
+                      VectorMetric metric, float radius, bool inclusive)
+    : _inner{std::move(inner)},
+      _radius{radius},
+      _inclusive{inclusive},
+      _nearest_is_largest{VectorMetricNearestIsLargest(metric)} {
+    SDB_ASSERT(_inner);
+  }
+
+  doc_id_t advance() final {
+    for (;;) {
+      const auto doc = _inner->advance();
+      if (doc_limits::eof(doc) || Inside(_inner->Distance())) {
+        return _doc = doc;
+      }
+    }
+  }
+
+  doc_id_t seek(doc_id_t target) final {
+    if (target <= _doc) {
+      return _doc;
+    }
+    const auto doc = _inner->seek(target);
+    if (doc_limits::eof(doc) || Inside(_inner->Distance())) {
+      return _doc = doc;
+    }
+    return advance();
+  }
+
+  doc_id_t LazySeek(doc_id_t target) final { return seek(target); }
+
+  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
+    return _inner->PrepareScore(ctx);
+  }
+
+  void FetchScoreArgs(uint16_t index) final { _inner->FetchScoreArgs(index); }
+
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    return _inner->GetMutable(type);
+  }
+
+ private:
+  bool Inside(score_t dist) const noexcept {
     if (_nearest_is_largest) {
       return _inclusive ? dist >= _radius : dist > _radius;
     }
     return _inclusive ? dist <= _radius : dist < _radius;
   }
 
-  DocIterator::ptr _approx;
-  ReadContext _read_ctx;
-  IvfVectorReader _vreader;
-  std::span<const float> _query;
-  VectorDistanceFn _dist;
+  memory::managed_ptr<VectorDistanceIterator> _inner;
   float _radius;
-  bool _gated;
   bool _inclusive;
   bool _nearest_is_largest;
-  score_t _boost;
-  FieldProperties _field;
-  CostAttr _cost;
-  BoostBlockAttr _boosts;
-  score_t* _block = nullptr;
-  score_t _cached_score = 0.f;
 };
 
-class VectorBlockScanDocIterator : public DocIterator {
+class FilterIterator : public DocIterator {
  public:
-  static constexpr size_t kBlock = doc_limits::kBlockSize;  // 128
-
-  VectorBlockScanDocIterator(const TermReader& reader,
-                             std::vector<PostingCookie>&& cookies,
-                             std::vector<uint64_t>&& pay_starts,
-                             std::vector<uint32_t>&& cluster_counts,
-                             std::unique_ptr<VectorBlockReader> vr,
-                             bitset&& inner_bits, bool has_inner, score_t boost,
-                             CostAttr::Type estimation)
-    : _reader{reader},
-      _cookies{std::move(cookies)},
-      _pay_starts{std::move(pay_starts)},
-      _cluster_counts{std::move(cluster_counts)},
-      _vr{std::move(vr)},
-      _inner_bits{std::move(inner_bits)},
-      _has_inner{has_inner},
-      _boost{boost},
-      _cost{estimation} {
-    SDB_ASSERT(_vr);
+  explicit FilterIterator(DocIterator::ptr&& it) noexcept : _it{std::move(it)} {
+    SDB_ASSERT(_it);
   }
 
-  doc_id_t advance() final {
-    for (;;) {
-      if (!_cur) {
-        if (_cluster >= _cookies.size()) {
-          return _doc = doc_limits::eof();
-        }
-        _cur = _reader.Iterator(IndexFeatures::None, _cookies[_cluster++]);
-        if (!_cur) {
-          continue;
-        }
-      }
-      const auto doc = _cur->advance();
-      if (!doc_limits::eof(doc)) {
-        return _doc = doc;
-      }
-      _cur = nullptr;
-    }
-  }
+  doc_id_t advance() final { return _doc = _it->advance(); }
 
-  doc_id_t seek(doc_id_t target) final {
-    while (_doc < target) {
-      if (doc_limits::eof(advance())) {
-        break;
-      }
-    }
-    return _doc;
-  }
+  doc_id_t seek(doc_id_t target) final { return _doc = _it->seek(target); }
 
-  void Collect(const ScoreFunction&, ColumnArgsFetcher&,
-               ScoreCollector& collector) final {
-    for (size_t c = 0; c < _cookies.size(); ++c) {
-      auto it = _reader.Iterator(IndexFeatures::None, _cookies[c]);
-      if (!it) {
-        continue;
-      }
-      _vr->StartCluster(_pay_starts.empty() ? 0 : _pay_starts[c],
-                        _cluster_counts.empty() ? 0 : _cluster_counts[c]);
-      uint32_t base = 0;
-      for (;;) {
-        size_t got = 0;
-        for (; got < kBlock; ++got) {
-          const auto doc = it->advance();
-          if (doc_limits::eof(doc)) {
-            break;
-          }
-          _docs[got] = doc;
-        }
-        if (got == 0) {
-          break;
-        }
-        _vr->ComputeBlock(_docs.data(), base, got, _boost, _dist.data());
-        base += static_cast<uint32_t>(got);
-
-        if (!_has_inner) {
-          collector.AddDocs(_docs.data(), got, _dist.data());
-          continue;
-        }
-        size_t k = 0;
-        for (size_t i = 0; i < got; ++i) {
-          if (_inner_bits.test(_docs[i])) {
-            _keep_docs[k] = _docs[i];
-            _keep_dist[k] = _dist[i];
-            ++k;
-          }
-        }
-        if (k != 0) {
-          collector.AddDocs(_keep_docs.data(), k, _keep_dist.data());
-        }
-      }
-    }
+  doc_id_t LazySeek(doc_id_t target) final {
+    return _doc = _it->LazySeek(target);
   }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return type == irs::Type<CostAttr>::id() ? &_cost : nullptr;
+    return _it->GetMutable(type);
   }
 
  private:
-  const TermReader& _reader;
-  std::vector<PostingCookie> _cookies;
-  std::vector<uint64_t> _pay_starts;
-  std::vector<uint32_t> _cluster_counts;
-  std::unique_ptr<VectorBlockReader> _vr;
-  bitset _inner_bits;
-  bool _has_inner;
-  score_t _boost;
-  CostAttr _cost;
-  std::array<doc_id_t, kBlock> _docs;
-  std::array<score_t, kBlock> _dist;
-  std::array<doc_id_t, kBlock> _keep_docs;
-  std::array<score_t, kBlock> _keep_dist;
-  DocIterator::ptr _cur;
-  size_t _cluster = 0;
+  DocIterator::ptr _it;
 };
+
+std::vector<PostingCookie> MakeCookies(const VectorState& state) {
+  std::vector<PostingCookie> cookies;
+  cookies.reserve(state.cookies.size());
+  for (const auto& cookie : state.cookies) {
+    SDB_ASSERT(cookie);
+    cookies.push_back({.cookie = cookie.get(), .field = state.reader->meta()});
+  }
+  return cookies;
+}
+
+memory::managed_ptr<VectorDistanceIterator> MakeRawReranker(
+  const SubReader& segment, const VectorState& state,
+  std::span<const float> query, VectorMetric metric, score_t boost,
+  const QueryBuilder* inner, const ExecutionContext& ctx,
+  const StatsBuffer& stats) {
+  const auto* col_reader = segment.GetColReader();
+  if (!col_reader) {
+    return nullptr;
+  }
+
+  auto cookies = MakeCookies(state);
+  DocIterator::ptr src =
+    state.reader->Iterator(IndexFeatures::None, cookies, WandContext{},
+                           /*min_match=*/1, ScoreMergeType::Noop);
+  if (!src) {
+    return nullptr;
+  }
+
+  const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
+  if (inner) {
+    auto inner_it = inner->Execute(ctx, stats);
+    if (!inner_it) {
+      return nullptr;
+    }
+    ScoreAdapters itrs;
+    itrs.reserve(2);
+    itrs.emplace_back(std::move(src));
+    itrs.emplace_back(std::move(inner_it));
+    src = MakeConjunction(ScoreMergeType::Noop, WandContext{}, docs_count,
+                          std::move(itrs));
+    if (!src) {
+      return nullptr;
+    }
+  }
+
+  const auto d = static_cast<uint32_t>(state.vector_column->ArraySize());
+  return memory::make_managed<RawVectorIterator>(
+    std::move(src), *state.vector_column, *col_reader, d, query, metric, boost,
+    state.estimation);
+}
 
 }  // namespace
 
-DocIterator::ptr VectorSimilarityQuery::Execute(
-  const ExecutionContext& ctx, const StatsBuffer& stats) const {
+DocIterator::ptr KnnVectorQuery::Execute(const ExecutionContext& ctx,
+                                         const StatsBuffer& stats) const {
   if (_state.cookies.empty()) {
     return DocIterator::empty();
   }
   SDB_ASSERT(_state.reader);
   SDB_ASSERT(_state.vector_column);
 
-  const auto* col_reader = _segment.GetColReader();
-  if (!col_reader) {
-    return DocIterator::empty();
-  }
+  const std::span<const float> query{_query};
+  const auto docs_count = static_cast<doc_id_t>(_segment.docs_count());
 
-  std::vector<PostingCookie> cookies;
-  cookies.reserve(_state.cookies.size());
-  for (const auto& cookie : _state.cookies) {
-    SDB_ASSERT(cookie);
-    cookies.push_back({.cookie = cookie.get(), .field = _state.reader->meta()});
-  }
+  if (_state.quant != VectorQuantization::None) {
+    SDB_ASSERT(_state.pay_starts.size() == _state.cookies.size());
+    SDB_ASSERT(_state.cluster_counts.size() == _state.cookies.size());
 
-  if (std::isinf(_radius)) {
-    std::unique_ptr<VectorBlockReader> vr;
-    if (_state.quant != VectorQuantization::None) {
-      if (auto pay_in = _state.reader->ReopenPayload()) {
-        vr = MakeQuantizerReader(_state.quant, std::move(pay_in), _state.d);
+    ScoreAdapters children;
+    children.reserve(_state.cookies.size());
+    bool ok = true;
+    for (size_t c = 0; c < _state.cookies.size(); ++c) {
+      auto pay_in = _state.reader->ReopenPayload();
+      auto vr =
+        pay_in ? MakeQuantizerReader(_state.quant, std::move(pay_in), _state.d)
+               : nullptr;
+      if (!vr) {
+        ok = false;
+        break;
       }
-    }
-    if (!vr) {
-      vr = MakeRawVectorReader(*_state.vector_column, *col_reader, _state.d);
-    }
-    vr->SetQuery(std::span{_query}, _metric);
+      vr->SetQuery(query, _metric);
+      vr->StartCluster(_state.pay_starts[c], _state.cluster_counts[c]);
 
-    bitset inner_bits;
-    bool has_inner = false;
-    if (_inner) {
+      const PostingCookie cookie{.cookie = _state.cookies[c].get(),
+                                 .field = _state.reader->meta()};
+      auto postings = _state.reader->Iterator(IndexFeatures::None, cookie);
+      if (!postings) {
+        continue;
+      }
+
+      children.emplace_back(memory::make_managed<QVectorIterator>(
+        std::move(postings), std::move(vr), _boost, _state.cluster_counts[c]));
+    }
+    if (ok && !children.empty()) {
+      using Disjunction =
+        DisjunctionIterator<ScoreAdapter, ScoreMergeType::Sum>;
+      auto v = MakeDisjunction<Disjunction>(WandContext{}, docs_count,
+                                            std::move(children));
+      if (!_inner) {
+        return v;
+      }
       auto inner_it = _inner->Execute(ctx, stats);
       if (!inner_it) {
         return DocIterator::empty();
       }
-      inner_bits.reset(_segment.docs_count() + doc_limits::min());
-      for (auto d = inner_it->advance(); !doc_limits::eof(d);
-           d = inner_it->advance()) {
-        inner_bits.set(d);
-      }
-      has_inner = true;
+      ScoreAdapters itrs;
+      itrs.reserve(2);
+      itrs.emplace_back(std::move(v));
+      itrs.emplace_back(
+        memory::make_managed<FilterIterator>(std::move(inner_it)));
+      return MakeConjunction(ScoreMergeType::Sum, WandContext{}, docs_count,
+                             std::move(itrs));
     }
-
-    return memory::make_managed<VectorBlockScanDocIterator>(
-      *_state.reader, std::move(cookies),
-      std::vector<uint64_t>{_state.pay_starts.begin(), _state.pay_starts.end()},
-      std::vector<uint32_t>{_state.cluster_counts.begin(),
-                            _state.cluster_counts.end()},
-      std::move(vr), std::move(inner_bits), has_inner, _boost,
-      _state.estimation);
   }
 
-  auto approx = _state.reader->Iterator(IndexFeatures::None, cookies, ctx.wand,
-                                        /*min_match=*/1, ScoreMergeType::Noop);
-  if (!approx) {
+  auto it = MakeRawReranker(_segment, _state, query, _metric, _boost,
+                            _inner.get(), ctx, stats);
+  return it ? DocIterator::ptr{std::move(it)} : DocIterator::empty();
+}
+
+DocIterator::ptr RangeVectorQuery::Execute(const ExecutionContext& ctx,
+                                           const StatsBuffer& stats) const {
+  if (_state.cookies.empty()) {
     return DocIterator::empty();
   }
+  SDB_ASSERT(_state.reader);
+  SDB_ASSERT(_state.vector_column);
 
-  // Hybrid search: intersect the cluster-union candidates with the inner
-  // predicate (e.g. a text filter) before reranking. Keeps the published
-  // BoostBlockAttr on the wrapping VectorSimilarityDocIterator.
-  if (_inner) {
-    auto inner_it = _inner->Execute(ctx, stats);
-    if (!inner_it) {
-      return DocIterator::empty();
-    }
-    ScoreAdapters itrs;
-    itrs.reserve(2);
-    itrs.emplace_back(std::move(approx));
-    itrs.emplace_back(std::move(inner_it));
-    approx = MakeConjunction(ScoreMergeType::Noop, ctx.wand,
-                             _segment.docs_count(), std::move(itrs));
-    if (!approx) {
-      return DocIterator::empty();
-    }
+  auto it = MakeRawReranker(_segment, _state, std::span<const float>{_query},
+                            _metric, _boost, _inner.get(), ctx, stats);
+  if (!it) {
+    return DocIterator::empty();
   }
-
-  return memory::make_managed<VectorSimilarityDocIterator>(
-    std::move(approx), *col_reader, *_state.vector_column, std::span{_query},
-    _metric, _radius, _inclusive, _state.estimation, _boost);
+  return memory::make_managed<VectorRangeIterator>(std::move(it), _metric,
+                                                   _radius, _inclusive);
 }
 
 }  // namespace irs

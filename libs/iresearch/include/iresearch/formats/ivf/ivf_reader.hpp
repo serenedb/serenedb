@@ -66,7 +66,4 @@ class IvfVectorReader {
   std::vector<float> _scratch;
 };
 
-std::unique_ptr<VectorBlockReader> MakeRawVectorReader(
-  const ColumnReader& vector_column, const ColReader& col_reader, uint32_t d);
-
 }  // namespace irs

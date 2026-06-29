@@ -49,11 +49,20 @@ class QuantizerWriter {
   virtual uint32_t CodeSize() const noexcept = 0;
 };
 
+class QuantizerReader {
+ public:
+  virtual ~QuantizerReader() = default;
+  virtual void SetQuery(std::span<const float> query, VectorMetric metric) = 0;
+  virtual void StartCluster(uint64_t pay_start, size_t num_docs) = 0;
+  virtual void ComputeBlock(size_t offset, size_t length, score_t boost,
+                            score_t* out) = 0;
+};
+
 std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(VectorQuantization quant,
                                                      uint32_t d,
                                                      VectorMetric metric);
 
-std::unique_ptr<VectorBlockReader> MakeQuantizerReader(
+std::unique_ptr<QuantizerReader> MakeQuantizerReader(
   VectorQuantization quant, std::unique_ptr<IndexInput> pay_in, uint32_t d);
 
 }  // namespace irs

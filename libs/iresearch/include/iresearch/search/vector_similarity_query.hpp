@@ -28,19 +28,52 @@
 
 namespace irs {
 
-// Prepared vector query shared by the kNN (ByVectorSimilarity) and range
-// (ByRadius) filters: per segment it holds the chosen cluster posting cookies
-// and the rerank vector column. execute() unions the chosen clusters into one
-// DocIterator and wraps it so each candidate is scored by exact distance to the
-// query vector. A finite `radius` turns the wrapper into a membership gate
-// (range search); a non-finite radius leaves every candidate to the outer
-// top-K collector (kNN).
-class VectorSimilarityQuery : public QueryBuilder {
+// Prepared kNN query (ByVectorSimilarity). Per segment it holds the cookies of
+// the `nprobe` cluster lists nearest to `query` plus the rerank vector column.
+// execute() scores each candidate by exact (or SQ8-quantized) distance to the
+// query and leaves truncation to the outer top-K collector. When SQ8 codes are
+// available and there is no inner filter, the clusters are scored as contiguous
+// quantized blocks and merged with a disjunction; otherwise the cluster union
+// is reranked from the raw vectors. An optional `inner` predicate is
+// intersected with the candidates (hybrid search).
+class KnnVectorQuery : public QueryBuilder {
  public:
-  VectorSimilarityQuery(const SubReader& segment, VectorState&& state,
-                        std::vector<float>&& query, VectorMetric metric,
-                        float radius, bool inclusive, score_t boost,
-                        QueryBuilder::ptr&& inner = nullptr)
+  KnnVectorQuery(const SubReader& segment, VectorState&& state,
+                 std::vector<float>&& query, VectorMetric metric, score_t boost,
+                 QueryBuilder::ptr&& inner = nullptr)
+    : QueryBuilder{segment},
+      _state{std::move(state)},
+      _query{std::move(query)},
+      _inner{std::move(inner)},
+      _metric{metric},
+      _boost{boost} {}
+
+  DocIterator::ptr Execute(const ExecutionContext& ctx,
+                           const StatsBuffer& stats) const final;
+
+  void Visit(PreparedStateVisitor&, score_t) const final {}
+
+  score_t Boost() const noexcept final { return _boost; }
+
+ private:
+  VectorState _state;
+  std::vector<float> _query;
+  QueryBuilder::ptr _inner;
+  VectorMetric _metric;
+  score_t _boost;
+};
+
+// Prepared range query (ByRadius). Probes every cluster, reranks the union from
+// the raw vectors (exact distances -- SQ8 would be approximate and unsound for
+// a membership test), and gates each candidate by `radius`/`inclusive`,
+// emitting the in-ball docs in ascending doc order. An optional `inner`
+// predicate is intersected with the candidates.
+class RangeVectorQuery : public QueryBuilder {
+ public:
+  RangeVectorQuery(const SubReader& segment, VectorState&& state,
+                   std::vector<float>&& query, VectorMetric metric,
+                   float radius, bool inclusive, score_t boost,
+                   QueryBuilder::ptr&& inner = nullptr)
     : QueryBuilder{segment},
       _state{std::move(state)},
       _query{std::move(query)},

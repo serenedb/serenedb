@@ -24,7 +24,7 @@
 
 namespace irs {
 
-// Surfaces the per-doc similarity value computed by VectorSimilarityDocIterator
+// Surfaces the per-doc similarity value computed by VectorDistanceIterator
 // (a "higher wins" score, i.e. negated distance) as the document score. The
 // iterator publishes the value through a BoostBlockAttr; this scorer reads it
 // back, so the distance kernel lives next to the vector reads, not here.

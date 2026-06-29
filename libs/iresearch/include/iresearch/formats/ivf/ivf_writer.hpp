@@ -78,12 +78,10 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
   bytes_view(max)() const final { return _max; }
   Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
 
-  // Quantized fields stream their codes into ".pay" via this payload writer.
   TermPayloadWriter* PayloadWriter() const final {
     return _qw != nullptr ? const_cast<IvfTermReader*>(this) : nullptr;
   }
 
-  // TermPayloadWriter: re-reads one cluster's vectors and streams its codes.
   void WriteTermPayload(IndexOutput& out, std::span<const doc_id_t> docs) final;
   void Finish(IndexOutput& out) final;
 
@@ -122,8 +120,6 @@ class IvfWriter {
     field_id postings_id;
     std::vector<doc_id_t> cluster_docs;
     std::vector<uint64_t> cluster_offsets;
-    // Retained until flush so the cluster codes can be (re-)read and streamed
-    // into ".pay"; null when the field is not quantized.
     std::unique_ptr<QuantizerWriter> qw;
     std::unique_ptr<ColumnReader> vector_column;
     uint32_t d = 0;

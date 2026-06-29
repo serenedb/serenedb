@@ -94,7 +94,7 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
   mutable std::vector<uint8_t> _code;
 };
 
-class ScalarQuantizerReader final : public VectorBlockReader {
+class ScalarQuantizerReader final : public QuantizerReader {
  public:
   ScalarQuantizerReader(std::unique_ptr<IndexInput> pay_in, uint32_t d)
     : _pay_in{std::move(pay_in)},
@@ -123,17 +123,24 @@ class ScalarQuantizerReader final : public VectorBlockReader {
                       _stat.size() * sizeof(float));
     _sq.trained = _stat;
     _dc.reset(_sq.get_distance_computer(_faiss_metric));
+    _dc->codes = _codes.data();
+    _dc->code_size = _d;
     _dc->set_query(_query.data());
   }
 
-  void ComputeBlock(const doc_id_t* /*docs*/, uint32_t base_ordinal,
-                    size_t count, score_t boost, score_t* out) final {
+  void ComputeBlock(size_t offset, size_t count, score_t boost,
+                    score_t* out) final {
     SDB_ASSERT(_dc);
-    SDB_ASSERT(static_cast<size_t>(base_ordinal) + count <= _n);
-    for (size_t i = 0; i < count; ++i) {
-      out[i] = static_cast<score_t>(
-                 _dc->query_to_code(_codes.data() + (base_ordinal + i) * _d)) *
-               boost;
+    SDB_ASSERT(offset + count <= _n);
+    size_t i = 0;
+    for (; i + 3 < count; i += 4) {
+      _dc->distances_batch_4(offset + i, offset + i + 1, offset + i + 2,
+                             offset + i + 3, out[i], out[i + 1], out[i + 2],
+                             out[i + 3]);
+    }
+
+    for (; i < count; i++) {
+      out[i] = _dc->distance_to_code(_codes.data() + (offset + i) * _d);
     }
   }
 
@@ -163,7 +170,7 @@ std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(VectorQuantization quant,
   return nullptr;
 }
 
-std::unique_ptr<VectorBlockReader> MakeQuantizerReader(
+std::unique_ptr<QuantizerReader> MakeQuantizerReader(
   VectorQuantization quant, std::unique_ptr<IndexInput> pay_in, uint32_t d) {
   switch (quant) {
     case VectorQuantization::None:

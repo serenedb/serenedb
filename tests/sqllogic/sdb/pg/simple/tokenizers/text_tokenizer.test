@@ -2329,3 +2329,5 @@ Text Search Dictionary:
   sparse_ngram:
     maxngramlength (integer) [default: 16] - Maximum emitted n-gram length (minimum 3)
     covering (boolean) [default: false] - Emit the minimal covering n-gram chain (query side) instead of all sparse n-grams (index side)
+  splitByNonAlpha:
+    to_lower (boolean) [default: false] - Lowercase (ASCII) each emitted token

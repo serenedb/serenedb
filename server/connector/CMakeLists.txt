@@ -2,9 +2,9 @@ add_library(
     serene_connector
     STATIC
     key_encoding.cpp
-    key_utils.cpp
     offsets_collector.cpp
     search_sink_writer.cpp
+    search_table_dispatch.cpp
     search_remove_filter.cpp
     duckdb_storage_extension.cpp
     index_expression.cpp
@@ -22,6 +22,7 @@ add_library(
     duckdb_table_function.cpp
     duckdb_scan_base.cpp
     duckdb_search_full_scan.cpp
+    duckdb_search_table_scan.cpp
     columnstore_materializer.cpp
     index_source_factory.cpp
     index_source_view.cpp
@@ -30,6 +31,7 @@ add_library(
     index_source_view_table.cpp
     view_fast_path.cpp
     duckdb_copy_filesystem.cpp
+    duckdb_physical_search_insert.cpp
     duckdb_pg_binary_copy.cpp
     duckdb_pg_text_copy.cpp
     duckdb_physical_ctas.cpp
@@ -39,6 +41,9 @@ add_library(
     duckdb_index_utils.cpp
     duckdb_search_sink_writer.cpp
     duckdb_vacuum_function.cpp
+    duckdb_physical_search_truncate.cpp
+    duckdb_physical_search_delete.cpp
+    duckdb_physical_search_update.cpp
     duckdb_transaction.cpp
     highlight/highlight_options.cpp
     highlight/memory_index.cpp

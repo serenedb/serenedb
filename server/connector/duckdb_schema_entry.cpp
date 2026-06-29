@@ -65,6 +65,7 @@
 #include "connector/duckdb_entry_cache.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/pg_logical_types.h"
+#include "connector/search_table_dispatch.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
@@ -168,14 +169,18 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
   auto& create_info = info.Base();
   auto& table_info = create_info.Cast<duckdb::CreateTableInfo>();
 
+  catalog::CreateTableOptions options;
+  options.name = table_info.table;
+
+  // Consume the SereneDB-specific `storage` WITH option (selects the table
+  // engine) before validating that no unknown options remain.
+  ApplyStorageKind(options, table_info.options);
+
   if (!table_info.options.empty()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("unrecognized parameter \"",
                             table_info.options.begin()->first, "\""));
   }
-
-  catalog::CreateTableOptions options;
-  options.name = table_info.table;
 
   // PG-style constraint name generator with dedup.
   auto choose_constraint_name = [&](std::string_view tbl,
@@ -466,8 +471,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
   auto sdb_table = sdb_table_entry.GetSereneDBTable();
 
   auto& catalog_impl = catalog::GetCatalog();
-  auto snapshot = catalog_impl.GetCatalogSnapshot();
   auto database_id = GetDatabaseId();
+
+  RejectIfSearchTable(*sdb_table, "CREATE INDEX");
 
   // Map DuckDB index type to SereneDB IndexType
   // DuckDB default is empty or "ART"; PG default is "btree"
@@ -973,6 +979,34 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
 
   auto& table_info = info.Cast<duckdb::AlterTableInfo>();
   auto table_name = info.name;
+
+  // Search-backed tables have a fixed iresearch schema, so structural ALTERs
+  // are rejected. Renames (table/column/constraint) are catalog-only metadata
+  // -- iresearch fields and the scan are keyed by column id, not name -- so
+  // they stay allowed.
+  std::string_view unsupported_search_op;
+  switch (table_info.alter_table_type) {
+    case duckdb::AlterTableType::ADD_COLUMN:
+      unsupported_search_op = "ALTER TABLE ADD COLUMN";
+      break;
+    case duckdb::AlterTableType::REMOVE_COLUMN:
+      unsupported_search_op = "ALTER TABLE DROP COLUMN";
+      break;
+    case duckdb::AlterTableType::DROP_CONSTRAINT:
+      unsupported_search_op = "ALTER TABLE DROP CONSTRAINT";
+      break;
+    case duckdb::AlterTableType::ALTER_COLUMN_TYPE:
+      unsupported_search_op = "ALTER TABLE ALTER COLUMN TYPE";
+      break;
+    default:
+      break;
+  }
+  if (!unsupported_search_op.empty()) {
+    auto snapshot = catalog_impl.GetCatalogSnapshot();
+    if (auto sdb_table = snapshot->GetTable(db, name, table_name)) {
+      RejectIfSearchTable(*sdb_table, unsupported_search_op);
+    }
+  }
 
   switch (table_info.alter_table_type) {
     case duckdb::AlterTableType::DROP_CONSTRAINT: {

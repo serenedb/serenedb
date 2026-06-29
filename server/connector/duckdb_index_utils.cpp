@@ -28,7 +28,6 @@
 #include "catalog/inverted_index.h"
 #include "connector/duckdb_search_sink_writer.h"
 #include "connector/duckdb_table_entry.h"
-#include "connector/key_utils.hpp"
 #include "pg/connection_context.h"
 #include "search/inverted_index_storage.h"
 

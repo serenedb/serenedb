@@ -30,8 +30,10 @@
 #include <yaclib/async/future.hpp>
 
 #include "absl/synchronization/mutex.h"
+#include "basics/containers/flat_hash_map.h"
 #include "catalog/identifiers/object_id.h"
 #include "rest_server/database_path_feature.h"
+#include "search/search_db_wal.h"
 
 namespace sdb {
 namespace search {
@@ -58,6 +60,11 @@ class SearchEngine final {
   void stop();
 
   std::filesystem::path GetPersistedPath(ObjectId database_id) const;
+
+  // The database's self-contained search WAL, lazily created on first use. ONE
+  // per database, shared by all of its search shards, so a transaction touching
+  // several search tables commits atomically.
+  SearchDbWal& GetDbWal(ObjectId database_id);
 
   // Launch the per-index refresh + compaction loops, registering their Futures
   // so stop() can join them.
@@ -102,6 +109,9 @@ class SearchEngine final {
 
  private:
   DatabasePathFeature& _dir_feature;
+  // Per-database central WALs (see GetDbWal). Guarded by _db_wals_mu.
+  absl::Mutex _db_wals_mu;
+  containers::FlatHashMap<ObjectId, std::unique_ptr<SearchDbWal>> _db_wals;
   std::atomic<bool> _stopping{false};
   std::atomic<int> _running_compactions{0};
   absl::Mutex _loops_mutex;

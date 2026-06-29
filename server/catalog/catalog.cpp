@@ -94,6 +94,7 @@
 #include "pg/pg_catalog/fwd.h"
 #include "pg/sql_utils.h"
 #include "search/inverted_index_storage.h"
+#include "search/search_table.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::catalog {
@@ -273,7 +274,7 @@ std::shared_ptr<TableDrop> Snapshot::CreateTableDrop(
     }
   }
   auto task = std::make_shared<TableDrop>(
-    table, std::move(indexes), std::move(owned_sequences), schema_id,
+    table, db_id, std::move(indexes), std::move(owned_sequences), schema_id,
     std::move(store_name), std::move(fk_referenced), is_root);
   UpdatePendingDrops(pending_drops, schema_id, table_id, task, is_root);
   return task;
@@ -2216,6 +2217,9 @@ Result Catalog::CreateTable(ObjectId database_id, std::string_view schema,
       // renames to the public name (RemoveTombstone), failure drops by id.
       store_table->name = DroppedStoreTableName(table->GetId());
     }
+  } else if (table->GetEngine() == TableEngine::Search) {
+    table->SetData(search::SearchTable::Create(database_id, table->GetId(),
+                                               /*is_new=*/true));
   }
 
   return Apply(
@@ -3578,6 +3582,7 @@ class OpenDatabase {
   Result RegisterTypes(ObjectId database_id, ObjectId schema_id);
   Result RegisterTables(ObjectId database_id, ObjectId schema_id);
   Result RegisterInvertedStorage(const std::shared_ptr<Index>& index);
+  Result RegisterSearchTable(ObjectId db_id, const Table& table);
   Result RegisterIndexes(ObjectId database_id, ObjectId schema_id,
                          ObjectId table_id);
 
@@ -3811,6 +3816,14 @@ Result OpenDatabase::RegisterInvertedStorage(
   });
 }
 
+Result OpenDatabase::RegisterSearchTable(ObjectId db_id, const Table& table) {
+  return basics::SafeCall([&] {
+    table.SetData(search::SearchTable::Create(db_id, table.GetId(),
+                                              /*is_new=*/false));
+    return Result{};
+  });
+}
+
 Result OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
   return GetCatalogStore().VisitBoot(
     schema_id, ObjectType::Table,
@@ -3826,6 +3839,10 @@ Result OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
         if (table->GetEngine() == TableEngine::Transactional) {
           GetCatalogStore().ValidateStoreTable(
             MakeStoreTableDef(_database_name, _schema_name, *table));
+        } else if (table->GetEngine() == TableEngine::Search) {
+          if (auto r = RegisterSearchTable(db_id, *table); !r.ok()) {
+            return r;
+          }
         }
         return AddTable(db_id, schema_id, table_id, std::move(table));
       }

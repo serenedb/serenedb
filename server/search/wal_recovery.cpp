@@ -26,8 +26,15 @@
 #include <chrono>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/storage/data_table.hpp>
+#include <iresearch/index/index_writer.hpp>
+#include <limits>
+#include <memory>
+#include <ranges>
+#include <string>
+#include <vector>
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"

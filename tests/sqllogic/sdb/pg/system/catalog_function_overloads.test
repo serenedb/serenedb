@@ -1,0 +1,229 @@
+# Stress test for the system catalog functions across every object type
+# (tables, views, sequences, indexes, types, scalar macros, table macros, and
+# a macro that has BOTH scalar and table overloads under one name).
+#
+# Regression guards for two serenedb bugs:
+#  1. A macro whose name carried both a scalar overload and a table overload
+#     crashed duckdb_functions(): the scalar extractor asserted that every
+#     overload was scalar. Each overload must now render by its own type.
+#  2. Scalar macros were emitted twice by duckdb_functions(): all function
+#     CatalogTypes share one cache bucket, and the table-function scan
+#     re-emitted entries cached by the scalar-function scan.
+
+
+statement ok
+CREATE TYPE sf_mood AS ENUM ('ok', 'bad')
+
+statement ok
+CREATE SEQUENCE sf_seq START 5
+
+statement ok
+CREATE TABLE sf_t (id INT PRIMARY KEY, name TEXT NOT NULL, mood sf_mood)
+
+statement ok
+CREATE VIEW sf_v AS SELECT id, name FROM sf_t
+
+statement ok
+CREATE INDEX sf_idx ON sf_t USING inverted (name)
+
+statement ok
+CREATE MACRO sf_scalar(a) AS a + 1
+
+statement ok
+CREATE MACRO sf_scalar(a, b) AS a + b
+
+statement ok
+CREATE MACRO sf_tab() AS TABLE SELECT 1 AS x
+
+statement ok
+CREATE MACRO sf_mixed(a) AS a * 2
+
+statement ok
+CREATE MACRO sf_mixed() AS TABLE SELECT 99 AS y
+
+
+# duckdb_functions(): each overload renders by its own type. The mixed name
+# yields a scalar 'macro' row and a 'table_macro' row.
+
+query
+SELECT function_name, function_type, macro_definition
+FROM duckdb_functions()
+WHERE database_name = current_database() AND function_name LIKE 'sf_%'
+ORDER BY function_name, function_type, macro_definition
+----
+function_name	function_type	macro_definition
+sf_mixed	macro	(a * 2)
+sf_mixed	table_macro	SELECT 99 AS y
+sf_scalar	macro	(a + 1)
+sf_scalar	macro	(a + b)
+sf_tab	table_macro	SELECT 1 AS x
+
+
+# No overload is double-listed.
+
+query
+SELECT function_name, count(*) AS c
+FROM duckdb_functions()
+WHERE database_name = current_database() AND function_name LIKE 'sf_%'
+GROUP BY function_name
+ORDER BY function_name
+----
+function_name	c
+sf_mixed	2
+sf_scalar	2
+sf_tab	1
+
+
+# No duplicate rows anywhere in the catalog (built-ins included).
+
+query
+SELECT count(*) AS dup_groups FROM (
+  SELECT database_name, schema_name, function_name, function_type, parameter_types
+  FROM duckdb_functions()
+  WHERE database_name = current_database()
+  GROUP BY 1, 2, 3, 4, 5 HAVING count(*) > 1
+) z
+----
+dup_groups
+0
+
+
+# Both overloads of the mixed-type macro are callable.
+
+query
+SELECT sf_mixed(10) AS v
+----
+v
+20
+
+query
+SELECT y FROM sf_mixed()
+----
+y
+99
+
+
+# A second scan reads through the warm cache (where the duplication bug lived)
+# and returns the same rows.
+
+query
+SELECT function_name, function_type
+FROM duckdb_functions()
+WHERE database_name = current_database() AND function_name LIKE 'sf_%'
+ORDER BY function_name, function_type
+----
+function_name	function_type
+sf_mixed	macro
+sf_mixed	table_macro
+sf_scalar	macro
+sf_scalar	macro
+sf_tab	table_macro
+
+
+# Each object type is introspectable through its dedicated function.
+
+query
+SELECT schema_name, table_name FROM duckdb_tables()
+WHERE database_name = current_database() AND table_name = 'sf_t'
+----
+schema_name	table_name
+public	sf_t
+
+query
+SELECT schema_name, view_name FROM duckdb_views()
+WHERE database_name = current_database() AND view_name LIKE 'sf_%'
+ORDER BY view_name
+----
+schema_name	view_name
+public	sf_v
+
+query
+SELECT schema_name, sequence_name, start_value FROM duckdb_sequences()
+WHERE database_name = current_database() AND sequence_name LIKE 'sf_%'
+ORDER BY sequence_name
+----
+schema_name	sequence_name	start_value
+public	sf_seq	5
+
+query
+SELECT schema_name, index_name, table_name FROM duckdb_indexes()
+WHERE database_name = current_database() AND index_name LIKE 'sf_%'
+ORDER BY index_name
+----
+schema_name	index_name	table_name
+public	sf_idx	sf_t
+
+query
+SELECT schema_name, type_name FROM duckdb_types()
+WHERE database_name = current_database() AND type_name LIKE 'sf_%'
+ORDER BY type_name
+----
+schema_name	type_name
+public	sf_mood
+
+query
+SELECT table_name, column_name, data_type FROM duckdb_columns()
+WHERE database_name = current_database() AND table_name = 'sf_t'
+ORDER BY column_name
+----
+table_name	column_name	data_type
+sf_t	id	INTEGER
+sf_t	mood	sf_mood
+sf_t	name	VARCHAR
+
+query
+SELECT schema_name, table_name, constraint_type FROM duckdb_constraints()
+WHERE database_name = current_database() AND table_name = 'sf_t'
+ORDER BY constraint_type
+----
+schema_name	table_name	constraint_type
+public	sf_t	NOT NULL
+public	sf_t	NOT NULL
+public	sf_t	PRIMARY KEY
+
+query
+SELECT count(*) > 0 AS present FROM duckdb_databases()
+WHERE database_name = current_database()
+----
+present
+t
+
+
+# pg_proc and information_schema.routines agree on the overload counts.
+
+query
+SELECT proname, count(*) AS c FROM pg_catalog.pg_proc
+WHERE proname LIKE 'sf_%'
+GROUP BY proname ORDER BY proname
+----
+proname	c
+sf_mixed	2
+sf_scalar	2
+sf_tab	1
+
+
+# Cleanup
+
+statement ok
+DROP MACRO sf_mixed
+
+statement ok
+DROP MACRO sf_scalar
+
+statement ok
+DROP MACRO TABLE sf_tab
+
+statement ok
+DROP VIEW sf_v
+
+statement ok
+DROP INDEX sf_idx
+
+statement ok
+DROP TABLE sf_t
+
+statement ok
+DROP SEQUENCE sf_seq
+
+statement ok
+DROP TYPE sf_mood

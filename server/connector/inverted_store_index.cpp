@@ -43,7 +43,6 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_search_sink_writer.h"
-#include "connector/key_utils.hpp"
 #include "connector/primary_key.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
@@ -70,8 +69,8 @@ struct InvertedStoreBuildLocalState final : duckdb::IndexBuildLocalState {};
 }  // namespace
 namespace {
 
-std::string RowIdKey(ObjectId table_id, duckdb::row_t row) {
-  auto key = key_utils::PrepareColumnKey(table_id, catalog::Column::Id{0});
+std::string RowIdKey(duckdb::row_t row) {
+  std::string key;
   primary_key::AppendSigned(key, static_cast<int64_t>(row));
   return key;
 }
@@ -222,7 +221,7 @@ void InvertedStoreIndex::ReplayAppend(duckdb::DataChunk& chunk,
   for (duckdb::idx_t i = 0; i < count; ++i) {
     auto row = duckdb::UnifiedVectorFormat::GetData<duckdb::row_t>(
       row_fmt)[row_fmt.sel->get_index(i)];
-    keys[i] = RowIdKey(_table_id, row);
+    keys[i] = RowIdKey(row);
     key_views[i] = keys[i];
   }
 
@@ -361,8 +360,7 @@ duckdb::ErrorData InvertedStoreIndex::AppendRows(
   for (duckdb::idx_t i = 0; i < count; ++i) {
     auto row = duckdb::UnifiedVectorFormat::GetData<duckdb::row_t>(
       row_fmt)[row_fmt.sel->get_index(i)];
-    keys[i] = key_utils::PrepareColumnKey(_table_id, catalog::Column::Id{0});
-    primary_key::AppendSigned(keys[i], static_cast<int64_t>(row));
+    keys[i] = RowIdKey(row);
     key_views[i] = keys[i];
   }
 

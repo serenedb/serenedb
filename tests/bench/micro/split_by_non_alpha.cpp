@@ -23,9 +23,11 @@
 //   * SplitByNonAlpha           -- the plain free function
 //   * PatternTokenizer          -- RE2 split on `[^A-Za-z0-9]+`; this is the
 //                                  same engine DuckDB's regexp_split_to_array /
-//                                  string_split_regex use, so it answers "is the
-//                                  built-in regex fast enough to reuse instead?"
-//   * SegmentationTokenizer     -- ICU/UAX#29 word-break analyzer (alphanumeric,
+//                                  string_split_regex use, so it answers "is
+//                                  the built-in regex fast enough to reuse
+//                                  instead?"
+//   * SegmentationTokenizer     -- ICU/UAX#29 word-break analyzer
+//   (alphanumeric,
 //                                  lowercase) -- the closest existing analyzer
 // `to_lower` is varied via Arg(0): 0 = keep case, 1 = ASCII-lowercase.
 // PatternTokenizer and Segmentation are run in their natural configs (pattern

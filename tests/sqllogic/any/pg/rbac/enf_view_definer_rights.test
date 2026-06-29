@@ -1,19 +1,11 @@
-# VIEW definer/owner-rights SELECT semantics (bug B1 regression target).
+# VIEW definer/owner-rights SELECT semantics.
 #
 # In PostgreSQL a non-materialized view runs with the VIEW OWNER's privileges:
 # a role granted SELECT on the view -- and NOTHING on the view's base table --
 # can read through the view, because the base-table access is checked against
 # the view owner, not the caller (rangeTableEntry->checkAsUser / definer
-# rights). Verified on PostgreSQL 17/19.
-#
-# !!! THIS TEST CURRENTLY FAILS ON SereneDB (probed 2026-06-21). !!!
-# SereneDB resolves the view through to its base relation and enforces SELECT on
-# the base table against the CALLER (invoker rights), so the read below is
-# refused with "permission denied for table vdr_iceberg" today. That is bug B1.
-# This file asserts the PG-FAITHFUL target behavior (the read is ALLOWED); the
-# RBAC fast-path redesign that introduces definer-rights view resolution should
-# make it pass. Until then it is an expected RED test -- do not "fix" it by
-# weakening the expectation; fix the engine.
+# rights). Verified on PostgreSQL 17/19. SereneDB matches this (definer is the
+# default; WITH (security_invoker=true) switches to caller rights).
 #
 # The companion any/pg/rbac/cp_view_column_reads.test asserts only the
 # byte-identical directions (a view grant does not leak the base table); this
@@ -68,9 +60,8 @@ base_sel
 f
 
 
-# === B1: read through the view -> PG ALLOWS (definer rights) ===
-# SereneDB DENIES this today ("permission denied for table vdr_iceberg"); the
-# redesign must make it succeed with the view owner's rights.
+# Read through the view -> ALLOWED under definer rights (the base is checked
+# against the view owner, who owns vdr_iceberg).
 connection c_ved user=vdr_vedernikoff password=vdr_vedernikoff_pw
 query
 SELECT id, av FROM vdr_clickclack ORDER BY id;

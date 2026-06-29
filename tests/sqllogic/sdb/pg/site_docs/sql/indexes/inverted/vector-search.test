@@ -6,7 +6,7 @@ statement ok
 CREATE TABLE vectors (id INTEGER, emb FLOAT[3]);
 
 statement ok
-CREATE INDEX l2_index ON vectors USING inverted (id, emb hnsw (metric = 'l2'));
+CREATE INDEX l2_index ON vectors USING inverted (id, emb ivf (metric = 'l2'));
 
 # DOCS_TEST: example_004
 
@@ -46,7 +46,7 @@ statement ok
 CREATE TABLE vectors_c (id INTEGER, emb FLOAT[3]);
 
 statement ok
-CREATE INDEX cos_index ON vectors_c USING inverted (id, emb hnsw (metric = 'cosine'));
+CREATE INDEX cos_index ON vectors_c USING inverted (id, emb ivf (metric = 'cosine'));
 
 statement ok
 INSERT INTO vectors_c VALUES

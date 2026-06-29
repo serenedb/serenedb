@@ -21,19 +21,19 @@ CREATE TEXT SEARCH DICTIONARY included(template = 'keyword');
 
 # Bare 'ivf' on a column: resolves to the dict, not the built-in IVF.
 statement ok
-CREATE TABLE shadow_hnsw_col(id INT PRIMARY KEY, s VARCHAR);
+CREATE TABLE shadow_ivf_col(id INT PRIMARY KEY, s VARCHAR);
 
 statement ok
-CREATE INDEX shadow_hnsw_col_idx ON shadow_hnsw_col USING inverted(id, s ivf);
+CREATE INDEX shadow_ivf_col_idx ON shadow_ivf_col USING inverted(id, s ivf);
 
 statement ok
-INSERT INTO shadow_hnsw_col VALUES (1, 'foo'), (2, 'bar'), (3, 'foo');
+INSERT INTO shadow_ivf_col VALUES (1, 'foo'), (2, 'bar'), (3, 'foo');
 
 statement ok
-VACUUM (REFRESH_TABLE) shadow_hnsw_col;
+VACUUM (REFRESH_TABLE) shadow_ivf_col;
 
 query
-SELECT id FROM shadow_hnsw_col_idx WHERE s = 'foo' ORDER BY id;
+SELECT id FROM shadow_ivf_col_idx WHERE s = 'foo' ORDER BY id;
 ----
 id
 1
@@ -63,20 +63,20 @@ id
 
 # Bare 'ivf' on an indexed expression: dict wins.
 statement ok
-CREATE TABLE shadow_hnsw_expr(id INT PRIMARY KEY, a VARCHAR, b VARCHAR);
+CREATE TABLE shadow_ivf_expr(id INT PRIMARY KEY, a VARCHAR, b VARCHAR);
 
 statement ok
-CREATE INDEX shadow_hnsw_expr_idx ON shadow_hnsw_expr USING inverted(
+CREATE INDEX shadow_ivf_expr_idx ON shadow_ivf_expr USING inverted(
     id, (a || b) ivf);
 
 statement ok
-INSERT INTO shadow_hnsw_expr VALUES (1, 'foo', 'bar'), (2, 'baz', 'qux');
+INSERT INTO shadow_ivf_expr VALUES (1, 'foo', 'bar'), (2, 'baz', 'qux');
 
 statement ok
-VACUUM (REFRESH_TABLE) shadow_hnsw_expr;
+VACUUM (REFRESH_TABLE) shadow_ivf_expr;
 
 query
-SELECT id FROM shadow_hnsw_expr_idx WHERE a || b = 'foobar';
+SELECT id FROM shadow_ivf_expr_idx WHERE a || b = 'foobar';
 ----
 id
 1
@@ -107,23 +107,23 @@ id
 
 # 'ivf (...)' on a vector column: built-in IVF, not the dict named 'ivf'.
 statement ok
-CREATE TABLE parens_hnsw_col(id INT PRIMARY KEY, emb FLOAT[3]);
+CREATE TABLE parens_ivf_col(id INT PRIMARY KEY, emb FLOAT[3]);
 
 statement ok
-CREATE INDEX parens_hnsw_col_idx ON parens_hnsw_col USING inverted(
+CREATE INDEX parens_ivf_col_idx ON parens_ivf_col USING inverted(
     id, emb ivf(metric = 'l2'));
 
 statement ok
-INSERT INTO parens_hnsw_col VALUES
+INSERT INTO parens_ivf_col VALUES
     (1, [1, 2, 3]),
     (2, [10, 10, 10]),
     (3, [0, 0, 0]);
 
 statement ok
-VACUUM (REFRESH_TABLE) parens_hnsw_col;
+VACUUM (REFRESH_TABLE) parens_ivf_col;
 
 query
-SELECT id FROM parens_hnsw_col_idx ORDER BY emb <-> [1, 2, 3]::FLOAT[3] LIMIT 1;
+SELECT id FROM parens_ivf_col_idx ORDER BY emb <-> [1, 2, 3]::FLOAT[3] LIMIT 1;
 ----
 id
 1
@@ -152,20 +152,20 @@ id	s
 
 # 'ivf (...)' on an indexed expression: built-in IVF.
 statement ok
-CREATE TABLE parens_hnsw_expr(id INT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT);
+CREATE TABLE parens_ivf_expr(id INT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT);
 
 statement ok
-CREATE INDEX parens_hnsw_expr_idx ON parens_hnsw_expr USING inverted(
+CREATE INDEX parens_ivf_expr_idx ON parens_ivf_expr USING inverted(
     id, (array_value(x, y, z)) ivf(metric = 'l2'));
 
 statement ok
-INSERT INTO parens_hnsw_expr VALUES (1, 1, 2, 3), (2, 10, 10, 10);
+INSERT INTO parens_ivf_expr VALUES (1, 1, 2, 3), (2, 10, 10, 10);
 
 statement ok
-VACUUM (REFRESH_TABLE) parens_hnsw_expr;
+VACUUM (REFRESH_TABLE) parens_ivf_expr;
 
 query
-SELECT id FROM parens_hnsw_expr_idx
+SELECT id FROM parens_ivf_expr_idx
 ORDER BY array_value(x, y, z) <-> [1, 2, 3]::FLOAT[3] LIMIT 1;
 ----
 id
@@ -200,30 +200,30 @@ id	s
 # IVF opclass and requires ARRAY(FLOAT, N).
 
 statement ok
-CREATE TABLE shadow_hnsw_int_arr_col(id INT PRIMARY KEY, emb INT[3]);
+CREATE TABLE shadow_ivf_int_arr_col(id INT PRIMARY KEY, emb INT[3]);
 
 statement error
-CREATE INDEX shadow_hnsw_int_arr_col_idx ON shadow_hnsw_int_arr_col USING inverted(
+CREATE INDEX shadow_ivf_int_arr_col_idx ON shadow_ivf_int_arr_col USING inverted(
     id, emb ivf);
 ----
 db error: ERROR: Failed to create index: Column 'emb' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[3])
 
 
 statement ok
-CREATE TABLE shadow_hnsw_float_arr_col(id INT PRIMARY KEY, emb FLOAT[3]);
+CREATE TABLE shadow_ivf_float_arr_col(id INT PRIMARY KEY, emb FLOAT[3]);
 
 statement error
-CREATE INDEX shadow_hnsw_float_arr_col_idx ON shadow_hnsw_float_arr_col USING inverted(
+CREATE INDEX shadow_ivf_float_arr_col_idx ON shadow_ivf_float_arr_col USING inverted(
     id, emb ivf);
 ----
 db error: ERROR: Failed to create index: Column 'emb' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got FLOAT[3])
 
 
 statement ok
-CREATE TABLE shadow_hnsw_arr_expr(id INT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT);
+CREATE TABLE shadow_ivf_arr_expr(id INT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT);
 
 statement error
-CREATE INDEX shadow_hnsw_arr_expr_idx ON shadow_hnsw_arr_expr USING inverted(
+CREATE INDEX shadow_ivf_arr_expr_idx ON shadow_ivf_arr_expr USING inverted(
     id, (array_value(x, y, z)) ivf);
 ----
 db error: ERROR: Failed to create index: Column 'array_value(x, y, z)' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got FLOAT[3])
@@ -233,11 +233,11 @@ db error: ERROR: Failed to create index: Column 'array_value(x, y, z)' uses a to
 # in scope -- this is the supported escape hatch. INT[3] still fails at
 # validation because IVF requires ARRAY(FLOAT, N).
 statement ok
-CREATE INDEX good_shadow_hnsw_float_arr_col_idx ON shadow_hnsw_float_arr_col USING inverted(
+CREATE INDEX good_shadow_ivf_float_arr_col_idx ON shadow_ivf_float_arr_col USING inverted(
     id, emb ivf(metric = 'l2'));
 
 statement error
-CREATE INDEX bad_shadow_hnsw_int_arr_with_opts_idx ON shadow_hnsw_int_arr_col USING inverted(
+CREATE INDEX bad_shadow_ivf_int_arr_with_opts_idx ON shadow_ivf_int_arr_col USING inverted(
     id, emb ivf(metric = 'l2'));
 ----
 db error: ERROR: Failed to create index: Column 'emb' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not INTEGER[3]
@@ -256,10 +256,10 @@ SET search_path TO hint_only;
 # Bare 'ivf' on a column with no dict by that name in this schema -- hint
 # error pointing at the options form.
 statement ok
-CREATE TABLE hint_hnsw_col(id INT PRIMARY KEY, s VARCHAR);
+CREATE TABLE hint_ivf_col(id INT PRIMARY KEY, s VARCHAR);
 
 statement error
-CREATE INDEX hint_hnsw_col_idx ON hint_hnsw_col USING inverted(id, s ivf);
+CREATE INDEX hint_ivf_col_idx ON hint_ivf_col USING inverted(id, s ivf);
 ----
 db error: ERROR: Unknown opclass 'ivf' on column 's': no text dictionary by that name in schema 'hint_only'
 HINT: 'ivf' is a built-in opclass; use the options form 'ivf (...)'
@@ -267,7 +267,7 @@ HINT: 'ivf' is a built-in opclass; use the options form 'ivf (...)'
 
 # Bare 'included' on a column with no dict by that name -- same hint shape.
 statement error
-CREATE INDEX hint_inc_col_idx ON hint_hnsw_col USING inverted(id, s included);
+CREATE INDEX hint_inc_col_idx ON hint_ivf_col USING inverted(id, s included);
 ----
 db error: ERROR: Unknown opclass 'included' on column 's': no text dictionary by that name in schema 'hint_only'
 HINT: 'included' is a built-in opclass; use the options form 'included (...)'
@@ -275,10 +275,10 @@ HINT: 'included' is a built-in opclass; use the options form 'included (...)'
 
 # Bare 'ivf' on an indexed expression with no dict -- same hint.
 statement ok
-CREATE TABLE hint_hnsw_expr(id INT PRIMARY KEY, a VARCHAR, b VARCHAR);
+CREATE TABLE hint_ivf_expr(id INT PRIMARY KEY, a VARCHAR, b VARCHAR);
 
 statement error
-CREATE INDEX hint_hnsw_expr_idx ON hint_hnsw_expr USING inverted(
+CREATE INDEX hint_ivf_expr_idx ON hint_ivf_expr USING inverted(
     id, (a || b) ivf);
 ----
 db error: ERROR: Unknown opclass 'ivf' on column '(a || b)': no text dictionary by that name in schema 'hint_only'
@@ -304,7 +304,7 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY hint_only_dict(template = 'keyword');
 
 statement error
-CREATE INDEX hint_parens_dict ON hint_hnsw_col USING inverted(
+CREATE INDEX hint_parens_dict ON hint_ivf_col USING inverted(
     id, s hint_only_dict (compression = 'zstd'));
 ----
 db error: ERROR: Failed to create index: Unknown built-in opclass 'hint_only_dict' on 's' (known: included, ivf)
@@ -313,7 +313,7 @@ db error: ERROR: Failed to create index: Unknown built-in opclass 'hint_only_dic
 # A non-built-in name with no dict by that name: bare-name lookup misses,
 # resulting in the "Unknown opclass" error.
 statement error
-CREATE INDEX hint_unknown ON hint_hnsw_col USING inverted(id, s missing_dict);
+CREATE INDEX hint_unknown ON hint_ivf_col USING inverted(id, s missing_dict);
 ----
 db error: ERROR: Failed to create index: Unknown opclass 'missing_dict' on column 's': no text dictionary by that name in schema 'hint_only'
 

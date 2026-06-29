@@ -99,7 +99,8 @@ class ScalarQuantizerReader final : public QuantizerReader {
   ScalarQuantizerReader(std::unique_ptr<IndexInput> pay_in, uint32_t d)
     : _pay_in{std::move(pay_in)},
       _d{d},
-      _sq{d, faiss::ScalarQuantizer::QuantizerType::QT_8bit} {}
+      _sq{d, faiss::ScalarQuantizer::QuantizerType::QT_8bit},
+      _codes_reader{*_pay_in, d} {}
 
   void SetQuery(std::span<const float> query, VectorMetric metric) final {
     _query.assign(query.begin(), query.end());
@@ -115,32 +116,32 @@ class ScalarQuantizerReader final : public QuantizerReader {
     if (_n == 0) {
       return;
     }
-    _codes.resize(_n * _d);
+    const uint64_t codes_bytes = static_cast<uint64_t>(_n) * _d;
     _stat.resize(2 * static_cast<size_t>(_d));
-    _pay_in->ReadData(pay_start, _codes.data(), _codes.size());
-    _pay_in->ReadData(pay_start + _codes.size(),
+    _pay_in->ReadData(pay_start + codes_bytes,
                       reinterpret_cast<byte_type*>(_stat.data()),
                       _stat.size() * sizeof(float));
     _sq.trained = _stat;
     _dc.reset(_sq.get_distance_computer(_faiss_metric));
-    _dc->codes = _codes.data();
     _dc->code_size = _d;
     _dc->set_query(_query.data());
+    _codes_reader.Reset(pay_start);
   }
 
   void ComputeBlock(size_t offset, size_t count, score_t boost,
                     score_t* out) final {
     SDB_ASSERT(_dc);
     SDB_ASSERT(offset + count <= _n);
+    const byte_type* block = _codes_reader.Read(offset, count);
+    _dc->codes = block;
     size_t i = 0;
     for (; i + 3 < count; i += 4) {
-      _dc->distances_batch_4(offset + i, offset + i + 1, offset + i + 2,
-                             offset + i + 3, out[i], out[i + 1], out[i + 2],
-                             out[i + 3]);
+      _dc->distances_batch_4(i, i + 1, i + 2, i + 3, out[i], out[i + 1],
+                             out[i + 2], out[i + 3]);
     }
 
     for (; i < count; i++) {
-      out[i] = _dc->distance_to_code(_codes.data() + (offset + i) * _d);
+      out[i] = _dc->distance_to_code(block + i * _d);
     }
   }
 
@@ -151,7 +152,7 @@ class ScalarQuantizerReader final : public QuantizerReader {
   faiss::MetricType _faiss_metric = faiss::MetricType::METRIC_L2;
   faiss::ScalarQuantizer _sq;
   std::unique_ptr<faiss::ScalarQuantizer::SQDistanceComputer> _dc;
-  std::vector<uint8_t> _codes;
+  VectorBlockReader _codes_reader;
   std::vector<float> _stat;
   size_t _n = 0;
 };

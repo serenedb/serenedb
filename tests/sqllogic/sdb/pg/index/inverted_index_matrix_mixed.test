@@ -27,7 +27,7 @@ CREATE TEXT SEARCH DICTIONARY geopoint_dict(template = 'geopoint', latitude = 'l
 # ----------------------------------------------------------------------------
 # Each CREATE INDEX combines opclasses of different families on the same
 # index (text term_dict + geo + implicit numeric, keyword + ngram + INCLUDE,
-# hnsw with mixed INCLUDE types, two JSON columns with different opclasses).
+# ivf with mixed INCLUDE types, two JSON columns with different opclasses).
 # For each accepted index we verify:
 #   * a single-column filter routes through the per-column codec, and
 #   * a multi-column AND filter combines posting lists across the heterogeneous
@@ -102,7 +102,7 @@ ORDER BY pk;
 pk
 2
 
-# --- (c) hnsw + INCLUDE(VARCHAR, INTEGER, GEOMETRY) -------------------------
+# --- (c) ivf + INCLUDE(VARCHAR, INTEGER, GEOMETRY) -------------------------
 
 statement ok
 CREATE TABLE g10_c(pk INTEGER PRIMARY KEY,
@@ -308,7 +308,7 @@ ORDER BY pk;
 pk
 2
 
-# --- (d) kw + ng + hnsw + INCLUDE(numeric, VARCHAR) -------------------------
+# --- (d) kw + ng + ivf + INCLUDE(numeric, VARCHAR) -------------------------
 
 statement ok
 CREATE TABLE g13_d(pk  INTEGER PRIMARY KEY,

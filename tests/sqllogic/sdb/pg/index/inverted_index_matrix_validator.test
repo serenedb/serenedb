@@ -169,11 +169,11 @@ CREATE INDEX m_reject_imp ON m_reject USING inverted(pk, i, bi, bo, dt, ts);
 # rules that aren't covered elsewhere in the matrix. Each rejection uses the
 # inventory regex so the exact error message stays observable.
 #   (a) GEOMETRY without OGC:CRS84 + geo_s2_dict       -> CRS84 validator
-#   (b) hnsw on scalar FLOAT                            -> hnsw validator
-#   (c) hnsw on LIST<FLOAT>                             -> hnsw validator
-#   (d) hnsw on ARRAY<DOUBLE,3>                         -> hnsw validator
-#   (e) hnsw on ARRAY<INTEGER,3>                        -> hnsw validator
-#   (f) hnsw on scalar VARCHAR                          -> hnsw validator
+#   (b) ivf on scalar FLOAT                            -> ivf validator
+#   (c) ivf on LIST<FLOAT>                             -> ivf validator
+#   (d) ivf on ARRAY<DOUBLE,3>                         -> ivf validator
+#   (e) ivf on ARRAY<INTEGER,3>                        -> ivf validator
+#   (f) ivf on scalar VARCHAR                          -> ivf validator
 #   (g) implicit (no opclass) on UUID                   -> term_dict Unsupported
 #   (h) implicit (no opclass) on DECIMAL(10,2)          -> term_dict Unsupported
 #   (i) implicit (no opclass) on INTERVAL               -> term_dict Unsupported
@@ -200,37 +200,37 @@ CREATE INDEX g5_reject_s2_nocrs ON g5_reject USING inverted(pk, g_nocrs geo_s2_d
 db error: ERROR: Failed to create index: Column 'g_nocrs': GEOMETRY type has no CRS attached; declare it with ::GEOMETRY('OGC:CRS84')
 
 
-# (b) hnsw on scalar FLOAT: must be ARRAY(FLOAT, N).
+# (b) ivf on scalar FLOAT: must be ARRAY(FLOAT, N).
 statement error
-CREATE INDEX g5_reject_hnsw_f ON g5_reject USING inverted(pk, f ivf (metric = 'l2'));
+CREATE INDEX g5_reject_ivf_f ON g5_reject USING inverted(pk, f ivf (metric = 'l2'));
 ----
 db error: ERROR: Failed to create index: Column 'f' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not FLOAT
 
 
-# (c) hnsw on LIST<FLOAT>: must be ARRAY(FLOAT, N), not a variable-length list.
+# (c) ivf on LIST<FLOAT>: must be ARRAY(FLOAT, N), not a variable-length list.
 statement error
-CREATE INDEX g5_reject_hnsw_fl ON g5_reject USING inverted(pk, fl ivf (metric = 'l2'));
+CREATE INDEX g5_reject_ivf_fl ON g5_reject USING inverted(pk, fl ivf (metric = 'l2'));
 ----
 db error: ERROR: Failed to create index: Column 'fl' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not FLOAT[]
 
 
-# (d) hnsw on ARRAY<DOUBLE,3>: element type must be FLOAT, not DOUBLE.
+# (d) ivf on ARRAY<DOUBLE,3>: element type must be FLOAT, not DOUBLE.
 statement error
-CREATE INDEX g5_reject_hnsw_da ON g5_reject USING inverted(pk, da ivf (metric = 'l2'));
+CREATE INDEX g5_reject_ivf_da ON g5_reject USING inverted(pk, da ivf (metric = 'l2'));
 ----
 db error: ERROR: Failed to create index: Column 'da' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not DOUBLE[3]
 
 
-# (e) hnsw on ARRAY<INTEGER,3>: element type must be FLOAT, not INTEGER.
+# (e) ivf on ARRAY<INTEGER,3>: element type must be FLOAT, not INTEGER.
 statement error
-CREATE INDEX g5_reject_hnsw_ia ON g5_reject USING inverted(pk, ia ivf (metric = 'l2'));
+CREATE INDEX g5_reject_ivf_ia ON g5_reject USING inverted(pk, ia ivf (metric = 'l2'));
 ----
 db error: ERROR: Failed to create index: Column 'ia' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not INTEGER[3]
 
 
-# (f) hnsw on scalar VARCHAR: not ARRAY at all.
+# (f) ivf on scalar VARCHAR: not ARRAY at all.
 statement error
-CREATE INDEX g5_reject_hnsw_v ON g5_reject USING inverted(pk, v ivf (metric = 'l2'));
+CREATE INDEX g5_reject_ivf_v ON g5_reject USING inverted(pk, v ivf (metric = 'l2'));
 ----
 db error: ERROR: Failed to create index: Column 'v' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not VARCHAR
 

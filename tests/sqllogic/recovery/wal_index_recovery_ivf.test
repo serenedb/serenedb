@@ -15,21 +15,21 @@ control substitution on
 # trx never gets to flush.
 
 statement ok
-CREATE TABLE wal_hnsw_t(pk INTEGER PRIMARY KEY, emb FLOAT[3]);
+CREATE TABLE wal_ivf_t(pk INTEGER PRIMARY KEY, emb FLOAT[3]);
 
 statement ok
-INSERT INTO wal_hnsw_t VALUES (1, [1.0, 0.0, 0.0]::FLOAT[3]);
+INSERT INTO wal_ivf_t VALUES (1, [1.0, 0.0, 0.0]::FLOAT[3]);
 
 statement ok
-CREATE INDEX wal_hnsw_idx ON wal_hnsw_t
+CREATE INDEX wal_ivf_idx ON wal_ivf_t
   USING inverted(emb ivf (metric = 'l2'));
 
 statement ok
-VACUUM (REFRESH_TABLE) wal_hnsw_t;
+VACUUM (REFRESH_TABLE) wal_ivf_t;
 
 # Plan check: ANN top-K served by the IVF index in the inverted index.
 query
-EXPLAIN SELECT pk FROM wal_hnsw_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
+EXPLAIN SELECT pk FROM wal_ivf_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
@@ -44,7 +44,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │           Index:          │
-│     wal_hnsw_idx (ANN)    │
+│     wal_ivf_idx (ANN)    │
 │                           │
 │       Lookup: table       │
 │           Top: 1          │
@@ -59,7 +59,7 @@ QUERY PLAN
 
 # Pre-crash row reads from the on-disk .cs + graph.
 query
-SELECT pk FROM wal_hnsw_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
+SELECT pk FROM wal_ivf_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
 ----
 pk
 1
@@ -71,7 +71,7 @@ statement ok
 SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
-INSERT INTO wal_hnsw_t VALUES (2, [0.0, 1.0, 0.0]::FLOAT[3]),
+INSERT INTO wal_ivf_t VALUES (2, [0.0, 1.0, 0.0]::FLOAT[3]),
                               (3, [0.0, 0.0, 1.0]::FLOAT[3]);
 
 statement ok
@@ -85,12 +85,12 @@ SELECT 1;
 
 connection wal_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) wal_hnsw_t;
+VACUUM (REFRESH_TABLE) wal_ivf_t;
 
 # Pre-crash row still queryable.
 connection wal_after
 query
-SELECT pk FROM wal_hnsw_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
+SELECT pk FROM wal_ivf_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
 ----
 pk
 1
@@ -99,14 +99,14 @@ pk
 # nearest neighbour to the second vector returns pk=2, third returns pk=3.
 connection wal_after
 query
-SELECT pk FROM wal_hnsw_idx ORDER BY emb <-> [0.0, 1.0, 0.0]::FLOAT[3] LIMIT 1;
+SELECT pk FROM wal_ivf_idx ORDER BY emb <-> [0.0, 1.0, 0.0]::FLOAT[3] LIMIT 1;
 ----
 pk
 2
 
 connection wal_after
 query
-SELECT pk FROM wal_hnsw_idx ORDER BY emb <-> [0.0, 0.0, 1.0]::FLOAT[3] LIMIT 1;
+SELECT pk FROM wal_ivf_idx ORDER BY emb <-> [0.0, 0.0, 1.0]::FLOAT[3] LIMIT 1;
 ----
 pk
 3
@@ -114,7 +114,7 @@ pk
 # All three rows visible.
 connection wal_after
 query
-SELECT COUNT(*) AS n FROM wal_hnsw_idx;
+SELECT COUNT(*) AS n FROM wal_ivf_idx;
 ----
 n
 3

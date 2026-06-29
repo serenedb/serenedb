@@ -79,7 +79,7 @@ pk	label
 5	unit-z
 
 
-# ---- HNSW search: NULL rows never appear in top-K ----
+# ---- IVF search: NULL rows never appear in top-K ----
 # LIMIT < non-NULL count -- always worked, kept as a baseline.
 query
 SELECT pk, label FROM vec_n_idx
@@ -112,7 +112,7 @@ pk	label
 5	unit-z
 
 
-# ---- DELETE filters out via docs_mask, no dangling HNSW node ----
+# ---- DELETE filters out via docs_mask, no dangling IVF node ----
 statement ok
 DELETE FROM vec_n WHERE pk = 3
 
@@ -133,13 +133,13 @@ pk	label
 1	unit-x
 
 
-# ---- Compaction rebuilds HNSW; NULL skip applies to merge too ----
+# ---- Compaction rebuilds IVF; NULL skip applies to merge too ----
 statement ok
 VACUUM (COMPACT_TABLE) vec_n;
 
 
 # Pre-fix this returned pk=4, pk=2 (the two NULL rows) because the
-# rebuilt HNSW indexed them as zero-vectors.
+# rebuilt IVF indexed them as zero-vectors.
 query
 SELECT pk, label FROM vec_n_idx
   ORDER BY emb <-> [0, 0.9, 0.1]::FLOAT[3] LIMIT 2;

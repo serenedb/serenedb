@@ -20,10 +20,46 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
-#include <span>
+#include <vector>
 
-#include "iresearch/index/column_info.hpp"
+#include "basics/assert.h"
+#include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
 
-namespace irs {}  // namespace irs
+namespace irs {
+
+class VectorBlockReader {
+ public:
+  VectorBlockReader(IndexInput& in, uint32_t record_size)
+    : _in{in}, _record_size{record_size} {}
+
+  void Reset(uint64_t base_offset) {
+    _base = base_offset;
+    _cur = 0;
+    _in.Seek(base_offset);
+  }
+
+  const byte_type* Read(size_t index, size_t count) {
+    SDB_ASSERT(index >= _cur);
+    if (index != _cur) {
+      _in.Seek(_base + static_cast<uint64_t>(index) * _record_size);
+      _cur = index;
+    }
+    const size_t bytes = count * size_t{_record_size};
+    _buf.resize(bytes);
+    _in.ReadData(_buf.data(), bytes);
+    _cur += count;
+    return _buf.data();
+  }
+
+ private:
+  IndexInput& _in;
+  std::vector<byte_type> _buf;
+  uint64_t _base = 0;
+  uint32_t _record_size;
+  size_t _cur = 0;
+};
+
+}  // namespace irs

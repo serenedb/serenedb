@@ -46,6 +46,8 @@
 #include <iresearch/search/search_range.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
+#include <iresearch/search/vector_radius_filter.hpp>
+#include <iresearch/search/vector_similarity_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/search/wildcard_ngram_filter.hpp>
 #include <sstream>
@@ -257,6 +259,21 @@ std::string GeoDistanceRangeString(const GeoDistanceFilter& filter) {
   return s;
 }
 
+std::string_view VectorMetricName(VectorMetric metric) {
+  switch (metric) {
+    case VectorMetric::L2Sqr:
+      return "l2";
+    case VectorMetric::InnerProduct:
+      return "ip";
+    case VectorMetric::Cosine:
+      return "cosine";
+    case VectorMetric::L1:
+      return "l1";
+    default:
+      SDB_UNREACHABLE();
+  }
+}
+
 struct FilterNode {
   std::string label;
   std::string detail;
@@ -433,6 +450,32 @@ FilterNode BuildNode(const Filter& filter, const FieldResolver& field) {
     return {.label = "GEO_DISTANCE",
             .detail = absl::StrCat(field(f.field_id()), " ",
                                    GeoDistanceRangeString(f))};
+  }
+  if (type == Type<ByVectorSimilarity>::id()) {
+    const auto& f = downCast<const ByVectorSimilarity>(filter);
+    const auto& o = f.options();
+    FilterNode node{
+      .label = "VECTOR_KNN",
+      .detail = absl::StrCat(field(f.field_id()),
+                             " metric=", VectorMetricName(o.metric),
+                             " dims=", o.query.size())};
+    if (o.inner) {
+      node.children.push_back(BuildNode(*o.inner, field));
+    }
+    return node;
+  }
+  if (type == Type<ByRadius>::id()) {
+    const auto& f = downCast<const ByRadius>(filter);
+    const auto& o = f.options();
+    FilterNode node{
+      .label = "VECTOR_RANGE",
+      .detail = absl::StrCat(
+        field(f.field_id()), " metric=", VectorMetricName(o.metric),
+        " dims=", o.query.size(), o.inclusive ? " <= " : " < ", o.radius)};
+    if (o.inner) {
+      node.children.push_back(BuildNode(*o.inner, field));
+    }
+    return node;
   }
   if (type == Type<ProxyFilter>::id()) {
     return BuildNode(downCast<const ProxyFilter>(filter).inner(), field);

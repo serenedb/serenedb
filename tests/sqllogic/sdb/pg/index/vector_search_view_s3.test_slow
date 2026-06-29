@@ -123,12 +123,12 @@ FROM read_json('s3://${MINIO_BUCKET}/${__DATABASE__}_vecs_single.jsonl');
 
 
 statement ok
-CREATE INDEX vecs_json_hnsw ON vecs_json
+CREATE INDEX vecs_json_ivf ON vecs_json
 USING inverted(emb ivf (metric = 'l2'));
 
 
 query
-SELECT count(*) FROM vecs_json_hnsw;
+SELECT count(*) FROM vecs_json_ivf;
 ----
 count
 10000
@@ -137,7 +137,7 @@ count
 query
 WITH
   result AS (
-    SELECT id FROM vecs_json_hnsw
+    SELECT id FROM vecs_json_ivf
     ORDER BY emb <-> [CASE i % 2 WHEN 0 THEN 0.0 ELSE 1.0 END::FLOAT FOR i IN range(${dim})]::FLOAT[${dim}]
     LIMIT 256
   )
@@ -154,7 +154,7 @@ SET sdb_nprobe TO 2048;
 query
 WITH
   result AS (
-    SELECT id FROM vecs_json_hnsw
+    SELECT id FROM vecs_json_ivf
     WHERE id > 5000
     ORDER BY emb <-> [CASE i % 2 WHEN 0 THEN 0.0 ELSE 1.0 END::FLOAT FOR i IN range(${dim})]::FLOAT[${dim}]
     LIMIT 256
@@ -177,12 +177,12 @@ FROM read_json('s3://${MINIO_BUCKET}/${__DATABASE__}_vecs_single.jsonl',
 
 
 statement ok
-CREATE INDEX vecs_json_cols_hnsw ON vecs_json_cols
+CREATE INDEX vecs_json_cols_ivf ON vecs_json_cols
 USING inverted(emb ivf (metric = 'l2'));
 
 
 query
-SELECT count(*) FROM vecs_json_cols_hnsw;
+SELECT count(*) FROM vecs_json_cols_ivf;
 ----
 count
 10000
@@ -191,7 +191,7 @@ count
 query
 WITH
   result AS (
-    SELECT id FROM vecs_json_cols_hnsw
+    SELECT id FROM vecs_json_cols_ivf
     ORDER BY emb <-> [CASE i % 2 WHEN 0 THEN 0.0 ELSE 1.0 END::FLOAT FOR i IN range(${dim})]::FLOAT[${dim}]
     LIMIT 256
   )
@@ -221,12 +221,12 @@ FROM read_json('s3://${MINIO_BUCKET}/${__DATABASE__}_vecs_glob_*.jsonl');
 
 
 statement ok
-CREATE INDEX vecs_json_glob_hnsw ON vecs_json_glob
+CREATE INDEX vecs_json_glob_ivf ON vecs_json_glob
 USING inverted(emb ivf (metric = 'l2'));
 
 
 query
-SELECT count(*) FROM vecs_json_glob_hnsw;
+SELECT count(*) FROM vecs_json_glob_ivf;
 ----
 count
 10000
@@ -235,7 +235,7 @@ count
 query
 WITH
   result AS (
-    SELECT id FROM vecs_json_glob_hnsw
+    SELECT id FROM vecs_json_glob_ivf
     ORDER BY emb <-> [CASE i % 2 WHEN 0 THEN 0.0 ELSE 1.0 END::FLOAT FOR i IN range(${dim})]::FLOAT[${dim}]
     LIMIT 256
   )

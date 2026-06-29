@@ -372,7 +372,7 @@ TEST_F(IRSColumnstoreTest, NormColumnAbsentOnTypedOnlySegment) {
   EXPECT_TRUE(r.HasColumn(1));
 }
 
-// ARRAY(FLOAT, dim) round-trip. Mirrors how HNSW vectors will be stored:
+// ARRAY(FLOAT, dim) round-trip. Mirrors how IVF vectors will be stored:
 // fixed-size float arrays per doc with array-level validity. Verifies the
 // recursive walk (writer FlushNode -> reader ColumnReader::Child()) lands
 // the same float bytes back.
@@ -426,7 +426,7 @@ TEST_F(IRSColumnstoreTest, RoundTripArrayFloatDense) {
     EXPECT_EQ(element->RowCount(), kRowCount * kDim);
 
     // Scan the element child as a flat FLOAT column and reassemble per-doc
-    // vectors -- mirrors how HNSWIndexReader will pull per-doc bytes.
+    // vectors -- mirrors how IvfVectorReader will pull per-doc bytes.
     irs::ReadContext ctx{r};
     auto seg = element->OpenSegment(0, ctx);
     duckdb::ColumnScanState state{nullptr};

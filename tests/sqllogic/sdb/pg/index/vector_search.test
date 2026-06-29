@@ -29,10 +29,20 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│   Index: l2_index (ANN)   │
+│      Index: l2_index      │
 │       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││    =3 nprobe=8    ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │           Top: 2          │
-│          Dims: 3          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -57,10 +67,20 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│   Index: l2_index (ANN)   │
+│      Index: l2_index      │
 │       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││    =3 nprobe=8    ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │           Top: 5          │
-│          Dims: 3          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -86,10 +106,20 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│   Index: l2_index (ANN)   │
+│      Index: l2_index      │
 │       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││    =3 nprobe=8    ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │          Top: 10          │
-│          Dims: 3          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -176,12 +206,19 @@ QUERY PLAN
 ┌───────────────────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│    l2_index (ANN range)   │
-│                           │
+│      Index: l2_index      │
 │       Lookup: table       │
-│        Radius: 0.7        │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││    VECTOR_RANGE   ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││      =3 < 0.7     ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │      Projections: id      │
 │                           │
 │          ~4 rows          │
@@ -236,12 +273,19 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│    l2_index (ANN range)   │
-│                           │
+│      Index: l2_index      │
 │       Lookup: table       │
-│         Radius: 1         │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││    VECTOR_RANGE   ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││       =3 < 1      ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │      Projections: id      │
 │                           │
 │          ~4 rows          │
@@ -270,12 +314,19 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│    l2_index (ANN range)   │
-│                           │
+│      Index: l2_index      │
 │       Lookup: table       │
-│        Radius: 100        │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││    VECTOR_RANGE   ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││      =3 < 100     ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │      Projections: id      │
 │                           │
 │          ~4 rows          │
@@ -326,12 +377,19 @@ QUERY PLAN
 ┌───────────────────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│    l2_index (ANN range)   │
-│                           │
+│      Index: l2_index      │
 │       Lookup: table       │
-│        Radius: 0.7        │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││    VECTOR_RANGE   ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││      =3 < 0.7     ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │      Projections: id      │
 │                           │
 │          ~4 rows          │
@@ -353,10 +411,20 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│   Index: l2_index (ANN)   │
+│      Index: l2_index      │
 │       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││    =3 nprobe=8    ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │          Top: 10          │
-│          Dims: 3          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -491,10 +559,20 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│   Index: l1_index (ANN)   │
+│      Index: l1_index      │
 │       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l1 dims││  │
+│  ││    =3 nprobe=8    ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │           Top: 5          │
-│          Dims: 3          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -520,10 +598,20 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│   Index: l1_index (ANN)   │
+│      Index: l1_index      │
 │       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l1 dims││  │
+│  ││    =3 nprobe=8    ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │           Top: 5          │
-│          Dims: 3          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -581,12 +669,20 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│      cos_index (ANN)      │
-│                           │
+│      Index: cos_index     │
 │       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=cosine ││  │
+│  ││   dims=3 nprobe=8 ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │           Top: 2          │
-│          Dims: 3          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -619,12 +715,20 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│      cos_index (ANN)      │
-│                           │
+│      Index: cos_index     │
 │       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=cosine ││  │
+│  ││   dims=3 nprobe=8 ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │           Top: 2          │
-│          Dims: 3          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -649,12 +753,20 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│      cos_index (ANN)      │
-│                           │
+│      Index: cos_index     │
 │       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=cosine ││  │
+│  ││   dims=3 nprobe=8 ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │           Top: 2          │
-│          Dims: 3          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -671,12 +783,19 @@ QUERY PLAN
 ┌───────────────────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│   cos_index (ANN range)   │
-│                           │
+│      Index: cos_index     │
 │       Lookup: table       │
-│        Radius: 0.5        │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││    VECTOR_RANGE   ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=cosine ││  │
+│  ││    dims=3 < 0.5   ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │      Projections: id      │
 │                           │
 │          ~4 rows          │
@@ -705,11 +824,18 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│      cos_index (ANN)      │
-│                           │
+│      Index: cos_index     │
 │       Lookup: table       │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=cosine ││  │
+│  ││   dims=3 nprobe=8 ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │        Projections:       │
 │             id            │
@@ -746,10 +872,20 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│   Index: ip_index (ANN)   │
+│      Index: ip_index      │
 │       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=ip dims││  │
+│  ││    =3 nprobe=8    ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │           Top: 2          │
-│          Dims: 3          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -782,10 +918,20 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│   Index: ip_index (ANN)   │
+│      Index: ip_index      │
 │       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=ip dims││  │
+│  ││    =3 nprobe=8    ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │           Top: 2          │
-│          Dims: 3          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -810,10 +956,20 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│   Index: ip_index (ANN)   │
+│      Index: ip_index      │
 │       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=ip dims││  │
+│  ││    =3 nprobe=8    ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │           Top: 2          │
-│          Dims: 3          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -830,12 +986,19 @@ QUERY PLAN
 ┌───────────────────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│    ip_index (ANN range)   │
-│                           │
+│      Index: ip_index      │
 │       Lookup: table       │
-│         Radius: 0         │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││    VECTOR_RANGE   ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=ip dims││  │
+│  ││       =3 < 0      ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │      Projections: id      │
 │                           │
 │          ~4 rows          │
@@ -864,9 +1027,18 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│   Index: ip_index (ANN)   │
+│      Index: ip_index      │
 │       Lookup: table       │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=ip dims││  │
+│  ││    =3 nprobe=8    ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │        Projections:       │
 │             id            │
@@ -1017,9 +1189,18 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│   Index: l2_index (ANN)   │
+│      Index: l2_index      │
 │       Lookup: table       │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││    =3 nprobe=8    ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │        Projections:       │
 │             id            │
@@ -1121,9 +1302,18 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│   Index: proj_idx (ANN)   │
+│      Index: proj_idx      │
 │       Lookup: table       │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││    =3 nprobe=8    ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │        Projections:       │
 │          category         │
@@ -1156,12 +1346,18 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│    l2_index (ANN range)   │
-│                           │
+│      Index: l2_index      │
 │       Lookup: table       │
-│        Radius: 200        │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││    VECTOR_RANGE   ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││      =3 < 200     ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │        Projections:       │
 │          emb (i)          │
@@ -1193,12 +1389,18 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│    l2_index (ANN range)   │
-│                           │
+│      Index: l2_index      │
 │       Lookup: table       │
-│        Radius: 200        │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││    VECTOR_RANGE   ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││      =3 < 200     ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │        Projections:       │
 │          emb (i)          │
@@ -1229,12 +1431,18 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│    proj_idx (ANN range)   │
-│                           │
+│      Index: proj_idx      │
 │       Lookup: table       │
-│        Radius: 200        │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││    VECTOR_RANGE   ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││      =3 < 200     ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │        Projections:       │
 │          category         │
@@ -1302,21 +1510,25 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│      mixed_idx (ANN)      │
-│                           │
+│      Index: mixed_idx     │
 │       Lookup: table       │
-│           Top: 2          │
-│          Dims: 3          │
 │                           │
-│        TextFilter:        │
+│          Filter:          │
 │  ┌─────────────────────┐  │
 │  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││    =3 nprobe=8    ││  │
+│  │└─────────┬─────────┘│  │
+│  │┌─────────┴─────────┐│  │
 │  ││        Term       ││  │
 │  ││    ────────────   ││  │
 │  ││ body(string) = red││  │
 │  │└───────────────────┘│  │
 │  └─────────────────────┘  │
+│                           │
+│           Top: 2          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -1461,15 +1673,18 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│      mixed_idx (ANN)      │
-│                           │
+│      Index: mixed_idx     │
 │       Lookup: table       │
-│          Dims: 3          │
 │                           │
-│        TextFilter:        │
+│          Filter:          │
 │  ┌─────────────────────┐  │
 │  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││    =3 nprobe=8    ││  │
+│  │└─────────┬─────────┘│  │
+│  │┌─────────┴─────────┐│  │
 │  ││       TERMS       ││  │
 │  ││    ────────────   ││  │
 │  ││  body(string) {[  ││  │

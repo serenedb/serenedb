@@ -34,12 +34,15 @@
 
 #include "auth/privilege.h"
 #include "basics/containers/flat_hash_set.h"
+#include "basics/down_cast.h"
+#include "basics/static_strings.h"
 #include "catalog/catalog.h"
 #include "catalog/object.h"
 #include "catalog/table.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_scan_entry.h"
 #include "connector/duckdb_table_entry.h"
+#include "connector/duckdb_view_entry.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
@@ -51,82 +54,62 @@ bool Has(duckdb::AccessVerb verb, duckdb::AccessVerb bit) {
   return (static_cast<uint8_t>(verb) & static_cast<uint8_t>(bit)) != 0;
 }
 
-catalog::AclMode ReadAcl(duckdb::AccessVerb verb, catalog::AclMode bit) {
-  return Has(verb, static_cast<duckdb::AccessVerb>(static_cast<uint8_t>(bit)))
-           ? bit
-           : catalog::AclMode::NoRights;
+// The binder's AccessVerb bits share bit positions with catalog::AclMode (the
+// carrier is defined that way so no translation table is needed), so the verb
+// bitmask reinterprets directly as the matching privilege bitmask.
+catalog::AclMode AsAclMode(duckdb::AccessVerb verb) {
+  using V = duckdb::AccessVerb;
+  using A = catalog::AclMode;
+  static_assert(
+    static_cast<uint8_t>(V::INSERT) == static_cast<uint8_t>(A::Insert) &&
+    static_cast<uint8_t>(V::SELECT) == static_cast<uint8_t>(A::Select) &&
+    static_cast<uint8_t>(V::UPDATE) == static_cast<uint8_t>(A::Update) &&
+    static_cast<uint8_t>(V::DELETE) == static_cast<uint8_t>(A::Delete) &&
+    static_cast<uint8_t>(V::TRUNCATE) == static_cast<uint8_t>(A::Truncate));
+  return static_cast<A>(static_cast<uint8_t>(verb));
 }
 
-// The SereneDB relation behind a bound entry: the base-table facade, or the
-// table/view an index-as-table entry (`SELECT * FROM <index_name>`) scans.
-// Null for vendored DuckDB entries (e.g. system tables), which we do not own.
-std::shared_ptr<const catalog::Object> SereneDBRelation(
-  const duckdb::CatalogEntry& entry) {
+// The system catalog schemas (pg_catalog, information_schema). Their relations
+// are world-readable projections of the catalog and the access-control rule
+// does not gate them -- matching PostgreSQL, which does not run relacl checks
+// on system catalog reads.
+bool IsSystemSchema(const duckdb::CatalogEntry& entry) {
+  const auto& schema = entry.ParentSchema().name;
+  return schema == StaticStrings::kPgCatalogSchema ||
+         schema == StaticStrings::kInformationSchema;
+}
+
+const catalog::Object* SereneDBRelation(const duckdb::CatalogEntry* entry) {
   if (const auto* facade =
-        dynamic_cast<const connector::SereneDBTableEntry*>(&entry)) {
-    return facade->GetSereneDBTable();
+        dynamic_cast<const connector::SereneDBTableEntry*>(entry)) {
+    return facade->GetSereneDBTable().get();
+  }
+  if (const auto* view =
+        dynamic_cast<const connector::SereneDBViewEntry*>(entry)) {
+    return view->GetSereneDBView().get();
   }
   if (const auto* index =
-        dynamic_cast<const connector::SereneDBIndexScanEntry*>(&entry)) {
+        dynamic_cast<const connector::SereneDBIndexScanEntry*>(entry)) {
     return index->GetSereneDBRelation();
   }
   return nullptr;
 }
 
-std::shared_ptr<catalog::Table> BaseTable(const duckdb::CatalogEntry& entry) {
-  auto rel = SereneDBRelation(entry);
-  if (rel && rel->GetType() == catalog::ObjectType::Table) {
-    return std::static_pointer_cast<catalog::Table>(
-      std::const_pointer_cast<catalog::Object>(rel));
-  }
-  return nullptr;
-}
-
-void RequireColumns(const catalog::Snapshot& snapshot, ObjectId role,
+void RequireColumns(const auth::RoleClosure& closure,
                     const catalog::Table& table, catalog::AclMode need,
                     const duckdb::unordered_set<uint64_t>& logical) {
-  std::vector<const catalog::Column*> cols;
-  cols.reserve(logical.size());
-  uint64_t visible = 0;
-  for (const auto& col : table.Columns()) {
-    if (col.GetId() == catalog::Column::kGeneratedPKId) {
-      continue;
-    }
-    if (logical.contains(visible)) {
-      cols.push_back(&col);
-    }
-    ++visible;
-  }
-  if (auth::HasColumnPrivilege(snapshot, role, table, need, cols)) {
+  if (auth::HasColumnPrivilege(closure, table, need, logical)) {
     return;
   }
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                   ERR_MSG("permission denied for table ", table.GetName()));
 }
 
-void RequireView(const catalog::Snapshot& snapshot, ObjectId role,
-                 const catalog::Object& view) {
-  if (auth::HasPrivilege(snapshot, role, view, catalog::AclMode::Select)) {
-    return;
+ObjectId EffectiveRole(ObjectId caller, const duckdb::CatalogEntry* who) {
+  if (const auto* view = SereneDBRelation(who)) {
+    return view->GetOwner();
   }
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                  ERR_MSG("permission denied for view ", view.GetName()));
-}
-
-std::shared_ptr<catalog::Object> Relation(const catalog::Snapshot& snapshot,
-                                          ObjectId database,
-                                          const duckdb::CatalogEntry& entry) {
-  return snapshot.GetRelation(catalog::NoAccessCheck(), database,
-                              entry.ParentSchema().name, entry.name);
-}
-
-ObjectId EffectiveRole(const catalog::Snapshot& snapshot, ObjectId database,
-                       ObjectId caller, const duckdb::CatalogEntry* who) {
-  if (!who) {
-    return caller;
-  }
-  auto view = Relation(snapshot, database, *who);
-  return view ? view->GetOwner() : caller;
+  return caller;
 }
 
 void CollectAndEnforce(duckdb::OptimizerExtensionInput& input,
@@ -140,73 +123,76 @@ void CollectAndEnforce(duckdb::OptimizerExtensionInput& input,
   auto& ctx = state->GetConnectionContext();
   const auto snapshot = ctx.EnsureCatalogSnapshot();
   const auto caller = ctx.GetRoleId();
-  const auto database = ctx.GetDatabaseId();
 
   const auto& properties = input.optimizer.binder.GetStatementProperties();
   const auto& reqs = properties.access_requirements;
 
+  // Resolve each requirement's SereneDB object ONCE (pointer hand-off from the
+  // bound entry's facade -- no catalog lookup, no GetObject re-fetch). A null
+  // object is a vendored DuckDB entry (system table/view) we do not enforce.
+  std::vector<const catalog::Object*> objects;
+  objects.reserve(reqs.size());
   containers::FlatHashSet<uint64_t> write_targets;
   for (const auto& req : reqs) {
-    if (req.table &&
+    // System-catalog relations are not access-controlled (see IsSystemSchema).
+    const catalog::Object* obj = (req.table && !IsSystemSchema(*req.table))
+                                   ? SereneDBRelation(req.table)
+                                   : nullptr;
+    objects.push_back(obj);
+    if (obj && obj->GetType() == catalog::ObjectType::Table &&
         Has(req.verb, duckdb::AccessVerb::INSERT | duckdb::AccessVerb::UPDATE |
                         duckdb::AccessVerb::DELETE |
                         duckdb::AccessVerb::TRUNCATE)) {
-      if (auto t = BaseTable(*req.table)) {
-        write_targets.insert(t->GetId().id());
-      }
+      write_targets.insert(obj->GetId().id());
     }
   }
 
-  for (const auto& req : reqs) {
-    if (!req.table) {
-      continue;
-    }
-    const ObjectId role = EffectiveRole(*snapshot, database, caller, req.who);
+  for (size_t i = 0; i < reqs.size(); ++i) {
+    const auto& req = reqs[i];
+    const catalog::Object* obj = objects[i];
 
-    // A view relation (a real VIEW_ENTRY, or an index-as-table over a view):
-    // PostgreSQL checks SELECT on the view itself.
-    const bool is_view =
-      req.table->type == duckdb::CatalogType::VIEW_ENTRY ||
-      [&] {
-        auto rel = SereneDBRelation(*req.table);
-        return rel && rel->GetType() == catalog::ObjectType::PgSqlView;
-      }();
-    if (is_view) {
-      std::shared_ptr<const catalog::Object> view =
-        req.table->type == duckdb::CatalogType::VIEW_ENTRY
-          ? Relation(*snapshot, database, *req.table)
-          : SereneDBRelation(*req.table);
-      if (view) {
-        RequireView(*snapshot, role, *view);
+    if (!obj) {
+      continue;  // vendored DuckDB entry: not ours to enforce.
+    }
+
+    const ObjectId role = EffectiveRole(caller, req.who);
+    const auto& closure = snapshot->EffectiveRoleClosure(role);
+
+    // PostgreSQL checks SELECT on the view relation itself.
+    if (obj->GetType() == catalog::ObjectType::PgSqlView) {
+      if (!auth::HasPrivilege(closure, *obj, catalog::AclMode::Select)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                        ERR_MSG("permission denied for view ", obj->GetName()));
       }
       continue;
     }
 
-    auto table = BaseTable(*req.table);
-    if (!table) {
-      continue;  // system table from the vendored catalog: not ours to enforce.
-    }
-    auto current = snapshot->GetObject<catalog::Table>(table->GetId());
-    const auto& t = current ? *current : *table;
+    const auto& t = basics::downCast<catalog::Table>(*obj);
 
-    const auto del = ReadAcl(req.verb, catalog::AclMode::Delete) |
-                     ReadAcl(req.verb, catalog::AclMode::Truncate);
-    if (del != catalog::AclMode::NoRights) {
-      snapshot->RequireAccess(role, t, del);
+    const auto del = AsAclMode(req.verb) &
+                     (catalog::AclMode::Delete | catalog::AclMode::Truncate);
+    if (del != catalog::AclMode::NoRights &&
+        !auth::HasAnyPrivilege(closure, t, del)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                      ERR_MSG("permission denied for table ", t.GetName()));
     }
     if (Has(req.verb, duckdb::AccessVerb::SELECT)) {
-      // Skip the bare scan a DML makes over its own target (reads no value).
+      // The scan a DML makes over its own target reads no column value, so it
+      // needs no SELECT (PG: `DELETE FROM t WHERE false` -> DELETE only).
+      // Detect it by empty read set + t is a write target. `SELECT count(*)
+      // FROM t` also has an empty read set but t is NOT a write target, so it
+      // still requires SELECT on any column.
       const bool bare_dml_scan =
         req.read.empty() && write_targets.contains(t.GetId().id());
       if (!bare_dml_scan) {
-        RequireColumns(*snapshot, role, t, catalog::AclMode::Select, req.read);
+        RequireColumns(closure, t, catalog::AclMode::Select, req.read);
       }
     }
     if (Has(req.verb, duckdb::AccessVerb::UPDATE)) {
-      RequireColumns(*snapshot, role, t, catalog::AclMode::Update, req.write);
+      RequireColumns(closure, t, catalog::AclMode::Update, req.write);
     }
     if (Has(req.verb, duckdb::AccessVerb::INSERT)) {
-      RequireColumns(*snapshot, role, t, catalog::AclMode::Insert, req.write);
+      RequireColumns(closure, t, catalog::AclMode::Insert, req.write);
     }
   }
 }

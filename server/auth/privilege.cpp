@@ -54,10 +54,8 @@ namespace {
 // `any_of` = has_*_privilege comma-list semantics (>=1 bit) vs enforcement's
 // all-of (every bit in `need`). superuser/owner imply all privileges. The
 // privilege class is `object.GetType()`.
-bool CheckPrivilege(const catalog::Snapshot& snapshot, ObjectId role,
-                    const catalog::Object& object, catalog::AclMode need,
-                    bool any_of) {
-  const auto& rc = snapshot.EffectiveRoleClosure(role);
+bool CheckPrivilege(const RoleClosure& rc, const catalog::Object& object,
+                    catalog::AclMode need, bool any_of) {
   if (rc.is_superuser) {
     return true;
   }
@@ -80,14 +78,26 @@ bool CheckPrivilege(const catalog::Snapshot& snapshot, ObjectId role,
 
 }  // namespace
 
+bool HasPrivilege(const RoleClosure& closure, const catalog::Object& object,
+                  catalog::AclMode need) {
+  return CheckPrivilege(closure, object, need, /*any_of=*/false);
+}
+
+bool HasAnyPrivilege(const RoleClosure& closure, const catalog::Object& object,
+                     catalog::AclMode need) {
+  return CheckPrivilege(closure, object, need, /*any_of=*/true);
+}
+
 bool HasPrivilege(const catalog::Snapshot& snapshot, ObjectId role,
                   const catalog::Object& object, catalog::AclMode need) {
-  return CheckPrivilege(snapshot, role, object, need, /*any_of=*/false);
+  return CheckPrivilege(snapshot.EffectiveRoleClosure(role), object, need,
+                        /*any_of=*/false);
 }
 
 bool HasAnyPrivilege(const catalog::Snapshot& snapshot, ObjectId role,
                      const catalog::Object& object, catalog::AclMode need) {
-  return CheckPrivilege(snapshot, role, object, need, /*any_of=*/true);
+  return CheckPrivilege(snapshot.EffectiveRoleClosure(role), object, need,
+                        /*any_of=*/true);
 }
 
 namespace {
@@ -102,6 +112,46 @@ bool ColumnGrants(const catalog::Column& column, ObjectId owner,
 }
 
 }  // namespace
+
+bool HasColumnPrivilege(const RoleClosure& rc, const catalog::Table& table,
+                        catalog::AclMode need, bool any_referenced,
+                        const std::function<bool(uint64_t)>& referenced) {
+  if (rc.is_superuser) {
+    return true;
+  }
+  const auto owner = table.GetOwner();
+
+  // Relation-level grant satisfies the privilege for every column.
+  if (std::ranges::binary_search(rc.closure, owner) ||
+      AclCheckSorted(table.GetAcl(), catalog::ObjectType::Table, owner,
+                     rc.closure, need, /*any_of=*/false)) {
+    return true;
+  }
+
+  // Walk the table's columns once: a referenced column must carry the privilege
+  // (all-of); with no referenced column, ANY one column suffices (PG count(*)).
+  bool saw_referenced = false;
+  uint64_t visible = 0;
+  for (const auto& col : table.Columns()) {
+    if (col.GetId() == catalog::Column::kGeneratedPKId) {
+      continue;
+    }
+    const uint64_t idx = visible++;
+    if (!any_referenced) {
+      if (ColumnGrants(col, owner, rc.closure, need)) {
+        return true;  // ANY-column: first granted column passes.
+      }
+    } else if (referenced(idx)) {
+      saw_referenced = true;
+      if (!ColumnGrants(col, owner, rc.closure, need)) {
+        return false;  // all-of: a referenced column lacks the privilege.
+      }
+    }
+  }
+  // ANY-column found none; all-of: pass iff every referenced column was
+  // granted.
+  return any_referenced && saw_referenced;
+}
 
 bool HasColumnPrivilege(const catalog::Snapshot& snapshot, ObjectId role,
                         const catalog::Table& table, catalog::AclMode need,

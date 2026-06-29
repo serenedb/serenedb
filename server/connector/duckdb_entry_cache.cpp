@@ -51,6 +51,7 @@
 #include "connector/duckdb_index_scan_entry.h"
 #include "connector/duckdb_system_table_entry.h"
 #include "connector/duckdb_table_entry.h"
+#include "connector/duckdb_view_entry.h"
 #include "pg/system_catalog.h"
 
 namespace sdb::connector {
@@ -61,32 +62,32 @@ bool IsSystemSchema(std::string_view schema_name) {
          schema_name == StaticStrings::kInformationSchema;
 }
 
-const catalog::PgSqlView* FindView(bool system, bool info_schema,
-                                   ObjectId db_id, std::string_view schema_name,
-                                   std::string_view name,
-                                   const catalog::Snapshot& snapshot) {
+std::shared_ptr<const catalog::PgSqlView> FindView(
+  bool system, bool info_schema, ObjectId db_id, std::string_view schema_name,
+  std::string_view name, const catalog::Snapshot& snapshot) {
   if (system) {
-    auto view = info_schema ? pg::GetInfoSchemaView(name) : pg::GetView(name);
-    return view.get();
+    return info_schema ? pg::GetInfoSchemaView(name) : pg::GetView(name);
   }
   auto relation =
     snapshot.GetRelation(catalog::NoAccessCheck(), db_id, schema_name, name);
   if (relation && relation->GetType() == catalog::ObjectType::PgSqlView) {
-    return &basics::downCast<const catalog::PgSqlView>(*relation);
+    return std::static_pointer_cast<const catalog::PgSqlView>(relation);
   }
   return nullptr;
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> MakeViewEntry(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
-  std::string_view schema_name, const catalog::PgSqlView& view) {
+  std::string_view schema_name,
+  std::shared_ptr<const catalog::PgSqlView> view) {
   auto info =
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateViewInfo>(
-      view.GetInfo().Copy());
+      view->GetInfo().Copy());
   info->schema = schema_name;
   info->temporary = false;
   info->internal = false;
-  return duckdb::make_uniq<duckdb::ViewCatalogEntry>(catalog, schema, *info);
+  return duckdb::make_uniq<SereneDBViewEntry>(catalog, schema, *info,
+                                              std::move(view));
 }
 
 std::shared_ptr<catalog::PgSqlFunction> FindFunctionByType(
@@ -607,10 +608,10 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
         }
         // System views (pg_tables, pg_views, etc.)
         if (type == TABLE_ENTRY || type == VIEW_ENTRY) {
-          auto* view =
+          auto view =
             FindView(system, info_schema, database, schema, name, snapshot);
           if (view) {
-            return MakeViewEntry(catalog, entry, schema, *view);
+            return MakeViewEntry(catalog, entry, schema, std::move(view));
           }
         }
         return nullptr;
@@ -637,7 +638,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
           if (type == TABLE_ENTRY || type == VIEW_ENTRY) {
             return MakeViewEntry(
               catalog, entry, schema,
-              basics::downCast<const catalog::PgSqlView>(*relation));
+              std::static_pointer_cast<const catalog::PgSqlView>(relation));
           }
           return nullptr;
         case catalog::ObjectType::SecondaryIndex:

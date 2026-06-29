@@ -65,6 +65,7 @@ TableInvertedIndexScanEntry::TableInvertedIndexScanEntry(
                            std::move(inverted_index)),
     _sdb_table(std::move(sdb_table)) {
   SDB_ASSERT(_sdb_table);
+  _relation = _sdb_table.get();
 }
 
 duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
@@ -121,6 +122,7 @@ ViewInvertedIndexScanEntry::ViewInvertedIndexScanEntry(
                            std::move(inverted_index)),
     _sdb_view(std::move(sdb_view)) {
   SDB_ASSERT(_sdb_view);
+  _relation = _sdb_view.get();
 }
 
 duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
@@ -198,6 +200,7 @@ TableSecondaryIndexScanEntry::TableSecondaryIndexScanEntry(
                             sk_unique),
     _sdb_table(std::move(sdb_table)) {
   SDB_ASSERT(_sdb_table);
+  _relation = _sdb_table.get();
 }
 
 duckdb::TableFunction TableSecondaryIndexScanEntry::GetScanFunction(

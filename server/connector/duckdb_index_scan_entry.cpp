@@ -72,9 +72,6 @@ duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
   // SELECT * FROM <index_name> resolves the base table here
   auto& sdb_ctx = GetSereneDBContext(context);
-  sdb_ctx.EnsureCatalogSnapshot()->GetTable(
-    catalog::RequireAccess(context, catalog::AclMode::Select),
-    _sdb_table->GetId());
   auto snapshot = sdb_ctx.EnsureSearchSnapshot(_inverted_index->GetId());
   auto data = duckdb::make_uniq<TableScanBindData>();
   data->table = _sdb_table;
@@ -131,23 +128,6 @@ duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
   auto& sdb_ctx = GetSereneDBContext(context);
   auto fp = ResolveViewFastPath(context, *_sdb_view);
-  if (fp) {
-    // Index-as-table over a view's fast path bypasses the view binder; enforce
-    // SELECT on the base table like the table-backed entries do.
-    auto snapshot = sdb_ctx.EnsureCatalogSnapshot();
-    std::shared_ptr<catalog::Object> base;
-    if (fp->base_table_id) {
-      base = snapshot->GetObject<catalog::Table>(*fp->base_table_id);
-    } else if (fp->catalog_ref) {
-      base =
-        snapshot->GetRelation(catalog::NoAccessCheck(), sdb_ctx.GetDatabaseId(),
-                              fp->catalog_ref->schema, fp->catalog_ref->table);
-    }
-    if (base) {
-      snapshot->RequireAccess(sdb_ctx.GetRoleId(), *base,
-                              catalog::AclMode::Select);
-    }
-  }
   auto snapshot = sdb_ctx.EnsureSearchSnapshot(_inverted_index->GetId());
   // The index only captures post-WHERE/ORDER/LIMIT rows; we must not
   // stream the reader directly.
@@ -223,10 +203,7 @@ TableSecondaryIndexScanEntry::TableSecondaryIndexScanEntry(
 duckdb::TableFunction TableSecondaryIndexScanEntry::GetScanFunction(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
-  // SELECT on the base table is required even when reached via the index name.
-  GetSereneDBContext(context).EnsureCatalogSnapshot()->GetTable(
-    catalog::RequireAccess(context, catalog::AclMode::Select),
-    _sdb_table->GetId());
+  // SELECT on the base table (reached via the index name)
   // Scanning a secondary index by name reads the table: the index itself
   // is a native ART on the store table.
   auto store_name = catalog::StoreTableName(

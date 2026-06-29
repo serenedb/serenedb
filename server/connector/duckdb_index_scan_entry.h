@@ -37,6 +37,11 @@ class SereneDBIndexScanEntry : public duckdb::TableCatalogEntry {
   duckdb::unique_ptr<duckdb::BaseStatistics> GetStatistics(
     duckdb::ClientContext& context, duckdb::column_t column_id) final;
 
+  // The SereneDB relation this index scans, so the RBAC rule can enforce SELECT
+  // on `SELECT * FROM <index_name>` like any other base read (the access is
+  // collected at bind time; this resolves it for the rule).
+  virtual std::shared_ptr<const catalog::Object> GetSereneDBRelation() const = 0;
+
  protected:
   SereneDBIndexScanEntry(duckdb::Catalog& catalog,
                          duckdb::SchemaCatalogEntry& schema,
@@ -72,6 +77,9 @@ class TableInvertedIndexScanEntry final : public InvertedIndexScanEntry {
 
   duckdb::vector<duckdb::column_t> GetRowIdColumns() const final;
   duckdb::virtual_column_map_t GetVirtualColumns() const final;
+  std::shared_ptr<const catalog::Object> GetSereneDBRelation() const final {
+    return _sdb_table;
+  }
 
  private:
   std::shared_ptr<catalog::Table> _sdb_table;
@@ -94,6 +102,9 @@ class ViewInvertedIndexScanEntry final : public InvertedIndexScanEntry {
 
   duckdb::vector<duckdb::column_t> GetRowIdColumns() const final;
   duckdb::virtual_column_map_t GetVirtualColumns() const final;
+  std::shared_ptr<const catalog::Object> GetSereneDBRelation() const final {
+    return _sdb_view;
+  }
 
  private:
   std::shared_ptr<const catalog::PgSqlView> _sdb_view;
@@ -128,6 +139,9 @@ class TableSecondaryIndexScanEntry final : public SecondaryIndexScanEntry {
     duckdb::unique_ptr<duckdb::FunctionData>& bind_data) final;
 
   duckdb::TableStorageInfo GetStorageInfo(duckdb::ClientContext& context) final;
+  std::shared_ptr<const catalog::Object> GetSereneDBRelation() const final {
+    return _sdb_table;
+  }
 
  private:
   std::shared_ptr<catalog::Table> _sdb_table;

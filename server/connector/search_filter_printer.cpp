@@ -454,11 +454,10 @@ FilterNode BuildNode(const Filter& filter, const FieldResolver& field) {
   if (type == Type<ByVectorSimilarity>::id()) {
     const auto& f = downCast<const ByVectorSimilarity>(filter);
     const auto& o = f.options();
-    FilterNode node{
-      .label = "VECTOR_KNN",
-      .detail = absl::StrCat(field(f.field_id()),
-                             " metric=", VectorMetricName(o.metric),
-                             " dims=", o.query.size())};
+    FilterNode node{.label = "VECTOR_KNN",
+                    .detail = absl::StrCat(field(f.field_id()), " metric=",
+                                           VectorMetricName(o.metric),
+                                           " dims=", o.query.size())};
     if (o.inner) {
       node.children.push_back(BuildNode(*o.inner, field));
     }

@@ -32,19 +32,14 @@ namespace sdb::catalog::persistence {
 struct RoleData {
   ObjectId id;
   std::string name;
-  bool active = true;
-  uint32_t options = 0;
+  bool active;
+  uint32_t options;
   std::vector<Membership> member_of;
-  // pg_authid attributes that are stored & surfaced but not enforced at
-  // runtime.
-  int32_t conn_limit = -1;  // rolconnlimit (-1 = unlimited)
-  std::string valid_until;  // rolvaliduntil; empty -> NULL (no expiry)
-  // Per-role GUC settings (pg_db_role_setting / pg_roles.rolconfig), each
-  // rendered as "guc=value" exactly as PostgreSQL stores them.
+  int32_t conn_limit;
+  std::string valid_until;
+  // SET VAR=... params that set for every session of this role
   std::vector<std::string> config;
-  // ALTER DEFAULT PRIVILEGES targets owned by this role (pg_default_acl rows).
   std::vector<DefaultAcl> default_acls;
-  // rolpassword: PG-format SCRAM verifier string; empty when no password.
   std::string password_verifier;
 };
 

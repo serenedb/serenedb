@@ -40,7 +40,8 @@ class SereneDBIndexScanEntry : public duckdb::TableCatalogEntry {
   // The SereneDB relation this index scans, so the RBAC rule can enforce SELECT
   // on `SELECT * FROM <index_name>` like any other base read (the access is
   // collected at bind time; this resolves it for the rule). Observing pointer
-  // into the typed relation each concrete entry owns; set by their constructors.
+  // into the typed relation each concrete entry owns; set by their
+  // constructors.
   const catalog::Object* GetSereneDBRelation() const { return _relation; }
 
  protected:

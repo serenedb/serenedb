@@ -33,7 +33,8 @@ namespace sdb::connector {
 // bound entry (a pointer hand-off) instead of resolving the view again by name.
 class SereneDBViewEntry final : public duckdb::ViewCatalogEntry {
  public:
-  SereneDBViewEntry(duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
+  SereneDBViewEntry(duckdb::Catalog& catalog,
+                    duckdb::SchemaCatalogEntry& schema,
                     duckdb::CreateViewInfo& info,
                     std::shared_ptr<const catalog::PgSqlView> sdb_view)
     : duckdb::ViewCatalogEntry(catalog, schema, info),

@@ -75,7 +75,7 @@ set(IResearch_core_sources
     ./analysis/geo_analyzer.cpp
     ./analysis/pattern_tokenizer.cpp
     ./analysis/wildcard_analyzer.cpp
-    ./analysis/split_by_non_alpha_tokenizer.cpp
+    ./analysis/split_by_non_alpha.cpp
     ./error/error.cpp
     ./formats/column/col_reader.cpp
     ./formats/column/col_writer.cpp

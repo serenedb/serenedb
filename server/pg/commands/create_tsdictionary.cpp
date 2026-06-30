@@ -39,7 +39,6 @@
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/analysis/solr_synonyms_tokenizer.hpp>
 #include <iresearch/analysis/sparse_ngram_tokenizer.hpp>
-#include <iresearch/analysis/split_by_non_alpha_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
 #include <iresearch/analysis/stopwords_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
@@ -502,15 +501,6 @@ class CreateTSDictionaryOptions : public OptionsParser {
     return opts;
   }
 
-  irs::analysis::SplitByNonAlphaTokenizer::Options BuildSplitByNonAlpha(
-    std::string_view prefix,
-    const irs::analysis::SplitByNonAlphaTokenizer::Options* parent) {
-    irs::analysis::SplitByNonAlphaTokenizer::Options opts;
-    opts.to_lower = Resolve<tokenizer_options::kToLower>(
-      prefix, parent ? &parent->to_lower : nullptr);
-    return opts;
-  }
-
   irs::analysis::StopwordsTokenizer::Options BuildStopwords(
     std::string_view prefix,
     const irs::analysis::StopwordsTokenizer::Options* parent) {
@@ -855,9 +845,6 @@ class CreateTSDictionaryOptions : public OptionsParser {
     } else if (type == SegmentationTokenizer::type_name()) {
       out.config = BuildSegmentation(
         prefix, ParentOptions<SegmentationTokenizer::Options>(parent_cfg));
-    } else if (type == SplitByNonAlphaTokenizer::type_name()) {
-      out.config = BuildSplitByNonAlpha(
-        prefix, ParentOptions<SplitByNonAlphaTokenizer::Options>(parent_cfg));
     } else if (type == PipelineTokenizer::type_name()) {
       out.config = BuildPipeline(
         prefix, ParentOptions<PipelineTokenizer::Options>(parent_cfg));

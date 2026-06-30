@@ -22,34 +22,36 @@
 
 #include <absl/strings/ascii.h>
 
+#include <cstddef>
 #include <string>
 #include <string_view>
 
 namespace irs::analysis {
 
-// This is the same semantics as SplitByNonAlphaTokenizer,
-// expressed as a plain function.
+size_t FindFirstAlnum(const char* data, size_t pos, size_t size) noexcept;
+size_t FindFirstNonAlnum(const char* data, size_t pos, size_t size) noexcept;
+
 template<typename Emit>
-void SplitByNonAlpha(std::string_view data, bool to_lower, std::string& buf,
-                     Emit&& emit) {
+void SplitByNonAlpha(std::string_view data, Emit&& emit) {
   const char* const base = data.data();
   const size_t size = data.size();
   size_t pos = 0;
 
   while (pos < size) {
-    while (pos < size &&
-           !absl::ascii_isalnum(static_cast<unsigned char>(base[pos]))) {
-      ++pos;
-    }
+    pos = FindFirstAlnum(base, pos, size);
     if (pos >= size) {
       break;
     }
     const size_t start = pos;
-    while (pos < size &&
-           absl::ascii_isalnum(static_cast<unsigned char>(base[pos]))) {
-      ++pos;
-    }
-    const std::string_view token{base + start, pos - start};
+    pos = FindFirstNonAlnum(base, pos, size);
+    emit(std::string_view{base + start, pos - start});
+  }
+}
+
+template<typename Emit>
+void SplitByNonAlpha(std::string_view data, bool to_lower, std::string& buf,
+                     Emit&& emit) {
+  SplitByNonAlpha(data, [&](std::string_view token) {
     if (to_lower) {
       buf.resize(token.size());
       absl::ascii_internal::AsciiStrToLower(buf.data(), token.data(),
@@ -58,7 +60,7 @@ void SplitByNonAlpha(std::string_view data, bool to_lower, std::string& buf,
     } else {
       emit(token);
     }
-  }
+  });
 }
 
 }  // namespace irs::analysis

@@ -35,7 +35,6 @@
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/analysis/solr_synonyms_tokenizer.hpp>
 #include <iresearch/analysis/sparse_ngram_tokenizer.hpp>
-#include <iresearch/analysis/split_by_non_alpha_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
 #include <iresearch/analysis/stopwords_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
@@ -175,11 +174,6 @@ inline constexpr OptionInfo kNgramSize{
 inline constexpr OptionInfo kBreak{
   "break", "alpha"sv, "Token boundary detection mode: all, graphic, alpha"};
 
-// Split by non-alphanumeric
-
-inline constexpr OptionInfo kToLower{"to_lower", false,
-                                     "Lowercase (ASCII) each emitted token"};
-
 // Delimiter
 
 inline constexpr OptionInfo kDelimiter{
@@ -284,8 +278,6 @@ inline constexpr OptionInfo kNormOptions[] = {kLocale, kCase, kAccent};
 
 inline constexpr OptionInfo kSegmentationOptions[] = {kCase, kBreak};
 
-inline constexpr OptionInfo kSplitByNonAlphaOptions[] = {kToLower};
-
 inline constexpr OptionInfo kEdgeNGramOptions[] = {kMinGram, kMaxGram,
                                                    kPreserveOriginal};
 
@@ -388,11 +380,6 @@ inline constexpr OptionGroup kSegmentationGroup{
   kSegmentationOptions,
   {},
 };
-inline constexpr OptionGroup kSplitByNonAlphaGroup{
-  irs::analysis::SplitByNonAlphaTokenizer::type_name(),
-  kSplitByNonAlphaOptions,
-  {},
-};
 inline constexpr OptionGroup kPipelineGroup{
   irs::analysis::PipelineTokenizer::type_name(),
   {},
@@ -442,7 +429,7 @@ inline constexpr OptionGroup kTokenizerSubgroups[] = {
   kCopyFromGroup,       kGeoPointGroup,
   kGeoJsonGroup,        kKeywordGroup,
   kSolrSynonymsGroup,   kWordnetSynonymsGroup,
-  kSparseNGramGroup,    kSplitByNonAlphaGroup,
+  kSparseNGramGroup,
 };
 
 }  // namespace sdb::pg::tokenizer_options

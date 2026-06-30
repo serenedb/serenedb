@@ -84,6 +84,25 @@ TEST(clustering_test, train_centroids_norms_per_metric) {
   }
 }
 
+TEST(clustering_test, train_centroids_separates_blobs) {
+  constexpr uint32_t d = 4;
+  constexpr uint32_t k = 2;
+  const auto c =
+    TrainCentroids(VectorMetric::L2Sqr, kBlobs2x4.data(), /*n=*/8, k, d,
+                   /*seed=*/42);
+  ASSERT_EQ(c.size(), static_cast<size_t>(k) * d);
+
+  const float* a = c.data();
+  const float* b = c.data() + d;
+  EXPECT_GT(std::abs(a[1] - b[1]), 10.f);
+  for (const float* cen : {a, b}) {
+    EXPECT_NEAR(cen[0], 8.f, 1.5f);
+    EXPECT_GT(std::abs(cen[1]), 6.f);
+    EXPECT_NEAR(cen[2], 0.f, 1.f);
+    EXPECT_NEAR(cen[3], 0.f, 1.f);
+  }
+}
+
 TEST(clustering_test, nearest_centroid_metric_direction) {
   constexpr uint32_t d = 4;
   // Two unit centroids along orthogonal axes.

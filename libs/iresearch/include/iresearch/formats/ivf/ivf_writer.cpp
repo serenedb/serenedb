@@ -50,6 +50,7 @@ namespace irs {
 namespace {
 
 constexpr uint32_t kClusterSeed = 42;
+constexpr double kNlistSqrtMultiplier = 2.0;
 
 // Streams the flat vector column in row-aligned chunks (no full matrix in RAM),
 // invoking `sink(first_row, n_rows, data)` where `data` points at `n_rows * d`
@@ -113,7 +114,8 @@ uint32_t ResolveNlist(const IvfInfo& info, uint64_t valid_count) {
     info.nlist != 0
       ? info.nlist
       : static_cast<uint32_t>(std::max<int64_t>(
-          1, std::llround(std::sqrt(static_cast<double>(valid_count)))));
+          1, std::llround(kNlistSqrtMultiplier *
+                          std::sqrt(static_cast<double>(valid_count)))));
   return static_cast<uint32_t>(
     std::min<uint64_t>(nlist, std::max<uint64_t>(valid_count, 1)));
 }

@@ -48,6 +48,7 @@ struct SearchFullScanGlobalState : public CommonScanGlobalState {
   std::atomic<irs::score_t> global_kth_score{
     std::numeric_limits<irs::score_t>::lowest()};
   bool parallel_topk = false;
+  uint32_t rerank_pool = 0;
 
   duckdb::idx_t MaxThreads() const final {
     if (count_only && queries.empty()) {

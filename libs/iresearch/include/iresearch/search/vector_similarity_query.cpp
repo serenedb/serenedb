@@ -41,7 +41,6 @@
 #include "iresearch/search/make_disjunction.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/utils/vector.hpp"
 
 namespace irs {
 namespace {
@@ -361,6 +360,21 @@ memory::managed_ptr<VectorDistanceIterator> MakeRawReranker(
 }
 
 }  // namespace
+
+void RerankExactDistances(const SubReader& segment,
+                          const ColumnReader& vector_column, uint32_t d,
+                          std::span<const float> query, VectorMetric metric,
+                          std::span<ScoreDoc> hits) {
+  const auto* col_reader = segment.GetColReader();
+  if (!col_reader) {
+    return;
+  }
+  RawVectorReader reader{vector_column, *col_reader, d};
+  reader.SetQuery(query, metric);
+  for (auto& hit : hits) {
+    reader.ComputeDistance(hit.doc, kNoBoost, hit.score);
+  }
+}
 
 DocIterator::ptr KnnVectorQuery::Execute(const ExecutionContext& ctx,
                                          const StatsBuffer& stats) const {

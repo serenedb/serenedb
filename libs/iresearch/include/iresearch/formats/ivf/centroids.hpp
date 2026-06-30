@@ -62,6 +62,10 @@ class TwoLayerCentroids {
   void SearchL2(std::span<const float> query, const L2BodyView& view,
                 uint32_t n2, std::vector<uint32_t>& out) const;
 
+  void SearchGlobal(std::span<const float> query, IndexInput& in, uint32_t n1,
+                    uint32_t nprobe, std::vector<uint32_t>& out_ids,
+                    std::vector<float>* out_centroids) const;
+
   uint32_t Dimension() const noexcept { return _d; }
   uint32_t L1Count() const noexcept { return _n_l1; }
   VectorMetric Metric() const noexcept { return _metric; }

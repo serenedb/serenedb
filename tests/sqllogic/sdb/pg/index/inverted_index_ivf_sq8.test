@@ -50,7 +50,7 @@ pk	label
 
 query
 SELECT pk, label FROM sq8_l2_idx
-  ORDER BY emb <-> [10, 10, 1]::FLOAT[3] LIMIT 3;
+  ORDER BY emb <-> [10, 12, 1]::FLOAT[3] LIMIT 3;
 ----
 pk	label
 4	xy

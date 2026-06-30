@@ -80,12 +80,13 @@ std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
 
   faiss::ClusteringParameters cp;
   cp.niter = 25;
+  cp.nredo = 2;
   cp.seed = static_cast<int>(seed);
   cp.spherical = angular;
   cp.min_points_per_centroid = 1;
   cp.max_points_per_centroid = static_cast<int>(std::max<size_t>(
     static_cast<size_t>(cp.max_points_per_centroid), (n + k - 1) / k));
-  cp.init_method = faiss::ClusteringInitMethod::RANDOM;
+  cp.init_method = faiss::ClusteringInitMethod::KMEANS_PLUS_PLUS;
 
   faiss::Clustering clus(static_cast<int>(d), static_cast<int>(k), cp);
   if (angular) {

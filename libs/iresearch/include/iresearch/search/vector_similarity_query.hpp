@@ -20,9 +20,12 @@
 
 #pragma once
 
+#include <span>
 #include <vector>
 
 #include "iresearch/index/column_info.hpp"
+#include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/iterators.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/search/states/vector_state.hpp"
 
@@ -99,5 +102,10 @@ class RangeVectorQuery : public QueryBuilder {
   bool _inclusive;
   score_t _boost;
 };
+
+void RerankExactDistances(const SubReader& segment,
+                          const ColumnReader& vector_column, uint32_t d,
+                          std::span<const float> query, VectorMetric metric,
+                          std::span<ScoreDoc> hits);
 
 }  // namespace irs

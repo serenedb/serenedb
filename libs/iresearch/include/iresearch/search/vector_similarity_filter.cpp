@@ -23,9 +23,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <unordered_map>
 #include <vector>
 
+#include "basics/containers/flat_hash_map.h"
 #include "basics/memory.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
@@ -37,6 +37,11 @@
 #include "iresearch/search/vector_similarity_query.hpp"
 
 namespace irs {
+namespace {
+
+constexpr double kL1Overprobe = 3.0;
+
+}  // namespace
 
 QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
@@ -55,15 +60,11 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
     return QueryBuilder::Empty();
   }
 
-  const uint32_t n1 = static_cast<uint32_t>(std::max<double>(
-    1.0, std::ceil(std::sqrt(static_cast<double>(opts.nprobe)))));
-  const uint32_t n2 = n1;
-
-  std::vector<uint32_t> l1_ids;
-  ivf->SearchL1(opts.query, n1, l1_ids);
-  if (l1_ids.empty()) {
-    return QueryBuilder::Empty();
-  }
+  const uint32_t n1 = std::min<uint32_t>(
+    ivf->L1Count(),
+    static_cast<uint32_t>(std::max<double>(
+      1.0,
+      std::ceil(kL1Overprobe * std::sqrt(static_cast<double>(opts.nprobe))))));
 
   auto idx_in = segment.ReopenIvf();
   if (!idx_in) {
@@ -82,27 +83,19 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
   const uint32_t d = ivf->Dimension();
 
   std::vector<uint32_t> fine_ids;
-  std::unordered_map<uint32_t, uint32_t> fine_centroid_off;
   std::vector<float> probed_centroids;
-  L2BodyView body;
-  for (const uint32_t l1 : l1_ids) {
-    ivf->ReadL2Body(*idx_in, l1, body);
-    ivf->SearchL2(opts.query, body, n2, fine_ids);
-    if (pq) {
-      const auto* cv = reinterpret_cast<const float*>(body.l2_centroids);
-      for (uint32_t s = 0; s < body.n_l2; ++s) {
-        const uint32_t id = body.fine_ids[s];
-        if (fine_centroid_off.emplace(id, probed_centroids.size()).second) {
-          const float* cen = cv + static_cast<size_t>(s) * d;
-          probed_centroids.insert(probed_centroids.end(), cen, cen + d);
-        }
-      }
-    }
-  }
-  std::sort(fine_ids.begin(), fine_ids.end());
-  fine_ids.erase(std::unique(fine_ids.begin(), fine_ids.end()), fine_ids.end());
+  ivf->SearchGlobal(opts.query, *idx_in, n1, opts.nprobe, fine_ids,
+                    pq ? &probed_centroids : nullptr);
   if (fine_ids.empty()) {
     return QueryBuilder::Empty();
+  }
+
+  sdb::containers::FlatHashMap<uint32_t, uint32_t> fine_centroid_off;
+  if (pq) {
+    fine_centroid_off.reserve(fine_ids.size());
+    for (uint32_t i = 0; i < fine_ids.size(); ++i) {
+      fine_centroid_off.emplace(fine_ids[i], i * d);
+    }
   }
 
   auto terms = postings->iterator(SeekMode::NORMAL);

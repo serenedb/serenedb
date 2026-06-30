@@ -194,4 +194,70 @@ void TwoLayerCentroids::SearchL2(std::span<const float> query,
   TopK(scored, n2, nearest_is_largest, out);
 }
 
+void TwoLayerCentroids::SearchGlobal(std::span<const float> query,
+                                     IndexInput& in, uint32_t n1,
+                                     uint32_t nprobe,
+                                     std::vector<uint32_t>& out_ids,
+                                     std::vector<float>* out_centroids) const {
+  out_ids.clear();
+  if (out_centroids != nullptr) {
+    out_centroids->clear();
+  }
+  if (_n_l1 == 0 || nprobe == 0) {
+    return;
+  }
+
+  std::vector<uint32_t> l1_ids;
+  SearchL1(query, n1, l1_ids);
+  if (l1_ids.empty()) {
+    return;
+  }
+
+  const auto dist = ResolveVectorDistance(_metric);
+  const bool nearest_is_largest = VectorMetricNearestIsLargest(_metric);
+  const auto* q = reinterpret_cast<const byte_type*>(query.data());
+  const auto d = static_cast<uint16_t>(_d);
+  const size_t stride = static_cast<size_t>(_d) * sizeof(float);
+
+  std::vector<std::pair<float, uint32_t>> scored;
+  std::vector<uint32_t> slot_fine_id;
+  std::vector<float> slot_centroid;
+  L2BodyView body;
+  for (const uint32_t l1 : l1_ids) {
+    ReadL2Body(in, l1, body);
+    scored.reserve(scored.size() + body.n_l2);
+    slot_fine_id.reserve(slot_fine_id.size() + body.n_l2);
+    for (uint32_t s = 0; s < body.n_l2; ++s) {
+      const byte_type* cv = body.l2_centroids + s * stride;
+      const auto slot = static_cast<uint32_t>(slot_fine_id.size());
+      scored.emplace_back(dist(q, cv, d), slot);
+      slot_fine_id.push_back(body.fine_ids[s]);
+      if (out_centroids != nullptr) {
+        const auto* cf = reinterpret_cast<const float*>(cv);
+        slot_centroid.insert(slot_centroid.end(), cf, cf + _d);
+      }
+    }
+  }
+  if (scored.empty()) {
+    return;
+  }
+
+  const uint32_t k =
+    std::min<uint32_t>(nprobe, static_cast<uint32_t>(scored.size()));
+  std::vector<uint32_t> slots;
+  TopK(scored, k, nearest_is_largest, slots);
+
+  out_ids.reserve(slots.size());
+  if (out_centroids != nullptr) {
+    out_centroids->reserve(static_cast<size_t>(slots.size()) * _d);
+  }
+  for (const uint32_t slot : slots) {
+    out_ids.push_back(slot_fine_id[slot]);
+    if (out_centroids != nullptr) {
+      const float* cf = slot_centroid.data() + static_cast<size_t>(slot) * _d;
+      out_centroids->insert(out_centroids->end(), cf, cf + _d);
+    }
+  }
+}
+
 }  // namespace irs

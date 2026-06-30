@@ -183,6 +183,54 @@ TEST(two_layer_centroids_test, roundtrip_and_search) {
   }
 }
 
+TEST(two_layer_centroids_test, search_global_picks_global_topk) {
+  SimpleMemoryAccounter memory;
+  MemoryFile file{memory};
+
+  constexpr uint32_t d = 2;
+  const std::vector<float> l1{/*c0*/ 0.f, 0.f, /*c1*/ 10.f, 10.f};
+  const std::vector<L2BodySpec> bodies{
+    L2BodySpec{.centroids = {0.f, 0.f, 1.f, 1.f}, .fine_ids = {0, 1}},
+    L2BodySpec{.centroids = {10.f, 10.f, 11.f, 11.f}, .fine_ids = {2, 3}},
+  };
+
+  Serialized s;
+  {
+    MemoryIndexOutput out{file};
+    s = WriteEntry(out, VectorMetric::L2Sqr, d, l1, bodies);
+    out.Flush();
+  }
+
+  MemoryIndexInput in{file};
+  in.Seek(s.resident_offset);
+  auto centroids = TwoLayerCentroids::Deserialize(in, s.resident_size);
+
+  const std::vector<float> q{0.4f, 0.4f};
+  std::vector<uint32_t> ids;
+  std::vector<float> cens;
+  centroids.SearchGlobal(q, in, /*n1=*/2, /*nprobe=*/2, ids, &cens);
+  ASSERT_EQ(ids.size(), 2u);
+  EXPECT_EQ(ids[0], 0u);
+  EXPECT_EQ(ids[1], 1u);
+  ASSERT_EQ(cens.size(), 2u * d);
+  EXPECT_EQ((std::vector<float>(cens.begin(), cens.begin() + d)),
+            (std::vector<float>{0.f, 0.f}));
+  EXPECT_EQ((std::vector<float>(cens.begin() + d, cens.end())),
+            (std::vector<float>{1.f, 1.f}));
+
+  centroids.SearchGlobal(q, in, /*n1=*/2, /*nprobe=*/100, ids, nullptr);
+  EXPECT_EQ(ids.size(), 4u);
+
+  std::vector<uint32_t> one;
+  centroids.SearchGlobal({std::vector<float>{10.9f, 10.9f}}, in, /*n1=*/2,
+                         /*nprobe=*/1, one, nullptr);
+  ASSERT_EQ(one.size(), 1u);
+  EXPECT_EQ(one[0], 3u);
+
+  centroids.SearchGlobal(q, in, /*n1=*/2, /*nprobe=*/0, ids, nullptr);
+  EXPECT_TRUE(ids.empty());
+}
+
 TEST(two_layer_centroids_test, inner_product_nearest_is_largest) {
   SimpleMemoryAccounter memory;
   MemoryFile file{memory};

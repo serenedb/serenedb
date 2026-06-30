@@ -25,19 +25,23 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string_view>
 
 namespace irs::analysis {
 
-template<unsigned BlockBytes>
-inline uint32_t ClassifyAlnumBlock(const char* block) noexcept {
-  uint32_t bitmask = 0;
-  for (unsigned i = 0; i < BlockBytes; ++i) {
+template<typename Mask>
+inline Mask ClassifyAlnumBlock(const char* block) noexcept {
+  const auto as_mask = [](auto value) noexcept {
+    return static_cast<Mask>(value);
+  };
+  Mask bitmask = 0;
+  for (unsigned i = 0; i < std::numeric_limits<Mask>::digits; ++i) {
     const unsigned char byte = static_cast<unsigned char>(block[i]);
     const unsigned char lowered = byte | 0x20;
     const uint32_t is_digit = static_cast<unsigned char>(byte - '0') < 10;
     const uint32_t is_letter = static_cast<unsigned char>(lowered - 'a') < 26;
-    bitmask |= (is_digit | is_letter) << i;
+    bitmask = as_mask(bitmask | as_mask((is_digit | is_letter) << i));
   }
   return bitmask;
 }
@@ -48,30 +52,35 @@ class AlnumTokenAssembler {
   AlnumTokenAssembler(const char* input, EmitFn& emit) noexcept
     : _input{input}, _emit{emit} {}
 
-  template<unsigned BlockBytes>
-  void ConsumeBlock(uint32_t bitmask, size_t offset) {
-    constexpr uint32_t kValidBits =
-      BlockBytes >= 32 ? ~uint32_t{0} : (uint32_t{1} << BlockBytes) - 1;
+  template<typename Mask>
+  void ConsumeBlock(Mask bitmask, size_t offset) {
+    constexpr int kBits = std::numeric_limits<Mask>::digits;
+    // Just not to bloat
+    const auto as_mask = [](auto value) noexcept {
+      return static_cast<Mask>(value);
+    };
 
     if (_token_open) {
-      const uint32_t separators = ~bitmask & kValidBits;
+      const auto separators = as_mask(~bitmask);
       if (separators == 0) {
         return;
       }
-      const int token_end = std::countr_zero(separators);
+      const auto token_end = as_mask(std::countr_zero(separators));
       CloseToken(offset + token_end);
-      bitmask &= ~LowBitsMask(token_end);
+      bitmask = as_mask(bitmask & ~LowBitsMask<Mask>(token_end));
     }
 
     while (bitmask != 0) {
-      const int token_begin = std::countr_zero(bitmask);
-      const int token_length = std::countr_zero(~(bitmask >> token_begin));
-      if (token_begin + token_length >= static_cast<int>(BlockBytes)) {
+      const auto token_begin = as_mask(std::countr_zero(bitmask));
+      const auto run = as_mask(bitmask >> token_begin);
+      const auto token_length = as_mask(std::countr_zero(as_mask(~run)));
+      if (token_begin + token_length >= kBits) {
         OpenToken(offset + token_begin);
         return;
       }
       EmitToken(offset + token_begin, token_length);
-      bitmask &= ~(LowBitsMask(token_length) << token_begin);
+      bitmask = as_mask(
+        bitmask & ~as_mask(LowBitsMask<Mask>(token_length) << token_begin));
     }
   }
 
@@ -94,8 +103,9 @@ class AlnumTokenAssembler {
   }
 
  private:
-  static uint32_t LowBitsMask(int count) noexcept {
-    return (uint32_t{1} << count) - 1;
+  template<typename Mask>
+  static Mask LowBitsMask(int count) noexcept {
+    return static_cast<Mask>((Mask{1} << count) - 1);
   }
 
   void OpenToken(size_t begin) noexcept {
@@ -126,18 +136,18 @@ void SplitByNonAlpha(std::string_view data, EmitFn&& emit) {
   AlnumTokenAssembler assembler{input, emit};
   size_t offset = 0;
   while (size - offset >= 32) {
-    assembler.template ConsumeBlock<32>(ClassifyAlnumBlock<32>(input + offset),
-                                        offset);
+    assembler.template ConsumeBlock<uint32_t>(
+      ClassifyAlnumBlock<uint32_t>(input + offset), offset);
     offset += 32;
   }
   if (size - offset >= 16) {
-    assembler.template ConsumeBlock<16>(ClassifyAlnumBlock<16>(input + offset),
-                                        offset);
+    assembler.template ConsumeBlock<uint16_t>(
+      ClassifyAlnumBlock<uint16_t>(input + offset), offset);
     offset += 16;
   }
   if (size - offset >= 8) {
-    assembler.template ConsumeBlock<8>(ClassifyAlnumBlock<8>(input + offset),
-                                       offset);
+    assembler.template ConsumeBlock<uint8_t>(
+      ClassifyAlnumBlock<uint8_t>(input + offset), offset);
     offset += 8;
   }
   assembler.ConsumeTail(offset, size);

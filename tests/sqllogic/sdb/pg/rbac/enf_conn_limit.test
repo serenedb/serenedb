@@ -1,0 +1,59 @@
+# serenedb-only: CONNECTION LIMIT enforced live at connect. A role at its limit
+# refuses further connections with PG's 53300 error; closing one frees a slot.
+# Superusers ignore the limit. Cannot run on the shared PG container: it runs HBA
+# trust and the test holds concurrent authenticated sessions per role, which the
+# per-connection `connection ... user=` directives make serenedb-specific.
+#
+# Lore: the MOP admits one vedernikoff at a time; the overseer comes and goes freely.
+
+statement ok
+DROP ROLE IF EXISTS clim_solo;
+
+
+statement ok
+DROP ROLE IF EXISTS clim_overseer;
+
+
+statement ok
+CREATE ROLE clim_solo LOGIN PASSWORD 'mop' CONNECTION LIMIT 1;
+
+
+# A superuser with CONNECTION LIMIT 0 still connects -- superusers are exempt.
+statement ok
+CREATE ROLE clim_overseer SUPERUSER LOGIN PASSWORD 'mop' CONNECTION LIMIT 0;
+
+
+# First connection for clim_solo takes its single slot and stays open.
+connection c_solo1 user=clim_solo password=mop
+query
+SELECT current_user;
+----
+current_user
+clim_solo
+
+
+# Second concurrent connection for clim_solo is over the limit -> refused.
+connection c_solo2 user=clim_solo password=mop
+statement error
+SELECT 1;
+----
+db error: FATAL: too many connections for role "clim_solo"<slt:ignore>
+
+
+# The superuser connects despite CONNECTION LIMIT 0.
+connection c_over user=clim_overseer password=mop
+query
+SELECT current_user;
+----
+current_user
+clim_overseer
+
+
+# Cleanup.
+connection default
+statement ok
+DROP ROLE clim_solo;
+
+
+statement ok
+DROP ROLE clim_overseer;

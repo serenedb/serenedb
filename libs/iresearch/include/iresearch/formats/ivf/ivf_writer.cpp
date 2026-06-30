@@ -20,8 +20,6 @@
 
 #include "iresearch/formats/ivf/ivf_writer.hpp"
 
-#include <superkmeans/superkmeans.h>
-
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -51,6 +49,8 @@
 namespace irs {
 namespace {
 
+constexpr uint32_t kClusterSeed = 42;
+
 // Streams the flat vector column in row-aligned chunks (no full matrix in RAM),
 // invoking `sink(first_row, n_rows, data)` where `data` points at `n_rows * d`
 // contiguous floats. The chunk holds whole rows so callers can map each row to
@@ -77,8 +77,6 @@ uint64_t ResolveTrainSample(const IvfInfo& info, uint64_t valid_count,
   if (info.train_sample != 0) {
     n_train = std::min<uint64_t>(valid_count, info.train_sample);
   } else {
-    // Mirror SuperKMeans' default GetNVectorsToSample policy so behaviour and
-    // the training set size match what it would otherwise pick internally.
     const auto by_fraction =
       static_cast<uint64_t>(0.3 * static_cast<double>(valid_count));
     const uint64_t by_clusters = static_cast<uint64_t>(nlist) * 256;
@@ -158,7 +156,7 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
 
   std::vector<float> sample(static_cast<size_t>(n_train) * d);
   {
-    std::mt19937_64 rng{skmeans::SuperKMeansConfig{}.seed};
+    std::mt19937_64 rng{kClusterSeed};
     uint64_t seen = 0;
     StreamRowBatches(
       *child, rows, d, ctx,
@@ -189,7 +187,7 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
     NormalizeRows(sample.data(), n_train, d);
   }
 
-  const uint32_t base_seed = skmeans::SuperKMeansConfig{}.seed;
+  const uint32_t base_seed = kClusterSeed;
   const std::vector<float> l1_centroids =
     TrainCentroids(m, sample.data(), n_train, n_l1, d, base_seed);
 

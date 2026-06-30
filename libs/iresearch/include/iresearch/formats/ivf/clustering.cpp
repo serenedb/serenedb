@@ -20,8 +20,10 @@
 
 #include "iresearch/formats/ivf/clustering.hpp"
 
-#include <superkmeans/superkmeans.h>
+#include <faiss/Clustering.h>
+#include <faiss/IndexFlat.h>
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -70,21 +72,30 @@ void NormalizeRows(float* data, size_t n, uint32_t d) {
   }
 }
 
-// Use
 std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
                                   size_t n, uint32_t k, uint32_t d,
                                   uint32_t seed) {
-  skmeans::SuperKMeansConfig cfg;
-  cfg.n_threads = 1;
-  cfg.iters = 25;
-  cfg.sampling_fraction = 1.0f;  // already sampled
-  cfg.seed = seed;
-  cfg.angular =
+  const bool angular =
     metric == VectorMetric::InnerProduct || metric == VectorMetric::Cosine;
-  skmeans::SuperKMeans<skmeans::Quantization::f32,
-                       skmeans::DistanceFunction::l2>
-    km{k, d, cfg};
-  return km.Train(data, n);
+
+  faiss::ClusteringParameters cp;
+  cp.niter = 25;
+  cp.seed = static_cast<int>(seed);
+  cp.spherical = angular;
+  cp.min_points_per_centroid = 1;
+  cp.max_points_per_centroid = static_cast<int>(std::max<size_t>(
+    static_cast<size_t>(cp.max_points_per_centroid), (n + k - 1) / k));
+  cp.init_method = faiss::ClusteringInitMethod::RANDOM;
+
+  faiss::Clustering clus(static_cast<int>(d), static_cast<int>(k), cp);
+  if (angular) {
+    faiss::IndexFlatIP index(static_cast<int>(d));
+    clus.train(static_cast<faiss::idx_t>(n), data, index);
+  } else {
+    faiss::IndexFlatL2 index(static_cast<int>(d));
+    clus.train(static_cast<faiss::idx_t>(n), data, index);
+  }
+  return std::move(clus.centroids);
 }
 
 uint32_t NearestCentroid(VectorMetric metric, const float* v,

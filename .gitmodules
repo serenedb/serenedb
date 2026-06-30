@@ -189,10 +189,6 @@
 [submodule "third_party/database-connector"]
 	path = third_party/database-connector
 	url = https://github.com/serenedb/database-connector.git
-[submodule "third_party/SuperKMeans"]
-	path = third_party/SuperKMeans
-	url = https://github.com/serenedb/SuperKMeans.git
-	shallow = true
 [submodule "third_party/simdutf"]
 	path = third_party/simdutf
 	url = https://github.com/serenedb/simdutf.git

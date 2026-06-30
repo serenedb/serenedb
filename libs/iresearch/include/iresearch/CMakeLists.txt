@@ -282,7 +282,6 @@ target_link_libraries(
     PRIVATE lz4_static
     PRIVATE text
     PRIVATE stemmer-static
-    PRIVATE superkmeans
 )
 
 if(uring_FOUND)

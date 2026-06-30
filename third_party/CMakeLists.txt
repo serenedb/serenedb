@@ -715,11 +715,6 @@ target_link_libraries(
         inet_extension
 )
 
-################################################################################
-## SuperKMeans
-################################################################################
-add_subdirectory(SuperKMeans)
-
 # !!! KEEP THIS LAST !!!
 # Guard against a future add_subdirectory() in this file re-pointing OpenSSL at
 # a system copy via find_package / CACHE FORCE / etc. The pre-seeded cache

@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/random/random.h>
+#include <absl/strings/ascii.h>
 #include <benchmark/benchmark.h>
 
 #include <cstdint>
@@ -74,10 +75,17 @@ void SetBytes(benchmark::State& state, const std::string& data) {
 
 void RunFunction(benchmark::State& state, const std::string& data) {
   const bool to_lower = state.range(0) != 0;
-  std::string buf;
+  std::string lowered;
   for (auto _ : state) {
-    SplitByNonAlpha(data, to_lower, buf, [](std::string_view token) {
-      benchmark::DoNotOptimize(token);
+    SplitByNonAlpha(data, [&](std::string_view token) {
+      if (to_lower) {
+        lowered.resize(token.size());
+        absl::ascii_internal::AsciiStrToLower(lowered.data(), token.data(),
+                                              token.size());
+        benchmark::DoNotOptimize(lowered);
+      } else {
+        benchmark::DoNotOptimize(token);
+      }
     });
   }
   SetBytes(state, data);
@@ -108,6 +116,28 @@ void RunSegmentation(benchmark::State& state, const std::string& data) {
     while (bool has_next = stream->next()) {
       benchmark::DoNotOptimize(has_next);
     }
+  }
+  SetBytes(state, data);
+}
+
+std::string MakeSmallInput(size_t n) {
+  absl::BitGen bitgen;
+  static constexpr char kChars[] =
+    "0123456789qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM   ,.!-_";
+  constexpr auto kN = sizeof(kChars) - 1;
+  std::string data;
+  data.reserve(n);
+  for (size_t i = 0; i < n; ++i) {
+    data += kChars[absl::Uniform(bitgen, 0u, static_cast<uint32_t>(kN))];
+  }
+  return data;
+}
+
+void BmSmallInput(benchmark::State& state) {
+  const std::string data = MakeSmallInput(static_cast<size_t>(state.range(0)));
+  for (auto _ : state) {
+    SplitByNonAlpha(
+      data, [](std::string_view token) { benchmark::DoNotOptimize(token); });
   }
   SetBytes(state, data);
 }
@@ -149,5 +179,7 @@ BENCHMARK_REGISTER_F(MixedCorpus, BmSegmentation)->Arg(1);
 BENCHMARK_REGISTER_F(LongTokenCorpus, BmFunction)->Arg(0)->Arg(1);
 BENCHMARK_REGISTER_F(LongTokenCorpus, BmPattern)->Arg(0);
 BENCHMARK_REGISTER_F(LongTokenCorpus, BmSegmentation)->Arg(1);
+
+BENCHMARK(BmSmallInput)->Arg(8)->Arg(16)->Arg(24)->Arg(31)->Arg(48)->Arg(64);
 
 BENCHMARK_MAIN();

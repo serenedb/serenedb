@@ -25,16 +25,14 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
-#include <string>
 #include <string_view>
 
 namespace irs::analysis {
 
-inline constexpr size_t kAlnumBlockBytes = 32;
-
+template<unsigned BlockBytes>
 inline uint32_t ClassifyAlnumBlock(const char* block) noexcept {
   uint32_t bitmask = 0;
-  for (uint32_t i = 0; i < kAlnumBlockBytes; ++i) {
+  for (unsigned i = 0; i < BlockBytes; ++i) {
     const unsigned char byte = static_cast<unsigned char>(block[i]);
     const unsigned char lowered = byte | 0x20;
     const uint32_t is_digit = static_cast<unsigned char>(byte - '0') < 10;
@@ -50,9 +48,13 @@ class AlnumTokenAssembler {
   AlnumTokenAssembler(const char* input, EmitFn& emit) noexcept
     : _input{input}, _emit{emit} {}
 
+  template<unsigned BlockBytes>
   void ConsumeBlock(uint32_t bitmask, size_t offset) {
+    constexpr uint32_t kValidBits =
+      BlockBytes >= 32 ? ~uint32_t{0} : (uint32_t{1} << BlockBytes) - 1;
+
     if (_token_open) {
-      const uint32_t separators = ~bitmask;
+      const uint32_t separators = ~bitmask & kValidBits;
       if (separators == 0) {
         return;
       }
@@ -64,7 +66,7 @@ class AlnumTokenAssembler {
     while (bitmask != 0) {
       const int token_begin = std::countr_zero(bitmask);
       const int token_length = std::countr_zero(~(bitmask >> token_begin));
-      if (token_begin + token_length >= static_cast<int>(kAlnumBlockBytes)) {
+      if (token_begin + token_length >= static_cast<int>(BlockBytes)) {
         OpenToken(offset + token_begin);
         return;
       }
@@ -120,30 +122,26 @@ template<typename EmitFn>
 void SplitByNonAlpha(std::string_view data, EmitFn&& emit) {
   const char* const input = data.data();
   const size_t size = data.size();
-  const size_t whole_blocks_size = size & ~(kAlnumBlockBytes - 1);
 
   AlnumTokenAssembler assembler{input, emit};
-  for (size_t offset = 0; offset < whole_blocks_size;
-       offset += kAlnumBlockBytes) {
-    assembler.ConsumeBlock(ClassifyAlnumBlock(input + offset), offset);
+  size_t offset = 0;
+  while (size - offset >= 32) {
+    assembler.template ConsumeBlock<32>(ClassifyAlnumBlock<32>(input + offset),
+                                        offset);
+    offset += 32;
   }
-  assembler.ConsumeTail(whole_blocks_size, size);
+  if (size - offset >= 16) {
+    assembler.template ConsumeBlock<16>(ClassifyAlnumBlock<16>(input + offset),
+                                        offset);
+    offset += 16;
+  }
+  if (size - offset >= 8) {
+    assembler.template ConsumeBlock<8>(ClassifyAlnumBlock<8>(input + offset),
+                                       offset);
+    offset += 8;
+  }
+  assembler.ConsumeTail(offset, size);
   assembler.Finish(size);
-}
-
-template<typename EmitFn>
-void SplitByNonAlpha(std::string_view data, bool to_lower, std::string& buf,
-                     EmitFn&& emit) {
-  SplitByNonAlpha(data, [&](std::string_view token) {
-    if (to_lower) {
-      buf.resize(token.size());
-      absl::ascii_internal::AsciiStrToLower(buf.data(), token.data(),
-                                            token.size());
-      emit(std::string_view{buf});
-    } else {
-      emit(token);
-    }
-  });
 }
 
 }  // namespace irs::analysis

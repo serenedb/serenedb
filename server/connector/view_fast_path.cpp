@@ -309,7 +309,6 @@ std::optional<ViewFastPath> ResolveViewFastPath(
                         .table = catalog::StoreTableName(
                           entry.ParentCatalog().GetName(),
                           entry.ParentSchema().name, entry.name)};
-      out.base_table_id = sdb_table->GetId();
       out.pk_spec = catalog::PkSpec::DuckDBRowId;
       out.projection_columns = std::move(projection_columns);
       return out;

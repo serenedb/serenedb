@@ -22,35 +22,118 @@
 
 #include <absl/strings/ascii.h>
 
+#include <bit>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
 
 namespace irs::analysis {
 
-size_t FindFirstAlnum(const char* data, size_t pos, size_t size) noexcept;
-size_t FindFirstNonAlnum(const char* data, size_t pos, size_t size) noexcept;
+inline constexpr size_t kAlnumBlockBytes = 32;
 
-template<typename Emit>
-void SplitByNonAlpha(std::string_view data, Emit&& emit) {
-  const char* const base = data.data();
-  const size_t size = data.size();
-  size_t pos = 0;
-
-  while (pos < size) {
-    pos = FindFirstAlnum(base, pos, size);
-    if (pos >= size) {
-      break;
-    }
-    const size_t start = pos;
-    pos = FindFirstNonAlnum(base, pos, size);
-    emit(std::string_view{base + start, pos - start});
+inline uint32_t ClassifyAlnumBlock(const char* block) noexcept {
+  uint32_t bitmask = 0;
+  for (uint32_t i = 0; i < kAlnumBlockBytes; ++i) {
+    const unsigned char byte = static_cast<unsigned char>(block[i]);
+    const unsigned char lowered = byte | 0x20;
+    const uint32_t is_digit = static_cast<unsigned char>(byte - '0') < 10;
+    const uint32_t is_letter = static_cast<unsigned char>(lowered - 'a') < 26;
+    bitmask |= (is_digit | is_letter) << i;
   }
+  return bitmask;
 }
 
-template<typename Emit>
+template<typename EmitFn>
+class AlnumTokenAssembler {
+ public:
+  AlnumTokenAssembler(const char* input, EmitFn& emit) noexcept
+    : _input{input}, _emit{emit} {}
+
+  void ConsumeBlock(uint32_t bitmask, size_t offset) {
+    if (_token_open) {
+      const uint32_t separators = ~bitmask;
+      if (separators == 0) {
+        return;
+      }
+      const int token_end = std::countr_zero(separators);
+      CloseToken(offset + token_end);
+      bitmask &= ~LowBitsMask(token_end);
+    }
+
+    while (bitmask != 0) {
+      const int token_begin = std::countr_zero(bitmask);
+      const int token_length = std::countr_zero(~(bitmask >> token_begin));
+      if (token_begin + token_length >= static_cast<int>(kAlnumBlockBytes)) {
+        OpenToken(offset + token_begin);
+        return;
+      }
+      EmitToken(offset + token_begin, token_length);
+      bitmask &= ~(LowBitsMask(token_length) << token_begin);
+    }
+  }
+
+  void ConsumeTail(size_t begin, size_t end) {
+    for (size_t pos = begin; pos < end; ++pos) {
+      const bool alnum =
+        absl::ascii_isalnum(static_cast<unsigned char>(_input[pos]));
+      if (alnum && !_token_open) {
+        OpenToken(pos);
+      } else if (!alnum && _token_open) {
+        CloseToken(pos);
+      }
+    }
+  }
+
+  void Finish(size_t input_end) {
+    if (_token_open) {
+      CloseToken(input_end);
+    }
+  }
+
+ private:
+  static uint32_t LowBitsMask(int count) noexcept {
+    return (uint32_t{1} << count) - 1;
+  }
+
+  void OpenToken(size_t begin) noexcept {
+    _token_begin = begin;
+    _token_open = true;
+  }
+
+  void CloseToken(size_t end) {
+    _emit(std::string_view{_input + _token_begin, end - _token_begin});
+    _token_open = false;
+  }
+
+  void EmitToken(size_t begin, int length) {
+    _emit(std::string_view{_input + begin, static_cast<size_t>(length)});
+  }
+
+  const char* _input;
+  EmitFn& _emit;
+  size_t _token_begin = 0;
+  bool _token_open = false;
+};
+
+template<typename EmitFn>
+void SplitByNonAlpha(std::string_view data, EmitFn&& emit) {
+  const char* const input = data.data();
+  const size_t size = data.size();
+  const size_t whole_blocks_size = size & ~(kAlnumBlockBytes - 1);
+
+  AlnumTokenAssembler assembler{input, emit};
+  for (size_t offset = 0; offset < whole_blocks_size;
+       offset += kAlnumBlockBytes) {
+    assembler.ConsumeBlock(ClassifyAlnumBlock(input + offset), offset);
+  }
+  assembler.ConsumeTail(whole_blocks_size, size);
+  assembler.Finish(size);
+}
+
+template<typename EmitFn>
 void SplitByNonAlpha(std::string_view data, bool to_lower, std::string& buf,
-                     Emit&& emit) {
+                     EmitFn&& emit) {
   SplitByNonAlpha(data, [&](std::string_view token) {
     if (to_lower) {
       buf.resize(token.size());

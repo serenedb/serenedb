@@ -62,7 +62,7 @@ count
 # merge timing), so the probes below would be flaky. With it they return the
 # true nearest neighbours.
 statement ok
-SET sdb_ef_search TO 4096
+SET sdb_nprobe TO 4096
 
 
 query

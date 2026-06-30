@@ -22,7 +22,6 @@
 
 #include <cstdint>
 #include <duckdb/catalog/catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/enums/catalog_type.hpp>
 #include <duckdb/common/enums/statement_type.hpp>
 #include <duckdb/main/database.hpp>

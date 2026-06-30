@@ -960,7 +960,6 @@ Result CatalogStore::ExecuteCreateStoreTableImpl(const StoreTableDef& def,
   return basics::SafeCall([&]() -> Result {
     auto info = duckdb::make_uniq<duckdb::CreateTableInfo>(
       std::string{kStoreAlias}, "main", def.name);
-    info->tags["sdb_table_id"] = std::to_string(def.table_id.id());
     for (const auto& col : def.columns) {
       info->columns.AddColumn(duckdb::ColumnDefinition{col.name, col.type});
     }

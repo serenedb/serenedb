@@ -51,22 +51,12 @@ bool HasAdminOption(const catalog::Snapshot& snapshot, ObjectId member,
 
 namespace {
 
-// `any_of` = has_*_privilege comma-list semantics (>=1 bit) vs enforcement's
-// all-of (every bit in `need`). superuser/owner imply all privileges. The
-// privilege class is `object.GetType()`.
 bool CheckPrivilege(const RoleClosure& rc, const catalog::Object& object,
                     catalog::AclMode need, bool any_of) {
   if (rc.is_superuser) {
     return true;
   }
-  // Note: a non-resolvable id (PUBLIC pseudo-grantee, dangling grantee) still
-  // runs the ACL walk below -- its closure is seeded with the id itself, so
-  // PUBLIC entries match. Only a real Role contributes a superuser bit or
-  // inherit edges to the closure.
 
-  // Ownercheck short-circuits the ACL. An unset owner (e.g. an index, which
-  // derives ownership from its table) is in no role's closure and grants no
-  // implicit access -- the correct default, so it is passed through as-is.
   const auto owner = object.GetOwner();
   if (std::ranges::binary_search(rc.closure, owner)) {
     return true;
@@ -102,9 +92,6 @@ bool HasAnyPrivilege(const catalog::Snapshot& snapshot, ObjectId role,
 
 namespace {
 
-// A column carries the privilege if the table owner reaches it (the owner holds
-// every column privilege) or the column's own ACL grants it. Column privileges
-// use the Table privilege class (SELECT/INSERT/UPDATE share the relation bits).
 bool ColumnGrants(const catalog::Column& column, ObjectId owner,
                   RoleIdSpan closure, catalog::AclMode need) {
   return AclCheckSorted(column.GetAcl(), catalog::ObjectType::Table, owner,

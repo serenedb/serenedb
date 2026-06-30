@@ -47,6 +47,7 @@ struct IVFColumnConfig {
   irs::field_id centroids_id = irs::field_limits::invalid();
   irs::field_id postings_id = irs::field_limits::invalid();
   irs::field_id sq_id = irs::field_limits::invalid();
+  uint32_t pq_m = 0;
 };
 
 // Persisted per-field iresearch config, keyed by field_id in InvertedIndexData.

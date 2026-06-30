@@ -44,9 +44,16 @@ enum class VectorMetric : uint8_t {
 enum class VectorQuantization : uint8_t {
   None = 0,
   SQ8,
+  SQ4,
+  PQ,
 };
 
 struct IvfInfo {
+  struct Quantizer {
+    VectorQuantization kind = VectorQuantization::None;
+    uint32_t pq_m = 0;
+  };
+
   field_id centroids_id = field_limits::invalid();
   field_id postings_id = field_limits::invalid();
   field_id sq_id = field_limits::invalid();
@@ -55,7 +62,7 @@ struct IvfInfo {
   int d = 0;
 
   VectorMetric metric = VectorMetric::L2Sqr;
-  VectorQuantization quant = VectorQuantization::None;
+  Quantizer quant;
 
   uint32_t nlist = 0;
 

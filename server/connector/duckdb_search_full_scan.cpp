@@ -89,6 +89,7 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
   o->centroids_id = vs.centroids_id;
   o->postings_id = vs.postings_id;
   o->metric = vs.metric;
+  o->quant = vs.quant;
   o->nprobe = vs.nprobe;
   o->inner = std::move(inner);
   return f;

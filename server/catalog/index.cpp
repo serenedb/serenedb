@@ -62,8 +62,11 @@ constexpr std::string_view kIPMetric = "ip";
 constexpr std::string_view kNlistField = "nlist";
 constexpr std::string_view kTrainSampleField = "train_sample";
 constexpr std::string_view kQuantField = "quant";
+constexpr std::string_view kPqMField = "pq_m";
 
 constexpr std::string_view kSQ8Quant = "sq8";
+constexpr std::string_view kSQ4Quant = "sq4";
+constexpr std::string_view kPQQuant = "pq";
 constexpr std::string_view kNoneQuant = "none";
 
 template<typename T>
@@ -410,7 +413,8 @@ std::string DescribeIVFOptions() {
   return "metric (string: l2|l1|cosine|ip, REQUIRED), "
          "nlist (int >= 1, default auto ~sqrt(rows)), "
          "train_sample (int >= 1, default auto), "
-         "quant (string: sq8|none, default none), "
+         "quant (string: sq8|sq4|pq|none, default none; sq4/pq need l2|ip), "
+         "pq_m (int >= 1, divides dimension, quant='pq' only, default auto), "
          "compression (string, default 'auto'), "
          "row_group_size (int >= 1)";
 }
@@ -492,6 +496,10 @@ Result ApplyIVFOptions(
       absl::AsciiStrToLower(&v);
       if (v == kSQ8Quant) {
         cfg.quant = irs::VectorQuantization::SQ8;
+      } else if (v == kSQ4Quant) {
+        cfg.quant = irs::VectorQuantization::SQ4;
+      } else if (v == kPQQuant) {
+        cfg.quant = irs::VectorQuantization::PQ;
       } else if (v == kNoneQuant) {
         cfg.quant = irs::VectorQuantization::None;
       } else {
@@ -503,8 +511,27 @@ Result ApplyIVFOptions(
                 "'. Expected one of: ",
                 kSQ8Quant,
                 " ",
+                kSQ4Quant,
+                " ",
+                kPQQuant,
+                " ",
                 kNoneQuant};
       }
+    } else if (key == kPqMField) {
+      auto n = GetIndexIntOption(kIVFKind, column_name, key, raw_val);
+      if (!n) {
+        return std::move(n).error();
+      }
+      if (*n < 1) {
+        return {ERROR_BAD_PARAMETER,
+                "Column '",
+                column_name,
+                "': ivf option '",
+                kPqMField,
+                "' must be positive, got ",
+                *n};
+      }
+      cfg.pq_m = static_cast<uint32_t>(*n);
     } else if (key == kCompressionField) {
       auto str = GetIndexStringOption(kIVFKind, column_name, key, raw_val);
       if (!str) {
@@ -535,6 +562,50 @@ Result ApplyIVFOptions(
             kL1Metric,           ", ",
             kCosineMetric,       ", ",
             kIPMetric,           "). Example: ivf (metric = 'l2')"};
+  }
+  if (cfg.quant != irs::VectorQuantization::None &&
+      cfg.metric != irs::VectorMetric::L2Sqr &&
+      cfg.metric != irs::VectorMetric::InnerProduct) {
+    return {ERROR_BAD_PARAMETER, "Column '",
+            column_name,         "': ivf quantization supports only metric '",
+            kL2Metric,           "' or '",
+            kIPMetric,           "'"};
+  }
+  if (cfg.quant == irs::VectorQuantization::PQ) {
+    if (cfg.pq_m == 0) {
+      // Default: snap the number of subquantizers to a divisor of d giving a
+      // subvector dimension close to 8.
+      constexpr int kTargetDsub = 8;
+      uint32_t best = 1;
+      int best_diff = cfg.d;
+      for (int m = 1; m <= cfg.d; ++m) {
+        if (cfg.d % m != 0) {
+          continue;
+        }
+        const int dsub = cfg.d / m;
+        const int diff =
+          dsub > kTargetDsub ? dsub - kTargetDsub : kTargetDsub - dsub;
+        if (diff < best_diff) {
+          best_diff = diff;
+          best = static_cast<uint32_t>(m);
+        }
+      }
+      cfg.pq_m = best;
+    }
+    if (cfg.d <= 0 || cfg.d % static_cast<int>(cfg.pq_m) != 0) {
+      return {ERROR_BAD_PARAMETER,
+              "Column '",
+              column_name,
+              "': ivf option '",
+              kPqMField,
+              "' (",
+              cfg.pq_m,
+              ") must divide the vector dimension ",
+              cfg.d};
+    }
+  } else if (cfg.pq_m != 0) {
+    return {ERROR_BAD_PARAMETER, "Column '", column_name,
+            "': ivf option '",   kPqMField,  "' is only valid with quant 'pq'"};
   }
   return {};
 }

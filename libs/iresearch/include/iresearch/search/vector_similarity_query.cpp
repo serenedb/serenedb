@@ -380,17 +380,25 @@ DocIterator::ptr KnnVectorQuery::Execute(const ExecutionContext& ctx,
     ScoreAdapters children;
     children.reserve(_state.cookies.size());
     bool ok = true;
+    const bool has_centroids =
+      _state.cluster_centroids.size() == _state.cookies.size() * _state.d;
     for (size_t c = 0; c < _state.cookies.size(); ++c) {
       auto pay_in = _state.reader->ReopenPayload();
-      auto vr =
-        pay_in ? MakeQuantizerReader(_state.quant, std::move(pay_in), _state.d)
-               : nullptr;
+      auto vr = pay_in
+                  ? MakeQuantizerReader(
+                      _state.quant, std::move(pay_in), _state.d,
+                      {_state.quant_stats.data(), _state.quant_stats.size()})
+                  : nullptr;
       if (!vr) {
         ok = false;
         break;
       }
+      const float* centroid = has_centroids
+                                ? _state.cluster_centroids.data() + c * _state.d
+                                : nullptr;
       vr->SetQuery(query, _metric);
-      vr->StartCluster(_state.pay_starts[c], _state.cluster_counts[c]);
+      vr->StartCluster(_state.pay_starts[c], _state.cluster_counts[c],
+                       centroid);
 
       const PostingCookie cookie{.cookie = _state.cookies[c].get(),
                                  .field = _state.reader->meta()};

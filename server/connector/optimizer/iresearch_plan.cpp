@@ -468,6 +468,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
       .natural_order = info.order,
       .centroids_id = ann_info->centroids_id,
       .postings_id = ann_info->postings_id,
+      .quant = ann_info->quant.kind,
       .nprobe = ReadNprobe(context),
     };
     ss.score_order = irs::VectorMetricNearestIsLargest(info.metric)

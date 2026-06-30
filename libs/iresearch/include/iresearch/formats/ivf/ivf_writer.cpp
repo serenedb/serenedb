@@ -123,7 +123,7 @@ uint32_t ResolveNlist(const IvfInfo& info, uint64_t valid_count) {
 }  // namespace
 
 BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
-                           IdxWriter& idx) const {
+                           IdxWriter& idx, QuantizerWriter* qw) const {
   const auto* child = vector_column.Child();
   SDB_ASSERT(child);
   const auto d = static_cast<uint32_t>(vector_column.ArraySize());
@@ -151,7 +151,10 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
     1, valid_count));
   const uint32_t n_l2_target = static_cast<uint32_t>(std::max<uint64_t>(
     1, (static_cast<uint64_t>(total_target) + n_l1 - 1) / n_l1));
-  const uint64_t n_train = ResolveTrainSample(_info, valid_count, total_target);
+  uint64_t n_train = ResolveTrainSample(_info, valid_count, total_target);
+  if (_info.quant.kind == VectorQuantization::PQ) {
+    n_train = std::min<uint64_t>(valid_count, std::max<uint64_t>(n_train, 256));
+  }
 
   std::vector<float> sample(static_cast<size_t>(n_train) * d);
   {
@@ -181,6 +184,7 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
   }
 
   const VectorMetric m = _info.metric;
+  const bool pq = _info.quant.kind == VectorQuantization::PQ;
   if (m == VectorMetric::Cosine) {
     NormalizeRows(sample.data(), n_train, d);
   }
@@ -195,12 +199,18 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
     std::vector<float> gather;
     gather.reserve(STANDARD_VECTOR_SIZE * d);
     size_t gathered = 0;
+    const bool sq_train = qw != nullptr && !pq;
     const auto flush = [&]() {
       if (gathered == 0) {
         return;
       }
       AssignNearest(m, gather.data(), gathered, l1_centroids.data(), n_l1, d,
                     doc_cell);
+      // Scalar quantizers accumulate their global [vmin, vdiff] over every
+      // vector here (streamed), not just the centroid-training sample.
+      if (sq_train) {
+        qw->Train(gather.data(), gathered);
+      }
       gather.clear();
       gathered = 0;
     };
@@ -262,6 +272,7 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
   std::vector<float> l2_centroids;
   std::vector<float> cell_sample;
   std::vector<uint32_t> fine_ids;
+  std::vector<float> residual_sample;
 
   for (uint32_t c = 0; c < n_l1; ++c) {
     body_offsets.push_back(bout.Position());
@@ -312,6 +323,23 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
     bout.WriteData(reinterpret_cast<const byte_type*>(fine_ids.data()),
                    static_cast<size_t>(n_l2) * sizeof(uint32_t));
 
+    out.fine_centroids.insert(
+      out.fine_centroids.end(), l2_centroids.data(),
+      l2_centroids.data() + static_cast<size_t>(n_l2) * d);
+    if (pq) {
+      for (const uint32_t si : sidx) {
+        const float* v = sample.data() + static_cast<size_t>(si) * d;
+        const uint32_t best =
+          NearestCentroid(m, v, l2_centroids.data(), n_l2, d);
+        const float* cen = l2_centroids.data() + static_cast<size_t>(best) * d;
+        const size_t base = residual_sample.size();
+        residual_sample.resize(base + d);
+        for (uint32_t j = 0; j < d; ++j) {
+          residual_sample[base + j] = v[j] - cen[j];
+        }
+      }
+    }
+
     std::vector<std::vector<doc_id_t>> sub(n_l2);
     {
       ColumnReader::RangeScan member_scan{*child, ctx};
@@ -335,12 +363,21 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
     next_fine_id += n_l2;
   }
 
+  std::span<const byte_type> stats;
+  if (qw != nullptr) {
+    if (pq) {
+      qw->Train(residual_sample.data(), residual_sample.size() / d);
+    }
+    stats = qw->StatsBytes();
+  }
+
   out.resident_offset = bout.Position();
-  TwoLayerCentroids::WriteFooter(bout, _info.metric, d, n_l1,
-                                 std::span<const float>{l1_centroids},
-                                 std::span<const uint64_t>{body_offsets});
+  TwoLayerCentroids::WriteFooter(
+    bout, _info.metric, d, n_l1, std::span<const float>{l1_centroids},
+    std::span<const uint64_t>{body_offsets}, stats);
   out.resident_size = bout.Position() - out.resident_offset;
-  SDB_ASSERT(out.resident_size == TwoLayerCentroids::FooterSize(d, n_l1));
+  SDB_ASSERT(out.resident_size ==
+             TwoLayerCentroids::FooterSize(d, n_l1, stats.size()));
   out.empty = false;
   return out;
 }
@@ -443,18 +480,20 @@ IvfTermReader::IvfTermReader(field_id postings_id,
                              std::span<const doc_id_t> cluster_docs,
                              std::span<const uint64_t> cluster_offsets,
                              QuantizerWriter* qw, const ColumnReader* vectors,
-                             ReadContext* ctx, uint32_t d)
+                             ReadContext* ctx, uint32_t d,
+                             std::span<const float> fine_centroids)
   : _cluster_docs{cluster_docs},
     _cluster_offsets{cluster_offsets},
     _qw{qw},
     _vectors{vectors},
     _ctx{ctx},
     _d{d},
+    _fine_centroids{fine_centroids},
+    _count{cluster_offsets.empty() ? 0 : cluster_offsets.size() - 1},
     _meta{postings_id,
           qw != nullptr ? IndexFeatures::Pay : IndexFeatures::None} {
-  const size_t count = cluster_offsets.empty() ? 0 : cluster_offsets.size() - 1;
   bool found = false;
-  for (size_t c = 0; c < count; ++c) {
+  for (size_t c = 0; c < _count; ++c) {
     if (cluster_offsets[c + 1] == cluster_offsets[c]) {
       continue;
     }
@@ -478,35 +517,34 @@ TermIterator::ptr IvfTermReader::iterator() const {
 void IvfTermReader::WriteTermPayload(IndexOutput& out,
                                      std::span<const doc_id_t> docs) {
   SDB_ASSERT(_qw && _vectors && _vectors->Child() && _ctx);
-  const size_t n = docs.size();
-  if (n != 0) {
-    constexpr size_t kBatch = STANDARD_VECTOR_SIZE;
-    _vec_buf.resize(std::min(n, kBatch) * _d);
-    auto scan_batches = [&](auto&& sink) {
-      ColumnReader::RangeScan scan{*_vectors->Child(), *_ctx};
-      duckdb::Vector row{duckdb::LogicalType::FLOAT,
-                         static_cast<duckdb::idx_t>(_d)};
-      size_t filled = 0;
-      for (size_t k = 0; k < n; ++k) {
-        const uint64_t r = static_cast<uint64_t>(docs[k]) - doc_limits::min();
-        scan.Scan(r * _d, _d, row, /*out_offset=*/0);
-        std::memcpy(_vec_buf.data() + filled * _d,
-                    duckdb::FlatVector::GetData<float>(row),
-                    static_cast<size_t>(_d) * sizeof(float));
-        if (++filled == kBatch) {
-          sink(_vec_buf.data(), filled);
-          filled = 0;
-        }
-      }
-      if (filled != 0) {
-        sink(_vec_buf.data(), filled);
-      }
-    };
-    scan_batches([&](const float* p, size_t c) { _qw->UpdateStats(p, c); });
-    scan_batches(
-      [&](const float* p, size_t c) { _qw->EncodeCluster(out, p, c); });
+  const size_t cluster = _term_idx++;
+  if (cluster < _count && (cluster + 1) * _d <= _fine_centroids.size()) {
+    _qw->SetClusterCentroid(_fine_centroids.data() + cluster * _d);
   }
-  _qw->Finalize(out);
+  const size_t n = docs.size();
+  if (n == 0) {
+    return;
+  }
+  constexpr size_t kBatch = STANDARD_VECTOR_SIZE;
+  _vec_buf.resize(std::min(n, kBatch) * _d);
+  ColumnReader::RangeScan scan{*_vectors->Child(), *_ctx};
+  duckdb::Vector row{duckdb::LogicalType::FLOAT,
+                     static_cast<duckdb::idx_t>(_d)};
+  size_t filled = 0;
+  for (size_t k = 0; k < n; ++k) {
+    const uint64_t r = static_cast<uint64_t>(docs[k]) - doc_limits::min();
+    scan.Scan(r * _d, _d, row, /*out_offset=*/0);
+    std::memcpy(_vec_buf.data() + filled * _d,
+                duckdb::FlatVector::GetData<float>(row),
+                static_cast<size_t>(_d) * sizeof(float));
+    if (++filled == kBatch) {
+      _qw->EncodeCluster(out, _vec_buf.data(), filled);
+      filled = 0;
+    }
+  }
+  if (filled != 0) {
+    _qw->EncodeCluster(out, _vec_buf.data(), filled);
+  }
 }
 
 void IvfTermReader::Finish(IndexOutput& /*out*/) { SDB_ASSERT(_qw); }
@@ -528,21 +566,21 @@ void IvfWriter::OnCommit(ColWriter& cw, IdxWriter& idx,
     }
     const auto d = static_cast<uint32_t>(col->ArraySize());
     auto qw =
-      MakeQuantizerWriter(opts.ivf_info->quant, d, opts.ivf_info->metric);
+      MakeQuantizerWriter(opts.ivf_info->quant.kind, d, opts.ivf_info->metric,
+                          opts.ivf_info->quant.pq_m);
 
     IvfBuilder builder{*opts.ivf_info};
-    BuiltIvf built = builder.Build(*col, cw.CommitReadContext(), idx);
+    BuiltIvf built = builder.Build(*col, cw.CommitReadContext(), idx, qw.get());
     if (built.empty) {
       continue;
     }
-    // The centroid entry was already streamed into the `.idx`; record its
-    // resident-trailer location for the footer.
     idx.AddCentroidsEntry(opts.ivf_info->centroids_id, built.resident_offset,
                           built.resident_size);
     _results.push_back(
       Result{.postings_id = opts.ivf_info->postings_id,
              .cluster_docs = std::move(built.cluster_docs),
              .cluster_offsets = std::move(built.cluster_offsets),
+             .fine_centroids = std::move(built.fine_centroids),
              .qw = std::move(qw),
              .vector_column = std::move(col),
              .d = d});
@@ -557,7 +595,7 @@ std::span<const BasicTermReader* const> IvfWriter::ClusterReaders(
     for (auto& r : _results) {
       _readers.push_back(std::make_unique<IvfTermReader>(
         r.postings_id, r.cluster_docs, r.cluster_offsets, r.qw.get(),
-        r.vector_column.get(), &ctx, r.d));
+        r.vector_column.get(), &ctx, r.d, r.fine_centroids));
       _reader_ptrs.push_back(_readers.back().get());
     }
   }

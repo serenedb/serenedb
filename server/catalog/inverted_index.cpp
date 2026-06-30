@@ -420,7 +420,7 @@ std::optional<irs::IvfInfo> InvertedIndex::GetIvfInfo(
     .sq_id = cfg.sq_id,
     .d = cfg.d,
     .metric = cfg.metric,
-    .quant = cfg.quant,
+    .quant = {.kind = cfg.quant, .pq_m = cfg.pq_m},
     .nlist = cfg.nlist,
     .train_sample = cfg.train_sample,
   };

@@ -54,7 +54,8 @@ void TopK(std::vector<std::pair<float, uint32_t>>& scored, uint32_t k,
 void TwoLayerCentroids::WriteFooter(IndexOutput& out, VectorMetric metric,
                                     uint32_t d, uint32_t n_l1,
                                     std::span<const float> l1_centroids,
-                                    std::span<const uint64_t> body_offsets) {
+                                    std::span<const uint64_t> body_offsets,
+                                    std::span<const byte_type> quant_stats) {
   out.WriteByte(static_cast<byte_type>(metric));
   out.WriteU32(d);
   out.WriteU32(n_l1);
@@ -64,6 +65,10 @@ void TwoLayerCentroids::WriteFooter(IndexOutput& out, VectorMetric metric,
   }
   for (const uint64_t off : body_offsets) {
     out.WriteU64(off);
+  }
+  out.WriteU64(quant_stats.size());
+  if (!quant_stats.empty()) {
+    out.WriteData(quant_stats.data(), quant_stats.size());
   }
 }
 
@@ -80,12 +85,6 @@ TwoLayerCentroids TwoLayerCentroids::Deserialize(IndexInput& in,
   out._d = static_cast<uint32_t>(in.ReadI32());
   out._n_l1 = static_cast<uint32_t>(in.ReadI32());
 
-  SDB_ENSURE(TwoLayerCentroids::FooterSize(out._d, out._n_l1) == byte_size,
-             sdb::ERROR_SERVER_CORRUPTED_DATAFILE,
-             "idx: two-layer centroid resident size mismatch (computed ",
-             TwoLayerCentroids::FooterSize(out._d, out._n_l1), ", expected ",
-             byte_size, ")");
-
   const size_t l1_count = static_cast<size_t>(out._n_l1) * out._d;
 
   out._l1_centroids.resize(l1_count);
@@ -96,6 +95,20 @@ TwoLayerCentroids TwoLayerCentroids::Deserialize(IndexInput& in,
   out._offsets.resize(out._n_l1);
   for (uint32_t i = 0; i < out._n_l1; ++i) {
     out._offsets[i] = static_cast<uint64_t>(in.ReadI64());
+  }
+
+  const uint64_t stats_len = static_cast<uint64_t>(in.ReadI64());
+
+  SDB_ENSURE(
+    TwoLayerCentroids::FooterSize(out._d, out._n_l1, stats_len) == byte_size,
+    sdb::ERROR_SERVER_CORRUPTED_DATAFILE,
+    "idx: two-layer centroid resident size mismatch (computed ",
+    TwoLayerCentroids::FooterSize(out._d, out._n_l1, stats_len), ", expected ",
+    byte_size, ")");
+
+  out._quant_stats.resize(stats_len);
+  if (stats_len != 0) {
+    in.ReadData(out._quant_stats.data(), stats_len);
   }
 
   return out;

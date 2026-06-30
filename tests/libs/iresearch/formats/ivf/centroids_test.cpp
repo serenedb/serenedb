@@ -61,9 +61,9 @@ Serialized WriteEntry(IndexOutput& out, VectorMetric metric, uint32_t d,
   }
   Serialized s;
   s.resident_offset = out.Position();
-  TwoLayerCentroids::WriteFooter(out, metric, d, n_l1,
-                                 std::span<const float>{l1_centroids},
-                                 std::span<const uint64_t>{body_offsets});
+  TwoLayerCentroids::WriteFooter(
+    out, metric, d, n_l1, std::span<const float>{l1_centroids},
+    std::span<const uint64_t>{body_offsets}, std::span<const byte_type>{});
   s.resident_size = out.Position() - s.resident_offset;
   return s;
 }
@@ -89,7 +89,8 @@ TEST(two_layer_centroids_test, roundtrip_and_search) {
     s = WriteEntry(out, VectorMetric::L2Sqr, d, l1, bodies);
     out.Flush();
   }
-  ASSERT_EQ(s.resident_size, TwoLayerCentroids::FooterSize(d, 2));
+  ASSERT_EQ(s.resident_size,
+            TwoLayerCentroids::FooterSize(d, 2, /*stats_len=*/0));
 
   MemoryIndexInput in{file};
   in.Seek(s.resident_offset);

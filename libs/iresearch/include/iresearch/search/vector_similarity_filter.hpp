@@ -30,12 +30,6 @@ namespace irs {
 
 class ByVectorSimilarity;
 
-// kNN options. The filter's field id is the original ARRAY(FLOAT) vector column
-// (used for exact rerank); `centroids_id` and `postings_id` are the companion
-// IVF field ids allocated by the connector. `nprobe` cluster lists nearest to
-// `query` are unioned; the outer top-K collector truncates the scored result.
-// `inner` is an optional predicate (e.g. a text filter) intersected with the
-// cluster-union candidates before rerank, for hybrid search.
 struct ByVectorSimilarityOptions {
   using FilterType = ByVectorSimilarity;
 
@@ -43,13 +37,14 @@ struct ByVectorSimilarityOptions {
   field_id centroids_id = field_limits::invalid();
   field_id postings_id = field_limits::invalid();
   VectorMetric metric = VectorMetric::L2Sqr;
+  VectorQuantization quant = VectorQuantization::None;
   uint32_t nprobe = 1;
   std::shared_ptr<const Filter> inner;
 
   bool operator==(const ByVectorSimilarityOptions& rhs) const noexcept {
     return query == rhs.query && centroids_id == rhs.centroids_id &&
            postings_id == rhs.postings_id && metric == rhs.metric &&
-           nprobe == rhs.nprobe && inner == rhs.inner;
+           quant == rhs.quant && nprobe == rhs.nprobe && inner == rhs.inner;
   }
 };
 

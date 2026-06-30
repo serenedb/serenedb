@@ -112,6 +112,7 @@ struct VectorScorerOptions {
   duckdb::OrderType natural_order;
   irs::field_id centroids_id = irs::field_limits::invalid();
   irs::field_id postings_id = irs::field_limits::invalid();
+  irs::VectorQuantization quant = irs::VectorQuantization::None;
   uint32_t nprobe = 1;
   float radius = std::numeric_limits<float>::max();
   bool radius_inclusive = false;

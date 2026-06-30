@@ -67,14 +67,20 @@ class TwoLayerCentroids {
   VectorMetric Metric() const noexcept { return _metric; }
   bool Empty() const noexcept { return _n_l1 == 0; }
 
+  std::span<const byte_type> QuantStats() const noexcept {
+    return {_quant_stats.data(), _quant_stats.size()};
+  }
+
   static void WriteFooter(IndexOutput& out, VectorMetric metric, uint32_t d,
                           uint32_t n_l1, std::span<const float> l1_centroids,
-                          std::span<const uint64_t> body_offsets);
+                          std::span<const uint64_t> body_offsets,
+                          std::span<const byte_type> quant_stats);
 
-  static inline constexpr uint64_t FooterSize(uint32_t d,
-                                              uint32_t n_l1) noexcept {
+  static inline constexpr uint64_t FooterSize(uint32_t d, uint32_t n_l1,
+                                              uint64_t stats_len) noexcept {
     return kHeaderSize + static_cast<uint64_t>(n_l1) * d * sizeof(float) +
-           static_cast<uint64_t>(n_l1) * sizeof(uint64_t);
+           static_cast<uint64_t>(n_l1) * sizeof(uint64_t) + sizeof(uint64_t) +
+           stats_len;
   }
 
  private:
@@ -92,6 +98,7 @@ class TwoLayerCentroids {
   uint32_t _n_l1 = 0;
   std::vector<float> _l1_centroids;
   std::vector<uint64_t> _offsets;
+  bstring _quant_stats;
 };
 
 }  // namespace irs

@@ -23,6 +23,7 @@
 #include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/search/cost.hpp"
+#include "iresearch/types.hpp"
 
 namespace irs {
 
@@ -31,7 +32,11 @@ class ColumnReader;
 
 struct VectorState {
   explicit VectorState(IResourceManager& memory) noexcept
-    : cookies{{memory}}, pay_starts{{memory}}, cluster_counts{{memory}} {}
+    : cookies{{memory}},
+      pay_starts{{memory}},
+      cluster_counts{{memory}},
+      quant_stats{{memory}},
+      cluster_centroids{{memory}} {}
 
   const TermReader* reader = nullptr;
   const ColumnReader* vector_column = nullptr;
@@ -42,6 +47,9 @@ struct VectorState {
   uint32_t d = 0;
   ManagedVector<uint64_t> pay_starts;
   ManagedVector<uint32_t> cluster_counts;
+
+  ManagedVector<byte_type> quant_stats;
+  ManagedVector<float> cluster_centroids;
 };
 
 }  // namespace irs

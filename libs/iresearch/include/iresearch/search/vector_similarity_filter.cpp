@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <unordered_map>
 #include <vector>
 
 #include "basics/memory.hpp"
@@ -69,11 +70,34 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
     return QueryBuilder::Empty();
   }
 
+  const bool has_pay = IndexFeatures::None !=
+                       (postings->meta().index_features & IndexFeatures::Pay);
+  const bool metric_ok = opts.metric == VectorMetric::L2Sqr ||
+                         opts.metric == VectorMetric::InnerProduct;
+  const VectorQuantization quant =
+    (has_pay && metric_ok && !ivf->QuantStats().empty())
+      ? opts.quant
+      : VectorQuantization::None;
+  const bool pq = quant == VectorQuantization::PQ;
+  const uint32_t d = ivf->Dimension();
+
   std::vector<uint32_t> fine_ids;
+  std::unordered_map<uint32_t, uint32_t> fine_centroid_off;
+  std::vector<float> probed_centroids;
   L2BodyView body;
   for (const uint32_t l1 : l1_ids) {
     ivf->ReadL2Body(*idx_in, l1, body);
     ivf->SearchL2(opts.query, body, n2, fine_ids);
+    if (pq) {
+      const auto* cv = reinterpret_cast<const float*>(body.l2_centroids);
+      for (uint32_t s = 0; s < body.n_l2; ++s) {
+        const uint32_t id = body.fine_ids[s];
+        if (fine_centroid_off.emplace(id, probed_centroids.size()).second) {
+          const float* cen = cv + static_cast<size_t>(s) * d;
+          probed_centroids.insert(probed_centroids.end(), cen, cen + d);
+        }
+      }
+    }
   }
   std::sort(fine_ids.begin(), fine_ids.end());
   fine_ids.erase(std::unique(fine_ids.begin(), fine_ids.end()), fine_ids.end());
@@ -87,19 +111,15 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
   }
   const auto* term_meta = irs::get<TermMeta>(*terms);
 
-  const VectorQuantization quant =
-    (IndexFeatures::None !=
-       (postings->meta().index_features & IndexFeatures::Pay) &&
-     (opts.metric == VectorMetric::L2Sqr ||
-      opts.metric == VectorMetric::InnerProduct))
-      ? VectorQuantization::SQ8
-      : VectorQuantization::None;
-
   VectorState state{ctx.memory};
   state.reader = postings;
   state.vector_column = vector_col;
   state.quant = quant;
-  state.d = ivf->Dimension();
+  state.d = d;
+  if (quant != VectorQuantization::None) {
+    const auto stats = ivf->QuantStats();
+    state.quant_stats.assign(stats.begin(), stats.end());
+  }
 
   std::array<byte_type, kCentroidTermWidth> term_buf{};
   CostAttr::Type estimation = 0;
@@ -116,6 +136,18 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
       state.pay_starts.push_back(
         static_cast<const TermMetaImpl*>(term_meta)->pay_start);
       state.cluster_counts.push_back(term_meta->docs_count);
+    }
+    if (pq) {
+      const auto it = fine_centroid_off.find(c);
+      const float* cen = it != fine_centroid_off.end()
+                           ? probed_centroids.data() + it->second
+                           : nullptr;
+      if (cen != nullptr) {
+        state.cluster_centroids.insert(state.cluster_centroids.end(), cen,
+                                       cen + d);
+      } else {
+        state.cluster_centroids.insert(state.cluster_centroids.end(), d, 0.f);
+      }
     }
     state.cookies.emplace_back(terms->cookie());
   }

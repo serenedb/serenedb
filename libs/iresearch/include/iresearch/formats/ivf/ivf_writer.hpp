@@ -49,6 +49,7 @@ struct BuiltIvf {
   uint64_t resident_size = 0;
   std::vector<doc_id_t> cluster_docs;
   std::vector<uint64_t> cluster_offsets;
+  std::vector<float> fine_centroids;
 };
 
 class QuantizerWriter;
@@ -58,7 +59,7 @@ class IvfBuilder {
   explicit IvfBuilder(IvfInfo info) : _info{std::move(info)} {}
 
   BuiltIvf Build(const ColumnReader& vector_column, ReadContext& ctx,
-                 IdxWriter& idx) const;
+                 IdxWriter& idx, QuantizerWriter* qw) const;
 
  private:
   IvfInfo _info;
@@ -68,7 +69,8 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
  public:
   IvfTermReader(field_id postings_id, std::span<const doc_id_t> cluster_docs,
                 std::span<const uint64_t> cluster_offsets, QuantizerWriter* qw,
-                const ColumnReader* vectors, ReadContext* ctx, uint32_t d);
+                const ColumnReader* vectors, ReadContext* ctx, uint32_t d,
+                std::span<const float> fine_centroids);
   ~IvfTermReader() final;
 
   TermIterator::ptr iterator() const final;
@@ -92,10 +94,13 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
   const ColumnReader* _vectors;
   ReadContext* _ctx;
   uint32_t _d;
+  std::span<const float> _fine_centroids;
+  size_t _count;
+  size_t _term_idx = 0;
   std::vector<float> _vec_buf;  // scratch for re-read cluster vectors
   FieldMeta _meta;
-  std::array<byte_type, 4> _min_buf{};
-  std::array<byte_type, 4> _max_buf{};
+  std::array<byte_type, 4> _min_buf;
+  std::array<byte_type, 4> _max_buf;
   bytes_view _min;
   bytes_view _max;
   mutable std::unique_ptr<IvfTermIterator> _it;
@@ -120,6 +125,7 @@ class IvfWriter {
     field_id postings_id;
     std::vector<doc_id_t> cluster_docs;
     std::vector<uint64_t> cluster_offsets;
+    std::vector<float> fine_centroids;
     std::unique_ptr<QuantizerWriter> qw;
     std::unique_ptr<ColumnReader> vector_column;
     uint32_t d = 0;

@@ -76,6 +76,7 @@ std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
                                   uint32_t seed) {
   skmeans::SuperKMeansConfig cfg;
   cfg.n_threads = 1;
+  cfg.iters = 25;
   cfg.sampling_fraction = 1.0f;  // already sampled
   cfg.seed = seed;
   cfg.angular =

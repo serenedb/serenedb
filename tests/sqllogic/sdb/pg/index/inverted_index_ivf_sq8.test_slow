@@ -1,0 +1,104 @@
+# SQ8-quantized IVF recall at scale: 50k vectors, recall@512 measured against
+# brute-force exact ground truth (computed before any index exists).
+#
+# Querying the <index> relation forces the IVF scan. Pure kNN on a quant='sq8'
+# index exercises the quantized QVectorIterator (8-bit codes in .pay); a kNN
+# with a filter falls back to the exact raw reranker. SQ8 is lossy, so recall
+# is approximate -- the thresholds catch a broken quantizer (0-score / batch
+# collapse / dropped clusters) without being flaky.
+
+statement ok
+CREATE TABLE vecs (id INT, emb FLOAT[8]);
+
+statement ok
+INSERT INTO vecs
+SELECT
+  s AS id,
+  [
+    sin(s * 0.001)::FLOAT,
+    cos(s * 0.001)::FLOAT,
+    sin(s * 0.003)::FLOAT,
+    cos(s * 0.003)::FLOAT,
+    sin(s * 0.007)::FLOAT,
+    cos(s * 0.007)::FLOAT,
+    sin(s * 0.013)::FLOAT,
+    cos(s * 0.013)::FLOAT
+  ]::FLOAT[8] AS emb
+FROM generate_series(1, 50000) AS s;
+
+# Exact top-512 ground truth (brute force -- no index built yet).
+statement ok
+CREATE TABLE correct_l2 (id INT);
+
+statement ok
+INSERT INTO correct_l2 SELECT id FROM vecs ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512;
+
+statement ok
+CREATE TABLE correct_l2_filtered (id INT);
+
+statement ok
+INSERT INTO correct_l2_filtered SELECT id FROM vecs WHERE id > 25000 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512;
+
+statement ok
+CREATE TABLE correct_ip (id INT);
+
+statement ok
+INSERT INTO correct_ip SELECT id FROM vecs ORDER BY emb <#> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512;
+
+# ---------------------------------------------------------------------------
+# SQ8 + L2 recall
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE INDEX vecs_sq8_l2 ON vecs USING inverted(id, emb ivf (metric = 'l2', quant = 'sq8'));
+
+statement ok
+VACUUM (REFRESH_TABLE) vecs;
+
+statement ok
+SET sdb_nprobe TO 512;
+
+# pure kNN -> quantized SQ8 path
+query
+WITH
+  result AS (SELECT id FROM vecs_sq8_l2 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_l2 WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+# filtered kNN -> exact raw reranker; needs a wider probe to keep recall up
+statement ok
+SET sdb_nprobe TO 2048;
+
+query
+WITH
+  result AS (SELECT id FROM vecs_sq8_l2 WHERE id > 25000 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_l2_filtered WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+statement ok
+SET sdb_nprobe TO 512;
+
+# ---------------------------------------------------------------------------
+# SQ8 + InnerProduct recall
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE INDEX vecs_sq8_ip ON vecs USING inverted(id, emb ivf (metric = 'ip', quant = 'sq8'));
+
+statement ok
+VACUUM (REFRESH_TABLE) vecs;
+
+query
+WITH
+  result AS (SELECT id FROM vecs_sq8_ip ORDER BY emb <#> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_ip WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+statement ok
+RESET sdb_nprobe;

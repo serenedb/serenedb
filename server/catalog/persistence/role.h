@@ -32,11 +32,10 @@ namespace sdb::catalog::persistence {
 struct RoleData {
   ObjectId id;
   std::string name;
-  bool active;
   uint32_t options;
   std::vector<Membership> member_of;
   int32_t conn_limit;
-  std::string valid_until;
+  int64_t valid_until;
   // SET VAR=... params that set for every session of this role
   std::vector<std::string> config;
   std::vector<DefaultAcl> default_acls;

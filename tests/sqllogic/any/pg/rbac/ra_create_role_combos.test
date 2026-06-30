@@ -1,0 +1,66 @@
+# CREATE ROLE parameter combinations not exercised by the per-attribute tests:
+# every attribute set at once, the CONNECTION LIMIT 0 boundary, and a quoted
+# mixed-case identifier. Byte-identical on PostgreSQL and serenedb.
+#
+# Lore: vedernikoff collects every badge at once; clickclack is locked to zero.
+
+statement ok
+DROP ROLE IF EXISTS crc_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS crc_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS "Crc-MixedCase";
+
+
+# Every positive attribute flag in one statement.
+statement ok
+CREATE ROLE crc_vedernikoff SUPERUSER CREATEDB CREATEROLE INHERIT LOGIN REPLICATION BYPASSRLS;
+
+
+query
+SELECT rolsuper, rolcreatedb, rolcreaterole, rolinherit, rolcanlogin, rolreplication, rolbypassrls
+FROM pg_roles WHERE rolname = 'crc_vedernikoff';
+----
+rolsuper	rolcreatedb	rolcreaterole	rolinherit	rolcanlogin	rolreplication	rolbypassrls
+t	t	t	t	t	t	t
+
+
+# CONNECTION LIMIT 0 -- a real value (no connections), distinct from -1 (unlimited).
+statement ok
+CREATE ROLE crc_clickclack LOGIN CONNECTION LIMIT 0;
+
+
+query
+SELECT rolconnlimit FROM pg_authid WHERE rolname = 'crc_clickclack';
+----
+rolconnlimit
+0
+
+
+# A quoted, mixed-case, hyphenated identifier is preserved verbatim.
+statement ok
+CREATE ROLE "Crc-MixedCase" LOGIN;
+
+
+query
+SELECT rolname, rolcanlogin FROM pg_roles WHERE rolname = 'Crc-MixedCase';
+----
+rolname	rolcanlogin
+Crc-MixedCase	t
+
+
+# Cleanup.
+statement ok
+DROP ROLE crc_vedernikoff;
+
+
+statement ok
+DROP ROLE crc_clickclack;
+
+
+statement ok
+DROP ROLE "Crc-MixedCase";

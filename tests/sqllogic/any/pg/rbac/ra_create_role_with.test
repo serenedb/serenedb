@@ -1,0 +1,57 @@
+# The optional WITH noise keyword in CREATE ROLE / ALTER ROLE: PG accepts an
+# optional WITH before the attribute list, and it is a no-op (the canonical
+# spelling most clients emit). Byte-identical on PostgreSQL and serenedb.
+#
+# Lore: vedernikoff is spelled into existence WITH the long form.
+
+statement ok
+DROP ROLE IF EXISTS wth_vedernikoff;
+
+
+# WITH before a mix of attributes (and PASSWORD).
+statement ok
+CREATE ROLE wth_vedernikoff WITH LOGIN SUPERUSER PASSWORD 'mop';
+
+
+query
+SELECT rolcanlogin, rolsuper FROM pg_roles WHERE rolname = 'wth_vedernikoff';
+----
+rolcanlogin	rolsuper
+t	t
+
+
+# ALTER ROLE ... WITH is also accepted.
+statement ok
+ALTER ROLE wth_vedernikoff WITH NOSUPERUSER NOLOGIN;
+
+
+query
+SELECT rolcanlogin, rolsuper FROM pg_roles WHERE rolname = 'wth_vedernikoff';
+----
+rolcanlogin	rolsuper
+f	f
+
+
+# WITH with no following options is still a valid (no-op) CREATE.
+statement ok
+DROP ROLE IF EXISTS wth_clickclack;
+
+
+statement ok
+CREATE ROLE wth_clickclack WITH;
+
+
+query
+SELECT count(*) FROM pg_roles WHERE rolname = 'wth_clickclack';
+----
+count
+1
+
+
+# Cleanup.
+statement ok
+DROP ROLE wth_vedernikoff;
+
+
+statement ok
+DROP ROLE wth_clickclack;

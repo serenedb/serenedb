@@ -15,6 +15,7 @@ target_sources(
         pg_catalog/pg_description.cpp
         pg_catalog/pg_enum.cpp
         pg_catalog/pg_extension.cpp
+        pg_catalog/pg_hba_file_rules.cpp
         pg_catalog/pg_index.cpp
         pg_catalog/pg_language.cpp
         pg_catalog/pg_namespace.cpp

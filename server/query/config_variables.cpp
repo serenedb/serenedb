@@ -51,6 +51,15 @@ namespace sdb {
 
 using duckdb::LogicalTypeId;
 
+// Defined in network/pg/hba.cpp; declared here to drive the `hba` GUC without
+// pulling in the heavy hba/session headers (resolved at link time). Applies the
+// ruleset and returns a formatted "line N: <msg>" error string on a parse
+// failure (leaving the live ruleset untouched), or nullopt on success.
+namespace network::pg::hba {
+
+std::optional<std::string> SetHbaFromTextString(std::string_view text);
+
+}  // namespace network::pg::hba
 namespace {
 
 template<basics::detail::FixedString Name>
@@ -244,7 +253,30 @@ void CheckApplicationName(duckdb::ClientContext&, duckdb::SetScope,
 
 constexpr std::pair<std::string_view, VariableDescription>
   kVariableDescription[] = {
-// serenedb specific variables
+    // serenedb specific variables
+    {
+      "hba",
+      {
+        LogicalTypeId::VARCHAR,
+        "Host-based authentication ruleset (pg_hba.conf syntax) as a single "
+        "string: one rule per line, first match wins, applied to connections "
+        "opened after the SET. An un-removable local + loopback trust rule is "
+        "force-prepended so a bad ruleset cannot lock you out; an empty value "
+        "restores the default (unix trust + SCRAM for TCP). Server-global.",
+        [] { return duckdb::Value{""}; },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          if (auto err =
+                network::pg::hba::SetHbaFromTextString(value.ToString())) {
+            throw duckdb::InvalidInputException("invalid hba ruleset: %s",
+                                                *err);
+          }
+        },
+        [](duckdb::ClientContext&, duckdb::SetScope) {
+          network::pg::hba::SetHbaFromTextString("");  // RESET => default
+        },
+        duckdb::SetScope::GLOBAL,
+      },
+    },
 #ifdef SDB_FAULT_INJECTION
     {
       "sdb_faults",

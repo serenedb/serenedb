@@ -387,27 +387,8 @@ inline constexpr SystemMacro kExternalMacros[] = {
       WHERE false;
   END;)"},
 
-  {"pg_catalog", "pg_hba_file_rules",
-   R"(()
-  RETURNS TABLE( rule_number INTEGER,
-                 file_name TEXT,
-                 line_number INTEGER,
-                 type TEXT,
-                 database TEXT[],
-                 user_name TEXT[],
-                 address TEXT,
-                 netmask TEXT,
-                 auth_method TEXT,
-                 options TEXT[],
-                 error TEXT)
-  LANGUAGE SQL
-  BEGIN ATOMIC
-      SELECT NULL::INTEGER, NULL::TEXT, NULL::INTEGER,
-             NULL::TEXT, NULL::TEXT[], NULL::TEXT[],
-             NULL::TEXT, NULL::TEXT, NULL::TEXT,
-             NULL::TEXT[], NULL::TEXT
-      WHERE false;
-  END;)"},
+  // pg_hba_file_rules is provided as a C++ system table backed by the live HBA
+  // ruleset (pg_catalog/pg_hba_file_rules.{h,cpp}); no SQL stub here.
 
   {"pg_catalog", "pg_ident_file_mappings",
    R"(()

@@ -66,6 +66,7 @@
 #include "pg/pg_catalog/pg_foreign_data_wrapper.h"
 #include "pg/pg_catalog/pg_foreign_server.h"
 #include "pg/pg_catalog/pg_foreign_table.h"
+#include "pg/pg_catalog/pg_hba_file_rules.h"
 #include "pg/pg_catalog/pg_index.h"
 #include "pg/pg_catalog/pg_inherits.h"
 #include "pg/pg_catalog/pg_init_privs.h"
@@ -171,6 +172,7 @@ const PgSystemSchema kPgCatalog{
   MakeTable<SystemTable<PgForeignDataWrapper>>(),
   MakeTable<SystemTable<PgForeignServer>>(),
   MakeTable<SystemTable<PgForeignTable>>(),
+  MakeTable<SystemTable<PgHbaFileRule>>(),
   MakeTable<SystemTable<PgIndex>>(),
   MakeTable<SystemTable<PgInherits>>(),
   MakeTable<SystemTable<PgInitPrivs>>(),

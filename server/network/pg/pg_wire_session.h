@@ -256,7 +256,8 @@ class PgWireSession
   void AfterTxnStatement();
 
   yaclib::Task<bool> Authenticate();
-  yaclib::Task<bool> AuthenticateCleartext(const std::string& expected);
+  void CapturePeerAddress();
+  yaclib::Task<bool> AuthenticateCleartext(const Credential& credential);
   yaclib::Task<bool> AuthenticateMd5(const std::string& expected);
   yaclib::Task<bool> AuthenticateScram(const ScramVerifier& verifier);
   // True when the role's VALID UNTIL has passed (password expired).
@@ -361,6 +362,10 @@ class PgWireSession
   uint32_t _max_conn = 0;
   std::chrono::milliseconds _auth_timeout{0};
   ProxyMode _proxy = ProxyMode::Off;
+  // Client peer address, captured once from the socket before auth for HBA
+  // matching. _peer_family is 0 for unix sockets (no IP).
+  int _peer_family = 0;
+  std::array<uint8_t, 16> _peer_addr{};
   FrameReader _frames;
   // The current command frame's pending _recv consume. Normally the command
   // loop applies it after the handler; COPY FROM STDIN consumes it early (so

@@ -38,6 +38,7 @@
 #include "catalog/table.h"
 #include "network/pg/bind_decoder.h"
 #include "network/pg/copy_eod_scanner.h"
+#include "network/pg/hba.h"
 #include "network/pg/scram_messages.h"
 #include "network/pg/startup_request.h"
 
@@ -737,27 +738,128 @@ bool PgWireSession<Kind>::PasswordExpired(std::string_view user) {
   return duckdb::Timestamp::GetCurrentTimestamp().value >= role->ValidUntil();
 }
 
+// Capture the client's peer IP once, before auth, for HBA CIDR matching. Unix
+// sockets have no peer IP (_peer_family stays 0). A v4-mapped-v6 address is
+// normalized back to AF_INET so family-strict matching stays PG-faithful.
+template<SocketKind Kind>
+void PgWireSession<Kind>::CapturePeerAddress() {
+  if constexpr (Kind == SocketKind::Unix) {
+    _peer_family = 0;
+    return;
+  } else {
+    asio_ns::error_code ec;
+    const auto endpoint = this->_socket.Lowest().remote_endpoint(ec);
+    if (ec) {
+      _peer_family = 0;
+      return;
+    }
+    const auto address = endpoint.address();
+    if (address.is_v4()) {
+      const auto bytes = address.to_v4().to_bytes();
+      _peer_family = AF_INET;
+      _peer_addr.fill(0);
+      std::copy(bytes.begin(), bytes.end(), _peer_addr.begin());
+    } else {
+      auto v6 = address.to_v6();
+      if (v6.is_v4_mapped()) {
+        const auto bytes =
+          asio_ns::ip::make_address_v4(asio_ns::ip::v4_mapped, v6).to_bytes();
+        _peer_family = AF_INET;
+        _peer_addr.fill(0);
+        std::copy(bytes.begin(), bytes.end(), _peer_addr.begin());
+      } else {
+        const auto bytes = v6.to_bytes();
+        _peer_family = AF_INET6;
+        std::copy(bytes.begin(), bytes.end(), _peer_addr.begin());
+      }
+    }
+  }
+}
+
 template<SocketKind Kind>
 yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
-  if (!_credentials) {
-    co_return true;
+  CapturePeerAddress();
+
+  // Consult the HBA ruleset first: it decides trust / reject / which method,
+  // for every connection, regardless of whether a stored credential exists.
+  const auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
+  const hba::MembershipFn is_member = [&snapshot](std::string_view user,
+                                                  std::string_view group) {
+    auto user_role = snapshot->GetRole(user);
+    auto group_role = snapshot->GetRole(group);
+    if (!user_role || !group_role) {
+      return false;  // missing_ok: unknown login role or target group
+    }
+    // NOSUPER: explicit (direct/indirect) membership only -- the closure is the
+    // membership set and does not implicitly include a superuser's non-members.
+    const auto& closure = snapshot->EffectiveRoleClosure(user_role->GetId());
+    return std::ranges::binary_search(closure.closure, group_role->GetId());
+  };
+
+  hba::ClientInfo client;
+  client.is_local = Kind == SocketKind::Unix;
+  client.is_ssl = this->_socket.IsTls();
+  client.is_gss = false;
+  client.family = _peer_family;
+  client.addr = _peer_addr;
+  client.is_replication = false;
+  client.user = UserName();
+  client.database = DatabaseName();
+
+  const auto ruleset = hba::GetHbaRuleset();
+  const hba::Decision decision = hba::Decide(*ruleset, client, is_member);
+
+  using DKind = hba::Decision::Kind;
+  hba::Method hba_method = hba::Method::ImplicitReject;
+  switch (decision.kind) {
+    case DKind::Trust:
+      co_return true;  // SetupConnection still enforces CanLogin / role-exists
+    case DKind::Reject:
+      WriteFatalResponse(
+        this->_send,
+        SQL_ERROR_DATA(
+          ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
+          ERR_MSG("no pg_hba.conf entry for host, user \"", UserName(),
+                  "\", database \"", DatabaseName(), "\"")));
+      co_return false;
+    case DKind::Unsupported:
+    case DKind::DeferredPeerIdent:
+    case DKind::MatchedHostnameDeferred:
+      WriteFatalResponse(
+        this->_send,
+        SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
+                       ERR_MSG(decision.reason)));
+      co_return false;
+    case DKind::Method:
+      hba_method = decision.method;  // scram / md5 / password
+      break;
   }
-  const auto credential = _credentials->LookupCredential(UserName());
+
+  // A password method matched: verify against the stored credential. A role
+  // with no stored password logs in under trust (SerenedB's "no password set"
+  // behavior), matching how a bare --auth_method server behaved before HBA.
+  const auto credential =
+    _credentials ? _credentials->LookupCredential(UserName()) : std::nullopt;
   if (!credential) {
     co_return true;
   }
+
   bool ok = false;
-  if (_auth_method == AuthMethod::Scram && credential->scram) {
+  if (hba_method == hba::Method::Scram && credential->scram) {
     ok = co_await AuthenticateScram(*credential->scram);
-  } else if (_auth_method == AuthMethod::Md5 && credential->cleartext) {
+  } else if (hba_method == hba::Method::Password &&
+             (credential->cleartext || credential->scram)) {
+    ok = co_await AuthenticateCleartext(*credential);
+  } else if (hba_method == hba::Method::Md5 && credential->cleartext) {
     ok = co_await AuthenticateMd5(*credential->cleartext);
-  } else if (_auth_method == AuthMethod::Cleartext && credential->cleartext) {
-    ok = co_await AuthenticateCleartext(*credential->cleartext);
   } else {
     WriteFatalResponse(
       this->_send,
-      SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
-                     ERR_MSG("no usable authentication credential for user")));
+      SQL_ERROR_DATA(
+        ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
+        ERR_MSG("authentication method \"", hba::MethodName(hba_method),
+                "\" cannot verify the stored password for user \"", UserName(),
+                "\"")));
     co_return false;
   }
   if (!ok) {
@@ -776,7 +878,7 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
 
 template<SocketKind Kind>
 yaclib::Task<bool> PgWireSession<Kind>::AuthenticateCleartext(
-  const std::string& expected) {
+  const Credential& credential) {
   if (!this->_socket.IsTls() && !_allow_cleartext) {
     WriteFatalResponse(
       this->_send,
@@ -805,12 +907,19 @@ yaclib::Task<bool> PgWireSession<Kind>::AuthenticateCleartext(
   while (!payload.empty() && payload.back() == '\0') {
     payload.remove_suffix(1);
   }
-  const std::string given = SaslPrep(payload);
+  const std::string given{payload};
   _frames.Consume(frame);
-  const std::string want = SaslPrep(expected);
-  const bool ok = ConstantTimeEqual(
-    {reinterpret_cast<const uint8_t*>(given.data()), given.size()},
-    {reinterpret_cast<const uint8_t*>(want.data()), want.size()});
+  bool ok = false;
+  if (credential.cleartext) {
+    const std::string given_prepared = SaslPrep(given);
+    const std::string want = SaslPrep(*credential.cleartext);
+    ok = ConstantTimeEqual(
+      {reinterpret_cast<const uint8_t*>(given_prepared.data()),
+       given_prepared.size()},
+      {reinterpret_cast<const uint8_t*>(want.data()), want.size()});
+  } else if (credential.scram) {
+    ok = VerifyCleartextAgainstScram(*credential.scram, given);
+  }
   if (!ok) {
     WriteFatalResponse(
       this->_send,

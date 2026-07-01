@@ -121,6 +121,18 @@ ABSL_FLAG(absl::Duration, http_body_timeout, absl::Seconds(30),
 namespace sdb {
 namespace {
 
+const char* AuthMethodName(network::pg::AuthMethod method) {
+  switch (method) {
+    case network::pg::AuthMethod::Scram:
+      return "scram-sha-256";
+    case network::pg::AuthMethod::Md5:
+      return "md5";
+    case network::pg::AuthMethod::Cleartext:
+      return "password";
+  }
+  return "password";
+}
+
 // Throwaway credential source: one user from the config flags. RBAC will
 // provide a real CredentialProvider via the same seam.
 class ConfigCredentialProvider final : public network::CredentialProvider {
@@ -236,19 +248,18 @@ void Server::SetupAuth() {
     }
     _credentials = std::make_unique<ConfigCredentialProvider>(
       _auth_user, std::move(credential));
-    const char* method_name =
-      _auth_method == network::pg::AuthMethod::Scram ? "scram-sha-256"
-      : _auth_method == network::pg::AuthMethod::Md5 ? "md5"
-                                                     : "cleartext";
     SDB_INFO(GENERAL, "network auth enabled for user '", _auth_user, "' (",
-             method_name, ")");
+             AuthMethodName(_auth_method), ")");
   } else {
     // No flag-configured credential: authenticate against per-role passwords
     // stored in the catalog (CREATE ROLE ... PASSWORD). Roles without a stored
-    // password log in under trust.
-    _auth_method = network::pg::AuthMethod::Scram;
+    // password log in under trust. The configured --auth_method still selects
+    // the wire mechanism: scram runs the SCRAM exchange against the stored
+    // verifier, password verifies the received cleartext against it; md5 has no
+    // plaintext to hash and is rejected at Authenticate().
     _credentials = std::make_unique<CatalogCredentialProvider>();
-    SDB_INFO(GENERAL, "network auth using per-role catalog passwords");
+    SDB_INFO(GENERAL, "network auth using per-role catalog passwords (",
+             AuthMethodName(_auth_method), ")");
   }
   if (!_api_key.empty()) {
     const auto colon = _api_key.find(':');

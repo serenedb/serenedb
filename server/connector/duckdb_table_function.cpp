@@ -25,6 +25,7 @@
 
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/types/variant.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
@@ -32,6 +33,9 @@
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
+#include <duckdb/storage/statistics/numeric_stats.hpp>
+#include <duckdb/storage/statistics/struct_stats.hpp>
+#include <duckdb/storage/statistics/variant_stats.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 
@@ -624,8 +628,7 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
   if (!bind.IsInvertedIndexEntry() || !bind.inverted_index) {
     return nullptr;
   }
-  if (!input.column_index.HasPrimaryIndex() ||
-      input.column_index.HasChildren()) {
+  if (!input.column_index.HasPrimaryIndex()) {
     return nullptr;
   }
   const auto column_index = input.column_index.GetPrimaryIndex();
@@ -648,8 +651,66 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
   if (stats == nullptr) {
     return nullptr;
   }
-  SDB_ASSERT(stats->GetType() == bind.column_types[column_index]);
-  return stats->ToUnique();
+  if (!input.column_index.HasChildren()) {
+    SDB_ASSERT(stats->GetType() == bind.column_types[column_index]);
+    return stats->ToUnique();
+  }
+  const duckdb::BaseStatistics* leaf = stats;
+  const duckdb::ColumnIndex* node = &input.column_index;
+  if (bind.column_types[column_index].id() == duckdb::LogicalTypeId::VARIANT) {
+    if (!duckdb::VariantStats::IsShredded(*stats)) {
+      return nullptr;
+    }
+    leaf = &duckdb::VariantStats::GetShreddedStats(*stats);
+    while (node->HasChildren()) {
+      node = &node->GetChildIndex(0);
+      if (node->HasPrimaryIndex()) {
+        return nullptr;
+      }
+      const duckdb::VariantPathComponent comp{node->GetFieldName()};
+      const auto child =
+        duckdb::VariantShreddedStats::FindChildStats(*leaf, comp);
+      if (!child) {
+        return nullptr;
+      }
+      leaf = child.get();
+    }
+  } else {
+    while (node->HasChildren()) {
+      node = &node->GetChildIndex(0);
+      if (!node->HasPrimaryIndex() ||
+          leaf->GetType().id() != duckdb::LogicalTypeId::STRUCT) {
+        return nullptr;
+      }
+      const auto field = node->GetPrimaryIndex();
+      if (field >= duckdb::StructType::GetChildCount(leaf->GetType())) {
+        return nullptr;
+      }
+      leaf = &duckdb::StructStats::GetChildStats(*leaf, field);
+    }
+  }
+  if (leaf->GetType().IsNested() || !input.column_index.HasType()) {
+    return nullptr;
+  }
+  const auto& want = input.column_index.GetScanType();
+  if (leaf->GetType() == want) {
+    return leaf->ToUnique();
+  }
+  if (leaf->GetType().IsNumeric() && want.IsNumeric() &&
+      duckdb::NumericStats::HasMinMax(*leaf)) {
+    duckdb::Value cmin;
+    duckdb::Value cmax;
+    if (duckdb::NumericStats::Min(*leaf).DefaultTryCastAs(want, cmin,
+                                                          nullptr) &&
+        duckdb::NumericStats::Max(*leaf).DefaultTryCastAs(want, cmax,
+                                                          nullptr)) {
+      auto casted = duckdb::NumericStats::CreateEmpty(want);
+      duckdb::NumericStats::SetMin(casted, cmin);
+      duckdb::NumericStats::SetMax(casted, cmax);
+      return casted.ToUnique();
+    }
+  }
+  return nullptr;
 }
 
 bool IsAnnScan(const SereneDBScanBindData& bind_data) {

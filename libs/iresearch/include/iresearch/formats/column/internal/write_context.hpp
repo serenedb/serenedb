@@ -20,20 +20,18 @@
 
 #pragma once
 
-#include <duckdb/storage/block_manager.hpp>
-
+#include "iresearch/formats/column/internal/iresearch_col_block_manager.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"
 
 namespace duckdb {
 
-class BlockAllocator;
 class DatabaseInstance;
 
 }  // namespace duckdb
 namespace irs {
 
-class WriteContext final : public duckdb::BlockManager {
+class WriteContext final : public IresearchColBlockManager {
  public:
   WriteContext(duckdb::DatabaseInstance& db, IndexOutput& out);
   ~WriteContext() final;
@@ -43,43 +41,28 @@ class WriteContext final : public duckdb::BlockManager {
   WriteContext(WriteContext&&) = delete;
   WriteContext& operator=(WriteContext&&) = delete;
 
-  duckdb::DatabaseInstance& Database() noexcept { return *_db; }
   IndexOutput& Out() noexcept { return *_out; }
 
   // duckdb::BlockManager interface -- write side
-  bool InMemory() final { return false; }
   duckdb::block_id_t GetFreeBlockId() final;
   duckdb::block_id_t PeekFreeBlockId() final;
-  duckdb::block_id_t GetFreeBlockIdForCheckpoint() final;
   void Write(duckdb::FileBuffer& block, duckdb::block_id_t block_id) final;
   void Write(duckdb::QueryContext context, duckdb::FileBuffer& block,
              duckdb::block_id_t block_id) final;
-  duckdb::unique_ptr<duckdb::Block> ConvertBlock(
-    duckdb::block_id_t block_id, duckdb::FileBuffer& source_buffer) final;
-  duckdb::unique_ptr<duckdb::Block> CreateBlock(
-    duckdb::block_id_t block_id, duckdb::FileBuffer* source_buffer) final;
 
   // duckdb::BlockManager interface -- read side (unused for writes)
   void Read(duckdb::QueryContext context, duckdb::Block& block) final;
   void ReadBlocks(duckdb::FileBuffer& buffer, duckdb::block_id_t start_block,
                   duckdb::idx_t block_count) final;
 
-  // Stubs / no-ops shared with the read side.
+  // Stubs / no-ops.
   bool IsRootBlock(duckdb::MetaBlockPointer root) final;
-  void MarkBlockAsCheckpointed(duckdb::block_id_t block_id) final;
-  void MarkBlockAsUsed(duckdb::block_id_t block_id) final;
-  void MarkBlockAsModified(duckdb::block_id_t block_id) final;
-  void IncreaseBlockReferenceCount(duckdb::block_id_t block_id) final;
   duckdb::idx_t GetMetaBlock() final;
   void WriteHeader(duckdb::QueryContext context,
                    duckdb::DatabaseHeader header) final;
   duckdb::idx_t TotalBlocks() final;
-  duckdb::idx_t FreeBlocks() final;
-  void FileSync() final;
 
  private:
-  duckdb::DatabaseInstance* _db;
-  duckdb::BlockAllocator* _allocator;
   IndexOutput* _out;
   duckdb::block_id_t _next_id = 0;
 };

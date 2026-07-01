@@ -37,7 +37,7 @@
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/all_iterator.hpp"
+#include "iresearch/index/iterators.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -54,13 +54,16 @@ class ColumnExistenceIterator : public DocIterator {
                           CostAttr::Type cost) noexcept
     : _reader{&reader},
       _ctx{col_reader},
-      _scan{reader, _ctx, /*validity_side=*/true},
-      _batch{reader.Type(), /*capacity=*/0} {
+      _scan_data{reader.NullsInData()},
+      _null_reader{_scan_data ? &reader : reader.Validity()},
+      _scan{_null_reader->InitScan(_ctx)},
+      _batch{
+        _scan_data ? reader.Type()
+                   : duckdb::LogicalType{duckdb::LogicalTypeId::VALIDITY},
+        _scan_data ? duckdb::idx_t{STANDARD_VECTOR_SIZE} : duckdb::idx_t{0}} {
+    SDB_ASSERT(cost != 0);
     _batch.BufferMutable().GetValidityMask().Initialize(STANDARD_VECTOR_SIZE);
     std::get<CostAttr>(_attrs) = CostAttr{cost};
-    if (cost == 0) {
-      _doc = doc_limits::eof();
-    }
   }
 
   Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
@@ -88,7 +91,7 @@ class ColumnExistenceIterator : public DocIterator {
       if (_word != 0) {
         continue;
       }
-      if (_rg_remaining > 0) {
+      if (_block_remaining > 0) {
         LoadChunk();
         continue;
       }
@@ -102,6 +105,13 @@ class ColumnExistenceIterator : public DocIterator {
     if (target <= _doc) [[unlikely]] {
       return _doc;
     }
+    const uint64_t row = target - doc_limits::min();
+    if (row >= _block_row) {
+      if (!SeekBlock(row)) {
+        return _doc = doc_limits::eof();
+      }
+      LoadChunk();
+    }
     while (_doc < target && !doc_limits::eof(_doc)) {
       advance();
     }
@@ -111,10 +121,25 @@ class ColumnExistenceIterator : public DocIterator {
   doc_id_t LazySeek(doc_id_t target) noexcept final { return seek(target); }
 
   uint32_t count() noexcept final {
-    uint32_t c = 0;
-    while (!doc_limits::eof(advance())) {
-      ++c;
+    uint32_t c = CountLoadedChunk();
+    while (true) {
+      if (_block_remaining == 0) {
+        if (!NextBlock()) {
+          break;
+        }
+      }
+      if (!_scan_data && _block_is_empty) {
+        c += static_cast<uint32_t>(_block_remaining);
+        _block_remaining = 0;
+        continue;
+      }
+      LoadChunk();
+      c += CountLoadedChunk();
     }
+    _word = 0;
+    _word_count = 0;
+    _word_idx = 0;
+    _doc = doc_limits::eof();
     return c;
   }
 
@@ -131,46 +156,87 @@ class ColumnExistenceIterator : public DocIterator {
   }
 
  private:
-  // Walk validity RGs, skipping any with row_count == 0. For each, set
-  // up `_rg_row` / `_rg_remaining` / `_rg_is_empty` and pull the first
-  // chunk. Returns false when no more RGs exist.
-  bool OpenNextRg() noexcept {
-    while (_next_vrg < _reader->ValidityRgCount()) {
-      const auto vrg = _next_vrg++;
+  bool NextBlock() noexcept {
+    if (_scan_data) {
+      if (_next_validity_block != 0) {
+        return false;
+      }
+      _next_validity_block = 1;
+      _block_row = 0;
+      _block_remaining = _reader->RowCount();
+      _block_is_empty = false;
+      return true;
+    }
+    while (_next_validity_block < _reader->ValidityRgCount()) {
+      const auto vrg = _next_validity_block++;
       const auto rg_count = _reader->ValidityRgRowCount(vrg);
       if (rg_count == 0) {
         continue;
       }
-      _rg_row = _reader->ValidityRgFirstRow(vrg);
-      _rg_remaining = rg_count;
-      _rg_is_empty = _reader->IsValidityRgEmpty(vrg);
-      LoadChunk();
+      _block_row = _reader->ValidityRgFirstRow(vrg);
+      _block_remaining = rg_count;
+      _block_is_empty = _reader->IsValidityRgEmpty(vrg);
       return true;
     }
     return false;
   }
 
-  // Load up to STANDARD_VECTOR_SIZE rows of validity from the current RG
-  // into `_batch`. EMPTY rgs synthesise all-ones; non-EMPTY rgs go
-  // through the codec scan. Bits past `take` in the last word are
-  // masked so the bit walk doesn't emit past the chunk.
+  bool OpenNextRg() noexcept {
+    if (!NextBlock()) {
+      return false;
+    }
+    LoadChunk();
+    return true;
+  }
+
+  bool SeekBlock(uint64_t row) noexcept {
+    while (row >= _block_row + _block_remaining) {
+      if (!NextBlock()) {
+        return false;
+      }
+    }
+    const uint64_t chunk = (row - _block_row) / STANDARD_VECTOR_SIZE;
+    const uint64_t skip = chunk * STANDARD_VECTOR_SIZE;
+    _block_row += skip;
+    _block_remaining -= skip;
+    return true;
+  }
+
+  uint32_t CountLoadedChunk() noexcept {
+    uint32_t c = static_cast<uint32_t>(std::popcount(_word));
+    while (_word_idx < _word_count) {
+      c += static_cast<uint32_t>(std::popcount(_chunk_words[_word_idx++]));
+    }
+    _word = 0;
+    return c;
+  }
+
   void LoadChunk() noexcept {
     const auto take =
-      std::min<duckdb::idx_t>(_rg_remaining, STANDARD_VECTOR_SIZE);
-    auto* words = _batch.BufferMutable().GetValidityMask().GetData();
-    if (_rg_is_empty) {
-      std::memset(words, 0xFF, ((take + 63) / 64) * sizeof(*words));
-    } else {
-      _scan.Scan(_rg_row, take, _batch, /*out_offset=*/0);
-    }
+      std::min<duckdb::idx_t>(_block_remaining, STANDARD_VECTOR_SIZE);
     _word_count = (take + 63) / 64;
+    auto* words = _batch.BufferMutable().GetValidityMask().GetData();
+    if (_scan_data || _block_is_empty) {
+      std::memset(words, 0xFF, _word_count * sizeof(*words));
+    }
+    if (_scan_data || !_block_is_empty) {
+      const uint64_t cur = _null_reader->CursorRow(_scan);
+      if (_block_row > cur) {
+        _null_reader->Skip(_scan, _block_row - cur);
+      }
+      if (_scan_data) {
+        _null_reader->ScanCount(_scan, _batch, take, /*result_offset=*/0);
+      } else {
+        _null_reader->Scan(_scan, _batch, take);
+      }
+    }
     if (const auto tail = (_word_count * 64) - take; tail != 0) {
       words[_word_count - 1] &= (~uint64_t{0}) >> tail;
     }
     _chunk_words = words;
-    _chunk_base = doc_limits::min() + _rg_row;
-    _rg_row += take;
-    _rg_remaining -= take;
+    _chunk_base = doc_limits::min() + _block_row;
+    _block_row += take;
+    _block_remaining -= take;
     _word_idx = 0;
     _word = 0;
   }
@@ -179,14 +245,16 @@ class ColumnExistenceIterator : public DocIterator {
 
   const ColumnReader* _reader;
   ReadContext _ctx;
-  ColumnReader::RangeScan _scan;
+  bool _scan_data;
+  const ColumnReader* _null_reader;
+  ColumnReader::ScanState _scan;
   duckdb::Vector _batch;
   Attributes _attrs;
 
-  size_t _next_vrg = 0;
-  uint64_t _rg_row = 0;        // row position of the next chunk to scan
-  uint64_t _rg_remaining = 0;  // rows left in the current RG
-  bool _rg_is_empty = false;
+  size_t _next_validity_block = 0;
+  uint64_t _block_row = 0;
+  uint64_t _block_remaining = 0;
+  bool _block_is_empty = false;
 
   const duckdb::validity_t* _chunk_words = nullptr;
   uint64_t _chunk_base = 0;  // doc-id of bit 0 of word 0 in current chunk
@@ -198,7 +266,7 @@ class ColumnExistenceIterator : public DocIterator {
 
 class AllDocsExistenceIterator : public DocIterator {
  public:
-  AllDocsExistenceIterator(uint32_t docs_count, score_t /*boost*/) noexcept
+  explicit AllDocsExistenceIterator(uint32_t docs_count) noexcept
     : _max_doc{doc_limits::min() + docs_count - 1} {
     std::get<CostAttr>(_attrs).reset(_max_doc);
   }
@@ -266,9 +334,9 @@ class ColumnExistenceQuery : public QueryBuilder {
     if (row_count == 0) {
       return DocIterator::empty();
     }
-    if (!column->HasValidity()) {
+    if (!column->HasValidity() && !column->NullsInData()) {
       return memory::make_managed<AllDocsExistenceIterator>(
-        static_cast<uint32_t>(row_count), _boost);
+        static_cast<uint32_t>(row_count));
     }
     const auto* col_reader = _segment.GetColReader();
     SDB_ENSURE(col_reader, sdb::ERROR_INTERNAL,

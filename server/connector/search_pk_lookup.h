@@ -59,7 +59,7 @@ class SegmentPkSequentialFetcher {
  public:
   SegmentPkSequentialFetcher(const irs::ColReader& col_reader,
                              const irs::ColumnReader& pk_col)
-    : _ctx{col_reader}, _pk_col{&pk_col} {}
+    : _ctx{col_reader}, _pk_col{&pk_col}, _state{pk_col.InitScan(_ctx)} {}
 
   SegmentPkSequentialFetcher(const SegmentPkSequentialFetcher&) = delete;
   SegmentPkSequentialFetcher& operator=(const SegmentPkSequentialFetcher&) =
@@ -69,22 +69,19 @@ class SegmentPkSequentialFetcher {
              const irs::ColumnReader& pk_col) {
     _ctx.Reset(col_reader);
     _pk_col = &pk_col;
+    _state = pk_col.InitScan(_ctx);
   }
 
   template<typename DocIds>
   void Fetch(const DocIds& docs, duckdb::Vector& out) {
-    if (docs.size() == 0) {
-      return;
-    }
     SDB_IF_FAILURE("SearchPkFetchFault") { SDB_THROW(ERROR_DEBUG); }
-    SDB_ASSERT(docs.IsSorted());
-    irs::ColumnReader::RangeScan range{*_pk_col, _ctx};
-    irs::ColumnReader::ScanRowsBatched(range, docs, out, 0);
+    _pk_col->Gather(_state, docs, out, 0);
   }
 
  private:
   irs::ReadContext _ctx;
   const irs::ColumnReader* _pk_col;
+  irs::ColumnReader::ScanState _state;
 };
 
 struct PkLookupBuffers {

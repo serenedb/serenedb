@@ -20,8 +20,6 @@
 
 #include "connector/duckdb_search_full_scan.hpp"
 
-#include <absl/algorithm/container.h>
-
 #include <algorithm>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
@@ -90,18 +88,19 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
                                    duckdb::GlobalTableFunctionState>(
       std::move(state));
   }
-  if (ss.text_scorer) {
-    state->scorer_obj = catalog::MakeScorer(*ss.text_scorer);
-  }
   state->filter = ss.stored_filter ? ss.stored_filter.get() : &MatchAllFilter();
   state->queries.resize(ss.snapshot->reader.size());
-  state->collectors.resize(state->MaxThreads());
 
   if (state->count_only) {
     return duckdb::unique_ptr_cast<SearchFullScanGlobalState,
                                    duckdb::GlobalTableFunctionState>(
       std::move(state));
   }
+
+  if (ss.text_scorer) {
+    state->scorer_obj = catalog::MakeScorer(*ss.text_scorer);
+  }
+  state->collectors.resize(state->MaxThreads());
 
   if (ss.score_top_k && ss.text_scorer) {
     state->parallel_topk = true;
@@ -326,18 +325,7 @@ bool SearchFullScanTopKLocalState::OnSegmentsExhausted(
   if (!prepped) {
     PrepEmitBuffer(ctx, g);
   }
-
-  const size_t remaining = top_hits.size() - current_idx;
-  if (remaining == 0) {
-    return false;
-  }
-  const auto take = std::min<size_t>(remaining, STANDARD_VECTOR_SIZE);
-  const ScoreDocsView view{top_hits.subspan(current_idx, take)};
-  const auto emitted = MaterializeChunk(ctx, g, *this, view, output, 0);
-  const auto visible = FinalizeBatch(ctx, g, *this, output, emitted);
-  current_idx += take;
-  output.SetChildCardinality(visible);
-  return emitted > 0;
+  return EmitBufferedScoreDocs(ctx, g, *this, top_hits, current_idx, output);
 }
 
 void SearchFullScanTopKLocalState::PrepEmitBuffer(
@@ -349,11 +337,8 @@ void SearchFullScanTopKLocalState::PrepEmitBuffer(
 
   const size_t accepted = collector->AcceptedCount();
   auto accepted_slice = hit_slice.subspan(0, accepted);
-  absl::c_sort(
-    accepted_slice, [](const irs::ScoreDoc& l, const irs::ScoreDoc& r) {
-      return std::pair{l.segment_idx, l.doc} < std::pair{r.segment_idx, r.doc};
-    });
-  top_hits = hit_slice.subspan(0, accepted);
+  SortScoreDocsBySegDoc(accepted_slice);
+  top_hits = accepted_slice;
 }
 
 void SearchFullScanScanLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
@@ -361,11 +346,10 @@ void SearchFullScanScanLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
                                                 uint32_t seg_idx,
                                                 SearchFullScanGlobalState& g) {
   current_seg_idx = seg_idx;
-  const bool has_real = absl::c_any_of(g.projected_columns, [](auto p) {
-    return p != duckdb::DConstants::INVALID_INDEX;
-  });
-  const bool bulk = has_real && !g.scan_score && !g.has_external_projections &&
-                    g.scan->IsMatchAll() && !g.scan->EmitOffsets() &&
+  bulk_zero_copy = false;
+  const bool bulk = g.has_real_column && !g.scan_score && !g.scan_rowid &&
+                    !g.has_external_projections && g.scan->IsMatchAll() &&
+                    !g.scan->EmitOffsets() &&
                     seg.live_docs_count() == seg.docs_count();
   if (bulk) {
     bulk_doc_in_seg = 0;
@@ -378,8 +362,7 @@ void SearchFullScanScanLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
   const auto& seg_query = EnsureSegmentQuery(g, *this, seg, seg_idx);
   streaming_doc = seg.mask(
     seg_query.Execute({}, g.stats ? *g.stats : irs::StatsBuffer::Empty()));
-  if (g.has_external_projections &&
-      !SegmentPkColumn(*g.reader, seg_idx).second) {
+  if (g.has_external_projections && !PkColumnFor(*g.reader, seg_idx).second) {
     streaming_doc.reset();
     return;
   }
@@ -473,13 +456,10 @@ duckdb::idx_t SearchFullScanScanLocalState::EmitChunk(
                "bulk cs scan: segment has no columnstore reader");
     const auto take =
       std::min<duckdb::idx_t>(budget, bulk_seg_doc_count - bulk_doc_in_seg);
-    const bool fills_entire_vector =
-      output_start == 0 && take == STANDARD_VECTOR_SIZE;
-    mat->Scan(bulk_doc_in_seg, take, output, output_start, fills_entire_vector);
-    const auto row_base =
-      g.produced_rows.fetch_add(take, std::memory_order_relaxed);
-    WriteVirtualColumns(g, row_base, take, ScoreDocsView{}, output,
-                        output_start);
+    bulk_zero_copy = output_start == 0;
+    mat->Scan(bulk_doc_in_seg, take, output, output_start);
+    AccountAndWriteVirtualColumns(g, take, ScoreDocsView{}, output,
+                                  output_start);
     bulk_doc_in_seg += take;
     return take;
   }

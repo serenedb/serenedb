@@ -87,7 +87,9 @@ class Role final : public catalog::Object {
   bool CanLogin() const noexcept { return Has(RoleOption::Login); }
   void SetOptions(RoleOption o) noexcept { _options = o; }
 
+  static constexpr int32_t kNoConnLimit = -1;
   int32_t ConnLimit() const noexcept { return _conn_limit; }
+  bool HasConnLimit() const noexcept { return _conn_limit != kNoConnLimit; }
   void SetConnLimit(int32_t limit) noexcept { _conn_limit = limit; }
 
   static constexpr int64_t kNoValidUntil = std::numeric_limits<int64_t>::min();
@@ -121,7 +123,7 @@ class Role final : public catalog::Object {
  private:
   RoleOption _options = RoleOption::None;
   std::vector<Membership> _member_of;
-  int32_t _conn_limit = -1;
+  int32_t _conn_limit = kNoConnLimit;
   int64_t _valid_until = kNoValidUntil;
   std::vector<std::string> _config;
   std::vector<DefaultAcl> _default_acls;

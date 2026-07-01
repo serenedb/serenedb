@@ -4927,7 +4927,7 @@ void InitCatalog() {
       .id = id::kRootUser,
       .name = std::string{StaticStrings::kDefaultUser},
       .options = static_cast<uint32_t>(RoleOption::All),
-      .conn_limit = -1,
+      .conn_limit = Role::kNoConnLimit,
     });
     if (auto br = GetCatalog().CreateRole(NoAccessCheck(), std::move(root));
         !br.ok()) {

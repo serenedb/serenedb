@@ -153,9 +153,10 @@ std::shared_ptr<const catalog::Snapshot> FreshSnapshot() {
 
 int32_t ParseConnLimit(bool has_conn_limit, int64_t value) {
   if (!has_conn_limit) {
-    return -1;
+    return catalog::Role::kNoConnLimit;
   }
-  if (value < -1 || value > std::numeric_limits<int32_t>::max()) {
+  if (value < catalog::Role::kNoConnLimit ||
+      value > std::numeric_limits<int32_t>::max()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("invalid connection limit: ", value));
   }

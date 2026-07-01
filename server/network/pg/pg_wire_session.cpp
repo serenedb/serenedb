@@ -361,16 +361,6 @@ bool PgWireSession<Kind>::SetupConnection() {
         ERR_MSG("role \"", user, "\" is not permitted to log in")));
     return false;
   }
-  if (_role_conns && !role->IsSuperuser() && role->HasConnLimit()) {
-    if (!_role_conns->TryAcquire(role->GetId(), role->ConnLimit())) {
-      WriteFatalResponse(
-        this->_send, SQL_ERROR_DATA(ERR_CODE(ERRCODE_TOO_MANY_CONNECTIONS),
-                                    ERR_MSG("too many connections for role \"",
-                                            user, "\"")));
-      return false;
-    }
-    _conn_limit_role = role->GetId();
-  }
 
   _conn = DuckDBEngine::Instance().CreateConnection();
   _txn_state.emplace(_conn->context->transaction);
@@ -2517,10 +2507,6 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
       this->KickSend();
       co_await RunCommandLoop();
     }
-  }
-  if (_conn_limit_role) {
-    _role_conns->Release(*_conn_limit_role);
-    _conn_limit_role.reset();
   }
   // Teardown runs where everything was created: results/portals die on a duck
   // worker; their cleanup may emit notices that must be stolen before

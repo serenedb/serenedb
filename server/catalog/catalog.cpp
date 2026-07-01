@@ -106,8 +106,8 @@ AccessContext RequireAccess(duckdb::ClientContext& context, AclMode need) {
                        need);
 }
 
-AccessContext RequireOwnership(duckdb::ClientContext& context) {
-  return RequireOwnership(connector::GetSereneDBContext(context).GetRoleId());
+AccessContext ActingAs(duckdb::ClientContext& context) {
+  return ActingAs(connector::GetSereneDBContext(context).GetRoleId());
 }
 
 namespace {
@@ -1117,7 +1117,7 @@ std::size_t Snapshot::RoleDependentCount(ObjectId role) const {
 void Snapshot::RequireAccess(ObjectId role, const Object& object,
                              AclMode need) const {
   if (need == AclMode::NoRights ||
-      auth::HasAnyPrivilege(*this, role, object, need)) {
+      auth::HasPrivilege(*this, role, object, need, auth::PrivMatch::Any)) {
     return;
   }
   THROW_SQL_ERROR(
@@ -2044,7 +2044,8 @@ ResultOr<ResolvedIndexRelation> ResolveIndexRelation(
 void RequireCreateOn(const Snapshot& snapshot, ObjectId role,
                      ObjectId parent_id) {
   auto parent = snapshot.GetObject(parent_id);
-  if (!parent || auth::HasPrivilege(snapshot, role, *parent, AclMode::Create)) {
+  if (!parent || auth::HasPrivilege(snapshot, role, *parent, AclMode::Create,
+                                    auth::PrivMatch::All)) {
     return;
   }
   THROW_SQL_ERROR(
@@ -2063,12 +2064,8 @@ void RequireCreateOn(const Snapshot& snapshot, ObjectId role,
 void RequireObjectOwner(const Snapshot& snapshot, ObjectId role,
                         ObjectId owner_id, const Object& reported) {
   auto owner_obj = snapshot.GetObject(owner_id);
-  if (!owner_obj) {
-    return;
-  }
-  const auto& rc = snapshot.EffectiveRoleClosure(role);
-  if (rc.is_superuser ||
-      std::ranges::binary_search(rc.closure, owner_obj->GetOwner())) {
+  if (!owner_obj ||
+      auth::IsOwner(snapshot.EffectiveRoleClosure(role), *owner_obj)) {
     return;
   }
   THROW_SQL_ERROR(
@@ -3068,8 +3065,8 @@ Result Catalog::ChangeOwner(const AccessContext& ax, ObjectId database_id,
     }
     if (type != ObjectType::Schema && new_owner != real_owner) {
       auto sch = _snapshot->GetSchema(database_id, schema);
-      if (sch &&
-          !auth::HasPrivilege(*_snapshot, new_owner, *sch, AclMode::Create)) {
+      if (sch && !auth::HasPrivilege(*_snapshot, new_owner, *sch,
+                                     AclMode::Create, auth::PrivMatch::All)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                         ERR_MSG("permission denied for schema ", schema));
       }
@@ -4930,6 +4927,7 @@ void InitCatalog() {
       .id = id::kRootUser,
       .name = std::string{StaticStrings::kDefaultUser},
       .options = static_cast<uint32_t>(RoleOption::All),
+      .conn_limit = -1,
     });
     if (auto br = GetCatalog().CreateRole(NoAccessCheck(), std::move(root));
         !br.ok()) {

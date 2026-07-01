@@ -36,8 +36,6 @@ namespace {
 
 using duckdb::LogicalType;
 
-// Read a client-supplied pragma arg, rejecting NULL before GetValue<T>() (which
-// would throw or read uninitialized data).
 template<typename T>
 T Arg(const duckdb::FunctionParameters& params, size_t i, const char* name) {
   if (params.values[i].IsNull()) {
@@ -61,6 +59,20 @@ bool ArgBool(const duckdb::FunctionParameters& params, size_t i,
 int32_t ArgInt(const duckdb::FunctionParameters& params, size_t i,
                const char* name) {
   return Arg<int32_t>(params, i, name);
+}
+
+int64_t ArgBigInt(const duckdb::FunctionParameters& params, size_t i,
+                  const char* name) {
+  return Arg<int64_t>(params, i, name);
+}
+
+std::vector<std::string> ArgStrList(const duckdb::FunctionParameters& params,
+                                    size_t i) {
+  std::vector<std::string> out;
+  for (const auto& v : duckdb::ListValue::GetChildren(params.values[i])) {
+    out.push_back(v.GetValue<std::string>());
+  }
+  return out;
 }
 
 LogicalType PrivListType() {
@@ -89,12 +101,6 @@ std::vector<pg::ParsedPriv> ArgPrivList(
   return out;
 }
 
-// PRAGMA serenedb_create_role('name', login, superuser, inherit, has_password,
-//   password, has_conn_limit, has_valid_until)
-//   [1] login BOOLEAN, [2] superuser BOOLEAN, [3] inherit BOOLEAN (INHERIT vs
-//   NOINHERIT). [4] has_password / [5] password set the SCRAM verifier.
-//   CONNECTION LIMIT / VALID UNTIL are parsed by the grammar but unsupported;
-//   their flags only signal one was given so the command can reject it.
 void CreateRolePragma(duckdb::ClientContext& context,
                       const duckdb::FunctionParameters& params) {
   auto& conn_ctx = GetSereneDBContext(context);
@@ -108,11 +114,19 @@ void CreateRolePragma(duckdb::ClientContext& context,
   options.password_is_null = ArgBool(params, 6, "password_is_null");
   options.has_conn_limit = ArgBool(params, 7, "has_conn_limit");
   options.has_valid_until = ArgBool(params, 8, "has_valid_until");
+  options.valid_until = ArgBigInt(params, 9, "valid_until");
+  options.createdb = ArgBool(params, 10, "createdb");
+  options.createrole = ArgBool(params, 11, "createrole");
+  options.conn_limit = ArgBigInt(params, 12, "conn_limit");
+  options.replication = ArgBool(params, 13, "replication");
+  options.bypassrls = ArgBool(params, 14, "bypassrls");
+  options.in_roles = ArgStrList(params, 15);
+  options.role_members = ArgStrList(params, 16);
+  options.admin_members = ArgStrList(params, 17);
 
   pg::CreateRole(conn_ctx, ArgStr(params, 0, "name"), options);
 }
 
-// PRAGMA serenedb_drop_role('name', missing_ok)
 void DropRolePragma(duckdb::ClientContext& context,
                     const duckdb::FunctionParameters& params) {
   auto& conn_ctx = GetSereneDBContext(context);
@@ -120,13 +134,6 @@ void DropRolePragma(duckdb::ClientContext& context,
                ArgBool(params, 1, "missing_ok"));
 }
 
-// PRAGMA serenedb_alter_role('name', login, super, createdb, createrole,
-//   inherit, has_password, password, has_conn_limit, has_valid_until).
-//   Attribute flags are tri-state ints (-1 unspecified / 0 false / 1 true). [6]
-//   has_password / [7] password update the SCRAM verifier (has_password
-//   distinguishes a PASSWORD clause -- incl. PASSWORD NULL, which clears it --
-//   from none). CONNECTION LIMIT / VALID UNTIL are parsed but unsupported;
-//   their flags only signal one was given so the command can reject it.
 void AlterRolePragma(duckdb::ClientContext& context,
                      const duckdb::FunctionParameters& params) {
   auto& conn_ctx = GetSereneDBContext(context);
@@ -141,11 +148,13 @@ void AlterRolePragma(duckdb::ClientContext& context,
   opts.password_is_null = ArgBool(params, 8, "password_is_null");
   opts.has_conn_limit = ArgBool(params, 9, "has_conn_limit");
   opts.has_valid_until = ArgBool(params, 10, "has_valid_until");
+  opts.valid_until = ArgBigInt(params, 11, "valid_until");
+  opts.conn_limit = ArgBigInt(params, 12, "conn_limit");
+  opts.replication = ArgInt(params, 13, "replication");
+  opts.bypassrls = ArgInt(params, 14, "bypassrls");
   pg::AlterRole(conn_ctx, ArgStr(params, 0, "name"), opts);
 }
 
-// PRAGMA serenedb_alter_role_config('name', op, setting, value). op is
-//   "SET" / "RESET" / "RESET_ALL".
 void AlterRoleConfigPragma(duckdb::ClientContext& context,
                            const duckdb::FunctionParameters& params) {
   auto& conn_ctx = GetSereneDBContext(context);
@@ -154,9 +163,6 @@ void AlterRoleConfigPragma(duckdb::ClientContext& context,
                       ArgStr(params, 3, "value"));
 }
 
-// PRAGMA serenedb_alter_default_privileges('privileges', 'objtype_char',
-//   'grantee', revoke, with_grant_option, 'for_role', 'in_schema',
-//   grant_option_only, cascade)
 void AlterDefaultPrivilegesPragma(duckdb::ClientContext& context,
                                   const duckdb::FunctionParameters& params) {
   auto& conn_ctx = GetSereneDBContext(context);
@@ -172,7 +178,6 @@ void AlterDefaultPrivilegesPragma(duckdb::ClientContext& context,
                              ArgBool(params, 3, "revoke"), opts);
 }
 
-// PRAGMA serenedb_rename_role('name', 'new_name')
 void RenameRolePragma(duckdb::ClientContext& context,
                       const duckdb::FunctionParameters& params) {
   auto& conn_ctx = GetSereneDBContext(context);
@@ -180,8 +185,6 @@ void RenameRolePragma(duckdb::ClientContext& context,
                  ArgStr(params, 1, "new_name"));
 }
 
-// The bulk GRANT ... ON ALL <kind> IN SCHEMA forms carry a marker objtype
-// string. Returns the per-object catalog type, or nullopt for a single object.
 std::optional<catalog::ObjectType> BulkObjTypeOf(std::string_view word) {
   if (word == "ALL_TABLES_IN_SCHEMA") {
     return catalog::ObjectType::Table;
@@ -195,8 +198,6 @@ std::optional<catalog::ObjectType> BulkObjTypeOf(std::string_view word) {
   return std::nullopt;
 }
 
-// PRAGMA serenedb_grant_table('privileges', 'name', 'grantee', revoke,
-//   with_grant_option, objtype, grant_option_only, cascade, 'granted_by')
 void GrantTablePragma(duckdb::ClientContext& context,
                       const duckdb::FunctionParameters& params) {
   auto& conn_ctx = GetSereneDBContext(context);
@@ -222,7 +223,6 @@ void GrantTablePragma(duckdb::ClientContext& context,
                   opts);
 }
 
-// PRAGMA serenedb_alter_owner('objtype', 'name', 'new_owner')
 void AlterOwnerPragma(duckdb::ClientContext& context,
                       const duckdb::FunctionParameters& params) {
   auto& conn_ctx = GetSereneDBContext(context);
@@ -230,10 +230,6 @@ void AlterOwnerPragma(duckdb::ClientContext& context,
                  ArgStr(params, 1, "name"), ArgStr(params, 2, "new_owner"));
 }
 
-// PRAGMA serenedb_grant_role('role', 'member', revoke, admin, inherit, set,
-//   option_only). admin/inherit/set are tri-state ints (-1 unspecified / 0
-//   false / 1 true). option_only marks REVOKE ADMIN OPTION FOR (keep the edge,
-//   drop only its admin option).
 void GrantRolePragma(duckdb::ClientContext& context,
                      const duckdb::FunctionParameters& params) {
   auto& conn_ctx = GetSereneDBContext(context);
@@ -256,7 +252,12 @@ void RegisterRbacPragmas(duckdb::DatabaseInstance& db) {
     "serenedb_create_role", CreateRolePragma,
     {LogicalType::VARCHAR, LogicalType::BOOLEAN, LogicalType::BOOLEAN,
      LogicalType::BOOLEAN, LogicalType::BOOLEAN, LogicalType::VARCHAR,
-     LogicalType::BOOLEAN, LogicalType::BOOLEAN, LogicalType::BOOLEAN}));
+     LogicalType::BOOLEAN, LogicalType::BOOLEAN, LogicalType::BOOLEAN,
+     LogicalType::BIGINT, LogicalType::BOOLEAN, LogicalType::BOOLEAN,
+     LogicalType::BIGINT, LogicalType::BOOLEAN, LogicalType::BOOLEAN,
+     LogicalType::LIST(LogicalType::VARCHAR),
+     LogicalType::LIST(LogicalType::VARCHAR),
+     LogicalType::LIST(LogicalType::VARCHAR)}));
 
   loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
     "serenedb_drop_role", DropRolePragma,
@@ -267,7 +268,8 @@ void RegisterRbacPragmas(duckdb::DatabaseInstance& db) {
     {LogicalType::VARCHAR, LogicalType::INTEGER, LogicalType::INTEGER,
      LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::INTEGER,
      LogicalType::BOOLEAN, LogicalType::VARCHAR, LogicalType::BOOLEAN,
-     LogicalType::BOOLEAN, LogicalType::BOOLEAN}));
+     LogicalType::BOOLEAN, LogicalType::BOOLEAN, LogicalType::BIGINT,
+     LogicalType::BIGINT, LogicalType::INTEGER, LogicalType::INTEGER}));
 
   loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
     "serenedb_alter_role_config", AlterRoleConfigPragma,

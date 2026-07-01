@@ -117,9 +117,9 @@ inline AccessContext RequireAccess(ObjectId role, AclMode need) {
   return {role, need};
 }
 
-AccessContext RequireOwnership(duckdb::ClientContext& context);
+AccessContext ActingAs(duckdb::ClientContext& context);
 
-inline AccessContext RequireOwnership(ObjectId role) { return {role}; }
+inline AccessContext ActingAs(ObjectId role) { return {role}; }
 
 inline AccessContext NoAccessCheck() { return {id::kRootUser}; }
 

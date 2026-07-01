@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <span>
 #include <string>
 #include <string_view>
@@ -37,12 +38,21 @@ struct ParsedPriv {
 struct CreateRoleOptions {
   bool login = false;
   bool superuser = false;
+  bool createdb = false;
+  bool createrole = false;
+  bool replication = false;
+  bool bypassrls = false;
   bool inherit = true;
   bool has_password = false;
   std::string password;
   bool password_is_null = false;
   bool has_conn_limit = false;
+  int64_t conn_limit = -1;
   bool has_valid_until = false;
+  int64_t valid_until = 0;
+  std::vector<std::string> in_roles;
+  std::vector<std::string> role_members;
+  std::vector<std::string> admin_members;
 };
 
 struct MemberOptions {
@@ -62,12 +72,16 @@ struct AlterRoleOptions {
   int superuser = -1;
   int createdb = -1;
   int createrole = -1;
+  int replication = -1;
+  int bypassrls = -1;
   int inherit = -1;
   bool has_password = false;
   std::string password;
   bool password_is_null = false;
   bool has_conn_limit = false;
+  int64_t conn_limit = -1;
   bool has_valid_until = false;
+  int64_t valid_until = 0;
 };
 
 void AlterRole(ConnectionContext& ctx, std::string_view name,

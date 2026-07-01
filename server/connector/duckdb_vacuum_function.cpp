@@ -260,7 +260,7 @@ void ForEachInvertedStorage(
 bool MayMaintain(ConnectionContext& conn_ctx, const catalog::Snapshot& snapshot,
                  const catalog::Table& table, std::string_view verb) {
   if (auth::HasPrivilege(snapshot, conn_ctx.GetRoleId(), table,
-                         catalog::AclMode::Maintain)) {
+                         catalog::AclMode::Maintain, auth::PrivMatch::All)) {
     return true;
   }
   conn_ctx.AddNotice(SQL_ERROR_DATA(

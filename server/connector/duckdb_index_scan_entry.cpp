@@ -71,7 +71,6 @@ TableInvertedIndexScanEntry::TableInvertedIndexScanEntry(
 duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
-  // SELECT * FROM <index_name> resolves the base table here
   auto& sdb_ctx = GetSereneDBContext(context);
   auto snapshot = sdb_ctx.EnsureSearchSnapshot(_inverted_index->GetId());
   auto data = duckdb::make_uniq<TableScanBindData>();
@@ -131,8 +130,6 @@ duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
   auto& sdb_ctx = GetSereneDBContext(context);
   auto fp = ResolveViewFastPath(context, *_sdb_view);
   auto snapshot = sdb_ctx.EnsureSearchSnapshot(_inverted_index->GetId());
-  // The index only captures post-WHERE/ORDER/LIMIT rows; we must not
-  // stream the reader directly.
   auto data = duckdb::make_uniq<ViewScanBindData>();
   data->view = _sdb_view;
   const auto& vinfo = _sdb_view->GetInfo();
@@ -206,9 +203,6 @@ TableSecondaryIndexScanEntry::TableSecondaryIndexScanEntry(
 duckdb::TableFunction TableSecondaryIndexScanEntry::GetScanFunction(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
-  // SELECT on the base table (reached via the index name)
-  // Scanning a secondary index by name reads the table: the index itself
-  // is a native ART on the store table.
   auto store_name = catalog::StoreTableName(
     ParentCatalog().GetName(), ParentSchema().name, _sdb_table->GetName());
   auto& store_entry =

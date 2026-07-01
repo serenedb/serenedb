@@ -23,6 +23,7 @@
 
 #include <absl/functional/function_ref.h>
 
+#include <limits>
 #include <set>
 #include <span>
 #include <string>
@@ -83,13 +84,17 @@ class Role final : public catalog::Object {
     return (_options & o) != RoleOption::None;
   }
   bool IsSuperuser() const noexcept { return Has(RoleOption::Superuser); }
-  bool CanLogin() const noexcept { return Has(RoleOption::Login) && _active; }
+  bool CanLogin() const noexcept { return Has(RoleOption::Login); }
   void SetOptions(RoleOption o) noexcept { _options = o; }
 
   int32_t ConnLimit() const noexcept { return _conn_limit; }
-  std::string_view ValidUntil() const noexcept { return _valid_until; }
+  void SetConnLimit(int32_t limit) noexcept { _conn_limit = limit; }
 
-  // Per-role GUC settings surfaced as pg_roles.rolconfig ("guc=value" each).
+  static constexpr int64_t kNoValidUntil = std::numeric_limits<int64_t>::min();
+  int64_t ValidUntil() const noexcept { return _valid_until; }
+  bool HasValidUntil() const noexcept { return _valid_until != kNoValidUntil; }
+  void SetValidUntil(int64_t micros) noexcept { _valid_until = micros; }
+
   std::span<const std::string> Config() const noexcept { return _config; }
   void SetConfig(std::string_view guc, std::string_view value);
   void ResetConfig(std::string_view guc);
@@ -114,11 +119,10 @@ class Role final : public catalog::Object {
   }
 
  private:
-  bool _active = true;
   RoleOption _options = RoleOption::None;
   std::vector<Membership> _member_of;
   int32_t _conn_limit = -1;
-  std::string _valid_until;
+  int64_t _valid_until = kNoValidUntil;
   std::vector<std::string> _config;
   std::vector<DefaultAcl> _default_acls;
   std::string _password_verifier;

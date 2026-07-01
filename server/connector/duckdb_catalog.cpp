@@ -158,9 +158,8 @@ Result DropFunctionOverload(catalog::Catalog& catalog,
 
   if (macro_info.macros.size() == 1) {
     // Last overload -- drop the whole function.
-    return catalog.DropFunction(catalog::RequireOwnership(context),
-                                info.catalog, info.schema, info.name,
-                                info.cascade);
+    return catalog.DropFunction(catalog::ActingAs(context), info.catalog,
+                                info.schema, info.name, info.cascade);
   }
 
   // Remove just the matched overload and update the stored function.
@@ -173,7 +172,7 @@ Result DropFunctionOverload(catalog::Catalog& catalog,
   auto function = std::make_shared<catalog::PgSqlFunction>(
     catalog::Permissions{}, ObjectId{}, ObjectId{}, info.name,
     std::move(new_info));
-  return catalog.CreateFunction(catalog::RequireOwnership(context), database_id,
+  return catalog.CreateFunction(catalog::ActingAs(context), database_id,
                                 info.schema, function, true);
 }
 
@@ -212,9 +211,8 @@ Result DropFunctionByKind(duckdb::ClientContext& context,
       ERR_MSG("could not find a ", kind, " named \"", info.name, "\""));
   }
   if (all_match) {
-    return catalog.DropFunction(catalog::RequireOwnership(context),
-                                info.catalog, info.schema, info.name,
-                                info.cascade);
+    return catalog.DropFunction(catalog::ActingAs(context), info.catalog,
+                                info.schema, info.name, info.cascade);
   }
   // Mixed: remove only matching overloads, keep the rest.
   auto new_info =
@@ -228,7 +226,7 @@ Result DropFunctionByKind(duckdb::ClientContext& context,
   auto function = std::make_shared<catalog::PgSqlFunction>(
     catalog::Permissions{}, ObjectId{}, ObjectId{}, info.name,
     std::move(new_info));
-  return catalog.CreateFunction(catalog::RequireOwnership(context), database_id,
+  return catalog.CreateFunction(catalog::ActingAs(context), database_id,
                                 info.schema, function, true);
 }
 
@@ -241,7 +239,7 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
   switch (info.type) {
     using enum duckdb::CatalogType;
     case TABLE_ENTRY:
-      r = catalog.DropTable(catalog::RequireOwnership(context), info.catalog,
+      r = catalog.DropTable(catalog::ActingAs(context), info.catalog,
                             info.schema, info.name, info.cascade);
       if (!info.cascade && r.is(ERROR_BAD_PARAMETER)) {
         THROW_SQL_ERROR(
@@ -253,11 +251,11 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
       }
       break;
     case INDEX_ENTRY:
-      r = catalog.DropIndex(catalog::RequireOwnership(context), info.catalog,
+      r = catalog.DropIndex(catalog::ActingAs(context), info.catalog,
                             info.schema, info.name, info.cascade);
       break;
     case VIEW_ENTRY:
-      r = catalog.DropView(catalog::RequireOwnership(context), info.catalog,
+      r = catalog.DropView(catalog::ActingAs(context), info.catalog,
                            info.schema, info.name, info.cascade);
       if (!info.cascade && r.is(ERROR_BAD_PARAMETER)) {
         THROW_SQL_ERROR(
@@ -285,7 +283,7 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
       }
       break;
     case TYPE_ENTRY:
-      r = catalog.DropType(catalog::RequireOwnership(context), info.catalog,
+      r = catalog.DropType(catalog::ActingAs(context), info.catalog,
                            info.schema, info.name, info.cascade);
       if (!info.cascade && r.is(ERROR_BAD_PARAMETER)) {
         THROW_SQL_ERROR(
@@ -299,7 +297,7 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
     case SEQUENCE_ENTRY: {
       bool if_exists =
         info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL;
-      r = catalog.DropSequence(catalog::RequireOwnership(context), info.catalog,
+      r = catalog.DropSequence(catalog::ActingAs(context), info.catalog,
                                info.schema, info.name, if_exists, info.cascade);
       if (!info.cascade && r.is(ERROR_BAD_PARAMETER)) {
         THROW_SQL_ERROR(
@@ -319,7 +317,7 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
           ERR_MSG("cannot drop schema ", info.name,
                   " because it is required by the database system"));
       } else {
-        r = catalog.DropSchema(catalog::RequireOwnership(context), info.catalog,
+        r = catalog.DropSchema(catalog::ActingAs(context), info.catalog,
                                info.name, info.cascade);
         // TODO(mbkkt) better error handling
         if (!info.cascade && r.is(ERROR_BAD_PARAMETER)) {
@@ -440,8 +438,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
   const ObjectId owner = GetSereneDBContext(client).GetRoleId();
   auto schema = std::make_shared<catalog::Schema>(owner, GetDatabaseId(),
                                                   ObjectId{}, info.schema);
-  auto r = catalog_impl.CreateSchema(catalog::RequireOwnership(owner),
-                                     GetDatabaseId(), std::move(schema));
+  auto r = catalog_impl.CreateSchema(catalog::ActingAs(owner), GetDatabaseId(),
+                                     std::move(schema));
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (if_not_exists) {
       return nullptr;

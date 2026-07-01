@@ -28,8 +28,6 @@
 #include <array>
 #include <optional>
 #include <string>
-#include <utility>
-#include <vector>
 
 #include "basics/containers/flat_hash_map.h"
 #include "basics/system-compiler.h"
@@ -68,10 +66,6 @@ AclMode ClassPrivs(ObjectType type) noexcept {
       return AclMode::Execute;
     case ObjectType::PgSqlType:
       return AclMode::Usage;
-    // Object classes with no SQL privileges of their own. Views are granted as
-    // Table (they share the relation namespace), so PgSqlView never reaches
-    // here; indexes derive access from their table; the rest are not ACL
-    // objects.
     case ObjectType::Invalid:
     case ObjectType::Tombstone:
     case ObjectType::Role:
@@ -91,12 +85,6 @@ bool Has(AclMode have, AclMode need) noexcept {
   return (have & need) == need && need != AclMode::NoRights;
 }
 
-auto FindAclItem(catalog::Acl& acl, ObjectId grantee, ObjectId grantor) {
-  return std::ranges::find_if(acl, [&](const AclItem& item) {
-    return item.grantee == grantee && item.grantor == grantor;
-  });
-}
-
 AclMode PublicDefaultPrivs(ObjectType type) noexcept {
   switch (type) {
     case ObjectType::Database:
@@ -105,9 +93,6 @@ AclMode PublicDefaultPrivs(ObjectType type) noexcept {
       return AclMode::Execute;
     case ObjectType::PgSqlType:
       return AclMode::Usage;
-    // PUBLIC gets no implicit privileges on these; either there is no default
-    // grant to PUBLIC (Table/Sequence/Schema) or the class is not an ACL
-    // object.
     case ObjectType::Table:
     case ObjectType::Sequence:
     case ObjectType::Schema:
@@ -172,10 +157,6 @@ void PutId(std::string& out, std::string_view name) {
 
 catalog::Acl AclDefault(ObjectType type, ObjectId owner) {
   catalog::Acl acl;
-  // Owner self-grant with NO stored grant options: PG's acldefault stores
-  // goptions = ACL_NO_RIGHTS (owner grantability is implicit by ownership),
-  // so owner rows print without '*'. The owner holds the object class's full
-  // privilege set.
   const AclMode owner_privs = ClassPrivs(type);
   if (owner_privs == AclMode::NoRights) {
     return acl;
@@ -199,12 +180,6 @@ catalog::Acl AclDefault(ObjectType type, ObjectId owner) {
 
 catalog::Acl AclForStorage(catalog::AclView stored, ObjectType type,
                            ObjectId owner) {
-  // An empty stored ACL means "never touched": the implicit default (owner +
-  // PUBLIC) applies. The first GRANT/REVOKE must materialize that default so it
-  // becomes explicit, editable rows -- otherwise a REVOKE FROM PUBLIC would
-  // collapse back to empty and read as "never touched" again. This mirrors PG's
-  // acldefault() materialization; the owner row also keeps the ACL non-NULL
-  // after a revoke (PG's relacl is {owner=.../owner}, not NULL).
   if (stored.empty()) {
     return AclDefault(type, owner);
   }
@@ -220,8 +195,6 @@ bool AclCheckSorted(catalog::AclView stored, ObjectType type, ObjectId owner,
     return any_of ? (have & need) != AclMode::NoRights : Has(have, need);
   };
 
-  // The owner's privileges are derived from ownership, never stored as an ACL
-  // row, so they are always the current full class set (and cannot be revoked).
   AclMode have = AclMode::NoRights;
   if (RolesContain(roles, owner)) {
     have |= ClassPrivs(type);
@@ -248,17 +221,12 @@ bool AclCheckSorted(catalog::AclView stored, ObjectType type, ObjectId owner,
   return false;
 }
 
-bool IsGranteeInRoles(ObjectId grantee, const RoleIdSet& roles) {
-  return grantee == catalog::kPublicGrantee || roles.contains(grantee);
-}
-
 bool IsGranteeInRoles(ObjectId grantee, RoleIdSpan roles) {
   return grantee == catalog::kPublicGrantee ||
          std::ranges::binary_search(roles, grantee);
 }
 
-template<typename Roles>
-AclMode AclModeHeld(catalog::AclView acl, const Roles& roles,
+AclMode AclModeHeld(catalog::AclView acl, RoleIdSpan roles,
                     AclMode AclItem::* field) {
   AclMode held = AclMode::NoRights;
   for (const auto& item : acl) {
@@ -269,104 +237,8 @@ AclMode AclModeHeld(catalog::AclView acl, const Roles& roles,
   return held;
 }
 
-AclMode AclGrantOptionHeld(catalog::AclView acl, const RoleIdSet& roles) {
-  return AclModeHeld(acl, roles, &AclItem::grant_option);
-}
-
 AclMode AclGrantOptionHeld(catalog::AclView acl, RoleIdSpan roles) {
   return AclModeHeld(acl, roles, &AclItem::grant_option);
-}
-
-AclMode AclPrivsHeld(catalog::AclView acl, const RoleIdSet& roles) {
-  return AclModeHeld(acl, roles, &AclItem::privs);
-}
-
-AclMode AclPrivsHeld(catalog::AclView acl, RoleIdSpan roles) {
-  return AclModeHeld(acl, roles, &AclItem::privs);
-}
-
-void AclGrant(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,
-              AclMode privs, AclMode grant_option) {
-  if (auto it = FindAclItem(acl, grantee, grantor); it != acl.end()) {
-    it->privs |= privs;
-    it->grant_option |= (grant_option & privs);
-    return;
-  }
-  acl.push_back(AclItem{
-    .grantee = grantee,
-    .grantor = grantor,
-    .privs = privs,
-    .grant_option = grant_option & privs,
-  });
-}
-
-void AclRevoke(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,
-               AclMode privs) {
-  auto it = FindAclItem(acl, grantee, grantor);
-  if (it == acl.end()) {
-    return;  // silent no-op, matching PostgreSQL
-  }
-  it->privs &= ~privs;
-  it->grant_option &= ~privs;
-  if (it->privs == AclMode::NoRights) {
-    acl.erase(it);
-  }
-}
-
-void AclRemoveGrantOption(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,
-                          AclMode privs) {
-  if (auto it = FindAclItem(acl, grantee, grantor); it != acl.end()) {
-    it->grant_option &= ~privs;
-  }
-  // No matching (grantee, grantor): silent no-op, matching PostgreSQL.
-}
-
-AclMode AclDependentPrivs(catalog::AclView acl, ObjectId grantee,
-                          AclMode privs) {
-  AclMode dependent = AclMode::NoRights;
-  for (const auto& item : acl) {
-    if (item.grantor == grantee) {
-      dependent |= item.privs & privs;
-    }
-  }
-  return dependent;
-}
-
-void AclRevokeCascade(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,
-                      AclMode privs) {
-  // (revokee, revoked-bits) worklist. Revoking from `grantee` may strip
-  // privileges that `grantee` re-granted; those revokees then cascade in turn.
-  std::vector<std::pair<ObjectId, AclMode>> work{{grantee, privs}};
-  while (!work.empty()) {
-    const auto [who, bits] = work.back();
-    work.pop_back();
-    // Any item whose grantor == `who` and which carries a revoked bit must lose
-    // that privilege (its grant chain is gone); schedule its grantee next.
-    for (const auto& item : acl) {
-      if (item.grantor != who) {
-        continue;
-      }
-      const AclMode dependent = item.privs & bits;
-      if (dependent != AclMode::NoRights) {
-        work.emplace_back(item.grantee, dependent);
-      }
-    }
-    // Revoke `bits` from every item granted BY `who` (i.e. grantor == who) and,
-    // for the top of the chain, also from (grantee, grantor).
-    for (auto it = acl.begin(); it != acl.end();) {
-      const bool top =
-        it->grantee == grantee && it->grantor == grantor && who == grantee;
-      if (it->grantor == who || top) {
-        it->privs &= ~bits;
-        it->grant_option &= ~bits;
-        if (it->privs == AclMode::NoRights) {
-          it = acl.erase(it);
-          continue;
-        }
-      }
-      ++it;
-    }
-  }
 }
 
 std::optional<AclMode> TryParseAclKeyword(std::string_view keyword,
@@ -384,8 +256,6 @@ std::optional<AclMode> TryParseAclKeyword(std::string_view keyword,
   return it->second;
 }
 
-// Render one aclitem to PG's text form: "grantee=privchars/grantor" ("" grantee
-// for PUBLIC), each priv char optionally followed by '*' for the grant option.
 std::string AclItemToText(
   const AclItem& item, absl::FunctionRef<std::string_view(ObjectId)> name_of) {
   std::string out;

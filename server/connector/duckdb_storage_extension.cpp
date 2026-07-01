@@ -54,9 +54,8 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
     auto state = context.registered_state->Get<SereneDBClientState>(
       kSereneDBClientStateKey);
     const auto ax =
-      state
-        ? catalog::RequireOwnership(state->GetConnectionContext().GetRoleId())
-        : catalog::NoAccessCheck();
+      state ? catalog::ActingAs(state->GetConnectionContext().GetRoleId())
+            : catalog::NoAccessCheck();
     auto r = catalog::CreateDatabase(ax, name);
     if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
       if (info.on_conflict == duckdb::OnCreateConflict::ERROR_ON_CONFLICT) {
@@ -107,7 +106,7 @@ void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
   auto ax = catalog::NoAccessCheck();
   if (state) {
     auto& conn_ctx = state->GetConnectionContext();
-    ax = catalog::RequireOwnership(conn_ctx.GetRoleId());
+    ax = catalog::ActingAs(conn_ctx.GetRoleId());
     conn_ctx.DropCatalogSnapshot();
   }
 

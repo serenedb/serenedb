@@ -427,8 +427,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     // has no OR REPLACE for tables). A missing table is fine -- replace then
     // degrades to a plain create.
     auto drop = catalog_impl.DropTable(
-      catalog::RequireOwnership(transaction.GetContext()), catalog.GetName(),
-      name, table_info.table, /*cascade=*/false);
+      catalog::ActingAs(transaction.GetContext()), catalog.GetName(), name,
+      table_info.table, /*cascade=*/false);
     if (!drop.ok() && !drop.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND) &&
         !drop.is(ERROR_SERVER_ILLEGAL_NAME)) {
       SDB_THROW(std::move(drop));
@@ -450,8 +450,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     if (snapshot->GetTable(catalog::NoAccessCheck(), database_id, name,
                            table_info.table)) {
       auto drop_result = catalog_impl.DropTable(
-        catalog::RequireOwnership(transaction.GetContext()), catalog.GetName(),
-        name, table_info.table, /*cascade=*/true);
+        catalog::ActingAs(transaction.GetContext()), catalog.GetName(), name,
+        table_info.table, /*cascade=*/true);
       if (!drop_result.ok()) {
         SDB_THROW(std::move(drop_result));
       }
@@ -461,9 +461,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
   // Creator owns the table (and its generated serial/PK sequences) via the
   // access context.
   const ObjectId role{GetSereneDBContext(transaction.GetContext()).GetRoleId()};
-  auto r =
-    catalog_impl.CreateTable(catalog::RequireOwnership(role), database_id, name,
-                             std::move(options), op_options);
+  auto r = catalog_impl.CreateTable(catalog::ActingAs(role), database_id, name,
+                                    std::move(options), op_options);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (if_not_exists) {
       return nullptr;
@@ -569,15 +568,15 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
       options.topk_scorer = catalog::ParseScorerExpression(context, value);
     }
     create_result = catalog_impl.CreateInvertedIndex(
-      catalog::RequireOwnership(context), context, database_id, name,
+      catalog::ActingAs(context), context, database_id, name,
       sdb_table->GetName(), info.index_name, std::move(idx_columns),
       std::move(options),
       /*operation_options=*/{});
   } else {
     bool unique = (info.constraint_type == duckdb::IndexConstraintType::UNIQUE);
     create_result = catalog_impl.CreateSecondaryIndex(
-      catalog::RequireOwnership(context), database_id, name,
-      sdb_table->GetName(), info.index_name, std::move(idx_columns), unique,
+      catalog::ActingAs(context), database_id, name, sdb_table->GetName(),
+      info.index_name, std::move(idx_columns), unique,
       /*operation_options=*/{});
   }
 
@@ -668,8 +667,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
     // Always replace=true for the catalog layer since we're replacing
     // the whole PgSqlFunction with the merged version. CreateFunction
     // preserves the prior owner on replace (PG semantics).
-    auto r = catalog_impl.CreateFunction(catalog::RequireOwnership(role),
-                                         database_id, name, function, true);
+    auto r = catalog_impl.CreateFunction(catalog::ActingAs(role), database_id,
+                                         name, function, true);
     if (!r.ok()) {
       SDB_THROW(std::move(r));
     }
@@ -679,8 +678,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
   // No existing function -- create new.
   auto function = std::make_shared<catalog::PgSqlFunction>(
     role, ObjectId{}, ObjectId{}, info.name, std::move(new_macro_info));
-  auto r = catalog_impl.CreateFunction(catalog::RequireOwnership(role),
-                                       database_id, name, function, false);
+  auto r = catalog_impl.CreateFunction(catalog::ActingAs(role), database_id,
+                                       name, function, false);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {
       return nullptr;
@@ -710,8 +709,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateView(
     info.on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
   // CreateView preserves the prior owner on replace (PG: CREATE OR REPLACE
   // keeps the original owner).
-  auto r = catalog_impl.CreateView(catalog::RequireOwnership(role), database_id,
-                                   name, view, replace);
+  auto r = catalog_impl.CreateView(catalog::ActingAs(role), database_id, name,
+                                   view, replace);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {
       return nullptr;
@@ -769,9 +768,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateSequence(
                                                       std::move(options));
 
   auto& catalog_impl = catalog::GetCatalog();
-  auto r =
-    catalog_impl.CreateSequence(catalog::RequireOwnership(role), database_id,
-                                name, sequence, if_not_exists);
+  auto r = catalog_impl.CreateSequence(catalog::ActingAs(role), database_id,
+                                       name, sequence, if_not_exists);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
                     ERR_MSG("relation \"", info.name, "\" already exists"));
@@ -818,8 +816,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateType(
   const ObjectId role{GetSereneDBContext(transaction.GetContext()).GetRoleId()};
   auto type = std::make_shared<catalog::PgSqlType>(
     role, ObjectId{}, ObjectId{}, info.name, std::move(type_info));
-  auto r = catalog_impl.CreateType(catalog::RequireOwnership(role), database_id,
-                                   name, type);
+  auto r =
+    catalog_impl.CreateType(catalog::ActingAs(role), database_id, name, type);
 
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {
@@ -887,8 +885,8 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
                                 duckdb::AlterInfo& info) {
   auto& catalog_impl = catalog::GetCatalog();
   auto db = GetDatabaseId();
-  const auto ax = catalog::RequireOwnership(
-    GetSereneDBContext(transaction.GetContext()).GetRoleId());
+  const auto ax =
+    catalog::ActingAs(GetSereneDBContext(transaction.GetContext()).GetRoleId());
 
   if (info.type == duckdb::AlterType::ALTER_SCALAR_FUNCTION) {
     auto& fn_info = info.Cast<duckdb::AlterScalarFunctionInfo>();

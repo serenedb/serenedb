@@ -35,12 +35,11 @@ constexpr uint64_t kNullMask = MaskFromNulls({
   GetIndex(&PgAuthid::rolpassword),
 });
 
-Timestamptz ParseValidUntil(std::string_view ts) {
-  if (ts.empty()) {
-    return {};  // is_null = true
+Timestamptz ValidUntilOf(const catalog::Role& role) {
+  if (!role.HasValidUntil()) {
+    return {};
   }
-  auto parsed = duckdb::Timestamp::FromString(std::string{ts}, false);
-  return Timestamptz{.micros = parsed.value, .is_null = false};
+  return Timestamptz{.micros = role.ValidUntil(), .is_null = false};
 }
 
 }  // namespace
@@ -62,7 +61,7 @@ catalog::MaterializedData SystemTableSnapshot<PgAuthid>::GetTableData() {
       .rolreplication = role->Has(RoleOption::Replication),
       .rolbypassrls = role->Has(RoleOption::BypassRls),
       .rolconnlimit = role->ConnLimit(),
-      .rolvaliduntil = ParseValidUntil(role->ValidUntil()),
+      .rolvaliduntil = ValidUntilOf(*role),
     };
     values.push_back(std::move(row));
   }

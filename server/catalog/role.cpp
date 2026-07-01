@@ -43,7 +43,6 @@ Role::Role(persistence::RoleData data)
                     data.id,
                     std::move(data.name),
                     ObjectType::Role},
-    _active{data.active},
     _options{static_cast<RoleOption>(data.options)},
     _member_of{std::move(data.member_of)},
     _conn_limit{data.conn_limit},
@@ -60,7 +59,6 @@ void catalog::Role::Serialize(duckdb::Serializer& sink) const {
   basics::WriteTuple(sink, persistence::RoleData{
                              .id = GetId(),
                              .name = std::string{GetName()},
-                             .active = _active,
                              .options = static_cast<uint32_t>(_options),
                              .member_of = _member_of,
                              .conn_limit = _conn_limit,
@@ -86,7 +84,6 @@ void catalog::Role::AddMembership(const Membership& edge) {
   if (it == _member_of.end()) {
     _member_of.push_back(edge);
   } else {
-    // Re-GRANT updates the existing edge's options (PG merges, never dups).
     *it = edge;
   }
 }
@@ -100,7 +97,6 @@ void catalog::Role::RemoveMembership(ObjectId role) {
 
 namespace {
 
-// The GUC name portion of a "guc=value" setconfig entry.
 std::string_view ConfigKey(std::string_view entry) {
   return entry.substr(0, entry.find('='));
 }
@@ -151,7 +147,6 @@ std::shared_ptr<Object> Role::Clone() const {
   return std::make_shared<Role>(persistence::RoleData{
     .id = GetId(),
     .name = std::string{GetName()},
-    .active = _active,
     .options = static_cast<uint32_t>(_options),
     .member_of = _member_of,
     .conn_limit = _conn_limit,

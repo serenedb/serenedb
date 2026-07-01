@@ -28,6 +28,7 @@
 #include <absl/strings/str_split.h>
 
 #include <algorithm>
+#include <limits>
 #include <ranges>
 #include <string>
 #include <utility>
@@ -49,21 +50,120 @@
 namespace sdb::pg {
 namespace {
 
+auto FindAclItem(catalog::Acl& acl, ObjectId grantee, ObjectId grantor) {
+  return std::ranges::find_if(acl, [&](const catalog::AclItem& item) {
+    return item.grantee == grantee && item.grantor == grantor;
+  });
+}
+
+catalog::AclMode AclPrivsHeld(catalog::AclView acl, auth::RoleIdSpan roles) {
+  catalog::AclMode held = catalog::AclMode::NoRights;
+  for (const auto& item : acl) {
+    if (item.grantee == catalog::kPublicGrantee ||
+        std::ranges::binary_search(roles, item.grantee)) {
+      held |= item.privs;
+    }
+  }
+  return held;
+}
+
+catalog::AclMode AclDependentPrivs(catalog::AclView acl, ObjectId grantee,
+                                   catalog::AclMode privs) {
+  catalog::AclMode dependent = catalog::AclMode::NoRights;
+  for (const auto& item : acl) {
+    if (item.grantor == grantee) {
+      dependent |= item.privs & privs;
+    }
+  }
+  return dependent;
+}
+
+void AclRevokeCascade(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,
+                      catalog::AclMode privs) {
+  std::vector<std::pair<ObjectId, catalog::AclMode>> work{{grantee, privs}};
+  while (!work.empty()) {
+    const auto [who, bits] = work.back();
+    work.pop_back();
+    for (const auto& item : acl) {
+      if (item.grantor != who) {
+        continue;
+      }
+      const catalog::AclMode dependent = item.privs & bits;
+      if (dependent != catalog::AclMode::NoRights) {
+        work.emplace_back(item.grantee, dependent);
+      }
+    }
+    for (auto it = acl.begin(); it != acl.end();) {
+      const bool top =
+        it->grantee == grantee && it->grantor == grantor && who == grantee;
+      if (it->grantor == who || top) {
+        it->privs &= ~bits;
+        it->grant_option &= ~bits;
+        if (it->privs == catalog::AclMode::NoRights) {
+          it = acl.erase(it);
+          continue;
+        }
+      }
+      ++it;
+    }
+  }
+}
+
+void AclGrant(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,
+              catalog::AclMode privs,
+              catalog::AclMode grant_option = catalog::AclMode::NoRights) {
+  if (auto it = FindAclItem(acl, grantee, grantor); it != acl.end()) {
+    it->privs |= privs;
+    it->grant_option |= (grant_option & privs);
+    return;
+  }
+  acl.push_back(catalog::AclItem{
+    .grantee = grantee,
+    .grantor = grantor,
+    .privs = privs,
+    .grant_option = grant_option & privs,
+  });
+}
+
+void AclRevoke(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,
+               catalog::AclMode privs) {
+  auto it = FindAclItem(acl, grantee, grantor);
+  if (it == acl.end()) {
+    return;
+  }
+  it->privs &= ~privs;
+  it->grant_option &= ~privs;
+  if (it->privs == catalog::AclMode::NoRights) {
+    acl.erase(it);
+  }
+}
+
+void AclRemoveGrantOption(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,
+                          catalog::AclMode privs) {
+  if (auto it = FindAclItem(acl, grantee, grantor); it != acl.end()) {
+    it->grant_option &= ~privs;
+  }
+}
+
 catalog::Catalog& GlobalCatalog() { return catalog::GetCatalog(); }
 
 std::shared_ptr<const catalog::Snapshot> FreshSnapshot() {
   return GlobalCatalog().GetCatalogSnapshot();
 }
 
-void RejectUnsupportedRoleOptions(bool has_conn_limit, bool has_valid_until) {
-  if (has_conn_limit) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("CONNECTION LIMIT is not supported"));
+int32_t ParseConnLimit(bool has_conn_limit, int64_t value) {
+  if (!has_conn_limit) {
+    return -1;
   }
-  if (has_valid_until) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("VALID UNTIL is not supported"));
+  if (value < -1 || value > std::numeric_limits<int32_t>::max()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("invalid connection limit: ", value));
   }
+  return static_cast<int32_t>(value);
+}
+
+int64_t ValidUntilOrUnset(bool has_valid_until, int64_t micros) {
+  return has_valid_until ? micros : catalog::Role::kNoValidUntil;
 }
 
 std::string MakePasswordVerifier(bool has_password, std::string_view password,
@@ -83,7 +183,10 @@ std::string MakePasswordVerifier(bool has_password, std::string_view password,
 
 void CreateRole(ConnectionContext& ctx, std::string_view name,
                 const CreateRoleOptions& options) {
-  RejectUnsupportedRoleOptions(options.has_conn_limit, options.has_valid_until);
+  const int32_t conn_limit =
+    ParseConnLimit(options.has_conn_limit, options.conn_limit);
+  const int64_t valid_until =
+    ValidUntilOrUnset(options.has_valid_until, options.valid_until);
 
   auto& catalog = GlobalCatalog();
   catalog::RoleOption opts = catalog::RoleOption::None;
@@ -93,20 +196,32 @@ void CreateRole(ConnectionContext& ctx, std::string_view name,
   if (options.superuser) {
     opts |= catalog::RoleOption::Superuser;
   }
+  if (options.createdb) {
+    opts |= catalog::RoleOption::CreateDb;
+  }
+  if (options.createrole) {
+    opts |= catalog::RoleOption::CreateRole;
+  }
+  if (options.replication) {
+    opts |= catalog::RoleOption::Replication;
+  }
+  if (options.bypassrls) {
+    opts |= catalog::RoleOption::BypassRls;
+  }
   if (options.inherit) {
     opts |= catalog::RoleOption::Inherit;
   }
   auto role = std::make_shared<catalog::Role>(catalog::persistence::RoleData{
     .name = std::string{name},
     .options = static_cast<uint32_t>(opts),
-    // No PASSWORD clause -> no stored verifier. PASSWORD '<x>' (incl. '') ->
-    // a real verifier. CREATE has no PASSWORD NULL form (is_null is false).
+    .conn_limit = conn_limit,
+    .valid_until = valid_until,
     .password_verifier = MakePasswordVerifier(
       options.has_password, options.password, options.password_is_null),
   });
 
-  auto r = catalog.CreateRole(catalog::RequireOwnership(ctx.GetRoleId()),
-                              std::move(role));
+  auto r =
+    catalog.CreateRole(catalog::ActingAs(ctx.GetRoleId()), std::move(role));
   if (r.is(ERROR_USER_DUPLICATE)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
                     ERR_MSG("role \"", name, "\" already exists"));
@@ -114,11 +229,21 @@ void CreateRole(ConnectionContext& ctx, std::string_view name,
   if (!r.ok()) {
     SDB_THROW(std::move(r));
   }
+
+  for (const auto& g : options.in_roles) {
+    GrantRole(ctx, g, name, /*revoke=*/false, MemberOptions{});
+  }
+  for (const auto& m : options.role_members) {
+    GrantRole(ctx, name, m, /*revoke=*/false, MemberOptions{});
+  }
+  for (const auto& a : options.admin_members) {
+    GrantRole(ctx, name, a, /*revoke=*/false, MemberOptions{.admin = 1});
+  }
 }
 
 void DropRole(ConnectionContext& ctx, std::string_view name, bool missing_ok) {
   auto& catalog = GlobalCatalog();
-  auto r = catalog.DropRole(catalog::RequireOwnership(ctx.GetRoleId()), name);
+  auto r = catalog.DropRole(catalog::ActingAs(ctx.GetRoleId()), name);
   if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
     if (missing_ok) {
       ctx.AddNotice(SQL_ERROR_DATA(
@@ -161,7 +286,10 @@ void CheckRoleChangeResult(const Result& r, std::string_view name) {
 
 void AlterRole(ConnectionContext& ctx, std::string_view name,
                const AlterRoleOptions& opts) {
-  RejectUnsupportedRoleOptions(opts.has_conn_limit, opts.has_valid_until);
+  const int32_t conn_limit =
+    ParseConnLimit(opts.has_conn_limit, opts.conn_limit);
+  const int64_t valid_until =
+    ValidUntilOrUnset(opts.has_valid_until, opts.valid_until);
 
   // Hash outside the mutate lambda (which runs under the catalog lock).
   const std::string verifier = MakePasswordVerifier(
@@ -169,7 +297,7 @@ void AlterRole(ConnectionContext& ctx, std::string_view name,
 
   auto& catalog = GlobalCatalog();
   auto r = catalog.ChangeRole(
-    catalog::RequireOwnership(ctx.GetRoleId()), name, "alter",
+    catalog::ActingAs(ctx.GetRoleId()), name, "alter",
     /*allow_self=*/false,
     [&](const catalog::Role& old_role,
         std::shared_ptr<catalog::Role>& new_role) -> Result {
@@ -179,10 +307,18 @@ void AlterRole(ConnectionContext& ctx, std::string_view name,
       o = SetBit(o, catalog::RoleOption::Superuser, opts.superuser);
       o = SetBit(o, catalog::RoleOption::CreateDb, opts.createdb);
       o = SetBit(o, catalog::RoleOption::CreateRole, opts.createrole);
+      o = SetBit(o, catalog::RoleOption::Replication, opts.replication);
+      o = SetBit(o, catalog::RoleOption::BypassRls, opts.bypassrls);
       o = SetBit(o, catalog::RoleOption::Inherit, opts.inherit);
       new_role->SetOptions(o);
       if (opts.has_password) {
         new_role->SetPasswordVerifier(verifier);
+      }
+      if (opts.has_valid_until) {
+        new_role->SetValidUntil(valid_until);
+      }
+      if (opts.has_conn_limit) {
+        new_role->SetConnLimit(conn_limit);
       }
       return {};
     });
@@ -193,7 +329,7 @@ void RenameRole(ConnectionContext& ctx, std::string_view name,
                 std::string_view new_name) {
   auto& catalog = GlobalCatalog();
   auto r = catalog.ChangeRole(
-    catalog::RequireOwnership(ctx.GetRoleId()), name, "rename",
+    catalog::ActingAs(ctx.GetRoleId()), name, "rename",
     /*allow_self=*/false,
     [&](const catalog::Role& old_role,
         std::shared_ptr<catalog::Role>& new_role) -> Result {
@@ -215,7 +351,7 @@ void AlterRoleConfig(ConnectionContext& ctx, std::string_view name,
 
   auto& catalog = GlobalCatalog();
   auto r = catalog.ChangeRole(
-    catalog::RequireOwnership(ctx.GetRoleId()), name, "alter",
+    catalog::ActingAs(ctx.GetRoleId()), name, "alter",
     /*allow_self=*/is_self,
     [&](const catalog::Role& old_role,
         std::shared_ptr<catalog::Role>& new_role) -> Result {
@@ -305,13 +441,13 @@ void ApplyAclChange(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,
   const auto grant_option =
     with_grant_option ? privs : catalog::AclMode::NoRights;
   if (!revoke) {
-    auth::AclGrant(acl, grantee, grantor, privs, grant_option);
+    AclGrant(acl, grantee, grantor, privs, grant_option);
   } else if (grant_option_only) {
-    auth::AclRemoveGrantOption(acl, grantee, grantor, privs);
+    AclRemoveGrantOption(acl, grantee, grantor, privs);
   } else if (cascade) {
-    auth::AclRevokeCascade(acl, grantee, grantor, privs);
+    AclRevokeCascade(acl, grantee, grantor, privs);
   } else {
-    auth::AclRevoke(acl, grantee, grantor, privs);
+    AclRevoke(acl, grantee, grantor, privs);
   }
 }
 
@@ -353,8 +489,8 @@ void AlterDefaultPrivileges(ConnectionContext& ctx,
   const catalog::AclMode privs = ParseAclModeOrThrow(privileges, type);
 
   auto r = catalog.ChangeDefaultAcl(
-    catalog::RequireOwnership(ctx.GetRoleId()), defacl_role_name, schema_id,
-    objtype_c, type, [&](catalog::Acl& acl) {
+    catalog::ActingAs(ctx.GetRoleId()), defacl_role_name, schema_id, objtype_c,
+    type, [&](catalog::Acl& acl) {
       ApplyAclChange(acl, grantee_id, defacl_role_id, privs, revoke,
                      opts.with_grant_option, opts.grant_option_only,
                      opts.cascade);
@@ -429,7 +565,7 @@ void ApplyAclGrant(const catalog::Snapshot& live, ObjectId owner,
   }
   if (allowed == catalog::AclMode::NoRights) {
     if (!is_owner &&
-        auth::AclPrivsHeld(acl, rc.closure) == catalog::AclMode::NoRights) {
+        AclPrivsHeld(acl, rc.closure) == catalog::AclMode::NoRights) {
       *gc.no_authority = true;
     } else {
       *gc.nothing_applied = true;
@@ -439,16 +575,16 @@ void ApplyAclGrant(const catalog::Snapshot& live, ObjectId owner,
   if (!gc.revoke) {
     const auto grant_option =
       gc.opts.with_grant_option ? allowed : catalog::AclMode::NoRights;
-    auth::AclGrant(acl, gc.grantee_id, grantor, allowed, grant_option);
+    AclGrant(acl, gc.grantee_id, grantor, allowed, grant_option);
   } else if (gc.opts.grant_option_only) {
-    auth::AclRemoveGrantOption(acl, gc.grantee_id, grantor, allowed);
+    AclRemoveGrantOption(acl, gc.grantee_id, grantor, allowed);
   } else if (gc.opts.cascade) {
-    auth::AclRevokeCascade(acl, gc.grantee_id, grantor, allowed);
-  } else if (auth::AclDependentPrivs(acl, gc.grantee_id, allowed) !=
+    AclRevokeCascade(acl, gc.grantee_id, grantor, allowed);
+  } else if (AclDependentPrivs(acl, gc.grantee_id, allowed) !=
              catalog::AclMode::NoRights) {
     *gc.dependents_block = true;
   } else {
-    auth::AclRevoke(acl, gc.grantee_id, grantor, allowed);
+    AclRevoke(acl, gc.grantee_id, grantor, allowed);
   }
 }
 
@@ -620,7 +756,7 @@ void GrantObject(ConnectionContext& ctx, catalog::ObjectType type,
         auto cr = catalog.ChangeColumnAcl(
           ctx.GetDatabaseId(), schema_name, rel_name, col.GetName(),
           [&](const catalog::Snapshot&, ObjectId owner, catalog::Acl& acl) {
-            auth::AclRevoke(acl, grantee_id, owner, privs);
+            AclRevoke(acl, grantee_id, owner, privs);
           });
         if (!cr.ok()) {
           SDB_THROW(std::move(cr));
@@ -691,9 +827,9 @@ void GrantRole(ConnectionContext& ctx, std::string_view role,
     .set_option = opts.set != 0,
   };
 
-  auto r = catalog.ChangeMembership(catalog::RequireOwnership(ctx.GetRoleId()),
-                                    role_id, role, member_id, member, edge,
-                                    revoke, opts.admin_option_only);
+  auto r = catalog.ChangeMembership(catalog::ActingAs(ctx.GetRoleId()), role_id,
+                                    role, member_id, member, edge, revoke,
+                                    opts.admin_option_only);
   if (!r.ok()) {
     SDB_THROW(std::move(r));
   }
@@ -730,7 +866,7 @@ void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
     schema_name = parsed.schema;
     rel_name = parsed.relation;
   }
-  auto r = catalog.ChangeOwner(catalog::RequireOwnership(current_id),
+  auto r = catalog.ChangeOwner(catalog::ActingAs(current_id),
                                ctx.GetDatabaseId(), schema_name, rel_name, type,
                                new_owner_id, new_owner_name);
   if (!r.ok()) {

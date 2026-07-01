@@ -38,10 +38,6 @@ using RoleIdSpan = std::span<const ObjectId>;
 
 catalog::Acl AclDefault(catalog::ObjectType type, ObjectId owner);
 
-// Produce the ACL to persist: drop the owner's derived self-grant (owner
-// privileges come from ownership at check time) and, on first touch, seed the
-// PUBLIC default so a later REVOKE FROM PUBLIC has a row to subtract from --
-// mirroring PG's acldefault() materialization, minus the owner row.
 catalog::Acl AclForStorage(catalog::AclView stored, catalog::ObjectType type,
                            ObjectId owner);
 
@@ -49,29 +45,7 @@ bool AclCheckSorted(catalog::AclView stored, catalog::ObjectType type,
                     ObjectId owner, RoleIdSpan roles, catalog::AclMode need,
                     bool any_of);
 
-catalog::AclMode AclGrantOptionHeld(catalog::AclView acl,
-                                    const RoleIdSet& roles);
 catalog::AclMode AclGrantOptionHeld(catalog::AclView acl, RoleIdSpan roles);
-
-catalog::AclMode AclPrivsHeld(catalog::AclView acl, const RoleIdSet& roles);
-catalog::AclMode AclPrivsHeld(catalog::AclView acl, RoleIdSpan roles);
-
-// Items are keyed by (grantee, grantor).
-void AclGrant(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,
-              catalog::AclMode privs,
-              catalog::AclMode grant_option = catalog::AclMode::NoRights);
-
-void AclRevoke(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,
-               catalog::AclMode privs);
-
-void AclRemoveGrantOption(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,
-                          catalog::AclMode privs);
-
-catalog::AclMode AclDependentPrivs(catalog::AclView acl, ObjectId grantee,
-                                   catalog::AclMode privs);
-
-void AclRevokeCascade(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,
-                      catalog::AclMode privs);
 
 std::optional<catalog::AclMode> TryParseAclKeyword(std::string_view keyword,
                                                    catalog::ObjectType type);

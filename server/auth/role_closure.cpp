@@ -29,9 +29,6 @@
 namespace sdb::auth {
 namespace {
 
-// Which per-edge option gates traversal: All = every edge (is_member_of),
-// Inherit = inherit_option edges (has_privs_of_role), Set = set_option edges
-// (member_can_set_role).
 enum class EdgeFilter { All, Inherit, Set };
 
 bool EdgePasses(const catalog::Membership& edge, EdgeFilter filter) {
@@ -46,8 +43,6 @@ bool EdgePasses(const catalog::Membership& edge, EdgeFilter filter) {
   return false;
 }
 
-// BFS over membership edges, following only edges that pass `filter`. Dangling
-// edges (DROP ROLE leaves them behind) are skipped.
 RoleIdSet ComputeClosure(const catalog::Snapshot& snapshot, ObjectId role,
                          EdgeFilter filter) {
   RoleIdSet out;
@@ -78,6 +73,11 @@ RoleIdSet ComputeClosure(const catalog::Snapshot& snapshot, ObjectId role,
   return out;
 }
 
+RoleIdSet ComputeEffectiveRoles(const catalog::Snapshot& snapshot,
+                                ObjectId role) {
+  return ComputeClosure(snapshot, role, EdgeFilter::Inherit);
+}
+
 RoleClosure ComputeRoleClosure(const catalog::Snapshot& snapshot,
                                ObjectId role) {
   RoleClosure out;
@@ -100,11 +100,6 @@ RoleClosure ComputeRoleClosure(const catalog::Snapshot& snapshot,
 
 }  // namespace
 
-RoleIdSet ComputeEffectiveRoles(const catalog::Snapshot& snapshot,
-                                ObjectId role) {
-  return ComputeClosure(snapshot, role, EdgeFilter::Inherit);
-}
-
 RoleIdSet ComputeMembershipClosure(const catalog::Snapshot& snapshot,
                                    ObjectId role) {
   return ComputeClosure(snapshot, role, EdgeFilter::All);
@@ -116,10 +111,7 @@ RoleIdSet ComputeSetRoleClosure(const catalog::Snapshot& snapshot,
 }
 
 void RoleClosureMap::Build(const catalog::Snapshot& snapshot) {
-  // Eager: compute every role's inherit-closure once, at snapshot publish.
-  // Reads afterward are lock-free lookups into this frozen map. Rebuild cost is
-  // paid only on the (rare) DDL/GRANT publish, never on the (hot) privilege
-  // check.
+  // Computed once at publish; reads afterward are lock-free lookups.
   auto roles = snapshot.GetRoles();
   _by_role.clear();
   _by_role.reserve(roles.size());

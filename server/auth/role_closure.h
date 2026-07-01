@@ -33,9 +33,6 @@ struct Snapshot;
 }  // namespace sdb::catalog
 namespace sdb::auth {
 
-RoleIdSet ComputeEffectiveRoles(const catalog::Snapshot& snapshot,
-                                ObjectId role);
-
 RoleIdSet ComputeMembershipClosure(const catalog::Snapshot& snapshot,
                                    ObjectId role);
 

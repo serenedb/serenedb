@@ -143,10 +143,9 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
     auto snapshot = catalog_impl.GetCatalogSnapshot();
     if (snapshot->GetTable(catalog::NoAccessCheck(), _database_id, _schema_name,
                            _options.name)) {
-      auto drop_result =
-        catalog_impl.DropTable(catalog::RequireOwnership(context),
-                               _database_name, _schema_name, _options.name,
-                               /*cascade=*/true);
+      auto drop_result = catalog_impl.DropTable(
+        catalog::ActingAs(context), _database_name, _schema_name, _options.name,
+        /*cascade=*/true);
       if (!drop_result.ok()) {
         SDB_THROW(std::move(drop_result));
       }
@@ -157,7 +156,7 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   op_options.table_id = _table_id;
   // Ownership is attributed to the creating role via the access context.
   auto create_result =
-    catalog_impl.CreateTable(catalog::RequireOwnership(context), _database_id,
+    catalog_impl.CreateTable(catalog::ActingAs(context), _database_id,
                              _schema_name, _options, op_options);
   if (!create_result.ok()) {
     SDB_THROW(std::move(create_result));

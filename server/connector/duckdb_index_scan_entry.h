@@ -77,7 +77,7 @@ class TableInvertedIndexScanEntry final : public InvertedIndexScanEntry {
   duckdb::virtual_column_map_t GetVirtualColumns() const final;
 
  private:
-  std::shared_ptr<catalog::Table> _indexed_table;
+  std::shared_ptr<catalog::Table> _sdb_table;
 };
 
 class ViewInvertedIndexScanEntry final : public InvertedIndexScanEntry {
@@ -99,7 +99,7 @@ class ViewInvertedIndexScanEntry final : public InvertedIndexScanEntry {
   duckdb::virtual_column_map_t GetVirtualColumns() const final;
 
  private:
-  std::shared_ptr<const catalog::PgSqlView> _indexed_view;
+  std::shared_ptr<const catalog::PgSqlView> _sdb_view;
 };
 
 class SecondaryIndexScanEntry : public SereneDBIndexScanEntry {
@@ -133,7 +133,7 @@ class TableSecondaryIndexScanEntry final : public SecondaryIndexScanEntry {
   duckdb::TableStorageInfo GetStorageInfo(duckdb::ClientContext& context) final;
 
  private:
-  std::shared_ptr<catalog::Table> _indexed_table;
+  std::shared_ptr<catalog::Table> _sdb_table;
 };
 
 }  // namespace sdb::connector

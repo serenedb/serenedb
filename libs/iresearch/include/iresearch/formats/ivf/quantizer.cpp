@@ -114,27 +114,44 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
   mutable std::vector<uint8_t> _code;
 };
 
-class ScalarQuantizerReader final : public QuantizerReader {
+class ScalarQuantizerCodebook final : public QuantizerCodebook {
  public:
-  ScalarQuantizerReader(std::unique_ptr<IndexInput> pay_in, uint32_t d,
-                        VectorQuantization quant,
-                        std::span<const byte_type> stats)
-    : _pay_in{std::move(pay_in)},
-      _d{d},
-      _sq{d, FaissScalarType(quant)},
-      _codes_reader{*_pay_in, static_cast<uint32_t>(_sq.code_size)} {
-    _sq.trained.assign(2 * static_cast<size_t>(_d), 0.f);
+  ScalarQuantizerCodebook(uint32_t d, VectorQuantization quant,
+                          std::span<const byte_type> stats,
+                          std::span<const float> query, VectorMetric metric)
+    : _sq{d, FaissScalarType(quant)},
+      _metric{metric},
+      _query(query.begin(), query.end()) {
+    _sq.trained.assign(2 * static_cast<size_t>(d), 0.f);
     const size_t want = _sq.trained.size() * sizeof(float);
     if (stats.size() >= want) {
       std::memcpy(_sq.trained.data(), stats.data(), want);
     }
   }
 
-  void SetQuery(std::span<const float> query, VectorMetric metric) final {
-    _query.assign(query.begin(), query.end());
-    _dc.reset(_sq.get_distance_computer(FaissMetric(metric)));
-    _dc->code_size = _sq.code_size;
-    _dc->set_query(_query.data());
+  std::unique_ptr<QuantizerReader> MakeReader(
+    std::unique_ptr<IndexInput> pay_in) const final;
+
+  const faiss::ScalarQuantizer& Sq() const noexcept { return _sq; }
+  std::span<const float> Query() const noexcept { return _query; }
+  VectorMetric Metric() const noexcept { return _metric; }
+
+ private:
+  faiss::ScalarQuantizer _sq;
+  VectorMetric _metric;
+  std::vector<float> _query;
+};
+
+class ScalarQuantizerReader final : public QuantizerReader {
+ public:
+  ScalarQuantizerReader(std::shared_ptr<const ScalarQuantizerCodebook> cb,
+                        std::unique_ptr<IndexInput> pay_in)
+    : _cb{std::move(cb)},
+      _pay_in{std::move(pay_in)},
+      _codes_reader{*_pay_in, static_cast<uint32_t>(_cb->Sq().code_size)} {
+    _dc.reset(_cb->Sq().get_distance_computer(FaissMetric(_cb->Metric())));
+    _dc->code_size = _cb->Sq().code_size;
+    _dc->set_query(_cb->Query().data());
   }
 
   void StartCluster(uint64_t pay_start, size_t num_docs,
@@ -152,7 +169,7 @@ class ScalarQuantizerReader final : public QuantizerReader {
     SDB_ASSERT(offset + count <= _n);
     const byte_type* block = _codes_reader.Read(offset, count);
     _dc->codes = block;
-    const size_t cs = _sq.code_size;
+    const size_t cs = _cb->Sq().code_size;
     size_t i = 0;
     for (; i + 3 < count; i += 4) {
       _dc->distances_batch_4(i, i + 1, i + 2, i + 3, out[i], out[i + 1],
@@ -164,14 +181,19 @@ class ScalarQuantizerReader final : public QuantizerReader {
   }
 
  private:
+  std::shared_ptr<const ScalarQuantizerCodebook> _cb;
   std::unique_ptr<IndexInput> _pay_in;
-  uint32_t _d;
-  std::vector<float> _query;
-  faiss::ScalarQuantizer _sq;
   std::unique_ptr<faiss::ScalarQuantizer::SQDistanceComputer> _dc;
   VectorBlockReader _codes_reader;
   size_t _n = 0;
 };
+
+std::unique_ptr<QuantizerReader> ScalarQuantizerCodebook::MakeReader(
+  std::unique_ptr<IndexInput> pay_in) const {
+  return std::make_unique<ScalarQuantizerReader>(
+    std::static_pointer_cast<const ScalarQuantizerCodebook>(shared_from_this()),
+    std::move(pay_in));
+}
 
 class ProductQuantizerWriter final : public QuantizerWriter {
  public:
@@ -251,20 +273,21 @@ class ProductQuantizerWriter final : public QuantizerWriter {
   mutable std::vector<uint8_t> _code;
 };
 
-class ProductQuantizerReader final : public QuantizerReader {
+class ProductQuantizerCodebook final : public QuantizerCodebook {
  public:
-  ProductQuantizerReader(std::unique_ptr<IndexInput> pay_in, uint32_t d,
-                         std::span<const byte_type> stats)
-    : _pay_in{std::move(pay_in)},
-      _hdr{ReadHeader(stats)},
-      _codes_reader{*_pay_in, _hdr.m == 0 ? 1 : _hdr.m} {
-    if (_hdr.m != 0 && d % _hdr.m == 0 && _hdr.ksub != 0) {
+  ProductQuantizerCodebook(uint32_t d, std::span<const byte_type> stats,
+                           std::span<const float> query, VectorMetric metric)
+    : _metric{metric}, _query(query.begin(), query.end()) {
+    SDB_ASSERT(metric == VectorMetric::L2Sqr ||
+               metric == VectorMetric::InnerProduct);
+    const Header hdr = ReadHeader(stats);
+    if (hdr.m != 0 && d % hdr.m == 0 && hdr.ksub != 0) {
       _pq.d = d;
-      _pq.M = _hdr.m;
+      _pq.M = hdr.m;
       _pq.nbits = 8;
       _pq.set_derived_values();
       const size_t want = _pq.centroids.size() * sizeof(float);
-      if (_hdr.ksub == static_cast<uint32_t>(_pq.ksub) &&
+      if (hdr.ksub == static_cast<uint32_t>(_pq.ksub) &&
           stats.size() >= 2 * sizeof(uint32_t) + want) {
         std::memcpy(_pq.centroids.data(), stats.data() + 2 * sizeof(uint32_t),
                     want);
@@ -275,58 +298,12 @@ class ProductQuantizerReader final : public QuantizerReader {
 
   bool Valid() const noexcept { return _valid; }
 
-  void SetQuery(std::span<const float> query, VectorMetric metric) final {
-    _query.assign(query.begin(), query.end());
-    _metric = metric;
-    SDB_ASSERT(metric == VectorMetric::L2Sqr ||
-               metric == VectorMetric::InnerProduct);
-  }
+  std::unique_ptr<QuantizerReader> MakeReader(
+    std::unique_ptr<IndexInput> pay_in) const final;
 
-  void StartCluster(uint64_t pay_start, size_t num_docs,
-                    const float* centroid) final {
-    _n = num_docs;
-    if (_n == 0) {
-      return;
-    }
-    SDB_ASSERT(centroid != nullptr);
-    _table.resize(static_cast<size_t>(_pq.M) * _pq.ksub);
-    if (_metric == VectorMetric::L2Sqr) {
-      // ||q - (c + r)||^2 = ||(q - c) - r||^2: ADC table for the residual
-      // query.
-      std::vector<float> qr(_query.size());
-      for (size_t j = 0; j < _query.size(); ++j) {
-        qr[j] = _query[j] - centroid[j];
-      }
-      _pq.compute_distance_table(qr.data(), _table.data());
-      _ip_offset = 0.f;
-    } else {
-      // IP(q, c + r) = IP(q, c) + IP(q, r).
-      _pq.compute_inner_prod_table(_query.data(), _table.data());
-      float off = 0.f;
-      for (size_t j = 0; j < _query.size(); ++j) {
-        off += _query[j] * centroid[j];
-      }
-      _ip_offset = off;
-    }
-    _codes_reader.Reset(pay_start);
-  }
-
-  void ComputeBlock(size_t offset, size_t count, score_t /*boost*/,
-                    score_t* out) final {
-    SDB_ASSERT(offset + count <= _n);
-    const byte_type* block = _codes_reader.Read(offset, count);
-    const size_t m = _pq.M;
-    const size_t ksub = _pq.ksub;
-    const float* table = _table.data();
-    for (size_t i = 0; i < count; ++i) {
-      const byte_type* code = block + i * m;
-      float acc = _ip_offset;
-      for (size_t j = 0; j < m; ++j) {
-        acc += table[j * ksub + code[j]];
-      }
-      out[i] = acc;
-    }
-  }
+  const faiss::ProductQuantizer& Pq() const noexcept { return _pq; }
+  std::span<const float> Query() const noexcept { return _query; }
+  VectorMetric Metric() const noexcept { return _metric; }
 
  private:
   struct Header {
@@ -343,17 +320,84 @@ class ProductQuantizerReader final : public QuantizerReader {
     return h;
   }
 
-  std::unique_ptr<IndexInput> _pay_in;
-  Header _hdr;
   faiss::ProductQuantizer _pq;
-  VectorBlockReader _codes_reader;
-  bool _valid = false;
-  VectorMetric _metric = VectorMetric::L2Sqr;
+  VectorMetric _metric;
   std::vector<float> _query;
+  bool _valid = false;
+};
+
+class ProductQuantizerReader final : public QuantizerReader {
+ public:
+  ProductQuantizerReader(std::shared_ptr<const ProductQuantizerCodebook> cb,
+                         std::unique_ptr<IndexInput> pay_in)
+    : _cb{std::move(cb)},
+      _pay_in{std::move(pay_in)},
+      _codes_reader{*_pay_in, static_cast<uint32_t>(_cb->Pq().code_size)} {}
+
+  void StartCluster(uint64_t pay_start, size_t num_docs,
+                    const float* centroid) final {
+    _n = num_docs;
+    if (_n == 0) {
+      return;
+    }
+    SDB_ASSERT(centroid != nullptr);
+    const faiss::ProductQuantizer& pq = _cb->Pq();
+    const std::span<const float> query = _cb->Query();
+    _table.resize(static_cast<size_t>(pq.M) * pq.ksub);
+    if (_cb->Metric() == VectorMetric::L2Sqr) {
+      // ||q - (c + r)||^2 = ||(q - c) - r||^2: ADC table for the residual
+      // query.
+      std::vector<float> qr(query.size());
+      for (size_t j = 0; j < query.size(); ++j) {
+        qr[j] = query[j] - centroid[j];
+      }
+      pq.compute_distance_table(qr.data(), _table.data());
+      _ip_offset = 0.f;
+    } else {
+      // IP(q, c + r) = IP(q, c) + IP(q, r).
+      pq.compute_inner_prod_table(query.data(), _table.data());
+      float off = 0.f;
+      for (size_t j = 0; j < query.size(); ++j) {
+        off += query[j] * centroid[j];
+      }
+      _ip_offset = off;
+    }
+    _codes_reader.Reset(pay_start);
+  }
+
+  void ComputeBlock(size_t offset, size_t count, score_t /*boost*/,
+                    score_t* out) final {
+    SDB_ASSERT(offset + count <= _n);
+    const byte_type* block = _codes_reader.Read(offset, count);
+    const size_t m = _cb->Pq().M;
+    const size_t ksub = _cb->Pq().ksub;
+    const float* table = _table.data();
+    for (size_t i = 0; i < count; ++i) {
+      const byte_type* code = block + i * m;
+      float acc = _ip_offset;
+      for (size_t j = 0; j < m; ++j) {
+        acc += table[j * ksub + code[j]];
+      }
+      out[i] = acc;
+    }
+  }
+
+ private:
+  std::shared_ptr<const ProductQuantizerCodebook> _cb;
+  std::unique_ptr<IndexInput> _pay_in;
+  VectorBlockReader _codes_reader;
   std::vector<float> _table;
   float _ip_offset = 0.f;
   size_t _n = 0;
 };
+
+std::unique_ptr<QuantizerReader> ProductQuantizerCodebook::MakeReader(
+  std::unique_ptr<IndexInput> pay_in) const {
+  return std::make_unique<ProductQuantizerReader>(
+    std::static_pointer_cast<const ProductQuantizerCodebook>(
+      shared_from_this()),
+    std::move(pay_in));
+}
 
 }  // namespace
 
@@ -373,26 +417,32 @@ std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(VectorQuantization quant,
   return nullptr;
 }
 
-std::unique_ptr<QuantizerReader> MakeQuantizerReader(
-  VectorQuantization quant, std::unique_ptr<IndexInput> pay_in, uint32_t d,
-  std::span<const byte_type> stats) {
+std::shared_ptr<const QuantizerCodebook> MakeQuantizerCodebook(
+  VectorQuantization quant, uint32_t d, std::span<const byte_type> stats,
+  std::span<const float> query, VectorMetric metric) {
   switch (quant) {
     case VectorQuantization::None:
       return nullptr;
     case VectorQuantization::SQ8:
     case VectorQuantization::SQ4:
-      return std::make_unique<ScalarQuantizerReader>(std::move(pay_in), d,
-                                                     quant, stats);
+      return std::make_shared<ScalarQuantizerCodebook>(d, quant, stats, query,
+                                                       metric);
     case VectorQuantization::PQ: {
-      auto reader =
-        std::make_unique<ProductQuantizerReader>(std::move(pay_in), d, stats);
-      if (!reader->Valid()) {
+      auto cb =
+        std::make_shared<ProductQuantizerCodebook>(d, stats, query, metric);
+      if (!cb->Valid()) {
         return nullptr;
       }
-      return reader;
+      return cb;
     }
   }
   return nullptr;
+}
+
+std::unique_ptr<QuantizerReader> MakeQuantizerReader(
+  const std::shared_ptr<const QuantizerCodebook>& codebook,
+  std::unique_ptr<IndexInput> pay_in) {
+  return codebook ? codebook->MakeReader(std::move(pay_in)) : nullptr;
 }
 
 }  // namespace irs

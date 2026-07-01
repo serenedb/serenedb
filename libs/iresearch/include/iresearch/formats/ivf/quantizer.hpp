@@ -56,11 +56,18 @@ class QuantizerWriter {
 class QuantizerReader {
  public:
   virtual ~QuantizerReader() = default;
-  virtual void SetQuery(std::span<const float> query, VectorMetric metric) = 0;
   virtual void StartCluster(uint64_t pay_start, size_t num_docs,
                             const float* centroid) = 0;
   virtual void ComputeBlock(size_t offset, size_t length, score_t boost,
                             score_t* out) = 0;
+};
+
+class QuantizerCodebook
+  : public std::enable_shared_from_this<QuantizerCodebook> {
+ public:
+  virtual ~QuantizerCodebook() = default;
+  virtual std::unique_ptr<QuantizerReader> MakeReader(
+    std::unique_ptr<IndexInput> pay_in) const = 0;
 };
 
 std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(VectorQuantization quant,
@@ -68,8 +75,12 @@ std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(VectorQuantization quant,
                                                      VectorMetric metric,
                                                      uint32_t pq_m);
 
+std::shared_ptr<const QuantizerCodebook> MakeQuantizerCodebook(
+  VectorQuantization quant, uint32_t d, std::span<const byte_type> stats,
+  std::span<const float> query, VectorMetric metric);
+
 std::unique_ptr<QuantizerReader> MakeQuantizerReader(
-  VectorQuantization quant, std::unique_ptr<IndexInput> pay_in, uint32_t d,
-  std::span<const byte_type> stats);
+  const std::shared_ptr<const QuantizerCodebook>& codebook,
+  std::unique_ptr<IndexInput> pay_in);
 
 }  // namespace irs

@@ -51,6 +51,7 @@ namespace {
 
 constexpr uint32_t kClusterSeed = 42;
 constexpr double kNlistSqrtMultiplier = 2.0;
+constexpr uint64_t kTrainPointsPerCentroid = 64;
 
 // Streams the flat vector column in row-aligned chunks (no full matrix in RAM),
 // invoking `sink(first_row, n_rows, data)` where `data` points at `n_rows * d`
@@ -78,11 +79,8 @@ uint64_t ResolveTrainSample(const IvfInfo& info, uint64_t valid_count,
   if (info.train_sample != 0) {
     n_train = std::min<uint64_t>(valid_count, info.train_sample);
   } else {
-    const auto by_fraction =
-      static_cast<uint64_t>(0.3 * static_cast<double>(valid_count));
-    const uint64_t by_clusters = static_cast<uint64_t>(nlist) * 256;
-    n_train =
-      std::min<uint64_t>(valid_count, std::min(by_fraction, by_clusters));
+    n_train = std::min<uint64_t>(
+      valid_count, static_cast<uint64_t>(nlist) * kTrainPointsPerCentroid);
   }
   // Train requires at least `nlist` points; nlist is already <= valid_count.
   return std::clamp<uint64_t>(n_train, nlist, valid_count);

@@ -243,7 +243,6 @@ StoreTableDef MakeStoreTableDef(std::string_view database,
                                 std::string_view schema, const Table& table) {
   StoreTableDef def;
   def.name = StoreTableName(database, schema, table.GetName());
-  def.table_id = table.GetId();
   const auto& cols = table.Columns();
   std::vector<size_t> mirror_pos(cols.size(), SIZE_MAX);
   def.columns.reserve(cols.size());

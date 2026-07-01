@@ -55,7 +55,7 @@ inline constexpr uint32_t kMaxSaslMessage = 1024;
 
 inline duckdb::LogicalType ResolveExpectedType(const auto& value_map,
                                                uint16_t id) {
-  const auto it = value_map.find(absl::StrCat(id + 1));
+  const auto it = value_map.find(duckdb::Identifier{absl::StrCat(id + 1)});
   if (it != value_map.end()) {
     const auto type = it->second->GetValue().type();
     if (type.id() != duckdb::LogicalTypeId::UNKNOWN &&
@@ -224,9 +224,9 @@ inline duckdb::unique_ptr<duckdb::SQLStatement> ExtractCopyToQuery(
     return std::move(select);
   }
   auto ref = duckdb::make_uniq<duckdb::BaseTableRef>();
-  ref->catalog_name = copy.info->catalog;
-  ref->schema_name = copy.info->schema;
-  ref->table_name = copy.info->table;
+  const auto& qualified = copy.info->GetQualifiedName();
+  ref->SetQualifiedName(qualified.Catalog(), qualified.Schema(),
+                        qualified.Name());
   auto node = duckdb::make_uniq<duckdb::SelectNode>();
   node->from_table = std::move(ref);
   if (copy.info->select_list.empty()) {
@@ -358,8 +358,10 @@ bool PgWireSession<Kind>::SetupConnection() {
 
   _conn->context->session_user = std::string{UserName()};
   std::vector<duckdb::CatalogSearchEntry> default_paths{
-    duckdb::CatalogSearchEntry{std::string{DatabaseName()}, "$user"},
-    duckdb::CatalogSearchEntry{std::string{DatabaseName()}, "public"},
+    duckdb::CatalogSearchEntry{duckdb::Identifier{DatabaseName()},
+                               duckdb::Identifier{"$user"}},
+    duckdb::CatalogSearchEntry{duckdb::Identifier{DatabaseName()},
+                               duckdb::Identifier{"public"}},
   };
   _conn->context->client_data->catalog_search_path->SetDefaultPaths(
     std::vector{default_paths});
@@ -1273,14 +1275,17 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
     auto snapshot = _connection_ctx->EnsureCatalogSnapshot();
     const auto db_id = _connection_ctx->GetDatabaseId();
     std::shared_ptr<catalog::Table> table;
-    if (!copy_info.schema.empty()) {
-      table = snapshot->GetTable(db_id, copy_info.schema, copy_info.table);
+    const auto& copy_name = copy_info.GetQualifiedName();
+    if (!copy_name.Schema().empty()) {
+      table = snapshot->GetTable(db_id, copy_name.Schema().GetIdentifierName(),
+                                 copy_name.Name().GetIdentifierName());
     } else {
       // Unqualified target: resolve across the search path by presence (the
       // schema that CONTAINS the table, as the binder does) -- the current
       // schema alone would miss a table in a later search-path schema.
       for (const auto& schema : _connection_ctx->GetSearchPath()) {
-        table = snapshot->GetTable(db_id, schema, copy_info.table);
+        table = snapshot->GetTable(db_id, schema,
+                                   copy_name.Name().GetIdentifierName());
         if (table) {
           break;
         }
@@ -1875,6 +1880,7 @@ void PgWireSession<Kind>::DescribeStatement(Statement& stmt) {
   const auto* types = &prepared.GetTypes();
   const auto* names = &prepared.GetNames();
   duckdb::unique_ptr<duckdb::PendingQueryResult> pending;
+  duckdb::vector<duckdb::Identifier> pending_names;
   if (!prepared.named_param_map.empty() &&
       std::ranges::any_of(*types, [](const duckdb::LogicalType& type) {
         return type.id() == duckdb::LogicalTypeId::UNKNOWN ||
@@ -1893,7 +1899,8 @@ void PgWireSession<Kind>::DescribeStatement(Statement& stmt) {
     pending = PendingQueryEnsured(prepared, dummy, nullptr);
     if (!pending->HasError()) {
       types = &pending->types;
-      names = &pending->names;
+      pending_names = duckdb::StringsToIdentifiers(pending->names);
+      names = &pending_names;
     }
   }
   WriteRowDescription(this->_send, *types, *names, {});

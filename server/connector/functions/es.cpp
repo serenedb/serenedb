@@ -350,8 +350,8 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
   options.pk_columns.push_back(id_column.GetId());
   {
     // PK implies NOT NULL, mirroring CREATE TABLE's constraint expansion.
-    auto col_ref =
-      duckdb::make_uniq<duckdb::ColumnRefExpression>(std::string{kIdColumn});
+    auto col_ref = duckdb::make_uniq<duckdb::ColumnRefExpression>(
+      duckdb::Identifier{kIdColumn});
     auto is_not_null = duckdb::make_uniq<duckdb::OperatorExpression>(
       duckdb::ExpressionType::OPERATOR_IS_NOT_NULL, std::move(col_ref));
     options.check_constraints.push_back(catalog::CheckConstraint{

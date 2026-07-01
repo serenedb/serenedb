@@ -156,7 +156,7 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   }
 
   auto& store_db = *duckdb::DatabaseManager::Get(context).GetDatabase(
-    context, std::string{catalog::kStoreDatabaseName});
+    context, duckdb::Identifier{catalog::kStoreDatabaseName});
   auto& meta = duckdb::MetaTransaction::Get(context);
   auto state = duckdb::make_uniq<CTASGlobalSinkState>(
     meta, store_db, _database_id, _database_name, _schema_name, _options.name);

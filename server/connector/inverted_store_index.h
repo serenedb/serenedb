@@ -67,7 +67,7 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
                            duckdb::Vector& row_ids) override;
   void Delete(duckdb::IndexLock& l, duckdb::DataChunk& chunk,
               duckdb::Vector& row_ids) override;
-  idx_t TryDelete(
+  duckdb::idx_t TryDelete(
     duckdb::IndexLock& l, duckdb::DataChunk& chunk, duckdb::Vector& row_ids,
     duckdb::optional_ptr<duckdb::SelectionVector> deleted_sel,
     duckdb::optional_ptr<duckdb::SelectionVector> non_deleted_sel) override;
@@ -89,7 +89,7 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
     return true;
   }
   void Vacuum(duckdb::IndexLock&) override {}
-  idx_t GetInMemorySize(duckdb::IndexLock&) override { return 0; }
+  duckdb::idx_t GetInMemorySize(duckdb::IndexLock&) override { return 0; }
   void Verify(duckdb::IndexLock&) override {}
   std::string ToString(duckdb::IndexLock&, bool) override;
   void VerifyAllocations(duckdb::IndexLock&) override {}
@@ -99,7 +99,8 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
     const duckdb::case_insensitive_map_t<duckdb::Value>& options) override;
   duckdb::IndexStorageInfo SerializeToWAL(
     const duckdb::case_insensitive_map_t<duckdb::Value>& options) override;
-  std::string GetConstraintViolationMessage(duckdb::VerifyExistenceType, idx_t,
+  std::string GetConstraintViolationMessage(duckdb::VerifyExistenceType,
+                                            duckdb::idx_t,
                                             duckdb::DataChunk&) override;
 
  public:

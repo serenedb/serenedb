@@ -102,7 +102,7 @@ class WireSinkContext {
   // row offset within the chunk DuckDB re-delivers after a mid-chunk suspend.
   bool paged = false;
   std::atomic<uint64_t> row_budget{0};
-  idx_t page_offset = 0;
+  duckdb::idx_t page_offset = 0;
 
   // --- filled by the collector ---
   Mode mode = Mode::Direct;

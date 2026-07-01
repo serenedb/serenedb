@@ -19,7 +19,7 @@ SET preserve_identifier_case = true;
 statement ok
 CREATE TABLE MyOtheRTaBLe (x INTEGER);
 
-query ?
+query
 SELECT * FROM "MyOtheRTaBLe";
 ----
 x
@@ -28,7 +28,7 @@ x
 statement ok
 CREATE TABLE "PreservedCase" (x INTEGER);
 
-query ?
+query
 SELECT * FROM PreservedCase;
 ----
 x

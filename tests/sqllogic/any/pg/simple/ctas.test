@@ -11,7 +11,7 @@ FROM
   generate_series(1, 100) AS serenedb(salary);
 
 
-query rowsort
+query
 SELECT * FROM vedernikoff ORDER BY 1, 2, 3;
 ----
 30003 values hashing to 0559962e298db3135b36ee24b4a3d1c0
@@ -27,7 +27,7 @@ statement ok
 CREATE TABLE IF NOT EXISTS vedernikoff AS SELECT 1 AS id;
 
 
-query rowsort
+query
 SELECT * FROM vedernikoff ORDER BY 1, 2, 3;
 ----
 30003 values hashing to 0559962e298db3135b36ee24b4a3d1c0
@@ -105,7 +105,7 @@ FROM
   generate_series(1, 100) AS serenedb(salary);
 
 
-query rowsort
+query
 SELECT * FROM vedernikoff ORDER BY 1, 2, 3;
 ----
 30003 values hashing to 0559962e298db3135b36ee24b4a3d1c0
@@ -184,17 +184,12 @@ query
 EXPLAIN CREATE TABLE vedernikoff AS SELECT x FROM generate_series(1, 10) AS t(x);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│    SDB_CREATE_TABLE_AS    │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│      GENERATE_SERIES      │
-│    ────────────────────   │
-│         Function:         │
-│      GENERATE_SERIES      │
-│                           │
-│          ~10 rows         │
-└───────────────────────────┘
+╭─ Sdb Create Table As ─────╮
+╰─────────────┬─────────────╯
+╭─ Generate Series ─────────╮
+│ Function: GENERATE_SERIES │
+│ ~10 rows                  │
+╰───────────────────────────╯
 
 
 onlyif serenedb
@@ -210,45 +205,16 @@ query
 EXPLAIN ANALYZE CREATE TABLE vedernikoff AS SELECT x FROM generate_series(1, 10) AS t(x);
 ----
 QUERY PLAN
-┌─────────────────────────────────────┐
-│┌───────────────────────────────────┐│
-││    Query Profiling Information    ││
-│└───────────────────────────────────┘│
-└─────────────────────────────────────┘
-EXPLAIN ANALYZE CREATE TABLE vedernikoff AS SELECT x FROM generate_series(1, 10) AS t(x);
-<slt:ignore>
-┌───────────────────────────┐
-│      RESULT_COLLECTOR     │
-│    ────────────────────   │
-│                           │
-│           0 rows          │
-<slt:ignore>
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│      EXPLAIN_ANALYZE      │
-│    ────────────────────   │
-│                           │
-│           0 rows          │
-<slt:ignore>
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│      CREATE_TABLE_AS      │
-│    ────────────────────   │
-│                           │
-│           1 row           │
-<slt:ignore>
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         TABLE_SCAN        │
-│    ────────────────────   │
-│         Function:         │
-│      GENERATE_SERIES      │
-│                           │
-│                           │
-│                           │
-│          10 rows          │
-<slt:ignore>
-└───────────────────────────┘
+╭─ Summary ──────────╮
+│ Total Time: 0.486s │
+╰────────────────────╯
+╭─ Create Table As ─────────╮
+│ 1 row                 0µs │
+╰─────────────┒┎────────────╯
+╭─ Table Scan ┚┖────────────╮
+│ Function: GENERATE_SERIES │
+│ 10 rows               0µs │
+╰───────────────────────────╯
 
 
 onlyif serenedb

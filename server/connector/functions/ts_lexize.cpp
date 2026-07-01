@@ -151,7 +151,8 @@ class ListTokenSink {
 
 const TsLexizeBindData& GetBindData(duckdb::ExpressionState& state) {
   return state.expr.Cast<duckdb::BoundFunctionExpression>()
-    .bind_info->Cast<TsLexizeBindData>();
+    .BindInfo()
+    ->Cast<TsLexizeBindData>();
 }
 
 void TsLexizeFunctionConstant(duckdb::DataChunk& args,

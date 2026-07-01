@@ -34,7 +34,7 @@ void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_compound([ts_phrase('a')], [], ['b','c'], 1). "
     "Buckets are TSQUERY[] or NULL; min_should_match defaults to 1.";
-  SDB_ASSERT(func.children.size() >= 3 && func.children.size() <= 4);
+  SDB_ASSERT(func.GetChildren().size() >= 3 && func.GetChildren().size() <= 4);
 
   auto extract =
     [](const duckdb::Expression& arg, std::string_view label,
@@ -54,7 +54,8 @@ void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
       // -> children values; list_value/array_value call -> children
       // expressions. Mirrors FromAnyAllOf's extraction.
       if (arg.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONSTANT) {
-        const auto& val = arg.Cast<duckdb::BoundConstantExpression>().value;
+        const auto& val =
+          arg.Cast<duckdb::BoundConstantExpression>().GetValue();
         if (val.IsNull()) {
           return;
         }
@@ -70,17 +71,17 @@ void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
       }
       if (arg.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
         const auto& fn = arg.Cast<duckdb::BoundFunctionExpression>();
-        if (fn.function.GetName() != "list_value" &&
-            fn.function.GetName() != "array_value") {
+        const auto& fn_name = fn.Function().GetName().GetIdentifierName();
+        if (fn_name != "list_value" && fn_name != "array_value") {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
             ERR_MSG("ts_compound ", label,
-                    " list arg must be a literal list or array (got: ",
-                    fn.function.GetName(), ")"),
+                    " list arg must be a literal list or array (got: ", fn_name,
+                    ")"),
             ERR_HINT("Pass a literal list/array, e.g. ['a', 'b'], or NULL "
                      "for an empty bucket."));
         }
-        for (const auto& e : fn.children) {
+        for (const auto& e : fn.GetChildren()) {
           out.push_back(e.get());
         }
         return;
@@ -94,9 +95,9 @@ void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
 
   std::vector<const duckdb::Expression*> must, must_not, should;
   std::vector<duckdb::unique_ptr<duckdb::Expression>> synthesised;
-  extract(*func.children[0], "must", must, synthesised);
-  extract(*func.children[1], "must_not", must_not, synthesised);
-  extract(*func.children[2], "should", should, synthesised);
+  extract(*func.GetChildren()[0], "must", must, synthesised);
+  extract(*func.GetChildren()[1], "must_not", must_not, synthesised);
+  extract(*func.GetChildren()[2], "should", should, synthesised);
 
   if (must.empty() && must_not.empty() && should.empty()) {
     AddFilter<irs::Empty>(parent);
@@ -123,9 +124,9 @@ void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
   if (!should.empty()) {
     int64_t min_should = 1;
-    if (func.children.size() == 4) {
-      if (auto r = GetIntArg(*func.children[3], "ts_compound min_should_match",
-                             min_should);
+    if (func.GetChildren().size() == 4) {
+      if (auto r = GetIntArg(*func.GetChildren()[3],
+                             "ts_compound min_should_match", min_should);
           !r.ok()) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
@@ -142,7 +143,7 @@ void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
     for (const auto* clause : should) {
       BuildTSQuery(or_filter, inner_ctx, column_info, *clause);
     }
-  } else if (func.children.size() == 4) {
+  } else if (func.GetChildren().size() == 4) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG(

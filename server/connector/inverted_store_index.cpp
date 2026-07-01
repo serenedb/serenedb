@@ -138,8 +138,8 @@ InvertedStoreIndex::InvertedStoreIndex(
   const duckdb::vector<duckdb::column_t>& column_ids,
   const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& exprs,
   duckdb::AttachedDatabase& db, ObjectId table_id, ObjectId index_id)
-  : BoundIndex(name, kTypeName, duckdb::IndexConstraintType::NONE, column_ids,
-               io, exprs, db),
+  : BoundIndex(duckdb::Identifier{name}, kTypeName,
+               duckdb::IndexConstraintType::NONE, column_ids, io, exprs, db),
     _table_id{table_id},
     _index_id{index_id} {}
 
@@ -538,7 +538,7 @@ void AttachInvertedStoreIndexCallbacks(duckdb::IndexType& type) {
     -> duckdb::unique_ptr<duckdb::IndexBuildGlobalState> {
     auto state = duckdb::make_uniq<InvertedStoreBuildGlobalState>();
     state->index = duckdb::make_uniq<InvertedStoreIndex>(
-      input.info.index_name,
+      input.info.GetIndexName().GetIdentifierName(),
       duckdb::TableIOManager::Get(input.table.GetStorage()), input.storage_ids,
       input.expressions, input.table.GetStorage().db,
       OptionId(input.info.options, InvertedStoreIndex::kTableIdOption),
@@ -563,7 +563,7 @@ void AttachInvertedStoreIndexCallbacks(duckdb::IndexType& type) {
   type.create_instance = [](duckdb::CreateIndexInput& input)
     -> duckdb::unique_ptr<duckdb::BoundIndex> {
     return duckdb::make_uniq<InvertedStoreIndex>(
-      input.name, input.table_io_manager, input.column_ids,
+      input.name.GetIdentifierName(), input.table_io_manager, input.column_ids,
       input.unbound_expressions, input.db,
       OptionId(input.storage_info.options, InvertedStoreIndex::kTableIdOption),
       OptionId(input.storage_info.options, InvertedStoreIndex::kIndexIdOption));

@@ -167,8 +167,8 @@ INSERT INTO vedernikoff_clickclack_orders (body) VALUES ('o1');
 query
 SELECT order_id, ticket_id, ref_id FROM vedernikoff_clickclack_orders;
 ----
-order_id  ticket_id  ref_id
-1         1          1
+order_id	ticket_id	ref_id
+1	1	1
 
 
 # Drop seq_a CASCADE: only order_id DEFAULT cleared. Other seqs unaffected.
@@ -187,9 +187,9 @@ INSERT INTO vedernikoff_clickclack_orders (body) VALUES ('o2');
 query
 SELECT order_id, ticket_id, ref_id, body FROM vedernikoff_clickclack_orders ORDER BY body;
 ----
-order_id  ticket_id  ref_id  body
-1         1          1       o1
-NULL      2          2       o2
+order_id	ticket_id	ref_id	body
+1	1	1	o1
+NULL	2	2	o2
 
 
 # Drop seq_b CASCADE: ticket_id DEFAULT cleared. Then seq_c.
@@ -238,14 +238,14 @@ INSERT INTO vedernikoff_iceberg_cyclic (body) VALUES
 query
 SELECT id, body FROM vedernikoff_iceberg_cyclic ORDER BY body;
 ----
-id  body
-1   r1
-2   r2
-3   r3
-1   r4
-2   r5
-3   r6
-1   r7
+id	body
+1	r1
+2	r2
+3	r3
+1	r4
+2	r5
+3	r6
+1	r7
 
 
 statement ok
@@ -349,8 +349,8 @@ INSERT INTO vedernikoff_x_t1 (body) VALUES ('row3');
 query
 SELECT a, b, c, d FROM vedernikoff_x_t1 WHERE body = 'row3';
 ----
-a     b     c     d
-NULL  NULL  NULL  NULL
+a	b	c	d
+NULL	NULL	NULL	NULL
 
 
 statement ok

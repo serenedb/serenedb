@@ -26,7 +26,7 @@ CREATE TEXT SEARCH DICTIONARY tok_keyword (
     template = 'keyword'
 );
 
-query ?
+query
 SELECT ts_lexize('tok_keyword', 'New York City');
 ----
 ts_lexize

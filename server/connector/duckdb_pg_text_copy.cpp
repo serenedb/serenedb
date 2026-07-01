@@ -144,7 +144,7 @@ void DrainToHandle(message::Buffer& buffer, duckdb::FileHandle& handle) {
 
 duckdb::unique_ptr<duckdb::FunctionData> BindCopyTo(
   duckdb::ClientContext&, duckdb::CopyFunctionBindInput& input,
-  const duckdb::vector<std::string>&,
+  const duckdb::vector<duckdb::Identifier>&,
   const duckdb::vector<duckdb::LogicalType>& sql_types) {
   auto opts = ResolveTextCopyOptions(input.info.options);
   return duckdb::make_uniq<PgTextCopyBindData>(sql_types, opts.delim,

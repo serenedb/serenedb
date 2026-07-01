@@ -52,18 +52,19 @@ void FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_regexp('abc.*') or ts_regexp('foo', 'posix'). "
     "Syntax is 'perl' (default) or 'posix'.";
-  SDB_ASSERT(func.children.size() >= 1 && func.children.size() <= 2);
+  SDB_ASSERT(func.GetChildren().size() >= 1 && func.GetChildren().size() <= 2);
   std::string pattern;
-  if (auto r = GetVarcharArg(*func.children[0], "ts_regexp pattern", pattern);
+  if (auto r =
+        GetVarcharArg(*func.GetChildren()[0], "ts_regexp pattern", pattern);
       !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
   }
   auto syntax = irs::RegexpSyntax::Perl;
-  if (func.children.size() == 2) {
+  if (func.GetChildren().size() == 2) {
     std::string syntax_name;
-    if (auto r =
-          GetVarcharArg(*func.children[1], "ts_regexp syntax", syntax_name);
+    if (auto r = GetVarcharArg(*func.GetChildren()[1], "ts_regexp syntax",
+                               syntax_name);
         !r.ok()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));

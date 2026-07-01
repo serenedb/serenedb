@@ -332,10 +332,12 @@ int64_t StoreTableSizeProxy(duckdb::ClientContext& context,
   }
   auto store_name = catalog::StoreTableName(
     database->GetName(), schema->GetName(), table->GetName());
-  duckdb::EntryLookupInfo lookup(duckdb::CatalogType::TABLE_ENTRY, store_name);
-  auto entry = duckdb::Catalog::GetEntry(
-    context, std::string{catalog::kStoreDatabaseName}, "main", lookup,
-    duckdb::OnEntryNotFound::RETURN_NULL);
+  duckdb::EntryLookupInfo lookup(
+    duckdb::CatalogType::TABLE_ENTRY,
+    duckdb::QualifiedName(duckdb::Identifier{catalog::kStoreDatabaseName},
+                          "main", duckdb::Identifier{store_name}));
+  auto entry = duckdb::Catalog::GetEntry(context, lookup,
+                                         duckdb::OnEntryNotFound::RETURN_NULL);
   if (!entry) {
     return 0;
   }
@@ -723,7 +725,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     format_type_fn.SetNullHandling(
       duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     duckdb::CreateScalarFunctionInfo info{std::move(format_type_fn)};
-    info.schema = "pg_catalog";
+    info.SetSchema("pg_catalog");
     info.on_conflict = duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
     loader.RegisterFunction(std::move(info));
   }

@@ -94,28 +94,19 @@ query
 EXPLAIN COPY reversed(id, name) FROM '${__TEST_DIR__}/lmao.parquet' WITH (FORMAT PARQUET);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│        BATCH_INSERT       │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│        SDB_PROGRESS       │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #1            │
-│             #0            │
-│                           │
-│          ~3 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│        PARQUET_SCAN       │
-│    ────────────────────   │
-│         Function:         │
-│        PARQUET_SCAN       │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
+╭─ Batch Insert ─────────╮
+╰────────────┬───────────╯
+╭─ Sdb Progress ─────────╮
+╰────────────┬───────────╯
+╭─ Projection ───────────╮
+│ Projections: #1, #0    │
+│ ~3 rows                │
+╰────────────┬───────────╯
+╭─ Parquet Scan ─────────╮
+│ Function: PARQUET_SCAN │
+│ Projections: id, name  │
+│ ~3 rows                │
+╰────────────────────────╯
 
 
 statement count 3

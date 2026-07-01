@@ -511,7 +511,7 @@ INSERT INTO b VALUES
 
 # DOCS_TEST_BODY
 
-query ????
+query
 SELECT a.*, b.*
 FROM a
 CROSS JOIN b;
@@ -526,7 +526,7 @@ id	x	id	x
 
 # DOCS_TEST_BODY
 
-query ????
+query
 SELECT a.*, b.*
 FROM a, b;
 ----

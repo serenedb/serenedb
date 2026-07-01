@@ -7,7 +7,7 @@ CREATE TABLE tbl AS
 
 # DOCS_TEST_BODY
 
-query ??
+query
 SELECT *
 FROM tbl
 WHERE x % 2 == 1;

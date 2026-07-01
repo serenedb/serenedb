@@ -41,27 +41,20 @@ query
 EXPLAIN UPDATE single_pk SET a = 200, b = 200 WHERE a = 2;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           UPDATE          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│            200            │
-│            200            │
-│           rowid           │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│      Table: single_pk     │
-│   Type: Sequential Scan   │
-│      Filters: (a = 2)     │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ Update ──────────────╮
+╰───────────┬───────────╯
+╭─ Projection ──────────╮
+│ Projections: 200,     │
+│              200,     │
+│              rowid    │
+│ ~1 row                │
+╰───────────┬───────────╯
+╭─ Seq Scan ┴───────────╮
+│ Table: single_pk      │
+│ Type: Sequential Scan │
+│ Filters: a = 2        │
+│ ~1 row                │
+╰───────────────────────╯
 
 
 statement error

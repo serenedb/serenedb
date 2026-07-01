@@ -41,31 +41,19 @@ query
 EXPLAIN SELECT SUM(small) FROM vedernikoff_idx;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│    UNGROUPED_AGGREGATE    │
-│    ────────────────────   │
-│        Aggregates:        │
-│    sum_no_overflow(#0)    │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│           small           │
-│                           │
-│          ~3 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│      vedernikoff_idx      │
-│                           │
-│     Projections: small    │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
+╭─ Ungrouped Aggregate ───────────╮
+│ Aggregates: sum_no_overflow(#0) │
+│ ~1 row                          │
+╰────────────────┬────────────────╯
+╭─ Projection ───┴────────────────╮
+│ Projections: small              │
+│ ~3 rows                         │
+╰────────────────┬────────────────╯
+╭─ Iresearch Scan ────────────────╮
+│ Index: vedernikoff_idx          │
+│ Projections: small              │
+│ ~3 rows                         │
+╰─────────────────────────────────╯
 
 
 # Three rows of 2^62 can overflow int64 -> the rewrite must not fire.
@@ -73,30 +61,19 @@ query
 EXPLAIN SELECT SUM(big) FROM vedernikoff_idx;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│    UNGROUPED_AGGREGATE    │
-│    ────────────────────   │
-│    Aggregates: sum(#0)    │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│            big            │
-│                           │
-│          ~3 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│      vedernikoff_idx      │
-│                           │
-│      Projections: big     │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
+╭─ Ungrouped Aggregate ──╮
+│ Aggregates: sum(#0)    │
+│ ~1 row                 │
+╰────────────┬───────────╯
+╭─ Projection ───────────╮
+│ Projections: big       │
+│ ~3 rows                │
+╰────────────┬───────────╯
+╭─ Iresearch Scan ───────╮
+│ Index: vedernikoff_idx │
+│ Projections: big       │
+│ ~3 rows                │
+╰────────────────────────╯
 
 
 query

@@ -34,44 +34,22 @@ WHERE
   AND v3.fact LIKE '%gain%' AND (v1.iq = 23 OR v2.iq = 54);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       CROSS_PRODUCT       ├───────────────────────────────────────────┐
-└─────────────┬─────────────┘                                           │
-┌─────────────┴─────────────┐                             ┌─────────────┴─────────────┐
-│     BLOCKWISE_NL_JOIN     │                             │        READ_PARQUET       │
-│    ────────────────────   │                             │    ────────────────────   │
-│      Join Type: INNER     │                             │         Function:         │
-│      Condition: false     │                             │        READ_PARQUET       │
-│                           │                             │                           │
-│                           │                             │        Projections:       │
-│                           │                             │             iq            │
-│                           │                             │           salary          │
-│                           ├──────────────┐              │            fact           │
-│                           │              │              │                           │
-│                           │              │              │          Filters:         │
-│                           │              │              │  ((iq >= 90) AND (NOT (iq │
-│                           │              │              │     IN (99, 95, 97))))    │
-│                           │              │              │   contains(fact, 'gain')  │
-│                           │              │              │                           │
-│        ~2,000 rows        │              │              │        ~2,000 rows        │
-└─────────────┬─────────────┘              │              └───────────────────────────┘
-┌─────────────┴─────────────┐┌─────────────┴─────────────┐
-│        READ_PARQUET       ││        EMPTY_RESULT       │
-│    ────────────────────   ││                           │
-│         Function:         ││                           │
-│        READ_PARQUET       ││                           │
-│                           ││                           │
-│        Projections:       ││                           │
-│             iq            ││                           │
-│           salary          ││                           │
-│            fact           ││                           │
-│                           ││                           │
-│          Filters:         ││                           │
-│ (((iq != 95) AND (iq > 90)││                           │
-│     ) AND (iq < 100))     ││                           │
-│                           ││                           │
-│        ~2,000 rows        ││                           │
-└───────────────────────────┘└───────────────────────────┘
+╭─ Cross Product ───────────────────────────╮
+╰─────────────────────┬─────────────────────╯
+                      ├───────────────────────────────────────────────────────────────────╮
+╭─ Blockwise Nl Join ─┴─────────────────────╮                      ╭─ Read Parquet ───────┴─────────────────────╮
+│ Join Type: INNER                          │                      │ Function: READ_PARQUET                     │
+│ Condition: false                          │                      │ Projections: iq, salary, fact              │
+│ ~2,000 rows                               │                      │ Filters:                                   │
+╰─────────────────────┬─────────────────────╯                      │ (iq >= 90) AND (NOT (iq IN (99, 95, 97))), │
+                      ├─────────────────────────────────╮          │ contains(fact, 'gain')                     │
+╭─ Read Parquet ──────┴─────────────────────╮  ╭─ Empty Result ─╮  │ ~2,000 rows                                │
+│ Function: READ_PARQUET                    │  ╰────────────────╯  ╰────────────────────────────────────────────╯
+│ Projections: iq, salary, fact             │
+│ Filters:                                  │
+│ ((iq != 95) AND (iq > 90)) AND (iq < 100) │
+│ ~2,000 rows                               │
+╰───────────────────────────────────────────╯
 
 query
 SELECT * FROM vedernikoff_company;

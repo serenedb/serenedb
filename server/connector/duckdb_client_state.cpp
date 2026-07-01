@@ -227,7 +227,7 @@ void SereneDBClientState::TransactionPreCheckpoint(duckdb::AttachedDatabase& db,
   // in-commit checkpoint, so the checkpoint's force-refresh never waits on an
   // un-committed in-flight batch. Only the store database carries indexed
   // tables, so settle on its commit.
-  if (db.GetName() != catalog::kStoreDatabaseName) {
+  if (db.GetName().GetIdentifierName() != catalog::kStoreDatabaseName) {
     return;
   }
   _connection_ctx->CommitSearch();

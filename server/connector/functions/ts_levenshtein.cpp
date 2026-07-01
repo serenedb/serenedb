@@ -37,17 +37,17 @@ LevenshteinArgs ParseLevenshteinArgs(
     "If distance is omitted (ts_levenshtein('test')), it is picked "
     "automatically from the term length (0 for <=2 chars, 1 for 3-5, "
     "2 for >=6).";
-  SDB_ASSERT(func.children.size() >= 1 && func.children.size() <= 4);
+  SDB_ASSERT(func.GetChildren().size() >= 1 && func.GetChildren().size() <= 4);
   LevenshteinArgs out;
   if (auto r =
-        GetVarcharArg(*func.children[0], "ts_levenshtein text", out.text);
+        GetVarcharArg(*func.GetChildren()[0], "ts_levenshtein text", out.text);
       !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
   }
-  if (func.children.size() >= 2) {
-    if (auto r =
-          GetIntArg(*func.children[1], "ts_levenshtein distance", out.distance);
+  if (func.GetChildren().size() >= 2) {
+    if (auto r = GetIntArg(*func.GetChildren()[1], "ts_levenshtein distance",
+                           out.distance);
         !r.ok()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
@@ -65,9 +65,10 @@ LevenshteinArgs ParseLevenshteinArgs(
               out.distance),
       ERR_HINT(kSyntaxHint));
   }
-  if (func.children.size() >= 3) {
-    if (auto r = GetBoolArg(*func.children[2], "ts_levenshtein transpositions",
-                            out.with_transpositions);
+  if (func.GetChildren().size() >= 3) {
+    if (auto r =
+          GetBoolArg(*func.GetChildren()[2], "ts_levenshtein transpositions",
+                     out.with_transpositions);
         !r.ok()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
@@ -81,9 +82,9 @@ LevenshteinArgs ParseLevenshteinArgs(
               out.distance),
       ERR_HINT(kSyntaxHint));
   }
-  if (func.children.size() >= 4) {
-    if (auto r =
-          GetVarcharArg(*func.children[3], "ts_levenshtein prefix", out.prefix);
+  if (func.GetChildren().size() >= 4) {
+    if (auto r = GetVarcharArg(*func.GetChildren()[3], "ts_levenshtein prefix",
+                               out.prefix);
         !r.ok()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));

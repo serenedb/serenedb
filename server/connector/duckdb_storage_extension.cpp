@@ -100,7 +100,8 @@ void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
     state->GetConnectionContext().DropCatalogSnapshot();
   }
   duckdb::shared_ptr<void> keep_alive = GetAttached().shared_from_this();
-  auto r = catalog::DropDatabase(GetName(), std::move(keep_alive));
+  auto r =
+    catalog::DropDatabase(GetName().GetIdentifierName(), std::move(keep_alive));
   SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
   if (!r.ok()) {
     SDB_THROW(std::move(r));

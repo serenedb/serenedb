@@ -66,28 +66,18 @@ query
 EXPLAIN SELECT pk, tags FROM list_n_idx WHERE text_for_search @@ ts_phrase('second');
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│     Index: list_n_idx     │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││  text_for_search  ││  │
-│  ││ (string) = second ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│        Projections:       │
-│           pk (l)          │
-│          tags (i)         │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ Iresearch Scan ───────────────────────────────╮
+│ Index: list_n_idx                              │
+│ Lookup: table                                  │
+│ Filter:                                        │
+│ ┌────────────────────────────────────────────┐ │
+│ │╭─ Term ───────────────────────────────────╮│ │
+│ ││ Detail: text_for_search(string) = second ││ │
+│ │╰──────────────────────────────────────────╯│ │
+│ └────────────────────────────────────────────┘ │
+│ Projections: pk (l), tags (i)                  │
+│ ~1 row                                         │
+╰────────────────────────────────────────────────╯
 
 
 # NULL row must come back as NULL, not as {} and not as {default}.

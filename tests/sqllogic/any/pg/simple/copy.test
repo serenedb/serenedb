@@ -95,31 +95,21 @@ query
 EXPLAIN COPY reversed(id, name) FROM '${__TEST_DIR__}/lmao' WITH (FORMAT CSV, HEADER TRUE);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│        BATCH_INSERT       │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│        SDB_PROGRESS       │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #1            │
-│             #0            │
-│                           │
-│          ~4 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          READ_CSV         │
-│    ────────────────────   │
-│     Function: READ_CSV    │
-│                           │
-│        Projections:       │
-│             id            │
-│            name           │
-│                           │
-│          ~4 rows          │
-└───────────────────────────┘
+╭─ Batch Insert ─────╮
+╰──────────┬─────────╯
+╭─ Sdb Progress ─────╮
+╰──────────┬─────────╯
+╭─ Projection ───────╮
+│ Projections: #1,   │
+│              #0    │
+│ ~4 rows            │
+╰──────────┬─────────╯
+╭─ Read Csv ─────────╮
+│ Function: READ_CSV │
+│ Projections: id,   │
+│              name  │
+│ ~4 rows            │
+╰────────────────────╯
 
 
 skipif postgres
@@ -127,23 +117,15 @@ query
 EXPLAIN COPY tindex TO '${__TEST_DIR__}/lmao' WITH (FORMAT CSV, HEADER TRUE);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│     BATCH_COPY_TO_FILE    │
-│    ────────────────────   │
-│        FORMAT: CSV        │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│       Table: tindex       │
-│   Type: Sequential Scan   │
-│                           │
-│        Projections:       │
-│             id            │
-│            name           │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
+╭─ Batch Copy To File ──╮
+│ FORMAT: CSV           │
+╰───────────┬───────────╯
+╭─ Seq Scan ┴───────────╮
+│ Table: tindex         │
+│ Type: Sequential Scan │
+│ Projections: id, name │
+│ ~3 rows               │
+╰───────────────────────╯
 
 
 skipif postgres
@@ -334,7 +316,7 @@ statement ok
 CREATE TABLE biksalen(kek BOOLEAN);
 
 
-statement error
+statement ok
 COPY biksalen FROM '${__TEST_DIR__}/deadinside.tsv' (ON_ERROR IGNORE, REJECT_LIMIT 9);
 
 
@@ -574,48 +556,24 @@ query
 EXPLAIN ANALYZE COPY arelav_consumer FROM '${__TEST_DIR__}/arelav_consuma.csv';
 ----
 QUERY PLAN
-┌─────────────────────────────────────┐
-│┌───────────────────────────────────┐│
-││    Query Profiling Information    ││
-│└───────────────────────────────────┘│
-└─────────────────────────────────────┘
+╭─ Summary ────────────╮
+│ Total Time:  0.0056s │
+│ Data Read: 111 bytes │
+╰──────────────────────╯
+╭─ Batch Insert ─────────────────────╮
+│ 1 row                          0µs │
+╰──────────────────┒┎────────────────╯
+╭─ Extension ──────┚┖────────────────╮
+│ 10 rows                        0µs │
+╰──────────────────┒┎────────────────╯
+╭─ Table Scan ─────┚┖────────────────╮
+│ Function: READ_CSV                 │
+│ Projections: eater                 │
+│ Total Files Read: 1                │
+│ Filename(s):                       │
 <slt:ignore>
-┌───────────────────────────┐
-│      RESULT_COLLECTOR     │
-│    ────────────────────   │
-│                           │
-│           0 rows          │
-<slt:ignore>
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│      EXPLAIN_ANALYZE      │
-│    ────────────────────   │
-│                           │
-│           0 rows          │
-<slt:ignore>
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│        BATCH_INSERT       │
-│    ────────────────────   │
-│                           │
-│           1 row           │
-<slt:ignore>
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         TABLE_SCAN        │
-│    ────────────────────   │
-│     Function: READ_CSV    │
-│     Projections: eater    │
-│    Total Files Read: 1    │
-│                           │
-│        Filename(s):       │
-<slt:ignore>
-│                           │
-│                           │
-│                           │
-│          10 rows          │
-<slt:ignore>
-└───────────────────────────┘
+│ 10 rows                        0µs │
+╰────────────────────────────────────╯
 
 
 skipif postgres

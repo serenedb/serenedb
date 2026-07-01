@@ -2,65 +2,32 @@ query
 EXPLAIN SELECT x FROM generate_series(1, 10000) AS t1(x);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│      GENERATE_SERIES      │
-│    ────────────────────   │
-│         Function:         │
-│      GENERATE_SERIES      │
-│                           │
-│        ~10,000 rows       │
-└───────────────────────────┘
+╭─ Generate Series ─────────╮
+│ Function: GENERATE_SERIES │
+│ ~10,000 rows              │
+╰───────────────────────────╯
 
 
 query
 EXPLAIN ANALYZE SELECT x FROM generate_series(1, 10000) AS t1(x);
 ----
 QUERY PLAN
-┌─────────────────────────────────────┐
-│┌───────────────────────────────────┐│
-││    Query Profiling Information    ││
-│└───────────────────────────────────┘│
-└─────────────────────────────────────┘
-EXPLAIN ANALYZE SELECT x FROM generate_series(1, 10000) AS t1(x);
-<slt:ignore>
-┌───────────────────────────┐
-│      RESULT_COLLECTOR     │
-│    ────────────────────   │
-│                           │
-│           0 rows          │
-<slt:ignore>
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│      EXPLAIN_ANALYZE      │
-│    ────────────────────   │
-│                           │
-│           0 rows          │
-<slt:ignore>
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         TABLE_SCAN        │
-│    ────────────────────   │
-│         Function:         │
-│      GENERATE_SERIES      │
-│                           │
-│                           │
-│                           │
-│        10,000 rows        │
-<slt:ignore>
-└───────────────────────────┘
+╭─ Summary ───────────╮
+│ Total Time: 0.0012s │
+╰─────────────────────╯
+╭─ Table Scan ──────────────╮
+│ Function: GENERATE_SERIES │
+│ 10,000 rows           0µs │
+╰───────────────────────────╯
 
 
 query
 EXPLAIN SELECT 1;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             1             │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         DUMMY_SCAN        │
-└───────────────────────────┘
+╭─ Projection ───╮
+│ Projections: 1 │
+│ ~1 row         │
+╰────────┬───────╯
+╭─ Dummy Scan ───╮
+╰────────────────╯

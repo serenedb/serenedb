@@ -59,28 +59,18 @@ query
 EXPLAIN SELECT pk, payload FROM struct_t_idx WHERE text_for_search @@ ts_phrase('first');
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│    Index: struct_t_idx    │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││  text_for_search  ││  │
-│  ││  (string) = first ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│        Projections:       │
-│           pk (l)          │
-│        payload (i)        │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ Iresearch Scan ──────────────────────────────╮
+│ Index: struct_t_idx                           │
+│ Lookup: table                                 │
+│ Filter:                                       │
+│ ┌───────────────────────────────────────────┐ │
+│ │╭─ Term ──────────────────────────────────╮│ │
+│ ││ Detail: text_for_search(string) = first ││ │
+│ │╰─────────────────────────────────────────╯│ │
+│ └───────────────────────────────────────────┘ │
+│ Projections: pk (l), payload (i)              │
+│ ~1 row                                        │
+╰───────────────────────────────────────────────╯
 
 
 # pg-wire serialises a STRUCT as a postgres composite tuple: "(field1,field2)"

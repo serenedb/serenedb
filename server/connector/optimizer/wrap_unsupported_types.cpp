@@ -140,7 +140,7 @@ void WrapVariantOutputs(duckdb::PlannerExtensionInput& input,
     explain.children[0] =
       WrapPlan(input.context, input.binder, std::move(explain.children[0]));
     explain.logical_plan_unopt =
-      explain.children[0]->ToString(explain.explain_format);
+      explain.children[0]->ToString(input.context, explain.format);
     return;
   }
   if (!AnyNeedsClientCast(statement.types)) {

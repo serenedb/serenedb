@@ -154,8 +154,10 @@ class HttpSession final
                                                _connection_ctx);
       _conn->context->session_user = std::string{user};
       std::vector<duckdb::CatalogSearchEntry> default_paths{
-        duckdb::CatalogSearchEntry{std::string{dbname}, "$user"},
-        duckdb::CatalogSearchEntry{std::string{dbname}, "public"},
+        duckdb::CatalogSearchEntry{duckdb::Identifier{dbname},
+                                   duckdb::Identifier{"$user"}},
+        duckdb::CatalogSearchEntry{duckdb::Identifier{dbname},
+                                   duckdb::Identifier{"public"}},
       };
       _conn->context->client_data->catalog_search_path->SetDefaultPaths(
         std::vector{default_paths});

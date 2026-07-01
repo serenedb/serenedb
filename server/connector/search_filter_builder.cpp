@@ -310,16 +310,13 @@ const duckdb::Expression& UnwrapBoostBoolCoercion(
     return expr;
   }
   const auto& cast = expr.Cast<duckdb::BoundCastExpression>();
-  if (!cast.child) {
-    return expr;
-  }
   if (cast.GetReturnType().id() != duckdb::LogicalTypeId::BOOLEAN) {
     return expr;
   }
-  if (!TryGetBoostModifier(cast.child->GetReturnType())) {
+  if (!TryGetBoostModifier(cast.Child().GetReturnType())) {
     return expr;
   }
-  return *cast.child;
+  return cast.Child();
 }
 
 Result FromExpression(irs::BooleanFilter& filter, const FilterContext& ctx,
@@ -334,7 +331,7 @@ Result MakeGroup(irs::BooleanFilter& parent, const FilterContext& ctx,
   auto sub_ctx = ctx;
   sub_ctx.boost = irs::kNoBoost;
   irs::BooleanFilter* group_root;
-  if (ctx.negated && absl::c_all_of(conj.children, [](const auto& child) {
+  if (ctx.negated && absl::c_all_of(conj.GetChildren(), [](const auto& child) {
         SDB_ASSERT(child);
         return IsComparisonExpr(*child);
       })) {
@@ -352,7 +349,7 @@ Result MakeGroup(irs::BooleanFilter& parent, const FilterContext& ctx,
     sub_ctx.negated = false;
   }
   group_root->boost(ctx.boost);
-  for (const auto& child : conj.children) {
+  for (const auto& child : conj.GetChildren()) {
     auto result = FromExpression(*group_root, sub_ctx, *child);
     if (!result.ok()) {
       return result;
@@ -363,8 +360,9 @@ Result MakeGroup(irs::BooleanFilter& parent, const FilterContext& ctx,
 
 Result FromIsNull(irs::BooleanFilter& filter, const FilterContext& ctx,
                   const duckdb::BoundOperatorExpression& op_expr) {
-  SDB_ASSERT(op_expr.children.size() == 1);
-  const auto* column_info = FindColumnInfoForExpr(ctx, *op_expr.children[0]);
+  SDB_ASSERT(op_expr.GetChildren().size() == 1);
+  const auto* column_info =
+    FindColumnInfoForExpr(ctx, *op_expr.GetChildren()[0]);
   if (!column_info) {
     return {ERROR_BAD_PARAMETER,
             "IS NULL input is not a reference to an indexed column"};
@@ -600,9 +598,10 @@ Result FromBetween(irs::BooleanFilter& filter, const FilterContext& ctx,
 template<bool GenericVersion>
 Result FromIn(irs::BooleanFilter& filter, const FilterContext& ctx,
               const duckdb::BoundOperatorExpression& op_expr) {
-  SDB_ASSERT(op_expr.children.size() >= 2);
+  SDB_ASSERT(op_expr.GetChildren().size() >= 2);
 
-  const auto* column_info = FindColumnInfoForExpr(ctx, *op_expr.children[0]);
+  const auto* column_info =
+    FindColumnInfoForExpr(ctx, *op_expr.GetChildren()[0]);
   if (!column_info) {
     return {ERROR_BAD_PARAMETER,
             "IN input is not a reference to an indexed column"};
@@ -621,9 +620,9 @@ Result FromIn(irs::BooleanFilter& filter, const FilterContext& ctx,
 
   // Collect constant values from children[1..]
   std::vector<const duckdb::Value*> values;
-  values.reserve(op_expr.children.size() - 1);
-  for (size_t i = 1; i < op_expr.children.size(); ++i) {
-    const auto* val = TryGetConstant(*op_expr.children[i]);
+  values.reserve(op_expr.GetChildren().size() - 1);
+  for (size_t i = 1; i < op_expr.GetChildren().size(); ++i) {
+    const auto* val = TryGetConstant(*op_expr.GetChildren()[i]);
     if (!val) {
       return {ERROR_BAD_PARAMETER, "Failed to evaluate IN value as constant"};
     }
@@ -671,9 +670,10 @@ Result FromIn(irs::BooleanFilter& filter, const FilterContext& ctx,
 duckdb::unique_ptr<duckdb::BoundFunctionExpression> MakeTSQueryCall(
   std::string_view ts_name, duckdb::LogicalType return_type,
   std::vector<duckdb::unique_ptr<duckdb::Expression>> children) {
-  duckdb::ScalarFunction fn(std::string{ts_name}, {}, return_type, nullptr);
+  duckdb::ScalarFunction fn(duckdb::Identifier{ts_name}, {}, return_type,
+                            nullptr);
   duckdb::BoundScalarFunction bound_fn(fn);
-  bound_fn.SetName(std::string{ts_name});
+  bound_fn.SetName(duckdb::Identifier{ts_name});
   return duckdb::make_uniq<duckdb::BoundFunctionExpression>(
     std::move(bound_fn), std::move(children), nullptr);
 }
@@ -757,13 +757,13 @@ const absl::flat_hash_map<std::string_view, PredicateInnerBuilder>
 Result FromPredicate(irs::BooleanFilter& filter, const FilterContext& ctx,
                      PredicateInnerBuilder build_inner,
                      const duckdb::BoundFunctionExpression& func) {
-  SDB_ASSERT(!func.children.empty());
+  SDB_ASSERT(!func.GetChildren().empty());
 
-  auto tail = func.children | std::views::drop(1) |
+  auto tail = func.GetChildren() | std::views::drop(1) |
               std::views::transform([](const auto& e) { return e->Copy(); }) |
               std::ranges::to<std::vector>();
   auto inner = build_inner(std::move(tail));
-  FromTSQueryMatch(filter, ctx, *func.children[0], *inner);
+  FromTSQueryMatch(filter, ctx, *func.GetChildren()[0], *inner);
   return {};
 }
 
@@ -851,8 +851,8 @@ const absl::flat_hash_map<std::string_view, StringBuiltinBuilder>
 Result FromFunctionExpression(irs::BooleanFilter& filter,
                               const FilterContext& ctx,
                               const duckdb::BoundFunctionExpression& func) {
-  std::string_view name = func.function.GetName();
-  std::span args = func.children;
+  std::string_view name = func.Function().GetName().GetIdentifierName();
+  std::span args = func.GetChildren();
 
   if (name == kTSQueryMatch) {
     // Anything that fails inside `@@` would otherwise fall through to
@@ -888,7 +888,8 @@ Result FromFunctionExpression(irs::BooleanFilter& filter,
           builtin != kBuiltinBuilder.end() ? builtin->second : nullptr) {
       SDB_ASSERT(args.size() == 2);
       if (args[0]->GetReturnType().id() != duckdb::LogicalTypeId::VARCHAR) {
-        return {ERROR_NOT_IMPLEMENTED, func.function.GetName(),
+        return {ERROR_NOT_IMPLEMENTED,
+                func.Function().GetName().GetIdentifierName(),
                 ": VARCHAR overload only -- declined for ",
                 args[0]->GetReturnType().ToString()};
       }
@@ -929,7 +930,7 @@ void FromTSQueryConjunction(irs::BooleanFilter& parent,
                             const SearchColumnInfo& column_info,
                             const duckdb::BoundFunctionExpression& func,
                             bool is_and) {
-  SDB_ASSERT(func.children.size() == 2);
+  SDB_ASSERT(func.GetChildren().size() == 2);
   irs::BooleanFilter* group;
   if (is_and) {
     group =
@@ -942,7 +943,7 @@ void FromTSQueryConjunction(irs::BooleanFilter& parent,
   auto sub_ctx = ctx;
   sub_ctx.boost = irs::kNoBoost;
   sub_ctx.negated = false;
-  for (const auto& child : func.children) {
+  for (const auto& child : func.GetChildren()) {
     BuildTSQuery(*group, sub_ctx, column_info, *child);
   }
 }
@@ -953,10 +954,10 @@ void FromTSQueryConjunction(irs::BooleanFilter& parent,
 void FromTSQueryNot(irs::BooleanFilter& parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info,
                     const duckdb::BoundFunctionExpression& func) {
-  SDB_ASSERT(func.children.size() == 1);
+  SDB_ASSERT(func.GetChildren().size() == 1);
   auto neg = ctx;
   neg.negated = !ctx.negated;
-  BuildTSQuery(parent, neg, column_info, *func.children[0]);
+  BuildTSQuery(parent, neg, column_info, *func.GetChildren()[0]);
 }
 
 // TSQUERY `^` -- boost. Multiplies the inherited ctx.boost by the
@@ -967,9 +968,9 @@ void FromTSQueryBoost(irs::BooleanFilter& parent, const FilterContext& ctx,
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_phrase('text') ^ 2.0. Factor must be >= 0; "
     "for composable boost use ::boost(K).";
-  SDB_ASSERT(func.children.size() == 2);
+  SDB_ASSERT(func.GetChildren().size() == 2);
   double factor_d;
-  if (auto r = GetDoubleArg(*func.children[1], "boost factor", factor_d);
+  if (auto r = GetDoubleArg(*func.GetChildren()[1], "boost factor", factor_d);
       !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
@@ -980,7 +981,8 @@ void FromTSQueryBoost(irs::BooleanFilter& parent, const FilterContext& ctx,
                     ERR_MSG("boost factor must be >= 0, got ", factor),
                     ERR_HINT(kSyntaxHint));
   }
-  BuildTSQuery(parent, ctx.WithBoost(factor), column_info, *func.children[0]);
+  BuildTSQuery(parent, ctx.WithBoost(factor), column_info,
+               *func.GetChildren()[0]);
 }
 
 // `(...)::boost(K)` -- multiplies ctx.boost by the modifier's factor
@@ -993,15 +995,15 @@ bool TryDispatchBoostCast(irs::BooleanFilter& parent, const FilterContext& ctx,
   if (peeled.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
     const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
     const auto boost = TryGetBoostModifier(cast_expr.GetReturnType());
-    if (!boost || !cast_expr.child) {
+    if (!boost) {
       return false;
     }
     BuildTSQuery(parent, ctx.WithBoost(static_cast<irs::score_t>(*boost)),
-                 column_info, *cast_expr.child);
+                 column_info, cast_expr.Child());
     return true;
   }
   if (peeled.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONSTANT) {
-    const auto& cv = peeled.Cast<duckdb::BoundConstantExpression>().value;
+    const auto& cv = peeled.Cast<duckdb::BoundConstantExpression>().GetValue();
     const auto boost = TryGetBoostModifier(cv.type());
     if (!boost) {
       return false;
@@ -1026,11 +1028,12 @@ bool TryDispatchSqlBoostCast(irs::BooleanFilter& filter,
   }
   const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
   const auto boost = TryGetBoostModifier(cast_expr.GetReturnType());
-  if (!boost || !cast_expr.child) {
+  if (!boost) {
     return false;
   }
-  auto r = FromExpression(
-    filter, ctx.WithBoost(static_cast<irs::score_t>(*boost)), *cast_expr.child);
+  auto r =
+    FromExpression(filter, ctx.WithBoost(static_cast<irs::score_t>(*boost)),
+                   cast_expr.Child());
   if (!r.ok()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1056,13 +1059,13 @@ bool TryDispatchTokenizeCast(irs::BooleanFilter& parent,
   if (peeled.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
     const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
     tokenizer = TryGetTokenizerModifier(cast_expr.GetReturnType());
-    if (!tokenizer.empty() && cast_expr.child) {
-      expr = cast_expr.child.get();
+    if (!tokenizer.empty()) {
+      expr = &cast_expr.Child();
       val = TryGetConstant(UnwrapTSQueryCast(*expr));
     }
   } else if (peeled.GetExpressionClass() ==
              duckdb::ExpressionClass::BOUND_CONSTANT) {
-    const auto& cv = peeled.Cast<duckdb::BoundConstantExpression>().value;
+    const auto& cv = peeled.Cast<duckdb::BoundConstantExpression>().GetValue();
     tokenizer = TryGetTokenizerModifier(cv.type());
     if (!tokenizer.empty()) {
       val = &cv;
@@ -1179,10 +1182,10 @@ Result FromOperatorExpression(irs::BooleanFilter& filter,
   const auto op_type = op_expr.GetExpressionType();
   switch (op_type) {
     case duckdb::ExpressionType::OPERATOR_NOT: {
-      SDB_ASSERT(op_expr.children.size() == 1);
+      SDB_ASSERT(op_expr.GetChildren().size() == 1);
       auto negated_ctx = ctx;
       negated_ctx.negated = !ctx.negated;
-      return FromExpression(filter, negated_ctx, *op_expr.children[0]);
+      return FromExpression(filter, negated_ctx, *op_expr.GetChildren()[0]);
     }
     case duckdb::ExpressionType::OPERATOR_IS_NULL:
       return FromIsNull(filter, ctx, op_expr);
@@ -1253,20 +1256,17 @@ const duckdb::Value* TryGetConstant(const duckdb::Expression& expr) {
   const auto* cur = &expr;
   while (cur->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
     const auto& cast = cur->Cast<duckdb::BoundCastExpression>();
-    if (!cast.child) {
-      return nullptr;
-    }
-    cur = cast.child.get();
+    cur = &cast.Child();
   }
   if (cur->GetExpressionClass() != duckdb::ExpressionClass::BOUND_CONSTANT) {
     return nullptr;
   }
-  return &cur->Cast<duckdb::BoundConstantExpression>().value;
+  return &cur->Cast<duckdb::BoundConstantExpression>().GetValue();
 }
 
 const SearchColumnInfo* FindColumnRefInfo(
   const FilterContext& ctx, const duckdb::BoundColumnRefExpression& ref) {
-  auto cache_it = ctx.column_cache.find(ref.binding);
+  auto cache_it = ctx.column_cache.find(ref.Binding());
   if (cache_it != ctx.column_cache.end()) {
     SDB_ASSERT(cache_it->second.logical_type.id() !=
                  duckdb::LogicalTypeId::VARCHAR ||
@@ -1282,7 +1282,7 @@ const SearchColumnInfo* FindColumnRefInfo(
   } else if (info->logical_type.id() == duckdb::LogicalTypeId::ARRAY) {
     info->logical_type = duckdb::ArrayType::GetChildType(info->logical_type);
   }
-  return &ctx.column_cache.emplace(ref.binding, std::move(info.value()))
+  return &ctx.column_cache.emplace(ref.Binding(), std::move(info.value()))
             .first->second;
 }
 
@@ -1303,8 +1303,10 @@ const duckdb::BoundColumnRefExpression* TryGetJsonColumnRef(
   out_path.clear();
   // Reject when outermost extraction does not return string.
   if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION ||
-      !IsJsonExtractString(
-        expr.Cast<duckdb::BoundFunctionExpression>().function.GetName())) {
+      !IsJsonExtractString(expr.Cast<duckdb::BoundFunctionExpression>()
+                             .Function()
+                             .GetName()
+                             .GetIdentifierName())) {
     return nullptr;
   }
 
@@ -1315,15 +1317,16 @@ const duckdb::BoundColumnRefExpression* TryGetJsonColumnRef(
     const auto& f = cur->Cast<duckdb::BoundFunctionExpression>();
     // TODO(mkornaukhov) first must be extracting string,
     // all the others should be extracing json
-    if (!IsJsonExtract(f.function.GetName()) || f.children.size() != 2) {
+    if (!IsJsonExtract(f.Function().GetName().GetIdentifierName()) ||
+        f.GetChildren().size() != 2) {
       return nullptr;
     }
-    const auto* key_val = TryGetConstant(*f.children[1]);
+    const auto* key_val = TryGetConstant(*f.GetChildren()[1]);
     if (!key_val || key_val->IsNull() ||
         !AppendJsonPathKey(*key_val, out_path)) {
       return nullptr;
     }
-    cur = f.children[0].get();
+    cur = f.GetChildren()[0].get();
   }
   absl::c_reverse(out_path);
   return TryGetColumnRef(*cur);
@@ -1339,10 +1342,7 @@ UnwrappedField UnwrapFieldCast(const duckdb::Expression& expr) {
     return {&expr, std::nullopt};
   }
   const auto& c = expr.Cast<duckdb::BoundCastExpression>();
-  if (!c.child) {
-    return {&expr, std::nullopt};
-  }
-  return {c.child.get(), c.GetReturnType()};
+  return {&c.Child(), c.GetReturnType()};
 }
 
 const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
@@ -1431,11 +1431,8 @@ const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr) {
   const duckdb::Expression* cur = &expr;
   while (cur->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
     const auto& cast = cur->Cast<duckdb::BoundCastExpression>();
-    if (!cast.child) {
-      break;
-    }
     const auto& target = cast.GetReturnType();
-    const auto& source = cast.child->GetReturnType();
+    const auto& source = cast.Child().GetReturnType();
     // Modifier-bearing casts must be preserved so the walker sees them.
     if (!TryGetTokenizerModifier(target).empty() ||
         TryGetBoostModifier(target)) {
@@ -1450,7 +1447,7 @@ const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr) {
     if (!IsAnyTSQueryType(target) && !IsAnyTSQueryType(source)) {
       break;
     }
-    cur = cast.child.get();
+    cur = &cast.Child();
   }
   return *cur;
 }
@@ -1618,9 +1615,8 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
   // TSQUERY position thanks to the recursive walker.
   if (unwrapped.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
     const auto& cast = unwrapped.Cast<duckdb::BoundCastExpression>();
-    if (cast.child &&
-        cast.child->GetReturnType().id() == duckdb::LogicalTypeId::BOOLEAN) {
-      const auto* val = TryGetConstant(*cast.child);
+    if (cast.Child().GetReturnType().id() == duckdb::LogicalTypeId::BOOLEAN) {
+      const auto* val = TryGetConstant(cast.Child());
       if (!val) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("BOOLEAN inside TSQUERY must be a constant"),
@@ -1653,7 +1649,8 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
   // rule. Non-VARCHAR / analyzer-less paths fall back to raw ByTerm.
   if (unwrapped.GetExpressionClass() ==
       duckdb::ExpressionClass::BOUND_CONSTANT) {
-    const auto& val = unwrapped.Cast<duckdb::BoundConstantExpression>().value;
+    const auto& val =
+      unwrapped.Cast<duckdb::BoundConstantExpression>().GetValue();
     if (val.IsNull()) {
       AddFilter<irs::Empty>(parent);
       return;
@@ -1678,7 +1675,8 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
 
   const auto& func = unwrapped.Cast<duckdb::BoundFunctionExpression>();
-  const auto op = ClassifyTSQueryFunction(func.function.GetName());
+  const auto op =
+    ClassifyTSQueryFunction(func.Function().GetName().GetIdentifierName());
 
   switch (op) {
     case TSQueryOp::Phrase:
@@ -1756,7 +1754,8 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
     case TSQueryOp::Unknown:
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("Not a TSQUERY-producing function: ", func.function.GetName()),
+        ERR_MSG("Not a TSQUERY-producing function: ",
+                func.Function().GetName().GetIdentifierName()),
         ERR_HINT("Use a TSQUERY constructor (ts_phrase, ts_like, ts_between, "
                  "ts_ngram, ts_levenshtein, ts_regexp, ts_any, ts_all, "
                  "ts_compound, ...) or 'literal'::TSQUERY."));

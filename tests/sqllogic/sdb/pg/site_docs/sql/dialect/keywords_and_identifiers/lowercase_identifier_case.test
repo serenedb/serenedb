@@ -8,7 +8,7 @@ SET preserve_identifier_case = false;
 statement ok
 CREATE TABLE tbl AS SELECT cos(pi()) AS CosineOfPi;
 
-query ?
+query
 SELECT CosineOfPi FROM tbl;
 ----
 cosineofpi

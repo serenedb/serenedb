@@ -43,12 +43,12 @@ VACUUM (REFRESH_TABLE) iit;
 query
 SELECT c_u64, c_i128, c_u128, c_dec FROM iit_idx WHERE body @@ ts_phrase('hello world');
 ----
-c_u64 c_i128 c_u128 c_dec
-42 42 42 1.5000
+c_u64	c_i128	c_u128	c_dec
+42	42	42	1.5000
 
 
 query
 SELECT c_uuid, c_iv, c_bit, c_list FROM iit_idx WHERE body @@ ts_phrase('hello world');
 ----
-c_uuid c_iv c_bit c_list
-00000000-0000-0000-0000-00000000002a 1 day 101 {1,2,3}
+c_uuid	c_iv	c_bit	c_list
+00000000-0000-0000-0000-00000000002a	1 day	101	{1,2,3}

@@ -14,7 +14,7 @@ SELECT nextval('serial');
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT nextval('serial') AS nextval;
 ----
 nextval

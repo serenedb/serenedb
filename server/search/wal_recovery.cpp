@@ -66,7 +66,9 @@ void BindStoreTableIndexes(duckdb::ClientContext& context,
     catalog::StoreTableName(database_name, schema_name, table_name);
   auto& entry = duckdb::Catalog::GetEntry(
                   context, duckdb::CatalogType::TABLE_ENTRY,
-                  std::string{catalog::kStoreDatabaseName}, "main", store_name)
+                  duckdb::QualifiedName(
+                    duckdb::Identifier{catalog::kStoreDatabaseName},
+                    duckdb::Identifier{"main"}, duckdb::Identifier{store_name}))
                   .Cast<duckdb::DuckTableEntry>();
   entry.GetStorage().GetDataTableInfo()->BindIndexes(
     context, connector::InvertedStoreIndex::kTypeName);

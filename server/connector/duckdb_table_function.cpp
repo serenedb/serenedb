@@ -189,7 +189,7 @@ catalog::Column::Id ViewScanBindData::ColumnIdByName(
   std::string_view name) const {
   const auto& info = view->GetInfo();
   for (size_t i = 0; i < info.names.size(); ++i) {
-    if (info.names[i] == name) {
+    if (info.names[i].GetIdentifierName() == name) {
       return static_cast<catalog::Column::Id>(i);
     }
   }
@@ -201,7 +201,7 @@ std::string_view ViewScanBindData::ColumnNameById(
   const auto& info = view->GetInfo();
   const auto idx = static_cast<size_t>(col_id);
   if (idx < info.names.size()) {
-    return info.names[idx];
+    return info.names[idx].GetIdentifierName();
   }
   return {};
 }
@@ -505,7 +505,8 @@ static duckdb::InsertionOrderPreservingMap<std::string> SereneDBScanToString(
   if (bind.table_entry) {
     const char* kind =
       bind.entry_kind == ScanEntryKind::BaseTable ? "Table" : "Index";
-    result.insert(kind, absl::StrCat(bind.table_entry->name, search_tag));
+    result.insert(kind, absl::StrCat(bind.table_entry->name.GetIdentifierName(),
+                                     search_tag));
   } else {
     const char* kind = bind.IsViewBacked() ? "View" : "Table";
     result.insert(kind, absl::StrCat(bind.RelationName(), search_tag));

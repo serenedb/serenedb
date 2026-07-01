@@ -101,7 +101,7 @@ void DrainToHandle(message::Buffer& buffer, duckdb::FileHandle& handle) {
 
 duckdb::unique_ptr<duckdb::FunctionData> BindCopyTo(
   duckdb::ClientContext&, duckdb::CopyFunctionBindInput&,
-  const duckdb::vector<std::string>&,
+  const duckdb::vector<duckdb::Identifier>&,
   const duckdb::vector<duckdb::LogicalType>& sql_types) {
   return duckdb::make_uniq<PgBinaryCopyBindData>(sql_types);
 }

@@ -116,6 +116,7 @@ PgClass MakeBaseRow(ObjectId schema_id, const catalog::Object& object) {
 
 void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
                      std::deque<std::string>& pk_index_names,
+                     std::deque<std::string>& uq_index_names,
                      const catalog::Snapshot& catalog,
                      duckdb::ClientContext& context) {
   // reltuples is read from the store table's row-group metadata
@@ -130,11 +131,13 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
     }
     auto store_name =
       catalog::StoreTableName(db_name, schema_name, table.GetName());
-    duckdb::EntryLookupInfo lookup(duckdb::CatalogType::TABLE_ENTRY,
-                                   store_name);
+    duckdb::EntryLookupInfo lookup(
+      duckdb::CatalogType::TABLE_ENTRY,
+      duckdb::QualifiedName(duckdb::Identifier{catalog::kStoreDatabaseName},
+                            duckdb::Identifier{"main"},
+                            duckdb::Identifier{store_name}));
     auto entry = duckdb::Catalog::GetEntry(
-      context, std::string{catalog::kStoreDatabaseName}, "main", lookup,
-      duckdb::OnEntryNotFound::RETURN_NULL);
+      context, lookup, duckdb::OnEntryNotFound::RETURN_NULL);
     if (!entry) {
       return 0.0F;
     }
@@ -202,7 +205,9 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
       if (table->PKColumns().empty()) {
         continue;
       }
-      pk_index_names.push_back(std::string{table->GetName()} + "_pkey");
+      pk_index_names.push_back(table->PKName().empty()
+                                 ? std::string{table->GetName()} + "_pkey"
+                                 : std::string{table->PKName()});
       PgClass row{
         .oid = PkIndexOid(table->GetId().id()),
         .relname = pk_index_names.back(),
@@ -239,15 +244,65 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
       values.push_back(std::move(row));
     }
   }
+
+  // Synthetic pg_class entries for UNIQUE constraint indexes (PG semantics).
+  // Name is the constraint name, OID is UniqueIndexOid(table_oid, ordinal).
+  for (const auto& schema : catalog.GetSchemas(database_id)) {
+    const auto schema_id = schema->GetId();
+    for (const auto& table :
+         catalog.GetTables(database_id, schema->GetName())) {
+      const auto& uniques = table->UniqueConstraints();
+      for (size_t uq_idx = 0; uq_idx < uniques.size(); ++uq_idx) {
+        uq_index_names.push_back(uniques[uq_idx].name.empty()
+                                   ? std::string{table->GetName()} + "_key"
+                                   : uniques[uq_idx].name);
+        PgClass row{
+          .oid = UniqueIndexOid(table->GetId().id(), uq_idx),
+          .relname = uq_index_names.back(),
+          .relnamespace = schema_id.id(),
+          .reltype = 0,
+          .reloftype = 0,
+          .relowner = id::kRootUser.id(),
+          .relam = 0,
+          .relfilenode = 0,
+          .reltablespace = 0,
+          .relpages = 0,
+          .reltuples = -1,
+          .relallvisible = 0,
+          .relallfrozen = 0,
+          .reltoastrelid = 0,
+          .relhasindex = false,
+          .relisshared = false,
+          .relpersistence = PgClass::Relpersistence::Permanent,
+          .relkind = PgClass::Relkind::Index,
+          .relnatts = static_cast<int16_t>(uniques[uq_idx].columns.size()),
+          .relchecks = 0,
+          .relhasrules = false,
+          .relhastriggers = false,
+          .relhassubclass = false,
+          .relrowsecurity = false,
+          .relforcerowsecurity = false,
+          .relispopulated = true,
+          .relreplident = PgClass::Relreplident::Default,
+          .relispartition = false,
+          .relrewrite = 0,
+          .relfrozenxid = 0,
+          .relminmxid = 0,
+        };
+        values.push_back(std::move(row));
+      }
+    }
+  }
 }
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgClass>::GetTableData() {
   std::vector<PgClass> values;
   std::deque<std::string> pk_index_names;
+  std::deque<std::string> uq_index_names;
   auto catalog = _config.EnsureCatalogSnapshot();
-  RetrieveObjects(GetDatabaseId(), values, pk_index_names, *catalog,
-                  _config.GetClientContext());
+  RetrieveObjects(GetDatabaseId(), values, pk_index_names, uq_index_names,
+                  *catalog, _config.GetClientContext());
 
   {
     VisitSystemTables([&](const catalog::VirtualTable& table, Oid schema_oid) {

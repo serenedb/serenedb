@@ -195,8 +195,9 @@ CommandTag BuildCommandTag(const duckdb::PreparedStatement& prepared) {
         const auto& drop_stmt = unbound->Cast<duckdb::DropStatement>();
         if (drop_stmt.info) {
           if (drop_stmt.info->type == duckdb::CatalogType::PREPARED_STATEMENT) {
-            return make(drop_stmt.info->name.empty() ? "DEALLOCATE ALL"
-                                                     : "DEALLOCATE");
+            return make(drop_stmt.info->GetQualifiedName().Name().empty()
+                          ? "DEALLOCATE ALL"
+                          : "DEALLOCATE");
           }
           return make(DropObjectTag(drop_stmt.info->type));
         }

@@ -71,7 +71,7 @@ std::vector<std::string> Config::GetSearchPath() const {
   std::vector<std::string> result;
   result.reserve(entries.size());
   for (const auto& entry : entries) {
-    result.emplace_back(entry.schema);
+    result.emplace_back(entry.GetSchema().GetIdentifierName());
   }
   return result;
 }

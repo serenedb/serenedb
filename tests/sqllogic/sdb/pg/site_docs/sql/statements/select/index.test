@@ -48,7 +48,7 @@ id	name	col1	col2	some column name	i	j	a	b	c	number	number1	number2
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT j FROM tbl WHERE i = 3;
 ----
 j

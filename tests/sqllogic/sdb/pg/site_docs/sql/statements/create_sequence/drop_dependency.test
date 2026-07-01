@@ -20,7 +20,7 @@ ALTER TABLE tbl ALTER COLUMN id SET DEFAULT NULL;
 statement ok
 INSERT INTO tbl(s) VALUES ('default is NULL');
 
-query ??
+query
 SELECT * FROM tbl;
 ----
 id	s

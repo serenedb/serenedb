@@ -257,7 +257,7 @@ INSERT INTO cities VALUES
 
 # DOCS_TEST_BODY
 
-query ??
+query
 SELECT DISTINCT ON(country) city, population
 FROM cities
 ORDER BY population DESC;
@@ -296,7 +296,7 @@ Mallard	2
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT row_number() OVER ()
 FROM sales;
 ----
@@ -308,7 +308,7 @@ row_number
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT amount - lag(amount) OVER (ORDER BY time)
 FROM sales;
 ----

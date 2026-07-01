@@ -242,36 +242,22 @@ query
 EXPLAIN SELECT COUNT(*) FROM vedernikoff_idx WHERE b @@ ts_phrase('pudge') AND b @@ ts_phrase('game');
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│    UNGROUPED_AGGREGATE    │
-│    ────────────────────   │
-│        Aggregates:        │
-│        count_star()       │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│      vedernikoff_idx      │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││       TERMS       ││  │
-│  ││    ────────────   ││  │
-│  ││ b(string) {['game'││  │
-│  ││ , 1],['pudge', 1] ││  │
-│  ││   ,} min_match=2  ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│          Output:          │
-│       row-count only      │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ Ungrouped Aggregate ───────────────────────────────────╮
+│ Aggregates: count_star()                                │
+│ ~1 row                                                  │
+╰────────────────────────────┬────────────────────────────╯
+╭─ Iresearch Scan ───────────┴────────────────────────────╮
+│ Index: vedernikoff_idx                                  │
+│ Filter:                                                 │
+│ ┌─────────────────────────────────────────────────────┐ │
+│ │╭─ Terms ───────────────────────────────────────────╮│ │
+│ ││ Detail:                                           ││ │
+│ ││ b(string) {['game', 1],['pudge', 1],} min_match=2 ││ │
+│ │╰───────────────────────────────────────────────────╯│ │
+│ └─────────────────────────────────────────────────────┘ │
+│ Output: row-count only                                  │
+│ ~1 row                                                  │
+╰─────────────────────────────────────────────────────────╯
 
 
 query
@@ -334,96 +320,56 @@ query
 EXPLAIN CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         EXTENSION         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│   Table: biksalen_memes   │
-│   Type: Sequential Scan   │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
+╭─ Extension ───────────╮
+╰───────────┬───────────╯
+╭─ Seq Scan ┴───────────╮
+│ Table: biksalen_memes │
+│ Type: Sequential Scan │
+│ ~3 rows               │
+╰───────────────────────╯
 
 
 query
 EXPLAIN CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         EXTENSION         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│   Table: biksalen_memes   │
-│   Type: Sequential Scan   │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
+╭─ Extension ───────────╮
+╰───────────┬───────────╯
+╭─ Seq Scan ┴───────────╮
+│ Table: biksalen_memes │
+│ Type: Sequential Scan │
+│ ~3 rows               │
+╰───────────────────────╯
 
 
 query
 EXPLAIN CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         EXTENSION         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│   Table: biksalen_memes   │
-│   Type: Sequential Scan   │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
+╭─ Extension ───────────╮
+╰───────────┬───────────╯
+╭─ Seq Scan ┴───────────╮
+│ Table: biksalen_memes │
+│ Type: Sequential Scan │
+│ ~3 rows               │
+╰───────────────────────╯
 
 
 query
 EXPLAIN ANALYZE CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b test_english, c test_english);
 ----
 QUERY PLAN
-┌─────────────────────────────────────┐
-│┌───────────────────────────────────┐│
-││    Query Profiling Information    ││
-│└───────────────────────────────────┘│
-└─────────────────────────────────────┘
-EXPLAIN ANALYZE CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b test_english, c test_english);
-<slt:ignore>
-┌───────────────────────────┐
-│      RESULT_COLLECTOR     │
-│    ────────────────────   │
-│                           │
-│           0 rows          │
-<slt:ignore>
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│      EXPLAIN_ANALYZE      │
-│    ────────────────────   │
-│                           │
-│           0 rows          │
-<slt:ignore>
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         EXTENSION         │
-│    ────────────────────   │
-│                           │
-│           1 row           │
-<slt:ignore>
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         TABLE_SCAN        │
-│    ────────────────────   │
-│   Table: biksalen_memes   │
-│   Type: Sequential Scan   │
-│                           │
-│                           │
-│                           │
-│           3 rows          │
-<slt:ignore>
-└───────────────────────────┘
+╭─ Summary ──────────╮
+│ Total Time: 0.674s │
+╰────────────────────╯
+╭─ Extension ───────────╮
+│ 1 row             0µs │
+╰───────────┒┎──────────╯
+╭─ Table Scan ──────────╮
+│ Table: biksalen_memes │
+│ Type: Sequential Scan │
+│ 3 rows            0µs │
+╰───────────────────────╯
 
 
 # EXPLAIN ANALYZE must actually create the index
@@ -646,47 +592,28 @@ query
 EXPLAIN SELECT a, BM25(score_parquet_idx.tableoid) > 0 AS has_score FROM score_parquet_idx WHERE b @@ ts_phrase('fox') ORDER BY a;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│          ORDER_BY         │
-│    ────────────────────   │
-│  score_parquet_idx.a ASC  │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             a             │
-│         has_score         │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│     score_parquet_idx     │
-│                           │
-│      Lookup: parquet      │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││  b(string) = fox  ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│           Score:          │
-│    bm25(k1=1.2, b=0.75)   │
-│                           │
-│        Projections:       │
-│             a             │
-│  sdb_inverted_index_score │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ Order By ─────────────────────────────╮
+│ Order By: score_parquet_idx.a ASC      │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ Projection ───────┴───────────────────╮
+│ Projections: a, has_score              │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ Iresearch Scan ───┴───────────────────╮
+│ Index: score_parquet_idx               │
+│ Lookup: parquet                        │
+│ Filter:                                │
+│ ┌───────────────────────────┐          │
+│ │╭─ Term ──────────────────╮│          │
+│ ││ Detail: b(string) = fox ││          │
+│ │╰─────────────────────────╯│          │
+│ └───────────────────────────┘          │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Projections: a,                        │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
 
 
 query
@@ -944,21 +871,14 @@ query
 EXPLAIN CREATE INDEX dense_csv_idx ON dense_csv_ext USING inverted(a, b test_english, c test_english);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         EXTENSION         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          READ_CSV         │
-│    ────────────────────   │
-│     Function: READ_CSV    │
-│                           │
-│        Projections:       │
-│             a             │
-│             b             │
-│             c             │
-│                           │
-│          ~13 rows         │
-└───────────────────────────┘
+╭─ Extension ────────╮
+╰──────────┬─────────╯
+╭─ Read Csv ─────────╮
+│ Function: READ_CSV │
+│ Projections: a, b, │
+│              c     │
+│ ~13 rows           │
+╰────────────────────╯
 
 
 statement ok
@@ -968,44 +888,27 @@ query
 EXPLAIN SELECT a, b FROM dense_csv_idx WHERE b @@ ts_phrase('shared term') ORDER BY a;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│          ORDER_BY         │
-│    ────────────────────   │
-│    dense_csv_idx.a ASC    │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             a             │
-│             b             │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│    Index: dense_csv_idx   │
-│        Lookup: csv        │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││       PHRASE      ││  │
-│  ││    ────────────   ││  │
-│  ││ b(string) = <Term ││  │
-│  ││   :shared(0, 0);  ││  │
-│  ││ Term:term(1, 1); >││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│        Projections:       │
-│             b             │
-│             a             │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ Order By ───────────────────────────────────────────────╮
+│ Order By: dense_csv_idx.a ASC                            │
+│ ~1 row                                                   │
+╰─────────────────────────────┬────────────────────────────╯
+╭─ Projection ────────────────┴────────────────────────────╮
+│ Projections: a, b                                        │
+│ ~1 row                                                   │
+╰─────────────────────────────┬────────────────────────────╯
+╭─ Iresearch Scan ────────────┴────────────────────────────╮
+│ Index: dense_csv_idx                                     │
+│ Lookup: csv                                              │
+│ Filter:                                                  │
+│ ┌──────────────────────────────────────────────────────┐ │
+│ │╭─ Phrase ───────────────────────────────────────────╮│ │
+│ ││ Detail:                                            ││ │
+│ ││ b(string) = <Term:shared(0, 0); Term:term(1, 1); > ││ │
+│ │╰────────────────────────────────────────────────────╯│ │
+│ └──────────────────────────────────────────────────────┘ │
+│ Projections: b, a                                        │
+│ ~1 row                                                   │
+╰──────────────────────────────────────────────────────────╯
 
 
 query

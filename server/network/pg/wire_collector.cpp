@@ -187,8 +187,8 @@ class PhysicalPgWireCollector : public duckdb::PhysicalResultCollector {
     auto collection = duckdb::make_uniq<duckdb::ColumnDataCollection>(
       duckdb::Allocator::DefaultAllocator(), types);
     return duckdb::make_uniq<duckdb::MaterializedQueryResult>(
-      statement_type, properties, names, std::move(collection),
-      cc->GetClientProperties());
+      statement_type, properties, duckdb::IdentifiersToStrings(names),
+      std::move(collection), cc->GetClientProperties());
   }
 
   bool ParallelSink() const override {

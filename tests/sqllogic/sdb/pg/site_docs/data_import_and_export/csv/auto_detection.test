@@ -51,7 +51,7 @@ SELECT
     regexp_replace(Prompt, '''${__TEST_DIR__}/[^'']*''', '''my_file.csv''') AS Prompt
 FROM sniff_csv('${__TEST_DIR__}/data_import_and_export_csv_auto_detection_example_002_1_my_file_csv.csv');
 ----
-Delimiter	Quote	Escape	NewLineDelimiter	Comment	SkipRows	HasHeader	Columns	DateFormat	TimestampFormat	UserArguments	prompt
+delimiter	quote	escape	newlinedelimiter	comment	skiprows	hasheader	columns	dateformat	timestampformat	userarguments	prompt
 ,	(empty)	(empty)	\\n	(empty)	0	t	{"(id,BIGINT)","(name,VARCHAR)","(value,BIGINT)"}	NULL	NULL	NULL	FROM read_csv('my_file.csv', auto_detect=false, delim=',', quote='', escape='', new_line='\\n', skip=0, comment='', header=true, columns={'id': 'BIGINT', 'name': 'VARCHAR', 'value': 'BIGINT'});
 
 
@@ -71,7 +71,7 @@ SELECT
     regexp_replace(Prompt, '''${__TEST_DIR__}/[^'']*''', '''my_file.csv''') AS Prompt
 FROM sniff_csv('${__TEST_DIR__}/data_import_and_export_csv_auto_detection_example_002_1_my_file_csv.csv', sample_size = 1000);
 ----
-Delimiter	Quote	Escape	NewLineDelimiter	Comment	SkipRows	HasHeader	Columns	DateFormat	TimestampFormat	UserArguments	prompt
+delimiter	quote	escape	newlinedelimiter	comment	skiprows	hasheader	columns	dateformat	timestampformat	userarguments	prompt
 ,	(empty)	(empty)	\\n	(empty)	0	t	{"(id,BIGINT)","(name,VARCHAR)","(value,BIGINT)"}	NULL	NULL	sample_size=1000	FROM read_csv('my_file.csv', auto_detect=false, delim=',', quote='', escape='', new_line='\\n', skip=0, comment='', header=true, columns={'id': 'BIGINT', 'name': 'VARCHAR', 'value': 'BIGINT'}, sample_size=1000);
 
 # DOCS_TEST: example_003

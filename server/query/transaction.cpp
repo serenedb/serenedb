@@ -204,7 +204,7 @@ void Transaction::CommitSearch() noexcept {
   bool has_cursor = false;
   if (auto store =
         duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance())
-          .GetDatabase(std::string{catalog::kStoreDatabaseName})) {
+          .GetDatabase(duckdb::Identifier{catalog::kStoreDatabaseName})) {
     auto& sm = store->GetStorageManager();
     cursor = search::WalCursor{sm.GetBlockManager().GetCheckpointIteration(),
                                sm.GetWALSize()};

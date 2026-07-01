@@ -5,13 +5,13 @@
 statement ok
 CREATE SEQUENCE serial START 1;
 
-query ?
+query
 SELECT nextval('serial') AS nextval;
 ----
 nextval
 1
 
-query ?
+query
 SELECT currval('serial') AS currval;
 ----
 currval

@@ -21,7 +21,7 @@ CREATE TEXT SEARCH DICTIONARY geojson_s2 (
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT ts_lexize(
     'geojson_s2',
     '{"type":"Point","coordinates":[13.405,52.52]}'

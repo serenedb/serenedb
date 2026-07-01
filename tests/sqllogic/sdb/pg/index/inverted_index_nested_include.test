@@ -59,27 +59,18 @@ query
 EXPLAIN SELECT pk, v FROM n1_idx WHERE t @@ ts_phrase('one');
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│       Index: n1_idx       │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││  t(string) = one  ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│        Projections:       │
-│           pk (l)          │
-│           v (i)           │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ Iresearch Scan ──────────────╮
+│ Index: n1_idx                 │
+│ Lookup: table                 │
+│ Filter:                       │
+│ ┌───────────────────────────┐ │
+│ │╭─ Term ──────────────────╮│ │
+│ ││ Detail: t(string) = one ││ │
+│ │╰─────────────────────────╯│ │
+│ └───────────────────────────┘ │
+│ Projections: pk (l), v (i)    │
+│ ~1 row                        │
+╰───────────────────────────────╯
 
 
 query
@@ -132,27 +123,18 @@ query
 EXPLAIN SELECT pk, v FROM n2_idx WHERE t @@ ts_phrase('one');
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│       Index: n2_idx       │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││  t(string) = one  ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│        Projections:       │
-│           pk (l)          │
-│           v (i)           │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ Iresearch Scan ──────────────╮
+│ Index: n2_idx                 │
+│ Lookup: table                 │
+│ Filter:                       │
+│ ┌───────────────────────────┐ │
+│ │╭─ Term ──────────────────╮│ │
+│ ││ Detail: t(string) = one ││ │
+│ │╰─────────────────────────╯│ │
+│ └───────────────────────────┘ │
+│ Projections: pk (l), v (i)    │
+│ ~1 row                        │
+╰───────────────────────────────╯
 
 
 skipif pg-wire-extended
@@ -213,27 +195,18 @@ query
 EXPLAIN SELECT pk, v FROM n3_idx WHERE t @@ ts_phrase('one');
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│       Index: n3_idx       │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││  t(string) = one  ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│        Projections:       │
-│           pk (l)          │
-│           v (i)           │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ Iresearch Scan ──────────────╮
+│ Index: n3_idx                 │
+│ Lookup: table                 │
+│ Filter:                       │
+│ ┌───────────────────────────┐ │
+│ │╭─ Term ──────────────────╮│ │
+│ ││ Detail: t(string) = one ││ │
+│ │╰─────────────────────────╯│ │
+│ └───────────────────────────┘ │
+│ Projections: pk (l), v (i)    │
+│ ~1 row                        │
+╰───────────────────────────────╯
 
 
 skipif pg-wire-extended
@@ -296,27 +269,18 @@ query
 EXPLAIN SELECT pk, v FROM n4_idx WHERE t @@ ts_phrase('one');
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│       Index: n4_idx       │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││  t(string) = one  ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│        Projections:       │
-│           pk (l)          │
-│           v (i)           │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ Iresearch Scan ──────────────╮
+│ Index: n4_idx                 │
+│ Lookup: table                 │
+│ Filter:                       │
+│ ┌───────────────────────────┐ │
+│ │╭─ Term ──────────────────╮│ │
+│ ││ Detail: t(string) = one ││ │
+│ │╰─────────────────────────╯│ │
+│ └───────────────────────────┘ │
+│ Projections: pk (l), v (i)    │
+│ ~1 row                        │
+╰───────────────────────────────╯
 
 
 skipif pg-wire-extended
@@ -387,27 +351,18 @@ query
 EXPLAIN SELECT pk, v FROM n5_idx WHERE t @@ ts_phrase('one');
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│       Index: n5_idx       │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││  t(string) = one  ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│        Projections:       │
-│           pk (l)          │
-│           v (i)           │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ Iresearch Scan ──────────────╮
+│ Index: n5_idx                 │
+│ Lookup: table                 │
+│ Filter:                       │
+│ ┌───────────────────────────┐ │
+│ │╭─ Term ──────────────────╮│ │
+│ ││ Detail: t(string) = one ││ │
+│ │╰─────────────────────────╯│ │
+│ └───────────────────────────┘ │
+│ Projections: pk (l), v (i)    │
+│ ~1 row                        │
+╰───────────────────────────────╯
 
 
 skipif pg-wire-extended
@@ -483,27 +438,18 @@ query
 EXPLAIN SELECT pk, v FROM n6_idx WHERE t @@ ts_phrase('one');
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│       Index: n6_idx       │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││  t(string) = one  ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│        Projections:       │
-│           pk (l)          │
-│           v (i)           │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ Iresearch Scan ──────────────╮
+│ Index: n6_idx                 │
+│ Lookup: table                 │
+│ Filter:                       │
+│ ┌───────────────────────────┐ │
+│ │╭─ Term ──────────────────╮│ │
+│ ││ Detail: t(string) = one ││ │
+│ │╰─────────────────────────╯│ │
+│ └───────────────────────────┘ │
+│ Projections: pk (l), v (i)    │
+│ ~1 row                        │
+╰───────────────────────────────╯
 
 
 skipif pg-wire-extended

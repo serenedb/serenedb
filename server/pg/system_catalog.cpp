@@ -357,8 +357,8 @@ std::shared_ptr<PgSqlView> GetView(std::string_view name) {
 void InitSystemViews(duckdb::Parser& parser) {
   for (const auto& view : kExternalViews) {
     auto info = duckdb::make_uniq<duckdb::CreateViewInfo>();
-    info->schema = view.schema;
-    info->view_name = view.name;
+    info->SetSchema(duckdb::Identifier{view.schema});
+    info->SetViewName(duckdb::Identifier{view.name});
     info->sql = view.sql;
     info->temporary = true;
     info->internal = true;
@@ -397,7 +397,7 @@ static duckdb::unique_ptr<duckdb::CreateMacroInfo> ParseMacro(
   auto info =
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
       std::move(create.info));
-  info->schema = macro.schema;
+  info->SetSchema(duckdb::Identifier{macro.schema});
   info->temporary = true;
   info->internal = true;
 

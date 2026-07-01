@@ -48,7 +48,6 @@
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/search/wildcard_ngram_filter.hpp>
-#include <sstream>
 
 #include "basics/down_cast.h"
 #include "basics/exceptions.h"
@@ -510,7 +509,7 @@ std::string RenderBoxTree(const FilterNode& root) {
   config.node_render_width = 21;
   duckdb::TextTreeRenderer renderer{config};
 
-  std::ostringstream ss;
+  duckdb::StringTreeRenderer ss;
   renderer.ToStream(tree, ss);
   std::vector<std::string> lines = absl::StrSplit(ss.str(), '\n');
   while (!lines.empty() && lines.back().empty()) {

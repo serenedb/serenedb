@@ -1,0 +1,247 @@
+hash-threshold 100
+
+control substitution on
+
+# System-catalog parity with PostgreSQL for every constraint type (CHECK,
+# PRIMARY KEY, UNIQUE, FOREIGN KEY, NOT NULL) and secondary indexes (unique +
+# non-unique), with explicit and auto-generated names: how they show in
+# pg_constraint / pg_index / pg_indexes / pg_class, how they enforce input DML
+# (INSERT / UPDATE / MERGE / COPY), and RENAME / DROP CONSTRAINT by name.
+# Concatenated single-column projections keep the output engine-agnostic;
+# constraint-violation errors use a bare `statement error` because the message
+# text is DuckDB-specific on SereneDB.
+
+statement ok
+CREATE TABLE parent (id INTEGER PRIMARY KEY);
+
+statement ok
+CREATE TABLE con (
+  id INTEGER CONSTRAINT con_pk PRIMARY KEY,
+  ck1 INTEGER CONSTRAINT con_ck1 CHECK (ck1 > 0),
+  ck2 INTEGER CHECK (ck2 >= 0),
+  uq1 INTEGER CONSTRAINT con_uq1 UNIQUE,
+  uq2 INTEGER UNIQUE,
+  nn1 INTEGER CONSTRAINT con_nn1 NOT NULL,
+  nn2 INTEGER NOT NULL,
+  fk1 INTEGER CONSTRAINT con_fk1 REFERENCES parent(id),
+  fk2 INTEGER REFERENCES parent(id)
+);
+
+statement ok
+CREATE INDEX con_sec ON con(ck2);
+
+statement ok
+CREATE UNIQUE INDEX con_usec ON con(nn2);
+
+# pg_constraint: every constraint type, explicit name kept, auto name PG-shaped.
+query
+SELECT conname || ' ' || contype::text AS c FROM pg_constraint
+WHERE conrelid = 'con'::regclass ORDER BY contype::text, conname;
+----
+c
+con_ck1 c
+con_ck2_check c
+con_fk1 f
+con_fk2_fkey f
+con_id_not_null n
+con_nn1 n
+con_nn2_not_null n
+con_pk p
+con_uq1 u
+con_uq2_key u
+
+# pg_indexes: PK + UNIQUE-constraint backing indexes AND user secondary indexes.
+query
+SELECT indexname AS c FROM pg_indexes
+WHERE schemaname = 'public' AND tablename = 'con' ORDER BY 1;
+----
+c
+con_pk
+con_sec
+con_uq1
+con_uq2_key
+con_usec
+
+# pg_index: uniqueness / primariness of each backing index.
+query
+SELECT c.relname || ' ' || i.indisunique::text || ' ' || i.indisprimary::text AS c
+FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+WHERE i.indrelid = 'con'::regclass ORDER BY 1;
+----
+c
+con_pk true true
+con_sec false false
+con_uq1 true false
+con_uq2_key true false
+con_usec true false
+
+# Plain / unique *indexes* are indexes, not constraints: absent from pg_constraint.
+# Scoped to `con` so a same-named table in a concurrent database can't skew it.
+query
+SELECT count(*) AS c FROM pg_constraint
+WHERE conrelid = 'con'::regclass AND conname IN ('con_sec', 'con_usec');
+----
+c
+0
+
+# pg_class exposes every index relation (relkind 'i'); scoped to `con`'s indexes.
+query
+SELECT relname AS c FROM pg_class
+WHERE relkind = 'i'
+  AND oid IN (SELECT indexrelid FROM pg_index WHERE indrelid = 'con'::regclass)
+ORDER BY 1;
+----
+c
+con_pk
+con_sec
+con_uq1
+con_uq2_key
+con_usec
+
+statement ok
+DROP TABLE con;
+
+statement ok
+DROP TABLE parent;
+
+
+# ---- input DML is constrained on every write path ----
+
+statement ok
+CREATE TABLE dml (
+  id INTEGER PRIMARY KEY,
+  q INTEGER CONSTRAINT dml_pos CHECK (q > 0),
+  u INTEGER CONSTRAINT dml_u UNIQUE,
+  r INTEGER NOT NULL
+);
+
+statement count 2
+INSERT INTO dml VALUES (1, 10, 100, 1), (2, 20, 200, 1);
+
+# INSERT: CHECK / UNIQUE / NOT NULL / PK all reject.
+statement error
+INSERT INTO dml VALUES (3, -1, 300, 1);
+
+statement error
+INSERT INTO dml VALUES (3, 30, 100, 1);
+
+statement error
+INSERT INTO dml VALUES (3, 30, 300, NULL);
+
+statement error
+INSERT INTO dml VALUES (1, 30, 300, 1);
+
+# UPDATE hits the same constraints.
+statement error
+UPDATE dml SET q = -5 WHERE id = 1;
+
+statement error
+UPDATE dml SET u = 200 WHERE id = 1;
+
+statement error
+UPDATE dml SET r = NULL WHERE id = 1;
+
+# MERGE (INSERT branch) is constrained.
+statement error
+MERGE INTO dml USING (SELECT 3 AS id) s ON dml.id = s.id
+WHEN NOT MATCHED THEN INSERT VALUES (3, -9, 999, 1);
+
+# MERGE (UPDATE branch) is constrained.
+statement error
+MERGE INTO dml USING (SELECT 1 AS id) s ON dml.id = s.id
+WHEN MATCHED THEN UPDATE SET q = -9;
+
+# COPY is constrained (a duplicate UNIQUE key in the loaded file).
+statement count 3
+COPY (SELECT 10 AS id, 5 AS q, 500 AS u, 1 AS r
+      UNION ALL SELECT 11, 6, 500, 1
+      UNION ALL SELECT 12, 7, 501, 1)
+TO '${__TEST_DIR__}/dml_dup.csv' WITH (FORMAT CSV, HEADER TRUE);
+
+statement error
+COPY dml FROM '${__TEST_DIR__}/dml_dup.csv' WITH (FORMAT CSV, HEADER TRUE);
+
+# The rejected writes left the table unchanged.
+query
+SELECT id || ' ' || q::text || ' ' || u::text || ' ' || r::text AS c FROM dml ORDER BY id;
+----
+c
+1 10 100 1
+2 20 200 1
+
+statement ok
+DROP TABLE dml;
+
+
+# ---- RENAME / DROP CONSTRAINT by name, all types ----
+
+statement ok
+CREATE TABLE p2 (id INTEGER PRIMARY KEY);
+
+statement ok
+CREATE TABLE life (
+  a INTEGER CONSTRAINT life_ck CHECK (a > 0),
+  b INTEGER CONSTRAINT life_uq UNIQUE,
+  c INTEGER CONSTRAINT life_fk REFERENCES p2(id),
+  d INTEGER CONSTRAINT life_nn NOT NULL,
+  CONSTRAINT life_pk PRIMARY KEY (a)
+);
+
+statement ok
+ALTER TABLE life RENAME CONSTRAINT life_ck TO life_ck2;
+
+statement ok
+ALTER TABLE life RENAME CONSTRAINT life_uq TO life_uq2;
+
+statement ok
+ALTER TABLE life RENAME CONSTRAINT life_fk TO life_fk2;
+
+statement ok
+ALTER TABLE life RENAME CONSTRAINT life_nn TO life_nn2;
+
+statement ok
+ALTER TABLE life RENAME CONSTRAINT life_pk TO life_pk2;
+
+query
+SELECT conname || ' ' || contype::text AS c FROM pg_constraint
+WHERE conrelid = 'life'::regclass ORDER BY contype::text, conname;
+----
+c
+life_ck2 c
+life_fk2 f
+life_a_not_null n
+life_nn2 n
+life_pk2 p
+life_uq2 u
+
+# renaming a missing constraint errors
+statement error
+ALTER TABLE life RENAME CONSTRAINT nope TO whatever;
+
+statement ok
+ALTER TABLE life DROP CONSTRAINT life_ck2;
+
+statement ok
+ALTER TABLE life DROP CONSTRAINT life_uq2;
+
+statement ok
+ALTER TABLE life DROP CONSTRAINT life_fk2;
+
+query
+SELECT conname || ' ' || contype::text AS c FROM pg_constraint
+WHERE conrelid = 'life'::regclass ORDER BY contype::text, conname;
+----
+c
+life_a_not_null n
+life_nn2 n
+life_pk2 p
+
+# dropping a missing constraint errors
+statement error
+ALTER TABLE life DROP CONSTRAINT nope;
+
+statement ok
+DROP TABLE life;
+
+statement ok
+DROP TABLE p2;

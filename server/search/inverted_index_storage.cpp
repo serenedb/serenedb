@@ -503,7 +503,7 @@ Result InvertedIndexStorage::RefreshUnsafeImpl(
     if (for_checkpoint) {
       if (auto store =
             duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance())
-              .GetDatabase(std::string{catalog::kStoreDatabaseName})) {
+              .GetDatabase(duckdb::Identifier{catalog::kStoreDatabaseName})) {
         const auto next_gen = store->GetStorageManager()
                                 .GetBlockManager()
                                 .GetCheckpointIteration() +

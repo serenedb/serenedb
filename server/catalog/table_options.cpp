@@ -41,12 +41,15 @@ std::optional<size_t> CheckConstraint::IsNotNull(
     return std::nullopt;
   }
   auto& op = parsed.Cast<duckdb::OperatorExpression>();
-  if (op.children.size() != 1 || op.children[0]->GetExpressionType() !=
-                                   duckdb::ExpressionType::COLUMN_REF) {
+  if (op.GetChildren().size() != 1 ||
+      op.GetChildren()[0]->GetExpressionType() !=
+        duckdb::ExpressionType::COLUMN_REF) {
     return std::nullopt;
   }
-  auto name =
-    op.children[0]->Cast<duckdb::ColumnRefExpression>().GetColumnName();
+  const auto& name = op.GetChildren()[0]
+                       ->Cast<duckdb::ColumnRefExpression>()
+                       .GetColumnName()
+                       .GetIdentifierName();
   for (size_t i = 0; i < columns.size(); ++i) {
     if (columns[i].GetName() == name) {
       return i;

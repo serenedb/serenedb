@@ -51,9 +51,6 @@ class ByTermIterator {
   void read() { _impl->read(); }
 
   bool next() {
-    if (_impl->next()) {
-      return true;
-    }
     _impl = SeekTermIterator::empty();
     return false;
   }

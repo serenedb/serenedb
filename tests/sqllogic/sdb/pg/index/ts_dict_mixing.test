@@ -1,0 +1,453 @@
+hash-threshold 100
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY mix_kw(template = 'keyword')
+
+statement ok
+CREATE TABLE mixt(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, opt VARCHAR,
+                  num INTEGER)
+
+statement ok
+CREATE INDEX mixt_idx ON mixt USING inverted(cat mix_kw, opt mix_kw)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO mixt VALUES
+  (1, 'red',   'x',  10),
+  (2, 'green', NULL, 20),
+  (3, 'red',   'y',  30),
+  (4, 'blue',  'x',  40),
+  (5, 'amber', NULL, 50)
+
+statement ok
+VACUUM (REFRESH_TABLE) mixt;
+
+query ITTT
+SELECT count(DISTINCT cat) AS cnt, min(cat) AS mn, max(cat) AS mx,
+       list_sort(array_agg(DISTINCT cat)) AS lst
+FROM mixt_idx
+----
+cnt	mn	mx	lst
+4	amber	red	{amber,blue,green,red}
+
+query
+EXPLAIN SELECT count(DISTINCT cat) AS cnt, min(cat) AS mn, max(cat) AS mx,
+       list_sort(array_agg(DISTINCT cat)) AS lst
+FROM mixt_idx
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│            cnt            │
+│             mn            │
+│             mx            │
+│            lst            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│         count(#0)         │
+│          min(#1)          │
+│          max(#2)          │
+│ list(#3) FILTER (WHERE #4)│
+│         Filter: #4        │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│  sdb_inverted_index_term$ │
+│  sdb_inverted_index_term$ │
+│  sdb_inverted_index_term$ │
+│  sdb_inverted_index_term$ │
+│ (sdb_inverted_index_term$ │
+│        IS NOT NULL)       │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       HASH_GROUP_BY       │
+│    ────────────────────   │
+│         Groups: #0        │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│      Index: mixt_idx      │
+│        TsDict: cat        │
+│                           │
+│        Projections:       │
+│  sdb_inverted_index_term$ │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+query IT
+SELECT count(DISTINCT cat) AS cnt, min(cat) AS mn FROM mixt_idx
+----
+cnt	mn
+4	amber
+
+query TT
+SELECT min(cat) AS mn, max(cat) AS mx FROM mixt_idx
+----
+mn	mx
+amber	red
+
+query TT
+SELECT list_sort(array_agg(DISTINCT cat)) AS lst, max(cat) AS mx FROM mixt_idx
+----
+lst	mx
+{amber,blue,green,red}	red
+
+query TTI
+SELECT min(cat) AS mn_cat, max(opt) AS mx_opt, count(DISTINCT cat) AS cnt_cat
+FROM mixt_idx
+----
+mn_cat	mx_opt	cnt_cat
+amber	y	4
+
+query
+EXPLAIN SELECT min(cat) AS mn_cat, max(opt) AS mx_opt,
+       count(DISTINCT cat) AS cnt_cat
+FROM mixt_idx
+----
+QUERY PLAN
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│          min(#0)          │
+│          max(#1)          │
+│         count(#2)         │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│  sdb_inverted_index_term$ │
+│  sdb_inverted_index_term$ │
+│  sdb_inverted_index_term$ │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       HASH_GROUP_BY       │
+│    ────────────────────   │
+│          Groups:          │
+│             #0            │
+│             #1            │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│             #1            │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│      Index: mixt_idx      │
+│      TsDict: cat, opt     │
+│                           │
+│        Projections:       │
+│  sdb_inverted_index_term$ │
+│  sdb_inverted_index_term$ │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+query TTI
+SELECT min(cat) AS mn_cat, max(opt) AS mx_opt, count(DISTINCT cat) AS cnt_cat
+FROM mixt
+----
+mn_cat	mx_opt	cnt_cat
+amber	y	4
+
+query II
+SELECT count(DISTINCT cat) AS c1, count(*) AS c2 FROM mixt_idx
+----
+c1	c2
+4	5
+
+query II
+SELECT count(DISTINCT cat) AS c1, count(*) AS c2 FROM mixt
+----
+c1	c2
+4	5
+
+query TI
+SELECT min(cat) AS mn, sum(id) AS s FROM mixt_idx
+----
+mn	s
+amber	15
+
+query II
+SELECT count(DISTINCT cat) AS c1, count(DISTINCT num) AS c2 FROM mixt_idx
+----
+c1	c2
+4	5
+
+query II
+SELECT count(DISTINCT cat) AS c1, count(DISTINCT num) AS c2 FROM mixt
+----
+c1	c2
+4	5
+
+query TT
+SELECT list_sort(array_agg(DISTINCT opt)) AS lst, min(cat) AS mn FROM mixt_idx
+----
+lst	mn
+{x,y,NULL}	amber
+
+query TT
+SELECT list_sort(array_agg(DISTINCT opt)) AS lst, min(cat) AS mn FROM mixt
+----
+lst	mn
+{x,y,NULL}	amber
+
+query
+EXPLAIN SELECT list_sort(array_agg(DISTINCT opt)) AS lst, min(cat) AS mn
+FROM mixt_idx
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│            lst            │
+│             mn            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│   array_agg(DISTINCT #0)  │
+│          min(#1)          │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│            opt            │
+│            cat            │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│      Index: mixt_idx      │
+│       Lookup: table       │
+│                           │
+│        Projections:       │
+│            opt            │
+│            cat            │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+query TIT
+SELECT list_sort(ts_dict_agg(cat)) AS terms, count(DISTINCT cat) AS cnt,
+       min(cat) AS mn
+FROM mixt_idx
+----
+terms	cnt	mn
+{amber,blue,green,red}	4	amber
+
+query TT
+SELECT ts_dict_min(cat) AS dmn, min(cat) AS mn FROM mixt_idx
+----
+dmn	mn
+amber	amber
+
+query TT
+SELECT list_sort(ts_dict_count(cat)) AS counts, max(cat) AS mx FROM mixt_idx
+----
+counts	mx
+{1,1,1,2}	red
+
+statement error
+SELECT ts_dict_agg(cat) AS a, count(*) AS c FROM mixt_idx
+----
+db error: ERROR: ts_dict_* aggregates cannot be combined with other aggregates over the same scan
+HINT: compute the other aggregates in a separate subquery
+
+
+statement error
+SELECT ts_dict_min(cat) AS mn, sum(id) AS s FROM mixt_idx
+----
+db error: ERROR: ts_dict_* aggregates cannot be combined with other aggregates over the same scan
+HINT: compute the other aggregates in a separate subquery
+
+
+query TI
+SELECT opt, count(DISTINCT cat) AS cnt FROM mixt_idx GROUP BY opt ORDER BY opt
+----
+opt	cnt
+x	2
+y	1
+NULL	2
+
+query TI
+SELECT opt, count(DISTINCT cat) AS cnt FROM mixt GROUP BY opt ORDER BY opt
+----
+opt	cnt
+x	2
+y	1
+NULL	2
+
+query
+EXPLAIN SELECT opt, count(DISTINCT cat) AS cnt FROM mixt_idx GROUP BY opt
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       HASH_GROUP_BY       │
+│    ────────────────────   │
+│         Groups: #0        │
+│                           │
+│        Aggregates:        │
+│     count(DISTINCT #1)    │
+│                           │
+│          ~3 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│            opt            │
+│            cat            │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│      Index: mixt_idx      │
+│       Lookup: table       │
+│                           │
+│        Projections:       │
+│            opt            │
+│            cat            │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+query I
+SELECT count(cat) AS c FROM mixt_idx
+----
+c
+5
+
+query I
+SELECT count(cat) AS c FROM mixt
+----
+c
+5
+
+query II
+SELECT count(opt) AS c1, count(DISTINCT opt) AS c2 FROM mixt_idx
+----
+c1	c2
+3	2
+
+query II
+SELECT count(opt) AS c1, count(DISTINCT opt) AS c2 FROM mixt
+----
+c1	c2
+3	2
+
+query T
+SELECT min(DISTINCT cat) AS mn FROM mixt_idx
+----
+mn
+amber
+
+query
+EXPLAIN SELECT min(DISTINCT cat) AS mn FROM mixt_idx
+----
+QUERY PLAN
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│    Aggregates: min(#0)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│  sdb_inverted_index_term$ │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       HASH_GROUP_BY       │
+│    ────────────────────   │
+│         Groups: #0        │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│      Index: mixt_idx      │
+│        TsDict: cat        │
+│                           │
+│        Projections:       │
+│  sdb_inverted_index_term$ │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+query I
+SELECT count(DISTINCT cat) AS c FROM mixt_idx HAVING c > 1
+----
+c
+4
+
+query I
+SELECT count(*) AS n
+FROM (SELECT count(DISTINCT cat) AS c FROM mixt_idx HAVING c > 10) x
+----
+n
+0
+
+query I
+SELECT count(DISTINCT cat) AS c FROM mixt_idx ORDER BY min(cat)
+----
+c
+4
+
+statement ok
+DROP TABLE mixt
+
+statement ok
+DROP TEXT SEARCH DICTIONARY mix_kw

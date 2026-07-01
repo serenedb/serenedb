@@ -1,0 +1,302 @@
+hash-threshold 100
+
+# Deleted documents are per-segment masks until compaction rewrites the
+# segment. The term-dict scan drops terms with no live documents and
+# ts_dict_count() counts live documents only; ts_dict_freq() stays a raw
+# index statistic until compaction. refresh_interval = 0 and
+# compaction_interval = 0 disable background maintenance so segments stay
+# dirty; VACUUM (REFRESH_TABLE) commits pending data and masks.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY del_kw(template = 'keyword')
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY del_tx(template = 'text', locale = 'en_US.UTF-8',
+    case = 'lower', stemming = false, accent = false, frequency = true,
+    position = true)
+
+statement ok
+CREATE TABLE dd(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, body VARCHAR)
+
+statement ok
+CREATE INDEX dd_idx ON dd USING inverted(cat del_kw, body del_tx)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO dd VALUES
+  (1, 'red',   'apple banana'),
+  (2, 'green', 'apple cherry'),
+  (3, 'red',   'banana'),
+  (4, 'blue',  'apple date')
+
+statement ok
+VACUUM (REFRESH_TABLE) dd;
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM dd_idx ORDER BY term
+----
+term	docs
+blue	1
+green	1
+red	2
+
+query TII
+SELECT unnest(ts_dict_agg(body)) AS term,
+       unnest(ts_dict_count(body)) AS docs,
+       unnest(ts_dict_freq(body)) AS freq
+FROM dd_idx ORDER BY term
+----
+term	docs	freq
+apple	3	3
+banana	2	2
+cherry	1	1
+date	1	1
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(cat)) AS term,
+               unnest(ts_dict_count(cat)) AS docs
+FROM dd_idx ORDER BY term
+----
+QUERY PLAN
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│      dd_idx.cat)) ASC     │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│  sdb_inverted_index_term$ │
+│CAST(sdb_inverted_index_ter│
+│    m_count$ AS INTEGER)   │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       HASH_GROUP_BY       │
+│    ────────────────────   │
+│         Groups: #0        │
+│    Aggregates: sum(#1)    │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│             #1            │
+│                           │
+│          ~4 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: dd_idx       │
+│        TsDict: cat        │
+│                           │
+│        Projections:       │
+│  sdb_inverted_index_term$ │
+│sdb_inverted_index_term_cou│
+│            nt$            │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+query
+EXPLAIN SELECT list_sort(array_agg(DISTINCT cat)) FROM dd_idx
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    list_sort(array_agg    │
+│      (DISTINCT cat))      │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│ list(#0) FILTER (WHERE #1)│
+│         Filter: #1        │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│  sdb_inverted_index_term$ │
+│ (sdb_inverted_index_term$ │
+│        IS NOT NULL)       │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       HASH_GROUP_BY       │
+│    ────────────────────   │
+│         Groups: #0        │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│                           │
+│          ~4 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: dd_idx       │
+│        TsDict: cat        │
+│                           │
+│        Projections:       │
+│  sdb_inverted_index_term$ │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+# 'blue' and 'date' live only in row 4: after its deletion they must not be
+# enumerated even though the segment still holds them (mask only, not
+# compacted). Counts are live-exact; freq keeps the raw index value.
+statement ok
+DELETE FROM dd WHERE id = 4
+
+statement ok
+VACUUM (REFRESH_TABLE) dd;
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM dd_idx ORDER BY term
+----
+term	docs
+green	1
+red	2
+
+query TII
+SELECT unnest(ts_dict_agg(body)) AS term,
+       unnest(ts_dict_count(body)) AS docs,
+       unnest(ts_dict_freq(body)) AS freq
+FROM dd_idx ORDER BY term
+----
+term	docs	freq
+apple	2	3
+banana	2	2
+cherry	1	1
+
+query T
+SELECT list_sort(array_agg(DISTINCT cat)) AS cats FROM dd_idx
+----
+cats
+{green,red}
+
+query I
+SELECT count(*) AS n FROM dd_idx WHERE cat = 'blue'
+----
+n
+0
+
+# Prefix enumeration whose only candidate term is dead yields nothing.
+query I
+SELECT count(*) AS n
+FROM (SELECT unnest(ts_dict_agg(cat)) AS t FROM dd_idx WHERE cat LIKE 'b%') x
+----
+n
+0
+
+statement ok
+DELETE FROM dd WHERE id = 3
+
+statement ok
+VACUUM (REFRESH_TABLE) dd;
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM dd_idx ORDER BY term
+----
+term	docs
+green	1
+red	1
+
+# A fresh clean segment sums with the dirty one per term.
+statement ok
+INSERT INTO dd VALUES (5, 'red', 'banana')
+
+statement ok
+VACUUM (REFRESH_TABLE) dd;
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM dd_idx ORDER BY term
+----
+term	docs
+green	1
+red	2
+
+query TI
+SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS docs
+FROM dd_idx ORDER BY term
+----
+term	docs
+apple	2
+banana	2
+cherry	1
+
+# UPDATE masks the old row and reinserts the new value into a fresh segment.
+statement ok
+UPDATE dd SET cat = 'teal' WHERE id = 2
+
+statement ok
+VACUUM (REFRESH_TABLE) dd;
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM dd_idx ORDER BY term
+----
+term	docs
+red	2
+teal	1
+
+query T
+SELECT list_sort(array_agg(DISTINCT cat)) AS cats FROM dd_idx
+----
+cats
+{red,teal}
+
+# A fully-deleted table exposes no terms.
+statement ok
+CREATE TABLE dd2(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL)
+
+statement ok
+CREATE INDEX dd2_idx ON dd2 USING inverted(cat del_kw)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO dd2 VALUES (1, 'a'), (2, 'b'), (3, 'c')
+
+statement ok
+VACUUM (REFRESH_TABLE) dd2;
+
+statement ok
+DELETE FROM dd2
+
+statement ok
+VACUUM (REFRESH_TABLE) dd2;
+
+query I
+SELECT count(*) AS n FROM dd2_idx
+----
+n
+0
+
+query I
+SELECT count(*) AS n
+FROM (SELECT unnest(ts_dict_agg(cat)) AS t FROM dd2_idx) x
+----
+n
+0

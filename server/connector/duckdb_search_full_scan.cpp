@@ -252,6 +252,7 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> SearchFullScanInitLocal(
     lstate->term_filter = ss.stored_filter.get();
     for (size_t i = 0; i < ss.ts_dicts.size(); ++i) {
       lstate->fields[i].field_id = ss.ts_dicts[i].field_id;
+      lstate->fields[i].term_uses = ss.ts_dicts[i].term_uses;
     }
     BuildTsDictSlots(*lstate, input, bd, ss);
     return lstate;
@@ -609,6 +610,7 @@ void TsDictLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
                                     uint32_t /*seg_idx*/,
                                     SearchFullScanGlobalState& /*g*/) {
   _seg = &seg;
+  _dirty = seg.live_docs_count() != seg.docs_count();
   _cur_field = 0;
   if (!fields.empty()) {
     OpenField(0);
@@ -630,7 +632,14 @@ void TsDictLocalState::OpenField(size_t field_idx) {
   };
 
   if (!term_filter) {
-    _cursor.emplace<irs::AllTermIterator>(*reader);
+    if (f.term_uses == SearchScan::TsDictRequest::kUseMax && !_dirty) {
+      irs::ByTermOptions options;
+      const auto max_term = reader->max();
+      options.term.assign(max_term.data(), max_term.size());
+      _cursor.emplace<irs::ByTermIterator>(*reader, options);
+    } else {
+      _cursor.emplace<irs::AllTermIterator>(*reader);
+    }
   } else if (const auto type = term_filter->type();
              type == irs::Type<irs::ByTerm>::id()) {
     claim.operator()<irs::ByTerm, irs::ByTermIterator>();
@@ -670,6 +679,9 @@ duckdb::idx_t TsDictLocalState::EmitField(duckdb::DataChunk& output,
   auto* freq_data = data.operator()<int64_t>(f.freq_slot);
   auto* score_data = data.operator()<float>(f.score_slot);
 
+  const bool min_only = f.term_uses == SearchScan::TsDictRequest::kUseMin;
+  const auto field_budget = min_only ? duckdb::idx_t{1} : budget;
+
   const auto n = std::visit(
     [&](auto& cur) -> duckdb::idx_t {
       const auto* meta = [&]() -> const irs::TermMeta* {
@@ -682,9 +694,23 @@ duckdb::idx_t TsDictLocalState::EmitField(duckdb::DataChunk& output,
         return meta;
       }();
       duckdb::idx_t count = 0;
-      while (count < budget && cur.Valid()) {
-        if (meta) {
+      while (count < field_budget && cur.Valid()) {
+        if (meta || _dirty) {
           cur.read();
+        }
+        uint32_t live_docs = 0;
+        if (_dirty) {
+          auto docs =
+            _seg->mask(cur.GetImpl().postings(irs::IndexFeatures::None));
+          if (count_data) {
+            live_docs = docs->count();
+          } else if (!irs::doc_limits::eof(docs->advance())) {
+            live_docs = 1;
+          }
+          if (live_docs == 0) {
+            cur.next();
+            continue;
+          }
         }
         const auto term = cur.value();
         const auto row = output_start + count;
@@ -698,7 +724,8 @@ duckdb::idx_t TsDictLocalState::EmitField(duckdb::DataChunk& output,
             duckdb::StringVector::AddStringOrBlob(*raw_vec, p, term.size());
         }
         if (count_data) {
-          count_data[row] = static_cast<int32_t>(meta->docs_count);
+          count_data[row] =
+            static_cast<int32_t>(_dirty ? live_docs : meta->docs_count);
         }
         if (freq_data) {
           freq_data[row] = static_cast<int64_t>(meta->freq);
@@ -713,6 +740,9 @@ duckdb::idx_t TsDictLocalState::EmitField(duckdb::DataChunk& output,
     },
     _cursor);
 
+  if (min_only && n != 0) {
+    _cursor.emplace<irs::AllTermIterator>();
+  }
   if (n == 0) {
     return 0;
   }

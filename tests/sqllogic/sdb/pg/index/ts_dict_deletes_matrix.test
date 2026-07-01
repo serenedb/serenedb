@@ -1,0 +1,413 @@
+hash-threshold 100
+
+# Explicit ts_dict_* aggregate family crossed with the segment lifecycle on a
+# keyword field and a text field (frequency = true). refresh_interval = 0 and
+# compaction_interval = 0 disable background maintenance, so deletion masks
+# persist and visibility is driven only by VACUUM (REFRESH_TABLE).
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ddm_kw(template = 'keyword')
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ddm_tx(template = 'text', locale = 'en_US.UTF-8',
+    case = 'lower', stemming = false, accent = false, frequency = true,
+    position = true)
+
+statement ok
+CREATE TABLE ddm(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, body VARCHAR)
+
+statement ok
+CREATE INDEX ddm_idx ON ddm USING inverted(cat ddm_kw, body ddm_tx)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO ddm VALUES
+  (1, 'red',   'apple banana'),
+  (2, 'green', 'apple cherry cherry'),
+  (3, 'red',   'banana date'),
+  (4, 'blue',  'date'),
+  (5, 'amber', 'elder fig')
+
+statement ok
+VACUUM (REFRESH_TABLE) ddm;
+
+# Case 1: baseline on a single clean segment.
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM ddm_idx ORDER BY term
+----
+term	docs
+amber	1
+blue	1
+green	1
+red	2
+
+query TT
+SELECT unnest(ts_dict_agg(cat)) AS term,
+       unnest(ts_dict_raw_agg(cat))::VARCHAR AS raw
+FROM ddm_idx ORDER BY term
+----
+term	raw
+amber	\\x616d626572
+blue	\\x626c7565
+green	\\x677265656e
+red	\\x726564
+
+# cherry appears twice inside doc 2: docs 1, freq 2.
+query TII
+SELECT unnest(ts_dict_agg(body)) AS term,
+       unnest(ts_dict_count(body)) AS docs,
+       unnest(ts_dict_freq(body)) AS freq
+FROM ddm_idx ORDER BY term
+----
+term	docs	freq
+apple	2	2
+banana	2	2
+cherry	1	2
+date	2	2
+elder	1	1
+fig	1	1
+
+query TT
+SELECT unnest(ts_dict_agg(body)) AS term,
+       unnest(ts_dict_raw_agg(body))::VARCHAR AS raw
+FROM ddm_idx ORDER BY term
+----
+term	raw
+apple	\\x6170706c65
+banana	\\x62616e616e61
+cherry	\\x636865727279
+date	\\x64617465
+elder	\\x656c646572
+fig	\\x666967
+
+query TT
+SELECT ts_dict_min(cat) AS lo, ts_dict_max(cat) AS hi FROM ddm_idx
+----
+lo	hi
+amber	red
+
+query TT
+SELECT ts_dict_min(body) AS lo, ts_dict_max(body) AS hi FROM ddm_idx
+----
+lo	hi
+apple	fig
+
+# max-only on a clean segment (direct seek) and min-only (first-term stop).
+query T
+SELECT ts_dict_max(cat) AS hi FROM ddm_idx
+----
+hi
+red
+
+query T
+SELECT ts_dict_min(body) AS lo FROM ddm_idx
+----
+lo
+apple
+
+query TI
+SELECT cat, count(*) AS n FROM ddm GROUP BY cat ORDER BY cat
+----
+cat	n
+amber	1
+blue	1
+green	1
+red	2
+
+# Case 2: the segment turns dirty. Row 4 is the only 'blue' doc, so the term
+# dies (agg and raw_agg both drop it); 'date' loses one of two docs, so its
+# live count drops to 1 while freq keeps the raw index value 2.
+
+statement ok
+DELETE FROM ddm WHERE id = 4
+
+statement ok
+VACUUM (REFRESH_TABLE) ddm;
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM ddm_idx ORDER BY term
+----
+term	docs
+amber	1
+green	1
+red	2
+
+query TT
+SELECT unnest(ts_dict_agg(cat)) AS term,
+       unnest(ts_dict_raw_agg(cat))::VARCHAR AS raw
+FROM ddm_idx ORDER BY term
+----
+term	raw
+amber	\\x616d626572
+green	\\x677265656e
+red	\\x726564
+
+query TII
+SELECT unnest(ts_dict_agg(body)) AS term,
+       unnest(ts_dict_count(body)) AS docs,
+       unnest(ts_dict_freq(body)) AS freq
+FROM ddm_idx ORDER BY term
+----
+term	docs	freq
+apple	2	2
+banana	2	2
+cherry	1	2
+date	1	2
+elder	1	1
+fig	1	1
+
+query I
+SELECT count(*) AS n FROM ddm_idx WHERE cat = 'blue'
+----
+n
+0
+
+query I
+SELECT count(*) AS n FROM ddm WHERE body LIKE '%date%'
+----
+n
+1
+
+# Case 7: row 5 holds the byte-min cat term ('amber') and the byte-max body
+# term ('fig'). After its deletion min(cat) moves to 'green' and max(body)
+# moves to 'date'; the segment is dirty, so max takes the full-enumeration
+# path and min's first-term stop must skip the dead terms.
+
+statement ok
+DELETE FROM ddm WHERE id = 5
+
+statement ok
+VACUUM (REFRESH_TABLE) ddm;
+
+query T
+SELECT ts_dict_min(cat) AS lo FROM ddm_idx
+----
+lo
+green
+
+query T
+SELECT ts_dict_max(body) AS hi FROM ddm_idx
+----
+hi
+date
+
+query TT
+SELECT ts_dict_min(cat) AS lo, ts_dict_max(cat) AS hi FROM ddm_idx
+----
+lo	hi
+green	red
+
+query TT
+SELECT ts_dict_min(body) AS lo, ts_dict_max(body) AS hi FROM ddm_idx
+----
+lo	hi
+apple	date
+
+query TT
+SELECT min(cat) AS lo, max(cat) AS hi FROM ddm
+----
+lo	hi
+green	red
+
+query TT
+SELECT unnest(ts_dict_agg(body)) AS term,
+       unnest(ts_dict_raw_agg(body))::VARCHAR AS raw
+FROM ddm_idx ORDER BY term
+----
+term	raw
+apple	\\x6170706c65
+banana	\\x62616e616e61
+cherry	\\x636865727279
+date	\\x64617465
+
+# Case 3 + 6: UPDATE masks the old row in the dirty segment and reinserts the
+# whole row into a fresh clean segment. 'green' loses its last live doc and
+# drops; 'teal' appears in the new segment. body sums combine both segments:
+# apple = 1 live (dirty) + 1 (clean) = 2 docs, freq = 2 raw (dirty, still
+# counting the masked doc) + 1 (clean) = 3.
+
+statement ok
+UPDATE ddm SET cat = 'teal' WHERE id = 2
+
+statement ok
+VACUUM (REFRESH_TABLE) ddm;
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM ddm_idx ORDER BY term
+----
+term	docs
+red	2
+teal	1
+
+query TII
+SELECT unnest(ts_dict_agg(body)) AS term,
+       unnest(ts_dict_count(body)) AS docs,
+       unnest(ts_dict_freq(body)) AS freq
+FROM ddm_idx ORDER BY term
+----
+term	docs	freq
+apple	2	3
+banana	2	2
+cherry	1	2
+date	1	2
+
+query TI
+SELECT cat, count(*) AS n FROM ddm GROUP BY cat ORDER BY cat
+----
+cat	n
+red	2
+teal	1
+
+query T
+SELECT list_sort(array_agg(DISTINCT cat)) AS cats FROM ddm_idx
+----
+cats
+{red,teal}
+
+# Case 4: row 2 is the last live doc of 'teal' and 'cherry'; after its
+# deletion both terms vanish from enumeration.
+
+statement ok
+DELETE FROM ddm WHERE id = 2
+
+statement ok
+VACUUM (REFRESH_TABLE) ddm;
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM ddm_idx ORDER BY term
+----
+term	docs
+red	2
+
+query TII
+SELECT unnest(ts_dict_agg(body)) AS term,
+       unnest(ts_dict_count(body)) AS docs,
+       unnest(ts_dict_freq(body)) AS freq
+FROM ddm_idx ORDER BY term
+----
+term	docs	freq
+apple	1	2
+banana	2	2
+date	1	2
+
+query I
+SELECT count(*) AS n
+FROM (SELECT unnest(ts_dict_agg(cat)) AS t FROM ddm_idx WHERE cat = 'teal') x
+----
+n
+0
+
+# Reinserting the dead terms puts them into a fresh clean segment: they
+# reappear with count 1 and cherry's freq is 1 -- the dead segment's raw
+# occurrences (freq 2 there) must not leak in. 'red' now sums the dirty
+# segment (2) with the clean one (1).
+
+statement ok
+INSERT INTO ddm VALUES (6, 'teal', 'cherry'), (7, 'red', 'banana')
+
+statement ok
+VACUUM (REFRESH_TABLE) ddm;
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM ddm_idx ORDER BY term
+----
+term	docs
+red	3
+teal	1
+
+query TII
+SELECT unnest(ts_dict_agg(body)) AS term,
+       unnest(ts_dict_count(body)) AS docs,
+       unnest(ts_dict_freq(body)) AS freq
+FROM ddm_idx ORDER BY term
+----
+term	docs	freq
+apple	1	2
+banana	3	3
+cherry	1	1
+date	1	2
+
+query TI
+SELECT cat, count(*) AS n FROM ddm GROUP BY cat ORDER BY cat
+----
+cat	n
+red	3
+teal	1
+
+# Case 8: multi-field enumeration in one query while both fields carry dead
+# terms in their dirty segments.
+
+query TT
+SELECT list_sort(ts_dict_agg(cat)) AS cats,
+       list_sort(ts_dict_agg(body)) AS bodies
+FROM ddm_idx
+----
+cats	bodies
+{red,teal}	{apple,banana,cherry,date}
+
+query TT
+SELECT list_sort(ts_dict_count(cat)) AS cat_docs,
+       list_sort(ts_dict_count(body)) AS body_docs
+FROM ddm_idx
+----
+cat_docs	body_docs
+{1,3}	{1,1,1,3}
+
+# Case 5: deleting every row leaves no live docs and no enumerable terms.
+
+statement ok
+CREATE TABLE ddm2(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, body VARCHAR)
+
+statement ok
+CREATE INDEX ddm2_idx ON ddm2 USING inverted(cat ddm_kw, body ddm_tx)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO ddm2 VALUES (1, 'a', 'one two'), (2, 'b', 'two'), (3, 'c', 'three')
+
+statement ok
+VACUUM (REFRESH_TABLE) ddm2;
+
+statement ok
+DELETE FROM ddm2
+
+statement ok
+VACUUM (REFRESH_TABLE) ddm2;
+
+query I
+SELECT count(*) AS n FROM ddm2_idx
+----
+n
+0
+
+query I
+SELECT count(*) AS n
+FROM (SELECT unnest(ts_dict_agg(cat)) AS t FROM ddm2_idx) x
+----
+n
+0
+
+query I
+SELECT count(*) AS n
+FROM (SELECT unnest(ts_dict_agg(body)) AS t FROM ddm2_idx) x
+----
+n
+0
+
+statement ok
+DROP TABLE ddm
+
+statement ok
+DROP TABLE ddm2
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ddm_kw
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ddm_tx

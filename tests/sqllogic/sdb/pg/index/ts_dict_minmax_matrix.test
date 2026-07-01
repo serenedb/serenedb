@@ -1,0 +1,416 @@
+hash-threshold 100
+
+# min/max/count(DISTINCT) over keyword inverted-index columns crossed with
+# WHERE acceptors, deletion masks and NULLs. min-only requests stop after the
+# first live term per segment and max-only requests seek to the greatest term
+# of a clean segment, so the cases below place dead terms at the byte-smallest
+# and byte-greatest positions and combine min/max with consumers that force
+# full enumeration. Background maintenance is disabled; visibility is driven
+# by VACUUM (REFRESH_TABLE) only, so deletion masks persist.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY mmx_kw(template = 'keyword')
+
+statement ok
+CREATE TABLE mmx1(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, nul VARCHAR)
+
+statement ok
+CREATE INDEX mmx1_idx ON mmx1 USING inverted(cat mmx_kw, nul mmx_kw)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO mmx1 VALUES
+  (1, 'aa', NULL), (2, 'ab', NULL), (3, 'ac', NULL), (4, 'ba', NULL),
+  (5, 'bd', NULL), (6, 'bm', NULL), (7, 'bt', NULL), (8, 'bz', NULL),
+  (9, 'cc', NULL), (10, 'cc', NULL), (11, 'yy', NULL), (12, 'zx', NULL),
+  (13, 'zz', NULL)
+
+statement ok
+VACUUM (REFRESH_TABLE) mmx1;
+
+# Clean segment: min-only stop and max-only seek shortcuts.
+query T
+SELECT min(cat) AS mn FROM mmx1_idx
+----
+mn
+aa
+
+query T
+SELECT max(cat) AS mx FROM mmx1_idx
+----
+mx
+zz
+
+# min + max in one query forces full enumeration.
+query TT
+SELECT min(cat) AS mn, max(cat) AS mx FROM mmx1_idx
+----
+mn	mx
+aa	zz
+
+query II
+SELECT (SELECT count(DISTINCT cat) FROM mmx1_idx) AS idx_cnt,
+       (SELECT count(DISTINCT cat) FROM mmx1) AS tbl_cnt
+----
+idx_cnt	tbl_cnt
+12	12
+
+# A column that is NULL for every row exposes no terms: count 0, min/max NULL.
+query ITT
+SELECT count(DISTINCT nul) AS cnt, min(nul) AS mn, max(nul) AS mx FROM mmx1_idx
+----
+cnt	mn	mx
+0	NULL	NULL
+
+query ITT
+SELECT count(DISTINCT nul) AS cnt, min(nul) AS mn, max(nul) AS mx FROM mmx1
+----
+cnt	mn	mx
+0	NULL	NULL
+
+# WHERE acceptors narrow the enumerated range for explicit ts_dict_min/max.
+query TT
+SELECT ts_dict_min(cat) AS lo, ts_dict_max(cat) AS hi
+FROM mmx1_idx WHERE cat LIKE 'b%'
+----
+lo	hi
+ba	bz
+
+query TT
+SELECT ts_dict_min(cat) AS lo, ts_dict_max(cat) AS hi
+FROM mmx1_idx WHERE cat = 'bm'
+----
+lo	hi
+bm	bm
+
+query TT
+SELECT ts_dict_min(cat) AS lo, ts_dict_max(cat) AS hi
+FROM mmx1_idx WHERE cat BETWEEN 'ac' AND 'bt'
+----
+lo	hi
+ac	bt
+
+query TT
+SELECT min(cat) AS lo, max(cat) AS hi FROM mmx1 WHERE cat LIKE 'b%'
+----
+lo	hi
+ba	bz
+
+# min combined with ts_dict_count: the min-only stop must not apply, so the
+# count list stays complete (12 terms covering all 13 live documents).
+query TII
+SELECT min(cat) AS mn, len(ts_dict_count(cat)) AS n_terms,
+       list_sum(ts_dict_count(cat)) AS docs
+FROM mmx1_idx
+----
+mn	n_terms	docs
+aa	12	13
+
+query TT
+SELECT max(cat) AS mx, list_sort(ts_dict_agg(cat)) AS terms FROM mmx1_idx
+----
+mx	terms
+zz	{aa,ab,ac,ba,bd,bm,bt,bz,cc,yy,zx,zz}
+
+# Kill the four byte-smallest terms, the three byte-greatest terms and both
+# boundary terms of the b-range. The segment stays dirty (masks only).
+statement ok
+DELETE FROM mmx1 WHERE cat IN ('aa', 'ab', 'ac', 'ba', 'bz', 'yy', 'zx', 'zz')
+
+statement ok
+VACUUM (REFRESH_TABLE) mmx1;
+
+# min probes across the four consecutive dead prefix terms to the first live
+# one; dirty max enumerates fully past the dead tail to the last live term.
+query T
+SELECT min(cat) AS mn FROM mmx1_idx
+----
+mn
+bd
+
+query T
+SELECT max(cat) AS mx FROM mmx1_idx
+----
+mx
+cc
+
+query TT
+SELECT min(cat) AS mn, max(cat) AS mx FROM mmx1_idx
+----
+mn	mx
+bd	cc
+
+query II
+SELECT (SELECT count(DISTINCT cat) FROM mmx1_idx) AS idx_cnt,
+       (SELECT count(DISTINCT cat) FROM mmx1) AS tbl_cnt
+----
+idx_cnt	tbl_cnt
+4	4
+
+# Dead terms sit exactly at the min and max positions of the accepted range.
+query TT
+SELECT ts_dict_min(cat) AS lo, ts_dict_max(cat) AS hi
+FROM mmx1_idx WHERE cat LIKE 'b%'
+----
+lo	hi
+bd	bt
+
+query TT
+SELECT ts_dict_min(cat) AS lo, ts_dict_max(cat) AS hi
+FROM mmx1_idx WHERE cat BETWEEN 'ba' AND 'zz'
+----
+lo	hi
+bd	cc
+
+query TT
+SELECT ts_dict_min(cat) AS lo, ts_dict_max(cat) AS hi
+FROM mmx1_idx WHERE cat = 'bm'
+----
+lo	hi
+bm	bm
+
+# Equality on a dead term: the dictionary still stores it, the liveness probe
+# drops it. Equality on a term that never existed behaves the same.
+query TT
+SELECT ts_dict_min(cat) AS lo, ts_dict_max(cat) AS hi
+FROM mmx1_idx WHERE cat = 'ba'
+----
+lo	hi
+NULL	NULL
+
+query TT
+SELECT ts_dict_min(cat) AS lo, ts_dict_max(cat) AS hi
+FROM mmx1_idx WHERE cat = 'bq'
+----
+lo	hi
+NULL	NULL
+
+query TT
+SELECT min(cat) AS lo, max(cat) AS hi FROM mmx1 WHERE cat LIKE 'b%'
+----
+lo	hi
+bd	bt
+
+# Consumer combination on the dirty segment: min stays correct and the count
+# list is complete (4 terms, 5 live documents -- 'cc' counts two).
+query TII
+SELECT min(cat) AS mn, len(ts_dict_count(cat)) AS n_terms,
+       list_sum(ts_dict_count(cat)) AS docs
+FROM mmx1_idx
+----
+mn	n_terms	docs
+bd	4	5
+
+query TT
+SELECT max(cat) AS mx, list_sort(ts_dict_agg(cat)) AS terms FROM mmx1_idx
+----
+mx	terms
+cc	{bd,bm,bt,cc}
+
+# Same-field post-filters force full enumeration, so min/max apply after the
+# filter: 'a' and 'z' pass the shortcut positions but fail the filter.
+statement ok
+CREATE TABLE mmx2(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL)
+
+statement ok
+CREATE INDEX mmx2_idx ON mmx2 USING inverted(cat mmx_kw)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO mmx2 VALUES (1, 'a'), (2, 'bb'), (3, 'cc'), (4, 'z')
+
+statement ok
+VACUUM (REFRESH_TABLE) mmx2;
+
+query T
+SELECT min(cat) AS mn FROM mmx2_idx WHERE length(cat) = 2
+----
+mn
+bb
+
+query T
+SELECT max(cat) AS mx FROM mmx2_idx WHERE length(cat) = 2
+----
+mx
+cc
+
+query T
+SELECT min(cat) AS mn FROM mmx2_idx WHERE cat <> 'a'
+----
+mn
+bb
+
+query T
+SELECT max(cat) AS mx FROM mmx2_idx WHERE cat <> 'z'
+----
+mx
+cc
+
+query TT
+SELECT min(cat) AS mn, max(cat) AS mx FROM mmx2 WHERE length(cat) = 2
+----
+mn	mx
+bb	cc
+
+query II
+SELECT (SELECT count(DISTINCT cat) FROM mmx2_idx) AS idx_cnt,
+       (SELECT count(DISTINCT cat) FROM mmx2) AS tbl_cnt
+----
+idx_cnt	tbl_cnt
+4	4
+
+statement ok
+INSERT INTO mmx2 VALUES (5, 'aa'), (6, 'zz'), (7, 'dd')
+
+statement ok
+VACUUM (REFRESH_TABLE) mmx2;
+
+query II
+SELECT (SELECT count(DISTINCT cat) FROM mmx2_idx) AS idx_cnt,
+       (SELECT count(DISTINCT cat) FROM mmx2) AS tbl_cnt
+----
+idx_cnt	tbl_cnt
+7	7
+
+# Dead 'aa' passes the length filter but has no live docs; live 'a' fails the
+# filter: min must skip both. Symmetric for dead 'zz' and live 'z' at max.
+statement ok
+DELETE FROM mmx2 WHERE id IN (5, 6)
+
+statement ok
+VACUUM (REFRESH_TABLE) mmx2;
+
+query T
+SELECT min(cat) AS mn FROM mmx2_idx WHERE length(cat) = 2
+----
+mn
+bb
+
+query T
+SELECT max(cat) AS mx FROM mmx2_idx WHERE length(cat) = 2
+----
+mx
+dd
+
+query T
+SELECT min(cat) AS mn FROM mmx2_idx WHERE cat <> 'a'
+----
+mn
+bb
+
+query T
+SELECT max(cat) AS mx FROM mmx2_idx WHERE cat <> 'z'
+----
+mx
+dd
+
+query TT
+SELECT min(cat) AS mn, max(cat) AS mx FROM mmx2_idx
+----
+mn	mx
+a	z
+
+query TT
+SELECT min(cat) AS mn, max(cat) AS mx FROM mmx2 WHERE length(cat) = 2
+----
+mn	mx
+bb	dd
+
+query II
+SELECT (SELECT count(DISTINCT cat) FROM mmx2_idx) AS idx_cnt,
+       (SELECT count(DISTINCT cat) FROM mmx2) AS tbl_cnt
+----
+idx_cnt	tbl_cnt
+5	5
+
+# Three segments (clean / dirty / clean): the global min 'bb' lives in the
+# dirty middle segment behind its dead 'aa', the global max 'zz' in a clean
+# segment served by the max-only seek.
+statement ok
+CREATE TABLE mmx3(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL)
+
+statement ok
+CREATE INDEX mmx3_idx ON mmx3 USING inverted(cat mmx_kw)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO mmx3 VALUES (1, 'mm'), (2, 'pp')
+
+statement ok
+VACUUM (REFRESH_TABLE) mmx3;
+
+query II
+SELECT (SELECT count(DISTINCT cat) FROM mmx3_idx) AS idx_cnt,
+       (SELECT count(DISTINCT cat) FROM mmx3) AS tbl_cnt
+----
+idx_cnt	tbl_cnt
+2	2
+
+statement ok
+INSERT INTO mmx3 VALUES (3, 'aa'), (4, 'bb'), (5, 'rr')
+
+statement ok
+VACUUM (REFRESH_TABLE) mmx3;
+
+query II
+SELECT (SELECT count(DISTINCT cat) FROM mmx3_idx) AS idx_cnt,
+       (SELECT count(DISTINCT cat) FROM mmx3) AS tbl_cnt
+----
+idx_cnt	tbl_cnt
+5	5
+
+statement ok
+DELETE FROM mmx3 WHERE id IN (3, 5)
+
+statement ok
+VACUUM (REFRESH_TABLE) mmx3;
+
+query II
+SELECT (SELECT count(DISTINCT cat) FROM mmx3_idx) AS idx_cnt,
+       (SELECT count(DISTINCT cat) FROM mmx3) AS tbl_cnt
+----
+idx_cnt	tbl_cnt
+3	3
+
+statement ok
+INSERT INTO mmx3 VALUES (6, 'cc'), (7, 'zz')
+
+statement ok
+VACUUM (REFRESH_TABLE) mmx3;
+
+query T
+SELECT min(cat) AS mn FROM mmx3_idx
+----
+mn
+bb
+
+query T
+SELECT max(cat) AS mx FROM mmx3_idx
+----
+mx
+zz
+
+query TT
+SELECT min(cat) AS mn, max(cat) AS mx FROM mmx3_idx
+----
+mn	mx
+bb	zz
+
+query TT
+SELECT ts_dict_min(cat) AS lo, ts_dict_max(cat) AS hi FROM mmx3_idx
+----
+lo	hi
+bb	zz
+
+query T
+SELECT list_sort(ts_dict_agg(cat)) AS terms FROM mmx3_idx
+----
+terms
+{bb,cc,mm,pp,zz}
+
+query II
+SELECT (SELECT count(DISTINCT cat) FROM mmx3_idx) AS idx_cnt,
+       (SELECT count(DISTINCT cat) FROM mmx3) AS tbl_cnt
+----
+idx_cnt	tbl_cnt
+5	5

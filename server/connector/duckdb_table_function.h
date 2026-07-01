@@ -162,12 +162,17 @@ struct SearchScan : ScanSource {
   bool EmitOffsets() const { return !offsets.empty(); }
 
   struct TsDictRequest {
+    static constexpr uint8_t kUseFull = 1;
+    static constexpr uint8_t kUseMin = 2;
+    static constexpr uint8_t kUseMax = 4;
+
     irs::field_id field_id = irs::field_limits::invalid();
     duckdb::idx_t term_col_idx = duckdb::DConstants::INVALID_INDEX;
     duckdb::idx_t term_raw_col_idx = duckdb::DConstants::INVALID_INDEX;
     duckdb::idx_t count_col_idx = duckdb::DConstants::INVALID_INDEX;
     duckdb::idx_t freq_col_idx = duckdb::DConstants::INVALID_INDEX;
     duckdb::idx_t score_col_idx = duckdb::DConstants::INVALID_INDEX;
+    uint8_t term_uses = 0;
   };
   // One entry per enumerated field; multiple ts_dict aggregations over
   // different fields in one query each get their own request.

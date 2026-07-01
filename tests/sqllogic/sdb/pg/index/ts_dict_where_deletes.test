@@ -1,0 +1,329 @@
+hash-threshold 100
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wd_kw(template = 'keyword')
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wd_tx(template = 'text', locale = 'en_US.UTF-8',
+    case = 'lower', stemming = false, accent = false, frequency = true,
+    position = true)
+
+statement ok
+CREATE TABLE wdk(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, tag VARCHAR)
+
+statement ok
+CREATE INDEX wdk_idx ON wdk USING inverted(cat wd_kw, tag wd_kw)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO wdk VALUES
+  (1, 'apple', 'x'),
+  (2, 'fig', 'x'),
+  (3, 'grape', 'x'),
+  (4, 'grape', 'x'),
+  (5, 'grape', 'x'),
+  (6, 'kiwi', 'x'),
+  (7, 'lime', 'x'),
+  (8, 'peach', 'x'),
+  (9, 'pear', 'x'),
+  (10, 'pine', 'x'),
+  (11, 'plum', 'x'),
+  (12, 'quail', 'x'),
+  (13, 'quince', 'x')
+
+statement ok
+VACUUM (REFRESH_TABLE) wdk;
+
+statement ok
+DELETE FROM wdk WHERE id IN (2, 5, 6, 8, 11, 12, 13)
+
+statement ok
+VACUUM (REFRESH_TABLE) wdk;
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM wdk_idx ORDER BY term
+----
+term	docs
+apple	1
+grape	2
+lime	1
+pear	1
+pine	1
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM wdk_idx WHERE cat = 'lime' ORDER BY term
+----
+term	docs
+lime	1
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM wdk_idx WHERE cat = 'grape' ORDER BY term
+----
+term	docs
+grape	2
+
+query I
+SELECT count(*) AS n FROM wdk WHERE cat = 'grape'
+----
+n
+2
+
+query I
+SELECT count(*) AS n
+FROM (SELECT unnest(ts_dict_agg(cat)) AS t FROM wdk_idx WHERE cat = 'fig') x
+----
+n
+0
+
+query I
+SELECT count(*) AS n
+FROM (SELECT unnest(ts_dict_agg(cat)) AS t FROM wdk_idx WHERE cat = 'zebra') x
+----
+n
+0
+
+query I
+SELECT count(*) AS n FROM wdk_idx WHERE cat = 'fig'
+----
+n
+0
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM wdk_idx WHERE cat IN ('fig', 'lime', 'zebra') ORDER BY term
+----
+term	docs
+lime	1
+
+query T
+SELECT list_sort(array_agg(DISTINCT cat)) AS cats
+FROM wdk WHERE cat IN ('fig', 'lime', 'zebra')
+----
+cats
+{lime}
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM wdk_idx WHERE cat LIKE 'p%' ORDER BY term
+----
+term	docs
+pear	1
+pine	1
+
+query I
+SELECT count(*) AS n
+FROM (SELECT unnest(ts_dict_agg(cat)) AS t FROM wdk_idx WHERE cat LIKE 'q%') x
+----
+n
+0
+
+query T
+SELECT list_sort(array_agg(DISTINCT cat)) AS cats FROM wdk WHERE cat LIKE 'p%'
+----
+cats
+{pear,pine}
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM wdk_idx WHERE cat BETWEEN 'a' AND 'm' ORDER BY term
+----
+term	docs
+apple	1
+grape	2
+lime	1
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM wdk_idx WHERE cat BETWEEN 'fig' AND 'kiwi' ORDER BY term
+----
+term	docs
+grape	2
+
+query T
+SELECT unnest(ts_dict_agg(cat)) AS term
+FROM wdk_idx WHERE cat > 'pear' ORDER BY term
+----
+term
+pine
+
+query I
+SELECT count(DISTINCT cat) AS n FROM wdk WHERE cat BETWEEN 'a' AND 'm'
+----
+n
+3
+
+query T
+SELECT unnest(ts_dict_agg(cat)) AS term
+FROM wdk_idx WHERE length(cat) = 4 ORDER BY term
+----
+term
+lime
+pear
+pine
+
+statement ok
+DELETE FROM wdk WHERE id IN (3, 4)
+
+statement ok
+VACUUM (REFRESH_TABLE) wdk;
+
+query I
+SELECT count(*) AS n
+FROM (SELECT unnest(ts_dict_agg(cat)) AS t FROM wdk_idx WHERE cat = 'grape') x
+----
+n
+0
+
+query I
+SELECT count(*) AS n FROM wdk_idx WHERE cat = 'grape'
+----
+n
+0
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM wdk_idx WHERE cat BETWEEN 'a' AND 'm' ORDER BY term
+----
+term	docs
+apple	1
+lime	1
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM wdk_idx WHERE cat IN ('grape', 'lime') ORDER BY term
+----
+term	docs
+lime	1
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM wdk_idx WHERE cat = 'lime' OR cat = 'grape' ORDER BY term
+----
+term	docs
+lime	1
+
+statement error
+SELECT ts_dict_agg(cat) FROM wdk_idx WHERE cat LIKE 'p%' AND cat <> 'pear'
+----
+db error: ERROR: ts_dict_agg() WHERE accepts a single predicate on the enumerated field (=, IN, LIKE, BETWEEN, length, <>, or @@ ts_*)
+HINT: combine conditions with UNION/INTERSECT/EXCEPT over unnest(ts_dict_agg(...)), or filter terms in an outer query
+
+
+statement error
+SELECT ts_dict_agg(cat) FROM wdk_idx WHERE cat = 'lime' OR length(cat) = 4
+----
+db error: ERROR: ts_dict_agg() WHERE accepts a single predicate on the enumerated field (=, IN, LIKE, BETWEEN, length, <>, or @@ ts_*)
+HINT: combine conditions with UNION/INTERSECT/EXCEPT over unnest(ts_dict_agg(...)), or filter terms in an outer query
+
+
+statement error
+SELECT ts_dict_agg(cat) FROM wdk_idx WHERE tag = 'x'
+----
+db error: ERROR: ts_dict_agg() WHERE accepts a single predicate on the enumerated field (=, IN, LIKE, BETWEEN, length, <>, or @@ ts_*)
+HINT: combine conditions with UNION/INTERSECT/EXCEPT over unnest(ts_dict_agg(...)), or filter terms in an outer query
+
+
+statement error
+SELECT ts_dict_agg(cat) AS c, ts_dict_agg(tag) AS t FROM wdk_idx WHERE cat LIKE 'p%'
+----
+db error: ERROR: ts_dict_agg() over multiple fields does not support a WHERE clause
+HINT: constrain each field with a single-field ts_dict_agg subquery
+
+
+statement ok
+CREATE TABLE wdt(id INTEGER PRIMARY KEY, body VARCHAR)
+
+statement ok
+CREATE INDEX wdt_idx ON wdt USING inverted(body wd_tx)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO wdt VALUES
+  (1, 'apple banana'),
+  (2, 'Aple cherry'),
+  (3, 'appl banana'),
+  (4, 'axle date')
+
+statement ok
+VACUUM (REFRESH_TABLE) wdt;
+
+statement ok
+DELETE FROM wdt WHERE id IN (3, 4)
+
+statement ok
+VACUUM (REFRESH_TABLE) wdt;
+
+query TII
+SELECT unnest(ts_dict_agg(body)) AS term,
+       unnest(ts_dict_count(body)) AS docs,
+       unnest(ts_dict_freq(body)) AS freq
+FROM wdt_idx ORDER BY term
+----
+term	docs	freq
+aple	1	1
+apple	1	1
+banana	1	2
+cherry	1	1
+
+query TIR
+SELECT unnest(ts_dict_agg(body)) AS term,
+       unnest(ts_dict_count(body)) AS docs,
+       unnest(ts_dict_score(body)) AS score
+FROM wdt_idx WHERE body @@ ts_levenshtein('apple', 1) ORDER BY term
+----
+term	docs	score
+aple	1	0.75
+apple	1	1
+
+query T
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM wdt_idx WHERE body @@ ts_starts_with('ap') ORDER BY term
+----
+term
+aple
+apple
+
+query T
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM wdt_idx WHERE body @@ ts_regexp('a[a-z]*e') ORDER BY term
+----
+term
+aple
+apple
+
+query I
+SELECT count(*) AS n FROM wdt_idx WHERE body @@ ts_starts_with('ap')
+----
+n
+2
+
+query T
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM wdt_idx WHERE length(body) = 4 ORDER BY term
+----
+term
+aple
+
+query T
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM wdt_idx WHERE body <> 'apple' ORDER BY term
+----
+term
+aple
+banana
+cherry
+
+statement ok
+DROP TABLE wdt
+
+statement ok
+DROP TABLE wdk
+
+statement ok
+DROP TEXT SEARCH DICTIONARY wd_tx
+
+statement ok
+DROP TEXT SEARCH DICTIONARY wd_kw

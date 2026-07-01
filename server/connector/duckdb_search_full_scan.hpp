@@ -159,6 +159,7 @@ struct TsDictLocalState : public CommonScanLocalState {
     duckdb::idx_t count_slot = duckdb::DConstants::INVALID_INDEX;
     duckdb::idx_t freq_slot = duckdb::DConstants::INVALID_INDEX;
     duckdb::idx_t score_slot = duckdb::DConstants::INVALID_INDEX;
+    uint8_t term_uses = 0;
   };
 
   std::vector<FieldState> fields;
@@ -179,6 +180,7 @@ struct TsDictLocalState : public CommonScanLocalState {
                           duckdb::idx_t budget);
 
   const irs::SubReader* _seg = nullptr;
+  bool _dirty = false;
   size_t _cur_field = 0;
   std::variant<irs::AllTermIterator, irs::ByTermIterator,
                irs::ByPrefixIterator, irs::ByRangeIterator,

@@ -768,6 +768,10 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
   const duckdb::LogicalType col_type{type};
   const auto col_idx =
     EnsureTsDictCol(*found->bind_data, *found->get, req, kind);
+  using Req = connector::SearchScan::TsDictRequest;
+  req.term_uses |= agg_name == "min"   ? Req::kUseMin
+                   : agg_name == "max" ? Req::kUseMax
+                                       : Req::kUseFull;
   const auto binding = ExposeGetColumnAt(root, col_ref.binding.table_index,
                                          *found->get, col_idx, name, col_type);
   auto result = agg_name == "list"
@@ -902,6 +906,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> InjectTsDictGroupBy(
     }
     auto& req = ss.ts_dicts[r];
     EnsureTsDictCol(*found->bind_data, *found->get, req, TsDictColKind::kTerm);
+    req.term_uses |= connector::SearchScan::TsDictRequest::kUseFull;
     entries.push_back({.source =
                          duckdb::ColumnBinding{
                            get_ti, duckdb::ProjectionIndex{req.term_col_idx}},
@@ -1065,23 +1070,51 @@ bool ColumnIsNotNull(const catalog::Table& table, catalog::Column::Id col_id) {
   return false;
 }
 
-struct ArrayAggMatch {
+struct KeywordDictAgg {
   duckdb::ColumnBinding binding;
   irs::field_id field_id;
+  std::string_view agg;
 };
 
-// `array_agg(DISTINCT col)` over a keyword-analyzed inverted-index column
-// enumerates exactly the field's distinct terms, so it can be served from the
-// term dictionary. Requires a NOT NULL column: `list()` keeps a NULL element
-// for missing values while the term dictionary has none.
-std::optional<ArrayAggMatch> ClassifyArrayAggDistinct(
+// The implicit rewrites below are only sound for a bare `SELECT <aggs> FROM
+// idx` shape: any filter, join or other operator between the aggregate and the
+// scan consumes document rows, which the term-dict scan no longer produces.
+const duckdb::LogicalGet* ImplicitTsDictTarget(
+  const duckdb::LogicalOperator& aggr) {
+  const auto* node = &aggr;
+  while (node->children.size() == 1) {
+    const auto* child = node->children[0].get();
+    if (child->type == duckdb::LogicalOperatorType::LOGICAL_GET) {
+      return &child->Cast<duckdb::LogicalGet>();
+    }
+    if (child->type != duckdb::LogicalOperatorType::LOGICAL_PROJECTION) {
+      return nullptr;
+    }
+    node = child;
+  }
+  return nullptr;
+}
+
+// `array_agg(DISTINCT col)`, `count(DISTINCT col)`, `min(col)` and `max(col)`
+// over a keyword-analyzed inverted-index column reduce exactly the field's
+// distinct terms, so they can be served from the term dictionary. Only
+// list()/array_agg requires a NOT NULL column: it keeps a NULL element for
+// missing values while the term dictionary has none; count/min/max skip NULLs.
+std::optional<KeywordDictAgg> ClassifyKeywordDictAgg(
   duckdb::BoundAggregateExpression& agg, duckdb::LogicalOperator& root,
-  const catalog::Snapshot& snapshot) {
+  const duckdb::LogicalGet& target, const catalog::Snapshot& snapshot) {
   const auto& name = agg.function.GetName();
-  if (name != "array_agg" && name != "list") {
+  const bool is_list = name == "array_agg" || name == "list";
+  const bool is_count = name == "count";
+  const bool is_min = name == "min";
+  const bool is_max = name == "max";
+  if (!is_list && !is_count && !is_min && !is_max) {
     return std::nullopt;
   }
-  if (!agg.IsDistinct() || agg.filter != nullptr || agg.order_bys != nullptr) {
+  if ((is_list || is_count) && !agg.IsDistinct()) {
+    return std::nullopt;
+  }
+  if (agg.filter != nullptr || agg.order_bys != nullptr) {
     return std::nullopt;
   }
   if (agg.children.size() != 1 || agg.children[0]->GetExpressionClass() !=
@@ -1095,8 +1128,9 @@ std::optional<ArrayAggMatch> ClassifyArrayAggDistinct(
   }
   const auto resolved = ResolveBindingThroughProjections(root, col_ref.binding);
   auto found = FindIResearchScan(root, resolved.table_index);
-  if (!found || found->bind_data->GetKind() !=
-                  connector::SereneDBScanBindData::Kind::Table) {
+  if (!found || found->get != &target ||
+      found->bind_data->GetKind() !=
+        connector::SereneDBScanBindData::Kind::Table) {
     return std::nullopt;
   }
   const auto col_id = ResolveColumnId(resolved, *found->bind_data, *found->get);
@@ -1111,28 +1145,44 @@ std::optional<ArrayAggMatch> ClassifyArrayAggDistinct(
   if (!index->IsKeywordField(snapshot, field_id)) {
     return std::nullopt;
   }
-  const auto& tbd = found->bind_data->As<connector::TableScanBindData>();
-  if (!tbd.table || !ColumnIsNotNull(*tbd.table, col_id)) {
-    return std::nullopt;
+  if (is_list) {
+    const auto& tbd = found->bind_data->As<connector::TableScanBindData>();
+    if (!tbd.table || !ColumnIsNotNull(*tbd.table, col_id)) {
+      return std::nullopt;
+    }
   }
-  return ArrayAggMatch{col_ref.binding, field_id};
+  return KeywordDictAgg{
+    col_ref.binding, field_id,
+    is_list ? std::string_view{"list"}
+            : is_count ? std::string_view{"count"}
+                       : is_min ? std::string_view{"min"}
+                                : std::string_view{"max"}};
 }
 
-duckdb::unique_ptr<duckdb::Expression> BuildKeywordTsDictList(
-  const duckdb::ColumnBinding& orig_binding, irs::field_id field_id,
-  duckdb::LogicalOperator& root, duckdb::ClientContext& context,
-  const std::string& alias) {
+duckdb::unique_ptr<duckdb::Expression> BuildKeywordTsDictAggregate(
+  const KeywordDictAgg& match, duckdb::LogicalOperator& root,
+  duckdb::ClientContext& context, const std::string& alias) {
   using C = catalog::Column;
-  const auto resolved = ResolveBindingThroughProjections(root, orig_binding);
+  using Req = connector::SearchScan::TsDictRequest;
+  const auto resolved = ResolveBindingThroughProjections(root, match.binding);
   auto found = FindIResearchScan(root, resolved.table_index);
   SDB_ASSERT(found.has_value());
-  auto& req = found->scan->TsDictFor(field_id);
+  auto& req = found->scan->TsDictFor(match.field_id);
   EnsureTsDictCol(*found->bind_data, *found->get, req, TsDictColKind::kTerm);
+  req.term_uses |= match.agg == "min"   ? Req::kUseMin
+                   : match.agg == "max" ? Req::kUseMax
+                                        : Req::kUseFull;
   const auto binding = ExposeGetColumnAt(
-    root, orig_binding.table_index, *found->get, req.term_col_idx, C::kTermName,
+    root, match.binding.table_index, *found->get, req.term_col_idx, C::kTermName,
     duckdb::LogicalType::VARCHAR);
-  auto result = BuildTsDictListAggregate(context, C::kTermName,
-                                         duckdb::LogicalType::VARCHAR, binding);
+  auto result =
+    match.agg == "list"
+      ? BuildTsDictListAggregate(context, C::kTermName,
+                                 duckdb::LogicalType::VARCHAR, binding)
+      : BuildTsDictAggregate(
+          context, match.agg,
+          duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
+            std::string{C::kTermName}, duckdb::LogicalType::VARCHAR, binding));
   result->SetAlias(alias);
   return result;
 }
@@ -1142,9 +1192,10 @@ void PushdownTsDictAggregates(duckdb::LogicalAggregate& aggr,
                               duckdb::Binder& binder,
                               duckdb::ClientContext& context) {
   std::vector<size_t> ts_dict_calls;
-  std::vector<std::pair<size_t, ArrayAggMatch>> array_aggs;
+  std::vector<std::pair<size_t, KeywordDictAgg>> keyword_aggs;
   bool other = false;
   std::shared_ptr<const catalog::Snapshot> snapshot;
+  const auto* implicit_target = ImplicitTsDictTarget(aggr);
   for (size_t i = 0; i < aggr.expressions.size(); ++i) {
     auto& expr = aggr.expressions[i];
     if (expr->GetExpressionClass() !=
@@ -1157,17 +1208,29 @@ void PushdownTsDictAggregates(duckdb::LogicalAggregate& aggr,
       ts_dict_calls.push_back(i);
       continue;
     }
-    if (aggr.groups.empty()) {
+    if (aggr.groups.empty() && implicit_target != nullptr) {
       if (!snapshot) {
         snapshot =
           connector::GetSereneDBContext(context).EnsureCatalogSnapshot();
       }
-      if (auto match = ClassifyArrayAggDistinct(agg, root, *snapshot)) {
-        array_aggs.push_back({i, *match});
+      if (auto match =
+            ClassifyKeywordDictAgg(agg, root, *implicit_target, *snapshot)) {
+        keyword_aggs.push_back({i, *match});
         continue;
       }
     }
     other = true;
+  }
+
+  // Converting a ts_dict aggregate switches the scan to term-dict rows, which
+  // would silently corrupt any sibling aggregate that still expects document
+  // rows (count(*) would count terms).
+  if (!ts_dict_calls.empty() && other) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("ts_dict_* aggregates cannot be combined with other aggregates "
+              "over the same scan"),
+      ERR_HINT("compute the other aggregates in a separate subquery"));
   }
 
   bool converted = false;
@@ -1177,13 +1240,14 @@ void PushdownTsDictAggregates(duckdb::LogicalAggregate& aggr,
     converted = true;
   }
 
-  // Converting array_agg forces the scan into term-dict enumeration, so it is
-  // only safe when every aggregate in the node can be served that way.
-  if (!other && !array_aggs.empty()) {
-    for (const auto& [i, match] : array_aggs) {
+  // Converting an implicit aggregate forces the scan into term-dict
+  // enumeration, so it is only safe when every aggregate in the node can be
+  // served that way.
+  if (!other && !keyword_aggs.empty()) {
+    for (const auto& [i, match] : keyword_aggs) {
       const auto alias = aggr.expressions[i]->GetAlias();
-      aggr.expressions[i] = BuildKeywordTsDictList(
-        match.binding, match.field_id, root, context, alias);
+      aggr.expressions[i] =
+        BuildKeywordTsDictAggregate(match, root, context, alias);
     }
     converted = true;
   }
@@ -1595,6 +1659,7 @@ void ClaimTsDictFilter(
     if (!boolean && refs_field && !refs_other) {
       auto& req = ss.ts_dicts.front();
       EnsureTsDictCol(bind_data, get, req, TsDictColKind::kTerm);
+      req.term_uses |= connector::SearchScan::TsDictRequest::kUseFull;
       RewriteFieldRefsToTerm(expr, field, bind_data, get, req.term_col_idx);
       return;
     }

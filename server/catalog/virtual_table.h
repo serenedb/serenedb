@@ -31,6 +31,11 @@ namespace sdb::catalog {
 
 class VirtualTable;
 
+// The single PUBLIC=SELECT grant shared by every world-readable system table.
+inline constexpr AclItem kSystemPublicSelect{.grantee = kPublicGrantee,
+                                             .grantor = id::kRootUser,
+                                             .privs = AclMode::Select};
+
 struct MaterializedData {
   std::vector<duckdb::Vector> columns;
   duckdb::idx_t row_count = 0;
@@ -71,9 +76,12 @@ class VirtualTable {
 
   virtual duckdb::LogicalType RowType() const noexcept = 0;
 
+  AclView GetAcl() const noexcept { return _acl; }
+
  protected:
   ObjectId _id;
   std::string_view _name;
+  AclView _acl{&kSystemPublicSelect, 1};
 };
 
 }  // namespace sdb::catalog

@@ -628,8 +628,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntryObject(
         return nullptr;
       }
       // Single snapshot lookup for tables, views, and indexes.
-      auto relation = snapshot.GetRelation(catalog::NoAccessCheck(), database,
-                                           schema, name);
+      auto relation =
+        snapshot.GetRelation(catalog::NoAccessCheck(), database, schema, name);
       if (!relation) {
         // GetRelation doesn't find regular tables -- use GetTable.
         if (type == TABLE_ENTRY || type == VIEW_ENTRY) {
@@ -671,9 +671,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntryObject(
           auto index_relation = snapshot.GetObject(index.GetRelationId());
           auto info = duckdb::make_uniq<duckdb::CreateIndexInfo>();
           info->schema = schema;
-          info->table = index_relation
-                          ? std::string{index_relation->GetName()}
-                          : std::string{};
+          info->table = index_relation ? std::string{index_relation->GetName()}
+                                       : std::string{};
           info->index_name = name;
           info->index_type =
             relation->GetType() == catalog::ObjectType::InvertedIndex
@@ -711,9 +710,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntryObject(
         auto sdb_type =
           snapshot.GetType(catalog::NoAccessCheck(), database, schema, name);
         if (sdb_type) {
-          auto type_info = duckdb::unique_ptr_cast<duckdb::CreateInfo,
-                                                   duckdb::CreateTypeInfo>(
-            sdb_type->GetInfo().Copy());
+          auto type_info =
+            duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateTypeInfo>(
+              sdb_type->GetInfo().Copy());
           type_info->schema = schema;
           type_info->type = sdb_type->GetLogicalType();
           object = sdb_type;

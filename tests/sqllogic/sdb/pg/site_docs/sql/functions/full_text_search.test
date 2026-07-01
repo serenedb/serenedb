@@ -1168,3 +1168,11 @@ SELECT ts_lexize('bigram', 'help') AS ts_lexize;
 ----
 ts_lexize
 {he,el,lp}
+
+# DOCS_TEST: ts_split_by_non_alpha
+# DOCS_TEST_BODY
+query
+SELECT ts_split_by_non_alpha('The Quick-Brown FOX 2024', true) AS ts_split_by_non_alpha;
+----
+ts_split_by_non_alpha
+{the,quick,brown,fox,2024}

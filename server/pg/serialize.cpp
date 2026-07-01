@@ -887,9 +887,9 @@ struct TimestampTzBinCore {
 template<WrapContext InContainer>
 struct TimestampTzNsTextCore {
   using Value = duckdb::timestamp_tz_ns_t;
-  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value ts) {
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value tz) {
     duckdb::StringHeap heap{duckdb::Allocator::DefaultAllocator()};
-    const auto str = duckdb::StringCast::Operation(ts, heap);
+    const auto str = duckdb::StringCast::Operation(tz, heap);
     WithWrapIfNested<InContainer>(ctx, [&] {
       ctx.writer->Write(std::string_view{str.GetData(), str.GetSize()});
     });
@@ -899,8 +899,8 @@ struct TimestampTzNsTextCore {
 struct TimestampTzNsBinCore {
   using Value = duckdb::timestamp_tz_ns_t;
   static constexpr uint32_t kMaxBytes = 8;
-  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value ts) {
-    absl::big_endian::Store64(dst, (ts.value - kGapNs) / 1000);
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value tz) {
+    absl::big_endian::Store64(dst, (tz.value - kGapNs) / 1000);
     return 8;
   }
 };

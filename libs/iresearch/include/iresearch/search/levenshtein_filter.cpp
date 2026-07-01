@@ -94,7 +94,7 @@ void VisitImpl(const SubReader& segment, const TermReader& reader,
                const automaton_table_matcher& matcher, Visitor&& visitor) {
   SDB_ASSERT(fst::kError != matcher.Properties(0));
   LevenshteinIterator it(reader, matcher, no_distance, utf8_target_size);
-  if (IsNull(it.value())) {
+  if (!it.Valid()) {
     return;
   }
   visitor.Prepare(segment, reader, it.GetImpl());

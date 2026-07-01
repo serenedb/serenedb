@@ -88,7 +88,7 @@ QueryBuilder::ptr ByPrefix::PrepareSegment(const SubReader& segment,
   SampledMultiTermVisitor mtv{collector ? &collector->Limited() : nullptr,
                               query->State()};
   ByPrefixIterator terms(*reader, term);
-  if (!IsNull(terms.value())) {
+  if (terms.Valid()) {
     mtv.Prepare(segment, *reader, terms.GetImpl());
     VisitImpl(terms, mtv);
   }
@@ -103,7 +103,7 @@ PrepareCollector::ptr ByPrefix::MakeCollector(const Scorer* scorer) const {
 void ByPrefix::visit(const SubReader& segment, const TermReader& reader,
                      const ByPrefixOptions& options, FilterVisitor& visitor) {
   ByPrefixIterator terms(reader, options.term);
-  if (IsNull(terms.value())) {
+  if (!terms.Valid()) {
     return;
   }
   visitor.Prepare(segment, reader, terms.GetImpl());

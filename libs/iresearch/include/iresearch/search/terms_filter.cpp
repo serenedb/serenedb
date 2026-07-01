@@ -66,7 +66,7 @@ ByTermsIterator::ByTermsIterator(const TermReader& reader,
 void ByTerms::visit(const SubReader& segment, const TermReader& field,
                     const ByTermsOptions& options, FilterVisitor& visitor) {
   ByTermsIterator terms(field, options.terms);
-  if (IsNull(terms.value())) {
+  if (!terms.Valid()) {
     return;
   }
   visitor.Prepare(segment, field, terms.GetImpl());
@@ -99,7 +99,7 @@ QueryBuilder::ptr ByTerms::PrepareSegment(const SubReader& segment,
   AllTermsVisitor mtv{query->State(), collector ? &collector->Field() : nullptr,
                       collector ? &collector->Terms() : nullptr};
   ByTermsIterator it(*reader, options.terms);
-  if (!IsNull(it.value())) {
+  if (it.Valid()) {
     mtv.Prepare(segment, *reader, it.GetImpl());
     VisitImpl(it, mtv);
   }

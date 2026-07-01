@@ -684,7 +684,7 @@ duckdb::idx_t TsDictLocalState::EmitField(duckdb::DataChunk& output,
   const auto n = std::visit(
     [&](auto& cur) -> duckdb::idx_t {
       duckdb::idx_t count = 0;
-      while (count < budget && !irs::IsNull(cur.value())) {
+      while (count < budget && cur.Valid()) {
         cur.read();
         const auto term = cur.value();
         const auto row = output_start + count;

@@ -80,6 +80,7 @@ class ByTermsIterator {
   score_t Boost() const noexcept { return _boost; }
   uint32_t Index() const noexcept { return _index; }
   bytes_view value() const noexcept { return _impl->value(); }
+  bool Valid() const noexcept { return !IsNull(value()); }
   void read() { _impl->read(); }
 
   bool next() {

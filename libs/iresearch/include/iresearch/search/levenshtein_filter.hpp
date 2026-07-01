@@ -160,6 +160,7 @@ class LevenshteinIterator {
   SeekTermIterator& GetImpl() noexcept { return *_impl; }
   score_t Boost() const noexcept { return _boost; }
   bytes_view value() const noexcept { return _impl->value(); }
+  bool Valid() const noexcept { return !IsNull(value()); }
   bool next();
   void read() { _impl->read(); }
 

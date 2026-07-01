@@ -59,6 +59,7 @@ class ByPrefixIterator {
   SeekTermIterator& GetImpl() noexcept { return *_impl; }
   score_t Boost() const noexcept { return kNoBoost; }
   bytes_view value() const noexcept { return _impl->value(); }
+  bool Valid() const noexcept { return !IsNull(value()); }
   void read() { _impl->read(); }
 
   bool next() {

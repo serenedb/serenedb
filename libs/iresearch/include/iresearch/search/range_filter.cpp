@@ -131,7 +131,7 @@ QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
   SampledMultiTermVisitor mtv{collector ? &collector->Limited() : nullptr,
                               query->State()};
   ByRangeIterator terms(*reader, rng);
-  if (!IsNull(terms.value())) {
+  if (terms.Valid()) {
     mtv.Prepare(segment, *reader, terms.GetImpl());
     VisitImpl(terms, mtv);
   }
@@ -149,7 +149,7 @@ PrepareCollector::ptr ByRange::MakeCollector(const Scorer* scorer) const {
 void ByRange::visit(const SubReader& segment, const TermReader& reader,
                     const ByRangeOptions& options, FilterVisitor& visitor) {
   ByRangeIterator terms(reader, options.range);
-  if (IsNull(terms.value())) {
+  if (!terms.Valid()) {
     return;
   }
   visitor.Prepare(segment, reader, terms.GetImpl());

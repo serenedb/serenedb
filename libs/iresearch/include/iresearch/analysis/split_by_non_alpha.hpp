@@ -32,16 +32,13 @@ namespace irs::analysis {
 
 template<typename Mask>
 inline Mask ClassifyAlnumBlock(const char* block) noexcept {
-  const auto as_mask = [](auto value) noexcept {
-    return static_cast<Mask>(value);
-  };
   Mask bitmask = 0;
-  for (unsigned i = 0; i < std::numeric_limits<Mask>::digits; ++i) {
+  for (int i = 0; i < std::numeric_limits<Mask>::digits; ++i) {
     const unsigned char byte = static_cast<unsigned char>(block[i]);
     const unsigned char lowered = byte | 0x20;
-    const uint32_t is_digit = static_cast<unsigned char>(byte - '0') < 10;
-    const uint32_t is_letter = static_cast<unsigned char>(lowered - 'a') < 26;
-    bitmask = as_mask(bitmask | as_mask((is_digit | is_letter) << i));
+    const unsigned is_digit = static_cast<unsigned char>(byte - '0') < 10;
+    const unsigned is_letter = static_cast<unsigned char>(lowered - 'a') < 26;
+    bitmask |= static_cast<Mask>((is_digit | is_letter) << i);
   }
   return bitmask;
 }
@@ -55,32 +52,28 @@ class AlnumTokenAssembler {
   template<typename Mask>
   void ConsumeBlock(Mask bitmask, size_t offset) {
     constexpr int kBits = std::numeric_limits<Mask>::digits;
-    // Just not to bloat
-    const auto as_mask = [](auto value) noexcept {
-      return static_cast<Mask>(value);
-    };
 
     if (_token_open) {
-      const auto separators = as_mask(~bitmask);
+      const Mask separators = ~bitmask;
       if (separators == 0) {
         return;
       }
-      const auto token_end = as_mask(std::countr_zero(separators));
+      const int token_end = std::countr_zero(separators);
       CloseToken(offset + token_end);
-      bitmask = as_mask(bitmask & ~LowBitsMask<Mask>(token_end));
+      bitmask &= ~LowBitsMask<Mask>(token_end);
     }
 
     while (bitmask != 0) {
-      const auto token_begin = as_mask(std::countr_zero(bitmask));
-      const auto run = as_mask(bitmask >> token_begin);
-      const auto token_length = as_mask(std::countr_zero(as_mask(~run)));
+      const int token_begin = std::countr_zero(bitmask);
+      const Mask run = bitmask >> token_begin;
+      const int token_length = std::countr_zero(static_cast<Mask>(~run));
       if (token_begin + token_length >= kBits) {
         OpenToken(offset + token_begin);
         return;
       }
       EmitToken(offset + token_begin, token_length);
-      bitmask = as_mask(
-        bitmask & ~as_mask(LowBitsMask<Mask>(token_length) << token_begin));
+      bitmask &=
+        ~static_cast<Mask>(LowBitsMask<Mask>(token_length) << token_begin);
     }
   }
 

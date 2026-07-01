@@ -161,7 +161,7 @@ duckdb::ScalarFunction MakeFn(duckdb::vector<duckdb::LogicalType> args,
 }  // namespace
 
 void RegisterSplitByNonAlpha(duckdb::ExtensionLoader& loader) {
-  duckdb::ScalarFunctionSet set{"split_by_non_alpha"};
+  duckdb::ScalarFunctionSet set{"ts_split_by_non_alpha"};
   set.AddFunction(MakeFn({duckdb::LogicalType::VARCHAR}, SplitConstant<false>));
   set.AddFunction(
     MakeFn({duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BOOLEAN},

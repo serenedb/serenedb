@@ -288,6 +288,17 @@ SELECT list_sort(ts_dict_count(cat)) AS counts, max(cat) AS mx FROM mixt_idx
 counts	mx
 {1,1,1,2}	red
 
+query TIT
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs,
+       max(cat) AS mx
+FROM mixt_idx ORDER BY term
+----
+term	docs	mx
+amber	1	red
+blue	1	red
+green	1	red
+red	2	red
+
 statement error
 SELECT ts_dict_agg(cat) AS a, count(*) AS c FROM mixt_idx
 ----

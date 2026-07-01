@@ -76,6 +76,65 @@ FROM mmx1_idx WHERE cat LIKE 'b%'
 lo	hi
 ba	bz
 
+query
+EXPLAIN SELECT ts_dict_min(cat) AS lo, ts_dict_max(cat) AS hi
+FROM mmx1_idx WHERE cat LIKE 'b%'
+----
+QUERY PLAN
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│          min(#0)          │
+│          max(#1)          │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│  sdb_inverted_index_term$ │
+│  sdb_inverted_index_term$ │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       HASH_GROUP_BY       │
+│    ────────────────────   │
+│         Groups: #0        │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│      Index: mmx1_idx      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││    STARTS_WITH    ││  │
+│  ││    ────────────   ││  │
+│  ││  cat(string) 'b'  ││  │
+│  ││     limit=1024    ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│        TsDict: cat        │
+│                           │
+│        Projections:       │
+│  sdb_inverted_index_term$ │
+│                           │
+│          ~2 rows          │
+└───────────────────────────┘
+
 query TT
 SELECT ts_dict_min(cat) AS lo, ts_dict_max(cat) AS hi
 FROM mmx1_idx WHERE cat = 'bm'
@@ -207,8 +266,11 @@ SELECT max(cat) AS mx, list_sort(ts_dict_agg(cat)) AS terms FROM mmx1_idx
 mx	terms
 cc	{bd,bm,bt,cc}
 
-# Same-field post-filters force full enumeration, so min/max apply after the
-# filter: 'a' and 'z' pass the shortcut positions but fail the filter.
+# Implicit min/max with a WHERE clause fall back to the regular document scan
+# (conversion requires a bare aggregate-over-scan shape); explicit
+# ts_dict_min/ts_dict_max keep the dictionary and apply the same-field
+# post-filter over emitted terms, forcing full enumeration so min/max see the
+# filtered set: 'a' and 'z' sit at the shortcut positions but fail the filter.
 statement ok
 CREATE TABLE mmx2(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL)
 
@@ -233,6 +295,69 @@ SELECT max(cat) AS mx FROM mmx2_idx WHERE length(cat) = 2
 ----
 mx
 cc
+
+query TT
+SELECT ts_dict_min(cat) AS mn, ts_dict_max(cat) AS mx FROM mmx2_idx
+WHERE length(cat) = 2
+----
+mn	mx
+bb	cc
+
+query
+EXPLAIN SELECT ts_dict_min(cat) AS mn, ts_dict_max(cat) AS mx FROM mmx2_idx
+WHERE length(cat) = 2
+----
+QUERY PLAN
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│          min(#0)          │
+│          max(#1)          │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│  sdb_inverted_index_term$ │
+│  sdb_inverted_index_term$ │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       HASH_GROUP_BY       │
+│    ────────────────────   │
+│         Groups: #0        │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│(length(sdb_inverted_index_│
+│        term$) = 2)        │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│      Index: mmx2_idx      │
+│        TsDict: cat        │
+│                           │
+│        Projections:       │
+│  sdb_inverted_index_term$ │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
 
 query T
 SELECT min(cat) AS mn FROM mmx2_idx WHERE cat <> 'a'
@@ -273,7 +398,8 @@ idx_cnt	tbl_cnt
 7	7
 
 # Dead 'aa' passes the length filter but has no live docs; live 'a' fails the
-# filter: min must skip both. Symmetric for dead 'zz' and live 'z' at max.
+# filter: the dictionary min must skip both. Symmetric for dead 'zz' and live
+# 'z' at max. The implicit forms fall back to the document scan and must agree.
 statement ok
 DELETE FROM mmx2 WHERE id IN (5, 6)
 
@@ -291,6 +417,13 @@ SELECT max(cat) AS mx FROM mmx2_idx WHERE length(cat) = 2
 ----
 mx
 dd
+
+query TT
+SELECT ts_dict_min(cat) AS mn, ts_dict_max(cat) AS mx FROM mmx2_idx
+WHERE length(cat) = 2
+----
+mn	mx
+bb	dd
 
 query T
 SELECT min(cat) AS mn FROM mmx2_idx WHERE cat <> 'a'

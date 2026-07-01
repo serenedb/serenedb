@@ -69,6 +69,67 @@ date	2	2
 elder	1	1
 fig	1	1
 
+query
+EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term,
+               unnest(ts_dict_count(body)) AS docs,
+               unnest(ts_dict_freq(body)) AS freq
+FROM ddm_idx ORDER BY term
+----
+QUERY PLAN
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│     ddm_idx.body)) ASC    │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│  sdb_inverted_index_term$ │
+│CAST(sdb_inverted_index_ter│
+│    m_count$ AS INTEGER)   │
+│CAST(sdb_inverted_index_ter│
+│     m_freq$ AS BIGINT)    │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       HASH_GROUP_BY       │
+│    ────────────────────   │
+│         Groups: #0        │
+│                           │
+│        Aggregates:        │
+│          sum(#1)          │
+│          sum(#2)          │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│             #1            │
+│             #2            │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: ddm_idx      │
+│        TsDict: body       │
+│                           │
+│        Projections:       │
+│  sdb_inverted_index_term$ │
+│sdb_inverted_index_term_cou│
+│            nt$            │
+│sdb_inverted_index_term_fre│
+│             q$            │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
 query TT
 SELECT unnest(ts_dict_agg(body)) AS term,
        unnest(ts_dict_raw_agg(body))::VARCHAR AS raw
@@ -100,6 +161,50 @@ SELECT ts_dict_max(cat) AS hi FROM ddm_idx
 ----
 hi
 red
+
+query
+EXPLAIN SELECT ts_dict_max(cat) AS hi FROM ddm_idx
+----
+QUERY PLAN
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│    Aggregates: max(#0)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│  sdb_inverted_index_term$ │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       HASH_GROUP_BY       │
+│    ────────────────────   │
+│         Groups: #0        │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: ddm_idx      │
+│        TsDict: cat        │
+│                           │
+│        Projections:       │
+│  sdb_inverted_index_term$ │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
 query T
 SELECT ts_dict_min(body) AS lo FROM ddm_idx

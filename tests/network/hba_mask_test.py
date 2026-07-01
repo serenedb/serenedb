@@ -178,6 +178,98 @@ MASK_CASES = [
 ]
 
 
+# --- axis matrix: user / database / method / +role / reject-at-connect -------
+#
+# These exercise paths the in-process gtest can only fake: that the startup
+# packet's user/database fields reach ClientInfo over the wire, that a matched
+# password method actually makes the server send an auth challenge
+# (AUTH_REQUESTED), that +role membership is resolved against the live catalog,
+# and that an unsupported method rejects at connect. Each probe carries a
+# (source_ip, user, database) and an expected outcome. `setup` runs first as a
+# superuser (loopback) to create any roles/grants the case needs.
+MATCH_CASES = [
+    {
+        "name": "method-selection-scram",
+        # A scram rule must make the server send an auth challenge, not trust.
+        # (Distinct from trust/reject -- the whole point of HBA method choice.)
+        "setup": "CREATE ROLE m_alice LOGIN PASSWORD 'pw';",
+        "hba": ("host all all 127.0.0.2/32 scram-sha-256\n"
+                "host all all 0.0.0.0/0    reject\n"),
+        "probes": [
+            ("127.0.0.2", "m_alice", "postgres", AUTH_REQUESTED),
+            ("127.5.5.5", "m_alice", "postgres", REJECTED),
+        ],
+    },
+    {
+        "name": "user-axis",
+        # Match on the role field: only u_alice is trusted from this net.
+        "setup": "CREATE ROLE u_alice LOGIN; CREATE ROLE u_bob LOGIN;",
+        "hba": ("host all u_alice 127.0.0.0/8 trust\n"
+                "host all all     0.0.0.0/0   reject\n"),
+        "probes": [
+            ("127.0.0.9", "u_alice", "postgres", TRUST),
+            ("127.0.0.9", "u_bob", "postgres", REJECTED),
+        ],
+    },
+    {
+        "name": "database-axis",
+        # Match on the database field.
+        "setup": "CREATE DATABASE reports; CREATE ROLE d_svc LOGIN;",
+        "hba": ("host reports all 127.0.0.0/8 trust\n"
+                "host all     all 0.0.0.0/0   reject\n"),
+        "probes": [
+            ("127.0.0.9", "d_svc", "reports", TRUST),
+            ("127.0.0.9", "d_svc", "postgres", REJECTED),
+        ],
+    },
+    {
+        "name": "role-membership",
+        # +analysts matches any (in)direct member; resolved live from the catalog.
+        "setup": ("CREATE ROLE analysts; "
+                  "CREATE ROLE r_in LOGIN IN ROLE analysts; "
+                  "CREATE ROLE r_out LOGIN;"),
+        "hba": ("host all +analysts 127.0.0.0/8 trust\n"
+                "host all all       0.0.0.0/0   reject\n"),
+        "probes": [
+            ("127.0.0.9", "r_in", "postgres", TRUST),
+            ("127.0.0.9", "r_out", "postgres", REJECTED),
+        ],
+    },
+    {
+        "name": "sameuser",
+        # sameuser matches when the target database name equals the role name.
+        "setup": "CREATE ROLE s_dev LOGIN; CREATE DATABASE s_dev;",
+        "hba": ("host sameuser all 127.0.0.0/8 trust\n"
+                "host all      all 0.0.0.0/0   reject\n"),
+        "probes": [
+            ("127.0.0.9", "s_dev", "s_dev", TRUST),      # db == role
+            ("127.0.0.9", "s_dev", "postgres", REJECTED),  # db != role
+        ],
+    },
+    {
+        "name": "reject-at-connect-ldap",
+        # An unsupported method parses fine but a matched connection is refused
+        # (not trusted, not an auth challenge) -- surfaces as REJECTED here.
+        "setup": "CREATE ROLE l_user LOGIN;",
+        "hba": "host all all 127.0.0.0/8 ldap ldapserver=nope\n",
+        "probes": [
+            ("127.0.0.9", "l_user", "postgres", REJECTED),
+        ],
+    },
+]
+
+
+def psql_exec(port: int, sql: str, user: str = "postgres"):
+    """Run a control statement as a superuser over the loopback (always admitted
+    by the safety rule). Raises on non-zero exit."""
+    proc = subprocess.run(
+        ["psql", "-h", "127.0.0.1", "-p", str(port), "-U", user,
+         "-d", "postgres", "-v", "ON_ERROR_STOP=1", "-c", sql],
+        capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"psql failed ({sql!r}): {proc.stderr.strip()}")
+
+
 def set_hba(port: int, ruleset: str):
     """Set the HBA ruleset over a superuser loopback connection via `SET hba`.
 
@@ -201,13 +293,10 @@ def run(binary: str) -> int:
     failures = []
     try:
         srv.start()
+
+        # Address/CIDR axis: vary the source IP, all-users/all-dbs, trust/reject.
         for case in MASK_CASES:
-            try:
-                set_hba(port, case["hba"])
-            except NotImplementedError as e:
-                print(f"SKIP {case['name']}: {e}")
-                failures.append((case["name"], "not-wired"))
-                continue
+            set_hba(port, case["hba"])
             for src, want in case["expect"].items():
                 got = probe("127.0.0.1", port, src)
                 ok = got == want
@@ -215,6 +304,20 @@ def run(binary: str) -> int:
                       f"from {src} -> {got} (want {want})")
                 if not ok:
                     failures.append((case["name"], f"{src}: {got}!={want}"))
+
+        # user / database / method / +role / reject-at-connect axes.
+        for case in MATCH_CASES:
+            if setup := case.get("setup"):
+                psql_exec(port, setup)
+            set_hba(port, case["hba"])
+            for src, user, db, want in case["probes"]:
+                got = probe("127.0.0.1", port, src, user=user, database=db)
+                ok = got == want
+                print(f"[{'OK' if ok else 'FAIL'}] {case['name']}: "
+                      f"{user}@{src}/{db} -> {got} (want {want})")
+                if not ok:
+                    failures.append(
+                        (case["name"], f"{user}@{src}/{db}: {got}!={want}"))
     finally:
         srv.stop()
 

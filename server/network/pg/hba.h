@@ -37,12 +37,12 @@ namespace sdb::network::pg::hba {
 // matches with a short-circuit switch over the connection's SSL/GSS state, not
 // an AND.
 enum class ConnType : uint8_t {
-  Local,       // unix socket
-  Host,        // TCP, any SSL/GSS state
-  HostSsl,     // TCP + TLS active
-  HostNoSsl,   // TCP, no TLS
-  HostGss,     // TCP + GSSAPI encryption (never matches -- SDB has no GSS)
-  HostNoGss,   // TCP, no GSSAPI
+  Local,      // unix socket
+  Host,       // TCP, any SSL/GSS state
+  HostSsl,    // TCP + TLS active
+  HostNoSsl,  // TCP, no TLS
+  HostGss,    // TCP + GSSAPI encryption (never matches -- SDB has no GSS)
+  HostNoGss,  // TCP, no GSSAPI
 };
 
 // The full PG UserAuth method set (UserAuthName[], hba.c:102-119) plus an
@@ -68,7 +68,8 @@ enum class Method : uint8_t {
 // How SerenedB treats a matched rule's method.
 //  Native            -- SDB evaluates it (trust/reject/password/md5/scram).
 //  DeferredPeerIdent -- parses; enforcement not yet built (unix SO_PEERCRED).
-//  RejectAtConnect   -- parses; a matched connection is refused (SDB can't do it).
+//  RejectAtConnect   -- parses; a matched connection is refused (SDB can't do
+//  it).
 enum class MethodClass : uint8_t { Native, DeferredPeerIdent, RejectAtConnect };
 
 MethodClass MethodExecutability(Method method);
@@ -76,12 +77,13 @@ MethodClass MethodExecutability(Method method);
 std::optional<Method> ParseMethod(std::string_view name);
 std::string_view MethodName(Method method);
 
-// Resolves group membership for `+group`/`samerole`/`samegroup`. Injected so the
-// matcher stays free of the catalog. Contract: NOSUPER semantics -- a superuser
-// is NOT an implicit member (is_member_of_role_nosuper, hba.c:920-939) -- and
-// returns false for a nonexistent target group (missing_ok).
-using MembershipFn = std::function<bool(std::string_view user,
-                                        std::string_view group)>;
+// Resolves group membership for `+group`/`samerole`/`samegroup`. Injected so
+// the matcher stays free of the catalog. Contract: NOSUPER semantics -- a
+// superuser is NOT an implicit member (is_member_of_role_nosuper,
+// hba.c:920-939) -- and returns false for a nonexistent target group
+// (missing_ok).
+using MembershipFn =
+  std::function<bool(std::string_view user, std::string_view group)>;
 
 // One parsed token in a name field. Carries quoted-ness (suppresses keyword /
 // +group / @file meaning, token_is_keyword hba.c:71) and an optional compiled
@@ -89,19 +91,19 @@ using MembershipFn = std::function<bool(std::string_view user,
 // so a Rule/Ruleset copies cheaply and an in-flight match keeps the regex alive
 // across a COW ruleset swap.
 struct AuthToken {
-  std::string value;                        // dequoted; for regex, without the '/'
+  std::string value;  // dequoted; for regex, without the '/'
   bool quoted = false;
   std::shared_ptr<const re2::RE2> regex;
 };
 
 // The connection facts a rule is matched against. Filled by the P2 call site.
 struct ClientInfo {
-  bool is_local = false;            // AF_UNIX socket; family/addr must be 0
+  bool is_local = false;           // AF_UNIX socket; family/addr must be 0
   bool is_ssl = false;             // TLS active on THIS socket right now
   bool is_gss = false;             // always false for SDB
   int family = 0;                  // AF_INET / AF_INET6; 0 when is_local
   std::array<uint8_t, 16> addr{};  // client IP, network order, left-aligned
-  bool is_replication = false;     // physical walsender; false unless SDB adds it
+  bool is_replication = false;  // physical walsender; false unless SDB adds it
   std::string_view user;
   std::string_view database;
 };
@@ -123,10 +125,10 @@ struct NameMatcher {
 struct AddrMatcher {
   enum class Kind : uint8_t { All, Mask, SameHost, SameNet, Hostname };
   Kind kind = Kind::All;
-  int family = 0;                   // AF_INET / AF_INET6 for Mask
-  std::array<uint8_t, 16> addr{};   // raw (NOT pre-masked)
-  std::array<uint8_t, 16> mask{};   // raw mask bytes
-  std::string hostname;             // Kind::Hostname; leading '.' => suffix match
+  int family = 0;                  // AF_INET / AF_INET6 for Mask
+  std::array<uint8_t, 16> addr{};  // raw (NOT pre-masked)
+  std::array<uint8_t, 16> mask{};  // raw mask bytes
+  std::string hostname;  // Kind::Hostname; leading '.' => suffix match
 
   // Only meaningful for All / Mask. For the deferred kinds the caller checks
   // `kind` and produces a reject-at-connect Decision.
@@ -142,36 +144,36 @@ struct MethodOption {
 };
 
 struct Rule {
-  uint32_t seq = 0;                 // authoring order == precedence
+  uint32_t seq = 0;  // authoring order == precedence
   ConnType conntype = ConnType::Host;
-  AddrMatcher address;              // meaningful only when conntype != Local
+  AddrMatcher address;  // meaningful only when conntype != Local
   NameMatcher database;
   NameMatcher role;
   Method method = Method::ImplicitReject;
   std::vector<MethodOption> options;
-  std::string raw;                  // verbatim authored line, for the view
+  std::string raw;  // verbatim authored line, for the view
 };
 
 struct Ruleset {
-  std::vector<Rule> rules;          // first-match-wins, in seq order
+  std::vector<Rule> rules;  // first-match-wins, in seq order
   uint64_t version = 0;
 };
 
 // The outcome of matching a connection against the ruleset.
 struct Decision {
   enum class Kind : uint8_t {
-    Trust,                   // matched a trust rule -- skip the password exchange
-    Reject,                  // matched a reject rule OR no rule matched (see rule)
-    Method,                  // matched a native password method (Password/Md5/Scram)
-    DeferredPeerIdent,       // matched peer/ident -- not yet supported
-    Unsupported,             // matched a method SDB can't perform (ldap/gss/...)
-    MatchedHostnameDeferred, // matched a samehost/samenet/hostname rule
+    Trust,              // matched a trust rule -- skip the password exchange
+    Reject,             // matched a reject rule OR no rule matched (see rule)
+    Method,             // matched a native password method (Password/Md5/Scram)
+    DeferredPeerIdent,  // matched peer/ident -- not yet supported
+    Unsupported,        // matched a method SDB can't perform (ldap/gss/...)
+    MatchedHostnameDeferred,  // matched a samehost/samenet/hostname rule
   };
   Kind kind = Kind::Reject;
   Method method = Method::ImplicitReject;  // valid when kind == Method
   std::vector<MethodOption> options;       // threaded to the auth layer
-  std::string reason;                      // client-facing text for the deferred kinds
-  const Rule* rule = nullptr;              // matched rule; nullptr => implicit reject
+  std::string reason;          // client-facing text for the deferred kinds
+  const Rule* rule = nullptr;  // matched rule; nullptr => implicit reject
 };
 
 // First-match-wins scan (check_hba, hba.c:2337-2438). No match => implicit
@@ -182,7 +184,7 @@ Decision Decide(const Ruleset& ruleset, const ClientInfo& client,
 // --- Authoring ---------------------------------------------------------------
 
 struct ParseError {
-  size_t line = 0;                  // 1-based; 0 == not line-specific
+  size_t line = 0;  // 1-based; 0 == not line-specific
   std::string message;
 };
 
@@ -195,9 +197,9 @@ std::optional<Ruleset> Parse(std::string_view text, ParseError& error);
 // --- Live ruleset holder (process-global, COW) -------------------------------
 //
 // The single source of truth the pg-wire session consults and the `hba` GUC
-// mutates. Held behind an atomic shared_ptr so a session reads a stable snapshot
-// for the whole match while a concurrent SET publishes a new pointer -- no lock,
-// no tear, and any in-flight regex stays alive through the swap.
+// mutates. Held behind an atomic shared_ptr so a session reads a stable
+// snapshot for the whole match while a concurrent SET publishes a new pointer
+// -- no lock, no tear, and any in-flight regex stays alive through the swap.
 
 // The current ruleset (never null once the server has initialized it).
 std::shared_ptr<const Ruleset> GetHbaRuleset();
@@ -229,13 +231,14 @@ std::optional<std::string> SetHbaFromTextString(std::string_view text);
 // table (P4). `address`/`netmask` are empty for `local` and keyword addresses.
 struct RenderedRule {
   uint32_t rule_number = 0;
-  std::string type;                     // local / host / hostssl / ...
-  std::vector<std::string> databases;   // database[] tokens (raw, incl. keywords)
-  std::vector<std::string> roles;       // user_name[] tokens
-  std::string address;                  // CIDR base / keyword / hostname; "" if none
-  std::string netmask;                  // dotted/hex mask; "" unless a Mask rule
-  std::string auth_method;              // trust / scram-sha-256 / ...
-  std::vector<std::string> options;     // "name=value" entries
+  std::string type;  // local / host / hostssl / ...
+  std::vector<std::string>
+    databases;                     // database[] tokens (raw, incl. keywords)
+  std::vector<std::string> roles;  // user_name[] tokens
+  std::string address;             // CIDR base / keyword / hostname; "" if none
+  std::string netmask;             // dotted/hex mask; "" unless a Mask rule
+  std::string auth_method;         // trust / scram-sha-256 / ...
+  std::vector<std::string> options;  // "name=value" entries
 };
 
 // Project the current live ruleset into view rows (in first-match order).

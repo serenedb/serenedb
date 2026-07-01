@@ -20,11 +20,8 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
-
 #include <optional>
 #include <span>
-#include <string>
 #include <string_view>
 
 #include "basics/containers/flat_hash_set.h"
@@ -49,9 +46,5 @@ catalog::AclMode AclGrantOptionHeld(catalog::AclView acl, RoleIdSpan roles);
 
 std::optional<catalog::AclMode> TryParseAclKeyword(std::string_view keyword,
                                                    catalog::ObjectType type);
-
-std::string AclItemToText(
-  const catalog::AclItem& item,
-  absl::FunctionRef<std::string_view(ObjectId)> name_of);
 
 }  // namespace sdb::auth

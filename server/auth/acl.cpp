@@ -25,10 +25,10 @@
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
-#include <array>
 #include <optional>
 #include <string>
 
+#include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/system-compiler.h"
 
@@ -115,44 +115,6 @@ bool RolesContain(RoleIdSpan roles, ObjectId id) noexcept {
   return std::ranges::binary_search(roles, id);
 }
 
-// PG aclitem privilege characters, in postgres' canonical print order. Mirrors
-// the ACL_*_CHR table in src/include/utils/acl.h.
-struct PrivChar {
-  AclMode mode;
-  char chr;
-};
-constexpr std::array kPrivChars{
-  PrivChar{AclMode::Insert, 'a'},      PrivChar{AclMode::Select, 'r'},
-  PrivChar{AclMode::Update, 'w'},      PrivChar{AclMode::Delete, 'd'},
-  PrivChar{AclMode::Truncate, 'D'},    PrivChar{AclMode::References, 'x'},
-  PrivChar{AclMode::Trigger, 't'},     PrivChar{AclMode::Maintain, 'm'},
-  PrivChar{AclMode::Execute, 'X'},     PrivChar{AclMode::Usage, 'U'},
-  PrivChar{AclMode::Create, 'C'},      PrivChar{AclMode::CreateTemp, 'T'},
-  PrivChar{AclMode::Connect, 'c'},     PrivChar{AclMode::Set, 's'},
-  PrivChar{AclMode::AlterSystem, 'A'},
-};
-
-// PG putid() (src/backend/utils/adt/acl.c): append a role name to an aclitem
-// string, double-quoting it when any character is not ASCII alphanumeric or
-// '_' (high-bit-set chars always force quotes), and doubling embedded '"'.
-void PutId(std::string& out, std::string_view name) {
-  const bool safe = std::ranges::all_of(name, [](unsigned char c) {
-    return !(c & 0x80) && (absl::ascii_isalnum(c) || c == '_');
-  });
-  if (safe) {
-    out.append(name);
-    return;
-  }
-  out.push_back('"');
-  for (char c : name) {
-    if (c == '"') {
-      out.push_back('"');
-    }
-    out.push_back(c);
-  }
-  out.push_back('"');
-}
-
 }  // namespace
 
 catalog::Acl AclDefault(ObjectType type, ObjectId owner) {
@@ -188,6 +150,8 @@ catalog::Acl AclForStorage(catalog::AclView stored, ObjectType type,
 
 bool AclCheckSorted(catalog::AclView stored, ObjectType type, ObjectId owner,
                     RoleIdSpan roles, AclMode need, bool any_of) {
+  SDB_ASSERT(std::ranges::is_sorted(roles),
+             "AclCheckSorted requires an ascending-sorted roles span");
   if (need == AclMode::NoRights) {
     return false;
   }
@@ -254,26 +218,6 @@ std::optional<AclMode> TryParseAclKeyword(std::string_view keyword,
     return std::nullopt;
   }
   return it->second;
-}
-
-std::string AclItemToText(
-  const AclItem& item, absl::FunctionRef<std::string_view(ObjectId)> name_of) {
-  std::string out;
-  if (item.grantee != catalog::kPublicGrantee) {
-    PutId(out, name_of(item.grantee));
-  }
-  out.push_back('=');
-  for (const auto& p : kPrivChars) {
-    if (Has(item.privs, p.mode)) {
-      out.push_back(p.chr);
-      if (Has(item.grant_option, p.mode)) {
-        out.push_back('*');
-      }
-    }
-  }
-  out.push_back('/');
-  PutId(out, name_of(item.grantor));
-  return out;
 }
 
 }  // namespace sdb::auth

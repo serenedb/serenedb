@@ -23,6 +23,7 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/common/constants.hpp>
+#include <duckdb/common/string_util.hpp>
 #include <duckdb/parser/constraints/check_constraint.hpp>
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
@@ -112,20 +113,24 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::LookupEntry(
   const duckdb::EntryLookupInfo& lookup_info) {
   auto& conn_ctx = GetSereneDBContext(transaction.GetContext());
   auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-  auto result = snapshot->GetDuckDBEntryCache().EnsureEntry(
+  auto [result, object] = snapshot->GetDuckDBEntryCache().EnsureEntry(
     lookup_info.GetCatalogType(), catalog, *this, GetDatabaseId(), name,
     lookup_info.GetEntryName(), *snapshot);
   if (result) {
-    const auto entry_type = lookup_info.GetCatalogType();
-    const bool is_function_entry =
-      entry_type == duckdb::CatalogType::MACRO_ENTRY ||
-      entry_type == duckdb::CatalogType::TABLE_MACRO_ENTRY ||
-      entry_type == duckdb::CatalogType::SCALAR_FUNCTION_ENTRY ||
-      entry_type == duckdb::CatalogType::AGGREGATE_FUNCTION_ENTRY;
-    if (is_function_entry && name != StaticStrings::kPgCatalogSchema) {
-      snapshot->GetFunction(catalog::RequireAccess(transaction.GetContext(),
-                                                   catalog::AclMode::Execute),
-                            GetDatabaseId(), name, lookup_info.GetEntryName());
+    if (object && name != StaticStrings::kPgCatalogSchema) {
+      const auto need = [&] {
+        switch (object->GetType()) {
+          case catalog::ObjectType::PgSqlFunction:
+            return catalog::AclMode::Execute;
+          case catalog::ObjectType::PgSqlType:
+            return catalog::AclMode::Usage;
+          default:
+            return catalog::AclMode::NoRights;
+        }
+      }();
+      if (need != catalog::AclMode::NoRights) {
+        snapshot->RequireAccess(conn_ctx.GetRoleId(), *object, need);
+      }
     }
     return result;
   }
@@ -246,17 +251,17 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     bool is_serial = pg::IsSerial(sdb_col.type);
     bool is_bigserial = pg::IsBigserial(sdb_col.type);
     if (is_smallserial || is_serial || is_bigserial) {
-      catalog::SequenceOptions seq_config;
+      catalog::SequenceOptions seq_opts;
       if (is_smallserial) {
-        seq_config.max_value = std::numeric_limits<int16_t>::max();
+        seq_opts.max_value = std::numeric_limits<int16_t>::max();
       } else if (is_serial) {
-        seq_config.max_value = std::numeric_limits<int32_t>::max();
+        seq_opts.max_value = std::numeric_limits<int32_t>::max();
       } else {
         SDB_ASSERT(is_bigserial);
-        seq_config.max_value = std::numeric_limits<int64_t>::max();
+        seq_opts.max_value = std::numeric_limits<int64_t>::max();
       }
       sdb_col.type = duckdb::LogicalType{sdb_col.type.id()};
-      options.sequences.emplace_back(sdb_col.GetId(), seq_config);
+      options.sequences.emplace_back(sdb_col.GetId(), seq_opts);
       append_not_null(options.columns.size() - 1);
     } else if (col.Generated()) {
       sdb_col.generated_type = catalog::Column::GeneratedType::kStored;

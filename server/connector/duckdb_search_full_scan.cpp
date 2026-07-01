@@ -95,7 +95,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
 
   if (ss.TsDictMode()) {
     state->count_only = false;
-    state->ts_dict = std::make_unique<TsDictShared>();
+    state->ts_dict_mode = true;
     if (absl::c_any_of(state->projected_columns, [](auto p) {
           return p != duckdb::DConstants::INVALID_INDEX;
         })) {
@@ -103,17 +103,13 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
         ERR_MSG("ts_dict_agg() cannot be combined with other table columns"));
     }
-    return duckdb::unique_ptr_cast<SearchFullScanGlobalState,
-                                   duckdb::GlobalTableFunctionState>(
-      std::move(state));
+    return state;
   }
 
   // Count-only with no filter reads live_docs_count() directly and skips the
   // per-segment prepare entirely (see SearchFullScanInitLocal).
   if ((state->count_only = ss.count_only) && !ss.stored_filter) {
-    return duckdb::unique_ptr_cast<SearchFullScanGlobalState,
-                                   duckdb::GlobalTableFunctionState>(
-      std::move(state));
+    return state;
   }
   if (ss.text_scorer) {
     state->scorer_obj = catalog::MakeScorer(*ss.text_scorer);
@@ -123,9 +119,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
   state->collectors.resize(state->MaxThreads());
 
   if (state->count_only) {
-    return duckdb::unique_ptr_cast<SearchFullScanGlobalState,
-                                   duckdb::GlobalTableFunctionState>(
-      std::move(state));
+    return state;
   }
 
   if (ss.score_top_k && ss.text_scorer) {
@@ -134,9 +128,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
 
   ClassifyColumnstoreProjections(*state, bind_data);
 
-  return duckdb::unique_ptr_cast<SearchFullScanGlobalState,
-                                 duckdb::GlobalTableFunctionState>(
-    std::move(state));
+  return state;
 }
 
 namespace {
@@ -255,6 +247,7 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> SearchFullScanInitLocal(
   if (gstate.TsDictMode()) {
     auto lstate = duckdb::make_uniq<TsDictLocalState>();
     const auto& ss = bd.scan_source->Cast<SearchScan>();
+    SDB_ASSERT(!ss.stored_filter || ss.ts_dicts.size() == 1);
     lstate->fields.resize(ss.ts_dicts.size());
     lstate->term_filter = ss.stored_filter.get();
     for (size_t i = 0; i < ss.ts_dicts.size(); ++i) {
@@ -623,7 +616,6 @@ void TsDictLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
 }
 
 void TsDictLocalState::OpenField(size_t field_idx) {
-  _meta = nullptr;
   const auto& f = fields[field_idx];
   const auto* reader = _seg->field(f.field_id);
   if (!reader || reader->size() == 0) {
@@ -654,9 +646,6 @@ void TsDictLocalState::OpenField(size_t field_idx) {
   } else if (type == irs::Type<irs::AutomatonFilter>::id()) {
     claim.operator()<irs::AutomatonFilter, irs::AllTermIterator>();
   }
-
-  std::visit([&](auto& it) { _meta = get<irs::TermMeta>(it.GetImpl()); },
-             _cursor);
 }
 
 duckdb::idx_t TsDictLocalState::EmitField(duckdb::DataChunk& output,
@@ -683,6 +672,7 @@ duckdb::idx_t TsDictLocalState::EmitField(duckdb::DataChunk& output,
 
   const auto n = std::visit(
     [&](auto& cur) -> duckdb::idx_t {
+      const auto* meta = irs::get<irs::TermMeta>(cur.GetImpl());
       duckdb::idx_t count = 0;
       while (count < budget && cur.Valid()) {
         cur.read();
@@ -698,10 +688,10 @@ duckdb::idx_t TsDictLocalState::EmitField(duckdb::DataChunk& output,
             duckdb::StringVector::AddStringOrBlob(*raw_v, p, term.size());
         }
         if (count_d) {
-          count_d[row] = static_cast<int32_t>(_meta ? _meta->docs_count : 0);
+          count_d[row] = static_cast<int32_t>(meta ? meta->docs_count : 0);
         }
         if (freq_d) {
-          freq_d[row] = static_cast<int64_t>(_meta ? _meta->freq : 0);
+          freq_d[row] = static_cast<int64_t>(meta ? meta->freq : 0);
         }
         if (score_d) {
           score_d[row] = cur.Boost();

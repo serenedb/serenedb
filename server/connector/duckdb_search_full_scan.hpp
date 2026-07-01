@@ -27,7 +27,6 @@
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/all_filter.hpp>
-#include <iresearch/search/automaton_filter.hpp>
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/levenshtein_filter.hpp>
 #include <iresearch/search/prefix_filter.hpp>
@@ -38,7 +37,6 @@
 #include <iresearch/search/score_function.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <memory>
-#include <map>
 #include <optional>
 #include <span>
 #include <variant>
@@ -50,13 +48,7 @@
 #include "connector/offsets_collector.hpp"
 #include "connector/search_pk_lookup.h"
 
-namespace irs {
-struct TermMeta;
-}  // namespace irs
-
 namespace sdb::connector {
-
-struct TsDictShared {};
 
 struct SearchFullScanGlobalState : public CommonScanGlobalState {
   SearchFullScanGlobalState() noexcept = default;
@@ -89,8 +81,8 @@ struct SearchFullScanGlobalState : public CommonScanGlobalState {
 
   bool count_only = false;
 
-  std::unique_ptr<TsDictShared> ts_dict;
-  bool TsDictMode() const { return ts_dict != nullptr; }
+  bool ts_dict_mode = false;
+  bool TsDictMode() const { return ts_dict_mode; }
 };
 
 struct SearchFullScanTopKLocalState : public SegDocBufferedScanLocalState {
@@ -192,7 +184,6 @@ struct TsDictLocalState : public CommonScanLocalState {
                irs::ByPrefixIterator, irs::ByRangeIterator,
                irs::ByTermsIterator, irs::LevenshteinIterator>
     _cursor;
-  const irs::TermMeta* _meta = nullptr;
 };
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(

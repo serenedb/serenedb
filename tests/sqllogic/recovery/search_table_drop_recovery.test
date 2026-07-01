@@ -1,0 +1,106 @@
+control substitution on
+
+
+# Reboot recovery of DROP TABLE on a search-backed table. The drop is
+# tombstoned synchronously, then the process crashes before the async
+# SearchTableDrop runs (crash_on_drop). Recovery must rebuild the drop task --
+# now a SearchTableDrop carrying db_id -- and complete it: remove the iresearch
+# artifacts and the table's catalog rows, including its auto-PK sequence. A
+# sibling search table must survive untouched.
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE s_drop (a INTEGER, b TEXT) WITH (storage = 'search');
+
+statement ok
+RESET sdb_faults;
+
+statement count 3
+INSERT INTO s_drop VALUES (1, 'one'), (2, 'two'), (3, 'three');
+
+statement ok
+VACUUM (REFRESH_TABLE) s_drop;
+
+query
+SELECT a, b FROM s_drop ORDER BY a;
+----
+a	b
+1	one
+2	two
+3	three
+
+
+# Survivor search table -- must be untouched by the crashed drop + recovery.
+statement ok
+CREATE TABLE s_witness (a INTEGER PRIMARY KEY, b TEXT) WITH (storage = 'search');
+
+statement ok
+INSERT INTO s_witness VALUES (7, 'keep');
+
+statement ok
+VACUUM (REFRESH_TABLE) s_witness;
+
+
+statement ok
+SET sdb_faults = 'crash_on_drop';
+
+
+statement error (?i)connection closed|server closed|terminat|reset|EOF
+DROP TABLE s_drop;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# The dropped search table is gone after recovery completed the SearchTableDrop.
+connection after_crash
+query
+SELECT count(*) FROM pg_class WHERE relname = 's_drop';
+----
+count
+0
+
+
+connection after_crash
+statement error (?i).*s_drop.* does not exist
+SELECT * FROM s_drop;
+
+
+# Survivor intact, its rows still searchable.
+connection after_crash
+query
+SELECT a, b FROM s_witness ORDER BY a;
+----
+a	b
+7	keep
+
+
+# The dropped name is free again -- a fresh search table reuses it cleanly.
+connection after_crash
+statement ok
+CREATE TABLE s_drop (a INTEGER, b TEXT) WITH (storage = 'search');
+
+connection after_crash
+statement ok
+INSERT INTO s_drop VALUES (9, 'nine');
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) s_drop;
+
+connection after_crash
+query
+SELECT a, b FROM s_drop ORDER BY a;
+----
+a	b
+9	nine
+
+
+connection after_crash
+statement ok
+DROP TABLE s_drop;
+
+connection after_crash
+statement ok
+DROP TABLE s_witness;

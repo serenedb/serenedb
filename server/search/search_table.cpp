@@ -57,10 +57,13 @@ ABSL_FLAG(uint32_t, server_search_table_cleanup_interval_step, 10,
 
 namespace sdb::search {
 
-std::filesystem::path SearchTable::GetPath(ObjectId db_id, ObjectId table_id) {
+std::filesystem::path SearchTable::GetPath(ObjectId db_id, ObjectId schema_id,
+                                           ObjectId table_id) {
   SDB_ASSERT(db_id.isSet());
+  SDB_ASSERT(schema_id.isSet());
   SDB_ASSERT(table_id.isSet());
   auto path = GetSearchEngine().GetPersistedPath(db_id);
+  path /= absl::StrCat(schema_id);
   path /= absl::StrCat(table_id);
   return path;
 }
@@ -81,15 +84,21 @@ std::filesystem::path SearchTable::GetChunkDir(ObjectId db_id,
   return path;
 }
 
-Result SearchTable::DropArtifacts(ObjectId db_id, ObjectId table_id) {
-  auto path = GetPath(db_id, table_id);
+Result SearchTable::DropIndexDir(ObjectId db_id, ObjectId schema_id,
+                                 ObjectId table_id) {
+  auto path = GetPath(db_id, schema_id, table_id);
   std::error_code ec;
   std::filesystem::remove_all(path, ec);
   if (ec) {
     return Result{ERROR_INTERNAL, "Failed to remove search table directory '" +
                                     path.string() + "': " + ec.message()};
   }
+  return {};
+}
+
+Result SearchTable::DropWalShard(ObjectId db_id, ObjectId table_id) {
   auto chunk_dir = GetChunkDir(db_id, table_id);
+  std::error_code ec;
   std::filesystem::remove_all(chunk_dir, ec);
   if (ec) {
     return Result{ERROR_INTERNAL,
@@ -101,13 +110,15 @@ Result SearchTable::DropArtifacts(ObjectId db_id, ObjectId table_id) {
 }
 
 std::shared_ptr<SearchTable> SearchTable::Create(ObjectId db_id,
+                                                 ObjectId schema_id,
                                                  ObjectId table_id,
                                                  bool is_new) {
-  return std::make_shared<SearchTable>(db_id, table_id, is_new);
+  return std::make_shared<SearchTable>(db_id, schema_id, table_id, is_new);
 }
 
-SearchTable::SearchTable(ObjectId db_id, ObjectId table_id, bool is_new)
-  : _table_id{table_id}, _db_id{db_id}, _is_new{is_new} {
+SearchTable::SearchTable(ObjectId db_id, ObjectId schema_id, ObjectId table_id,
+                         bool is_new)
+  : _table_id{table_id}, _db_id{db_id}, _schema_id{schema_id}, _is_new{is_new} {
   OpenWriter();
 
   _maint_settings.refresh_interval_msec =
@@ -124,7 +135,7 @@ SearchTable::~SearchTable() {
 }
 
 void SearchTable::OpenWriter() {
-  auto path = GetPath(_db_id, GetTableId());
+  auto path = GetPath(_db_id, _schema_id, GetTableId());
 
   std::error_code ec;
   bool path_exists = std::filesystem::exists(path, ec);
@@ -229,9 +240,10 @@ ResultWithTime SearchTable::RefreshUnsafe(
     result = {ERROR_INTERNAL, "refresh failed for search table ",
               GetTableId().id(), ": ", e.what()};
   }
-  const uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                             std::chrono::steady_clock::now() - begin)
-                             .count();
+  const uint64_t time_ms =
+    std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - begin)
+      .count();
   return {std::move(result), time_ms};
 }
 
@@ -264,9 +276,10 @@ ResultWithTime SearchTable::CompactUnsafe(
                 GetTableId().id(), ": ", e.what()};
     }
   }
-  const uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                             std::chrono::steady_clock::now() - begin)
-                             .count();
+  const uint64_t time_ms =
+    std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - begin)
+      .count();
   return {std::move(result), time_ms};
 }
 
@@ -279,9 +292,10 @@ ResultWithTime SearchTable::CleanupUnsafe() {
     result = {ERROR_INTERNAL, "cleanup failed for search table ",
               GetTableId().id(), ": ", e.what()};
   }
-  const uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                             std::chrono::steady_clock::now() - begin)
-                             .count();
+  const uint64_t time_ms =
+    std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - begin)
+      .count();
   return {std::move(result), time_ms};
 }
 

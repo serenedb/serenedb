@@ -120,7 +120,8 @@ CompactionOptions PinCompactionOptions(InvertedIndexStorage& idx) {
     return {};
   }
   const irs::IndexFieldOptions* options = index.get();
-  return {.alive = true, .keepalive = std::move(index), .field_options = options};
+  return {
+    .alive = true, .keepalive = std::move(index), .field_options = options};
 }
 
 CompactionOptions PinCompactionOptions(SearchTable& /*table*/) {

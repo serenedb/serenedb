@@ -779,3 +779,77 @@ count
 
 statement ok
 DROP TABLE comp_genpk;
+
+
+# Dropping a search table with NO explicit primary key must tear down its
+# auto-generated PK sequence too (owned-sequence teardown, now in
+# SearchTableDrop::Finalize). Reusing the name afterwards proves the catalog --
+# table def + tombstone + owned sequence -- was fully released.
+statement ok
+CREATE TABLE drop_nopk (a INTEGER, b TEXT) WITH (storage = 'search');
+
+statement ok
+INSERT INTO drop_nopk VALUES (1, 'a'), (2, 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) drop_nopk;
+
+statement ok
+DROP TABLE drop_nopk;
+
+statement ok
+CREATE TABLE drop_nopk (a INTEGER, b TEXT) WITH (storage = 'search');
+
+statement ok
+INSERT INTO drop_nopk VALUES (3, 'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) drop_nopk;
+
+query
+SELECT a, b FROM drop_nopk ORDER BY a;
+----
+a	b
+3	c
+
+statement ok
+DROP TABLE drop_nopk;
+
+
+# DROP SCHEMA CASCADE over a schema holding BOTH a transactional and a search
+# table exercises SchemaDrop's mixed TableDropBase vector: the synchronous
+# store-cleanup fan-out (a no-op for the search table) plus the async per-table
+# drop (TableDrop vs SearchTableDrop) under one ancestor, gated on the search
+# store draining.
+statement ok
+CREATE SCHEMA drop_mix;
+
+statement ok
+CREATE TABLE drop_mix.t_txn (a INTEGER PRIMARY KEY, b TEXT)
+  WITH (storage = 'transactional');
+
+statement ok
+CREATE TABLE drop_mix.t_search (a INTEGER PRIMARY KEY, b TEXT)
+  WITH (storage = 'search');
+
+statement ok
+INSERT INTO drop_mix.t_txn VALUES (1, 'x');
+
+statement ok
+INSERT INTO drop_mix.t_search VALUES (1, 'y');
+
+statement ok
+VACUUM (REFRESH_TABLE) drop_mix.t_search;
+
+statement ok
+DROP SCHEMA drop_mix CASCADE;
+
+statement error (?i)does not exist
+SELECT * FROM drop_mix.t_search;
+
+# The schema name is free again -- cascade removed both tables cleanly.
+statement ok
+CREATE SCHEMA drop_mix;
+
+statement ok
+DROP SCHEMA drop_mix;

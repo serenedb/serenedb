@@ -48,7 +48,8 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
  public:
   // `is_new` opens a fresh index (and publishes an empty commit); otherwise the
   // durable index is reopened and its committed tick restored.
-  SearchTable(ObjectId db_id, ObjectId table_id, bool is_new);
+  SearchTable(ObjectId db_id, ObjectId schema_id, ObjectId table_id,
+              bool is_new);
   ~SearchTable();
 
   SearchTable(const SearchTable&) = delete;
@@ -57,8 +58,8 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   // Opens (or reopens, when !is_new) this table's on-disk iresearch store and
   // binds the database WAL; the returned handle is attached to the catalog
   // Table via Table::SetData. Mirror of InvertedIndexStorage::Create.
-  static std::shared_ptr<SearchTable> Create(ObjectId db_id, ObjectId table_id,
-                                             bool is_new);
+  static std::shared_ptr<SearchTable> Create(ObjectId db_id, ObjectId schema_id,
+                                             ObjectId table_id, bool is_new);
 
   ObjectId GetTableId() const noexcept { return _table_id; }
   auto& GetTableLock() noexcept { return _table_lock; }
@@ -70,10 +71,19 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
     return _num_rows.load(std::memory_order_relaxed);
   }
 
-  static std::filesystem::path GetPath(ObjectId db_id, ObjectId table_id);
+  static std::filesystem::path GetPath(ObjectId db_id, ObjectId schema_id,
+                                       ObjectId table_id);
   static std::filesystem::path GetWalPath(ObjectId db_id);
   static std::filesystem::path GetChunkDir(ObjectId db_id, ObjectId table_id);
-  static Result DropArtifacts(ObjectId db_id, ObjectId table_id);
+
+  // Drop on-disk artifacts. The iresearch index dir nests under the schema
+  // (engine_search/<db>/<schema>/<table>), so a schema/database drop wipes it
+  // wholesale -- only a standalone table drop calls DropIndexDir. The WAL chunk
+  // dir + shard registration live under the per-database WAL, which no ancestor
+  // drop reaches, so DropWalShard is always per-table.
+  static Result DropIndexDir(ObjectId db_id, ObjectId schema_id,
+                             ObjectId table_id);
+  static Result DropWalShard(ObjectId db_id, ObjectId table_id);
 
   irs::IndexWriter::Transaction GetTransaction() noexcept {
     SDB_ASSERT(_writer);
@@ -176,6 +186,7 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
 
   ObjectId _table_id;
   ObjectId _db_id;
+  ObjectId _schema_id;
   bool _is_new;
   std::atomic<int64_t> _num_rows{0};
   std::shared_mutex _table_lock;
@@ -186,11 +197,11 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   uint64_t _last_committed_tick = 0;
 
   // Background maintenance (new model -- mirrors InvertedIndexStorage).
-  // _refresh_mutex serializes refresh-vs-refresh (Compact/Cleanup are lock-free;
-  // iresearch serializes them internally). A zero refresh/compaction interval
-  // disables that chain. The cadence lives in _maint_settings; the loops poll
-  // _compaction_gen (refresh nudges) and _stale_pressure (compaction-driven
-  // cleanup demand).
+  // _refresh_mutex serializes refresh-vs-refresh (Compact/Cleanup are
+  // lock-free; iresearch serializes them internally). A zero refresh/compaction
+  // interval disables that chain. The cadence lives in _maint_settings; the
+  // loops poll _compaction_gen (refresh nudges) and _stale_pressure
+  // (compaction-driven cleanup demand).
   TasksSettings _maint_settings;
   absl::Mutex _refresh_mutex;
   std::atomic<uint64_t> _compaction_gen{0};

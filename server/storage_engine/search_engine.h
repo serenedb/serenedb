@@ -68,8 +68,8 @@ class SearchEngine final {
   SearchDbWal& GetDbWal(ObjectId database_id);
 
   // Launch the per-target refresh + compaction loops, registering their Futures
-  // so stop() can join them. Templated on the storage type (InvertedIndexStorage
-  // or SearchTable); instantiated for both in the .cpp.
+  // so stop() can join them. Templated on the storage type
+  // (InvertedIndexStorage or SearchTable); instantiated for both in the .cpp.
   template<class Storage>
   void StartTasks(const std::shared_ptr<Storage>& storage);
 

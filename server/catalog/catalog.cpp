@@ -243,39 +243,45 @@ std::optional<std::string> Snapshot::ComposeStoreTableName(
   return StoreTableName(db->GetName(), schema_obj->GetName(), table->GetName());
 }
 
-std::shared_ptr<TableDrop> Snapshot::CreateTableDrop(
+std::shared_ptr<TableDropBase> Snapshot::CreateTableDrop(
   PendingDrops& pending_drops, ObjectId db_id, ObjectId schema_id,
   const std::shared_ptr<Table>& table, bool is_root) {
   const auto table_id = table->GetId();
   auto table_deps = GetDependency<TableDependency>(table_id);
-  auto indexes = table_deps->indexes | std::views::transform([&](ObjectId id) {
-                   auto index = GetObject<Index>(id);
-                   SDB_ASSERT(index);
-                   return CreateIndexDrop(pending_drops, db_id, schema_id,
-                                          table_id, index, false);
-                 }) |
-                 std::ranges::to<std::vector>();
   auto owned_sequences =
     table_deps->owned_sequences | std::ranges::to<std::vector>();
 
-  std::string store_name;
-  std::vector<std::string> fk_referenced;
-  if (table->GetEngine() == TableEngine::Transactional &&
-      !table->Tombstoned()) {
-    auto db = GetObject<Database>(db_id);
-    auto schema_obj = GetObject<Schema>(schema_id);
-    SDB_ASSERT(db && schema_obj);
-    store_name =
-      StoreTableName(db->GetName(), schema_obj->GetName(), table->GetName());
-    for (const auto& fk : table->ForeignKeys()) {
-      if (auto name = ComposeStoreTableName(fk.referenced_table)) {
-        fk_referenced.push_back(std::move(*name));
+  std::shared_ptr<TableDropBase> task;
+  if (table->GetEngine() == TableEngine::Search) {
+    task = std::make_shared<SearchTableDrop>(
+      table, db_id, std::move(owned_sequences), schema_id, is_root);
+  } else {
+    auto indexes = table_deps->indexes |
+                   std::views::transform([&](ObjectId id) {
+                     auto index = GetObject<Index>(id);
+                     SDB_ASSERT(index);
+                     return CreateIndexDrop(pending_drops, db_id, schema_id,
+                                            table_id, index, false);
+                   }) |
+                   std::ranges::to<std::vector>();
+    std::string store_name;
+    std::vector<std::string> fk_referenced;
+    if (!table->Tombstoned()) {
+      auto db = GetObject<Database>(db_id);
+      auto schema_obj = GetObject<Schema>(schema_id);
+      SDB_ASSERT(db && schema_obj);
+      store_name =
+        StoreTableName(db->GetName(), schema_obj->GetName(), table->GetName());
+      for (const auto& fk : table->ForeignKeys()) {
+        if (auto name = ComposeStoreTableName(fk.referenced_table)) {
+          fk_referenced.push_back(std::move(*name));
+        }
       }
     }
+    task = std::make_shared<TableDrop>(
+      table, std::move(indexes), std::move(owned_sequences), schema_id,
+      std::move(store_name), std::move(fk_referenced), is_root);
   }
-  auto task = std::make_shared<TableDrop>(
-    table, db_id, std::move(indexes), std::move(owned_sequences), schema_id,
-    std::move(store_name), std::move(fk_referenced), is_root);
   UpdatePendingDrops(pending_drops, schema_id, table_id, task, is_root);
   return task;
 }
@@ -2218,8 +2224,8 @@ Result Catalog::CreateTable(ObjectId database_id, std::string_view schema,
       store_table->name = DroppedStoreTableName(table->GetId());
     }
   } else if (table->GetEngine() == TableEngine::Search) {
-    table->SetData(search::SearchTable::Create(database_id, table->GetId(),
-                                               /*is_new=*/true));
+    table->SetData(search::SearchTable::Create(
+      database_id, *schema_id, table->GetId(), /*is_new=*/true));
   }
 
   return Apply(
@@ -3443,13 +3449,15 @@ std::shared_ptr<const Snapshot> Catalog::GetCatalogSnapshot() const noexcept {
 namespace {
 
 // In case of recovery the ColumnExpr shouldn't be parsed
-Result CheckTableForDrop(std::string_view bytes, ReadContext ctx) {
+ResultOr<TableEngine> CheckTableForDrop(std::string_view bytes,
+                                        ReadContext ctx) {
   auto table = catalog::DeserializeObject<Table>(bytes, ctx);
   if (!table) {
-    return {ERROR_SERVER_ILLEGAL_STATE,
-            "failed to deserialize table definition during drop recovery"};
+    return std::unexpected<Result>{
+      std::in_place, ERROR_SERVER_ILLEGAL_STATE,
+      "failed to deserialize table definition during drop recovery"};
   }
-  return {};
+  return table->GetEngine();
 }
 
 std::shared_ptr<IndexDrop> CreateIndexDrop(ObjectId db_id, ObjectId schema_id,
@@ -3460,30 +3468,11 @@ std::shared_ptr<IndexDrop> CreateIndexDrop(ObjectId db_id, ObjectId schema_id,
                                      table_id, is_root);
 }
 
-ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(CatalogStore& store,
-                                                     ObjectId db_id,
-                                                     ObjectId schema_id,
-                                                     ObjectId table_id,
-                                                     bool is_root = false) {
-  std::vector<std::shared_ptr<IndexDrop>> indexes;
-  auto collect_indexes = [&](ObjectType type) {
-    return store.VisitBoot(
-      table_id, type, [&](CatalogStore::Key key, std::string_view) {
-        indexes.push_back(
-          CreateIndexDrop(db_id, schema_id, table_id, key.id, type));
-        return Result{};
-      });
-  };
-  auto r = collect_indexes(ObjectType::SecondaryIndex);
-  if (r.ok()) {
-    r = collect_indexes(ObjectType::InvertedIndex);
-  }
-  if (!r.ok()) {
-    return std::unexpected<Result>{std::in_place, std::move(r)};
-  }
-
+ResultOr<std::shared_ptr<TableDropBase>> CreateTableDrop(
+  CatalogStore& store, ObjectId db_id, ObjectId schema_id, ObjectId table_id,
+  TableEngine engine, bool is_root = false) {
   std::vector<ObjectId> owned_sequences;
-  r = store.VisitBoot(
+  auto r = store.VisitBoot(
     schema_id, ObjectType::Sequence,
     [&](CatalogStore::Key key, std::string_view bytes) -> Result {
       auto seq = catalog::DeserializeObject<Sequence>(
@@ -3496,6 +3485,29 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(CatalogStore& store,
   if (!r.ok()) {
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
+
+  if (engine == TableEngine::Search) {
+    // Search tables reject CREATE INDEX, so there are no child index drops.
+    return std::make_shared<SearchTableDrop>(
+      table_id, db_id, std::move(owned_sequences), schema_id, is_root);
+  }
+
+  std::vector<std::shared_ptr<IndexDrop>> indexes;
+  auto collect_indexes = [&](ObjectType type) {
+    return store.VisitBoot(
+      table_id, type, [&](CatalogStore::Key key, std::string_view) {
+        indexes.push_back(
+          CreateIndexDrop(db_id, schema_id, table_id, key.id, type));
+        return Result{};
+      });
+  };
+  r = collect_indexes(ObjectType::SecondaryIndex);
+  if (r.ok()) {
+    r = collect_indexes(ObjectType::InvertedIndex);
+  }
+  if (!r.ok()) {
+    return std::unexpected<Result>{std::in_place, std::move(r)};
+  }
   return std::make_shared<TableDrop>(table_id, std::move(indexes),
                                      std::move(owned_sequences), schema_id,
                                      is_root);
@@ -3505,17 +3517,17 @@ ResultOr<std::shared_ptr<SchemaDrop>> CreateSchemaDrop(CatalogStore& store,
                                                        ObjectId db_id,
                                                        ObjectId schema_id,
                                                        bool is_root = false) {
-  std::vector<std::shared_ptr<TableDrop>> tables;
+  std::vector<std::shared_ptr<TableDropBase>> tables;
   auto r = store.VisitBoot(
     schema_id, ObjectType::Table,
     [&](CatalogStore::Key key, std::string_view bytes) -> Result {
-      if (auto check = CheckTableForDrop(
-            bytes,
-            {.id = key.id, .database_id = db_id, .schema_id = schema_id});
-          !check.ok()) {
-        return check;
+      auto engine = CheckTableForDrop(
+        bytes, {.id = key.id, .database_id = db_id, .schema_id = schema_id});
+      if (!engine) {
+        return std::move(engine.error());
       }
-      auto table_drop = CreateTableDrop(store, db_id, schema_id, key.id);
+      auto table_drop =
+        CreateTableDrop(store, db_id, schema_id, key.id, *engine);
       if (!table_drop) {
         return std::move(table_drop.error());
       }
@@ -3582,7 +3594,8 @@ class OpenDatabase {
   Result RegisterTypes(ObjectId database_id, ObjectId schema_id);
   Result RegisterTables(ObjectId database_id, ObjectId schema_id);
   Result RegisterInvertedStorage(const std::shared_ptr<Index>& index);
-  Result RegisterSearchTable(ObjectId db_id, const Table& table);
+  Result RegisterSearchTable(ObjectId db_id, ObjectId schema_id,
+                             const Table& table);
   Result RegisterIndexes(ObjectId database_id, ObjectId schema_id,
                          ObjectId table_id);
 
@@ -3816,9 +3829,10 @@ Result OpenDatabase::RegisterInvertedStorage(
   });
 }
 
-Result OpenDatabase::RegisterSearchTable(ObjectId db_id, const Table& table) {
+Result OpenDatabase::RegisterSearchTable(ObjectId db_id, ObjectId schema_id,
+                                         const Table& table) {
   return basics::SafeCall([&] {
-    table.SetData(search::SearchTable::Create(db_id, table.GetId(),
+    table.SetData(search::SearchTable::Create(db_id, schema_id, table.GetId(),
                                               /*is_new=*/false));
     return Result{};
   });
@@ -3840,20 +3854,19 @@ Result OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
           GetCatalogStore().ValidateStoreTable(
             MakeStoreTableDef(_database_name, _schema_name, *table));
         } else if (table->GetEngine() == TableEngine::Search) {
-          if (auto r = RegisterSearchTable(db_id, *table); !r.ok()) {
+          if (auto r = RegisterSearchTable(db_id, schema_id, *table); !r.ok()) {
             return r;
           }
         }
         return AddTable(db_id, schema_id, table_id, std::move(table));
       }
-      if (auto check = CheckTableForDrop(
-            bytes,
-            {.id = table_id, .database_id = db_id, .schema_id = schema_id});
-          !check.ok()) {
-        return check;
+      auto engine = CheckTableForDrop(
+        bytes, {.id = table_id, .database_id = db_id, .schema_id = schema_id});
+      if (!engine) {
+        return std::move(engine.error());
       }
-      auto drop =
-        CreateTableDrop(GetCatalogStore(), db_id, schema_id, table_id, true);
+      auto drop = CreateTableDrop(GetCatalogStore(), db_id, schema_id, table_id,
+                                  *engine, true);
       if (!drop) {
         return std::move(drop.error());
       }

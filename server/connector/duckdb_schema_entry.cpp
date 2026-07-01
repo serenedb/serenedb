@@ -71,6 +71,7 @@
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
+#include "search/search_table.h"
 
 namespace sdb::connector {
 namespace {
@@ -459,6 +460,17 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
   }
   if (!r.ok()) {
     SDB_THROW(std::move(r));
+  }
+
+  // Search tables maintain themselves in the background
+  // (commit/consolidate/GC). Kick the maintenance chains now that the table and
+  // its iresearch store exist; mirrors the inverted-index StartTasks in
+  // CreateIndex.
+  auto new_snapshot = catalog_impl.GetCatalogSnapshot();
+  if (auto sdb_table =
+        new_snapshot->GetTable(database_id, name, table_info.table);
+      sdb_table && sdb_table->GetEngine() == catalog::TableEngine::Search) {
+    sdb_table->GetData()->StartTasks();  // GetData asserts the store is bound
   }
 
   return nullptr;

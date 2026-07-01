@@ -599,3 +599,257 @@ w	h	area
 
 statement ok
 DROP TABLE search_gen_upd_gpk;
+
+
+###############################################################################
+# Compaction after deletes: surviving rows stay reachable and deleted rows are
+# NOT resurrected by the segment merge (consolidation physically drops the
+# masked/deleted docs while merging segments).
+###############################################################################
+
+statement ok
+CREATE TABLE comp_del (id INTEGER PRIMARY KEY, b TEXT) WITH (storage = 'search');
+
+# Build two published segments so COMPACT has real merging to do.
+statement ok
+INSERT INTO comp_del VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd');
+
+statement ok
+VACUUM (REFRESH_TABLE) comp_del;
+
+statement ok
+INSERT INTO comp_del VALUES (5, 'e'), (6, 'f'), (7, 'g'), (8, 'h');
+
+statement ok
+VACUUM (REFRESH_TABLE) comp_del;
+
+# Delete the even ids across both segments, then publish the tombstones.
+statement ok
+DELETE FROM comp_del WHERE id IN (2, 4, 6, 8);
+
+statement ok
+VACUUM (REFRESH_TABLE) comp_del;
+
+query
+SELECT id, b FROM comp_del ORDER BY id;
+----
+id	b
+1	a
+3	c
+5	e
+7	g
+
+# Merge everything into one segment, physically dropping the deleted docs.
+statement ok
+VACUUM (COMPACT_TABLE) comp_del;
+
+# Survivors still present (the merge dropped no live row)...
+query
+SELECT id, b FROM comp_del ORDER BY id;
+----
+id	b
+1	a
+3	c
+5	e
+7	g
+
+query
+SELECT COUNT(*) FROM comp_del;
+----
+count
+4
+
+# ...and no deleted row was resurrected -- each is gone when looked up by PK.
+query
+SELECT COUNT(*) FROM comp_del WHERE id IN (2, 4, 6, 8);
+----
+count
+0
+
+query
+SELECT b FROM comp_del WHERE id = 7;
+----
+b
+g
+
+# Compaction is idempotent: a second pass keeps the surviving set unchanged.
+statement ok
+VACUUM (COMPACT_TABLE) comp_del;
+
+query
+SELECT id FROM comp_del ORDER BY id;
+----
+id
+1
+3
+5
+7
+
+# A delete issued AFTER a compaction is still honored by the next compaction.
+statement ok
+DELETE FROM comp_del WHERE id = 5;
+
+statement ok
+VACUUM (COMPACT_TABLE) comp_del;
+
+query
+SELECT id FROM comp_del ORDER BY id;
+----
+id
+1
+3
+7
+
+statement ok
+DROP TABLE comp_del;
+
+
+# Delete then re-insert the SAME PK, then compact: the re-insert wins (higher
+# tick), the deleted original is not resurrected, and there is exactly one row.
+statement ok
+CREATE TABLE comp_reins (id INTEGER PRIMARY KEY, b TEXT) WITH (storage = 'search');
+
+statement ok
+INSERT INTO comp_reins VALUES (1, 'old'), (2, 'keep');
+
+statement ok
+VACUUM (REFRESH_TABLE) comp_reins;
+
+statement ok
+DELETE FROM comp_reins WHERE id = 1;
+
+statement ok
+INSERT INTO comp_reins VALUES (1, 'new');
+
+statement ok
+VACUUM (REFRESH_TABLE) comp_reins;
+
+statement ok
+VACUUM (COMPACT_TABLE) comp_reins;
+
+query
+SELECT id, b FROM comp_reins ORDER BY id;
+----
+id	b
+1	new
+2	keep
+
+query
+SELECT COUNT(*) FROM comp_reins WHERE id = 1;
+----
+count
+1
+
+statement ok
+DROP TABLE comp_reins;
+
+
+# Generated-PK table: rows are identified by a synthetic rowid, not a user PK.
+# Delete-by-value removes them; compaction must not bring them back.
+statement ok
+CREATE TABLE comp_genpk (a INTEGER, b TEXT) WITH (storage = 'search');
+
+statement ok
+INSERT INTO comp_genpk VALUES (10, 'p'), (20, 'q'), (30, 'r'), (40, 's');
+
+statement ok
+VACUUM (REFRESH_TABLE) comp_genpk;
+
+statement ok
+DELETE FROM comp_genpk WHERE a >= 30;
+
+statement ok
+VACUUM (REFRESH_TABLE) comp_genpk;
+
+statement ok
+VACUUM (COMPACT_TABLE) comp_genpk;
+
+query
+SELECT a, b FROM comp_genpk ORDER BY a;
+----
+a	b
+10	p
+20	q
+
+query
+SELECT COUNT(*) FROM comp_genpk WHERE a >= 30;
+----
+count
+0
+
+statement ok
+DROP TABLE comp_genpk;
+
+
+# Dropping a search table with NO explicit primary key must tear down its
+# auto-generated PK sequence too (owned-sequence teardown, now in
+# SearchTableDrop::Finalize). Reusing the name afterwards proves the catalog --
+# table def + tombstone + owned sequence -- was fully released.
+statement ok
+CREATE TABLE drop_nopk (a INTEGER, b TEXT) WITH (storage = 'search');
+
+statement ok
+INSERT INTO drop_nopk VALUES (1, 'a'), (2, 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) drop_nopk;
+
+statement ok
+DROP TABLE drop_nopk;
+
+statement ok
+CREATE TABLE drop_nopk (a INTEGER, b TEXT) WITH (storage = 'search');
+
+statement ok
+INSERT INTO drop_nopk VALUES (3, 'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) drop_nopk;
+
+query
+SELECT a, b FROM drop_nopk ORDER BY a;
+----
+a	b
+3	c
+
+statement ok
+DROP TABLE drop_nopk;
+
+
+# DROP SCHEMA CASCADE over a schema holding BOTH a transactional and a search
+# table exercises SchemaDrop's mixed TableDropBase vector: the synchronous
+# store-cleanup fan-out (a no-op for the search table) plus the async per-table
+# drop (TableDrop vs SearchTableDrop) under one ancestor, gated on the search
+# store draining.
+statement ok
+CREATE SCHEMA drop_mix;
+
+statement ok
+CREATE TABLE drop_mix.t_txn (a INTEGER PRIMARY KEY, b TEXT)
+  WITH (storage = 'transactional');
+
+statement ok
+CREATE TABLE drop_mix.t_search (a INTEGER PRIMARY KEY, b TEXT)
+  WITH (storage = 'search');
+
+statement ok
+INSERT INTO drop_mix.t_txn VALUES (1, 'x');
+
+statement ok
+INSERT INTO drop_mix.t_search VALUES (1, 'y');
+
+statement ok
+VACUUM (REFRESH_TABLE) drop_mix.t_search;
+
+statement ok
+DROP SCHEMA drop_mix CASCADE;
+
+statement error (?i)does not exist
+SELECT * FROM drop_mix.t_search;
+
+# The schema name is free again -- cascade removed both tables cleanly.
+statement ok
+CREATE SCHEMA drop_mix;
+
+statement ok
+DROP SCHEMA drop_mix;

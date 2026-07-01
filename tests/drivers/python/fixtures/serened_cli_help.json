@@ -230,6 +230,36 @@
           "categoryLabel": "Server"
         },
         {
+          "name": "server_search_table_cleanup_interval_step",
+          "flag": "--server_search_table_cleanup_interval_step",
+          "type": "",
+          "defaultValue": "10",
+          "description": "Run iresearch directory GC every Nth background commit for search tables. 0 disables periodic GC (VACUUM still GCs).",
+          "source": "server",
+          "category": "server",
+          "categoryLabel": "Server"
+        },
+        {
+          "name": "server_search_table_compaction_interval_ms",
+          "flag": "--server_search_table_compaction_interval_ms",
+          "type": "",
+          "defaultValue": "10000",
+          "description": "Interval between background segment consolidations for search tables. 0 disables background consolidation.",
+          "source": "server",
+          "category": "server",
+          "categoryLabel": "Server"
+        },
+        {
+          "name": "server_search_table_refresh_interval_ms",
+          "flag": "--server_search_table_refresh_interval_ms",
+          "type": "",
+          "defaultValue": "1000",
+          "description": "Interval between background commits (RefreshCommit) for search tables, making inserts searchable. 0 disables background commit (VACUUM is then the only way to flush); set both this and the compaction interval to 0 to turn background maintenance off.",
+          "source": "server",
+          "category": "server",
+          "categoryLabel": "Server"
+        },
+        {
           "name": "tls_ca",
           "flag": "--tls_ca",
           "type": "",

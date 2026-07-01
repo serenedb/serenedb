@@ -267,10 +267,14 @@ void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
     }
   };
 
-  auto sync_search_table = [&](auto& table) {
+  auto sync_search_table = [action](auto& table) {
     if (table->GetEngine() == catalog::TableEngine::Search) {
       if (const auto& search = table->GetData()) {
-        search->Commit();
+        if (action == Action::Refresh) {
+          search->VacuumRefresh();  // commit pending inserts + reclaim files
+        } else {
+          search->VacuumCompact();  // + merge segments
+        }
       }
     }
   };
@@ -278,9 +282,8 @@ void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
   auto walk_schema = [&](ObjectId db_id, std::string_view schema) {
     for (auto& table : snapshot.GetTables(db_id, schema)) {
       ForEachInvertedStorage(snapshot, table->GetId(), apply);
-      // SearchTable has no background commit thread yet, so VACUUM is currently
-      // the only way to flush a Search table's pending iresearch trxs into a
-      // segment visible to subsequent scans.
+      // Search tables also commit/consolidate/GC in the background; VACUUM is
+      // the synchronous, on-demand path through the same maintenance ops.
       sync_search_table(table);
     }
   };

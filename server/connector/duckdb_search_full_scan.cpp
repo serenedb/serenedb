@@ -652,7 +652,7 @@ void TsDictLocalState::OpenField(size_t field_idx) {
     claim
       .operator()<irs::LevenshteinAutomatonFilter, irs::LevenshteinIterator>();
   } else if (type == irs::Type<irs::AutomatonFilter>::id()) {
-    claim.operator()<irs::AutomatonFilter, irs::AutomatonIterator>();
+    claim.operator()<irs::AutomatonFilter, irs::AllTermIterator>();
   }
 
   std::visit([&](auto& it) { _meta = get<irs::TermMeta>(it.GetImpl()); },

@@ -190,8 +190,7 @@ struct TsDictLocalState : public CommonScanLocalState {
   size_t _cur_field = 0;
   std::variant<irs::AllTermIterator, irs::ByTermIterator,
                irs::ByPrefixIterator, irs::ByRangeIterator,
-               irs::ByTermsIterator, irs::LevenshteinIterator,
-               irs::AutomatonIterator>
+               irs::ByTermsIterator, irs::LevenshteinIterator>
     _cursor;
   const irs::TermMeta* _meta = nullptr;
 };

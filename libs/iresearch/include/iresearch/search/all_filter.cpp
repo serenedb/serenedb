@@ -23,6 +23,8 @@
 #include "all_filter.hpp"
 
 #include "all_iterator.hpp"
+#include "iresearch/search/automaton_filter.hpp"
+#include "iresearch/utils/automaton_utils.hpp"
 
 namespace irs {
 
@@ -66,12 +68,13 @@ AllTermIterator::AllTermIterator(const TermReader& reader)
   }
 }
 
-SeekTermIterator::ptr All::MakeIterator(const TermReader& reader) {
-  auto terms = reader.iterator(SeekMode::NORMAL);
-  if (!terms || !terms->next()) {
-    return nullptr;
-  }
-  return terms;
-}
+AllTermIterator::AllTermIterator(const TermReader& reader,
+                                 const AutomatonOptions& options)
+  : _impl{[&] {
+      SDB_ENSURE(options.compiled, sdb::ERROR_INTERNAL,
+                 "ts_dict automaton: filter has no compiled acceptor");
+      auto it = MakeAutomatonIterator(reader, options.compiled->matcher);
+      return it ? std::move(it) : SeekTermIterator::empty();
+    }()} {}
 
 }  // namespace irs

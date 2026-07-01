@@ -27,10 +27,13 @@
 
 namespace irs {
 
+struct AutomatonOptions;
+
 class AllTermIterator {
  public:
   AllTermIterator() : _impl{SeekTermIterator::empty()} {}
   explicit AllTermIterator(const TermReader& reader);
+  AllTermIterator(const TermReader& reader, const AutomatonOptions& options);
 
   SeekTermIterator& GetImpl() noexcept { return *_impl; }
   score_t Boost() const noexcept { return kNoBoost; }
@@ -52,8 +55,6 @@ class AllTermIterator {
 // Filter returning all documents
 class All : public FilterWithBoost {
  public:
-  static SeekTermIterator::ptr MakeIterator(const TermReader& reader);
-
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
 

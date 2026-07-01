@@ -72,15 +72,9 @@ struct ByTermsOptions {
 
 class ByTermsIterator {
  public:
+  ByTermsIterator(const TermReader& reader,
+                  const ByTermsOptions::search_terms& terms);
   ByTermsIterator(const TermReader& reader, const ByTermsOptions& options);
-
-  ByTermsIterator(SeekTermIterator::ptr&& impl,
-                  const ByTermsOptions::search_terms& terms)
-    : _impl{std::move(impl)}, _cursor{terms.begin()}, _end{terms.end()} {
-    if (!_impl || !AdvanceToMatch()) {
-      _impl = SeekTermIterator::empty();
-    }
-  }
 
   SeekTermIterator& GetImpl() noexcept { return *_impl; }
   score_t Boost() const noexcept { return _boost; }

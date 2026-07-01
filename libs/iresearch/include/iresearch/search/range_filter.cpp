@@ -61,8 +61,30 @@ void VisitImpl(ByRangeIterator& terms, Visitor& visitor) {
 }  // namespace
 
 ByRangeIterator::ByRangeIterator(const TermReader& reader,
+                                 const ByRangeFilterOptions::range_type& range)
+  : _impl{reader.iterator(SeekMode::NORMAL)}, _range{&range} {
+  bool res = false;
+  if (_impl) {
+    switch (_range->min_type) {
+      case BoundType::Unbounded:
+        res = _impl->next();
+        break;
+      case BoundType::Inclusive:
+        res = seek_min<true>(*_impl, _range->min);
+        break;
+      case BoundType::Exclusive:
+        res = seek_min<false>(*_impl, _range->min);
+        break;
+    }
+  }
+  if (!res || !InRange()) {
+    _impl = SeekTermIterator::empty();
+  }
+}
+
+ByRangeIterator::ByRangeIterator(const TermReader& reader,
                                  const ByRangeOptions& options)
-  : ByRangeIterator{reader.iterator(SeekMode::NORMAL), options.range} {}
+  : ByRangeIterator{reader, options.range} {}
 
 QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx) const {
@@ -108,12 +130,10 @@ QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
   }
   SampledMultiTermVisitor mtv{collector ? &collector->Limited() : nullptr,
                               query->State()};
-  if (auto impl = reader->iterator(SeekMode::NORMAL)) {
-    ByRangeIterator terms(std::move(impl), rng);
-    if (terms.value().data() != nullptr) {
-      mtv.Prepare(segment, *reader, terms.GetImpl());
-      VisitImpl(terms, mtv);
-    }
+  ByRangeIterator terms(*reader, rng);
+  if (!IsNull(terms.value())) {
+    mtv.Prepare(segment, *reader, terms.GetImpl());
+    VisitImpl(terms, mtv);
   }
   return query;
 }
@@ -128,12 +148,8 @@ PrepareCollector::ptr ByRange::MakeCollector(const Scorer* scorer) const {
 
 void ByRange::visit(const SubReader& segment, const TermReader& reader,
                     const ByRangeOptions& options, FilterVisitor& visitor) {
-  auto impl = reader.iterator(SeekMode::NORMAL);
-  if (!impl) {
-    return;
-  }
-  ByRangeIterator terms(std::move(impl), options.range);
-  if (terms.value().data() == nullptr) {
+  ByRangeIterator terms(reader, options.range);
+  if (IsNull(terms.value())) {
     return;
   }
   visitor.Prepare(segment, reader, terms.GetImpl());

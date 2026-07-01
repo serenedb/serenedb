@@ -47,9 +47,17 @@ void VisitImpl(ByPrefixIterator& terms, Visitor& visitor) {
 
 }  // namespace
 
+ByPrefixIterator::ByPrefixIterator(const TermReader& reader, bytes_view prefix)
+  : _impl{reader.iterator(SeekMode::NORMAL)}, _prefix{prefix} {
+  if (!_impl || SeekResult::End == _impl->seek_ge(_prefix) ||
+      !_impl->value().starts_with(_prefix)) {
+    _impl = SeekTermIterator::empty();
+  }
+}
+
 ByPrefixIterator::ByPrefixIterator(const TermReader& reader,
                                    const ByPrefixOptions& options)
-  : ByPrefixIterator{reader.iterator(SeekMode::NORMAL), options.term} {}
+  : ByPrefixIterator{reader, options.term} {}
 
 QueryBuilder::ptr ByPrefix::PrepareSegment(const SubReader& segment,
                                            const PrepareContext& ctx) const {
@@ -79,12 +87,10 @@ QueryBuilder::ptr ByPrefix::PrepareSegment(const SubReader& segment,
   }
   SampledMultiTermVisitor mtv{collector ? &collector->Limited() : nullptr,
                               query->State()};
-  if (auto impl = reader->iterator(SeekMode::NORMAL)) {
-    ByPrefixIterator terms(std::move(impl), term);
-    if (terms.value().data() != nullptr) {
-      mtv.Prepare(segment, *reader, terms.GetImpl());
-      VisitImpl(terms, mtv);
-    }
+  ByPrefixIterator terms(*reader, term);
+  if (!IsNull(terms.value())) {
+    mtv.Prepare(segment, *reader, terms.GetImpl());
+    VisitImpl(terms, mtv);
   }
   return query;
 }
@@ -96,12 +102,8 @@ PrepareCollector::ptr ByPrefix::MakeCollector(const Scorer* scorer) const {
 
 void ByPrefix::visit(const SubReader& segment, const TermReader& reader,
                      const ByPrefixOptions& options, FilterVisitor& visitor) {
-  auto impl = reader.iterator(SeekMode::NORMAL);
-  if (!impl) {
-    return;
-  }
-  ByPrefixIterator terms(std::move(impl), options.term);
-  if (terms.value().data() == nullptr) {
+  ByPrefixIterator terms(reader, options.term);
+  if (IsNull(terms.value())) {
     return;
   }
   visitor.Prepare(segment, reader, terms.GetImpl());

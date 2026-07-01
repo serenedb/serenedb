@@ -153,8 +153,9 @@ class LevenshteinIterator {
   LevenshteinIterator(const TermReader& reader,
                       const LevenshteinAutomatonOptions& options);
 
-  LevenshteinIterator(SeekTermIterator::ptr&& impl, byte_type no_distance,
-                      uint32_t target_size);
+  LevenshteinIterator(const TermReader& reader,
+                      const automaton_table_matcher& matcher,
+                      byte_type no_distance, uint32_t target_size);
 
   SeekTermIterator& GetImpl() noexcept { return *_impl; }
   score_t Boost() const noexcept { return _boost; }

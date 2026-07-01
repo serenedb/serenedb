@@ -93,12 +93,8 @@ void VisitImpl(const SubReader& segment, const TermReader& reader,
                const byte_type no_distance, const uint32_t utf8_target_size,
                const automaton_table_matcher& matcher, Visitor&& visitor) {
   SDB_ASSERT(fst::kError != matcher.Properties(0));
-  auto impl = reader.iterator(matcher);
-  if (!impl) {
-    return;
-  }
-  LevenshteinIterator it(std::move(impl), no_distance, utf8_target_size);
-  if (it.value().data() == nullptr) {
+  LevenshteinIterator it(reader, matcher, no_distance, utf8_target_size);
+  if (IsNull(it.value())) {
     return;
   }
   visitor.Prepare(segment, reader, it.GetImpl());
@@ -198,19 +194,23 @@ field_visitor LevenshteinAutomatonFilter::visitor(
 
 LevenshteinIterator::LevenshteinIterator(
   const TermReader& reader, const LevenshteinAutomatonOptions& options)
-  : LevenshteinIterator{
-      [&] {
-        SDB_ENSURE(options.compiled, sdb::ERROR_INTERNAL,
-                   "ts_dict levenshtein: filter has no compiled acceptor");
-        auto it = reader.iterator(options.compiled->matcher);
-        return it ? std::move(it) : SeekTermIterator::empty();
-      }(),
-      options.no_distance, options.utf8_target_size} {}
+  : LevenshteinIterator{reader,
+                        [&]() -> const automaton_table_matcher& {
+                          SDB_ENSURE(options.compiled, sdb::ERROR_INTERNAL,
+                                     "ts_dict levenshtein: filter has no "
+                                     "compiled acceptor");
+                          return options.compiled->matcher;
+                        }(),
+                        options.no_distance, options.utf8_target_size} {}
 
-LevenshteinIterator::LevenshteinIterator(SeekTermIterator::ptr&& impl,
+LevenshteinIterator::LevenshteinIterator(const TermReader& reader,
+                                         const automaton_table_matcher& matcher,
                                          byte_type no_distance,
                                          uint32_t target_size)
-  : _impl{std::move(impl)},
+  : _impl{[&] {
+      auto it = reader.iterator(matcher);
+      return it ? std::move(it) : SeekTermIterator::empty();
+    }()},
     _payload{irs::get<PayAttr>(*_impl)},
     _no_distance{no_distance},
     _target_size{target_size} {

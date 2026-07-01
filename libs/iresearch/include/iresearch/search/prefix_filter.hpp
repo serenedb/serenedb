@@ -53,15 +53,8 @@ struct ByPrefixOptions : ByPrefixFilterOptions {
 
 class ByPrefixIterator {
  public:
+  ByPrefixIterator(const TermReader& reader, bytes_view prefix);
   ByPrefixIterator(const TermReader& reader, const ByPrefixOptions& options);
-
-  ByPrefixIterator(SeekTermIterator::ptr&& impl, bytes_view prefix)
-    : _impl{std::move(impl)}, _prefix{prefix} {
-    if (!_impl || SeekResult::End == _impl->seek_ge(_prefix) ||
-        !_impl->value().starts_with(_prefix)) {
-      _impl = SeekTermIterator::empty();
-    }
-  }
 
   SeekTermIterator& GetImpl() noexcept { return *_impl; }
   score_t Boost() const noexcept { return kNoBoost; }

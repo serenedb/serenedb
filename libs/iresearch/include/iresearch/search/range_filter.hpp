@@ -56,29 +56,9 @@ struct ByRangeOptions : ByRangeFilterOptions {
 
 class ByRangeIterator {
  public:
+  ByRangeIterator(const TermReader& reader,
+                  const ByRangeFilterOptions::range_type& range);
   ByRangeIterator(const TermReader& reader, const ByRangeOptions& options);
-
-  ByRangeIterator(SeekTermIterator::ptr&& impl,
-                  const ByRangeFilterOptions::range_type& range)
-    : _impl{std::move(impl)}, _range{&range} {
-    bool res = false;
-    if (_impl) {
-      switch (_range->min_type) {
-        case BoundType::Unbounded:
-          res = _impl->next();
-          break;
-        case BoundType::Inclusive:
-          res = seek_min<true>(*_impl, _range->min);
-          break;
-        case BoundType::Exclusive:
-          res = seek_min<false>(*_impl, _range->min);
-          break;
-      }
-    }
-    if (!res || !InRange()) {
-      _impl = SeekTermIterator::empty();
-    }
-  }
 
   SeekTermIterator& GetImpl() noexcept { return *_impl; }
   score_t Boost() const noexcept { return kNoBoost; }

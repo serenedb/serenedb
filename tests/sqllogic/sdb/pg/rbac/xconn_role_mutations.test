@@ -1,0 +1,438 @@
+# serenedb-only (needs concurrent non-superuser password sessions): the COW
+# snapshot "live re-resolution" property. One connection (the owner, default =
+# superuser postgres) rewrites a role's authority while ANOTHER connection is
+# authenticated as -- or inherits through -- that role. Every privilege check
+# re-resolves against the current snapshot, so the change lands on the affected
+# session's very NEXT statement, with no reconnect.
+#
+# Complements xsess_revoke_drop_matrix.test (table-SELECT revoke, membership
+# REVOKE + SET ROLE, DROP live login) -- this file adds column-grant downgrade,
+# forward GRANT, group-privilege revoke, transitive-membership revoke, VALID
+# UNTIL expiry, and per-membership INHERIT flipping. Cannot run on the shared
+# trust PG container (per-role password sessions).
+#
+# Runner note: a connection is keyed by its FULL directive (name+user+password);
+# a directive-less record uses the default (postgres superuser) connection. Each
+# record that must share a role session repeats the identical full directive.
+#
+# Lore: clickclack the overseer owns the ledgers; vedernikoff the intern gains,
+# loses, and regains reach; the babsky committee is the group he inherits from;
+# mop and iceberg are the ledgers.
+
+statement ok
+DROP TABLE IF EXISTS xcm_mop_ledger;
+
+
+statement ok
+DROP TABLE IF EXISTS xcm_iceberg_ledger;
+
+
+statement ok
+DROP TABLE IF EXISTS xcm_hop_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS xcm_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS xcm_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS xcm_mid;
+
+
+statement ok
+DROP ROLE IF EXISTS xcm_top;
+
+
+statement ok
+CREATE TABLE xcm_mop_ledger (id int, secret text, note text);
+
+
+statement ok
+INSERT INTO xcm_mop_ledger VALUES (1, 'clickclack', 'iceberg');
+
+
+statement ok
+CREATE ROLE xcm_vedernikoff LOGIN PASSWORD 'ved_pw';
+
+
+statement ok
+GRANT SELECT ON xcm_mop_ledger TO xcm_vedernikoff;
+
+
+# ---- (1) column-grant DOWNGRADE mid-session
+# The intern starts with table-level SELECT (every column readable).
+connection c_ved user=xcm_vedernikoff password=ved_pw
+query
+SELECT id, secret, note FROM xcm_mop_ledger;
+----
+id	secret	note
+1	clickclack	iceberg
+
+
+# Owner downgrades the grant from table-level to column-level (id, note only).
+# In PostgreSQL a bare REVOKE SELECT (secret) is a no-op while table SELECT is
+# held, so the downgrade drops the table grant and re-grants only two columns.
+connection default
+statement ok
+REVOKE SELECT ON xcm_mop_ledger FROM xcm_vedernikoff;
+
+
+connection default
+statement ok
+GRANT SELECT (id, note) ON xcm_mop_ledger TO xcm_vedernikoff;
+
+
+# On the SAME live session: the secret column is now denied ...
+connection c_ved user=xcm_vedernikoff password=ved_pw
+statement error
+SELECT secret FROM xcm_mop_ledger;
+----
+db error: ERROR: permission denied for table xcm_mop_ledger<slt:ignore>
+
+
+# ... SELECT * expands to include secret, so it is denied too ...
+connection c_ved user=xcm_vedernikoff password=ved_pw
+statement error
+SELECT * FROM xcm_mop_ledger;
+----
+db error: ERROR: permission denied for table xcm_mop_ledger<slt:ignore>
+
+
+# ... but the still-granted columns read fine.
+connection c_ved user=xcm_vedernikoff password=ved_pw
+query
+SELECT id, note FROM xcm_mop_ledger;
+----
+id	note
+1	iceberg
+
+
+# ---- (2) forward GRANT of a NEW privilege to a live session
+# The intern has SELECT but no INSERT: the write is refused.
+connection c_ved user=xcm_vedernikoff password=ved_pw
+statement error
+INSERT INTO xcm_mop_ledger VALUES (2, 'x', 'y');
+----
+db error: ERROR: permission denied for table xcm_mop_ledger<slt:ignore>
+
+
+# Owner grants INSERT.
+connection default
+statement ok
+GRANT INSERT ON xcm_mop_ledger TO xcm_vedernikoff;
+
+
+# The very next INSERT on the same live session succeeds -- grants go live too,
+# not just revokes.
+connection c_ved user=xcm_vedernikoff password=ved_pw
+statement ok
+INSERT INTO xcm_mop_ledger VALUES (2, 'ignored', 'babsky');
+
+
+# ---- (3) REVOKE a privilege the session inherits through a GROUP
+# The intern joins the babsky committee (default INHERIT) and reads the iceberg
+# ledger only via the committee's SELECT.
+connection default
+statement ok
+CREATE ROLE xcm_babsky;
+
+
+connection default
+statement ok
+CREATE TABLE xcm_iceberg_ledger (id int, note text);
+
+
+connection default
+statement ok
+INSERT INTO xcm_iceberg_ledger VALUES (1, 'iceberg'), (2, 'mop');
+
+
+connection default
+statement ok
+GRANT SELECT ON xcm_iceberg_ledger TO xcm_babsky;
+
+
+connection default
+statement ok
+GRANT xcm_babsky TO xcm_vedernikoff;
+
+
+connection c_grp user=xcm_vedernikoff password=ved_pw
+query
+SELECT count(*) AS n FROM xcm_iceberg_ledger;
+----
+n
+2
+
+
+# Owner revokes SELECT from the committee. The intern holds no direct grant, so
+# the inherited privilege vanishes on the next statement.
+connection default
+statement ok
+REVOKE SELECT ON xcm_iceberg_ledger FROM xcm_babsky;
+
+
+connection c_grp user=xcm_vedernikoff password=ved_pw
+statement error
+SELECT count(*) FROM xcm_iceberg_ledger;
+----
+db error: ERROR: permission denied for table xcm_iceberg_ledger<slt:ignore>
+
+
+# Re-granting to the committee restores the inherited read on the next statement.
+connection default
+statement ok
+GRANT SELECT ON xcm_iceberg_ledger TO xcm_babsky;
+
+
+connection c_grp user=xcm_vedernikoff password=ved_pw
+query
+SELECT count(*) AS n FROM xcm_iceberg_ledger;
+----
+n
+2
+
+
+# ---- (4) TRANSITIVE membership revoke
+# Build a two-hop ladder: vedernikoff -> mid -> top, where only top holds a
+# grant on a dedicated ledger the intern has NO direct nor group access to. The
+# intern reads it purely through two levels of inheritance.
+connection default
+statement ok
+DROP TABLE IF EXISTS xcm_hop_ledger;
+
+
+connection default
+statement ok
+CREATE ROLE xcm_top;
+
+
+connection default
+statement ok
+CREATE ROLE xcm_mid;
+
+
+connection default
+statement ok
+GRANT xcm_top TO xcm_mid;
+
+
+connection default
+statement ok
+GRANT xcm_mid TO xcm_vedernikoff;
+
+
+connection default
+statement ok
+CREATE TABLE xcm_hop_ledger (id int, note text);
+
+
+connection default
+statement ok
+INSERT INTO xcm_hop_ledger VALUES (1, 'mop'), (2, 'iceberg');
+
+
+connection default
+statement ok
+GRANT SELECT ON xcm_hop_ledger TO xcm_top;
+
+
+# The intern reads the hop ledger via top (two hops away).
+connection c_hop user=xcm_vedernikoff password=ved_pw
+query
+SELECT count(*) AS n FROM xcm_hop_ledger;
+----
+n
+2
+
+
+# Owner snips the MIDDLE edge (mid is no longer a member of top). The intern's
+# two-hop path to top is broken, so top's grant no longer reaches him.
+connection default
+statement ok
+REVOKE xcm_top FROM xcm_mid;
+
+
+connection default
+query
+SELECT pg_has_role('xcm_vedernikoff', 'xcm_top', 'MEMBER') AS reaches_top;
+----
+reaches_top
+f
+
+
+connection c_hop user=xcm_vedernikoff password=ved_pw
+statement error
+SELECT count(*) FROM xcm_hop_ledger;
+----
+db error: ERROR: permission denied for table xcm_hop_ledger<slt:ignore>
+
+
+# ---- (5) VALID UNTIL in the past does NOT kill a live session
+# Expiry is checked only at password-auth time, never mid-session. So an already
+# authenticated session keeps working while a brand new connect is refused.
+connection default
+statement ok
+DROP ROLE IF EXISTS xcm_expiring;
+
+
+connection default
+statement ok
+CREATE ROLE xcm_expiring LOGIN PASSWORD 'exp_pw';
+
+
+connection default
+statement ok
+GRANT SELECT ON xcm_iceberg_ledger TO xcm_expiring;
+
+
+connection c_exp user=xcm_expiring password=exp_pw
+query
+SELECT count(*) AS n FROM xcm_iceberg_ledger;
+----
+n
+2
+
+
+# Owner back-dates the role's validity to the year 2000.
+connection default
+statement ok
+ALTER ROLE xcm_expiring VALID UNTIL '2000-01-01';
+
+
+# The ALREADY-LIVE session is unaffected on its next statement.
+connection c_exp user=xcm_expiring password=exp_pw
+query
+SELECT count(*) AS n FROM xcm_iceberg_ledger;
+----
+n
+2
+
+
+# But a brand new connect as the now-expired role is refused at auth time.
+connection c_exp_new user=xcm_expiring password=exp_pw
+statement error
+SELECT 1;
+----
+db error: FATAL: password authentication failed for user "xcm_expiring"<slt:ignore>
+
+
+# ---- (6) per-membership INHERIT flipped mid-session
+# GRANT ... WITH INHERIT {FALSE|TRUE} toggles whether a specific membership's
+# privileges flow to the member. Flipping it re-resolves live. (ALTER ROLE
+# NOINHERIT only sets the default for FUTURE grants and does not touch this
+# existing membership -- matches PostgreSQL.)
+connection default
+statement ok
+DROP ROLE IF EXISTS xcm_heir;
+
+
+connection default
+statement ok
+DROP ROLE IF EXISTS xcm_committee;
+
+
+connection default
+statement ok
+CREATE ROLE xcm_committee;
+
+
+connection default
+statement ok
+CREATE ROLE xcm_heir LOGIN PASSWORD 'heir_pw';
+
+
+connection default
+statement ok
+GRANT xcm_committee TO xcm_heir;
+
+
+connection default
+statement ok
+GRANT SELECT ON xcm_iceberg_ledger TO xcm_committee;
+
+
+# The heir inherits the committee's SELECT.
+connection c_heir user=xcm_heir password=heir_pw
+query
+SELECT count(*) AS n FROM xcm_iceberg_ledger;
+----
+n
+2
+
+
+# Owner turns inheritance OFF for this membership.
+connection default
+statement ok
+GRANT xcm_committee TO xcm_heir WITH INHERIT FALSE;
+
+
+# The heir no longer inherits: the next read is denied (he would have to SET ROLE
+# to the committee to use its privileges).
+connection c_heir user=xcm_heir password=heir_pw
+statement error
+SELECT count(*) FROM xcm_iceberg_ledger;
+----
+db error: ERROR: permission denied for table xcm_iceberg_ledger<slt:ignore>
+
+
+# Owner turns inheritance back ON; the inherited read returns on the next
+# statement, same session.
+connection default
+statement ok
+GRANT xcm_committee TO xcm_heir WITH INHERIT TRUE;
+
+
+connection c_heir user=xcm_heir password=heir_pw
+query
+SELECT count(*) AS n FROM xcm_iceberg_ledger;
+----
+n
+2
+
+
+# ---- cleanup (default = postgres superuser) ----
+
+connection default
+statement ok
+DROP TABLE xcm_mop_ledger;
+
+
+statement ok
+DROP TABLE xcm_iceberg_ledger;
+
+
+statement ok
+DROP TABLE xcm_hop_ledger;
+
+
+statement ok
+DROP ROLE xcm_vedernikoff;
+
+
+statement ok
+DROP ROLE xcm_babsky;
+
+
+statement ok
+DROP ROLE xcm_mid;
+
+
+statement ok
+DROP ROLE xcm_top;
+
+
+statement ok
+DROP ROLE xcm_expiring;
+
+
+statement ok
+DROP ROLE xcm_heir;
+
+
+statement ok
+DROP ROLE xcm_committee;

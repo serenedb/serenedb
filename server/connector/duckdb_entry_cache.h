@@ -79,6 +79,15 @@ class DuckDBEntryCache {
                          std::string_view schema_name, std::string_view name,
                          const catalog::Snapshot& snapshot);
 
+  // Builds the DuckDB entry and, when it wraps one of our catalog objects,
+  // sets `object` to the ACL-bearing object behind it.
+  duckdb::unique_ptr<duckdb::CatalogEntry> BuildEntryObject(
+    duckdb::CatalogType type, duckdb::Catalog& catalog,
+    duckdb::SchemaCatalogEntry& schema, ObjectId db_id,
+    std::string_view schema_name, std::string_view name,
+    const catalog::Snapshot& snapshot,
+    std::shared_ptr<const catalog::Object>& object);
+
   duckdb::unique_ptr<duckdb::CatalogEntry> BuildTableEntry(
     duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
     ObjectId db_id, std::string_view schema_name, std::string_view table_name,

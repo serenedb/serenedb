@@ -35,6 +35,7 @@
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 #include <yaclib/coro/on.hpp>
+#include <yaclib/util/result.hpp>
 
 #include "basics/lifecycle.h"
 #include "basics/log.h"
@@ -319,6 +320,10 @@ yaclib::Future<> RefreshLoop(std::weak_ptr<Storage> weak) {
           break;
       }
     }
+  } catch (const yaclib::ResultError<yaclib::StopError>&) {
+    // The executor was stopped (serened shutting down) while the loop awaited a
+    // timer -- a clean termination signal, not an error.
+    SDB_TRACE(SEARCH, "refresh loop stopped");
   } catch (const std::exception& ex) {
     SDB_ERROR(SEARCH, "refresh loop terminated by exception: ", ex.what());
   }
@@ -395,6 +400,10 @@ yaclib::Future<> CompactionCoordinator(std::weak_ptr<Storage> weak) {
         backoff = std::min(backoff, kMaxCompactionBackoff);
       }
     }
+  } catch (const yaclib::ResultError<yaclib::StopError>&) {
+    // The executor was stopped (serened shutting down) while the loop awaited a
+    // timer -- a clean termination signal, not an error.
+    SDB_TRACE(SEARCH, "compaction loop stopped");
   } catch (const std::exception& ex) {
     SDB_ERROR(SEARCH, "compaction loop terminated by exception: ", ex.what());
   }

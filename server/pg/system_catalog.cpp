@@ -372,9 +372,13 @@ void InitSystemViews(duckdb::Parser& parser) {
       duckdb::unique_ptr_cast<duckdb::SQLStatement, duckdb::SelectStatement>(
         std::move(parser.statements[0]));
 
+    catalog::Acl acl;
+    if (!view.superuser_only) {
+      acl.push_back(catalog::kSystemPublicSelect);
+    }
     auto entry = std::make_shared<catalog::PgSqlView>(
-      catalog::Permissions{}, ObjectId{}, ObjectId{}, view.name,
-      std::move(info));
+      catalog::Permissions{id::kRootUser, std::move(acl)}, ObjectId{},
+      ObjectId{}, view.name, std::move(info));
 
     auto& map = (view.schema == StaticStrings::kInformationSchema)
                   ? gInfoSchemaViews

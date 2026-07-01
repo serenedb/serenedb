@@ -339,6 +339,9 @@ class SystemTable : public catalog::VirtualTable {
   constexpr SystemTable() {
     _id = ObjectId{T::kId};
     _name = T::kName;
+    if constexpr (requires { T::kSuperuserOnly; }) {
+      _acl = {};  // no PUBLIC grant -> superuser-only
+    }
   }
 
   std::shared_ptr<catalog::VirtualTableSnapshot> CreateSnapshot(

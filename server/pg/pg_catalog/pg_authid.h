@@ -29,6 +29,7 @@ namespace sdb::pg {
 struct PgAuthid {
   static constexpr uint64_t kId = 107;
   static constexpr std::string_view kName = "pg_authid";
+  static constexpr bool kSuperuserOnly = true;
 
   Oid oid;
   Name rolname;

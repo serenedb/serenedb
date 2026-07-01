@@ -128,6 +128,10 @@ struct AclItem {
 using Acl = std::vector<AclItem>;
 using AclView = std::span<const AclItem>;
 
+inline constexpr AclItem kSystemPublicSelect{.grantee = kPublicGrantee,
+                                             .grantor = id::kRootUser,
+                                             .privs = AclMode::Select};
+
 struct Permissions {
   ObjectId owner;
   Acl acl;

@@ -662,39 +662,49 @@ duckdb::idx_t TsDictLocalState::EmitField(duckdb::DataChunk& output,
     return v ? duckdb::FlatVector::GetDataMutable<T>(*v) : nullptr;
   };
 
-  auto* term_v = vec(f.term_slot);
-  auto* raw_v = vec(f.term_raw_slot);
-  auto* term_d = data.operator()<duckdb::string_t>(f.term_slot);
-  auto* raw_d = data.operator()<duckdb::string_t>(f.term_raw_slot);
-  auto* count_d = data.operator()<int32_t>(f.count_slot);
-  auto* freq_d = data.operator()<int64_t>(f.freq_slot);
-  auto* score_d = data.operator()<float>(f.score_slot);
+  auto* term_vec = vec(f.term_slot);
+  auto* raw_vec = vec(f.term_raw_slot);
+  auto* term_data = data.operator()<duckdb::string_t>(f.term_slot);
+  auto* raw_data = data.operator()<duckdb::string_t>(f.term_raw_slot);
+  auto* count_data = data.operator()<int32_t>(f.count_slot);
+  auto* freq_data = data.operator()<int64_t>(f.freq_slot);
+  auto* score_data = data.operator()<float>(f.score_slot);
 
   const auto n = std::visit(
     [&](auto& cur) -> duckdb::idx_t {
-      const auto* meta = irs::get<irs::TermMeta>(cur.GetImpl());
+      const auto* meta = [&]() -> const irs::TermMeta* {
+        if ((!count_data && !freq_data) || !cur.Valid()) {
+          return nullptr;
+        }
+        const auto* meta = irs::get<irs::TermMeta>(cur.GetImpl());
+        SDB_ENSURE(meta, sdb::ERROR_INTERNAL,
+                   "ts_dict: term iterator has no term_meta");
+        return meta;
+      }();
       duckdb::idx_t count = 0;
       while (count < budget && cur.Valid()) {
-        cur.read();
+        if (meta) {
+          cur.read();
+        }
         const auto term = cur.value();
         const auto row = output_start + count;
         const auto* p = reinterpret_cast<const char*>(term.data());
-        if (term_d) {
-          term_d[row] =
-            duckdb::StringVector::AddString(*term_v, p, term.size());
+        if (term_data) {
+          term_data[row] =
+            duckdb::StringVector::AddString(*term_vec, p, term.size());
         }
-        if (raw_d) {
-          raw_d[row] =
-            duckdb::StringVector::AddStringOrBlob(*raw_v, p, term.size());
+        if (raw_data) {
+          raw_data[row] =
+            duckdb::StringVector::AddStringOrBlob(*raw_vec, p, term.size());
         }
-        if (count_d) {
-          count_d[row] = static_cast<int32_t>(meta ? meta->docs_count : 0);
+        if (count_data) {
+          count_data[row] = static_cast<int32_t>(meta->docs_count);
         }
-        if (freq_d) {
-          freq_d[row] = static_cast<int64_t>(meta ? meta->freq : 0);
+        if (freq_data) {
+          freq_data[row] = static_cast<int64_t>(meta->freq);
         }
-        if (score_d) {
-          score_d[row] = cur.Boost();
+        if (score_data) {
+          score_data[row] = cur.Boost();
         }
         ++count;
         cur.next();
@@ -718,9 +728,9 @@ duckdb::idx_t TsDictLocalState::EmitField(duckdb::DataChunk& output,
       if (slot == DConstants::INVALID_INDEX) {
         continue;
       }
-      auto& vec = output.data[slot];
+      auto& validity = duckdb::FlatVector::ValidityMutable(output.data[slot]);
       for (duckdb::idx_t i = 0; i < n; ++i) {
-        duckdb::FlatVector::SetNull(vec, output_start + i, true);
+        validity.SetInvalid(output_start + i);
       }
     }
   }

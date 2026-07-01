@@ -59,6 +59,8 @@
 #include "network/io_executor.h"
 #include "network/socket.h"
 #include "pg/connection_context.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::network {
 
@@ -146,9 +148,15 @@ class HttpSession final
       const std::string_view user =
         _user.empty() ? StaticStrings::kDefaultUser : _user;
       auto role = snapshot->GetRole(user);
-      SDB_ENSURE(role, ERROR_FORBIDDEN, "role \"", user, "\" does not exist");
-      SDB_ENSURE(role->CanLogin(), ERROR_FORBIDDEN, "role \"", user,
-                 "\" is not permitted to log in");
+      if (!role) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
+                        ERR_MSG("role \"", user, "\" does not exist"));
+      }
+      if (!role->CanLogin()) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
+          ERR_MSG("role \"", user, "\" is not permitted to log in"));
+      }
 
       _conn = DuckDBEngine::Instance().CreateConnection();
       _connection_ctx = std::make_shared<ConnectionContext>(
@@ -178,15 +186,16 @@ class HttpSession final
   // whole query and starve the pool under concurrent requests.
   yaclib::Task<duckdb::unique_ptr<duckdb::MaterializedQueryResult>> RunQuery(
     std::string sql, bool /*writes*/) override {
-    auto& conn = Connection();
-    auto& sdb_ctx = connector::GetSereneDBContext(*conn.context);
-    sdb_ctx.EnsureCatalogSnapshot();
-
     // Connection::Query() captures execution exceptions into the result's
     // ErrorData; the manual drive must do the same (table functions
     // THROW_SQL_ERROR), preserving the typed exception so the handlers'
-    // sqlstate->ES-error mapping still works.
+    // sqlstate->ES-error mapping still works. Connection() itself can throw
+    // (unknown / NOLOGIN role) -- keep it under the same guard so that surfaces
+    // as an ErrorData result too, not an escaped exception.
     try {
+      auto& conn = Connection();
+      auto& ctx = connector::GetSereneDBContext(*conn.context);
+      ctx.EnsureCatalogSnapshot();
       auto pending = conn.PendingQuery(sql, /*allow_stream_result=*/false);
       if (!pending->HasError()) {
         // In debug interleave queries more often to see more bugs.

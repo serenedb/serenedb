@@ -124,6 +124,7 @@ class Serened:
                 self.proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
+        self.proc = None
         shutil.rmtree(self.datadir, ignore_errors=True)
 
 
@@ -318,6 +319,10 @@ def run(binary: str) -> int:
                 if not ok:
                     failures.append(
                         (case["name"], f"{user}@{src}/{db}: {got}!={want}"))
+        # Persistence across restart is covered by the recovery suite
+        # (tests/sqllogic/recovery/hba_persist.test), which crashes serened and
+        # reads the ruleset back from pg_hba_file_rules -- the purpose-built
+        # harness for crash-durability.
     finally:
         srv.stop()
 

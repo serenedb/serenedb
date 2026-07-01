@@ -1,3 +1,5 @@
+control substitution on
+
 # Deny-path regression net: every authorization gate must actually REFUSE.
 # A regression in any of these is a privilege escalation, so each gate gets a
 # negative assertion (and a positive control where the deny would otherwise be
@@ -103,7 +105,7 @@ db error: ERROR: permission denied for table clickclack_vault
 
 connection c_intern user=vedernikoff_intern
 statement error
-COPY clickclack_vault TO '/tmp/rbac_authorization_denied_never_written.csv';
+COPY clickclack_vault TO '${__TEST_DIR__}/rbac_authorization_denied_never_written.csv';
 ----
 db error: ERROR: permission denied for table clickclack_vault
 

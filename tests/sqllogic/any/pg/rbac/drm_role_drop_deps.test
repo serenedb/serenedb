@@ -1,0 +1,101 @@
+# DROP ROLE dependency rules, single-connection so byte-identical on PostgreSQL
+# and serenedb. A plain role with no owned objects drops cleanly and disappears
+# from pg_roles; a role that OWNS an object cannot be dropped until the object
+# is gone ("cannot be dropped because some objects depend on it"). Ownership is
+# established via SET ROLE (the created object's owner is the effective role),
+# so no second authenticated session is needed.
+#
+# Lore: vedernikoff drops the transient intern; babsky owns the mop and so
+# resists being dropped until the mop is cleared.
+
+statement ok
+DROP TABLE IF EXISTS drm_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS drm_intern;
+
+
+statement ok
+DROP ROLE IF EXISTS drm_babsky;
+
+
+# A plain role with no owned objects exists, then drops cleanly.
+statement ok
+CREATE ROLE drm_intern;
+
+
+query
+SELECT count(*) AS present FROM pg_roles WHERE rolname = 'drm_intern';
+----
+present
+1
+
+
+statement ok
+DROP ROLE drm_intern;
+
+
+query
+SELECT count(*) AS present FROM pg_roles WHERE rolname = 'drm_intern';
+----
+present
+0
+
+
+# A role that owns an object cannot be dropped. Create the object AS that role
+# via SET ROLE, so ownership lands on it (owner = effective role).
+statement ok
+CREATE ROLE drm_babsky;
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO drm_babsky;
+
+
+statement ok
+SET ROLE drm_babsky;
+
+
+statement ok
+CREATE TABLE drm_mop (id int);
+
+
+statement ok
+RESET ROLE;
+
+
+# Ownership landed on drm_babsky.
+query
+SELECT (SELECT rolname FROM pg_roles WHERE oid = c.relowner) AS owner
+FROM pg_class c WHERE c.relname = 'drm_mop';
+----
+owner
+drm_babsky
+
+
+# DROP ROLE is refused while the role still owns the table.
+statement error
+DROP ROLE drm_babsky;
+----
+db error: ERROR: role "drm_babsky" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Once the owned object is gone and grants revoked, the role drops.
+statement ok
+DROP TABLE drm_mop;
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM drm_babsky;
+
+
+statement ok
+DROP ROLE drm_babsky;
+
+
+query
+SELECT count(*) AS present FROM pg_roles WHERE rolname = 'drm_babsky';
+----
+present
+0

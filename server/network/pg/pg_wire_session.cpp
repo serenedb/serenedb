@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
 
@@ -109,8 +110,6 @@ inline bool IsExtended(char type) {
 // STDOUT to /dev/stdin / /dev/stdout; a COPY to/from a real file classifies as
 // None (it runs through the normal Prepare/Execute path).
 enum class CopyDir : uint8_t { None, FromStdin, ToStdout };
-
-// CopyFormat lives in the header (it is a parameter to the COPY coroutines).
 
 struct CopyKind {
   CopyDir dir = CopyDir::None;
@@ -361,6 +360,16 @@ bool PgWireSession<Kind>::SetupConnection() {
         ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
         ERR_MSG("role \"", user, "\" is not permitted to log in")));
     return false;
+  }
+  if (_role_conns && !role->IsSuperuser() && role->HasConnLimit()) {
+    if (!_role_conns->TryAcquire(role->GetId(), role->ConnLimit())) {
+      WriteFatalResponse(
+        this->_send, SQL_ERROR_DATA(ERR_CODE(ERRCODE_TOO_MANY_CONNECTIONS),
+                                    ERR_MSG("too many connections for role \"",
+                                            user, "\"")));
+      return false;
+    }
+    _conn_limit_role = role->GetId();
   }
 
   _conn = DuckDBEngine::Instance().CreateConnection();
@@ -730,36 +739,49 @@ void PgWireSession<Kind>::WriteCommandTag(
 }
 
 template<SocketKind Kind>
+bool PgWireSession<Kind>::PasswordExpired(std::string_view user) {
+  const auto role = catalog::GetCatalog().GetCatalogSnapshot()->GetRole(user);
+  if (!role || !role->HasValidUntil()) {
+    return false;
+  }
+  return duckdb::Timestamp::GetCurrentTimestamp().value >= role->ValidUntil();
+}
+
+template<SocketKind Kind>
 yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
   if (!_credentials) {
-    co_return true;  // no provider configured -> trust (current behavior)
+    co_return true;
   }
   const auto credential = _credentials->LookupCredential(UserName());
   if (!credential) {
-    co_return true;  // no credential for this user -> trust
+    co_return true;
   }
-  switch (_auth_method) {
-    case AuthMethod::Scram:
-      if (credential->scram) {
-        co_return co_await AuthenticateScram(*credential->scram);
-      }
-      break;
-    case AuthMethod::Md5:
-      if (credential->cleartext) {
-        co_return co_await AuthenticateMd5(*credential->cleartext);
-      }
-      break;
-    case AuthMethod::Cleartext:
-      if (credential->cleartext) {
-        co_return co_await AuthenticateCleartext(*credential->cleartext);
-      }
-      break;
+  bool ok = false;
+  if (_auth_method == AuthMethod::Scram && credential->scram) {
+    ok = co_await AuthenticateScram(*credential->scram);
+  } else if (_auth_method == AuthMethod::Md5 && credential->cleartext) {
+    ok = co_await AuthenticateMd5(*credential->cleartext);
+  } else if (_auth_method == AuthMethod::Cleartext && credential->cleartext) {
+    ok = co_await AuthenticateCleartext(*credential->cleartext);
+  } else {
+    WriteFatalResponse(
+      this->_send,
+      SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
+                     ERR_MSG("no usable authentication credential for user")));
+    co_return false;
   }
-  WriteFatalResponse(
-    this->_send,
-    SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
-                   ERR_MSG("no usable authentication credential for user")));
-  co_return false;
+  if (!ok) {
+    co_return false;
+  }
+  if (PasswordExpired(UserName())) {
+    WriteFatalResponse(
+      this->_send,
+      SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_PASSWORD),
+                     ERR_MSG("password authentication failed for user \"",
+                             UserName(), "\"")));
+    co_return false;
+  }
+  co_return true;
 }
 
 template<SocketKind Kind>
@@ -1116,7 +1138,6 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
         // framing), instead of the single-threaded CopyFunction.
         co_await RunCopyToStdout(std::move(statement), copy.format);
       } else {
-        // csv/json/parquet/...: DuckDB writes the bytes, the session frames.
         co_await RunCopyToStdoutViaFormat(std::move(statement), copy.format);
       }
       continue;
@@ -1538,7 +1559,6 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
           }
           if (is_text && scanner.Ended()) {
             eod = true;
-            // worker sees EOF; the rest of the stream is dropped
             bridge.Finish();
           }
         }
@@ -1841,11 +1861,7 @@ void PgWireSession<Kind>::HandleBind(std::string_view payload) {
   }
 
   Portal portal;
-  portal.stmt = slot;  // co-own the plan
-  // Only a Prepared statement carries parameters and result columns; a deferred
-  // COPY or the empty query binds with none. Planning (PendingQuery) is
-  // deferred to Execute, where max_rows picks the wire-collector (full drain)
-  // vs the streaming (cursor paging) path; plan-time errors surface there.
+  portal.stmt = slot;
   if (statement.GetKind() == Statement::Kind::Prepared) {
     portal.bind_info = ParseBindVars(payload, statement, statement_name);
   }
@@ -2014,7 +2030,6 @@ yaclib::Task<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
       co_await ExecutePrepared(portal, max_rows);
       co_return {};
   }
-  co_return {};  // unreachable: the switch above is exhaustive
 }
 
 template<SocketKind Kind>
@@ -2028,7 +2043,6 @@ yaclib::Task<> PgWireSession<Kind>::RunDeferredCopy(Portal& portal) {
     if (IsNativeCopyFormat(copy.format)) {
       co_await RunCopyToStdout(std::move(deferred), copy.format);
     } else {
-      // csv/json/parquet/...: DuckDB writes the bytes, the session frames.
       co_await RunCopyToStdoutViaFormat(std::move(deferred), copy.format);
     }
   } else {
@@ -2503,6 +2517,10 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
       this->KickSend();
       co_await RunCommandLoop();
     }
+  }
+  if (_conn_limit_role) {
+    _role_conns->Release(*_conn_limit_role);
+    _conn_limit_role.reset();
   }
   // Teardown runs where everything was created: results/portals die on a duck
   // worker; their cleanup may emit notices that must be stolen before

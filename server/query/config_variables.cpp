@@ -25,6 +25,7 @@
 #include <absl/strings/str_replace.h>
 #include <absl/strings/str_split.h>
 
+#include <algorithm>
 #include <duckdb/common/assert.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/types/string.hpp>
@@ -35,9 +36,11 @@
 #include <magic_enum/magic_enum.hpp>
 #include <string>
 
+#include "auth/role_closure.h"
 #include "basics/debugging.h"
 #include "basics/serializer.h"
 #include "basics/static_strings.h"
+#include "catalog/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
@@ -56,10 +59,6 @@ void Readonly(duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {
                                       std::string_view{Name}.data()};
 }
 
-// Settings that are writable in principle but where serened doesn't yet honor
-// the change. Emit a NOTICE so clients that care can see the SET is a no-op
-// on the server side; the value still flows into DuckDB session state so
-// SHOW round-trips what the client set.
 template<basics::detail::FixedString Name>
 void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
                  duckdb::Value& value) {
@@ -86,9 +85,79 @@ void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
       "\" is accepted for compatibility but is not enforced by serened")));
 }
 
-// PostgreSQL drivers supply client_encoding in many forms (UTF8, UTF-8, utf_8,
-// utf8, 'utf-8', "utf-8", ...).
-// To tackle this we have a special overload for encoding.
+void SyncIsSuperuser(ConnectionContext& conn) {
+  const bool super = conn.EnsureCatalogSnapshot()
+                       ->EffectiveRoleClosure(conn.GetRoleId())
+                       .is_superuser;
+  conn.SetSetting("is_superuser", super ? "on" : "off", /*is_local=*/false);
+}
+
+void SetRoleCallback(duckdb::ClientContext& ctx, duckdb::SetScope,
+                     duckdb::Value& value) {
+  auto& conn = connector::GetSereneDBContext(ctx);
+  const std::string name = value.ToString();
+  if (absl::EqualsIgnoreCase(name, "none")) {
+    conn.SetEffectiveRole(conn.GetSessionRoleId(), /*is_none=*/true);
+    value = duckdb::Value{"none"};
+    SyncIsSuperuser(conn);
+    return;
+  }
+  auto snapshot = conn.EnsureCatalogSnapshot();
+  auto target = snapshot->GetRole(name);
+  if (!target) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("role \"", name, "\" does not exist"));
+  }
+  // SET ROLE is relative to the session role, not the (possibly already
+  // switched) effective role: members-of via set_option edges, or superuser.
+  const ObjectId session = conn.GetSessionRoleId();
+  if (!snapshot->EffectiveRoleClosure(session).is_superuser &&
+      !auth::ComputeSetRoleClosure(*snapshot, session)
+         .contains(target->GetId())) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    ERR_MSG("permission denied to set role \"", name, "\""));
+  }
+  conn.SetEffectiveRole(target->GetId(), /*is_none=*/false);
+  value = duckdb::Value{std::string{target->GetName()}};
+  SyncIsSuperuser(conn);
+}
+
+void ResetRoleCallback(duckdb::ClientContext& ctx, duckdb::SetScope) {
+  auto& conn = connector::GetSereneDBContext(ctx);
+  conn.SetEffectiveRole(conn.GetSessionRoleId(), /*is_none=*/true);
+  SyncIsSuperuser(conn);
+}
+
+void SetSessionAuthCallback(duckdb::ClientContext& ctx, duckdb::SetScope,
+                            duckdb::Value& value) {
+  auto& conn = connector::GetSereneDBContext(ctx);
+  const std::string name = value.ToString();
+  auto snapshot = conn.EnsureCatalogSnapshot();
+  auto target = snapshot->GetRole(name);
+  if (!target) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("role \"", name, "\" does not exist"));
+  }
+  const bool login_super =
+    snapshot->EffectiveRoleClosure(conn.GetLoginRoleId()).is_superuser;
+  if (!login_super && target->GetId() != conn.GetLoginRoleId()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+      ERR_MSG("permission denied to set session authorization \"", name, "\""));
+  }
+  conn.SetSessionRole(target->GetId());
+  value = duckdb::Value{std::string{target->GetName()}};
+  conn.SetSetting("role", "none", /*is_local=*/false);
+  SyncIsSuperuser(conn);
+}
+
+void ResetSessionAuthCallback(duckdb::ClientContext& ctx, duckdb::SetScope) {
+  auto& conn = connector::GetSereneDBContext(ctx);
+  conn.ResetIdentity();
+  conn.SetSetting("role", "none", /*is_local=*/false);
+  SyncIsSuperuser(conn);
+}
+
 void NoOverwriteClientEncoding(duckdb::ClientContext& ctx, duckdb::SetScope,
                                duckdb::Value& value) {
   auto canonicalize = [](std::string_view name) {
@@ -116,11 +185,6 @@ void NoOverwriteClientEncoding(duckdb::ClientContext& ctx, duckdb::SetScope,
     got_current ? current.ToString() : std::string{}, new_str};
 }
 
-// PG validates DateStyle as an output format (ISO / SQL / Postgres / German)
-// and/or a field order (YMD / DMY / MDY, plus the EURO*, NONEURO* and US
-// aliases), comma-separated in either order; an unrecognized token is
-// invalid_parameter_value. serenedb only renders ISO, but it still rejects
-// garbage so a bad value is a user error, not silently stored.
 void CheckDateStyle(duckdb::ClientContext&, duckdb::SetScope,
                     duckdb::Value& value) {
   if (value.IsNull()) {
@@ -131,11 +195,10 @@ void CheckDateStyle(duckdb::ClientContext&, duckdb::SetScope,
     const auto token = absl::AsciiStrToUpper(absl::StripAsciiWhitespace(field));
     static constexpr std::string_view kKnown[] = {
       "ISO", "SQL", "POSTGRES", "GERMAN", "YMD", "DMY", "MDY", "US", "DEFAULT"};
-    bool ok =
-      absl::StartsWith(token, "EURO") || absl::StartsWith(token, "NONEURO");
-    for (const auto known : kKnown) {
-      ok = ok || token == known;
-    }
+    const bool ok = absl::StartsWith(token, "EURO") ||
+                    absl::StartsWith(token, "NONEURO") ||
+                    std::ranges::any_of(
+                      kKnown, [&](std::string_view k) { return k == token; });
     if (!ok) {
       throw duckdb::InvalidInputException(
         "invalid value for parameter \"DateStyle\": \"%s\"", raw);
@@ -143,8 +206,6 @@ void CheckDateStyle(duckdb::ClientContext&, duckdb::SetScope,
   }
 }
 
-// PG's IntervalStyle is an enum GUC: postgres / postgres_verbose /
-// sql_standard / iso_8601. Anything else is invalid_parameter_value.
 void CheckIntervalStyle(duckdb::ClientContext&, duckdb::SetScope,
                         duckdb::Value& value) {
   if (value.IsNull()) {
@@ -515,7 +576,8 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::VARCHAR,
         "Sets the current session's user name.",
         [] { return duckdb::Value{std::string{StaticStrings::kDefaultUser}}; },
-        NoOverwrite<"session_authorization">,
+        SetSessionAuthCallback,
+        ResetSessionAuthCallback,
       },
     },
     {
@@ -523,8 +585,9 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::VARCHAR,
         "Sets the current role.",
-        [] { return duckdb::Value{std::string{StaticStrings::kDefaultUser}}; },
-        NoOverwrite<"role">,
+        [] { return duckdb::Value{"none"}; },
+        SetRoleCallback,
+        ResetRoleCallback,
       },
     },
     {

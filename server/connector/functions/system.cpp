@@ -123,12 +123,25 @@ void CurrentSetting2Function(duckdb::DataChunk& args,
   }
 }
 
+// current_user / current_role -> the effective role (follows SET ROLE).
 void CurrentUserFunction(duckdb::DataChunk& args,
                          duckdb::ExpressionState& state,
                          duckdb::Vector& result) {
   auto& context = state.GetContext();
   const auto& conn_ctx = GetSereneDBContext(context);
-  result.Reference(conn_ctx.user(), duckdb::count_t(args.size()));
+  auto value = duckdb::Value(conn_ctx.EffectiveUserName());
+  result.Reference(value, duckdb::count_t(args.size()));
+}
+
+// session_user -> the session role (follows SET SESSION AUTHORIZATION, not
+// SET ROLE).
+void SessionUserFunction(duckdb::DataChunk& args,
+                         duckdb::ExpressionState& state,
+                         duckdb::Vector& result) {
+  auto& context = state.GetContext();
+  const auto& conn_ctx = GetSereneDBContext(context);
+  auto value = duckdb::Value(conn_ctx.SessionUserName());
+  result.Reference(value, duckdb::count_t(args.size()));
 }
 
 // pg_backend_pid() -> int4: this connection's backend PID, the same value sent
@@ -563,7 +576,8 @@ bool HasAnyObjectPrivilegeText(const catalog::Snapshot& snapshot,
                                std::string_view priv_text) {
   const auto modes = ParsePrivCheckText(priv_text, type);
   if (modes.privs != catalog::AclMode::NoRights &&
-      auth::HasAnyPrivilege(snapshot, role_id, object, modes.privs)) {
+      auth::HasPrivilege(snapshot, role_id, object, modes.privs,
+                         auth::PrivMatch::Any)) {
     return true;
   }
   if (modes.grant_options == catalog::AclMode::NoRights) {
@@ -1784,7 +1798,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     "current_role", {}, duckdb::LogicalType::VARCHAR, CurrentUserFunction});
 
   loader.RegisterFunction(duckdb::ScalarFunction{
-    "session_user", {}, duckdb::LogicalType::VARCHAR, CurrentUserFunction});
+    "session_user", {}, duckdb::LogicalType::VARCHAR, SessionUserFunction});
 
   loader.RegisterFunction(duckdb::ScalarFunction{
     "has_table_privilege",

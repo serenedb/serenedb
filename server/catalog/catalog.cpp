@@ -4928,6 +4928,7 @@ void InitCatalog() {
       .name = std::string{StaticStrings::kDefaultUser},
       .options = static_cast<uint32_t>(RoleOption::All),
       .conn_limit = Role::kNoConnLimit,
+      .valid_until = Role::kNoValidUntil,
     });
     if (auto br = GetCatalog().CreateRole(NoAccessCheck(), std::move(root));
         !br.ok()) {

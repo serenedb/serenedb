@@ -334,6 +334,7 @@ void Server::AddUnixListener(const network::ListenSpec& spec) {
     deps.max_message_bytes = _max_message;
     deps.auth_method = _auth_method;
     deps.active = &_active;
+    deps.role_conns = &_role_conns;
     deps.max_connections = spec.max_connections.value_or(_max_connections);
     deps.auth_timeout = _auth_timeout;
     deps.proxy = spec.proxy;
@@ -391,6 +392,7 @@ void Server::AddListener(const network::ListenSpec& spec) {
     deps.max_message_bytes = _max_message;
     deps.auth_method = _auth_method;
     deps.active = &_active;
+    deps.role_conns = &_role_conns;
     deps.max_connections = spec.max_connections.value_or(_max_connections);
     deps.auth_timeout = _auth_timeout;
     deps.proxy = spec.proxy;

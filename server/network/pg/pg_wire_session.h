@@ -85,6 +85,7 @@
 #include "network/pg/frame_reader.h"
 #include "network/pg/pg_frame_codec.h"
 #include "network/pg/protocol_state.h"
+#include "network/pg/role_connection_counter.h"
 #include "network/pg/startup_request.h"
 #include "network/pg/wire_collector.h"
 #include "network/pg/wire_frames.h"
@@ -121,6 +122,8 @@ struct PgServerContext {
   // unlimited). Over-cap connections get 53300 then close.
   std::atomic<uint32_t>* active = nullptr;
   uint32_t max_connections = 0;
+  // Shared per-role live-connection counter for CONNECTION LIMIT enforcement.
+  RoleConnectionCounter* role_conns = nullptr;
   // Deadline for TLS handshake + startup + auth (0 = off); slowloris guard.
   std::chrono::milliseconds auth_timeout{0};
   // HAProxy PROXY-protocol preface policy (off / optional / require).
@@ -156,6 +159,7 @@ class PgWireSession
       _max_message{ctx.max_message_bytes},
       _active{ctx.active},
       _max_conn{ctx.max_connections},
+      _role_conns{ctx.role_conns},
       _auth_timeout{ctx.auth_timeout},
       _proxy{ctx.proxy},
       _frames{this->_recv} {}
@@ -173,6 +177,7 @@ class PgWireSession
       _max_message{ctx.max_message_bytes},
       _active{ctx.active},
       _max_conn{ctx.max_connections},
+      _role_conns{ctx.role_conns},
       _auth_timeout{ctx.auth_timeout},
       _proxy{ctx.proxy},
       _frames{this->_recv} {}
@@ -190,6 +195,7 @@ class PgWireSession
       _max_message{ctx.max_message_bytes},
       _active{ctx.active},
       _max_conn{ctx.max_connections},
+      _role_conns{ctx.role_conns},
       _auth_timeout{ctx.auth_timeout},
       _proxy{ctx.proxy},
       _frames{this->_recv} {}
@@ -259,6 +265,8 @@ class PgWireSession
   yaclib::Task<bool> AuthenticateCleartext(const std::string& expected);
   yaclib::Task<bool> AuthenticateMd5(const std::string& expected);
   yaclib::Task<bool> AuthenticateScram(const ScramVerifier& verifier);
+  // True when the role's VALID UNTIL has passed (password expired).
+  static bool PasswordExpired(std::string_view user);
 
   // The duck-side half of the session: an endless coroutine hosted by _task
   // on the DuckDB scheduler. Prologue (SetupConnection + startup burst) ->
@@ -357,6 +365,8 @@ class PgWireSession
   uint32_t _max_message = kDefaultMaxMessageBytes;
   std::atomic<uint32_t>* _active = nullptr;
   uint32_t _max_conn = 0;
+  RoleConnectionCounter* _role_conns = nullptr;
+  std::optional<ObjectId> _conn_limit_role;
   std::chrono::milliseconds _auth_timeout{0};
   ProxyMode _proxy = ProxyMode::Off;
   FrameReader _frames;

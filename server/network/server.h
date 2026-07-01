@@ -92,6 +92,7 @@ class Server final {
   // sessions that point at them via the per-listener contexts.
   network::pg::CancelRegistry _cancel;
   std::atomic<std::uint32_t> _active{0};
+  network::pg::RoleConnectionCounter _role_conns;
   // Shared (cross-listener) auth sources; a future RBAC layer replaces them.
   std::unique_ptr<network::CredentialProvider> _credentials;
   std::unique_ptr<network::http::ApiKeyValidator> _api_key_validator;

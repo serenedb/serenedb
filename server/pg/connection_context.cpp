@@ -42,7 +42,27 @@ ConnectionContext::ConnectionContext(
     _database{std::move(database)},
     _send_buffer{send_buffer},
     _copy_queue{copy_queue},
-    _role_id{role_id} {}
+    _login_role_id{role_id},
+    _session_role_id{role_id},
+    _effective_role_id{role_id} {}
+
+namespace {
+
+std::string RoleName(const catalog::Snapshot& snapshot, ObjectId role,
+                     const std::string& fallback) {
+  auto obj = snapshot.GetObject<catalog::Role>(role);
+  return obj ? std::string{obj->GetName()} : fallback;
+}
+
+}  // namespace
+
+std::string ConnectionContext::EffectiveUserName() const {
+  return RoleName(*EnsureCatalogSnapshot(), _effective_role_id, _user);
+}
+
+std::string ConnectionContext::SessionUserName() const {
+  return RoleName(*EnsureCatalogSnapshot(), _session_role_id, _user);
+}
 
 std::string ConnectionContext::GetCurrentSchemaFromSnapshot(
   std::shared_ptr<const catalog::Snapshot> snapshot) const {

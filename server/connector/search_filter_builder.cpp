@@ -25,6 +25,7 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
+#include <algorithm>
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/planner/expression/bound_between_expression.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
@@ -36,8 +37,11 @@
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/analysis/wildcard_analyzer.hpp>
+#include <iresearch/index/index_reader.hpp>
+#include <iresearch/index/iterators.hpp>
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/all_filter.hpp>
+#include <iresearch/search/automaton_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/column_existence_filter.hpp>
 #include <iresearch/search/granular_range_filter.hpp>
@@ -56,8 +60,11 @@
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/search/wildcard_ngram_filter.hpp>
 #include <iresearch/types.hpp>
+#include <iresearch/utils/automaton_utils.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 #include <magic_enum/magic_enum.hpp>
+#include <map>
+#include <optional>
 
 #include "basics/assert.h"
 #include "basics/containers/node_hash_map.h"

@@ -361,12 +361,16 @@ duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
   if (collected == 0 || !g.has_external_projections) {
     return collected;
   }
-  SDB_ASSERT(l.index_source);
-  SDB_ASSERT(std::visit(
-    absl::Overload{[](std::monostate) { return false; },
-                   [&](auto& pk) { return PrimaryKeysSize(pk) == collected; }},
-    l.pk_batch));
-  return l.index_source->Materialize(ctx, l.pk_batch, 0, collected, output);
+  if constexpr (requires { l.index_source; l.pk_batch; }) {
+    SDB_ASSERT(l.index_source);
+    SDB_ASSERT(std::visit(
+      absl::Overload{[](std::monostate) { return false; },
+                     [&](auto& pk) { return PrimaryKeysSize(pk) == collected; }},
+      l.pk_batch));
+    return l.index_source->Materialize(ctx, l.pk_batch, 0, collected, output);
+  } else {
+    return collected;
+  }
 }
 
 template<typename Gstate, typename Lstate>

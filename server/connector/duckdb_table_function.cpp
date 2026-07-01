@@ -347,6 +347,14 @@ void SearchScan::AppendSummary(
                     ", ");
     out.insert("Offsets", std::move(cols));
   }
+  if (TsDictMode()) {
+    auto names = absl::StrJoin(
+      ts_dicts | std::views::transform([&](const auto& req) {
+        return ColumnNameFor(bind, catalog::Column::Id{req.field_id});
+      }),
+      ", ");
+    out.insert("TsDict", std::move(names));
+  }
 }
 
 struct ProjectionEntry {
@@ -426,7 +434,12 @@ bool ProjectionIsVirtual(const SereneDBScanBindData& bind,
   }
   const auto catalog_col_id = bind.column_ids[col_id];
   return catalog_col_id == catalog::Column::kInvertedIndexScoreId ||
-         catalog_col_id == catalog::Column::kInvertedIndexOffsetsId;
+         catalog_col_id == catalog::Column::kInvertedIndexOffsetsId ||
+         catalog_col_id == catalog::Column::kInvertedIndexTermId ||
+         catalog_col_id == catalog::Column::kInvertedIndexTermRawId ||
+         catalog_col_id == catalog::Column::kInvertedIndexTermCountId ||
+         catalog_col_id == catalog::Column::kInvertedIndexTermFreqId ||
+         catalog_col_id == catalog::Column::kInvertedIndexTermScoreId;
 }
 
 std::vector<ProjectionEntry> BuildProjectionEntries(

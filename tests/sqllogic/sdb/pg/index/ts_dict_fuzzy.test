@@ -1,0 +1,107 @@
+hash-threshold 100
+
+# Term-dictionary WHERE constraints expressed as ts_* / search predicates are
+# claimed via the shared filter builder and the matched terms are enumerated
+# from the built filter (no term-matching logic is duplicated). Levenshtein
+# carries a per-term score derived from the edit distance.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tf(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+)
+
+
+statement ok
+CREATE TABLE tfd(id INTEGER PRIMARY KEY, body VARCHAR)
+
+
+statement ok
+CREATE INDEX tfd_idx ON tfd USING inverted(body tf)
+
+
+statement ok
+INSERT INTO tfd VALUES
+  (1, 'apple apricot avocado'),
+  (2, 'apple banana'),
+  (3, 'aple grape')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) tfd;
+
+
+# Prefix completion via ts_starts_with.
+query T
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM tfd_idx WHERE body @@ ts_starts_with('ap') ORDER BY term
+----
+term
+aple
+apple
+apricot
+
+
+# Fuzzy "did you mean" via ts_levenshtein: matched terms carry an edit-distance
+# score (exact match scores highest).
+query TR
+SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_score(body)) AS score
+FROM tfd_idx WHERE body @@ ts_levenshtein('apple', 1) ORDER BY term
+----
+term	score
+aple	0.75
+apple	1
+
+
+# Regular-expression term matching via ts_regexp.
+query T
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM tfd_idx WHERE body @@ ts_regexp('a[a-z]*e') ORDER BY term
+----
+term
+aple
+apple
+
+
+# The levenshtein_matches sugar predicate is claimed the same way.
+query T
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM tfd_idx WHERE levenshtein_matches(body, 'banana', 1) ORDER BY term
+----
+term
+banana
+
+
+# Counts/scores still merge across segments: add a second segment containing a
+# near-duplicate of 'apple' and re-run the fuzzy query.
+statement ok
+INSERT INTO tfd VALUES (4, 'apple appl')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) tfd;
+
+
+query TIR
+SELECT unnest(ts_dict_agg(body)) AS term,
+       unnest(ts_dict_count(body)) AS docs,
+       unnest(ts_dict_score(body)) AS score
+FROM tfd_idx WHERE body @@ ts_levenshtein('apple', 1) ORDER BY term
+----
+term	docs	score
+aple	1	0.75
+appl	1	0.75
+apple	3	1
+
+
+statement ok
+DROP TABLE tfd
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY tf

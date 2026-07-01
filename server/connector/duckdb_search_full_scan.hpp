@@ -26,11 +26,22 @@
 #include <duckdb.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/iterators.hpp>
+#include <iresearch/search/all_filter.hpp>
+#include <iresearch/search/automaton_filter.hpp>
 #include <iresearch/search/filter.hpp>
+#include <iresearch/search/levenshtein_filter.hpp>
+#include <iresearch/search/prefix_filter.hpp>
+#include <iresearch/search/range_filter.hpp>
+#include <iresearch/search/term_filter.hpp>
+#include <iresearch/search/terms_filter.hpp>
+#include <iresearch/utils/string.hpp>
 #include <iresearch/search/score_function.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <memory>
+#include <map>
 #include <optional>
+#include <span>
+#include <variant>
 #include <vector>
 
 #include "connector/duckdb_scan_base.hpp"
@@ -39,7 +50,13 @@
 #include "connector/offsets_collector.hpp"
 #include "connector/search_pk_lookup.h"
 
+namespace irs {
+struct TermMeta;
+}  // namespace irs
+
 namespace sdb::connector {
+
+struct TsDictShared {};
 
 struct SearchFullScanGlobalState : public CommonScanGlobalState {
   SearchFullScanGlobalState() noexcept = default;
@@ -71,6 +88,9 @@ struct SearchFullScanGlobalState : public CommonScanGlobalState {
   const SearchScan* scan = nullptr;
 
   bool count_only = false;
+
+  std::unique_ptr<TsDictShared> ts_dict;
+  bool TsDictMode() const { return ts_dict != nullptr; }
 };
 
 struct SearchFullScanTopKLocalState : public SegDocBufferedScanLocalState {
@@ -136,6 +156,44 @@ struct SearchFullScanCountLocalState : public CommonScanLocalState {
   bool OnSegmentsExhausted(duckdb::ClientContext& ctx,
                            SearchFullScanGlobalState& g,
                            duckdb::DataChunk& output);
+};
+
+struct TsDictLocalState : public CommonScanLocalState {
+  // Per enumerated field: its output column slots.
+  struct FieldState {
+    irs::field_id field_id = irs::field_limits::invalid();
+    duckdb::idx_t term_slot = duckdb::DConstants::INVALID_INDEX;
+    duckdb::idx_t term_raw_slot = duckdb::DConstants::INVALID_INDEX;
+    duckdb::idx_t count_slot = duckdb::DConstants::INVALID_INDEX;
+    duckdb::idx_t freq_slot = duckdb::DConstants::INVALID_INDEX;
+    duckdb::idx_t score_slot = duckdb::DConstants::INVALID_INDEX;
+  };
+
+  std::vector<FieldState> fields;
+  // Single-field WHERE constraint (term_filter) -- only set when fields.size()
+  // == 1; null for global / multi-field enumeration.
+  const irs::Filter* term_filter = nullptr;
+
+  void StartSegment(duckdb::ClientContext& ctx, const irs::SubReader& seg,
+                    uint32_t seg_idx, SearchFullScanGlobalState& g);
+  duckdb::idx_t EmitChunk(duckdb::ClientContext& ctx,
+                          SearchFullScanGlobalState& g,
+                          duckdb::DataChunk& output,
+                          duckdb::idx_t output_start);
+
+ private:
+  void OpenField(size_t field_idx);
+  duckdb::idx_t EmitField(duckdb::DataChunk& output, duckdb::idx_t output_start,
+                          duckdb::idx_t budget);
+
+  const irs::SubReader* _seg = nullptr;
+  size_t _cur_field = 0;
+  std::variant<irs::AllTermIterator, irs::ByTermIterator,
+               irs::ByPrefixIterator, irs::ByRangeIterator,
+               irs::ByTermsIterator, irs::LevenshteinIterator,
+               irs::AutomatonIterator>
+    _cursor;
+  const irs::TermMeta* _meta = nullptr;
 };
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(

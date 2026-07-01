@@ -34,53 +34,34 @@ namespace irs {
 namespace {
 
 template<typename Visitor>
-void VisitImpl(const SubReader& segment, const TermReader& reader,
-               bytes_view prefix, Visitor& visitor) {
-  auto terms = reader.iterator(SeekMode::NORMAL);
-
-  // seek to prefix
-  if (!terms) [[unlikely]] {
-    return;
-  }
-  if (SeekResult::End == terms->seek_ge(prefix)) {
-    return;
-  }
-
-  auto* term = irs::get<TermAttr>(*terms);
-
-  if (!term) [[unlikely]] {
-    return;
-  }
-
-  if (!term->value.starts_with(prefix)) {
-    return;
-  }
-
-  terms->read();
-  visitor.Prepare(segment, reader, *terms);
-  visitor.Visit(kNoBoost);
-
-  while (terms->next() && term->value.starts_with(prefix)) {
-    terms->read();
-    visitor.Visit(kNoBoost);
+void VisitImpl(ByPrefixIterator& terms, Visitor& visitor) {
+  for (;;) {
+    if (!visitor.Visit(kNoBoost)) {
+      return;
+    }
+    if (!terms.next()) {
+      return;
+    }
   }
 }
 
 }  // namespace
 
+ByPrefixIterator::ByPrefixIterator(const TermReader& reader,
+                                   const ByPrefixOptions& options)
+  : ByPrefixIterator{reader.iterator(SeekMode::NORMAL), options.term} {}
+
 QueryBuilder::ptr ByPrefix::PrepareSegment(const SubReader& segment,
                                            const PrepareContext& ctx) const {
   auto sub_ctx = ctx;
   sub_ctx.boost *= Boost();
-  return PrepareSegment(segment, sub_ctx, field_id(), options().term,
-                        options().scored_terms_limit);
+  return PrepareSegment(segment, sub_ctx, field_id(), options().term);
 }
 
 QueryBuilder::ptr ByPrefix::PrepareSegment(const SubReader& segment,
                                            const PrepareContext& ctx,
                                            const irs::field_id field,
-                                           const bytes_view prefix,
-                                           size_t /*scored_terms_limit*/) {
+                                           const bytes_view term) {
   auto query = memory::make_tracked<MultiTermQuery>(
     ctx.memory, segment, ctx.memory, ctx.boost, ScoreMergeType::Sum, size_t{1});
 
@@ -98,7 +79,13 @@ QueryBuilder::ptr ByPrefix::PrepareSegment(const SubReader& segment,
   }
   SampledMultiTermVisitor mtv{collector ? &collector->Limited() : nullptr,
                               query->State()};
-  VisitImpl(segment, *reader, prefix, mtv);
+  if (auto impl = reader->iterator(SeekMode::NORMAL)) {
+    ByPrefixIterator terms(std::move(impl), term);
+    if (terms.value().data() != nullptr) {
+      mtv.Prepare(segment, *reader, terms.GetImpl());
+      VisitImpl(terms, mtv);
+    }
+  }
   return query;
 }
 
@@ -108,8 +95,17 @@ PrepareCollector::ptr ByPrefix::MakeCollector(const Scorer* scorer) const {
 }
 
 void ByPrefix::visit(const SubReader& segment, const TermReader& reader,
-                     bytes_view prefix, FilterVisitor& visitor) {
-  VisitImpl(segment, reader, prefix, visitor);
+                     const ByPrefixOptions& options, FilterVisitor& visitor) {
+  auto impl = reader.iterator(SeekMode::NORMAL);
+  if (!impl) {
+    return;
+  }
+  ByPrefixIterator terms(std::move(impl), options.term);
+  if (terms.value().data() == nullptr) {
+    return;
+  }
+  visitor.Prepare(segment, reader, terms.GetImpl());
+  VisitImpl(terms, visitor);
 }
 
 }  // namespace irs

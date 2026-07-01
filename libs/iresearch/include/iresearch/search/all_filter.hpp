@@ -22,13 +22,38 @@
 
 #pragma once
 
-#include "filter.hpp"
+#include "iresearch/index/iterators.hpp"
+#include "iresearch/search/filter.hpp"
 
 namespace irs {
+
+class AllTermIterator {
+ public:
+  AllTermIterator() : _impl{SeekTermIterator::empty()} {}
+  explicit AllTermIterator(const TermReader& reader);
+
+  SeekTermIterator& GetImpl() noexcept { return *_impl; }
+  score_t Boost() const noexcept { return kNoBoost; }
+  bytes_view value() const noexcept { return _impl->value(); }
+  void read() { _impl->read(); }
+
+  bool next() {
+    if (_impl->next()) {
+      return true;
+    }
+    _impl = SeekTermIterator::empty();
+    return false;
+  }
+
+ private:
+  SeekTermIterator::ptr _impl;
+};
 
 // Filter returning all documents
 class All : public FilterWithBoost {
  public:
+  static SeekTermIterator::ptr MakeIterator(const TermReader& reader);
+
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
 

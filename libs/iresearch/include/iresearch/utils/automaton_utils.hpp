@@ -385,31 +385,52 @@ inline bool Validate(const automaton& a,
 }
 
 //////////////////////////////////////////////////////////////////////////////
+/// @brief streaming/resumable visit over a caller-owned automaton-filtered
+///        iterator positioned on an accepted, not-yet-consumed term.
+///        Stops without consuming when the visitor returns false, leaving
+///        `terms` parked so a subsequent call resumes from the same term.
+//////////////////////////////////////////////////////////////////////////////
+template<typename Visitor>
+void VisitTerms(SeekTermIterator& terms, Visitor& visitor) {
+  for (;;) {
+    if (!visitor.Visit(kNoBoost)) {
+      return;
+    }
+    if (!terms.next()) {
+      return;
+    }
+  }
+}
+
+//////////////////////////////////////////////////////////////////////////////
 /// @brief generalized field visitation logic for automaton based filters
 /// @param segment segment reader
 /// @param field term reader
 /// @param matcher input matcher
 /// @param visitor visitor
 //////////////////////////////////////////////////////////////////////////////
+inline SeekTermIterator::ptr MakeAutomatonIterator(
+  const TermReader& reader, const automaton_table_matcher& matcher) {
+  auto terms = reader.iterator(matcher);
+  if (!terms || !terms->next()) {
+    return nullptr;
+  }
+  return terms;
+}
+
 template<typename Visitor>
 void Visit(const SubReader& segment, const TermReader& reader,
            const automaton_table_matcher& matcher, Visitor& visitor) {
   SDB_ASSERT(fst::kError != matcher.Properties(0));
-  auto terms = reader.iterator(matcher);
+  auto terms = MakeAutomatonIterator(reader, matcher);
 
-  if (!terms) [[unlikely]] {
+  if (!terms) {
     return;
   }
 
-  if (terms->next()) {
-    visitor.Prepare(segment, reader, *terms);
+  visitor.Prepare(segment, reader, *terms);
 
-    do {
-      terms->read();
-
-      visitor.Visit(kNoBoost);
-    } while (terms->next());
-  }
+  VisitTerms(*terms, visitor);
 }
 
 //////////////////////////////////////////////////////////////////////////////

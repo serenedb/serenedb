@@ -42,12 +42,13 @@ struct FilterVisitor {
   /// @brief makes preparations for a visitor
   //////////////////////////////////////////////////////////////////////////////
   virtual void Prepare(const SubReader& segment, const TermReader& field,
-                       const SeekTermIterator& terms) = 0;
+                       SeekTermIterator& terms) = 0;
 
   //////////////////////////////////////////////////////////////////////////////
   /// @brief applies actions to a current term iterator
+  /// @returns true to continue visiting, false to stop visiting
   //////////////////////////////////////////////////////////////////////////////
-  virtual void Visit(score_t boost) = 0;
+  virtual bool Visit(score_t boost) = 0;
 };
 
 }  // namespace irs

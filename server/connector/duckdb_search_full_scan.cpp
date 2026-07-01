@@ -30,15 +30,25 @@
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader_impl.hpp>
 #include <iresearch/search/all_filter.hpp>
+#include <iresearch/search/automaton_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/doc_collector.hpp>
+#include <iresearch/search/filter_visitor.hpp>
+#include <iresearch/search/levenshtein_filter.hpp>
+#include <iresearch/search/prefix_filter.hpp>
+#include <iresearch/search/range_filter.hpp>
 #include <iresearch/search/score_function.hpp>
 #include <iresearch/search/scorer.hpp>
+#include <iresearch/search/term_filter.hpp>
+#include <iresearch/search/terms_filter.hpp>
+#include <iresearch/utils/automaton_utils.hpp>
 #include <iresearch/utils/string.hpp>
+#include <ranges>
 #include <span>
 
 #include "basics/assert.h"
 #include "basics/debugging.h"
+#include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
 #include "catalog/scorer_options.h"
@@ -82,6 +92,21 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
   state->scan = &ss;
   state->reader = &ss.snapshot->reader;
   state->total_segments = ss.snapshot->reader.size();
+
+  if (ss.TsDictMode()) {
+    state->count_only = false;
+    state->ts_dict = std::make_unique<TsDictShared>();
+    if (absl::c_any_of(state->projected_columns, [](auto p) {
+          return p != duckdb::DConstants::INVALID_INDEX;
+        })) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("ts_dict_agg() cannot be combined with other table columns"));
+    }
+    return duckdb::unique_ptr_cast<SearchFullScanGlobalState,
+                                   duckdb::GlobalTableFunctionState>(
+      std::move(state));
+  }
 
   // Count-only with no filter reads live_docs_count() directly and skips the
   // per-segment prepare entirely (see SearchFullScanInitLocal).
@@ -176,6 +201,50 @@ void BuildOffsetsEntries(Lstate& lstate, duckdb::TableFunctionInitInput& input,
   }
 }
 
+void BuildTsDictSlots(TsDictLocalState& lstate,
+                      duckdb::TableFunctionInitInput& input,
+                      const SereneDBScanBindData& bd, const SearchScan& ss) {
+  // Each kind of term-dict virtual column carries the same sentinel catalog id,
+  // so the k-th column of a kind (in append/bind order) belongs to the k-th
+  // field request that asked for that kind.
+  using duckdb::DConstants;
+  using Req = SearchScan::TsDictRequest;
+  using Field = TsDictLocalState::FieldState;
+
+  const auto assign = [&](catalog::Column::Id cat, auto req, auto slot) {
+    size_t i = 0;
+    duckdb::idx_t out_slot = 0;
+    for (auto col_id : input.column_ids) {
+      if (col_id == duckdb::COLUMN_IDENTIFIER_ROW_ID ||
+          col_id >= duckdb::VIRTUAL_COLUMN_START) {
+        ++out_slot;
+        continue;
+      }
+      if (col_id >= bd.column_ids.size()) {
+        continue;
+      }
+      if (bd.column_ids[col_id] == cat) {
+        while (ss.ts_dicts[i].*req == DConstants::INVALID_INDEX) {
+          ++i;
+        }
+        lstate.fields[i++].*slot = out_slot;
+      }
+      ++out_slot;
+    }
+  };
+
+  assign(catalog::Column::kInvertedIndexTermId, &Req::term_col_idx,
+         &Field::term_slot);
+  assign(catalog::Column::kInvertedIndexTermRawId, &Req::term_raw_col_idx,
+         &Field::term_raw_slot);
+  assign(catalog::Column::kInvertedIndexTermCountId, &Req::count_col_idx,
+         &Field::count_slot);
+  assign(catalog::Column::kInvertedIndexTermFreqId, &Req::freq_col_idx,
+         &Field::freq_slot);
+  assign(catalog::Column::kInvertedIndexTermScoreId, &Req::score_col_idx,
+         &Field::score_slot);
+}
+
 }  // namespace
 
 duckdb::unique_ptr<duckdb::LocalTableFunctionState> SearchFullScanInitLocal(
@@ -183,6 +252,17 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> SearchFullScanInitLocal(
   duckdb::GlobalTableFunctionState* state) {
   auto& gstate = state->Cast<SearchFullScanGlobalState>();
   const auto& bd = input.bind_data->Cast<SereneDBScanBindData>();
+  if (gstate.TsDictMode()) {
+    auto lstate = duckdb::make_uniq<TsDictLocalState>();
+    const auto& ss = bd.scan_source->Cast<SearchScan>();
+    lstate->fields.resize(ss.ts_dicts.size());
+    lstate->term_filter = ss.stored_filter.get();
+    for (size_t i = 0; i < ss.ts_dicts.size(); ++i) {
+      lstate->fields[i].field_id = ss.ts_dicts[i].field_id;
+    }
+    BuildTsDictSlots(*lstate, input, bd, ss);
+    return lstate;
+  }
   if (gstate.count_only) {
     auto lstate = duckdb::make_uniq<SearchFullScanCountLocalState>();
     if (gstate.queries.empty()) {
@@ -210,7 +290,10 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
                             duckdb::TableFunctionInput& data,
                             duckdb::DataChunk& output) {
   auto& gstate = data.global_state->Cast<SearchFullScanGlobalState>();
-  if (gstate.count_only) {
+  if (gstate.TsDictMode()) {
+    auto& l = data.local_state->Cast<TsDictLocalState>();
+    RunStreamingScan(context, gstate, l, output);
+  } else if (gstate.count_only) {
     auto& l = data.local_state->Cast<SearchFullScanCountLocalState>();
     RunCollectThenEmitScan(context, gstate, l, output);
   } else if (gstate.parallel_topk) {
@@ -526,6 +609,153 @@ bool SearchFullScanCountLocalState::OnSegmentsExhausted(
   g.produced_rows.fetch_add(batch, std::memory_order_relaxed);
   local_emitted += batch;
   return true;
+}
+
+void TsDictLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
+                                    const irs::SubReader& seg,
+                                    uint32_t /*seg_idx*/,
+                                    SearchFullScanGlobalState& /*g*/) {
+  _seg = &seg;
+  _cur_field = 0;
+  if (!fields.empty()) {
+    OpenField(0);
+  }
+}
+
+void TsDictLocalState::OpenField(size_t field_idx) {
+  _meta = nullptr;
+  const auto& f = fields[field_idx];
+  const auto* reader = _seg->field(f.field_id);
+  if (!reader || reader->size() == 0) {
+    return;
+  }
+
+  const auto claim = [&]<typename F, typename W>() {
+    const auto& filter = basics::downCast<F>(*term_filter);
+    if (filter.field_id() == f.field_id) {
+      _cursor.emplace<W>(*reader, filter.options());
+    }
+  };
+
+  if (!term_filter) {
+    _cursor.emplace<irs::AllTermIterator>(*reader);
+  } else if (const auto type = term_filter->type();
+             type == irs::Type<irs::ByTerm>::id()) {
+    claim.operator()<irs::ByTerm, irs::ByTermIterator>();
+  } else if (type == irs::Type<irs::ByPrefix>::id()) {
+    claim.operator()<irs::ByPrefix, irs::ByPrefixIterator>();
+  } else if (type == irs::Type<irs::ByRange>::id()) {
+    claim.operator()<irs::ByRange, irs::ByRangeIterator>();
+  } else if (type == irs::Type<irs::ByTerms>::id()) {
+    claim.operator()<irs::ByTerms, irs::ByTermsIterator>();
+  } else if (type == irs::Type<irs::LevenshteinAutomatonFilter>::id()) {
+    claim
+      .operator()<irs::LevenshteinAutomatonFilter, irs::LevenshteinIterator>();
+  } else if (type == irs::Type<irs::AutomatonFilter>::id()) {
+    claim.operator()<irs::AutomatonFilter, irs::AutomatonIterator>();
+  }
+
+  std::visit([&](auto& it) { _meta = get<irs::TermMeta>(it.GetImpl()); },
+             _cursor);
+}
+
+duckdb::idx_t TsDictLocalState::EmitField(duckdb::DataChunk& output,
+                                          duckdb::idx_t output_start,
+                                          duckdb::idx_t budget) {
+  using duckdb::DConstants;
+
+  const auto& f = fields[_cur_field];
+  const auto vec = [&](duckdb::idx_t slot) -> duckdb::Vector* {
+    return slot == DConstants::INVALID_INDEX ? nullptr : &output.data[slot];
+  };
+  const auto data = [&]<typename T>(duckdb::idx_t slot) -> T* {
+    auto* v = vec(slot);
+    return v ? duckdb::FlatVector::GetDataMutable<T>(*v) : nullptr;
+  };
+
+  auto* term_v = vec(f.term_slot);
+  auto* raw_v = vec(f.term_raw_slot);
+  auto* term_d = data.operator()<duckdb::string_t>(f.term_slot);
+  auto* raw_d = data.operator()<duckdb::string_t>(f.term_raw_slot);
+  auto* count_d = data.operator()<int32_t>(f.count_slot);
+  auto* freq_d = data.operator()<int64_t>(f.freq_slot);
+  auto* score_d = data.operator()<float>(f.score_slot);
+
+  const auto n = std::visit(
+    [&](auto& cur) -> duckdb::idx_t {
+      duckdb::idx_t count = 0;
+      while (count < budget && cur.value().data() != nullptr) {
+        cur.read();
+        const auto term = cur.value();
+        const auto row = output_start + count;
+        const auto* p = reinterpret_cast<const char*>(term.data());
+        if (term_d) {
+          term_d[row] =
+            duckdb::StringVector::AddString(*term_v, p, term.size());
+        }
+        if (raw_d) {
+          raw_d[row] =
+            duckdb::StringVector::AddStringOrBlob(*raw_v, p, term.size());
+        }
+        if (count_d) {
+          count_d[row] = static_cast<int32_t>(_meta ? _meta->docs_count : 0);
+        }
+        if (freq_d) {
+          freq_d[row] = static_cast<int64_t>(_meta ? _meta->freq : 0);
+        }
+        if (score_d) {
+          score_d[row] = cur.Boost();
+        }
+        ++count;
+        cur.next();
+      }
+      return count;
+    },
+    _cursor);
+
+  if (n == 0) {
+    return 0;
+  }
+
+  // The other fields' columns are NULL on rows produced for this field.
+  for (size_t fi = 0; fi < fields.size(); ++fi) {
+    if (fi == _cur_field) {
+      continue;
+    }
+    const auto& of = fields[fi];
+    for (const auto slot : {of.term_slot, of.term_raw_slot, of.count_slot,
+                            of.freq_slot, of.score_slot}) {
+      if (slot == DConstants::INVALID_INDEX) {
+        continue;
+      }
+      auto& vec = output.data[slot];
+      for (duckdb::idx_t i = 0; i < n; ++i) {
+        duckdb::FlatVector::SetNull(vec, output_start + i, true);
+      }
+    }
+  }
+  return n;
+}
+
+duckdb::idx_t TsDictLocalState::EmitChunk(duckdb::ClientContext& /*ctx*/,
+                                          SearchFullScanGlobalState& g,
+                                          duckdb::DataChunk& output,
+                                          duckdb::idx_t output_start) {
+  if (!_seg) {
+    return 0;
+  }
+  const auto budget = STANDARD_VECTOR_SIZE - output_start;
+  while (_cur_field < fields.size()) {
+    if (const auto n = EmitField(output, output_start, budget); n != 0) {
+      g.produced_rows.fetch_add(n, std::memory_order_relaxed);
+      return n;
+    }
+    ++_cur_field;
+    if (_cur_field < fields.size()) {
+      OpenField(_cur_field);
+    }
+  }
+  return 0;
 }
 
 }  // namespace sdb::connector

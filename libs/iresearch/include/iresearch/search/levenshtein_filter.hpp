@@ -36,6 +36,7 @@ class ByEditDistance;
 class LevenshteinAutomatonFilter;
 struct FilterVisitor;
 struct CompiledAcceptor;
+struct PayAttr;
 
 struct ByEditDistanceAllOptions {
   //////////////////////////////////////////////////////////////////////////////
@@ -145,6 +146,28 @@ struct LevenshteinAutomatonOptions {
     return target == rhs.target && utf8_target_size == rhs.utf8_target_size &&
            no_distance == rhs.no_distance && max_terms == rhs.max_terms;
   }
+};
+
+class LevenshteinIterator {
+ public:
+  LevenshteinIterator(const TermReader& reader,
+                      const LevenshteinAutomatonOptions& options);
+
+  LevenshteinIterator(SeekTermIterator::ptr&& impl, byte_type no_distance,
+                      uint32_t target_size);
+
+  SeekTermIterator& GetImpl() noexcept { return *_impl; }
+  score_t Boost() const noexcept { return _boost; }
+  bytes_view value() const noexcept { return _impl->value(); }
+  bool next();
+  void read() { _impl->read(); }
+
+ private:
+  SeekTermIterator::ptr _impl;
+  const PayAttr* _payload;
+  byte_type _no_distance;
+  uint32_t _target_size;
+  score_t _boost{};
 };
 
 class LevenshteinAutomatonFilter final

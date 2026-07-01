@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "iresearch/index/iterators.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/search/search_range.hpp"
 #include "iresearch/utils/string.hpp"
@@ -53,11 +54,67 @@ struct ByRangeOptions : ByRangeFilterOptions {
   }
 };
 
+class ByRangeIterator {
+ public:
+  ByRangeIterator(const TermReader& reader, const ByRangeOptions& options);
+
+  ByRangeIterator(SeekTermIterator::ptr&& impl,
+                  const ByRangeFilterOptions::range_type& range)
+    : _impl{std::move(impl)}, _range{&range} {
+    bool res = false;
+    if (_impl) {
+      switch (_range->min_type) {
+        case BoundType::Unbounded:
+          res = _impl->next();
+          break;
+        case BoundType::Inclusive:
+          res = seek_min<true>(*_impl, _range->min);
+          break;
+        case BoundType::Exclusive:
+          res = seek_min<false>(*_impl, _range->min);
+          break;
+      }
+    }
+    if (!res || !InRange()) {
+      _impl = SeekTermIterator::empty();
+    }
+  }
+
+  SeekTermIterator& GetImpl() noexcept { return *_impl; }
+  score_t Boost() const noexcept { return kNoBoost; }
+  bytes_view value() const noexcept { return _impl->value(); }
+  void read() { _impl->read(); }
+
+  bool next() {
+    if (_impl->next() && InRange()) {
+      return true;
+    }
+    _impl = SeekTermIterator::empty();
+    return false;
+  }
+
+ private:
+  bool InRange() const {
+    const bytes_view value = _impl->value();
+    switch (_range->max_type) {
+      case BoundType::Unbounded:
+        return true;
+      case BoundType::Inclusive:
+        return value <= _range->max;
+      case BoundType::Exclusive:
+        return value < _range->max;
+    }
+    return false;
+  }
+
+  SeekTermIterator::ptr _impl;
+  const ByRangeFilterOptions::range_type* _range;
+};
+
 class ByRange : public FilterWithField<ByRangeOptions> {
  public:
   static void visit(const SubReader& segment, const TermReader& reader,
-                    const options_type::range_type& rng,
-                    FilterVisitor& visitor);
+                    const ByRangeOptions& options, FilterVisitor& visitor);
 
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;

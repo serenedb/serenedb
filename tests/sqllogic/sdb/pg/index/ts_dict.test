@@ -1,0 +1,260 @@
+hash-threshold 100
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY td_simple(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+)
+
+
+statement ok
+CREATE TABLE td(id INTEGER PRIMARY KEY, body VARCHAR)
+
+
+statement ok
+CREATE INDEX td_idx ON td USING inverted(body td_simple)
+
+
+statement ok
+INSERT INTO td VALUES
+  (1, 'apple banana cherry'),
+  (2, 'apple banana'),
+  (3, 'apple date')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) td;
+
+
+# Global term dictionary over a single segment: terms in byte order, with
+# per-term document counts and total frequencies. ts_dict_agg() yields readable
+# text; ts_dict_raw_agg() yields the raw term bytes.
+query TII
+SELECT unnest(ts_dict_agg(body)) AS term,
+       unnest(ts_dict_count(body)) AS docs,
+       unnest(ts_dict_freq(body)) AS freq
+FROM td_idx
+ORDER BY term
+----
+term	docs	freq
+apple	3	3
+banana	2	2
+cherry	1	1
+date	1	1
+
+
+query TT
+SELECT unnest(ts_dict_agg(body)) AS term,
+       unnest(ts_dict_raw_agg(body))::VARCHAR AS raw
+FROM td_idx
+ORDER BY term
+----
+term	raw
+apple	\\x6170706c65
+banana	\\x62616e616e61
+cherry	\\x636865727279
+date	\\x64617465
+
+
+# Second batch in a fresh segment: the same terms now span two segments and
+# their counts/frequencies must be summed across segments.
+statement ok
+INSERT INTO td VALUES
+  (4, 'apple apple banana'),
+  (5, 'date')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) td;
+
+
+query TII
+SELECT unnest(ts_dict_agg(body)) AS term,
+       unnest(ts_dict_count(body)) AS docs,
+       unnest(ts_dict_freq(body)) AS freq
+FROM td_idx
+ORDER BY docs DESC, term
+----
+term	docs	freq
+apple	4	5
+banana	3	3
+date	2	2
+cherry	1	1
+
+
+# Direct LIST results (no unnest): the aggregates return position-aligned lists.
+# Term order from the cross-segment GROUP BY is unspecified, so re-sort by term
+# (alignment is preserved) to compare deterministically.
+query TT
+SELECT list(t ORDER BY t) AS terms, list(d ORDER BY t) AS docs
+FROM (SELECT unnest(ts_dict_agg(body)) AS t, unnest(ts_dict_count(body)) AS d FROM td_idx) s
+----
+terms	docs
+{apple,banana,cherry,date}	{4,3,1,2}
+
+
+query TT
+SELECT list(t ORDER BY t) AS terms, list(f ORDER BY t) AS freq
+FROM (SELECT unnest(ts_dict_agg(body)) AS t, unnest(ts_dict_freq(body)) AS f FROM td_idx) s
+----
+terms	freq
+{apple,banana,cherry,date}	{5,3,1,2}
+
+
+# A predicate the optimizer cannot push as a term acceptor (here, a length
+# predicate) is applied as a post-filter over the emitted terms -- the field
+# reference binds to the term, not the document.
+query T
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM td_idx WHERE length(body) > 4 ORDER BY term
+----
+term
+apple
+banana
+cherry
+
+
+# Scalar term-dictionary aggregates: the min/max term (across both segments).
+query TT
+SELECT ts_dict_min(body) AS lo,
+       ts_dict_max(body) AS hi
+FROM td_idx
+----
+lo	hi
+apple	date
+
+
+# WHERE constraints on the enumerated field narrow the term set: a predicate is
+# claimed by the optimizer and applied during enumeration (not as a doc filter).
+query T
+SELECT unnest(ts_dict_agg(body)) AS term FROM td_idx WHERE body LIKE 'a%' ORDER BY term
+----
+term
+apple
+
+
+query T
+SELECT unnest(list_sort(ts_dict_agg(body))) AS term FROM td_idx WHERE body = 'banana'
+----
+term
+banana
+
+
+query T
+SELECT unnest(ts_dict_agg(body)) AS term FROM td_idx WHERE body BETWEEN 'b' AND 'd' ORDER BY term
+----
+term
+banana
+cherry
+
+
+# A predicate that cannot be pushed as a term acceptor (a length predicate)
+# applies as a post-filter over the terms -- all four terms are longer than 3.
+query T
+SELECT unnest(ts_dict_agg(body)) AS term FROM td_idx WHERE length(body) > 3 ORDER BY term
+----
+term
+apple
+banana
+cherry
+date
+
+
+# Plan check: unnest(ts_dict_agg()) over a single field collapses the list+unnest
+# round-trip into a projection over the injected cross-segment GROUP BY -- no
+# UNNEST operator, no intermediate list.
+query
+EXPLAIN SELECT unnest(ts_dict_agg(body)) FROM td_idx
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       HASH_GROUP_BY       │
+│    ────────────────────   │
+│         Groups: #0        │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: td_idx       │
+│        TsDict: body       │
+│                           │
+│        Projections:       │
+│  sdb_inverted_index_term$ │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+
+# Plan check: single-field unnest of the term plus its score, with ORDER BY
+# score, adds only the requested ORDER_BY over the cross-segment GROUP BY -- no
+# UNNEST operator, no intermediate list, no redundant projection.
+query
+EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_score(body)) AS score FROM td_idx ORDER BY score
+----
+QUERY PLAN
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│     td_idx.body)) ASC     │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       HASH_GROUP_BY       │
+│    ────────────────────   │
+│         Groups: #0        │
+│    Aggregates: max(#1)    │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│             #1            │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: td_idx       │
+│        TsDict: body       │
+│                           │
+│        Projections:       │
+│  sdb_inverted_index_term$ │
+│sdb_inverted_index_term_sco│
+│            re$            │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+
+# ts_dict_agg over a base table (not the index relation) has no inverted index
+# scan to claim, so the stub aggregate fires.
+statement error
+SELECT ts_dict_agg(body) FROM td
+----
+db error: ERROR: ts_dict_agg() requires an inverted index scan in the same sub-query
+
+
+statement ok
+DROP TABLE td
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY td_simple

@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "iresearch/index/iterators.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -50,18 +51,47 @@ struct ByPrefixOptions : ByPrefixFilterOptions {
   }
 };
 
+class ByPrefixIterator {
+ public:
+  ByPrefixIterator(const TermReader& reader, const ByPrefixOptions& options);
+
+  ByPrefixIterator(SeekTermIterator::ptr&& impl, bytes_view prefix)
+    : _impl{std::move(impl)}, _prefix{prefix} {
+    if (!_impl || SeekResult::End == _impl->seek_ge(_prefix) ||
+        !_impl->value().starts_with(_prefix)) {
+      _impl = SeekTermIterator::empty();
+    }
+  }
+
+  SeekTermIterator& GetImpl() noexcept { return *_impl; }
+  score_t Boost() const noexcept { return kNoBoost; }
+  bytes_view value() const noexcept { return _impl->value(); }
+  void read() { _impl->read(); }
+
+  bool next() {
+    if (_impl->next() && _impl->value().starts_with(_prefix)) {
+      return true;
+    }
+    _impl = SeekTermIterator::empty();
+    return false;
+  }
+
+ private:
+  SeekTermIterator::ptr _impl;
+  bytes_view _prefix;
+};
+
 class ByPrefix : public FilterWithField<ByPrefixOptions> {
  public:
   static void visit(const SubReader& segment, const TermReader& reader,
-                    bytes_view prefix, FilterVisitor& visitor);
+                    const ByPrefixOptions& options, FilterVisitor& visitor);
 
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
   static QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx,
                                           const irs::field_id field,
-                                          const bytes_view prefix,
-                                          size_t scored_terms_limit);
+                                          const bytes_view term);
 
   PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 };

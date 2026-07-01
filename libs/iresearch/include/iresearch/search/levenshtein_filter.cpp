@@ -88,44 +88,27 @@ struct AggregatedStatsVisitor : util::Noncopyable {
   mutable bool field_collected{false};
 };
 
-//////////////////////////////////////////////////////////////////////////////
-/// @brief visitation logic for levenshtein filter
-/// @param segment segment reader
-/// @param field term reader
-/// @param matcher input matcher
-/// @param visitor visitor
-//////////////////////////////////////////////////////////////////////////////
 template<typename Visitor>
 void VisitImpl(const SubReader& segment, const TermReader& reader,
                const byte_type no_distance, const uint32_t utf8_target_size,
                const automaton_table_matcher& matcher, Visitor&& visitor) {
   SDB_ASSERT(fst::kError != matcher.Properties(0));
-  auto terms = reader.iterator(matcher);
-
-  if (!terms) [[unlikely]] {
+  auto impl = reader.iterator(matcher);
+  if (!impl) {
     return;
   }
-
-  if (terms->next()) {
-    auto* payload = irs::get<PayAttr>(*terms);
-
-    const byte_type* distance{&no_distance};
-    if (payload && !payload->value.empty()) {
-      distance = &payload->value.front();
+  LevenshteinIterator it(std::move(impl), no_distance, utf8_target_size);
+  if (it.value().data() == nullptr) {
+    return;
+  }
+  visitor.Prepare(segment, reader, it.GetImpl());
+  for (;;) {
+    if (!visitor.Visit(it.Boost())) {
+      return;
     }
-
-    visitor.Prepare(segment, reader, *terms);
-
-    do {
-      terms->read();
-
-      const auto utf8_value_size =
-        static_cast<uint32_t>(utf8_utils::Length(terms->value()));
-      const auto boost =
-        Similarity(*distance, std::min(utf8_value_size, utf8_target_size));
-
-      visitor.Visit(boost);
-    } while (terms->next());
+    if (!it.next()) {
+      return;
+    }
   }
 }
 
@@ -211,6 +194,42 @@ field_visitor LevenshteinAutomatonFilter::visitor(
       return VisitImpl(segment, field, no_distance, utf8_target_size,
                        compiled->matcher, visitor);
     };
+}
+
+LevenshteinIterator::LevenshteinIterator(
+  const TermReader& reader, const LevenshteinAutomatonOptions& options)
+  : LevenshteinIterator{
+      [&] {
+        SDB_ENSURE(options.compiled, sdb::ERROR_INTERNAL,
+                   "ts_dict levenshtein: filter has no compiled acceptor");
+        auto it = reader.iterator(options.compiled->matcher);
+        return it ? std::move(it) : SeekTermIterator::empty();
+      }(),
+      options.no_distance, options.utf8_target_size} {}
+
+LevenshteinIterator::LevenshteinIterator(SeekTermIterator::ptr&& impl,
+                                         byte_type no_distance,
+                                         uint32_t target_size)
+  : _impl{std::move(impl)},
+    _payload{irs::get<PayAttr>(*_impl)},
+    _no_distance{no_distance},
+    _target_size{target_size} {
+  if (!next()) {
+    _impl = SeekTermIterator::empty();
+  }
+}
+
+bool LevenshteinIterator::next() {
+  if (!_impl->next()) {
+    _impl = SeekTermIterator::empty();
+    return false;
+  }
+  const byte_type distance =
+    _payload->value.empty() ? _no_distance : _payload->value.front();
+  const auto utf8_value_size =
+    static_cast<uint32_t>(utf8_utils::Length(_impl->value()));
+  _boost = Similarity(distance, std::min(utf8_value_size, _target_size));
+  return true;
 }
 
 QueryBuilder::ptr LevenshteinAutomatonFilter::PrepareSegment(

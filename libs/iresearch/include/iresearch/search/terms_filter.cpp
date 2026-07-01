@@ -33,39 +33,38 @@ namespace irs {
 namespace {
 
 template<typename Visitor>
-void VisitImpl(const SubReader& segment, const TermReader& field,
-               const ByTermsOptions::search_terms& search_terms,
-               Visitor& visitor) {
-  auto terms = field.iterator(SeekMode::NORMAL);
-
-  if (!terms) [[unlikely]] {
-    return;
-  }
-
-  visitor.Prepare(segment, field, *terms);
-
-  [[maybe_unused]] uint32_t idx = 0;
-  for (auto& term : search_terms) {
-    if constexpr (requires { visitor.SetIndex(idx); }) {
-      visitor.SetIndex(idx++);
+void VisitImpl(ByTermsIterator& terms, Visitor& visitor) {
+  for (;;) {
+    if constexpr (requires { visitor.SetIndex(terms.Index()); }) {
+      visitor.SetIndex(terms.Index());
     }
-
-    if (!terms->seek(term.term)) {
-      continue;
+    if (!visitor.Visit(terms.Boost())) {
+      return;
     }
-
-    terms->read();
-
-    visitor.Visit(term.boost);
+    if (!terms.next()) {
+      return;
+    }
   }
 }
 
 }  // namespace
 
+ByTermsIterator::ByTermsIterator(const TermReader& reader,
+                                 const ByTermsOptions& options)
+  : ByTermsIterator{reader.iterator(SeekMode::NORMAL), options.terms} {}
+
 void ByTerms::visit(const SubReader& segment, const TermReader& field,
-                    const ByTermsOptions::search_terms& terms,
-                    FilterVisitor& visitor) {
-  VisitImpl(segment, field, terms, visitor);
+                    const ByTermsOptions& options, FilterVisitor& visitor) {
+  auto impl = field.iterator(SeekMode::NORMAL);
+  if (!impl) {
+    return;
+  }
+  ByTermsIterator terms(std::move(impl), options.terms);
+  if (terms.value().data() == nullptr) {
+    return;
+  }
+  visitor.Prepare(segment, field, terms.GetImpl());
+  VisitImpl(terms, visitor);
 }
 
 QueryBuilder::ptr ByTerms::PrepareSegment(const SubReader& segment,
@@ -93,7 +92,13 @@ QueryBuilder::ptr ByTerms::PrepareSegment(const SubReader& segment,
                       : nullptr;
   AllTermsVisitor mtv{query->State(), collector ? &collector->Field() : nullptr,
                       collector ? &collector->Terms() : nullptr};
-  VisitImpl(segment, *reader, terms, mtv);
+  if (auto impl = reader->iterator(SeekMode::NORMAL)) {
+    ByTermsIterator it(std::move(impl), options.terms);
+    if (it.value().data() != nullptr) {
+      mtv.Prepare(segment, *reader, it.GetImpl());
+      VisitImpl(it, mtv);
+    }
+  }
   return query;
 }
 

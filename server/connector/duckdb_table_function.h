@@ -27,6 +27,7 @@
 #include <functional>
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/scorer.hpp>
+#include <iresearch/utils/string.hpp>
 #include <memory>
 #include <optional>
 #include <string_view>
@@ -159,6 +160,30 @@ struct SearchScan : ScanSource {
   std::vector<OffsetsRequest> offsets;
 
   bool EmitOffsets() const { return !offsets.empty(); }
+
+  struct TsDictRequest {
+    irs::field_id field_id = irs::field_limits::invalid();
+    duckdb::idx_t term_col_idx = duckdb::DConstants::INVALID_INDEX;
+    duckdb::idx_t term_raw_col_idx = duckdb::DConstants::INVALID_INDEX;
+    duckdb::idx_t count_col_idx = duckdb::DConstants::INVALID_INDEX;
+    duckdb::idx_t freq_col_idx = duckdb::DConstants::INVALID_INDEX;
+    duckdb::idx_t score_col_idx = duckdb::DConstants::INVALID_INDEX;
+  };
+  // One entry per enumerated field; multiple ts_dict aggregations over
+  // different fields in one query each get their own request.
+  std::vector<TsDictRequest> ts_dicts;
+
+  bool TsDictMode() const { return !ts_dicts.empty(); }
+
+  TsDictRequest& TsDictFor(irs::field_id field_id) {
+    for (auto& req : ts_dicts) {
+      if (req.field_id == field_id) {
+        return req;
+      }
+    }
+    ts_dicts.push_back(TsDictRequest{.field_id = field_id});
+    return ts_dicts.back();
+  }
 
   bool count_only = false;
 

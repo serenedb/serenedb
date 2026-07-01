@@ -24,6 +24,7 @@
 
 #include <set>
 
+#include "iresearch/index/iterators.hpp"
 #include "iresearch/search/all_docs_provider.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/utils/string.hpp"
@@ -69,13 +70,62 @@ struct ByTermsOptions {
   }
 };
 
+class ByTermsIterator {
+ public:
+  ByTermsIterator(const TermReader& reader, const ByTermsOptions& options);
+
+  ByTermsIterator(SeekTermIterator::ptr&& impl,
+                  const ByTermsOptions::search_terms& terms)
+    : _impl{std::move(impl)}, _cursor{terms.begin()}, _end{terms.end()} {
+    if (!_impl || !AdvanceToMatch()) {
+      _impl = SeekTermIterator::empty();
+    }
+  }
+
+  SeekTermIterator& GetImpl() noexcept { return *_impl; }
+  score_t Boost() const noexcept { return _boost; }
+  uint32_t Index() const noexcept { return _index; }
+  bytes_view value() const noexcept { return _impl->value(); }
+  void read() { _impl->read(); }
+
+  bool next() {
+    if (_cursor != _end) {
+      ++_cursor;
+      ++_index;
+      if (AdvanceToMatch()) {
+        return true;
+      }
+    }
+    _impl = SeekTermIterator::empty();
+    return false;
+  }
+
+ private:
+  bool AdvanceToMatch() {
+    while (_cursor != _end) {
+      if (_impl->seek(_cursor->term)) {
+        _boost = _cursor->boost;
+        return true;
+      }
+      ++_cursor;
+      ++_index;
+    }
+    return false;
+  }
+
+  SeekTermIterator::ptr _impl;
+  ByTermsOptions::search_terms::const_iterator _cursor;
+  ByTermsOptions::search_terms::const_iterator _end;
+  score_t _boost = kNoBoost;
+  uint32_t _index = 0;
+};
+
 // Filter by a set of terms
 class ByTerms final : public FilterWithField<ByTermsOptions>,
                       public AllDocsProvider {
  public:
   static void visit(const SubReader& segment, const TermReader& field,
-                    const ByTermsOptions::search_terms& terms,
-                    FilterVisitor& visitor);
+                    const ByTermsOptions& options, FilterVisitor& visitor);
 
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;

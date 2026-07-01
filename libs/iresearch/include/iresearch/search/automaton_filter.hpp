@@ -23,6 +23,7 @@
 #include <memory>
 #include <utility>
 
+#include "iresearch/index/iterators.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/utils/automaton.hpp"
 #include "iresearch/utils/string.hpp"
@@ -50,8 +51,32 @@ struct AutomatonOptions {
   }
 };
 
+class AutomatonIterator {
+ public:
+  AutomatonIterator(const TermReader& reader, const AutomatonOptions& options);
+
+  SeekTermIterator& GetImpl() noexcept { return *_impl; }
+  score_t Boost() const noexcept { return kNoBoost; }
+  bytes_view value() const noexcept { return _impl->value(); }
+  void read() { _impl->read(); }
+
+  bool next() {
+    if (_impl->next()) {
+      return true;
+    }
+    _impl = SeekTermIterator::empty();
+    return false;
+  }
+
+ private:
+  SeekTermIterator::ptr _impl;
+};
+
 class AutomatonFilter final : public FilterWithField<AutomatonOptions> {
  public:
+  static SeekTermIterator::ptr MakeIterator(const TermReader& reader,
+                                            const AutomatonOptions& options);
+
   static field_visitor visitor(const automaton& acceptor);
 
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,

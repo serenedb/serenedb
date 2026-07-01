@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "iresearch/index/iterators.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -39,11 +40,32 @@ struct ByTermOptions {
   bool operator==(const ByTermOptions& rhs) const noexcept = default;
 };
 
+class ByTermIterator {
+ public:
+  ByTermIterator(const TermReader& reader, const ByTermOptions& options);
+
+  SeekTermIterator& GetImpl() noexcept { return *_impl; }
+  score_t Boost() const noexcept { return kNoBoost; }
+  bytes_view value() const noexcept { return _impl->value(); }
+  void read() { _impl->read(); }
+
+  bool next() {
+    if (_impl->next()) {
+      return true;
+    }
+    _impl = SeekTermIterator::empty();
+    return false;
+  }
+
+ private:
+  SeekTermIterator::ptr _impl;
+};
+
 // User-side term filter
 class ByTerm : public FilterWithField<ByTermOptions> {
  public:
   static void Visit(const SubReader& segment, const TermReader& field,
-                    const bytes_view term, FilterVisitor& visitor);
+                    const ByTermOptions& options, FilterVisitor& visitor);
 
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final {

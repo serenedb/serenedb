@@ -22,37 +22,31 @@
 
 #include "term_filter.hpp"
 
+#include <tuple>
+
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/filter_visitor.hpp"
 #include "iresearch/search/term_query.hpp"
 
 namespace irs {
-namespace {
 
-SeekTermIterator::ptr GetTermsIterator(const TermReader& field,
-                                       const bytes_view term) {
-  auto terms = field.iterator(SeekMode::RandomOnly);
-  if (!terms) [[unlikely]] {
-    return nullptr;
+ByTermIterator::ByTermIterator(const TermReader& reader,
+                               const ByTermOptions& options)
+  : _impl{reader.iterator(SeekMode::RandomOnly)} {
+  if (!_impl || !_impl->seek(options.term)) {
+    _impl = SeekTermIterator::empty();
   }
-  if (!terms->seek(term)) {
-    return nullptr;
-  }
-  terms->read();
-  return terms;
 }
 
-}  // namespace
-
 void ByTerm::Visit(const SubReader& segment, const TermReader& field,
-                   const bytes_view term, FilterVisitor& visitor) {
-  auto terms = GetTermsIterator(field, term);
-  if (!terms) {
+                   const ByTermOptions& options, FilterVisitor& visitor) {
+  auto terms = field.iterator(SeekMode::RandomOnly);
+  if (!terms || !terms->seek(options.term)) {
     return;
   }
   visitor.Prepare(segment, field, *terms);
-  visitor.Visit(kNoBoost);
+  std::ignore = visitor.Visit(kNoBoost);
 }
 
 QueryBuilder::ptr ByTerm::PrepareSegment(const SubReader& segment,
@@ -66,7 +60,10 @@ QueryBuilder::ptr ByTerm::PrepareSegment(const SubReader& segment,
     return memory::make_tracked<TermQuery>(
       ctx.memory, segment, TermState{nullptr, nullptr}, ctx.boost);
   }
-  auto terms = GetTermsIterator(*reader, term);
+  auto terms = reader->iterator(SeekMode::RandomOnly);
+  if (terms && !terms->seek(term)) {
+    terms = nullptr;
+  }
   if (ctx.collector) {
     auto& collector = sdb::basics::downCast<ByTermsCollector>(*ctx.collector);
     SDB_ASSERT(collector.Terms().size() == 1);

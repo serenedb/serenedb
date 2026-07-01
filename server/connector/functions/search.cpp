@@ -87,6 +87,64 @@ void ScorerStubFn(duckdb::DataChunk& /*args*/, duckdb::ExpressionState& state,
     "%s() requires an inverted index scan in the same sub-query", fn_name);
 }
 
+[[noreturn]] void TsDictStubThrow() {
+  throw duckdb::InvalidInputException(
+    "ts_dict_agg() family requires an inverted index scan in the same "
+    "sub-query (call it over an inverted-indexed column).");
+}
+
+// Each stub needs distinct callback pointers: DuckDB compares AggregateFunctions
+// by callbacks only (ignoring name), so sharing one stub set would let the
+// binder dedup two term-dict aggregates with the same return type (e.g.
+// ts_dict_min/ts_dict_max) into one before the optimizer can claim them.
+template<int Tag>
+struct TsDictStub {
+  static duckdb::idx_t StateSize(const duckdb::BoundAggregateFunction&) {
+    return 1;
+  }
+  static void Init(const duckdb::BoundAggregateFunction&, duckdb::data_ptr_t) {}
+  static void Update(duckdb::Vector[], duckdb::AggregateInputData&,
+                     duckdb::idx_t, duckdb::Vector&, duckdb::idx_t) {
+    TsDictStubThrow();
+  }
+  static void Combine(duckdb::Vector&, duckdb::Vector&,
+                      duckdb::AggregateInputData&, duckdb::idx_t) {
+    TsDictStubThrow();
+  }
+  static void Finalize(duckdb::Vector&, duckdb::AggregateInputData&,
+                       duckdb::Vector&, duckdb::idx_t, duckdb::idx_t) {
+    TsDictStubThrow();
+  }
+};
+
+template<int Tag>
+void RegisterTsDictStub(duckdb::ExtensionLoader& loader, std::string_view name,
+                          const duckdb::LogicalType& ret) {
+  duckdb::AggregateFunction fn(
+    std::string{name}, {duckdb::LogicalType::ANY}, ret,
+    TsDictStub<Tag>::StateSize, TsDictStub<Tag>::Init,
+    TsDictStub<Tag>::Update, TsDictStub<Tag>::Combine,
+    TsDictStub<Tag>::Finalize,
+    duckdb::FunctionNullHandling::DEFAULT_NULL_HANDLING);
+  loader.RegisterFunction(std::move(fn));
+}
+
+void RegisterTsDictFunctions(duckdb::ExtensionLoader& loader) {
+  const auto list = [](const duckdb::LogicalType& el) {
+    return duckdb::LogicalType::LIST(el);
+  };
+  RegisterTsDictStub<0>(loader, kTsDictAgg, list(duckdb::LogicalType::VARCHAR));
+  RegisterTsDictStub<1>(loader, kTsDictRawAgg, list(duckdb::LogicalType::BLOB));
+  RegisterTsDictStub<2>(loader, kTsDictCount,
+                          list(duckdb::LogicalType::INTEGER));
+  RegisterTsDictStub<3>(loader, kTsDictFreq,
+                          list(duckdb::LogicalType::BIGINT));
+  RegisterTsDictStub<4>(loader, kTsDictScore,
+                          list(duckdb::LogicalType::FLOAT));
+  RegisterTsDictStub<5>(loader, kTsDictMin, duckdb::LogicalType::VARCHAR);
+  RegisterTsDictStub<6>(loader, kTsDictMax, duckdb::LogicalType::VARCHAR);
+}
+
 void RegisterTSQueryTypes(duckdb::ExtensionLoader& loader) {
   loader.RegisterType(std::string{kTSQueryTypeName}, MakeTSQueryType());
 
@@ -1048,6 +1106,7 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
   RegisterTsLexize(loader);
   RegisterTsHighlight(loader);
   RegisterTSQuerySurface(loader);
+  RegisterTsDictFunctions(loader);
 }
 
 }  // namespace sdb::connector

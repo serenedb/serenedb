@@ -33,6 +33,22 @@ AutomatonOptions::AutomatonOptions(automaton acceptor, bytes_view pattern,
     compiled{std::make_shared<const CompiledAcceptor>(std::move(acceptor))},
     scored_terms_limit{scored_terms_limit} {}
 
+SeekTermIterator::ptr AutomatonFilter::MakeIterator(
+  const TermReader& reader, const AutomatonOptions& options) {
+  SDB_ENSURE(options.compiled, sdb::ERROR_INTERNAL,
+             "AutomatonFilter::MakeIterator: filter has no compiled acceptor");
+  return MakeAutomatonIterator(reader, options.compiled->matcher);
+}
+
+AutomatonIterator::AutomatonIterator(const TermReader& reader,
+                                     const AutomatonOptions& options)
+  : _impl{[&] {
+      SDB_ENSURE(options.compiled, sdb::ERROR_INTERNAL,
+                 "AutomatonIterator: filter has no compiled acceptor");
+      auto it = MakeAutomatonIterator(reader, options.compiled->matcher);
+      return it ? std::move(it) : SeekTermIterator::empty();
+    }()} {}
+
 field_visitor AutomatonFilter::visitor(const automaton& acceptor) {
   if (!Validate(acceptor)) {
     return [](const SubReader&, const TermReader&, FilterVisitor&) {};

@@ -59,4 +59,19 @@ PrepareCollector::ptr All::MakeCollector(const Scorer* scorer) const {
   return std::make_unique<AllCollector>(scorer);
 }
 
+AllTermIterator::AllTermIterator(const TermReader& reader)
+  : _impl{reader.iterator(SeekMode::NORMAL)} {
+  if (!_impl || !_impl->next()) {
+    _impl = SeekTermIterator::empty();
+  }
+}
+
+SeekTermIterator::ptr All::MakeIterator(const TermReader& reader) {
+  auto terms = reader.iterator(SeekMode::NORMAL);
+  if (!terms || !terms->next()) {
+    return nullptr;
+  }
+  return terms;
+}
+
 }  // namespace irs

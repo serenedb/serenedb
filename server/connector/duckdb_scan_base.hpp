@@ -25,13 +25,17 @@
 #include <algorithm>
 #include <atomic>
 #include <duckdb.hpp>
+#include <duckdb/common/types/vector_cache.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/filter.hpp>
 #include <iresearch/types.hpp>
+#include <limits>
 #include <memory>
 #include <span>
 #include <string>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 #include "catalog/table_options.h"
@@ -76,6 +80,7 @@ struct CommonScanGlobalState : public duckdb::GlobalTableFunctionState {
   // True iff at least one projected real column is NOT an INCLUDE
   // column (i.e. IndexSource still has work to do).
   bool has_external_projections = false;
+  bool has_real_column = false;
 
   // Rowid virtual column
   bool has_generated_pk = false;
@@ -99,14 +104,6 @@ struct CommonScanGlobalState : public duckdb::GlobalTableFunctionState {
 
   std::atomic<duckdb::idx_t> produced_rows{0};
 
-  // Cached IndexSource adapter for the table being scanned: holds whatever
-  // bind/session state the per-source materialiser needs (file-backed: a
-  // bound MultiFileBindData + lookup gstate). Lazy-built via MakeIndexSource
-  // on first use; reused across batches.
-  // shared_ptr (not unique_ptr) so derived-state destructors don't need
-  // IndexSource's complete type -- the deleter is type-erased.
-  std::shared_ptr<IndexSource> index_source;
-
   duckdb::idx_t MaxThreads() const override { return 1; }
 };
 
@@ -122,9 +119,24 @@ struct CommonScanLocalState : public duckdb::LocalTableFunctionState {
 struct SegDocBufferedScanLocalState : public CommonScanLocalState {
   PrimaryKeyBatch pk_batch;
   std::shared_ptr<IndexSource> index_source;
+  duckdb::VectorCache pk_vec_cache;
   PkLookupBuffers pk_lookup;
   size_t current_idx = 0;
   const SereneDBScanBindData* bind_data = nullptr;
+
+  std::pair<const irs::ColReader*, const irs::ColumnReader*> PkColumnFor(
+    const irs::IndexReader& reader, uint32_t seg_idx) {
+    if (seg_idx != pk_col_cached_seg) {
+      std::tie(pk_col_reader, pk_column) = SegmentPkColumn(reader, seg_idx);
+      pk_col_cached_seg = seg_idx;
+    }
+    return {pk_col_reader, pk_column};
+  }
+
+ private:
+  const irs::ColReader* pk_col_reader = nullptr;
+  const irs::ColumnReader* pk_column = nullptr;
+  uint32_t pk_col_cached_seg = std::numeric_limits<uint32_t>::max();
 };
 
 void InitCommonState(CommonScanGlobalState& state,
@@ -158,13 +170,16 @@ struct ScoreDocsView {
   uint64_t operator[](size_t i) const noexcept {
     return doc(i) - irs::doc_limits::min();
   }
-  bool IsSorted() const noexcept {
-    return std::ranges::is_sorted(hits, {}, &irs::ScoreDoc::doc);
-  }
   ScoreDocsView subview(size_t off, size_t n) const noexcept {
     return {hits.subspan(off, n)};
   }
 };
+
+inline void SortScoreDocsBySegDoc(std::span<irs::ScoreDoc> hits) {
+  std::ranges::sort(hits, [](const irs::ScoreDoc& l, const irs::ScoreDoc& r) {
+    return std::pair{l.segment_idx, l.doc} < std::pair{r.segment_idx, r.doc};
+  });
+}
 
 struct StreamingHitsView {
   std::span<const irs::doc_id_t> docs;
@@ -178,7 +193,6 @@ struct StreamingHitsView {
   uint64_t operator[](size_t i) const noexcept {
     return doc(i) - irs::doc_limits::min();
   }
-  bool IsSorted() const noexcept { return std::ranges::is_sorted(docs); }
   StreamingHitsView subview(size_t off, size_t n) const noexcept {
     return {docs.subspan(off, n),
             scores.empty() ? std::span<const float>{} : scores.subspan(off, n),
@@ -209,10 +223,16 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> CommonScanInitLocal(
   duckdb::GlobalTableFunctionState* global_state);
 
 template<typename View>
-void WriteVirtualColumns(CommonScanGlobalState& gstate,
-                         duckdb::idx_t /*row_base*/, duckdb::idx_t num_rows,
+void WriteVirtualColumns(CommonScanGlobalState& gstate, duckdb::idx_t num_rows,
                          const View& view, duckdb::DataChunk& output,
                          duckdb::idx_t output_start) {
+  if (gstate.scan_tableoid) {
+    auto* tableoid_data = duckdb::FlatVector::GetDataMutable<int64_t>(
+      output.data[gstate.tableoid_output_idx]);
+    for (duckdb::idx_t i = 0; i < num_rows; ++i) {
+      tableoid_data[output_start + i] = gstate.tableoid_value;
+    }
+  }
   SDB_ASSERT(!gstate.scan_score || view.size() == num_rows);
   if (!gstate.scan_score) {
     return;
@@ -224,18 +244,27 @@ void WriteVirtualColumns(CommonScanGlobalState& gstate,
   }
 }
 
+template<typename View>
+void AccountAndWriteVirtualColumns(CommonScanGlobalState& gstate,
+                                   duckdb::idx_t num_rows, const View& view,
+                                   duckdb::DataChunk& output,
+                                   duckdb::idx_t output_start) {
+  gstate.produced_rows.fetch_add(num_rows, std::memory_order_relaxed);
+  WriteVirtualColumns(gstate, num_rows, view, output, output_start);
+}
+
 template<typename Lstate, typename Gstate, typename View>
 void WriteChunkOffsets(Lstate& lstate, const Gstate& g,
                        const irs::IndexReader& reader, const View& view,
                        duckdb::DataChunk& output, duckdb::idx_t output_start) {
-  for (const auto& entry : lstate.offsets_entries) {
-    auto& list_vec = output.data[entry.output_idx];
-    list_vec.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
-    if (output_start == 0) {
+  if (output_start == 0) {
+    for (const auto& entry : lstate.offsets_entries) {
+      auto& list_vec = output.data[entry.output_idx];
+      list_vec.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
       duckdb::ListVector::SetListSize(list_vec, 0);
+      auto& child = duckdb::ListVector::GetChildMutable(list_vec);
+      child.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
     }
-    auto& child = duckdb::ListVector::GetChildMutable(list_vec);
-    child.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   }
   const irs::SubReader* cached_seg = nullptr;
   for (size_t i = 0; i < view.size(); ++i) {
@@ -272,26 +301,32 @@ void ReadIResearchSegments(Lstate& l, Gstate& g, const View& view,
       absl::Overload{
         [](std::monostate) {},
         [&](auto& pk) {
-          const auto [col_reader, pk_col] = SegmentPkColumn(*g.reader, seg_id);
-          SDB_ASSERT(pk_col);
           if (!l.pk_lookup.seg_pk_vec) {
-            l.pk_lookup.seg_pk_vec = std::make_unique<duckdb::Vector>(
-              duckdb::LogicalType::BLOB, STANDARD_VECTOR_SIZE);
+            l.pk_vec_cache =
+              duckdb::VectorCache(duckdb::Allocator::Get(*g.client_context),
+                                  duckdb::LogicalType::BLOB);
+            l.pk_lookup.seg_pk_vec =
+              std::make_unique<duckdb::Vector>(l.pk_vec_cache);
           }
-          if (!l.pk_lookup.fetcher) {
-            l.pk_lookup.fetcher = std::make_unique<SegmentPkSequentialFetcher>(
-              *col_reader, *pk_col);
-          } else if (l.pk_lookup.last_seg_idx != seg_id) {
-            l.pk_lookup.fetcher->Reset(*col_reader, *pk_col);
+          if (!l.pk_lookup.fetcher || l.pk_lookup.last_seg_idx != seg_id) {
+            const auto [col_reader, pk_col] = l.PkColumnFor(*g.reader, seg_id);
+            SDB_ASSERT(pk_col);
+            if (!l.pk_lookup.fetcher) {
+              l.pk_lookup.fetcher =
+                std::make_unique<SegmentPkSequentialFetcher>(*col_reader,
+                                                             *pk_col);
+            } else {
+              l.pk_lookup.fetcher->Reset(*col_reader, *pk_col);
+            }
+            l.pk_lookup.last_seg_idx = seg_id;
           }
-          l.pk_lookup.last_seg_idx = seg_id;
+          l.pk_lookup.seg_pk_vec->ResetFromCache(l.pk_vec_cache);
           l.pk_lookup.fetcher->Fetch(slice, *l.pk_lookup.seg_pk_vec);
-          auto* data = duckdb::FlatVector::GetData<duckdb::string_t>(
+          const auto* data = duckdb::FlatVector::GetData<duckdb::string_t>(
             *l.pk_lookup.seg_pk_vec);
-          // TODO: remove this cycle by removing the redundant buffer.
           for (size_t k = 0; k < slice.size(); ++k) {
-            std::string_view bytes{data[k].GetData(), data[k].GetSize()};
-            AppendPrimaryKey(pk, bytes);
+            AppendPrimaryKey(
+              pk, std::string_view{data[k].GetData(), data[k].GetSize()});
           }
         }},
       l.pk_batch);
@@ -344,9 +379,7 @@ duckdb::idx_t MaterializeChunk(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
     }
   }
 
-  const auto row_base =
-    g.produced_rows.fetch_add(num_rows, std::memory_order_relaxed);
-  WriteVirtualColumns(g, row_base, num_rows, view, output, output_start);
+  AccountAndWriteVirtualColumns(g, num_rows, view, output, output_start);
   return num_rows;
 }
 
@@ -367,6 +400,28 @@ duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
                    [&](auto& pk) { return PrimaryKeysSize(pk) == collected; }},
     l.pk_batch));
   return l.index_source->Materialize(ctx, l.pk_batch, 0, collected, output);
+}
+
+template<typename Gstate, typename Lstate>
+bool EmitBufferedScoreDocs(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
+                           std::span<const irs::ScoreDoc> hits,
+                           size_t& current_idx, duckdb::DataChunk& output) {
+  const size_t remaining = hits.size() - current_idx;
+  if (remaining == 0) {
+    return false;
+  }
+  const auto take = std::min<size_t>(remaining, STANDARD_VECTOR_SIZE);
+  SDB_IF_FAILURE("SearchLookupFault") {
+    if (g.has_external_projections) {
+      SDB_THROW(ERROR_DEBUG);
+    }
+  }
+  const ScoreDocsView view{hits.subspan(current_idx, take)};
+  const auto emitted = MaterializeChunk(ctx, g, l, view, output, 0);
+  const auto visible = FinalizeBatch(ctx, g, l, output, emitted);
+  current_idx += take;
+  output.SetChildCardinality(visible);
+  return emitted > 0;
 }
 
 template<typename Gstate, typename Lstate>
@@ -423,6 +478,9 @@ void RunStreamingScan(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
     collected += added;
     if (added != 0) {
       continue;
+    }
+    if (collected != 0 && l.EmitsZeroCopyContiguous()) {
+      break;
     }
     const auto seg_idx = g.next_segment.fetch_add(1, std::memory_order_relaxed);
     if (seg_idx >= g.total_segments) {

@@ -35,7 +35,8 @@ ColumnstoreMaterializer::ColumnstoreMaterializer(
       continue;
     }
     _bound.emplace_back(column_reader, projection.output_slot,
-                        irs::MakeMaterializeState(*column_reader, _ctx),
+                        std::make_unique<irs::ColumnReader::ScanState>(
+                          column_reader->InitScan(_ctx)),
                         projection.extract_path, projection.extract_scan_type);
   }
 }

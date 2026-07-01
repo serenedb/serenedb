@@ -116,6 +116,9 @@ void InitCommonState(CommonScanGlobalState& state,
       : bind_data.As<TableScanBindData>().table->PKColumns().empty();
 
   state.external_projected_columns = state.projected_columns;
+  state.has_real_column = absl::c_any_of(state.projected_columns, [](auto p) {
+    return p != duckdb::DConstants::INVALID_INDEX;
+  });
 
   state.client_context = &context;
   state.projected_column_indexes = input.column_indexes;
@@ -154,9 +157,7 @@ void DecodeExtractPath(const duckdb::ColumnIndex& column_index,
 void ClassifyColumnstoreProjections(CommonScanGlobalState& state,
                                     const SereneDBScanBindData& bind_data) {
   if (!bind_data.IsInvertedIndexEntry() || !bind_data.inverted_index) {
-    state.has_external_projections = absl::c_any_of(
-      state.projected_columns,
-      [](auto p) { return p != duckdb::DConstants::INVALID_INDEX; });
+    state.has_external_projections = state.has_real_column;
     return;
   }
 
@@ -223,8 +224,9 @@ void CommonScanGetMetrics(duckdb::TableFunctionGetMetricsInput& input) {
 }
 
 duckdb::unique_ptr<duckdb::LocalTableFunctionState> CommonScanInitLocal(
-  duckdb::ExecutionContext& context, duckdb::TableFunctionInitInput& input,
-  duckdb::GlobalTableFunctionState* global_state) {
+  duckdb::ExecutionContext& /*context*/,
+  duckdb::TableFunctionInitInput& /*input*/,
+  duckdb::GlobalTableFunctionState* /*global_state*/) {
   return duckdb::make_uniq<CommonScanLocalState>();
 }
 

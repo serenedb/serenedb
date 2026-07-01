@@ -47,7 +47,7 @@ class NormColumnReader final {
     uint8_t byte_size;
   };
 
-  NormColumnReader(field_id id, std::vector<NormRowGroupPointer> pointers,
+  NormColumnReader(field_id id, std::vector<NormRowGroupMeta> pointers,
                    IndexInput& in);
 
   field_id Id() const noexcept { return _id; }
@@ -86,7 +86,7 @@ class NormColumnReader final {
 
  private:
   field_id _id;
-  std::vector<NormRowGroupPointer> _pointers;
+  std::vector<NormRowGroupMeta> _pointers;
   std::vector<uint64_t> _row_offsets;  // cumulative; size = pointers + 1
   std::vector<std::span<const byte_type>> _spans;
   std::vector<byte_type> _owned;

@@ -103,6 +103,7 @@ struct SearchFullScanScanLocalState : public SegDocBufferedScanLocalState {
   uint32_t current_seg_idx = 0;
   uint64_t bulk_doc_in_seg = 0;
   uint64_t bulk_seg_doc_count = 0;
+  bool bulk_zero_copy = false;
 
   irs::DocIterator::ptr streaming_doc;
   irs::ScoreFunction streaming_score_function;
@@ -122,6 +123,8 @@ struct SearchFullScanScanLocalState : public SegDocBufferedScanLocalState {
                           SearchFullScanGlobalState& g,
                           duckdb::DataChunk& output,
                           duckdb::idx_t output_start);
+
+  bool EmitsZeroCopyContiguous() const { return bulk_zero_copy; }
 
  private:
   void AdvanceChunk(SearchFullScanGlobalState& g, duckdb::idx_t budget);

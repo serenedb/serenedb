@@ -21,339 +21,352 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
-#include <duckdb/common/types.hpp>
-#include <duckdb/common/types/vector_buffer.hpp>
-#include <duckdb/common/vector/dictionary_vector.hpp>
-#include <duckdb/storage/buffer/buffer_handle.hpp>
-#include <duckdb/storage/buffer_manager.hpp>
-#include <duckdb/storage/data_pointer.hpp>
+#include <duckdb/common/allocator.hpp>
+#include <duckdb/common/types/hyperloglog.hpp>
+#include <duckdb/common/types/vector.hpp>
+#include <duckdb/common/types/vector_cache.hpp>
+#include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/storage/statistics/base_statistics.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
 #include <memory>
 #include <span>
 #include <string>
-#include <utility>
+#include <string_view>
 #include <vector>
 
-#include "iresearch/formats/column/internal/persistent_column_data.hpp"
+#include "basics/assert.h"
 #include "iresearch/formats/column/read_context.hpp"
-#include "iresearch/store/data_input.hpp"
-#include "iresearch/types.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
+namespace duckdb {
+
+class Serializer;
+class Deserializer;
+class CompressionFunction;
+
+}  // namespace duckdb
 namespace irs {
 
-class ColReader;
-
-struct RgWindow {
-  size_t rg = std::numeric_limits<size_t>::max();
+struct BlockWindow {
+  size_t block = 0;
   duckdb::idx_t begin = 0;
   duckdb::idx_t end = 0;
 };
 
+struct IotaRange {
+  using contiguous_range_tag = void;
+  uint64_t start;
+  uint64_t count;
+  constexpr size_t size() const noexcept { return static_cast<size_t>(count); }
+  constexpr uint64_t operator[](size_t i) const noexcept { return start + i; }
+};
+
 template<typename Rows>
-inline size_t ConsecutiveRunLength(
-  const Rows& rows, size_t i,
-  uint64_t upper_bound = std::numeric_limits<uint64_t>::max()) noexcept {
+inline size_t ConsecutiveRunLength(const Rows& rows, size_t i) noexcept {
+  SDB_ASSERT(i < rows.size());
   if constexpr (requires { typename Rows::contiguous_range_tag; }) {
-    SDB_ASSERT(i < rows.size());
-    const uint64_t begin = static_cast<uint64_t>(rows[i]);
-    if (begin > upper_bound) {
-      return 1;
-    }
-    return std::min(rows.size() - i, static_cast<size_t>(upper_bound - begin));
+    return rows.size() - i;
   }
   size_t run = 1;
   while (i + run < rows.size() &&
          static_cast<uint64_t>(rows[i + run]) ==
-           static_cast<uint64_t>(rows[i + run - 1]) + 1 &&
-         static_cast<uint64_t>(rows[i + run]) < upper_bound) {
+           static_cast<uint64_t>(rows[i + run - 1]) + 1) {
     ++run;
   }
   return run;
 }
 
-class SharedPinHolder final : public duckdb::AuxiliaryDataHolder {
- public:
-  SharedPinHolder(std::shared_ptr<duckdb::BufferHandle> pin,
-                  duckdb::buffer_ptr<duckdb::DictionaryEntry> dict) noexcept
-    : _dict{std::move(dict)}, _pin{std::move(pin)} {}
-
- private:
-  duckdb::buffer_ptr<duckdb::DictionaryEntry> _dict;
-  std::shared_ptr<duckdb::BufferHandle> _pin;
+struct ColumnBlockMeta {
+  duckdb::BaseStatistics statistics;
+  uint64_t tuple_count = 0;
+  uint64_t file_offset = 0;
+  uint64_t byte_size = 0;
+  duckdb::CompressionType compression_type =
+    duckdb::CompressionType::COMPRESSION_AUTO;
 };
 
-duckdb::buffer_ptr<duckdb::DictionaryEntry> DictFsstScanDictionary(
-  duckdb::ColumnScanState& state, bool is_dict_fsst);
+enum class VariantShredState : uint8_t {
+  Unshredded = 0,
+  Partial = 1,
+  Full = 2,
+};
+
+struct ColumnMeta;
+
+struct VariantRgMeta {
+  uint64_t row_count = 0;
+  VariantShredState shred_state = VariantShredState::Unshredded;
+  std::unique_ptr<ColumnMeta> unshredded;
+  std::unique_ptr<ColumnMeta> shredded;
+};
+
+struct ColumnMeta {
+  field_id id = 0;
+  duckdb::LogicalType type;
+  std::vector<ColumnBlockMeta> data;
+  std::vector<ColumnBlockMeta> validity;
+  std::vector<ColumnMeta> children;
+  std::vector<VariantRgMeta> variant_rgs;
+  duckdb::shared_ptr<duckdb::HyperLogLog> hyperloglog;
+  uint64_t write_list_running = 0;
+};
+
+void SerializeColumnMeta(duckdb::Serializer& s, const ColumnMeta& meta);
+ColumnMeta DeserializeColumnMeta(duckdb::Deserializer& d);
 
 class ColumnReader final {
  public:
-  struct VariantRgReader {
-    uint64_t row_count = 0;
-    VariantShredState shred_state = VariantShredState::Unshredded;
-    std::unique_ptr<ColumnReader> unshredded;
-    std::unique_ptr<ColumnReader> shredded;
+  struct ScanState;
+
+  struct VectorScratch {
+    explicit VectorScratch(const duckdb::LogicalType& type)
+      : cache{duckdb::Allocator::DefaultAllocator(), type}, vector{cache} {}
+    VectorScratch(const VectorScratch&) = delete;
+    VectorScratch(VectorScratch&&) = delete;
+
+    duckdb::Vector& Reset() {
+      cache.ResetFromCache(vector);
+      return vector;
+    }
+
+    duckdb::VectorCache cache;
+    duckdb::Vector vector;
   };
 
-  ColumnReader(field_id id, duckdb::LogicalType type,
-               std::vector<duckdb::DataPointer> data_pointers,
-               std::vector<duckdb::DataPointer> validity_pointers,
-               std::unique_ptr<ColumnReader> element_child,
-               std::vector<std::unique_ptr<ColumnReader>> struct_children,
-               uint64_t array_size, bool fully_shredded,
-               duckdb::shared_ptr<duckdb::HyperLogLog> hyperloglog);
+  struct VariantRgScan {
+    std::unique_ptr<ScanState> unshredded;
+    std::unique_ptr<ScanState> shredded;
+    std::unique_ptr<VectorScratch> intermediate;
+    uint64_t local_pos = 0;
+    std::unique_ptr<ScanState> leaf;
+    const ColumnReader* leaf_reader = nullptr;
+    uint64_t leaf_pos = 0;
+  };
 
-  ColumnReader(field_id id, duckdb::LogicalType type,
-               std::vector<duckdb::DataPointer> validity_pointers,
-               std::vector<VariantRgReader> variant_rgs,
-               duckdb::shared_ptr<duckdb::HyperLogLog> hyperloglog);
+  struct ScanState {
+    duckdb::ColumnScanState st{nullptr};
+    BlockWindow window{};
+    std::vector<std::unique_ptr<duckdb::ColumnSegment>> segments;
+    std::vector<ScanState> child_states;
+    std::vector<VariantRgScan> variant_rgs;
+    std::unique_ptr<VectorScratch> scratch;
+    uint64_t variant_cursor = 0;
+    ReadContext* ctx = nullptr;
+    bool initialized = false;
+    int8_t variant_extract_ok = -1;
+    std::vector<std::string> variant_extract_path;
+    duckdb::LogicalType variant_extract_type;
+    int8_t variant_leaf_resolved = -1;
+    duckdb::LogicalType variant_leaf_type;
+  };
 
-  ColumnReader(const ColumnReader&) = delete;
-  ColumnReader& operator=(const ColumnReader&) = delete;
+  static std::unique_ptr<ColumnReader> Make(ColumnMeta&& meta);
 
   field_id Id() const noexcept { return _id; }
   const duckdb::LogicalType& Type() const noexcept { return _type; }
-
   uint64_t RowCount() const noexcept { return _row_count; }
-  bool HasValidity() const noexcept { return _has_validity; }
-  bool FullyShredded() const noexcept { return _fully_shredded; }
+  size_t DataRgCount() const noexcept { return _segments.size(); }
+  bool HasValidity() const noexcept { return _validity != nullptr; }
+  const ColumnReader* Validity() const noexcept { return _validity.get(); }
+  bool NullsInData() const noexcept { return _nulls_in_data; }
+  const duckdb::HyperLogLog* HyperLogLog() const noexcept {
+    return _hyperloglog.get();
+  }
+
+  uint64_t CursorRow(const ScanState& s) const noexcept {
+    return GatherCursor(s);
+  }
 
   const duckdb::BaseStatistics& MergedStatistics() const noexcept {
     return *_stats;
   }
 
-  const duckdb::HyperLogLog* HyperLogLog() const noexcept {
-    return _hyperloglog.get();
+  const ColumnReader* Child() const noexcept {
+    return (_type.id() == duckdb::LogicalTypeId::ARRAY ||
+            _type.id() == duckdb::LogicalTypeId::LIST ||
+            _type.id() == duckdb::LogicalTypeId::MAP) &&
+               !_children.empty()
+             ? _children.front().get()
+             : nullptr;
+  }
+  uint64_t ArraySize() const noexcept { return _array_size; }
+
+  size_t StructFieldCount() const noexcept {
+    return _type.id() == duckdb::LogicalTypeId::STRUCT ? _children.size() : 0;
+  }
+  const ColumnReader& StructField(size_t i) const noexcept {
+    SDB_ASSERT(i < _children.size());
+    return *_children[i];
   }
 
-  size_t DataRgCount() const noexcept { return _data_pointers.size(); }
-  size_t ValidityRgCount() const noexcept { return _validity_pointers.size(); }
+  size_t ValidityRgCount() const noexcept {
+    return _validity ? _validity->_segments.size() : 0;
+  }
   uint64_t ValidityRgFirstRow(size_t vrg) const noexcept {
-    SDB_ASSERT(vrg < _validity_pointers.size());
-    return _validity_offsets[vrg];
+    SDB_ASSERT(_validity && vrg < _validity->_offsets.size());
+    return _validity->_offsets[vrg];
   }
   uint64_t ValidityRgRowCount(size_t vrg) const noexcept {
-    SDB_ASSERT(vrg < _validity_pointers.size());
-    return _validity_offsets[vrg + 1] - _validity_offsets[vrg];
+    SDB_ASSERT(_validity && vrg + 1 < _validity->_offsets.size());
+    return _validity->_offsets[vrg + 1] - _validity->_offsets[vrg];
   }
   bool IsValidityRgEmpty(size_t vrg) const noexcept {
-    SDB_ASSERT(vrg < _validity_pointers.size());
-    return _validity_pointers[vrg].compression_type ==
+    SDB_ASSERT(_validity && vrg < _validity->_segments.size());
+    return _validity->_segments[vrg].compression_type ==
            duckdb::CompressionType::COMPRESSION_EMPTY;
   }
 
-  RgWindow Locate(uint64_t row_pos, RgWindow hint = {}) const noexcept;
+  BlockWindow Locate(uint64_t row, BlockWindow hint = {}) const noexcept;
 
-  duckdb::unique_ptr<duckdb::ColumnSegment> OpenSegment(size_t rg,
-                                                        ReadContext& ctx) const;
-  duckdb::unique_ptr<duckdb::ColumnSegment> OpenValiditySegment(
-    size_t vrg, ReadContext& ctx) const;
+  std::unique_ptr<duckdb::ColumnSegment> OpenSegment(size_t rg,
+                                                     ReadContext& ctx) const {
+    return Open(BlockWindow{rg, _offsets[rg], _offsets[rg + 1]}, ctx);
+  }
 
-  class ScanCursor {
-   public:
-    ScanCursor() noexcept = default;
-    explicit ScanCursor(duckdb::unique_ptr<duckdb::ColumnSegment> seg)
-      : _seg{std::move(seg)} {
-      _seg->InitializeScan(_state);
-      _is_dict_fsst = _seg->GetCompressionFunction().type ==
-                      duckdb::CompressionType::COMPRESSION_DICT_FSST;
-      if (auto& block = _seg->GetBlockHandle()) {
-        auto& bm = duckdb::BufferManager::GetBufferManager(_seg->GetDatabase());
-        _pin = std::make_shared<duckdb::BufferHandle>(bm.Pin(block));
+  ScanState InitScan(ReadContext& ctx) const;
+
+  duckdb::idx_t Scan(ScanState& s, duckdb::Vector& result,
+                     duckdb::idx_t count) const;
+
+  void Skip(ScanState& s, duckdb::idx_t count) const;
+
+  duckdb::idx_t ScanCount(ScanState& s, duckdb::Vector& result,
+                          duckdb::idx_t count,
+                          duckdb::idx_t result_offset) const;
+
+  template<typename DocIds>
+  void Gather(ScanState& s, const DocIds& doc_ids, duckdb::Vector& result,
+              duckdb::idx_t out_offset) const {
+    const size_t n = doc_ids.size();
+    size_t i = 0;
+    uint64_t cur = GatherCursor(s);
+    while (i < n) {
+      const size_t run = ConsecutiveRunLength(doc_ids, i);
+      const auto target = static_cast<uint64_t>(doc_ids[i]);
+      SDB_ASSERT(target >= cur, "Gather requires ascending doc ids");
+      if (target > cur) {
+        Skip(s, target - cur);
       }
-    }
-
-    ScanCursor(const ScanCursor&) = delete;
-    ScanCursor& operator=(const ScanCursor&) = delete;
-    ScanCursor(ScanCursor&&) noexcept = default;
-    ScanCursor& operator=(ScanCursor&&) noexcept = default;
-
-    // Re-initialize scan state on the same segment; SeekTo is forward-only,
-    // so backward seeks must Reset() first.
-    void Reset() noexcept {
-      _state = duckdb::ColumnScanState{nullptr};
-      _seg->InitializeScan(_state);
-      _cursor = 0;
-    }
-
-    void SeekTo(uint64_t target) noexcept {
-      SDB_ASSERT(target >= _cursor);
-      if (target > _cursor) {
-        _state.offset_in_column = target;
-        _seg->Skip(_state);
-        _cursor = target;
-      }
-    }
-
-    void Scan(duckdb::idx_t count, duckdb::Vector& out_vec,
-              duckdb::idx_t out_offset,
-              duckdb::ScanVectorType scan_type =
-                duckdb::ScanVectorType::SCAN_FLAT_VECTOR) {
-      _seg->Scan(_state, count, out_vec, out_offset, scan_type);
-      _state.offset_in_column += count;
-      _state.internal_index += count;
-      _cursor += count;
-      // The output's non-inline string_t are zero-copy views into memory this
-      // cursor owns; keep that memory alive on the output Vector so it stays
-      // valid after the cursor moves to the next segment -- otherwise a later
-      // consumer reads freed memory (heap-use-after-free; ASAN-confirmed via
-      // SearchFullScanFunction -> AppendPrimaryKey<PrimaryKeyI64I64>). Two
-      // cases:
-      //  * Most codecs: the views point into the segment's pinned block (PK
-      //    blobs, VARCHAR > 12B). Share the block pin -- pinned once when the
-      //    cursor opens the segment; each chunk just shares it.
-      //  * dict_fsst: the scan FSST-decodes its strings into a buffer in a
-      //    memory pool (an arena owned by the scan state's reusable dictionary)
-      //    and the output only *references* that buffer -- it is not in the
-      //    block. The cursor frees the dictionary on a segment crossing, so
-      //    also share it (a ref-counted buffer) to keep the pool alive for the
-      //    output. dict_fsst is VARCHAR-only, so the codec flag alone gates it;
-      //    for every other codec the helper returns a null dict and the output
-      //    just rides on the pin.
-      if (_is_dict_fsst || _pin) {
-        out_vec.BufferMutable().AddAuxiliaryData(
-          std::make_unique<SharedPinHolder>(
-            _pin, DictFsstScanDictionary(_state, _is_dict_fsst)));
-      }
-    }
-
-    uint64_t Position() const noexcept { return _cursor; }
-    explicit operator bool() const noexcept { return _seg != nullptr; }
-
-   private:
-    duckdb::unique_ptr<duckdb::ColumnSegment> _seg;
-    duckdb::ColumnScanState _state{nullptr};
-    std::shared_ptr<duckdb::BufferHandle> _pin;
-    bool _is_dict_fsst = false;
-    uint64_t _cursor = 0;
-  };
-
-  class RangeScan {
-   public:
-    RangeScan(const ColumnReader& reader, ReadContext& ctx,
-              bool validity_side = false) noexcept
-      : _reader{&reader}, _ctx{&ctx}, _validity{validity_side} {}
-
-    RangeScan(const RangeScan&) = delete;
-    RangeScan& operator=(const RangeScan&) = delete;
-    RangeScan(RangeScan&&) noexcept = default;
-    RangeScan& operator=(RangeScan&&) noexcept = default;
-
-    void Scan(uint64_t row_pos, duckdb::idx_t count, duckdb::Vector& out,
-              duckdb::idx_t out_offset, bool may_use_entire = false);
-
-   private:
-    const ColumnReader* _reader;
-    ReadContext* _ctx;  // borrowed; owned by the caller's per-query state
-    bool _validity;
-    ScanCursor _cursor;
-    RgWindow _window;
-  };
-
-  template<typename Rows>
-  static void ScanRowsBatched(RangeScan& range, const Rows& rows,
-                              duckdb::Vector& out, duckdb::idx_t out_offset,
-                              bool may_use_entire = false) {
-    if constexpr (requires { typename Rows::contiguous_range_tag; }) {
-      if (rows.size() != 0) {
-        range.Scan(rows[0], rows.size(), out, out_offset, may_use_entire);
-      }
-      return;
-    } else {
-      size_t i = 0;
-      while (i < rows.size()) {
-        const size_t run_len = ConsecutiveRunLength(rows, i);
-        range.Scan(rows[i], run_len, out, out_offset + i);
-        i += run_len;
-      }
+      cur = target + run;
+      ScanCount(s, result, static_cast<duckdb::idx_t>(run),
+                out_offset + static_cast<duckdb::idx_t>(i));
+      i += run;
     }
   }
 
-  // ARRAY/LIST element child. nullptr for primitives.
-  const ColumnReader* Child() const noexcept { return _child.get(); }
-  uint64_t ArraySize() const noexcept { return _array_size; }
-
-  // STRUCT field access. Empty for non-STRUCT.
-  size_t StructFieldCount() const noexcept { return _struct_fields.size(); }
-  const ColumnReader& StructField(size_t i) const noexcept {
-    SDB_ASSERT(i < _struct_fields.size());
-    return *_struct_fields[i];
+  template<typename DocIds>
+  bool TryGatherVariantExtract(ScanState& s, const DocIds& doc_ids,
+                               std::span<const std::string_view> path,
+                               duckdb::Vector& out,
+                               duckdb::idx_t out_offset) const {
+    if (_type.id() != duckdb::LogicalTypeId::VARIANT || path.empty() ||
+        _variant_rgs.empty()) {
+      return false;
+    }
+    const auto& out_type = out.GetType();
+    const bool same_key =
+      s.variant_extract_ok >= 0 && s.variant_extract_type == out_type &&
+      s.variant_extract_path.size() == path.size() &&
+      std::equal(path.begin(), path.end(), s.variant_extract_path.begin());
+    if (!same_key) {
+      s.variant_extract_ok = -1;
+      s.variant_extract_type = out_type;
+      s.variant_extract_path.assign(path.begin(), path.end());
+      for (auto& vstate : s.variant_rgs) {
+        vstate.leaf.reset();
+        vstate.leaf_reader = nullptr;
+        vstate.leaf_pos = 0;
+      }
+    }
+    if (s.variant_extract_ok == 0) {
+      return false;
+    }
+    if (s.variant_extract_ok < 0) {
+      for (const auto& rg : _variant_rgs) {
+        const ColumnReader* leaf =
+          rg.shred_state != VariantShredState::Unshredded && rg.shredded
+            ? FindShreddedLeaf(*rg.shredded, path)
+            : nullptr;
+        if (!leaf || leaf->Type() != out_type) {
+          s.variant_extract_ok = 0;
+          return false;
+        }
+      }
+      s.variant_extract_ok = 1;
+    }
+    const size_t n = doc_ids.size();
+    size_t i = 0;
+    while (i < n) {
+      const size_t run = ConsecutiveRunLength(doc_ids, i);
+      const auto target = static_cast<uint64_t>(doc_ids[i]);
+      ForEachVariantRun(target, static_cast<duckdb::idx_t>(run),
+                        [&](size_t rg, duckdb::idx_t local_start,
+                            duckdb::idx_t rlen, duckdb::idx_t done) {
+                          const bool entire =
+                            out_offset == 0 && i == 0 && done == 0 && rlen == n;
+                          ExtractShreddedLeafRun(
+                            s, rg, path, local_start, rlen, out,
+                            out_offset + static_cast<duckdb::idx_t>(i) + done,
+                            entire);
+                        });
+      i += run;
+    }
+    return true;
   }
 
-  size_t VariantRgCount() const noexcept { return _variant_rgs.size(); }
-  const VariantRgReader& VariantRg(size_t rg) const noexcept {
-    SDB_ASSERT(rg < _variant_rgs.size());
-    return _variant_rgs[rg];
-  }
-  RgWindow LocateVariantRg(uint64_t row, RgWindow hint = {}) const noexcept;
+  bool ResolveUniformShreddedLeaf(std::span<const std::string_view> path,
+                                  duckdb::LogicalType& leaf_type) const;
 
-  class ListOffsetState {
-   public:
-    ListOffsetState(const ColumnReader& list_column, ReadContext& ctx) noexcept
-      : _list_column{&list_column}, _ctx{&ctx} {}
-
-    ListOffsetState(const ListOffsetState&) = delete;
-    ListOffsetState& operator=(const ListOffsetState&) = delete;
-    // Move-construct only (duckdb::Vector isn't move-assignable);
-    // callers must build the state in-place, not assign over it.
-    ListOffsetState(ListOffsetState&&) noexcept = default;
-    ListOffsetState& operator=(ListOffsetState&&) = delete;
-
-    void Read(size_t rg, uint64_t in_rg, uint64_t& start, uint64_t& end);
-    uint64_t Read(size_t rg, uint64_t first_in_rg, duckdb::idx_t count,
-                  duckdb::Vector& out_buf);
-
-   private:
-    const ColumnReader* _list_column;
-    ReadContext* _ctx;  // borrowed
-    size_t _rg = std::numeric_limits<size_t>::max();
-    ScanCursor _cursor;
-    uint64_t _next_pos = 0;
-    uint64_t _prev_offset = 0;
-    duckdb::Vector _buf{duckdb::LogicalType::UBIGINT, 1};
-  };
+  void FetchRow(ReadContext& ctx, duckdb::ColumnFetchState& fetch_state,
+                uint64_t row, duckdb::Vector& result,
+                duckdb::idx_t result_idx) const;
 
   class PointReader {
    public:
-    explicit PointReader(duckdb::DatabaseInstance& db) noexcept : _ctx{db} {}
-
-    PointReader(const ColReader& col_reader, const ColumnReader& reader)
-      : _ctx{col_reader}, _reader{&reader} {}
+    PointReader(const ColReader& col_reader, const ColumnReader& col);
 
     PointReader(const PointReader&) = delete;
     PointReader& operator=(const PointReader&) = delete;
 
-    void Reset(const ColReader& col_reader, const ColumnReader& reader);
-
+    // Fetch `row` into result[out_offset]; returns false if the row is NULL.
     bool FetchRow(uint64_t row, duckdb::Vector& out, duckdb::idx_t out_offset);
 
    protected:
-    bool FetchValidity(uint64_t row, duckdb::Vector& out,
-                       duckdb::idx_t out_offset);
-    void FetchData(uint64_t row, duckdb::Vector& out, duckdb::idx_t out_offset);
-
     ReadContext _ctx;
-    const ColumnReader* _reader = nullptr;
-    duckdb::unique_ptr<duckdb::ColumnSegment> _segment;
-    duckdb::unique_ptr<duckdb::ColumnSegment> _validity_segment;
+    const ColumnReader* _reader;
+    std::unique_ptr<duckdb::ColumnSegment> _block;
+    std::unique_ptr<duckdb::ColumnSegment> _validity_block;
     duckdb::ColumnFetchState _fetch_state;
     duckdb::ColumnFetchState _validity_fetch_state;
-    size_t _cached_rg = static_cast<size_t>(-1);
-    size_t _cached_vrg = static_cast<size_t>(-1);
+    BlockWindow _window{};
+    BlockWindow _validity_window{};
+    size_t _cached_block = static_cast<size_t>(-1);
+    size_t _cached_validity_block = static_cast<size_t>(-1);
   };
 
-  class BlobPointReader : public PointReader {
+  class BlobPointReader final : public PointReader {
    public:
     using PointReader::PointReader;
 
-    bytes_view FetchRow(uint64_t row);
+    bytes_view FetchRow(uint64_t row) {
+      duckdb::FlatVector::ValidityMutable(_buf).Reset();
+      if (!PointReader::FetchRow(row, _buf, 0)) {
+        return {};
+      }
+      const auto& s = duckdb::FlatVector::GetData<duckdb::string_t>(_buf)[0];
+      return bytes_view{reinterpret_cast<const byte_type*>(s.GetData()),
+                        s.GetSize()};
+    }
     bytes_view FetchDoc(doc_id_t doc) {
       return FetchRow(static_cast<uint64_t>(doc) - doc_limits::min());
     }
-
-    bool IsNullRow(uint64_t row);
+    bool IsNullRow(uint64_t row) {
+      duckdb::FlatVector::ValidityMutable(_buf).Reset();
+      return !PointReader::FetchRow(row, _buf, 0);
+    }
     bool IsNullDoc(doc_id_t doc) {
       return IsNullRow(static_cast<uint64_t>(doc) - doc_limits::min());
     }
@@ -363,40 +376,126 @@ class ColumnReader final {
   };
 
  private:
-  RgWindow LocateValidity(uint64_t row_pos, RgWindow hint) const noexcept;
-  friend class RangeScan;
-  friend class PointReader;
-  friend class BlobPointReader;
-  friend class ListOffsetState;
+  ColumnReader(field_id id, duckdb::LogicalType type, uint64_t row_count,
+               std::vector<ColumnBlockMeta> segments,
+               std::unique_ptr<ColumnReader> validity,
+               std::vector<std::unique_ptr<ColumnReader>> children);
 
-  duckdb::unique_ptr<duckdb::ColumnSegment> OpenSegmentImpl(
-    const duckdb::DataPointer& p, const duckdb::LogicalType& type,
-    ReadContext& ctx) const;
+  duckdb::idx_t ScanStruct(ScanState& s, duckdb::Vector& result,
+                           duckdb::idx_t count) const;
+
+  duckdb::idx_t ScanVariant(ScanState& s, duckdb::Vector& result,
+                            duckdb::idx_t count,
+                            duckdb::idx_t result_offset) const;
+  void ReconstructVariantRun(ScanState& s, size_t rg, duckdb::idx_t local_start,
+                             duckdb::idx_t run, duckdb::Vector& result,
+                             duckdb::idx_t out_off) const;
+  static duckdb::Vector& ScratchVector(ScanState& s,
+                                       const duckdb::LogicalType& type);
+  void SkipVariant(ScanState& s, duckdb::idx_t count) const;
+  void SeekVariantRg(ScanState& s, size_t rg, duckdb::idx_t target_local) const;
+  const ColumnReader* FindShreddedLeaf(
+    const ColumnReader& node, std::span<const std::string_view> path) const;
+  void ExtractShreddedLeafRun(ScanState& s, size_t rg,
+                              std::span<const std::string_view> path,
+                              duckdb::idx_t local_start, duckdb::idx_t run,
+                              duckdb::Vector& out, duckdb::idx_t out_off,
+                              bool allow_entire) const;
+  template<typename Fn>
+  void ForEachVariantRun(uint64_t start_row, duckdb::idx_t count,
+                         Fn&& fn) const {
+    duckdb::idx_t done = 0;
+    while (done < count) {
+      const uint64_t row = start_row + done;
+      const auto it =
+        std::upper_bound(_variant_offsets.begin(), _variant_offsets.end(), row);
+      const auto rg = static_cast<size_t>(it - _variant_offsets.begin()) - 1;
+      const uint64_t rg_begin = _variant_offsets[rg];
+      const uint64_t rg_end = _variant_offsets[rg + 1];
+      const auto run = std::min<duckdb::idx_t>(
+        count - done, static_cast<duckdb::idx_t>(rg_end - row));
+      fn(rg, static_cast<duckdb::idx_t>(row - rg_begin), run, done);
+      done += run;
+    }
+  }
+  uint64_t GatherCursor(const ScanState& s) const noexcept {
+    switch (_kind) {
+      case Kind::Variant:
+        return s.variant_cursor;
+      case Kind::Struct:
+      case Kind::Array: {
+        if (_validity) {
+          return _validity->GatherCursor(s.child_states[0]);
+        }
+        SDB_ASSERT(!_children.empty() && s.child_states.size() > 1);
+        const uint64_t child =
+          _children.front()->GatherCursor(s.child_states[1]);
+        return _kind == Kind::Array && _array_size != 0 ? child / _array_size
+                                                        : child;
+      }
+      case Kind::List:
+      case Kind::Primitive:
+        return s.window.begin + s.st.offset_in_column;
+    }
+    return s.window.begin + s.st.offset_in_column;
+  }
 
   duckdb::BaseStatistics BuildMergedStatistics() const;
 
+  const duckdb::CompressionFunction& ResolveCodec(size_t block,
+                                                  ReadContext& ctx) const;
+  std::unique_ptr<duckdb::ColumnSegment> Open(const BlockWindow& w,
+                                              ReadContext& ctx) const;
+  bool NextSegment(BlockWindow& w) const noexcept;
+  void BeginScanVector(ScanState& s) const;
+  void AttachScanPin(ScanState& s, duckdb::Vector& result) const;
+  duckdb::idx_t ScanVector(ScanState& s, duckdb::Vector& result,
+                           duckdb::idx_t count,
+                           duckdb::ScanVectorType scan_type,
+                           duckdb::idx_t base_result_offset = 0) const;
+  duckdb::ScanVectorType GetVectorScanType(ScanState& s, duckdb::idx_t count,
+                                           duckdb::Vector& result) const;
+
+  struct VariantRg {
+    VariantShredState shred_state = VariantShredState::Unshredded;
+    std::unique_ptr<ColumnReader> unshredded;
+    std::unique_ptr<ColumnReader> shredded;
+    duckdb::LogicalType intermediate_type;
+  };
+
+  enum class Kind : uint8_t { Primitive, Struct, Array, List, Variant };
+
+  static Kind ClassifyKind(duckdb::LogicalTypeId id) noexcept {
+    switch (id) {
+      case duckdb::LogicalTypeId::VARIANT:
+        return Kind::Variant;
+      case duckdb::LogicalTypeId::STRUCT:
+        return Kind::Struct;
+      case duckdb::LogicalTypeId::ARRAY:
+        return Kind::Array;
+      case duckdb::LogicalTypeId::LIST:
+      case duckdb::LogicalTypeId::MAP:
+        return Kind::List;
+      default:
+        return Kind::Primitive;
+    }
+  }
+
   field_id _id;
   duckdb::LogicalType _type;
-  std::vector<duckdb::DataPointer> _data_pointers;
-  std::vector<duckdb::DataPointer> _validity_pointers;
-  std::vector<uint64_t> _data_offsets;      // size = data_pointers + 1
-  std::vector<uint64_t> _validity_offsets;  // size = validity_pointers + 1
+  Kind _kind;
+  std::vector<ColumnBlockMeta> _segments;
+  mutable std::vector<std::atomic<const duckdb::CompressionFunction*>> _codecs;
+  std::vector<uint64_t> _offsets;
   uint64_t _row_count = 0;
-  bool _has_validity = false;  // any RG with non-EMPTY validity codec
-  bool _fully_shredded = true;
-  std::unique_ptr<ColumnReader> _child;
-  uint64_t _array_size = 0;  // 0 for non-ARRAY
-  std::vector<std::unique_ptr<ColumnReader>>
-    _struct_fields;  // empty for non-STRUCT
-  // Element-start prefix sums across LIST/MAP row groups, derived
-  // eagerly from each segment's stats (max stored cumulative offset).
-  std::vector<uint64_t> _rg_element_starts;
-  std::vector<VariantRgReader> _variant_rgs;
+  bool _nulls_in_data = false;
+  std::unique_ptr<ColumnReader> _validity;
+  std::vector<std::unique_ptr<ColumnReader>> _children;
+  uint64_t _array_size = 0;
+  std::vector<VariantRg> _variant_rgs;
+  std::vector<uint64_t> _variant_offsets;
   duckdb::shared_ptr<duckdb::HyperLogLog> _hyperloglog;
   duckdb::unique_ptr<duckdb::BaseStatistics> _stats;
 };
-
-std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
-                                               PersistentColumnData&& node);
 
 }  // namespace irs

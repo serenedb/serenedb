@@ -36,6 +36,7 @@ add_bench(ci_fold128)
 add_bench(ci_compare)
 add_bench(socket_write)
 add_bench(duckdb_collector)
+add_bench(columnstore_vs_duckdb)
 target_include_directories(
     serenedb-bench-micro-ci_hash
     SYSTEM

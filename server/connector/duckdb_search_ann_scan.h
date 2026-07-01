@@ -93,6 +93,8 @@ struct SearchAnnRangeLocalState : public SegDocBufferedScanLocalState {
                           SearchAnnScanGlobalState& g,
                           duckdb::DataChunk& output,
                           duckdb::idx_t output_start);
+
+  bool EmitsZeroCopyContiguous() const { return false; }
 };
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(

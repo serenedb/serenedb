@@ -80,7 +80,6 @@ set(IResearch_core_sources
     ./formats/column/col_writer.cpp
     ./formats/column/column_writer.cpp
     ./formats/column/column_reader.cpp
-    ./formats/column/scan.cpp
     ./formats/column/norm_writer.cpp
     ./formats/column/norm_column_reader.cpp
     ./formats/column/merge.cpp

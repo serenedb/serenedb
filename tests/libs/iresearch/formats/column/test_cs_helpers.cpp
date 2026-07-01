@@ -92,11 +92,11 @@ void AppendNullBlob(ColumnWriter& cw, doc_id_t doc) {
 bool VisitBlobColumn(const ColReader& cs_reader, const ColumnReader& column,
                      const std::function<bool(doc_id_t, bytes_view)>& visitor) {
   duckdb::Vector batch{duckdb::LogicalType::BLOB, STANDARD_VECTOR_SIZE};
-  RgWindow window{};
+  BlockWindow window{};
   ReadContext ctx{cs_reader};
   for (uint64_t row_pos = 0; row_pos < column.RowCount();) {
     window = column.Locate(row_pos, window);
-    auto seg = column.OpenSegment(window.rg, ctx);
+    auto seg = column.OpenSegment(window.block, ctx);
     const auto rg_count = static_cast<duckdb::idx_t>(window.end - window.begin);
     duckdb::ColumnScanState state{nullptr};
     seg->InitializeScan(state);

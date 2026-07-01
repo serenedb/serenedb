@@ -22,11 +22,6 @@
 
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/storage/block.hpp>
-#include <duckdb/storage/block_allocator.hpp>
-#include <duckdb/storage/buffer/block_handle.hpp>
-#include <duckdb/storage/buffer_manager.hpp>
-#include <duckdb/storage/metadata/metadata_manager.hpp>
-#include <duckdb/storage/storage_info.hpp>
 
 #include "basics/errors.h"
 #include "basics/exceptions.h"
@@ -35,11 +30,7 @@
 namespace irs {
 
 ReadContext::ReadContext(duckdb::DatabaseInstance& db) noexcept
-  : duckdb::BlockManager{duckdb::BufferManager::GetBufferManager(db),
-                         DEFAULT_BLOCK_ALLOC_SIZE,
-                         duckdb::Storage::DEFAULT_BLOCK_HEADER_SIZE},
-    _db{&db},
-    _allocator{&duckdb::BlockAllocator::Get(db)} {}
+  : IresearchColBlockManager{db} {}
 
 ReadContext::ReadContext(const ColReader& reader)
   : ReadContext{reader.Database()} {
@@ -59,10 +50,11 @@ void ReadContext::Reset(const ColReader& reader) {
   _in = reader.ReopenIn();
 }
 
-void ReadContext::Read(duckdb::QueryContext /*context*/, duckdb::Block& block) {
-  _in->ReadData(static_cast<uint64_t>(block.id),
-                reinterpret_cast<byte_type*>(block.InternalBuffer()),
-                block.AllocSize());
+void ReadContext::Read(duckdb::QueryContext /*context*/,
+                       duckdb::Block& /*block*/) {
+  SDB_THROW(sdb::ERROR_INTERNAL,
+            "ReadContext::Read: unexpected block read on .col read context; "
+            "reads go through IndexInput::ReadData");
 }
 
 void ReadContext::ReadBlocks(duckdb::FileBuffer& /*buffer*/,
@@ -73,45 +65,26 @@ void ReadContext::ReadBlocks(duckdb::FileBuffer& /*buffer*/,
             "reads are not supported");
 }
 
-duckdb::unique_ptr<duckdb::Block> ReadContext::ConvertBlock(
-  duckdb::block_id_t block_id, duckdb::FileBuffer& source_buffer) {
-  return duckdb::make_uniq<duckdb::Block>(source_buffer, block_id,
-                                          GetBlockHeaderSize());
-}
-
-duckdb::unique_ptr<duckdb::Block> ReadContext::CreateBlock(
-  duckdb::block_id_t block_id, duckdb::FileBuffer* source_buffer) {
-  if (source_buffer) {
-    return ConvertBlock(block_id, *source_buffer);
-  }
-  return duckdb::make_uniq<duckdb::Block>(*_allocator, block_id, *this);
-}
-
 duckdb::block_id_t ReadContext::GetFreeBlockId() {
   SDB_THROW(sdb::ERROR_INTERNAL,
             "ReadContext::GetFreeBlockId on read-only context");
 }
-duckdb::block_id_t ReadContext::PeekFreeBlockId() { return 0; }
-duckdb::block_id_t ReadContext::GetFreeBlockIdForCheckpoint() {
-  return GetFreeBlockId();
+duckdb::block_id_t ReadContext::PeekFreeBlockId() {
+  SDB_THROW(sdb::ERROR_INTERNAL,
+            "ReadContext::PeekFreeBlockId on read-only context");
 }
-void ReadContext::Write(duckdb::FileBuffer& /*block*/,
-                        duckdb::block_id_t /*block_id*/) {
-  SDB_THROW(sdb::ERROR_INTERNAL, "ReadContext::Write on read-only context");
+void ReadContext::Write(duckdb::FileBuffer& block,
+                        duckdb::block_id_t block_id) {
+  Write(duckdb::QueryContext{}, block, block_id);
 }
 void ReadContext::Write(duckdb::QueryContext /*context*/,
-                        duckdb::FileBuffer& block,
-                        duckdb::block_id_t block_id) {
-  Write(block, block_id);
+                        duckdb::FileBuffer& /*block*/,
+                        duckdb::block_id_t /*block_id*/) {
+  SDB_THROW(sdb::ERROR_INTERNAL, "ReadContext::Write on read-only context");
 }
 bool ReadContext::IsRootBlock(duckdb::MetaBlockPointer /*root*/) {
   SDB_THROW(sdb::ERROR_INTERNAL,
             "ReadContext::IsRootBlock on read-only context");
-}
-void ReadContext::MarkBlockAsCheckpointed(duckdb::block_id_t /*block_id*/) {}
-void ReadContext::MarkBlockAsUsed(duckdb::block_id_t /*block_id*/) {}
-void ReadContext::MarkBlockAsModified(duckdb::block_id_t /*block_id*/) {}
-void ReadContext::IncreaseBlockReferenceCount(duckdb::block_id_t /*block_id*/) {
 }
 duckdb::idx_t ReadContext::GetMetaBlock() {
   SDB_THROW(sdb::ERROR_INTERNAL,
@@ -123,7 +96,5 @@ void ReadContext::WriteHeader(duckdb::QueryContext /*context*/,
             "ReadContext::WriteHeader on read-only context");
 }
 duckdb::idx_t ReadContext::TotalBlocks() { return 0; }
-duckdb::idx_t ReadContext::FreeBlocks() { return 0; }
-void ReadContext::FileSync() {}
 
 }  // namespace irs

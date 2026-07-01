@@ -25,7 +25,6 @@
 #include <cmath>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
 #include "basics/memory.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
@@ -90,14 +89,6 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
     return QueryBuilder::Empty();
   }
 
-  sdb::containers::FlatHashMap<uint32_t, uint32_t> fine_centroid_off;
-  if (pq) {
-    fine_centroid_off.reserve(fine_ids.size());
-    for (uint32_t i = 0; i < fine_ids.size(); ++i) {
-      fine_centroid_off.emplace(fine_ids[i], i * d);
-    }
-  }
-
   auto terms = postings->iterator(SeekMode::NORMAL);
   if (!terms) {
     return QueryBuilder::Empty();
@@ -116,7 +107,8 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
 
   std::array<byte_type, kCentroidTermWidth> term_buf{};
   CostAttr::Type estimation = 0;
-  for (const uint32_t c : fine_ids) {
+  for (size_t i = 0; i < fine_ids.size(); ++i) {
+    const uint32_t c = fine_ids[i];
     EncodeCentroidTerm(c, term_buf.data());
     if (!terms->seek(bytes_view{term_buf.data(), term_buf.size()})) {
       continue;
@@ -131,16 +123,9 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
       state.cluster_counts.push_back(term_meta->docs_count);
     }
     if (pq) {
-      const auto it = fine_centroid_off.find(c);
-      const float* cen = it != fine_centroid_off.end()
-                           ? probed_centroids.data() + it->second
-                           : nullptr;
-      if (cen != nullptr) {
-        state.cluster_centroids.insert(state.cluster_centroids.end(), cen,
-                                       cen + d);
-      } else {
-        state.cluster_centroids.insert(state.cluster_centroids.end(), d, 0.f);
-      }
+      const float* cen = probed_centroids.data() + i * d;
+      state.cluster_centroids.insert(state.cluster_centroids.end(), cen,
+                                     cen + d);
     }
     state.cookies.emplace_back(terms->cookie());
   }

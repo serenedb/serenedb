@@ -22,12 +22,11 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include <utility>
 
 #include "basics/errors.h"
 #include "basics/exceptions.h"
-#include "basics/misc.hpp"
-#include "basics/resource_manager.hpp"
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
@@ -70,12 +69,6 @@ void TwoLayerCentroids::WriteFooter(IndexOutput& out, VectorMetric metric,
   if (!quant_stats.empty()) {
     out.WriteData(quant_stats.data(), quant_stats.size());
   }
-}
-
-void TwoLayerCentroids::Release() noexcept {
-  _l1_centroids.clear();
-  _offsets.clear();
-  _n_l1 = 0;
 }
 
 TwoLayerCentroids TwoLayerCentroids::Deserialize(IndexInput& in,
@@ -220,22 +213,17 @@ void TwoLayerCentroids::SearchGlobal(std::span<const float> query,
   const size_t stride = static_cast<size_t>(_d) * sizeof(float);
 
   std::vector<std::pair<float, uint32_t>> scored;
-  std::vector<uint32_t> slot_fine_id;
-  std::vector<float> slot_centroid;
+  std::vector<uint32_t> cand_fine_id;
   L2BodyView body;
   for (const uint32_t l1 : l1_ids) {
     ReadL2Body(in, l1, body);
     scored.reserve(scored.size() + body.n_l2);
-    slot_fine_id.reserve(slot_fine_id.size() + body.n_l2);
+    cand_fine_id.reserve(cand_fine_id.size() + body.n_l2);
     for (uint32_t s = 0; s < body.n_l2; ++s) {
       const byte_type* cv = body.l2_centroids + s * stride;
-      const auto slot = static_cast<uint32_t>(slot_fine_id.size());
-      scored.emplace_back(dist(q, cv, d), slot);
-      slot_fine_id.push_back(body.fine_ids[s]);
-      if (out_centroids != nullptr) {
-        const auto* cf = reinterpret_cast<const float*>(cv);
-        slot_centroid.insert(slot_centroid.end(), cf, cf + _d);
-      }
+      const auto cand = static_cast<uint32_t>(cand_fine_id.size());
+      scored.emplace_back(dist(q, cv, d), cand);
+      cand_fine_id.push_back(body.fine_ids[s]);
     }
   }
   if (scored.empty()) {
@@ -244,18 +232,33 @@ void TwoLayerCentroids::SearchGlobal(std::span<const float> query,
 
   const uint32_t k =
     std::min<uint32_t>(nprobe, static_cast<uint32_t>(scored.size()));
-  std::vector<uint32_t> slots;
-  TopK(scored, k, nearest_is_largest, slots);
+  std::vector<uint32_t> cand_idx;
+  TopK(scored, k, nearest_is_largest, cand_idx);
 
-  out_ids.reserve(slots.size());
-  if (out_centroids != nullptr) {
-    out_centroids->reserve(static_cast<size_t>(slots.size()) * _d);
+  out_ids.reserve(cand_idx.size());
+  for (const uint32_t ci : cand_idx) {
+    out_ids.push_back(cand_fine_id[ci]);
   }
-  for (const uint32_t slot : slots) {
-    out_ids.push_back(slot_fine_id[slot]);
-    if (out_centroids != nullptr) {
-      const float* cf = slot_centroid.data() + static_cast<size_t>(slot) * _d;
-      out_centroids->insert(out_centroids->end(), cf, cf + _d);
+  if (out_centroids == nullptr) {
+    return;
+  }
+
+  constexpr uint32_t kUnselected = std::numeric_limits<uint32_t>::max();
+  std::vector<uint32_t> rank_of(cand_fine_id.size(), kUnselected);
+  for (uint32_t p = 0; p < cand_idx.size(); ++p) {
+    rank_of[cand_idx[p]] = p;
+  }
+  out_centroids->resize(static_cast<size_t>(cand_idx.size()) * _d);
+  uint32_t ci = 0;
+  for (const uint32_t l1 : l1_ids) {
+    ReadL2Body(in, l1, body);
+    for (uint32_t s = 0; s < body.n_l2; ++s, ++ci) {
+      const uint32_t p = rank_of[ci];
+      if (p == kUnselected) {
+        continue;
+      }
+      std::memcpy(out_centroids->data() + static_cast<size_t>(p) * _d,
+                  body.l2_centroids + s * stride, stride);
     }
   }
 }

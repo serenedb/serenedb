@@ -91,11 +91,6 @@ class TwoLayerCentroids {
   const float* L1Centroid(uint32_t i) const noexcept {
     return _l1_centroids.data() + static_cast<size_t>(i) * _d;
   }
-  size_t ResidentBytes() const noexcept {
-    return _l1_centroids.size() * sizeof(float) +
-           _offsets.size() * sizeof(uint64_t);
-  }
-  void Release() noexcept;
 
   VectorMetric _metric = VectorMetric::L2Sqr;
   uint32_t _d = 0;

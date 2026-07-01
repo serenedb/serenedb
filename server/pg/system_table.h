@@ -20,6 +20,12 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+#include <absl/strings/ascii.h>
+#include <absl/strings/str_cat.h>
+#include <absl/strings/str_replace.h>
+
+#include <algorithm>
 #include <array>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -41,6 +47,61 @@
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
+
+struct PrivChar {
+  catalog::AclMode mode;
+  char chr;
+};
+inline constexpr std::array kPrivChars{
+  PrivChar{catalog::AclMode::Insert, 'a'},
+  PrivChar{catalog::AclMode::Select, 'r'},
+  PrivChar{catalog::AclMode::Update, 'w'},
+  PrivChar{catalog::AclMode::Delete, 'd'},
+  PrivChar{catalog::AclMode::Truncate, 'D'},
+  PrivChar{catalog::AclMode::References, 'x'},
+  PrivChar{catalog::AclMode::Trigger, 't'},
+  PrivChar{catalog::AclMode::Maintain, 'm'},
+  PrivChar{catalog::AclMode::Execute, 'X'},
+  PrivChar{catalog::AclMode::Usage, 'U'},
+  PrivChar{catalog::AclMode::Create, 'C'},
+  PrivChar{catalog::AclMode::CreateTemp, 'T'},
+  PrivChar{catalog::AclMode::Connect, 'c'},
+  PrivChar{catalog::AclMode::Set, 's'},
+  PrivChar{catalog::AclMode::AlterSystem, 'A'},
+};
+
+inline void PutId(std::string& out, std::string_view name) {
+  const bool safe = std::ranges::all_of(name, [](unsigned char c) {
+    return !(c & 0x80) && (absl::ascii_isalnum(c) || c == '_');
+  });
+  if (safe) {
+    out.append(name);
+    return;
+  }
+  absl::StrAppend(&out, "\"", absl::StrReplaceAll(name, {{"\"", "\"\""}}),
+                  "\"");
+}
+
+inline std::string AclToPgString(
+  const catalog::AclItem& item,
+  absl::FunctionRef<std::string_view(ObjectId)> name_of) {
+  std::string out;
+  if (item.grantee != catalog::kPublicGrantee) {
+    PutId(out, name_of(item.grantee));
+  }
+  out.push_back('=');
+  for (const auto& p : kPrivChars) {
+    if ((item.privs & p.mode) != catalog::AclMode::NoRights) {
+      out.push_back(p.chr);
+      if ((item.grant_option & p.mode) != catalog::AclMode::NoRights) {
+        out.push_back('*');
+      }
+    }
+  }
+  out.push_back('/');
+  PutId(out, name_of(item.grantor));
+  return out;
+}
 
 template<typename T>
 duckdb::LogicalType GetFieldType();
@@ -121,8 +182,8 @@ void WriteField(duckdb::Vector& vec, duckdb::idx_t row, const Field& field,
       auto& child = duckdb::ListVector::GetEntry(vec);
       for (duckdb::idx_t i = 0; i < list_size; i++) {
         std::string oid_fallback;
-        auto text = auth::AclItemToText(
-          field.items[i], [&](ObjectId id) -> std::string_view {
+        auto text =
+          AclToPgString(field.items[i], [&](ObjectId id) -> std::string_view {
             if (id == catalog::kPublicGrantee) {
               return {};
             }

@@ -130,8 +130,10 @@ void CreateRolePragma(duckdb::ClientContext& context,
 void DropRolePragma(duckdb::ClientContext& context,
                     const duckdb::FunctionParameters& params) {
   auto& conn_ctx = GetSereneDBContext(context);
-  pg::DropRole(conn_ctx, ArgStr(params, 0, "name"),
-               ArgBool(params, 1, "missing_ok"));
+  const bool missing_ok = ArgBool(params, 1, "missing_ok");
+  for (const auto& name : ArgStrList(params, 0)) {
+    pg::DropRole(conn_ctx, name, missing_ok);
+  }
 }
 
 void AlterRolePragma(duckdb::ClientContext& context,
@@ -261,7 +263,7 @@ void RegisterRbacPragmas(duckdb::DatabaseInstance& db) {
 
   loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
     "serenedb_drop_role", DropRolePragma,
-    {LogicalType::VARCHAR, LogicalType::BOOLEAN}));
+    {LogicalType::LIST(LogicalType::VARCHAR), LogicalType::BOOLEAN}));
 
   loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
     "serenedb_alter_role", AlterRolePragma,

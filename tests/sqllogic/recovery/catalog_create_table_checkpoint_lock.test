@@ -1,0 +1,76 @@
+## The 'pause_store_create_table' failpoint parks a CREATE right after it takes
+## the checkpoint lock. We then prove a concurrent non-force CHECKPOINT cannot
+## proceed (DuckDB refuses: "Cannot CHECKPOINT: there are other write
+## transactions active").
+##
+## If this test FAILS (a CHECKPOINT succeeds while a CREATE is parked) it means
+## one of two things:
+##   1. DuckDB changed its lock model so CREATE_CATALOG_ENTRY no longer
+##      conflicts with a checkpoint (their sync/lock no longer triggers), or
+##   2. our prevention regressed -- the ModifyDatabase(CREATE_CATALOG_ENTRY)
+##      call in ExecuteCreateStoreTableImpl no longer takes the lock.
+## Either way the invariant "store CREATE never overlaps a store checkpoint" is
+## no longer enforced and must be re-established before this test is removed.
+
+control substitution on
+control max-async-connections 4
+
+
+# Arm the failpoint, then start a CREATE that parks while holding the store's
+# checkpoint lock. It must run async so the runner can drive the checkpointer
+# connection while this CREATE is parked.
+connection writer
+statement ok
+SET sdb_faults = 'pause_store_create_table';
+
+
+connection writer
+statement async ok
+CREATE TABLE cctr_lock_probe(id INTEGER PRIMARY KEY, body TEXT);
+
+
+# Retry CHECKPOINT until it fails. The failure only appears once the writer has
+# reached the parked state and is holding the checkpoint lock, so this both
+# waits for the writer AND is the first half of the assertion. On a binary
+# without the fix the CHECKPOINT keeps succeeding, the retries are exhausted,
+# and this directive fails (see header).
+connection checkpointer
+statement error retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CHECKPOINT;
+
+
+# The writer is still parked (lock held until the fault is cleared below), so a
+# CHECKPOINT now fails deterministically -- assert it is exactly the
+# checkpoint-lock conflict, not some unrelated error.
+connection checkpointer
+statement error (?i)cannot checkpoint.*other write transactions
+CHECKPOINT;
+
+
+# Release the writer from a SEPARATE connection. `writer` is blocked inside the
+# parked CREATE, and the runner waits for a connection's in-flight async
+# statement to finish before reusing that connection -- clearing the fault on
+# `writer` would deadlock (the clear would wait for the very CREATE it must
+# release). The failpoint set is global, so any connection can clear it.
+connection releaser
+statement ok
+SET sdb_faults = '-pause_store_create_table';
+
+
+# Retry the INSERT until the async CREATE has committed and the table is
+# visible -- same retry mechanism as the CHECKPOINT above, used for success
+# instead of error. This replaces an explicit `wait` for the writer.
+connection checkpointer
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+INSERT INTO cctr_lock_probe VALUES (1, 'ok');
+
+
+# Exercise the PK-index delete path -- the exact operation that fails "0 out of
+# 1" when a CREATE is stranded by an overlapping checkpoint. It succeeds here
+# because the overlap was prevented.
+statement ok
+DELETE FROM cctr_lock_probe WHERE id = 1;
+
+
+statement ok
+DROP TABLE cctr_lock_probe;

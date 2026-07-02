@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/common/exception/binder_exception.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -44,12 +45,14 @@
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
+#include <duckdb/transaction/meta_transaction.hpp>
 #include <exception>
 #include <filesystem>
 #include <initializer_list>
 #include <utility>
 
 #include "basics/assert.h"
+#include "basics/debugging.h"
 #include "basics/down_cast.h"
 #include "basics/duckdb_engine.h"
 #include "basics/exceptions.h"
@@ -1009,6 +1012,20 @@ Result CatalogStore::ExecuteCreateStoreTableImpl(const StoreTableDef& def,
     auto& context = *_conn->context;
     auto& catalog =
       duckdb::Catalog::GetCatalog(context, std::string{kStoreAlias});
+    // Acquire the store's (shared) checkpoint lock before creating the table.
+    // The direct catalog.CreateTable() call bypasses the statement-execution
+    // path that normally registers the modification and takes this lock (which
+    // serenedb's DROP/ALTER do go through, via _conn->Query). Without it, a
+    // store table can be created concurrently with a store checkpoint; the new
+    // table is then not in the checkpoint's snapshot, so MergeCheckpointDeltas
+    // never merges its index's added_data delta -> the entry is stranded -> a
+    // later delete fails "0 out of 1" -> "Failed to rollback transaction".
+    duckdb::MetaTransaction::Get(context).ModifyDatabase(
+      catalog.GetAttached(),
+      duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY);
+    SDB_IF_FAILURE("pause_store_create_table") {
+      sdb::WaitWhileFailurePointDebugging("pause_store_create_table");
+    }
     catalog.CreateTable(context, std::move(info));
     return {};
   });

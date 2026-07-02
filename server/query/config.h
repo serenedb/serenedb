@@ -30,6 +30,8 @@
 
 #include "basics/assert.h"
 #include "basics/containers/node_hash_map.h"
+#include "basics/errors.h"
+#include "basics/exceptions.h"
 #include "catalog/types.h"
 
 namespace duckdb {
@@ -107,9 +109,11 @@ class Config {
 
   // Read-only access to the snapshot acquired for the current statement.
   // Never acquires: a lazy first-acquire from an executor worker would race
-  // the connection thread.
+  // the connection thread. The check stays in release builds -- a scope hole
+  // must surface as an error, not a null dereference.
   const std::shared_ptr<const catalog::Snapshot>& CatalogSnapshot() const {
-    SDB_ASSERT(_snapshot);
+    SDB_ENSURE(_snapshot, ERROR_INTERNAL,
+               "no catalog snapshot acquired for the current statement");
     return _snapshot;
   }
 

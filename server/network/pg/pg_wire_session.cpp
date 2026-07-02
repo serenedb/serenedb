@@ -1511,6 +1511,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdoutViaFormat(
   auto prepared = _conn->Prepare(std::move(statement));
   ThrowIfError(*prepared);
   auto inner = ExtractCopyToQuery(probe->Cast<duckdb::CopyStatement>());
+  _connection_ctx->AcquireCatalogSnapshot();
   auto inner_prepared = _conn->Prepare(std::move(inner));
   ThrowIfError(*inner_prepared);
 

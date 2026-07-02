@@ -182,13 +182,11 @@ class PhysicalPgWireCollector : public duckdb::PhysicalResultCollector {
   // object for the standard fetch/cleanup path.
   duckdb::unique_ptr<duckdb::QueryResult> GetResult(
     duckdb::GlobalSinkState& state) const override {
-    auto& gstate = state.Cast<PgWireCollectorGlobalState>();
-    auto cc = gstate.ctx->context.lock();
     auto collection = duckdb::make_uniq<duckdb::ColumnDataCollection>(
       duckdb::Allocator::DefaultAllocator(), types);
     return duckdb::make_uniq<duckdb::MaterializedQueryResult>(
       statement_type, properties, duckdb::IdentifiersToStrings(names),
-      std::move(collection), cc->GetClientProperties());
+      std::move(collection), duckdb::ClientProperties{});
   }
 
   bool ParallelSink() const override {

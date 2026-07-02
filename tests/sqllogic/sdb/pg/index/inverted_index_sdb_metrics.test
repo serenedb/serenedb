@@ -1,0 +1,57 @@
+control substitution on
+
+statement ok
+CREATE TABLE t(r text);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY test_english(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false
+);
+
+statement ok
+CREATE INDEX index_t ON t USING inverted(r test_english);
+
+statement ok
+INSERT INTO t VALUES ('a'), ('b'), ('c');
+
+statement ok
+VACUUM (REFRESH_TABLE) t;
+
+
+# Per-index IResearch-style statistics are exposed with index_id populated.
+query
+SELECT metric, value FROM sdb_metrics
+WHERE index_id = (SELECT oid FROM pg_class WHERE relname = 'index_t')
+  AND metric IN ('num_docs', 'num_live_docs')
+ORDER BY metric;
+----
+metric	value
+num_docs	3
+num_live_docs	3
+
+
+# All 12 per-index metrics are present for the one inverted index.
+query
+SELECT count(*) FROM sdb_metrics WHERE index_id IS NOT NULL;
+----
+count
+12
+
+
+# Process-wide gauges keep a NULL index_id.
+query
+SELECT count(*) FROM sdb_metrics WHERE metric = 'refresh_active' AND index_id IS NULL;
+----
+count
+1
+
+
+statement ok
+DROP TABLE t;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY test_english;

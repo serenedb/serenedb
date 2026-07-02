@@ -24,9 +24,11 @@
 
 namespace sdb::pg {
 
-// system.metrics: one row per process-wide dynamic gauge.
-// Backed by relaxed-atomic counters (sdb::metrics), re-read per query snapshot.
-// NOLINTBEGIN
+// system.metrics: one row per process-wide dynamic gauge, plus one row per
+// per-inverted-index statistic. Process-wide gauges are backed by
+// relaxed-atomic counters (sdb::metrics); per-index rows carry the index oid in
+// `index_id` (NULL for gauges) and are re-read from the catalog per query
+// snapshot. NOLINTBEGIN
 struct SdbMetrics {
   static constexpr uint64_t kId = 999995;  // TODO(codeworse): assign proper OID
   static constexpr std::string_view kName = "sdb_metrics";
@@ -34,6 +36,7 @@ struct SdbMetrics {
   Text metric;
   uint64_t value;
   Text description;
+  Oid index_id;
 };
 // NOLINTEND
 

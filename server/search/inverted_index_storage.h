@@ -87,9 +87,16 @@ class InvertedIndexStorage final
     // NOLINTBEGIN
     uint64_t numDocs = 0;
     uint64_t numLiveDocs = 0;
+    uint64_t numBufferedDocs = 0;
     uint64_t numSegments = 0;
     uint64_t numFiles = 0;
     uint64_t indexSize = 0;
+    uint64_t numFailedCommits = 0;
+    uint64_t numFailedCleanups = 0;
+    uint64_t numFailedConsolidations = 0;
+    uint64_t avgCommitTimeMs = 0;
+    uint64_t avgCleanupTimeMs = 0;
+    uint64_t avgConsolidationTimeMs = 0;
     // NOLINTEND
   };
 
@@ -251,6 +258,30 @@ class InvertedIndexStorage final
   int64_t GetIcebergSnapshotId() const noexcept { return _iceberg_snapshot_id; }
 
  private:
+  class MovingAverageMs {
+   public:
+    void Record(uint64_t time_ms) noexcept {
+      const uint64_t old =
+        _time_num.fetch_add((time_ms << 32U) + 1, std::memory_order_relaxed);
+      const uint64_t old_time = old >> 32U;
+      const uint64_t old_num = static_cast<uint32_t>(old);
+      if (old_num >= kWindow) {
+        _time_num.fetch_sub(((old_time / old_num) << 32U) + 1,
+                            std::memory_order_relaxed);
+      }
+    }
+    uint64_t Average() const noexcept {
+      const uint64_t v = _time_num.load(std::memory_order_relaxed);
+      const uint64_t time = v >> 32U;
+      const uint64_t num = static_cast<uint32_t>(v);
+      return num == 0 ? 0 : time / num;
+    }
+
+   private:
+    static constexpr uint64_t kWindow = 10;
+    std::atomic<uint64_t> _time_num{0};
+  };
+
   Result CompactUnsafeImpl(const irs::CompactionPolicy& policy,
                            const irs::MergeWriter::FlushProgress& progress,
                            bool& empty_compaction,
@@ -293,6 +324,12 @@ class InvertedIndexStorage final
   std::atomic<bool> _out_of_sync{false};
   std::atomic<uint64_t> _compaction_gen{0};
   std::atomic<uint32_t> _stale_pressure{0};
+  std::atomic<uint64_t> _num_failed_commits{0};
+  std::atomic<uint64_t> _num_failed_cleanups{0};
+  std::atomic<uint64_t> _num_failed_consolidations{0};
+  MovingAverageMs _avg_commit_time_ms;
+  MovingAverageMs _avg_cleanup_time_ms;
+  MovingAverageMs _avg_consolidation_time_ms;
   int64_t _iceberg_snapshot_id{0};
   Phase _phase{Phase::Creating};
 

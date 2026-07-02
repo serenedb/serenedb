@@ -342,21 +342,32 @@ void InvertedIndexStorage::CheckpointRefresh() {
 
 InvertedIndexStorage::Stats InvertedIndexStorage::UpdateStatsUnsafe(
   InvertedIndexSnapshotPtr inverted_index_snapshot) const {
-  SDB_ASSERT(inverted_index_snapshot);
-  auto& reader = inverted_index_snapshot->reader;
-  SDB_ASSERT(reader);
-  auto& segments = reader->Meta().index_meta.segments;
-
   Stats stats;
-  stats.numSegments = segments.size();
-  stats.numDocs = reader->docs_count();
-  stats.numLiveDocs = reader->live_docs_count();
-  stats.numFiles = 1 + stats.numSegments;
-  for (const auto& segment : segments) {
-    const auto& meta = segment.meta;
-    stats.indexSize += meta.byte_size;
-    stats.numFiles += meta.files.size();
+  if (inverted_index_snapshot) {
+    auto& reader = inverted_index_snapshot->reader;
+    SDB_ASSERT(reader);
+    auto& segments = reader->Meta().index_meta.segments;
+    stats.numSegments = segments.size();
+    stats.numDocs = reader->docs_count();
+    stats.numLiveDocs = reader->live_docs_count();
+    stats.numFiles = 1 + stats.numSegments;
+    for (const auto& segment : segments) {
+      const auto& meta = segment.meta;
+      stats.indexSize += meta.byte_size;
+      stats.numFiles += meta.files.size();
+    }
   }
+  if (_writer) {
+    stats.numBufferedDocs = _writer->BufferedDocs();
+  }
+  stats.numFailedCommits = _num_failed_commits.load(std::memory_order_relaxed);
+  stats.numFailedCleanups =
+    _num_failed_cleanups.load(std::memory_order_relaxed);
+  stats.numFailedConsolidations =
+    _num_failed_consolidations.load(std::memory_order_relaxed);
+  stats.avgCommitTimeMs = _avg_commit_time_ms.Average();
+  stats.avgCleanupTimeMs = _avg_cleanup_time_ms.Average();
+  stats.avgConsolidationTimeMs = _avg_consolidation_time_ms.Average();
   return stats;
 }
 
@@ -366,6 +377,11 @@ InvertedIndexStorage::ResultWithTime InvertedIndexStorage::CleanupUnsafe() {
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - begin)
                        .count();
+  if (!result.ok()) {
+    _num_failed_cleanups.fetch_add(1, std::memory_order_relaxed);
+  } else {
+    _avg_cleanup_time_ms.Record(time_ms);
+  }
   return {std::move(result), time_ms};
 }
 
@@ -392,6 +408,11 @@ InvertedIndexStorage::ResultWithTime InvertedIndexStorage::CompactUnsafe(
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - begin)
                        .count();
+  if (!result.ok()) {
+    _num_failed_consolidations.fetch_add(1, std::memory_order_relaxed);
+  } else if (!empty_compaction) {
+    _avg_consolidation_time_ms.Record(time_ms);
+  }
   return {std::move(result), time_ms};
 }
 
@@ -406,6 +427,12 @@ InvertedIndexStorage::ResultWithTime InvertedIndexStorage::RefreshUnsafe(
 
   SDB_IF_FAILURE("Search::FailOnCommit") { result.reset(ERROR_DEBUG); }
   SDB_IF_FAILURE("Search::CrashAfterCommit") { SDB_IMMEDIATE_ABORT(); }
+
+  if (!result.ok()) {
+    _num_failed_commits.fetch_add(1, std::memory_order_relaxed);
+  } else if (code == RefreshResult::Done) {
+    _avg_commit_time_ms.Record(time_ms);
+  }
 
   return {std::move(result), time_ms};
 }
@@ -584,11 +611,7 @@ void InvertedIndexStorage::FinishCreation() {
 }
 
 InvertedIndexStorage::Stats InvertedIndexStorage::GetStats() const {
-  auto snapshot = GetInvertedIndexSnapshot();
-  if (!snapshot) {
-    return {};
-  }
-  return UpdateStatsUnsafe(std::move(snapshot));
+  return UpdateStatsUnsafe(GetInvertedIndexSnapshot());
 }
 
 }  // namespace sdb::search

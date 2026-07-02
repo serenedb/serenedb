@@ -108,11 +108,15 @@ int RunServer(int argc, char** argv) {
       if (up_background) {
         stop("background", [&] { background.stop(); });
       }
+      if (up_store) {
+        // detach + checkpoint. Must run BEFORE ShutdownCatalog: the detach
+        // checkpoints the store, which serializes store-table inverted indexes,
+        // and InvertedStoreIndex::CheckpointBarrier resolves the global
+        // catalog.
+        stop("store", [&] { store.Shutdown(); });
+      }
       if (up_catalog) {
         stop("catalog", [&] { catalog::ShutdownCatalog(); });
-      }
-      if (up_store) {
-        stop("store", [&] { store.Shutdown(); });  // detach + checkpoint
       }
     };
 

@@ -39,6 +39,7 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <duckdb/planner/expression/bound_unnest_expression.hpp>
+#include <duckdb/optimizer/column_binding_replacer.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/operator/logical_aggregate.hpp>
 #include <duckdb/planner/operator/logical_filter.hpp>
@@ -1222,15 +1223,177 @@ duckdb::unique_ptr<duckdb::Expression> BuildKeywordTsDictAggregate(
   return result;
 }
 
-void PushdownTsDictAggregates(duckdb::LogicalAggregate& aggr,
+// `SELECT col, count(*) FROM idx GROUP BY col` over a keyword NOT NULL column
+// is a facet: the groups are exactly the field's live terms and each group's
+// size is the term's live doc count. The group key is repointed at the term
+// column, every count(*) / count(col) becomes sum(term_count) (the user's own
+// GROUP BY merges the per-segment rows), and a projection above casts the sums
+// back to count's BIGINT. A bare GROUP BY with no aggregates converts too.
+bool TryPushdownTsDictFacet(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
+                            duckdb::LogicalOperator& root,
+                            duckdb::LogicalGet& target,
+                            duckdb::LogicalFilter* where_filter,
+                            duckdb::Binder& binder,
+                            duckdb::ClientContext& context) {
+  using C = catalog::Column;
+  auto& aggr = plan->Cast<duckdb::LogicalAggregate>();
+  if (aggr.groups.size() != 1 || aggr.grouping_sets.size() > 1) {
+    return false;
+  }
+  if (aggr.groups[0]->GetExpressionClass() !=
+      duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+    return false;
+  }
+  auto& group_ref = aggr.groups[0]->Cast<duckdb::BoundColumnRefExpression>();
+  if (group_ref.GetReturnType().id() != duckdb::LogicalTypeId::VARCHAR) {
+    return false;
+  }
+  const auto resolved =
+    ResolveBindingThroughProjections(root, group_ref.binding);
+  auto found = FindIResearchScan(root, resolved.table_index);
+  if (!found || found->get != &target ||
+      found->bind_data->GetKind() !=
+        connector::SereneDBScanBindData::Kind::Table) {
+    return false;
+  }
+  const auto col_id = ResolveColumnId(resolved, *found->bind_data, *found->get);
+  if (col_id == catalog::Column::kInvalidId) {
+    return false;
+  }
+  const auto* index = found->bind_data->inverted_index.get();
+  if (index == nullptr) {
+    return false;
+  }
+  const auto field_id = static_cast<irs::field_id>(col_id);
+  const auto snapshot =
+    connector::GetSereneDBContext(context).EnsureCatalogSnapshot();
+  if (!index->IsKeywordField(*snapshot, field_id)) {
+    return false;
+  }
+  const auto& tbd = found->bind_data->As<connector::TableScanBindData>();
+  if (!tbd.table || !ColumnIsNotNull(*tbd.table, col_id)) {
+    return false;
+  }
+
+  for (auto& expr : aggr.expressions) {
+    if (expr->GetExpressionClass() !=
+        duckdb::ExpressionClass::BOUND_AGGREGATE) {
+      return false;
+    }
+    auto& agg = expr->Cast<duckdb::BoundAggregateExpression>();
+    if (agg.IsDistinct() || agg.filter != nullptr ||
+        agg.order_bys != nullptr) {
+      return false;
+    }
+    const auto& name = agg.function.GetName();
+    if (name == "count_star") {
+      continue;
+    }
+    if (name != "count" || agg.children.size() != 1 ||
+        agg.children[0]->GetExpressionClass() !=
+          duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+      return false;
+    }
+    const auto child = ResolveBindingThroughProjections(
+      root, agg.children[0]->Cast<duckdb::BoundColumnRefExpression>().binding);
+    if (ResolveColumnId(child, *found->bind_data, *found->get) != col_id) {
+      return false;
+    }
+  }
+
+  if (where_filter != nullptr) {
+    for (auto& expr : where_filter->expressions) {
+      bool refs_field = false;
+      bool refs_other = false;
+      CollectPredicateFields(*expr, field_id, *found->bind_data, *found->get,
+                             refs_field, refs_other);
+      if (!refs_field || refs_other || ContainsTSQueryExpr(*expr)) {
+        return false;
+      }
+    }
+  }
+
+  auto& req = found->scan->TsDictFor(field_id);
+  EnsureTsDictCol(*found->bind_data, *found->get, req, TsDictColKind::kTerm);
+  EnsureTsDictCol(*found->bind_data, *found->get, req, TsDictColKind::kCount);
+  req.term_uses |= connector::SearchScan::TsDictRequest::kUseFull;
+
+  const auto anchor = group_ref.binding.table_index;
+  const auto term_binding =
+    ExposeGetColumnAt(root, anchor, *found->get, req.term_col_idx, C::kTermName,
+                      duckdb::LogicalType::VARCHAR);
+  const auto count_binding = ExposeGetColumnAt(
+    root, anchor, *found->get, req.count_col_idx, C::kTermCountName,
+    duckdb::LogicalType::INTEGER);
+
+  aggr.groups[0] = duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
+    std::string{C::kTermName}, duckdb::LogicalType::VARCHAR, term_binding);
+
+  std::vector<duckdb::LogicalType> old_types;
+  for (auto& expr : aggr.expressions) {
+    old_types.push_back(expr->GetReturnType());
+    expr = BuildTsDictAggregate(
+      context, "sum",
+      duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
+        std::string{C::kTermCountName}, duckdb::LogicalType::INTEGER,
+        count_binding));
+  }
+  aggr.group_stats.clear();
+  aggr.group_stats.resize(aggr.groups.size());
+  aggr.ResolveOperatorTypes();
+
+  if (!old_types.empty()) {
+    const auto proj_index = binder.GenerateTableIndex();
+    duckdb::ColumnBindingReplacer replacer;
+    replacer.replacement_bindings.emplace_back(
+      duckdb::ColumnBinding{aggr.group_index, duckdb::ProjectionIndex{0}},
+      duckdb::ColumnBinding{proj_index, duckdb::ProjectionIndex{0}});
+    duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> proj_exprs;
+    proj_exprs.push_back(duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
+      std::string{C::kTermName}, duckdb::LogicalType::VARCHAR,
+      duckdb::ColumnBinding{aggr.group_index, duckdb::ProjectionIndex{0}}));
+    for (size_t i = 0; i < old_types.size(); ++i) {
+      replacer.replacement_bindings.emplace_back(
+        duckdb::ColumnBinding{aggr.aggregate_index,
+                              duckdb::ProjectionIndex{i}},
+        duckdb::ColumnBinding{proj_index, duckdb::ProjectionIndex{i + 1}});
+      duckdb::unique_ptr<duckdb::Expression> sum_ref =
+        duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
+          aggr.expressions[i]->GetReturnType(),
+          duckdb::ColumnBinding{aggr.aggregate_index,
+                                duckdb::ProjectionIndex{i}});
+      proj_exprs.push_back(duckdb::BoundCastExpression::AddCastToType(
+        context, std::move(sum_ref), old_types[i]));
+    }
+    replacer.stop_operator = plan.get();
+    replacer.VisitOperator(root);
+
+    auto proj = duckdb::make_uniq<duckdb::LogicalProjection>(
+      proj_index, std::move(proj_exprs));
+    for (auto& e : proj->expressions) {
+      proj->types.push_back(e->GetReturnType());
+    }
+    proj->children.push_back(std::move(plan));
+    plan = std::move(proj);
+  }
+  return true;
+}
+
+void PushdownTsDictAggregates(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
                               duckdb::LogicalOperator& root,
                               duckdb::Binder& binder,
                               duckdb::ClientContext& context) {
+  auto& aggr = plan->Cast<duckdb::LogicalAggregate>();
   std::vector<size_t> ts_dict_calls;
   std::vector<std::pair<size_t, KeywordDictAgg>> keyword_aggs;
   bool other = false;
   std::shared_ptr<const catalog::Snapshot> snapshot;
   const auto [implicit_target, implicit_filter] = ImplicitTsDictTarget(aggr);
+  if (!aggr.groups.empty() && implicit_target != nullptr &&
+      TryPushdownTsDictFacet(plan, root, *implicit_target, implicit_filter,
+                             binder, context)) {
+    return;
+  }
   for (size_t i = 0; i < aggr.expressions.size(); ++i) {
     auto& expr = aggr.expressions[i];
     if (expr->GetExpressionClass() !=
@@ -1400,8 +1563,7 @@ void RewriteIResearchExpressions(
       }
       break;
     case duckdb::LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY:
-      PushdownTsDictAggregates(plan->Cast<duckdb::LogicalAggregate>(), *root,
-                               binder, context);
+      PushdownTsDictAggregates(plan, *root, binder, context);
       break;
     case duckdb::LogicalOperatorType::LOGICAL_UNNEST:
       CollapseTsDictUnnest(plan);

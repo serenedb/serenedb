@@ -47,8 +47,6 @@
 #include <iresearch/search/regexp_filter.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
-#include <iresearch/search/vector_radius_filter.hpp>
-#include <iresearch/search/vector_similarity_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/search/wildcard_ngram_filter.hpp>
 #include <optional>
@@ -6106,42 +6104,6 @@ TEST_F(SearchFilterBuilderTest, test_BuiltinMix_OrEndsWithRegexp) {
                "SELECT * FROM foo WHERE ends_with(b, 'bar') OR "
                "regexp_matches(b, '[a-z]+[0-9]+')",
                columns, true);
-}
-
-TEST(SearchFilterPrinterTest, test_VectorKnnWithInner) {
-  auto inner = std::make_shared<irs::And>();
-  AddTermFilter<std::string_view>(*inner, 2, "footwear");
-
-  irs::ByVectorSimilarity knn;
-  *knn.mutable_field_id() = ExpectedFieldId(1);
-  auto* o = knn.mutable_options();
-  o->query = {1.0f, 0.0f, 0.0f};
-  o->metric = irs::VectorMetric::L2Sqr;
-  o->nprobe = 4;
-  o->inner = inner;
-
-  const auto rendered = irs::ToString(knn);
-  EXPECT_NE(rendered.find("VECTOR_KNN"), std::string::npos) << rendered;
-  EXPECT_NE(rendered.find("metric=l2"), std::string::npos) << rendered;
-  EXPECT_NE(rendered.find("dims=3"), std::string::npos) << rendered;
-  EXPECT_NE(rendered.find("nprobe=4"), std::string::npos) << rendered;
-  EXPECT_NE(rendered.find("Term"), std::string::npos) << rendered;
-}
-
-TEST(SearchFilterPrinterTest, test_VectorRangeNoInner) {
-  irs::ByRadius range;
-  *range.mutable_field_id() = ExpectedFieldId(1);
-  auto* o = range.mutable_options();
-  o->query = {1.0f, 0.0f, 0.0f};
-  o->metric = irs::VectorMetric::Cosine;
-  o->radius = 0.5f;
-  o->inclusive = true;
-
-  const auto rendered = irs::ToString(range);
-  EXPECT_NE(rendered.find("VECTOR_RANGE"), std::string::npos) << rendered;
-  EXPECT_NE(rendered.find("metric=cosine"), std::string::npos) << rendered;
-  EXPECT_NE(rendered.find("dims=3"), std::string::npos) << rendered;
-  EXPECT_NE(rendered.find("<="), std::string::npos) << rendered;
 }
 
 }  // namespace

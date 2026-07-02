@@ -21,6 +21,7 @@
 #pragma once
 
 #include "basics/empty.hpp"
+#include "basics/exceptions.h"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/posting/iterator_pos.hpp"
@@ -31,13 +32,24 @@
 
 namespace irs {
 
-template<typename IteratorTraits>
 class PostingIteratorBase : public DocIterator {
+ public:
+  uint32_t RemainingDocs() const noexcept {
+    return _left_in_leaf + _left_in_list;
+  }
+
+ protected:
+  uint32_t _left_in_leaf = 0;
+  uint32_t _left_in_list = 0;
+};
+
+template<typename IteratorTraits>
+class PostingIterator : public PostingIteratorBase {
  public:
   static_assert(doc_limits::kBlockSize % kScoreBlock == 0,
                 "kBlockSize must be a multiple of kScoreBlock");
 
-  ~PostingIteratorBase() {
+  ~PostingIterator() {
     if constexpr (IteratorTraits::Frequency()) {
       if (_doc_in) {
         std::allocator<uint32_t>{}.deallocate(_collected_freqs, kScoreBlock);
@@ -136,14 +148,12 @@ class PostingIteratorBase : public DocIterator {
   [[maybe_unused]] doc_id_t _placeholder_for_bitset_materialize[8];
 #endif
   doc_id_t _max_in_leaf = doc_limits::invalid();
-  uint32_t _left_in_leaf = 0;
-  uint32_t _left_in_list = 0;
   IndexInput::ptr _doc_in;
   Attributes _attrs;
 };
 
 template<typename IteratorTraits>
-doc_id_t PostingIteratorBase<IteratorTraits>::advance() {
+doc_id_t PostingIterator<IteratorTraits>::advance() {
   if (_left_in_leaf == 0) [[unlikely]] {
     if (_left_in_list == 0) [[unlikely]] {
       return _doc = doc_limits::eof();
@@ -166,7 +176,7 @@ doc_id_t PostingIteratorBase<IteratorTraits>::advance() {
 }
 
 template<typename IteratorTraits>
-doc_id_t PostingIteratorBase<IteratorTraits>::seek(doc_id_t target) {
+doc_id_t PostingIterator<IteratorTraits>::seek(doc_id_t target) {
   if (target <= _doc) [[unlikely]] {
     return _doc;
   }
@@ -201,7 +211,7 @@ doc_id_t PostingIteratorBase<IteratorTraits>::seek(doc_id_t target) {
 }
 
 template<typename IteratorTraits>
-doc_id_t PostingIteratorBase<IteratorTraits>::LazySeek(doc_id_t target) {
+doc_id_t PostingIterator<IteratorTraits>::LazySeek(doc_id_t target) {
   if constexpr (IteratorTraits::Position()) {
     return seek(target);
   } else {
@@ -242,9 +252,9 @@ doc_id_t PostingIteratorBase<IteratorTraits>::LazySeek(doc_id_t target) {
 }
 
 template<typename IteratorTraits>
-void PostingIteratorBase<IteratorTraits>::Collect(const ScoreFunction& scorer,
-                                                  ColumnArgsFetcher& fetcher,
-                                                  ScoreCollector& collector) {
+void PostingIterator<IteratorTraits>::Collect(const ScoreFunction& scorer,
+                                              ColumnArgsFetcher& fetcher,
+                                              ScoreCollector& collector) {
   ResolveScoreCollector(collector, [&](auto& collector) IRS_FORCE_INLINE {
     auto process_block = [&]<size_t N>(size_t left_in_leaf) IRS_FORCE_INLINE {
       std::span<const doc_id_t, N> docs{std::end(_docs) - left_in_leaf,
@@ -280,7 +290,7 @@ void PostingIteratorBase<IteratorTraits>::Collect(const ScoreFunction& scorer,
 
 template<typename IteratorTraits>
 template<size_t N>
-const score_t* PostingIteratorBase<IteratorTraits>::ScoreBlock(
+const score_t* PostingIterator<IteratorTraits>::ScoreBlock(
   std::span<const doc_id_t, N> docs, const ScoreFunction& score,
   ColumnArgsFetcher* fetcher) {
   if constexpr (N == kPostingBlock) {
@@ -312,7 +322,7 @@ const score_t* PostingIteratorBase<IteratorTraits>::ScoreBlock(
 
 template<typename IteratorTraits>
 template<ScoreMergeType MergeType, bool TrackMatch, size_t N>
-bool PostingIteratorBase<IteratorTraits>::ProcessBatch(
+bool PostingIterator<IteratorTraits>::ProcessBatch(
   std::span<const doc_id_t, N> docs, const doc_id_t min,
   uint64_t* IRS_RESTRICT doc_mask, [[maybe_unused]] FillBlockScoreContext score,
   [[maybe_unused]] FillBlockMatchContext match) {
@@ -366,11 +376,11 @@ bool PostingIteratorBase<IteratorTraits>::ProcessBatch(
 // FieldTraits defines requested features.
 template<typename IteratorTraits, typename FieldTraits, bool HasWand,
          typename InputType>
-class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
+class PostingIteratorImpl : public PostingIterator<IteratorTraits> {
   static_assert((IteratorTraits::Features() & FieldTraits::Features()) ==
                 IteratorTraits::Features());
 
-  using Base = PostingIteratorBase<IteratorTraits>;
+  using Base = PostingIterator<IteratorTraits>;
   using typename Base::Position;
 
   static_assert(doc_limits::kBlockSize % kScoreBlock == 0,

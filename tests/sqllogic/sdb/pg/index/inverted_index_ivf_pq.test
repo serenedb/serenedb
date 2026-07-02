@@ -1,0 +1,133 @@
+hash-threshold 100
+
+# Residual Product-Quantization IVF vector index. One global codebook (M
+# subquantizers, ksub=256 centroids, nbits=8) is trained on the reservoir
+# sample's centroid-relative residuals and stored once in the .idx; each cluster
+# stores only M-byte codes. PQ is lossy + approximate, so determinism here comes
+# from far-separated "landmark" vectors (queries can't miss them) plus an
+# exhaustive nprobe. PQ training needs >= 256 points, so the table is padded
+# with filler rows. quant='pq' supports only metric l2 and ip; pq_m must divide
+# the dimension.
+
+statement ok
+SET sdb_nprobe = 1000
+
+# ===========================================================================
+# 1. L2 + PQ (d=8, pq_m=4 -> dsub=2): far-separated landmarks among filler.
+# ===========================================================================
+
+statement ok
+CREATE TABLE pq_l2 (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX pq_l2_idx ON pq_l2
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'pq', pq_m = 4, nlist = 8))
+
+# 300 bounded filler rows near the origin to train the codebook.
+statement ok
+INSERT INTO pq_l2
+SELECT g,
+  ARRAY[ (g % 37)::float, ((g * 7) % 37)::float, ((g * 11) % 37)::float,
+         ((g * 13) % 37)::float, ((g * 17) % 37)::float, ((g * 19) % 37)::float,
+         ((g * 23) % 37)::float, ((g * 29) % 37)::float ]::FLOAT[8]
+FROM generate_series(1, 300) g
+
+# three landmarks, each isolated on a different axis, far from all filler.
+statement count 3
+INSERT INTO pq_l2 VALUES
+  (1001, [1000, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1002, [0, 1000, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1003, [0, 0, 0, 0, 0, 0, 0, 1000]::FLOAT[8])
+
+statement ok
+VACUUM (REFRESH_TABLE) pq_l2
+
+query
+SELECT count(*) FROM pq_l2_idx;
+----
+count
+303
+
+query
+SELECT pk FROM pq_l2_idx
+  ORDER BY emb <-> [1000, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1001
+
+query
+SELECT pk FROM pq_l2_idx
+  ORDER BY emb <-> [0, 1000, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1002
+
+query
+SELECT pk FROM pq_l2_idx
+  ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 1000]::FLOAT[8] LIMIT 1;
+----
+pk
+1003
+
+# hybrid: an inner filter routes through the exact raw reranker.
+query
+SELECT pk FROM pq_l2_idx
+  WHERE pk >= 1001 ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 1000]::FLOAT[8] LIMIT 1;
+----
+pk
+1003
+
+# ===========================================================================
+# 2. InnerProduct + PQ.
+# ===========================================================================
+
+statement ok
+CREATE TABLE pq_ip (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX pq_ip_idx ON pq_ip
+  USING inverted(pk, emb ivf (metric = 'ip', quant = 'pq', pq_m = 4, nlist = 4))
+
+statement ok
+INSERT INTO pq_ip
+SELECT g,
+  ARRAY[ (g % 31)::float, ((g * 3) % 31)::float, ((g * 5) % 31)::float,
+         ((g * 7) % 31)::float, ((g * 11) % 31)::float, ((g * 13) % 31)::float,
+         ((g * 17) % 31)::float, ((g * 19) % 31)::float ]::FLOAT[8]
+FROM generate_series(1, 300) g
+
+# a landmark with a large component on axis 1: maximal inner product with a
+# query that points along axis 1.
+statement count 1
+INSERT INTO pq_ip VALUES (2001, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8])
+
+statement ok
+VACUUM (REFRESH_TABLE) pq_ip
+
+query
+SELECT pk FROM pq_ip_idx
+  ORDER BY emb <#> [100, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+2001
+
+statement ok
+RESET sdb_nprobe
+
+# ===========================================================================
+# 3. Guards: pq requires metric l2/ip; pq_m must divide the dimension.
+# ===========================================================================
+
+statement ok
+CREATE TABLE pq_bad (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement error
+CREATE INDEX pq_bad_cos ON pq_bad USING inverted(pk, emb ivf (metric = 'cosine', quant = 'pq', pq_m = 4));
+----
+db error: ERROR: Failed to create index: Column 'emb': ivf quantization supports only metric 'l2' or 'ip'
+
+
+statement error
+CREATE INDEX pq_bad_m ON pq_bad USING inverted(pk, emb ivf (metric = 'l2', quant = 'pq', pq_m = 3));
+----
+db error: ERROR: Failed to create index: Column 'emb': ivf option 'pq_m' (3) must divide the vector dimension 8

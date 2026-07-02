@@ -29,7 +29,6 @@
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/norm_column_reader.hpp"
-#include "iresearch/formats/hnsw/hnsw_reader.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/index/index_meta.hpp"
@@ -253,12 +252,18 @@ const ColumnReader* SegmentReaderImpl::Column(field_id field) const {
   return _data->col_reader->Column(field);
 }
 
-const HnswReader* SegmentReaderImpl::HNSW(field_id field) const {
-  if (!_data) {
+const TwoLayerCentroids* SegmentReaderImpl::Ivf(field_id field) const {
+  if (!_data || !_data->idx_reader) {
     return nullptr;
   }
-  auto it = _data->hnsw_by_id.find(field);
-  return it == _data->hnsw_by_id.end() ? nullptr : it->second;
+  return _data->idx_reader->Ivf(field);
+}
+
+IndexInput::ptr SegmentReaderImpl::ReopenIvf() const {
+  if (!_data || !_data->idx_reader) {
+    return nullptr;
+  }
+  return _data->idx_reader->ReopenIn();
 }
 
 DocIterator::ptr SegmentReaderImpl::docs_iterator() const {
@@ -286,26 +291,7 @@ void SegmentReaderImpl::ColumnData::Open(const Directory& dir,
                                          const IndexReaderOptions& options) {
   SDB_ASSERT(options.db);
   col_reader = std::make_unique<ColReader>(dir, meta.name, *options.db);
-  idx_reader = std::make_unique<IdxReader>(dir, meta.name, options.hnsw_graphs);
-
-  const auto entries = idx_reader->HNSWEntries();
-  hnsw_readers.reserve(entries.size());
-  hnsw_by_id.reserve(entries.size());
-  for (const auto& [id, entry] : entries) {
-    const auto* column_reader = col_reader->Column(id);
-    if (!column_reader) {
-      continue;
-    }
-    HNSWInfo info = entry.info;
-    const auto& col_type = column_reader->Type();
-    if (col_type.id() == duckdb::LogicalTypeId::ARRAY) {
-      info.d = static_cast<int>(duckdb::ArrayType::GetSize(col_type));
-    }
-    auto hnsw_reader =
-      std::make_unique<HnswReader>(id, entry.graph, info, *column_reader);
-    hnsw_by_id.emplace(id, hnsw_reader.get());
-    hnsw_readers.push_back(std::move(hnsw_reader));
-  }
+  idx_reader = std::make_unique<IdxReader>(dir, meta.name);
 }
 
 }  // namespace irs

@@ -34,8 +34,13 @@
 #include <iresearch/search/doc_collector.hpp>
 #include <iresearch/search/score_function.hpp>
 #include <iresearch/search/scorer.hpp>
+#include <iresearch/search/vector_radius_filter.hpp>
+#include <iresearch/search/vector_similarity_filter.hpp>
+#include <iresearch/search/vector_similarity_query.hpp>
+#include <iresearch/search/vector_similarity_scorer.hpp>
 #include <iresearch/utils/string.hpp>
 #include <span>
+#include <type_traits>
 
 #include "basics/assert.h"
 #include "basics/debugging.h"
@@ -63,6 +68,58 @@ const irs::Filter& MatchAllFilter() {
   return kInstance;
 }
 
+constexpr uint32_t kRerankFactor = 4;
+
+void RerankHits(SearchFullScanGlobalState& g, std::span<irs::ScoreDoc> hits) {
+  SDB_ASSERT(g.vector_scorer != nullptr);
+  SDB_ASSERT(g.reader != nullptr);
+  const auto& vs = *g.vector_scorer;
+  const std::span<const float> query{vs.query_vector};
+  const auto d = static_cast<uint32_t>(vs.query_vector.size());
+  size_t i = 0;
+  while (i < hits.size()) {
+    const uint32_t seg = hits[i].segment_idx;
+    size_t j = i + 1;
+    while (j < hits.size() && hits[j].segment_idx == seg) {
+      ++j;
+    }
+    const auto& sub = (*g.reader)[seg];
+    if (const auto* vec_col = sub.Column(vs.field_id); vec_col != nullptr) {
+      irs::RerankExactDistances(sub, *vec_col, d, query, vs.metric,
+                                hits.subspan(i, j - i));
+    }
+    i = j;
+  }
+}
+
+irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
+                                  std::shared_ptr<const irs::Filter> inner) {
+  if (vs.radius != std::numeric_limits<float>::max()) {
+    auto f = std::make_unique<irs::ByRadius>();
+    *f->mutable_field_id() = vs.field_id;
+    auto* o = f->mutable_options();
+    o->query = vs.query_vector;
+    o->centroids_id = vs.centroids_id;
+    o->postings_id = vs.postings_id;
+    o->metric = vs.metric;
+    o->radius = vs.EffectiveRadius();
+    o->inclusive = vs.radius_inclusive;
+    o->inner = std::move(inner);
+    return f;
+  }
+  auto f = std::make_unique<irs::ByVectorSimilarity>();
+  *f->mutable_field_id() = vs.field_id;
+  auto* o = f->mutable_options();
+  o->query = vs.query_vector;
+  o->centroids_id = vs.centroids_id;
+  o->postings_id = vs.postings_id;
+  o->metric = vs.metric;
+  o->quant = vs.quant;
+  o->nprobe = vs.nprobe;
+  o->inner = std::move(inner);
+  return f;
+}
+
 }  // namespace
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
@@ -82,9 +139,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
   state->scan = &ss;
   state->reader = &ss.snapshot->reader;
   state->total_segments = ss.snapshot->reader.size();
+  state->vector_scorer = ss.vector_scorer ? &*ss.vector_scorer : nullptr;
 
-  // Count-only with no filter reads live_docs_count() directly and skips the
-  // per-segment prepare entirely (see SearchFullScanInitLocal).
   if ((state->count_only = ss.count_only) && !ss.stored_filter) {
     return duckdb::unique_ptr_cast<SearchFullScanGlobalState,
                                    duckdb::GlobalTableFunctionState>(
@@ -92,8 +148,16 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
   }
   if (ss.text_scorer) {
     state->scorer_obj = catalog::MakeScorer(*ss.text_scorer);
+  } else if (ss.score_order) {
+    state->scorer_obj = std::make_unique<irs::VectorSimilarityScorer>();
   }
-  state->filter = ss.stored_filter ? ss.stored_filter.get() : &MatchAllFilter();
+  if (ss.vector_scorer) {
+    state->owned_filter = MakeVectorFilter(*ss.vector_scorer, ss.stored_filter);
+    state->filter = state->owned_filter.get();
+  } else {
+    state->filter =
+      ss.stored_filter ? ss.stored_filter.get() : &MatchAllFilter();
+  }
   state->queries.resize(ss.snapshot->reader.size());
   state->collectors.resize(state->MaxThreads());
 
@@ -103,8 +167,17 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
       std::move(state));
   }
 
-  if (ss.score_top_k && ss.text_scorer) {
+  if (ss.score_top_k && (ss.text_scorer || ss.score_order)) {
     state->parallel_topk = true;
+    if (ss.vector_scorer &&
+        ss.vector_scorer->quant != irs::VectorQuantization::None) {
+      state->rerank_pool =
+        kRerankFactor * static_cast<uint32_t>(*ss.score_top_k);
+    }
+  }
+  if (ss.score_order && *ss.score_order == duckdb::OrderType::ASCENDING) {
+    state->global_kth_score.store(std::numeric_limits<irs::score_t>::max(),
+                                  std::memory_order_relaxed);
   }
 
   ClassifyColumnstoreProjections(*state, bind_data);
@@ -194,9 +267,15 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> SearchFullScanInitLocal(
   if (gstate.parallel_topk) {
     auto lstate = duckdb::make_uniq<SearchFullScanTopKLocalState>();
     lstate->bind_data = &bd;
-    const size_t k = *bd.scan_source->Cast<SearchScan>().score_top_k;
+    auto& ss = bd.scan_source->Cast<SearchScan>();
+    const size_t k = gstate.rerank_pool ? gstate.rerank_pool : *ss.score_top_k;
     lstate->hit_buf.resize(irs::BlockSize(k));
     lstate->hit_slice = std::span<irs::ScoreDoc>{lstate->hit_buf};
+    if (ss.score_order) {
+      lstate->local_threshold = *ss.score_order == duckdb::OrderType::ASCENDING
+                                  ? std::numeric_limits<irs::score_t>::max()
+                                  : std::numeric_limits<irs::score_t>::lowest();
+    }
     BuildOffsetsEntries(*lstate, input, bd);
     return lstate;
   }
@@ -272,45 +351,77 @@ void IResearchSetScanOrder(
   }
 }
 
-void SearchFullScanTopKLocalState::OnSegment(duckdb::ClientContext& ctx,
-                                             const irs::SubReader& seg,
-                                             uint32_t seg_idx,
-                                             SearchFullScanGlobalState& g) {
-  auto& search = bind_data->scan_source->Cast<SearchScan>();
-  if (!collector) {
-    const size_t k = *search.score_top_k;
-    collector.emplace(local_threshold, k, hit_slice);
-  }
+namespace {
 
-  score_fetcher.Clear();
-  collector->SetSegment(seg_idx);
+template<irs::Order O>
+void CollectSegmentTopK(SearchFullScanTopKLocalState& s,
+                        const irs::SubReader& seg, uint32_t seg_idx,
+                        SearchFullScanGlobalState& g) {
+  using C = irs::NthPartitionScoreCollector<O>;
+  auto& search = s.bind_data->scan_source->Cast<SearchScan>();
+  if (!std::holds_alternative<C>(s.collector)) {
+    const size_t k = g.rerank_pool ? g.rerank_pool : *search.score_top_k;
+    s.collector.template emplace<C>(s.local_threshold, k, s.hit_slice);
+  }
+  auto& collector = std::get<C>(s.collector);
+
+  s.score_fetcher.Clear();
+  collector.SetSegment(seg_idx);
 
   const auto seen_global = g.global_kth_score.load(std::memory_order_relaxed);
-  if (seen_global > local_threshold) {
-    local_threshold = seen_global;
+  if constexpr (O == irs::Order::ASC) {
+    if (seen_global < s.local_threshold) {
+      s.local_threshold = seen_global;
+    }
+  } else {
+    if (seen_global > s.local_threshold) {
+      s.local_threshold = seen_global;
+    }
   }
 
-  const auto& seg_query = EnsureSegmentQuery(g, *this, seg, seg_idx);
+  const auto& seg_query = EnsureSegmentQuery(g, s, seg, seg_idx);
   const bool wand_enabled =
-    WandEnabled(bind_data->inverted_index.get(), search.text_scorer);
+    WandEnabled(s.bind_data->inverted_index.get(), search.text_scorer);
   auto it =
     seg.mask(seg_query.Execute({.wand = {.wand_enabled = wand_enabled}},
                                g.stats ? *g.stats : irs::StatsBuffer::Empty()));
   auto score_func = it->PrepareScore({
     .scorer = g.scorer_obj.get(),
     .segment = &seg,
-    .fetcher = &score_fetcher,
+    .fetcher = &s.score_fetcher,
   });
   if (auto* it_threshold = irs::GetMutable<irs::ScoreThresholdAttr>(it.get())) {
-    collector->SetScoreThreshold(it_threshold->value);
+    collector.SetScoreThreshold(it_threshold->value);
   }
-  it->Collect(score_func, score_fetcher, *collector);
-  collector->SetScoreThreshold(local_threshold);
+  it->Collect(score_func, s.score_fetcher, collector);
+  collector.SetScoreThreshold(s.local_threshold);
 
-  const irs::score_t kth = local_threshold;
+  const irs::score_t kth = s.local_threshold;
   auto cur = g.global_kth_score.load(std::memory_order_relaxed);
-  while (kth > cur && !g.global_kth_score.compare_exchange_weak(
-                        cur, kth, std::memory_order_relaxed)) {
+  if constexpr (O == irs::Order::ASC) {
+    while (kth < cur && !g.global_kth_score.compare_exchange_weak(
+                          cur, kth, std::memory_order_relaxed)) {
+    }
+  } else {
+    while (kth > cur && !g.global_kth_score.compare_exchange_weak(
+                          cur, kth, std::memory_order_relaxed)) {
+    }
+  }
+}
+
+}  // namespace
+
+void SearchFullScanTopKLocalState::OnSegment(duckdb::ClientContext& /*ctx*/,
+                                             const irs::SubReader& seg,
+                                             uint32_t seg_idx,
+                                             SearchFullScanGlobalState& g) {
+  auto& search = bind_data->scan_source->Cast<SearchScan>();
+  const bool ascending =
+    search.score_order && *search.score_order == duckdb::OrderType::ASCENDING;
+  if (ascending) {
+    CollectSegmentTopK<irs::Order::ASC>(*this, seg, seg_idx, g);
+  } else {
+    CollectSegmentTopK<irs::Order::DESC>(*this, seg, seg_idx, g);
   }
 }
 
@@ -343,17 +454,43 @@ bool SearchFullScanTopKLocalState::OnSegmentsExhausted(
 void SearchFullScanTopKLocalState::PrepEmitBuffer(
   duckdb::ClientContext& /*ctx*/, SearchFullScanGlobalState& g) {
   prepped = true;
-  if (!collector) {
+  if (std::holds_alternative<std::monostate>(collector)) {
     return;  // no segments claimed by this thread
   }
 
-  const size_t accepted = collector->AcceptedCount();
+  const size_t accepted = std::visit(
+    [](auto& c) -> size_t {
+      if constexpr (std::is_same_v<std::decay_t<decltype(c)>, std::monostate>) {
+        return 0;
+      } else {
+        return c.AcceptedCount();
+      }
+    },
+    collector);
   auto accepted_slice = hit_slice.subspan(0, accepted);
-  absl::c_sort(
-    accepted_slice, [](const irs::ScoreDoc& l, const irs::ScoreDoc& r) {
-      return std::pair{l.segment_idx, l.doc} < std::pair{r.segment_idx, r.doc};
-    });
-  top_hits = hit_slice.subspan(0, accepted);
+  const auto by_seg_doc = [](const irs::ScoreDoc& l, const irs::ScoreDoc& r) {
+    return std::pair{l.segment_idx, l.doc} < std::pair{r.segment_idx, r.doc};
+  };
+  size_t kept = accepted;
+  if (g.rerank_pool > 0 && g.vector_scorer != nullptr) {
+    absl::c_sort(accepted_slice, by_seg_doc);
+    RerankHits(g, accepted_slice);
+    const auto& search = bind_data->scan_source->Cast<SearchScan>();
+    const size_t kreal = *search.score_top_k;
+    if (kept > kreal) {
+      const bool asc = search.score_order &&
+                       *search.score_order == duckdb::OrderType::ASCENDING;
+      std::nth_element(accepted_slice.begin(), accepted_slice.begin() + kreal,
+                       accepted_slice.end(),
+                       [asc](const irs::ScoreDoc& l, const irs::ScoreDoc& r) {
+                         return asc ? l.score < r.score : l.score > r.score;
+                       });
+      kept = kreal;
+      accepted_slice = hit_slice.subspan(0, kept);
+    }
+  }
+  absl::c_sort(accepted_slice, by_seg_doc);
+  top_hits = hit_slice.subspan(0, kept);
 }
 
 void SearchFullScanScanLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,

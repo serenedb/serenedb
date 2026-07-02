@@ -20,27 +20,36 @@
 
 #pragma once
 
-#include <faiss/impl/IDSelector.h>
+#include "iresearch/formats/seek_cookie.hpp"
+#include "iresearch/index/column_info.hpp"
+#include "iresearch/search/cost.hpp"
+#include "iresearch/types.hpp"
 
-#include <iresearch/index/iterators.hpp>
-#include <iresearch/search/filter.hpp>
+namespace irs {
 
-namespace sdb::connector {
+struct TermReader;
+class ColumnReader;
 
-// Non-iresearch WHERE conjuncts remain as LogicalFilter above the scan; only
-// iresearch-claimable conjuncts are evaluated here per ANN candidate.
-class TextScanFilter final : public faiss::IDSelector {
- public:
-  TextScanFilter(const irs::Filter& filter, irs::PrepareCollector& collector);
+struct VectorState {
+  explicit VectorState(IResourceManager& memory) noexcept
+    : cookies{{memory}},
+      pay_starts{{memory}},
+      cluster_counts{{memory}},
+      quant_stats{{memory}},
+      cluster_centroids{{memory}} {}
 
-  void Reset(const irs::SubReader& segment);
-  bool is_member(faiss::idx_t id) const final;
+  const TermReader* reader = nullptr;
+  const ColumnReader* vector_column = nullptr;
+  ManagedVector<SeekCookie::ptr> cookies;
+  CostAttr::Type estimation = 0;
 
- private:
-  const irs::Filter& _filter;
-  irs::PrepareCollector& _collector;
-  mutable irs::QueryBuilder::ptr _query;
-  mutable irs::DocIterator::ptr _it;
+  VectorQuantization quant = VectorQuantization::None;
+  uint32_t d = 0;
+  ManagedVector<uint64_t> pay_starts;
+  ManagedVector<uint32_t> cluster_counts;
+
+  ManagedVector<byte_type> quant_stats;
+  ManagedVector<float> cluster_centroids;
 };
 
-}  // namespace sdb::connector
+}  // namespace irs

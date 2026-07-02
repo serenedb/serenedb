@@ -140,9 +140,6 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     }
     return MakePersistedNormReader(*col);
   }
-  PreloadedHnswGraphs TakeBuiltHnswGraphs() noexcept {
-    return std::move(_built_hnsw_graphs);
-  }
   ColWriter* GetColWriter() noexcept { return _col_writer.get(); }
 
   // Owning per-op encoding config (the snapshot's InvertedIndex): flush encodes
@@ -168,7 +165,8 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
 
   void finish();
 
-  void FlushFields(FlushState& state);
+  void FlushFields(FlushState& state,
+                   std::span<const BasicTermReader* const> extra);
 
   // Reset body that keeps _field_options; reset() drops them, reset(meta)
   // keeps.
@@ -190,7 +188,6 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // Owning per-op override; null falls back to _fallback_field_options.
   std::shared_ptr<const IndexFieldOptions> _field_options;
   std::unique_ptr<ColWriter> _col_writer;
-  PreloadedHnswGraphs _built_hnsw_graphs;
   doc_id_t _batch_first_doc_id = doc_limits::eof();
   bool _initialized = false;
   bool _valid = true;

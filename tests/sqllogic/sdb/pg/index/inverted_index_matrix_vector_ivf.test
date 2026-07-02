@@ -1,27 +1,27 @@
 control substitution on
 
 # ============================================================================
-# Vector  --  HNSW (array only) + text-tokenized FLOAT array
+# Vector  --  IVF (array only) + text-tokenized FLOAT array
 # ============================================================================
 
 statement ok
 CREATE TABLE m_vec(pk INTEGER PRIMARY KEY, emb FLOAT[3], fs FLOAT[]);
 
 statement ok
-CREATE INDEX m_vec_hnsw_st   ON m_vec
-    USING inverted(pk, emb hnsw (metric = 'l2')) INCLUDE (emb);
+CREATE INDEX m_vec_ivf_st   ON m_vec
+    USING inverted(pk, emb ivf (metric = 'l2')) INCLUDE (emb);
 
 statement ok
-CREATE INDEX m_vec_hnsw_ns   ON m_vec
-    USING inverted(pk, emb hnsw (metric = 'cosine'));
+CREATE INDEX m_vec_ivf_ns   ON m_vec
+    USING inverted(pk, emb ivf (metric = 'cosine'));
 
 statement ok
-CREATE INDEX m_vec_hnsw_expr_ns ON m_vec
-    USING inverted(pk, (emb) hnsw (metric = 'l2'));
+CREATE INDEX m_vec_ivf_expr_ns ON m_vec
+    USING inverted(pk, (emb) ivf (metric = 'l2'));
 
 statement ok
-CREATE INDEX m_vec_hnsw_expr_st ON m_vec
-    USING inverted(pk, (emb) hnsw (metric = 'l2')) INCLUDE (emb);
+CREATE INDEX m_vec_ivf_expr_st ON m_vec
+    USING inverted(pk, (emb) ivf (metric = 'l2')) INCLUDE (emb);
 
 statement ok
 CREATE INDEX m_vec_floats_st ON m_vec USING inverted(pk, fs) INCLUDE (fs);
@@ -42,7 +42,7 @@ statement ok
 VACUUM (REFRESH_TABLE) m_vec;
 
 query
-SELECT pk FROM m_vec_hnsw_st
+SELECT pk FROM m_vec_ivf_st
 ORDER BY emb <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3]
 LIMIT 1;
 ----
@@ -50,7 +50,7 @@ pk
 1
 
 query
-SELECT pk FROM m_vec_hnsw_ns
+SELECT pk FROM m_vec_ivf_ns
 ORDER BY emb <=> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3]
 LIMIT 1;
 ----
@@ -58,7 +58,7 @@ pk
 1
 
 query
-SELECT count(*) FROM m_vec_hnsw_ns;
+SELECT count(*) FROM m_vec_ivf_ns;
 ----
 count
 3
@@ -73,7 +73,7 @@ pk
 3
 
 query
-SELECT pk FROM m_vec_hnsw_expr_ns
+SELECT pk FROM m_vec_ivf_expr_ns
 ORDER BY (emb) <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3]
 LIMIT 1;
 ----
@@ -81,7 +81,7 @@ pk
 1
 
 query
-SELECT pk FROM m_vec_hnsw_expr_st
+SELECT pk FROM m_vec_ivf_expr_st
 ORDER BY (emb) <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3]
 LIMIT 1;
 ----
@@ -92,7 +92,7 @@ pk
 # and exclude the orthogonal vectors at distance sqrt(2)~1.414... < 1.5
 # but stays away from the third row at sqrt(2).
 query
-SELECT pk FROM m_vec_hnsw_st
+SELECT pk FROM m_vec_ivf_st
 WHERE emb <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3] < 0.5
 ORDER BY pk;
 ----
@@ -100,18 +100,18 @@ pk
 1
 
 query
-SELECT pk FROM m_vec_hnsw_expr_ns
+SELECT pk FROM m_vec_ivf_expr_ns
 WHERE (emb) <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3] < 0.5
 ORDER BY pk;
 ----
 pk
 1
 
-# Lock in that both column and expression HNSW reach the ANN scan operator
-# (not a brute-force fallback). top-K ⇒ IRESEARCH_SCAN (ANN),
-# distance < radius ⇒ IRESEARCH_SCAN (ANN range).
+# Lock in that both column and expression IVF reach the ANN scan operator
+# (not a brute-force fallback). top-K ⇒ IRESEARCH_SCAN with a VECTOR_KNN
+# Filter node, distance < radius ⇒ IRESEARCH_SCAN with a VECTOR_RANGE node.
 query
-EXPLAIN SELECT pk FROM m_vec_hnsw_st
+EXPLAIN SELECT pk FROM m_vec_ivf_st
   ORDER BY emb <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3] LIMIT 1;
 ----
 QUERY PLAN
@@ -126,12 +126,20 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│    m_vec_hnsw_st (ANN)    │
-│                           │
+│    Index: m_vec_ivf_st    │
 │       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││         =3        ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │           Top: 1          │
-│          Dims: 3          │
 │                           │
 │        Projections:       │
 │             pk            │
@@ -141,7 +149,7 @@ QUERY PLAN
 └───────────────────────────┘
 
 query
-EXPLAIN SELECT pk FROM m_vec_hnsw_expr_ns
+EXPLAIN SELECT pk FROM m_vec_ivf_expr_ns
   ORDER BY (emb) <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3] LIMIT 1;
 ----
 QUERY PLAN
@@ -157,11 +165,21 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │           Index:          │
-│  m_vec_hnsw_expr_ns (ANN) │
+│     m_vec_ivf_expr_ns     │
 │                           │
 │       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││         =3        ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │           Top: 1          │
-│          Dims: 3          │
 │                           │
 │        Projections:       │
 │             pk            │
@@ -171,26 +189,33 @@ QUERY PLAN
 └───────────────────────────┘
 
 query
-EXPLAIN SELECT pk FROM m_vec_hnsw_st
+EXPLAIN SELECT pk FROM m_vec_ivf_st
   WHERE emb <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3] < 1.5;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│ m_vec_hnsw_st (ANN range) │
-│                           │
+│    Index: m_vec_ivf_st    │
 │       Lookup: table       │
-│        Radius: 1.5        │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││    VECTOR_RANGE   ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││      =3 < 1.5     ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │      Projections: pk      │
 │                           │
 │          ~3 rows          │
 └───────────────────────────┘
 
 query
-EXPLAIN SELECT pk FROM m_vec_hnsw_expr_ns
+EXPLAIN SELECT pk FROM m_vec_ivf_expr_ns
   WHERE (emb) <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3] < 1.5;
 ----
 QUERY PLAN
@@ -198,12 +223,20 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │           Index:          │
-│  m_vec_hnsw_expr_ns (ANN  │
-│           range)          │
+│     m_vec_ivf_expr_ns     │
 │                           │
 │       Lookup: table       │
-│        Radius: 1.5        │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││    VECTOR_RANGE   ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││      =3 < 1.5     ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │      Projections: pk      │
 │                           │
 │          ~3 rows          │

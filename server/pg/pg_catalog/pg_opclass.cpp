@@ -34,9 +34,9 @@ catalog::MaterializedData SystemTableSnapshot<PgOpclass>::GetTableData() {
   std::vector<PgOpclass> values;
 
   values.push_back({
-    .oid = id::kPgOpclassHnsw.id(),
+    .oid = id::kPgOpclassIvf.id(),
     .opcmethod = id::kPgAmInverted.id(),
-    .opcname = "hnsw",
+    .opcname = "ivf",
     .opcnamespace = id::kPgCatalogSchema.id(),
     .opcowner = id::kRootUser.id(),
     .opcfamily = 0,

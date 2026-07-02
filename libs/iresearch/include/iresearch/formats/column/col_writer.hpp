@@ -40,11 +40,13 @@ class DatabaseInstance;
 namespace irs {
 
 class Directory;
-struct HNSWInfo;
 
+class ColumnReader;
 class ColumnWriter;
 class NormColumnWriter;
-class HnswWriter;
+class ReadContext;
+class IvfWriter;
+class IdxWriter;
 
 class ColWriter final {
  public:
@@ -73,17 +75,17 @@ class ColWriter final {
   std::span<const std::unique_ptr<NormColumnWriter>> NormWriters()
     const noexcept;
 
-  // Attach an HNSW graph to a previously-opened ARRAY column. Graph is
-  // built at Commit() from the just-flushed column bytes and emitted as
-  // an inline side-payload referenced by footer slot 102.
-  HnswWriter& AttachHnsw(field_id column_id, HNSWInfo info);
+  std::unique_ptr<IvfWriter> TakeIvf() noexcept;
 
-  void Commit(uint64_t target_row);
+  void Commit(uint64_t target_row, IdxWriter* idx = nullptr);
   void Rollback() noexcept;
 
-  std::vector<BuiltHnsw> TakeBuiltHnsw();
-
  private:
+  friend class IvfWriter;
+
+  std::unique_ptr<ColumnReader> ReopenColumn(field_id id) const;
+  ReadContext& CommitReadContext() noexcept;
+
   void EnsureOut();
   bool Empty() const noexcept;
 

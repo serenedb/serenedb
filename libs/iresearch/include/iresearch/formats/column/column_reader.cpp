@@ -356,6 +356,8 @@ void ColumnReader::RangeScan::Scan(uint64_t row_pos, duckdb::idx_t count,
       _cursor =
         ScanCursor{_validity ? _reader->OpenValiditySegment(_window.rg, *_ctx)
                              : _reader->OpenSegment(_window.rg, *_ctx)};
+    } else if (row_pos - _window.begin < _cursor.Position()) {
+      _cursor.Reset();
     }
     _cursor.SeekTo(row_pos - _window.begin);
     const auto take = std::min<duckdb::idx_t>(count, _window.end - row_pos);

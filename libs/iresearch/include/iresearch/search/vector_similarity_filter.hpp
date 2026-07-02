@@ -20,41 +20,39 @@
 
 #pragma once
 
-#include <faiss/impl/HNSW.h>
-
 #include <memory>
-#include <utility>
+#include <vector>
 
-#include "iresearch/formats/hnsw/hnsw_reader.hpp"  // ChunkedVectorCache, ReadHNSW
 #include "iresearch/index/column_info.hpp"
+#include "iresearch/search/filter.hpp"
 
 namespace irs {
 
-class DataOutput;
-class ColumnReader;
-class ReadContext;
+class ByVectorSimilarity;
 
-void WriteHNSW(DataOutput& out, const faiss::HNSW& hnsw);
+struct ByVectorSimilarityOptions {
+  using FilterType = ByVectorSimilarity;
 
-class HnswWriter final {
+  std::vector<float> query;
+  field_id centroids_id = field_limits::invalid();
+  field_id postings_id = field_limits::invalid();
+  VectorMetric metric = VectorMetric::L2Sqr;
+  VectorQuantization quant = VectorQuantization::None;
+  uint32_t nprobe = 1;
+  std::shared_ptr<const Filter> inner;
+
+  bool operator==(const ByVectorSimilarityOptions& rhs) const noexcept {
+    return query == rhs.query && centroids_id == rhs.centroids_id &&
+           postings_id == rhs.postings_id && metric == rhs.metric &&
+           quant == rhs.quant && nprobe == rhs.nprobe && inner == rhs.inner;
+  }
+};
+
+class ByVectorSimilarity final
+  : public FilterWithField<ByVectorSimilarityOptions> {
  public:
-  explicit HnswWriter(HNSWInfo info);
-  ~HnswWriter();
-
-  HnswWriter(const HnswWriter&) = delete;
-  HnswWriter& operator=(const HnswWriter&) = delete;
-
-  void Build(const ColumnReader& vector_column, ReadContext& ctx);
-
-  void Serialize(DataOutput& out);
-
-  const HNSWInfo& Info() const noexcept { return _info; }
-
-  const std::shared_ptr<faiss::HNSW>& Graph() const noexcept { return _hnsw; }
-
- private:
-  HNSWInfo _info;
-  std::shared_ptr<faiss::HNSW> _hnsw;
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
 };
 
 }  // namespace irs

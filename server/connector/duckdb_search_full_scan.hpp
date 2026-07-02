@@ -31,6 +31,7 @@
 #include <iresearch/search/scorer.hpp>
 #include <memory>
 #include <optional>
+#include <variant>
 #include <vector>
 
 #include "connector/duckdb_scan_base.hpp"
@@ -47,6 +48,7 @@ struct SearchFullScanGlobalState : public CommonScanGlobalState {
   std::atomic<irs::score_t> global_kth_score{
     std::numeric_limits<irs::score_t>::lowest()};
   bool parallel_topk = false;
+  uint32_t rerank_pool = 0;
 
   duckdb::idx_t MaxThreads() const final {
     if (count_only && queries.empty()) {
@@ -56,6 +58,7 @@ struct SearchFullScanGlobalState : public CommonScanGlobalState {
   }
 
   const irs::Filter* filter = nullptr;
+  irs::Filter::ptr owned_filter;
   std::vector<irs::PrepareCollector::ptr> collectors;
   std::vector<irs::QueryBuilder::ptr> queries;
   std::optional<irs::StatsBuffer> stats;
@@ -80,7 +83,9 @@ struct SearchFullScanTopKLocalState : public SegDocBufferedScanLocalState {
   // seeds the iterator-local threshold at min().
   irs::score_t local_threshold = std::numeric_limits<irs::score_t>::min();
   irs::ColumnArgsFetcher score_fetcher;
-  std::optional<irs::NthPartitionScoreCollector> collector;
+  using CollectorDesc = irs::NthPartitionScoreCollector<irs::Order::DESC>;
+  using CollectorAsc = irs::NthPartitionScoreCollector<irs::Order::ASC>;
+  std::variant<std::monostate, CollectorDesc, CollectorAsc> collector;
   std::span<const irs::ScoreDoc> top_hits;
   std::vector<FieldEntry> offsets_entries;
   std::vector<highlight::HitRange> offsets_doc_scratch;

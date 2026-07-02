@@ -688,13 +688,11 @@ class IndexWriter : private util::Noncopyable {
   struct FlushedSegment : public IndexSegment {
     FlushedSegment() = default;
     explicit FlushedSegment(IndexSegment&& segment, DocMap&& old2new,
-                            DocsMask&& docs_mask, size_t docs_begin,
-                            PreloadedHnswGraphs&& hnsw_graphs = {}) noexcept
+                            DocsMask&& docs_mask, size_t docs_begin) noexcept
       : IndexSegment{std::move(segment)},
         old2new{std::move(old2new)},
         docs_mask{std::move(docs_mask)},
         document_mask{{this->docs_mask.set.get_allocator()}},
-        hnsw_graphs{std::move(hnsw_graphs)},
         _docs_begin{docs_begin},
         _docs_end{_docs_begin + meta.docs_count} {}
 
@@ -713,7 +711,6 @@ class IndexWriter : private util::Noncopyable {
     // Flushed segment removals
     DocsMask docs_mask;
     DocumentMask document_mask;
-    PreloadedHnswGraphs hnsw_graphs;
     bool was_flush = false;
 
    private:

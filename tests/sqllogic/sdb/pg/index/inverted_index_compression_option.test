@@ -1,4 +1,4 @@
-# Force-compression option on INCLUDE and HNSW columns. The user-supplied
+# Force-compression option on INCLUDE and IVF columns. The user-supplied
 # `compression` option bypasses the analyze tournament and pins the column
 # to one specific DuckDB codec; an unsupported codec for the column's
 # physical type must throw at flush time.
@@ -191,65 +191,65 @@ statement error
 CREATE INDEX compr_mismatch_num ON compr_bad_num USING inverted(txt compr_english)
   INCLUDE (pk, n included (compression = 'fsst'));
 
-# --- 9. HNSW column accepts compression option --------------------------
-# HNSW vectors used to be force-uncompressed; now the same compression
+# --- 9. IVF column accepts compression option --------------------------
+# IVF vectors used to be force-uncompressed; now the same compression
 # knob applies. UNCOMPRESSED is a safe choice for FLOAT[].
 statement ok
-CREATE TABLE hnsw_comp (id INT PRIMARY KEY, emb FLOAT[3]);
+CREATE TABLE ivf_comp (id INT PRIMARY KEY, emb FLOAT[3]);
 
 statement ok
-CREATE INDEX hnsw_comp_unc ON hnsw_comp
-  USING inverted(emb hnsw (metric = 'l2', compression = 'uncompressed'));
+CREATE INDEX ivf_comp_unc ON ivf_comp
+  USING inverted(emb ivf (metric = 'l2', compression = 'uncompressed'));
 
 statement ok
-INSERT INTO hnsw_comp VALUES
+INSERT INTO ivf_comp VALUES
   (1, [1.0, 0.0, 0.0]::FLOAT[3]),
   (2, [0.0, 1.0, 0.0]::FLOAT[3]),
   (3, [0.0, 0.0, 1.0]::FLOAT[3]);
 
 statement ok
-VACUUM (REFRESH_TABLE) hnsw_comp;
+VACUUM (REFRESH_TABLE) ivf_comp;
 
 query
-SELECT id FROM hnsw_comp_unc ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
+SELECT id FROM ivf_comp_unc ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
 ----
 id
 1
 
-# --- 10. HNSW vector column visible to materialization ------------------
-# After auto-promoting hnsw columns to store_values=true, the materializer
+# --- 10. IVF vector column visible to materialization ------------------
+# After auto-promoting ivf columns to store_values=true, the materializer
 # can return the vector itself (not just rocksdb-fallback).
 statement ok
-CREATE TABLE hnsw_mat (id INT PRIMARY KEY, emb FLOAT[3]);
+CREATE TABLE ivf_mat (id INT PRIMARY KEY, emb FLOAT[3]);
 
 statement ok
-CREATE INDEX hnsw_mat_idx ON hnsw_mat USING inverted(emb hnsw (metric = 'l2'));
+CREATE INDEX ivf_mat_idx ON ivf_mat USING inverted(emb ivf (metric = 'l2'));
 
 statement ok
-INSERT INTO hnsw_mat VALUES
+INSERT INTO ivf_mat VALUES
   (1, [1.0, 2.0, 3.0]::FLOAT[3]),
   (2, [4.0, 5.0, 6.0]::FLOAT[3]);
 
 statement ok
-VACUUM (REFRESH_TABLE) hnsw_mat;
+VACUUM (REFRESH_TABLE) ivf_mat;
 
 query
-SELECT id, emb FROM hnsw_mat_idx ORDER BY id;
+SELECT id, emb FROM ivf_mat_idx ORDER BY id;
 ----
 id	emb
 1	{1,2,3}
 2	{4,5,6}
 
-# --- 11. HNSW with unknown compression name rejected at parse time ------
+# --- 11. IVF with unknown compression name rejected at parse time ------
 statement ok
-CREATE TABLE hnsw_bad (id INT PRIMARY KEY, emb FLOAT[3]);
+CREATE TABLE ivf_bad (id INT PRIMARY KEY, emb FLOAT[3]);
 
 statement error
-CREATE INDEX hnsw_bad_idx ON hnsw_bad
-  USING inverted(emb hnsw (metric = 'l2', compression = 'no_such'));
+CREATE INDEX ivf_bad_idx ON ivf_bad
+  USING inverted(emb ivf (metric = 'l2', compression = 'no_such'));
 
-# --- 12. HNSW codec/type mismatch rejected synchronously ----------------
+# --- 12. IVF codec/type mismatch rejected synchronously ----------------
 # FSST is VARCHAR-only; ARRAY(FLOAT,N) leaf is FLOAT, not VARCHAR.
 statement error
-CREATE INDEX hnsw_mismatch ON hnsw_bad
-  USING inverted(emb hnsw (metric = 'l2', compression = 'fsst'));
+CREATE INDEX ivf_mismatch ON ivf_bad
+  USING inverted(emb ivf (metric = 'l2', compression = 'fsst'));

@@ -34,27 +34,41 @@
 
 namespace irs {
 
-enum class HNSWMetric : uint8_t {
+enum class VectorMetric : uint8_t {
   L2Sqr = 0,
-  NegativeIP,
+  InnerProduct,
   Cosine,
   L1,
 };
 
-struct HNSWInfo {
-  doc_id_t max_doc = 0;
+enum class VectorQuantization : uint8_t {
+  None = 0,
+  SQ8,
+  SQ4,
+  PQ,
+};
+
+struct IvfInfo {
+  struct Quantizer {
+    VectorQuantization kind = VectorQuantization::None;
+    uint32_t pq_m = 0;
+  };
+
+  field_id centroids_id = field_limits::invalid();
+  field_id postings_id = field_limits::invalid();
+  field_id sq_id = field_limits::invalid();
 
   // dimensionality of the data
   int d = 0;
 
-  // HNSW M parameter
-  int m = 32;
+  VectorMetric metric = VectorMetric::L2Sqr;
+  Quantizer quant;
 
-  // HNSW metric
-  HNSWMetric metric = HNSWMetric::L2Sqr;
+  uint32_t nlist = 0;
 
-  // expansion factor at construction time
-  int ef_construction = 40;
+  uint32_t train_sample = 0;
+
+  uint32_t cluster_iters = 0;
 };
 
 struct ColumnOptions {
@@ -62,7 +76,7 @@ struct ColumnOptions {
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
   duckdb::CompressionType compression =
     duckdb::CompressionType::COMPRESSION_AUTO;
-  std::optional<HNSWInfo> hnsw_info;
+  std::optional<IvfInfo> ivf_info;
   bool hyperloglog = false;
 };
 

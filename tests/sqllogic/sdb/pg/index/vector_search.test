@@ -3,7 +3,7 @@ CREATE TABLE t (id INT, emb FLOAT[3]);
 
 
 statement ok
-CREATE INDEX l2_index ON t USING inverted(id, emb hnsw (metric = 'l2'));
+CREATE INDEX l2_index ON t USING inverted(id, emb ivf (metric = 'l2'));
 
 
 statement count 4
@@ -29,10 +29,20 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│   Index: l2_index (ANN)   │
+│      Index: l2_index      │
 │       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││         =3        ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │           Top: 2          │
-│          Dims: 3          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -57,10 +67,20 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│   Index: l2_index (ANN)   │
+│      Index: l2_index      │
 │       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││         =3        ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │           Top: 5          │
-│          Dims: 3          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -86,10 +106,20 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│   Index: l2_index (ANN)   │
+│      Index: l2_index      │
 │       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││         =3        ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │          Top: 10          │
-│          Dims: 3          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -176,12 +206,19 @@ QUERY PLAN
 ┌───────────────────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│    l2_index (ANN range)   │
-│                           │
+│      Index: l2_index      │
 │       Lookup: table       │
-│        Radius: 0.7        │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││    VECTOR_RANGE   ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││      =3 < 0.7     ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │      Projections: id      │
 │                           │
 │          ~4 rows          │
@@ -236,12 +273,19 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│    l2_index (ANN range)   │
-│                           │
+│      Index: l2_index      │
 │       Lookup: table       │
-│         Radius: 1         │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││    VECTOR_RANGE   ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││       =3 < 1      ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │      Projections: id      │
 │                           │
 │          ~4 rows          │
@@ -270,12 +314,19 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│    l2_index (ANN range)   │
-│                           │
+│      Index: l2_index      │
 │       Lookup: table       │
-│        Radius: 100        │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││    VECTOR_RANGE   ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││      =3 < 100     ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │      Projections: id      │
 │                           │
 │          ~4 rows          │
@@ -326,12 +377,19 @@ QUERY PLAN
 ┌───────────────────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│    l2_index (ANN range)   │
-│                           │
+│      Index: l2_index      │
 │       Lookup: table       │
-│        Radius: 0.7        │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││    VECTOR_RANGE   ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││      =3 < 0.7     ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │      Projections: id      │
 │                           │
 │          ~4 rows          │
@@ -353,10 +411,20 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│   Index: l2_index (ANN)   │
+│      Index: l2_index      │
 │       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││         =3        ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │          Top: 10          │
-│          Dims: 3          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -444,7 +512,7 @@ statement ok
 CREATE TABLE t_l2 (id INT, emb FLOAT[3]);
 
 statement ok
-CREATE INDEX l2_tuned ON t_l2 USING inverted(emb hnsw (metric = 'l2', m = 16, ef_construction = 64));
+CREATE INDEX l2_tuned ON t_l2 USING inverted(emb ivf (metric = 'l2'));
 
 statement count 4
 INSERT INTO t_l2 VALUES (1, [100, 0, 0]::FLOAT[3]), (2, [50, 50, 50]::FLOAT[3]), (3, [50, 25, 50]::FLOAT[3]), (4, [50, 50, 100]::FLOAT[3]);
@@ -465,7 +533,7 @@ CREATE TABLE t_l1 (id INT, emb FLOAT[3]);
 
 
 statement ok
-CREATE INDEX l1_index ON t_l1 USING inverted(emb hnsw (metric = 'l1'));
+CREATE INDEX l1_index ON t_l1 USING inverted(emb ivf (metric = 'l1'));
 
 
 statement count 4
@@ -491,10 +559,20 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│   Index: l1_index (ANN)   │
+│      Index: l1_index      │
 │       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l1 dims││  │
+│  ││         =3        ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │           Top: 5          │
-│          Dims: 3          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -520,10 +598,20 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│   Index: l1_index (ANN)   │
+│      Index: l1_index      │
 │       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l1 dims││  │
+│  ││         =3        ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │           Top: 5          │
-│          Dims: 3          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -558,7 +646,7 @@ statement ok
 CREATE TABLE t_cos (id INT, emb FLOAT[3]);
 
 statement ok
-CREATE INDEX cos_index ON t_cos USING inverted(emb hnsw (metric = 'cosine'));
+CREATE INDEX cos_index ON t_cos USING inverted(emb ivf (metric = 'cosine'));
 
 statement count 4
 INSERT INTO t_cos VALUES (1, [100, 0, 0]::FLOAT[3]), (2, [50, 50, 50]::FLOAT[3]), (3, [50, 25, 50]::FLOAT[3]), (4, [50, 50, 100]::FLOAT[3]);
@@ -581,12 +669,20 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│      cos_index (ANN)      │
-│                           │
+│      Index: cos_index     │
 │       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=cosine ││  │
+│  ││       dims=3      ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │           Top: 2          │
-│          Dims: 3          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -619,12 +715,20 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│      cos_index (ANN)      │
-│                           │
+│      Index: cos_index     │
 │       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=cosine ││  │
+│  ││       dims=3      ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │           Top: 2          │
-│          Dims: 3          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -649,12 +753,20 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│      cos_index (ANN)      │
-│                           │
+│      Index: cos_index     │
 │       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=cosine ││  │
+│  ││       dims=3      ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │           Top: 2          │
-│          Dims: 3          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -671,12 +783,19 @@ QUERY PLAN
 ┌───────────────────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│   cos_index (ANN range)   │
-│                           │
+│      Index: cos_index     │
 │       Lookup: table       │
-│        Radius: 0.5        │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││    VECTOR_RANGE   ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=cosine ││  │
+│  ││    dims=3 < 0.5   ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │      Projections: id      │
 │                           │
 │          ~4 rows          │
@@ -705,11 +824,18 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│      cos_index (ANN)      │
-│                           │
+│      Index: cos_index     │
 │       Lookup: table       │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=cosine ││  │
+│  ││       dims=3      ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │        Projections:       │
 │             id            │
@@ -723,7 +849,7 @@ statement ok
 CREATE TABLE t_ip (id INT, emb FLOAT[3]);
 
 statement ok
-CREATE INDEX ip_index ON t_ip USING inverted(emb hnsw (metric = 'ip', m = 8, ef_construction = 40));
+CREATE INDEX ip_index ON t_ip USING inverted(emb ivf (metric = 'ip'));
 
 statement count 4
 INSERT INTO t_ip VALUES (1, [100, 0, 0]::FLOAT[3]), (2, [50, 50, 50]::FLOAT[3]), (3, [50, 25, 50]::FLOAT[3]), (4, [50, 50, 100]::FLOAT[3]);
@@ -746,10 +872,20 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│   Index: ip_index (ANN)   │
+│      Index: ip_index      │
 │       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=ip dims││  │
+│  ││         =3        ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │           Top: 2          │
-│          Dims: 3          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -782,10 +918,20 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│   Index: ip_index (ANN)   │
+│      Index: ip_index      │
 │       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=ip dims││  │
+│  ││         =3        ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │           Top: 2          │
-│          Dims: 3          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -810,10 +956,20 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│   Index: ip_index (ANN)   │
+│      Index: ip_index      │
 │       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=ip dims││  │
+│  ││         =3        ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │           Top: 2          │
-│          Dims: 3          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -830,12 +986,19 @@ QUERY PLAN
 ┌───────────────────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│    ip_index (ANN range)   │
-│                           │
+│      Index: ip_index      │
 │       Lookup: table       │
-│         Radius: 0         │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││    VECTOR_RANGE   ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=ip dims││  │
+│  ││       =3 < 0      ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │      Projections: id      │
 │                           │
 │          ~4 rows          │
@@ -864,9 +1027,18 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│   Index: ip_index (ANN)   │
+│      Index: ip_index      │
 │       Lookup: table       │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=ip dims││  │
+│  ││         =3        ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │        Projections:       │
 │             id            │
@@ -877,7 +1049,7 @@ QUERY PLAN
 
 
 statement ok
-CREATE INDEX l1_index ON t_l1 USING inverted(emb hnsw (Metric = 'L1', M = 24, EF_CONSTRUCTION = 48));
+CREATE INDEX l1_index ON t_l1 USING inverted(emb ivf (Metric = 'L1'));
 
 statement count 4
 INSERT INTO t_l1 VALUES (1, [100, 0, 0]::FLOAT[3]), (2, [50, 50, 50]::FLOAT[3]), (3, [50, 25, 50]::FLOAT[3]), (4, [50, 50, 100]::FLOAT[3]);
@@ -897,95 +1069,95 @@ statement ok
 CREATE TABLE t_err (id INT, emb FLOAT[3], emb_int INT[3]);
 
 statement error
-CREATE INDEX bad_opt ON t_err USING inverted(emb hnsw (metric = 'l2', ef_search = 50));
+CREATE INDEX bad_opt ON t_err USING inverted(emb ivf (metric = 'l2', ef_search = 50));
 ----
-db error: ERROR: Failed to create index: Column 'emb': unknown hnsw option 'ef_search'. Accepted options: metric (string: l2|l1|cosine|ip, REQUIRED), m (int >= 2, default 32), ef_construction (int >= 1, default 40, must be >= m), compression (string, default 'auto'), row_group_size (int >= 1)
+db error: ERROR: Failed to create index: Column 'emb': unknown ivf option 'ef_search'. Accepted options: metric (string: l2|l1|cosine|ip, REQUIRED), nlist (int >= 1, default auto ~sqrt(rows)), train_sample (int >= 1, default auto), quant (string: sq8|sq4|pq|none, default none; sq4/pq need l2|ip), pq_m (int >= 1, divides dimension, quant='pq' only, default auto), compression (string, default 'auto'), row_group_size (int >= 1)
 
 
 statement error
-CREATE INDEX bad_metric ON t_err USING inverted(emb hnsw (metric = 'manhattan'));
+CREATE INDEX bad_metric ON t_err USING inverted(emb ivf (metric = 'manhattan'));
 ----
-db error: ERROR: Failed to create index: Column 'emb': unknown hnsw metric 'manhattan'. Expected one of: l2 l1 cosine ip
+db error: ERROR: Failed to create index: Column 'emb': unknown ivf metric 'manhattan'. Expected one of: l2 l1 cosine ip
 
 
 statement error
-CREATE INDEX bad_m_low ON t_err USING inverted(emb hnsw (metric = 'l2', m = 1));
+CREATE INDEX bad_nlist_zero ON t_err USING inverted(emb ivf (metric = 'l2', nlist = 0));
 ----
-db error: ERROR: Failed to create index: Column 'emb': hnsw option 'm' must be at least 2, got 1
+db error: ERROR: Failed to create index: Column 'emb': ivf option 'nlist' must be positive, got 0
 
 
 statement error
-CREATE INDEX bad_m_high ON t_err USING inverted(emb hnsw (metric = 'l2', m = 200));
-
-statement error
-CREATE INDEX bad_ef ON t_err USING inverted(emb hnsw (metric = 'l2', m = 32, ef_construction = 8));
-
-statement error
-CREATE INDEX bad_m_type ON t_err USING inverted(emb hnsw (metric = 'l2', m = 'sixteen'));
+CREATE INDEX bad_nlist_type ON t_err USING inverted(emb ivf (metric = 'l2', nlist = 'sixteen'));
 ----
-db error: ERROR: Failed to create index: Column 'emb': hnsw option 'm' must be an integer, got 'sixteen'
+db error: ERROR: Failed to create index: Column 'emb': ivf option 'nlist' must be an integer, got 'sixteen'
 
 
 statement error
-CREATE INDEX bad_metric_type ON t_err USING inverted(emb hnsw (metric = 7));
+CREATE INDEX bad_train_zero ON t_err USING inverted(emb ivf (metric = 'l2', train_sample = 0));
 ----
-db error: ERROR: Failed to create index: Column 'emb': unknown hnsw metric '7'. Expected one of: l2 l1 cosine ip
+db error: ERROR: Failed to create index: Column 'emb': ivf option 'train_sample' must be positive, got 0
 
 
 statement error
-CREATE INDEX bad_ef_zero ON t_err USING inverted(emb hnsw (metric = 'l2', ef_construction = 0));
+CREATE INDEX bad_quant ON t_err USING inverted(emb ivf (metric = 'l2', quant = 'foo'));
 ----
-db error: ERROR: Failed to create index: Column 'emb': hnsw option 'ef_construction' must be positive, got 0
+db error: ERROR: Failed to create index: Column 'emb': unknown ivf quant 'foo'. Expected one of: sq8 sq4 pq none
 
 
 statement error
-CREATE INDEX bad_scalar ON t_err USING inverted(id hnsw (metric = 'l2'));
+CREATE INDEX bad_metric_type ON t_err USING inverted(emb ivf (metric = 7));
 ----
-db error: ERROR: Failed to create index: Column 'id' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not INTEGER
+db error: ERROR: Failed to create index: Column 'emb': unknown ivf metric '7'. Expected one of: l2 l1 cosine ip
 
 
 statement error
-CREATE INDEX bad_int_arr ON t_err USING inverted(emb_int hnsw (metric = 'l2'));
+CREATE INDEX bad_scalar ON t_err USING inverted(id ivf (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'emb_int' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not INTEGER[3]
+db error: ERROR: Failed to create index: Column 'id' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not INTEGER
 
 
 statement error
-CREATE INDEX m_real_empty ON t_err USING inverted(emb hnsw ());
+CREATE INDEX bad_int_arr ON t_err USING inverted(emb_int ivf (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'emb': hnsw opclass requires the 'metric' option (one of: l2, l1, cosine, ip). Example: hnsw (metric = 'l2')
+db error: ERROR: Failed to create index: Column 'emb_int' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not INTEGER[3]
+
+
+statement error
+CREATE INDEX m_real_empty ON t_err USING inverted(emb ivf ());
+----
+db error: ERROR: Failed to create index: Column 'emb': ivf opclass requires the 'metric' option (one of: l2, l1, cosine, ip). Example: ivf (metric = 'l2')
 
 
 statement ok
-CREATE INDEX m_real_real ON t_err USING inverted(emb hnsw (metric = 'l2', m = 16));
+CREATE INDEX m_real_real ON t_err USING inverted(emb ivf (metric = 'l2', nlist = 4, quant = 'none'));
 
 statement ok
 DROP INDEX m_real_real;
 
 
 statement error
-CREATE INDEX m_real_bare ON t_err USING inverted(emb hnsw);
+CREATE INDEX m_real_bare ON t_err USING inverted(emb ivf);
 ----
-db error: ERROR: Unknown opclass 'hnsw' on column 'emb': no text dictionary by that name in schema 'public'
-HINT: 'hnsw' is a built-in opclass; use the options form 'hnsw (...)'
+db error: ERROR: Unknown opclass 'ivf' on column 'emb': no text dictionary by that name in schema 'public'
+HINT: 'ivf' is a built-in opclass; use the options form 'ivf (...)'
 
 
 statement error
 CREATE INDEX m_fake_empty ON t_err USING inverted(emb fake_idx ());
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on 'emb' (known: included, hnsw)
+db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on 'emb' (known: included, ivf)
 
 
 statement error
 CREATE INDEX m_fake_real ON t_err USING inverted(emb fake_idx (m = 16));
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on 'emb' (known: included, hnsw)
+db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on 'emb' (known: included, ivf)
 
 
 statement error
 CREATE INDEX m_fake_fake ON t_err USING inverted(emb fake_idx (foo = 1));
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on 'emb' (known: included, hnsw)
+db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on 'emb' (known: included, ivf)
 
 
 statement error
@@ -1017,9 +1189,18 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│   Index: l2_index (ANN)   │
+│      Index: l2_index      │
 │       Lookup: table       │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││         =3        ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │        Projections:       │
 │             id            │
@@ -1057,7 +1238,7 @@ CREATE TABLE t_proj (id INT, category INT, payload VARCHAR, emb FLOAT[3]);
 
 
 statement ok
-CREATE INDEX proj_idx ON t_proj USING inverted(emb hnsw (metric = 'l2'));
+CREATE INDEX proj_idx ON t_proj USING inverted(emb ivf (metric = 'l2'));
 
 
 statement count 4
@@ -1121,9 +1302,18 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│   Index: proj_idx (ANN)   │
+│      Index: proj_idx      │
 │       Lookup: table       │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││         =3        ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │        Projections:       │
 │          category         │
@@ -1156,12 +1346,18 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│    l2_index (ANN range)   │
-│                           │
+│      Index: l2_index      │
 │       Lookup: table       │
-│        Radius: 200        │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││    VECTOR_RANGE   ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││      =3 < 200     ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │        Projections:       │
 │          emb (i)          │
@@ -1193,12 +1389,18 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│    l2_index (ANN range)   │
-│                           │
+│      Index: l2_index      │
 │       Lookup: table       │
-│        Radius: 200        │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││    VECTOR_RANGE   ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││      =3 < 200     ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │        Projections:       │
 │          emb (i)          │
@@ -1229,12 +1431,18 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│    proj_idx (ANN range)   │
-│                           │
+│      Index: proj_idx      │
 │       Lookup: table       │
-│        Radius: 200        │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││    VECTOR_RANGE   ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││      =3 < 200     ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │        Projections:       │
 │          category         │
@@ -1253,7 +1461,7 @@ CREATE TABLE t_mixed (id INT, body VARCHAR, emb FLOAT[3]);
 
 
 statement ok
-CREATE INDEX mixed_idx ON t_mixed USING inverted(body en, emb hnsw (metric = 'l2'));
+CREATE INDEX mixed_idx ON t_mixed USING inverted(body en, emb ivf (metric = 'l2'));
 
 
 statement count 4
@@ -1302,21 +1510,25 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│      mixed_idx (ANN)      │
-│                           │
+│      Index: mixed_idx     │
 │       Lookup: table       │
-│           Top: 2          │
-│          Dims: 3          │
 │                           │
-│        TextFilter:        │
+│          Filter:          │
 │  ┌─────────────────────┐  │
 │  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││         =3        ││  │
+│  │└─────────┬─────────┘│  │
+│  │┌─────────┴─────────┐│  │
 │  ││        Term       ││  │
 │  ││    ────────────   ││  │
 │  ││ body(string) = red││  │
 │  │└───────────────────┘│  │
 │  └─────────────────────┘  │
+│                           │
+│           Top: 2          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -1461,15 +1673,18 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│      mixed_idx (ANN)      │
-│                           │
+│      Index: mixed_idx     │
 │       Lookup: table       │
-│          Dims: 3          │
 │                           │
-│        TextFilter:        │
+│          Filter:          │
 │  ┌─────────────────────┐  │
 │  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││         =3        ││  │
+│  │└─────────┬─────────┘│  │
+│  │┌─────────┴─────────┐│  │
 │  ││       TERMS       ││  │
 │  ││    ────────────   ││  │
 │  ││  body(string) {[  ││  │
@@ -1534,7 +1749,7 @@ CREATE TABLE t_big (id INT, emb FLOAT[3]);
 
 
 statement ok
-CREATE INDEX big_idx ON t_big USING inverted(emb hnsw (metric = 'l2', m = 16, ef_construction = 64));
+CREATE INDEX big_idx ON t_big USING inverted(emb ivf (metric = 'l2'));
 
 
 statement count 1100
@@ -1570,11 +1785,20 @@ count
 50
 
 
+# IVF kNN only scans nprobe clusters, so an exhaustive scan needs nprobe >= nlist.
+statement ok
+SET sdb_nprobe = 1000;
+
+
 query
 SELECT COUNT(*) FROM (SELECT id FROM big_idx ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 5000) sub;
 ----
 count
 1100
+
+
+statement ok
+RESET sdb_nprobe;
 
 
 query
@@ -1596,7 +1820,7 @@ id
 
 
 statement ok
-SET sdb_ef_search = 256;
+SET sdb_nprobe = 256;
 
 
 query
@@ -1609,7 +1833,7 @@ id
 
 
 statement ok
-RESET sdb_ef_search;
+RESET sdb_nprobe;
 
 
 statement ok
@@ -1617,7 +1841,7 @@ CREATE TABLE t_merge (id INT, emb FLOAT[3]);
 
 
 statement ok
-CREATE INDEX merge_idx ON t_merge USING inverted(id, emb hnsw (metric = 'l2'));
+CREATE INDEX merge_idx ON t_merge USING inverted(id, emb ivf (metric = 'l2'));
 
 
 statement count 2

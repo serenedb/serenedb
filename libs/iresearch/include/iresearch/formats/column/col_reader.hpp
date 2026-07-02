@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <faiss/impl/HNSW.h>
-
 #include <duckdb/common/types.hpp>
 #include <memory>
 #include <span>
@@ -43,19 +41,9 @@ namespace irs {
 
 class Directory;
 struct SegmentMeta;
-struct HNSWInfo;
 
 class ColumnReader;
 class NormColumnReader;
-
-using PreloadedHnswGraphs =
-  sdb::containers::FlatHashMap<field_id, std::shared_ptr<const faiss::HNSW>>;
-
-struct BuiltHnsw {
-  field_id column_id;
-  HNSWInfo info;
-  std::shared_ptr<const faiss::HNSW> graph;
-};
 
 // One file per segment.
 inline constexpr std::string_view kColFormatExt = "col";

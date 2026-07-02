@@ -69,7 +69,8 @@ class SegmentReader final : public SubReader {
   NormReader::ptr norms(field_id field) const final;
 
   const ColumnReader* Column(field_id field) const final;
-  const HnswReader* HNSW(field_id field) const final;
+  const TwoLayerCentroids* Ivf(field_id field) const final;
+  IndexInput::ptr ReopenIvf() const final;
   const ColReader* GetColReader() const final;
 
   const std::shared_ptr<const SegmentReaderImpl>& GetImpl() const noexcept {

@@ -255,17 +255,17 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      "sdb_ef_search",
+      "sdb_nprobe",
       {
         LogicalTypeId::INTEGER,
-        "Per-session override for the HNSW search-time neighbourhood size "
-        "(efSearch). 0 (default) uses Top-K value instead.",
-        [] { return duckdb::Value::INTEGER(0); },
+        "Number of IVF cluster lists scanned per vector-similarity query. "
+        "Higher values improve recall at the cost of latency. Default 8.",
+        [] { return duckdb::Value::INTEGER(8); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto n = value.GetValue<int32_t>();
-          if (n < 0) {
+          if (n < 1) {
             throw duckdb::InvalidInputException{
-              "invalid value for parameter \"sdb_ef_search\": \"%s\"",
+              "invalid value for parameter \"sdb_nprobe\": \"%s\"",
               value.ToString()};
           }
         },

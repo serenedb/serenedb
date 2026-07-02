@@ -18,28 +18,28 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/duckdb_ann_filter.h"
+#pragma once
 
-#include <iresearch/formats/hnsw/hnsw_reader.hpp>
+#include <cstddef>
+#include <cstdint>
+#include <vector>
 
-#include "basics/assert.h"
+#include "iresearch/index/column_info.hpp"
 
-namespace sdb::connector {
+namespace irs {
 
-TextScanFilter::TextScanFilter(const irs::Filter& filter,
-                               irs::PrepareCollector& collector)
-  : _filter{filter}, _collector{collector} {}
+void NormalizeRows(float* data, size_t n, uint32_t d);
 
-void TextScanFilter::Reset(const irs::SubReader& segment) {
-  _query = _filter.PrepareSegment(segment, {.collector = &_collector});
-  SDB_ASSERT(_query);
-  _it = _query->Execute({}, irs::StatsBuffer::Empty());
-  SDB_ASSERT(_it);
-}
+std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
+                                  size_t n, uint32_t k, uint32_t d,
+                                  uint32_t seed, uint32_t niter = 25,
+                                  uint32_t nredo = 1);
 
-bool TextScanFilter::is_member(faiss::idx_t id) const {
-  auto [_, doc_id] = irs::UnpackSegmentWithDoc(id);
-  return _it->seek(doc_id) == doc_id;
-}
+uint32_t NearestCentroid(VectorMetric metric, const float* v,
+                         const float* centroids, uint32_t k, uint32_t d);
 
-}  // namespace sdb::connector
+void AssignNearest(VectorMetric metric, const float* data, size_t n,
+                   const float* centroids, uint32_t k, uint32_t d,
+                   std::vector<uint32_t>& out);
+
+}  // namespace irs

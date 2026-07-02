@@ -68,6 +68,7 @@ class ScoreCollector {
  public:
   enum class Tag {
     NthPartition,
+    NthPartitionAsc,
     Generic,
   };
 
@@ -98,13 +99,17 @@ struct ScoreDoc {
   bool operator==(const ScoreDoc& other) const = default;
 };
 
+enum class Order { ASC, DESC };
+
 // TODO(mbkkt) Try to make it autovectorized,
 // otherwise try to use xsimd/neon specific intrinsics
+template<Order O>
 class NthPartitionScoreCollector final : public ScoreCollector {
  public:
   explicit NthPartitionScoreCollector(score_t& score_threshold, size_t k,
                                       std::span<ScoreDoc> hits) noexcept
-    : ScoreCollector{Tag::NthPartition},
+    : ScoreCollector{O == Order::ASC ? Tag::NthPartitionAsc
+                                     : Tag::NthPartition},
       _score_threshold{&score_threshold},
       _hits_it{hits.data()},
       _hits_begin{hits.data()},
@@ -114,7 +119,11 @@ class NthPartitionScoreCollector final : public ScoreCollector {
   }
 
   void SetScoreThreshold(score_t& score_threshold) noexcept {
-    SDB_ASSERT(score_threshold <= *_score_threshold);
+    if constexpr (O == Order::ASC) {
+      SDB_ASSERT(score_threshold >= *_score_threshold);
+    } else {
+      SDB_ASSERT(score_threshold <= *_score_threshold);
+    }
     score_threshold = *_score_threshold;
     _score_threshold = &score_threshold;
   }
@@ -181,7 +190,7 @@ class NthPartitionScoreCollector final : public ScoreCollector {
     auto threshold = _mm256_set1_ps(*_score_threshold);
     for (; i + 8 <= count; i += 8) {
       auto scores_vec = _mm256_loadu_ps(scores + i);
-      auto cmp = _mm256_cmp_ps(scores_vec, threshold, _CMP_GT_OQ);
+      auto cmp = _mm256_cmp_ps(scores_vec, threshold, kCmpPred);
       auto pass = static_cast<unsigned>(_mm256_movemask_ps(cmp));
 
       while (pass) {
@@ -190,7 +199,7 @@ class NthPartitionScoreCollector final : public ScoreCollector {
         const score_t score = scores[i + bit];
         if (Push(score, docs[i + bit])) {
           threshold = _mm256_set1_ps(*_score_threshold);
-          cmp = _mm256_cmp_ps(scores_vec, threshold, _CMP_GT_OQ);
+          cmp = _mm256_cmp_ps(scores_vec, threshold, kCmpPred);
           pass &= static_cast<unsigned>(_mm256_movemask_ps(cmp));
         }
       }
@@ -203,34 +212,49 @@ class NthPartitionScoreCollector final : public ScoreCollector {
   }
 
  private:
+  IRS_FORCE_INLINE bool Accept(score_t score) const noexcept {
+    if constexpr (O == Order::ASC) {
+      return score < *_score_threshold;
+    } else {
+      return score > *_score_threshold;
+    }
+  }
+
   IRS_FORCE_INLINE void TryPush(score_t score, doc_id_t doc) noexcept {
-    if (score > *_score_threshold) {
+    if (Accept(score)) {
       Push(score, doc);
     }
   }
 
   IRS_FORCE_INLINE bool Push(score_t score, doc_id_t doc) noexcept {
-    SDB_ASSERT(*_score_threshold < score);
+    SDB_ASSERT(Accept(score));
     *_hits_it = {score, doc, _current_segment};
     ++_hits_it;
     if (_hits_it != _hits_end) {
       return false;
     }
     _hits_it = _hits_pivot;
-    std::nth_element(
-      _hits_begin, _hits_pivot, _hits_end,
-      [](const ScoreDoc& l, const ScoreDoc& r) { return l.score > r.score; });
+    std::nth_element(_hits_begin, _hits_pivot, _hits_end,
+                     [](const ScoreDoc& l, const ScoreDoc& r) {
+                       if constexpr (O == Order::ASC) {
+                         return l.score < r.score;
+                       } else {
+                         return l.score > r.score;
+                       }
+                     });
     *_score_threshold = _hits_pivot->score;
     return true;
   }
 
 #ifdef __AVX2__
+  static constexpr int kCmpPred = O == Order::ASC ? _CMP_LT_OQ : _CMP_GT_OQ;
+
   IRS_FORCE_INLINE uint64_t GetScoreMask(const score_t* IRS_RESTRICT scores,
                                          __m256 threshold) const noexcept {
     uint64_t mask = 0;
     for (int i = 0; i < 64; i += 8) {
       const uint64_t bits = _mm256_movemask_ps(
-        _mm256_cmp_ps(_mm256_loadu_ps(scores + i), threshold, _CMP_GT_OQ));
+        _mm256_cmp_ps(_mm256_loadu_ps(scores + i), threshold, kCmpPred));
       mask |= bits << i;
     }
     return mask;
@@ -251,7 +275,12 @@ IRS_FORCE_INLINE auto ResolveScoreCollector(ScoreCollector& collector, F&& f) {
   switch (collector.GetTag()) {
     case ScoreCollector::Tag::NthPartition:
       return std::forward<F>(f)(
-        sdb::basics::downCast<NthPartitionScoreCollector>(collector));
+        sdb::basics::downCast<NthPartitionScoreCollector<Order::DESC>>(
+          collector));
+    case ScoreCollector::Tag::NthPartitionAsc:
+      return std::forward<F>(f)(
+        sdb::basics::downCast<NthPartitionScoreCollector<Order::ASC>>(
+          collector));
     case ScoreCollector::Tag::Generic:
       return std::forward<F>(f)(collector);
     default:

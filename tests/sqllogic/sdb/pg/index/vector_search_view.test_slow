@@ -117,7 +117,7 @@ INSERT INTO correct_text_hybrid2 SELECT id FROM vecs_text WHERE body = 'red fox'
 
 
 statement ok
-SET sdb_ef_search TO 512;
+SET sdb_nprobe TO 512;
 
 
 
@@ -132,12 +132,12 @@ SELECT id, emb::FLOAT[8] as emb FROM read_parquet('${__TEST_DIR__}/vecs.parquet'
 
 
 statement ok
-CREATE INDEX vecs_pq_hnsw ON vecs_pq
-USING inverted(emb hnsw (metric = 'l2', m = 64, ef_construction = 256));
+CREATE INDEX vecs_pq_idx ON vecs_pq
+USING inverted(emb ivf (metric = 'l2'));
 
 
 query
-EXPLAIN SELECT id FROM vecs_pq_hnsw ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 10;
+EXPLAIN SELECT id FROM vecs_pq_idx ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 10;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
@@ -151,12 +151,20 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│     vecs_pq_hnsw (ANN)    │
-│                           │
+│     Index: vecs_pq_idx    │
 │      Lookup: parquet      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││         =8        ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │          Top: 10          │
-│          Dims: 8          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -168,7 +176,7 @@ QUERY PLAN
 
 query
 WITH
-  result AS (SELECT id FROM vecs_pq_hnsw ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+  result AS (SELECT id FROM vecs_pq_idx ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
 SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct WHERE id IN (SELECT id FROM result);
 ----
 ?column?
@@ -176,11 +184,11 @@ t
 
 
 statement ok
-SET sdb_ef_search TO 2048;
+SET sdb_nprobe TO 2048;
 
 
 query
-EXPLAIN SELECT id FROM vecs_pq_hnsw WHERE id > 25000 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 10;
+EXPLAIN SELECT id FROM vecs_pq_idx WHERE id > 25000 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 10;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
@@ -201,11 +209,18 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│     vecs_pq_hnsw (ANN)    │
-│                           │
+│     Index: vecs_pq_idx    │
 │      Lookup: parquet      │
-│          Dims: 8          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││         =8        ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │        Projections:       │
 │             id            │
@@ -217,7 +232,7 @@ QUERY PLAN
 
 query
 WITH
-  result AS (SELECT id FROM vecs_pq_hnsw WHERE id > 25000 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+  result AS (SELECT id FROM vecs_pq_idx WHERE id > 25000 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
 SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_filtered WHERE id IN (SELECT id FROM result);
 ----
 ?column?
@@ -225,7 +240,7 @@ t
 
 
 statement ok
-SET sdb_ef_search TO 512;
+SET sdb_nprobe TO 512;
 
 
 statement ok
@@ -240,11 +255,11 @@ SELECT id, body, emb::FLOAT[8] as emb FROM read_parquet('${__TEST_DIR__}/vecs_te
 
 statement ok
 CREATE INDEX vecs_text_pq_idx ON vecs_text_pq
-USING inverted(id, body en, emb hnsw (metric = 'l2', m = 64, ef_construction = 256));
+USING inverted(id, body en, emb ivf (metric = 'l2'));
 
 
 statement ok
-SET sdb_ef_search TO 4096;
+SET sdb_nprobe TO 4096;
 
 
 query
@@ -302,4 +317,4 @@ t
 
 
 statement ok
-SET sdb_ef_search TO 512;
+SET sdb_nprobe TO 512;

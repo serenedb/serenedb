@@ -12553,73 +12553,6 @@ TEST_P(IndexTestCase14, buffered_column_reopen) {
                   "relied on are gone with the new columnstore";
 }
 
-// Minimal stand-ins for the original HNSW search fixtures. Bodies of the
-// two tests below `GTEST_SKIP()` -- the production HNSW path is now driven
-// through the typed columnstore (`ColWriter::AttachHNSW`,
-// `HnswReader`) and `SubReader::Search(field_id, ...)`; the
-// legacy `irs::ColumnInfo`/`IndexWriterOptions::column_info` lambda and
-// `DirectoryReader::Search(name, info, buffer)` overloads the original
-// tests built on are gone. SQL-level coverage lives at
-// `tests/sqllogic/sdb/pg/index/vector_search.test`. These fixtures stay so
-// the parametrized test names still appear in the runner's output and we
-// have an obvious place to restore them when a gtest harness for the new
-// HNSW API lands.
-struct SearchTestFeatureBase {
-  irs::HNSWMetric metric = irs::HNSWMetric::L2Sqr;
-};
-
-struct ANNSearchFeature : SearchTestFeatureBase {};
-struct RangeSearchFeature : SearchTestFeatureBase {};
-
-template<typename Feature>
-class VectorSearchTestBase
-  : public virtual TestParamBase<
-      std::tuple<tests::dir_param_f, tests::FormatInfo, Feature>> {
- public:
-  using Param = std::tuple<tests::dir_param_f, tests::FormatInfo, Feature>;
-
-  static std::string to_string(const testing::TestParamInfo<Param>& info) {
-    const auto& [dir_f, fmt, feat] = info.param;
-    std::string name = (*dir_f)(nullptr).second;
-    if (fmt.codec) {
-      name += "_";
-      name += fmt.codec;
-    }
-    switch (feat.metric) {
-      case irs::HNSWMetric::L2Sqr:
-        name += "_L2Sqr";
-        break;
-      case irs::HNSWMetric::NegativeIP:
-        name += "_IP";
-        break;
-      case irs::HNSWMetric::Cosine:
-        name += "_Cosine";
-        break;
-      case irs::HNSWMetric::L1:
-        name += "_L1";
-        break;
-    }
-    return name;
-  }
-};
-
-class ANNSearchTest : public VectorSearchTestBase<ANNSearchFeature> {};
-class RangeSearchTest : public VectorSearchTestBase<RangeSearchFeature> {};
-
-TEST_P(ANNSearchTest, hnsw_search_basic) {
-  GTEST_SKIP() << "Legacy IndexWriterOptions::column_info / irs::ColumnInfo "
-                  "and DirectoryReader::Search(name, ...) overloads are "
-                  "removed; SQL-level coverage at "
-                  "tests/sqllogic/sdb/pg/index/vector_search.test";
-}
-
-TEST_P(RangeSearchTest, hnsw_range_search_basic) {
-  GTEST_SKIP() << "Legacy IndexWriterOptions::column_info / irs::ColumnInfo "
-                  "and DirectoryReader::RangeSearch(name, ...) overloads "
-                  "are removed; SQL-level coverage at "
-                  "tests/sqllogic/sdb/pg/index/vector_search.test";
-}
-
 static const auto kTestFormats =
   ::testing::Values(tests::FormatInfo{"1_5simd"});
 
@@ -12636,25 +12569,3 @@ INSTANTIATE_TEST_SUITE_P(index_test_14, IndexTestCase14, kTestValues,
 
 INSTANTIATE_TEST_SUITE_P(index_test_15, IndexTestCase, kTestValues,
                          IndexTestCase::to_string);
-
-INSTANTIATE_TEST_SUITE_P(
-  BasicANNSearch, ANNSearchTest,
-  ::testing::Combine(kTestDirs, kTestFormats,
-                     ::testing::ValuesIn(std::vector<ANNSearchFeature>{
-                       ANNSearchFeature{{irs::HNSWMetric::L2Sqr}},
-                       ANNSearchFeature{{irs::HNSWMetric::NegativeIP}},
-                       ANNSearchFeature{{irs::HNSWMetric::Cosine}},
-                       ANNSearchFeature{{irs::HNSWMetric::L1}},
-                     })),
-  ANNSearchTest::to_string);
-
-INSTANTIATE_TEST_SUITE_P(
-  BasicRangeSearch, RangeSearchTest,
-  ::testing::Combine(kTestDirs, kTestFormats,
-                     ::testing::ValuesIn(std::vector<RangeSearchFeature>{
-                       RangeSearchFeature{{irs::HNSWMetric::L2Sqr}},
-                       RangeSearchFeature{{irs::HNSWMetric::NegativeIP}},
-                       RangeSearchFeature{{irs::HNSWMetric::Cosine}},
-                       RangeSearchFeature{{irs::HNSWMetric::L1}},
-                     })),
-  RangeSearchTest::to_string);

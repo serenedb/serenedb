@@ -1,6 +1,6 @@
 hash-threshold 100
 
-# End-to-end: INCLUDE'd columns alongside an HNSW range search.
+# End-to-end: INCLUDE'd columns alongside an IVF range search.
 # WHERE l2_distance(emb, q) < radius triggers IRESEARCH_RANGE_SCAN;
 # verifies projected INCLUDE'd columns route through the
 # columnstore overlay (per-segment perm + materialize), while
@@ -17,7 +17,7 @@ CREATE TABLE vec_r (
 
 
 statement ok
-CREATE INDEX vec_r_idx ON vec_r USING inverted(pk, emb hnsw (metric = 'l2'))
+CREATE INDEX vec_r_idx ON vec_r USING inverted(pk, emb ivf (metric = 'l2'))
   INCLUDE (label, tag)
 
 
@@ -52,11 +52,17 @@ QUERY PLAN
 ┌───────────────────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│   vec_r_idx (ANN range)   │
+│      Index: vec_r_idx     │
 │                           │
-│         Radius: 1         │
-│          Dims: 3          │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││    VECTOR_RANGE   ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││       =3 < 1      ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │        Projections:       │
 │           label           │
@@ -85,12 +91,18 @@ QUERY PLAN
 ┌───────────────────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│   vec_r_idx (ANN range)   │
-│                           │
+│      Index: vec_r_idx     │
 │       Lookup: table       │
-│         Radius: 1         │
-│          Dims: 3          │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││    VECTOR_RANGE   ││  │
+│  ││    ────────────   ││  │
+│  ││ emb metric=l2 dims││  │
+│  ││       =3 < 1      ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │        Projections:       │
 │           pk (l)          │

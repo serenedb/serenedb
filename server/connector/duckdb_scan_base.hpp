@@ -36,6 +36,7 @@
 
 #include "catalog/table_options.h"
 #include "connector/columnstore_materializer.h"
+#include "connector/duckdb_table_function.h"
 #include "connector/index_source.h"
 #include "connector/index_source_factory.h"
 #include "connector/offsets_collector.hpp"
@@ -90,6 +91,7 @@ struct CommonScanGlobalState : public duckdb::GlobalTableFunctionState {
   // Score virtual column (set only for search scans with BM25/TFIDF scorer)
   bool scan_score = false;
   duckdb::idx_t score_output_idx = 0;
+  const VectorScorerOptions* vector_scorer = nullptr;
 
   bool finished = false;
 
@@ -219,8 +221,15 @@ void WriteVirtualColumns(CommonScanGlobalState& gstate,
   }
   auto* score_data = duckdb::FlatVector::GetDataMutable<float>(
     output.data[gstate.score_output_idx]);
-  for (duckdb::idx_t i = 0; i < num_rows; ++i) {
-    score_data[output_start + i] = view.score(i);
+  if (gstate.vector_scorer) {
+    const auto& vs = *gstate.vector_scorer;
+    for (duckdb::idx_t i = 0; i < num_rows; ++i) {
+      score_data[output_start + i] = vs.TransformDistance(view.score(i));
+    }
+  } else {
+    for (duckdb::idx_t i = 0; i < num_rows; ++i) {
+      score_data[output_start + i] = view.score(i);
+    }
   }
 }
 

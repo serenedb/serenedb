@@ -38,7 +38,7 @@ namespace sdb {
 namespace catalog {
 
 inline constexpr std::string_view kIncludedKind = "included";
-inline constexpr std::string_view kHNSWKind = "hnsw";
+inline constexpr std::string_view kIVFKind = "ivf";
 
 class SecondaryIndex;
 class InvertedIndex;

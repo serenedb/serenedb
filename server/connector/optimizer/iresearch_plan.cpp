@@ -50,6 +50,7 @@
 #include "connector/functions/vector.h"
 #include "connector/index_expression.hpp"
 #include "connector/search_filter_builder.hpp"
+#include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
@@ -387,6 +388,17 @@ duckdb::unique_ptr<duckdb::Expression> PushdownScorerCall(
   return ref;
 }
 
+uint32_t ReadNprobe(duckdb::ClientContext& context) {
+  duckdb::Value v;
+  if (context.TryGetCurrentSetting("sdb_nprobe", v) && !v.IsNull()) {
+    const auto n = v.GetValue<int32_t>();
+    if (n >= 1) {
+      return static_cast<uint32_t>(n);
+    }
+  }
+  return 1;
+}
+
 duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   duckdb::BoundFunctionExpression& func, const connector::AnnFunctionInfo& info,
   duckdb::LogicalOperator& root, duckdb::ClientContext& context) {
@@ -435,7 +447,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   if (!irs::field_limits::valid(call_field_id)) {
     return nullptr;
   }
-  auto ann_info = index->GetHNSWInfo(call_field_id);
+  auto ann_info = index->GetIvfInfo(call_field_id);
   if (!ann_info || ann_info->metric != info.metric) {
     return nullptr;
   }
@@ -454,7 +466,14 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
       .metric = info.metric,
       .score_emit = info.score_emit,
       .natural_order = info.order,
+      .centroids_id = ann_info->centroids_id,
+      .postings_id = ann_info->postings_id,
+      .quant = ann_info->quant.kind,
+      .nprobe = ReadNprobe(context),
     };
+    ss.score_order = irs::VectorMetricNearestIsLargest(info.metric)
+                       ? duckdb::OrderType::DESCENDING
+                       : duckdb::OrderType::ASCENDING;
   } else {
     const auto& vs = *ss.vector_scorer;
     if (vs.field_id != call_field_id || vs.metric != info.metric ||
@@ -767,6 +786,10 @@ bool TryClaimAnnRange(
     if (scan.vector_scorer->radius == std::numeric_limits<float>::max()) {
       continue;
     }
+    const auto cmp_type = cmp.GetExpressionType();
+    scan.vector_scorer->radius_inclusive =
+      cmp_type == duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO ||
+      cmp_type == duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO;
     filters.erase(filters.begin() + i);
     return true;
   }
@@ -862,16 +885,7 @@ bool TryClaimSearchFilter(
   irs::Optimize(root, {.scored = scan.text_scorer.has_value(),
                        .analyzed_fields = std::move(analyzed_fields)});
 
-  std::shared_ptr<irs::Filter> stored;
-  if (scan.vector_scorer) {
-    auto proxy = std::make_shared<irs::ProxyFilter>();
-    proxy->set_filter(irs::IResourceManager::gNoop, std::move(root));
-    stored = std::move(proxy);
-  } else {
-    stored = std::move(root);
-  }
-
-  scan.stored_filter = std::move(stored);
+  scan.stored_filter = std::move(root);
   for (auto& req : scan.offsets) {
     if (req.bind) {
       req.bind->stored_filter = scan.stored_filter;

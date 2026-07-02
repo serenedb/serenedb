@@ -24,6 +24,8 @@ set(iresearch-tests_sources
     ./formats/column/variant_shredding_test.cpp
     ./formats/column/test_cs_helpers.cpp
     ./formats/columnstore2_test.cpp
+    ./formats/ivf/centroids_test.cpp
+    ./formats/ivf/clustering_test.cpp
     ./formats/sparse_bitmap_test.cpp
     ./formats/formats_tests.cpp
     ./formats/formats_test_case_base.cpp

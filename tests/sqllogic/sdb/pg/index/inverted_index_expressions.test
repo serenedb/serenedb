@@ -1355,38 +1355,38 @@ statement error
 CREATE INDEX inc_e_dict_with_opts ON inc_e_num USING inverted(
     id, (a + b) verbatim_dict (compression='zstd'));
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'verbatim_dict' on '(a + b)' (known: included, hnsw)
+db error: ERROR: Failed to create index: Unknown built-in opclass 'verbatim_dict' on '(a + b)' (known: included, ivf)
 
 
-# --- HNSW on an indexed expression: `(expr) hnsw(metric='l2', m=..., ef_construction=...)` builds an ANN graph over the expression's value.
-
-statement ok
-CREATE TABLE hnsw_e(id INT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT);
+# --- IVF on an indexed expression: `(expr) ivf(metric='l2')` builds an ANN graph over the expression's value.
 
 statement ok
-CREATE INDEX hnsw_e_idx ON hnsw_e USING inverted(
+CREATE TABLE ivf_e(id INT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT);
+
+statement ok
+CREATE INDEX ivf_e_idx ON ivf_e USING inverted(
     id,
-    (array_value(x, y, z)) hnsw(metric='l2', m=8, ef_construction=16));
+    (array_value(x, y, z)) ivf(metric='l2'));
 
 statement ok
-INSERT INTO hnsw_e VALUES
+INSERT INTO ivf_e VALUES
     (1, 1, 2, 3),
     (2, 10, 10, 10),
     (3, 5, 5, 5),
     (4, 0, 0, 0);
 
 statement ok
-VACUUM (REFRESH_TABLE) hnsw_e;
+VACUUM (REFRESH_TABLE) ivf_e;
 
 query
-SELECT id FROM hnsw_e_idx ORDER BY array_value(x, y, z) <-> [1,2,3]::FLOAT[3] LIMIT 2;
+SELECT id FROM ivf_e_idx ORDER BY array_value(x, y, z) <-> [1,2,3]::FLOAT[3] LIMIT 2;
 ----
 id
 1
 4
 
 query
-EXPLAIN SELECT id FROM hnsw_e_idx ORDER BY array_value(x, y, z) <-> [1,2,3]::FLOAT[3] LIMIT 2;
+EXPLAIN SELECT id FROM ivf_e_idx ORDER BY array_value(x, y, z) <-> [1,2,3]::FLOAT[3] LIMIT 2;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
@@ -1400,12 +1400,21 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Index:          │
-│      hnsw_e_idx (ANN)     │
-│                           │
+│      Index: ivf_e_idx     │
 │       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     VECTOR_KNN    ││  │
+│  ││    ────────────   ││  │
+│  ││ array_value(x, y, ││  │
+│  ││  z) metric=l2 dims││  │
+│  ││         =3        ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
 │           Top: 2          │
-│          Dims: 3          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -1419,47 +1428,47 @@ QUERY PLAN
 # (validator inside TryAnnTopk). The query still returns correct results.
 
 statement ok
-CREATE TABLE hnsw_e2(id INT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT);
+CREATE TABLE ivf_e2(id INT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT);
 
 statement ok
-CREATE INDEX hnsw_e2_idx ON hnsw_e2 USING inverted(
-    id, (array_value(x, y, z)) hnsw(metric='l2', m=8, ef_construction=16));
+CREATE INDEX ivf_e2_idx ON ivf_e2 USING inverted(
+    id, (array_value(x, y, z)) ivf(metric='l2'));
 
 statement ok
-INSERT INTO hnsw_e2 VALUES (1, 1, 0, 0), (2, 0, 1, 0), (3, 0, 0, 1);
+INSERT INTO ivf_e2 VALUES (1, 1, 0, 0), (2, 0, 1, 0), (3, 0, 0, 1);
 
 statement ok
-VACUUM (REFRESH_TABLE) hnsw_e2;
+VACUUM (REFRESH_TABLE) ivf_e2;
 
-# `hnsw` requires options.
+# `ivf` requires options.
 
 statement error
-CREATE INDEX hnsw_e_no_opts ON hnsw_e USING inverted(
-    id, (array_value(x, y, z)) hnsw);
+CREATE INDEX ivf_e_no_opts ON ivf_e USING inverted(
+    id, (array_value(x, y, z)) ivf);
 ----
-db error: ERROR: Unknown opclass 'hnsw' on column 'array_value(x, y, z)': no text dictionary by that name in schema 'public'
-HINT: 'hnsw' is a built-in opclass; use the options form 'hnsw (...)'
+db error: ERROR: Unknown opclass 'ivf' on column 'array_value(x, y, z)': no text dictionary by that name in schema 'public'
+HINT: 'ivf' is a built-in opclass; use the options form 'ivf (...)'
 
 
 # ARRAY of non-FLOAT child type is rejected.
 
 statement ok
-CREATE TABLE hnsw_e3(id INT PRIMARY KEY, a INT, b INT, c INT);
+CREATE TABLE ivf_e3(id INT PRIMARY KEY, a INT, b INT, c INT);
 
 statement error
-CREATE INDEX hnsw_e3_idx ON hnsw_e3 USING inverted(
-    id, (array_value(a, b, c)) hnsw(metric='l2', m=8, ef_construction=16));
+CREATE INDEX ivf_e3_idx ON ivf_e3 USING inverted(
+    id, (array_value(a, b, c)) ivf(metric='l2'));
 ----
-db error: ERROR: Failed to create index: Column 'array_value(a, b, c)' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not INTEGER[3]
+db error: ERROR: Failed to create index: Column 'array_value(a, b, c)' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not INTEGER[3]
 
 
-# Non-ARRAY return type rejected when hnsw is requested.
+# Non-ARRAY return type rejected when ivf is requested.
 
 statement error
-CREATE INDEX hnsw_e_scalar ON hnsw_e USING inverted(
-    id, (x + y + z) hnsw(metric='l2', m=8, ef_construction=16));
+CREATE INDEX ivf_e_scalar ON ivf_e USING inverted(
+    id, (x + y + z) ivf(metric='l2'));
 ----
-db error: ERROR: Failed to create index: Column '((x + y) + z)' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not FLOAT
+db error: ERROR: Failed to create index: Column '((x + y) + z)' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not FLOAT
 
 
 # --- INCLUDE columns alongside an indexed expression ---------------------

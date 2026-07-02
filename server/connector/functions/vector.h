@@ -33,12 +33,12 @@
 namespace sdb::connector {
 
 struct AnnFunctionInfo : public duckdb::ScalarFunctionInfo {
-  irs::HNSWMetric metric;
+  irs::VectorMetric metric;
   duckdb::OrderType order;
   bool is_norm;  // unary norm form (l2_norm/l1_norm) vs binary distance
   ScoreEmit score_emit;
 
-  AnnFunctionInfo(irs::HNSWMetric m, duckdb::OrderType o, bool n, ScoreEmit e)
+  AnnFunctionInfo(irs::VectorMetric m, duckdb::OrderType o, bool n, ScoreEmit e)
     : metric(m), order(o), is_norm(n), score_emit(e) {}
 };
 

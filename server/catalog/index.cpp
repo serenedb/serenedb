@@ -64,10 +64,12 @@ constexpr std::string_view kTrainSampleField = "train_sample";
 constexpr std::string_view kClusterItersField = "cluster_iters";
 constexpr std::string_view kQuantField = "quant";
 constexpr std::string_view kPqMField = "pq_m";
+constexpr std::string_view kRaBitQBitsField = "rabitq_bits";
 
 constexpr std::string_view kSQ8Quant = "sq8";
 constexpr std::string_view kSQ4Quant = "sq4";
 constexpr std::string_view kPQQuant = "pq";
+constexpr std::string_view kRaBitQQuant = "rabitq";
 constexpr std::string_view kNoneQuant = "none";
 
 template<typename T>
@@ -415,8 +417,10 @@ std::string DescribeIVFOptions() {
          "nlist (int >= 1, default auto ~sqrt(rows)), "
          "train_sample (int >= 1, default auto), "
          "cluster_iters (int >= 1, k-means iterations, default auto), "
-         "quant (string: sq8|sq4|pq|none, default none; sq4/pq need l2|ip), "
+         "quant (string: sq8|sq4|pq|rabitq|none, default none; sq4/pq/rabitq "
+         "need l2|ip), "
          "pq_m (int >= 1, divides dimension, quant='pq' only, default auto), "
+         "rabitq_bits (int 1-9, quant='rabitq' only, default 1), "
          "compression (string, default 'auto'), "
          "row_group_size (int >= 1)";
 }
@@ -517,6 +521,8 @@ Result ApplyIVFOptions(
         cfg.quant = irs::VectorQuantization::SQ4;
       } else if (v == kPQQuant) {
         cfg.quant = irs::VectorQuantization::PQ;
+      } else if (v == kRaBitQQuant) {
+        cfg.quant = irs::VectorQuantization::RaBitQ;
       } else if (v == kNoneQuant) {
         cfg.quant = irs::VectorQuantization::None;
       } else {
@@ -531,6 +537,8 @@ Result ApplyIVFOptions(
                 kSQ4Quant,
                 " ",
                 kPQQuant,
+                " ",
+                kRaBitQQuant,
                 " ",
                 kNoneQuant};
       }
@@ -549,6 +557,21 @@ Result ApplyIVFOptions(
                 *n};
       }
       cfg.pq_m = static_cast<uint32_t>(*n);
+    } else if (key == kRaBitQBitsField) {
+      auto n = GetIndexIntOption(kIVFKind, column_name, key, raw_val);
+      if (!n) {
+        return std::move(n).error();
+      }
+      if (*n < 1) {
+        return {ERROR_BAD_PARAMETER,
+                "Column '",
+                column_name,
+                "': ivf option '",
+                kRaBitQBitsField,
+                "' must be positive, got ",
+                *n};
+      }
+      cfg.rabitq_bits = static_cast<uint32_t>(*n);
     } else if (key == kCompressionField) {
       auto str = GetIndexStringOption(kIVFKind, column_name, key, raw_val);
       if (!str) {
@@ -623,6 +646,21 @@ Result ApplyIVFOptions(
   } else if (cfg.pq_m != 0) {
     return {ERROR_BAD_PARAMETER, "Column '", column_name,
             "': ivf option '",   kPqMField,  "' is only valid with quant 'pq'"};
+  }
+  if (cfg.quant == irs::VectorQuantization::RaBitQ) {
+    if (cfg.rabitq_bits == 0) {
+      cfg.rabitq_bits = 1;
+    }
+    if (cfg.rabitq_bits > 9) {
+      return {ERROR_BAD_PARAMETER, "Column '",
+              column_name,         "': ivf option '",
+              kRaBitQBitsField,    "' (",
+              cfg.rabitq_bits,     ") must be between 1 and 9"};
+    }
+  } else if (cfg.rabitq_bits != 0) {
+    return {ERROR_BAD_PARAMETER, "Column '",
+            column_name,         "': ivf option '",
+            kRaBitQBitsField,    "' is only valid with quant 'rabitq'"};
   }
   return {};
 }

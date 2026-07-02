@@ -78,13 +78,14 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
     (has_pay && metric_ok && !ivf->QuantStats().empty())
       ? opts.quant
       : VectorQuantization::None;
-  const bool pq = quant == VectorQuantization::PQ;
+  const bool needs_centroids =
+    quant == VectorQuantization::PQ || quant == VectorQuantization::RaBitQ;
   const uint32_t d = ivf->Dimension();
 
   std::vector<uint32_t> fine_ids;
   std::vector<float> probed_centroids;
   ivf->SearchGlobal(opts.query, *idx_in, n1, opts.nprobe, fine_ids,
-                    pq ? &probed_centroids : nullptr);
+                    needs_centroids ? &probed_centroids : nullptr);
   if (fine_ids.empty()) {
     return QueryBuilder::Empty();
   }
@@ -122,7 +123,7 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
         static_cast<const TermMetaImpl*>(term_meta)->pay_start);
       state.cluster_counts.push_back(term_meta->docs_count);
     }
-    if (pq) {
+    if (needs_centroids) {
       const float* cen = probed_centroids.data() + i * d;
       state.cluster_centroids.insert(state.cluster_centroids.end(), cen,
                                      cen + d);

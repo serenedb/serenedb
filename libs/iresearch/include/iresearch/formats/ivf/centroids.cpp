@@ -37,11 +37,17 @@ namespace {
 void TopK(std::vector<std::pair<float, uint32_t>>& scored, uint32_t k,
           bool nearest_is_largest, std::vector<uint32_t>& out) {
   const auto mid = scored.begin() + k;
-  std::partial_sort(
-    scored.begin(), mid, scored.end(),
-    [nearest_is_largest](const auto& l, const auto& r) noexcept {
-      return nearest_is_largest ? l.first > r.first : l.first < r.first;
-    });
+  irs::ResolveBool(nearest_is_largest, [&]<bool NearestIsLarger>() {
+    std::partial_sort(scored.begin(), mid, scored.end(),
+                      [&](const auto& l, const auto& r) noexcept {
+                        if constexpr (NearestIsLarger) {
+                          return l.first > r.first;
+                        } else {
+                          return l.first < r.first;
+                        }
+                      });
+  });
+  SDB_ASSERT(out.empty());
   out.reserve(out.size() + k);
   for (auto it = scored.begin(); it != mid; ++it) {
     out.push_back(it->second);
@@ -136,8 +142,6 @@ void TwoLayerCentroids::ReadL2Body(IndexInput& in, uint32_t l1_id,
 
   const uint32_t n_l2 = static_cast<uint32_t>(in.ReadI32());
   view.n_l2 = n_l2;
-  view.fine_ids.clear();
-  view.l2_centroids = nullptr;
   if (n_l2 == 0) {
     return;
   }
@@ -154,58 +158,17 @@ void TwoLayerCentroids::ReadL2Body(IndexInput& in, uint32_t l1_id,
   }
   view.l2_centroids = p;
 
-  view.fine_ids.resize(n_l2);
   const byte_type* ids = p + centroids_bytes;
-  for (uint32_t i = 0; i < n_l2; ++i) {
-    uint32_t v;
-    std::memcpy(&v, ids + static_cast<size_t>(i) * sizeof(uint32_t), sizeof(v));
-    view.fine_ids[i] = v;
-  }
+
+  view.fine_ids = std::span{reinterpret_cast<const uint32_t*>(ids), n_l2};
 }
 
-void TwoLayerCentroids::SearchL2(std::span<const float> query,
-                                 const L2BodyView& view, uint32_t n2,
-                                 std::vector<uint32_t>& out) const {
-  if (view.n_l2 == 0) {
-    return;
-  }
-  n2 = std::min<uint32_t>(std::max<uint32_t>(n2, 1), view.n_l2);
-
-  const auto dist = ResolveVectorDistance(_metric);
-  const bool nearest_is_largest = VectorMetricNearestIsLargest(_metric);
-  const auto* q = reinterpret_cast<const byte_type*>(query.data());
-  const auto d = static_cast<uint16_t>(_d);
-  const size_t stride = static_cast<size_t>(_d) * sizeof(float);
-
-  std::vector<std::pair<float, uint32_t>> scored;
-  scored.reserve(view.n_l2);
-  for (uint32_t s = 0; s < view.n_l2; ++s) {
-    const byte_type* cv = view.l2_centroids + s * stride;
-    scored.emplace_back(dist(q, cv, d), view.fine_ids[s]);
-  }
-
-  TopK(scored, n2, nearest_is_largest, out);
-}
-
-void TwoLayerCentroids::SearchGlobal(std::span<const float> query,
-                                     IndexInput& in, uint32_t n1,
-                                     uint32_t nprobe,
-                                     std::vector<uint32_t>& out_ids,
-                                     std::vector<float>* out_centroids) const {
-  out_ids.clear();
-  if (out_centroids != nullptr) {
-    out_centroids->clear();
-  }
-  if (_n_l1 == 0 || nprobe == 0) {
-    return;
-  }
-
-  std::vector<uint32_t> l1_ids;
-  SearchL1(query, n1, l1_ids);
-  if (l1_ids.empty()) {
-    return;
-  }
-
+void TwoLayerCentroids::SearchL2(std::span<const float> query, uint32_t nprobe,
+                                 std::span<uint32_t> l1_ids, IndexInput& in,
+                                 std::vector<uint32_t>& out_ids,
+                                 std::vector<float>* out_centroids) const {
+  SDB_ASSERT(out_ids.empty());
+  SDB_ASSERT(!out_centroids || out_centroids->empty());
   const auto dist = ResolveVectorDistance(_metric);
   const bool nearest_is_largest = VectorMetricNearestIsLargest(_metric);
   const auto* q = reinterpret_cast<const byte_type*>(query.data());
@@ -274,6 +237,27 @@ void TwoLayerCentroids::SearchGlobal(std::span<const float> query,
                   body.l2_centroids + s * stride, stride);
     }
   }
+}
+
+void TwoLayerCentroids::SearchGlobal(std::span<const float> query,
+                                     IndexInput& in, uint32_t n1,
+                                     uint32_t nprobe,
+                                     std::vector<uint32_t>& out_ids,
+                                     std::vector<float>* out_centroids) const {
+  out_ids.clear();
+  if (out_centroids != nullptr) {
+    out_centroids->clear();
+  }
+  if (_n_l1 == 0 || nprobe == 0) {
+    return;
+  }
+
+  std::vector<uint32_t> l1_ids;
+  SearchL1(query, n1, l1_ids);
+  if (l1_ids.empty()) {
+    return;
+  }
+  SearchL2(query, nprobe, l1_ids, in, out_ids, out_centroids);
 }
 
 }  // namespace irs

@@ -46,12 +46,14 @@ enum class VectorQuantization : uint8_t {
   SQ8,
   SQ4,
   PQ,
+  RaBitQ,
 };
 
 struct IvfInfo {
   struct Quantizer {
     VectorQuantization kind = VectorQuantization::None;
     uint32_t pq_m = 0;
+    uint32_t nb_bits = 0;
   };
 
   field_id centroids_id = field_limits::invalid();

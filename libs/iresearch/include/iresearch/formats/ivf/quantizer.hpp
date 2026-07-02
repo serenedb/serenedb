@@ -73,7 +73,8 @@ class QuantizerCodebook
 std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(VectorQuantization quant,
                                                      uint32_t d,
                                                      VectorMetric metric,
-                                                     uint32_t pq_m);
+                                                     uint32_t pq_m,
+                                                     uint32_t nb_bits);
 
 std::shared_ptr<const QuantizerCodebook> MakeQuantizerCodebook(
   VectorQuantization quant, uint32_t d, std::span<const byte_type> stats,

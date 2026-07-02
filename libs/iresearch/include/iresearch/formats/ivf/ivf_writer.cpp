@@ -201,7 +201,9 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
     std::vector<float> gather;
     gather.reserve(STANDARD_VECTOR_SIZE * d);
     size_t gathered = 0;
-    const bool sq_train = qw != nullptr && !pq;
+    const bool sq_train =
+      qw != nullptr && (_info.quant.kind == VectorQuantization::SQ8 ||
+                        _info.quant.kind == VectorQuantization::SQ4);
     const auto flush = [&]() {
       if (gathered == 0) {
         return;
@@ -580,9 +582,9 @@ void IvfWriter::OnCommit(ColWriter& cw, IdxWriter& idx,
       continue;
     }
     const auto d = static_cast<uint32_t>(col->ArraySize());
-    auto qw =
-      MakeQuantizerWriter(opts.ivf_info->quant.kind, d, opts.ivf_info->metric,
-                          opts.ivf_info->quant.pq_m);
+    auto qw = MakeQuantizerWriter(
+      opts.ivf_info->quant.kind, d, opts.ivf_info->metric,
+      opts.ivf_info->quant.pq_m, opts.ivf_info->quant.nb_bits);
 
     IvfBuilder builder{*opts.ivf_info};
     BuiltIvf built = builder.Build(*col, cw.CommitReadContext(), idx, qw.get());

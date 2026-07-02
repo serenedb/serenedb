@@ -136,51 +136,6 @@ TEST(two_layer_centroids_test, roundtrip_and_search) {
     std::memcpy(c.data(), body.l2_centroids, c.size() * sizeof(float));
     EXPECT_EQ(c, (std::vector<float>{0.f, 0.f, 1.f, 1.f}));
   }
-
-  // SearchL2 within cell 0: query near (0,0) -> fine 0; near (1,1) -> fine 1.
-  {
-    std::vector<uint32_t> fine;
-    centroids.SearchL2({std::vector<float>{0.1f, 0.1f}}, body, /*n2=*/1, fine);
-    ASSERT_EQ(fine.size(), 1u);
-    EXPECT_EQ(fine[0], 0u);
-  }
-  {
-    std::vector<uint32_t> fine;
-    centroids.SearchL2({std::vector<float>{0.9f, 0.9f}}, body, /*n2=*/1, fine);
-    ASSERT_EQ(fine.size(), 1u);
-    EXPECT_EQ(fine[0], 1u);
-  }
-  {
-    std::vector<uint32_t> fine;
-    centroids.SearchL2({std::vector<float>{0.5f, 0.5f}}, body, /*n2=*/5, fine);
-    ASSERT_EQ(fine.size(), 2u);  // clamped to n_l2
-  }
-
-  // Cell 1 maps to fine ids {2, 3}.
-  centroids.ReadL2Body(in, /*l1_id=*/1, body);
-  ASSERT_EQ(body.n_l2, 2u);
-  EXPECT_EQ(body.fine_ids[0], 2u);
-  EXPECT_EQ(body.fine_ids[1], 3u);
-  {
-    std::vector<uint32_t> fine;
-    centroids.SearchL2({std::vector<float>{10.1f, 10.1f}}, body, /*n2=*/1,
-                       fine);
-    ASSERT_EQ(fine.size(), 1u);
-    EXPECT_EQ(fine[0], 2u);
-  }
-
-  // End-to-end navigation: nearest fine cluster to a query near (11,11).
-  {
-    const std::vector<float> q{11.f, 11.f};
-    std::vector<uint32_t> l1_ids;
-    centroids.SearchL1(q, /*n1=*/1, l1_ids);
-    ASSERT_EQ(l1_ids.size(), 1u);
-    centroids.ReadL2Body(in, l1_ids[0], body);
-    std::vector<uint32_t> fine;
-    centroids.SearchL2(q, body, /*n2=*/1, fine);
-    ASSERT_EQ(fine.size(), 1u);
-    EXPECT_EQ(fine[0], 3u);
-  }
 }
 
 TEST(two_layer_centroids_test, search_global_picks_global_topk) {

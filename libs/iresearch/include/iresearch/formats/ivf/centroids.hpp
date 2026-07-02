@@ -38,7 +38,7 @@ struct IResourceManager;
 
 struct L2BodyView {
   const byte_type* l2_centroids = nullptr;
-  std::vector<uint32_t> fine_ids;
+  std::span<const uint32_t> fine_ids;
   bstring buf;
   uint32_t n_l2 = 0;
 };
@@ -59,8 +59,10 @@ class TwoLayerCentroids {
 
   void ReadL2Body(IndexInput& in, uint32_t l1_id, L2BodyView& view) const;
 
-  void SearchL2(std::span<const float> query, const L2BodyView& view,
-                uint32_t n2, std::vector<uint32_t>& out) const;
+  void SearchL2(std::span<const float> query, uint32_t nprobe,
+                std::span<uint32_t> l1_ids, IndexInput& in,
+                std::vector<uint32_t>& out,
+                std::vector<float>* out_centroids) const;
 
   void SearchGlobal(std::span<const float> query, IndexInput& in, uint32_t n1,
                     uint32_t nprobe, std::vector<uint32_t>& out_ids,

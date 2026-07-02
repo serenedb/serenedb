@@ -48,9 +48,7 @@ duckdb::OperatorResultType SereneDBPhysicalProgress::Execute(
                          static_cast<int64_t>(input.size()));
     state->progress->Add(pg::copy_progress::Param::BytesProcessed,
                          static_cast<int64_t>(input.GetAllocationSize()));
-    SDB_IF_FAILURE("pause_sst_sink_mid_copy") {
-      sdb::WaitWhileFailurePointDebugging("pause_sst_sink_mid_copy");
-    }
+    sdb::WaitWhileFailurePointDebugging("pause_sst_sink_mid_copy");
   }
   chunk.Reference(input);
   return duckdb::OperatorResultType::NEED_MORE_INPUT;

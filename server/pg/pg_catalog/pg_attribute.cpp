@@ -174,7 +174,7 @@ void EmitColumnsForSystemTable(const catalog::VirtualTable& table,
 
     PgAttribute row{
       .attrelid = table.Id().id(),
-      .attname = children[i].first,
+      .attname = children[i].first.GetIdentifierName(),
       .atttypid = type_oid,
       .attlen = phys.attlen,
       .attnum = static_cast<int16_t>(i + 1),
@@ -216,7 +216,7 @@ void EmitColumnsForCompositeType(const catalog::PgSqlType& type,
     auto phys = GetPhysicalInfo(type_id);
     PgAttribute row{
       .attrelid = type_oid,
-      .attname = children[i].first,
+      .attname = children[i].first.GetIdentifierName(),
       .atttypid = type_id,
       .attlen = phys.attlen,
       .attnum = static_cast<int16_t>(i + 1),
@@ -244,7 +244,7 @@ void EmitColumnsForCompositeType(const catalog::PgSqlType& type,
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgAttribute>::GetTableData() {
-  auto catalog = _config.EnsureCatalogSnapshot();
+  auto catalog = _config.CatalogSnapshot();
 
   std::vector<PgAttribute> values;
 

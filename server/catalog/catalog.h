@@ -113,6 +113,8 @@ struct Snapshot {
 
   std::shared_ptr<Snapshot> Clone() const;
 
+  uint64_t Version() const noexcept { return _version; }
+
   connector::DuckDBEntryCache& GetDuckDBEntryCache() const;
   std::vector<std::shared_ptr<Database>> GetDatabases() const;
   std::vector<std::shared_ptr<Schema>> GetSchemas(ObjectId database) const;
@@ -343,6 +345,7 @@ struct Snapshot {
   ObjectDependencies _deps;
   ObjectSetById<Object> _objects;
   mutable connector::DuckDBEntryCache _duckdb_cache;
+  uint64_t _version = 0;
   bool _in_load = true;
 };
 

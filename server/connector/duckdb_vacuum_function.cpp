@@ -433,7 +433,7 @@ void VacuumExecute(duckdb::ClientContext& context,
                    duckdb::DataChunk& output) {
   auto& bind_data = input.bind_data->Cast<VacuumBindData>();
   auto& conn_ctx = GetSereneDBContext(context);
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  auto snapshot = conn_ctx.CatalogSnapshot();
 
   auto verb = ParseOption(bind_data.option);
   if (!verb) {

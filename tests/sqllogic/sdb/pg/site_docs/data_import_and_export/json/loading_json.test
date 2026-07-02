@@ -20,7 +20,7 @@ SELECT *
 FROM read_json('${__TEST_DIR__}/data_import_and_export_json_loading_json_example_001_1_todos_json.json')
 LIMIT 5;
 ----
-userid	id	title	completed
+userId	id	title	completed
 1	1	write docs fixtures	f
 1	2	run sqllogictest	t
 
@@ -50,7 +50,7 @@ query
 DESCRIBE TABLE todos;
 ----
 column_name	column_type	null	key	default	extra
-userid	BIGINT	YES	NULL	NULL	NULL
+userId	BIGINT	YES	NULL	NULL	NULL
 id	BIGINT	YES	NULL	NULL	NULL
 title	VARCHAR	YES	NULL	NULL	NULL
 completed	BOOLEAN	YES	NULL	NULL	NULL

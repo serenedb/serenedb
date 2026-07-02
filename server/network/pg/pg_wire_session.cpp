@@ -55,7 +55,7 @@ inline constexpr uint32_t kMaxSaslMessage = 1024;
 
 inline duckdb::LogicalType ResolveExpectedType(const auto& value_map,
                                                uint16_t id) {
-  const auto it = value_map.find(absl::StrCat(id + 1));
+  const auto it = value_map.find(duckdb::Identifier{absl::StrCat(id + 1)});
   if (it != value_map.end()) {
     const auto type = it->second->GetValue().type();
     if (type.id() != duckdb::LogicalTypeId::UNKNOWN &&
@@ -224,9 +224,9 @@ inline duckdb::unique_ptr<duckdb::SQLStatement> ExtractCopyToQuery(
     return std::move(select);
   }
   auto ref = duckdb::make_uniq<duckdb::BaseTableRef>();
-  ref->catalog_name = copy.info->catalog;
-  ref->schema_name = copy.info->schema;
-  ref->table_name = copy.info->table;
+  const auto& qualified = copy.info->GetQualifiedName();
+  ref->SetQualifiedName(qualified.Catalog(), qualified.Schema(),
+                        qualified.Name());
   auto node = duckdb::make_uniq<duckdb::SelectNode>();
   node->from_table = std::move(ref);
   if (copy.info->select_list.empty()) {
@@ -358,8 +358,10 @@ bool PgWireSession<Kind>::SetupConnection() {
 
   _conn->context->session_user = std::string{UserName()};
   std::vector<duckdb::CatalogSearchEntry> default_paths{
-    duckdb::CatalogSearchEntry{std::string{DatabaseName()}, "$user"},
-    duckdb::CatalogSearchEntry{std::string{DatabaseName()}, "public"},
+    duckdb::CatalogSearchEntry{duckdb::Identifier{DatabaseName()},
+                               duckdb::Identifier{"$user"}},
+    duckdb::CatalogSearchEntry{duckdb::Identifier{DatabaseName()},
+                               duckdb::Identifier{"public"}},
   };
   _conn->context->client_data->catalog_search_path->SetDefaultPaths(
     std::vector{default_paths});
@@ -450,21 +452,9 @@ duckdb::unique_ptr<duckdb::PendingQueryResult>
 PgWireSession<Kind>::PendingQueryEnsured(
   duckdb::PreparedStatement& prepared, duckdb::vector<duckdb::Value>& values,
   std::shared_ptr<WireSinkContext> wire) {
-  _connection_ctx->EnsureCatalogSnapshot();
+  _connection_ctx->AcquireCatalogSnapshot();
   const bool is_ddl = IsCatalogDdl(prepared.GetStatementType());
-  if (_connection_ctx->IsExplicitTransaction() && is_ddl) {
-    if (_connection_ctx->GetStrictDDL()) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
-        ERR_MSG("DDL statements are not supported inside a transaction block: "
-                "DDL commits immediately and cannot be rolled back "
-                "(sdb_strict_ddl is enabled)"));
-    }
-    _connection_ctx->AddNotice(SQL_ERROR_DATA(
-      ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
-      ERR_MSG("DDL is not transactional: the statement commits immediately "
-              "and is not undone by ROLLBACK")));
-  }
+  NoticeDdlInTransaction(prepared.GetStatementType());
   // Once an explicit transaction has run a snapshot-taking statement it can no
   // longer change its isolation level (SET TRANSACTION ISOLATION LEVEL must
   // precede any query -- enforced by isolation_level_validator). A statement
@@ -497,12 +487,91 @@ PgWireSession<Kind>::PendingQueryEnsured(
   // streaming) and gives the eager-cleanup materialized fetch path; the wire
   // collector streams the bytes itself. Snapshot must be set before sinks can
   // run (workers may pick tasks up during PendingQuery), so fill the
-  // serialization template here, after EnsureCatalogSnapshot.
+  // serialization template here, after CatalogSnapshot.
   FillContext(*_connection_ctx, wire->proto);
   _client_state->wire_sink = std::move(wire);
   auto pending = prepared.PendingQuery(values, /*allow_stream_result=*/false);
   _client_state->wire_sink.reset();
   return pending;
+}
+
+template<SocketKind Kind>
+void PgWireSession<Kind>::NoticeDdlInTransaction(duckdb::StatementType type) {
+  if (!IsCatalogDdl(type) || !_connection_ctx->IsExplicitTransaction()) {
+    return;
+  }
+  if (_connection_ctx->GetStrictDDL()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+      ERR_MSG("DDL statements are not supported inside a transaction block: "
+              "DDL commits immediately and cannot be rolled back "
+              "(sdb_strict_ddl is enabled)"));
+  }
+  _connection_ctx->AddNotice(SQL_ERROR_DATA(
+    ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+    ERR_MSG("DDL is not transactional: the statement commits immediately "
+            "and is not undone by ROLLBACK")));
+}
+
+template<SocketKind Kind>
+duckdb::unique_ptr<duckdb::PendingQueryResult>
+PgWireSession<Kind>::PendingStatementEnsured(
+  duckdb::unique_ptr<duckdb::SQLStatement> statement,
+  const std::shared_ptr<WireSinkContext>& wire) {
+  _connection_ctx->AcquireCatalogSnapshot();
+  // Statement type is parse-time, and the check must precede PendingQuery:
+  // execution tasks (including the DDL itself) can run inside it.
+  NoticeDdlInTransaction(statement->type);
+  FillContext(*_connection_ctx, wire->proto);
+  _client_state->wire_sink = wire;
+  auto pending =
+    _conn->PendingQuery(std::move(statement), /*allow_stream_result=*/false);
+  _client_state->wire_sink.reset();
+  if (pending && !pending->HasError() &&
+      _connection_ctx->IsExplicitTransaction()) {
+    // Post-bind statement classification; see PendingQueryEnsured. Consumed at
+    // statement end, so running after PendingQuery (bind) is early enough.
+    const auto& props = pending->properties;
+    if (!props.read_databases.empty() || !props.modified_databases.empty()) {
+      _connection_ctx->MarkQueryInTransaction();
+    }
+    if (IsCatalogDdl(pending->statement_type)) {
+      _connection_ctx->MarkStatementDdl();
+    } else if (!props.modified_databases.empty()) {
+      _connection_ctx->MarkStatementDml();
+    }
+  }
+  return pending;
+}
+
+template<SocketKind Kind>
+yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>>
+PgWireSession<Kind>::DriveStatementToResult(
+  duckdb::unique_ptr<duckdb::SQLStatement> statement,
+  duckdb::unique_ptr<duckdb::PendingQueryResult>& pending,
+  std::shared_ptr<WireSinkContext> wire) {
+  pending = PendingStatementEnsured(std::move(statement), wire);
+  ThrowIfError(*pending);
+  // The collector hook engages the context only for QUERY_RESULT plans;
+  // everything else drives without the wire drain.
+  const bool engaged = wire && wire->engaged;
+  if (engaged) {
+    this->ArmSendWaiter();
+  }
+  absl::Cleanup disarm = [this, engaged] {
+    if (engaged) {
+      this->DisarmSendWaiter();
+    }
+  };
+  const auto status =
+    co_await DriveQuery(*pending, engaged ? wire.get() : nullptr, false);
+  ThrowIfDriveFailed(*pending, status);
+  if (engaged) {
+    co_await FinishWireDrain(*wire);
+  }
+  auto result = pending->Execute();
+  ThrowIfError(*result);
+  co_return std::move(result);
 }
 
 template<SocketKind Kind>
@@ -708,6 +777,20 @@ void PgWireSession<Kind>::WriteCommandTag(
     }
   }
   WriteCommandComplete(this->_send, prepared, rows);
+}
+
+template<SocketKind Kind>
+void PgWireSession<Kind>::WriteCommandTag(
+  const sdb::pg::CommandTag& tag, duckdb::QueryResult& result,
+  duckdb::StatementReturnType return_type) {
+  uint64_t rows = 0;
+  if (return_type == duckdb::StatementReturnType::CHANGED_ROWS) {
+    auto chunk = result.FetchRaw();
+    if (chunk && chunk->size() > 0) {
+      rows = static_cast<uint64_t>(chunk->GetValue(0, 0).GetValue<int64_t>());
+    }
+  }
+  WriteCommandComplete(this->_send, tag, rows);
 }
 
 template<SocketKind Kind>
@@ -1037,6 +1120,10 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
     WriteEmptyFrame(this->_send, PQ_MSG_EMPTY_QUERY_RESPONSE);
     co_return {};
   }
+  // Parsing binds too: the statement preprocessor resolves PRAGMA lookups
+  // through the catalog (TryReparsePragma), so the snapshot must be held
+  // before ExtractStatements.
+  _connection_ctx->AcquireCatalogSnapshot();
   auto extracted = _conn->ExtractStatements(query);
   if (extracted.empty()) {
     // A non-empty but statement-less query (";", a bare comment): postgres
@@ -1102,36 +1189,30 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
       }
       continue;
     }
-    auto prepared = _conn->Prepare(std::move(statement));
-    ThrowIfError(*prepared);
-    const auto return_type = prepared->GetStatementProperties().return_type;
-    duckdb::vector<duckdb::Value> params;
-    if (return_type == duckdb::StatementReturnType::QUERY_RESULT) {
-      // Rows go to the wire straight from the executor (wire_collector.h):
-      // encoded in Sink on the workers, spliced here in plan order.
-      // RowDescription MUST be committed before PendingQuery: arming hands
-      // the _send producer role to the direct-mode sink, and workers can run
-      // it inside PendingQuery -- writing T afterwards interleaves with the
-      // first DataRows (a plan error then lands after T, which is postgres's
-      // mid-stream error behavior).
-      WriteRowDescription(this->_send, prepared->GetTypes(),
-                          prepared->GetNames(), {});
-      auto wire = MakeWireContext({});
-      duckdb::unique_ptr<duckdb::PendingQueryResult> pending;
-      co_await DriveToResult(*prepared, params, pending, wire);
-      commit_block_if_last(is_last, prepared->GetStatementType());
-      DrainNotices();
-      WriteCommandComplete(this->_send, *prepared,
+    // Bind and execution share one duckdb query lifecycle (one transaction):
+    // the plan's catalog references stay valid end-to-end. The command tag
+    // needs the parse tree, so it is built before the statement moves; rows
+    // go to the wire straight from the executor (wire_collector.h), with the
+    // hook writing RowDescription post-bind, before any task can emit a
+    // DataRow (a plan error then lands after T, which is postgres's
+    // mid-stream error behavior).
+    const auto stmt_type = statement->type;
+    const auto tag = sdb::pg::BuildCommandTag(*statement, *_conn->context);
+    auto wire = MakeWireContext({});
+    wire->announce_rowdesc = true;
+    duckdb::unique_ptr<duckdb::PendingQueryResult> pending;
+    auto result =
+      co_await DriveStatementToResult(std::move(statement), pending, wire);
+    commit_block_if_last(is_last, stmt_type);
+    DrainNotices();
+    if (pending->properties.return_type ==
+        duckdb::StatementReturnType::QUERY_RESULT) {
+      WriteCommandComplete(this->_send, tag,
                            wire->rows.load(std::memory_order_relaxed));
       continue;
     }
-    duckdb::unique_ptr<duckdb::PendingQueryResult> pending;
-    auto result = co_await DriveToResult(*prepared, params, pending, nullptr);
-    commit_block_if_last(is_last, prepared->GetStatementType());
-    DrainNotices();
-    WriteCommandTag(*prepared, *result, return_type);
-    if (prepared->GetStatementType() ==
-        duckdb::StatementType::TRANSACTION_STATEMENT) {
+    WriteCommandTag(tag, *result, pending->properties.return_type);
+    if (stmt_type == duckdb::StatementType::TRANSACTION_STATEMENT) {
       AfterTxnStatement();
     }
   }
@@ -1270,17 +1351,20 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   }
   auto copy_columns = static_cast<int16_t>(copy_info.select_list.size());
   if (copy_columns == 0) {
-    auto snapshot = _connection_ctx->EnsureCatalogSnapshot();
+    auto snapshot = _connection_ctx->AcquireCatalogSnapshot();
     const auto db_id = _connection_ctx->GetDatabaseId();
     std::shared_ptr<catalog::Table> table;
-    if (!copy_info.schema.empty()) {
-      table = snapshot->GetTable(db_id, copy_info.schema, copy_info.table);
+    const auto& copy_name = copy_info.GetQualifiedName();
+    if (!copy_name.Schema().empty()) {
+      table = snapshot->GetTable(db_id, copy_name.Schema().GetIdentifierName(),
+                                 copy_name.Name().GetIdentifierName());
     } else {
       // Unqualified target: resolve across the search path by presence (the
       // schema that CONTAINS the table, as the binder does) -- the current
       // schema alone would miss a table in a later search-path schema.
       for (const auto& schema : _connection_ctx->GetSearchPath()) {
-        table = snapshot->GetTable(db_id, schema, copy_info.table);
+        table = snapshot->GetTable(db_id, schema,
+                                   copy_name.Name().GetIdentifierName());
         if (table) {
           break;
         }
@@ -1303,6 +1387,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   duckdb::unique_ptr<duckdb::PreparedStatement> prepared;
   duckdb::unique_ptr<duckdb::QueryResult> result;
   try {
+    _connection_ctx->AcquireCatalogSnapshot();
     prepared = _conn->Prepare(std::move(statement));  // sniffs /dev/stdin
     ThrowIfError(*prepared);
     duckdb::vector<duckdb::Value> params;
@@ -1348,6 +1433,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
     RejectBinaryCopyOptions(*copy.info);
   }
   auto inner = ExtractCopyToQuery(copy);
+  _connection_ctx->AcquireCatalogSnapshot();
   auto prepared = _conn->Prepare(std::move(inner));
   ThrowIfError(*prepared);
 
@@ -1421,6 +1507,7 @@ template<SocketKind Kind>
 yaclib::Task<> PgWireSession<Kind>::RunCopyToStdoutViaFormat(
   duckdb::unique_ptr<duckdb::SQLStatement> statement, CopyFormat format) {
   auto probe = statement->Copy();
+  _connection_ctx->AcquireCatalogSnapshot();
   auto prepared = _conn->Prepare(std::move(statement));
   ThrowIfError(*prepared);
   auto inner = ExtractCopyToQuery(probe->Cast<duckdb::CopyStatement>());
@@ -1605,7 +1692,7 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
 
   duckdb::case_insensitive_map_t<duckdb::LogicalType> type_hints;
   if (num_params > 0) {
-    const auto snapshot = _connection_ctx->EnsureCatalogSnapshot();
+    const auto snapshot = _connection_ctx->AcquireCatalogSnapshot();
     for (uint16_t i = 0; i < num_params; ++i) {
       const auto oid =
         static_cast<int32_t>(absl::big_endian::Load32(payload.data()));
@@ -1636,6 +1723,7 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
   // (raw_statement_count > 1) are rejected: a prepared statement holds exactly
   // one command -- one parameter list, one result descriptor.
   duckdb::idx_t raw_statement_count = 0;
+  _connection_ctx->AcquireCatalogSnapshot();
   auto extracted =
     _conn->ExtractStatements(query, &raw_statement_count, /*wrap_multi=*/false);
   if (raw_statement_count > 1) {
@@ -1686,6 +1774,9 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     extracted.erase(extracted.begin());
   }
   if (extracted.size() == 1) {
+    // The temp-DDL scaffolding above ran full query lifecycles whose statement
+    // end released the Parse-time snapshot.
+    _connection_ctx->AcquireCatalogSnapshot();
     auto prepared = _conn->Prepare(std::move(extracted[0]),
                                    type_hints.empty() ? nullptr : &type_hints);
     if (prepared->HasError()) {
@@ -1738,7 +1829,7 @@ BindInfo PgWireSession<Kind>::ParseBindVars(std::string_view cursor,
 
   duckdb::vector<duckdb::Value> values;
   values.reserve(params);
-  const auto snapshot = _connection_ctx->EnsureCatalogSnapshot();
+  const auto snapshot = _connection_ctx->AcquireCatalogSnapshot();
   sdb::pg::DeserializeContext dctx{snapshot.get()};
   for (uint16_t i = 0; i < params; ++i) {
     if (cursor.size() < sizeof(int32_t)) {
@@ -1875,6 +1966,7 @@ void PgWireSession<Kind>::DescribeStatement(Statement& stmt) {
   const auto* types = &prepared.GetTypes();
   const auto* names = &prepared.GetNames();
   duckdb::unique_ptr<duckdb::PendingQueryResult> pending;
+  duckdb::vector<duckdb::Identifier> pending_names;
   if (!prepared.named_param_map.empty() &&
       std::ranges::any_of(*types, [](const duckdb::LogicalType& type) {
         return type.id() == duckdb::LogicalTypeId::UNKNOWN ||
@@ -1893,10 +1985,17 @@ void PgWireSession<Kind>::DescribeStatement(Statement& stmt) {
     pending = PendingQueryEnsured(prepared, dummy, nullptr);
     if (!pending->HasError()) {
       types = &pending->types;
-      names = &pending->names;
+      pending_names = duckdb::StringsToIdentifiers(pending->names);
+      names = &pending_names;
     }
   }
   WriteRowDescription(this->_send, *types, *names, {});
+  if (pending) {
+    // ~PendingQueryResult is a no-op: without an explicit Close the dummy
+    // query's lifecycle (and its statement snapshot) stays open until the
+    // next duckdb entry point's InitialCleanup.
+    pending->Close();
+  }
 }
 
 template<SocketKind Kind>
@@ -2131,11 +2230,13 @@ yaclib::Task<> PgWireSession<Kind>::ExecuteCompound(Portal& portal) {
   auto& body = portal.stmt->GetCompound();
   duckdb::vector<duckdb::Value> no_params;
   for (duckdb::idx_t i = 0; i + 1 < body.size(); ++i) {
+    _connection_ctx->AcquireCatalogSnapshot();
     auto prepared = _conn->Prepare(std::move(body[i]));
     ThrowIfError(*prepared);
     duckdb::unique_ptr<duckdb::PendingQueryResult> pending;
     co_await DriveToResult(*prepared, no_params, pending, nullptr);
   }
+  _connection_ctx->AcquireCatalogSnapshot();
   auto last = _conn->Prepare(std::move(body.back()));
   ThrowIfError(*last);
   portal.stmt->SetCompoundResult(std::move(last));

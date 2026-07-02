@@ -34,7 +34,7 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgTsDict>::GetTableData() {
-  auto catalog = _config.EnsureCatalogSnapshot();
+  auto catalog = _config.CatalogSnapshot();
 
   std::vector<PgTsDict> values;
 

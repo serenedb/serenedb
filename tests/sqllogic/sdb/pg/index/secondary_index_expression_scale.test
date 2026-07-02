@@ -43,27 +43,16 @@ query
 EXPLAIN SELECT j, k FROM pudge_expr_scale WHERE (j + k) = 2000;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│      ((j + k) = 2000)     │
-│                           │
-│         ~200 rows         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│           Table:          │
-│      pudge_expr_scale     │
-│                           │
-│   Type: Sequential Scan   │
-│                           │
-│        Projections:       │
-│             j             │
-│             k             │
-│                           │
-│        ~1,000 rows        │
-└───────────────────────────┘
+╭─ FILTER ───────────────────╮
+│ Expression: (j + k) = 2000 │
+│ ~200 rows                  │
+╰──────────────┬─────────────╯
+╭─ SEQ_SCAN ───┴─────────────╮
+│ Table: pudge_expr_scale    │
+│ Type: Sequential Scan      │
+│ Projections: j, k          │
+│ ~1,000 rows                │
+╰────────────────────────────╯
 
 
 # DML maintenance at scale: moving a row's computed key is reflected immediately.

@@ -10,35 +10,25 @@ query
 EXPLAIN select * from t;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│          Table: t         │
-│   Type: Sequential Scan   │
-│                           │
-│        Projections:       │
-│             c1            │
-│             c2            │
-│                           │
-│          ~0 rows          │
-└───────────────────────────┘
+╭─ SEQ_SCAN ────────────╮
+│ Table: t              │
+│ Type: Sequential Scan │
+│ Projections: c1, c2   │
+│ ~0 rows               │
+╰───────────────────────╯
 
 
 query
 EXPLAIN INSERT INTO t VALUES ('text', 42);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           INSERT          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│        SDB_PROGRESS       │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│      COLUMN_DATA_SCAN     │
-│    ────────────────────   │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ INSERT ───────────╮
+╰──────────┬─────────╯
+╭─ SDB_PROGRESS ─────╮
+╰──────────┬─────────╯
+╭─ COLUMN_DATA_SCAN ─╮
+│ ~1 row             │
+╰────────────────────╯
 
 
 query error db error: ERROR: table t has 2 columns but 1 values were supplied

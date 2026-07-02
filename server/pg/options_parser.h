@@ -102,8 +102,9 @@ class OptionsParser {
     Options out;
     out.reserve(named_params.size());
     for (auto&& [name, value] : named_params) {
-      auto [_, inserted] = out.try_emplace(
-        name, std::make_unique<duckdb::Value>(std::move(value)));
+      auto [_, inserted] =
+        out.try_emplace(name.GetIdentifierName(),
+                        std::make_unique<duckdb::Value>(std::move(value)));
       if (!inserted) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
                         ERR_MSG("conflicting or redundant options"));
@@ -232,7 +233,7 @@ class OptionsParser {
   void MakeOptions(const duckdb::named_parameter_map_t& options) {
     _options.reserve(options.size());
     for (const auto& option : options) {
-      std::string_view option_name = option.first;
+      std::string_view option_name = option.first.GetIdentifierName();
       auto [_, emplaced] = _options.try_emplace(
         option_name, std::make_unique<duckdb::Value>(option.second));
       if (!emplaced) {

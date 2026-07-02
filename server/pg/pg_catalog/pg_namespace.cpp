@@ -59,7 +59,7 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgNamespace>& values,
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgNamespace>::GetTableData() {
   std::vector<PgNamespace> values;
-  auto snapshot = _config.EnsureCatalogSnapshot();
+  auto snapshot = _config.CatalogSnapshot();
   RetrieveObjects(GetDatabaseId(), values, *snapshot);
 
   auto result = CreateColumns<PgNamespace>(values.size());

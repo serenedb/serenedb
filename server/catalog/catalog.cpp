@@ -135,10 +135,10 @@ std::optional<std::string> RerenderPrettyAfterRename(
   auto rewrite = [&](this auto& self, duckdb::ParsedExpression& e) -> void {
     if (e.GetExpressionClass() == duckdb::ExpressionClass::COLUMN_REF) {
       auto& cref = e.Cast<duckdb::ColumnRefExpression>();
-      if (!cref.column_names.empty()) {
-        auto it = renames.find(cref.column_names.back());
+      if (!cref.ColumnNames().empty()) {
+        auto it = renames.find(cref.ColumnNames().back().GetIdentifierName());
         if (it != renames.end()) {
-          cref.column_names.back() = it->second;
+          cref.ColumnNamesMutable().back() = duckdb::Identifier{it->second};
         }
       }
     }
@@ -173,6 +173,7 @@ std::shared_ptr<Snapshot> Snapshot::Clone() const {
   result->_resolution_table = _resolution_table;
   result->_objects = _objects;
   result->_deps = _deps;
+  result->_version = _version + 1;
   result->_in_load = _in_load;
   // New snapshot starts with empty DuckDB cache (lazily populated)
   return result;
@@ -1793,14 +1794,15 @@ ResultOr<ResolvedIndexRelation> ResolveIndexRelation(
   } else if (relation->GetType() == ObjectType::PgSqlView) {
     auto& view = basics::downCast<PgSqlView>(*relation);
     const auto& view_info = view.GetInfo();
-    auto columns = std::views::iota(size_t{0}, view_info.names.size()) |
-                   std::views::transform([&](size_t i) {
-                     Column c{ObjectId{}, Column::Id{i}, view_info.names[i],
-                              view_info.types[i]};
-                     c.SetId(Column::Id{i});
-                     return c;
-                   }) |
-                   std::ranges::to<std::vector>();
+    auto columns =
+      std::views::iota(size_t{0}, view_info.names.size()) |
+      std::views::transform([&](size_t i) {
+        Column c{ObjectId{}, Column::Id{i},
+                 view_info.names[i].GetIdentifierName(), view_info.types[i]};
+        c.SetId(Column::Id{i});
+        return c;
+      }) |
+      std::ranges::to<std::vector>();
     return ResolvedIndexRelation{
       .relation_id = view.GetId(),
       .columns = std::move(columns),
@@ -2090,7 +2092,8 @@ Result Catalog::CreateTable(ObjectId database_id, std::string_view schema,
     return r;
   }
   for (const auto& unique : options.unique_constraints) {
-    if (auto r = reject_nested_key(unique, "unique constraint"); !r.ok()) {
+    if (auto r = reject_nested_key(unique.columns, "unique constraint");
+        !r.ok()) {
       return r;
     }
   }
@@ -2167,7 +2170,7 @@ Result Catalog::CreateTable(ObjectId database_id, std::string_view schema,
     *schema_id, table_id, options.name, std::move(options.columns),
     std::move(options.pk_columns), std::move(options.check_constraints),
     generated_pk_seq_id, options.engine, std::move(options.unique_constraints),
-    std::move(options.foreign_keys));
+    std::move(options.foreign_keys), std::move(options.pk_name));
   if (with_tombstone) {
     table->SetTombstoned(true);
   }
@@ -2722,16 +2725,16 @@ Result Catalog::ChangeTable(ObjectId database_id, std::string_view schema,
         }
         // Newly added UNIQUE constraints -> ADD UNIQUE on the store table.
         for (const auto& uc : updated->UniqueConstraints()) {
-          bool existed =
-            absl::c_any_of(table->UniqueConstraints(),
-                           [&](const auto& oc) { return oc == uc; });
+          bool existed = absl::c_any_of(
+            table->UniqueConstraints(),
+            [&](const auto& oc) { return oc.columns == uc.columns; });
           if (existed) {
             continue;
           }
           std::vector<std::string> names;
-          names.reserve(uc.size());
+          names.reserve(uc.columns.size());
           bool ok = true;
-          for (auto id : uc) {
+          for (auto id : uc.columns) {
             const auto* col = updated->ColumnById(id);
             if (!col || col->type.IsNested()) {
               ok = false;

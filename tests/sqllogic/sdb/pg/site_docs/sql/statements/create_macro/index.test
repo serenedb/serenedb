@@ -117,7 +117,7 @@ CREATE MACRO get_users(i) AS TABLE
 
 # DOCS_TEST_BODY
 
-query ??
+query
 SELECT * FROM get_users([1, 5]);
 ----
 uid	name

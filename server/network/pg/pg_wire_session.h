@@ -321,6 +321,21 @@ class PgWireSession
   duckdb::unique_ptr<duckdb::PendingQueryResult> PendingQueryEnsured(
     duckdb::PreparedStatement& prepared, duckdb::vector<duckdb::Value>& values,
     std::shared_ptr<WireSinkContext> wire);
+  // Single-lifecycle variant for the simple protocol: bind and execution share
+  // one duckdb query (and one transaction), so plan-held catalog references
+  // stay valid end-to-end. RowDescription is written by the collector hook
+  // (wire->announce_rowdesc), the only post-bind point that precedes task
+  // start.
+  duckdb::unique_ptr<duckdb::PendingQueryResult> PendingStatementEnsured(
+    duckdb::unique_ptr<duckdb::SQLStatement> statement,
+    const std::shared_ptr<WireSinkContext>& wire);
+  yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> DriveStatementToResult(
+    duckdb::unique_ptr<duckdb::SQLStatement> statement,
+    duckdb::unique_ptr<duckdb::PendingQueryResult>& pending,
+    std::shared_ptr<WireSinkContext> wire);
+  // Rejects (sdb_strict_ddl) or notices catalog DDL inside an explicit
+  // transaction block. Statement type is a parse-time property.
+  void NoticeDdlInTransaction(duckdb::StatementType type);
   // Builds an armed per-execution wire-sink contract (see wire_collector.h).
   std::shared_ptr<WireSinkContext> MakeWireContext(
     std::span<const sdb::pg::VarFormat> formats);
@@ -342,6 +357,9 @@ class PgWireSession
   // 25P02), returning the discard mode the command loop must enter.
   PostError FunnelError(const std::exception& exception, char type);
   void WriteCommandTag(const duckdb::PreparedStatement& prepared,
+                       duckdb::QueryResult& result,
+                       duckdb::StatementReturnType return_type);
+  void WriteCommandTag(const sdb::pg::CommandTag& tag,
                        duckdb::QueryResult& result,
                        duckdb::StatementReturnType return_type);
 

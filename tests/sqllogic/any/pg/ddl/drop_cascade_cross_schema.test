@@ -61,17 +61,17 @@ INSERT INTO vedernikoff_mop_team.candidates (note) VALUES ('mop_after');
 query
 SELECT id, note FROM vedernikoff_clickclack_team.candidates ORDER BY note;
 ----
-id    note
-NULL  cc_after
-7000  cc_round1
+id	note
+NULL	cc_after
+7000	cc_round1
 
 
 query
 SELECT id, note FROM vedernikoff_mop_team.candidates ORDER BY note;
 ----
-id    note
-NULL  mop_after
-7001  mop_round1
+id	note
+NULL	mop_after
+7001	mop_round1
 
 
 statement ok
@@ -510,15 +510,15 @@ INSERT INTO vedernikoff_x_bravo.records (c) VALUES ('green');
 query
 SELECT id, c FROM vedernikoff_x_charlie.alpha_proxy;
 ----
-id  c
-1   red
+id	c
+1	red
 
 
 query
 SELECT id, c FROM vedernikoff_x_charlie.bravo_proxy;
 ----
-id  c
-2   green
+id	c
+2	green
 
 
 # Drop the source schema; alpha/bravo tables survive (DEFAULT cleared, color

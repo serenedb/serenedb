@@ -227,7 +227,7 @@ void SereneDBClientState::TransactionPreCheckpoint(duckdb::AttachedDatabase& db,
   // in-commit checkpoint, so the checkpoint's force-refresh never waits on an
   // un-committed in-flight batch. Only the store database carries indexed
   // tables, so settle on its commit.
-  if (db.GetName() != catalog::kStoreDatabaseName) {
+  if (db.GetName().GetIdentifierName() != catalog::kStoreDatabaseName) {
     return;
   }
   _connection_ctx->CommitSearch();
@@ -290,12 +290,20 @@ void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {
   _connection_ctx->OnStatementEnd();
 }
 
-ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context) {
+ConnectionContext* GetSereneDBContextPtr(duckdb::ClientContext& context) {
   auto state =
     context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);
-  SDB_ASSERT(state, "SereneDB client state not registered; active query: ",
+  if (!state) {
+    return nullptr;
+  }
+  return &state->GetConnectionContext();
+}
+
+ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context) {
+  auto* ctx = GetSereneDBContextPtr(context);
+  SDB_ASSERT(ctx, "SereneDB client state not registered; active query: ",
              context.GetCurrentQuery());
-  return state->GetConnectionContext();
+  return *ctx;
 }
 
 }  // namespace sdb::connector

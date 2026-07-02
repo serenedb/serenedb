@@ -62,7 +62,7 @@ duckdb::unique_ptr<duckdb::BaseSecret> CreateOpenAISecretFromConfig(
   for (const auto& named : input.options) {
     auto key = duckdb::StringUtil::Lower(named.first);
     if (key == "api_key" || key == "base_url" || key == "embeddings_path") {
-      secret->secret_map[key] = named.second;
+      secret->secret_map[duckdb::Identifier{key}] = named.second;
     }
   }
   secret->redact_keys = {"api_key"};
@@ -115,7 +115,8 @@ ProviderConfig LoadProviderConfig(duckdb::ClientContext& context,
     basics::downCast<const duckdb::KeyValueSecret>(*entry->secret);
 
   ProviderConfig cfg;
-  cfg.type = embedding::ResolveProviderType(entry->secret->GetType());
+  cfg.type = embedding::ResolveProviderType(
+    entry->secret->GetType().GetIdentifierName());
   cfg.model = std::move(model);
   duckdb::Value v;
   if (kv.TryGetValue("api_key", v) && !v.IsNull()) {
@@ -172,7 +173,8 @@ duckdb::unique_ptr<duckdb::FunctionData> AIEmbedBind(
 void AIEmbedFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                      duckdb::Vector& result) {
   const auto& bind = state.expr.Cast<duckdb::BoundFunctionExpression>()
-                       .bind_info->Cast<EmbeddingBindData>();
+                       .BindInfo()
+                       ->Cast<EmbeddingBindData>();
   const auto count = args.size();
 
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);

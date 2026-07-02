@@ -178,7 +178,7 @@ auto& EnsureField(duckdb::ClientContext& context,
     SDB_ENSURE(wrapper_or.has_value(), ERROR_INTERNAL);
     wrapper = std::move(*wrapper_or);
   } else {
-    auto snapshot = GetSereneDBContext(context).EnsureCatalogSnapshot();
+    auto snapshot = GetSereneDBContext(context).CatalogSnapshot();
     auto column_tokenizer = bind.inverted_index->GetTokenizer(
       snapshot, static_cast<irs::field_id>(bind.column_id));
     wrapper = std::move(column_tokenizer.analyzer);
@@ -201,7 +201,7 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> InitOffsetsLocalState(
 void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                      duckdb::Vector& result) {
   auto& expr = state.expr.Cast<duckdb::BoundFunctionExpression>();
-  if (!expr.bind_info) {
+  if (!expr.BindInfo()) {
     // Reached when neither the iresearch_plan rule nor
     // OffsetsStandaloneBind populated bind data (literal first arg, no
     // surrounding SearchScan, unresolved dict name, etc.). Same shape
@@ -214,7 +214,7 @@ void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                "up, or use the standalone ts_offsets(dict, body, filter) "
                "form."));
   }
-  auto& bind = expr.bind_info->Cast<OffsetsBindData>();
+  auto& bind = expr.BindInfo()->Cast<OffsetsBindData>();
   auto& local_state = duckdb::ExecuteFunctionState::GetFunctionState(state)
                         ->Cast<OffsetsLocalState>();
   const auto count = args.size();
@@ -317,7 +317,7 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
   static constexpr duckdb::idx_t kSyntheticColumnIdx = 0;
 
   auto body_ref = duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-    "synthetic_body", duckdb::LogicalType::VARCHAR,
+    duckdb::Identifier{"synthetic_body"}, duckdb::LogicalType::VARCHAR,
     duckdb::ColumnBinding{duckdb::TableIndex{kSyntheticTableIdx},
                           duckdb::ProjectionIndex{kSyntheticColumnIdx}});
 
@@ -325,18 +325,18 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
   at_at_children.push_back(std::move(body_ref));
   at_at_children.push_back(tsquery_expr.Copy());
 
-  duckdb::ScalarFunction at_at(std::string{kTSQueryMatch}, {},
+  duckdb::ScalarFunction at_at(duckdb::Identifier{kTSQueryMatch}, {},
                                duckdb::LogicalType::BOOLEAN, nullptr);
   duckdb::BoundScalarFunction bound_at_at(at_at);
-  bound_at_at.SetName(std::string{kTSQueryMatch});
+  bound_at_at.SetName(duckdb::Identifier{kTSQueryMatch});
   auto match_expr = duckdb::make_uniq<duckdb::BoundFunctionExpression>(
     std::move(bound_at_at), std::move(at_at_children), nullptr);
 
   auto column_getter =
     [column_id, dict_tokenizer](const duckdb::BoundColumnRefExpression& ref)
     -> std::optional<SearchColumnInfo> {
-    if (ref.binding.table_index != duckdb::TableIndex{kSyntheticTableIdx} ||
-        ref.binding.column_index !=
+    if (ref.Binding().table_index != duckdb::TableIndex{kSyntheticTableIdx} ||
+        ref.Binding().column_index !=
           duckdb::ProjectionIndex{kSyntheticColumnIdx}) {
       return std::nullopt;
     }

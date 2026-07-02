@@ -71,7 +71,7 @@ std::vector<std::string> Config::GetSearchPath() const {
   std::vector<std::string> result;
   result.reserve(entries.size());
   for (const auto& entry : entries) {
-    result.emplace_back(entry.schema);
+    result.emplace_back(entry.GetSchema().GetIdentifierName());
   }
   return result;
 }
@@ -108,7 +108,7 @@ std::optional<std::string> Config::Get(std::string_view key) const {
   return std::nullopt;
 }
 
-std::shared_ptr<const catalog::Snapshot> Config::EnsureCatalogSnapshot() const {
+std::shared_ptr<const catalog::Snapshot> Config::AcquireCatalogSnapshot() {
   if (_snapshot) {
     return _snapshot;
   }

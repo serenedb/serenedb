@@ -9,7 +9,7 @@ statement ok
 CREATE OR REPLACE TABLE times AS
     FROM range('2025-08-30'::TIMESTAMPTZ, '2025-08-31'::TIMESTAMPTZ, INTERVAL 1 HOUR) tbl(t);
 
-query ?
+query
 SELECT count(*) AS matching_rows
 FROM times
 WHERE t <= '2025-08-30';
@@ -24,7 +24,7 @@ matching_rows
 statement ok
 SET timezone = 'HST';
 
-query ?
+query
 SELECT count(*) AS matching_rows
 FROM times
 WHERE t <= '2025-08-30';
@@ -39,7 +39,7 @@ matching_rows
 statement ok
 SET timezone = 'America/New_York';
 
-query ?
+query
 SELECT count(*) AS matching_rows
 FROM times
 WHERE t <= '2025-08-30';
@@ -67,7 +67,7 @@ CREATE OR REPLACE TABLE hourly AS
             INTERVAL 1 HOUR) tbl(ts)
     ) parts;
 
-query ?
+query
 SELECT count(*) AS rows FROM hourly;
 ----
 rows
@@ -78,7 +78,7 @@ rows
 
 # DOCS_TEST_BODY
 
-query ??
+query
 SELECT
     TIMESTAMP '2025-08-31 00:00:00'
         BETWEEN TIMESTAMP '2025-08-30' AND TIMESTAMP '2025-08-31' AS between_closed,

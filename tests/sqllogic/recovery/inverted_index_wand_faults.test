@@ -132,7 +132,7 @@ SET sdb_faults = 'irs::WandIterator';
 
 # Plain (non-WAND) index -- has_wand is false, dispatch falls through.
 
-query I
+query
 SELECT COUNT(*) FROM (
   SELECT id FROM plain_docs_idx
   WHERE body @@ ts_phrase('fox')
@@ -145,7 +145,7 @@ count
 
 # ASC ordering -- score_top_k rule only matches DESC.
 
-query I
+query
 SELECT COUNT(*) FROM (
   SELECT id FROM wand_docs_idx
   WHERE body @@ ts_phrase('fox')
@@ -158,7 +158,7 @@ count
 
 # Mismatched scorer type (TFIDF query against BM25-WAND index).
 
-query I
+query
 SELECT COUNT(*) FROM (
   SELECT id FROM wand_docs_idx
   WHERE body @@ ts_phrase('fox')
@@ -172,7 +172,7 @@ count
 # Same scorer type, different params (index `bm25(1.2, 0.75)`, query
 # `BM25(idx.tableoid, 1.5, 0.8)`). ScorerOptions equality is exact on params.
 
-query I
+query
 SELECT COUNT(*) FROM (
   SELECT id FROM wand_docs_idx
   WHERE body @@ ts_phrase('fox')
@@ -185,7 +185,7 @@ count
 
 # Scorer not the primary sort key.
 
-query I
+query
 SELECT COUNT(*) FROM (
   SELECT id FROM wand_docs_idx
   WHERE body @@ ts_phrase('fox')
@@ -198,7 +198,7 @@ count
 
 # Scorer wrapped in arithmetic.
 
-query I
+query
 SELECT COUNT(*) FROM (
   SELECT id FROM wand_docs_idx
   WHERE body @@ ts_phrase('fox')
@@ -213,7 +213,7 @@ count
 # ctx.wand. (Single-token ts_phrase short-circuits to ByTerm and DOES use
 # WAND -- covered in the positive section above.)
 
-query I
+query
 SELECT COUNT(*) FROM (
   SELECT id FROM wand_docs_idx
   WHERE body @@ ts_phrase('fox', 'lazy')
@@ -227,7 +227,7 @@ count
 # Boolean with NOT child disables WAND on the And iterator
 # (boolean_query.cpp:133).
 
-query I
+query
 SELECT COUNT(*) FROM (
   SELECT id FROM wand_docs_idx
   WHERE body @@ ts_phrase('fox') AND NOT (body @@ ts_phrase('lazy'))
@@ -240,7 +240,7 @@ count
 
 # No LIMIT -- score_top_k rule doesn't pull up.
 
-query I
+query
 SELECT COUNT(*) FROM (
   SELECT id FROM wand_docs_idx
   WHERE body @@ ts_phrase('rare_token')
@@ -280,7 +280,7 @@ statement ok
 SET sdb_disable_top_k_optimization = true;
 
 
-query I
+query
 SELECT COUNT(*) FROM (
   SELECT id FROM wand_docs_idx
   WHERE body @@ ts_phrase('fox')

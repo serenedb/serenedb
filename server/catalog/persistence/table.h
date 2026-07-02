@@ -31,10 +31,11 @@ struct TableData {
   std::string name;
   std::vector<Column> columns;
   std::vector<Column::Id> pk_columns;
+  std::string pk_name;
   std::vector<CheckConstraint> check_constraints;
   ObjectId generated_pk_seq_id;
   TableEngine engine = TableEngine::Transactional;
-  std::vector<std::vector<Column::Id>> unique_constraints;
+  std::vector<TableUnique> unique_constraints;
   std::vector<TableForeignKey> foreign_keys;
   std::string comment;
 };

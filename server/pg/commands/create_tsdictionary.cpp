@@ -934,7 +934,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
 void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
                      std::string_view schema, bool if_not_exists,
                      const duckdb::named_parameter_map_t& options) {
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  auto snapshot = conn_ctx.CatalogSnapshot();
   auto db_id = conn_ctx.GetDatabaseId();
   auto current_schema = conn_ctx.GetCurrentSchema();
 

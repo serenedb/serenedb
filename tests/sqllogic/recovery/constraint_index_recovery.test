@@ -1,0 +1,117 @@
+control substitution on
+
+# Constraint + secondary-index metadata (explicit and auto names, types) and
+# enforcement survive a crash/restart, and DROP / RENAME CONSTRAINT by name
+# still work after recovery. Mirrors any/pg/index/constraint_index_catalog.test
+# but SereneDB-only (crash injection).
+
+statement ok
+CREATE TABLE parent (id INTEGER PRIMARY KEY);
+
+statement ok
+CREATE TABLE con (
+  id INTEGER CONSTRAINT con_pk PRIMARY KEY,
+  ck1 INTEGER CONSTRAINT con_ck1 CHECK (ck1 > 0),
+  ck2 INTEGER CHECK (ck2 >= 0),
+  uq1 INTEGER CONSTRAINT con_uq1 UNIQUE,
+  uq2 INTEGER UNIQUE,
+  nn1 INTEGER CONSTRAINT con_nn1 NOT NULL,
+  nn2 INTEGER NOT NULL,
+  fk1 INTEGER CONSTRAINT con_fk1 REFERENCES parent(id),
+  fk2 INTEGER REFERENCES parent(id)
+);
+
+statement ok
+CREATE INDEX con_sec ON con(ck2);
+
+statement ok
+CREATE UNIQUE INDEX con_usec ON con(nn2);
+
+statement ok
+INSERT INTO parent VALUES (1);
+
+statement count 1
+INSERT INTO con VALUES (1, 5, 5, 10, 20, 30, 40, 1, 1);
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id FROM con;
+----
+id
+1
+
+# constraint names + types persisted across the crash
+connection after_crash
+query
+SELECT conname || ' ' || contype::text AS c FROM pg_constraint
+WHERE conrelid = 'con'::regclass ORDER BY contype::text, conname;
+----
+c
+con_ck1 c
+con_ck2_check c
+con_fk1 f
+con_fk2_fkey f
+con_id_not_null n
+con_nn1 n
+con_nn2_not_null n
+con_pk p
+con_uq1 u
+con_uq2_key u
+
+# index metadata (PK / UNIQUE-constraint backing indexes + secondary indexes)
+connection after_crash
+query
+SELECT indexname AS c FROM pg_indexes
+WHERE schemaname = 'public' AND tablename = 'con' ORDER BY 1;
+----
+c
+con_pk
+con_sec
+con_uq1
+con_uq2_key
+con_usec
+
+# enforcement still active after recovery: CHECK and UNIQUE reject
+connection after_crash
+statement error
+INSERT INTO con VALUES (2, -1, 5, 11, 21, 31, 41, 1, 1);
+
+connection after_crash
+statement error
+INSERT INTO con VALUES (2, 5, 5, 10, 21, 31, 41, 1, 1);
+
+# RENAME / DROP CONSTRAINT by name work after recovery
+connection after_crash
+statement ok
+ALTER TABLE con RENAME CONSTRAINT con_ck1 TO con_ck1b;
+
+connection after_crash
+statement ok
+ALTER TABLE con DROP CONSTRAINT con_uq1;
+
+connection after_crash
+query
+SELECT conname || ' ' || contype::text AS c FROM pg_constraint
+WHERE conrelid = 'con'::regclass AND contype::text IN ('c', 'u')
+ORDER BY contype::text, conname;
+----
+c
+con_ck1b c
+con_ck2_check c
+con_uq2_key u
+
+connection after_crash
+statement ok
+DROP TABLE con;
+
+connection after_crash
+statement ok
+DROP TABLE parent;

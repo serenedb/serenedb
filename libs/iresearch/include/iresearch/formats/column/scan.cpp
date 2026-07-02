@@ -105,7 +105,7 @@ size_t FindStructFieldIndex(const duckdb::LogicalType& struct_type,
                             std::string_view field) {
   const auto& children = duckdb::StructType::GetChildTypes(struct_type);
   for (size_t i = 0; i < children.size(); ++i) {
-    if (absl::EqualsIgnoreCase(field, children[i].first)) {
+    if (absl::EqualsIgnoreCase(field, children[i].first.GetIdentifierName())) {
       return i;
     }
   }

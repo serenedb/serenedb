@@ -59,7 +59,7 @@ std::unique_ptr<DuckDBSinkIndexWriter> CreateInvertedIndexWriter(
   ObjectId table_id, ObjectId index_id, ConnectionContext& conn_ctx,
   duckdb::optional_ptr<duckdb::ClientContext> expr_context) {
   std::unique_ptr<DuckDBSinkIndexWriter> writer;
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  auto snapshot = conn_ctx.CatalogSnapshot();
   conn_ctx.EnsureIndexesTransactions(
     table_id, [&](auto& index_txn, const catalog::Index& index) {
       if (index.GetId() != index_id) {

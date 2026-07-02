@@ -43,600 +43,356 @@ query
 EXPLAIN SELECT id FROM fo_score_idx WHERE s = 'alpha';
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│    Index: fo_score_idx    │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││ s(string) = alpha ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│      Projections: id      │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ─────╮
+│ Index: fo_score_idx  │
+│ Lookup: table        │
+│ Filter:              │
+│ ╭─ Term ───────────╮ │
+│ │ Field: s(string) │ │
+│ │ Value: alpha     │ │
+│ ╰──────────────────╯ │
+│ Projections: id      │
+│ ~1 row               │
+╰──────────────────────╯
 
 query
 EXPLAIN SELECT id, BM25(fo_score_idx.tableoid) FROM fo_score_idx WHERE s = 'alpha';
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│    Index: fo_score_idx    │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││ s(string) = alpha ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│           Score:          │
-│    bm25(k1=1.2, b=0.75)   │
-│                           │
-│        Projections:       │
-│             id            │
-│  sdb_inverted_index_score │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: fo_score_idx                    │
+│ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Term ───────────╮                   │
+│ │ Field: s(string) │                   │
+│ │ Value: alpha     │                   │
+│ ╰──────────────────╯                   │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
 
 query
 EXPLAIN SELECT id FROM fo_score_idx WHERE s = 'alpha' OR n @@ ts_between(NULL, NULL, true, true);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│    Index: fo_score_idx    │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        ALL        ││  │
-│  ││    ────────────   ││  │
-│  ││         1         ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│      Projections: id      │
-│                           │
-│          ~4 rows          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ────╮
+│ Index: fo_score_idx │
+│ Lookup: table       │
+│ Filter:             │
+│ ╭─ All ──╮          │
+│ ╰────────╯          │
+│ Projections: id     │
+│ ~4 rows             │
+╰─────────────────────╯
 
 query
 EXPLAIN SELECT id, BM25(fo_score_idx.tableoid) FROM fo_score_idx WHERE s = 'alpha' OR n @@ ts_between(NULL, NULL, true, true);
 ----
 QUERY PLAN
-┌─────────────────────────────────────────────┐
-│                IRESEARCH_SCAN               │
-│    ──────────────────────────────────────   │
-│             Index: fo_score_idx             │
-│                Lookup: table                │
-│                                             │
-│                   Filter:                   │
-│ ┌──────────────────────────────────────────┐│
-│ │┌───────────────────┐                     ││
-│ ││         OR        ├──────────┐          ││
-│ │└─────────┬─────────┘          │          ││
-│ │┌─────────┴─────────┐┌─────────┴─────────┐││
-│ ││        Term       ││        ALL        │││
-│ ││    ────────────   ││    ────────────   │││
-│ ││ s(string) = alpha ││         1         │││
-│ │└───────────────────┘└───────────────────┘││
-│ └──────────────────────────────────────────┘│
-│                                             │
-│         Score: bm25(k1=1.2, b=0.75)         │
-│                                             │
-│                 Projections:                │
-│                      id                     │
-│           sdb_inverted_index_score          │
-│                                             │
-│                    ~1 row                   │
-└─────────────────────────────────────────────┘
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: fo_score_idx                    │
+│ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Or ─────────────╮                   │
+│ ╰─────────┬────────╯                   │
+│           ├────────────────╮           │
+│ ╭─ Term ──┴────────╮  ╭─ All ──╮       │
+│ │ Field: s(string) │  ╰────────╯       │
+│ │ Value: alpha     │                   │
+│ ╰──────────────────╯                   │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
 
 query
 EXPLAIN SELECT id FROM fo_score_idx WHERE n @@ ts_between(NULL, NULL, true, true) OR n @@ ts_between(NULL, NULL, true, true);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│    Index: fo_score_idx    │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        ALL        ││  │
-│  ││    ────────────   ││  │
-│  ││         1         ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│      Projections: id      │
-│                           │
-│          ~4 rows          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ────╮
+│ Index: fo_score_idx │
+│ Lookup: table       │
+│ Filter:             │
+│ ╭─ All ──╮          │
+│ ╰────────╯          │
+│ Projections: id     │
+│ ~4 rows             │
+╰─────────────────────╯
 
 query
 EXPLAIN SELECT id, BM25(fo_score_idx.tableoid) FROM fo_score_idx WHERE n @@ ts_between(NULL, NULL, true, true) OR n @@ ts_between(NULL, NULL, true, true);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│    Index: fo_score_idx    │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        ALL        ││  │
-│  ││    ────────────   ││  │
-│  ││         1         ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│           Score:          │
-│    bm25(k1=1.2, b=0.75)   │
-│                           │
-│        Projections:       │
-│             id            │
-│  sdb_inverted_index_score │
-│                           │
-│          ~4 rows          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: fo_score_idx                    │
+│ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ All ──╮                             │
+│ ╰────────╯                             │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~4 rows                                │
+╰────────────────────────────────────────╯
 
 query
 EXPLAIN SELECT id FROM fo_score_ng_idx WHERE g @@ ts_ngram('analytical', 0.01);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│      fo_score_ng_idx      │
-│                           │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││       TERMS       ││  │
-│  ││    ────────────   ││  │
-│  ││ g(string) {['aly',││  │
-│  ││  1],['al\\xff', 1],││  │
-│  ││ ['ana', 1],['cal',││  │
-│  ││   1],['ica', 1],[ ││  │
-│  ││ 'lyt', 1],['l\\xff'││  │
-│  ││ , 1],['nal', 1],[ ││  │
-│  ││ 'tic', 1],['yti', ││  │
-│  ││  1],['\\xffan', 1] ││  │
-│  ││   ,} min_match=1  ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│      Projections: id      │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ────────────────────────────────────────────────────────────────────────╮
+│ Index: fo_score_ng_idx                                                                  │
+│ Lookup: table                                                                           │
+│ Filter:                                                                                 │
+│ ╭─ Terms ─────────────────────────────────────────────────────────────────────────────╮ │
+│ │ Field: g(string)                                                                    │ │
+│ │ Values:                                                                             │ │
+│ │ 'aly', 'al\\xff', 'ana', 'cal', 'ica', 'lyt', 'l\\xff', 'nal', 'tic', 'yti', '\\xffan' │ │
+│ │ Min Match: 1                                                                        │ │
+│ ╰─────────────────────────────────────────────────────────────────────────────────────╯ │
+│ Projections: id                                                                         │
+│ ~1 row                                                                                  │
+╰─────────────────────────────────────────────────────────────────────────────────────────╯
 
 query
 EXPLAIN SELECT id, BM25(fo_score_ng_idx.tableoid) FROM fo_score_ng_idx WHERE g @@ ts_ngram('analytical', 0.01);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│      fo_score_ng_idx      │
-│                           │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││  NGRAM_SIMILARITY ││  │
-│  ││    ────────────   ││  │
-│  ││ g(string) ngrams= ││  │
-│  ││\\xffanananalalylyty││  │
-│  ││ titicicacalal\\xffl││  │
-│  ││\\xff threshold=0.01││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│           Score:          │
-│    bm25(k1=1.2, b=0.75)   │
-│                           │
-│        Projections:       │
-│             id            │
-│  sdb_inverted_index_score │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ──────────────────────────────╮
+│ Index: fo_score_ng_idx                        │
+│ Lookup: table                                 │
+│ Filter:                                       │
+│ ╭─ Ngram Similarity ────────────────────────╮ │
+│ │ Field: g(string)                          │ │
+│ │ Ngrams:                                   │ │
+│ │ \\xffanananalalylytytiticicacalal\\xffl\\xff │ │
+│ │ Threshold: 0.01                           │ │
+│ ╰───────────────────────────────────────────╯ │
+│ Score: bm25(k1=1.2, b=0.75)                   │
+│ Projections: id, sdb_inverted_index_score     │
+│ ~1 row                                        │
+╰───────────────────────────────────────────────╯
 
 query
 EXPLAIN SELECT id FROM fo_score_ng_idx WHERE g @@ ts_ngram('analytical', 1.0);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│      fo_score_ng_idx      │
-│                           │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││       PHRASE      ││  │
-│  ││    ────────────   ││  │
-│  ││ g(string) = <Term:││  │
-│  ││ \\xffan(0, 0); Term││  │
-│  ││  :ana(1, 1); Term ││  │
-│  ││  :nal(1, 1); Term ││  │
-│  ││  :aly(1, 1); Term ││  │
-│  ││  :lyt(1, 1); Term ││  │
-│  ││  :yti(1, 1); Term ││  │
-│  ││  :tic(1, 1); Term ││  │
-│  ││  :ica(1, 1); Term ││  │
-│  ││  :cal(1, 1); Term ││  │
-│  ││   :al\\xff(1, 1);  ││  │
-│  ││  Term:l\\xff(1, 1);││  │
-│  ││          >        ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│      Projections: id      │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Index: fo_score_ng_idx                                                                                                                                                                       │
+│ Lookup: table                                                                                                                                                                                │
+│ Filter:                                                                                                                                                                                      │
+│ ╭─ Phrase ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+│ │ Field: g(string)                                                                                                                                                                         │ │
+│ │ Parts:                                                                                                                                                                                   │ │
+│ │ Term:\\xffan(0, 0); Term:ana(1, 1); Term:nal(1, 1); Term:aly(1, 1); Term:lyt(1, 1); Term:yti(1, 1); Term:tic(1, 1); Term:ica(1, 1); Term:cal(1, 1); Term:al\\xff(1, 1); Term:l\\xff(1, 1);  │ │
+│ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+│ Projections: id                                                                                                                                                                              │
+│ ~1 row                                                                                                                                                                                       │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
 query
 EXPLAIN SELECT id, BM25(fo_score_ng_idx.tableoid) FROM fo_score_ng_idx WHERE g @@ ts_ngram('analytical', 1.0);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│      fo_score_ng_idx      │
-│                           │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││       PHRASE      ││  │
-│  ││    ────────────   ││  │
-│  ││ g(string) = <Term:││  │
-│  ││ \\xffan(0, 0); Term││  │
-│  ││  :ana(1, 1); Term ││  │
-│  ││  :nal(1, 1); Term ││  │
-│  ││  :aly(1, 1); Term ││  │
-│  ││  :lyt(1, 1); Term ││  │
-│  ││  :yti(1, 1); Term ││  │
-│  ││  :tic(1, 1); Term ││  │
-│  ││  :ica(1, 1); Term ││  │
-│  ││  :cal(1, 1); Term ││  │
-│  ││   :al\\xff(1, 1);  ││  │
-│  ││  Term:l\\xff(1, 1);││  │
-│  ││          >        ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│           Score:          │
-│    bm25(k1=1.2, b=0.75)   │
-│                           │
-│        Projections:       │
-│             id            │
-│  sdb_inverted_index_score │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Index: fo_score_ng_idx                                                                                                                                                                       │
+│ Lookup: table                                                                                                                                                                                │
+│ Filter:                                                                                                                                                                                      │
+│ ╭─ Phrase ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+│ │ Field: g(string)                                                                                                                                                                         │ │
+│ │ Parts:                                                                                                                                                                                   │ │
+│ │ Term:\\xffan(0, 0); Term:ana(1, 1); Term:nal(1, 1); Term:aly(1, 1); Term:lyt(1, 1); Term:yti(1, 1); Term:tic(1, 1); Term:ica(1, 1); Term:cal(1, 1); Term:al\\xff(1, 1); Term:l\\xff(1, 1);  │ │
+│ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+│ Score: bm25(k1=1.2, b=0.75)                                                                                                                                                                  │
+│ Projections: id, sdb_inverted_index_score                                                                                                                                                    │
+│ ~1 row                                                                                                                                                                                       │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
 query
 EXPLAIN SELECT id FROM fo_score_idx WHERE s = 'alpha' OR s = 'gamma';
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│    Index: fo_score_idx    │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││       TERMS       ││  │
-│  ││    ────────────   ││  │
-│  ││ s(string) {['alpha││  │
-│  ││ ', 1],['gamma', 1]││  │
-│  ││   ,} min_match=1  ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│      Projections: id      │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ─────────────╮
+│ Index: fo_score_idx          │
+│ Lookup: table                │
+│ Filter:                      │
+│ ╭─ Terms ──────────────────╮ │
+│ │ Field: s(string)         │ │
+│ │ Values: 'alpha', 'gamma' │ │
+│ │ Min Match: 1             │ │
+│ ╰──────────────────────────╯ │
+│ Projections: id              │
+│ ~1 row                       │
+╰──────────────────────────────╯
 
 query
 EXPLAIN SELECT id, BM25(fo_score_idx.tableoid) FROM fo_score_idx WHERE s = 'alpha' OR s = 'gamma';
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│    Index: fo_score_idx    │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││       TERMS       ││  │
-│  ││    ────────────   ││  │
-│  ││ s(string) {['alpha││  │
-│  ││ ', 1],['gamma', 1]││  │
-│  ││   ,} min_match=1  ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│           Score:          │
-│    bm25(k1=1.2, b=0.75)   │
-│                           │
-│        Projections:       │
-│             id            │
-│  sdb_inverted_index_score │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: fo_score_idx                    │
+│ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Terms ──────────────────╮           │
+│ │ Field: s(string)         │           │
+│ │ Values: 'alpha', 'gamma' │           │
+│ │ Min Match: 1             │           │
+│ ╰──────────────────────────╯           │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
 
 query
 EXPLAIN SELECT id FROM fo_score_idx WHERE t @@ ts_phrase('alpha') AND NOT (t @@ ts_phrase('beta'));
 ----
 QUERY PLAN
-┌─────────────────────────────────────────────┐
-│                IRESEARCH_SCAN               │
-│    ──────────────────────────────────────   │
-│             Index: fo_score_idx             │
-│                Lookup: table                │
-│                                             │
-│                   Filter:                   │
-│ ┌──────────────────────────────────────────┐│
-│ │┌───────────────────┐                     ││
-│ ││     EXCLUSION     ├──────────┐          ││
-│ │└─────────┬─────────┘          │          ││
-│ │┌─────────┴─────────┐┌─────────┴─────────┐││
-│ ││        Term       ││        Term       │││
-│ ││    ────────────   ││    ────────────   │││
-│ ││ t(string) = alpha ││  t(string) = beta │││
-│ │└───────────────────┘└───────────────────┘││
-│ └──────────────────────────────────────────┘│
-│                                             │
-│               Projections: id               │
-│                                             │
-│                    ~1 row                   │
-└─────────────────────────────────────────────┘
+╭─ IRESEARCH_SCAN ───────────────────────────╮
+│ Index: fo_score_idx                        │
+│ Lookup: table                              │
+│ Filter:                                    │
+│ ╭─ Exclusion ──────╮                       │
+│ ╰─────────┬────────╯                       │
+│           ├─────────────────────╮          │
+│ ╭─ Term ──┴────────╮  ╭─ Term ──┴────────╮ │
+│ │ Field: t(string) │  │ Field: t(string) │ │
+│ │ Value: alpha     │  │ Value: beta      │ │
+│ ╰──────────────────╯  ╰──────────────────╯ │
+│ Projections: id                            │
+│ ~1 row                                     │
+╰────────────────────────────────────────────╯
 
 query
 EXPLAIN SELECT id, BM25(fo_score_idx.tableoid) FROM fo_score_idx WHERE t @@ ts_phrase('alpha') AND NOT (t @@ ts_phrase('beta'));
 ----
 QUERY PLAN
-┌─────────────────────────────────────────────┐
-│                IRESEARCH_SCAN               │
-│    ──────────────────────────────────────   │
-│             Index: fo_score_idx             │
-│                Lookup: table                │
-│                                             │
-│                   Filter:                   │
-│ ┌──────────────────────────────────────────┐│
-│ │┌───────────────────┐                     ││
-│ ││     EXCLUSION     ├──────────┐          ││
-│ │└─────────┬─────────┘          │          ││
-│ │┌─────────┴─────────┐┌─────────┴─────────┐││
-│ ││        Term       ││        Term       │││
-│ ││    ────────────   ││    ────────────   │││
-│ ││ t(string) = alpha ││  t(string) = beta │││
-│ │└───────────────────┘└───────────────────┘││
-│ └──────────────────────────────────────────┘│
-│                                             │
-│         Score: bm25(k1=1.2, b=0.75)         │
-│                                             │
-│                 Projections:                │
-│                      id                     │
-│           sdb_inverted_index_score          │
-│                                             │
-│                    ~1 row                   │
-└─────────────────────────────────────────────┘
+╭─ IRESEARCH_SCAN ───────────────────────────╮
+│ Index: fo_score_idx                        │
+│ Lookup: table                              │
+│ Filter:                                    │
+│ ╭─ Exclusion ──────╮                       │
+│ ╰─────────┬────────╯                       │
+│           ├─────────────────────╮          │
+│ ╭─ Term ──┴────────╮  ╭─ Term ──┴────────╮ │
+│ │ Field: t(string) │  │ Field: t(string) │ │
+│ │ Value: alpha     │  │ Value: beta      │ │
+│ ╰──────────────────╯  ╰──────────────────╯ │
+│ Score: bm25(k1=1.2, b=0.75)                │
+│ Projections: id, sdb_inverted_index_score  │
+│ ~1 row                                     │
+╰────────────────────────────────────────────╯
 
 query
 EXPLAIN SELECT id FROM fo_score_idx WHERE n @@ ts_gt(1) AND n @@ ts_lt(4);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│    Index: fo_score_idx    │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││   GranularRange   ││  │
-│  ││    ────────────   ││  │
-│  ││ n(numeric) >( \\x0 ││  │
-│  ││ \\x80\\x0\\x0\\x1 \\x10││  │
-│  ││ \\x80\\x0 ), <( \\x0 ││  │
-│  ││ \\x80\\x0\\x0\\x4 \\x10││  │
-│  ││     \\x80\\x0 )     ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│      Projections: id      │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ──────╮
+│ Index: fo_score_idx   │
+│ Lookup: table         │
+│ Filter:               │
+│ ╭─ Granular Range ──╮ │
+│ │ Field: n(numeric) │ │
+│ │ Range: >1, <4     │ │
+│ │ Boost: 2          │ │
+│ ╰───────────────────╯ │
+│ Projections: id       │
+│ ~1 row                │
+╰───────────────────────╯
 
 query
 EXPLAIN SELECT id, BM25(fo_score_idx.tableoid) FROM fo_score_idx WHERE n @@ ts_gt(1) AND n @@ ts_lt(4);
 ----
 QUERY PLAN
-┌─────────────────────────────────────────────┐
-│                IRESEARCH_SCAN               │
-│    ──────────────────────────────────────   │
-│             Index: fo_score_idx             │
-│                Lookup: table                │
-│                                             │
-│                   Filter:                   │
-│ ┌──────────────────────────────────────────┐│
-│ │┌───────────────────┐                     ││
-│ ││        AND        ├──────────┐          ││
-│ │└─────────┬─────────┘          │          ││
-│ │┌─────────┴─────────┐┌─────────┴─────────┐││
-│ ││   GranularRange   ││   GranularRange   │││
-│ ││    ────────────   ││    ────────────   │││
-│ ││ n(numeric) >( \\x0 ││ n(numeric) <( \\x0 │││
-│ ││ \\x80\\x0\\x0\\x1 \\x10││ \\x80\\x0\\x0\\x4 \\x10│││
-│ ││     \\x80\\x0 )     ││     \\x80\\x0 )     │││
-│ │└───────────────────┘└───────────────────┘││
-│ └──────────────────────────────────────────┘│
-│                                             │
-│         Score: bm25(k1=1.2, b=0.75)         │
-│                                             │
-│                 Projections:                │
-│                      id                     │
-│           sdb_inverted_index_score          │
-│                                             │
-│                    ~1 row                   │
-└─────────────────────────────────────────────┘
+╭─ IRESEARCH_SCAN ─────────────────────────────╮
+│ Index: fo_score_idx                          │
+│ Lookup: table                                │
+│ Filter:                                      │
+│ ╭─ And ─────────────╮                        │
+│ ╰─────────┬─────────╯                        │
+│           ├──────────────────────╮           │
+│ ╭─ Granular Range ──╮  ╭─ Granular Range ──╮ │
+│ │ Field: n(numeric) │  │ Field: n(numeric) │ │
+│ │ Range: >1         │  │ Range: <4         │ │
+│ ╰───────────────────╯  ╰───────────────────╯ │
+│ Score: bm25(k1=1.2, b=0.75)                  │
+│ Projections: id, sdb_inverted_index_score    │
+│ ~1 row                                       │
+╰──────────────────────────────────────────────╯
 
 query
 EXPLAIN SELECT id FROM fo_score_idx WHERE t @@ ts_all([ts_phrase('alpha'), ts_between(NULL, NULL, true, true)]);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│    Index: fo_score_idx    │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││ t(string) = alpha ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│      Projections: id      │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ─────╮
+│ Index: fo_score_idx  │
+│ Lookup: table        │
+│ Filter:              │
+│ ╭─ Term ───────────╮ │
+│ │ Field: t(string) │ │
+│ │ Value: alpha     │ │
+│ │ Boost: 2         │ │
+│ ╰──────────────────╯ │
+│ Projections: id      │
+│ ~1 row               │
+╰──────────────────────╯
 
 query
 EXPLAIN SELECT id, BM25(fo_score_idx.tableoid) FROM fo_score_idx WHERE t @@ ts_all([ts_phrase('alpha'), ts_between(NULL, NULL, true, true)]);
 ----
 QUERY PLAN
-┌─────────────────────────────────────────────┐
-│                IRESEARCH_SCAN               │
-│    ──────────────────────────────────────   │
-│             Index: fo_score_idx             │
-│                Lookup: table                │
-│                                             │
-│                   Filter:                   │
-│ ┌──────────────────────────────────────────┐│
-│ │┌───────────────────┐                     ││
-│ ││        AND        ├──────────┐          ││
-│ │└─────────┬─────────┘          │          ││
-│ │┌─────────┴─────────┐┌─────────┴─────────┐││
-│ ││        Term       ││        ALL        │││
-│ ││    ────────────   ││    ────────────   │││
-│ ││ t(string) = alpha ││         1         │││
-│ │└───────────────────┘└───────────────────┘││
-│ └──────────────────────────────────────────┘│
-│                                             │
-│         Score: bm25(k1=1.2, b=0.75)         │
-│                                             │
-│                 Projections:                │
-│                      id                     │
-│           sdb_inverted_index_score          │
-│                                             │
-│                    ~1 row                   │
-└─────────────────────────────────────────────┘
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: fo_score_idx                    │
+│ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ And ────────────╮                   │
+│ ╰─────────┬────────╯                   │
+│           ├────────────────╮           │
+│ ╭─ Term ──┴────────╮  ╭─ All ──╮       │
+│ │ Field: t(string) │  ╰────────╯       │
+│ │ Value: alpha     │                   │
+│ ╰──────────────────╯                   │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
 
 query
 EXPLAIN SELECT id FROM fo_score_idx WHERE n @@ ts_all([ts_gt(1), ts_lt(4)]);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│    Index: fo_score_idx    │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││   GranularRange   ││  │
-│  ││    ────────────   ││  │
-│  ││ n(numeric) >( \\x0 ││  │
-│  ││ \\x80\\x0\\x0\\x1 \\x10││  │
-│  ││ \\x80\\x0 ), <( \\x0 ││  │
-│  ││ \\x80\\x0\\x0\\x4 \\x10││  │
-│  ││     \\x80\\x0 )     ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│      Projections: id      │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ──────╮
+│ Index: fo_score_idx   │
+│ Lookup: table         │
+│ Filter:               │
+│ ╭─ Granular Range ──╮ │
+│ │ Field: n(numeric) │ │
+│ │ Range: >1, <4     │ │
+│ │ Boost: 2          │ │
+│ ╰───────────────────╯ │
+│ Projections: id       │
+│ ~1 row                │
+╰───────────────────────╯
 
 query
 EXPLAIN SELECT id, BM25(fo_score_idx.tableoid) FROM fo_score_idx WHERE n @@ ts_all([ts_gt(1), ts_lt(4)]);
 ----
 QUERY PLAN
-┌─────────────────────────────────────────────┐
-│                IRESEARCH_SCAN               │
-│    ──────────────────────────────────────   │
-│             Index: fo_score_idx             │
-│                Lookup: table                │
-│                                             │
-│                   Filter:                   │
-│ ┌──────────────────────────────────────────┐│
-│ │┌───────────────────┐                     ││
-│ ││        AND        ├──────────┐          ││
-│ │└─────────┬─────────┘          │          ││
-│ │┌─────────┴─────────┐┌─────────┴─────────┐││
-│ ││   GranularRange   ││   GranularRange   │││
-│ ││    ────────────   ││    ────────────   │││
-│ ││ n(numeric) >( \\x0 ││ n(numeric) <( \\x0 │││
-│ ││ \\x80\\x0\\x0\\x1 \\x10││ \\x80\\x0\\x0\\x4 \\x10│││
-│ ││     \\x80\\x0 )     ││     \\x80\\x0 )     │││
-│ │└───────────────────┘└───────────────────┘││
-│ └──────────────────────────────────────────┘│
-│                                             │
-│         Score: bm25(k1=1.2, b=0.75)         │
-│                                             │
-│                 Projections:                │
-│                      id                     │
-│           sdb_inverted_index_score          │
-│                                             │
-│                    ~1 row                   │
-└─────────────────────────────────────────────┘
+╭─ IRESEARCH_SCAN ─────────────────────────────╮
+│ Index: fo_score_idx                          │
+│ Lookup: table                                │
+│ Filter:                                      │
+│ ╭─ And ─────────────╮                        │
+│ ╰─────────┬─────────╯                        │
+│           ├──────────────────────╮           │
+│ ╭─ Granular Range ──╮  ╭─ Granular Range ──╮ │
+│ │ Field: n(numeric) │  │ Field: n(numeric) │ │
+│ │ Range: >1         │  │ Range: <4         │ │
+│ ╰───────────────────╯  ╰───────────────────╯ │
+│ Score: bm25(k1=1.2, b=0.75)                  │
+│ Projections: id, sdb_inverted_index_score    │
+│ ~1 row                                       │
+╰──────────────────────────────────────────────╯

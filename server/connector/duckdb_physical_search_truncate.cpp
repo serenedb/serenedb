@@ -47,10 +47,6 @@ duckdb::SourceResultType SereneDBSearchTruncate::GetDataInternal(
   auto& conn_ctx = GetSereneDBContext(context.client);
   const auto& search = _table->GetData();
   conn_ctx.SearchTxn().AddSearchTruncate(search);
-
-  if (const int64_t current = search->NumRows(); current > 0) {
-    conn_ctx.UpdateNumRows(_table->GetId(), -current);
-  }
   return duckdb::SourceResultType::FINISHED;
 }
 

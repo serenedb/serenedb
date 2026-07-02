@@ -106,7 +106,7 @@ GOOG	2001-01-01 00:01:30	21.16
 
 # DOCS_TEST_BODY
 
-query ???
+query
 SELECT h.ticker, h.when, price * shares AS value
 FROM holdings h
 ASOF LEFT JOIN prices p

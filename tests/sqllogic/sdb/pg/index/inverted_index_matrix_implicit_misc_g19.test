@@ -185,7 +185,7 @@ db error: ERROR: Failed to create index: Column 'vr' has unsupported type VARIAN
 statement error
 CREATE INDEX g19_imp_expr_nested ON g19_t USING inverted(pk, ([[pk]]));
 ----
-db error: ERROR: Failed to create index: Column 'main.list_value(main.list_value(pk))' has unsupported type INTEGER[][] and can not be indexed
+db error: ERROR: Failed to create index: Column 'list_value(list_value(pk))' has unsupported type INTEGER[][] and can not be indexed
 
 
 # ----------------------------------------------------------------------------

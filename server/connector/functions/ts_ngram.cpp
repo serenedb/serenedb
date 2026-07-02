@@ -41,19 +41,20 @@ void FromNgram(irs::BooleanFilter& filter, const FilterContext& ctx,
                     ERR_MSG("ts_ngram field is not VARCHAR"),
                     ERR_HINT(kSyntaxHint));
   }
-  SDB_ASSERT(func.children.size() >= 1 && func.children.size() <= 2);
+  SDB_ASSERT(func.GetChildren().size() >= 1 && func.GetChildren().size() <= 2);
 
   std::string target;
-  if (auto r = GetVarcharArg(*func.children[0], "ts_ngram text", target);
+  if (auto r = GetVarcharArg(*func.GetChildren()[0], "ts_ngram text", target);
       !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
   }
 
   float threshold = 0.7f;
-  if (func.children.size() == 2) {
+  if (func.GetChildren().size() == 2) {
     double thr;
-    if (auto r = GetDoubleArg(*func.children[1], "ts_ngram threshold", thr);
+    if (auto r =
+          GetDoubleArg(*func.GetChildren()[1], "ts_ngram threshold", thr);
         !r.ok()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));

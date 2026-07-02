@@ -59,8 +59,8 @@ BEGIN READ ONLY;
 query
 SELECT id, v FROM txro ORDER BY id;
 ----
-id v
-1 10
+id	v
+1	10
 
 
 statement ok

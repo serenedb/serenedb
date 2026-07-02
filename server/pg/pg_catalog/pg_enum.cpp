@@ -38,7 +38,7 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgEnum>::GetTableData() {
-  auto snapshot = _config.EnsureCatalogSnapshot();
+  auto snapshot = _config.CatalogSnapshot();
   auto database_id = GetDatabaseId();
 
   std::vector<PgEnum> rows;

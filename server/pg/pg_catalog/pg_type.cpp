@@ -1514,7 +1514,7 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
-  auto snapshot = _config.EnsureCatalogSnapshot();
+  auto snapshot = _config.CatalogSnapshot();
   auto database_id = GetDatabaseId();
 
   std::vector<PgType> rows;

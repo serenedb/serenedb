@@ -74,8 +74,8 @@ SELECT
     cardinality(ARRAY[]::int[]) AS card,
     array_length(ARRAY[]::int[], 1) AS len;
 ----
-card len
-0 NULL
+card	len
+0	NULL
 
 # ---------------------------------------------------------------------------
 # Nested / multi-dimensional arrays (matching dimensions). AGREE.
@@ -99,8 +99,8 @@ SELECT
     array_length(ARRAY[ARRAY[1, 2], ARRAY[3, 4]], 1) AS d1,
     array_length(ARRAY[ARRAY[1, 2], ARRAY[3, 4]], 2) AS d2;
 ----
-d1 d2
-2 2
+d1	d2
+2	2
 
 # ---------------------------------------------------------------------------
 # DIVERGENCE: NULL SUB-ARRAY literal -- SELECT ARRAY[ARRAY[1,2], NULL].
@@ -179,8 +179,8 @@ SELECT
     (ARRAY[10, 20, 30])[0] AS zero,
     (ARRAY[10, 20, 30])[9] AS past_end;
 ----
-first last zero past_end
-10 30 NULL NULL
+first	last	zero	past_end
+10	30	NULL	NULL
 
 # Array slice [lo:hi] is inclusive on both ends.
 query
@@ -195,8 +195,8 @@ SELECT
     ARRAY[1, 2, 3] = ARRAY[1, 2, 3] AS eq,
     ARRAY[1, 2] = ARRAY[1, 2, 3] AS ne;
 ----
-eq ne
-t f
+eq	ne
+t	f
 
 # = ANY(array) membership test.
 query
@@ -204,8 +204,8 @@ SELECT
     2 = ANY(ARRAY[1, 2, 3]) AS has_2,
     9 = ANY(ARRAY[1, 2, 3]) AS has_9;
 ----
-has_2 has_9
-t f
+has_2	has_9
+t	f
 
 # Array concatenation with ||.
 query

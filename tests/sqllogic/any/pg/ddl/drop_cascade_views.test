@@ -104,9 +104,9 @@ CREATE VIEW vedernikoff_clickclack_summary AS
 query
 SELECT name, total FROM vedernikoff_clickclack_summary ORDER BY name;
 ----
-name               total
-vedernikoff_alpha  300
-vedernikoff_bravo  300
+name	total
+vedernikoff_alpha	300
+vedernikoff_bravo	300
 
 
 # Refusal on either side.
@@ -204,15 +204,15 @@ SELECT * FROM vedernikoff_mop_union;
 query
 SELECT id, payload FROM vedernikoff_mop_t1;
 ----
-id  payload
-1   a
+id	payload
+1	a
 
 
 query
 SELECT id, payload FROM vedernikoff_mop_t3;
 ----
-id  payload
-3   c
+id	payload
+3	c
 
 
 statement ok

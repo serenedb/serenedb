@@ -21,7 +21,7 @@ COPY (SELECT * FROM (VALUES
 query
 SELECT * FROM read_csv('${__TEST_DIR__}/data_import_and_export_multiple_files_combining_schemas_example_001_flights_*.csv');
 ----
-flightdate	uniquecarrier	origincityname	destcityname
+FlightDate	UniqueCarrier	OriginCityName	DestCityName
 2024-01-01	AA	New York, NY	Los Angeles, CA
 2024-01-02	UA	San Francisco, CA	Seattle, WA
 2024-02-01	DL	Boston, MA	Chicago, IL
@@ -48,7 +48,7 @@ COPY (SELECT * FROM (VALUES
 query
 SELECT * FROM read_csv('${__TEST_DIR__}/data_import_and_export_multiple_files_combining_schemas_example_002_1_flights_csv_*.csv', union_by_name = true);
 ----
-flightdate	uniquecarrier	origincityname	destcityname
+FlightDate	UniqueCarrier	OriginCityName	DestCityName
 2024-01-01	AA	New York, NY	Los Angeles, CA
 2024-01-02	UA	San Francisco, CA	Seattle, WA
 2024-01-01	AA	New York, NY	Los Angeles, CA
@@ -75,7 +75,7 @@ COPY (SELECT * FROM (VALUES
 query
 SELECT * FROM read_csv(['${__TEST_DIR__}/data_import_and_export_multiple_files_combining_schemas_example_003_1_flights3_csv.csv', '${__TEST_DIR__}/data_import_and_export_multiple_files_combining_schemas_example_003_2_flights4_csv.csv'], union_by_name = true);
 ----
-flightdate	origincityname	destcityname	uniquecarrier
+FlightDate	OriginCityName	DestCityName	UniqueCarrier
 1988-01-01	New York, NY	Los Angeles, CA	NULL
 1988-01-02	New York, NY	Los Angeles, CA	NULL
 1988-01-03	New York, NY	Los Angeles, CA	AA
@@ -101,7 +101,7 @@ COPY (SELECT * FROM (VALUES
 query
 SELECT * FROM read_csv(['${__TEST_DIR__}/data_import_and_export_multiple_files_combining_schemas_example_004_1_flights1_csv.csv', '${__TEST_DIR__}/data_import_and_export_multiple_files_combining_schemas_example_004_2_flights2_csv.csv']);
 ----
-flightdate	uniquecarrier	origincityname	destcityname
+FlightDate	UniqueCarrier	OriginCityName	DestCityName
 1988-01-01	AA	New York, NY	Los Angeles, CA
 1988-01-02	AA	New York, NY	Los Angeles, CA
 1988-01-03	AA	New York, NY	Los Angeles, CA

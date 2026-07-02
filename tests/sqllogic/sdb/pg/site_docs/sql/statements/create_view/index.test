@@ -62,7 +62,7 @@ CREATE VIEW view1(a) AS SELECT 42;
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT definition
 FROM pg_views
 WHERE viewname = 'view1'

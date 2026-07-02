@@ -175,9 +175,9 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<CreateIndexGlobalState>();
   state->database_id = _database_id;
-  state->schema_name = _schema_entry.name;
+  state->schema_name = _schema_entry.name.GetIdentifierName();
   state->table_name = std::string{_relation->GetName()};
-  state->index_name = _info->index_name;
+  state->index_name = _info->GetIndexName().GetIdentifierName();
 
   if (auto sdb_state = context.registered_state->Get<SereneDBClientState>(
         kSereneDBClientStateKey)) {
@@ -239,7 +239,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
 
     if (expr->GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {
       auto& col_ref = expr->Cast<duckdb::ColumnRefExpression>();
-      auto col_name = col_ref.GetColumnName();
+      const auto& col_name = col_ref.GetColumnName().GetIdentifierName();
       const auto* cat_col = resolve_column(col_name);
       if (!cat_col) {
         throw duckdb::CatalogException("column \"%s\" not found in table",
@@ -308,14 +308,16 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     }
 
     create_result = catalog_impl.CreateInvertedIndex(
-      context, _database_id, _schema_entry.name, _relation->GetName(),
-      _info->index_name, std::move(idx_columns), std::move(options),
+      context, _database_id, _schema_entry.name.GetIdentifierName(),
+      _relation->GetName(), _info->GetIndexName().GetIdentifierName(),
+      std::move(idx_columns), std::move(options),
       {.create_with_tombstone = true});
   } else {
     bool unique =
       (_info->constraint_type == duckdb::IndexConstraintType::UNIQUE);
     create_result = catalog_impl.CreateSecondaryIndex(
-      _database_id, _schema_entry.name, _relation->GetName(), _info->index_name,
+      _database_id, _schema_entry.name.GetIdentifierName(),
+      _relation->GetName(), _info->GetIndexName().GetIdentifierName(),
       std::move(idx_columns), unique, {.create_with_tombstone = true});
   }
 
@@ -333,7 +335,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   // Get fresh snapshot with the new index
   auto snapshot = catalog_impl.GetCatalogSnapshot();
   auto catalog_index =
-    snapshot->GetRelation(_database_id, _schema_entry.name, _info->index_name);
+    snapshot->GetRelation(_database_id, _schema_entry.name.GetIdentifierName(),
+                          _info->GetIndexName().GetIdentifierName());
   SDB_ASSERT(catalog_index);
   state->index_id = catalog_index->GetId();
   if (state->progress) {
@@ -689,10 +692,13 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
     }
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("cannot CREATE INDEX on ", op.table.ParentCatalog().GetName(),
-              ".", op.table.name,
+      ERR_MSG("cannot CREATE INDEX on ",
+              op.table.ParentCatalog().GetName().GetIdentifierName(), ".",
+              op.table.name.GetIdentifierName(),
               ": its catalog differs from the current one (",
-              duckdb::DatabaseManager::GetDefaultDatabase(input.context), ")"));
+              duckdb::DatabaseManager::GetDefaultDatabase(input.context)
+                .GetIdentifierName(),
+              ")"));
   }
   auto& schema_entry = op.table.ParentSchema().Cast<SereneDBSchemaEntry>();
   auto database_id = sdb_catalog->GetDatabaseId();
@@ -704,13 +710,14 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
     // Foreign-source view: resolve the SereneDB-catalog PgSqlView by name
     // and synthesise a column list from its bound schema.
     auto& conn_ctx = GetSereneDBContext(input.context);
-    auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+    auto snapshot = conn_ctx.CatalogSnapshot();
     relation =
-      snapshot->GetRelation(database_id, schema_entry.name, op.table.name);
+      snapshot->GetRelation(database_id, schema_entry.name.GetIdentifierName(),
+                            op.table.name.GetIdentifierName());
     if (!relation || relation->GetType() != catalog::ObjectType::PgSqlView) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-        ERR_MSG("view \"", op.table.name, "\" not found in SereneDB catalog"));
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                      ERR_MSG("view \"", op.table.name.GetIdentifierName(),
+                              "\" not found in SereneDB catalog"));
     }
     auto& view = basics::downCast<catalog::PgSqlView>(*relation);
     const auto& vinfo = view.GetInfo();
@@ -733,7 +740,8 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
     for (auto p : view_positions) {
       SDB_ASSERT(p < vinfo.names.size());
       view_columns.emplace_back(ObjectId{}, catalog::Column::Id{p},
-                                vinfo.names[p], vinfo.types[p]);
+                                vinfo.names[p].GetIdentifierName(),
+                                vinfo.types[p]);
       view_columns.back().SetId(catalog::Column::Id{p});
     }
   } else {

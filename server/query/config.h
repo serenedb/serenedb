@@ -28,6 +28,7 @@
 #include <string>
 #include <string_view>
 
+#include "basics/assert.h"
 #include "basics/containers/node_hash_map.h"
 #include "catalog/types.h"
 
@@ -98,7 +99,19 @@ class Config {
 
   void DropCatalogSnapshot() { _snapshot.reset(); }
 
-  std::shared_ptr<const catalog::Snapshot> EnsureCatalogSnapshot() const;
+  // Acquires the statement's catalog snapshot. Called only at statement
+  // boundaries on the connection thread (OnStatementBegin, the wire message
+  // handlers that bind or serialize before a query lifecycle starts); all
+  // other code reads via CatalogSnapshot().
+  std::shared_ptr<const catalog::Snapshot> AcquireCatalogSnapshot();
+
+  // Read-only access to the snapshot acquired for the current statement.
+  // Never acquires: a lazy first-acquire from an executor worker would race
+  // the connection thread.
+  const std::shared_ptr<const catalog::Snapshot>& CatalogSnapshot() const {
+    SDB_ASSERT(_snapshot);
+    return _snapshot;
+  }
 
   // Returns the current value of a setting, or std::nullopt if not found.
   std::optional<std::string> Get(std::string_view key) const;
@@ -148,7 +161,7 @@ class Config {
   // hold string_views that outlive the caller.
   // TODO: use FlatHashMap, there're now problems with ASAN build
   containers::NodeHashMap<std::string, TxnVariable> _transaction;
-  mutable std::shared_ptr<const catalog::Snapshot> _snapshot;
+  std::shared_ptr<const catalog::Snapshot> _snapshot;
   duckdb::ClientContext& _client_ctx;
 };
 

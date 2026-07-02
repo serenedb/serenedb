@@ -187,8 +187,8 @@ class PhysicalPgWireCollector : public duckdb::PhysicalResultCollector {
     auto collection = duckdb::make_uniq<duckdb::ColumnDataCollection>(
       duckdb::Allocator::DefaultAllocator(), types);
     return duckdb::make_uniq<duckdb::MaterializedQueryResult>(
-      statement_type, properties, names, std::move(collection),
-      cc->GetClientProperties());
+      statement_type, properties, duckdb::IdentifiersToStrings(names),
+      std::move(collection), cc->GetClientProperties());
   }
 
   bool ParallelSink() const override {
@@ -257,6 +257,10 @@ duckdb::unique_ptr<duckdb::PhysicalOperator> MakeWireCollector(
     return duckdb::PhysicalResultCollector::GetResultCollector(context, data);
   }
   ctx->context = context.shared_from_this();
+  ctx->engaged = true;
+  if (ctx->announce_rowdesc) {
+    WriteRowDescription(*ctx->send, data.types, data.names, ctx->formats);
+  }
   auto& physical_plan = *data.physical_plan;
   auto& root = physical_plan.Root();
   // Parallel (workers encode into a completion-order queue the session splices)

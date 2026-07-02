@@ -31,7 +31,7 @@ CREATE TEXT SEARCH DICTIONARY tok_ngram (
     maxgram = 3
 );
 
-query ?
+query
 SELECT ts_lexize('tok_ngram', 'search');
 ----
 ts_lexize
@@ -49,7 +49,7 @@ CREATE TEXT SEARCH DICTIONARY tok_ngram_orig (
     preserveoriginal = true
 );
 
-query ?
+query
 SELECT ts_lexize('tok_ngram_orig', 'search');
 ----
 ts_lexize
@@ -68,7 +68,7 @@ CREATE TEXT SEARCH DICTIONARY tok_ngram_mark (
     endmarker = '$'
 );
 
-query ?
+query
 SELECT ts_lexize('tok_ngram_mark', 'cat');
 ----
 ts_lexize

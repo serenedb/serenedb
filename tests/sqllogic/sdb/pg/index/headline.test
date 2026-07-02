@@ -655,45 +655,29 @@ FROM hl_docs_idx WHERE body @@ ts_phrase('fox')
 ORDER BY id;
 ----
 QUERY PLAN
-┌───────────────────────────────────┐
-│              ORDER_BY             │
-│    ────────────────────────────   │
-│         hl_docs_idx.id ASC        │
-│                                   │
-│               ~1 row              │
-└─────────────────┬─────────────────┘
-┌─────────────────┴─────────────────┐
-│             PROJECTION            │
-│    ────────────────────────────   │
-│                 id                │
-│       ts_highlight(body, #2)      │
-│                                   │
-│               ~1 row              │
-└─────────────────┬─────────────────┘
-┌─────────────────┴─────────────────┐
-│           IRESEARCH_SCAN          │
-│    ────────────────────────────   │
-│         Index: hl_docs_idx        │
-│           Lookup: table           │
-│                                   │
-│              Filter:              │
-│      ┌─────────────────────┐      │
-│      │┌───────────────────┐│      │
-│      ││        Term       ││      │
-│      ││    ────────────   ││      │
-│      ││ body(string) = fox││      │
-│      │└───────────────────┘│      │
-│      └─────────────────────┘      │
-│                                   │
-│           Offsets: body           │
-│                                   │
-│            Projections:           │
-│                body               │
-│                 id                │
-│ sdb_inverted_index_offsets<slt:ignore>│
-│                                   │
-│               ~1 row              │
-└───────────────────────────────────┘
+╭─ ORDER_BY ───────────────────────────╮
+│ Order By: hl_docs_idx.id ASC         │
+│ ~1 row                               │
+╰───────────────────┬──────────────────╯
+╭─ PROJECTION ──────┴──────────────────╮
+│ Projections: id,                     │
+│              ts_highlight(body, #2)  │
+│ ~1 row                               │
+╰───────────────────┬──────────────────╯
+╭─ IRESEARCH_SCAN ──┴──────────────────╮
+│ Index: hl_docs_idx                   │
+│ Lookup: table                        │
+│ Filter:                              │
+│ ╭─ Term ──────────────╮              │
+│ │ Field: body(string) │              │
+│ │ Value: fox          │              │
+│ ╰─────────────────────╯              │
+│ Offsets: body                        │
+│ Projections:                         │
+│ body, id,                            │
+│ sdb_inverted_index_offsets$<slt:ignore>
+│ ~1 row                               │
+╰──────────────────────────────────────╯
 
 # Virtual-column 2-arg form with MaxOffsets in the options string. The
 # options literal stays on the outer call; bind-time parsing pulls
@@ -704,46 +688,29 @@ FROM hl_docs_idx WHERE body @@ ts_phrase('fox')
 ORDER BY id;
 ----
 QUERY PLAN
-┌───────────────────────────────────┐
-│              ORDER_BY             │
-│    ────────────────────────────   │
-│         hl_docs_idx.id ASC        │
-│                                   │
-│               ~1 row              │
-└─────────────────┬─────────────────┘
-┌─────────────────┴─────────────────┐
-│             PROJECTION            │
-│    ────────────────────────────   │
-│                 id                │
-│ ts_highlight(body, #2, 'MaxOffsets│
-│      =3, HighlightAll=true')      │
-│                                   │
-│               ~1 row              │
-└─────────────────┬─────────────────┘
-┌─────────────────┴─────────────────┐
-│           IRESEARCH_SCAN          │
-│    ────────────────────────────   │
-│         Index: hl_docs_idx        │
-│           Lookup: table           │
-│                                   │
-│              Filter:              │
-│      ┌─────────────────────┐      │
-│      │┌───────────────────┐│      │
-│      ││        Term       ││      │
-│      ││    ────────────   ││      │
-│      ││ body(string) = fox││      │
-│      │└───────────────────┘│      │
-│      └─────────────────────┘      │
-│                                   │
-│           Offsets: body           │
-│                                   │
-│            Projections:           │
-│                body               │
-│                 id                │
-│ sdb_inverted_index_offsets<slt:ignore>│
-│                                   │
-│               ~1 row              │
-└───────────────────────────────────┘
+╭─ ORDER_BY ─────────────────────────────────────────────────╮
+│ Order By: hl_docs_idx.id ASC                               │
+│ ~1 row                                                     │
+╰──────────────────────────────┬─────────────────────────────╯
+╭─ PROJECTION ─────────────────┴─────────────────────────────╮
+│ Projections:                                               │
+│ id,                                                        │
+│ ts_highlight(body, #2, 'MaxOffsets=3, HighlightAll=true')  │
+│ ~1 row                                                     │
+╰──────────────────────────────┬─────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────┴─────────────────────────────╮
+│ Index: hl_docs_idx                                         │
+│ Lookup: table                                              │
+│ Filter:                                                    │
+│ ╭─ Term ──────────────╮                                    │
+│ │ Field: body(string) │                                    │
+│ │ Value: fox          │                                    │
+│ ╰─────────────────────╯                                    │
+│ Offsets: body                                              │
+│ Projections:                                               │
+│ body, id, sdb_inverted_index_offsets$<slt:ignore>
+│ ~1 row                                                     │
+╰────────────────────────────────────────────────────────────╯
 
 # --- ts_highlight MaxOffsets behaviour ---
 # Row 5 has many 'fox' / 'quick' tokens; capping the synthesised
@@ -811,51 +778,32 @@ WHERE title @@ ts_phrase('fox') AND body @@ ts_phrase('fox')
 ORDER BY id
 ----
 QUERY PLAN
-┌─────────────────────────────────────────────┐
-│                   ORDER_BY                  │
-│    ──────────────────────────────────────   │
-│             hl_multi_idx.id ASC             │
-│                                             │
-│                    ~1 row                   │
-└──────────────────────┬──────────────────────┘
-┌──────────────────────┴──────────────────────┐
-│                  PROJECTION                 │
-│    ──────────────────────────────────────   │
-│                      id                     │
-│                      th                     │
-│                      bh                     │
-│                                             │
-│                    ~1 row                   │
-└──────────────────────┬──────────────────────┘
-┌──────────────────────┴──────────────────────┐
-│                IRESEARCH_SCAN               │
-│    ──────────────────────────────────────   │
-│             Index: hl_multi_idx             │
-│                Lookup: table                │
-│                                             │
-│                   Filter:                   │
-│ ┌──────────────────────────────────────────┐│
-│ │┌───────────────────┐                     ││
-│ ││        AND        ├──────────┐          ││
-│ │└─────────┬─────────┘          │          ││
-│ │┌─────────┴─────────┐┌─────────┴─────────┐││
-│ ││        Term       ││        Term       │││
-│ ││    ────────────   ││    ────────────   │││
-│ ││title(string) = fox││ body(string) = fox│││
-│ │└───────────────────┘└───────────────────┘││
-│ └──────────────────────────────────────────┘│
-│                                             │
-│             Offsets: title, body            │
-│                                             │
-│                 Projections:                │
-│                    title                    │
-│                     body                    │
-│                      id                     │
-│      sdb_inverted_index_offsets<slt:ignore>     │
-│      sdb_inverted_index_offsets<slt:ignore>     │
-│                                             │
-│                    ~1 row                   │
-└─────────────────────────────────────────────┘
+╭─ ORDER_BY ────────────────────────────────────────╮
+│ Order By: hl_multi_idx.id ASC                     │
+│ ~1 row                                            │
+╰─────────────────────────┬─────────────────────────╯
+╭─ PROJECTION ────────────┴─────────────────────────╮
+│ Projections: id, th, bh                           │
+│ ~1 row                                            │
+╰─────────────────────────┬─────────────────────────╯
+╭─ IRESEARCH_SCAN ────────┴─────────────────────────╮
+│ Index: hl_multi_idx                               │
+│ Lookup: table                                     │
+│ Filter:                                           │
+│ ╭─ And ────────────────╮                          │
+│ ╰───────────┬──────────╯                          │
+│             ├────────────────────────╮            │
+│ ╭─ Term ────┴──────────╮  ╭─ Term ───┴──────────╮ │
+│ │ Field: title(string) │  │ Field: body(string) │ │
+│ │ Value: fox           │  │ Value: fox          │ │
+│ ╰──────────────────────╯  ╰─────────────────────╯ │
+│ Offsets: title, body                              │
+│ Projections:                                      │
+│ title, body, id,                                  │
+│ sdb_inverted_index_offsets$<slt:ignore>
+│ sdb_inverted_index_offsets$<slt:ignore>
+│ ~1 row                                            │
+╰───────────────────────────────────────────────────╯
 
 # Multi-field render with MaxOffsets on one column only. Title renders
 # all hits (default unlimited); body is capped at 4 fox hits.
@@ -1180,25 +1128,17 @@ EXPLAIN SELECT ts_highlight('hl_inplace_dict', doc, ts_phrase('fox'))
 FROM hl_dyn
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│     ts_highlight(doc,     │
-│         ts_offsets(       │
-│  'hl_inplace_dict', doc,  │
-│           NULL))          │
-│                           │
-│          ~2 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│       Table: hl_dyn       │
-│   Type: Sequential Scan   │
-│      Projections: doc     │
-│                           │
-│          ~2 rows          │
-└───────────────────────────┘
+╭─ PROJECTION ────────────────────────────────────────────────╮
+│ Projections:                                                │
+│ ts_highlight(doc, ts_offsets('hl_inplace_dict', doc, NULL)) │
+│ ~2 rows                                                     │
+╰──────────────────────────────┬──────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────┴──────────────────────────────╮
+│ Table: hl_dyn                                               │
+│ Type: Sequential Scan                                       │
+│ Projections: doc                                            │
+│ ~2 rows                                                     │
+╰─────────────────────────────────────────────────────────────╯
 
 # Standalone form with MaxOffsets in the options string. The limit
 # flows into the inner ts_offsets() as a trailing INTEGER arg (= 2);
@@ -1210,25 +1150,17 @@ EXPLAIN SELECT ts_highlight('hl_inplace_dict', doc,
 FROM hl_dyn
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│     ts_highlight(doc,     │
-│         ts_offsets(       │
-│  'hl_inplace_dict', doc,  │
-│  NULL, 2), 'MaxOffsets=2')│
-│                           │
-│          ~2 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│       Table: hl_dyn       │
-│   Type: Sequential Scan   │
-│      Projections: doc     │
-│                           │
-│          ~2 rows          │
-└───────────────────────────┘
+╭─ PROJECTION ───────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                   │
+│ ts_highlight(doc, ts_offsets('hl_inplace_dict', doc, NULL, 2), 'MaxOffsets=2') │
+│ ~2 rows                                                                        │
+╰────────────────────────────────────────┬───────────────────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────────────┴───────────────────────────────────────╮
+│ Table: hl_dyn                                                                  │
+│ Type: Sequential Scan                                                          │
+│ Projections: doc                                                               │
+│ ~2 rows                                                                        │
+╰────────────────────────────────────────────────────────────────────────────────╯
 
 # Standalone MaxOffsets behaviour: 5-fox body, MaxOffsets=2 caps to
 # the first two highlighted spans.

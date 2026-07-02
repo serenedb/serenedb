@@ -39,7 +39,7 @@ INSERT INTO tbl VALUES
 query
 SELECT * FROM tbl;
 ----
-id	name	col1	col2	some column name	i	j	a	b	c	number	number1	number2
+id	name	col1	col2	Some Column Name	i	j	a	b	c	number	number1	number2
 1	mark	1	2	alpha	1	10	10	20	30	10	100	1000
 3	bookmark	4	5	beta	2	20	11	21	31	20	200	2000
 7	other	9	16	gamma	3	30	12	22	32	NULL	300	3000
@@ -48,7 +48,7 @@ id	name	col1	col2	some column name	i	j	a	b	c	number	number1	number2
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT j FROM tbl WHERE i = 3;
 ----
 j
@@ -73,7 +73,7 @@ i	sum
 query
 SELECT * FROM tbl ORDER BY i DESC LIMIT 3;
 ----
-id	name	col1	col2	some column name	i	j	a	b	c	number	number1	number2
+id	name	col1	col2	Some Column Name	i	j	a	b	c	number	number1	number2
 7	other	9	16	gamma	3	30	12	22	32	NULL	300	3000
 3	bookmark	4	5	beta	2	20	11	21	31	20	200	2000
 1	mark	1	2	alpha	1	10	10	20	30	10	100	1000

@@ -95,7 +95,12 @@ IGNORED_DIRS_RE='(/_generated/|^_generated/|tools/rpkg/src/duckdb/|tools/rpkg/in
 # Team-local exclusions: files whose branch-side edits don't round-trip cleanly
 # through clang-format-11 and that we don't want auto-reformatted on every run.
 # Format with full-path-prefix matching, anchored at each submodule's root.
-LOCAL_IGNORED_PATHS_RE='^(src/catalog/default/default_types\.cpp)$'
+#   - default_types.cpp: branch-side edits don't round-trip
+#   - config.cpp: the hand-aligned DUCKDB_SETTING macro table (clang-format-11
+#     would flatten it)
+#   - keyword_map.cpp: emitted by scripts/parser/inline_grammar.py at grammar
+#     regen but carries no auto-generated marker
+LOCAL_IGNORED_PATHS_RE='^(src/catalog/default/default_types\.cpp|src/main/config\.cpp|src/parser/peg/keyword_map\.cpp)$'
 
 # --- collect candidates per submodule, into one consolidated list ----------
 # Output paths in $FILES_TO_FORMAT are relative to $THIRD_PARTY (e.g. duckdb/src/foo.cpp)
@@ -162,8 +167,13 @@ fi
 echo "total scope: $TOTAL file(s)"
 
 # --- inner script that runs inside the container ---------------------------
-CHECK_FLAG=""
-[[ "$CHECK_ONLY" -eq 1 ]] && CHECK_FLAG="--dry-run --Werror"
+# duckdb's format.py post-processes clang-format's output: it rewrites
+# 'ARGS &&...args' back to 'ARGS &&... args' in .cpp/.hpp (clang-format 11
+# disagrees with the tree's historical parameter-pack spacing), and its check
+# mode ignores '...' lines altogether. Without the same fixup every run churns
+# hundreds of untouched upstream lines. Check mode therefore compares against
+# the post-processed output instead of using clang-format's --dry-run.
+PACK_FIXUP='s/ARGS &&\.\.\.args/ARGS \&\&... args/g'
 
 cat >"$INNER_SCRIPT" <<INNER
 #!/bin/sh
@@ -172,7 +182,26 @@ pip install --quiet --disable-pip-version-check --root-user-action=ignore --no-w
 export PATH="/tmp/.local/bin:\$PATH"
 cd /work
 echo "clang-format: \$(clang-format --version)"
-xargs -a /tmp/files.txt -n 50 -P 4 clang-format -i --style=file --sort-includes=0 $CHECK_FLAG
+if [ "$CHECK_ONLY" -eq 1 ]; then
+	status=0
+	while IFS= read -r f; do
+		case "\$f" in
+		*.cpp | *.hpp)
+			clang-format --style=file --sort-includes=0 "\$f" | sed '$PACK_FIXUP' >/tmp/formatted
+			;;
+		*)
+			clang-format --style=file --sort-includes=0 "\$f" >/tmp/formatted
+			;;
+		esac
+		if ! cmp -s /tmp/formatted "\$f"; then
+			echo "needs formatting: \$f"
+			status=1
+		fi
+	done </tmp/files.txt
+	exit \$status
+fi
+xargs -a /tmp/files.txt -n 50 -P 4 clang-format -i --style=file --sort-includes=0
+grep -E '\\.(cpp|hpp)\$' /tmp/files.txt | xargs -r sed -i '$PACK_FIXUP'
 INNER
 
 # --- run --------------------------------------------------------------------

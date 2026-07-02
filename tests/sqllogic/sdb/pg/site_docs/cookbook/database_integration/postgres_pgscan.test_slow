@@ -58,7 +58,7 @@ id	name	signups
 
 # DOCS_TEST_BODY
 
-query rowsort
+query ?? rowsort
 SELECT id, name
 FROM postgres_scan('host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}', '${__DATABASE__}_app', 'users');
 ----

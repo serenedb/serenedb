@@ -49,7 +49,7 @@ COPY pgsp_copy_dst
 # Poll until the parked COPY shows up. retry re-runs on result mismatch, so
 # this resolves as soon as the first chunk has been reported.
 connection observer
-query TT retry 100 backoff 100ms
+query ?? retry 100 backoff 100ms
 SELECT command, "type" FROM pg_stat_progress_copy
 WHERE relid = 'pgsp_copy_dst'::regclass AND tuples_processed > 0;
 ----

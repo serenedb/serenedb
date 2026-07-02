@@ -144,7 +144,7 @@ void DrainToHandle(message::Buffer& buffer, duckdb::FileHandle& handle) {
 
 duckdb::unique_ptr<duckdb::FunctionData> BindCopyTo(
   duckdb::ClientContext&, duckdb::CopyFunctionBindInput& input,
-  const duckdb::vector<std::string>&,
+  const duckdb::vector<duckdb::Identifier>&,
   const duckdb::vector<duckdb::LogicalType>& sql_types) {
   auto opts = ResolveTextCopyOptions(input.info.options);
   return duckdb::make_uniq<PgTextCopyBindData>(sql_types, opts.delim,
@@ -318,7 +318,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitGlobalFrom(
                               "on a server-side PostgreSQL wire connection"));
     }
     auto& conn = state->GetConnectionContext();
-    result->snapshot = conn.EnsureCatalogSnapshot();
+    result->snapshot = conn.CatalogSnapshot();
     // pg-stdin: borrow the recv-buffer view the bridge already holds; skip the
     // FileHandle entirely. Text COPY opens stdin once (single-pass), so nothing
     // else reads the handle, and the session has already sent CopyInResponse.
@@ -333,7 +333,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitGlobalFrom(
     return result;
   }
   if (state) {
-    result->snapshot = state->GetConnectionContext().EnsureCatalogSnapshot();
+    result->snapshot = state->GetConnectionContext().CatalogSnapshot();
   }
   // file / real-stdin: block-buffered reader over the OS FileHandle.
   result->source = std::make_unique<HandleByteSource>(

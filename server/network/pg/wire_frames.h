@@ -22,6 +22,7 @@
 
 #include <cstdint>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/identifier.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <span>
@@ -94,7 +95,7 @@ void WriteCopyOutResponse(message::Buffer& out, bool binary, int16_t columns);
 // names, delimiter-separated and newline-terminated, with PG text escaping.
 // Sent after CopyOutResponse and before the row frames when HEADER is set.
 void WriteCopyTextHeader(message::Buffer& out,
-                         std::span<const std::string> names, char delim);
+                         std::span<const duckdb::Identifier> names, char delim);
 
 // The 19-byte PGCOPY header as its own CopyData frame (start of a binary COPY
 // TO STDOUT stream).
@@ -108,7 +109,7 @@ void WriteCopyDone(message::Buffer& out);
 
 void WriteRowDescription(message::Buffer& out,
                          std::span<const duckdb::LogicalType> types,
-                         std::span<const std::string> names,
+                         std::span<const duckdb::Identifier> names,
                          std::span<const sdb::pg::VarFormat> formats);
 
 // CommandComplete built straight from the prepared statement: writes the PG

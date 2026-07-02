@@ -908,7 +908,7 @@ void RegexpInstrFunction(duckdb::DataChunk& args,
   bool has_start_n = args.ColumnCount() == 4;
 
   auto& func_expr = state.expr.Cast<duckdb::BoundFunctionExpression>();
-  auto& info = func_expr.bind_info->Cast<RegexpInstrBindData>();
+  auto& info = func_expr.BindInfo()->Cast<RegexpInstrBindData>();
 
   std::vector<duckdb::UnifiedVectorFormat> vdata(args.ColumnCount());
   for (duckdb::idx_t c = 0; c < args.ColumnCount(); c++) {

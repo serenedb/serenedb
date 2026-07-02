@@ -324,7 +324,7 @@ void RegisterNormalize(duckdb::ExtensionLoader& loader) {
     duckdb::LogicalType::ARRAY(duckdb::LogicalType::DOUBLE,
                                duckdb::optional_idx{}),
     ArrayNormalizeExecutor<N, double>, NormalizeBind);
-  duckdb::ScalarFunctionSet fn{name};
+  duckdb::ScalarFunctionSet fn{duckdb::Identifier{name}};
   fn.AddFunction(float_fn);
   fn.AddFunction(double_fn);
   loader.RegisterFunction(std::move(fn));
@@ -359,7 +359,7 @@ void RegisterNorm(duckdb::ExtensionLoader& loader) {
     metric, duckdb::OrderType::ASCENDING, /*is_norm=*/true, score_emit);
   double_fn.SetExtraFunctionInfo<AnnFunctionInfo>(
     metric, duckdb::OrderType::ASCENDING, /*is_norm=*/true, score_emit);
-  duckdb::ScalarFunctionSet norm{name};
+  duckdb::ScalarFunctionSet norm{duckdb::Identifier{name}};
   norm.AddFunction(float_fn);
   norm.AddFunction(double_fn);
   loader.RegisterFunction(std::move(norm));
@@ -424,12 +424,12 @@ void RegisterDistance(duckdb::ExtensionLoader& loader) {
   double_fn.SetExtraFunctionInfo<AnnFunctionInfo>(metric, order,
                                                   /*is_norm=*/false,
                                                   score_emit);
-  duckdb::ScalarFunctionSet distance{name};
+  duckdb::ScalarFunctionSet distance{duckdb::Identifier{name}};
   distance.AddFunction(float_fn);
   distance.AddFunction(double_fn);
   loader.RegisterFunction(std::move(distance));
   if (!op_name.empty()) {
-    duckdb::ScalarFunctionSet op{op_name};
+    duckdb::ScalarFunctionSet op{duckdb::Identifier{op_name}};
     op.AddFunction(float_fn);
     op.AddFunction(double_fn);
     loader.RegisterFunction(std::move(op));

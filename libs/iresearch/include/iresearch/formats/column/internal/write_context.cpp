@@ -97,7 +97,8 @@ void WriteContext::Read(duckdb::QueryContext /*context*/,
   SDB_THROW(sdb::ERROR_INTERNAL, "WriteContext::Read on write-only context");
 }
 
-void WriteContext::ReadBlocks(duckdb::FileBuffer& /*buffer*/,
+void WriteContext::ReadBlocks(duckdb::QueryContext /*context*/,
+                              duckdb::FileBuffer& /*buffer*/,
                               duckdb::block_id_t /*start_block*/,
                               duckdb::idx_t /*block_count*/) {
   SDB_THROW(sdb::ERROR_INTERNAL,

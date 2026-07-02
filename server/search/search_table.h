@@ -58,13 +58,6 @@ class SearchTable {
   ObjectId GetTableId() const noexcept { return _table_id; }
   auto& GetTableLock() noexcept { return _table_lock; }
 
-  void UpdateNumRows(int64_t delta) noexcept {
-    _num_rows.fetch_add(delta, std::memory_order_relaxed);
-  }
-  int64_t NumRows() const noexcept {
-    return _num_rows.load(std::memory_order_relaxed);
-  }
-
   static std::filesystem::path GetPath(ObjectId db_id, ObjectId table_id);
   static std::filesystem::path GetWalPath(ObjectId db_id);
   static std::filesystem::path GetChunkDir(ObjectId db_id, ObjectId table_id);
@@ -106,20 +99,12 @@ class SearchTable {
 
   uint64_t CommittedTick() const noexcept { return _last_committed_tick; }
 
-  void SyncNumRowsFromIndex() {
-    SDB_ASSERT(_writer);
-    auto reader = _writer->GetSnapshot();
-    auto live = static_cast<int64_t>(reader.live_docs_count());
-    UpdateNumRows(live - NumRows());
-  }
-
  private:
   void OpenWriter();
 
   ObjectId _table_id;
   ObjectId _db_id;
   bool _is_new;
-  std::atomic<int64_t> _num_rows{0};
   std::shared_mutex _table_lock;
   std::unique_ptr<irs::Directory> _dir;
   std::shared_ptr<irs::IndexWriter> _writer;

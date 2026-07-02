@@ -578,7 +578,7 @@ std::string RegclassOut(const catalog::Snapshot& snapshot, uint64_t oid) {
 }
 
 uint64_t RegclassIn(const ConnectionContext& ctx, std::string_view name) {
-  auto snapshot = ctx.EnsureCatalogSnapshot();
+  auto snapshot = ctx.CatalogSnapshot();
   auto current_schema = ctx.GetCurrentSchema();
   auto object_name = ParseObjectName(name, current_schema);
   auto relation = snapshot->GetRelation(ctx.GetDatabaseId(), object_name.schema,
@@ -614,7 +614,7 @@ uint64_t RegnamespaceIn(const ConnectionContext& ctx, std::string_view name) {
   if (name == "information_schema") {
     return id::kPgInformationSchema.id();
   }
-  auto snapshot = ctx.EnsureCatalogSnapshot();
+  auto snapshot = ctx.CatalogSnapshot();
   auto schema = snapshot->GetSchema(ctx.GetDatabaseId(), name);
   if (schema) {
     return schema->GetId();

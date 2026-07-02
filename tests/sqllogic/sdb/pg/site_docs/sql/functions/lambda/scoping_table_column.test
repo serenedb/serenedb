@@ -8,7 +8,7 @@ CREATE TABLE tbl (x INTEGER);
 statement ok
 INSERT INTO tbl VALUES (10);
 
-query ?
+query
 SELECT list_apply(
             [1, 2],
             lambda x: list_apply([4], lambda x: x + tbl.x)[1] + x

@@ -20,24 +20,27 @@
 
 #pragma once
 
+#include <duckdb/common/explain_value.hpp>
 #include <functional>
 #include <iresearch/search/filter.hpp>
-#include <ostream>
 #include <string>
-#include <string_view>
 
+#include "catalog/inverted_index.h"
 #include "catalog/table_options.h"
 
 namespace irs {
 
-// Renders the filter as a DuckDB-style box tree, with raw field ids
-// (identity transform).
-std::string ToString(const Filter& f);
+using FieldNameResolver = std::function<std::string(sdb::catalog::Column::Id)>;
+using FieldKindResolver =
+  std::function<sdb::catalog::term_dict::Kind(sdb::catalog::Column::Id)>;
 
-// Renders the filter as a DuckDB-style box tree, with column names resolved
-// via col_name(id). Falls back to "col=ID" for unknown ids.
-std::string ToStringDemangled(
-  const Filter& f,
-  const std::function<std::string(sdb::catalog::Column::Id)>& col_name);
+// Builds the structured filter tree for EXPLAIN: one node per filter with its
+// attributes (field, decoded terms/bounds, max_terms, min_match, boost, ...)
+// and children for boolean operators. DuckDB renders it per output format
+// (nested boxes in text, nested objects in JSON).
+duckdb::ExplainNode ToExplainNode(const Filter& f);
+duckdb::ExplainNode ToExplainNode(const Filter& f,
+                                  const FieldNameResolver& name_of,
+                                  const FieldKindResolver& kind_of);
 
 }  // namespace irs

@@ -290,8 +290,7 @@ duckdb::unique_ptr<duckdb::Expression> BindPgTypeof(
 // and a BinaryExecutor would NULL-propagate the NULL typmod and drop the name.
 void FormatTypeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                         duckdb::Vector& result) {
-  auto snapshot =
-    GetSereneDBContext(state.GetContext()).EnsureCatalogSnapshot();
+  auto snapshot = GetSereneDBContext(state.GetContext()).CatalogSnapshot();
   duckdb::UnaryExecutor::Execute<int64_t, duckdb::string_t>(
     args.data[0], result, args.size(),
     [&](int64_t type_oid) -> duckdb::string_t {
@@ -332,10 +331,12 @@ int64_t StoreTableSizeProxy(duckdb::ClientContext& context,
   }
   auto store_name = catalog::StoreTableName(
     database->GetName(), schema->GetName(), table->GetName());
-  duckdb::EntryLookupInfo lookup(duckdb::CatalogType::TABLE_ENTRY, store_name);
-  auto entry = duckdb::Catalog::GetEntry(
-    context, std::string{catalog::kStoreDatabaseName}, "main", lookup,
-    duckdb::OnEntryNotFound::RETURN_NULL);
+  duckdb::EntryLookupInfo lookup(
+    duckdb::CatalogType::TABLE_ENTRY,
+    duckdb::QualifiedName(duckdb::Identifier{catalog::kStoreDatabaseName},
+                          "main", duckdb::Identifier{store_name}));
+  auto entry = duckdb::Catalog::GetEntry(context, lookup,
+                                         duckdb::OnEntryNotFound::RETURN_NULL);
   if (!entry) {
     return 0;
   }
@@ -415,7 +416,7 @@ void PgDatabaseSizeNameFunction(duckdb::DataChunk& args,
                                 duckdb::Vector& result) {
   auto& context = state.GetContext();
   auto& conn_ctx = GetSereneDBContext(context);
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  auto snapshot = conn_ctx.CatalogSnapshot();
 
   duckdb::UnaryExecutor::Execute<duckdb::string_t, int64_t>(
     args.data[0], result, args.size(), [&](duckdb::string_t input) -> int64_t {
@@ -435,7 +436,7 @@ void PgDatabaseSizeOidFunction(duckdb::DataChunk& args,
                                duckdb::Vector& result) {
   auto& context = state.GetContext();
   auto& conn_ctx = GetSereneDBContext(context);
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  auto snapshot = conn_ctx.CatalogSnapshot();
 
   duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
     args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
@@ -462,7 +463,7 @@ void PgSchemaSizeNameFunction(duckdb::DataChunk& args,
                               duckdb::Vector& result) {
   auto& context = state.GetContext();
   auto& conn_ctx = GetSereneDBContext(context);
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  auto snapshot = conn_ctx.CatalogSnapshot();
   auto database_id = conn_ctx.GetDatabaseId();
 
   duckdb::UnaryExecutor::Execute<duckdb::string_t, int64_t>(
@@ -483,7 +484,7 @@ void PgSchemaSizeOidFunction(duckdb::DataChunk& args,
                              duckdb::Vector& result) {
   auto& context = state.GetContext();
   auto& conn_ctx = GetSereneDBContext(context);
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  auto snapshot = conn_ctx.CatalogSnapshot();
 
   duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
     args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
@@ -628,7 +629,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     [](duckdb::DataChunk& args, duckdb::ExpressionState& state,
        duckdb::Vector& result) {
       auto& ctx = GetSereneDBContext(state.GetContext());
-      auto snap = ctx.EnsureCatalogSnapshot();
+      auto snap = ctx.CatalogSnapshot();
       duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
         args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
           return GetRelationForkSize(state.GetContext(), *snap,
@@ -644,7 +645,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     [](duckdb::DataChunk& args, duckdb::ExpressionState& state,
        duckdb::Vector& result) {
       auto& ctx = GetSereneDBContext(state.GetContext());
-      auto snap = ctx.EnsureCatalogSnapshot();
+      auto snap = ctx.CatalogSnapshot();
       duckdb::BinaryExecutor::Execute<int64_t, duckdb::string_t, int64_t>(
         args.data[0], args.data[1], result, args.size(),
         [&](int64_t oid, duckdb::string_t fork) -> int64_t {
@@ -662,7 +663,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     [](duckdb::DataChunk& args, duckdb::ExpressionState& state,
        duckdb::Vector& result) {
       auto& ctx = GetSereneDBContext(state.GetContext());
-      auto snap = ctx.EnsureCatalogSnapshot();
+      auto snap = ctx.CatalogSnapshot();
       duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
         args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
           return GetRelationForkSize(state.GetContext(), *snap,
@@ -678,7 +679,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     [](duckdb::DataChunk& args, duckdb::ExpressionState& state,
        duckdb::Vector& result) {
       auto& ctx = GetSereneDBContext(state.GetContext());
-      auto snap = ctx.EnsureCatalogSnapshot();
+      auto snap = ctx.CatalogSnapshot();
       duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
         args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
           return GetRelationForkSize(state.GetContext(), *snap,
@@ -723,7 +724,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     format_type_fn.SetNullHandling(
       duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     duckdb::CreateScalarFunctionInfo info{std::move(format_type_fn)};
-    info.schema = "pg_catalog";
+    info.SetSchema("pg_catalog");
     info.on_conflict = duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
     loader.RegisterFunction(std::move(info));
   }

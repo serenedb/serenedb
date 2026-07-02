@@ -1,0 +1,79 @@
+control substitution on
+
+# SereneDB allows zero-physical-column tables (CREATE TABLE t();). internal-42
+# relaxed the parser/binder and the checkpoint writer, but the checkpoint reader
+# still asserted !columns.empty(), so a zero-column table that was checkpointed
+# into the store crashed the server on restart (ATTACH of store.db). Force the
+# empty table into the checkpointed store, crash, and prove recovery reattaches.
+
+statement ok
+CREATE TABLE zc_empty();
+
+# Witness table with real columns + rows, checkpointed alongside the empty one.
+statement ok
+CREATE TABLE zc_witness(a INTEGER, b TEXT);
+
+statement count 2
+INSERT INTO zc_witness VALUES (1, 'one'), (2, 'two');
+
+# Move both tables out of the WAL and into the checkpointed store (store.db).
+statement ok
+CHECKPOINT;
+
+# Empty table is present and reports zero columns before the crash.
+query
+SELECT count(*) FROM information_schema.columns WHERE table_name = 'zc_empty';
+----
+count
+0
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart: server re-attaches store.db with the checkpointed empty table ---
+
+connection zc_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+# Empty table recovered: still catalogued, still zero columns, still zero rows.
+connection zc_after
+query
+SELECT relname FROM pg_class WHERE relname = 'zc_empty';
+----
+relname
+zc_empty
+
+connection zc_after
+query
+SELECT count(*) FROM information_schema.columns WHERE table_name = 'zc_empty';
+----
+count
+0
+
+connection zc_after
+query
+SELECT count(*) FROM zc_empty;
+----
+count
+0
+
+# Witness table + rows survived the same checkpoint/restart.
+connection zc_after
+query
+SELECT a, b FROM zc_witness ORDER BY a;
+----
+a  b
+1  one
+2  two
+
+connection zc_after
+statement ok
+DROP TABLE zc_empty;
+
+connection zc_after
+statement ok
+DROP TABLE zc_witness;

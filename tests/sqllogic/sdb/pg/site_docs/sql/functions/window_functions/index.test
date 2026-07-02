@@ -20,7 +20,7 @@ CREATE TABLE results AS SELECT * FROM (VALUES
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT row_number() OVER () AS row_number
 FROM sales
 ORDER BY 1;
@@ -39,7 +39,7 @@ row_number
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT row_number() OVER (ORDER BY time) AS row_number
 FROM sales
 ORDER BY 1;
@@ -58,7 +58,7 @@ row_number
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT row_number() OVER (PARTITION BY region ORDER BY time) AS row_number
 FROM sales
 ORDER BY 1;
@@ -77,7 +77,7 @@ row_number
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT amount - lag(amount) OVER (ORDER BY time) AS difference
 FROM sales
 ORDER BY time;
@@ -96,7 +96,7 @@ NULL
 
 # DOCS_TEST_BODY
 
-query ?
+query
 WITH sales(amount, region) AS (
     VALUES (100, 'north'), (250, 'north'), (180, 'south'), (220, 'south')
 )
@@ -118,7 +118,7 @@ percentage
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT count(DISTINCT name) OVER (ORDER BY time) AS count
 FROM sales
 ORDER BY time;
@@ -137,7 +137,7 @@ count
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT mode(value ORDER BY time DESC) OVER (ORDER BY time) AS mode
 FROM sales
 ORDER BY time;
@@ -153,7 +153,7 @@ mode
 
 # DOCS_TEST_BODY
 
-query ???
+query
 SELECT event, athlete,
     first_value(athlete ORDER BY time) OVER w AS fastest
 FROM results
@@ -210,13 +210,13 @@ CREATE TABLE "Generation History" AS SELECT * FROM (VALUES
 
 # DOCS_TEST_BODY
 
-query ???
+query
 SELECT "Plant", "Date",
     row_number() OVER (PARTITION BY "Plant" ORDER BY "Date") AS "Row"
 FROM "Generation History"
 ORDER BY 1, 2;
 ----
-plant	date	Row
+Plant	Date	Row
 Boston	2019-01-02	1
 Boston	2019-01-03	2
 Boston	2019-01-04	3
@@ -247,7 +247,7 @@ Worcester	2019-01-13	12
 
 # DOCS_TEST_BODY
 
-query ??
+query
 SELECT points,
     sum(points) OVER (
         ORDER BY datetime
@@ -275,7 +275,7 @@ points	Moving Sum
 
 # DOCS_TEST_BODY
 
-query ???
+query
 SELECT "Plant", "Date",
     avg("MWh") OVER (
         PARTITION BY "Plant"
@@ -286,7 +286,7 @@ SELECT "Plant", "Date",
 FROM "Generation History"
 ORDER BY 1, 2;
 ----
-plant	date	MWh 7-day Moving Average
+Plant	Date	MWh 7-day Moving Average
 Boston	2019-01-02	517450.75
 Boston	2019-01-03	508793.2
 Boston	2019-01-04	508529.8333333333
@@ -325,7 +325,7 @@ Worcester	2019-01-13	99145.75
 
 # DOCS_TEST_BODY
 
-query ???
+query
 SELECT "Date", "Plant",
     avg("MWh") OVER (
         ORDER BY "Date" ASC
@@ -335,7 +335,7 @@ SELECT "Date", "Plant",
 FROM "Generation History"
 ORDER BY 1, 2;
 ----
-date	plant	MWh 7-day Moving Average
+Date	Plant	MWh 7-day Moving Average
 2019-01-02	Boston	311109.5
 2019-01-02	Worcester	311109.5
 2019-01-03	Boston	305753.1
@@ -376,7 +376,7 @@ date	plant	MWh 7-day Moving Average
 
 # DOCS_TEST_BODY
 
-query ????
+query
 SELECT event, date, athlete,
     avg(time) OVER w AS recent
 FROM results
@@ -409,7 +409,7 @@ event	date	athlete	recent
 
 # DOCS_TEST_BODY
 
-query ?????
+query
 SELECT "Plant", "Date",
     min("MWh") OVER seven AS "MWh 7-day Moving Minimum",
     avg("MWh") OVER seven AS "MWh 7-day Moving Average",
@@ -422,7 +422,7 @@ WINDOW seven AS (
               AND INTERVAL 3 DAYS FOLLOWING)
 ORDER BY 1, 2;
 ----
-plant	date	MWh 7-day Moving Minimum	MWh 7-day Moving Average	MWh 7-day Moving Maximum
+Plant	Date	MWh 7-day Moving Minimum	MWh 7-day Moving Average	MWh 7-day Moving Maximum
 Boston	2019-01-02	469538	517450.75	564337
 Boston	2019-01-03	469538	508793.2	564337
 Boston	2019-01-04	469538	508529.8333333333	564337
@@ -473,7 +473,7 @@ Worcester	2019-01-13	93806	99145.75	107170
 
 # DOCS_TEST_BODY
 
-query ????????
+query
 SELECT "Plant", "Date",
     min("MWh") OVER seven AS "MWh 7-day Moving Minimum",
     avg("MWh") OVER seven AS "MWh 7-day Moving Average",
@@ -495,7 +495,7 @@ WINDOW
                   AND INTERVAL 1 DAYS FOLLOWING)
 ORDER BY 1, 2;
 ----
-plant	date	MWh 7-day Moving Minimum	MWh 7-day Moving Average	MWh 7-day Moving Maximum	MWh 3-day Moving Minimum	MWh 3-day Moving Average	MWh 3-day Moving Maximum
+Plant	Date	MWh 7-day Moving Minimum	MWh 7-day Moving Average	MWh 7-day Moving Maximum	MWh 3-day Moving Minimum	MWh 3-day Moving Average	MWh 3-day Moving Maximum
 Boston	2019-01-02	469538	517450.75	564337	507405	535871	564337
 Boston	2019-01-03	469538	508793.2	564337	507405	533421.6666666666	564337
 Boston	2019-01-04	469538	508529.8333333333	564337	469538	501822	528523
@@ -538,7 +538,7 @@ Worcester	2019-01-13	93806	99145.75	107170	98963	103066.5	107170
 
 # DOCS_TEST_BODY
 
-query ?????
+query
 SELECT "Plant", "Date",
     min("MWh") OVER seven AS "MWh 7-day Moving Minimum",
     quantile_cont("MWh", [0.25, 0.5, 0.75]) OVER seven
@@ -552,7 +552,7 @@ WINDOW seven AS (
               AND INTERVAL 3 DAYS FOLLOWING)
 ORDER BY 1, 2;
 ----
-plant	date	MWh 7-day Moving Minimum	MWh 7-day Moving IQR	MWh 7-day Moving Maximum
+Plant	Date	MWh 7-day Moving Minimum	MWh 7-day Moving IQR	MWh 7-day Moving Maximum
 Boston	2019-01-02	469538	{497938.25,517964,537476.5}	564337
 Boston	2019-01-03	469538	{474163,507405,528523}	564337
 Boston	2019-01-04	469538	{482425.5,507309,523243.5}	564337
@@ -583,12 +583,12 @@ Worcester	2019-01-13	93806	{95934.5,97803.5,101014.75}	107170
 
 # DOCS_TEST_BODY
 
-query ???
+query
 SELECT "Plant", "Date", "MWh"
 FROM "Generation History"
 ORDER BY "Plant", "Date";
 ----
-plant	date	mwh
+Plant	Date	MWh
 Boston	2019-01-02	564337
 Boston	2019-01-03	507405
 Boston	2019-01-04	528523

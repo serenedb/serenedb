@@ -92,7 +92,7 @@ success
 # DOCS_TEST_BODY
 
 query
-CALL enable_logging(storage = 'file', storage_config = {'path': 'path/to/store/logs'});
+CALL enable_logging(storage = 'file', storage_config = {'path': '${__TEST_DIR__}/path/to/store/logs'});
 ----
 success
 
@@ -101,7 +101,7 @@ success
 # DOCS_TEST_BODY
 
 query
-CALL enable_logging(storage_path = 'path/to/store/logs');
+CALL enable_logging(storage_path = '${__TEST_DIR__}/path/to/store/logs');
 ----
 success
 

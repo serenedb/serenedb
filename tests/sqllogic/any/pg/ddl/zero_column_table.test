@@ -1,0 +1,112 @@
+# Zero-physical-column tables (CREATE TABLE t();). PostgreSQL allows them and can
+# store/return rows with no columns. SereneDB allows creating and introspecting
+# them, but its columnar engine cannot materialize a zero-column row or result set,
+# so the operations that would produce one are rejected with a clean error (never
+# an internal assertion). See the "onlyif serenedb" blocks below.
+#
+# Catalog counts are scoped to current_database() so the test is safe under the
+# parallel shared-server harness (another test's identically-named table cannot
+# leak in).
+
+
+statement ok
+CREATE TABLE zerocol_tbl();
+
+
+query
+SELECT count(*) FROM zerocol_tbl;
+----
+count
+0
+
+
+query
+SELECT count(*) FROM information_schema.columns
+WHERE table_name = 'zerocol_tbl' AND table_catalog = current_database();
+----
+count
+0
+
+
+statement ok
+DELETE FROM zerocol_tbl;
+
+
+statement ok
+TRUNCATE zerocol_tbl;
+
+
+# A column can be added and dropped again, round-tripping back to zero columns
+# (empty table -- no rows to lose, so both backends agree).
+statement ok
+ALTER TABLE zerocol_tbl ADD COLUMN a int;
+
+
+query
+SELECT count(*) FROM information_schema.columns
+WHERE table_name = 'zerocol_tbl' AND table_catalog = current_database();
+----
+count
+1
+
+
+statement ok
+ALTER TABLE zerocol_tbl DROP COLUMN a;
+
+
+query
+SELECT count(*) FROM information_schema.columns
+WHERE table_name = 'zerocol_tbl' AND table_catalog = current_database();
+----
+count
+0
+
+
+# PostgreSQL returns a zero-column result here; SereneDB rejects it cleanly.
+onlyif serenedb
+query error
+SELECT * FROM zerocol_tbl;
+----
+db error: ERROR: SELECT list is empty after resolving * expressions!
+
+
+onlyif serenedb
+query error
+SELECT FROM zerocol_tbl;
+----
+db error: ERROR: SELECT clause without selection list
+
+
+# PostgreSQL inserts an empty row; SereneDB has no column to materialize it into.
+onlyif serenedb
+statement error
+INSERT INTO zerocol_tbl DEFAULT VALUES;
+----
+db error: ERROR: cannot insert into table "zerocol_tbl" with no columns
+
+
+onlyif serenedb
+statement error
+INSERT INTO zerocol_tbl SELECT;
+----
+db error: ERROR: SELECT clause without selection list
+
+
+# Once a real column exists the table behaves normally (matches PostgreSQL).
+statement ok
+ALTER TABLE zerocol_tbl ADD COLUMN a int;
+
+
+statement ok
+INSERT INTO zerocol_tbl DEFAULT VALUES;
+
+
+query
+SELECT count(*) FROM zerocol_tbl;
+----
+count
+1
+
+
+statement ok
+DROP TABLE zerocol_tbl;

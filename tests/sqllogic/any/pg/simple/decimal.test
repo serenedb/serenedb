@@ -116,12 +116,10 @@ query error
 SELECT 1::numeric(10, 'aboba');
 
 
-skipif serenedb # TODO(Pasha) Add proper decimal support in DuckDB
 query error
 SELECT 1::numeric(1.1);
 
 
-skipif serenedb # TODO(Pasha) Add proper decimal support in DuckDB
 query error
 SELECT 1::numeric(10, 1.1);
 
@@ -132,6 +130,13 @@ SELECT 1::numeric(true);
 
 query error
 SELECT 1::numeric(10, true);
+
+
+query
+SELECT 1::numeric('1');
+----
+numeric
+1
 
 
 query

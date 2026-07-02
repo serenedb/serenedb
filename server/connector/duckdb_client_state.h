@@ -110,6 +110,7 @@ class SereneDBClientState final : public duckdb::ClientContextState {
 };
 
 // Helper to get the ConnectionContext from a DuckDB ClientContext.
+ConnectionContext* GetSereneDBContextPtr(duckdb::ClientContext& context);
 ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context);
 
 }  // namespace sdb::connector

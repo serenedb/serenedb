@@ -83,7 +83,7 @@ CREATE TEXT SEARCH DICTIONARY pipe_delim_norm (
     STEP2_CASE = 'lower'
 );
 
-query ?
+query
 SELECT ts_lexize('pipe_delim_norm', 'RED,Green,BLUE');
 ----
 ts_lexize
@@ -105,7 +105,7 @@ CREATE TEXT SEARCH DICTIONARY pipe_delim_stem (
     STEP2_STEMMING = true
 );
 
-query ?
+query
 SELECT ts_lexize('pipe_delim_stem', 'Cats,RUNNING');
 ----
 ts_lexize

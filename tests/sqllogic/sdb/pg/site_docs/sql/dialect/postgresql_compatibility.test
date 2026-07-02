@@ -133,7 +133,7 @@ SET preserve_identifier_case = false;
 statement ok
 CREATE TABLE MyTaBLe (x INTEGER);
 
-query ?
+query
 SELECT DISTINCT table_name AS tbl
 FROM duckdb_tables()
 WHERE table_name = 'mytable';

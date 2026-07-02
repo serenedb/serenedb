@@ -20,24 +20,10 @@
 
 #pragma once
 
-#include <string>
-#include <vector>
+#include "catalog/persistence/search_table_options.h"
 
-#include "catalog/table_options.h"
+namespace sdb::catalog {
 
-namespace sdb::catalog::persistence {
+using persistence::SearchTableOptions;
 
-struct TableData {
-  std::string name;
-  std::vector<Column> columns;
-  std::vector<Column::Id> pk_columns;
-  std::vector<CheckConstraint> check_constraints;
-  ObjectId generated_pk_seq_id;
-  TableEngine engine = TableEngine::Transactional;
-  std::vector<std::vector<Column::Id>> unique_constraints;
-  std::vector<TableForeignKey> foreign_keys;
-  std::string comment;
-  SearchTableOptions search_options;
-};
-
-}  // namespace sdb::catalog::persistence
+}  // namespace sdb::catalog

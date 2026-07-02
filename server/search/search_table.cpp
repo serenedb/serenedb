@@ -21,7 +21,6 @@
 #include "search/search_table.h"
 
 #include <absl/base/internal/endian.h>
-#include <absl/flags/flag.h>
 #include <absl/strings/str_cat.h>
 
 #include <chrono>
@@ -42,18 +41,6 @@
 #include "basics/log.h"
 #include "search/task.h"
 #include "storage_engine/search_engine.h"
-
-ABSL_FLAG(uint32_t, server_search_table_refresh_interval_ms, 1000,
-          "Interval between background commits (RefreshCommit) for search "
-          "tables, making inserts searchable. 0 disables background commit "
-          "(VACUUM is then the only way to flush); set both this and the "
-          "compaction interval to 0 to turn background maintenance off.");
-ABSL_FLAG(uint32_t, server_search_table_compaction_interval_ms, 10000,
-          "Interval between background segment consolidations for search "
-          "tables. 0 disables background consolidation.");
-ABSL_FLAG(uint32_t, server_search_table_cleanup_interval_step, 10,
-          "Run iresearch directory GC every Nth background commit for search "
-          "tables. 0 disables periodic GC (VACUUM still GCs).");
 
 namespace sdb::search {
 
@@ -109,24 +96,22 @@ Result SearchTable::DropWalShard(ObjectId db_id, ObjectId table_id) {
   return {};
 }
 
-std::shared_ptr<SearchTable> SearchTable::Create(ObjectId db_id,
-                                                 ObjectId schema_id,
-                                                 ObjectId table_id,
-                                                 bool is_new) {
-  return std::make_shared<SearchTable>(db_id, schema_id, table_id, is_new);
+std::shared_ptr<SearchTable> SearchTable::Create(
+  ObjectId db_id, ObjectId schema_id, ObjectId table_id, bool is_new,
+  const catalog::SearchTableOptions& options) {
+  return std::make_shared<SearchTable>(db_id, schema_id, table_id, is_new,
+                                       options);
 }
 
 SearchTable::SearchTable(ObjectId db_id, ObjectId schema_id, ObjectId table_id,
-                         bool is_new)
+                         bool is_new,
+                         const catalog::SearchTableOptions& options)
   : _table_id{table_id}, _db_id{db_id}, _schema_id{schema_id}, _is_new{is_new} {
   OpenWriter();
 
-  _maint_settings.refresh_interval_msec =
-    absl::GetFlag(FLAGS_server_search_table_refresh_interval_ms);
-  _maint_settings.compaction_interval_msec =
-    absl::GetFlag(FLAGS_server_search_table_compaction_interval_ms);
-  _maint_settings.cleanup_interval_step =
-    absl::GetFlag(FLAGS_server_search_table_cleanup_interval_step);
+  _maint_settings.refresh_interval_msec = options.refresh_interval_ms;
+  _maint_settings.compaction_interval_msec = options.compaction_interval_ms;
+  _maint_settings.cleanup_interval_step = options.cleanup_interval_step;
 }
 
 SearchTable::~SearchTable() {

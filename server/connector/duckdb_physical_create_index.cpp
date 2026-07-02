@@ -55,10 +55,12 @@
 #include "connector/primary_key.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/view_fast_path.h"
+#include "connector/with_option_resolver.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/progress_tracker.h"
 #include "pg/sql_exception_macro.h"
+#include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
@@ -285,21 +287,15 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       return it != _info->options.end() ? &it->second : nullptr;
     };
     auto resolve_uint = [&](std::string_view name) -> uint32_t {
-      if (auto* v = find_with(name)) {
-        return v->GetValue<uint32_t>();
-      }
-      duckdb::Value v;
-      auto r = context.TryGetCurrentSetting(std::string{name}, v);
-      SDB_ASSERT(r, "missing DB-level default for setting: ", name);
-      return v.GetValue<uint32_t>();
+      return ResolveUintWithOption(context, name, find_with(name));
     };
 
     catalog::InvertedIndexOptions options{
       .row_group_size = resolve_uint("row_group_size"),
       .norm_row_group_size = resolve_uint("norm_row_group_size"),
-      .refresh_interval_ms = resolve_uint("refresh_interval"),
-      .compaction_interval_ms = resolve_uint("compaction_interval"),
-      .cleanup_interval_step = resolve_uint("cleanup_interval_step"),
+      .refresh_interval_ms = resolve_uint(kRefreshIntervalSetting),
+      .compaction_interval_ms = resolve_uint(kCompactionIntervalSetting),
+      .cleanup_interval_step = resolve_uint(kCleanupIntervalStepSetting),
     };
     if (auto* v = find_with("optimize_top_k")) {
       auto value =

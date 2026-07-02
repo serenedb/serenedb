@@ -518,7 +518,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   options.name = table_info.table;  // facade name (before the retarget below)
   // Consume the storage WITH-option (Transactional on this path) so the
   // unrecognized-parameter check does not reject it.
-  ApplyStorageKind(options, table_info.options);
+  ApplyStorageKind(context, options, table_info.options);
 
   if (!table_info.options.empty()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

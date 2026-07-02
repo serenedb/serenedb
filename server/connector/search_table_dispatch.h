@@ -26,6 +26,11 @@
 
 #include "catalog/table_options.h"
 
+namespace duckdb {
+
+class ClientContext;
+
+}  // namespace duckdb
 namespace sdb::catalog {
 
 class Table;
@@ -46,7 +51,7 @@ catalog::TableEngine ReadStorageEngine(
     duckdb::unique_ptr<duckdb::ParsedExpression>>& with_options);
 
 void ApplyStorageKind(
-  catalog::CreateTableOptions& options,
+  duckdb::ClientContext& context, catalog::CreateTableOptions& options,
   duckdb::case_insensitive_map_t<duckdb::unique_ptr<duckdb::ParsedExpression>>&
     with_options);
 

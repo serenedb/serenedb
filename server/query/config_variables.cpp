@@ -43,6 +43,7 @@
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "query/config.h"
+#include "query/config_variable_names.h"
 
 namespace sdb {
 
@@ -343,7 +344,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      "refresh_interval",
+      kRefreshIntervalSetting,
       {
         LogicalTypeId::UINTEGER,
         "Background refresh interval (ms) for newly created inverted indexes. "
@@ -354,7 +355,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      "compaction_interval",
+      kCompactionIntervalSetting,
       {
         LogicalTypeId::UINTEGER,
         "Background compaction interval (ms) for newly created inverted "
@@ -365,7 +366,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      "cleanup_interval_step",
+      kCleanupIntervalStepSetting,
       {
         LogicalTypeId::UINTEGER,
         "Number of commit ticks between background unreferenced-file cleanup "

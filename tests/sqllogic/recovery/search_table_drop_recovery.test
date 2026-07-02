@@ -44,7 +44,7 @@ statement ok
 SET sdb_faults = 'crash_on_drop';
 
 
-statement error (?i)connection closed|server closed|terminat|reset|EOF
+statement error connection closed
 DROP TABLE s_drop;
 
 
@@ -63,8 +63,10 @@ count
 
 
 connection after_crash
-statement error (?i).*s_drop.* does not exist
+statement error
 SELECT * FROM s_drop;
+----
+db error: ERROR: Table with name s_drop does not exist!<slt:ignore>
 
 
 # Survivor intact, its rows still searchable.

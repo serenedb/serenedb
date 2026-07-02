@@ -75,6 +75,17 @@ class Table final : public Object {
   const auto& UniqueConstraints() const noexcept { return _unique_constraints; }
   const auto& ForeignKeys() const noexcept { return _foreign_keys; }
 
+  // Background-maintenance options (Search-engine tables only; default/empty
+  // elsewhere). Resolved from WITH / config-var defaults at CREATE, persisted,
+  // read back at boot. SetSearchOptions is used once on the freshly built
+  // table.
+  const SearchTableOptions& SearchOptions() const noexcept {
+    return _search_options;
+  }
+  void SetSearchOptions(const SearchTableOptions& options) noexcept {
+    _search_options = options;
+  }
+
   ObjectId GetGeneratedPkSeqId() const noexcept { return _generated_pk_seq_id; }
 
   const std::shared_ptr<search::SearchTable>& GetData() const noexcept {
@@ -153,6 +164,7 @@ class Table final : public Object {
   std::vector<TableForeignKey> _foreign_keys;
   mutable std::shared_ptr<search::SearchTable> _data;
   std::string _comment;
+  SearchTableOptions _search_options;
 };
 
 }  // namespace sdb::catalog

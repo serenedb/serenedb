@@ -139,6 +139,9 @@ TEST(CatalogPersistence, table) {
                               .pk_columns = {ObjectId{1}},
                               .check_constraints = {},
                               .generated_pk_seq_id = ObjectId{9},
+                              .search_options = {.refresh_interval_ms = 500,
+                                                 .compaction_interval_ms = 7000,
+                                                 .cleanup_interval_step = 3},
                             });
 }
 

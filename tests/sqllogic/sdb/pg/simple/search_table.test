@@ -844,8 +844,11 @@ VACUUM (REFRESH_TABLE) drop_mix.t_search;
 statement ok
 DROP SCHEMA drop_mix CASCADE;
 
-statement error (?i)does not exist
+statement error
 SELECT * FROM drop_mix.t_search;
+----
+db error: ERROR: Table with name "drop_mix.t_search" does not exist because schema "drop_mix" does not exist.
+
 
 # The schema name is free again -- cascade removed both tables cleanly.
 statement ok
@@ -853,3 +856,67 @@ CREATE SCHEMA drop_mix;
 
 statement ok
 DROP SCHEMA drop_mix;
+
+
+# Background-maintenance interval WITH options (shared with inverted indexes,
+# resolved against the refresh_interval / compaction_interval /
+# cleanup_interval_step config-variable defaults). Accepted on a search table.
+statement ok
+CREATE TABLE search_intervals (a INTEGER PRIMARY KEY, b TEXT)
+  WITH (storage = 'search', refresh_interval = 500,
+        compaction_interval = 7000, cleanup_interval_step = 3);
+
+statement ok
+INSERT INTO search_intervals VALUES (1, 'x');
+
+statement ok
+VACUUM (REFRESH_TABLE) search_intervals;
+
+query
+SELECT a, b FROM search_intervals ORDER BY a;
+----
+a	b
+1	x
+
+statement ok
+DROP TABLE search_intervals;
+
+# refresh_interval = 0 disables the background commit; still creatable.
+statement ok
+CREATE TABLE search_no_bg (a INTEGER PRIMARY KEY, b TEXT)
+  WITH (storage = 'search', refresh_interval = 0);
+
+statement ok
+DROP TABLE search_no_bg;
+
+# A non-integer interval literal is a clean error.
+statement error
+CREATE TABLE search_bad_interval (a INTEGER PRIMARY KEY)
+  WITH (storage = 'search', refresh_interval = 'x');
+----
+db error: ERROR: WITH option "refresh_interval" expects an integer literal
+
+
+# The interval options are search-only: an inverted-style per-object scoping,
+# so they are rejected on a transactional table.
+statement error
+CREATE TABLE txn_bad_interval (a INTEGER PRIMARY KEY)
+  WITH (storage = 'transactional', refresh_interval = 500);
+----
+db error: ERROR: unrecognized parameter "refresh_interval"
+
+
+# The config variable (shared with inverted indexes) governs the default when
+# no WITH override is given.
+statement ok
+SET compaction_interval = 4242;
+
+statement ok
+CREATE TABLE search_setvar (a INTEGER PRIMARY KEY, b TEXT)
+  WITH (storage = 'search');
+
+statement ok
+DROP TABLE search_setvar;
+
+statement ok
+RESET compaction_interval;

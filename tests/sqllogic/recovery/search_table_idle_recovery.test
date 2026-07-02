@@ -28,6 +28,19 @@ VACUUM (REFRESH_TABLE) gc_idle;
 statement ok
 CREATE TABLE gc_fresh (a INTEGER, b TEXT) WITH (storage = 'search');
 
+# Table with explicit (non-default) maintenance intervals: recovery must read
+# the persisted intervals back off the deserialized catalog Table (no context).
+statement ok
+CREATE TABLE gc_tuned (a INTEGER, b TEXT)
+  WITH (storage = 'search', refresh_interval = 300,
+        compaction_interval = 6000, cleanup_interval_step = 2);
+
+statement ok
+INSERT INTO gc_tuned VALUES (42, 'tuned');
+
+statement ok
+VACUUM (REFRESH_TABLE) gc_tuned;
+
 # Publish a baseline on the active table.
 statement ok
 INSERT INTO gc_active VALUES (1, 'one'), (2, 'two');
@@ -62,6 +75,19 @@ SELECT a, b FROM gc_idle ORDER BY a;
 ----
 a	b
 100	idle
+
+# The tuned table (non-default persisted intervals) recovered intact -- proves
+# the extra TableData fields round-trip through catalog (de)serialization.
+connection after
+query
+SELECT a, b FROM gc_tuned ORDER BY a;
+----
+a	b
+42	tuned
+
+connection after
+statement ok
+DROP TABLE gc_tuned;
 
 # The fresh, never-written table recovered as empty and is usable.
 connection after

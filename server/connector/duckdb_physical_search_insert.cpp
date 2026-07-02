@@ -118,8 +118,8 @@ struct SearchInsertLocalState : duckdb::LocalSinkState {
 };
 
 std::shared_ptr<catalog::Table> CreateCtasTable(
-  SearchInsertGlobalState& state, duckdb::BoundCreateTableInfo& info,
-  duckdb::SchemaCatalogEntry& schema) {
+  duckdb::ClientContext& context, SearchInsertGlobalState& state,
+  duckdb::BoundCreateTableInfo& info, duckdb::SchemaCatalogEntry& schema) {
   auto& schema_entry = schema.Cast<SereneDBSchemaEntry>();
   auto database_id = schema_entry.GetDatabaseId();
   auto& create_info = info.Base();
@@ -140,7 +140,7 @@ std::shared_ptr<catalog::Table> CreateCtasTable(
   }
   // CTAS has no PK/UNIQUE constraints, so the Table ctor wires up a generated
   // PK sequence.
-  ApplyStorageKind(options, table_info.options);
+  ApplyStorageKind(context, options, table_info.options);
   SDB_ASSERT(options.engine == catalog::TableEngine::Search,
              "SereneDBSearchInsert CTAS mode used for non-Search engine");
 
@@ -239,7 +239,7 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   std::shared_ptr<catalog::Table> table;
   std::shared_ptr<const catalog::Snapshot> snapshot;
   if (_ctas_info) {
-    table = CreateCtasTable(*state, *_ctas_info, *_ctas_schema);
+    table = CreateCtasTable(context, *state, *_ctas_info, *_ctas_schema);
     if (!table) {
       return nullptr;  // IF NOT EXISTS hit an existing relation.
     }

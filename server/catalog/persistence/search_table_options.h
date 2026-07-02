@@ -20,24 +20,19 @@
 
 #pragma once
 
-#include <string>
-#include <vector>
-
-#include "catalog/table_options.h"
+#include <cstdint>
 
 namespace sdb::catalog::persistence {
 
-struct TableData {
-  std::string name;
-  std::vector<Column> columns;
-  std::vector<Column::Id> pk_columns;
-  std::vector<CheckConstraint> check_constraints;
-  ObjectId generated_pk_seq_id;
-  TableEngine engine = TableEngine::Transactional;
-  std::vector<std::vector<Column::Id>> unique_constraints;
-  std::vector<TableForeignKey> foreign_keys;
-  std::string comment;
-  SearchTableOptions search_options;
+// Persisted per-table options for a Search-engine table -- the table-engine
+// analog of InvertedIndexOptions. Resolved at CREATE from the WITH options /
+// config-variable defaults, stored in TableData, and read back at boot. Grouped
+// so future search-table options add here (plus the WITH/config-var resolution)
+// without widening every layer. 0 = disabled (matches the inverted semantics).
+struct SearchTableOptions {
+  uint32_t refresh_interval_ms = 0;
+  uint32_t compaction_interval_ms = 0;
+  uint32_t cleanup_interval_step = 0;
 };
 
 }  // namespace sdb::catalog::persistence

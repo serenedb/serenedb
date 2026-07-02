@@ -86,6 +86,7 @@ std::shared_ptr<Table> Table::Deserialize(duckdb::Deserializer& src,
     data.generated_pk_seq_id, data.engine, std::move(data.unique_constraints),
     std::move(data.foreign_keys));
   table->_comment = std::move(data.comment);
+  table->_search_options = data.search_options;
   return table;
 }
 
@@ -100,6 +101,7 @@ void Table::Serialize(duckdb::Serializer& sink) const {
     .unique_constraints = _unique_constraints,
     .foreign_keys = _foreign_keys,
     .comment = _comment,
+    .search_options = _search_options,
   };
   basics::WriteTuple(sink, data);
 }
@@ -328,6 +330,7 @@ std::shared_ptr<Object> Table::Clone() const {
   cloned->SetTombstoned(Tombstoned());
   cloned->SetData(_data);
   cloned->_comment = _comment;
+  cloned->_search_options = _search_options;
   return cloned;
 }
 

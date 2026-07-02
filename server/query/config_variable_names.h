@@ -20,24 +20,14 @@
 
 #pragma once
 
-#include <string>
-#include <vector>
+#include <string_view>
 
-#include "catalog/table_options.h"
+namespace sdb {
 
-namespace sdb::catalog::persistence {
+inline constexpr std::string_view kRefreshIntervalSetting = "refresh_interval";
+inline constexpr std::string_view kCompactionIntervalSetting =
+  "compaction_interval";
+inline constexpr std::string_view kCleanupIntervalStepSetting =
+  "cleanup_interval_step";
 
-struct TableData {
-  std::string name;
-  std::vector<Column> columns;
-  std::vector<Column::Id> pk_columns;
-  std::vector<CheckConstraint> check_constraints;
-  ObjectId generated_pk_seq_id;
-  TableEngine engine = TableEngine::Transactional;
-  std::vector<std::vector<Column::Id>> unique_constraints;
-  std::vector<TableForeignKey> foreign_keys;
-  std::string comment;
-  SearchTableOptions search_options;
-};
-
-}  // namespace sdb::catalog::persistence
+}  // namespace sdb

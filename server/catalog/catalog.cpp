@@ -2174,6 +2174,7 @@ Result Catalog::CreateTable(ObjectId database_id, std::string_view schema,
     std::move(options.pk_columns), std::move(options.check_constraints),
     generated_pk_seq_id, options.engine, std::move(options.unique_constraints),
     std::move(options.foreign_keys));
+  table->SetSearchOptions(options.search_options);
   if (with_tombstone) {
     table->SetTombstoned(true);
   }
@@ -2224,8 +2225,9 @@ Result Catalog::CreateTable(ObjectId database_id, std::string_view schema,
       store_table->name = DroppedStoreTableName(table->GetId());
     }
   } else if (table->GetEngine() == TableEngine::Search) {
-    table->SetData(search::SearchTable::Create(
-      database_id, *schema_id, table->GetId(), /*is_new=*/true));
+    table->SetData(search::SearchTable::Create(database_id, *schema_id,
+                                               table->GetId(), /*is_new=*/true,
+                                               table->SearchOptions()));
   }
 
   return Apply(
@@ -3833,7 +3835,8 @@ Result OpenDatabase::RegisterSearchTable(ObjectId db_id, ObjectId schema_id,
                                          const Table& table) {
   return basics::SafeCall([&] {
     table.SetData(search::SearchTable::Create(db_id, schema_id, table.GetId(),
-                                              /*is_new=*/false));
+                                              /*is_new=*/false,
+                                              table.SearchOptions()));
     return Result{};
   });
 }

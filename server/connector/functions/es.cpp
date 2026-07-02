@@ -50,10 +50,12 @@
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/with_option_resolver.h"
 #include "pg/commands/create_tsdictionary.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
+#include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
@@ -231,10 +233,7 @@ duckdb::unique_ptr<duckdb::FunctionData> EsAcknowledgedBind(
 
 uint32_t ResolveUintSetting(duckdb::ClientContext& context,
                             std::string_view name) {
-  duckdb::Value value;
-  auto r = context.TryGetCurrentSetting(std::string{name}, value);
-  SDB_ASSERT(r, "missing DB-level default for setting: ", name);
-  return value.GetValue<uint32_t>();
+  return ResolveUintWithOption(context, name, /*with_value=*/nullptr);
 }
 
 // The backfill-free tail of CREATE INDEX ... USING inverted: the table was
@@ -279,11 +278,11 @@ void CreateTextIndex(duckdb::ClientContext& context, ObjectId database_id,
   catalog::InvertedIndexOptions options{
     .row_group_size = ResolveUintSetting(context, "row_group_size"),
     .norm_row_group_size = ResolveUintSetting(context, "norm_row_group_size"),
-    .refresh_interval_ms = ResolveUintSetting(context, "refresh_interval"),
+    .refresh_interval_ms = ResolveUintSetting(context, kRefreshIntervalSetting),
     .compaction_interval_ms =
-      ResolveUintSetting(context, "compaction_interval"),
+      ResolveUintSetting(context, kCompactionIntervalSetting),
     .cleanup_interval_step =
-      ResolveUintSetting(context, "cleanup_interval_step"),
+      ResolveUintSetting(context, kCleanupIntervalStepSetting),
   };
 
   const auto index_name = absl::StrCat(index, kEsTextIndexSuffix);

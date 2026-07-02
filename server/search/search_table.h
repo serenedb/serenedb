@@ -35,6 +35,7 @@
 #include "basics/assert.h"
 #include "basics/result.h"
 #include "catalog/identifiers/object_id.h"
+#include "catalog/search_table_options.h"
 #include "search/maintenance.h"
 #include "search/search_db_wal.h"
 
@@ -47,9 +48,11 @@ namespace sdb::search {
 class SearchTable : public std::enable_shared_from_this<SearchTable> {
  public:
   // `is_new` opens a fresh index (and publishes an empty commit); otherwise the
-  // durable index is reopened and its committed tick restored.
+  // durable index is reopened and its committed tick restored. The maintenance
+  // intervals are resolved (WITH else config-var default) + persisted by the
+  // catalog and passed in here (mirrors InvertedIndexStorage).
   SearchTable(ObjectId db_id, ObjectId schema_id, ObjectId table_id,
-              bool is_new);
+              bool is_new, const catalog::SearchTableOptions& options);
   ~SearchTable();
 
   SearchTable(const SearchTable&) = delete;
@@ -58,8 +61,9 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   // Opens (or reopens, when !is_new) this table's on-disk iresearch store and
   // binds the database WAL; the returned handle is attached to the catalog
   // Table via Table::SetData. Mirror of InvertedIndexStorage::Create.
-  static std::shared_ptr<SearchTable> Create(ObjectId db_id, ObjectId schema_id,
-                                             ObjectId table_id, bool is_new);
+  static std::shared_ptr<SearchTable> Create(
+    ObjectId db_id, ObjectId schema_id, ObjectId table_id, bool is_new,
+    const catalog::SearchTableOptions& options);
 
   ObjectId GetTableId() const noexcept { return _table_id; }
   auto& GetTableLock() noexcept { return _table_lock; }

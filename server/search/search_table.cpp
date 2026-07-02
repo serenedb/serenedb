@@ -39,6 +39,7 @@
 #include "basics/duckdb_engine.h"
 #include "basics/exceptions.h"
 #include "basics/log.h"
+#include "search/inverted_index_storage.h"
 #include "search/task.h"
 #include "storage_engine/search_engine.h"
 
@@ -49,10 +50,11 @@ std::filesystem::path SearchTable::GetPath(ObjectId db_id, ObjectId schema_id,
   SDB_ASSERT(db_id.isSet());
   SDB_ASSERT(schema_id.isSet());
   SDB_ASSERT(table_id.isSet());
-  auto path = GetSearchEngine().GetPersistedPath(db_id);
-  path /= absl::StrCat(schema_id);
-  path /= absl::StrCat(table_id);
-  return path;
+  // Same engine_search/<db>/<schema>/<table> layout as an inverted index minus
+  // the trailing index level -- reuse its path generator with the index unset.
+  // TODO(Dronplane): unify as generic SearchStorage with all common stuff
+  return InvertedIndexStorage::GetPath(db_id, schema_id, table_id,
+                                       /*index_id=*/ObjectId{});
 }
 
 std::filesystem::path SearchTable::GetWalPath(ObjectId db_id) {

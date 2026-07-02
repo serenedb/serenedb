@@ -48,7 +48,6 @@ void AppServer::parseOptions(int argc, char* argv[]) {
     static constexpr CategoryRule kRules[] = {
       {"server/rest_server/database_path_feature.cpp", "server"},
       {"server/storage_engine/search_engine.cpp", "server"},
-      {"server/search/search_table.cpp", "server"},
       {"server/network/server.cpp", "server"},
       {"server/query/server_engine.cpp", "server"},
       {"server/scheduler/background_scheduler.cpp", "server"},

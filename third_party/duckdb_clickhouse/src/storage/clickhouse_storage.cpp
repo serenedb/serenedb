@@ -214,6 +214,7 @@ static unique_ptr<Catalog> ClickHouseAttach(optional_ptr<StorageExtensionInfo> s
 
 	try {
 		auto conn = ClickHouseConnection::Open(params);
+		ClickHouseConnection::LogQuery("SELECT version()");
 		conn.GetClient().Execute("SELECT version()");
 	} catch (const std::exception &e) {
 		throw IOException("Failed to connect to ClickHouse at %s:%d: %s", params.host, (int)params.port, e.what());

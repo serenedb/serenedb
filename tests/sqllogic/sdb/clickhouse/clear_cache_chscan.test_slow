@@ -1,0 +1,72 @@
+control substitution on
+
+# clickhouse_clear_cache(): the connector caches each table's column list for the
+# catalog's lifetime. If the remote table's schema drifts (ClickHouse ALTER ADD
+# COLUMN is routine), a query binds against the stale cached columns and fails;
+# clearing the cache makes the next query re-read the schema from the server.
+# vedernikoff theme. Clean slate for re-run safety.
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}', 'DROP TABLE IF EXISTS default.cc_ved');
+----
+n
+1
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT} database=default',
+  'CREATE TABLE default.cc_ved (id Int64) ENGINE = MergeTree ORDER BY id');
+----
+n
+1
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}',
+  'INSERT INTO default.cc_ved VALUES (1), (2)');
+----
+n
+1
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chc (TYPE clickhouse);
+
+# Bind + read the table -> caches the 1-column (id) schema.
+query
+SELECT count(*) AS n FROM chc.default.cc_ved;
+----
+n
+2
+
+# Drift the remote schema: add a column with a default.
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}',
+  'ALTER TABLE default.cc_ved ADD COLUMN val String DEFAULT ''pudge''');
+----
+n
+1
+
+# The new column is not visible yet -- binding it fails against the stale cache.
+statement error
+SELECT val FROM chc.default.cc_ved;
+
+# Clear the cache; the next query re-reads the (now 2-column) schema.
+query
+SELECT count(*) AS n FROM clickhouse_clear_cache();
+----
+n
+1
+
+query
+SELECT val FROM chc.default.cc_ved ORDER BY id;
+----
+val
+pudge
+pudge
+
+statement ok
+DETACH chc;
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}', 'DROP TABLE default.cc_ved');
+----
+n
+1

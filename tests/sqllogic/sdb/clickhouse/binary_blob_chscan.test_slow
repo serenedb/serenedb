@@ -1,0 +1,34 @@
+control substitution on
+
+# ch_binary_as_blob (a session-scoped setting) reads ClickHouse String / FixedString
+# columns as BLOB (raw bytes) instead of VARCHAR, so non-UTF-8 payloads (hashes,
+# protobufs, images) survive intact rather than violating the VARCHAR UTF-8 contract.
+# Exercised via the ad-hoc clickhouse_query path (re-describes per query, so the
+# session setting applies). SET SESSION keeps it isolated to this connection.
+
+# Default: String -> VARCHAR.
+query
+SELECT typeof(s) AS t FROM clickhouse_query('host=${CHHOST} port=${CHPORT} user=default', 'SELECT ''hello'' AS s');
+----
+t
+VARCHAR
+
+statement ok
+SET SESSION ch_binary_as_blob = true;
+
+# Now String -> BLOB, and a non-UTF-8 payload round-trips byte-exact.
+query
+SELECT typeof(s) AS t, octet_length(s) AS n, hex(s) AS h FROM clickhouse_query('host=${CHHOST} port=${CHPORT} user=default', 'SELECT unhex(''DEADBEEF'') AS s');
+----
+t	n	h
+BLOB	4	DEADBEEF
+
+statement ok
+SET SESSION ch_binary_as_blob = false;
+
+# Back to VARCHAR once disabled.
+query
+SELECT typeof(s) AS t FROM clickhouse_query('host=${CHHOST} port=${CHPORT} user=default', 'SELECT ''world'' AS s');
+----
+t
+VARCHAR

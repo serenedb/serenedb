@@ -1,0 +1,50 @@
+control substitution on
+
+# Write-side ClickHouse Array(T): a DuckDB LIST column maps to Array(...) in the
+# CREATE TABLE -- never Nullable(Array), which ClickHouse forbids -- with scalar
+# elements made Nullable so NULL elements round-trip. INSERT builds each row's
+# array from the LIST child (per-row slice -> sub-column -> AppendAsColumn).
+# Reads use element access + length to stay independent of array text rendering.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS cha (TYPE clickhouse);
+
+statement ok
+DROP TABLE IF EXISTS cha.default.arr_ved;
+
+statement ok
+CREATE TABLE cha.default.arr_ved (id BIGINT PRIMARY KEY, tags VARCHAR[], nums INTEGER[]);
+
+# Row 2 has an empty nums array, row 3 an empty tags array, row 4 a NULL element.
+statement ok
+INSERT INTO cha.default.arr_ved VALUES
+  (1, ['alpha', 'beta'], [10, 20, 30]),
+  (2, ['gamma'], []::INTEGER[]),
+  (3, []::VARCHAR[], [7, 8]),
+  (4, ['x'], [1, NULL, 3]);
+
+query
+SELECT id, len(tags) AS nt, coalesce(tags[1], 'none') AS t1, coalesce(tags[2], 'none') AS t2
+FROM cha.default.arr_ved ORDER BY id;
+----
+id	nt	t1	t2
+1	2	alpha	beta
+2	1	gamma	none
+3	0	none	none
+4	1	x	none
+
+query
+SELECT id, len(nums) AS nn, coalesce(nums[1], -1) AS n1, coalesce(nums[2], -1) AS n2, coalesce(nums[3], -1) AS n3
+FROM cha.default.arr_ved ORDER BY id;
+----
+id	nn	n1	n2	n3
+1	3	10	20	30
+2	0	-1	-1	-1
+3	2	7	8	-1
+4	3	1	-1	3
+
+statement ok
+DROP TABLE cha.default.arr_ved;
+
+statement ok
+DETACH cha;

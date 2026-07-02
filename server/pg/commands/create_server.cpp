@@ -70,11 +70,10 @@ std::pair<std::vector<std::string>, std::vector<std::string>> SplitOptions(
 void RunAttach(const catalog::ForeignServer& server) {
   auto sql = catalog::BuildForeignServerAttachSql(server);
   if (sql.empty()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("foreign-data wrapper \"", server.GetFdwName(),
-              "\" is not supported"),
-      ERR_HINT("Use clickhouse_fdw or postgres_fdw."));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("foreign-data wrapper \"", server.GetFdwName(),
+                            "\" is not supported"),
+                    ERR_HINT("Use clickhouse_fdw or postgres_fdw."));
   }
   auto conn = DuckDBEngine::Instance().CreateConnection();
   auto result = conn->Query(sql);
@@ -150,12 +149,13 @@ void ReattachServer(ObjectId db_id, std::string_view server_name,
     if (throw_on_error) {
       // Adding/changing a PUBLIC mapping: the new credentials must connect.
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_CONNECTION_EXCEPTION),
-                      ERR_MSG("could not connect foreign server \"", server_name,
-                              "\": ", err));
+                      ERR_MSG("could not connect foreign server \"",
+                              server_name, "\": ", err));
     }
-    // Revert path (e.g. a PUBLIC mapping was dropped): the remaining server-only
-    // credentials do not connect. DETACH so the live attachment matches the
-    // catalog rather than leaving the just-dropped mapping's credentials live.
+    // Revert path (e.g. a PUBLIC mapping was dropped): the remaining
+    // server-only credentials do not connect. DETACH so the live attachment
+    // matches the catalog rather than leaving the just-dropped mapping's
+    // credentials live.
     conn->Query(DetachSql(server_name));
     SDB_WARN(GENERAL, "Detached foreign server \"", server_name,
              "\" after its credentials stopped connecting: ", err);
@@ -238,8 +238,8 @@ void DropForeignServer(ConnectionContext& conn_ctx, std::string_view name,
     SDB_THROW(std::move(r));
   }
 
-  // Cascade: drop the server's user mappings. Otherwise they are orphaned, and a
-  // future server created with the same name would silently inherit the old
+  // Cascade: drop the server's user mappings. Otherwise they are orphaned, and
+  // a future server created with the same name would silently inherit the old
   // PUBLIC mapping's credentials (boot replay / ReattachServer merges by name).
   auto db_id = conn_ctx.GetDatabaseId();
   for (const auto& m :
@@ -321,7 +321,8 @@ void DropUserMapping(ConnectionContext& conn_ctx, std::string_view user,
   const auto name = catalog::MakeUserMappingName(role, server);
 
   auto& catalog = catalog::GetCatalog();
-  auto r = catalog.DropUserMapping(conn_ctx.GetDatabase(), kSchema, name, false);
+  auto r =
+    catalog.DropUserMapping(conn_ctx.GetDatabase(), kSchema, name, false);
   if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
     if (!missing_ok) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),

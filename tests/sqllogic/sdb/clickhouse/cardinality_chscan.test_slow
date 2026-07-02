@@ -1,0 +1,42 @@
+control substitution on
+
+# The scan's cardinality callback reports system.tables.total_rows, so the
+# optimizer sees each remote table's real size -- distinct per table (vedernikoff
+# has 6 rows, widgets has 5), not the ~1-row default a statistics-less scan would
+# give. Visible as the `~N rows` estimate in the EXPLAIN scan box.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=chtest' AS chcard (TYPE clickhouse);
+
+query
+EXPLAIN SELECT id FROM chcard.chtest.vedernikoff;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│      Projections: id      │
+│                           │
+│          ~6 rows          │
+└───────────────────────────┘
+
+query
+EXPLAIN SELECT id FROM chcard.chtest.widgets;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│      Projections: id      │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+statement ok
+DETACH chcard;

@@ -36,6 +36,25 @@ public:
 	string table;
 	//! ClickHouse server-declared column type strings, in column order (for INSERT block building)
 	vector<string> clickhouse_types;
+	//! Parallel to clickhouse_types: true when the type has no DuckDB mapping and the
+	//! column is surfaced as VARCHAR via a remote toString() projection.
+	vector<bool> stringified;
+
+private:
+	//! Approximate row count from system.tables.total_rows, fetched lazily on the first
+	//! scan and cached for the entry's lifetime (clickhouse_clear_cache rebuilds it).
+	//! row_count_known is false when the server reports NULL (non-MergeTree engines).
+	idx_t cached_row_count = 0;
+	bool cached_row_count_known = false;
+	bool row_count_fetched = false;
 };
+
+//! Refuse an UPDATE/DELETE that would mutate rows the statement did not target. A
+//! ClickHouse MergeTree ORDER BY key is a sorting prefix, not a uniqueness constraint,
+//! so `WHERE pk IN (id_list)` can match rows that merely share a key value. Counts the
+//! rows the mutation would touch and throws if that exceeds `affected_count` (the rows
+//! actually selected). `id_list` is the comma-joined rowid list; `op` is "UPDATE"/"DELETE".
+void VerifyRowIdCoverage(ClickHouseConnection &connection, const string &database, const string &table_name,
+                         const string &pk_column, const string &id_list, idx_t affected_count, const char *op);
 
 } // namespace duckdb

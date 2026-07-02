@@ -36,10 +36,6 @@ static const std::string &ResolveAlias(const std::string &input_name) {
 	return it->second;
 }
 
-const std::vector<std::string> &ClickHouseSecrets::ConnectionOptionNames() {
-	return connection_option_names;
-}
-
 SecretType ClickHouseSecrets::CreateType() {
 	SecretType secret_type;
 	secret_type.name = "clickhouse";

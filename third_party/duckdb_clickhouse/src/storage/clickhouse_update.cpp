@@ -11,6 +11,8 @@
 #include <clickhouse/client.h>
 #include <clickhouse/exceptions.h>
 
+#include <unordered_map>
+
 namespace duckdb {
 
 ClickHouseUpdate::ClickHouseUpdate(PhysicalPlan &physical_plan, LogicalOperator &op, TableCatalogEntry &table,
@@ -18,57 +20,6 @@ ClickHouseUpdate::ClickHouseUpdate(PhysicalPlan &physical_plan, LogicalOperator 
                                    string pk_column_p)
     : PhysicalOperator(physical_plan, PhysicalOperatorType::EXTENSION, op.types, 1), table(table),
       columns(std::move(columns_p)), expressions(std::move(expressions_p)), pk_column(std::move(pk_column_p)) {
-}
-
-// Render a DuckDB Value as a ClickHouse SQL literal for use in an ALTER ... UPDATE expression.
-static string RenderClickHouseLiteral(const Value &value) {
-	if (value.IsNull()) {
-		return "NULL";
-	}
-	switch (value.type().id()) {
-	case LogicalTypeId::BOOLEAN:
-		return value.GetValue<bool>() ? "1" : "0";
-	case LogicalTypeId::TINYINT:
-	case LogicalTypeId::SMALLINT:
-	case LogicalTypeId::INTEGER:
-	case LogicalTypeId::BIGINT:
-	case LogicalTypeId::HUGEINT:
-	case LogicalTypeId::UTINYINT:
-	case LogicalTypeId::USMALLINT:
-	case LogicalTypeId::UINTEGER:
-	case LogicalTypeId::UBIGINT:
-	case LogicalTypeId::UHUGEINT:
-	case LogicalTypeId::FLOAT:
-	case LogicalTypeId::DOUBLE:
-	case LogicalTypeId::DECIMAL:
-		return value.ToString();
-	case LogicalTypeId::VARCHAR:
-		return ClickHouseStringLiteral(value.ToString());
-	case LogicalTypeId::BLOB: {
-		// value.ToString() on a BLOB yields a hex-escaped TEXT rendering (\\x00...),
-		// which would be stored literally instead of the raw bytes. Emit the raw
-		// bytes via ClickHouse unhex('...') so arbitrary binary round-trips exactly.
-		auto bytes = value.GetValueUnsafe<string_t>();
-		static const char digits[] = "0123456789ABCDEF";
-		string hex;
-		hex.reserve(bytes.GetSize() * 2);
-		for (idx_t i = 0; i < bytes.GetSize(); i++) {
-			auto b = static_cast<unsigned char>(bytes.GetData()[i]);
-			hex += digits[b >> 4];
-			hex += digits[b & 0x0F];
-		}
-		return "unhex('" + hex + "')";
-	}
-	case LogicalTypeId::DATE:
-	case LogicalTypeId::TIMESTAMP:
-	case LogicalTypeId::TIMESTAMP_SEC:
-	case LogicalTypeId::TIMESTAMP_MS:
-	case LogicalTypeId::TIMESTAMP_NS:
-		return ClickHouseStringLiteral(value.ToString());
-	default:
-		throw NotImplementedException("UPDATE of ClickHouse column with type %s is not supported",
-		                              value.type().ToString());
-	}
 }
 
 //===--------------------------------------------------------------------===//
@@ -115,7 +66,7 @@ SinkResultType ClickHouseUpdate::Sink(ExecutionContext &context, DataChunk &chun
 		auto &binding = expressions[i]->Cast<BoundReferenceExpression>();
 		auto &value_vector = chunk.data[binding.index];
 		for (idx_t r = 0; r < chunk.size(); r++) {
-			gstate.values[i].push_back(RenderClickHouseLiteral(value_vector.GetValue(r)));
+			gstate.values[i].push_back(ClickHouseValueLiteral(value_vector.GetValue(r)));
 		}
 	}
 	for (idx_t r = 0; r < chunk.size(); r++) {
@@ -135,26 +86,51 @@ SinkFinalizeType ClickHouseUpdate::Finalize(Pipeline &pipeline, Event &event, Cl
 		return SinkFinalizeType::READY;
 	}
 
-	string pk = ClickHouseQuoteIdentifier(pk_column);
-	string id_list;
+	// The rowid key is a MergeTree sorting prefix, not a uniqueness constraint, so the
+	// same id can appear for several matched rows. `CASE pk WHEN id THEN ...` can only
+	// express ONE value per id (the first WHEN wins): dedup occurrences whose rendered
+	// values agree, refuse when they differ -- per-row identities are inexpressible.
+	unordered_map<int64_t, idx_t> first_occurrence;
+	vector<idx_t> rows;
 	for (idx_t r = 0; r < gstate.ids.size(); r++) {
-		if (r > 0) {
-			id_list += ",";
+		auto it = first_occurrence.find(gstate.ids[r]);
+		if (it == first_occurrence.end()) {
+			first_occurrence.emplace(gstate.ids[r], r);
+			rows.push_back(r);
+			continue;
 		}
-		id_list += to_string(gstate.ids[r]);
+		for (idx_t c = 0; c < gstate.column_names.size(); c++) {
+			if (gstate.values[c][r] != gstate.values[c][it->second]) {
+				throw InvalidInputException(
+				    "Cannot UPDATE ClickHouse table \"%s\": the key \"%s\" used as the row identifier is not "
+				    "unique, and rows sharing key value %lld would receive different new values",
+				    gstate.table.table, pk_column, static_cast<long long>(gstate.ids[r]));
+			}
+		}
 	}
 
+	string pk = ClickHouseQuoteIdentifier(pk_column);
+	string id_list;
+	for (idx_t i = 0; i < rows.size(); i++) {
+		if (i > 0) {
+			id_list += ",";
+		}
+		id_list += to_string(gstate.ids[rows[i]]);
+	}
+
+	// multiIf rather than CASE: ClickHouse lowers a `CASE pk WHEN ...` chain to
+	// transform(), which rejects wide types (e.g. Int128); multiIf takes any type.
 	string assignments;
 	for (idx_t c = 0; c < gstate.column_names.size(); c++) {
 		if (c > 0) {
 			assignments += ", ";
 		}
 		string col = ClickHouseQuoteIdentifier(gstate.column_names[c]);
-		assignments += col + " = CASE " + pk;
-		for (idx_t r = 0; r < gstate.ids.size(); r++) {
-			assignments += " WHEN " + to_string(gstate.ids[r]) + " THEN " + gstate.values[c][r];
+		assignments += col + " = multiIf(";
+		for (auto r : rows) {
+			assignments += pk + " = " + to_string(gstate.ids[r]) + ", " + gstate.values[c][r] + ", ";
 		}
-		assignments += " ELSE " + col + " END";
+		assignments += col + ")";
 	}
 
 	string sql = "ALTER TABLE " + ClickHouseQuoteIdentifier(gstate.table.database) + "." +
@@ -163,7 +139,11 @@ SinkFinalizeType ClickHouseUpdate::Finalize(Pipeline &pipeline, Event &event, Cl
 
 	auto &transaction = ClickHouseTransaction::Get(context, gstate.table.catalog);
 	auto &connection = transaction.GetConnection();
+	// Guard against mutating rows that merely share a (non-unique) key value.
+	VerifyRowIdCoverage(connection, gstate.table.database, gstate.table.table, pk_column, id_list, gstate.ids.size(),
+	                    "UPDATE");
 	try {
+		ClickHouseConnection::LogQuery(sql);
 		connection.GetClient().Execute(sql);
 	} catch (const clickhouse::Error &e) {
 		throw IOException("ClickHouse error during UPDATE: %s", e.what());

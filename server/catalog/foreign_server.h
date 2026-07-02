@@ -65,18 +65,18 @@ class ForeignServer : public Object {
 
 class UserMapping;
 
-// Builds `ATTACH '<connstr>' AS "<name>" (TYPE <storage>)` for a foreign server,
-// mapping the FDW name to the connector storage type (clickhouse_fdw ->
+// Builds `ATTACH '<connstr>' AS "<name>" (TYPE <storage>)` for a foreign
+// server, mapping the FDW name to the connector storage type (clickhouse_fdw ->
 // clickhouse, postgres_fdw -> postgres) and the option keys to that dialect
 // (database <-> dbname). Returns "" if the FDW is not a supported connector.
-// If a `public_mapping` is supplied (a PUBLIC USER MAPPING for this server), its
-// options override the server's (e.g. user/password). Shared by create-time
-// attach and boot replay so both stay in sync. `alias` overrides the ATTACH name
-// (defaults to the server name); used to probe-attach to a throwaway name when
-// validating new credentials before detaching the live attachment.
-std::string BuildForeignServerAttachSql(const ForeignServer& server,
-                                        const UserMapping* public_mapping = nullptr,
-                                        std::string_view alias = {});
+// If a `public_mapping` is supplied (a PUBLIC USER MAPPING for this server),
+// its options override the server's (e.g. user/password). Shared by create-time
+// attach and boot replay so both stay in sync. `alias` overrides the ATTACH
+// name (defaults to the server name); used to probe-attach to a throwaway name
+// when validating new credentials before detaching the live attachment.
+std::string BuildForeignServerAttachSql(
+  const ForeignServer& server, const UserMapping* public_mapping = nullptr,
+  std::string_view alias = {});
 
 // Quote an SQL identifier with double quotes, doubling any embedded quote.
 std::string QuoteSqlIdentifier(std::string_view name);

@@ -77,6 +77,26 @@ INSERT INTO chtest.vedernikoff (id, val) VALUES
     (5, 'vedernikoff kostya'),
     (6, 'anchin reads manga');
 
+-- LowCardinality(Nullable(<numeric>)) with a fully-NULL row, for the read-path
+-- regression test (the numeric ItemView decode branches must null-check). A
+-- numeric LowCardinality is a "suspicious" type to CREATE, so enable it here; the
+-- connector only READS these columns, which needs no special setting.
+SET allow_suspicious_low_cardinality_types = 1;
+
+CREATE TABLE chtest.lc_nullable
+(
+    id  Int64,
+    n32 LowCardinality(Nullable(UInt32)),
+    n64 LowCardinality(Nullable(Int64)),
+    f64 LowCardinality(Nullable(Float64))
+)
+ENGINE = MergeTree
+ORDER BY id;
+
+INSERT INTO chtest.lc_nullable (id, n32, n64, f64) VALUES
+    (1, 42, -7, 2.5),
+    (2, NULL, NULL, NULL);
+
 -- A user whose password contains a SPACE, for the FDW connection-string
 -- escaping + credential-redaction tests (the default user, opened with no
 -- password by CLICKHOUSE_SKIP_USER_SETUP, rejects a non-empty password).

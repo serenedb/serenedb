@@ -7,6 +7,9 @@
 #include "duckdb/common/types/uuid.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/common/types/vector.hpp"
+#include "duckdb/common/vector/list_vector.hpp"
+#include "duckdb/common/vector/struct_vector.hpp"
+#include "duckdb/common/vector/map_vector.hpp"
 
 #include <clickhouse/columns/array.h>
 #include <clickhouse/columns/bool.h>
@@ -17,6 +20,7 @@
 #include <clickhouse/columns/ip4.h>
 #include <clickhouse/columns/ip6.h>
 #include <clickhouse/columns/lowcardinality.h>
+#include <clickhouse/columns/json.h>
 #include <clickhouse/columns/map.h>
 #include <clickhouse/columns/nullable.h>
 #include <clickhouse/columns/numeric.h>
@@ -69,6 +73,12 @@ static std::string RenderDecimalString(clickhouse::Int128 unscaled, size_t scale
     result.insert(result.begin(), '-');
   }
   return result;
+}
+
+// ClickHouse DateTime64(p) stores an integer tick count at 10^-p seconds;
+// DuckDB TIMESTAMP is microseconds (10^-6). Shared by the scalar and bulk decode.
+static int64_t DateTime64TicksToMicros(int64_t ticks, int precision) {
+  return (precision <= 6) ? ticks * Pow10(6 - precision) : ticks / Pow10(precision - 6);
 }
 
 static hugeint_t ClickHouseInt128ToHugeint(const clickhouse::Int128 &value) {
@@ -173,6 +183,17 @@ LogicalType ClickHouseToLogicalType(const clickhouse::Type &type) {
 }
 
 LogicalType ClickHouseTypeStringToLogicalType(const std::string &type_str) {
+  // LowCardinality is a storage-only wrapper that maps to the same LogicalType as its
+  // inner type, so strip it before constructing a column. CreateColumnByType on a
+  // top-level LowCardinality(Nullable(<numeric>)) throws while building its
+  // null-placeholder dictionary (GetNullItemForDictionary constructs a zero-byte
+  // numeric ItemView) -- a clickhouse-cpp quirk -- and would make every column of a
+  // table that has such a column unreadable at bind time.
+  static const std::string lc_prefix = "LowCardinality(";
+  if (type_str.rfind(lc_prefix, 0) == 0 && !type_str.empty() && type_str.back() == ')') {
+    return ClickHouseTypeStringToLogicalType(
+        type_str.substr(lc_prefix.size(), type_str.size() - lc_prefix.size() - 1));
+  }
   auto column = clickhouse::CreateColumnByType(type_str);
   if (!column) {
     throw NotImplementedException("Unsupported ClickHouse type: %s", type_str);
@@ -231,13 +252,7 @@ static Value ClickHouseScalarValueAt(const clickhouse::Column &col, idx_t row) {
     auto datetime = col.As<clickhouse::ColumnDateTime64>();
     auto ticks = datetime->At(row);
     auto precision = static_cast<int>(datetime->GetPrecision());
-    int64_t micros;
-    if (precision <= 6) {
-      micros = ticks * Pow10(6 - precision);
-    } else {
-      micros = ticks / Pow10(precision - 6);
-    }
-    return Value::TIMESTAMP(Timestamp::FromEpochMicroSeconds(micros));
+    return Value::TIMESTAMP(Timestamp::FromEpochMicroSeconds(DateTime64TicksToMicros(ticks, precision)));
   }
   case clickhouse::Type::Decimal:
   case clickhouse::Type::Decimal32:
@@ -257,10 +272,27 @@ static Value ClickHouseScalarValueAt(const clickhouse::Column &col, idx_t row) {
     return Value::DECIMAL(ClickHouseInt128ToHugeint(unscaled), static_cast<uint8_t>(precision),
                           static_cast<uint8_t>(scale));
   }
-  case clickhouse::Type::Enum8:
-    return Value(std::string(col.As<clickhouse::ColumnEnum8>()->NameAt(row)));
-  case clickhouse::Type::Enum16:
-    return Value(std::string(col.As<clickhouse::ColumnEnum16>()->NameAt(row)));
+  case clickhouse::Type::Enum8: {
+    // NameAt() does std::map::at on the ordinal -> throws (aborting the whole scan) if
+    // the stored ordinal is outside the current Enum definition (e.g. after an ALTER).
+    // Read the raw ordinal and only resolve the name when it is actually defined.
+    auto enum_col = col.As<clickhouse::ColumnEnum8>();
+    int16_t ordinal = enum_col->At(row);
+    auto enum_type = col.Type()->As<clickhouse::EnumType>();
+    if (enum_type && enum_type->HasEnumValue(ordinal)) {
+      return Value(std::string(enum_type->GetEnumName(ordinal)));
+    }
+    return Value(std::to_string(ordinal));
+  }
+  case clickhouse::Type::Enum16: {
+    auto enum_col = col.As<clickhouse::ColumnEnum16>();
+    int16_t ordinal = enum_col->At(row);
+    auto enum_type = col.Type()->As<clickhouse::EnumType>();
+    if (enum_type && enum_type->HasEnumValue(ordinal)) {
+      return Value(std::string(enum_type->GetEnumName(ordinal)));
+    }
+    return Value(std::to_string(ordinal));
+  }
   case clickhouse::Type::UUID: {
     auto uuid = col.As<clickhouse::ColumnUUID>()->At(row);
     return Value::UUID(hugeint_t(static_cast<int64_t>(uuid.first ^ (static_cast<uint64_t>(1) << 63)), uuid.second));
@@ -270,7 +302,9 @@ static Value ClickHouseScalarValueAt(const clickhouse::Column &col, idx_t row) {
   case clickhouse::Type::IPv6:
     return Value(col.As<clickhouse::ColumnIPv6>()->AsString(row));
   case clickhouse::Type::JSON:
-    return Value(std::string(col.As<clickhouse::ColumnString>()->At(row)));
+    // ColumnJSON is a sibling of ColumnString (both derive from Column), not a
+    // subclass, so As<ColumnString>() would return nullptr and ->At() segfault.
+    return Value(std::string(col.As<clickhouse::ColumnJSON>()->At(row)));
   case clickhouse::Type::Void:
     return Value();
   default:
@@ -283,52 +317,65 @@ static Value ClickHouseColumnValueAt(const clickhouse::Column &col, idx_t row) {
   case clickhouse::Type::Nullable: {
     auto nullable = col.As<clickhouse::ColumnNullable>();
     auto nested = nullable->Nested();
-    auto child_type = ClickHouseToLogicalType(*nested->Type());
     if (nullable->IsNull(row)) {
-      return Value(child_type);
+      return Value(ClickHouseToLogicalType(*nested->Type()));
     }
     return ClickHouseColumnValueAt(*nested, row);
   }
   case clickhouse::Type::LowCardinality: {
     auto lc = col.As<clickhouse::ColumnLowCardinality>();
-    auto item = lc->GetItem(row);
     auto nested_type = lc->GetNestedType();
     bool nested_nullable = nested_type->GetCode() == clickhouse::Type::Nullable;
     if (nested_nullable) {
       nested_type = nested_type->As<clickhouse::NullableType>()->GetNestedType();
     }
-    switch (nested_type->GetCode()) {
-    case clickhouse::Type::String:
-    case clickhouse::Type::FixedString: {
-      auto child_type = ClickHouseToLogicalType(*nested_type);
-      auto view = item.AsBinaryData();
-      if (nested_nullable && view.data() == nullptr) {
-        return Value(child_type);
+    // clickhouse-cpp materializes the NULL placeholder of a LowCardinality(Nullable(T))
+    // as a zero-byte numeric ItemView, so GetItem/get<T> throws in the ItemView
+    // validator. That only ever happens for a NULL row, so decode such a throw on a
+    // nullable LC as SQL NULL (a Void ItemView is the other, non-throwing, null form).
+    try {
+      auto item = lc->GetItem(row);
+      if (nested_nullable && item.type == clickhouse::Type::Void) {
+        return Value(ClickHouseToLogicalType(*nested_type));
       }
-      return Value(std::string(view.data(), view.size()));
-    }
-    case clickhouse::Type::UInt8:
-      return Value::UTINYINT(item.get<uint8_t>());
-    case clickhouse::Type::UInt16:
-      return Value::USMALLINT(item.get<uint16_t>());
-    case clickhouse::Type::UInt32:
-      return Value::UINTEGER(item.get<uint32_t>());
-    case clickhouse::Type::UInt64:
-      return Value::UBIGINT(item.get<uint64_t>());
-    case clickhouse::Type::Int8:
-      return Value::TINYINT(item.get<int8_t>());
-    case clickhouse::Type::Int16:
-      return Value::SMALLINT(item.get<int16_t>());
-    case clickhouse::Type::Int32:
-      return Value::INTEGER(item.get<int32_t>());
-    case clickhouse::Type::Int64:
-      return Value::BIGINT(item.get<int64_t>());
-    case clickhouse::Type::Float32:
-      return Value::FLOAT(item.get<float>());
-    case clickhouse::Type::Float64:
-      return Value::DOUBLE(item.get<double>());
-    default:
-      throw NotImplementedException("Unsupported ClickHouse LowCardinality nested type: %s", nested_type->GetName());
+      switch (nested_type->GetCode()) {
+      case clickhouse::Type::String:
+      case clickhouse::Type::FixedString: {
+        auto child_type = ClickHouseToLogicalType(*nested_type);
+        auto view = item.AsBinaryData();
+        if (nested_nullable && view.data() == nullptr) {
+          return Value(child_type);
+        }
+        return Value(std::string(view.data(), view.size()));
+      }
+      case clickhouse::Type::UInt8:
+        return Value::UTINYINT(item.get<uint8_t>());
+      case clickhouse::Type::UInt16:
+        return Value::USMALLINT(item.get<uint16_t>());
+      case clickhouse::Type::UInt32:
+        return Value::UINTEGER(item.get<uint32_t>());
+      case clickhouse::Type::UInt64:
+        return Value::UBIGINT(item.get<uint64_t>());
+      case clickhouse::Type::Int8:
+        return Value::TINYINT(item.get<int8_t>());
+      case clickhouse::Type::Int16:
+        return Value::SMALLINT(item.get<int16_t>());
+      case clickhouse::Type::Int32:
+        return Value::INTEGER(item.get<int32_t>());
+      case clickhouse::Type::Int64:
+        return Value::BIGINT(item.get<int64_t>());
+      case clickhouse::Type::Float32:
+        return Value::FLOAT(item.get<float>());
+      case clickhouse::Type::Float64:
+        return Value::DOUBLE(item.get<double>());
+      default:
+        throw NotImplementedException("Unsupported ClickHouse LowCardinality nested type: %s", nested_type->GetName());
+      }
+    } catch (const clickhouse::Error &) {
+      if (nested_nullable) {
+        return Value(ClickHouseToLogicalType(*nested_type));
+      }
+      throw;
     }
   }
   case clickhouse::Type::Array: {
@@ -397,9 +444,8 @@ void ClickHouseColumnToVector(const clickhouse::Column &col, Vector &out, idx_t 
   case clickhouse::Type::Nullable: {
     auto nullable = col.As<clickhouse::ColumnNullable>();
     ClickHouseColumnToVector(*nullable->Nested(), out, src_offset, count);
-    auto nulls = nullable->Nulls()->As<clickhouse::ColumnUInt8>();
     for (idx_t row = 0; row < count; row++) {
-      if (nulls->At(src_offset + row) != 0) {
+      if (nullable->IsNull(src_offset + row)) {
         FlatVector::SetNull(out, row, true);
       }
     }
@@ -476,8 +522,7 @@ void ClickHouseColumnToVector(const clickhouse::Column &col, Vector &out, idx_t 
     auto data = FlatVector::GetDataMutable<timestamp_t>(out);
     for (idx_t row = 0; row < count; row++) {
       auto ticks = typed->At(src_offset + row);
-      int64_t micros = (precision <= 6) ? ticks * Pow10(6 - precision) : ticks / Pow10(precision - 6);
-      data[row] = Timestamp::FromEpochMicroSeconds(micros);
+      data[row] = Timestamp::FromEpochMicroSeconds(DateTime64TicksToMicros(ticks, precision));
     }
     return;
   }
@@ -521,17 +566,61 @@ std::string ClickHouseStringLiteral(const std::string &value) {
   return result;
 }
 
-std::string ClickHouseEscapeSingleQuotes(const std::string &value) {
-  std::string result;
-  result.reserve(value.size());
-  for (auto c : value) {
-    if (c == '\'') {
-      result += "''";
-    } else {
-      result += c;
-    }
+std::string ClickHouseBlobLiteral(const string_t &bytes) {
+  // Raw bytes as ClickHouse unhex('HEX'); val.ToString() would hex-escape a BLOB
+  // as TEXT and never match. Shared by filter pushdown and UPDATE.
+  static const char digits[] = "0123456789ABCDEF";
+  std::string hex;
+  hex.reserve(bytes.GetSize() * 2);
+  for (idx_t i = 0; i < bytes.GetSize(); i++) {
+    auto b = static_cast<unsigned char>(bytes.GetData()[i]);
+    hex += digits[b >> 4];
+    hex += digits[b & 0x0F];
   }
-  return result;
+  return "unhex('" + hex + "')";
+}
+
+std::string ClickHouseValueLiteral(const Value &value) {
+  if (value.IsNull()) {
+    return "NULL";
+  }
+  switch (value.type().id()) {
+  case LogicalTypeId::BOOLEAN:
+    return value.GetValue<bool>() ? "1" : "0";
+  case LogicalTypeId::TINYINT:
+  case LogicalTypeId::SMALLINT:
+  case LogicalTypeId::INTEGER:
+  case LogicalTypeId::BIGINT:
+  case LogicalTypeId::UTINYINT:
+  case LogicalTypeId::USMALLINT:
+  case LogicalTypeId::UINTEGER:
+  case LogicalTypeId::UBIGINT:
+  case LogicalTypeId::FLOAT:
+  case LogicalTypeId::DOUBLE:
+    return value.ToString();
+  case LogicalTypeId::HUGEINT:
+    // ClickHouse parses a bare 128-bit integer literal as Float64 (precision loss
+    // above 2^53); force exact integer parsing.
+    return "toInt128('" + value.ToString() + "')";
+  case LogicalTypeId::UHUGEINT:
+    return "toUInt128('" + value.ToString() + "')";
+  case LogicalTypeId::DECIMAL:
+    // A bare decimal literal is parsed as Float64 -> wrong boundary values; render an
+    // exact Decimal carrying the value's scale.
+    return "toDecimal128('" + value.ToString() + "', " + std::to_string(DecimalType::GetScale(value.type())) + ")";
+  case LogicalTypeId::BLOB:
+    return ClickHouseBlobLiteral(value.GetValueUnsafe<string_t>());
+  case LogicalTypeId::LIST:
+  case LogicalTypeId::ARRAY:
+  case LogicalTypeId::STRUCT:
+  case LogicalTypeId::MAP:
+    // DuckDB's nested-value text is not valid ClickHouse literal syntax.
+    throw NotImplementedException("Cannot render a %s value as a ClickHouse literal", value.type().ToString());
+  default:
+    // VARCHAR, DATE/TIMESTAMP, UUID, ENUM labels, ...: a quoted string literal that
+    // ClickHouse casts to the column / comparison type.
+    return ClickHouseStringLiteral(value.ToString());
+  }
 }
 
 std::string LogicalTypeToClickHouseType(const LogicalType &type, bool nullable) {
@@ -602,6 +691,64 @@ std::string LogicalTypeToClickHouseType(const LogicalType &type, bool nullable) 
     base = "Decimal(" + std::to_string(DecimalType::GetWidth(type)) + ", " +
            std::to_string(DecimalType::GetScale(type)) + ")";
     break;
+  case LogicalTypeId::ENUM: {
+    // ClickHouse Enum8 values are int8 (fits <=127 positive ordinals), Enum16 are
+    // int16. Members get 1-based ordinals; INSERT and read map by NAME (see the
+    // Enum cases in AppendScalarColumn / ClickHouseColumnValueAt), so the numeric
+    // ordinals are internal and need only be distinct + in range.
+    auto size = EnumType::GetSize(type);
+    // Enum8 fits 127 one-based ordinals; anything larger renders as Enum16. A member
+    // count beyond Int16 is delegated to ClickHouse, which rejects the DDL loudly on
+    // the first out-of-range ordinal.
+    base = size <= 127 ? "Enum8(" : "Enum16(";
+    for (idx_t i = 0; i < size; i++) {
+      if (i > 0) {
+        base += ", ";
+      }
+      base += ClickHouseStringLiteral(EnumType::GetString(type, i).GetString()) + " = " + std::to_string(i + 1);
+    }
+    base += ")";
+    break;
+  }
+  case LogicalTypeId::LIST: {
+    // ClickHouse forbids Nullable(Array(...)), so the array is never wrapped
+    // (returned directly, bypassing the Nullable wrap below). Elements can be
+    // NULL at runtime, so a scalar element type is made Nullable; nested element
+    // types (Array/Map/Tuple) cannot be, and are left bare.
+    auto &child = ListType::GetChildType(type);
+    bool child_nullable = child.id() != LogicalTypeId::LIST && child.id() != LogicalTypeId::STRUCT &&
+                          child.id() != LogicalTypeId::MAP;
+    return "Array(" + LogicalTypeToClickHouseType(child, child_nullable) + ")";
+  }
+  case LogicalTypeId::STRUCT: {
+    // DuckDB STRUCT -> ClickHouse named Tuple. Like arrays, ClickHouse forbids
+    // Nullable(Tuple(...)), so the tuple is returned directly; scalar fields are
+    // made Nullable (nested Array/Struct/Map fields cannot be).
+    std::string s = "Tuple(";
+    auto field_count = StructType::GetChildCount(type);
+    for (idx_t i = 0; i < field_count; i++) {
+      if (i > 0) {
+        s += ", ";
+      }
+      auto &field = StructType::GetChildType(type, i);
+      bool field_nullable = field.id() != LogicalTypeId::LIST && field.id() != LogicalTypeId::STRUCT &&
+                            field.id() != LogicalTypeId::MAP;
+      s += ClickHouseQuoteIdentifier(StructType::GetChildName(type, i)) + " " +
+           LogicalTypeToClickHouseType(field, field_nullable);
+    }
+    s += ")";
+    return s;
+  }
+  case LogicalTypeId::MAP: {
+    // DuckDB MAP -> ClickHouse Map(K, V). ClickHouse forbids Nullable(Map) and a
+    // Nullable Map key, so neither is wrapped; the value may be Nullable when scalar.
+    auto &key = MapType::KeyType(type);
+    auto &value = MapType::ValueType(type);
+    bool value_nullable = value.id() != LogicalTypeId::LIST && value.id() != LogicalTypeId::STRUCT &&
+                          value.id() != LogicalTypeId::MAP;
+    return "Map(" + LogicalTypeToClickHouseType(key, false) + ", " +
+           LogicalTypeToClickHouseType(value, value_nullable) + ")";
+  }
   default:
     throw NotImplementedException("Cannot map DuckDB type %s to a ClickHouse type", type.ToString());
   }
@@ -620,6 +767,11 @@ static void AppendNumericColumn(const clickhouse::ColumnRef &col, Vector &vec, i
     typed->Append(data[row]);
   }
 }
+
+// Append `count` rows into an existing ClickHouse column, transparently handling a
+// Nullable wrapper (defined below ClickHouseColumnFromVector). Forward-declared here
+// because the Tuple/Map cases of AppendScalarColumn recurse into it per field.
+static void AppendColumnFromVector(const clickhouse::ColumnRef &col, Vector &vec, idx_t count);
 
 // Append `count` rows of a flattened DuckDB vector into a (non-Nullable) ClickHouse column.
 // Null rows are written as a type default; the surrounding Nullable wrapper records the flag.
@@ -760,12 +912,14 @@ static void AppendScalarColumn(const clickhouse::ColumnRef &col, Vector &vec, id
         typed->Append(0);
         continue;
       }
-      int64_t micros = data[row].value;
-      if (micros == INT64_MAX || micros == INT64_MIN) {
+      if (!data[row].IsFinite()) {
+        // DuckDB's -infinity sentinel is -INT64_MAX, not INT64_MIN, so an explicit
+        // INT64_MIN check misses it; IsFinite() rejects both infinities correctly.
         throw InvalidInputException(
             "Infinite TIMESTAMP is not representable in a ClickHouse "
             "DateTime64 column");
       }
+      int64_t micros = data[row].value;
       int64_t ticks;
       if (precision <= 6) {
         ticks = micros / Pow10(6 - precision);
@@ -816,17 +970,96 @@ static void AppendScalarColumn(const clickhouse::ColumnRef &col, Vector &vec, id
       throw NotImplementedException("Unsupported DuckDB decimal storage for ClickHouse INSERT");
     }
   }
+  case clickhouse::Type::Enum8: {
+    // The connector exposes ClickHouse Enum columns to DuckDB as VARCHAR, so the
+    // input here is the label string; clickhouse-cpp's ColumnEnum::Append(name)
+    // resolves it against the column's enum definition. Null rows append a raw
+    // placeholder value (unchecked; the surrounding Nullable wrapper flags them).
+    auto typed = col->As<clickhouse::ColumnEnum8>();
+    auto data = FlatVector::GetData<string_t>(vec);
+    for (idx_t row = 0; row < count; row++) {
+      if (validity.RowIsValid(row)) {
+        typed->Append(std::string(data[row].GetData(), data[row].GetSize()));
+      } else {
+        typed->Append(static_cast<int8_t>(0), /*checkValue=*/false);
+      }
+    }
+    return;
+  }
+  case clickhouse::Type::Enum16: {
+    auto typed = col->As<clickhouse::ColumnEnum16>();
+    auto data = FlatVector::GetData<string_t>(vec);
+    for (idx_t row = 0; row < count; row++) {
+      if (validity.RowIsValid(row)) {
+        typed->Append(std::string(data[row].GetData(), data[row].GetSize()));
+      } else {
+        typed->Append(static_cast<int16_t>(0), /*checkValue=*/false);
+      }
+    }
+    return;
+  }
+  case clickhouse::Type::Array: {
+    // vec is a flattened LIST vector. Build a ClickHouse sub-column for each
+    // row's slice of the child vector and append it as one array element. The
+    // element type string comes from the array's own (empty) data column, so
+    // nested and Nullable element types recurse through ClickHouseColumnFromVector
+    // unchanged.
+    auto array_col = col->As<clickhouse::ColumnArray>();
+    auto item_type_name = array_col->GetData()->Type()->GetName();
+    auto list_entries = FlatVector::GetData<list_entry_t>(vec);
+    auto &child_vec = ListVector::GetChild(vec);
+    for (idx_t row = 0; row < count; row++) {
+      auto &entry = list_entries[row];
+      Vector slice(child_vec, entry.offset, entry.offset + entry.length);
+      auto element_column = ClickHouseColumnFromVector(item_type_name, slice, entry.length);
+      array_col->AppendAsColumn(element_column);
+    }
+    return;
+  }
+  case clickhouse::Type::Tuple: {
+    // DuckDB STRUCT -> ClickHouse Tuple: append each struct field into the tuple's
+    // corresponding child column (fields may themselves be Nullable/nested).
+    auto tuple_col = col->As<clickhouse::ColumnTuple>();
+    auto &entries = StructVector::GetEntries(vec);
+    for (idx_t f = 0; f < tuple_col->TupleSize(); f++) {
+      AppendColumnFromVector(tuple_col->At(f), entries[f], count);
+    }
+    return;
+  }
+  case clickhouse::Type::Map: {
+    // DuckDB MAP (a LIST of key/value pairs) -> ClickHouse Map(K,V), which is
+    // physically Array(Tuple(K,V)). Build that array one map-row at a time from
+    // the key/value child vectors, then wrap it in a ColumnMap and append.
+    auto map_type = col->Type()->As<clickhouse::MapType>();
+    std::string tuple_type =
+        "Tuple(" + map_type->GetKeyType()->GetName() + ", " + map_type->GetValueType()->GetName() + ")";
+    auto array_col = clickhouse::CreateColumnByType("Array(" + tuple_type + ")");
+    // Parse the tuple type string once; per-row sub-columns are cheap empty clones.
+    auto tuple_prototype = clickhouse::CreateColumnByType(tuple_type);
+    auto list_entries = FlatVector::GetData<list_entry_t>(vec);
+    auto &keys = MapVector::GetKeys(vec);
+    auto &values = MapVector::GetValues(vec);
+    for (idx_t row = 0; row < count; row++) {
+      auto &entry = list_entries[row];
+      Vector key_slice(keys, entry.offset, entry.offset + entry.length);
+      Vector value_slice(values, entry.offset, entry.offset + entry.length);
+      auto tuple_sub = tuple_prototype->CloneEmpty();
+      auto tuple_typed = tuple_sub->As<clickhouse::ColumnTuple>();
+      AppendColumnFromVector(tuple_typed->At(0), key_slice, entry.length);
+      AppendColumnFromVector(tuple_typed->At(1), value_slice, entry.length);
+      array_col->As<clickhouse::ColumnArray>()->AppendAsColumn(tuple_sub);
+    }
+    auto map_batch = std::make_shared<clickhouse::ColumnMap>(array_col);
+    col->As<clickhouse::ColumnMap>()->Append(map_batch);
+    return;
+  }
   default:
     throw NotImplementedException("INSERT into ClickHouse column of type %s is not yet supported",
                                   col->Type()->GetName());
   }
 }
 
-clickhouse::ColumnRef ClickHouseColumnFromVector(const std::string &ch_type, Vector &vec, idx_t count) {
-  auto col = clickhouse::CreateColumnByType(ch_type);
-  if (!col) {
-    throw NotImplementedException("Unsupported ClickHouse column type for INSERT: %s", ch_type);
-  }
+static void AppendColumnFromVector(const clickhouse::ColumnRef &col, Vector &vec, idx_t count) {
   vec.Flatten(count);
   col->Reserve(count);
   if (col->Type()->GetCode() == clickhouse::Type::Nullable) {
@@ -836,7 +1069,7 @@ clickhouse::ColumnRef ClickHouseColumnFromVector(const std::string &ch_type, Vec
     for (idx_t row = 0; row < count; row++) {
       nullable->Append(!validity.RowIsValid(row));
     }
-    return col;
+    return;
   }
   auto &validity = FlatVector::Validity(vec);
   if (!validity.AllValid()) {
@@ -844,6 +1077,14 @@ clickhouse::ColumnRef ClickHouseColumnFromVector(const std::string &ch_type, Vec
                                 col->Type()->GetName());
   }
   AppendScalarColumn(col, vec, count);
+}
+
+clickhouse::ColumnRef ClickHouseColumnFromVector(const std::string &ch_type, Vector &vec, idx_t count) {
+  auto col = clickhouse::CreateColumnByType(ch_type);
+  if (!col) {
+    throw NotImplementedException("Unsupported ClickHouse column type for INSERT: %s", ch_type);
+  }
+  AppendColumnFromVector(col, vec, count);
   return col;
 }
 

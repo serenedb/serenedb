@@ -27,7 +27,6 @@ public:
 	~ClickHouseCatalog();
 
 	ClickHouseConnectionParams params;
-	AccessMode access_mode;
 
 public:
 	void Initialize(bool load_builtin) override;
@@ -64,10 +63,22 @@ public:
 	bool InMemory() override;
 	string GetDBPath() override;
 
+	//! Lease a connection: reuse an idle pooled one (same params) if available and the
+	//! connection cache is enabled, otherwise open a fresh connection.
 	ClickHouseConnection OpenConnection();
+	//! Return a connection to the idle pool for reuse. Pass ONLY a connection left in a
+	//! clean state -- a fully-drained scan or a committed statement. A connection that
+	//! errored or was abandoned mid-stream must be dropped (let it destruct), never
+	//! returned here, or it would poison the next lease.
+	void ReturnConnection(ClickHouseConnection connection);
 	const ClickHouseConnectionParams &GetConnectionParams() const {
 		return params;
 	}
+
+	//! Drop all cached schema/table metadata so the next lookup re-reads it from
+	//! the server (picks up remote schema drift). Retires entries rather than
+	//! freeing them, keeping any concurrently-bound raw pointers valid.
+	void ClearCache();
 
 	CatalogLookupBehavior CatalogTypeLookupRule(CatalogType type) const override {
 		switch (type) {
@@ -90,6 +101,13 @@ private:
 	// lifetime, so a concurrently-bound statement holding a raw pointer into a
 	// schema (and its table/retired_tables entries) never dangles.
 	vector<unique_ptr<ClickHouseSchemaEntry>> retired_schemas;
+
+	// Idle connections kept for reuse across transactions/scans (all share this
+	// catalog's params). Guarded by connection_pool_lock; capped at
+	// MAX_POOLED_CONNECTIONS (excess returns are dropped).
+	static constexpr idx_t MAX_POOLED_CONNECTIONS = 8;
+	std::mutex connection_pool_lock;
+	vector<ClickHouseConnection> idle_connections;
 };
 
 } // namespace duckdb

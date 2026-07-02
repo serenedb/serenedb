@@ -43,17 +43,17 @@ namespace {
 ForeignServer MakeServer(std::string_view name, std::string fdw,
                          std::vector<std::string> keys,
                          std::vector<std::string> vals) {
-  return ForeignServer{ObjectId{}, ObjectId{}, name, std::move(fdw),
-                       std::move(keys), std::move(vals)};
+  return ForeignServer{ObjectId{},     ObjectId{},      name,
+                       std::move(fdw), std::move(keys), std::move(vals)};
 }
 
 // postgres dialect: `database` is renamed to `dbname`, and a password with a
 // space is single-quoted by QuoteConnstrValue then its quotes doubled by the
 // outer QuoteLiteral. Locks the whole emission exactly.
 TEST(ForeignServerAttachSql, PostgresRenamesDbnameAndQuotesSpacedValue) {
-  auto server = MakeServer(
-    "vedernikoff_srv", "postgres_fdw", {"host", "port", "database", "password"},
-    {"db.internal", "5432", "postgres", "pudge kostya"});
+  auto server = MakeServer("vedernikoff_srv", "postgres_fdw",
+                           {"host", "port", "database", "password"},
+                           {"db.internal", "5432", "postgres", "pudge kostya"});
 
   EXPECT_EQ(
     BuildForeignServerAttachSql(server),
@@ -63,9 +63,9 @@ TEST(ForeignServerAttachSql, PostgresRenamesDbnameAndQuotesSpacedValue) {
 
 // clickhouse dialect: the rename runs the other way (`dbname` -> `database`).
 TEST(ForeignServerAttachSql, ClickHouseRenamesDatabase) {
-  auto server = MakeServer("ch_vedernikoff_srv", "clickhouse_fdw",
-                           {"host", "dbname", "user"},
-                           {"ch.internal", "chtest", "pudge"});
+  auto server =
+    MakeServer("ch_vedernikoff_srv", "clickhouse_fdw",
+               {"host", "dbname", "user"}, {"ch.internal", "chtest", "pudge"});
 
   EXPECT_EQ(BuildForeignServerAttachSql(server),
             "ATTACH 'host=ch.internal database=chtest user=pudge' AS "
@@ -74,24 +74,24 @@ TEST(ForeignServerAttachSql, ClickHouseRenamesDatabase) {
 
 // The bare fdw names (no `_fdw` suffix) map to the same storage.
 TEST(ForeignServerAttachSql, BareFdwNamesMap) {
-  EXPECT_NE(BuildForeignServerAttachSql(
-              MakeServer("s", "postgres", {"host"}, {"h"}))
-              .find("(TYPE postgres)"),
-            std::string::npos);
-  EXPECT_NE(BuildForeignServerAttachSql(
-              MakeServer("s", "clickhouse", {"host"}, {"h"}))
-              .find("(TYPE clickhouse)"),
-            std::string::npos);
+  EXPECT_NE(
+    BuildForeignServerAttachSql(MakeServer("s", "postgres", {"host"}, {"h"}))
+      .find("(TYPE postgres)"),
+    std::string::npos);
+  EXPECT_NE(
+    BuildForeignServerAttachSql(MakeServer("s", "clickhouse", {"host"}, {"h"}))
+      .find("(TYPE clickhouse)"),
+    std::string::npos);
 }
 
 // A PUBLIC user mapping's option overrides the server's value for the same key
 // (the mapping's credentials win), keeping the key's original position.
 TEST(ForeignServerAttachSql, PublicMappingOverridesServerOptionByKey) {
-  auto server = MakeServer("vedernikoff_srv", "postgres_fdw",
-                           {"user", "host", "database"},
-                           {"kostya", "h", "postgres"});
-  UserMapping mapping{ObjectId{}, ObjectId{},     "pubmap", "vedernikoff_srv",
-                      "public",   {"user"}, {"pudge"}};
+  auto server =
+    MakeServer("vedernikoff_srv", "postgres_fdw", {"user", "host", "database"},
+               {"kostya", "h", "postgres"});
+  UserMapping mapping{ObjectId{}, ObjectId{}, "pubmap", "vedernikoff_srv",
+                      "public",   {"user"},   {"pudge"}};
 
   const auto sql = BuildForeignServerAttachSql(server, &mapping);
   EXPECT_NE(sql.find("user=pudge"), std::string::npos);
@@ -100,12 +100,10 @@ TEST(ForeignServerAttachSql, PublicMappingOverridesServerOptionByKey) {
 
 // An explicit alias overrides the server name as the ATTACH target.
 TEST(ForeignServerAttachSql, AliasOverridesAttachName) {
-  auto server =
-    MakeServer("vedernikoff_srv", "postgres_fdw", {"host"}, {"h"});
-  EXPECT_NE(
-    BuildForeignServerAttachSql(server, nullptr, "ved_alias").find(
-      "AS \"ved_alias\""),
-    std::string::npos);
+  auto server = MakeServer("vedernikoff_srv", "postgres_fdw", {"host"}, {"h"});
+  EXPECT_NE(BuildForeignServerAttachSql(server, nullptr, "ved_alias")
+              .find("AS \"ved_alias\""),
+            std::string::npos);
 }
 
 // An unsupported FDW yields an empty string (the caller treats this as "nothing

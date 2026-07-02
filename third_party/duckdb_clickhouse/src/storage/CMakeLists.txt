@@ -6,6 +6,7 @@ add_library(
   clickhouse_insert.cpp
   clickhouse_delete.cpp
   clickhouse_update.cpp
+  clickhouse_merge_into.cpp
   clickhouse_transaction.cpp
   clickhouse_transaction_manager.cpp
   clickhouse_storage.cpp)

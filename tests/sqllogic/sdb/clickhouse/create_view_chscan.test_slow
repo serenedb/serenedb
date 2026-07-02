@@ -1,0 +1,98 @@
+control substitution on
+
+# CREATE VIEW forwards the view definition to ClickHouse (the postgres-connector
+# analog). DuckDB parses the SELECT and qualifies table refs with the ATTACH alias
+# (`chv`.`db`.`t`); that three-part name is stripped to `db`.`t` before the CREATE
+# VIEW is sent, since ClickHouse resolves only db.table.
+#
+# Supported: single-table views (projection / filter / aggregate, incl. COUNT(*)
+# which DuckDB renders as count_star() and we rewrite to count()), subquery
+# predicates, CREATE OR REPLACE, CREATE VIEW IF NOT EXISTS. Multi-table JOIN views
+# are NOT supported: DuckDB renders a parenthesized join (FROM (a JOIN b)) that the
+# ClickHouse SQL dialect rejects -- such a CREATE VIEW returns a clean CH error.
+#
+# The connector surfaces a ClickHouse view as a scannable TABLE entry (a scan
+# connector must not expand a remote view's query locally), so a created view is
+# read like a table and dropped with DROP TABLE, not DROP VIEW.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chv (TYPE clickhouse);
+
+statement ok
+DROP TABLE IF EXISTS chv.default.cv_filter;
+
+statement ok
+DROP TABLE IF EXISTS chv.default.cv_src;
+
+statement ok
+CREATE TABLE chv.default.cv_src (id BIGINT PRIMARY KEY, val VARCHAR, qty INTEGER);
+
+statement ok
+INSERT INTO chv.default.cv_src VALUES (1, 'a', 10), (2, 'b', 20), (3, 'c', 30);
+
+# 1) single-table filtered + projected view
+statement ok
+CREATE VIEW chv.default.cv_filter AS SELECT id, val FROM chv.default.cv_src WHERE id > 1;
+
+query
+SELECT id, val FROM chv.default.cv_filter ORDER BY id;
+----
+id	val
+2	b
+3	c
+
+# 2) aggregate view
+statement ok
+CREATE VIEW chv.default.cv_agg AS SELECT count(*) AS n, sum(qty) AS total FROM chv.default.cv_src;
+
+query
+SELECT n, total FROM chv.default.cv_agg;
+----
+n	total
+3	60
+
+# 3) subquery-predicate view (the nested SELECT's refs are catalog-stripped too)
+statement ok
+CREATE VIEW chv.default.cv_sub AS SELECT id, val FROM chv.default.cv_src WHERE id IN (SELECT id FROM chv.default.cv_src WHERE qty >= 20);
+
+query
+SELECT id, val FROM chv.default.cv_sub ORDER BY id;
+----
+id	val
+2	b
+3	c
+
+# 4) CREATE OR REPLACE swaps the definition
+statement ok
+CREATE OR REPLACE VIEW chv.default.cv_filter AS SELECT id, val FROM chv.default.cv_src WHERE id > 2;
+
+query
+SELECT id, val FROM chv.default.cv_filter ORDER BY id;
+----
+id	val
+3	c
+
+# 5) CREATE VIEW IF NOT EXISTS on an existing view is a no-op (keeps the definition)
+statement ok
+CREATE VIEW IF NOT EXISTS chv.default.cv_filter AS SELECT id FROM chv.default.cv_src;
+
+query
+SELECT id, val FROM chv.default.cv_filter ORDER BY id;
+----
+id	val
+3	c
+
+statement ok
+DROP TABLE chv.default.cv_filter;
+
+statement ok
+DROP TABLE chv.default.cv_agg;
+
+statement ok
+DROP TABLE chv.default.cv_sub;
+
+statement ok
+DROP TABLE chv.default.cv_src;
+
+statement ok
+DETACH chv;

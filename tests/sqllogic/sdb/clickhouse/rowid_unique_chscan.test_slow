@@ -1,0 +1,88 @@
+control substitution on
+
+# A ClickHouse MergeTree ORDER BY key is a sorting prefix, NOT a uniqueness
+# constraint, yet the connector uses a single integer key as the UPDATE/DELETE row
+# identifier via `WHERE pk IN (ids)`. If two rows share that key, mutating one would
+# silently mutate the other. The connector now counts the rows the mutation would
+# touch and REFUSES when it exceeds the rows the statement selected -- but still
+# allows mutating a key whose rows are all intended (e.g. DELETE WHERE key = v).
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chu (TYPE clickhouse);
+
+statement ok
+DROP TABLE IF EXISTS chu.default.dup;
+
+statement ok
+CREATE TABLE chu.default.dup (id BIGINT PRIMARY KEY, val VARCHAR);
+
+# id=1 is duplicated; id=2 is unique.
+statement ok
+INSERT INTO chu.default.dup VALUES (1, 'a'), (1, 'b'), (2, 'c');
+
+# DELETE targeting ONE row of the shared key -> refused (would collaterally delete
+# the sibling (1,'b') which does not match val='a').
+statement error
+DELETE FROM chu.default.dup WHERE val = 'a';
+
+# ...and the table is untouched.
+query
+SELECT count(*) AS n FROM chu.default.dup;
+----
+n
+3
+
+# DELETE by the key value itself deletes all of its rows -- all intended -> allowed.
+statement ok
+DELETE FROM chu.default.dup WHERE id = 1;
+
+query
+SELECT count(*) AS n FROM chu.default.dup;
+----
+n
+1
+
+# UPDATE on a shared key: re-introduce a duplicate (id=3), then target one row.
+statement ok
+INSERT INTO chu.default.dup VALUES (3, 'x'), (3, 'y');
+
+statement error
+UPDATE chu.default.dup SET val = 'z' WHERE val = 'x';
+
+# A per-row-differing UPDATE on the shared key ('x!' vs 'y!') is inexpressible via
+# `CASE pk` (the first WHEN would win for every row) -> refused, table unchanged.
+statement error
+UPDATE chu.default.dup SET val = val || '!' WHERE id = 3;
+
+query
+SELECT count(*) AS n FROM chu.default.dup WHERE id = 3 AND val IN ('x', 'y');
+----
+n
+2
+
+# A constant UPDATE that matches ALL rows of the shared key is expressible (the
+# duplicate ids collapse to one CASE arm) -> allowed, both rows updated.
+statement ok
+UPDATE chu.default.dup SET val = 'same' WHERE id = 3;
+
+query
+SELECT count(*) AS n FROM chu.default.dup WHERE id = 3 AND val = 'same';
+----
+n
+2
+
+# UPDATE on the unique key id=2 -> allowed.
+statement ok
+UPDATE chu.default.dup SET val = 'updated' WHERE id = 2;
+
+query
+SELECT val FROM chu.default.dup WHERE id = 2;
+----
+val
+updated
+
+statement ok
+DROP TABLE chu.default.dup;
+
+statement ok
+DETACH chu;

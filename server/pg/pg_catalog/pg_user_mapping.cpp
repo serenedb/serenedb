@@ -34,9 +34,8 @@
 #include "pg/pg_catalog/make_options.h"
 
 namespace sdb::pg {
-namespace {
 
-}  // namespace
+namespace {}  // namespace
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgUserMapping>::GetTableData() {

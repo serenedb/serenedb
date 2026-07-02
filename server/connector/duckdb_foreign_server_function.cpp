@@ -24,7 +24,6 @@
 #include <duckdb/function/pragma_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
-
 #include <string>
 
 #include "connector/duckdb_client_state.h"

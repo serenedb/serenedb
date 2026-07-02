@@ -2,6 +2,7 @@
 
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/printer.hpp"
 
 #include <clickhouse/client.h>
 #include <clickhouse/exceptions.h>
@@ -246,9 +247,6 @@ ClickHouseConnection::ClickHouseConnection(std::unique_ptr<clickhouse::Client> c
 ClickHouseConnection ClickHouseConnection::Open(const ClickHouseConnectionParams &params) {
 	try {
 		return ClickHouseConnection(std::make_unique<clickhouse::Client>(params.ToClientOptions()));
-	} catch (const clickhouse::Error &e) {
-		throw IOException("Failed to connect to ClickHouse server at %s:%d: %s", params.host, (int)params.port,
-		                  e.what());
 	} catch (const std::exception &e) {
 		throw IOException("Failed to connect to ClickHouse server at %s:%d: %s", params.host, (int)params.port,
 		                  e.what());
@@ -260,6 +258,32 @@ clickhouse::Client &ClickHouseConnection::GetClient() {
 		throw IOException("ClickHouse connection is not open");
 	}
 	return *client;
+}
+
+static bool debug_clickhouse_print_queries = false;
+
+void ClickHouseConnection::DebugSetPrintQueries(bool print) {
+	debug_clickhouse_print_queries = print;
+}
+
+void ClickHouseConnection::LogQuery(const std::string &sql) {
+	if (debug_clickhouse_print_queries) {
+		Printer::Print(sql + "\n");
+	}
+}
+
+void ClickHouseConnection::ThrowError(const char *op, const std::string &sql, const std::exception &error) {
+	throw IOException("ClickHouse error %s: %s\nSQL: %s", op, error.what(), sql);
+}
+
+static bool clickhouse_connection_cache_enabled = true;
+
+void ClickHouseConnection::SetConnectionCache(bool enabled) {
+	clickhouse_connection_cache_enabled = enabled;
+}
+
+bool ClickHouseConnection::ConnectionCacheEnabled() {
+	return clickhouse_connection_cache_enabled;
 }
 
 } // namespace duckdb

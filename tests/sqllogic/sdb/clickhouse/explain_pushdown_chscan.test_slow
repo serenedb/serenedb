@@ -1,0 +1,894 @@
+control substitution on
+
+# EXPLAIN-based verification of the ClickHouse connector's pushdown
+# optimizations. Each EXPLAIN shows the FULL DuckDB physical plan so the
+# optimization is visible in the operator tree; each is paired with a query
+# that asserts result correctness, so a silently-broken pushdown is caught.
+#
+# The remote scan appears as CLICKHOUSE_SCAN_PUSHDOWN (the catalog / ATTACH
+# path, filter_pushdown=true) or CLICKHOUSE_SCAN (the clickhouse_scan() table
+# function). Projection pushdown shows as `Projections: <cols>` and filter
+# pushdown as `Filters: (<expr>)` inside that scan box.
+#
+# LIMIT/OFFSET pushdown (ClickHouseOptimizer, an OptimizerExtension): a constant
+# LIMIT/OFFSET directly above a clickhouse scan -- walking only through
+# projections, and only when the scan carries no pushed table_filters -- is
+# folded into the remote SQL and the LIMIT operator is REMOVED from the plan.
+#   PUSHED     => no LIMIT / STREAMING_LIMIT / TOP_N node sits above the scan.
+#   NOT PUSHED => that node REMAINS (ORDER BY becomes TOP_N; a WHERE / DISTINCT /
+#                 GROUP BY leaves a STREAMING_LIMIT).
+# The sqllogic runner compares the plan whitespace-insensitively (runs of
+# spaces collapse to a tab), so the box padding shown here is not significant --
+# the operator tree and its detail lines are. Cardinality estimates (~N rows)
+# come from the remote table's system.tables.total_rows (surfaced by the scan's
+# cardinality callback); an un-pushed LIMIT above the scan caps them further.
+#
+# All chtest.* fixtures are pre-seeded by the container init script (read-only).
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=chtest' AS chexp (TYPE clickhouse);
+
+
+####################  LIMIT / OFFSET pushdown -- POSITIVE (folded into the remote scan)  ####################
+
+# Plain LIMIT: no LIMIT operator remains above the scan.
+query
+EXPLAIN SELECT id FROM chexp.chtest.vedernikoff LIMIT 3;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│      Projections: id      │
+│                           │
+│          ~6 rows          │
+└───────────────────────────┘
+
+# ...and it returns exactly 3 rows.
+query
+SELECT count(*) AS n FROM (SELECT id FROM chexp.chtest.vedernikoff LIMIT 3);
+----
+n
+3
+
+# LIMIT + OFFSET together: both folded, no LIMIT operator remains.
+query
+EXPLAIN SELECT id FROM chexp.chtest.vedernikoff LIMIT 2 OFFSET 3;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│      Projections: id      │
+│                           │
+│          ~6 rows          │
+└───────────────────────────┘
+
+# 6 rows, offset 3, limit 2 -> 2 rows.
+query
+SELECT count(*) AS n FROM (SELECT id FROM chexp.chtest.vedernikoff LIMIT 2 OFFSET 3);
+----
+n
+2
+
+# OFFSET with no LIMIT keyword: folded, no LIMIT operator remains.
+query
+EXPLAIN SELECT id FROM chexp.chtest.vedernikoff OFFSET 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│      Projections: id      │
+│                           │
+│          ~6 rows          │
+└───────────────────────────┘
+
+# 6 rows, offset 2 -> 4 remain.
+query
+SELECT count(*) AS n FROM (SELECT id FROM chexp.chtest.vedernikoff OFFSET 2);
+----
+n
+4
+
+# LIMIT larger than the table: still folded (pushdown is independent of the
+# row count).
+query
+EXPLAIN SELECT id FROM chexp.chtest.vedernikoff LIMIT 1000;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│      Projections: id      │
+│                           │
+│          ~6 rows          │
+└───────────────────────────┘
+
+# Capped at the table size (6).
+query
+SELECT count(*) AS n FROM (SELECT id FROM chexp.chtest.vedernikoff LIMIT 1000);
+----
+n
+6
+
+# LIMIT over a bare projection: the optimizer walks through the PROJECTION and
+# folds the LIMIT into the scan (PROJECTION stays, no LIMIT operator).
+query
+EXPLAIN SELECT id + 1 AS x FROM chexp.chtest.vedernikoff LIMIT 3;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             x             │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│      Projections: id      │
+│                           │
+│          ~6 rows          │
+└───────────────────────────┘
+
+# 3 rows.
+query
+SELECT count(*) AS n FROM (SELECT id + 1 AS x FROM chexp.chtest.vedernikoff LIMIT 3);
+----
+n
+3
+
+# LIMIT inside a subquery feeding an aggregate: folded; an UNGROUPED_AGGREGATE
+# sits over the scan but there is no LIMIT operator.
+query
+EXPLAIN SELECT count(*) FROM (SELECT id FROM chexp.chtest.vedernikoff LIMIT 3) t;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│        count_star()       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             42            │
+│                           │
+│          ~3 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│          ~6 rows          │
+└───────────────────────────┘
+
+# The aggregate counts the 3 limited rows.
+query
+SELECT count(*) FROM (SELECT id FROM chexp.chtest.vedernikoff LIMIT 3) t;
+----
+count
+3
+
+# LIMIT on the clickhouse_scan() table-function path (CLICKHOUSE_SCAN, no
+# _PUSHDOWN): IsClickHouseScan() covers this function too, so the LIMIT is still
+# folded -- no LIMIT operator remains.
+query
+EXPLAIN SELECT id
+FROM clickhouse_scan('host=${CHHOST} port=${CHPORT} user=default', 'chtest', 'vedernikoff')
+LIMIT 3;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│      CLICKHOUSE_SCAN      │
+│    ────────────────────   │
+│         Function:         │
+│      CLICKHOUSE_SCAN      │
+│                           │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+# 3 rows.
+query
+SELECT count(*) AS n FROM (
+  SELECT id FROM clickhouse_scan('host=${CHHOST} port=${CHPORT} user=default', 'chtest', 'vedernikoff') LIMIT 3);
+----
+n
+3
+
+
+####################  LIMIT / OFFSET pushdown -- NEGATIVE (operator retained above the scan)  ####################
+
+# ORDER BY + LIMIT: pushdown refused (ORDER BY is not a projection). The LIMIT
+# collapses into a TOP_N operator that REMAINS above the scan.
+query
+EXPLAIN SELECT id FROM chexp.chtest.vedernikoff ORDER BY id LIMIT 3;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 3          │
+│                           │
+│         Order By:         │
+│     vedernikoff.id ASC    │
+│                           │
+│          ~3 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│      Projections: id      │
+│                           │
+│          Filters:         │
+│ optional: Dynamic Filter  │
+│            (id)           │
+│                           │
+│          ~6 rows          │
+└───────────────────────────┘
+
+# Still the three smallest ids.
+query
+SELECT id FROM chexp.chtest.vedernikoff ORDER BY id LIMIT 3;
+----
+id
+1
+2
+3
+
+# WHERE + LIMIT: pushdown refused (the scan carries a pushed table filter, so a
+# remote LIMIT could drop the wrong rows). A STREAMING_LIMIT REMAINS, and the
+# filter shows in the scan box as Filters: (id > 3).
+query
+EXPLAIN SELECT id FROM chexp.chtest.vedernikoff WHERE id > 3 LIMIT 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│      STREAMING_LIMIT      │
+│    ────────────────────   │
+│          Limit: 2         │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│      Projections: id      │
+│     Filters: (id > 3)     │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+# ids 4,5,6 satisfy id>3; LIMIT 2 -> 2 rows.
+query
+SELECT count(*) AS n FROM (SELECT id FROM chexp.chtest.vedernikoff WHERE id > 3 LIMIT 2);
+----
+n
+2
+
+# DISTINCT + LIMIT: a DISTINCT sits between the LIMIT and the scan, so pushdown
+# is refused and a STREAMING_LIMIT REMAINS.
+query
+EXPLAIN SELECT DISTINCT name FROM chexp.chtest.widgets LIMIT 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│      STREAMING_LIMIT      │
+│    ────────────────────   │
+│          Limit: 2         │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│      LIMITED_DISTINCT     │
+│    ────────────────────   │
+│         Groups: #0        │
+│          Limit: 2         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│            name           │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│     Projections: name     │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+# widgets has 4 distinct names; LIMIT 2 -> 2 rows.
+query
+SELECT count(*) AS n FROM (SELECT DISTINCT name FROM chexp.chtest.widgets LIMIT 2);
+----
+n
+2
+
+# GROUP BY + LIMIT: an aggregate sits between the LIMIT and the scan; pushdown
+# refused, STREAMING_LIMIT REMAINS.
+query
+EXPLAIN SELECT name, count(*) FROM chexp.chtest.widgets GROUP BY name LIMIT 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│      STREAMING_LIMIT      │
+│    ────────────────────   │
+│          Limit: 2         │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       HASH_GROUP_BY       │
+│    ────────────────────   │
+│         Groups: #0        │
+│                           │
+│        Aggregates:        │
+│        count_star()       │
+│                           │
+│          ~3 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│            name           │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│     Projections: name     │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+# 2 groups returned.
+query
+SELECT count(*) AS n FROM (SELECT name, count(*) FROM chexp.chtest.widgets GROUP BY name LIMIT 2);
+----
+n
+2
+
+
+####################  LIMIT edge cases  ####################
+
+# LIMIT 0: DuckDB short-circuits the whole plan to EMPTY_RESULT before the CH
+# optimizer runs -- the remote scan is elided entirely.
+query
+EXPLAIN SELECT id FROM chexp.chtest.vedernikoff LIMIT 0;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│        EMPTY_RESULT       │
+└───────────────────────────┘
+
+# No rows.
+query
+SELECT count(*) AS n FROM (SELECT id FROM chexp.chtest.vedernikoff LIMIT 0);
+----
+n
+0
+
+# OFFSET past the end of the table: folded, empty result.
+query
+SELECT count(*) AS n FROM (SELECT id FROM chexp.chtest.vedernikoff LIMIT 5 OFFSET 100);
+----
+n
+0
+
+
+####################  Projection pushdown  ####################
+
+# Selecting a column subset: only id and name appear in the scan's Projections
+# list (widgets has 6 columns).
+query
+EXPLAIN SELECT id, name FROM chexp.chtest.widgets;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│        Projections:       │
+│             id            │
+│            name           │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+# Correct rows.
+query
+SELECT id, name FROM chexp.chtest.widgets ORDER BY id;
+----
+id	name
+1	gadget
+2	gizmo
+3	thingamajig
+4	gadget
+5	widget
+
+# A single projected column.
+query
+EXPLAIN SELECT price FROM chexp.chtest.widgets;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│     Projections: price    │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+# 5 rows.
+query
+SELECT count(*) AS n FROM (SELECT price FROM chexp.chtest.widgets);
+----
+n
+5
+
+
+####################  Filter pushdown  ####################
+
+# Equality: pushed into the scan as Filters: (name = 'gadget').
+query
+EXPLAIN SELECT id FROM chexp.chtest.widgets WHERE name = 'gadget';
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             id            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│        Projections:       │
+│            name           │
+│             id            │
+│                           │
+│          Filters:         │
+│     (name = 'gadget')     │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+# rows 1 and 4.
+query
+SELECT id FROM chexp.chtest.widgets WHERE name = 'gadget' ORDER BY id;
+----
+id
+1
+4
+
+# IN list: DuckDB keeps a FILTER for the disjunction and ALSO pushes an optional
+# Filters: (id IN (1, 3)) into the scan.
+query
+EXPLAIN SELECT id FROM chexp.chtest.widgets WHERE id IN (1, 3);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│   ((id = 1) OR (id = 3))  │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│      Projections: id      │
+│                           │
+│          Filters:         │
+│  optional: (id IN (1, 3)) │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+# rows 1 and 3.
+query
+SELECT id FROM chexp.chtest.widgets WHERE id IN (1, 3) ORDER BY id;
+----
+id
+1
+3
+
+# Less-than: pushed as Filters: (price < 5.00).
+query
+EXPLAIN SELECT id FROM chexp.chtest.widgets WHERE price < 5;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             id            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│        Projections:       │
+│           price           │
+│             id            │
+│                           │
+│          Filters:         │
+│       (price < 5.00)      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+# only row 3 (price 4.50).
+query
+SELECT id FROM chexp.chtest.widgets WHERE price < 5 ORDER BY id;
+----
+id
+3
+
+# Greater-than: pushed as Filters: (price > 10.00).
+query
+EXPLAIN SELECT id FROM chexp.chtest.widgets WHERE price > 10;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             id            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│        Projections:       │
+│           price           │
+│             id            │
+│                           │
+│          Filters:         │
+│      (price > 10.00)      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+# rows 2,4,5.
+query
+SELECT id FROM chexp.chtest.widgets WHERE price > 10 ORDER BY id;
+----
+id
+2
+4
+5
+
+# Less-or-equal: pushed as Filters: (id <= 2).
+query
+EXPLAIN SELECT id FROM chexp.chtest.widgets WHERE id <= 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│      Projections: id      │
+│     Filters: (id <= 2)    │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+# rows 1,2.
+query
+SELECT id FROM chexp.chtest.widgets WHERE id <= 2 ORDER BY id;
+----
+id
+1
+2
+
+# Greater-or-equal: pushed as Filters: (id >= 4).
+query
+EXPLAIN SELECT id FROM chexp.chtest.widgets WHERE id >= 4;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│      Projections: id      │
+│     Filters: (id >= 4)    │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+# rows 4,5.
+query
+SELECT id FROM chexp.chtest.widgets WHERE id >= 4 ORDER BY id;
+----
+id
+4
+5
+
+# AND across two columns: both conjuncts pushed as separate Filters lines.
+query
+EXPLAIN SELECT id FROM chexp.chtest.widgets WHERE name = 'gadget' AND price > 10;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             id            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│        Projections:       │
+│            name           │
+│           price           │
+│             id            │
+│                           │
+│          Filters:         │
+│     (name = 'gadget')     │
+│      (price > 10.00)      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+# only row 4 (gadget, 14.99).
+query
+SELECT id FROM chexp.chtest.widgets WHERE name = 'gadget' AND price > 10 ORDER BY id;
+----
+id
+4
+
+# OR across two columns: DuckDB keeps a FILTER operator for the disjunction
+# above the scan; the connector still returns the correct rows.
+query
+EXPLAIN SELECT id FROM chexp.chtest.widgets WHERE name = 'widget' OR price < 5;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #2            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ ((price < 5.00) OR (name =│
+│         'widget'))        │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│        Projections:       │
+│            name           │
+│           price           │
+│             id            │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+# rows 3 (price<5) and 5 (widget).
+query
+SELECT id FROM chexp.chtest.widgets WHERE name = 'widget' OR price < 5 ORDER BY id;
+----
+id
+3
+5
+
+# IS NULL on a Nullable(Int32): DuckDB applies the null test through a FILTER
+# operator above the scan (c_nullable IS NULL). Fixture row c_uint8=2 is NULL.
+query
+EXPLAIN SELECT c_uint8 FROM chexp.chtest.types_all WHERE c_nullable IS NULL;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #1            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│    (c_nullable IS NULL)   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│        Projections:       │
+│         c_nullable        │
+│          c_uint8          │
+│                           │
+│          ~2 rows          │
+└───────────────────────────┘
+
+# c_uint8 = 2.
+query
+SELECT c_uint8 FROM chexp.chtest.types_all WHERE c_nullable IS NULL;
+----
+c_uint8
+2
+
+# IS NOT NULL: the complementary row.
+query
+SELECT c_uint8 FROM chexp.chtest.types_all WHERE c_nullable IS NOT NULL ORDER BY c_uint8;
+----
+c_uint8
+1
+
+# BLOB equality against a FixedString(4): the bytes match exactly (rendered via
+# unhex on the remote side); a CAST(... AS BLOB) FILTER node sits above the
+# scan. Fixture c_fixedstr 'abcd' (c_uint8=1), 'wxyz' (c_uint8=2).
+query
+EXPLAIN SELECT c_uint8 FROM chexp.chtest.types_all WHERE c_fixedstr = 'abcd'::BLOB;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #1            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (CAST(c_fixedstr AS BLOB) │
+│      = 'abcd'::BLOB)      │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│        Projections:       │
+│         c_fixedstr        │
+│          c_uint8          │
+│                           │
+│          ~2 rows          │
+└───────────────────────────┘
+
+# c_uint8 = 1.
+query
+SELECT c_uint8 FROM chexp.chtest.types_all WHERE c_fixedstr = 'abcd'::BLOB;
+----
+c_uint8
+1
+
+# BLOB IN list matches both rows.
+query
+SELECT c_uint8 FROM chexp.chtest.types_all WHERE c_fixedstr IN ('abcd'::BLOB, 'wxyz'::BLOB) ORDER BY c_uint8;
+----
+c_uint8
+1
+2
+
+# A non-matching BLOB predicate returns the empty result.
+query
+SELECT count(*) AS n FROM chexp.chtest.types_all WHERE c_fixedstr = 'zzzz'::BLOB;
+----
+n
+0
+
+
+####################  Filter + projection composed  ####################
+
+# A projection subset AND a pushed filter in the same scan box.
+query
+EXPLAIN SELECT name FROM chexp.chtest.widgets WHERE id >= 4;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│            name           │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│        Projections:       │
+│             id            │
+│            name           │
+│                           │
+│     Filters: (id >= 4)    │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+# names for rows 4,5.
+query
+SELECT name FROM chexp.chtest.widgets WHERE id >= 4 ORDER BY id;
+----
+name
+gadget
+widget
+
+
+statement ok
+DETACH chexp;

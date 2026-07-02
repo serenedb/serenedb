@@ -1,0 +1,33 @@
+control substitution on
+
+# BLOB filter pushdown: a binary constant is rendered as ClickHouse unhex('..')
+# so equality/IN predicates on a FixedString/String-as-bytes column match
+# exactly. (val.ToString() would hex-escape the bytes as TEXT and never match,
+# so before the fix these queries returned 0 / the wrong rows.) Fixture
+# chtest.types_all: c_fixedstr FixedString(4) with values 'abcd' (c_uint8=1) and
+# 'wxyz' (c_uint8=2).
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=chtest' AS chb (TYPE clickhouse);
+
+query
+SELECT count(*) AS n FROM chb.chtest.types_all WHERE c_fixedstr = 'abcd'::BLOB;
+----
+n
+1
+
+query
+SELECT count(*) AS n FROM chb.chtest.types_all WHERE c_fixedstr = 'zzzz'::BLOB;
+----
+n
+0
+
+query
+SELECT c_uint8 FROM chb.chtest.types_all WHERE c_fixedstr IN ('abcd'::BLOB, 'wxyz'::BLOB) ORDER BY c_uint8;
+----
+c_uint8
+1
+2
+
+statement ok
+DETACH chb;

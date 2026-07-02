@@ -28,8 +28,6 @@
 #include <string>
 #include <string_view>
 #include <utility>
-
-#include <utility>
 #include <vector>
 
 #include "basics/serializer.h"
@@ -190,8 +188,8 @@ std::string BuildForeignServerAttachSql(const ForeignServer& server,
   }
 
   const std::string_view attach_name = alias.empty() ? server.GetName() : alias;
-  return "ATTACH " + QuoteLiteral(connstr) + " AS " + QuoteSqlIdentifier(attach_name) +
-         " (TYPE " + storage + ")";
+  return "ATTACH " + QuoteLiteral(connstr) + " AS " +
+         QuoteSqlIdentifier(attach_name) + " (TYPE " + storage + ")";
 }
 
 }  // namespace sdb::catalog

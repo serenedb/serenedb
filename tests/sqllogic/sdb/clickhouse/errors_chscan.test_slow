@@ -1,0 +1,71 @@
+control substitution on
+
+# Error-path coverage for connector fixes that previously lacked a dedicated
+# test:
+#  - a query for a nonexistent table yields a clean "does not exist" catalog
+#    error, not a connection error (LookupEntry maps the no-columns
+#    CatalogException to the not-found result; a real connection error would
+#    still propagate);
+#  - writing an infinite DATE / TIMESTAMP is rejected up front rather than
+#    silently corrupting the stored value;
+#  - a malformed remote statement surfaces a clean error through clickhouse_execute.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=chtest' AS cherr (TYPE clickhouse);
+
+# Nonexistent table -> clean catalog error (not a connection error / hang).
+statement error
+SELECT * FROM cherr.chtest.no_such_table_xyz LIMIT 1;
+
+# An existing table still resolves after the miss (the cache was not poisoned).
+query
+SELECT count(*) AS n FROM cherr.chtest.vedernikoff;
+----
+n
+6
+
+statement ok
+DETACH cherr;
+
+# Infinite DATE / TIMESTAMP on INSERT are rejected (DATE->Date32, TIMESTAMP->
+# DateTime64 both guard finiteness/overflow before sending the block).
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS cherr2 (TYPE clickhouse);
+
+statement ok
+DROP TABLE IF EXISTS cherr2.default.err_dt;
+
+statement ok
+CREATE TABLE cherr2.default.err_dt (id BIGINT PRIMARY KEY, d DATE, ts TIMESTAMP);
+
+statement error
+INSERT INTO cherr2.default.err_dt VALUES (1, 'infinity'::DATE, NULL);
+
+statement error
+INSERT INTO cherr2.default.err_dt VALUES (2, NULL, 'infinity'::TIMESTAMP);
+
+# Negative-infinity TIMESTAMP must also be rejected: DuckDB's -infinity sentinel is
+# -INT64_MAX, not INT64_MIN, so the DateTime64 guard checks IsFinite() (not an
+# explicit INT64_MIN compare, which silently wrote a garbage tick count).
+statement error
+INSERT INTO cherr2.default.err_dt VALUES (4, NULL, '-infinity'::TIMESTAMP);
+
+# A finite row still inserts fine (the rejected inserts sent nothing).
+statement ok
+INSERT INTO cherr2.default.err_dt VALUES (3, DATE '2021-06-19', TIMESTAMP '2021-06-19 12:00:00');
+
+query
+SELECT count(*) AS n FROM cherr2.default.err_dt;
+----
+n
+1
+
+statement ok
+DROP TABLE cherr2.default.err_dt;
+
+statement ok
+DETACH cherr2;
+
+# A malformed remote statement surfaces a clean error.
+statement error
+SELECT * FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}', 'THIS IS NOT SQL');

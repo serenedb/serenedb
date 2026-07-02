@@ -30,23 +30,29 @@ public:
 	ClickHouseTableEntry &table;
 	string id_list;
 	idx_t delete_count;
+	//! Number of rowids currently accumulated in id_list (its element count), for the
+	//! shared-key coverage guard.
+	idx_t id_count = 0;
 
 	void Flush(ClientContext &context) {
 		if (id_list.empty()) {
 			return;
 		}
-		auto &delete_table = table;
-		auto &transaction = ClickHouseTransaction::Get(context, delete_table.catalog);
+		auto &transaction = ClickHouseTransaction::Get(context, table.catalog);
 		auto &connection = transaction.GetConnection();
-		string sql = "ALTER TABLE " + ClickHouseQuoteIdentifier(delete_table.database) + "." +
-		             ClickHouseQuoteIdentifier(delete_table.table) + " DELETE WHERE " +
+		// Guard against deleting rows that merely share a (non-unique) key value.
+		VerifyRowIdCoverage(connection, table.database, table.table, pk_column, id_list, id_count, "DELETE");
+		string sql = "ALTER TABLE " + ClickHouseQuoteIdentifier(table.database) + "." +
+		             ClickHouseQuoteIdentifier(table.table) + " DELETE WHERE " +
 		             ClickHouseQuoteIdentifier(pk_column) + " IN (" + id_list + ") SETTINGS mutations_sync = 1";
 		try {
+			ClickHouseConnection::LogQuery(sql);
 			connection.GetClient().Execute(sql);
 		} catch (const clickhouse::Error &e) {
 			throw IOException("ClickHouse error during DELETE: %s", e.what());
 		}
 		id_list = "";
+		id_count = 0;
 	}
 
 	string pk_column;
@@ -73,6 +79,7 @@ SinkResultType ClickHouseDelete::Sink(ExecutionContext &context, DataChunk &chun
 			gstate.id_list += ",";
 		}
 		gstate.id_list += to_string(row_data[i]);
+		gstate.id_count++;
 		if (gstate.id_list.size() > 1000000) {
 			gstate.Flush(context.client);
 		}

@@ -6,7 +6,6 @@
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/expression/bound_operator_expression.hpp"
 #include "duckdb/planner/filter/table_filter_functions.hpp"
-#include "duckdb/common/enum_util.hpp"
 
 #include "clickhouse_filter_pushdown.hpp"
 #include "clickhouse_types.hpp"
@@ -14,25 +13,12 @@
 namespace duckdb {
 
 static string TransformLiteral(const Value &val) {
-	switch (val.type().id()) {
-	case LogicalTypeId::TINYINT:
-	case LogicalTypeId::SMALLINT:
-	case LogicalTypeId::INTEGER:
-	case LogicalTypeId::BIGINT:
-	case LogicalTypeId::HUGEINT:
-	case LogicalTypeId::UTINYINT:
-	case LogicalTypeId::USMALLINT:
-	case LogicalTypeId::UINTEGER:
-	case LogicalTypeId::UBIGINT:
-	case LogicalTypeId::UHUGEINT:
-	case LogicalTypeId::FLOAT:
-	case LogicalTypeId::DOUBLE:
-	case LogicalTypeId::DECIMAL:
-		return val.ToString();
-	case LogicalTypeId::BOOLEAN:
-		return val.GetValue<bool>() ? "1" : "0";
-	default:
-		return ClickHouseStringLiteral(val.ToString());
+	try {
+		return ClickHouseValueLiteral(val);
+	} catch (const NotImplementedException &) {
+		// A value with no exact ClickHouse literal form (nested types): empty string
+		// signals the caller to keep the filter local.
+		return string();
 	}
 }
 
@@ -51,22 +37,29 @@ static string TransformComparison(ExpressionType type) {
 	case ExpressionType::COMPARE_GREATERTHANOREQUALTO:
 		return ">=";
 	default:
-		throw NotImplementedException("Unsupported expression type");
+		// Unsupported comparison (e.g. IS [NOT] DISTINCT FROM, whose null-safe semantics
+		// differ from a plain operator). Empty string signals "keep this filter local"
+		// -- never throw, which would abort the whole query.
+		return string();
 	}
 }
 
 static string TransformConstantFilter(const string &column_name, ExpressionType comparison_type, const Value &constant,
                                       column_t column_id) {
-	if (IsVirtualColumn(column_id)) {
-		return string();
-	}
 	if (constant.IsNull()) {
 		// A NULL constant has three-valued semantics that a textual "col <op> NULL"
 		// predicate gets wrong; keep the filter local instead of pushing it.
 		return string();
 	}
-	auto constant_string = TransformLiteral(constant);
 	auto operator_string = TransformComparison(comparison_type);
+	if (operator_string.empty()) {
+		// Unsupported comparison operator -> keep the filter local.
+		return string();
+	}
+	auto constant_string = TransformLiteral(constant);
+	if (constant_string.empty()) {
+		return string();
+	}
 	return StringUtil::Format("%s %s %s", column_name, operator_string, constant_string);
 }
 
@@ -89,25 +82,42 @@ static string TransformExpressionSubject(const string &column_name, const Expres
 		if (struct_type.id() != LogicalTypeId::STRUCT || StructType::IsUnnamed(struct_type)) {
 			return string();
 		}
-		// Postgres composite "(expr).field" syntax is invalid in ClickHouse; keep
-		// struct-field filters local rather than push an unparseable predicate.
-		return string();
+		// ClickHouse addresses Tuple fields as tupleElement(col, 'name').
+		return "tupleElement(" + parent_name + ", " +
+		       ClickHouseStringLiteral(StructType::GetChildName(struct_type, child_idx)) + ")";
 	}
 	default:
 		return string();
 	}
 }
 
-static string TransformExpression(const string &column_name, const Expression &expr, column_t column_id);
+//! `exact` is degraded (never restored) whenever the rendered SQL is WIDER than the
+//! expression -- a dropped required conjunct, an unsupported comparison, a dropped OR
+//! branch. The caller must then re-apply the filter locally: the optimizer has already
+//! erased fully-pushed filters from the plan, so "keep it local" is not automatic.
+static string TransformExpression(const string &column_name, const Expression &expr, column_t column_id, bool &exact);
 
 static string CreateExpression(const string &column_name, const vector<unique_ptr<Expression>> &filters, string op,
-                               column_t column_id) {
+                               column_t column_id, bool &exact) {
+	bool is_or = op == "OR";
 	vector<string> filter_entries;
 	for (auto &filter : filters) {
-		auto filter_str = TransformExpression(column_name, *filter, column_id);
-		if (!filter_str.empty()) {
-			filter_entries.push_back(std::move(filter_str));
+		auto filter_str = TransformExpression(column_name, *filter, column_id, exact);
+		if (filter_str.empty()) {
+			// An un-pushable branch of an OR makes the whole disjunction un-pushable:
+			// dropping it and pushing the rest would under-filter and silently lose rows
+			// the remote must not exclude. For AND, pushing the remaining conjuncts is a
+			// safe superset -- but only if the whole filter is then re-applied locally,
+			// so mark it inexact (unless the dropped piece was advisory-only).
+			if (!ExpressionFilter::IsOptionalExpression(*filter)) {
+				exact = false;
+			}
+			if (is_or) {
+				return string();
+			}
+			continue;
 		}
+		filter_entries.push_back(std::move(filter_str));
 	}
 	if (filter_entries.empty()) {
 		return string();
@@ -115,7 +125,7 @@ static string CreateExpression(const string &column_name, const vector<unique_pt
 	return "(" + StringUtil::Join(filter_entries, " " + op + " ") + ")";
 }
 
-static string TransformExpression(const string &column_name, const Expression &expr, column_t column_id) {
+static string TransformExpression(const string &column_name, const Expression &expr, column_t column_id, bool &exact) {
 	if (IsVirtualColumn(column_id)) {
 		return string();
 	}
@@ -147,9 +157,9 @@ static string TransformExpression(const string &column_name, const Expression &e
 		auto &conjunction = expr.Cast<BoundConjunctionExpression>();
 		switch (conjunction.GetExpressionType()) {
 		case ExpressionType::CONJUNCTION_AND:
-			return CreateExpression(column_name, conjunction.children, "AND", column_id);
+			return CreateExpression(column_name, conjunction.children, "AND", column_id, exact);
 		case ExpressionType::CONJUNCTION_OR:
-			return CreateExpression(column_name, conjunction.children, "OR", column_id);
+			return CreateExpression(column_name, conjunction.children, "OR", column_id, exact);
 		default:
 			return string();
 		}
@@ -180,7 +190,11 @@ static string TransformExpression(const string &column_name, const Expression &e
 					// three-valued semantics) rather than push "IN (NULL)".
 					return string();
 				}
-				in_list += TransformLiteral(constant);
+				auto literal = TransformLiteral(constant);
+				if (literal.empty()) {
+					return string();
+				}
+				in_list += literal;
 			}
 			return subject + " IN (" + in_list + ")";
 		}
@@ -188,31 +202,68 @@ static string TransformExpression(const string &column_name, const Expression &e
 			return string();
 		}
 	}
+	case ExpressionClass::BOUND_FUNCTION: {
+		// The optimizer wraps join/IN-subquery-probe predicates in OptionalFilter /
+		// SelectivityOptionalFilter scalars whose real predicate hides in a child
+		// expression. Unwrap and push that child (mirrors the postgres connector) so
+		// the WHERE reaches ClickHouse instead of fetching + re-filtering locally. A
+		// bare DynamicFilter has no static form, so it stays local (empty string).
+		auto &func = expr.Cast<BoundFunctionExpression>();
+		// Failures inside an advisory wrapper never affect correctness, so exactness is
+		// tracked with a throwaway flag.
+		bool optional_exact = true;
+		if (func.function.GetName() == OptionalFilterScalarFun::NAME && func.bind_info) {
+			auto &data = func.bind_info->Cast<OptionalFilterFunctionData>();
+			return data.child_filter_expr
+			           ? TransformExpression(column_name, *data.child_filter_expr, column_id, optional_exact)
+			           : string();
+		}
+		if (func.function.GetName() == SelectivityOptionalFilterScalarFun::NAME && func.bind_info) {
+			auto &data = func.bind_info->Cast<SelectivityOptionalFilterFunctionData>();
+			return data.child_filter_expr
+			           ? TransformExpression(column_name, *data.child_filter_expr, column_id, optional_exact)
+			           : string();
+		}
+		return string();
+	}
 	default:
 		return string();
 	}
 }
 
-static string TransformFilter(const string &column_name, const TableFilter &filter, column_t column_id) {
+static string TransformFilter(const string &column_name, const TableFilter &filter, column_t column_id, bool &exact) {
 	auto &expr_filter = ExpressionFilter::GetExpressionFilter(filter, "ClickHouseFilterPushdown::TransformFilter");
-	return TransformExpression(column_name, *expr_filter.expr, column_id);
+	return TransformExpression(column_name, *expr_filter.expr, column_id, exact);
 }
 
 string ClickHouseFilterPushdown::TransformFilters(const vector<column_t> &column_ids, optional_ptr<TableFilterSet> filters,
-                                                  const vector<std::string> &names) {
+                                                  const vector<std::string> &names, vector<idx_t> *inexact_filters,
+                                                  const vector<bool> *stringified) {
 	if (!filters || !filters->HasFilters()) {
 		return string();
 	}
 	string result;
 	for (auto &entry : *filters) {
 		auto column_id = column_ids[entry.GetIndex()];
-		if (IsVirtualColumn(column_id)) {
-			continue;
-		}
-		string column_name = ClickHouseQuoteIdentifier(names[column_id]);
 		auto &filter = entry.Filter();
-		auto filter_text = TransformFilter(column_name, filter, column_id);
+		string filter_text;
+		bool exact = true;
+		if (IsVirtualColumn(column_id)) {
+			exact = false;
+		} else {
+			string column_name = ClickHouseQuoteIdentifier(names[column_id]);
+			if (stringified && column_id < stringified->size() && (*stringified)[column_id]) {
+				column_name = "toString(" + column_name + ")";
+			}
+			filter_text = TransformFilter(column_name, filter, column_id, exact);
+		}
 
+		if ((filter_text.empty() || !exact) && inexact_filters && !ExpressionFilter::IsOptionalFilter(filter)) {
+			// The remote WHERE misses (part of) this required filter, and the optimizer
+			// erased it from the plan believing the scan applies it -- the scan must
+			// re-apply it locally or rows leak through unfiltered.
+			inexact_filters->push_back(entry.GetIndex());
+		}
 		if (filter_text.empty()) {
 			continue;
 		}

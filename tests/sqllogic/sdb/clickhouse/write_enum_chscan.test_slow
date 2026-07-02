@@ -1,0 +1,45 @@
+control substitution on
+
+# Write-side ENUM: a DuckDB ENUM column maps to a ClickHouse Enum8/16 in the
+# generated CREATE TABLE DDL, values INSERT by name (reusing clickhouse-cpp
+# ColumnEnum::Append), and read back as their VARCHAR labels. Unique type/table
+# names for parallel-test safety.
+
+statement ok
+CREATE TYPE ce_mood AS ENUM ('happy', 'sad', 'angry');
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS che (TYPE clickhouse);
+
+statement ok
+DROP TABLE IF EXISTS che.default.ce_enum_t;
+
+# The connector renders `mood` as Enum8('happy'=1,'sad'=2,'angry'=3) on ClickHouse.
+statement ok
+CREATE TABLE che.default.ce_enum_t (id BIGINT PRIMARY KEY, mood ce_mood);
+
+statement ok
+INSERT INTO che.default.ce_enum_t VALUES (1, 'happy'), (2, 'angry'), (3, 'sad'), (4, 'happy');
+
+# Read back: the ClickHouse Enum column decodes to its labels.
+query
+SELECT id, mood FROM che.default.ce_enum_t ORDER BY id;
+----
+id	mood
+1	happy
+2	angry
+3	sad
+4	happy
+
+# Filter on the enum value (rendered as a string literal, resolved by ClickHouse).
+query
+SELECT count(*) AS n FROM che.default.ce_enum_t WHERE mood = 'happy';
+----
+n
+2
+
+statement ok
+DROP TABLE che.default.ce_enum_t;
+
+statement ok
+DETACH che;

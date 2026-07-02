@@ -66,8 +66,9 @@ class UserMapping : public Object {
   std::vector<std::string> _option_values;
 };
 
-// Schema-unique synthetic name for a user mapping: "<len(user)>:<user>@<server>".
-// A PUBLIC mapping uses user "public". The length prefix makes the (user, server)
+// Schema-unique synthetic name for a user mapping:
+// "<len(user)>:<user>@<server>". A PUBLIC mapping uses user "public". The
+// length prefix makes the (user, server)
 // -> name mapping injective even when a user or server name contains '@' (which
 // a plain "<user>@<server>" could not disambiguate, e.g. ("a","b@c") vs
 // ("a@b","c")).

@@ -98,11 +98,8 @@ count
 0
 
 
-# Read-only contract: writes through the attach must fail.
-statement error
-INSERT INTO ch.chtest.widgets (id, name, price, stock, tags, note)
-VALUES (6, 'newthing', 1.00, 1, [], NULL);
-
+# (Writes through the attach are supported and covered by the write_*_chscan
+# tests; this test must not mutate the shared read-only widgets fixture.)
 
 statement ok
 DETACH ch;

@@ -33,13 +33,12 @@ namespace sdb::pg {
 
 // Build "key=value" option strings, redacting any secret value so credentials
 // are not dumped into the catalog (clickhouse accepts both `password` and
-// `passwd`). The strings are appended to `storage` (stable addresses) and a span
-// over the row's slice is returned. Shared by the pg_foreign_server and
+// `passwd`). The strings are appended to `storage` (stable addresses) and a
+// span over the row's slice is returned. Shared by the pg_foreign_server and
 // pg_user_mapping system tables, whose objects both expose GetOptionKeys()/
 // GetOptionValues().
 template<typename Object>
-Array<Text> MakeOptions(const Object& object,
-                        std::deque<std::string>& storage,
+Array<Text> MakeOptions(const Object& object, std::deque<std::string>& storage,
                         std::deque<std::vector<std::string_view>>& spans) {
   const auto& keys = object.GetOptionKeys();
   const auto& vals = object.GetOptionValues();

@@ -32,9 +32,17 @@ std::string ClickHouseQuoteIdentifier(const std::string &name);
 //! backslash-escapes embedded ' and \. For value literals (filter pushdown, UPDATE).
 std::string ClickHouseStringLiteral(const std::string &value);
 
-//! Escape embedded single quotes (doubled) WITHOUT surrounding quotes, for a name
-//! interpolated into a metadata query the caller already quotes (... = '<here>').
-std::string ClickHouseEscapeSingleQuotes(const std::string &value);
+//! Render BLOB bytes as a ClickHouse unhex('HEX') literal so raw binary
+//! round-trips exactly. Shared by filter pushdown and UPDATE literal rendering.
+std::string ClickHouseBlobLiteral(const string_t &bytes);
+
+//! Render a scalar DuckDB Value as an EXACT ClickHouse SQL literal: NULL -> NULL;
+//! HUGEINT/UHUGEINT/DECIMAL via to*() casts (ClickHouse parses their bare literals as
+//! Float64, losing precision); other scalar types as a quoted string ClickHouse casts
+//! to the target type. Shared by filter pushdown, UPDATE assignments and DEFAULT
+//! rendering so their exactness rules cannot drift apart. Throws
+//! NotImplementedException for nested types.
+std::string ClickHouseValueLiteral(const Value &value);
 
 //! Reverse type map: a DuckDB LogicalType rendered as a ClickHouse column type for DDL
 //! (CREATE TABLE / CREATE TABLE AS). When `nullable` is set the result is wrapped in

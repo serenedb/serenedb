@@ -115,6 +115,8 @@ SinkResultType ClickHouseInsert::Sink(ExecutionContext &context, DataChunk &chun
 	block.RefreshRowCount();
 
 	try {
+		ClickHouseConnection::LogQuery("INSERT INTO " + gstate.qualified_table + " (" + std::to_string(block.GetRowCount()) +
+		                               " rows)");
 		connection.GetClient().Insert(gstate.qualified_table, block);
 	} catch (const clickhouse::Error &e) {
 		throw IOException("ClickHouse error during INSERT into %s: %s", gstate.qualified_table, e.what());

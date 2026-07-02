@@ -20,19 +20,17 @@
 
 #include "connector/index_source_external_db_key.h"
 
+#include <cstddef>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/common/types/vector.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
-
-#include <cstddef>
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include <duckdb/common/types/vector.hpp>
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
@@ -40,11 +38,12 @@
 #include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
-
 namespace {
+
 std::string Quote(const std::string& id) {
   return duckdb::KeywordHelper::WriteQuoted(id, '"');
 }
+
 }  // namespace
 
 ExternalDBKeyIndexSource::ExternalDBKeyIndexSource(
@@ -89,8 +88,8 @@ ExternalDBKeyIndexSource::ExternalDBKeyIndexSource(
     });
 
   // The PK is selected FIRST (column 0), then the projected real columns
-  // (1..N). Keeping the PK at a fixed leading index avoids an offset bug when no
-  // real columns are projected (the list would otherwise start with a "NULL"
+  // (1..N). Keeping the PK at a fixed leading index avoids an offset bug when
+  // no real columns are projected (the list would otherwise start with a "NULL"
   // placeholder and shift the PK). Only the IN list varies per Materialize()
   // call, so build the constant prefix once here.
   std::string select_list = _pk_quoted;
@@ -139,9 +138,9 @@ duckdb::idx_t ExternalDBKeyIndexSource::Materialize(
   duckdb::Connection con(*context.db);
   auto result = con.Query(sql);
   if (result->HasError()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
-                    ERR_MSG("external-key materialisation failed: ",
-                            result->GetError()));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
+      ERR_MSG("external-key materialisation failed: ", result->GetError()));
   }
 
   AliasOutput(output);

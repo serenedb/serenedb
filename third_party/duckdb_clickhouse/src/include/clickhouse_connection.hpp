@@ -47,6 +47,22 @@ public:
 
 	clickhouse::Client &GetClient();
 
+	//! Print `sql` to stdout when ch_debug_show_queries is enabled. Called at every
+	//! query-emit site (the postgres pg_debug_show_queries analog; there is no single
+	//! choke point because callers drive clickhouse::Client directly).
+	static void LogQuery(const std::string &sql);
+	//! Uniform error translation: throw an IOException naming the failed operation and
+	//! carrying the SQL that failed (so errors are debuggable without re-running under
+	//! ch_debug_show_queries).
+	[[noreturn]] static void ThrowError(const char *op, const std::string &sql, const std::exception &error);
+	static void DebugSetPrintQueries(bool print);
+
+	//! Whether idle connections are cached for reuse across transactions/scans
+	//! (ch_connection_cache; on by default). When off, every lease opens a fresh
+	//! connection and returns drop immediately.
+	static void SetConnectionCache(bool enabled);
+	static bool ConnectionCacheEnabled();
+
 	bool IsOpen() const {
 		return client != nullptr;
 	}

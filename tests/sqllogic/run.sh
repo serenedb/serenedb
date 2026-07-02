@@ -457,9 +457,12 @@ launch_postgres() {
 
 # Launches a clickhouse-server container, used by tests that read a real
 # ClickHouse via the clickhouse_scanner connector (filename suffix `_chscan.`).
-# The image runs /docker-entrypoint-initdb.d/*.sql at startup, so fixtures are
-# pre-seeded by bind-mounting the fixtures dir there; the connector is
-# read-only and cannot create CH tables/data.
+# The image runs /docker-entrypoint-initdb.d/*.sql at startup, so shared
+# read-only fixtures are pre-seeded by bind-mounting the fixtures dir there;
+# they deliberately include ClickHouse-native column types the connector's
+# write path cannot create (LowCardinality, IPv4, FixedString, plain
+# Date/DateTime), keeping read-decode coverage independent of the write path.
+# Write tests create their own tables in `default` through the connector.
 launch_clickhouse() {
 	local prefix
 	prefix="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
@@ -526,6 +529,46 @@ launch_clickhouse() {
 		fi
 		sleep 1
 	done
+
+	# The readiness checks above run `docker exec` INSIDE the container, but tests
+	# connect from the host through the published port. A bare TCP connect isn't
+	# enough: docker's userland proxy accepts the connection before ClickHouse's
+	# external native listener is up, so the first parallel tests still race it and
+	# fail their ATTACH "after 0 ms" (the whole suite then finishes in a fraction of
+	# the usual time). Speak the native handshake and require an actual server reply.
+	# Skipped in COMPOSE_NETWORK mode, where tests reach the container by name.
+	if [[ "$CHHOST" == "localhost" ]]; then
+		echo "Waiting for clickhouse to answer the native protocol on host port ${CHPORT}..."
+		for i in $(seq 1 60); do
+			if python3 - "${CHPORT}" <<'PY' 2>/dev/null; then
+import socket, sys
+port = int(sys.argv[1])
+def uv(n):
+    out = bytearray()
+    while True:
+        b = n & 0x7f; n >>= 7
+        out.append(b | 0x80 if n else b)
+        if not n: break
+    return bytes(out)
+def us(s):
+    b = s.encode(); return uv(len(b)) + b
+try:
+    s = socket.socket(); s.settimeout(2); s.connect(("127.0.0.1", port))
+    s.sendall(uv(0) + us("readycheck") + uv(24) + uv(8) + uv(54448) + us("default") + us("default") + us(""))
+    sys.exit(0 if s.recv(1) else 1)
+except Exception:
+    sys.exit(1)
+PY
+				echo "clickhouse native protocol is answering."
+				break
+			fi
+			if [[ $i -eq 60 ]]; then
+				echo "ERROR: clickhouse native protocol on ${CHPORT} not answering within 60 seconds"
+				exit 1
+			fi
+			sleep 1
+		done
+	fi
 
 	echo "clickhouse running (host=$CHHOST, port=$CHPORT)."
 	echo

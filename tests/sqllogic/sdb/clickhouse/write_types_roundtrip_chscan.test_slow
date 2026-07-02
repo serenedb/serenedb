@@ -212,11 +212,13 @@ id	v_int	v_dbl
 3	-7	-2.5
 
 # ---------------------------------------------------------------------
-# Out-of-scope boundary: a complex/nested column type cannot be mapped to a
-# ClickHouse column, so CREATE TABLE rejects it (no INSERT is attempted).
+# Out-of-scope boundary: a DuckDB type with no ClickHouse equivalent (TIME;
+# LIST/STRUCT/MAP are now supported -- see write_array / write_struct_map) cannot
+# be mapped to a ClickHouse column, so CREATE TABLE rejects it (no INSERT is
+# attempted).
 # ---------------------------------------------------------------------
 statement error
-CREATE TABLE chwt.default.wt_complex (id BIGINT PRIMARY KEY, tags INTEGER[]);
+CREATE TABLE chwt.default.wt_complex (id BIGINT PRIMARY KEY, t TIME);
 
 # ---------------------------------------------------------------------
 # Cleanup.

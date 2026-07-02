@@ -19,9 +19,11 @@
 
 namespace duckdb {
 
+// The access-mode parameter is deliberately unused: access control is delegated to
+// ClickHouse RBAC via the mapped remote user, not re-implemented client-side.
 ClickHouseCatalog::ClickHouseCatalog(AttachedDatabase &db_p, const string &connection_string, AccessMode access_mode_p)
     : Catalog(db_p), params(ClickHouseConnectionParams::FromConnectionString(connection_string)),
-      access_mode(access_mode_p), default_schema(params.database) {
+      default_schema(params.database) {
 }
 
 ClickHouseCatalog::~ClickHouseCatalog() = default;
@@ -31,16 +33,42 @@ void ClickHouseCatalog::Initialize(bool load_builtin) {
 }
 
 ClickHouseConnection ClickHouseCatalog::OpenConnection() {
+	if (ClickHouseConnection::ConnectionCacheEnabled()) {
+		std::lock_guard<std::mutex> l(connection_pool_lock);
+		while (!idle_connections.empty()) {
+			auto conn = std::move(idle_connections.back());
+			idle_connections.pop_back();
+			if (conn.IsOpen()) {
+				return conn;
+			}
+			// A closed/moved-from entry: discard and try the next.
+		}
+	}
 	return ClickHouseConnection::Open(params);
+}
+
+void ClickHouseCatalog::ReturnConnection(ClickHouseConnection connection) {
+	// Drop (let it close) if it is not reusable or caching is disabled.
+	if (!connection.IsOpen() || !ClickHouseConnection::ConnectionCacheEnabled()) {
+		return;
+	}
+	std::lock_guard<std::mutex> l(connection_pool_lock);
+	if (idle_connections.size() < MAX_POOLED_CONNECTIONS) {
+		idle_connections.push_back(std::move(connection));
+	}
+	// Pool full: drop the surplus connection.
 }
 
 optional_ptr<CatalogEntry> ClickHouseCatalog::CreateSchema(CatalogTransaction transaction, CreateSchemaInfo &info) {
 	auto connection = OpenConnection();
+	auto sql = "CREATE DATABASE IF NOT EXISTS " + ClickHouseQuoteIdentifier(info.schema);
 	try {
-		connection.GetClient().Execute("CREATE DATABASE IF NOT EXISTS " + ClickHouseQuoteIdentifier(info.schema));
+		ClickHouseConnection::LogQuery(sql);
+		connection.GetClient().Execute(sql);
 	} catch (const clickhouse::Error &e) {
-		throw IOException("ClickHouse error creating database \"%s\": %s", info.schema, e.what());
+		ClickHouseConnection::ThrowError("creating database", sql, e);
 	}
+	ReturnConnection(std::move(connection));
 	std::lock_guard<std::mutex> l(schema_lock);
 	auto entry = schemas.find(info.schema);
 	if (entry == schemas.end()) {
@@ -52,11 +80,14 @@ optional_ptr<CatalogEntry> ClickHouseCatalog::CreateSchema(CatalogTransaction tr
 
 void ClickHouseCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 	auto connection = OpenConnection();
+	auto sql = "DROP DATABASE IF EXISTS " + ClickHouseQuoteIdentifier(info.name);
 	try {
-		connection.GetClient().Execute("DROP DATABASE IF EXISTS " + ClickHouseQuoteIdentifier(info.name));
+		ClickHouseConnection::LogQuery(sql);
+		connection.GetClient().Execute(sql);
 	} catch (const clickhouse::Error &e) {
-		throw IOException("ClickHouse error dropping database \"%s\": %s", info.name, e.what());
+		ClickHouseConnection::ThrowError("dropping database", sql, e);
 	}
+	ReturnConnection(std::move(connection));
 	std::lock_guard<std::mutex> l(schema_lock);
 	auto it = schemas.find(info.name);
 	if (it != schemas.end()) {
@@ -67,9 +98,15 @@ void ClickHouseCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 	}
 }
 
-PhysicalOperator &ClickHouseCatalog::PlanMergeInto(ClientContext &context, PhysicalPlanGenerator &planner,
-                                                   LogicalMergeInto &op, PhysicalOperator &plan) {
-	throw NotImplementedException("ClickHouse databases are read-only: MERGE INTO not supported");
+void ClickHouseCatalog::ClearCache() {
+	std::lock_guard<std::mutex> l(schema_lock);
+	// Retire every cached schema (and its cached table metadata) rather than
+	// freeing it, so bound statements keep working; the next lookup rebuilds a
+	// fresh entry from the server.
+	for (auto &entry : schemas) {
+		retired_schemas.push_back(std::move(entry.second));
+	}
+	schemas.clear();
 }
 
 unique_ptr<LogicalOperator> ClickHouseCatalog::BindCreateIndex(Binder &binder, CreateStatement &stmt,
@@ -81,19 +118,26 @@ void ClickHouseCatalog::ScanSchemas(ClientContext &context, std::function<void(S
 	auto connection = OpenConnection();
 	auto &client = connection.GetClient();
 	vector<string> schema_names;
-	client.BeginSelect("SELECT name FROM system.databases");
-	while (auto block = client.NextBlock()) {
-		if (block->GetColumnCount() == 0) {
-			continue;
+	const string sql = "SELECT name FROM system.databases";
+	ClickHouseConnection::LogQuery(sql);
+	try {
+		client.BeginSelect(sql);
+		while (auto block = client.NextBlock()) {
+			if (block->GetColumnCount() == 0) {
+				continue;
+			}
+			auto name_col = (*block)[0]->As<clickhouse::ColumnString>();
+			if (!name_col) {
+				continue;
+			}
+			for (idx_t row = 0; row < block->GetRowCount(); row++) {
+				schema_names.emplace_back(name_col->At(row));
+			}
 		}
-		auto name_col = (*block)[0]->As<clickhouse::ColumnString>();
-		if (!name_col) {
-			continue;
-		}
-		for (idx_t row = 0; row < block->GetRowCount(); row++) {
-			schema_names.emplace_back(name_col->At(row));
-		}
+	} catch (const clickhouse::Error &e) {
+		ClickHouseConnection::ThrowError("listing databases", sql, e);
 	}
+	ReturnConnection(std::move(connection));
 	for (auto &schema_name : schema_names) {
 		std::lock_guard<std::mutex> l(schema_lock);
 		auto entry = schemas.find(schema_name);
@@ -114,13 +158,19 @@ optional_ptr<SchemaCatalogEntry> ClickHouseCatalog::LookupSchema(CatalogTransact
 	auto connection = OpenConnection();
 	auto &client = connection.GetClient();
 	bool found = false;
-	auto sql = "SELECT name FROM system.databases WHERE name = '" + ClickHouseEscapeSingleQuotes(schema_name) + "'";
-	client.BeginSelect(sql);
-	while (auto block = client.NextBlock()) {
-		if (block->GetRowCount() > 0) {
-			found = true;
+	auto sql = "SELECT name FROM system.databases WHERE name = " + ClickHouseStringLiteral(schema_name);
+	ClickHouseConnection::LogQuery(sql);
+	try {
+		client.BeginSelect(sql);
+		while (auto block = client.NextBlock()) {
+			if (block->GetRowCount() > 0) {
+				found = true;
+			}
 		}
+	} catch (const clickhouse::Error &e) {
+		ClickHouseConnection::ThrowError("probing database", sql, e);
 	}
+	ReturnConnection(std::move(connection));
 	if (!found) {
 		if (if_not_found == OnEntryNotFound::RETURN_NULL) {
 			return nullptr;
@@ -141,19 +191,25 @@ optional_ptr<SchemaCatalogEntry> ClickHouseCatalog::LookupSchema(CatalogTransact
 DatabaseSize ClickHouseCatalog::GetDatabaseSize(ClientContext &context) {
 	auto connection = OpenConnection();
 	auto &client = connection.GetClient();
-	auto sql = "SELECT sum(bytes_on_disk) FROM system.parts WHERE database = '" + ClickHouseEscapeSingleQuotes(default_schema) +
-	           "' AND active";
+	auto sql = "SELECT sum(bytes_on_disk) FROM system.parts WHERE database = " +
+	           ClickHouseStringLiteral(default_schema) + " AND active";
 	DatabaseSize size;
-	client.BeginSelect(sql);
-	while (auto block = client.NextBlock()) {
-		if (block->GetColumnCount() == 0 || block->GetRowCount() == 0) {
-			continue;
+	ClickHouseConnection::LogQuery(sql);
+	try {
+		client.BeginSelect(sql);
+		while (auto block = client.NextBlock()) {
+			if (block->GetColumnCount() == 0 || block->GetRowCount() == 0) {
+				continue;
+			}
+			auto bytes_col = (*block)[0]->As<clickhouse::ColumnUInt64>();
+			if (bytes_col) {
+				size.bytes = bytes_col->At(0);
+			}
 		}
-		auto bytes_col = (*block)[0]->As<clickhouse::ColumnUInt64>();
-		if (bytes_col) {
-			size.bytes = bytes_col->At(0);
-		}
+	} catch (const clickhouse::Error &e) {
+		ClickHouseConnection::ThrowError("reading database size", sql, e);
 	}
+	ReturnConnection(std::move(connection));
 	return size;
 }
 

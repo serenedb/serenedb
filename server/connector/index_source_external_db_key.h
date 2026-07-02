@@ -37,7 +37,8 @@ namespace sdb::connector {
 // whose PK comes from the engine's own metadata (PkSpec::ExternalDBKey). The
 // index keys postings by the PK column's value; at search time we re-fetch the
 // matched rows engine-agnostically by running
-//   SELECT <projection>, <pk> FROM <catalog>.<schema>.<table> WHERE <pk> IN (...)
+//   SELECT <projection>, <pk> FROM <catalog>.<schema>.<table> WHERE <pk> IN
+//   (...)
 // through the catalog -- which routes to the connector's own scan + filter
 // pushdown -- and map each returned row back to its output slot by PK. No
 // dependency on the connector extension itself: this is pure DuckDB SQL.

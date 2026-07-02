@@ -3,6 +3,14 @@
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
+#include "duckdb/planner/operator/logical_get.hpp"
+#include "duckdb/planner/operator/logical_limit.hpp"
+#include "duckdb/planner/expression/bound_reference_expression.hpp"
+#include "duckdb/planner/expression/bound_conjunction_expression.hpp"
+#include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/optimizer/optimizer_extension.hpp"
+
+#include <algorithm>
 
 #include <clickhouse/client.h>
 #include <clickhouse/block.h>
@@ -15,6 +23,8 @@
 #include "clickhouse_types.hpp"
 #include "clickhouse_filter_pushdown.hpp"
 #include "clickhouse_scanner.hpp"
+#include "storage/clickhouse_catalog.hpp"
+#include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 
 namespace duckdb {
 
@@ -26,8 +36,13 @@ unique_ptr<FunctionData> ClickHouseBindData::Copy() const {
 	result->sql = sql;
 	result->from_query = from_query;
 	result->names = names;
+	result->types = types;
+	result->stringified = stringified;
+	result->limit = limit;
 	result->rowid_column = rowid_column;
 	result->table_entry = table_entry;
+	result->has_cardinality = has_cardinality;
+	result->approx_row_count = approx_row_count;
 	return std::move(result);
 }
 
@@ -39,11 +54,31 @@ bool ClickHouseBindData::Equals(const FunctionData &other_p) const {
 
 struct ClickHouseGlobalState : public GlobalTableFunctionState {
 	ClickHouseGlobalState() = default;
+	~ClickHouseGlobalState() override {
+		// Return the connection to the catalog pool only when the stream was fully
+		// drained (done): an early abort (e.g. LIMIT) or a mid-scan error leaves
+		// unread blocks on the wire, so those connections are dropped, never pooled.
+		// Ad-hoc scans (clickhouse_scan/clickhouse_query) have no owning catalog and
+		// always drop.
+		if (owner_catalog && done && connection.IsOpen()) {
+			owner_catalog->ReturnConnection(std::move(connection));
+		}
+	}
 
 	ClickHouseConnection connection;
+	//! The catalog whose pool this scan's connection was leased from (null for ad-hoc scans).
+	optional_ptr<ClickHouseCatalog> owner_catalog;
 	std::optional<clickhouse::Block> current_block;
 	idx_t block_offset = 0;
 	bool done = false;
+	//! Conjunction of the table filters whose remote rendering is absent or wider than
+	//! the filter itself (see TransformFilters). The optimizer erased them from the
+	//! plan, so the scan re-applies them to every decoded chunk -- otherwise rows leak
+	//! through unfiltered.
+	unique_ptr<Expression> local_filter;
+	unique_ptr<ExpressionExecutor> local_filter_executor;
+	//! The remote SQL this scan streams, kept for error messages.
+	std::string remote_sql;
 
 	// One Select cursor (NextBlock) per scan; ClickHouse parallelises server-side.
 	idx_t MaxThreads() const override {
@@ -52,8 +87,10 @@ struct ClickHouseGlobalState : public GlobalTableFunctionState {
 };
 
 void ClickHouseDiscoverColumns(ClickHouseConnection &connection, const std::string &describe_sql,
-                               vector<LogicalType> &return_types, vector<std::string> &names) {
+                               vector<LogicalType> &return_types, vector<std::string> &names, bool binary_as_blob,
+                               vector<bool> &stringified) {
 	auto &client = connection.GetClient();
+	ClickHouseConnection::LogQuery(describe_sql);
 	client.BeginSelect(describe_sql);
 	while (auto block = client.NextBlock()) {
 		idx_t name_idx = block->GetColumnCount();
@@ -77,7 +114,24 @@ void ClickHouseDiscoverColumns(ClickHouseConnection &connection, const std::stri
 			std::string col_name(name_col->At(row));
 			std::string col_type(type_col->At(row));
 			names.push_back(col_name);
-			return_types.push_back(ClickHouseTypeStringToLogicalType(col_type));
+			LogicalType logical_type;
+			bool needs_to_string = false;
+			try {
+				logical_type = ClickHouseTypeStringToLogicalType(col_type);
+			} catch (const NotImplementedException &) {
+				// A column type with no DuckDB mapping must not make the WHOLE table
+				// unreadable: degrade this column to VARCHAR; the scan projects
+				// toString(col) so the wire carries a plain String.
+				logical_type = LogicalType::VARCHAR;
+				needs_to_string = true;
+			}
+			// ch_binary_as_blob: read a top-level String / FixedString as BLOB (raw bytes)
+			// rather than VARCHAR, so non-UTF-8 payloads survive intact.
+			if (binary_as_blob && (col_type == "String" || col_type.rfind("FixedString(", 0) == 0)) {
+				logical_type = LogicalType::BLOB;
+			}
+			stringified.push_back(needs_to_string);
+			return_types.push_back(logical_type);
 		}
 	}
 }
@@ -94,23 +148,25 @@ static unique_ptr<FunctionData> ClickHouseBind(ClientContext &context, TableFunc
 	auto describe_sql =
 	    StringUtil::Format("DESCRIBE TABLE `%s`.`%s`", bind_data->database, bind_data->table);
 
+	Value binary_setting;
+	bool binary_as_blob =
+	    context.TryGetCurrentSetting("ch_binary_as_blob", binary_setting) && BooleanValue::Get(binary_setting);
 	try {
 		auto connection = ClickHouseConnection::Open(bind_data->params);
-		ClickHouseDiscoverColumns(connection, describe_sql, return_types, names);
-	} catch (const clickhouse::ServerException &e) {
-		throw IOException("ClickHouse error describing table \"%s\".\"%s\": %s", bind_data->database,
-		                  bind_data->table, e.what());
+		ClickHouseDiscoverColumns(connection, describe_sql, return_types, names, binary_as_blob,
+		                          bind_data->stringified);
 	} catch (const clickhouse::Error &e) {
-		throw IOException("ClickHouse error describing table \"%s\".\"%s\": %s", bind_data->database,
-		                  bind_data->table, e.what());
+		ClickHouseConnection::ThrowError("describing table", describe_sql, e);
 	}
 
 	bind_data->names = names;
+	bind_data->types = return_types;
 	return std::move(bind_data);
 }
 
 static std::string BuildScanSQL(const ClickHouseBindData &bind_data, const vector<column_t> &column_ids,
-                                optional_ptr<TableFilterSet> filters, bool filter_pushdown) {
+                                optional_ptr<TableFilterSet> filters, bool filter_pushdown,
+                                vector<idx_t> *inexact_filters = nullptr) {
 	std::string col_names;
 	for (auto &column_id : column_ids) {
 		if (!col_names.empty()) {
@@ -123,7 +179,14 @@ static std::string BuildScanSQL(const ClickHouseBindData &bind_data, const vecto
 				col_names += "toInt64(" + ClickHouseQuoteIdentifier(bind_data.rowid_column) + ")";
 			}
 		} else {
-			col_names += ClickHouseQuoteIdentifier(bind_data.names[column_id]);
+			auto quoted = ClickHouseQuoteIdentifier(bind_data.names[column_id]);
+			if (column_id < bind_data.stringified.size() && bind_data.stringified[column_id]) {
+				// Unmapped column type surfaced as VARCHAR: project its text form so the
+				// wire carries a plain String.
+				col_names += "toString(" + quoted + ")";
+			} else {
+				col_names += quoted;
+			}
 		}
 	}
 	if (col_names.empty()) {
@@ -139,11 +202,14 @@ static std::string BuildScanSQL(const ClickHouseBindData &bind_data, const vecto
 	}
 
 	if (filter_pushdown && filters) {
-		auto filter_string = ClickHouseFilterPushdown::TransformFilters(column_ids, filters, bind_data.names);
+		auto filter_string = ClickHouseFilterPushdown::TransformFilters(column_ids, filters, bind_data.names,
+		                                                                inexact_filters, &bind_data.stringified);
 		if (!filter_string.empty()) {
 			query += " WHERE " + filter_string;
 		}
 	}
+	// A LIMIT/OFFSET the optimizer proved safe to push (see ClickHouseOptimizer).
+	query += bind_data.limit;
 	return query;
 }
 
@@ -153,16 +219,51 @@ static unique_ptr<GlobalTableFunctionState> ClickHouseInitGlobalStateInternal(Cl
 	auto &bind_data = input.bind_data->Cast<ClickHouseBindData>();
 	auto result = make_uniq<ClickHouseGlobalState>();
 
-	auto sql = BuildScanSQL(bind_data, input.column_ids, input.filters, filter_pushdown);
+	vector<idx_t> inexact_filters;
+	auto sql = BuildScanSQL(bind_data, input.column_ids, input.filters, filter_pushdown, &inexact_filters);
+
+	if (!inexact_filters.empty() && input.filters) {
+		// Re-apply the filters the remote WHERE cannot express exactly. Each filter is
+		// keyed by its projection position, which is also its column in the output chunk.
+		vector<unique_ptr<Expression>> conjuncts;
+		for (auto &entry : *input.filters) {
+			auto proj_idx = entry.GetIndex();
+			if (std::find(inexact_filters.begin(), inexact_filters.end(), proj_idx) == inexact_filters.end()) {
+				continue;
+			}
+			auto column_id = input.column_ids[proj_idx];
+			auto column_type = column_id == COLUMN_IDENTIFIER_ROW_ID ? LogicalType::BIGINT : bind_data.types[column_id];
+			BoundReferenceExpression column_ref(std::move(column_type), proj_idx);
+			conjuncts.push_back(entry.Filter().ToExpression(column_ref));
+		}
+		if (conjuncts.size() == 1) {
+			result->local_filter = std::move(conjuncts[0]);
+		} else if (!conjuncts.empty()) {
+			auto conjunction = make_uniq<BoundConjunctionExpression>(ExpressionType::CONJUNCTION_AND);
+			conjunction->children = std::move(conjuncts);
+			result->local_filter = std::move(conjunction);
+		}
+		if (result->local_filter) {
+			result->local_filter_executor = make_uniq<ExpressionExecutor>(context, *result->local_filter);
+		}
+	}
 
 	try {
-		result->connection = ClickHouseConnection::Open(bind_data.params);
+		// A catalog-backed scan leases from that catalog's connection pool (its params
+		// match bind_data.params); ad-hoc clickhouse_scan/clickhouse_query open direct.
+		if (bind_data.table_entry) {
+			auto &catalog = bind_data.table_entry->catalog.Cast<ClickHouseCatalog>();
+			result->owner_catalog = &catalog;
+			result->connection = catalog.OpenConnection();
+		} else {
+			result->connection = ClickHouseConnection::Open(bind_data.params);
+		}
+		ClickHouseConnection::LogQuery(sql);
 		result->connection.GetClient().BeginSelect(sql);
-	} catch (const clickhouse::ServerException &e) {
-		throw IOException("ClickHouse error starting scan: %s", e.what());
 	} catch (const clickhouse::Error &e) {
-		throw IOException("ClickHouse error starting scan: %s", e.what());
+		ClickHouseConnection::ThrowError("starting scan", sql, e);
 	}
+	result->remote_sql = std::move(sql);
 	return std::move(result);
 }
 
@@ -203,12 +304,25 @@ static void ClickHouseScan(ClientContext &context, TableFunctionInput &data, Dat
 			}
 			output.SetChildCardinality(count);
 			gstate.block_offset += count;
+			if (gstate.local_filter_executor && count > 0) {
+				SelectionVector sel(count);
+				idx_t approved = gstate.local_filter_executor->SelectExpression(output, sel);
+				if (approved == 0) {
+					// Every row of this slice was filtered out; an empty chunk would end
+					// the scan prematurely, so pull the next slice instead.
+					output.SetChildCardinality(0);
+					continue;
+				}
+				if (approved < count) {
+					output.Slice(sel, approved);
+					output.Flatten();
+					output.SetChildCardinality(approved);
+				}
+			}
 			return;
 		}
-	} catch (const clickhouse::ServerException &e) {
-		throw IOException("ClickHouse error during scan: %s", e.what());
 	} catch (const clickhouse::Error &e) {
-		throw IOException("ClickHouse error during scan: %s", e.what());
+		ClickHouseConnection::ThrowError("during scan", gstate.remote_sql, e);
 	}
 }
 
@@ -228,12 +342,75 @@ static unique_ptr<FunctionData> ClickHouseScanDeserialize(Deserializer &deserial
 	throw NotImplementedException("ClickHouseScanDeserialize");
 }
 
+bool IsClickHouseScan(const std::string &name) {
+	return name == "clickhouse_scan" || name == "clickhouse_scan_pushdown";
+}
+
+// Push a constant LIMIT/OFFSET directly above a clickhouse scan into the remote
+// SQL. Correctness gates: (1) only walk through projections -- an intervening
+// ORDER BY or FILTER is NOT a projection, so those plans are left alone (a
+// remote LIMIT must never precede a local sort/filter); (2) the scan must carry
+// no pushed table_filters, since a remote LIMIT applied before a filter that is
+// only partially translatable would drop the wrong rows.
+static void OptimizeLimitPushdown(unique_ptr<LogicalOperator> &op) {
+	if (op->type == LogicalOperatorType::LOGICAL_LIMIT) {
+		auto &limit = op->Cast<LogicalLimit>();
+		reference<LogicalOperator> child = *op->children[0];
+		while (child.get().type == LogicalOperatorType::LOGICAL_PROJECTION) {
+			child = *child.get().children[0];
+		}
+		if (child.get().type == LogicalOperatorType::LOGICAL_GET) {
+			auto &get = child.get().Cast<LogicalGet>();
+			bool const_limit = limit.limit_val.Type() == LimitNodeType::CONSTANT_VALUE ||
+			                   limit.limit_val.Type() == LimitNodeType::UNSET;
+			bool const_offset = limit.offset_val.Type() == LimitNodeType::CONSTANT_VALUE ||
+			                    limit.offset_val.Type() == LimitNodeType::UNSET;
+			if (IsClickHouseScan(get.function.name) && const_limit && const_offset &&
+			    !get.table_filters.HasFilters()) {
+				auto &bind_data = get.bind_data->Cast<ClickHouseBindData>();
+				string clause;
+				if (limit.limit_val.Type() != LimitNodeType::UNSET) {
+					clause += " LIMIT " + to_string(limit.limit_val.GetConstantValue());
+				}
+				if (limit.offset_val.Type() != LimitNodeType::UNSET) {
+					clause += " OFFSET " + to_string(limit.offset_val.GetConstantValue());
+				}
+				if (!clause.empty() && bind_data.limit.empty()) {
+					bind_data.limit = clause;
+					op = std::move(op->children[0]);
+					return;
+				}
+			}
+		}
+	}
+	for (auto &child : op->children) {
+		OptimizeLimitPushdown(child);
+	}
+}
+
+void ClickHouseOptimizer::Optimize(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan) {
+	OptimizeLimitPushdown(plan);
+}
+
+// Report the remote table's approximate row count (captured at bind from
+// system.tables.total_rows) so the optimizer can order joins sensibly instead of
+// assuming ~1 row. Unknown counts yield no estimate. The postgres analog is
+// PostgresScanCardinality.
+static unique_ptr<NodeStatistics> ClickHouseScanCardinality(ClientContext &context, const FunctionData *bind_data_p) {
+	auto &bind_data = bind_data_p->Cast<ClickHouseBindData>();
+	if (!bind_data.has_cardinality) {
+		return nullptr;
+	}
+	return make_uniq<NodeStatistics>(bind_data.approx_row_count);
+}
+
 ClickHouseScanFunction::ClickHouseScanFunction()
     : TableFunction("clickhouse_scan", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
                     ClickHouseScan, ClickHouseBind, ClickHouseInitGlobalState) {
 	serialize = ClickHouseScanSerialize;
 	deserialize = ClickHouseScanDeserialize;
 	get_bind_info = ClickHouseGetBindInfo;
+	cardinality = ClickHouseScanCardinality;
 	projection_pushdown = true;
 }
 
@@ -243,6 +420,7 @@ ClickHouseScanFunctionFilterPushdown::ClickHouseScanFunctionFilterPushdown()
 	serialize = ClickHouseScanSerialize;
 	deserialize = ClickHouseScanDeserialize;
 	get_bind_info = ClickHouseGetBindInfo;
+	cardinality = ClickHouseScanCardinality;
 	projection_pushdown = true;
 	filter_pushdown = true;
 }

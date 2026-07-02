@@ -602,6 +602,34 @@ TEST_F(SearchDbWalTest, IdleShardPinsLogUntilDeregister) {
   EXPECT_FALSE(std::filesystem::exists(SegPath(3)));
 }
 
+TEST_F(SearchDbWalTest, IdleShardAdvancedToCurrentTickUnpinsGc) {
+  // The fix for the idle-shard GC stall: rather than relying on DROP
+  // (DeregisterShard), an idle shard -- which has no records of its own and is
+  // therefore caught up -- advances its committed tick to the WAL's current
+  // tick. That is what SearchTable's background refresh (RefreshUnsafe) and
+  // recovery finalize now do, lifting the shared WAL's GC floor while the shard
+  // stays registered.
+  SearchDbWal wal(Fs(), _dir, /*seal_threshold=*/1);
+  for (int i = 1; i <= 3; ++i) {
+    auto c = MakeIntCdc(Alloc(), {i});
+    auto sec = InlineSection(7, *c);
+    wal.AppendCommit(std::span{&sec, 1}, /*tick_span=*/1);
+  }
+  wal.RegisterShard(ObjectId{7}, 0);
+  wal.RegisterShard(ObjectId{8}, 0);  // idle, pins min at 0
+  wal.OnShardCommit(ObjectId{7}, 2);  // min still 0 (shard 8 at 0) -> no GC
+  EXPECT_TRUE(std::filesystem::exists(SegPath(1)));
+
+  // Advance the idle shard to the current WAL tick (the fix). min now rises to
+  // shard 7's tick (2), so consumed segments below it are reclaimed -- without
+  // dropping shard 8.
+  wal.OnShardCommit(ObjectId{8}, wal.CurrentTick());
+  EXPECT_FALSE(std::filesystem::exists(SegPath(1)));
+  EXPECT_FALSE(std::filesystem::exists(SegPath(2)));
+  EXPECT_TRUE(
+    std::filesystem::exists(SegPath(3)));  // shard 7 hasn't consumed 3
+}
+
 TEST_F(SearchDbWalTest, MinTickGcReclaimsLoneSealedSegment) {
   // A single bulk commit -> ONE sealed segment with NO successor. It must still
   // be reclaimed once consumed -- regression guard: an earlier filename-only

@@ -191,6 +191,14 @@ void SearchTable::OpenWriter() {
   }
 
   _wal = &GetSearchEngine().GetDbWal(_db_id);
+
+  if (_is_new) {
+    // A brand-new shard has no WAL records, so it is trivially caught up to the
+    // database WAL's current tick. Seed its committed tick there (not 0) so an
+    // unused table doesn't pin the shared WAL's GC floor; the initial
+    // RefreshCommit below persists it via the meta payload for reopen.
+    _last_committed_tick = _wal->CurrentTick();
+  }
   _wal->RegisterShard(GetTableId(), _last_committed_tick);
 
   if (_is_new) {
@@ -229,11 +237,18 @@ ResultWithTime SearchTable::RefreshUnsafe(
       }
     }
     if (lock.owns_lock()) {
-      // Publish staged batches; touch the WAL only when something actually
-      // committed, so an idle table doesn't churn ticks + GC every interval.
+      // Snapshot the WAL tick before publishing. RegisterFlush ties every
+      // in-flight DML batch to the writer's flush context, so a RefreshCommit
+      // that reports no changes proves this shard has nothing un-published up
+      // to that tick (a pending batch would have blocked RefreshCommit). Any
+      // batch that commits after this snapshot lands at a strictly higher tick,
+      // so advancing to `tick_before` never over-claims.
+      const auto tick_before = _wal->CurrentTick();
       if (_writer->RefreshCommit()) {
         _wal->OnShardCommit(GetTableId(), _last_committed_tick);
         code = RefreshResult::Done;
+      } else {
+        _wal->OnShardCommit(GetTableId(), tick_before);
       }
     }
   } catch (const std::exception& e) {

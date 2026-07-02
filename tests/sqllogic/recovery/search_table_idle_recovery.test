@@ -1,0 +1,116 @@
+control substitution on
+
+# Several search tables in one database share a single per-database WAL. This
+# exercises recovery's finalize advancing EVERY shard's committed tick to the
+# recovered max -- so an idle or never-written shard doesn't pin the shared
+# WAL's GC floor -- plus a fresh table registering at the current WAL tick,
+# across a crash + WAL replay. The point is correctness of that multi-shard
+# advance: the active table's WAL-only write must replay while the idle and
+# fresh shards recover intact and stay usable.
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE gc_active (a INTEGER, b TEXT) WITH (storage = 'search');
+
+statement ok
+RESET sdb_faults;
+
+# Idle table: written + published once, then never touched again.
+statement ok
+CREATE TABLE gc_idle (a INTEGER, b TEXT) WITH (storage = 'search');
+
+statement ok
+INSERT INTO gc_idle VALUES (100, 'idle');
+
+statement ok
+VACUUM (REFRESH_TABLE) gc_idle;
+
+# Fresh table: created, never written (registers at the current WAL tick).
+statement ok
+CREATE TABLE gc_fresh (a INTEGER, b TEXT) WITH (storage = 'search');
+
+# Publish a baseline on the active table.
+statement ok
+INSERT INTO gc_active VALUES (1, 'one'), (2, 'two');
+
+statement ok
+VACUUM (REFRESH_TABLE) gc_active;
+
+# Crash AFTER the WAL commit on the active table: (3,4) is WAL-only and recovery
+# must replay it, while the idle + fresh shards are advanced to the recovered
+# max without losing data.
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+statement error connection closed
+INSERT INTO gc_active VALUES (3, 'three'), (4, 'four');
+
+# --- restart ---
+connection after
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT a, b FROM gc_active ORDER BY a;
+----
+a	b
+1	one
+2	two
+3	three
+4	four
+
+# The idle table survived recovery untouched.
+connection after
+query
+SELECT a, b FROM gc_idle ORDER BY a;
+----
+a	b
+100	idle
+
+# The fresh, never-written table recovered as empty and is usable.
+connection after
+query
+SELECT COUNT(*) AS n FROM gc_fresh;
+----
+n
+0
+
+connection after
+statement ok
+INSERT INTO gc_fresh VALUES (9, 'nine');
+
+connection after
+statement ok
+VACUUM (REFRESH_TABLE) gc_fresh;
+
+connection after
+query
+SELECT a, b FROM gc_fresh ORDER BY a;
+----
+a	b
+9	nine
+
+# The idle table is still writable after recovery + the advance.
+connection after
+statement ok
+INSERT INTO gc_idle VALUES (200, 'more');
+
+connection after
+statement ok
+VACUUM (REFRESH_TABLE) gc_idle;
+
+connection after
+query
+SELECT a, b FROM gc_idle ORDER BY a;
+----
+a	b
+100	idle
+200	more
+
+connection after
+statement ok
+DROP TABLE gc_active;
+
+connection after
+statement ok
+DROP TABLE gc_idle;
+
+connection after
+statement ok
+DROP TABLE gc_fresh;

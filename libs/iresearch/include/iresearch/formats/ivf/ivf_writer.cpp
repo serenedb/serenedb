@@ -233,28 +233,6 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
     SDB_ASSERT(doc_cell.size() == valid_count);
   }
 
-  std::vector<size_t> l1_offsets(n_l1 + 1, 0);
-  for (const uint32_t cell : doc_cell) {
-    ++l1_offsets[cell + 1];
-  }
-  for (uint32_t c = 0; c < n_l1; ++c) {
-    l1_offsets[c + 1] += l1_offsets[c];
-  }
-  std::vector<doc_id_t> l1_member_docs(valid_count);
-  {
-    std::vector<size_t> cursor(l1_offsets.begin(), l1_offsets.begin() + n_l1);
-    size_t seen = 0;
-    for (uint64_t r = 0; r < rows; ++r) {
-      if (!valid[r]) {
-        continue;
-      }
-      const uint32_t cell = doc_cell[seen++];
-      l1_member_docs[cursor[cell]++] =
-        static_cast<doc_id_t>(r + doc_limits::min());
-    }
-    SDB_ASSERT(seen == valid_count);
-  }
-
   std::vector<std::vector<uint32_t>> sample_groups(n_l1);
   {
     std::vector<uint32_t> sample_assign;
@@ -269,7 +247,8 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
   IndexOutput& bout = idx.BlocksOut();
   std::vector<uint64_t> body_offsets;
   body_offsets.reserve(n_l1);
-  out.cluster_offsets.push_back(0);
+  std::vector<uint32_t> cell_fine_base(n_l1);
+  std::vector<uint32_t> cell_n_l2(n_l1);
   uint32_t next_fine_id = 0;
   std::vector<float> l2_centroids;
   std::vector<float> cell_sample;
@@ -343,27 +322,56 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
       }
     }
 
-    std::vector<std::vector<doc_id_t>> sub(n_l2);
-    {
-      ColumnReader::RangeScan member_scan{*child, ctx};
-      duckdb::Vector row{duckdb::LogicalType::FLOAT,
-                         static_cast<duckdb::idx_t>(d)};
-      for (size_t mi = l1_offsets[c]; mi < l1_offsets[c + 1]; ++mi) {
-        const doc_id_t docid = l1_member_docs[mi];
-        const uint64_t r = static_cast<uint64_t>(docid) - doc_limits::min();
-        member_scan.Scan(r * d, d, row, /*out_offset=*/0);
-        const float* v = duckdb::FlatVector::GetData<float>(row);
-        const uint32_t best =
-          NearestCentroid(m, v, l2_centroids.data(), n_l2, d);
-        sub[best].push_back(docid);
-      }
-    }
-    for (uint32_t s = 0; s < n_l2; ++s) {
-      out.cluster_docs.insert(out.cluster_docs.end(), sub[s].begin(),
-                              sub[s].end());
-      out.cluster_offsets.push_back(out.cluster_docs.size());
-    }
+    cell_fine_base[c] = next_fine_id;
+    cell_n_l2[c] = n_l2;
     next_fine_id += n_l2;
+  }
+
+  const uint32_t n_fine = next_fine_id;
+  std::vector<uint32_t> doc_fine;
+  doc_fine.reserve(valid_count);
+  {
+    size_t seen = 0;
+    StreamRowBatches(
+      *child, rows, d, ctx,
+      [&](uint64_t first, duckdb::idx_t n, const float* p) {
+        for (duckdb::idx_t k = 0; k < n; ++k) {
+          if (!valid[first + k]) {
+            continue;
+          }
+          const float* v = p + static_cast<size_t>(k) * d;
+          const uint32_t cell = doc_cell[seen++];
+          const float* cc = out.fine_centroids.data() +
+                            static_cast<size_t>(cell_fine_base[cell]) * d;
+          const uint32_t best = NearestCentroid(m, v, cc, cell_n_l2[cell], d);
+          doc_fine.push_back(cell_fine_base[cell] + best);
+        }
+      });
+    SDB_ASSERT(seen == valid_count);
+    SDB_ASSERT(doc_fine.size() == valid_count);
+  }
+
+  out.cluster_offsets.assign(n_fine + 1, 0);
+  for (const uint32_t f : doc_fine) {
+    ++out.cluster_offsets[f + 1];
+  }
+  for (uint32_t f = 0; f < n_fine; ++f) {
+    out.cluster_offsets[f + 1] += out.cluster_offsets[f];
+  }
+  out.cluster_docs.resize(valid_count);
+  {
+    std::vector<uint64_t> cursor(out.cluster_offsets.begin(),
+                                 out.cluster_offsets.begin() + n_fine);
+    size_t seen = 0;
+    for (uint64_t r = 0; r < rows; ++r) {
+      if (!valid[r]) {
+        continue;
+      }
+      const uint32_t f = doc_fine[seen++];
+      out.cluster_docs[cursor[f]++] =
+        static_cast<doc_id_t>(r + doc_limits::min());
+    }
+    SDB_ASSERT(seen == valid_count);
   }
 
   std::span<const byte_type> stats;

@@ -214,8 +214,11 @@ void TwoLayerCentroids::SearchGlobal(std::span<const float> query,
 
   std::vector<std::pair<float, uint32_t>> scored;
   std::vector<uint32_t> cand_fine_id;
+  std::vector<uint32_t> cand_begin;
+  cand_begin.reserve(l1_ids.size() + 1);
   L2BodyView body;
   for (const uint32_t l1 : l1_ids) {
+    cand_begin.push_back(static_cast<uint32_t>(cand_fine_id.size()));
     ReadL2Body(in, l1, body);
     scored.reserve(scored.size() + body.n_l2);
     cand_fine_id.reserve(cand_fine_id.size() + body.n_l2);
@@ -226,6 +229,7 @@ void TwoLayerCentroids::SearchGlobal(std::span<const float> query,
       cand_fine_id.push_back(body.fine_ids[s]);
     }
   }
+  cand_begin.push_back(static_cast<uint32_t>(cand_fine_id.size()));
   if (scored.empty()) {
     return;
   }
@@ -249,11 +253,20 @@ void TwoLayerCentroids::SearchGlobal(std::span<const float> query,
     rank_of[cand_idx[p]] = p;
   }
   out_centroids->resize(static_cast<size_t>(cand_idx.size()) * _d);
-  uint32_t ci = 0;
-  for (const uint32_t l1 : l1_ids) {
-    ReadL2Body(in, l1, body);
-    for (uint32_t s = 0; s < body.n_l2; ++s, ++ci) {
-      const uint32_t p = rank_of[ci];
+  for (size_t li = 0; li < l1_ids.size(); ++li) {
+    const uint32_t begin = cand_begin[li];
+    const uint32_t end = cand_begin[li + 1];
+    bool selected = false;
+    for (uint32_t ci = begin; ci < end && !selected; ++ci) {
+      selected = rank_of[ci] != kUnselected;
+    }
+    if (!selected) {
+      continue;
+    }
+    ReadL2Body(in, l1_ids[li], body);
+    SDB_ASSERT(body.n_l2 == end - begin);
+    for (uint32_t s = 0; s < body.n_l2; ++s) {
+      const uint32_t p = rank_of[begin + s];
       if (p == kUnselected) {
         continue;
       }

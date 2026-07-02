@@ -308,8 +308,9 @@ static std::string ColumnNameFor(const SereneDBScanBindData& bind,
   return absl::StrCat("col", col_id);
 }
 
-static irs::Filter::ptr MakeVectorDisplayFilter(
-  const VectorScorerOptions& vs, const std::shared_ptr<irs::Filter>& inner) {
+irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
+                                  std::shared_ptr<const irs::Filter> inner,
+                                  float radius) {
   if (vs.radius != std::numeric_limits<float>::max()) {
     auto f = std::make_unique<irs::ByRadius>();
     *f->mutable_field_id() = vs.field_id;
@@ -318,9 +319,9 @@ static irs::Filter::ptr MakeVectorDisplayFilter(
     o->centroids_id = vs.centroids_id;
     o->postings_id = vs.postings_id;
     o->metric = vs.metric;
-    o->radius = vs.radius;
+    o->radius = radius;
     o->inclusive = vs.radius_inclusive;
-    o->inner = inner;
+    o->inner = std::move(inner);
     return f;
   }
   auto f = std::make_unique<irs::ByVectorSimilarity>();
@@ -332,7 +333,7 @@ static irs::Filter::ptr MakeVectorDisplayFilter(
   o->metric = vs.metric;
   o->quant = vs.quant;
   o->nprobe = vs.nprobe;
-  o->inner = inner;
+  o->inner = std::move(inner);
   return f;
 }
 
@@ -343,7 +344,7 @@ void SearchScan::AppendSummary(
     const auto resolver = MakeFieldNameResolver(bind, *bind.inverted_index);
     if (vector_scorer) {
       const auto display =
-        MakeVectorDisplayFilter(*vector_scorer, stored_filter);
+        MakeVectorFilter(*vector_scorer, stored_filter, vector_scorer->radius);
       out.insert("Filter", irs::ToStringDemangled(*display, resolver));
     } else if (stored_filter) {
       out.insert("Filter", irs::ToStringDemangled(*stored_filter, resolver));

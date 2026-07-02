@@ -149,6 +149,10 @@ struct VectorScorerOptions {
   }
 };
 
+irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
+                                  std::shared_ptr<const irs::Filter> inner,
+                                  float radius);
+
 struct SearchScan : ScanSource {
   SearchScan() : ScanSource(ScanSourceKind::Search) {}
 

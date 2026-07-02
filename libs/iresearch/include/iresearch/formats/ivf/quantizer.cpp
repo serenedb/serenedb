@@ -292,6 +292,10 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
         std::memcpy(_pq.centroids.data(), stats.data() + 2 * sizeof(uint32_t),
                     want);
         _valid = true;
+        if (_metric == VectorMetric::InnerProduct) {
+          _ip_table.resize(static_cast<size_t>(_pq.M) * _pq.ksub);
+          _pq.compute_inner_prod_table(_query.data(), _ip_table.data());
+        }
       }
     }
   }
@@ -304,6 +308,7 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
   const faiss::ProductQuantizer& Pq() const noexcept { return _pq; }
   std::span<const float> Query() const noexcept { return _query; }
   VectorMetric Metric() const noexcept { return _metric; }
+  const float* IpTable() const noexcept { return _ip_table.data(); }
 
  private:
   struct Header {
@@ -323,6 +328,7 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
   faiss::ProductQuantizer _pq;
   VectorMetric _metric;
   std::vector<float> _query;
+  std::vector<float> _ip_table;
   bool _valid = false;
 };
 
@@ -343,19 +349,20 @@ class ProductQuantizerReader final : public QuantizerReader {
     SDB_ASSERT(centroid != nullptr);
     const faiss::ProductQuantizer& pq = _cb->Pq();
     const std::span<const float> query = _cb->Query();
-    _table.resize(static_cast<size_t>(pq.M) * pq.ksub);
     if (_cb->Metric() == VectorMetric::L2Sqr) {
       // ||q - (c + r)||^2 = ||(q - c) - r||^2: ADC table for the residual
       // query.
-      std::vector<float> qr(query.size());
+      _table.resize(static_cast<size_t>(pq.M) * pq.ksub);
+      _qr.resize(query.size());
       for (size_t j = 0; j < query.size(); ++j) {
-        qr[j] = query[j] - centroid[j];
+        _qr[j] = query[j] - centroid[j];
       }
-      pq.compute_distance_table(qr.data(), _table.data());
+      pq.compute_distance_table(_qr.data(), _table.data());
+      _table_ptr = _table.data();
       _ip_offset = 0.f;
     } else {
       // IP(q, c + r) = IP(q, c) + IP(q, r).
-      pq.compute_inner_prod_table(query.data(), _table.data());
+      _table_ptr = _cb->IpTable();
       float off = 0.f;
       for (size_t j = 0; j < query.size(); ++j) {
         off += query[j] * centroid[j];
@@ -371,7 +378,7 @@ class ProductQuantizerReader final : public QuantizerReader {
     const byte_type* block = _codes_reader.Read(offset, count);
     const size_t m = _cb->Pq().M;
     const size_t ksub = _cb->Pq().ksub;
-    const float* table = _table.data();
+    const float* table = _table_ptr;
     for (size_t i = 0; i < count; ++i) {
       const byte_type* code = block + i * m;
       float acc = _ip_offset;
@@ -387,6 +394,8 @@ class ProductQuantizerReader final : public QuantizerReader {
   std::unique_ptr<IndexInput> _pay_in;
   VectorBlockReader _codes_reader;
   std::vector<float> _table;
+  std::vector<float> _qr;
+  const float* _table_ptr = nullptr;
   float _ip_offset = 0.f;
   size_t _n = 0;
 };

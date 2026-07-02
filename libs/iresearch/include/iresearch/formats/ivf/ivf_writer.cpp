@@ -254,6 +254,9 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
   std::vector<float> cell_sample;
   std::vector<uint32_t> fine_ids;
   std::vector<float> residual_sample;
+  if (pq) {
+    residual_sample.reserve(static_cast<size_t>(n_train) * d);
+  }
 
   for (uint32_t c = 0; c < n_l1; ++c) {
     body_offsets.push_back(bout.Position());
@@ -503,18 +506,22 @@ IvfTermReader::IvfTermReader(field_id postings_id,
     _count{cluster_offsets.empty() ? 0 : cluster_offsets.size() - 1},
     _meta{postings_id,
           qw != nullptr ? IndexFeatures::Pay : IndexFeatures::None} {
-  bool found = false;
+  size_t first = _count;
+  size_t last = _count;
   for (size_t c = 0; c < _count; ++c) {
     if (cluster_offsets[c + 1] == cluster_offsets[c]) {
       continue;
     }
-    EncodeCentroidTerm(static_cast<uint32_t>(c), _max_buf.data());
-    _max = {_max_buf.data(), _max_buf.size()};
-    if (!found) {
-      EncodeCentroidTerm(static_cast<uint32_t>(c), _min_buf.data());
-      _min = {_min_buf.data(), _min_buf.size()};
-      found = true;
+    if (first == _count) {
+      first = c;
     }
+    last = c;
+  }
+  if (first != _count) {
+    EncodeCentroidTerm(static_cast<uint32_t>(first), _min_buf.data());
+    _min = {_min_buf.data(), _min_buf.size()};
+    EncodeCentroidTerm(static_cast<uint32_t>(last), _max_buf.data());
+    _max = {_max_buf.data(), _max_buf.size()};
   }
 }
 
@@ -537,24 +544,21 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
     return;
   }
   constexpr size_t kBatch = STANDARD_VECTOR_SIZE;
-  _vec_buf.resize(std::min(n, kBatch) * _d);
   ColumnReader::RangeScan scan{*_vectors->Child(), *_ctx};
-  duckdb::Vector row{duckdb::LogicalType::FLOAT,
-                     static_cast<duckdb::idx_t>(_d)};
+  duckdb::Vector batch{duckdb::LogicalType::FLOAT,
+                       static_cast<duckdb::idx_t>(std::min(n, kBatch) * _d)};
+  const float* vecs = duckdb::FlatVector::GetData<float>(batch);
   size_t filled = 0;
   for (size_t k = 0; k < n; ++k) {
     const uint64_t r = static_cast<uint64_t>(docs[k]) - doc_limits::min();
-    scan.Scan(r * _d, _d, row, /*out_offset=*/0);
-    std::memcpy(_vec_buf.data() + filled * _d,
-                duckdb::FlatVector::GetData<float>(row),
-                static_cast<size_t>(_d) * sizeof(float));
+    scan.Scan(r * _d, _d, batch, static_cast<duckdb::idx_t>(filled) * _d);
     if (++filled == kBatch) {
-      _qw->EncodeCluster(out, _vec_buf.data(), filled);
+      _qw->EncodeCluster(out, vecs, filled);
       filled = 0;
     }
   }
   if (filled != 0) {
-    _qw->EncodeCluster(out, _vec_buf.data(), filled);
+    _qw->EncodeCluster(out, vecs, filled);
   }
 }
 

@@ -97,7 +97,6 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
   std::span<const float> _fine_centroids;
   size_t _count;
   size_t _term_idx = 0;
-  std::vector<float> _vec_buf;  // scratch for re-read cluster vectors
   FieldMeta _meta;
   std::array<byte_type, 4> _min_buf;
   std::array<byte_type, 4> _max_buf;

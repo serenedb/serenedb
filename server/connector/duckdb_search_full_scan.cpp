@@ -92,34 +92,6 @@ void RerankHits(SearchFullScanGlobalState& g, std::span<irs::ScoreDoc> hits) {
   }
 }
 
-irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
-                                  std::shared_ptr<const irs::Filter> inner) {
-  if (vs.radius != std::numeric_limits<float>::max()) {
-    auto f = std::make_unique<irs::ByRadius>();
-    *f->mutable_field_id() = vs.field_id;
-    auto* o = f->mutable_options();
-    o->query = vs.query_vector;
-    o->centroids_id = vs.centroids_id;
-    o->postings_id = vs.postings_id;
-    o->metric = vs.metric;
-    o->radius = vs.EffectiveRadius();
-    o->inclusive = vs.radius_inclusive;
-    o->inner = std::move(inner);
-    return f;
-  }
-  auto f = std::make_unique<irs::ByVectorSimilarity>();
-  *f->mutable_field_id() = vs.field_id;
-  auto* o = f->mutable_options();
-  o->query = vs.query_vector;
-  o->centroids_id = vs.centroids_id;
-  o->postings_id = vs.postings_id;
-  o->metric = vs.metric;
-  o->quant = vs.quant;
-  o->nprobe = vs.nprobe;
-  o->inner = std::move(inner);
-  return f;
-}
-
 }  // namespace
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
@@ -152,7 +124,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
     state->scorer_obj = std::make_unique<irs::VectorSimilarityScorer>();
   }
   if (ss.vector_scorer) {
-    state->owned_filter = MakeVectorFilter(*ss.vector_scorer, ss.stored_filter);
+    state->owned_filter = MakeVectorFilter(*ss.vector_scorer, ss.stored_filter,
+                                           ss.vector_scorer->EffectiveRadius());
     state->filter = state->owned_filter.get();
   } else {
     state->filter =

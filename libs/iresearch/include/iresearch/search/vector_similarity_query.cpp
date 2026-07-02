@@ -400,10 +400,20 @@ DocIterator::ptr KnnVectorQuery::Execute(const ExecutionContext& ctx,
     bool ok = true;
     const bool has_centroids =
       _state.cluster_centroids.size() == _state.cookies.size() * _state.d;
+    std::unique_ptr<IndexInput> pay_root;
     for (size_t c = 0; c < _state.cookies.size(); ++c) {
-      auto pay_in = _state.reader->ReopenPayload();
+      const PostingCookie cookie{.cookie = _state.cookies[c].get(),
+                                 .field = _state.reader->meta()};
+      auto postings = _state.reader->Iterator(IndexFeatures::None, cookie);
+      if (!postings) {
+        continue;
+      }
+
+      if (!pay_root) {
+        pay_root = _state.reader->ReopenPayload();
+      }
       auto vr =
-        pay_in ? MakeQuantizerReader(codebook, std::move(pay_in)) : nullptr;
+        pay_root ? MakeQuantizerReader(codebook, pay_root->Dup()) : nullptr;
       if (!vr) {
         ok = false;
         break;
@@ -413,13 +423,6 @@ DocIterator::ptr KnnVectorQuery::Execute(const ExecutionContext& ctx,
                                 : nullptr;
       vr->StartCluster(_state.pay_starts[c], _state.cluster_counts[c],
                        centroid);
-
-      const PostingCookie cookie{.cookie = _state.cookies[c].get(),
-                                 .field = _state.reader->meta()};
-      auto postings = _state.reader->Iterator(IndexFeatures::None, cookie);
-      if (!postings) {
-        continue;
-      }
 
       children.emplace_back(memory::make_managed<QVectorIterator>(
         std::move(postings), std::move(vr), _boost, _state.cluster_counts[c]));

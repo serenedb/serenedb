@@ -41,6 +41,7 @@
 #include <duckdb/planner/expression/bound_unnest_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/operator/logical_aggregate.hpp>
+#include <duckdb/planner/operator/logical_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_join.hpp>
 #include <duckdb/planner/operator/logical_order.hpp>
@@ -1076,23 +1077,57 @@ struct KeywordDictAgg {
   std::string_view agg;
 };
 
-// The implicit rewrites below are only sound for a bare `SELECT <aggs> FROM
-// idx` shape: any filter, join or other operator between the aggregate and the
-// scan consumes document rows, which the term-dict scan no longer produces.
-const duckdb::LogicalGet* ImplicitTsDictTarget(
-  const duckdb::LogicalOperator& aggr) {
-  const auto* node = &aggr;
-  while (node->children.size() == 1) {
-    const auto* child = node->children[0].get();
-    if (child->type == duckdb::LogicalOperatorType::LOGICAL_GET) {
-      return &child->Cast<duckdb::LogicalGet>();
+void CollectPredicateFields(duckdb::Expression& expr, irs::field_id field,
+                            connector::SereneDBScanBindData& bind_data,
+                            duckdb::LogicalGet& get, bool& refs_field,
+                            bool& refs_other);
+
+// True if the expression tree contains a TSQUERY-typed node, i.e. an
+// optimizer-claimed @@ ts_* matcher with no scalar fallback: such a predicate
+// can only run as a claimed search filter, never as a post-filter.
+bool ContainsTSQueryExpr(const duckdb::Expression& expr) {
+  if (const auto& type = expr.GetReturnType();
+      type.id() == duckdb::LogicalTypeId::VARCHAR) {
+    const auto alias = type.GetAlias();
+    if (alias == connector::kTSQueryTypeName ||
+        alias == connector::kTokenizedTSQueryTypeName ||
+        alias == connector::kBoostedTSQueryTypeName) {
+      return true;
     }
-    if (child->type != duckdb::LogicalOperatorType::LOGICAL_PROJECTION) {
-      return nullptr;
+  }
+  bool found = false;
+  duckdb::ExpressionIterator::EnumerateChildren(
+    expr, [&](const duckdb::Expression& child) {
+      found = found || ContainsTSQueryExpr(child);
+    });
+  return found;
+}
+
+// The implicit rewrites below are only sound for a bare `SELECT <aggs> FROM
+// idx` shape, optionally with ONE filter whose every conjunct references only
+// the enumerated field (the ts_dict claim then turns it into a term acceptor
+// or a term post-filter). Anything else between the aggregate and the scan
+// consumes document rows, which the term-dict scan no longer produces.
+std::pair<duckdb::LogicalGet*, duckdb::LogicalFilter*> ImplicitTsDictTarget(
+  duckdb::LogicalOperator& aggr) {
+  auto* node = &aggr;
+  duckdb::LogicalFilter* filter = nullptr;
+  while (node->children.size() == 1) {
+    auto* child = node->children[0].get();
+    if (child->type == duckdb::LogicalOperatorType::LOGICAL_GET) {
+      return {&child->Cast<duckdb::LogicalGet>(), filter};
+    }
+    if (child->type == duckdb::LogicalOperatorType::LOGICAL_FILTER) {
+      if (filter != nullptr) {
+        return {nullptr, nullptr};
+      }
+      filter = &child->Cast<duckdb::LogicalFilter>();
+    } else if (child->type != duckdb::LogicalOperatorType::LOGICAL_PROJECTION) {
+      return {nullptr, nullptr};
     }
     node = child;
   }
-  return nullptr;
+  return {nullptr, nullptr};
 }
 
 // `array_agg(DISTINCT col)`, `count(DISTINCT col)`, `min(col)` and `max(col)`
@@ -1195,7 +1230,7 @@ void PushdownTsDictAggregates(duckdb::LogicalAggregate& aggr,
   std::vector<std::pair<size_t, KeywordDictAgg>> keyword_aggs;
   bool other = false;
   std::shared_ptr<const catalog::Snapshot> snapshot;
-  const auto* implicit_target = ImplicitTsDictTarget(aggr);
+  const auto [implicit_target, implicit_filter] = ImplicitTsDictTarget(aggr);
   for (size_t i = 0; i < aggr.expressions.size(); ++i) {
     auto& expr = aggr.expressions[i];
     if (expr->GetExpressionClass() !=
@@ -1220,6 +1255,32 @@ void PushdownTsDictAggregates(duckdb::LogicalAggregate& aggr,
       }
     }
     other = true;
+  }
+
+  // A WHERE clause is only convertible when every conjunct references just the
+  // ONE enumerated field, so the ts_dict filter claim can absorb it; the
+  // conversion is dropped otherwise and the aggregates stay on the document
+  // scan.
+  if (!keyword_aggs.empty() && implicit_filter != nullptr) {
+    const auto field = keyword_aggs.front().second.field_id;
+    auto& bind_data =
+      implicit_target->bind_data->Cast<connector::SereneDBScanBindData>();
+    bool convertible = true;
+    for (const auto& [i, match] : keyword_aggs) {
+      convertible &= match.field_id == field;
+    }
+    for (auto& expr : implicit_filter->expressions) {
+      bool refs_field = false;
+      bool refs_other = false;
+      CollectPredicateFields(*expr, field, bind_data, *implicit_target,
+                             refs_field, refs_other);
+      convertible &=
+        refs_field && !refs_other && !ContainsTSQueryExpr(*expr);
+    }
+    if (!convertible) {
+      keyword_aggs.clear();
+      other = true;
+    }
   }
 
   // Converting a ts_dict aggregate switches the scan to term-dict rows, which
@@ -1440,12 +1501,12 @@ bool TryClaimAnnRange(
   return false;
 }
 
-bool TryClaimSearchFilter(
-  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
-  duckdb::LogicalGet& get, connector::SereneDBScanBindData& bind_data,
-  const catalog::InvertedIndex& index,
-  std::shared_ptr<const catalog::Snapshot> snapshot,
-  duckdb::ClientContext& context) {
+template<typename F>
+auto WithSearchGetters(duckdb::LogicalGet& get,
+                       connector::SereneDBScanBindData& bind_data,
+                       const catalog::InvertedIndex& index,
+                       const std::shared_ptr<const catalog::Snapshot>& snapshot,
+                       duckdb::ClientContext& context, F&& fn) {
   const auto projected_ids = BuildProjectedColumnIds(get, bind_data);
   const auto table_index = get.table_index;
   const auto relation_id = index.GetRelationId();
@@ -1507,44 +1568,59 @@ bool TryClaimSearchFilter(
     return make_info(field_id, info, expr_data->return_type);
   };
 
-  auto& scan = bind_data.scan_source->Cast<connector::SearchScan>();
+  return fn(getter, expr_getter, analyzed_fields);
+}
 
-  auto root_and = std::make_unique<irs::And>();
-  bool any_claimed = false;
-  for (size_t i = 0; i < filters.size();) {
-    if (TryClaimIResearchConjunct(*root_and, filters[i], getter, expr_getter,
-                                  context)) {
-      any_claimed = true;
-      std::swap(filters[i], filters.back());
-      filters.pop_back();
-    } else {
-      ++i;
-    }
-  }
-  if (!any_claimed) {
-    return false;
-  }
+bool TryClaimSearchFilter(
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
+  duckdb::LogicalGet& get, connector::SereneDBScanBindData& bind_data,
+  const catalog::InvertedIndex& index,
+  std::shared_ptr<const catalog::Snapshot> snapshot,
+  duckdb::ClientContext& context) {
+  return WithSearchGetters(
+    get, bind_data, index, snapshot, context,
+    [&](const connector::ColumnGetter& getter,
+        const connector::ExpressionGetter& expr_getter,
+        containers::FlatHashSet<irs::field_id>& analyzed_fields) {
+      auto& scan = bind_data.scan_source->Cast<connector::SearchScan>();
 
-  irs::Filter::ptr root = std::move(root_and);
-  irs::Optimize(root, {.scored = scan.text_scorer.has_value(),
-                       .analyzed_fields = std::move(analyzed_fields)});
+      auto root_and = std::make_unique<irs::And>();
+      bool any_claimed = false;
+      for (size_t i = 0; i < filters.size();) {
+        if (TryClaimIResearchConjunct(*root_and, filters[i], getter,
+                                      expr_getter, context)) {
+          any_claimed = true;
+          std::swap(filters[i], filters.back());
+          filters.pop_back();
+        } else {
+          ++i;
+        }
+      }
+      if (!any_claimed) {
+        return false;
+      }
 
-  std::shared_ptr<irs::Filter> stored;
-  if (scan.vector_scorer) {
-    auto proxy = std::make_shared<irs::ProxyFilter>();
-    proxy->set_filter(irs::IResourceManager::gNoop, std::move(root));
-    stored = std::move(proxy);
-  } else {
-    stored = std::move(root);
-  }
+      irs::Filter::ptr root = std::move(root_and);
+      irs::Optimize(root, {.scored = scan.text_scorer.has_value(),
+                           .analyzed_fields = std::move(analyzed_fields)});
 
-  scan.stored_filter = std::move(stored);
-  for (auto& req : scan.offsets) {
-    if (req.bind) {
-      req.bind->stored_filter = scan.stored_filter;
-    }
-  }
-  return true;
+      std::shared_ptr<irs::Filter> stored;
+      if (scan.vector_scorer) {
+        auto proxy = std::make_shared<irs::ProxyFilter>();
+        proxy->set_filter(irs::IResourceManager::gNoop, std::move(root));
+        stored = std::move(proxy);
+      } else {
+        stored = std::move(root);
+      }
+
+      scan.stored_filter = std::move(stored);
+      for (auto& req : scan.offsets) {
+        if (req.bind) {
+          req.bind->stored_filter = scan.stored_filter;
+        }
+      }
+      return true;
+    });
 }
 
 // Repoint every column reference that resolves to the enumerated field onto the
@@ -1598,9 +1674,10 @@ void CollectPredicateFields(duckdb::Expression& expr, irs::field_id field,
 }
 
 // True if `filter` is a single term-acceptor leaf (ByTerm / ByTerms / ByPrefix
-// / ByRange / Levenshtein / Automaton) constraining `field`. ts_dict_agg()
-// WHERE accepts exactly this shape; null, And/Or/Not and other-field leaves
-// return false.
+// / ByRange / Levenshtein / Automaton) constraining `field`, i.e. a shape the
+// term-dict scan can enumerate directly. null, And/Or/Not, other-field leaves
+// and ByTerms with min_match > 1 (an intersection the enumeration cannot
+// express) return false.
 template<typename... Fs>
 bool IsAcceptorOn(const irs::Filter& filter, irs::field_id field) {
   const auto type = filter.type();
@@ -1610,17 +1687,41 @@ bool IsAcceptorOn(const irs::Filter& filter, irs::field_id field) {
 }
 
 bool IsSingleAcceptor(const irs::Filter* filter, irs::field_id field) {
-  return filter != nullptr &&
-         IsAcceptorOn<irs::ByTerm, irs::ByPrefix, irs::ByRange, irs::ByTerms,
+  if (filter == nullptr) {
+    return false;
+  }
+  if (filter->type() == irs::Type<irs::ByTerms>::id()) {
+    const auto& terms = basics::downCast<irs::ByTerms>(*filter);
+    return terms.field_id() == field && terms.options().min_match <= 1;
+  }
+  return IsAcceptorOn<irs::ByTerm, irs::ByPrefix, irs::ByRange,
                       irs::LevenshteinAutomatonFilter, irs::AutomatonFilter>(
-           *filter, field);
+    *filter, field);
 }
 
-// ts_dict_agg() WHERE accepts ONE predicate on the single enumerated field: a
-// claimable term acceptor (enumerated via seek/automaton) or, failing that, a
-// single same-field scalar predicate post-filtered on the emitted term column.
-// Boolean combinations (multiple conjuncts / OR / NOT) and cross-field
-// references are rejected, to be composed via set operations by the caller.
+size_t AcceptorRank(const irs::Filter& filter) {
+  const auto type = filter.type();
+  if (type == irs::Type<irs::ByTerm>::id()) {
+    return 0;
+  }
+  if (type == irs::Type<irs::ByTerms>::id()) {
+    return 1;
+  }
+  if (type == irs::Type<irs::ByPrefix>::id() ||
+      type == irs::Type<irs::ByRange>::id()) {
+    return 2;
+  }
+  return 3;
+}
+
+// ts_dict_agg() WHERE accepts predicates on the single enumerated field. The
+// claimable conjuncts are fused and, when the optimizer folds them into ONE
+// term acceptor, that acceptor drives the enumeration; otherwise the most
+// selective individually-claimable acceptor drives and every remaining
+// same-field conjunct is applied as a post-filter over the emitted term
+// column. Cross-field references and non-driving @@ ts_* conjuncts (optimizer
+// stubs with no scalar fallback) are rejected; nothing is committed to the
+// scan before all conjuncts validate.
 void ClaimTsDictFilter(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
   duckdb::LogicalGet& get, connector::SereneDBScanBindData& bind_data,
@@ -1635,42 +1736,107 @@ void ClaimTsDictFilter(
       ERR_HINT(
         "constrain each field with a single-field ts_dict_agg subquery"));
   }
-  const auto field = ss.ts_dicts.front().field_id;
-  const size_t conjuncts = filters.size();
-  TryClaimSearchFilter(filters, get, bind_data, index, std::move(snapshot),
-                       context);
+  auto& req = ss.ts_dicts.front();
+  const auto field = req.field_id;
 
-  if (conjuncts == 1 && filters.empty() &&
-      IsSingleAcceptor(ss.stored_filter.get(), field)) {
-    return;
-  }
+  WithSearchGetters(
+    get, bind_data, index, snapshot, context,
+    [&](const connector::ColumnGetter& getter,
+        const connector::ExpressionGetter& expr_getter,
+        containers::FlatHashSet<irs::field_id>& analyzed_fields) {
+      const auto optimize = [&](irs::Filter::ptr& f) {
+        irs::Optimize(f, {.scored = false, .analyzed_fields = analyzed_fields});
+      };
 
-  if (conjuncts == 1 && filters.size() == 1 && !ss.stored_filter) {
-    auto& expr = filters.front();
-    const auto cls = expr->GetExpressionClass();
-    const bool boolean =
-      cls == duckdb::ExpressionClass::BOUND_CONJUNCTION ||
-      (cls == duckdb::ExpressionClass::BOUND_OPERATOR &&
-       expr->GetExpressionType() == duckdb::ExpressionType::OPERATOR_NOT);
-    bool refs_field = false;
-    bool refs_other = false;
-    CollectPredicateFields(*expr, field, bind_data, get, refs_field,
-                           refs_other);
-    if (!boolean && refs_field && !refs_other) {
-      auto& req = ss.ts_dicts.front();
-      EnsureTsDictCol(bind_data, get, req, TsDictColKind::kTerm);
-      req.term_uses |= connector::SearchScan::TsDictRequest::kUseFull;
-      RewriteFieldRefsToTerm(expr, field, bind_data, get, req.term_col_idx);
-      return;
-    }
-  }
+      irs::Filter::ptr driver;
+      size_t driver_pos = filters.size();
+      bool fused_drives = false;
 
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-    ERR_MSG("ts_dict_agg() WHERE accepts a single predicate on the enumerated "
-            "field (=, IN, LIKE, BETWEEN, length, <>, or @@ ts_*)"),
-    ERR_HINT("combine conditions with UNION/INTERSECT/EXCEPT over "
-             "unnest(ts_dict_agg(...)), or filter terms in an outer query"));
+      auto fused_and = std::make_unique<irs::And>();
+      std::vector<bool> claimed(filters.size(), false);
+      size_t n_claimed = 0;
+      for (size_t i = 0; i < filters.size(); ++i) {
+        if (TryClaimIResearchConjunct(*fused_and, filters[i], getter,
+                                      expr_getter, context)) {
+          claimed[i] = true;
+          ++n_claimed;
+        }
+      }
+
+      if (n_claimed != 0) {
+        irs::Filter::ptr fused = std::move(fused_and);
+        optimize(fused);
+        if (IsSingleAcceptor(fused.get(), field)) {
+          driver = std::move(fused);
+          fused_drives = true;
+        } else {
+          size_t best_rank = 4;
+          for (size_t i = 0; i < filters.size(); ++i) {
+            if (!claimed[i]) {
+              continue;
+            }
+            auto one_and = std::make_unique<irs::And>();
+            TryClaimIResearchConjunct(*one_and, filters[i], getter, expr_getter,
+                                      context);
+            irs::Filter::ptr one = std::move(one_and);
+            optimize(one);
+            if (IsSingleAcceptor(one.get(), field)) {
+              if (const auto rank = AcceptorRank(*one); rank < best_rank) {
+                best_rank = rank;
+                driver = std::move(one);
+                driver_pos = i;
+              }
+            }
+          }
+        }
+      }
+
+      std::vector<size_t> post_filters;
+      for (size_t i = 0; i < filters.size(); ++i) {
+        if ((fused_drives && claimed[i]) || i == driver_pos) {
+          continue;
+        }
+        bool refs_field = false;
+        bool refs_other = false;
+        CollectPredicateFields(*filters[i], field, bind_data, get, refs_field,
+                               refs_other);
+        if (!refs_field || refs_other || ContainsTSQueryExpr(*filters[i])) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+            ERR_MSG("ts_dict_agg() WHERE accepts same-field predicates only: "
+                    "one term acceptor (=, IN, LIKE, BETWEEN, @@ ts_*) plus "
+                    "scalar post-filters over the terms"),
+            ERR_HINT("cross-field conditions and extra @@ ts_* matchers are "
+                     "not supported; filter in an outer query over "
+                     "unnest(ts_dict_agg(...))"));
+        }
+        post_filters.push_back(i);
+      }
+
+      if (driver) {
+        ss.stored_filter = std::move(driver);
+      }
+      if (!post_filters.empty()) {
+        EnsureTsDictCol(bind_data, get, req, TsDictColKind::kTerm);
+        req.term_uses |= connector::SearchScan::TsDictRequest::kUseFull;
+        for (const auto i : post_filters) {
+          RewriteFieldRefsToTerm(filters[i], field, bind_data, get,
+                                 req.term_col_idx);
+        }
+      }
+
+      size_t out = 0;
+      for (size_t i = 0; i < filters.size(); ++i) {
+        const bool drop = (fused_drives && claimed[i]) || i == driver_pos;
+        if (!drop) {
+          if (out != i) {
+            filters[out] = std::move(filters[i]);
+          }
+          ++out;
+        }
+      }
+      filters.erase(filters.begin() + out, filters.end());
+    });
 }
 
 }  // namespace

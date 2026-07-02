@@ -2,9 +2,9 @@ hash-threshold 100
 
 # Doc-restricted term enumeration (significant-terms style) is NOT supported:
 # it would intersect each term's postings with the matched-document set, which
-# defeats the point of reading the term dictionary directly. A WHERE on a
-# non-enumerated field (or any boolean combination) is therefore rejected; the
-# caller composes such queries with set operations / outer filters instead.
+# defeats the point of reading the term dictionary directly. A WHERE that
+# references a non-enumerated field is therefore rejected; the caller composes
+# such queries with set operations / outer filters instead.
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY dr(
@@ -69,8 +69,8 @@ statement error
 SELECT ts_dict_agg(body) FROM dr_idx
 WHERE category @@ ts_starts_with('news')
 ----
-db error: ERROR: ts_dict_agg() WHERE accepts a single predicate on the enumerated field (=, IN, LIKE, BETWEEN, length, <>, or @@ ts_*)
-HINT: combine conditions with UNION/INTERSECT/EXCEPT over unnest(ts_dict_agg(...)), or filter terms in an outer query
+db error: ERROR: ts_dict_agg() WHERE accepts same-field predicates only: one term acceptor (=, IN, LIKE, BETWEEN, @@ ts_*) plus scalar post-filters over the terms
+HINT: cross-field conditions and extra @@ ts_* matchers are not supported; filter in an outer query over unnest(ts_dict_agg(...))
 
 
 # A term constraint plus a document filter is two conjuncts -> also rejected.
@@ -78,8 +78,8 @@ statement error
 SELECT ts_dict_agg(body) FROM dr_idx
 WHERE body @@ ts_starts_with('a') AND category @@ ts_starts_with('news')
 ----
-db error: ERROR: ts_dict_agg() WHERE accepts a single predicate on the enumerated field (=, IN, LIKE, BETWEEN, length, <>, or @@ ts_*)
-HINT: combine conditions with UNION/INTERSECT/EXCEPT over unnest(ts_dict_agg(...)), or filter terms in an outer query
+db error: ERROR: ts_dict_agg() WHERE accepts same-field predicates only: one term acceptor (=, IN, LIKE, BETWEEN, @@ ts_*) plus scalar post-filters over the terms
+HINT: cross-field conditions and extra @@ ts_* matchers are not supported; filter in an outer query over unnest(ts_dict_agg(...))
 
 
 statement ok

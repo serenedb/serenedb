@@ -961,8 +961,26 @@ mango	1666
 melon	3333
 
 # --- notpre : body NOT LIKE 'a%'
-statement error
-SELECT unnest(ts_dict_agg(body)) AS term FROM cart_idx WHERE body NOT LIKE 'a%'
+query
+SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS docs FROM cart_idx WHERE body NOT LIKE 'a%' ORDER BY term, docs
 ----
-db error: ERROR: ts_dict_agg() WHERE accepts a single predicate on the enumerated field (=, IN, LIKE, BETWEEN, length, <>, or @@ ts_*)
-HINT: combine conditions with UNION/INTERSECT/EXCEPT over unnest(ts_dict_agg(...)), or filter terms in an outer query
+term	docs
+banana	3334
+berry	3333
+blueberry	3334
+cherry	1667
+citrus	3334
+cranberry	3333
+date	3334
+dragonfruit	1667
+elderberry	3333
+fig	3334
+grape	3334
+guava	1667
+kiwi	3332
+lemon	3333
+lime	3333
+mango	1666
+melon	3333
+orange	3333
+papaya	3332

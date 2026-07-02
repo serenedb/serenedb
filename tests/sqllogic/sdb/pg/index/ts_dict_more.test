@@ -160,14 +160,17 @@ alpha
 delta
 
 
-# A boolean combination over the term is no longer enumerated inline; compose it
-# with set operations instead (see ts_dict_compose.test).
-statement error
+# A same-field boolean combination applies as a post-filter over the emitted
+# terms.
+query T
 SELECT unnest(ts_dict_agg(body)) AS term
 FROM dm_idx WHERE body = 'beta' OR length(body) = 5 ORDER BY term
 ----
-db error: ERROR: ts_dict_agg() WHERE accepts a single predicate on the enumerated field (=, IN, LIKE, BETWEEN, length, <>, or @@ ts_*)
-HINT: combine conditions with UNION/INTERSECT/EXCEPT over unnest(ts_dict_agg(...)), or filter terms in an outer query
+term
+alpha
+beta
+delta
+gamma
 
 
 statement ok

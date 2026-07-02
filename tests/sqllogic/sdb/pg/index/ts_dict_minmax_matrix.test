@@ -86,14 +86,13 @@ QUERY PLAN
 │    ────────────────────   │
 │        Aggregates:        │
 │          min(#0)          │
-│          max(#1)          │
+│          max(#0)          │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
-│  sdb_inverted_index_term$ │
 │  sdb_inverted_index_term$ │
 │                           │
 │           ~1 row          │
@@ -266,11 +265,10 @@ SELECT max(cat) AS mx, list_sort(ts_dict_agg(cat)) AS terms FROM mmx1_idx
 mx	terms
 cc	{bd,bm,bt,cc}
 
-# Implicit min/max with a WHERE clause fall back to the regular document scan
-# (conversion requires a bare aggregate-over-scan shape); explicit
-# ts_dict_min/ts_dict_max keep the dictionary and apply the same-field
-# post-filter over emitted terms, forcing full enumeration so min/max see the
-# filtered set: 'a' and 'z' sit at the shortcut positions but fail the filter.
+# A same-field WHERE stays convertible for implicit min/max and both they and
+# explicit ts_dict_min/ts_dict_max apply it as a post-filter over the emitted
+# terms, forcing full enumeration so min/max see the filtered set: 'a' and 'z'
+# sit at the shortcut positions but fail the filter.
 statement ok
 CREATE TABLE mmx2(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL)
 
@@ -313,14 +311,13 @@ QUERY PLAN
 │    ────────────────────   │
 │        Aggregates:        │
 │          min(#0)          │
-│          max(#1)          │
+│          max(#0)          │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
-│  sdb_inverted_index_term$ │
 │  sdb_inverted_index_term$ │
 │                           │
 │          ~0 rows          │

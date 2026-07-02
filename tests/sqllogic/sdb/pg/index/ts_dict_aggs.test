@@ -129,14 +129,13 @@ QUERY PLAN
 │    ────────────────────   │
 │        Aggregates:        │
 │          min(#0)          │
-│          max(#1)          │
+│          max(#0)          │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
-│  sdb_inverted_index_term$ │
 │  sdb_inverted_index_term$ │
 │                           │
 │        ~20,000 rows       │
@@ -351,14 +350,13 @@ QUERY PLAN
 │    ────────────────────   │
 │        Aggregates:        │
 │          min(#0)          │
-│          max(#1)          │
+│          max(#0)          │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
-│  sdb_inverted_index_term$ │
 │  sdb_inverted_index_term$ │
 │                           │
 │        ~4,000 rows        │
@@ -593,14 +591,13 @@ QUERY PLAN
 │    ────────────────────   │
 │        Aggregates:        │
 │          min(#0)          │
-│          max(#1)          │
+│          max(#0)          │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
-│  sdb_inverted_index_term$ │
 │  sdb_inverted_index_term$ │
 │                           │
 │        ~4,000 rows        │
@@ -837,14 +834,13 @@ QUERY PLAN
 │    ────────────────────   │
 │        Aggregates:        │
 │          min(#0)          │
-│          max(#1)          │
+│          max(#0)          │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
-│  sdb_inverted_index_term$ │
 │  sdb_inverted_index_term$ │
 │                           │
 │        ~4,000 rows        │
@@ -1078,14 +1074,13 @@ QUERY PLAN
 │    ────────────────────   │
 │        Aggregates:        │
 │          min(#0)          │
-│          max(#1)          │
+│          max(#0)          │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
-│  sdb_inverted_index_term$ │
 │  sdb_inverted_index_term$ │
 │                           │
 │        ~4,000 rows        │
@@ -1317,14 +1312,13 @@ QUERY PLAN
 │    ────────────────────   │
 │        Aggregates:        │
 │          min(#0)          │
-│          max(#1)          │
+│          max(#0)          │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
-│  sdb_inverted_index_term$ │
 │  sdb_inverted_index_term$ │
 │                           │
 │        ~4,000 rows        │
@@ -1551,14 +1545,13 @@ QUERY PLAN
 │    ────────────────────   │
 │        Aggregates:        │
 │          min(#0)          │
-│          max(#1)          │
+│          max(#0)          │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
-│  sdb_inverted_index_term$ │
 │  sdb_inverted_index_term$ │
 │                           │
 │        ~4,000 rows        │
@@ -1792,14 +1785,13 @@ QUERY PLAN
 │    ────────────────────   │
 │        Aggregates:        │
 │          min(#0)          │
-│          max(#1)          │
+│          max(#0)          │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
-│  sdb_inverted_index_term$ │
 │  sdb_inverted_index_term$ │
 │                           │
 │        ~4,000 rows        │
@@ -2046,14 +2038,13 @@ QUERY PLAN
 │    ────────────────────   │
 │        Aggregates:        │
 │          min(#0)          │
-│          max(#1)          │
+│          max(#0)          │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
-│  sdb_inverted_index_term$ │
 │  sdb_inverted_index_term$ │
 │                           │
 │        ~4,000 rows        │
@@ -2302,14 +2293,13 @@ QUERY PLAN
 │    ────────────────────   │
 │        Aggregates:        │
 │          min(#0)          │
-│          max(#1)          │
+│          max(#0)          │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
-│  sdb_inverted_index_term$ │
 │  sdb_inverted_index_term$ │
 │                           │
 │        ~4,000 rows        │
@@ -2435,11 +2425,29 @@ terms	counts
 
 
 # === filter: notpre : body NOT LIKE 'a%'
-statement error
+query
 SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_raw_agg(body))::VARCHAR AS raw, unnest(ts_dict_count(body)) AS docs, unnest(ts_dict_freq(body)) AS freq, unnest(ts_dict_score(body)) AS score FROM agg_idx WHERE body NOT LIKE 'a%' ORDER BY term
 ----
-db error: ERROR: ts_dict_agg() WHERE accepts a single predicate on the enumerated field (=, IN, LIKE, BETWEEN, length, <>, or @@ ts_*)
-HINT: combine conditions with UNION/INTERSECT/EXCEPT over unnest(ts_dict_agg(...)), or filter terms in an outer query
+term	raw	docs	freq	score
+banana	\\x62616e616e61	3334	3334	1
+berry	\\x6265727279	3333	3333	1
+blueberry	\\x626c75656265727279	3334	3334	1
+cherry	\\x636865727279	1667	3334	1
+citrus	\\x636974727573	3334	3334	1
+cranberry	\\x6372616e6265727279	3333	3333	1
+date	\\x64617465	3334	3334	1
+dragonfruit	\\x647261676f6e6672756974	1667	3334	1
+elderberry	\\x656c6465726265727279	3333	3333	1
+fig	\\x666967	3334	3334	1
+grape	\\x6772617065	3334	3334	1
+guava	\\x6775617661	1667	3334	1
+kiwi	\\x6b697769	3332	3332	1
+lemon	\\x6c656d6f6e	3333	3333	1
+lime	\\x6c696d65	3333	3333	1
+mango	\\x6d616e676f	1666	3332	1
+melon	\\x6d656c6f6e	3333	3333	1
+orange	\\x6f72616e6765	3333	3333	1
+papaya	\\x706170617961	3332	3332	1
 
 
 statement ok

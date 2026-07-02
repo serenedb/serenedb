@@ -217,19 +217,16 @@ QUERY PLAN
 │    ────────────────────   │
 │        Aggregates:        │
 │         count(#0)         │
-│          min(#1)          │
-│          max(#2)          │
-│ list(#3) FILTER (WHERE #4)│
-│         Filter: #4        │
+│          min(#0)          │
+│          max(#0)          │
+│ list(#0) FILTER (WHERE #1)│
+│         Filter: #1        │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
-│  sdb_inverted_index_term$ │
-│  sdb_inverted_index_term$ │
-│  sdb_inverted_index_term$ │
 │  sdb_inverted_index_term$ │
 │ (sdb_inverted_index_term$ │
 │        IS NOT NULL)       │
@@ -270,7 +267,7 @@ SELECT count(DISTINCT cat) AS c1, count(*) AS c2 FROM mc_idx
 c1	c2
 4	5
 
-# A WHERE clause consumes document rows, so implicit conversion is disabled and
+# A WHERE clause referencing any other column disables implicit conversion and
 # the aggregates fall back to the regular scan.
 query IT
 SELECT count(DISTINCT cat) AS cnt, min(cat) AS mn FROM mc_idx WHERE id > 2
@@ -278,12 +275,72 @@ SELECT count(DISTINCT cat) AS cnt, min(cat) AS mn FROM mc_idx WHERE id > 2
 cnt	mn
 3	amber
 
+# A WHERE clause on the enumerated column itself stays convertible: the
+# ts_dict claim absorbs it as a term acceptor or post-filter.
 query TI
 SELECT min(cat) AS mn, count(DISTINCT cat) AS cnt FROM mc_idx
 WHERE cat LIKE 'r%'
 ----
 mn	cnt
 red	1
+
+query
+EXPLAIN SELECT min(cat) AS mn, count(DISTINCT cat) AS cnt FROM mc_idx
+WHERE cat LIKE 'r%'
+----
+QUERY PLAN
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│          min(#0)          │
+│         count(#0)         │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│  sdb_inverted_index_term$ │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       HASH_GROUP_BY       │
+│    ────────────────────   │
+│         Groups: #0        │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: mc_idx       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││    STARTS_WITH    ││  │
+│  ││    ────────────   ││  │
+│  ││  cat(string) 'r'  ││  │
+│  ││     limit=1024    ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│        TsDict: cat        │
+│                           │
+│        Projections:       │
+│  sdb_inverted_index_term$ │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
 
 query T
 SELECT list_sort(array_agg(DISTINCT cat)) AS lst FROM mc_idx WHERE id > 2

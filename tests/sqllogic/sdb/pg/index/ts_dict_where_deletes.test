@@ -413,25 +413,169 @@ FROM wdk_idx WHERE cat = 'lime' OR cat = 'grape' ORDER BY term
 term	docs
 lime	1
 
-statement error
-SELECT ts_dict_agg(cat) FROM wdk_idx WHERE cat LIKE 'p%' AND cat <> 'pear'
+query T
+SELECT unnest(ts_dict_agg(cat)) AS term
+FROM wdk_idx WHERE cat LIKE 'p%' AND cat <> 'pear' ORDER BY term
 ----
-db error: ERROR: ts_dict_agg() WHERE accepts a single predicate on the enumerated field (=, IN, LIKE, BETWEEN, length, <>, or @@ ts_*)
-HINT: combine conditions with UNION/INTERSECT/EXCEPT over unnest(ts_dict_agg(...)), or filter terms in an outer query
+term
+pine
 
-
-statement error
-SELECT ts_dict_agg(cat) FROM wdk_idx WHERE cat = 'lime' OR length(cat) = 4
+query
+EXPLAIN SELECT unnest(ts_dict_agg(cat)) AS term
+FROM wdk_idx WHERE cat LIKE 'p%' AND cat <> 'pear'
 ----
-db error: ERROR: ts_dict_agg() WHERE accepts a single predicate on the enumerated field (=, IN, LIKE, BETWEEN, length, <>, or @@ ts_*)
-HINT: combine conditions with UNION/INTERSECT/EXCEPT over unnest(ts_dict_agg(...)), or filter terms in an outer query
+QUERY PLAN
+┌───────────────────────────┐
+│       HASH_GROUP_BY       │
+│    ────────────────────   │
+│         Groups: #0        │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (sdb_inverted_index_term$ │
+│         != 'pear')        │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: wdk_idx      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││    STARTS_WITH    ││  │
+│  ││    ────────────   ││  │
+│  ││  cat(string) 'p'  ││  │
+│  ││     limit=1024    ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│        TsDict: cat        │
+│                           │
+│        Projections:       │
+│  sdb_inverted_index_term$ │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query T
+SELECT unnest(ts_dict_agg(cat)) AS term
+FROM wdk_idx WHERE cat = 'lime' OR length(cat) = 4 ORDER BY term
+----
+term
+lime
+pear
+pine
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(cat)) AS term
+FROM wdk_idx WHERE cat = 'lime' OR length(cat) = 4
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       HASH_GROUP_BY       │
+│    ────────────────────   │
+│         Groups: #0        │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ ((sdb_inverted_index_term$│
+│    = 'lime') OR (length   │
+│ (sdb_inverted_index_term$)│
+│            = 4))          │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: wdk_idx      │
+│        TsDict: cat        │
+│                           │
+│        Projections:       │
+│  sdb_inverted_index_term$ │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+query T
+SELECT unnest(ts_dict_agg(cat)) AS term
+FROM wdk_idx WHERE cat >= 'lime' AND cat < 'pine' ORDER BY term
+----
+term
+lime
+pear
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(cat)) AS term
+FROM wdk_idx WHERE cat >= 'lime' AND cat < 'pine'
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       HASH_GROUP_BY       │
+│    ────────────────────   │
+│         Groups: #0        │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: wdk_idx      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││       Range       ││  │
+│  ││    ────────────   ││  │
+│  ││ cat(string) >=lime││  │
+│  ││      , <pine      ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│        TsDict: cat        │
+│                           │
+│        Projections:       │
+│  sdb_inverted_index_term$ │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
 
 
 statement error
 SELECT ts_dict_agg(cat) FROM wdk_idx WHERE tag = 'x'
 ----
-db error: ERROR: ts_dict_agg() WHERE accepts a single predicate on the enumerated field (=, IN, LIKE, BETWEEN, length, <>, or @@ ts_*)
-HINT: combine conditions with UNION/INTERSECT/EXCEPT over unnest(ts_dict_agg(...)), or filter terms in an outer query
+db error: ERROR: ts_dict_agg() WHERE accepts same-field predicates only: one term acceptor (=, IN, LIKE, BETWEEN, @@ ts_*) plus scalar post-filters over the terms
+HINT: cross-field conditions and extra @@ ts_* matchers are not supported; filter in an outer query over unnest(ts_dict_agg(...))
 
 
 statement error

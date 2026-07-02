@@ -42,7 +42,7 @@ constexpr uint64_t kPerIndexMask = MaskFromNonNulls({
   GetIndex(&SdbMetrics::metric),
   GetIndex(&SdbMetrics::value),
   GetIndex(&SdbMetrics::description),
-  GetIndex(&SdbMetrics::index_id),
+  GetIndex(&SdbMetrics::relation_id),
 });
 
 using Stats = search::InvertedIndexStorage::Stats;
@@ -102,10 +102,10 @@ catalog::MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
         basics::downCast<const catalog::InvertedIndex>(*index_ptr).GetData();
       SDB_ASSERT(storage);
       const auto stats = storage->GetStats();
-      const Oid index_id = index_ptr->GetId().id();
+      const Oid relation_id = index_ptr->GetId().id();
       for (const auto& desc : kIndexMetrics) {
         values.emplace_back(desc.metric, stats.*desc.field, desc.description,
-                            index_id);
+                            relation_id);
         masks.emplace_back(kPerIndexMask);
       }
     }

@@ -13,38 +13,113 @@ CREATE TEXT SEARCH DICTIONARY test_english(
 );
 
 statement ok
-CREATE INDEX index_t ON t USING inverted(r test_english);
+CREATE INDEX index_t ON t USING inverted(r test_english)
+WITH (refresh_interval = 0, compaction_interval = 0);
 
 statement ok
 INSERT INTO t VALUES ('a'), ('b'), ('c');
+
+
+query
+SELECT metric, value FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'index_t')
+ORDER BY metric;
+----
+metric	value
+avg_cleanup_time_ms	0
+avg_commit_time_ms	0
+avg_consolidation_time_ms	0
+index_size	0
+num_buffered_docs	3
+num_docs	0
+num_failed_cleanups	0
+num_failed_commits	0
+num_failed_consolidations	0
+num_files	1
+num_live_docs	0
+num_segments	0
+
 
 statement ok
 VACUUM (REFRESH_TABLE) t;
 
 
-# Per-index IResearch-style statistics are exposed with index_id populated.
 query
 SELECT metric, value FROM sdb_metrics
-WHERE index_id = (SELECT oid FROM pg_class WHERE relname = 'index_t')
-  AND metric IN ('num_docs', 'num_live_docs')
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'index_t')
 ORDER BY metric;
 ----
 metric	value
+avg_cleanup_time_ms	0
+avg_commit_time_ms	<slt:ignore>
+avg_consolidation_time_ms	0
+index_size	<slt:ignore>
+num_buffered_docs	0
 num_docs	3
+num_failed_cleanups	0
+num_failed_commits	0
+num_failed_consolidations	0
+num_files	5
 num_live_docs	3
+num_segments	1
 
 
-# All 12 per-index metrics are present for the one inverted index.
+statement ok
+DELETE FROM t WHERE r = 'a';
+
+statement ok
+INSERT INTO t VALUES ('d'), ('e');
+
+statement ok
+VACUUM (REFRESH_TABLE) t;
+
+
 query
-SELECT count(*) FROM sdb_metrics WHERE index_id IS NOT NULL;
+SELECT metric, value FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'index_t')
+ORDER BY metric;
 ----
-count
-12
+metric	value
+avg_cleanup_time_ms	0
+avg_commit_time_ms	<slt:ignore>
+avg_consolidation_time_ms	0
+index_size	<slt:ignore>
+num_buffered_docs	0
+num_docs	5
+num_failed_cleanups	0
+num_failed_commits	0
+num_failed_consolidations	0
+num_files	9
+num_live_docs	4
+num_segments	2
 
 
-# Process-wide gauges keep a NULL index_id.
+statement ok
+VACUUM (COMPACT_TABLE) t;
+
+
 query
-SELECT count(*) FROM sdb_metrics WHERE metric = 'refresh_active' AND index_id IS NULL;
+SELECT metric, value FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'index_t')
+ORDER BY metric;
+----
+metric	value
+avg_cleanup_time_ms	0
+avg_commit_time_ms	<slt:ignore>
+avg_consolidation_time_ms	<slt:ignore>
+index_size	<slt:ignore>
+num_buffered_docs	0
+num_docs	4
+num_failed_cleanups	0
+num_failed_commits	0
+num_failed_consolidations	0
+num_files	5
+num_live_docs	4
+num_segments	1
+
+
+query
+SELECT count(*) FROM sdb_metrics WHERE metric = 'refresh_active' AND relation_id IS NULL;
 ----
 count
 1

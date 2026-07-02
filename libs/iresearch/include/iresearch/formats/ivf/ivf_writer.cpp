@@ -52,6 +52,8 @@ namespace {
 constexpr uint32_t kClusterSeed = 42;
 constexpr double kNlistSqrtMultiplier = 2.0;
 constexpr uint64_t kTrainPointsPerCentroid = 64;
+constexpr uint32_t kDefaultClusterIters = 10;
+constexpr uint32_t kClusterRedo = 1;
 
 // Streams the flat vector column in row-aligned chunks (no full matrix in RAM),
 // invoking `sink(first_row, n_rows, data)` where `data` points at `n_rows * d`
@@ -153,6 +155,8 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
   if (_info.quant.kind == VectorQuantization::PQ) {
     n_train = std::min<uint64_t>(valid_count, std::max<uint64_t>(n_train, 256));
   }
+  const uint32_t cluster_iters =
+    _info.cluster_iters != 0 ? _info.cluster_iters : kDefaultClusterIters;
 
   std::vector<float> sample(static_cast<size_t>(n_train) * d);
   {
@@ -188,8 +192,8 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
   }
 
   const uint32_t base_seed = kClusterSeed;
-  const std::vector<float> l1_centroids =
-    TrainCentroids(m, sample.data(), n_train, n_l1, d, base_seed);
+  const std::vector<float> l1_centroids = TrainCentroids(
+    m, sample.data(), n_train, n_l1, d, base_seed, cluster_iters, kClusterRedo);
 
   std::vector<uint32_t> doc_cell;
   doc_cell.reserve(valid_count);
@@ -307,7 +311,8 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
                       static_cast<size_t>(d) * sizeof(float));
         }
         l2_centroids =
-          TrainCentroids(m, cell_sample.data(), ms, n_l2, d, base_seed + c);
+          TrainCentroids(m, cell_sample.data(), ms, n_l2, d, base_seed + c,
+                         cluster_iters, kClusterRedo);
       }
     }
 

@@ -44,6 +44,7 @@ struct IVFColumnConfig {
   irs::VectorQuantization quant = irs::VectorQuantization::None;
   uint32_t nlist = 0;
   uint32_t train_sample = 0;
+  uint32_t cluster_iters = 0;
   irs::field_id centroids_id = irs::field_limits::invalid();
   irs::field_id postings_id = irs::field_limits::invalid();
   irs::field_id sq_id = irs::field_limits::invalid();

@@ -61,6 +61,7 @@ constexpr std::string_view kIPMetric = "ip";
 
 constexpr std::string_view kNlistField = "nlist";
 constexpr std::string_view kTrainSampleField = "train_sample";
+constexpr std::string_view kClusterItersField = "cluster_iters";
 constexpr std::string_view kQuantField = "quant";
 constexpr std::string_view kPqMField = "pq_m";
 
@@ -413,6 +414,7 @@ std::string DescribeIVFOptions() {
   return "metric (string: l2|l1|cosine|ip, REQUIRED), "
          "nlist (int >= 1, default auto ~sqrt(rows)), "
          "train_sample (int >= 1, default auto), "
+         "cluster_iters (int >= 1, k-means iterations, default auto), "
          "quant (string: sq8|sq4|pq|none, default none; sq4/pq need l2|ip), "
          "pq_m (int >= 1, divides dimension, quant='pq' only, default auto), "
          "compression (string, default 'auto'), "
@@ -487,6 +489,21 @@ Result ApplyIVFOptions(
                 *n};
       }
       cfg.train_sample = static_cast<uint32_t>(*n);
+    } else if (key == kClusterItersField) {
+      auto n = GetIndexIntOption(kIVFKind, column_name, key, raw_val);
+      if (!n) {
+        return std::move(n).error();
+      }
+      if (*n < 1) {
+        return {ERROR_BAD_PARAMETER,
+                "Column '",
+                column_name,
+                "': ivf option '",
+                kClusterItersField,
+                "' must be positive, got ",
+                *n};
+      }
+      cfg.cluster_iters = static_cast<uint32_t>(*n);
     } else if (key == kQuantField) {
       auto str = GetIndexStringOption(kIVFKind, column_name, key, raw_val);
       if (!str) {

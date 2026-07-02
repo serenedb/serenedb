@@ -32,7 +32,8 @@ void NormalizeRows(float* data, size_t n, uint32_t d);
 
 std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
                                   size_t n, uint32_t k, uint32_t d,
-                                  uint32_t seed);
+                                  uint32_t seed, uint32_t niter = 25,
+                                  uint32_t nredo = 1);
 
 uint32_t NearestCentroid(VectorMetric metric, const float* v,
                          const float* centroids, uint32_t k, uint32_t d);

@@ -74,13 +74,14 @@ void NormalizeRows(float* data, size_t n, uint32_t d) {
 
 std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
                                   size_t n, uint32_t k, uint32_t d,
-                                  uint32_t seed) {
+                                  uint32_t seed, uint32_t niter,
+                                  uint32_t nredo) {
   const bool angular =
     metric == VectorMetric::InnerProduct || metric == VectorMetric::Cosine;
 
   faiss::ClusteringParameters cp;
-  cp.niter = 25;
-  cp.nredo = 2;
+  cp.niter = static_cast<int>(std::max<uint32_t>(1, niter));
+  cp.nredo = static_cast<int>(std::max<uint32_t>(1, nredo));
   cp.seed = static_cast<int>(seed);
   cp.spherical = angular;
   cp.min_points_per_centroid = 1;

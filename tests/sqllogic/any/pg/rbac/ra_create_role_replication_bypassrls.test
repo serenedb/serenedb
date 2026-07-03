@@ -1,0 +1,64 @@
+# REPLICATION / BYPASSRLS role attributes set at CREATE ROLE time (and toggled by
+# ALTER ROLE), surfaced through pg_roles. Both default off; the NO* forms are
+# explicit negations. Byte-identical on PostgreSQL and serenedb.
+#
+# Lore: vedernikoff streams the iceberg's WAL and slips past the row guards.
+
+statement ok
+DROP ROLE IF EXISTS rb_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS rb_clickclack;
+
+
+# Both attributes set directly in CREATE ROLE.
+statement ok
+CREATE ROLE rb_vedernikoff REPLICATION BYPASSRLS;
+
+
+query
+SELECT rolreplication, rolbypassrls FROM pg_roles WHERE rolname = 'rb_vedernikoff';
+----
+rolreplication	rolbypassrls
+t	t
+
+
+# Explicit NO* forms (and the default when unspecified) are off.
+statement ok
+CREATE ROLE rb_clickclack WITH NOREPLICATION NOBYPASSRLS;
+
+
+query
+SELECT rolreplication, rolbypassrls FROM pg_roles WHERE rolname = 'rb_clickclack';
+----
+rolreplication	rolbypassrls
+f	f
+
+
+# ALTER ROLE toggles each independently.
+statement ok
+ALTER ROLE rb_vedernikoff NOREPLICATION;
+
+
+statement ok
+ALTER ROLE rb_clickclack BYPASSRLS;
+
+
+query
+SELECT rolname, rolreplication, rolbypassrls
+FROM pg_roles WHERE rolname IN ('rb_vedernikoff', 'rb_clickclack')
+ORDER BY rolname;
+----
+rolname	rolreplication	rolbypassrls
+rb_clickclack	f	t
+rb_vedernikoff	f	t
+
+
+# Cleanup.
+statement ok
+DROP ROLE rb_vedernikoff;
+
+
+statement ok
+DROP ROLE rb_clickclack;

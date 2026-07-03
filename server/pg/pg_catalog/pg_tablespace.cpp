@@ -21,10 +21,37 @@
 #include "pg/pg_catalog/pg_tablespace.h"
 
 namespace sdb::pg {
+namespace {
 
+constexpr uint64_t kNullMask = MaskFromNulls({
+  GetIndex(&PgTablespace::spcacl),
+  GetIndex(&PgTablespace::spcoptions),
+});
+
+}  // namespace
+
+// TODO: emit user rows here once CREATE TABLESPACE is implemented.
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgTablespace>::GetTableData() {
-  return {CreateColumns<PgTablespace>(0), 0};
+  const std::array<PgTablespace, 2> values{
+    PgTablespace{
+      .oid = 1663,
+      .spcname = "pg_default",
+      .spcowner = id::kRootUser.id(),
+    },
+    PgTablespace{
+      .oid = 1664,
+      .spcname = "pg_global",
+      .spcowner = id::kRootUser.id(),
+    },
+  };
+
+  auto result = CreateColumns<PgTablespace>(values.size());
+  for (size_t row = 0; row < values.size(); ++row) {
+    WriteData(result, values[row], kNullMask, row,
+              *_config.CatalogSnapshot());
+  }
+  return {std::move(result), values.size()};
 }
 
 }  // namespace sdb::pg

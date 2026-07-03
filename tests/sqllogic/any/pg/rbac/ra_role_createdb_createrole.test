@@ -1,0 +1,81 @@
+# CREATEDB / CREATEROLE set at CREATE ROLE time (not only ALTER ROLE) and the
+# privilege enforcement they gate: a role without CREATEROLE cannot create or
+# drop roles, a role without CREATEDB cannot create databases, and a superuser
+# or a role holding the attribute may. Byte-identical on PostgreSQL and serenedb.
+#
+# Lore: vedernikoff the role-smith may mint roles; the intern may not.
+
+statement ok
+DROP ROLE IF EXISTS rcr_smith;
+
+
+statement ok
+DROP ROLE IF EXISTS rcr_dbsmith;
+
+
+statement ok
+DROP ROLE IF EXISTS rcr_intern;
+
+
+# CREATEDB + CREATEROLE accepted directly in CREATE ROLE, with the NO* negations.
+statement ok
+CREATE ROLE rcr_smith LOGIN NOCREATEDB CREATEROLE;
+
+
+statement ok
+CREATE ROLE rcr_dbsmith LOGIN CREATEDB NOCREATEROLE;
+
+
+statement ok
+CREATE ROLE rcr_intern LOGIN;
+
+
+query
+SELECT rolname, rolcreatedb, rolcreaterole
+FROM pg_roles WHERE rolname IN ('rcr_smith', 'rcr_dbsmith', 'rcr_intern')
+ORDER BY rolname;
+----
+rolname	rolcreatedb	rolcreaterole
+rcr_dbsmith	t	f
+rcr_intern	f	f
+rcr_smith	f	t
+
+
+# A CREATEROLE role can create a role.
+connection c_smith user=rcr_smith
+statement ok
+CREATE ROLE rcr_minted;
+
+
+# A role without CREATEROLE cannot create a role.
+connection c_intern user=rcr_intern
+statement error
+CREATE ROLE rcr_blocked;
+----
+db error: ERROR: permission denied to create role<slt:ignore>
+
+
+# A role without CREATEDB cannot create a database.
+connection c_intern user=rcr_intern
+statement error
+CREATE DATABASE rcr_blocked_db;
+----
+db error: ERROR: permission denied to create database<slt:ignore>
+
+
+# Cleanup.
+connection default
+statement ok
+DROP ROLE rcr_minted;
+
+
+statement ok
+DROP ROLE rcr_smith;
+
+
+statement ok
+DROP ROLE rcr_dbsmith;
+
+
+statement ok
+DROP ROLE rcr_intern;

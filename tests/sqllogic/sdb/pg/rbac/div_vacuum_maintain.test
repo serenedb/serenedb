@@ -1,0 +1,156 @@
+# serenedb-only: VACUUM (REFRESH_*|COMPACT_*|RECOMPUTE_STATS_*) is a serenedb
+# pragma, but its privilege rule mirrors PostgreSQL VACUUM/ANALYZE: the role must
+# own the table, hold MAINTAIN on it, or be a superuser. A role lacking all three
+# does NOT abort the command -- PG (and serenedb) emit a WARNING and SKIP the
+# table ("permission denied to <verb> \"<t>\", skipping it"). The skip is
+# out-of-band on the wire, so it surfaces as a successful no-op statement; we pin
+# the gate down through the has_table_privilege('...','MAINTAIN') oracle plus the
+# fact that the maintenance pragma never errors for a non-owner.
+#
+# Cannot run on PostgreSQL (no such pragma) and uses serenedb's Trust-stub
+# `connection ... user=` auth.
+#
+# Lore: clickclack owns the mop counter table; vedernikoff was never granted
+# anything until the explicit GRANT MAINTAIN below.
+
+statement ok
+DROP TABLE IF EXISTS vac_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS vac_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS vac_vedernikoff;
+
+
+statement ok
+CREATE ROLE vac_clickclack LOGIN;
+
+
+statement ok
+CREATE ROLE vac_vedernikoff LOGIN;
+
+
+statement ok
+CREATE TABLE vac_mop (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+INSERT INTO vac_mop VALUES (1, 'sweep'), (2, 'rinse');
+
+
+statement ok
+ALTER TABLE vac_mop OWNER TO vac_clickclack;
+
+
+# MAINTAIN oracle: owner holds it; an arbitrary role does not.
+query
+SELECT
+  has_table_privilege('vac_clickclack', 'vac_mop', 'MAINTAIN')  AS owner_maint,
+  has_table_privilege('vac_vedernikoff', 'vac_mop', 'MAINTAIN') AS other_maint;
+----
+owner_maint	other_maint
+t	f
+
+
+# Superuser may always maintain (skip the gate entirely).
+statement ok
+VACUUM (recompute_stats_table) vac_mop;
+
+
+# Owner may maintain its own table.
+connection c_owner user=vac_clickclack
+statement ok
+VACUUM (recompute_stats_table) vac_mop;
+
+
+connection c_owner user=vac_clickclack
+statement ok
+VACUUM (refresh_table) vac_mop;
+
+
+# Non-owner without MAINTAIN: the table is SKIPPED with a warning, not an error
+# -- the statement still succeeds (PG warn-and-skip semantics).
+connection c_other user=vac_vedernikoff
+statement ok
+VACUUM (recompute_stats_table) vac_mop;
+
+
+connection c_other user=vac_vedernikoff
+statement ok
+VACUUM (refresh_table) vac_mop;
+
+
+# Grant MAINTAIN to the non-owner; the oracle flips and the gate now lets it
+# through (no skip).
+statement ok
+GRANT MAINTAIN ON vac_mop TO vac_vedernikoff;
+
+
+query
+SELECT has_table_privilege('vac_vedernikoff', 'vac_mop', 'MAINTAIN') AS other_maint;
+----
+other_maint
+t
+
+
+connection c_other2 user=vac_vedernikoff
+statement ok
+VACUUM (recompute_stats_table) vac_mop;
+
+
+# REVOKE puts the role back outside the gate; still a no-op skip, not an error.
+statement ok
+REVOKE MAINTAIN ON vac_mop FROM vac_vedernikoff;
+
+
+query
+SELECT has_table_privilege('vac_vedernikoff', 'vac_mop', 'MAINTAIN') AS other_maint;
+----
+other_maint
+f
+
+
+connection c_other3 user=vac_vedernikoff
+statement ok
+VACUUM (recompute_stats_table) vac_mop;
+
+
+# A NONEXISTENT relation is a hard error (PG: a missing VACUUM target errors,
+# even though a no-privilege target only warns + skips). Asymmetry is PG-faithful.
+connection default
+statement error
+VACUUM (recompute_stats_table) vac_nonesuch;
+----
+db error: ERROR: relation "vac_nonesuch" does not exist<slt:ignore>
+
+
+# A nonexistent SCHEMA target likewise errors.
+connection default
+statement error
+VACUUM (recompute_stats_schema) vac_no_schema;
+----
+db error: ERROR: schema "vac_no_schema" does not exist<slt:ignore>
+
+
+# An unrecognized pragma option is rejected at parse time (PG: "unrecognized
+# VACUUM option ..."), rather than silently lowering to a standard no-op VACUUM.
+connection default
+statement error
+VACUUM (refresh_bogus) vac_mop;
+----
+db error: ERROR: unrecognized VACUUM option "refresh_bogus"<slt:ignore>
+
+
+statement ok
+DROP TABLE vac_mop;
+
+
+statement ok
+DROP ROLE vac_vedernikoff;
+
+
+statement ok
+DROP ROLE vac_clickclack;

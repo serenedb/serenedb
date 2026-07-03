@@ -1,0 +1,355 @@
+# Combinatorial privilege grants, TRIPLES: grant exactly three of the seven
+# table privileges to a fresh role and assert all seven bits via
+# has_table_privilege -- exactly the three granted are t, the other four f.
+# Many distinct triples drawn from across the privilege set, including all-DML
+# triples, mixed read/write/schema triples, and the three "heavy" privileges
+# (TRUNCATE/REFERENCES/TRIGGER) together.
+#
+# Column order in every block: SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES
+# TRIGGER. The has_table_privilege oracle is byte-identical on real PostgreSQL
+# and serenedb.
+#
+# All objects are prefixed combo_ (vedernikoff/clickclack/mop lore). Roles are
+# cluster-global, so the combo_ tag keeps names unique across files. The file
+# is idempotent (DROP ... IF EXISTS up front) and self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS combo_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_tri_siu;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_tri_sid;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_tri_sud;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_tri_iud;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_tri_str;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_tri_sft;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_tri_idr;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_tri_heavy;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_tri_endpoints;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_tri_split;
+
+
+statement ok
+CREATE TABLE combo_mop (id int, vedernikoff text);
+
+
+# ============================================================================
+# Each role gets exactly one triple. Three t bits, four f bits per row.
+# ============================================================================
+
+# ---- triple: SELECT + INSERT + UPDATE (the common read/write trio) ----
+
+statement ok
+CREATE ROLE combo_tri_siu;
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE ON combo_mop TO combo_tri_siu;
+
+
+query
+SELECT has_table_privilege('combo_tri_siu','combo_mop','SELECT')     AS sel,
+       has_table_privilege('combo_tri_siu','combo_mop','INSERT')     AS ins,
+       has_table_privilege('combo_tri_siu','combo_mop','UPDATE')     AS upd,
+       has_table_privilege('combo_tri_siu','combo_mop','DELETE')     AS del,
+       has_table_privilege('combo_tri_siu','combo_mop','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_tri_siu','combo_mop','REFERENCES') AS refs,
+       has_table_privilege('combo_tri_siu','combo_mop','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	f	f	f	f
+
+
+# ---- triple: SELECT + INSERT + DELETE ----
+
+statement ok
+CREATE ROLE combo_tri_sid;
+
+
+statement ok
+GRANT SELECT, INSERT, DELETE ON combo_mop TO combo_tri_sid;
+
+
+query
+SELECT has_table_privilege('combo_tri_sid','combo_mop','SELECT')     AS sel,
+       has_table_privilege('combo_tri_sid','combo_mop','INSERT')     AS ins,
+       has_table_privilege('combo_tri_sid','combo_mop','UPDATE')     AS upd,
+       has_table_privilege('combo_tri_sid','combo_mop','DELETE')     AS del,
+       has_table_privilege('combo_tri_sid','combo_mop','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_tri_sid','combo_mop','REFERENCES') AS refs,
+       has_table_privilege('combo_tri_sid','combo_mop','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	f	t	f	f	f
+
+
+# ---- triple: SELECT + UPDATE + DELETE ----
+
+statement ok
+CREATE ROLE combo_tri_sud;
+
+
+statement ok
+GRANT SELECT, UPDATE, DELETE ON combo_mop TO combo_tri_sud;
+
+
+query
+SELECT has_table_privilege('combo_tri_sud','combo_mop','SELECT')     AS sel,
+       has_table_privilege('combo_tri_sud','combo_mop','INSERT')     AS ins,
+       has_table_privilege('combo_tri_sud','combo_mop','UPDATE')     AS upd,
+       has_table_privilege('combo_tri_sud','combo_mop','DELETE')     AS del,
+       has_table_privilege('combo_tri_sud','combo_mop','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_tri_sud','combo_mop','REFERENCES') AS refs,
+       has_table_privilege('combo_tri_sud','combo_mop','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	f	t	t	f	f	f
+
+
+# ---- triple: INSERT + UPDATE + DELETE (all-write, no read) ----
+
+statement ok
+CREATE ROLE combo_tri_iud;
+
+
+statement ok
+GRANT INSERT, UPDATE, DELETE ON combo_mop TO combo_tri_iud;
+
+
+query
+SELECT has_table_privilege('combo_tri_iud','combo_mop','SELECT')     AS sel,
+       has_table_privilege('combo_tri_iud','combo_mop','INSERT')     AS ins,
+       has_table_privilege('combo_tri_iud','combo_mop','UPDATE')     AS upd,
+       has_table_privilege('combo_tri_iud','combo_mop','DELETE')     AS del,
+       has_table_privilege('combo_tri_iud','combo_mop','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_tri_iud','combo_mop','REFERENCES') AS refs,
+       has_table_privilege('combo_tri_iud','combo_mop','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	t	t	t	f	f	f
+
+
+# ---- triple: SELECT + TRUNCATE + REFERENCES (read + two heavy privileges) ----
+
+statement ok
+CREATE ROLE combo_tri_str;
+
+
+statement ok
+GRANT SELECT, TRUNCATE, REFERENCES ON combo_mop TO combo_tri_str;
+
+
+query
+SELECT has_table_privilege('combo_tri_str','combo_mop','SELECT')     AS sel,
+       has_table_privilege('combo_tri_str','combo_mop','INSERT')     AS ins,
+       has_table_privilege('combo_tri_str','combo_mop','UPDATE')     AS upd,
+       has_table_privilege('combo_tri_str','combo_mop','DELETE')     AS del,
+       has_table_privilege('combo_tri_str','combo_mop','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_tri_str','combo_mop','REFERENCES') AS refs,
+       has_table_privilege('combo_tri_str','combo_mop','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	f	f	f	t	t	f
+
+
+# ---- triple: SELECT + REFERENCES + TRIGGER ----
+
+statement ok
+CREATE ROLE combo_tri_sft;
+
+
+statement ok
+GRANT SELECT, REFERENCES, TRIGGER ON combo_mop TO combo_tri_sft;
+
+
+query
+SELECT has_table_privilege('combo_tri_sft','combo_mop','SELECT')     AS sel,
+       has_table_privilege('combo_tri_sft','combo_mop','INSERT')     AS ins,
+       has_table_privilege('combo_tri_sft','combo_mop','UPDATE')     AS upd,
+       has_table_privilege('combo_tri_sft','combo_mop','DELETE')     AS del,
+       has_table_privilege('combo_tri_sft','combo_mop','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_tri_sft','combo_mop','REFERENCES') AS refs,
+       has_table_privilege('combo_tri_sft','combo_mop','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	f	f	f	f	t	t
+
+
+# ---- triple: INSERT + DELETE + REFERENCES (non-adjacent spread) ----
+
+statement ok
+CREATE ROLE combo_tri_idr;
+
+
+statement ok
+GRANT INSERT, DELETE, REFERENCES ON combo_mop TO combo_tri_idr;
+
+
+query
+SELECT has_table_privilege('combo_tri_idr','combo_mop','SELECT')     AS sel,
+       has_table_privilege('combo_tri_idr','combo_mop','INSERT')     AS ins,
+       has_table_privilege('combo_tri_idr','combo_mop','UPDATE')     AS upd,
+       has_table_privilege('combo_tri_idr','combo_mop','DELETE')     AS del,
+       has_table_privilege('combo_tri_idr','combo_mop','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_tri_idr','combo_mop','REFERENCES') AS refs,
+       has_table_privilege('combo_tri_idr','combo_mop','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	t	f	t	f	t	f
+
+
+# ---- triple: TRUNCATE + REFERENCES + TRIGGER (the three heavy privileges) ----
+
+statement ok
+CREATE ROLE combo_tri_heavy;
+
+
+statement ok
+GRANT TRUNCATE, REFERENCES, TRIGGER ON combo_mop TO combo_tri_heavy;
+
+
+query
+SELECT has_table_privilege('combo_tri_heavy','combo_mop','SELECT')     AS sel,
+       has_table_privilege('combo_tri_heavy','combo_mop','INSERT')     AS ins,
+       has_table_privilege('combo_tri_heavy','combo_mop','UPDATE')     AS upd,
+       has_table_privilege('combo_tri_heavy','combo_mop','DELETE')     AS del,
+       has_table_privilege('combo_tri_heavy','combo_mop','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_tri_heavy','combo_mop','REFERENCES') AS refs,
+       has_table_privilege('combo_tri_heavy','combo_mop','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	f	f	f	t	t	t
+
+
+# ---- triple: SELECT + DELETE + TRIGGER (the two endpoints plus a middle) ----
+
+statement ok
+CREATE ROLE combo_tri_endpoints;
+
+
+statement ok
+GRANT SELECT, DELETE, TRIGGER ON combo_mop TO combo_tri_endpoints;
+
+
+query
+SELECT has_table_privilege('combo_tri_endpoints','combo_mop','SELECT')     AS sel,
+       has_table_privilege('combo_tri_endpoints','combo_mop','INSERT')     AS ins,
+       has_table_privilege('combo_tri_endpoints','combo_mop','UPDATE')     AS upd,
+       has_table_privilege('combo_tri_endpoints','combo_mop','DELETE')     AS del,
+       has_table_privilege('combo_tri_endpoints','combo_mop','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_tri_endpoints','combo_mop','REFERENCES') AS refs,
+       has_table_privilege('combo_tri_endpoints','combo_mop','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	f	f	t	f	f	t
+
+
+# ============================================================================
+# A triple assembled from three separate single-priv grants equals the same
+# combined-list triple. combo_tri_split gets INSERT, then TRUNCATE, then
+# TRIGGER -- in three statements, in non-canonical order.
+# ============================================================================
+
+statement ok
+CREATE ROLE combo_tri_split;
+
+
+statement ok
+GRANT INSERT ON combo_mop TO combo_tri_split;
+
+
+statement ok
+GRANT TRUNCATE ON combo_mop TO combo_tri_split;
+
+
+statement ok
+GRANT TRIGGER ON combo_mop TO combo_tri_split;
+
+
+query
+SELECT has_table_privilege('combo_tri_split','combo_mop','SELECT')     AS sel,
+       has_table_privilege('combo_tri_split','combo_mop','INSERT')     AS ins,
+       has_table_privilege('combo_tri_split','combo_mop','UPDATE')     AS upd,
+       has_table_privilege('combo_tri_split','combo_mop','DELETE')     AS del,
+       has_table_privilege('combo_tri_split','combo_mop','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_tri_split','combo_mop','REFERENCES') AS refs,
+       has_table_privilege('combo_tri_split','combo_mop','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	t	f	f	t	f	t
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE combo_mop;
+
+
+statement ok
+DROP ROLE combo_tri_siu;
+
+
+statement ok
+DROP ROLE combo_tri_sid;
+
+
+statement ok
+DROP ROLE combo_tri_sud;
+
+
+statement ok
+DROP ROLE combo_tri_iud;
+
+
+statement ok
+DROP ROLE combo_tri_str;
+
+
+statement ok
+DROP ROLE combo_tri_sft;
+
+
+statement ok
+DROP ROLE combo_tri_idr;
+
+
+statement ok
+DROP ROLE combo_tri_heavy;
+
+
+statement ok
+DROP ROLE combo_tri_endpoints;
+
+
+statement ok
+DROP ROLE combo_tri_split;

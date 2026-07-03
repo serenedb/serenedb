@@ -1,0 +1,148 @@
+# Cross-product file F: a privilege held through TWO independent sources -- a
+# direct grant to the role and a grant to PUBLIC -- survives the revoke of
+# either source as long as the other remains. Revoking from PUBLIC is distinct
+# from revoking from the role: each removes only its own ACL row, and the oracle
+# stays true until the LAST surviving source is gone.
+#
+# Lore: xog_f_mop is the superuser-owned table. xog_f_babsky receives SELECT
+# both directly and via PUBLIC; xog_f_kostya receives SELECT only via PUBLIC.
+
+statement ok
+DROP TABLE IF EXISTS xog_f_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_f_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_f_kostya;
+
+
+statement ok
+CREATE TABLE xog_f_mop (id int);
+
+
+statement ok
+CREATE ROLE xog_f_babsky LOGIN;
+
+
+statement ok
+CREATE ROLE xog_f_kostya LOGIN;
+
+
+# Grant SELECT directly to babsky AND to PUBLIC. babsky now has two sources;
+# kostya has one (PUBLIC only).
+statement ok
+GRANT SELECT ON xog_f_mop TO xog_f_babsky;
+
+
+statement ok
+GRANT SELECT ON xog_f_mop TO PUBLIC;
+
+
+# Both roles hold SELECT.
+query
+SELECT has_table_privilege('xog_f_babsky','xog_f_mop','SELECT') AS babsky,
+       has_table_privilege('xog_f_kostya','xog_f_mop','SELECT') AS kostya;
+----
+babsky	kostya
+t	t
+
+
+# Two grantee rows: the direct one for babsky and the empty-grantee PUBLIC row.
+query rowsort
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_f_mop'
+) g WHERE e NOT LIKE 'postgres=%';
+----
+e
+xog_f_babsky=r/postgres
+=r/postgres
+
+
+# ---- REVOKE FROM PUBLIC only: babsky keeps SELECT via its DIRECT grant;
+# kostya loses it (PUBLIC was its only source). ----
+statement ok
+REVOKE SELECT ON xog_f_mop FROM PUBLIC;
+
+
+query
+SELECT has_table_privilege('xog_f_babsky','xog_f_mop','SELECT') AS babsky,
+       has_table_privilege('xog_f_kostya','xog_f_mop','SELECT') AS kostya;
+----
+babsky	kostya
+t	f
+
+
+# The PUBLIC row is gone; babsky's direct row remains.
+query rowsort
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_f_mop'
+) g WHERE e NOT LIKE 'postgres=%';
+----
+e
+xog_f_babsky=r/postgres
+
+
+# ---- Re-grant to PUBLIC, then REVOKE FROM the ROLE only: babsky still holds
+# SELECT through PUBLIC; the direct row is the one that disappears. ----
+statement ok
+GRANT SELECT ON xog_f_mop TO PUBLIC;
+
+
+statement ok
+REVOKE SELECT ON xog_f_mop FROM xog_f_babsky;
+
+
+query
+SELECT has_table_privilege('xog_f_babsky','xog_f_mop','SELECT') AS babsky,
+       has_table_privilege('xog_f_kostya','xog_f_mop','SELECT') AS kostya;
+----
+babsky	kostya
+t	t
+
+
+# Only the PUBLIC row survives now.
+query rowsort
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_f_mop'
+) g WHERE e NOT LIKE 'postgres=%';
+----
+e
+=r/postgres
+
+
+# ---- REVOKE the last source (PUBLIC): both roles lose SELECT and no grantee
+# row remains. ----
+statement ok
+REVOKE SELECT ON xog_f_mop FROM PUBLIC;
+
+
+query
+SELECT has_table_privilege('xog_f_babsky','xog_f_mop','SELECT') AS babsky,
+       has_table_privilege('xog_f_kostya','xog_f_mop','SELECT') AS kostya;
+----
+babsky	kostya
+f	f
+
+
+query
+SELECT count(*) AS grantee_rows FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_f_mop'
+) g WHERE e NOT LIKE 'postgres=%';
+----
+grantee_rows
+0
+
+
+statement ok
+DROP TABLE xog_f_mop;
+
+
+statement ok
+DROP ROLE xog_f_babsky;
+
+
+statement ok
+DROP ROLE xog_f_kostya;

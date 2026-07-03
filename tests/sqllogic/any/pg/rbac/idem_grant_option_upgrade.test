@@ -1,0 +1,255 @@
+# GRANT idempotency, grant-option edition.
+#
+# A re-GRANT WITH GRANT OPTION UPGRADES an existing plain grant (adds the
+# option without disturbing the privilege bit). A subsequent plain re-GRANT
+# does NOT drop an already-held option -- PostgreSQL only ever ADDS the grant
+# option on a re-grant, never removes it. Accumulation of distinct privileges
+# carries each privilege's option independently. Asserted through the
+# byte-identical 'PRIV WITH GRANT OPTION' strings of has_table_privilege.
+#
+# Objects prefixed idem_ under the vedernikoff/iceberg lore; single superuser
+# session (the cross-role answer comes from the role argument). Idempotent and
+# self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS idem_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS idem_vitalik;
+
+
+statement ok
+DROP ROLE IF EXISTS idem_shlepach;
+
+
+statement ok
+DROP ROLE IF EXISTS idem_kryakva;
+
+
+statement ok
+DROP ROLE IF EXISTS idem_makak;
+
+
+statement ok
+CREATE TABLE idem_iceberg (id int, payload text);
+
+
+statement ok
+CREATE ROLE idem_vitalik;
+
+
+statement ok
+CREATE ROLE idem_shlepach;
+
+
+statement ok
+CREATE ROLE idem_kryakva;
+
+
+statement ok
+CREATE ROLE idem_makak;
+
+
+# ============================================================================
+# Plain GRANT -> the privilege is held, the option is NOT.
+# ============================================================================
+
+statement ok
+GRANT SELECT ON idem_iceberg TO idem_vitalik;
+
+
+query
+SELECT has_table_privilege('idem_vitalik','idem_iceberg','SELECT')                   AS s,
+       has_table_privilege('idem_vitalik','idem_iceberg','SELECT WITH GRANT OPTION') AS sg;
+----
+s	sg
+t	f
+
+
+# Repeating the plain GRANT is idempotent: still privilege-yes, option-no.
+statement ok
+GRANT SELECT ON idem_iceberg TO idem_vitalik;
+
+
+query
+SELECT has_table_privilege('idem_vitalik','idem_iceberg','SELECT')                   AS s,
+       has_table_privilege('idem_vitalik','idem_iceberg','SELECT WITH GRANT OPTION') AS sg;
+----
+s	sg
+t	f
+
+
+# ============================================================================
+# Re-GRANT WITH GRANT OPTION upgrades the existing plain grant: privilege
+# unchanged, option now present.
+# ============================================================================
+
+statement ok
+GRANT SELECT ON idem_iceberg TO idem_vitalik WITH GRANT OPTION;
+
+
+query
+SELECT has_table_privilege('idem_vitalik','idem_iceberg','SELECT')                   AS s,
+       has_table_privilege('idem_vitalik','idem_iceberg','SELECT WITH GRANT OPTION') AS sg;
+----
+s	sg
+t	t
+
+
+# Re-issuing WITH GRANT OPTION again is idempotent -- option stays present.
+statement ok
+GRANT SELECT ON idem_iceberg TO idem_vitalik WITH GRANT OPTION;
+
+
+query
+SELECT has_table_privilege('idem_vitalik','idem_iceberg','SELECT WITH GRANT OPTION') AS sg;
+----
+sg
+t
+
+
+# ============================================================================
+# Plain re-GRANT does NOT drop an already-held option. PG only adds, never
+# removes, the grant option on a re-grant.
+# ============================================================================
+
+statement ok
+GRANT SELECT ON idem_iceberg TO idem_vitalik;
+
+
+query
+SELECT has_table_privilege('idem_vitalik','idem_iceberg','SELECT')                   AS s,
+       has_table_privilege('idem_vitalik','idem_iceberg','SELECT WITH GRANT OPTION') AS sg;
+----
+s	sg
+t	t
+
+
+# ============================================================================
+# The other direction in one go: a fresh role granted WITH GRANT OPTION from
+# the start holds both privilege and option immediately; a later plain re-GRANT
+# does not strip the option.
+# ============================================================================
+
+statement ok
+GRANT INSERT ON idem_iceberg TO idem_shlepach WITH GRANT OPTION;
+
+
+query
+SELECT has_table_privilege('idem_shlepach','idem_iceberg','INSERT')                   AS i,
+       has_table_privilege('idem_shlepach','idem_iceberg','INSERT WITH GRANT OPTION') AS ig;
+----
+i	ig
+t	t
+
+
+statement ok
+GRANT INSERT ON idem_iceberg TO idem_shlepach;
+
+
+query
+SELECT has_table_privilege('idem_shlepach','idem_iceberg','INSERT')                   AS i,
+       has_table_privilege('idem_shlepach','idem_iceberg','INSERT WITH GRANT OPTION') AS ig;
+----
+i	ig
+t	t
+
+
+# ============================================================================
+# Per-privilege independence: distinct privileges accumulate, each carrying its
+# own option state. UPDATE arrives plain, DELETE arrives with the option; later
+# UPDATE is upgraded while DELETE is left untouched.
+# ============================================================================
+
+statement ok
+GRANT UPDATE ON idem_iceberg TO idem_kryakva;
+
+
+statement ok
+GRANT DELETE ON idem_iceberg TO idem_kryakva WITH GRANT OPTION;
+
+
+query
+SELECT has_table_privilege('idem_kryakva','idem_iceberg','UPDATE')                   AS u,
+       has_table_privilege('idem_kryakva','idem_iceberg','UPDATE WITH GRANT OPTION') AS ug,
+       has_table_privilege('idem_kryakva','idem_iceberg','DELETE')                   AS d,
+       has_table_privilege('idem_kryakva','idem_iceberg','DELETE WITH GRANT OPTION') AS dg;
+----
+u	ug	d	dg
+t	f	t	t
+
+
+# Upgrade only UPDATE; DELETE's option must remain, UPDATE's option appears.
+statement ok
+GRANT UPDATE ON idem_iceberg TO idem_kryakva WITH GRANT OPTION;
+
+
+query
+SELECT has_table_privilege('idem_kryakva','idem_iceberg','UPDATE')                   AS u,
+       has_table_privilege('idem_kryakva','idem_iceberg','UPDATE WITH GRANT OPTION') AS ug,
+       has_table_privilege('idem_kryakva','idem_iceberg','DELETE')                   AS d,
+       has_table_privilege('idem_kryakva','idem_iceberg','DELETE WITH GRANT OPTION') AS dg;
+----
+u	ug	d	dg
+t	t	t	t
+
+
+# ============================================================================
+# Accumulation through a multi-privilege list WITH GRANT OPTION: the option is
+# conferred on each named privilege at once, then a plain superset re-GRANT
+# adds the missing bit without removing the options on the originals.
+# ============================================================================
+
+statement ok
+GRANT SELECT, INSERT ON idem_iceberg TO idem_makak WITH GRANT OPTION;
+
+
+query
+SELECT has_table_privilege('idem_makak','idem_iceberg','SELECT WITH GRANT OPTION') AS sg,
+       has_table_privilege('idem_makak','idem_iceberg','INSERT WITH GRANT OPTION') AS ig,
+       has_table_privilege('idem_makak','idem_iceberg','UPDATE')                   AS u,
+       has_table_privilege('idem_makak','idem_iceberg','UPDATE WITH GRANT OPTION') AS ug;
+----
+sg	ig	u	ug
+t	t	f	f
+
+
+# Plain GRANT of the superset {SELECT, INSERT, UPDATE}: UPDATE is added (plain),
+# the prior SELECT/INSERT options survive untouched.
+statement ok
+GRANT SELECT, INSERT, UPDATE ON idem_iceberg TO idem_makak;
+
+
+query
+SELECT has_table_privilege('idem_makak','idem_iceberg','SELECT WITH GRANT OPTION') AS sg,
+       has_table_privilege('idem_makak','idem_iceberg','INSERT WITH GRANT OPTION') AS ig,
+       has_table_privilege('idem_makak','idem_iceberg','UPDATE')                   AS u,
+       has_table_privilege('idem_makak','idem_iceberg','UPDATE WITH GRANT OPTION') AS ug;
+----
+sg	ig	u	ug
+t	t	t	f
+
+
+# ============================================================================
+# Cleanup. Drop the table first so the grants on it disappear before the roles.
+# ============================================================================
+
+statement ok
+DROP TABLE idem_iceberg;
+
+
+statement ok
+DROP ROLE idem_vitalik;
+
+
+statement ok
+DROP ROLE idem_shlepach;
+
+
+statement ok
+DROP ROLE idem_kryakva;
+
+
+statement ok
+DROP ROLE idem_makak;

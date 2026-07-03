@@ -259,7 +259,8 @@ void CreateTextIndex(duckdb::ClientContext& context, ObjectId database_id,
 
   auto& catalog = catalog::GetCatalog();
   auto snapshot = catalog.GetCatalogSnapshot();
-  auto table = snapshot->GetTable(database_id, kEsSchema, index);
+  auto table =
+    snapshot->GetTable(catalog::NoAccessCheck(), database_id, kEsSchema, index);
   SDB_ASSERT(table);
 
   std::vector<catalog::CreateIndexColumn> idx_columns;
@@ -288,14 +289,16 @@ void CreateTextIndex(duckdb::ClientContext& context, ObjectId database_id,
 
   const auto index_name = absl::StrCat(index, kEsTextIndexSuffix);
   auto r = catalog.CreateInvertedIndex(
-    context, database_id, kEsSchema, index, index_name, std::move(idx_columns),
-    std::move(options), {.create_with_tombstone = true});
+    catalog::NoAccessCheck(), context, database_id, kEsSchema, index,
+    index_name, std::move(idx_columns), std::move(options),
+    {.create_with_tombstone = true});
   if (!r.ok()) {
     SDB_THROW(std::move(r));
   }
 
   auto fresh = catalog.GetCatalogSnapshot();
-  auto relation = fresh->GetRelation(database_id, kEsSchema, index_name);
+  auto relation = fresh->GetRelation(catalog::NoAccessCheck(), database_id,
+                                     kEsSchema, index_name);
   SDB_ASSERT(relation);
   auto storage =
     basics::downCast<const catalog::InvertedIndex>(*relation).GetData();
@@ -329,8 +332,9 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
 
   {
     auto schema = std::make_shared<catalog::Schema>(
-      database_id, catalog::SchemaOptions{.name = std::string{kEsSchema}});
-    auto r = catalog.CreateSchema(database_id, std::move(schema));
+      conn_ctx.GetRoleId(), database_id, ObjectId{}, kEsSchema);
+    auto r = catalog.CreateSchema(catalog::NoAccessCheck(), database_id,
+                                  std::move(schema));
     if (!r.ok() && !r.is(ERROR_SERVER_DUPLICATE_NAME)) {
       SDB_THROW(std::move(r));
     }
@@ -368,7 +372,8 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
   }
   add_column(kSourceColumn, duckdb::LogicalType::VARCHAR);
 
-  auto r = catalog.CreateTable(database_id, kEsSchema, std::move(options), {});
+  auto r = catalog.CreateTable(catalog::NoAccessCheck(), database_id, kEsSchema,
+                               std::move(options), {});
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
                     ERR_MSG("index [", data.index, "] already exists"));
@@ -400,8 +405,8 @@ void EsDropIndexExecute(duckdb::ClientContext& context,
 
   auto& conn_ctx = GetSereneDBContext(context);
   auto& catalog = catalog::GetCatalog();
-  auto r =
-    catalog.DropTable(conn_ctx.GetDatabase(), kEsSchema, data.index, true);
+  auto r = catalog.DropTable(catalog::NoAccessCheck(), conn_ctx.GetDatabase(),
+                             kEsSchema, data.index, true);
   if (r.is(ERROR_SERVER_ILLEGAL_NAME) ||
       r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
@@ -440,7 +445,8 @@ void EsMappingExecute(duckdb::ClientContext& context,
   const auto database_id = conn_ctx.GetDatabaseId();
   auto snapshot = conn_ctx.CatalogSnapshot();
 
-  auto table = snapshot->GetTable(database_id, kEsSchema, data.index);
+  auto table = snapshot->GetTable(catalog::NoAccessCheck(), database_id,
+                                  kEsSchema, data.index);
   if (!table) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("no such index [", data.index, "]"));
@@ -606,8 +612,8 @@ duckdb::unique_ptr<EsWriteBindData> BindWriteTarget(
 
   auto& conn_ctx = GetSereneDBContext(context);
   auto snapshot = conn_ctx.CatalogSnapshot();
-  data->table =
-    snapshot->GetTable(conn_ctx.GetDatabaseId(), kEsSchema, data->index);
+  data->table = snapshot->GetTable(
+    catalog::NoAccessCheck(), conn_ctx.GetDatabaseId(), kEsSchema, data->index);
   if (!data->table) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("no such index [", data->index, "]"));
@@ -1078,7 +1084,8 @@ void EsRefreshExecute(duckdb::ClientContext& context,
       }
     }
   } else {
-    auto table = snapshot->GetTable(database_id, kEsSchema, data.index);
+    auto table = snapshot->GetTable(catalog::NoAccessCheck(), database_id,
+                                    kEsSchema, data.index);
     if (!table) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                       ERR_MSG("no such index [", data.index, "]"));

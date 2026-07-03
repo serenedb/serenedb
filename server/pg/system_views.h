@@ -28,6 +28,7 @@ struct SystemView {
   std::string_view schema;
   std::string_view name;
   std::string_view sql;
+  bool superuser_only = false;
 };
 
 // TODO(mkornaukhov) write queries in separate sql file
@@ -79,9 +80,8 @@ inline constexpr SystemView kExternalViews[] = {
           setconfig AS useconfig
       FROM pg_authid LEFT JOIN pg_db_role_setting s
       ON (pg_authid.oid = setrole AND setdatabase = 0)
-      WHERE rolcanlogin)"},
-
-  // R"(REVOKE ALL ON pg_shadow FROM public;)",
+      WHERE rolcanlogin)",
+   /*superuser_only=*/true},
 
   {"pg_catalog", "pg_group",
    R"(SELECT
@@ -657,13 +657,6 @@ inline constexpr SystemView kExternalViews[] = {
   // R"(REVOKE ALL ON pg_file_settings FROM PUBLIC;)",
 
   // R"(REVOKE EXECUTE ON FUNCTION pg_show_all_file_settings() FROM PUBLIC;)",
-
-  {"pg_catalog", "pg_hba_file_rules",
-   R"(SELECT * FROM pg_hba_file_rules() AS A)"},
-
-  // R"(REVOKE ALL ON pg_hba_file_rules FROM PUBLIC;)",
-
-  // R"(REVOKE EXECUTE ON FUNCTION pg_hba_file_rules() FROM PUBLIC;)",
 
   {"pg_catalog", "pg_ident_file_mappings",
    R"(SELECT * FROM pg_ident_file_mappings() AS A)"},

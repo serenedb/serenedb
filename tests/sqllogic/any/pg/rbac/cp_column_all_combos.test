@@ -1,0 +1,178 @@
+# Interactions of GRANT ALL with column-level privileges. PG column-applicable
+# privileges are SELECT(r), INSERT(a), UPDATE(w), REFERENCES(x); a table-level
+# GRANT ALL expands to the full relacl set arwdDxtm. This file pins:
+#   - table-level GRANT ALL: relacl gets every privilege, no attacl, read/write
+#     of every column works;
+#   - mixed grant: column SELECT(a) + table INSERT -> reads a but not b, and
+#     inserts every column;
+#   - REFERENCES(a) is x in attacl and does NOT imply SELECT(r) -> reading a is
+#     refused.
+# Byte-identical to PostgreSQL's pg_class.relacl / pg_attribute.attacl rendering
+# and ExecCheckOneRelPerms enforcement.
+#
+# SCOPED OUT: the column-list form `GRANT ALL (a) ON t TO r` (which on real PG
+# expands to attacl <slt:ignore>r=arwx/postgres<slt:ignore>) is a syntax error on serened -- the ALL
+# keyword is not accepted with a column list -- so it is not exercised here.
+#
+# Lore: vedernikoff gets the column-scoped grants over clickclack/babsky.
+
+
+statement ok
+DROP TABLE IF EXISTS cac_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS cac_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS cac_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS cac_mop;
+
+
+statement ok
+CREATE TABLE cac_iceberg (clickclack int, babsky int);
+
+
+statement ok
+INSERT INTO cac_iceberg VALUES (1, 2);
+
+
+# === Table-level GRANT ALL ===
+
+statement ok
+CREATE ROLE cac_vedernikoff LOGIN PASSWORD 'cac_vedernikoff_pw';
+
+
+statement ok
+GRANT ALL ON cac_iceberg TO cac_vedernikoff;
+
+
+# Table ALL expands to the full relacl set; no per-column attacl is written.
+query
+SELECT relacl::text AS acl FROM pg_class WHERE relname = 'cac_iceberg';
+----
+acl
+<slt:ignore>postgres=arwdDxtm/postgres<slt:ignore>cac_vedernikoff=arwdDxtm/postgres<slt:ignore>
+
+
+query
+SELECT a.attname, a.attacl::text AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'cac_iceberg' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack	NULL
+babsky	NULL
+
+
+# Table ALL -> every column reads.
+connection c_ved user=cac_vedernikoff password=cac_vedernikoff_pw
+query
+SELECT clickclack, babsky FROM cac_iceberg ORDER BY clickclack;
+----
+clickclack	babsky
+1	2
+
+
+# Table ALL -> every column writes.
+connection c_ved2 user=cac_vedernikoff password=cac_vedernikoff_pw
+statement ok
+UPDATE cac_iceberg SET clickclack = 10, babsky = 20;
+
+
+# === Mixed: column SELECT + table INSERT ===
+
+statement ok
+CREATE ROLE cac_babsky LOGIN PASSWORD 'cac_babsky_pw';
+
+
+statement ok
+GRANT SELECT (clickclack) ON cac_iceberg TO cac_babsky;
+
+
+statement ok
+GRANT INSERT ON cac_iceberg TO cac_babsky;
+
+
+# Column SELECT lands in attacl as r; table INSERT lands in relacl as a.
+query
+SELECT a.attname, a.attacl::text AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'cac_iceberg' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack	<slt:ignore>cac_babsky=r/postgres<slt:ignore>
+babsky	NULL
+
+
+# Reads the column-granted clickclack.
+connection c_bab user=cac_babsky password=cac_babsky_pw
+query
+SELECT clickclack FROM cac_iceberg ORDER BY clickclack;
+----
+clickclack
+10
+
+
+# babsky has no SELECT on column babsky -> refused.
+connection c_bab2 user=cac_babsky password=cac_babsky_pw
+statement error
+SELECT babsky FROM cac_iceberg;
+----
+db error: ERROR: permission denied for table cac_iceberg<slt:ignore>
+
+
+# Table INSERT covers every column -> insert succeeds.
+connection c_bab3 user=cac_babsky password=cac_babsky_pw
+statement ok
+INSERT INTO cac_iceberg (clickclack, babsky) VALUES (3, 4);
+
+
+# === REFERENCES(a) is not SELECT ===
+
+statement ok
+CREATE ROLE cac_mop LOGIN PASSWORD 'cac_mop_pw';
+
+
+statement ok
+GRANT REFERENCES (clickclack) ON cac_iceberg TO cac_mop;
+
+
+# REFERENCES renders as x in attacl, distinct from SELECT's r.
+query
+SELECT a.attacl::text AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'cac_iceberg' AND a.attname = 'clickclack';
+----
+acl
+<slt:ignore>cac_babsky=r/postgres<slt:ignore>cac_mop=x/postgres<slt:ignore>
+
+
+# REFERENCES does not imply SELECT -> reading clickclack is refused.
+connection c_mop user=cac_mop password=cac_mop_pw
+statement error
+SELECT clickclack FROM cac_iceberg;
+----
+db error: ERROR: permission denied for table cac_iceberg<slt:ignore>
+
+
+statement ok
+DROP TABLE cac_iceberg;
+
+
+statement ok
+DROP ROLE cac_vedernikoff;
+
+
+statement ok
+DROP ROLE cac_babsky;
+
+
+statement ok
+DROP ROLE cac_mop;

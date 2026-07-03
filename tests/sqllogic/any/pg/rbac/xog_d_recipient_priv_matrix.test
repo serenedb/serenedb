@@ -1,0 +1,188 @@
+# Cross-product file D: the full recipient x privilege matrix on a single
+# superuser-owned table. Five recipient kinds --
+#   owner       (postgres, implicit ALL, no relacl row)
+#   direct      (granted exactly two privileges)
+#   member      (inherits via a group it belongs to)
+#   public      (a role that receives a privilege only through PUBLIC)
+#   nothing     (a login role with no grant of any kind)
+# are each swept through all seven table privileges with has_table_privilege,
+# the oracle that is byte-identical on both engines.
+#
+# Lore: xog_d_clickclack is the table. Roles: xog_d_direct, xog_d_grp /
+# xog_d_member, xog_d_public, xog_d_nothing.
+
+statement ok
+DROP TABLE IF EXISTS xog_d_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_d_direct;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_d_member;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_d_grp;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_d_public;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_d_nothing;
+
+
+statement ok
+CREATE TABLE xog_d_clickclack (id int, payload text);
+
+
+statement ok
+CREATE ROLE xog_d_direct LOGIN;
+
+
+statement ok
+CREATE ROLE xog_d_grp;
+
+
+statement ok
+CREATE ROLE xog_d_member LOGIN;
+
+
+statement ok
+CREATE ROLE xog_d_public LOGIN;
+
+
+statement ok
+CREATE ROLE xog_d_nothing LOGIN;
+
+
+# Wire the recipients: a direct grant of SELECT+UPDATE; a group that holds
+# INSERT with xog_d_member as an inheriting member; a PUBLIC grant of DELETE.
+statement ok
+GRANT SELECT, UPDATE ON xog_d_clickclack TO xog_d_direct;
+
+
+statement ok
+GRANT INSERT ON xog_d_clickclack TO xog_d_grp;
+
+
+statement ok
+GRANT xog_d_grp TO xog_d_member;
+
+
+statement ok
+GRANT DELETE ON xog_d_clickclack TO PUBLIC;
+
+
+# ---- owner row: ALL seven privileges, implicitly. ----
+query
+SELECT has_table_privilege('postgres','xog_d_clickclack','SELECT')     AS sel,
+       has_table_privilege('postgres','xog_d_clickclack','INSERT')     AS ins,
+       has_table_privilege('postgres','xog_d_clickclack','UPDATE')     AS upd,
+       has_table_privilege('postgres','xog_d_clickclack','DELETE')     AS del,
+       has_table_privilege('postgres','xog_d_clickclack','TRUNCATE')   AS trc,
+       has_table_privilege('postgres','xog_d_clickclack','REFERENCES') AS ref,
+       has_table_privilege('postgres','xog_d_clickclack','TRIGGER')    AS trg;
+----
+sel	ins	upd	del	trc	ref	trg
+t	t	t	t	t	t	t
+
+
+# ---- direct grantee: SELECT+UPDATE held; DELETE arrives through PUBLIC; the
+# rest are absent. ----
+query
+SELECT has_table_privilege('xog_d_direct','xog_d_clickclack','SELECT')     AS sel,
+       has_table_privilege('xog_d_direct','xog_d_clickclack','INSERT')     AS ins,
+       has_table_privilege('xog_d_direct','xog_d_clickclack','UPDATE')     AS upd,
+       has_table_privilege('xog_d_direct','xog_d_clickclack','DELETE')     AS del,
+       has_table_privilege('xog_d_direct','xog_d_clickclack','TRUNCATE')   AS trc,
+       has_table_privilege('xog_d_direct','xog_d_clickclack','REFERENCES') AS ref,
+       has_table_privilege('xog_d_direct','xog_d_clickclack','TRIGGER')    AS trg;
+----
+sel	ins	upd	del	trc	ref	trg
+t	f	t	t	f	f	f
+
+
+# ---- member-via-inherit: INSERT inherited from the group; DELETE through
+# PUBLIC; SELECT/UPDATE were direct to xog_d_direct, not to the member. ----
+query
+SELECT has_table_privilege('xog_d_member','xog_d_clickclack','SELECT')     AS sel,
+       has_table_privilege('xog_d_member','xog_d_clickclack','INSERT')     AS ins,
+       has_table_privilege('xog_d_member','xog_d_clickclack','UPDATE')     AS upd,
+       has_table_privilege('xog_d_member','xog_d_clickclack','DELETE')     AS del,
+       has_table_privilege('xog_d_member','xog_d_clickclack','TRUNCATE')   AS trc,
+       has_table_privilege('xog_d_member','xog_d_clickclack','REFERENCES') AS ref,
+       has_table_privilege('xog_d_member','xog_d_clickclack','TRIGGER')    AS trg;
+----
+sel	ins	upd	del	trc	ref	trg
+f	t	f	t	f	f	f
+
+
+# ---- PUBLIC-recipient: only DELETE, which every role gets through PUBLIC. ----
+query
+SELECT has_table_privilege('xog_d_public','xog_d_clickclack','SELECT')     AS sel,
+       has_table_privilege('xog_d_public','xog_d_clickclack','INSERT')     AS ins,
+       has_table_privilege('xog_d_public','xog_d_clickclack','UPDATE')     AS upd,
+       has_table_privilege('xog_d_public','xog_d_clickclack','DELETE')     AS del,
+       has_table_privilege('xog_d_public','xog_d_clickclack','TRUNCATE')   AS trc,
+       has_table_privilege('xog_d_public','xog_d_clickclack','REFERENCES') AS ref,
+       has_table_privilege('xog_d_public','xog_d_clickclack','TRIGGER')    AS trg;
+----
+sel	ins	upd	del	trc	ref	trg
+f	f	f	t	f	f	f
+
+
+# ---- nothing-role: PUBLIC reaches it too, so DELETE is true; everything else
+# false. ----
+query
+SELECT has_table_privilege('xog_d_nothing','xog_d_clickclack','SELECT')     AS sel,
+       has_table_privilege('xog_d_nothing','xog_d_clickclack','INSERT')     AS ins,
+       has_table_privilege('xog_d_nothing','xog_d_clickclack','UPDATE')     AS upd,
+       has_table_privilege('xog_d_nothing','xog_d_clickclack','DELETE')     AS del,
+       has_table_privilege('xog_d_nothing','xog_d_clickclack','TRUNCATE')   AS trc,
+       has_table_privilege('xog_d_nothing','xog_d_clickclack','REFERENCES') AS ref,
+       has_table_privilege('xog_d_nothing','xog_d_clickclack','TRIGGER')    AS trg;
+----
+sel	ins	upd	del	trc	ref	trg
+f	f	f	t	f	f	f
+
+
+# ---- The relacl carries exactly three grantee rows (direct, group, PUBLIC);
+# the owner's privileges are never a grantee row. We never assert the owner's
+# own relacl entry because its letter set differs by engine (MAINTAIN). ----
+query rowsort
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_d_clickclack'
+) g WHERE e NOT LIKE 'postgres=%';
+----
+e
+xog_d_direct=rw/postgres
+xog_d_grp=a/postgres
+=d/postgres
+
+
+statement ok
+DROP TABLE xog_d_clickclack;
+
+
+statement ok
+DROP ROLE xog_d_direct;
+
+
+statement ok
+DROP ROLE xog_d_member;
+
+
+statement ok
+DROP ROLE xog_d_grp;
+
+
+statement ok
+DROP ROLE xog_d_public;
+
+
+statement ok
+DROP ROLE xog_d_nothing;

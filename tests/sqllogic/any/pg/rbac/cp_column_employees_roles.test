@@ -1,0 +1,282 @@
+# Column-level privileges, real-world role split on an employees table.
+# GRANT SELECT (id,name) -> analyst, UPDATE (bonus) -> manager,
+# INSERT (name,department) -> hr. The privilege only covers the named columns:
+# touching any other column (in a projection, a WHERE/SET expression that reads
+# it, SELECT *, or RETURNING) is refused at column granularity. count(*) needs
+# no specific column so it passes under the any-column rule. RETURNING reads the
+# row back and so additionally needs SELECT on the returned columns -- a role
+# with only write privilege cannot RETURNING. Byte-identical to PostgreSQL.
+
+statement ok
+DROP TABLE IF EXISTS cge_employees;
+
+
+statement ok
+DROP ROLE IF EXISTS cge_analyst;
+
+
+statement ok
+DROP ROLE IF EXISTS cge_manager;
+
+
+statement ok
+DROP ROLE IF EXISTS cge_hr;
+
+
+statement ok
+DROP ROLE IF EXISTS cge_combo;
+
+
+statement ok
+CREATE TABLE cge_employees (id int, name text, department text, bonus int, salary int);
+
+
+statement ok
+INSERT INTO cge_employees VALUES (1, 'vedernikoff', 'eng', 100, 5000), (2, 'babsky', 'sales', 200, 6000);
+
+
+statement ok
+CREATE ROLE cge_analyst LOGIN PASSWORD 'cge_analyst_pw';
+
+
+statement ok
+CREATE ROLE cge_manager LOGIN PASSWORD 'cge_manager_pw';
+
+
+statement ok
+CREATE ROLE cge_hr LOGIN PASSWORD 'cge_hr_pw';
+
+
+# The three spine grants from the scenario.
+statement ok
+GRANT SELECT (id, name) ON cge_employees TO cge_analyst;
+
+
+statement ok
+GRANT UPDATE (bonus) ON cge_employees TO cge_manager;
+
+
+statement ok
+GRANT INSERT (name, department) ON cge_employees TO cge_hr;
+
+
+# attacl carries the per-column grants: analyst 'r' on id+name, hr 'a' (insert)
+# on name+department, manager 'w' (update) on bonus. Grantor masked.
+query
+SELECT a.attname, a.attacl::text AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'cge_employees' AND a.attnum > 0 AND a.attacl IS NOT NULL
+ORDER BY a.attnum;
+----
+attname	acl
+id	<slt:ignore>cge_analyst=r/postgres<slt:ignore>
+name	<slt:ignore>cge_analyst=r/postgres<slt:ignore>cge_hr=a/postgres<slt:ignore>
+department	<slt:ignore>cge_hr=a/postgres<slt:ignore>
+bonus	<slt:ignore>cge_manager=w/postgres<slt:ignore>
+
+
+# === analyst: SELECT (id, name) ===
+
+# Reading the two granted columns is allowed.
+connection c_an user=cge_analyst password=cge_analyst_pw
+query
+SELECT id, name FROM cge_employees ORDER BY id;
+----
+id	name
+1	vedernikoff
+2	babsky
+
+
+# count(*) reads no specific column -> allowed (any-column rule).
+connection c_an_cnt user=cge_analyst password=cge_analyst_pw
+query
+SELECT count(*) AS n FROM cge_employees;
+----
+n
+2
+
+
+# Reading an ungranted column (department) is refused.
+connection c_an2 user=cge_analyst password=cge_analyst_pw
+statement error
+SELECT department FROM cge_employees;
+----
+db error: ERROR: permission denied for table cge_employees<slt:ignore>
+
+
+# Reading bonus (ungranted) is refused.
+connection c_an3 user=cge_analyst password=cge_analyst_pw
+statement error
+SELECT bonus FROM cge_employees;
+----
+db error: ERROR: permission denied for table cge_employees<slt:ignore>
+
+
+# Reading salary (ungranted) is refused.
+connection c_an4 user=cge_analyst password=cge_analyst_pw
+statement error
+SELECT salary FROM cge_employees;
+----
+db error: ERROR: permission denied for table cge_employees<slt:ignore>
+
+
+# SELECT * expands to every column -> touches ungranted columns -> refused.
+connection c_an5 user=cge_analyst password=cge_analyst_pw
+statement error
+SELECT * FROM cge_employees;
+----
+db error: ERROR: permission denied for table cge_employees<slt:ignore>
+
+
+# WHERE on an ungranted column reads it -> refused, even projecting a granted col.
+connection c_an6 user=cge_analyst password=cge_analyst_pw
+statement error
+SELECT id FROM cge_employees WHERE salary > 100;
+----
+db error: ERROR: permission denied for table cge_employees<slt:ignore>
+
+
+# === manager: UPDATE (bonus) ===
+
+# Setting bonus to a constant reads no column -> allowed.
+connection c_mg user=cge_manager password=cge_manager_pw
+statement ok
+UPDATE cge_employees SET bonus = 999;
+
+
+# bonus = bonus + 1 reads bonus, but manager has no SELECT on it -> refused.
+connection c_mg2 user=cge_manager password=cge_manager_pw
+statement error
+UPDATE cge_employees SET bonus = bonus + 1;
+----
+db error: ERROR: permission denied for table cge_employees<slt:ignore>
+
+
+# bonus = salary reads salary (ungranted to read) -> refused.
+connection c_mg3 user=cge_manager password=cge_manager_pw
+statement error
+UPDATE cge_employees SET bonus = salary;
+----
+db error: ERROR: permission denied for table cge_employees<slt:ignore>
+
+
+# Updating an ungranted column (salary) -> refused (no UPDATE on salary).
+connection c_mg4 user=cge_manager password=cge_manager_pw
+statement error
+UPDATE cge_employees SET salary = 1;
+----
+db error: ERROR: permission denied for table cge_employees<slt:ignore>
+
+
+# RETURNING bonus reads the column back -> needs SELECT on bonus, which the
+# update-only role lacks -> refused.
+connection c_mg5 user=cge_manager password=cge_manager_pw
+statement error
+UPDATE cge_employees SET bonus = 5 RETURNING bonus;
+----
+db error: ERROR: permission denied for table cge_employees<slt:ignore>
+
+
+# === hr: INSERT (name, department) ===
+
+# Inserting exactly the two granted columns is allowed (others default to NULL).
+connection c_hr user=cge_hr password=cge_hr_pw
+statement ok
+INSERT INTO cge_employees (name, department) VALUES ('mop', 'ops');
+
+
+# Naming an ungranted column (id) in the insert is refused.
+connection c_hr2 user=cge_hr password=cge_hr_pw
+statement error
+INSERT INTO cge_employees (id, name, department) VALUES (9, 'x', 'ops');
+----
+db error: ERROR: permission denied for table cge_employees<slt:ignore>
+
+
+# Naming an ungranted column (bonus) is refused.
+connection c_hr3 user=cge_hr password=cge_hr_pw
+statement error
+INSERT INTO cge_employees (name, department, bonus) VALUES ('x', 'ops', 5);
+----
+db error: ERROR: permission denied for table cge_employees<slt:ignore>
+
+
+# INSERT without a column list targets every column -> needs INSERT on all -> refused.
+connection c_hr4 user=cge_hr password=cge_hr_pw
+statement error
+INSERT INTO cge_employees VALUES (9, 'x', 'ops', 1, 1);
+----
+db error: ERROR: permission denied for table cge_employees<slt:ignore>
+
+
+# RETURNING name reads the row back -> needs SELECT on name, which hr lacks -> refused.
+connection c_hr5 user=cge_hr password=cge_hr_pw
+statement error
+INSERT INTO cge_employees (name, department) VALUES ('x', 'ops') RETURNING name;
+----
+db error: ERROR: permission denied for table cge_employees<slt:ignore>
+
+
+# === combined grant: the boundary where RETURNING becomes legal ===
+# A role with both INSERT (name,department) AND SELECT (name) can insert and
+# RETURNING name -- but RETURNING department still fails (no SELECT on it).
+
+statement ok
+CREATE ROLE cge_combo LOGIN PASSWORD 'cge_combo_pw';
+
+
+statement ok
+GRANT INSERT (name, department) ON cge_employees TO cge_combo;
+
+
+statement ok
+GRANT SELECT (name) ON cge_employees TO cge_combo;
+
+
+# INSERT ... RETURNING name -> allowed (column SELECT on name covers the read-back).
+connection c_co user=cge_combo password=cge_combo_pw
+query
+INSERT INTO cge_employees (name, department) VALUES ('iceberg', 'eng') RETURNING name;
+----
+name
+iceberg
+
+
+# RETURNING department -> refused (combo has INSERT but no SELECT on department).
+connection c_co2 user=cge_combo password=cge_combo_pw
+statement error
+INSERT INTO cge_employees (name, department) VALUES ('x', 'eng') RETURNING department;
+----
+db error: ERROR: permission denied for table cge_employees<slt:ignore>
+
+
+# Plain read of the one granted column.
+connection c_co3 user=cge_combo password=cge_combo_pw
+query
+SELECT name FROM cge_employees ORDER BY name;
+----
+name
+babsky
+iceberg
+mop
+vedernikoff
+
+
+statement ok
+DROP TABLE cge_employees;
+
+
+statement ok
+DROP ROLE cge_analyst;
+
+
+statement ok
+DROP ROLE cge_manager;
+
+
+statement ok
+DROP ROLE cge_hr;
+
+
+statement ok
+DROP ROLE cge_combo;

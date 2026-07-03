@@ -24,7 +24,6 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 
-#include "catalog/database.h"
 #include "catalog/identifiers/object_id.h"
 
 namespace sdb::connector {

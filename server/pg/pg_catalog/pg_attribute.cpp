@@ -39,7 +39,6 @@ namespace {
 constexpr uint64_t kNullMask = MaskFromNulls({
   GetIndex(&PgAttribute::attcompression),
   GetIndex(&PgAttribute::attstattarget),
-  GetIndex(&PgAttribute::attacl),
   GetIndex(&PgAttribute::attoptions),
   GetIndex(&PgAttribute::attfdwoptions),
   GetIndex(&PgAttribute::attmissingval),
@@ -154,6 +153,7 @@ void EmitColumnsForTable(const catalog::Table& table,
       .attislocal = true,
       .attinhcount = 0,
       .attcollation = GetCollationForType(type_oid),
+      .attacl = {col.GetAcl()},
     };
     values.push_back(std::move(row));
   }
@@ -267,7 +267,8 @@ catalog::MaterializedData SystemTableSnapshot<PgAttribute>::GetTableData() {
   auto result = CreateColumns<PgAttribute>(values.size());
 
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row);
+    WriteData(result, values[row], kNullMask, row,
+              *_config.CatalogSnapshot());
   }
 
   return {std::move(result), values.size()};

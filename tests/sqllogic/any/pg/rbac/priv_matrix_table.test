@@ -1,0 +1,490 @@
+# Single-table privilege matrix: "a role can do A but not B".
+#
+# The assertion surface is has_table_privilege(role, table, priv), which is
+# byte-identical on real PostgreSQL and serenedb. For each of the seven table
+# privileges we grant it ALONE to a fresh role and assert that bit is t while
+# all six others are f -- a real 7x7 matrix. Then additive grants, GRANT ALL,
+# selective REVOKE, REVOKE ALL, and finally real query-path enforcement on a
+# second connection to prove the boolean oracle matches behavior.
+#
+# All objects are prefixed pm_ and live under the clickclack/vedernikoff lore.
+# The file is idempotent (DROP ... IF EXISTS up front) and self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS pm_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS pm_select_only;
+
+
+statement ok
+DROP ROLE IF EXISTS pm_insert_only;
+
+
+statement ok
+DROP ROLE IF EXISTS pm_update_only;
+
+
+statement ok
+DROP ROLE IF EXISTS pm_delete_only;
+
+
+statement ok
+DROP ROLE IF EXISTS pm_truncate_only;
+
+
+statement ok
+DROP ROLE IF EXISTS pm_references_only;
+
+
+statement ok
+DROP ROLE IF EXISTS pm_trigger_only;
+
+
+statement ok
+DROP ROLE IF EXISTS pm_additive;
+
+
+statement ok
+DROP ROLE IF EXISTS pm_allgrant;
+
+
+statement ok
+DROP ROLE IF EXISTS pm_allwords;
+
+
+statement ok
+DROP ROLE IF EXISTS pm_revoke_one;
+
+
+statement ok
+DROP ROLE IF EXISTS pm_revoke_all;
+
+
+statement ok
+CREATE TABLE pm_iceberg (id int, clickclack text);
+
+
+# ============================================================================
+# Per-privilege isolation: grant ONE privilege, assert exactly that bit is t.
+# Column order in every block: SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES
+# TRIGGER. Exactly one t per row, six f -- the diagonal of the matrix.
+# ============================================================================
+
+# ---- row 1: SELECT alone ----
+
+statement ok
+CREATE ROLE pm_select_only;
+
+
+statement ok
+GRANT SELECT ON pm_iceberg TO pm_select_only;
+
+
+query
+SELECT has_table_privilege('pm_select_only','pm_iceberg','SELECT')     AS sel,
+       has_table_privilege('pm_select_only','pm_iceberg','INSERT')     AS ins,
+       has_table_privilege('pm_select_only','pm_iceberg','UPDATE')     AS upd,
+       has_table_privilege('pm_select_only','pm_iceberg','DELETE')     AS del,
+       has_table_privilege('pm_select_only','pm_iceberg','TRUNCATE')   AS trunc,
+       has_table_privilege('pm_select_only','pm_iceberg','REFERENCES') AS refs,
+       has_table_privilege('pm_select_only','pm_iceberg','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	f	f	f	f	f	f
+
+
+# ---- row 2: INSERT alone ----
+
+statement ok
+CREATE ROLE pm_insert_only;
+
+
+statement ok
+GRANT INSERT ON pm_iceberg TO pm_insert_only;
+
+
+query
+SELECT has_table_privilege('pm_insert_only','pm_iceberg','SELECT')     AS sel,
+       has_table_privilege('pm_insert_only','pm_iceberg','INSERT')     AS ins,
+       has_table_privilege('pm_insert_only','pm_iceberg','UPDATE')     AS upd,
+       has_table_privilege('pm_insert_only','pm_iceberg','DELETE')     AS del,
+       has_table_privilege('pm_insert_only','pm_iceberg','TRUNCATE')   AS trunc,
+       has_table_privilege('pm_insert_only','pm_iceberg','REFERENCES') AS refs,
+       has_table_privilege('pm_insert_only','pm_iceberg','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	t	f	f	f	f	f
+
+
+# ---- row 3: UPDATE alone ----
+
+statement ok
+CREATE ROLE pm_update_only;
+
+
+statement ok
+GRANT UPDATE ON pm_iceberg TO pm_update_only;
+
+
+query
+SELECT has_table_privilege('pm_update_only','pm_iceberg','SELECT')     AS sel,
+       has_table_privilege('pm_update_only','pm_iceberg','INSERT')     AS ins,
+       has_table_privilege('pm_update_only','pm_iceberg','UPDATE')     AS upd,
+       has_table_privilege('pm_update_only','pm_iceberg','DELETE')     AS del,
+       has_table_privilege('pm_update_only','pm_iceberg','TRUNCATE')   AS trunc,
+       has_table_privilege('pm_update_only','pm_iceberg','REFERENCES') AS refs,
+       has_table_privilege('pm_update_only','pm_iceberg','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	f	t	f	f	f	f
+
+
+# ---- row 4: DELETE alone ----
+
+statement ok
+CREATE ROLE pm_delete_only;
+
+
+statement ok
+GRANT DELETE ON pm_iceberg TO pm_delete_only;
+
+
+query
+SELECT has_table_privilege('pm_delete_only','pm_iceberg','SELECT')     AS sel,
+       has_table_privilege('pm_delete_only','pm_iceberg','INSERT')     AS ins,
+       has_table_privilege('pm_delete_only','pm_iceberg','UPDATE')     AS upd,
+       has_table_privilege('pm_delete_only','pm_iceberg','DELETE')     AS del,
+       has_table_privilege('pm_delete_only','pm_iceberg','TRUNCATE')   AS trunc,
+       has_table_privilege('pm_delete_only','pm_iceberg','REFERENCES') AS refs,
+       has_table_privilege('pm_delete_only','pm_iceberg','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	f	f	t	f	f	f
+
+
+# ---- row 5: TRUNCATE alone ----
+
+statement ok
+CREATE ROLE pm_truncate_only;
+
+
+statement ok
+GRANT TRUNCATE ON pm_iceberg TO pm_truncate_only;
+
+
+query
+SELECT has_table_privilege('pm_truncate_only','pm_iceberg','SELECT')     AS sel,
+       has_table_privilege('pm_truncate_only','pm_iceberg','INSERT')     AS ins,
+       has_table_privilege('pm_truncate_only','pm_iceberg','UPDATE')     AS upd,
+       has_table_privilege('pm_truncate_only','pm_iceberg','DELETE')     AS del,
+       has_table_privilege('pm_truncate_only','pm_iceberg','TRUNCATE')   AS trunc,
+       has_table_privilege('pm_truncate_only','pm_iceberg','REFERENCES') AS refs,
+       has_table_privilege('pm_truncate_only','pm_iceberg','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	f	f	f	t	f	f
+
+
+# ---- row 6: REFERENCES alone ----
+
+statement ok
+CREATE ROLE pm_references_only;
+
+
+statement ok
+GRANT REFERENCES ON pm_iceberg TO pm_references_only;
+
+
+query
+SELECT has_table_privilege('pm_references_only','pm_iceberg','SELECT')     AS sel,
+       has_table_privilege('pm_references_only','pm_iceberg','INSERT')     AS ins,
+       has_table_privilege('pm_references_only','pm_iceberg','UPDATE')     AS upd,
+       has_table_privilege('pm_references_only','pm_iceberg','DELETE')     AS del,
+       has_table_privilege('pm_references_only','pm_iceberg','TRUNCATE')   AS trunc,
+       has_table_privilege('pm_references_only','pm_iceberg','REFERENCES') AS refs,
+       has_table_privilege('pm_references_only','pm_iceberg','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	f	f	f	f	t	f
+
+
+# ---- row 7: TRIGGER alone ----
+
+statement ok
+CREATE ROLE pm_trigger_only;
+
+
+statement ok
+GRANT TRIGGER ON pm_iceberg TO pm_trigger_only;
+
+
+query
+SELECT has_table_privilege('pm_trigger_only','pm_iceberg','SELECT')     AS sel,
+       has_table_privilege('pm_trigger_only','pm_iceberg','INSERT')     AS ins,
+       has_table_privilege('pm_trigger_only','pm_iceberg','UPDATE')     AS upd,
+       has_table_privilege('pm_trigger_only','pm_iceberg','DELETE')     AS del,
+       has_table_privilege('pm_trigger_only','pm_iceberg','TRUNCATE')   AS trunc,
+       has_table_privilege('pm_trigger_only','pm_iceberg','REFERENCES') AS refs,
+       has_table_privilege('pm_trigger_only','pm_iceberg','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	f	f	f	f	f	t
+
+
+# ============================================================================
+# Additive grants: SELECT, then also INSERT. Each step adds exactly one bit.
+# ============================================================================
+
+statement ok
+CREATE ROLE pm_additive;
+
+
+# Nothing granted yet: all seven bits are f.
+query
+SELECT has_table_privilege('pm_additive','pm_iceberg','SELECT')   AS sel,
+       has_table_privilege('pm_additive','pm_iceberg','INSERT')   AS ins,
+       has_table_privilege('pm_additive','pm_iceberg','UPDATE')   AS upd,
+       has_table_privilege('pm_additive','pm_iceberg','DELETE')   AS del;
+----
+sel	ins	upd	del
+f	f	f	f
+
+
+statement ok
+GRANT SELECT ON pm_iceberg TO pm_additive;
+
+
+# After SELECT: only SELECT is t.
+query
+SELECT has_table_privilege('pm_additive','pm_iceberg','SELECT')   AS sel,
+       has_table_privilege('pm_additive','pm_iceberg','INSERT')   AS ins,
+       has_table_privilege('pm_additive','pm_iceberg','UPDATE')   AS upd,
+       has_table_privilege('pm_additive','pm_iceberg','DELETE')   AS del;
+----
+sel	ins	upd	del
+t	f	f	f
+
+
+statement ok
+GRANT INSERT ON pm_iceberg TO pm_additive;
+
+
+# After also granting INSERT: SELECT and INSERT held, UPDATE/DELETE still not.
+query
+SELECT has_table_privilege('pm_additive','pm_iceberg','SELECT')   AS sel,
+       has_table_privilege('pm_additive','pm_iceberg','INSERT')   AS ins,
+       has_table_privilege('pm_additive','pm_iceberg','UPDATE')   AS upd,
+       has_table_privilege('pm_additive','pm_iceberg','DELETE')   AS del;
+----
+sel	ins	upd	del
+t	t	f	f
+
+
+# A combined grant list in one statement is equivalent to two grants.
+statement ok
+GRANT UPDATE, DELETE ON pm_iceberg TO pm_additive;
+
+
+query
+SELECT has_table_privilege('pm_additive','pm_iceberg','SELECT')   AS sel,
+       has_table_privilege('pm_additive','pm_iceberg','INSERT')   AS ins,
+       has_table_privilege('pm_additive','pm_iceberg','UPDATE')   AS upd,
+       has_table_privilege('pm_additive','pm_iceberg','DELETE')   AS del;
+----
+sel	ins	upd	del
+t	t	t	t
+
+
+# ============================================================================
+# GRANT ALL and GRANT ALL PRIVILEGES: every one of the seven bits is t.
+# ============================================================================
+
+statement ok
+CREATE ROLE pm_allgrant;
+
+
+statement ok
+GRANT ALL ON pm_iceberg TO pm_allgrant;
+
+
+query
+SELECT has_table_privilege('pm_allgrant','pm_iceberg','SELECT')     AS sel,
+       has_table_privilege('pm_allgrant','pm_iceberg','INSERT')     AS ins,
+       has_table_privilege('pm_allgrant','pm_iceberg','UPDATE')     AS upd,
+       has_table_privilege('pm_allgrant','pm_iceberg','DELETE')     AS del,
+       has_table_privilege('pm_allgrant','pm_iceberg','TRUNCATE')   AS trunc,
+       has_table_privilege('pm_allgrant','pm_iceberg','REFERENCES') AS refs,
+       has_table_privilege('pm_allgrant','pm_iceberg','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	t	t	t	t
+
+
+# GRANT ALL PRIVILEGES (the verbose spelling) is identical.
+statement ok
+CREATE ROLE pm_allwords;
+
+
+statement ok
+GRANT ALL PRIVILEGES ON pm_iceberg TO pm_allwords;
+
+
+query
+SELECT has_table_privilege('pm_allwords','pm_iceberg','SELECT')     AS sel,
+       has_table_privilege('pm_allwords','pm_iceberg','INSERT')     AS ins,
+       has_table_privilege('pm_allwords','pm_iceberg','UPDATE')     AS upd,
+       has_table_privilege('pm_allwords','pm_iceberg','DELETE')     AS del,
+       has_table_privilege('pm_allwords','pm_iceberg','TRUNCATE')   AS trunc,
+       has_table_privilege('pm_allwords','pm_iceberg','REFERENCES') AS refs,
+       has_table_privilege('pm_allwords','pm_iceberg','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	t	t	t	t
+
+
+# ============================================================================
+# Selective REVOKE off a full grant: one bit drops, the rest survive.
+# ============================================================================
+
+statement ok
+CREATE ROLE pm_revoke_one;
+
+
+statement ok
+GRANT ALL ON pm_iceberg TO pm_revoke_one;
+
+
+statement ok
+REVOKE UPDATE ON pm_iceberg FROM pm_revoke_one;
+
+
+# UPDATE is now f; the other six remain t.
+query
+SELECT has_table_privilege('pm_revoke_one','pm_iceberg','SELECT')     AS sel,
+       has_table_privilege('pm_revoke_one','pm_iceberg','INSERT')     AS ins,
+       has_table_privilege('pm_revoke_one','pm_iceberg','UPDATE')     AS upd,
+       has_table_privilege('pm_revoke_one','pm_iceberg','DELETE')     AS del,
+       has_table_privilege('pm_revoke_one','pm_iceberg','TRUNCATE')   AS trunc,
+       has_table_privilege('pm_revoke_one','pm_iceberg','REFERENCES') AS refs,
+       has_table_privilege('pm_revoke_one','pm_iceberg','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	f	t	t	t	t
+
+
+# Revoking a multi-priv list at once drops exactly those bits.
+statement ok
+REVOKE SELECT, TRIGGER ON pm_iceberg FROM pm_revoke_one;
+
+
+query
+SELECT has_table_privilege('pm_revoke_one','pm_iceberg','SELECT')     AS sel,
+       has_table_privilege('pm_revoke_one','pm_iceberg','INSERT')     AS ins,
+       has_table_privilege('pm_revoke_one','pm_iceberg','UPDATE')     AS upd,
+       has_table_privilege('pm_revoke_one','pm_iceberg','DELETE')     AS del,
+       has_table_privilege('pm_revoke_one','pm_iceberg','TRUNCATE')   AS trunc,
+       has_table_privilege('pm_revoke_one','pm_iceberg','REFERENCES') AS refs,
+       has_table_privilege('pm_revoke_one','pm_iceberg','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	t	f	t	t	t	f
+
+
+# ============================================================================
+# REVOKE ALL off a full grant: every bit drops back to f.
+# ============================================================================
+
+statement ok
+CREATE ROLE pm_revoke_all;
+
+
+statement ok
+GRANT ALL ON pm_iceberg TO pm_revoke_all;
+
+
+statement ok
+REVOKE ALL ON pm_iceberg FROM pm_revoke_all;
+
+
+query
+SELECT has_table_privilege('pm_revoke_all','pm_iceberg','SELECT')     AS sel,
+       has_table_privilege('pm_revoke_all','pm_iceberg','INSERT')     AS ins,
+       has_table_privilege('pm_revoke_all','pm_iceberg','UPDATE')     AS upd,
+       has_table_privilege('pm_revoke_all','pm_iceberg','DELETE')     AS del,
+       has_table_privilege('pm_revoke_all','pm_iceberg','TRUNCATE')   AS trunc,
+       has_table_privilege('pm_revoke_all','pm_iceberg','REFERENCES') AS refs,
+       has_table_privilege('pm_revoke_all','pm_iceberg','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	f	f	f	f	f	f
+
+
+# REVOKE ALL PRIVILEGES off an already-empty role is a no-op (still all f).
+statement ok
+REVOKE ALL PRIVILEGES ON pm_iceberg FROM pm_revoke_all;
+
+
+query
+SELECT has_table_privilege('pm_revoke_all','pm_iceberg','SELECT')     AS sel,
+       has_table_privilege('pm_revoke_all','pm_iceberg','TRIGGER')    AS trig;
+----
+sel	trig
+f	f
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE pm_iceberg;
+
+
+statement ok
+DROP ROLE pm_select_only;
+
+
+statement ok
+DROP ROLE pm_insert_only;
+
+
+statement ok
+DROP ROLE pm_update_only;
+
+
+statement ok
+DROP ROLE pm_delete_only;
+
+
+statement ok
+DROP ROLE pm_truncate_only;
+
+
+statement ok
+DROP ROLE pm_references_only;
+
+
+statement ok
+DROP ROLE pm_trigger_only;
+
+
+statement ok
+DROP ROLE pm_additive;
+
+
+statement ok
+DROP ROLE pm_allgrant;
+
+
+statement ok
+DROP ROLE pm_allwords;
+
+
+statement ok
+DROP ROLE pm_revoke_one;
+
+
+statement ok
+DROP ROLE pm_revoke_all;

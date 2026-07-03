@@ -65,7 +65,7 @@ catalog::MaterializedData SystemTableSnapshot<PgOpclass>::GetTableData() {
         .opcmethod = id::kPgAmInverted.id(),
         .opcname = tokenizer->GetName(),
         .opcnamespace = tokenizer->GetParentId().id(),
-        .opcowner = id::kRootUser.id(),
+        .opcowner = tokenizer->GetOwner().id(),
         .opcfamily = 0,
         .opcintype = PgTypeOID::kText,
         .opcdefault = false,
@@ -77,7 +77,8 @@ catalog::MaterializedData SystemTableSnapshot<PgOpclass>::GetTableData() {
   static constexpr uint64_t kNullMask = 0;
   auto result = CreateColumns<PgOpclass>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row);
+    WriteData(result, values[row], kNullMask, row,
+              *_config.CatalogSnapshot());
   }
   return {std::move(result), values.size()};
 }

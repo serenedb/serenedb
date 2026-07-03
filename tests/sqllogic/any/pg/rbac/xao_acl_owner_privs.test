@@ -1,0 +1,112 @@
+# How ALTER TABLE ... OWNER TO moves the *implicit* owner privileges around,
+# observed through has_table_privilege across all seven table privileges. The
+# old owner loses every implicit privilege and the new owner gains it. Both
+# owners are non-superusers (a superuser would always report true regardless of
+# ownership, masking the effect). Byte-identical on PostgreSQL and serenedb.
+#
+# Lore: clickclack is the table; ownership passes from mop to vedernikoff.
+
+statement ok
+DROP TABLE IF EXISTS xao_aop_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_aop_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_aop_vedernikoff;
+
+
+statement ok
+CREATE ROLE xao_aop_mop;
+
+
+statement ok
+CREATE ROLE xao_aop_vedernikoff;
+
+
+statement ok
+CREATE TABLE xao_aop_clickclack (id int);
+
+
+# Superuser hands the table to the non-super owner mop (transferred once).
+statement ok
+ALTER TABLE xao_aop_clickclack OWNER TO xao_aop_mop;
+
+
+# Before the next transfer: mop (owner) holds every implicit privilege, and the
+# future owner vedernikoff holds none.
+query
+SELECT
+  has_table_privilege('xao_aop_mop','xao_aop_clickclack','SELECT')     AS sel,
+  has_table_privilege('xao_aop_mop','xao_aop_clickclack','INSERT')     AS ins,
+  has_table_privilege('xao_aop_mop','xao_aop_clickclack','UPDATE')     AS upd,
+  has_table_privilege('xao_aop_mop','xao_aop_clickclack','DELETE')     AS del,
+  has_table_privilege('xao_aop_mop','xao_aop_clickclack','TRUNCATE')   AS trunc,
+  has_table_privilege('xao_aop_mop','xao_aop_clickclack','REFERENCES') AS refs,
+  has_table_privilege('xao_aop_mop','xao_aop_clickclack','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	t	t	t	t
+
+
+query
+SELECT
+  has_table_privilege('xao_aop_vedernikoff','xao_aop_clickclack','SELECT')     AS sel,
+  has_table_privilege('xao_aop_vedernikoff','xao_aop_clickclack','INSERT')     AS ins,
+  has_table_privilege('xao_aop_vedernikoff','xao_aop_clickclack','UPDATE')     AS upd,
+  has_table_privilege('xao_aop_vedernikoff','xao_aop_clickclack','DELETE')     AS del,
+  has_table_privilege('xao_aop_vedernikoff','xao_aop_clickclack','TRUNCATE')   AS trunc,
+  has_table_privilege('xao_aop_vedernikoff','xao_aop_clickclack','REFERENCES') AS refs,
+  has_table_privilege('xao_aop_vedernikoff','xao_aop_clickclack','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	f	f	f	f	f	f
+
+
+# Transfer mop -> vedernikoff (transferred twice).
+statement ok
+ALTER TABLE xao_aop_clickclack OWNER TO xao_aop_vedernikoff;
+
+
+# After: the old owner mop has lost every implicit privilege.
+query
+SELECT
+  has_table_privilege('xao_aop_mop','xao_aop_clickclack','SELECT')     AS sel,
+  has_table_privilege('xao_aop_mop','xao_aop_clickclack','INSERT')     AS ins,
+  has_table_privilege('xao_aop_mop','xao_aop_clickclack','UPDATE')     AS upd,
+  has_table_privilege('xao_aop_mop','xao_aop_clickclack','DELETE')     AS del,
+  has_table_privilege('xao_aop_mop','xao_aop_clickclack','TRUNCATE')   AS trunc,
+  has_table_privilege('xao_aop_mop','xao_aop_clickclack','REFERENCES') AS refs,
+  has_table_privilege('xao_aop_mop','xao_aop_clickclack','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	f	f	f	f	f	f
+
+
+# ...and the new owner vedernikoff has gained all of them.
+query
+SELECT
+  has_table_privilege('xao_aop_vedernikoff','xao_aop_clickclack','SELECT')     AS sel,
+  has_table_privilege('xao_aop_vedernikoff','xao_aop_clickclack','INSERT')     AS ins,
+  has_table_privilege('xao_aop_vedernikoff','xao_aop_clickclack','UPDATE')     AS upd,
+  has_table_privilege('xao_aop_vedernikoff','xao_aop_clickclack','DELETE')     AS del,
+  has_table_privilege('xao_aop_vedernikoff','xao_aop_clickclack','TRUNCATE')   AS trunc,
+  has_table_privilege('xao_aop_vedernikoff','xao_aop_clickclack','REFERENCES') AS refs,
+  has_table_privilege('xao_aop_vedernikoff','xao_aop_clickclack','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	t	t	t	t
+
+
+statement ok
+DROP TABLE xao_aop_clickclack;
+
+
+statement ok
+DROP ROLE xao_aop_mop;
+
+
+statement ok
+DROP ROLE xao_aop_vedernikoff;

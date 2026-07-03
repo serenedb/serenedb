@@ -1,0 +1,314 @@
+# DROP ROLE must refuse while the role OWNS a base table, exactly like
+# PostgreSQL -- the relowner pin is a hard dependency. The drop becomes possible
+# once ownership is removed: either by DROP TABLE (the owned object goes away) or
+# by ALTER TABLE ... OWNER TO another role (the pin moves off the role).
+#
+# Also exercises DROP TABLE CASCADE vs RESTRICT when the owned table itself has a
+# dependent object (a view): RESTRICT refuses, CASCADE drops both, after which
+# the former owner can be dropped.
+#
+# (PostgreSQL also lifts the dependency via REASSIGN OWNED BY, but serenedb does
+# not support that statement, so it is not exercised here.)
+
+
+# ---- Idempotent setup: tear down every fixture first. ----
+
+statement ok
+DROP VIEW IF EXISTS dot_iceberg CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS dot_kostya CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS dot_mop CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS dot_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS dot_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS dot_babsky;
+
+
+# =====================================================================
+# Case 1: a role that owns a base table cannot be dropped; dropping the
+# table removes the only dependency and then the role drops cleanly.
+# =====================================================================
+
+statement ok
+CREATE ROLE dot_vedernikoff;
+
+
+statement ok
+CREATE TABLE dot_kostya (id int);
+
+
+statement ok
+ALTER TABLE dot_kostya OWNER TO dot_vedernikoff;
+
+
+# DROP ROLE refused while the role owns the table (PG 2BP01, DETAIL "owner of
+# table dot_kostya" -- ignored, wording differs across engines).
+statement error
+DROP ROLE dot_vedernikoff;
+----
+db error: ERROR: role "dot_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# IF EXISTS does not soften the dependency error: the role exists, so the
+# dependency still fires.
+statement error
+DROP ROLE IF EXISTS dot_vedernikoff;
+----
+db error: ERROR: role "dot_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Remove the dependency by dropping the owned table; now the drop succeeds.
+statement ok
+DROP TABLE dot_kostya;
+
+
+statement ok
+DROP ROLE dot_vedernikoff;
+
+
+# =====================================================================
+# Case 2: ALTER TABLE ... OWNER TO another role moves the pin. The old
+# owner drops cleanly; the new owner is now the one that is blocked.
+# =====================================================================
+
+statement ok
+CREATE ROLE dot_vedernikoff;
+
+
+statement ok
+CREATE ROLE dot_clickclack;
+
+
+statement ok
+CREATE TABLE dot_kostya (id int);
+
+
+statement ok
+ALTER TABLE dot_kostya OWNER TO dot_vedernikoff;
+
+
+# Hand the table to clickclack.
+statement ok
+ALTER TABLE dot_kostya OWNER TO dot_clickclack;
+
+
+# Old owner no longer pinned -> drops cleanly.
+statement ok
+DROP ROLE dot_vedernikoff;
+
+
+# New owner now carries the dependency -> refused.
+statement error
+DROP ROLE dot_clickclack;
+----
+db error: ERROR: role "dot_clickclack" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Reassign back to the bootstrap superuser; clickclack then drops cleanly.
+statement ok
+ALTER TABLE dot_kostya OWNER TO postgres;
+
+
+statement ok
+DROP ROLE dot_clickclack;
+
+
+statement ok
+DROP TABLE dot_kostya;
+
+
+# =====================================================================
+# Case 3: a role owning one table AND holding a grant on another. Each
+# dependency must be cleared independently before the role can drop.
+# =====================================================================
+
+statement ok
+CREATE ROLE dot_vedernikoff;
+
+
+statement ok
+CREATE TABLE dot_kostya (id int);
+
+
+statement ok
+CREATE TABLE dot_mop (id int);
+
+
+statement ok
+ALTER TABLE dot_kostya OWNER TO dot_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON dot_mop TO dot_vedernikoff;
+
+
+# Revoking the grant is not enough -- the ownership pin on dot_kostya remains.
+statement ok
+REVOKE SELECT ON dot_mop FROM dot_vedernikoff;
+
+
+statement error
+DROP ROLE dot_vedernikoff;
+----
+db error: ERROR: role "dot_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Drop the owned table -> last dependency gone -> role drops.
+statement ok
+DROP TABLE dot_kostya;
+
+
+statement ok
+DROP ROLE dot_vedernikoff;
+
+
+statement ok
+DROP TABLE dot_mop;
+
+
+# =====================================================================
+# Case 4: distinct owner vs grantee on the SAME table. The grantee is
+# blocked only by its privilege; the owner is blocked by the relowner
+# pin. Each clears via its own removal path.
+# =====================================================================
+
+statement ok
+CREATE ROLE dot_vedernikoff;
+
+
+statement ok
+CREATE ROLE dot_clickclack;
+
+
+statement ok
+CREATE TABLE dot_kostya (id int);
+
+
+# clickclack owns; vedernikoff merely holds a SELECT grant.
+statement ok
+ALTER TABLE dot_kostya OWNER TO dot_clickclack;
+
+
+statement ok
+GRANT SELECT ON dot_kostya TO dot_vedernikoff;
+
+
+# Grantee blocked by the privilege dependency (DETAIL "privileges for table ...").
+statement error
+DROP ROLE dot_vedernikoff;
+----
+db error: ERROR: role "dot_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Revoke clears the grantee's dependency.
+statement ok
+REVOKE SELECT ON dot_kostya FROM dot_vedernikoff;
+
+
+statement ok
+DROP ROLE dot_vedernikoff;
+
+
+# Owner is still pinned by relowner.
+statement error
+DROP ROLE dot_clickclack;
+----
+db error: ERROR: role "dot_clickclack" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+DROP TABLE dot_kostya;
+
+
+statement ok
+DROP ROLE dot_clickclack;
+
+
+# =====================================================================
+# Case 5: the owned table has its own dependent (a view). DROP TABLE
+# RESTRICT refuses; the owner stays pinned. DROP TABLE CASCADE drops
+# table + view, after which the owner drops cleanly.
+# =====================================================================
+
+statement ok
+CREATE ROLE dot_vedernikoff;
+
+
+statement ok
+CREATE TABLE dot_kostya (id int);
+
+
+statement ok
+ALTER TABLE dot_kostya OWNER TO dot_vedernikoff;
+
+
+statement ok
+CREATE VIEW dot_iceberg AS SELECT * FROM dot_kostya;
+
+
+# RESTRICT refuses because the view depends on the table.
+statement error
+DROP TABLE dot_kostya RESTRICT;
+----
+db error: ERROR: cannot drop table dot_kostya because other objects depend on it<slt:ignore>
+
+
+# Table still present and still owned by vedernikoff -> the role is still pinned.
+statement error
+DROP ROLE dot_vedernikoff;
+----
+db error: ERROR: role "dot_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# CASCADE drops the table and its dependent view together.
+statement ok
+DROP TABLE dot_kostya CASCADE;
+
+
+# Ownership pin gone -> the role drops cleanly.
+statement ok
+DROP ROLE dot_vedernikoff;
+
+
+# View was cascaded away with the table.
+statement ok
+DROP VIEW IF EXISTS dot_iceberg CASCADE;
+
+
+# ---- Full cleanup. ----
+
+statement ok
+DROP VIEW IF EXISTS dot_iceberg CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS dot_kostya CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS dot_mop CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS dot_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS dot_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS dot_babsky;

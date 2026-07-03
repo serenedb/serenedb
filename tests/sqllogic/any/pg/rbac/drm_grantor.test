@@ -1,0 +1,262 @@
+# DROP ROLE must refuse while the role is the GRANTOR of a privilege held by
+# someone else -- not just while it holds a grant itself. When role A holds a
+# privilege WITH GRANT OPTION and that privilege is granted onward to B with
+# A recorded as the grantor (relacl entry "B=.../A"), A is a dependency of that
+# ACL exactly like the grantee is. Dropping A is refused until the grant it
+# authored is gone (revoked with CASCADE, or the object dropped). The grantor
+# relationship is established by SET ROLE <role> around the onward GRANT, so the
+# grant is attributed to that role (PG rejects GRANTED BY <role> unless the
+# grantor is the current user; serened honors SET ROLE for grant attribution).
+#
+# Validated against PostgreSQL 19. NOTE: PG also tracks grantor dependencies on
+# DATABASE-level ACLs; serened does not (DROP ROLE of a database-grant grantor
+# succeeds there), so only table-level grantor cases are asserted here.
+
+statement ok
+DROP TABLE IF EXISTS drm_kostya;
+
+
+statement ok
+DROP TABLE IF EXISTS drm_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS drm_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS drm_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS drm_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS drm_mop;
+
+
+statement ok
+CREATE TABLE drm_kostya (id int);
+
+
+statement ok
+CREATE TABLE drm_iceberg (id int);
+
+
+statement ok
+CREATE ROLE drm_vedernikoff;
+
+
+statement ok
+CREATE ROLE drm_clickclack;
+
+
+statement ok
+CREATE ROLE drm_babsky;
+
+
+statement ok
+CREATE ROLE drm_mop;
+
+
+# Give vedernikoff a grantable SELECT, then attribute an onward grant to it:
+# the relacl entry becomes "drm_clickclack=r/drm_vedernikoff" -- vedernikoff is
+# now the grantor.
+statement ok
+GRANT SELECT ON drm_kostya TO drm_vedernikoff WITH GRANT OPTION;
+
+
+statement ok
+SET ROLE drm_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON drm_kostya TO drm_clickclack;
+
+
+statement ok
+RESET ROLE;
+
+
+# The grantor cannot be dropped while the grant it authored exists.
+statement error
+DROP ROLE drm_vedernikoff;
+----
+db error: ERROR: role "drm_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# The grantee is equally a dependency of the same ACL -> also refused.
+statement error
+DROP ROLE drm_clickclack;
+----
+db error: ERROR: role "drm_clickclack" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# A role uninvolved in this ACL drops cleanly.
+statement ok
+DROP ROLE drm_mop;
+
+
+# A plain REVOKE FROM the grantee, issued by a role that is NOT the grantor of
+# clickclack's privilege (here the superuser), does not match the grantor and is
+# a no-op -- the grant survives, so the grantor is still refused.
+statement ok
+REVOKE SELECT ON drm_kostya FROM drm_clickclack;
+
+
+statement error
+DROP ROLE drm_vedernikoff;
+----
+db error: ERROR: role "drm_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Revoking the grantor's own privilege WITHOUT cascade is refused while the
+# grant it authored still depends on it.
+statement error
+REVOKE SELECT ON drm_kostya FROM drm_vedernikoff;
+----
+db error: ERROR: dependent privileges exist<slt:ignore>
+
+
+# REVOKE ... FROM <grantor> CASCADE removes the grantor's privilege and the
+# dependent grant in one shot -> the ACL is clean.
+statement ok
+REVOKE SELECT ON drm_kostya FROM drm_vedernikoff CASCADE;
+
+
+# With the authored grant gone, both grantor and former grantee drop.
+statement ok
+DROP ROLE drm_vedernikoff;
+
+
+statement ok
+DROP ROLE drm_clickclack;
+
+
+# --- Resolution by dropping the object the grant lives on ---
+statement ok
+CREATE ROLE drm_vedernikoff;
+
+
+statement ok
+CREATE ROLE drm_clickclack;
+
+
+statement ok
+GRANT SELECT ON drm_kostya TO drm_vedernikoff WITH GRANT OPTION;
+
+
+statement ok
+SET ROLE drm_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON drm_kostya TO drm_clickclack;
+
+
+statement ok
+RESET ROLE;
+
+
+statement error
+DROP ROLE drm_vedernikoff;
+----
+db error: ERROR: role "drm_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Dropping the table removes the entire ACL, so the grantor relationship is gone.
+statement ok
+DROP TABLE drm_kostya;
+
+
+statement ok
+DROP ROLE drm_vedernikoff;
+
+
+statement ok
+DROP ROLE drm_clickclack;
+
+
+# --- Grantor of several onward grants (multiple grantees, multiple privileges) ---
+statement ok
+CREATE ROLE drm_vedernikoff;
+
+
+statement ok
+CREATE ROLE drm_clickclack;
+
+
+# babsky was created during setup and not yet dropped; reset it for this block.
+statement ok
+DROP ROLE IF EXISTS drm_babsky;
+
+
+statement ok
+CREATE ROLE drm_babsky;
+
+
+statement ok
+GRANT SELECT, INSERT ON drm_iceberg TO drm_vedernikoff WITH GRANT OPTION;
+
+
+statement ok
+SET ROLE drm_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON drm_iceberg TO drm_clickclack;
+
+
+statement ok
+GRANT INSERT ON drm_iceberg TO drm_babsky;
+
+
+statement ok
+RESET ROLE;
+
+
+# vedernikoff is the grantor of two distinct grants -> refused.
+statement error
+DROP ROLE drm_vedernikoff;
+----
+db error: ERROR: role "drm_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# REVOKE ALL ... FROM the grantor CASCADE tears down its own grants and every
+# grant authored by it (both grantees) at once.
+statement ok
+REVOKE ALL ON drm_iceberg FROM drm_vedernikoff CASCADE;
+
+
+statement ok
+DROP ROLE drm_vedernikoff;
+
+
+statement ok
+DROP ROLE drm_clickclack;
+
+
+statement ok
+DROP ROLE drm_babsky;
+
+
+# --- Cleanup ---
+statement ok
+DROP TABLE IF EXISTS drm_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS drm_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS drm_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS drm_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS drm_mop;

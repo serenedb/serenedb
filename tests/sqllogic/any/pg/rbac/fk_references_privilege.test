@@ -1,0 +1,98 @@
+# Creating a FOREIGN KEY requires the REFERENCES privilege on the referenced
+# table (PG: table-wide REFERENCES, or REFERENCES on each referenced column,
+# or ownership/superuser). A role with CREATE on the schema but no REFERENCES
+# on the parent table cannot point a foreign key at it.
+#
+# Every assertion verified byte-for-byte against PostgreSQL 19.
+#
+# Lore: vedernikoff wants his ledger to reference the mop committee's roster.
+
+statement ok
+DROP TABLE IF EXISTS fkr_child;
+
+
+statement ok
+DROP TABLE IF EXISTS fkr_roster;
+
+
+statement ok
+DROP ROLE IF EXISTS fkr_vedernikoff;
+
+
+statement ok
+CREATE TABLE fkr_roster (id int PRIMARY KEY, badge int);
+
+
+statement ok
+CREATE ROLE fkr_vedernikoff LOGIN PASSWORD 'fkr_vedernikoff_pw';
+
+
+# vedernikoff may create objects in the schema but holds nothing on fkr_roster.
+statement ok
+GRANT CREATE ON SCHEMA public TO fkr_vedernikoff;
+
+
+# === no REFERENCES on the parent -> the FK is refused ===
+connection c_ved user=fkr_vedernikoff password=fkr_vedernikoff_pw
+statement error
+CREATE TABLE fkr_child (id int, ref int REFERENCES fkr_roster(id));
+----
+db error: ERROR: permission denied for table fkr_roster<slt:ignore>
+
+
+# === table-wide REFERENCES grant -> the FK is allowed ===
+connection default
+statement ok
+GRANT REFERENCES ON fkr_roster TO fkr_vedernikoff;
+
+
+connection c_ved2 user=fkr_vedernikoff password=fkr_vedernikoff_pw
+statement ok
+CREATE TABLE fkr_child (id int, ref int REFERENCES fkr_roster(id));
+
+
+connection c_ved2 user=fkr_vedernikoff password=fkr_vedernikoff_pw
+statement ok
+DROP TABLE fkr_child;
+
+
+# === revoke table-wide, grant only REFERENCES(id) on the column the FK targets
+# -> still allowed (column-level satisfies it). ===
+connection default
+statement ok
+REVOKE REFERENCES ON fkr_roster FROM fkr_vedernikoff;
+
+
+connection default
+statement ok
+GRANT REFERENCES (id) ON fkr_roster TO fkr_vedernikoff;
+
+
+connection c_ved3 user=fkr_vedernikoff password=fkr_vedernikoff_pw
+statement ok
+CREATE TABLE fkr_child (id int, ref int REFERENCES fkr_roster(id));
+
+
+connection c_ved3 user=fkr_vedernikoff password=fkr_vedernikoff_pw
+statement ok
+DROP TABLE fkr_child;
+
+
+# ---- cleanup ----
+connection default
+statement ok
+DROP TABLE IF EXISTS fkr_child;
+
+
+statement ok
+DROP TABLE fkr_roster;
+
+
+# vedernikoff still holds CREATE on the schema; PG refuses to drop a role with a
+# live grant, so revoke it before dropping the role.
+statement ok
+REVOKE CREATE ON SCHEMA public FROM fkr_vedernikoff;
+
+
+statement ok
+DROP ROLE fkr_vedernikoff;

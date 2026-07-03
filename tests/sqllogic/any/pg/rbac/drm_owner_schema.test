@@ -1,0 +1,314 @@
+# DROP ROLE must refuse while the role owns a SCHEMA (nspowner points at it) or
+# holds privileges on one, exactly like PostgreSQL -- otherwise the role's id
+# lingers as a dangling owner/grantee. The drop becomes possible once the
+# dependency is removed: DROP the schema (RESTRICT requires it be empty, CASCADE
+# drops its contents), ALTER SCHEMA ... OWNER TO another role, or REVOKE the
+# schema privilege. PostgreSQL prints SQLSTATE 2BP01 with message "role ...
+# cannot be dropped because some objects depend on it"; the DETAIL line ("owner
+# of schema ..." vs "privileges for schema ...") differs and is ignored.
+#
+# Lore: vedernikoff and clickclack and kostya own the iceberg/clickclack_sch
+# schemas; mop is merely a grantee.
+#
+# serenedb does not support CREATE SCHEMA ... AUTHORIZATION, ALTER SCHEMA RENAME,
+# DROP OWNED BY, or REASSIGN OWNED BY -- ownership is established here with a
+# plain CREATE SCHEMA followed by ALTER SCHEMA ... OWNER TO, which both engines
+# accept.
+
+statement ok
+DROP SCHEMA IF EXISTS dos_iceberg CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS dos_clickclack_sch CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS dos_empty CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS dos_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS dos_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS dos_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS dos_mop_role;
+
+
+# === Empty schema: owner cannot be dropped, then can after OWNER TO away ===
+
+statement ok
+CREATE ROLE dos_vedernikoff;
+
+
+statement ok
+CREATE SCHEMA dos_empty;
+
+
+# Transfer ownership of the empty schema to the role -> it now has a dependency.
+statement ok
+ALTER SCHEMA dos_empty OWNER TO dos_vedernikoff;
+
+
+query
+SELECT pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname='dos_empty';
+----
+owner
+dos_vedernikoff
+
+
+# DROP ROLE is refused while the role owns the (empty) schema.
+statement error
+DROP ROLE dos_vedernikoff;
+----
+db error: ERROR: role "dos_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Move ownership back to postgres -> dependency gone -> drop succeeds.
+statement ok
+ALTER SCHEMA dos_empty OWNER TO postgres;
+
+
+statement ok
+DROP ROLE dos_vedernikoff;
+
+
+statement ok
+DROP SCHEMA dos_empty;
+
+
+# === ALTER SCHEMA OWNER TO another role transfers the dependency ===
+
+statement ok
+CREATE ROLE dos_vedernikoff;
+
+
+statement ok
+CREATE ROLE dos_clickclack;
+
+
+statement ok
+CREATE SCHEMA dos_iceberg;
+
+
+statement ok
+ALTER SCHEMA dos_iceberg OWNER TO dos_vedernikoff;
+
+
+# vedernikoff owns the schema and is refused.
+statement error
+DROP ROLE dos_vedernikoff;
+----
+db error: ERROR: role "dos_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Transfer to clickclack -> vedernikoff drops cleanly, clickclack now refused.
+statement ok
+ALTER SCHEMA dos_iceberg OWNER TO dos_clickclack;
+
+
+statement ok
+DROP ROLE dos_vedernikoff;
+
+
+statement error
+DROP ROLE dos_clickclack;
+----
+db error: ERROR: role "dos_clickclack" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# === Non-empty schema: DROP SCHEMA RESTRICT refused, CASCADE clears it ===
+
+statement ok
+CREATE TABLE dos_iceberg.dos_mop (id int);
+
+
+# DROP SCHEMA defaults to RESTRICT and refuses while the table lives inside.
+statement error
+DROP SCHEMA dos_iceberg;
+----
+db error: ERROR: cannot drop schema dos_iceberg because other objects depend on it<slt:ignore>
+
+
+# Likewise the explicit RESTRICT form.
+statement error
+DROP SCHEMA dos_iceberg RESTRICT;
+----
+db error: ERROR: cannot drop schema dos_iceberg because other objects depend on it<slt:ignore>
+
+
+# CASCADE drops the contained table and the schema together; the owner role's
+# dependency vanishes so DROP ROLE then succeeds.
+statement ok
+DROP SCHEMA dos_iceberg CASCADE;
+
+
+statement ok
+DROP ROLE dos_clickclack;
+
+
+# === Non-empty schema cleared the manual way: drop the table, then RESTRICT ===
+
+statement ok
+CREATE ROLE dos_kostya;
+
+
+statement ok
+CREATE SCHEMA dos_iceberg;
+
+
+statement ok
+ALTER SCHEMA dos_iceberg OWNER TO dos_kostya;
+
+
+statement ok
+CREATE TABLE dos_iceberg.dos_mop (id int);
+
+
+# While kostya owns the (non-empty) schema, DROP ROLE is refused.
+statement error
+DROP ROLE dos_kostya;
+----
+db error: ERROR: role "dos_kostya" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Drop the table first; now the empty schema accepts a RESTRICT drop, and after
+# that kostya owns nothing and drops cleanly.
+statement ok
+DROP TABLE dos_iceberg.dos_mop;
+
+
+statement ok
+DROP SCHEMA dos_iceberg RESTRICT;
+
+
+statement ok
+DROP ROLE dos_kostya;
+
+
+# === Two schemas, one owner: partial removal still refused ===
+
+statement ok
+CREATE ROLE dos_vedernikoff;
+
+
+statement ok
+CREATE SCHEMA dos_iceberg;
+
+
+statement ok
+CREATE SCHEMA dos_clickclack_sch;
+
+
+statement ok
+ALTER SCHEMA dos_iceberg OWNER TO dos_vedernikoff;
+
+
+statement ok
+ALTER SCHEMA dos_clickclack_sch OWNER TO dos_vedernikoff;
+
+
+# Owning both schemas -> refused.
+statement error
+DROP ROLE dos_vedernikoff;
+----
+db error: ERROR: role "dos_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Hand off just one schema; the role still owns the other, so still refused.
+statement ok
+ALTER SCHEMA dos_iceberg OWNER TO postgres;
+
+
+statement error
+DROP ROLE dos_vedernikoff;
+----
+db error: ERROR: role "dos_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Hand off the second schema too; now the role owns nothing and drops cleanly.
+statement ok
+ALTER SCHEMA dos_clickclack_sch OWNER TO postgres;
+
+
+statement ok
+DROP ROLE dos_vedernikoff;
+
+
+# === Schema privilege grant (not ownership) also blocks the grantee's drop ===
+
+statement ok
+CREATE ROLE dos_mop_role;
+
+
+# mop holds USAGE on a schema it does not own -> the grant is a dependency.
+statement ok
+GRANT USAGE ON SCHEMA dos_iceberg TO dos_mop_role;
+
+
+statement error
+DROP ROLE dos_mop_role;
+----
+db error: ERROR: role "dos_mop_role" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Adding CREATE keeps the dependency; revoking only USAGE leaves it refused.
+statement ok
+GRANT CREATE ON SCHEMA dos_iceberg TO dos_mop_role;
+
+
+statement ok
+REVOKE USAGE ON SCHEMA dos_iceberg FROM dos_mop_role;
+
+
+statement error
+DROP ROLE dos_mop_role;
+----
+db error: ERROR: role "dos_mop_role" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Revoke the last privilege -> no dependency -> drop succeeds.
+statement ok
+REVOKE CREATE ON SCHEMA dos_iceberg FROM dos_mop_role;
+
+
+statement ok
+DROP ROLE dos_mop_role;
+
+
+# === Cleanup ===
+
+statement ok
+DROP SCHEMA IF EXISTS dos_iceberg CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS dos_clickclack_sch CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS dos_empty CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS dos_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS dos_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS dos_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS dos_mop_role;

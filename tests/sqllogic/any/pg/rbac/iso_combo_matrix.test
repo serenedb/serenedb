@@ -1,0 +1,258 @@
+# Multi-table isolation with COMPOUND grants: six tables, each receiving a
+# distinct COMBINATION of privileges granted to the same role. The full
+# seven-privilege vector is asserted per table, and a wide cross-table block
+# proves each combination is confined to its own table. The has_table_privilege
+# oracle is byte-identical on real PostgreSQL and serenedb.
+#
+# Grant plan (role iso_androed):
+#   iso_clickclack -> SELECT, INSERT
+#   iso_kostya     -> UPDATE, DELETE
+#   iso_deadinside -> SELECT, REFERENCES, TRIGGER
+#   iso_babsky     -> INSERT, UPDATE, DELETE, TRUNCATE
+#   iso_pudge      -> ALL (the full seven)
+#   iso_mop        -> (nothing -- a control table that must stay all-f)
+# All names prefixed iso_; idempotent and self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS iso_clickclack;
+
+
+statement ok
+DROP TABLE IF EXISTS iso_kostya;
+
+
+statement ok
+DROP TABLE IF EXISTS iso_deadinside;
+
+
+statement ok
+DROP TABLE IF EXISTS iso_babsky;
+
+
+statement ok
+DROP TABLE IF EXISTS iso_pudge;
+
+
+statement ok
+DROP TABLE IF EXISTS iso_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS iso_androed;
+
+
+statement ok
+CREATE TABLE iso_clickclack (id int, mop text);
+
+
+statement ok
+CREATE TABLE iso_kostya (id int, mop text);
+
+
+statement ok
+CREATE TABLE iso_deadinside (id int, mop text);
+
+
+statement ok
+CREATE TABLE iso_babsky (id int, mop text);
+
+
+statement ok
+CREATE TABLE iso_pudge (id int, mop text);
+
+
+statement ok
+CREATE TABLE iso_mop (id int, mop text);
+
+
+statement ok
+CREATE ROLE iso_androed;
+
+
+# ============================================================================
+# Apply the distinct per-table combinations.
+# ============================================================================
+
+statement ok
+GRANT SELECT, INSERT ON iso_clickclack TO iso_androed;
+
+
+statement ok
+GRANT UPDATE, DELETE ON iso_kostya TO iso_androed;
+
+
+statement ok
+GRANT SELECT, REFERENCES, TRIGGER ON iso_deadinside TO iso_androed;
+
+
+statement ok
+GRANT INSERT, UPDATE, DELETE, TRUNCATE ON iso_babsky TO iso_androed;
+
+
+statement ok
+GRANT ALL ON iso_pudge TO iso_androed;
+
+
+# ============================================================================
+# Per-table full vectors. Column order: SELECT INSERT UPDATE DELETE TRUNCATE
+# REFERENCES TRIGGER.
+# ============================================================================
+
+# iso_clickclack -> SELECT, INSERT only.
+query
+SELECT has_table_privilege('iso_androed','iso_clickclack','SELECT')     AS sel,
+       has_table_privilege('iso_androed','iso_clickclack','INSERT')     AS ins,
+       has_table_privilege('iso_androed','iso_clickclack','UPDATE')     AS upd,
+       has_table_privilege('iso_androed','iso_clickclack','DELETE')     AS del,
+       has_table_privilege('iso_androed','iso_clickclack','TRUNCATE')   AS trunc,
+       has_table_privilege('iso_androed','iso_clickclack','REFERENCES') AS refs,
+       has_table_privilege('iso_androed','iso_clickclack','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	f	f	f	f	f
+
+
+# iso_kostya -> UPDATE, DELETE only.
+query
+SELECT has_table_privilege('iso_androed','iso_kostya','SELECT')     AS sel,
+       has_table_privilege('iso_androed','iso_kostya','INSERT')     AS ins,
+       has_table_privilege('iso_androed','iso_kostya','UPDATE')     AS upd,
+       has_table_privilege('iso_androed','iso_kostya','DELETE')     AS del,
+       has_table_privilege('iso_androed','iso_kostya','TRUNCATE')   AS trunc,
+       has_table_privilege('iso_androed','iso_kostya','REFERENCES') AS refs,
+       has_table_privilege('iso_androed','iso_kostya','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	f	t	t	f	f	f
+
+
+# iso_deadinside -> SELECT, REFERENCES, TRIGGER only.
+query
+SELECT has_table_privilege('iso_androed','iso_deadinside','SELECT')     AS sel,
+       has_table_privilege('iso_androed','iso_deadinside','INSERT')     AS ins,
+       has_table_privilege('iso_androed','iso_deadinside','UPDATE')     AS upd,
+       has_table_privilege('iso_androed','iso_deadinside','DELETE')     AS del,
+       has_table_privilege('iso_androed','iso_deadinside','TRUNCATE')   AS trunc,
+       has_table_privilege('iso_androed','iso_deadinside','REFERENCES') AS refs,
+       has_table_privilege('iso_androed','iso_deadinside','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	f	f	f	f	t	t
+
+
+# iso_babsky -> INSERT, UPDATE, DELETE, TRUNCATE only.
+query
+SELECT has_table_privilege('iso_androed','iso_babsky','SELECT')     AS sel,
+       has_table_privilege('iso_androed','iso_babsky','INSERT')     AS ins,
+       has_table_privilege('iso_androed','iso_babsky','UPDATE')     AS upd,
+       has_table_privilege('iso_androed','iso_babsky','DELETE')     AS del,
+       has_table_privilege('iso_androed','iso_babsky','TRUNCATE')   AS trunc,
+       has_table_privilege('iso_androed','iso_babsky','REFERENCES') AS refs,
+       has_table_privilege('iso_androed','iso_babsky','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	t	t	t	t	f	f
+
+
+# iso_pudge -> ALL seven.
+query
+SELECT has_table_privilege('iso_androed','iso_pudge','SELECT')     AS sel,
+       has_table_privilege('iso_androed','iso_pudge','INSERT')     AS ins,
+       has_table_privilege('iso_androed','iso_pudge','UPDATE')     AS upd,
+       has_table_privilege('iso_androed','iso_pudge','DELETE')     AS del,
+       has_table_privilege('iso_androed','iso_pudge','TRUNCATE')   AS trunc,
+       has_table_privilege('iso_androed','iso_pudge','REFERENCES') AS refs,
+       has_table_privilege('iso_androed','iso_pudge','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	t	t	t	t
+
+
+# iso_mop -> control table, never granted: all seven f.
+query
+SELECT has_table_privilege('iso_androed','iso_mop','SELECT')     AS sel,
+       has_table_privilege('iso_androed','iso_mop','INSERT')     AS ins,
+       has_table_privilege('iso_androed','iso_mop','UPDATE')     AS upd,
+       has_table_privilege('iso_androed','iso_mop','DELETE')     AS del,
+       has_table_privilege('iso_androed','iso_mop','TRUNCATE')   AS trunc,
+       has_table_privilege('iso_androed','iso_mop','REFERENCES') AS refs,
+       has_table_privilege('iso_androed','iso_mop','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	f	f	f	f	f	f
+
+
+# ============================================================================
+# Wide cross-table no-leak block. Each column probes a privilege that a table
+# does NOT hold, picking from another table's combination. Every cell is f.
+#   SELECT is on clickclack/deadinside/pudge -> f on kostya, babsky, mop
+#   INSERT is on clickclack/babsky/pudge      -> f on kostya, deadinside, mop
+#   TRUNCATE is on babsky/pudge               -> f on clickclack, kostya, deadinside
+#   REFERENCES is on deadinside/pudge         -> f on clickclack, kostya, babsky
+# ============================================================================
+
+query
+SELECT has_table_privilege('iso_androed','iso_kostya','SELECT')        AS s_ko,
+       has_table_privilege('iso_androed','iso_babsky','SELECT')        AS s_ba,
+       has_table_privilege('iso_androed','iso_deadinside','INSERT')    AS i_di,
+       has_table_privilege('iso_androed','iso_clickclack','TRUNCATE')  AS t_cc,
+       has_table_privilege('iso_androed','iso_kostya','TRUNCATE')      AS t_ko,
+       has_table_privilege('iso_androed','iso_clickclack','REFERENCES') AS r_cc,
+       has_table_privilege('iso_androed','iso_babsky','REFERENCES')    AS r_ba;
+----
+s_ko	s_ba	i_di	t_cc	t_ko	r_cc	r_ba
+f	f	f	f	f	f	f
+
+
+# ============================================================================
+# Re-grant on the empty control table iso_mop is isolated to it: granting
+# SELECT,INSERT there flips exactly those two bits and leaves every prior
+# table's vector exactly as established above.
+# ============================================================================
+
+statement ok
+GRANT SELECT, INSERT ON iso_mop TO iso_androed;
+
+
+query
+SELECT has_table_privilege('iso_androed','iso_mop','SELECT')        AS mop_s,
+       has_table_privilege('iso_androed','iso_mop','INSERT')        AS mop_i,
+       has_table_privilege('iso_androed','iso_mop','UPDATE')        AS mop_u,
+       has_table_privilege('iso_androed','iso_clickclack','SELECT') AS cc_s,
+       has_table_privilege('iso_androed','iso_kostya','UPDATE')     AS ko_u,
+       has_table_privilege('iso_androed','iso_pudge','TRUNCATE')    AS pu_t;
+----
+mop_s	mop_i	mop_u	cc_s	ko_u	pu_t
+t	t	f	t	t	t
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE iso_clickclack;
+
+
+statement ok
+DROP TABLE iso_kostya;
+
+
+statement ok
+DROP TABLE iso_deadinside;
+
+
+statement ok
+DROP TABLE iso_babsky;
+
+
+statement ok
+DROP TABLE iso_pudge;
+
+
+statement ok
+DROP TABLE iso_mop;
+
+
+statement ok
+DROP ROLE iso_androed;

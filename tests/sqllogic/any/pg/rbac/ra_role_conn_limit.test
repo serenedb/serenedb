@@ -1,0 +1,57 @@
+# CONNECTION LIMIT (rolconnlimit) storage and surfacing through pg_authid,
+# identical on PostgreSQL and serenedb. CREATE / ALTER ROLE accept an integer
+# (>= -1), -1 means unlimited, and an out-of-range value is refused. Live
+# per-role connection enforcement cannot run on the shared trust-auth PG
+# container, so it lives in sdb/pg/rbac/enf_conn_limit.test.
+#
+# Lore: only so many vedernikoffs may crowd the MOP at once.
+
+statement ok
+DROP ROLE IF EXISTS rcl_vedernikoff;
+
+
+statement ok
+CREATE ROLE rcl_vedernikoff LOGIN CONNECTION LIMIT 3;
+
+
+query
+SELECT rolname, rolconnlimit FROM pg_authid WHERE rolname = 'rcl_vedernikoff';
+----
+rolname	rolconnlimit
+rcl_vedernikoff	3
+
+
+# ALTER ROLE replaces the limit.
+statement ok
+ALTER ROLE rcl_vedernikoff CONNECTION LIMIT 10;
+
+
+query
+SELECT rolconnlimit FROM pg_authid WHERE rolname = 'rcl_vedernikoff';
+----
+rolconnlimit
+10
+
+
+# CONNECTION LIMIT -1 is unlimited (the default for a role with no clause).
+statement ok
+ALTER ROLE rcl_vedernikoff CONNECTION LIMIT -1;
+
+
+query
+SELECT rolconnlimit FROM pg_authid WHERE rolname = 'rcl_vedernikoff';
+----
+rolconnlimit
+-1
+
+
+# An out-of-range limit (< -1) is refused.
+statement error
+CREATE ROLE rcl_bad CONNECTION LIMIT -5;
+----
+db error: ERROR: invalid connection limit: -5<slt:ignore>
+
+
+# Cleanup.
+statement ok
+DROP ROLE rcl_vedernikoff;

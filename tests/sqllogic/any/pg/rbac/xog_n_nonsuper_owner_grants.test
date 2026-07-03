@@ -1,0 +1,162 @@
+# Cross-product file N: a NON-super owner acts as grantor. The superuser creates
+# the table and hands ownership to a non-super role; that owner then GRANTs to
+# other roles over its OWN authenticated connection. The resulting ACL rows
+# carry the non-super owner as grantor (.../xog_n_mop), and the grantees can run
+# real DML to the extent of what they were given.
+#
+# Lore: xog_n_iceberg is the table; xog_n_mop is its non-super owner-grantor;
+# xog_n_reader gets SELECT, xog_n_writer gets SELECT+INSERT.
+
+statement ok
+DROP TABLE IF EXISTS xog_n_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_n_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_n_reader;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_n_writer;
+
+
+statement ok
+CREATE ROLE xog_n_mop LOGIN PASSWORD 'xog_n_mop_pw';
+
+
+statement ok
+CREATE ROLE xog_n_reader LOGIN PASSWORD 'xog_n_reader_pw';
+
+
+statement ok
+CREATE ROLE xog_n_writer LOGIN PASSWORD 'xog_n_writer_pw';
+
+
+statement ok
+CREATE TABLE xog_n_iceberg (id int, payload text);
+
+
+statement ok
+INSERT INTO xog_n_iceberg VALUES (1, 'clickclack');
+
+
+statement ok
+ALTER TABLE xog_n_iceberg OWNER TO xog_n_mop;
+
+
+# Ownership is on the non-super role.
+query
+SELECT EXISTS(
+  SELECT 1 FROM pg_class c JOIN pg_authid a ON a.oid = c.relowner
+  WHERE c.relname = 'xog_n_iceberg' AND a.rolname = 'xog_n_mop'
+) AS owned_by_mop;
+----
+owned_by_mop
+t
+
+
+# ---- The non-super owner grants on its own connection: SELECT to reader,
+# SELECT+INSERT to writer. ----
+connection c_mop user=xog_n_mop password=xog_n_mop_pw
+statement ok
+GRANT SELECT ON xog_n_iceberg TO xog_n_reader;
+
+
+connection c_mop user=xog_n_mop password=xog_n_mop_pw
+statement ok
+GRANT SELECT, INSERT ON xog_n_iceberg TO xog_n_writer;
+
+
+# The ACL rows show the NON-super owner as grantor.
+query rowsort
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_n_iceberg'
+) g WHERE e LIKE 'xog_n_reader=%' OR e LIKE 'xog_n_writer=%';
+----
+e
+xog_n_reader=r/xog_n_mop
+xog_n_writer=ar/xog_n_mop
+
+
+# Oracle reflects the grants.
+query
+SELECT has_table_privilege('xog_n_reader','xog_n_iceberg','SELECT') AS rd_sel,
+       has_table_privilege('xog_n_reader','xog_n_iceberg','INSERT') AS rd_ins,
+       has_table_privilege('xog_n_writer','xog_n_iceberg','SELECT') AS wr_sel,
+       has_table_privilege('xog_n_writer','xog_n_iceberg','INSERT') AS wr_ins;
+----
+rd_sel	rd_ins	wr_sel	wr_ins
+t	f	t	t
+
+
+# ---- Real DML: reader can SELECT but not INSERT; writer can do both. ----
+connection c_rd user=xog_n_reader password=xog_n_reader_pw
+query
+SELECT count(*) AS n FROM xog_n_iceberg;
+----
+n
+1
+
+
+connection c_rd user=xog_n_reader password=xog_n_reader_pw
+statement error
+INSERT INTO xog_n_iceberg VALUES (2, 'nope');
+----
+db error: ERROR: permission denied for table xog_n_iceberg<slt:ignore>
+
+
+connection c_wr user=xog_n_writer password=xog_n_writer_pw
+statement ok
+INSERT INTO xog_n_iceberg VALUES (2, 'babsky');
+
+
+connection c_wr user=xog_n_writer password=xog_n_writer_pw
+query
+SELECT count(*) AS n FROM xog_n_iceberg;
+----
+n
+2
+
+
+# ---- The non-super owner can REVOKE what it granted, on its own connection. ----
+connection c_mop user=xog_n_mop password=xog_n_mop_pw
+statement ok
+REVOKE INSERT ON xog_n_iceberg FROM xog_n_writer;
+
+
+# writer keeps SELECT, loses INSERT.
+query
+SELECT has_table_privilege('xog_n_writer','xog_n_iceberg','SELECT') AS wr_sel,
+       has_table_privilege('xog_n_writer','xog_n_iceberg','INSERT') AS wr_ins;
+----
+wr_sel	wr_ins
+t	f
+
+
+# And the revoke is enforced on the real path.
+connection c_wr user=xog_n_writer password=xog_n_writer_pw
+statement error
+INSERT INTO xog_n_iceberg VALUES (3, 'gone');
+----
+db error: ERROR: permission denied for table xog_n_iceberg<slt:ignore>
+
+
+# The owner drops its own table to clean up.
+connection c_mop user=xog_n_mop password=xog_n_mop_pw
+statement ok
+DROP TABLE xog_n_iceberg;
+
+
+statement ok
+DROP ROLE xog_n_mop;
+
+
+statement ok
+DROP ROLE xog_n_reader;
+
+
+statement ok
+DROP ROLE xog_n_writer;

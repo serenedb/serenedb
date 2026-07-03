@@ -1,0 +1,180 @@
+# Column-list ALL (PG `GRANT ALL (col) ON t`): ALL expands to only the
+# column-applicable privileges -- INSERT(a), SELECT(r), UPDATE(w),
+# REFERENCES(x) -- never DELETE/TRUNCATE/TRIGGER/MAINTAIN, which are
+# table-scoped. So attacl renders <slt:ignore>role=arwx/postgres<slt:ignore>. A non-column
+# privilege named with a column list is rejected with PG's
+# `invalid privilege type <P> for column`. REFERENCES alone grants only x
+# and does not imply SELECT.
+#
+# Lore: vedernikoff and babsky hold column-list ALL on iceberg columns.
+
+statement ok
+DROP TABLE IF EXISTS cag_iceberg;
+
+
+statement ok
+DROP TABLE IF EXISTS cag_clickclack;
+
+
+statement ok
+DROP TABLE IF EXISTS cag_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS cag_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS cag_babsky;
+
+
+statement ok
+CREATE TABLE cag_iceberg (a int, b int);
+
+
+statement ok
+INSERT INTO cag_iceberg VALUES (1, 2);
+
+
+statement ok
+CREATE ROLE cag_vedernikoff LOGIN PASSWORD 'cag_vedernikoff_pw';
+
+
+statement ok
+CREATE ROLE cag_babsky LOGIN;
+
+
+# === GRANT ALL (a): column-applicable ALL = arwx (INSERT/SELECT/UPDATE/REFERENCES) ===
+
+statement ok
+GRANT ALL (a) ON cag_iceberg TO cag_vedernikoff;
+
+
+# Column a carries arwx; b stays ungranted (NULL). ALL drops the
+# table-only privileges (delete/truncate/trigger/maintain).
+query
+SELECT a.attname, a.attacl::text AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'cag_iceberg' AND a.attnum > 0 AND NOT a.attisdropped
+ORDER BY a.attnum;
+----
+attname	acl
+a	<slt:ignore>cag_vedernikoff=arwx/postgres<slt:ignore>
+b	NULL
+
+
+# The grantee can SELECT the granted column (SELECT bit present).
+connection c_ved user=cag_vedernikoff password=cag_vedernikoff_pw
+query
+SELECT a FROM cag_iceberg ORDER BY a;
+----
+a
+1
+
+
+# And UPDATE it with a constant (UPDATE bit present, reads nothing).
+connection c_ved2 user=cag_vedernikoff password=cag_vedernikoff_pw
+statement ok
+UPDATE cag_iceberg SET a = 9;
+
+
+# But is refused on the ungranted column b.
+connection c_ved3 user=cag_vedernikoff password=cag_vedernikoff_pw
+statement error
+SELECT b FROM cag_iceberg;
+----
+db error: ERROR: permission denied for table cag_iceberg<slt:ignore>
+
+
+# === GRANT ALL PRIVILEGES (a,b): both columns get arwx ===
+
+statement ok
+CREATE TABLE cag_clickclack (a int, b int);
+
+
+statement ok
+GRANT ALL PRIVILEGES (a, b) ON cag_clickclack TO cag_babsky;
+
+
+query
+SELECT a.attname, a.attacl::text AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'cag_clickclack' AND a.attnum > 0 AND NOT a.attisdropped
+ORDER BY a.attnum;
+----
+attname	acl
+a	<slt:ignore>cag_babsky=arwx/postgres<slt:ignore>
+b	<slt:ignore>cag_babsky=arwx/postgres<slt:ignore>
+
+
+# === Non-column privileges named with a column list are rejected ===
+
+statement error
+GRANT DELETE (a) ON cag_iceberg TO cag_vedernikoff;
+----
+db error: ERROR: invalid privilege type DELETE for column<slt:ignore>
+
+
+statement error
+GRANT TRUNCATE (a) ON cag_iceberg TO cag_vedernikoff;
+----
+db error: ERROR: invalid privilege type TRUNCATE for column<slt:ignore>
+
+
+statement error
+GRANT TRIGGER (a) ON cag_iceberg TO cag_vedernikoff;
+----
+db error: ERROR: invalid privilege type TRIGGER for column<slt:ignore>
+
+
+# === REFERENCES alone grants only x, not SELECT ===
+
+statement ok
+CREATE TABLE cag_mop (a int, b int);
+
+
+statement ok
+INSERT INTO cag_mop VALUES (1, 2);
+
+
+statement ok
+GRANT REFERENCES (a) ON cag_mop TO cag_vedernikoff;
+
+
+query
+SELECT a.attname, a.attacl::text AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'cag_mop' AND a.attnum > 0 AND NOT a.attisdropped
+ORDER BY a.attnum;
+----
+attname	acl
+a	<slt:ignore>cag_vedernikoff=x/postgres<slt:ignore>
+b	NULL
+
+
+# REFERENCES is not SELECT: the role cannot read the column it can reference.
+connection c_ved4 user=cag_vedernikoff password=cag_vedernikoff_pw
+statement error
+SELECT a FROM cag_mop;
+----
+db error: ERROR: permission denied for table cag_mop<slt:ignore>
+
+
+statement ok
+DROP TABLE cag_iceberg;
+
+
+statement ok
+DROP TABLE cag_clickclack;
+
+
+statement ok
+DROP TABLE cag_mop;
+
+
+statement ok
+DROP ROLE cag_vedernikoff;
+
+
+statement ok
+DROP ROLE cag_babsky;

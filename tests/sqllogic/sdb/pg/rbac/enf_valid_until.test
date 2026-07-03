@@ -1,0 +1,108 @@
+# serenedb-only: VALID UNTIL is a password-expiry gate enforced at connect. A
+# role whose VALID UNTIL has passed cannot authenticate with its password; a
+# future (or 'infinity') expiry logs in normally. The gate applies only to the
+# password path -- a passwordless role logs in under trust regardless of expiry,
+# matching PostgreSQL, which checks rolvaliduntil only during password verify.
+# Cannot run on the shared PG container: it runs HBA trust, so no password is
+# ever verified and the expiry is never consulted.
+#
+# Lore: vedernikoff's MOP clearance expires; clickclack's never does.
+
+statement ok
+DROP ROLE IF EXISTS vu_expired;
+
+
+statement ok
+DROP ROLE IF EXISTS vu_valid;
+
+
+statement ok
+DROP ROLE IF EXISTS vu_forever;
+
+
+statement ok
+DROP ROLE IF EXISTS vu_trust_expired;
+
+
+statement ok
+CREATE ROLE vu_expired LOGIN PASSWORD 'mop_secret' VALID UNTIL '2000-01-01 00:00:00+00';
+
+
+statement ok
+CREATE ROLE vu_valid LOGIN PASSWORD 'mop_secret' VALID UNTIL '2099-01-01 00:00:00+00';
+
+
+statement ok
+CREATE ROLE vu_forever LOGIN PASSWORD 'mop_secret' VALID UNTIL 'infinity';
+
+
+# Passwordless role: trust login, so the expiry never applies.
+statement ok
+CREATE ROLE vu_trust_expired LOGIN VALID UNTIL '2000-01-01 00:00:00+00';
+
+
+# --- past expiry + password -> refused (password expired) ---
+connection c_expired user=vu_expired password=mop_secret
+statement error
+SELECT 1;
+----
+db error: FATAL: password authentication failed for user "vu_expired"<slt:ignore>
+
+
+# --- future expiry + password -> logs in ---
+connection c_valid user=vu_valid password=mop_secret
+query
+SELECT current_user;
+----
+current_user
+vu_valid
+
+
+# --- 'infinity' expiry + password -> logs in ---
+connection c_forever user=vu_forever password=mop_secret
+query
+SELECT current_user;
+----
+current_user
+vu_forever
+
+
+# --- passwordless role with a past expiry -> trust login, expiry not consulted ---
+connection c_trust user=vu_trust_expired password=irrelevant
+query
+SELECT current_user;
+----
+current_user
+vu_trust_expired
+
+
+# --- ALTER ROLE pushes the expiry into the future -> the role can log in again ---
+connection default
+statement ok
+ALTER ROLE vu_expired VALID UNTIL '2099-01-01 00:00:00+00';
+
+
+connection c_renewed user=vu_expired password=mop_secret
+query
+SELECT current_user;
+----
+current_user
+vu_expired
+
+
+# Cleanup.
+connection default
+statement ok
+DROP ROLE vu_expired;
+
+
+statement ok
+DROP ROLE vu_valid;
+
+
+statement ok
+DROP ROLE vu_forever;
+
+
+statement ok
+DROP ROLE vu_trust_expired;

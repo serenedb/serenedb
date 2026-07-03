@@ -1,0 +1,112 @@
+# The PUBLIC pseudo-role: a grant to PUBLIC applies to every role, and a
+# revoke from PUBLIC removes it from everyone. Verified via has_table_privilege.
+# (File-unique role names: the runner runs test files in parallel on one server.)
+
+statement ok
+DROP ROLE IF EXISTS pub_clack;
+
+
+statement ok
+DROP ROLE IF EXISTS pub_berg;
+
+
+statement ok
+DROP TABLE IF EXISTS pub_listings;
+
+
+statement ok
+CREATE TABLE pub_listings (id int);
+
+
+statement ok
+CREATE ROLE pub_clack;
+
+
+statement ok
+CREATE ROLE pub_berg;
+
+
+# No one has access yet.
+query
+SELECT
+  has_table_privilege('pub_clack', 'pub_listings', 'SELECT'),
+  has_table_privilege('pub_berg', 'pub_listings', 'SELECT');
+----
+has_table_privilege	has_table_privilege
+f	f
+
+
+# GRANT ... TO PUBLIC reaches every role.
+statement ok
+GRANT SELECT ON pub_listings TO PUBLIC;
+
+
+query
+SELECT
+  has_table_privilege('pub_clack', 'pub_listings', 'SELECT'),
+  has_table_privilege('pub_berg', 'pub_listings', 'SELECT');
+----
+has_table_privilege	has_table_privilege
+t	t
+
+
+# A role created AFTER the PUBLIC grant also enjoys it (PUBLIC is implicit, not
+# a stored membership).
+statement ok
+CREATE ROLE pub_latecomer;
+
+
+query
+SELECT has_table_privilege('pub_latecomer', 'pub_listings', 'SELECT');
+----
+has_table_privilege
+t
+
+
+statement ok
+DROP ROLE IF EXISTS pub_latecomer;
+
+
+# A direct grant stacks on top of the PUBLIC grant for one role only.
+statement ok
+GRANT INSERT ON pub_listings TO pub_clack;
+
+
+query
+SELECT
+  has_table_privilege('pub_clack', 'pub_listings', 'INSERT'),
+  has_table_privilege('pub_berg', 'pub_listings', 'INSERT');
+----
+has_table_privilege	has_table_privilege
+t	f
+
+
+# REVOKE ... FROM PUBLIC removes the shared privilege from everyone, but the
+# direct INSERT grant to pub_clack remains.
+statement ok
+REVOKE SELECT ON pub_listings FROM PUBLIC;
+
+
+query
+SELECT
+  has_table_privilege('pub_clack', 'pub_listings', 'SELECT'),
+  has_table_privilege('pub_berg', 'pub_listings', 'SELECT'),
+  has_table_privilege('pub_clack', 'pub_listings', 'INSERT');
+----
+has_table_privilege	has_table_privilege	has_table_privilege
+f	f	t
+
+
+# Cleanup: drop the table first so its grants (pub_clack's INSERT) go with it,
+# leaving the roles dependency-free for DROP (PostgreSQL refuses to drop a role
+# that still owns or is granted on a live object).
+statement ok
+DROP TABLE pub_listings;
+
+
+statement ok
+DROP ROLE pub_clack;
+
+
+statement ok
+DROP ROLE pub_berg;

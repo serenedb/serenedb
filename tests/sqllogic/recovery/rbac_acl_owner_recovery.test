@@ -1,0 +1,95 @@
+control substitution on
+
+# Object OWNERSHIP set via ALTER ... OWNER TO must survive a crash + WAL
+# recovery. A table, a view, and a sequence are each handed to a specific
+# non-bootstrap role; after recovery pg_get_userbyid(relowner) must still
+# resolve to that role for all three relkinds (the relowner is persisted in the
+# object definition, not re-derived from the creating session).
+#
+# Vedernikoff owns the lot: the clickclack table, the iceberg view, and the mop
+# sequence all transfer to vedernikoff, who is an ordinary (non-superuser) role.
+
+statement ok
+DROP TABLE IF EXISTS rbac_acl_own_clickclack;
+
+
+statement ok
+DROP VIEW IF EXISTS rbac_acl_own_iceberg;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS rbac_acl_own_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS rbac_acl_own_vedernikoff;
+
+
+statement ok
+CREATE ROLE rbac_acl_own_vedernikoff;
+
+
+statement ok
+CREATE TABLE rbac_acl_own_clickclack (id INTEGER);
+
+
+statement ok
+CREATE VIEW rbac_acl_own_iceberg AS SELECT 1 AS x;
+
+
+statement ok
+CREATE SEQUENCE rbac_acl_own_mop;
+
+
+statement ok
+ALTER TABLE rbac_acl_own_clickclack OWNER TO rbac_acl_own_vedernikoff;
+
+
+statement ok
+ALTER VIEW rbac_acl_own_iceberg OWNER TO rbac_acl_own_vedernikoff;
+
+
+statement ok
+ALTER SEQUENCE rbac_acl_own_mop OWNER TO rbac_acl_own_vedernikoff;
+
+
+# Ownership BEFORE the crash: all three owned by vedernikoff.
+query
+SELECT relname, pg_get_userbyid(relowner) AS owner FROM pg_class
+WHERE relname IN ('rbac_acl_own_clickclack', 'rbac_acl_own_iceberg', 'rbac_acl_own_mop')
+ORDER BY relname;
+----
+relname	owner
+rbac_acl_own_clickclack	rbac_acl_own_vedernikoff
+rbac_acl_own_iceberg	rbac_acl_own_vedernikoff
+rbac_acl_own_mop	rbac_acl_own_vedernikoff
+
+
+# ====================== CRASH ======================
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+# --- restart ---
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# ====================== POST-RECOVERY ======================
+
+# relowner survived for every relkind: still vedernikoff after recovery.
+connection after_crash
+query
+SELECT relname, pg_get_userbyid(relowner) AS owner FROM pg_class
+WHERE relname IN ('rbac_acl_own_clickclack', 'rbac_acl_own_iceberg', 'rbac_acl_own_mop')
+ORDER BY relname;
+----
+relname	owner
+rbac_acl_own_clickclack	rbac_acl_own_vedernikoff
+rbac_acl_own_iceberg	rbac_acl_own_vedernikoff
+rbac_acl_own_mop	rbac_acl_own_vedernikoff

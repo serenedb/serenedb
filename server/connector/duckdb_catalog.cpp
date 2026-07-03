@@ -61,7 +61,6 @@
 #include <duckdb/planner/operator/logical_simple.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/storage/database_size.hpp>
-#include <duckdb/transaction/meta_transaction.hpp>
 #include <ranges>
 
 #include "basics/static_strings.h"
@@ -89,17 +88,29 @@
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
-#include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {
 
+// Align catalog_type with the surviving macros: MACRO_ENTRY iff all remaining
+// macros are scalar, else TABLE_MACRO_ENTRY. Prevents a mismatched catalog
+// bucket (e.g. a TableMacroFunction left in a MACRO_ENTRY bucket) which breaks
+// Cast<>() at lookup time.
+void AlignMacroCatalogType(duckdb::CreateMacroInfo& new_info) {
+  const bool all_scalar =
+    !new_info.macros.empty() &&
+    std::ranges::all_of(new_info.macros, [](const auto& m) {
+      return m->type == duckdb::MacroType::SCALAR_MACRO;
+    });
+  new_info.type = all_scalar ? duckdb::CatalogType::MACRO_ENTRY
+                             : duckdb::CatalogType::TABLE_MACRO_ENTRY;
+}
+
 // DROP FUNCTION name(type, ...) -- selective overload removal.
 // Fetches the existing PgSqlFunction, finds the matching overload by
 // parameter signature, and either removes just that overload (updating the
 // stored function) or drops the whole function if it was the last one.
-// DROP FUNCTION name(type, ...) -- selective overload removal.
 Result DropFunctionOverload(catalog::Catalog& catalog,
                             duckdb::ClientContext& context,
                             duckdb::DropInfo& info) {
@@ -114,7 +125,8 @@ Result DropFunctionOverload(catalog::Catalog& catalog,
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
   auto database_id = db->GetId();
-  auto existing = snapshot->GetFunction(database_id, info_schema, info_name);
+  auto existing = snapshot->GetFunction(catalog::NoAccessCheck(), database_id,
+                                        info_schema, info_name);
   if (!existing) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
@@ -159,8 +171,8 @@ Result DropFunctionOverload(catalog::Catalog& catalog,
 
   if (macro_info.macros.size() == 1) {
     // Last overload -- drop the whole function.
-    return catalog.DropFunction(info_catalog, info_schema, info_name,
-                                info.cascade);
+    return catalog.DropFunction(catalog::ActingAs(context), info_catalog,
+                                info_schema, info_name, info.cascade);
   }
 
   // Remove just the matched overload and update the stored function.
@@ -168,29 +180,20 @@ Result DropFunctionOverload(catalog::Catalog& catalog,
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
       macro_info.Copy());
   new_info->macros.erase(new_info->macros.begin() + match_idx);
-  // Align catalog_type with the surviving macros: MACRO_ENTRY iff all
-  // remaining macros are scalar, else TABLE_MACRO_ENTRY. Prevents a
-  // mismatched catalog bucket (e.g. a TableMacroFunction left in a
-  // MACRO_ENTRY bucket) which breaks Cast<>() at lookup time.
-  bool all_scalar = !new_info->macros.empty();
-  for (const auto& m : new_info->macros) {
-    if (m->type != duckdb::MacroType::SCALAR_MACRO) {
-      all_scalar = false;
-      break;
-    }
-  }
-  new_info->type = all_scalar ? duckdb::CatalogType::MACRO_ENTRY
-                              : duckdb::CatalogType::TABLE_MACRO_ENTRY;
+  AlignMacroCatalogType(*new_info);
 
   auto function = std::make_shared<catalog::PgSqlFunction>(
-    ObjectId{}, ObjectId{}, info_name, std::move(new_info));
-  return catalog.CreateFunction(database_id, info_schema, function, true);
+    catalog::Permissions{}, ObjectId{}, ObjectId{}, info_name,
+    std::move(new_info));
+  return catalog.CreateFunction(catalog::ActingAs(context), database_id,
+                                info_schema, function, true);
 }
 
 // DROP FUNCTION/PROCEDURE name -- drop overloads matching the drop kind.
 // PG: DROP FUNCTION drops only function overloads, DROP PROCEDURE drops only
 // procedure overloads. If mixed (func + proc under same name), keep the other.
-Result DropFunctionByKind(catalog::Catalog& catalog,
+Result DropFunctionByKind(duckdb::ClientContext& context,
+                          catalog::Catalog& catalog,
                           const duckdb::DropInfo& info) {
   const auto& info_catalog =
     info.GetQualifiedName().Catalog().GetIdentifierName();
@@ -203,7 +206,8 @@ Result DropFunctionByKind(catalog::Catalog& catalog,
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
   auto database_id = db->GetId();
-  auto existing = snapshot->GetFunction(database_id, info_schema, info_name);
+  auto existing = snapshot->GetFunction(catalog::NoAccessCheck(), database_id,
+                                        info_schema, info_name);
   if (!existing) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
@@ -225,8 +229,8 @@ Result DropFunctionByKind(catalog::Catalog& catalog,
       ERR_MSG("could not find a ", kind, " named \"", info_name, "\""));
   }
   if (all_match) {
-    return catalog.DropFunction(info_catalog, info_schema, info_name,
-                                info.cascade);
+    return catalog.DropFunction(catalog::ActingAs(context), info_catalog,
+                                info_schema, info_name, info.cascade);
   }
   // Mixed: remove only matching overloads, keep the rest.
   auto new_info =
@@ -235,20 +239,13 @@ Result DropFunctionByKind(catalog::Catalog& catalog,
   std::erase_if(new_info->macros, [&](const auto& m) {
     return m->is_procedure == info.is_procedure;
   });
-  // Align catalog_type with the surviving macros (see DropFunctionOverload).
-  bool all_scalar = !new_info->macros.empty();
-  for (const auto& m : new_info->macros) {
-    if (m->type != duckdb::MacroType::SCALAR_MACRO) {
-      all_scalar = false;
-      break;
-    }
-  }
-  new_info->type = all_scalar ? duckdb::CatalogType::MACRO_ENTRY
-                              : duckdb::CatalogType::TABLE_MACRO_ENTRY;
+  AlignMacroCatalogType(*new_info);
 
   auto function = std::make_shared<catalog::PgSqlFunction>(
-    ObjectId{}, ObjectId{}, info_name, std::move(new_info));
-  return catalog.CreateFunction(database_id, info_schema, function, true);
+    catalog::Permissions{}, ObjectId{}, ObjectId{}, info_name,
+    std::move(new_info));
+  return catalog.CreateFunction(catalog::ActingAs(context), database_id,
+                                info_schema, function, true);
 }
 
 }  // namespace
@@ -265,7 +262,8 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
   switch (info.type) {
     using enum duckdb::CatalogType;
     case TABLE_ENTRY:
-      r = catalog.DropTable(info_catalog, info_schema, info_name, info.cascade);
+      r = catalog.DropTable(catalog::ActingAs(context), info_catalog,
+                            info_schema, info_name, info.cascade);
       if (!info.cascade && r.is(ERROR_BAD_PARAMETER)) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
@@ -276,10 +274,12 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
       }
       break;
     case INDEX_ENTRY:
-      r = catalog.DropIndex(info_catalog, info_schema, info_name, info.cascade);
+      r = catalog.DropIndex(catalog::ActingAs(context), info_catalog,
+                            info_schema, info_name, info.cascade);
       break;
     case VIEW_ENTRY:
-      r = catalog.DropView(info_catalog, info_schema, info_name, info.cascade);
+      r = catalog.DropView(catalog::ActingAs(context), info_catalog,
+                           info_schema, info_name, info.cascade);
       if (!info.cascade && r.is(ERROR_BAD_PARAMETER)) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
@@ -294,7 +294,7 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
       if (info.has_func_args) {
         r = DropFunctionOverload(catalog, context, info);
       } else {
-        r = DropFunctionByKind(catalog, info);
+        r = DropFunctionByKind(context, catalog, info);
       }
       if (!info.cascade && r.is(ERROR_BAD_PARAMETER)) {
         THROW_SQL_ERROR(
@@ -306,7 +306,8 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
       }
       break;
     case TYPE_ENTRY:
-      r = catalog.DropType(info_catalog, info_schema, info_name, info.cascade);
+      r = catalog.DropType(catalog::ActingAs(context), info_catalog,
+                           info_schema, info_name, info.cascade);
       if (!info.cascade && r.is(ERROR_BAD_PARAMETER)) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
@@ -319,8 +320,8 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
     case SEQUENCE_ENTRY: {
       bool if_exists =
         info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL;
-      r = catalog.DropSequence(info_catalog, info_schema, info_name, if_exists,
-                               info.cascade);
+      r = catalog.DropSequence(catalog::ActingAs(context), info_catalog,
+                               info_schema, info_name, if_exists, info.cascade);
       if (!info.cascade && r.is(ERROR_BAD_PARAMETER)) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
@@ -339,7 +340,8 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
           ERR_MSG("cannot drop schema ", info_name,
                   " because it is required by the database system"));
       } else {
-        r = catalog.DropSchema(info_catalog, info_name, info.cascade);
+        r = catalog.DropSchema(catalog::ActingAs(context), info_catalog,
+                               info_name, info.cascade);
         // TODO(mbkkt) better error handling
         if (!info.cascade && r.is(ERROR_BAD_PARAMETER)) {
           THROW_SQL_ERROR(
@@ -443,30 +445,29 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
       ERR_MSG("unacceptable schema name \"", schema_name, "\""),
       ERR_DETAIL("The prefix \"pg_\" is reserved for system schemas."));
   }
-  // PG: schemas pre-populated by the system catalog (e.g. information_schema)
-  // shadow the user catalog. Reject creation if a system schema with the same
-  // name already exists.
-  if (transaction.HasContext()) {
-    auto& system = duckdb::Catalog::GetSystemCatalog(*transaction.context);
-    auto existing =
-      system.GetSchema(*transaction.context, info.GetQualifiedName().Schema(),
-                       duckdb::OnEntryNotFound::RETURN_NULL);
-    bool if_not_exists =
-      info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
-    if (existing) {
-      if (if_not_exists) {
-        return nullptr;
-      }
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_SCHEMA),
-                      ERR_MSG("schema \"", schema_name, "\" already exists"));
-    }
-  }
-  auto& catalog_impl = catalog::GetCatalog();
-  auto schema = std::make_shared<catalog::Schema>(
-    GetDatabaseId(), catalog::SchemaOptions{.name = schema_name});
-  auto r = catalog_impl.CreateSchema(GetDatabaseId(), std::move(schema));
+  auto& client = transaction.GetContext();
+
+  auto& system = duckdb::Catalog::GetSystemCatalog(client);
   bool if_not_exists =
     info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
+  if (system.GetSchema(client, info.GetQualifiedName().Schema(),
+                       duckdb::OnEntryNotFound::RETURN_NULL)) {
+    if (if_not_exists) {
+      return nullptr;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_SCHEMA),
+                    ERR_MSG("schema \"", schema_name, "\" already exists"));
+  }
+
+  // PG: CREATE SCHEMA requires CREATE on the current database -- enforced
+  // inside Catalog::CreateSchema, which throws "permission denied for database
+  // <name>" directly. The creator owns the schema (PG current_user).
+  auto& catalog_impl = catalog::GetCatalog();
+  const ObjectId owner = GetSereneDBContext(client).GetRoleId();
+  auto schema = std::make_shared<catalog::Schema>(owner, GetDatabaseId(),
+                                                  ObjectId{}, schema_name);
+  auto r = catalog_impl.CreateSchema(catalog::ActingAs(owner), GetDatabaseId(),
+                                     std::move(schema));
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (if_not_exists) {
       return nullptr;
@@ -941,7 +942,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     };
     auto snapshot = GetSereneDBContext(binder.context).CatalogSnapshot();
     auto relation_obj = snapshot->GetRelation(
-      GetDatabaseId(), target.ParentSchema().name.GetIdentifierName(),
+      catalog::NoAccessCheck(), GetDatabaseId(),
+      target.ParentSchema().name.GetIdentifierName(),
       target.name.GetIdentifierName());
     std::optional<ViewFastPath> fp;
     if (relation_obj &&

@@ -1,0 +1,102 @@
+control substitution on
+
+# Table ACL grants must survive a crash + WAL recovery: the relacl written by
+# GRANT is persisted through the catalog-definition path and re-synthesized
+# byte-identically on reload, and the real RBAC check (has_table_privilege)
+# gives the same answers after recovery as before.
+#
+# Vedernikoff audits the clickclack ledger. iceberg (a non-superuser group)
+# gets SELECT,INSERT; PUBLIC gets SELECT WITH GRANT OPTION. The owner self-grant
+# (postgres=arwdDxtm, no '*' -- owner goptions are implicit, not stored), the
+# iceberg entry (ar), and the PUBLIC entry ('' grantee, r*) must all re-render
+# identically after the crash.
+
+statement ok
+DROP TABLE IF EXISTS rbac_acl_tg_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS rbac_acl_tg_iceberg;
+
+
+statement ok
+CREATE TABLE rbac_acl_tg_ledger (id INTEGER, payload TEXT);
+
+
+statement count 2
+INSERT INTO rbac_acl_tg_ledger VALUES (1, 'clickclack'), (2, 'MOP');
+
+
+statement ok
+CREATE ROLE rbac_acl_tg_iceberg LOGIN;
+
+
+statement ok
+GRANT SELECT, INSERT ON rbac_acl_tg_ledger TO rbac_acl_tg_iceberg;
+
+
+statement ok
+GRANT SELECT ON rbac_acl_tg_ledger TO PUBLIC WITH GRANT OPTION;
+
+
+# relacl BEFORE the crash: owner self-grant (all table privs, no '*'),
+# iceberg=ar, PUBLIC ('')=r* (grant option). Unnest sorted for determinism.
+query
+SELECT unnest(relacl::text[]) AS e FROM pg_class
+WHERE relname = 'rbac_acl_tg_ledger' ORDER BY e;
+----
+e
+=r*/postgres
+postgres=arwdDxtm/postgres
+rbac_acl_tg_iceberg=ar/postgres
+
+
+query
+SELECT
+  has_table_privilege('rbac_acl_tg_iceberg', 'rbac_acl_tg_ledger', 'SELECT') AS sel,
+  has_table_privilege('rbac_acl_tg_iceberg', 'rbac_acl_tg_ledger', 'INSERT') AS ins,
+  has_table_privilege('rbac_acl_tg_iceberg', 'rbac_acl_tg_ledger', 'DELETE') AS del;
+----
+sel	ins	del
+t	t	f
+
+
+# ====================== CRASH ======================
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+# --- restart ---
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# ====================== POST-RECOVERY ======================
+
+# relacl is byte-identical after recovery (re-synthesized from the reloaded ACL).
+connection after_crash
+query
+SELECT unnest(relacl::text[]) AS e FROM pg_class
+WHERE relname = 'rbac_acl_tg_ledger' ORDER BY e;
+----
+e
+=r*/postgres
+postgres=arwdDxtm/postgres
+rbac_acl_tg_iceberg=ar/postgres
+
+
+# has_table_privilege gives the same answers after recovery.
+connection after_crash
+query
+SELECT
+  has_table_privilege('rbac_acl_tg_iceberg', 'rbac_acl_tg_ledger', 'SELECT') AS sel,
+  has_table_privilege('rbac_acl_tg_iceberg', 'rbac_acl_tg_ledger', 'INSERT') AS ins,
+  has_table_privilege('rbac_acl_tg_iceberg', 'rbac_acl_tg_ledger', 'DELETE') AS del;
+----
+sel	ins	del
+t	t	f

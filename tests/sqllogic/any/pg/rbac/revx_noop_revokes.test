@@ -1,0 +1,260 @@
+# REVOKE edge cases, no-op family. PostgreSQL treats a REVOKE of a privilege the
+# grantee never held as a silent success: the statement is `ok`, and the role's
+# privilege state is exactly what it was before. This file walks the no-op
+# shapes -- revoke of a never-granted privilege, double revoke, revoke of more
+# than was granted, REVOKE ALL when only some bits are held -- and pins the
+# resulting has_table_privilege state after every step. The boolean oracle is
+# byte-identical on real PostgreSQL and serenedb.
+#
+# All objects are prefixed revx_ under the vedernikoff lore; the file is
+# idempotent (DROP ... IF EXISTS up front) and self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS revx_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS revx_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS revx_deadinside;
+
+
+statement ok
+DROP ROLE IF EXISTS revx_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS revx_pudge;
+
+
+statement ok
+CREATE TABLE revx_clickclack (id int, mop text);
+
+
+statement ok
+CREATE ROLE revx_kostya;
+
+
+statement ok
+CREATE ROLE revx_deadinside;
+
+
+statement ok
+CREATE ROLE revx_babsky;
+
+
+statement ok
+CREATE ROLE revx_pudge;
+
+
+# ============================================================================
+# REVOKE a privilege that was never granted: a pure no-op. The role holds
+# nothing before and nothing after; the statement still reports ok.
+# ============================================================================
+
+# Baseline: revx_kostya holds nothing.
+query
+SELECT has_table_privilege('revx_kostya','revx_clickclack','SELECT') AS sel,
+       has_table_privilege('revx_kostya','revx_clickclack','INSERT') AS ins,
+       has_table_privilege('revx_kostya','revx_clickclack','UPDATE') AS upd,
+       has_table_privilege('revx_kostya','revx_clickclack','DELETE') AS del;
+----
+sel	ins	upd	del
+f	f	f	f
+
+
+# Revoke SELECT which was never granted -- ok, still all f.
+statement ok
+REVOKE SELECT ON revx_clickclack FROM revx_kostya;
+
+
+query
+SELECT has_table_privilege('revx_kostya','revx_clickclack','SELECT') AS sel,
+       has_table_privilege('revx_kostya','revx_clickclack','INSERT') AS ins,
+       has_table_privilege('revx_kostya','revx_clickclack','UPDATE') AS upd,
+       has_table_privilege('revx_kostya','revx_clickclack','DELETE') AS del;
+----
+sel	ins	upd	del
+f	f	f	f
+
+
+# Revoke a multi-privilege list none of which was granted -- still ok, still f.
+statement ok
+REVOKE INSERT, UPDATE, DELETE ON revx_clickclack FROM revx_kostya;
+
+
+query
+SELECT has_table_privilege('revx_kostya','revx_clickclack','SELECT') AS sel,
+       has_table_privilege('revx_kostya','revx_clickclack','INSERT') AS ins,
+       has_table_privilege('revx_kostya','revx_clickclack','UPDATE') AS upd,
+       has_table_privilege('revx_kostya','revx_clickclack','DELETE') AS del;
+----
+sel	ins	upd	del
+f	f	f	f
+
+
+# REVOKE ALL on a role that has nothing is also a no-op.
+statement ok
+REVOKE ALL ON revx_clickclack FROM revx_kostya;
+
+
+query
+SELECT has_table_privilege('revx_kostya','revx_clickclack','SELECT')     AS sel,
+       has_table_privilege('revx_kostya','revx_clickclack','TRUNCATE')   AS trunc,
+       has_table_privilege('revx_kostya','revx_clickclack','REFERENCES') AS refs,
+       has_table_privilege('revx_kostya','revx_clickclack','TRIGGER')    AS trig;
+----
+sel	trunc	refs	trig
+f	f	f	f
+
+
+# ============================================================================
+# Double REVOKE: revoke a held privilege twice. The first drops the bit; the
+# second is a no-op against the now-absent grant. State is identical after both.
+# ============================================================================
+
+statement ok
+GRANT SELECT, INSERT ON revx_clickclack TO revx_deadinside;
+
+
+query
+SELECT has_table_privilege('revx_deadinside','revx_clickclack','SELECT') AS sel,
+       has_table_privilege('revx_deadinside','revx_clickclack','INSERT') AS ins;
+----
+sel	ins
+t	t
+
+
+# First revoke of SELECT: SELECT drops, INSERT stays.
+statement ok
+REVOKE SELECT ON revx_clickclack FROM revx_deadinside;
+
+
+query
+SELECT has_table_privilege('revx_deadinside','revx_clickclack','SELECT') AS sel,
+       has_table_privilege('revx_deadinside','revx_clickclack','INSERT') AS ins;
+----
+sel	ins
+f	t
+
+
+# Second revoke of the same SELECT: no-op, ok, state unchanged.
+statement ok
+REVOKE SELECT ON revx_clickclack FROM revx_deadinside;
+
+
+query
+SELECT has_table_privilege('revx_deadinside','revx_clickclack','SELECT') AS sel,
+       has_table_privilege('revx_deadinside','revx_clickclack','INSERT') AS ins;
+----
+sel	ins
+f	t
+
+
+# ============================================================================
+# REVOKE more than was granted: the list mixes a held privilege with several
+# never-granted ones. Only the held bit drops; the extras are silently ignored.
+# ============================================================================
+
+statement ok
+GRANT UPDATE ON revx_clickclack TO revx_babsky;
+
+
+query
+SELECT has_table_privilege('revx_babsky','revx_clickclack','SELECT') AS sel,
+       has_table_privilege('revx_babsky','revx_clickclack','INSERT') AS ins,
+       has_table_privilege('revx_babsky','revx_clickclack','UPDATE') AS upd,
+       has_table_privilege('revx_babsky','revx_clickclack','DELETE') AS del;
+----
+sel	ins	upd	del
+f	f	t	f
+
+
+# Revoke UPDATE (held) plus SELECT/INSERT/DELETE (never held) in one list.
+statement ok
+REVOKE SELECT, INSERT, UPDATE, DELETE ON revx_clickclack FROM revx_babsky;
+
+
+query
+SELECT has_table_privilege('revx_babsky','revx_clickclack','SELECT') AS sel,
+       has_table_privilege('revx_babsky','revx_clickclack','INSERT') AS ins,
+       has_table_privilege('revx_babsky','revx_clickclack','UPDATE') AS upd,
+       has_table_privilege('revx_babsky','revx_clickclack','DELETE') AS del;
+----
+sel	ins	upd	del
+f	f	f	f
+
+
+# ============================================================================
+# REVOKE ALL when only some bits are held: clears the held ones, the rest were
+# already absent. A single REVOKE ALL collapses a partial grant set to empty.
+# ============================================================================
+
+statement ok
+GRANT SELECT, DELETE, TRIGGER ON revx_clickclack TO revx_pudge;
+
+
+query
+SELECT has_table_privilege('revx_pudge','revx_clickclack','SELECT')     AS sel,
+       has_table_privilege('revx_pudge','revx_clickclack','INSERT')     AS ins,
+       has_table_privilege('revx_pudge','revx_clickclack','DELETE')     AS del,
+       has_table_privilege('revx_pudge','revx_clickclack','TRIGGER')    AS trig;
+----
+sel	ins	del	trig
+t	f	t	t
+
+
+statement ok
+REVOKE ALL PRIVILEGES ON revx_clickclack FROM revx_pudge;
+
+
+query
+SELECT has_table_privilege('revx_pudge','revx_clickclack','SELECT')     AS sel,
+       has_table_privilege('revx_pudge','revx_clickclack','INSERT')     AS ins,
+       has_table_privilege('revx_pudge','revx_clickclack','UPDATE')     AS upd,
+       has_table_privilege('revx_pudge','revx_clickclack','DELETE')     AS del,
+       has_table_privilege('revx_pudge','revx_clickclack','TRUNCATE')   AS trunc,
+       has_table_privilege('revx_pudge','revx_clickclack','REFERENCES') AS refs,
+       has_table_privilege('revx_pudge','revx_clickclack','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	f	f	f	f	f	f
+
+
+# A second REVOKE ALL after the role is empty is still a no-op.
+statement ok
+REVOKE ALL ON revx_clickclack FROM revx_pudge;
+
+
+query
+SELECT has_table_privilege('revx_pudge','revx_clickclack','SELECT')  AS sel,
+       has_table_privilege('revx_pudge','revx_clickclack','TRIGGER') AS trig;
+----
+sel	trig
+f	f
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE revx_clickclack;
+
+
+statement ok
+DROP ROLE revx_kostya;
+
+
+statement ok
+DROP ROLE revx_deadinside;
+
+
+statement ok
+DROP ROLE revx_babsky;
+
+
+statement ok
+DROP ROLE revx_pudge;

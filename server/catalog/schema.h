@@ -35,7 +35,8 @@ using persistence::SchemaOptions;
 
 class Schema : public Object {
  public:
-  Schema(ObjectId database_id, SchemaOptions options);
+  Schema(Permissions perm, ObjectId database_id, ObjectId id,
+         std::string_view name);
 
   static std::shared_ptr<Schema> Deserialize(duckdb::Deserializer& src,
                                              ReadContext ctx);

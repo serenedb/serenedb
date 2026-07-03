@@ -1,0 +1,133 @@
+# pg_has_role: the three privilege keywords USAGE / MEMBER / SET and their
+# comma-list combinations, asserted identically on real PostgreSQL and serenedb.
+#
+# For a plain (INHERIT-default) membership all three keywords report t for a
+# member of the group: MEMBER (is a member), USAGE (inherits the group's
+# privileges), and SET (may SET ROLE to the group). A comma-list is satisfied
+# if ANY listed keyword holds, so on a real membership every list is t and on a
+# non-membership every list is f.
+#
+# Graph (-> reads "is a member of"):
+#   phr_myasnig -> phr_zhidky        (member of the group)
+#   phr_negaimorit                    (a bystander, member of nothing)
+#
+# Prefixed phr_, myasnig/zhidky/negaimorit lore, idempotent and self-cleaning.
+
+statement ok
+DROP ROLE IF EXISTS phr_myasnig;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_zhidky;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_negaimorit;
+
+
+statement ok
+CREATE ROLE phr_myasnig;
+
+
+statement ok
+CREATE ROLE phr_zhidky;
+
+
+statement ok
+CREATE ROLE phr_negaimorit;
+
+
+statement ok
+GRANT phr_zhidky TO phr_myasnig;
+
+
+# ---- Each single keyword on the real membership: all three t ----
+
+query
+SELECT pg_has_role('phr_myasnig', 'phr_zhidky', 'USAGE')  AS usage,
+       pg_has_role('phr_myasnig', 'phr_zhidky', 'MEMBER') AS member,
+       pg_has_role('phr_myasnig', 'phr_zhidky', 'SET')    AS set_;
+----
+usage	member	set_
+t	t	t
+
+
+# Keyword spelling is case-insensitive -- lowercase agrees with uppercase.
+query
+SELECT pg_has_role('phr_myasnig', 'phr_zhidky', 'usage')  AS usage,
+       pg_has_role('phr_myasnig', 'phr_zhidky', 'member') AS member,
+       pg_has_role('phr_myasnig', 'phr_zhidky', 'set')    AS set_;
+----
+usage	member	set_
+t	t	t
+
+
+# ---- Comma-lists on the real membership: a list is t if ANY member holds ----
+# Every ordering and pairing is t because all three individual keywords are t.
+
+query
+SELECT pg_has_role('phr_myasnig', 'phr_zhidky', 'USAGE, MEMBER')      AS um,
+       pg_has_role('phr_myasnig', 'phr_zhidky', 'MEMBER, SET')        AS ms,
+       pg_has_role('phr_myasnig', 'phr_zhidky', 'SET, USAGE')         AS su,
+       pg_has_role('phr_myasnig', 'phr_zhidky', 'USAGE, MEMBER, SET') AS ums;
+----
+um	ms	su	ums
+t	t	t	t
+
+
+# Whitespace inside the list and keyword order do not change the result.
+query
+SELECT pg_has_role('phr_myasnig', 'phr_zhidky', 'MEMBER,USAGE')  AS no_space,
+       pg_has_role('phr_myasnig', 'phr_zhidky', 'SET,  MEMBER')  AS extra_space,
+       pg_has_role('phr_myasnig', 'phr_zhidky', 'SET, MEMBER, USAGE') AS reordered;
+----
+no_space	extra_space	reordered
+t	t	t
+
+
+# ---- The same keywords on a NON-membership: all three f ----
+# negaimorit is a member of nothing, so USAGE / MEMBER / SET are all f.
+
+query
+SELECT pg_has_role('phr_negaimorit', 'phr_zhidky', 'USAGE')  AS usage,
+       pg_has_role('phr_negaimorit', 'phr_zhidky', 'MEMBER') AS member,
+       pg_has_role('phr_negaimorit', 'phr_zhidky', 'SET')    AS set_;
+----
+usage	member	set_
+f	f	f
+
+
+# A comma-list is f only when EVERY listed keyword is f -- which holds here.
+query
+SELECT pg_has_role('phr_negaimorit', 'phr_zhidky', 'USAGE, MEMBER')      AS um,
+       pg_has_role('phr_negaimorit', 'phr_zhidky', 'MEMBER, SET')        AS ms,
+       pg_has_role('phr_negaimorit', 'phr_zhidky', 'USAGE, MEMBER, SET') AS ums;
+----
+um	ms	ums
+f	f	f
+
+
+# ---- Self-membership: all three keywords are t for a role on itself ----
+
+query
+SELECT pg_has_role('phr_zhidky', 'phr_zhidky', 'USAGE')  AS usage,
+       pg_has_role('phr_zhidky', 'phr_zhidky', 'MEMBER') AS member,
+       pg_has_role('phr_zhidky', 'phr_zhidky', 'SET')    AS set_,
+       pg_has_role('phr_zhidky', 'phr_zhidky', 'USAGE, MEMBER, SET') AS all_list;
+----
+usage	member	set_	all_list
+t	t	t	t
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP ROLE IF EXISTS phr_myasnig;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_zhidky;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_negaimorit;

@@ -1,0 +1,106 @@
+# serenedb-only (needs a non-superuser password session): MERGE INTO must
+# require the write privilege matching each WHEN action, not just SELECT on the
+# target. A SELECT-only role attempting a MERGE that UPDATE/DELETE/INSERTs rows
+# is denied; the merge succeeds only once the matching write privilege is held.
+#
+# Lore: vedernikoff has read access to the mop ledger and tries to smuggle a
+# write in through a MERGE.
+
+statement ok
+DROP TABLE IF EXISTS emp_mop_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS emp_vedernikoff;
+
+
+statement ok
+CREATE TABLE emp_mop_ledger (id int PRIMARY KEY, note text);
+
+
+statement ok
+INSERT INTO emp_mop_ledger VALUES (1, 'clickclack'), (2, 'iceberg');
+
+
+statement ok
+CREATE ROLE emp_vedernikoff LOGIN PASSWORD 'ved_pw';
+
+
+statement ok
+GRANT SELECT ON emp_mop_ledger TO emp_vedernikoff;
+
+
+# A MERGE whose matched branch UPDATEs is denied for a SELECT-only role.
+connection c_ved user=emp_vedernikoff password=ved_pw
+statement error
+MERGE INTO emp_mop_ledger t
+USING (SELECT * FROM (VALUES (1, 'tampered')) AS v(id, note)) s
+ON t.id = s.id
+WHEN MATCHED THEN UPDATE SET note = s.note;
+----
+db error: ERROR: permission denied for table emp_mop_ledger<slt:ignore>
+
+
+# A MERGE whose matched branch DELETEs is denied too.
+connection c_ved user=emp_vedernikoff password=ved_pw
+statement error
+MERGE INTO emp_mop_ledger t
+USING (SELECT * FROM (VALUES (1)) AS v(id)) s
+ON t.id = s.id
+WHEN MATCHED THEN DELETE;
+----
+db error: ERROR: permission denied for table emp_mop_ledger<slt:ignore>
+
+
+# A MERGE whose not-matched branch INSERTs is denied too.
+connection c_ved user=emp_vedernikoff password=ved_pw
+statement error
+MERGE INTO emp_mop_ledger t
+USING (SELECT * FROM (VALUES (9, 'sneaked')) AS v(id, note)) s
+ON t.id = s.id
+WHEN NOT MATCHED THEN INSERT VALUES (s.id, s.note);
+----
+db error: ERROR: permission denied for table emp_mop_ledger<slt:ignore>
+
+
+# The ledger is untouched by the denied merges.
+connection default
+query
+SELECT id, note FROM emp_mop_ledger ORDER BY id;
+----
+id	note
+1	clickclack
+2	iceberg
+
+
+# Once UPDATE is granted, the matched-UPDATE merge succeeds.
+connection default
+statement ok
+GRANT UPDATE ON emp_mop_ledger TO emp_vedernikoff;
+
+
+connection c_ved user=emp_vedernikoff password=ved_pw
+statement ok
+MERGE INTO emp_mop_ledger t
+USING (SELECT * FROM (VALUES (1, 'updated')) AS v(id, note)) s
+ON t.id = s.id
+WHEN MATCHED THEN UPDATE SET note = s.note;
+
+
+connection default
+query
+SELECT id, note FROM emp_mop_ledger ORDER BY id;
+----
+id	note
+1	updated
+2	iceberg
+
+
+# cleanup
+connection default
+statement ok
+DROP TABLE emp_mop_ledger;
+
+
+statement ok
+DROP ROLE emp_vedernikoff;

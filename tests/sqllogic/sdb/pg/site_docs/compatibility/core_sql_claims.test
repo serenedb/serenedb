@@ -102,32 +102,26 @@ statement error
 ALTER TABLE ddl_alter_t ALTER COLUMN a TYPE BIGINT;
 
 # ddl_priv: CREATE ROLE
-statement error
+statement ok
 CREATE ROLE ddl_priv_role1;
 
 # ddl_priv: OWNER TO
 statement ok
 CREATE TABLE ddl_priv_owner_t(a int);
 
-statement error
+statement ok
 ALTER TABLE ddl_priv_owner_t OWNER TO postgres;
-----
-db error: ERROR: syntax error at or near "OWNER"
-
 
 # ddl_priv: ALTER ROLE
-statement error
+statement ok
 ALTER ROLE postgres WITH LOGIN;
 
 # ddl_priv: GRANT
 statement ok
 CREATE TABLE ddl_priv_grant_t(a int);
 
-statement error
+statement ok
 GRANT SELECT ON ddl_priv_grant_t TO postgres;
-----
-db error: ERROR: syntax error at or near "SELECT"
-
 
 # ddl_priv: REVOKE
 statement ok
@@ -136,7 +130,8 @@ CREATE TABLE ddl_priv_revoke_t(a int);
 statement error
 REVOKE SELECT ON ddl_priv_revoke_t FROM postgres;
 ----
-db error: ERROR: syntax error at or near "SELECT"
+db error: ERROR: dependent privileges exist
+HINT: Use CASCADE to revoke them too.
 
 
 # ddl_priv: SET ROLE
@@ -144,7 +139,7 @@ statement ok
 SET ROLE postgres;
 
 # ddl_priv: INHERIT
-statement error
+statement ok
 CREATE ROLE ddl_priv_inherit1 INHERIT;
 
 # ddl_priv: Row Security Policies
@@ -154,7 +149,7 @@ CREATE TABLE ddl_priv_rls_t(a int);
 statement error
 ALTER TABLE ddl_priv_rls_t ENABLE ROW LEVEL SECURITY;
 ----
-db error: ERROR: syntax error at or near "ENABLE"
+db error: ERROR: Pragma Function with name serenedb_alter_table_row_security does not exist!<slt:ignore>
 
 
 # ddl_index: GIN

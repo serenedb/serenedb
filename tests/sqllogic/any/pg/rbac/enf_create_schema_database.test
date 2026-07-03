@@ -1,0 +1,57 @@
+# CREATE SCHEMA requires CREATE on the current database, like PostgreSQL: a role
+# without CREATE on the database is refused ("permission denied for database
+# X"). A superuser creates schemas freely. (Regression guard: CREATE SCHEMA was
+# ungated.) The grant-then-succeed path is covered against a named database in
+# gobjacl_database_datacl; here the harness runs in a per-test database whose
+# name is not known to the test, so only the denial + superuser cases are
+# asserted.
+#
+# Lore: vedernikoff (no CREATE on the database) is refused.
+
+statement ok
+DROP SCHEMA IF EXISTS enf_cs_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS enf_cs_vedernikoff;
+
+
+statement ok
+CREATE ROLE enf_cs_vedernikoff LOGIN PASSWORD 'enf_cs_vedernikoff_pw';
+
+
+# Without CREATE on the database, CREATE SCHEMA is refused.
+connection c_ved user=enf_cs_vedernikoff password=enf_cs_vedernikoff_pw
+statement error
+CREATE SCHEMA enf_cs_clickclack;
+----
+db error: ERROR: permission denied for database <slt:ignore>
+
+
+# Nothing was created.
+connection default
+query
+SELECT count(*) AS n FROM pg_namespace WHERE nspname = 'enf_cs_clickclack';
+----
+n
+0
+
+
+# A superuser creates the schema fine.
+statement ok
+CREATE SCHEMA enf_cs_clickclack;
+
+
+query
+SELECT count(*) AS n FROM pg_namespace WHERE nspname = 'enf_cs_clickclack';
+----
+n
+1
+
+
+statement ok
+DROP SCHEMA enf_cs_clickclack;
+
+
+statement ok
+DROP ROLE enf_cs_vedernikoff;

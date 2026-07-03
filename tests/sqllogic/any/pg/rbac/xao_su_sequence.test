@@ -1,0 +1,99 @@
+# Superuser-driven ALTER SEQUENCE ... OWNER TO across the new-owner
+# cross-product: plain role, group, CURRENT_USER, nonexistent role.
+# Byte-identical on PostgreSQL and serenedb. Owner read back through
+# pg_class.relowner (sequences are relations too).
+#
+# Lore: the mop_seq sequence is handed to clickclack, then the iceberg group.
+
+statement ok
+DROP SEQUENCE IF EXISTS xao_sus_mop_seq;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_sus_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_sus_iceberg;
+
+
+statement ok
+CREATE ROLE xao_sus_clickclack;
+
+
+statement ok
+CREATE ROLE xao_sus_iceberg;
+
+
+statement ok
+CREATE SEQUENCE xao_sus_mop_seq;
+
+
+# Transferred 0 times: owned by the bootstrap superuser.
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='xao_sus_mop_seq';
+----
+owner
+postgres
+
+
+# (1) superuser -> plain role
+statement ok
+ALTER SEQUENCE xao_sus_mop_seq OWNER TO xao_sus_clickclack;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='xao_sus_mop_seq';
+----
+owner
+xao_sus_clickclack
+
+
+# (2) superuser -> a group (transferred once already)
+statement ok
+ALTER SEQUENCE xao_sus_mop_seq OWNER TO xao_sus_iceberg;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='xao_sus_mop_seq';
+----
+owner
+xao_sus_iceberg
+
+
+# (3) superuser -> CURRENT_USER (transferred twice already)
+statement ok
+ALTER SEQUENCE xao_sus_mop_seq OWNER TO CURRENT_USER;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='xao_sus_mop_seq';
+----
+owner
+postgres
+
+
+# (4) superuser -> nonexistent role
+statement error
+ALTER SEQUENCE xao_sus_mop_seq OWNER TO xao_sus_ghost;
+----
+db error: ERROR: role "xao_sus_ghost" does not exist<slt:ignore>
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='xao_sus_mop_seq';
+----
+owner
+postgres
+
+
+statement ok
+DROP SEQUENCE xao_sus_mop_seq;
+
+
+statement ok
+DROP ROLE xao_sus_clickclack;
+
+
+statement ok
+DROP ROLE xao_sus_iceberg;

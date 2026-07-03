@@ -1,0 +1,167 @@
+# Deeper PUBLIC semantics: multi-privilege PUBLIC grants, ALL PRIVILEGES to
+# PUBLIC, partial REVOKE FROM PUBLIC, the union of a PUBLIC grant with a
+# group-inherited grant, and the key asymmetry that REVOKE ... FROM <a specific
+# role> does NOT strip a privilege that the role only holds via PUBLIC. All
+# checked through the byte-identical has_table_privilege oracle.
+
+statement ok
+DROP ROLE IF EXISTS pub_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS pub_androed;
+
+
+statement ok
+DROP ROLE IF EXISTS pub_myasnig;
+
+
+statement ok
+DROP TABLE IF EXISTS pub_pudge;
+
+
+statement ok
+CREATE TABLE pub_pudge (id int, body text);
+
+
+statement ok
+CREATE ROLE pub_babsky;
+
+
+statement ok
+CREATE ROLE pub_androed;
+
+
+statement ok
+CREATE ROLE pub_myasnig;
+
+
+# GRANT multiple privileges to PUBLIC in one statement: every role gets both.
+statement ok
+GRANT SELECT, UPDATE ON pub_pudge TO PUBLIC;
+
+
+query
+SELECT has_table_privilege('pub_babsky', 'pub_pudge', 'SELECT') AS sel,
+       has_table_privilege('pub_babsky', 'pub_pudge', 'UPDATE') AS upd,
+       has_table_privilege('pub_babsky', 'pub_pudge', 'INSERT') AS ins,
+       has_table_privilege('pub_androed', 'pub_pudge', 'UPDATE') AS mop_upd;
+----
+sel	upd	ins	mop_upd
+t	t	f	t
+
+
+# Partial REVOKE FROM PUBLIC: drop only UPDATE, SELECT survives for everyone.
+statement ok
+REVOKE UPDATE ON pub_pudge FROM PUBLIC;
+
+
+query
+SELECT has_table_privilege('pub_babsky', 'pub_pudge', 'SELECT') AS sel,
+       has_table_privilege('pub_babsky', 'pub_pudge', 'UPDATE') AS upd,
+       has_table_privilege('pub_androed', 'pub_pudge', 'SELECT') AS mop_sel,
+       has_table_privilege('pub_androed', 'pub_pudge', 'UPDATE') AS mop_upd;
+----
+sel	upd	mop_sel	mop_upd
+t	f	t	f
+
+
+# Asymmetry: REVOKE SELECT FROM a SPECIFIC role does NOT remove the SELECT the
+# role holds via PUBLIC -- there is no per-role grant to revoke, and the PUBLIC
+# grant is untouched. (PG: revoking a privilege the role only has through PUBLIC
+# is a no-op against the role's own ACL entry.)
+statement ok
+REVOKE SELECT ON pub_pudge FROM pub_babsky;
+
+
+query
+SELECT has_table_privilege('pub_babsky', 'pub_pudge', 'SELECT') AS sel;
+----
+sel
+t
+
+
+# A direct INSERT grant to one role unions with the still-present PUBLIC SELECT.
+statement ok
+GRANT INSERT ON pub_pudge TO pub_babsky;
+
+
+query
+SELECT has_table_privilege('pub_babsky', 'pub_pudge', 'SELECT') AS sel,
+       has_table_privilege('pub_babsky', 'pub_pudge', 'INSERT') AS ins,
+       has_table_privilege('pub_androed', 'pub_pudge', 'INSERT') AS mop_ins;
+----
+sel	ins	mop_ins
+t	t	f
+
+
+# Group inheritance unions with PUBLIC: pub_myasnig gets a direct DELETE,
+# pub_androed becomes a member, so pub_androed ends up with PUBLIC's
+# SELECT plus the inherited DELETE.
+statement ok
+GRANT DELETE ON pub_pudge TO pub_myasnig;
+
+
+statement ok
+GRANT pub_myasnig TO pub_androed;
+
+
+query
+SELECT has_table_privilege('pub_androed', 'pub_pudge', 'SELECT') AS sel,
+       has_table_privilege('pub_androed', 'pub_pudge', 'DELETE') AS del,
+       has_table_privilege('pub_babsky', 'pub_pudge', 'DELETE') AS cc_del;
+----
+sel	del	cc_del
+t	t	f
+
+
+# GRANT ALL PRIVILEGES TO PUBLIC: now every role has the full table matrix.
+statement ok
+GRANT ALL PRIVILEGES ON pub_pudge TO PUBLIC;
+
+
+query
+SELECT has_table_privilege('pub_babsky', 'pub_pudge', 'SELECT') AS sel,
+       has_table_privilege('pub_babsky', 'pub_pudge', 'INSERT') AS ins,
+       has_table_privilege('pub_babsky', 'pub_pudge', 'UPDATE') AS upd,
+       has_table_privilege('pub_babsky', 'pub_pudge', 'DELETE') AS del,
+       has_table_privilege('pub_babsky', 'pub_pudge', 'TRUNCATE') AS trunc,
+       has_table_privilege('pub_babsky', 'pub_pudge', 'REFERENCES') AS refs,
+       has_table_privilege('pub_babsky', 'pub_pudge', 'TRIGGER') AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	t	t	t	t
+
+
+# REVOKE ALL FROM PUBLIC clears the PUBLIC matrix; pub_babsky keeps its
+# own direct INSERT, pub_androed keeps its inherited DELETE.
+statement ok
+REVOKE ALL ON pub_pudge FROM PUBLIC;
+
+
+query
+SELECT has_table_privilege('pub_babsky', 'pub_pudge', 'SELECT') AS sel,
+       has_table_privilege('pub_babsky', 'pub_pudge', 'INSERT') AS ins,
+       has_table_privilege('pub_babsky', 'pub_pudge', 'UPDATE') AS upd,
+       has_table_privilege('pub_androed', 'pub_pudge', 'SELECT') AS mop_sel,
+       has_table_privilege('pub_androed', 'pub_pudge', 'DELETE') AS mop_del;
+----
+sel	ins	upd	mop_sel	mop_del
+f	t	f	f	t
+
+
+# Cleanup.
+statement ok
+DROP TABLE IF EXISTS pub_pudge;
+
+
+statement ok
+DROP ROLE IF EXISTS pub_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS pub_androed;
+
+
+statement ok
+DROP ROLE IF EXISTS pub_myasnig;

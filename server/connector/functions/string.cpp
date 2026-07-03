@@ -233,8 +233,8 @@ void ConvertFromFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     [&](duckdb::string_t data, duckdb::string_t encoding) -> duckdb::string_t {
       std::string_view enc(encoding.GetData(), encoding.GetSize());
       if (enc != "UTF8" && enc != "UTF-8" && enc != "utf8" && enc != "utf-8") {
-        throw duckdb::InvalidInputException(
-          "conversion from %s is not supported", std::string{enc});
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                        ERR_MSG("conversion from ", enc, " is not supported"));
       }
       return duckdb::StringVector::AddString(result, data);
     });
@@ -249,8 +249,8 @@ void ConvertToFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     [&](duckdb::string_t data, duckdb::string_t encoding) -> duckdb::string_t {
       std::string_view enc(encoding.GetData(), encoding.GetSize());
       if (enc != "UTF8" && enc != "UTF-8" && enc != "utf8" && enc != "utf-8") {
-        throw duckdb::InvalidInputException("conversion to %s is not supported",
-                                            std::string{enc});
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                        ERR_MSG("conversion to ", enc, " is not supported"));
       }
       return duckdb::StringVector::AddStringOrBlob(result, data);
     });
@@ -427,8 +427,8 @@ void EncodeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
         target.Finalize();
         return target;
       }
-      throw duckdb::InvalidInputException("unrecognized encoding: \"%s\"",
-                                          std::string{format});
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("unrecognized encoding: \"", format, "\""));
     });
 }
 
@@ -461,7 +461,8 @@ void DecodeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
           int h1 = hex_val(input[i]);
           int h2 = (i + 1 < input.size()) ? hex_val(input[i + 1]) : -1;
           if (h1 < 0 || h2 < 0) {
-            throw duckdb::InvalidInputException("invalid hexadecimal data");
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                            ERR_MSG("invalid hexadecimal data"));
           }
           *out++ = static_cast<char>((h1 << 4) | h2);
         }
@@ -473,8 +474,8 @@ void DecodeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
         auto blob = duckdb::Blob::FromBase64(data);
         return duckdb::StringVector::AddStringOrBlob(result, blob);
       }
-      throw duckdb::InvalidInputException("unrecognized encoding: \"%s\"",
-                                          std::string{format});
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("unrecognized encoding: \"", format, "\""));
     });
 }
 
@@ -538,7 +539,8 @@ void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     // Helper to get arg as string
     auto get_arg = [&](duckdb::idx_t arg_idx) -> std::optional<std::string> {
       if (arg_idx >= ncols) {
-        throw duckdb::InvalidInputException("too few arguments for format()");
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("too few arguments for format()"));
       }
       auto idx = vdata[arg_idx].sel->get_index(row);
       if (!vdata[arg_idx].validity.RowIsValid(idx)) {
@@ -611,8 +613,8 @@ void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       }
       i++;  // skip %
       if (i >= fmt.size()) {
-        throw duckdb::InvalidInputException(
-          "unterminated format() conversion specifier");
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("unterminated format() conversion specifier"));
       }
       if (fmt[i] == '%') {
         out += '%';
@@ -648,8 +650,8 @@ void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       }
 
       if (i >= fmt.size()) {
-        throw duckdb::InvalidInputException(
-          "unterminated format() conversion specifier");
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("unterminated format() conversion specifier"));
       }
 
       char spec = fmt[i++];
@@ -664,8 +666,9 @@ void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
         case 'I': {
           auto val = get_arg(arg_idx);
           if (!val) {
-            throw duckdb::InvalidInputException(
-              "null values cannot be formatted as an SQL identifier");
+            THROW_SQL_ERROR(
+              ERR_CODE(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+              ERR_MSG("null values cannot be formatted as an SQL identifier"));
           }
           formatted = quote_ident(*val);
         } break;
@@ -675,8 +678,9 @@ void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
           break;
         }
         default:
-          throw duckdb::InvalidInputException(
-            "unrecognized format() type specifier \"%c\"", spec);
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                          ERR_MSG("unrecognized format() type specifier \"",
+                                  std::string_view{&spec, 1}, "\""));
       }
 
       // Apply width
@@ -893,8 +897,8 @@ duckdb::unique_ptr<duckdb::FunctionData> RegexpInstrBind(
       auto pattern_str = val.ToString();
       auto re = std::make_unique<re2::RE2>(pattern_str, re2::RE2::Quiet);
       if (!re->ok()) {
-        throw duckdb::InvalidInputException("invalid regular expression: %s",
-                                            re->error());
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_REGULAR_EXPRESSION),
+                        ERR_MSG("invalid regular expression: ", re->error()));
       }
       return duckdb::make_uniq<RegexpInstrBindData>(std::move(re));
     }
@@ -953,8 +957,9 @@ void RegexpInstrFunction(duckdb::DataChunk& args,
       row_re.emplace(re2::StringPiece(pattern.GetData(), pattern.GetSize()),
                      re2::RE2::Quiet);
       if (!row_re->ok()) {
-        throw duckdb::InvalidInputException("invalid regular expression: %s",
-                                            row_re->error());
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_REGULAR_EXPRESSION),
+          ERR_MSG("invalid regular expression: ", row_re->error()));
       }
       re = &*row_re;
     }
@@ -1015,8 +1020,8 @@ void RegexpMatchFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     re2::RE2 re(re2::StringPiece(pattern.GetData(), pattern.GetSize()),
                 re2::RE2::Quiet);
     if (!re.ok()) {
-      throw duckdb::InvalidInputException("invalid regular expression: %s",
-                                          re.error());
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_REGULAR_EXPRESSION),
+                      ERR_MSG("invalid regular expression: ", re.error()));
     }
 
     re2::StringPiece input(text.GetData(), text.GetSize());

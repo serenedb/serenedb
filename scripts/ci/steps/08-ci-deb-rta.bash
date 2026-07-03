@@ -54,6 +54,18 @@ if [[ $test_rc -ne 0 ]]; then
 	exit $test_rc
 fi
 
+# HBA network tests: the mask test launches its own serened and source-binds
+# 127.x addresses, so it runs inside the systemd container against the
+# deb-installed binary (must precede the apt remove below).
+echo "=== HBA network tests ==="
+network_rc=0
+$EXEC env SERENED=/usr/bin/serened /workspace/tests/network/run.sh \
+	2>&1 | tee "${WORKSPACE}/out/logs/deb-rta-network.log" || network_rc=$?
+if [[ $network_rc -ne 0 ]]; then
+	echo "DEB_RTA=FAILED (network tests)"
+	exit $network_rc
+fi
+
 # Optional drivers RTA (python+java only). Gated on RTA_DRIVERS to keep
 # normal RTA wall time bounded; turn on once D1 driver harness is stable.
 if [[ "${RTA_DRIVERS:-false}" == "true" ]]; then

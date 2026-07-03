@@ -1,0 +1,103 @@
+# Real query-path enforcement of a PUBLIC grant: a fresh non-privileged login
+# (granted nothing directly) can actually SELECT a PUBLIC-granted table, but is
+# denied INSERT because INSERT was never granted to PUBLIC. The deny block ends
+# with a trailing <slt:ignore> because serenedb appends a DETAIL line PG does
+# not; the prefix up to the table name is byte-identical on both engines.
+#
+# Authentication is a trust stub on serenedb, so the password is not actually
+# checked; what we exercise is AUTHORIZATION via the planner hooks.
+
+statement ok
+DROP TABLE IF EXISTS pub_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS pub_vedernikoff;
+
+
+statement ok
+CREATE TABLE pub_kostya (id int, headline text);
+
+
+statement ok
+INSERT INTO pub_kostya VALUES (1, 'clickclack ships'), (2, 'mop deployed');
+
+
+statement ok
+CREATE ROLE pub_vedernikoff LOGIN PASSWORD 'pub_vedernikoff_pw';
+
+
+# Before the PUBLIC grant the fresh role cannot even read.
+connection c_pub user=pub_vedernikoff password=pub_vedernikoff_pw
+statement error
+SELECT * FROM pub_kostya;
+----
+db error: ERROR: permission denied for table pub_kostya<slt:ignore>
+
+
+# Owner grants SELECT to PUBLIC.
+statement ok
+GRANT SELECT ON pub_kostya TO PUBLIC;
+
+
+# The has_table_privilege oracle reflects the PUBLIC grant for the named role.
+query
+SELECT has_table_privilege('pub_vedernikoff', 'pub_kostya', 'SELECT') AS sel,
+       has_table_privilege('pub_vedernikoff', 'pub_kostya', 'INSERT') AS ins;
+----
+sel	ins
+t	f
+
+
+# Real enforcement: the fresh login can now SELECT the PUBLIC-granted table.
+connection c_pub user=pub_vedernikoff password=pub_vedernikoff_pw
+query
+SELECT id, headline FROM pub_kostya ORDER BY id;
+----
+id	headline
+1	clickclack ships
+2	mop deployed
+
+
+connection c_pub user=pub_vedernikoff password=pub_vedernikoff_pw
+query
+SELECT count(*) AS n FROM pub_kostya;
+----
+n
+2
+
+
+# ...but is still denied INSERT, since INSERT was never granted to PUBLIC.
+connection c_pub user=pub_vedernikoff password=pub_vedernikoff_pw
+statement error
+INSERT INTO pub_kostya VALUES (3, 'deadinside denied');
+----
+db error: ERROR: permission denied for table pub_kostya<slt:ignore>
+
+
+# REVOKE SELECT FROM PUBLIC: the fresh login loses read access again.
+statement ok
+REVOKE SELECT ON pub_kostya FROM PUBLIC;
+
+
+query
+SELECT has_table_privilege('pub_vedernikoff', 'pub_kostya', 'SELECT') AS sel;
+----
+sel
+f
+
+
+connection c_pub user=pub_vedernikoff password=pub_vedernikoff_pw
+statement error
+SELECT * FROM pub_kostya;
+----
+db error: ERROR: permission denied for table pub_kostya<slt:ignore>
+
+
+# Cleanup.
+statement ok
+DROP TABLE IF EXISTS pub_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS pub_vedernikoff;

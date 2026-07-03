@@ -1,0 +1,62 @@
+# CREATE TEXT SEARCH DICTIONARY (a tokenizer) requires CREATE on the containing
+# schema, like any schema-scoped object: a role without CREATE on public is
+# refused ("permission denied for schema public"); once granted CREATE, it
+# succeeds. (Regression guard: CreateTokenizer was ungated.)
+#
+# serened-only: the tokenizer feature is a serened extension whose only valid
+# template is 'keyword', which does not exist in PostgreSQL, so the PG oracle
+# cannot run it. The RBAC assertion is what matters here.
+#
+# Lore: vedernikoff is refused until granted CREATE on public.
+
+onlyif serenedb
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS enf_tk_clickclack;
+
+
+onlyif serenedb
+statement ok
+DROP ROLE IF EXISTS enf_tk_vedernikoff;
+
+
+onlyif serenedb
+statement ok
+CREATE ROLE enf_tk_vedernikoff LOGIN PASSWORD 'enf_tk_vedernikoff_pw';
+
+
+# Without CREATE on the schema, creating the dictionary is refused.
+connection c_ved user=enf_tk_vedernikoff password=enf_tk_vedernikoff_pw
+onlyif serenedb
+statement error
+CREATE TEXT SEARCH DICTIONARY enf_tk_clickclack(template = 'keyword');
+----
+db error: ERROR: permission denied for schema public<slt:ignore>
+
+
+# Grant CREATE on public; now it succeeds.
+connection default
+onlyif serenedb
+statement ok
+GRANT CREATE ON SCHEMA public TO enf_tk_vedernikoff;
+
+
+connection c_ved2 user=enf_tk_vedernikoff password=enf_tk_vedernikoff_pw
+onlyif serenedb
+statement ok
+CREATE TEXT SEARCH DICTIONARY enf_tk_clickclack(template = 'keyword');
+
+
+onlyif serenedb
+statement ok
+DROP TEXT SEARCH DICTIONARY enf_tk_clickclack;
+
+
+connection default
+onlyif serenedb
+statement ok
+REVOKE CREATE ON SCHEMA public FROM enf_tk_vedernikoff;
+
+
+onlyif serenedb
+statement ok
+DROP ROLE enf_tk_vedernikoff;

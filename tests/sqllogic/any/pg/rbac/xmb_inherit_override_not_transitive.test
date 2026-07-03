@@ -1,0 +1,127 @@
+# Cross-membership: a per-edge WITH INHERIT TRUE override is LOCAL to that edge.
+# It does not punch through a non-inheriting edge further down the chain. PG
+# computes has_privs_of_role by walking only edges whose effective inherit bit
+# is true; one non-inheriting hop blocks everything beyond it regardless of how
+# the edges above were granted.
+#
+# Chain (-> reads "is a member of"), all three roles NOINHERIT by attribute:
+#   xmb_iont_mop --[INHERIT TRUE]--> xmb_iont_kostya --[default = NOINHERIT]--> xmb_iont_iceberg
+# Leaf xmb_iont_iceberg holds SELECT. The override on the FIRST edge lets mop wield
+# kostya's own privileges, but kostya (NOINHERIT, default edge to iceberg) does
+# not wield iceberg's privileges -- so neither does mop. mop is still a MEMBER
+# of iceberg transitively.
+#
+# Byte-identical on real PostgreSQL and serenedb.
+
+statement ok
+DROP ROLE IF EXISTS xmb_iont_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_iont_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_iont_iceberg;
+
+
+statement ok
+DROP TABLE IF EXISTS xmb_iont_clickclack;
+
+
+statement ok
+CREATE TABLE xmb_iont_clickclack (id int);
+
+
+statement ok
+CREATE ROLE xmb_iont_mop NOINHERIT LOGIN PASSWORD 'xmb_iont_mop_pw';
+
+
+statement ok
+CREATE ROLE xmb_iont_kostya NOINHERIT;
+
+
+statement ok
+CREATE ROLE xmb_iont_iceberg;
+
+
+statement ok
+GRANT SELECT ON xmb_iont_clickclack TO xmb_iont_iceberg;
+
+
+# First edge overridden to inherit; second edge takes kostya's NOINHERIT default.
+statement ok
+GRANT xmb_iont_kostya TO xmb_iont_mop WITH INHERIT TRUE;
+
+
+statement ok
+GRANT xmb_iont_iceberg TO xmb_iont_kostya;
+
+
+# kostya does not wield iceberg's SELECT (NOINHERIT default edge); mop inherits
+# kostya's own privileges, but kostya has none from iceberg to pass along.
+query
+SELECT has_table_privilege('xmb_iont_mop', 'xmb_iont_clickclack', 'SELECT') AS mop_sel,
+       has_table_privilege('xmb_iont_kostya', 'xmb_iont_clickclack', 'SELECT') AS kostya_sel,
+       has_table_privilege('xmb_iont_iceberg', 'xmb_iont_clickclack', 'SELECT') AS iceberg_sel;
+----
+mop_sel	kostya_sel	iceberg_sel
+f	f	t
+
+
+# mop is a MEMBER of iceberg transitively, but USAGE stops at the NOINHERIT hop.
+query
+SELECT pg_has_role('xmb_iont_mop', 'xmb_iont_kostya', 'USAGE') AS mop_usage_kostya,
+       pg_has_role('xmb_iont_mop', 'xmb_iont_iceberg', 'MEMBER') AS mop_member_iceberg,
+       pg_has_role('xmb_iont_mop', 'xmb_iont_iceberg', 'USAGE') AS mop_usage_iceberg;
+----
+mop_usage_kostya	mop_member_iceberg	mop_usage_iceberg
+t	t	f
+
+
+connection c_mop user=xmb_iont_mop password=xmb_iont_mop_pw
+statement error
+SELECT * FROM xmb_iont_clickclack;
+----
+db error: ERROR: permission denied for table xmb_iont_clickclack<slt:ignore>
+
+
+# ---- Fix the SECOND edge with WITH INHERIT TRUE: now the chain inherits ----
+
+statement ok
+GRANT xmb_iont_iceberg TO xmb_iont_kostya WITH INHERIT TRUE;
+
+
+query
+SELECT has_table_privilege('xmb_iont_mop', 'xmb_iont_clickclack', 'SELECT') AS mop_sel,
+       has_table_privilege('xmb_iont_kostya', 'xmb_iont_clickclack', 'SELECT') AS kostya_sel,
+       pg_has_role('xmb_iont_mop', 'xmb_iont_iceberg', 'USAGE') AS mop_usage_iceberg;
+----
+mop_sel	kostya_sel	mop_usage_iceberg
+t	t	t
+
+
+connection c_mop2 user=xmb_iont_mop password=xmb_iont_mop_pw
+query
+SELECT count(*) FROM xmb_iont_clickclack;
+----
+count
+0
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP TABLE IF EXISTS xmb_iont_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_iont_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_iont_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_iont_iceberg;

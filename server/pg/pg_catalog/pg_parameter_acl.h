@@ -32,7 +32,7 @@ struct PgParameterAcl {
 
   Oid oid;
   Text parname;
-  Array<Aclitem> paracl;
+  AclColumn paracl;
 };
 // NOLINTEND
 

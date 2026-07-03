@@ -1,0 +1,312 @@
+# Column-level privilege inheritance from TABLE grants.
+#
+# serenedb has no column-GRANT syntax, but has_column_privilege(role, table,
+# column, priv) is still answerable: a table-level grant must make EVERY column
+# of that table carry the corresponding column privilege. This file pins the
+# byte-identical surface between real PostgreSQL and serenedb -- the positive
+# direction, where a granted (or owned, or PUBLIC) privilege flows down to each
+# column and has_column_privilege returns t.
+#
+# Only the t-returning cases are asserted here: those are identical on both
+# engines (a table SELECT grant => column SELECT t on every column; GRANT ALL =>
+# every column priv t; owner holds all; PUBLIC flows down). The query path
+# (real SELECT/INSERT on a second connection as the granted role) is used as a
+# positive control to show the column oracle matches behaviour.
+#
+# Objects are prefixed cp_ (clickclack / vedernikoff lore); the file is
+# idempotent (DROP ... IF EXISTS up front) and self-cleaning at the end.
+
+statement ok
+DROP TABLE IF EXISTS cp_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS cp_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS cp_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS cp_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS cp_pudge;
+
+
+statement ok
+DROP ROLE IF EXISTS cp_androed;
+
+
+statement ok
+DROP ROLE IF EXISTS cp_deadinside;
+
+
+statement ok
+DROP ROLE IF EXISTS cp_myasnig;
+
+
+# A four-column table: every assertion below names these columns explicitly
+# (id, payload, tagline, headcount). The column-privilege oracle must answer t
+# for each of them once the matching table privilege is granted.
+
+statement ok
+CREATE TABLE cp_iceberg (id int, payload text, tagline text, headcount int);
+
+
+# ============================================================================
+# Table SELECT grant flows to column SELECT on EVERY column.
+# A single GRANT SELECT ON <table> makes has_column_privilege(...,'SELECT')
+# return t for id, payload, tagline and headcount alike.
+# ============================================================================
+
+statement ok
+CREATE ROLE cp_clickclack LOGIN PASSWORD 'cp_clickclack_pw';
+
+
+statement ok
+GRANT SELECT ON cp_iceberg TO cp_clickclack;
+
+
+query
+SELECT has_column_privilege('cp_clickclack','cp_iceberg','id','SELECT')       AS c_id,
+       has_column_privilege('cp_clickclack','cp_iceberg','payload','SELECT')   AS c_payload,
+       has_column_privilege('cp_clickclack','cp_iceberg','tagline','SELECT')   AS c_tagline,
+       has_column_privilege('cp_clickclack','cp_iceberg','headcount','SELECT') AS c_headcount;
+----
+c_id	c_payload	c_tagline	c_headcount
+t	t	t	t
+
+
+# ============================================================================
+# Table INSERT grant flows to column INSERT on every column.
+# ============================================================================
+
+statement ok
+CREATE ROLE cp_kostya LOGIN PASSWORD 'cp_kostya_pw';
+
+
+statement ok
+GRANT INSERT ON cp_iceberg TO cp_kostya;
+
+
+query
+SELECT has_column_privilege('cp_kostya','cp_iceberg','id','INSERT')       AS c_id,
+       has_column_privilege('cp_kostya','cp_iceberg','payload','INSERT')   AS c_payload,
+       has_column_privilege('cp_kostya','cp_iceberg','tagline','INSERT')   AS c_tagline,
+       has_column_privilege('cp_kostya','cp_iceberg','headcount','INSERT') AS c_headcount;
+----
+c_id	c_payload	c_tagline	c_headcount
+t	t	t	t
+
+
+# ============================================================================
+# Table UPDATE grant flows to column UPDATE on every column.
+# ============================================================================
+
+statement ok
+CREATE ROLE cp_babsky;
+
+
+statement ok
+GRANT UPDATE ON cp_iceberg TO cp_babsky;
+
+
+query
+SELECT has_column_privilege('cp_babsky','cp_iceberg','id','UPDATE')       AS c_id,
+       has_column_privilege('cp_babsky','cp_iceberg','payload','UPDATE')   AS c_payload,
+       has_column_privilege('cp_babsky','cp_iceberg','tagline','UPDATE')   AS c_tagline,
+       has_column_privilege('cp_babsky','cp_iceberg','headcount','UPDATE') AS c_headcount;
+----
+c_id	c_payload	c_tagline	c_headcount
+t	t	t	t
+
+
+# ============================================================================
+# Table REFERENCES grant flows to column REFERENCES on every column.
+# ============================================================================
+
+statement ok
+CREATE ROLE cp_pudge;
+
+
+statement ok
+GRANT REFERENCES ON cp_iceberg TO cp_pudge;
+
+
+query
+SELECT has_column_privilege('cp_pudge','cp_iceberg','id','REFERENCES')       AS c_id,
+       has_column_privilege('cp_pudge','cp_iceberg','payload','REFERENCES')   AS c_payload,
+       has_column_privilege('cp_pudge','cp_iceberg','tagline','REFERENCES')   AS c_tagline,
+       has_column_privilege('cp_pudge','cp_iceberg','headcount','REFERENCES') AS c_headcount;
+----
+c_id	c_payload	c_tagline	c_headcount
+t	t	t	t
+
+
+# ============================================================================
+# GRANT ALL: every column carries SELECT, INSERT, UPDATE and REFERENCES.
+# The four column-relevant privileges are all t on the same column.
+# ============================================================================
+
+statement ok
+CREATE ROLE cp_androed;
+
+
+statement ok
+GRANT ALL ON cp_iceberg TO cp_androed;
+
+
+query
+SELECT has_column_privilege('cp_androed','cp_iceberg','payload','SELECT')     AS c_sel,
+       has_column_privilege('cp_androed','cp_iceberg','payload','INSERT')     AS c_ins,
+       has_column_privilege('cp_androed','cp_iceberg','payload','UPDATE')     AS c_upd,
+       has_column_privilege('cp_androed','cp_iceberg','payload','REFERENCES') AS c_refs;
+----
+c_sel	c_ins	c_upd	c_refs
+t	t	t	t
+
+
+# GRANT ALL PRIVILEGES (verbose spelling) behaves the same -- and the column
+# privileges hold across every column, not just one.
+query
+SELECT has_column_privilege('cp_androed','cp_iceberg','id','SELECT')       AS c_id_sel,
+       has_column_privilege('cp_androed','cp_iceberg','tagline','INSERT')   AS c_tagline_ins,
+       has_column_privilege('cp_androed','cp_iceberg','headcount','UPDATE') AS c_headcount_upd;
+----
+c_id_sel	c_tagline_ins	c_headcount_upd
+t	t	t
+
+
+# ============================================================================
+# PUBLIC: a grant to PUBLIC reaches a role that was never named directly.
+# cp_deadinside has no individual grant; the PUBLIC SELECT covers its columns.
+# ============================================================================
+
+statement ok
+CREATE ROLE cp_deadinside;
+
+
+statement ok
+GRANT SELECT ON cp_iceberg TO PUBLIC;
+
+
+query
+SELECT has_column_privilege('cp_deadinside','cp_iceberg','id','SELECT')      AS c_id,
+       has_column_privilege('cp_deadinside','cp_iceberg','payload','SELECT')  AS c_payload,
+       has_column_privilege('cp_deadinside','cp_iceberg','tagline','SELECT')  AS c_tagline;
+----
+c_id	c_payload	c_tagline
+t	t	t
+
+
+# A second, fully fresh role also sees the PUBLIC column privilege -- PUBLIC is
+# not tied to any one grantee.
+statement ok
+CREATE ROLE cp_myasnig;
+
+
+query
+SELECT has_column_privilege('cp_myasnig','cp_iceberg','headcount','SELECT') AS c_headcount;
+----
+c_headcount
+t
+
+
+statement ok
+REVOKE SELECT ON cp_iceberg FROM PUBLIC;
+
+
+# ============================================================================
+# Owner holds every column privilege on every column. The owning superuser
+# (postgres) answers t for each priv/column pair regardless of explicit grants.
+# ============================================================================
+
+query
+SELECT has_column_privilege('postgres','cp_iceberg','id','SELECT')          AS c_sel,
+       has_column_privilege('postgres','cp_iceberg','payload','INSERT')      AS c_ins,
+       has_column_privilege('postgres','cp_iceberg','tagline','UPDATE')      AS c_upd,
+       has_column_privilege('postgres','cp_iceberg','headcount','REFERENCES') AS c_refs;
+----
+c_sel	c_ins	c_upd	c_refs
+t	t	t	t
+
+
+# The implicit-grantee 3-argument form (current session user = the superuser
+# owner) is identical: every column the session owner names is privileged.
+query
+SELECT has_column_privilege('cp_iceberg','id','SELECT')      AS c_id_sel,
+       has_column_privilege('cp_iceberg','payload','INSERT')  AS c_payload_ins;
+----
+c_id_sel	c_payload_ins
+t	t
+
+
+# ============================================================================
+# Query-path positive control: cp_clickclack (table SELECT) can really read,
+# and cp_kostya (table INSERT) can really insert -- exactly what the column
+# oracle predicted. Real DML, byte-identical success on both engines.
+# ============================================================================
+
+statement ok
+INSERT INTO cp_iceberg VALUES (1, 'mop', 'iceberg', 7), (2, 'pavel', 'salam', 3);
+
+
+connection c_clickclack user=cp_clickclack password=cp_clickclack_pw
+query
+SELECT id AS row_id, payload AS row_payload FROM cp_iceberg ORDER BY id;
+----
+row_id	row_payload
+1	mop
+2	pavel
+
+
+connection c_kostya user=cp_kostya password=cp_kostya_pw
+statement ok
+INSERT INTO cp_iceberg VALUES (3, 'gul', 'kryakva', 9);
+
+
+# The owner sees all three rows -- the cp_kostya insert landed.
+query
+SELECT count(*) AS n FROM cp_iceberg;
+----
+n
+3
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE cp_iceberg;
+
+
+statement ok
+DROP ROLE cp_clickclack;
+
+
+statement ok
+DROP ROLE cp_kostya;
+
+
+statement ok
+DROP ROLE cp_babsky;
+
+
+statement ok
+DROP ROLE cp_pudge;
+
+
+statement ok
+DROP ROLE cp_androed;
+
+
+statement ok
+DROP ROLE cp_deadinside;
+
+
+statement ok
+DROP ROLE cp_myasnig;

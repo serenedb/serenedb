@@ -103,6 +103,11 @@ repos:
         entry: python3 scripts/check_cpp_extensions.py
         files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp|c\+\+|h\+\+)$
         exclude: ^tests/drivers/c/
+      - id: check-no-throw-duckdb
+        name: Check no raw duckdb exceptions in server code
+        language: python
+        entry: python3 scripts/check_no_throw_duckdb.py
+        files: ^server/.*\.(cpp|cc|c|hpp|hh|h|ipp|tpp)$
       - id: check-api-keys
         name: Scan for hard-coded API keys
         language: python

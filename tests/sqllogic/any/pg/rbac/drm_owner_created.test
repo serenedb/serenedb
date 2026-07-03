@@ -1,0 +1,276 @@
+# DROP ROLE must refuse while a role owns an object it CREATED, not just one it
+# was handed via ALTER ... OWNER TO. A non-superuser that issues CREATE under its
+# own connection becomes the relowner directly (no ALTER), and that pin is a hard
+# dependency exactly like PostgreSQL. The drop becomes possible once ownership is
+# removed -- by ALTER ... OWNER TO another role (the pin moves, including the
+# table's owned PK sequence) or by DROP of the created object.
+#
+# This complements drm_owner_table / drm_owner_view / drm_owner_sequence, which
+# all CREATE as the superuser and then ALTER OWNER TO the role; here the role is
+# the original creator.
+#
+# Lore: vedernikoff creates and owns; kostya is the reassignment target.
+
+
+# ---- Idempotent setup: tear down every fixture first. ----
+
+statement ok
+DROP VIEW IF EXISTS doc_v CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS doc_t CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS doc_base CASCADE;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS doc_seq CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS doc_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS doc_kostya;
+
+
+statement ok
+CREATE ROLE doc_vedernikoff LOGIN;
+
+
+statement ok
+CREATE ROLE doc_kostya;
+
+
+statement ok
+GRANT CREATE, USAGE ON SCHEMA public TO doc_vedernikoff;
+
+
+# =====================================================================
+# Case 1: a TABLE created by the role pins it (creator-owns). The pin
+# clears when ownership is moved away by ALTER ... OWNER TO.
+# =====================================================================
+
+connection ccreate user=doc_vedernikoff
+statement ok
+CREATE TABLE doc_t (id int);
+
+
+# The creator is the relowner with no ALTER having run.
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='doc_t';
+----
+owner
+doc_vedernikoff
+
+
+# Refused while the role still owns the table it created and holds schema grants.
+statement error
+DROP ROLE doc_vedernikoff;
+----
+db error: ERROR: role "doc_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Move ownership away (this also re-owns the table's generated PK sequence) and
+# drop the remaining schema grants; the role then drops cleanly.
+connection default
+statement ok
+ALTER TABLE doc_t OWNER TO postgres;
+
+
+statement ok
+REVOKE ALL ON SCHEMA public FROM doc_vedernikoff;
+
+
+statement ok
+DROP ROLE doc_vedernikoff;
+
+
+statement ok
+DROP TABLE doc_t;
+
+
+# =====================================================================
+# Case 2: a TABLE created by the role; the pin clears by DROP TABLE.
+# =====================================================================
+
+statement ok
+CREATE ROLE doc_vedernikoff LOGIN;
+
+
+statement ok
+GRANT CREATE, USAGE ON SCHEMA public TO doc_vedernikoff;
+
+
+connection ccreate2 user=doc_vedernikoff
+statement ok
+CREATE TABLE doc_t (id int);
+
+
+connection default
+statement ok
+REVOKE ALL ON SCHEMA public FROM doc_vedernikoff;
+
+
+# Still refused: it owns the created table even after schema grants are gone.
+statement error
+DROP ROLE doc_vedernikoff;
+----
+db error: ERROR: role "doc_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+DROP TABLE doc_t;
+
+
+statement ok
+DROP ROLE doc_vedernikoff;
+
+
+# =====================================================================
+# Case 3: ownership moved to a THIRD role pins that role, not the
+# creator (the pin moves, it is not duplicated).
+# =====================================================================
+
+statement ok
+CREATE ROLE doc_vedernikoff LOGIN;
+
+
+statement ok
+GRANT CREATE, USAGE ON SCHEMA public TO doc_vedernikoff;
+
+
+connection ccreate3 user=doc_vedernikoff
+statement ok
+CREATE TABLE doc_t (id int);
+
+
+connection default
+statement ok
+ALTER TABLE doc_t OWNER TO doc_kostya;
+
+
+statement ok
+REVOKE ALL ON SCHEMA public FROM doc_vedernikoff;
+
+
+# The creator no longer owns anything -> droppable.
+statement ok
+DROP ROLE doc_vedernikoff;
+
+
+# The new owner is now pinned by the table (and its owned PK sequence).
+statement error
+DROP ROLE doc_kostya;
+----
+db error: ERROR: role "doc_kostya" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+DROP TABLE doc_t;
+
+
+statement ok
+DROP ROLE doc_kostya;
+
+
+# =====================================================================
+# Case 4: a VIEW created by the role pins it; clears by DROP VIEW.
+# =====================================================================
+
+statement ok
+CREATE ROLE doc_vedernikoff LOGIN;
+
+
+statement ok
+GRANT CREATE, USAGE ON SCHEMA public TO doc_vedernikoff;
+
+
+statement ok
+CREATE TABLE doc_base (id int);
+
+
+statement ok
+GRANT SELECT ON doc_base TO doc_vedernikoff;
+
+
+connection ccreate4 user=doc_vedernikoff
+statement ok
+CREATE VIEW doc_v AS SELECT id FROM doc_base;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='doc_v';
+----
+owner
+doc_vedernikoff
+
+
+connection default
+statement ok
+REVOKE ALL ON SCHEMA public FROM doc_vedernikoff;
+
+
+statement ok
+REVOKE SELECT ON doc_base FROM doc_vedernikoff;
+
+
+# Still refused: owns the view it created.
+statement error
+DROP ROLE doc_vedernikoff;
+----
+db error: ERROR: role "doc_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+DROP VIEW doc_v;
+
+
+statement ok
+DROP ROLE doc_vedernikoff;
+
+
+# =====================================================================
+# Case 5: a SEQUENCE created by the role pins it; clears by DROP SEQUENCE.
+# =====================================================================
+
+statement ok
+CREATE ROLE doc_vedernikoff LOGIN;
+
+
+statement ok
+GRANT CREATE, USAGE ON SCHEMA public TO doc_vedernikoff;
+
+
+connection ccreate5 user=doc_vedernikoff
+statement ok
+CREATE SEQUENCE doc_seq;
+
+
+connection default
+statement ok
+REVOKE ALL ON SCHEMA public FROM doc_vedernikoff;
+
+
+statement error
+DROP ROLE doc_vedernikoff;
+----
+db error: ERROR: role "doc_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+DROP SEQUENCE doc_seq;
+
+
+statement ok
+DROP ROLE doc_vedernikoff;
+
+
+# ---- Final teardown. ----
+
+statement ok
+DROP TABLE IF EXISTS doc_base CASCADE;

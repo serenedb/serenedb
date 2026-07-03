@@ -1,0 +1,244 @@
+# Server-side prepared statements re-check privileges on every EXECUTE, not just
+# at PREPARE time. DuckDB rebinds on each execute, so the privilege check rides
+# along; PostgreSQL records perms at parse-analyze and re-checks at executor
+# start. The same prepared statement therefore tracks live GRANT/REVOKE without
+# being re-prepared, and this is byte-for-byte identical to PostgreSQL.
+#
+# This file is the PG-FAITHFUL surface: PREPARE of a *granted* statement, the
+# REVOKE re-check direction (the keystone), parameters, and the SELECT/UPDATE/
+# DELETE DML re-checks. The eager-at-PREPARE divergence (PG defers, serenedb
+# denies at prepare) and the prepared-INSERT re-check gap live in the sibling
+# sdb/pg/rbac/div_prepared_eager.test.
+#
+# Lore: vedernikoff prepares his ledger reads and writes once and keeps the
+# statements pinned on his session while the MOP grants and revokes the
+# privileges out from under him from a separate admin session.
+
+statement ok
+DROP TABLE IF EXISTS prep_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS prep_vedernikoff;
+
+
+statement ok
+CREATE TABLE prep_ledger (id int, amt int, secret int);
+
+
+statement ok
+INSERT INTO prep_ledger VALUES (1, 10, 100), (2, 20, 200), (3, 30, 300);
+
+
+statement ok
+CREATE ROLE prep_vedernikoff LOGIN PASSWORD 'prep_vedernikoff_pw';
+
+
+statement ok
+GRANT SELECT (id, amt) ON prep_ledger TO prep_vedernikoff;
+
+
+# ---- CASE 1: PREPARE a granted SELECT, EXECUTE twice -> allowed both times ----
+# The named connection is reused (cached), so the prepared statement lives on
+# this session for the rest of the test; later EXECUTEs hit it without a
+# re-prepare on the role side.
+
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
+statement ok
+PREPARE p_read AS SELECT amt FROM prep_ledger ORDER BY id;
+
+
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
+query
+EXECUTE p_read;
+----
+amt
+10
+20
+30
+
+
+# EXECUTE again on the same prepared statement -> still allowed.
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
+query
+EXECUTE p_read;
+----
+amt
+10
+20
+30
+
+
+# ---- CASE 2: prepared-after-REVOKE -- the keystone re-check ----
+# Admin (the default connection) revokes the column SELECT out from under the
+# pinned prepared statement. No re-prepare happens on the role side.
+
+connection default
+statement ok
+REVOKE SELECT (id, amt) ON prep_ledger FROM prep_vedernikoff;
+
+
+# Same prepared statement, re-checked on EXECUTE -> denied.
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
+statement error
+EXECUTE p_read;
+----
+db error: ERROR: permission denied for table prep_ledger<slt:ignore>
+
+
+# Admin re-grants; the pinned statement works again without a re-prepare.
+connection default
+statement ok
+GRANT SELECT (id, amt) ON prep_ledger TO prep_vedernikoff;
+
+
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
+query
+EXECUTE p_read;
+----
+amt
+10
+20
+30
+
+
+# ---- CASE 4: prepared statement WITH PARAMETERS, re-checked across REVOKE ----
+
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
+statement ok
+PREPARE p_param AS SELECT amt FROM prep_ledger WHERE id = $1;
+
+
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
+query
+EXECUTE p_param(1);
+----
+amt
+10
+
+
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
+query
+EXECUTE p_param(2);
+----
+amt
+20
+
+
+# Admin revokes; the parameterized statement is re-checked on the next EXECUTE.
+connection default
+statement ok
+REVOKE SELECT (id, amt) ON prep_ledger FROM prep_vedernikoff;
+
+
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
+statement error
+EXECUTE p_param(1);
+----
+db error: ERROR: permission denied for table prep_ledger<slt:ignore>
+
+
+# Re-grant and confirm it reads again with the same bound parameter shape.
+connection default
+statement ok
+GRANT SELECT (id, amt) ON prep_ledger TO prep_vedernikoff;
+
+
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
+query
+EXECUTE p_param(3);
+----
+amt
+30
+
+
+# ---- CASE 5: prepared DML -- UPDATE and DELETE are re-checked per EXECUTE ----
+# (The prepared-INSERT direction diverges from PG and is documented separately
+# in sdb/pg/rbac/div_prepared_eager.test.) UPDATE/DELETE here need SELECT for
+# the WHERE clause read plus the action privilege; the role holds SELECT.
+
+connection default
+statement ok
+GRANT UPDATE, DELETE ON prep_ledger TO prep_vedernikoff;
+
+
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
+statement ok
+PREPARE p_upd AS UPDATE prep_ledger SET amt = $1 WHERE id = $2;
+
+
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
+statement ok
+PREPARE p_del AS DELETE FROM prep_ledger WHERE id = $1;
+
+
+# Both work while the action privileges are held.
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
+statement ok
+EXECUTE p_upd(99, 1);
+
+
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
+statement ok
+EXECUTE p_del(3);
+
+
+# Admin revokes UPDATE; the pinned UPDATE statement is re-checked -> denied.
+connection default
+statement ok
+REVOKE UPDATE ON prep_ledger FROM prep_vedernikoff;
+
+
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
+statement error
+EXECUTE p_upd(88, 2);
+----
+db error: ERROR: permission denied for table prep_ledger<slt:ignore>
+
+
+# Admin revokes DELETE; the pinned DELETE statement is re-checked -> denied.
+connection default
+statement ok
+REVOKE DELETE ON prep_ledger FROM prep_vedernikoff;
+
+
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
+statement error
+EXECUTE p_del(1);
+----
+db error: ERROR: permission denied for table prep_ledger<slt:ignore>
+
+
+# ---- CASE 6: re-PREPARE the same name after DEALLOCATE picks up live privs ----
+# DEALLOCATE drops the pinned statement; the fresh PREPARE re-binds against the
+# current grants. The role still holds SELECT (id, amt), so a read re-prepares
+# and executes cleanly under the reused name.
+
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
+statement ok
+DEALLOCATE p_read;
+
+
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
+statement ok
+PREPARE p_read AS SELECT id FROM prep_ledger ORDER BY id;
+
+
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
+query
+EXECUTE p_read;
+----
+id
+1
+2
+
+
+# ---- cleanup ----
+
+connection default
+statement ok
+DROP TABLE prep_ledger;
+
+
+statement ok
+DROP ROLE prep_vedernikoff;

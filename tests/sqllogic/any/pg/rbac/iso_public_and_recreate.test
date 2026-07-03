@@ -1,0 +1,208 @@
+# Multi-table isolation of the PUBLIC pseudo-role and of object lifecycle:
+#   1. GRANT ... TO PUBLIC on ONE table reaches every role on that table only --
+#      sibling tables stay private.
+#   2. REVOKE ... FROM PUBLIC on that table is likewise table-local.
+#   3. DROP + CREATE of one table yields a FRESH empty ACL for that table while
+#      its siblings keep their grants intact -- privileges do not survive a
+#      same-name recreate, and the recreate does not disturb neighbours.
+# Asserted through the byte-identical has_table_privilege oracle.
+#
+# Three tables: iso_salam, iso_lambda, iso_vitalik. Two roles: iso_shlepach,
+# iso_kryakva. All names prefixed iso_; file idempotent and self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS iso_salam;
+
+
+statement ok
+DROP TABLE IF EXISTS iso_lambda;
+
+
+statement ok
+DROP TABLE IF EXISTS iso_vitalik;
+
+
+statement ok
+DROP ROLE IF EXISTS iso_shlepach;
+
+
+statement ok
+DROP ROLE IF EXISTS iso_kryakva;
+
+
+statement ok
+CREATE TABLE iso_salam (id int, mop text);
+
+
+statement ok
+CREATE TABLE iso_lambda (id int, mop text);
+
+
+statement ok
+CREATE TABLE iso_vitalik (id int, mop text);
+
+
+statement ok
+CREATE ROLE iso_shlepach;
+
+
+statement ok
+CREATE ROLE iso_kryakva;
+
+
+# ============================================================================
+# Baseline: neither role has SELECT on any of the three tables.
+# ============================================================================
+
+query
+SELECT has_table_privilege('iso_shlepach','iso_salam','SELECT')   AS sh_sa,
+       has_table_privilege('iso_shlepach','iso_lambda','SELECT')  AS sh_la,
+       has_table_privilege('iso_shlepach','iso_vitalik','SELECT') AS sh_vi,
+       has_table_privilege('iso_kryakva','iso_salam','SELECT')    AS kr_sa;
+----
+sh_sa	sh_la	sh_vi	kr_sa
+f	f	f	f
+
+
+# ============================================================================
+# GRANT SELECT ON iso_salam TO PUBLIC: both roles gain SELECT on iso_salam,
+# but iso_lambda and iso_vitalik remain private -- PUBLIC is per-object.
+# ============================================================================
+
+statement ok
+GRANT SELECT ON iso_salam TO PUBLIC;
+
+
+# Both roles can SELECT iso_salam now (via PUBLIC).
+query
+SELECT has_table_privilege('iso_shlepach','iso_salam','SELECT') AS sh_sa,
+       has_table_privilege('iso_kryakva','iso_salam','SELECT')  AS kr_sa;
+----
+sh_sa	kr_sa
+t	t
+
+
+# But the PUBLIC grant on iso_salam does NOT touch the sibling tables.
+query
+SELECT has_table_privilege('iso_shlepach','iso_lambda','SELECT')  AS sh_la,
+       has_table_privilege('iso_shlepach','iso_vitalik','SELECT') AS sh_vi,
+       has_table_privilege('iso_kryakva','iso_lambda','SELECT')   AS kr_la,
+       has_table_privilege('iso_kryakva','iso_vitalik','SELECT')  AS kr_vi;
+----
+sh_la	sh_vi	kr_la	kr_vi
+f	f	f	f
+
+
+# ============================================================================
+# An explicit per-role grant on a DIFFERENT table is also isolated: give
+# iso_shlepach INSERT on iso_lambda only. iso_kryakva does not get it, and
+# iso_salam / iso_vitalik are unaffected.
+# ============================================================================
+
+statement ok
+GRANT INSERT ON iso_lambda TO iso_shlepach;
+
+
+query
+SELECT has_table_privilege('iso_shlepach','iso_lambda','INSERT')  AS sh_la_i,
+       has_table_privilege('iso_kryakva','iso_lambda','INSERT')   AS kr_la_i,
+       has_table_privilege('iso_shlepach','iso_salam','INSERT')   AS sh_sa_i,
+       has_table_privilege('iso_shlepach','iso_vitalik','INSERT') AS sh_vi_i;
+----
+sh_la_i	kr_la_i	sh_sa_i	sh_vi_i
+t	f	f	f
+
+
+# ============================================================================
+# REVOKE SELECT ON iso_salam FROM PUBLIC: removes the shared SELECT on iso_salam
+# from every role at once, and only on iso_salam. iso_shlepach's direct INSERT
+# on iso_lambda survives untouched.
+# ============================================================================
+
+statement ok
+REVOKE SELECT ON iso_salam FROM PUBLIC;
+
+
+query
+SELECT has_table_privilege('iso_shlepach','iso_salam','SELECT')  AS sh_sa,
+       has_table_privilege('iso_kryakva','iso_salam','SELECT')   AS kr_sa,
+       has_table_privilege('iso_shlepach','iso_lambda','INSERT') AS sh_la_i;
+----
+sh_sa	kr_sa	sh_la_i
+f	f	t
+
+
+# ============================================================================
+# DROP + CREATE of iso_lambda: the recreated same-name table starts with a
+# FRESH empty ACL -- iso_shlepach's old INSERT is gone. Sibling iso_vitalik,
+# which we grant just before the drop, is completely unaffected.
+# ============================================================================
+
+statement ok
+GRANT UPDATE ON iso_vitalik TO iso_shlepach;
+
+
+# Pre-drop snapshot: lambda INSERT held, vitalik UPDATE held.
+query
+SELECT has_table_privilege('iso_shlepach','iso_lambda','INSERT')  AS la_i,
+       has_table_privilege('iso_shlepach','iso_vitalik','UPDATE') AS vi_u;
+----
+la_i	vi_u
+t	t
+
+
+statement ok
+DROP TABLE iso_lambda;
+
+
+statement ok
+CREATE TABLE iso_lambda (id int, mop text);
+
+
+# Recreated iso_lambda: empty ACL, no INSERT survives. iso_vitalik's UPDATE,
+# granted before the drop, is still present -- the lifecycle event was local.
+query
+SELECT has_table_privilege('iso_shlepach','iso_lambda','INSERT')  AS la_i,
+       has_table_privilege('iso_shlepach','iso_lambda','SELECT')  AS la_s,
+       has_table_privilege('iso_shlepach','iso_vitalik','UPDATE') AS vi_u;
+----
+la_i	la_s	vi_u
+f	f	t
+
+
+# A grant on the fresh iso_lambda lands cleanly and stays isolated from vitalik.
+statement ok
+GRANT DELETE ON iso_lambda TO iso_kryakva;
+
+
+query
+SELECT has_table_privilege('iso_kryakva','iso_lambda','DELETE')   AS kr_la_d,
+       has_table_privilege('iso_kryakva','iso_vitalik','DELETE')  AS kr_vi_d,
+       has_table_privilege('iso_shlepach','iso_lambda','DELETE')  AS sh_la_d;
+----
+kr_la_d	kr_vi_d	sh_la_d
+t	f	f
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE iso_salam;
+
+
+statement ok
+DROP TABLE iso_lambda;
+
+
+statement ok
+DROP TABLE iso_vitalik;
+
+
+statement ok
+DROP ROLE iso_shlepach;
+
+
+statement ok
+DROP ROLE iso_kryakva;

@@ -30,7 +30,8 @@ namespace sdb::catalog {
 
 class PgSqlView final : public Object {
  public:
-  PgSqlView(ObjectId schema_id, ObjectId id, std::string_view name,
+  PgSqlView(Permissions perm, ObjectId schema_id, ObjectId id,
+            std::string_view name,
             duckdb::unique_ptr<duckdb::CreateViewInfo> info);
 
   static std::shared_ptr<PgSqlView> Deserialize(duckdb::Deserializer& src,

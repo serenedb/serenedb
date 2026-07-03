@@ -1,0 +1,142 @@
+# PUBLIC pseudo-role grants: a privilege granted TO PUBLIC reaches every role
+# (including roles created after the grant), a privilege NOT granted to PUBLIC
+# stays absent for non-owners, REVOKE ... FROM PUBLIC removes it everywhere, and
+# an explicit per-role grant unions with the PUBLIC grant. Verified through the
+# byte-identical has_table_privilege oracle, which itself reflects PUBLIC grants.
+# All object names are prefixed pub_ so the file is collision-free in the shared
+# parallel runner.
+
+statement ok
+DROP ROLE IF EXISTS pub_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS pub_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS pub_iceberg;
+
+
+statement ok
+DROP TABLE IF EXISTS pub_negaimorit;
+
+
+statement ok
+CREATE TABLE pub_negaimorit (id int, note text);
+
+
+statement ok
+CREATE ROLE pub_clickclack;
+
+
+statement ok
+CREATE ROLE pub_mop;
+
+
+# No grant yet: every non-owner role lacks SELECT.
+query
+SELECT has_table_privilege('pub_clickclack', 'pub_negaimorit', 'SELECT') AS clickclack,
+       has_table_privilege('pub_mop', 'pub_negaimorit', 'SELECT') AS mop;
+----
+clickclack	mop
+f	f
+
+
+# GRANT SELECT ON t TO PUBLIC: the privilege now reaches every existing role.
+statement ok
+GRANT SELECT ON pub_negaimorit TO PUBLIC;
+
+
+query
+SELECT has_table_privilege('pub_clickclack', 'pub_negaimorit', 'SELECT') AS clickclack,
+       has_table_privilege('pub_mop', 'pub_negaimorit', 'SELECT') AS mop;
+----
+clickclack	mop
+t	t
+
+
+# A role created AFTER the PUBLIC grant also enjoys it -- PUBLIC is implicit, it
+# is not a stored membership edge that has to exist at grant time.
+statement ok
+CREATE ROLE pub_iceberg;
+
+
+query
+SELECT has_table_privilege('pub_iceberg', 'pub_negaimorit', 'SELECT') AS iceberg;
+----
+iceberg
+t
+
+
+# A privilege NOT granted to PUBLIC stays f for non-owners (only SELECT went to
+# PUBLIC; INSERT/UPDATE/DELETE did not).
+query
+SELECT has_table_privilege('pub_clickclack', 'pub_negaimorit', 'INSERT') AS ins,
+       has_table_privilege('pub_clickclack', 'pub_negaimorit', 'UPDATE') AS upd,
+       has_table_privilege('pub_clickclack', 'pub_negaimorit', 'DELETE') AS del,
+       has_table_privilege('pub_iceberg', 'pub_negaimorit', 'INSERT') AS ins2;
+----
+ins	upd	del	ins2
+f	f	f	f
+
+
+# The table owner (postgres) holds everything regardless of the PUBLIC grant.
+query
+SELECT has_table_privilege('postgres', 'pub_negaimorit', 'SELECT') AS sel,
+       has_table_privilege('postgres', 'pub_negaimorit', 'INSERT') AS ins,
+       has_table_privilege('postgres', 'pub_negaimorit', 'TRUNCATE') AS trunc;
+----
+sel	ins	trunc
+t	t	t
+
+
+# PUBLIC + an explicit per-role grant: pub_clickclack now has the UNION of the
+# PUBLIC SELECT and its own direct INSERT; pub_mop still has only the PUBLIC
+# SELECT.
+statement ok
+GRANT INSERT ON pub_negaimorit TO pub_clickclack;
+
+
+query
+SELECT has_table_privilege('pub_clickclack', 'pub_negaimorit', 'SELECT') AS sel,
+       has_table_privilege('pub_clickclack', 'pub_negaimorit', 'INSERT') AS ins,
+       has_table_privilege('pub_mop', 'pub_negaimorit', 'SELECT') AS mop_sel,
+       has_table_privilege('pub_mop', 'pub_negaimorit', 'INSERT') AS mop_ins;
+----
+sel	ins	mop_sel	mop_ins
+t	t	t	f
+
+
+# REVOKE SELECT ON t FROM PUBLIC removes the shared SELECT from EVERY role at
+# once -- including the role created after the original grant -- but the direct
+# INSERT grant to pub_clickclack survives.
+statement ok
+REVOKE SELECT ON pub_negaimorit FROM PUBLIC;
+
+
+query
+SELECT has_table_privilege('pub_clickclack', 'pub_negaimorit', 'SELECT') AS cc_sel,
+       has_table_privilege('pub_clickclack', 'pub_negaimorit', 'INSERT') AS cc_ins,
+       has_table_privilege('pub_mop', 'pub_negaimorit', 'SELECT') AS mop_sel,
+       has_table_privilege('pub_iceberg', 'pub_negaimorit', 'SELECT') AS ice_sel;
+----
+cc_sel	cc_ins	mop_sel	ice_sel
+f	t	f	f
+
+
+# Cleanup -- order-independent file.
+statement ok
+DROP TABLE IF EXISTS pub_negaimorit;
+
+
+statement ok
+DROP ROLE IF EXISTS pub_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS pub_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS pub_iceberg;

@@ -629,8 +629,8 @@ std::unique_ptr<QuantizerReader> RaBitQuantizerCodebook::MakeReader(
 }  // namespace
 
 std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
-  VectorQuantization quant, uint32_t d,
-  VectorMetric metric, uint32_t pq_m, uint32_t pq_niter, uint32_t nb_bits) {
+  VectorQuantization quant, uint32_t d, VectorMetric metric, uint32_t pq_m,
+  uint32_t pq_niter, uint32_t nb_bits) {
   switch (quant) {
     case VectorQuantization::None:
       return nullptr;

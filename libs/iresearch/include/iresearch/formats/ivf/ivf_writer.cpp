@@ -26,8 +26,10 @@
 #include <duckdb/common/types/validity_mask.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
+#include <numeric>
 #include <random>
 #include <span>
+#include <utility>
 
 #include "basics/assert.h"
 #include "basics/exceptions.h"
@@ -54,6 +56,7 @@ constexpr double kNlistSqrtMultiplier = 2.0;
 constexpr uint64_t kTrainPointsPerCentroid = 64;
 constexpr uint32_t kDefaultClusterIters = 10;
 constexpr uint32_t kClusterRedo = 1;
+constexpr uint64_t kSampleSegmentOversample = 4;
 
 // Streams the flat vector column in row-aligned chunks (no full matrix in RAM),
 // invoking `sink(first_row, n_rows, data)` where `data` points at `n_rows * d`
@@ -72,6 +75,31 @@ void StreamRowBatches(const ColumnReader& child, uint64_t rows, uint32_t d,
       std::min<uint64_t>(rows_per_batch, rows - first));
     scan.Scan(first * d, n * d, batch, /*out_offset=*/0);
     sink(first, n, duckdb::FlatVector::GetData<float>(batch));
+  }
+}
+
+// Streams only the given (start_row, n_rows) ranges, which must be ascending
+// and disjoint. Reuses one RangeScan so cross-range jumps stay forward-only;
+// the sink still gets the absolute first row so callers can map back to
+// validity / doc id.
+template<typename Sink>
+void StreamSelectedRanges(const ColumnReader& child,
+                          std::span<const std::pair<uint64_t, uint64_t>> ranges,
+                          uint32_t d, ReadContext& ctx, Sink&& sink) {
+  const auto rows_per_batch =
+    static_cast<duckdb::idx_t>(std::max<uint64_t>(1, STANDARD_VECTOR_SIZE / d));
+  duckdb::Vector batch{duckdb::LogicalType::FLOAT,
+                       static_cast<duckdb::idx_t>(rows_per_batch) * d};
+  ColumnReader::RangeScan scan{child, ctx};
+  for (const auto& [start, n_rows] : ranges) {
+    for (uint64_t off = 0; off < n_rows; off += rows_per_batch) {
+      const auto n = static_cast<duckdb::idx_t>(
+        std::min<uint64_t>(rows_per_batch, n_rows - off));
+      const uint64_t first = start + off;
+      scan.Scan(first * d, static_cast<uint64_t>(n) * d, batch,
+                /*out_offset=*/0);
+      sink(first, n, duckdb::FlatVector::GetData<float>(batch));
+    }
   }
 }
 
@@ -607,9 +635,9 @@ void IvfWriter::OnCommit(ColWriter& cw, IdxWriter& idx,
     const uint32_t pq_niter = opts.ivf_info->cluster_iters != 0
                                 ? opts.ivf_info->cluster_iters
                                 : kDefaultClusterIters;
-    auto qw =
-      MakeQuantizerWriter(opts.ivf_info->quant.kind, d, opts.ivf_info->metric,
-                          opts.ivf_info->quant.pq_m, pq_niter, opts.ivf_info->quant.nb_bits);
+    auto qw = MakeQuantizerWriter(
+      opts.ivf_info->quant.kind, d, opts.ivf_info->metric,
+      opts.ivf_info->quant.pq_m, pq_niter, opts.ivf_info->quant.nb_bits);
 
     IvfBuilder builder{*opts.ivf_info};
     BuiltIvf built = builder.Build(*col, cw.CommitReadContext(), idx, qw.get());

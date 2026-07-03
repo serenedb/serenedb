@@ -129,6 +129,10 @@ class ColumnReader final {
   }
 
   size_t DataRgCount() const noexcept { return _data_pointers.size(); }
+  RgWindow DataRgWindow(size_t rg) const noexcept {
+    SDB_ASSERT(rg < _data_pointers.size());
+    return {rg, _data_offsets[rg], _data_offsets[rg + 1]};
+  }
   size_t ValidityRgCount() const noexcept { return _validity_pointers.size(); }
   uint64_t ValidityRgFirstRow(size_t vrg) const noexcept {
     SDB_ASSERT(vrg < _validity_pointers.size());

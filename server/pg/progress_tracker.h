@@ -37,6 +37,9 @@ namespace sdb::pg {
 enum class ProgressCommand : int64_t {
   Copy,
   CreateIndex,
+  CreateTableAs,
+  Analyze,
+  Vacuum,
 };
 
 inline constexpr size_t kProgressMaxParams = 20;
@@ -169,10 +172,62 @@ enum class Phase : int64_t {
 };
 
 }  // namespace create_index_progress
+namespace create_table_as_progress {
+
+enum class Param : size_t {
+  Phase = 0,
+  TuplesProcessed = 1,
+  BytesProcessed = 2,
+  TuplesTotal = 3,
+};
+
+// SereneDB-specific: PostgreSQL has no CREATE TABLE AS progress view.
+enum class Phase : int64_t {
+  Ingesting = 1,
+  Committing = 2,
+  Finalizing = 3,
+};
+
+}  // namespace create_table_as_progress
+namespace analyze_progress {
+
+enum class Param : size_t {
+  Phase = 0,
+  ChildTablesTotal = 5,
+  ChildTablesDone = 6,
+  CurrentChildTableRelid = 7,
+};
+
+enum class Phase : int64_t {
+  Initializing = 0,
+  ComputingStatistics = 3,
+};
+
+}  // namespace analyze_progress
+namespace vacuum_progress {
+
+enum class Param : size_t {
+  Phase = 0,
+  // Surface as heap_blks_total / heap_blks_scanned: sub-index work units of
+  // the index being processed. Refresh reports the flush stages' step counts;
+  // compaction has no known total and ticks StepsDone per ~16k merged docs.
+  StepsTotal = 1,
+  StepsDone = 2,
+  IndexesTotal = 8,
+  IndexesProcessed = 9,
+};
+
+enum class Phase : int64_t {
+  Initializing = 0,
+  VacuumingIndexes = 2,
+};
+
+}  // namespace vacuum_progress
 
 class ProgressReporter {
  public:
-  ProgressReporter(ObjectId datid, ObjectId relid, ProgressCommand command);
+  ProgressReporter(int32_t pid, ObjectId datid, ObjectId relid,
+                   ProgressCommand command);
   ProgressReporter(const ProgressReporter&) = delete;
   ProgressReporter& operator=(const ProgressReporter&) = delete;
   ~ProgressReporter();
@@ -202,6 +257,15 @@ class ProgressReporter {
   }
   void SetPhase(create_index_progress::Phase p) {
     Set(create_index_progress::Param::Phase, std::to_underlying(p));
+  }
+  void SetPhase(create_table_as_progress::Phase p) {
+    Set(create_table_as_progress::Param::Phase, std::to_underlying(p));
+  }
+  void SetPhase(analyze_progress::Phase p) {
+    Set(analyze_progress::Param::Phase, std::to_underlying(p));
+  }
+  void SetPhase(vacuum_progress::Phase p) {
+    Set(vacuum_progress::Param::Phase, std::to_underlying(p));
   }
 
  private:

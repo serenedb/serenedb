@@ -282,8 +282,7 @@ class PgWireSession
   // to the socket during the drive and is fully drained before Execute.
   yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> DriveToResult(
     duckdb::PreparedStatement& prepared, duckdb::vector<duckdb::Value>& values,
-    duckdb::unique_ptr<duckdb::PendingQueryResult>& pending,
-    std::shared_ptr<WireSinkContext> wire);
+    ClosingPending& pending, std::shared_ptr<WireSinkContext> wire);
   yaclib::Task<> RunSimpleQuery(std::string_view query);
   yaclib::Task<> RunCopyFromStdin(
     duckdb::unique_ptr<duckdb::SQLStatement> statement);
@@ -330,8 +329,7 @@ class PgWireSession
     duckdb::unique_ptr<duckdb::SQLStatement> statement,
     const std::shared_ptr<WireSinkContext>& wire);
   yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> DriveStatementToResult(
-    duckdb::unique_ptr<duckdb::SQLStatement> statement,
-    duckdb::unique_ptr<duckdb::PendingQueryResult>& pending,
+    duckdb::unique_ptr<duckdb::SQLStatement> statement, ClosingPending& pending,
     std::shared_ptr<WireSinkContext> wire);
   // Rejects (sdb_strict_ddl) or notices catalog DDL inside an explicit
   // transaction block. Statement type is a parse-time property.

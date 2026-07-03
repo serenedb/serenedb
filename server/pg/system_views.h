@@ -1396,6 +1396,21 @@ inline constexpr SystemView kExternalViews[] = {
       FROM pg_stat_get_progress_info('COPY') AS S
           LEFT JOIN pg_database D ON S.datid = D.oid)"},
 
+  {"pg_catalog", "pg_stat_progress_create_table_as",
+   R"(SELECT
+          S.pid AS pid, S.datid AS datid, D.datname AS datname,
+          S.relid AS relid,
+          'CREATE TABLE AS' AS command,
+          CASE S.param1 WHEN 1 THEN 'ingesting'
+                        WHEN 2 THEN 'committing'
+                        WHEN 3 THEN 'finalizing'
+                        END AS phase,
+          S.param2 AS tuples_processed,
+          S.param3 AS bytes_processed,
+          S.param4 AS tuples_total
+      FROM pg_stat_get_progress_info('CREATE TABLE AS') AS S
+          LEFT JOIN pg_database D ON S.datid = D.oid)"},
+
   {"pg_catalog", "pg_user_mappings",
    R"(SELECT
           U.oid       AS umid,

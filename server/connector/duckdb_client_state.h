@@ -98,14 +98,25 @@ class SereneDBClientState final : public duckdb::ClientContextState {
   void TransactionRollback(duckdb::MetaTransaction& transaction,
                            duckdb::ClientContext& context) final;
 
-  duckdb::RebindQueryInfo OnExecutePrepared(
-    duckdb::ClientContext& context, duckdb::PreparedStatementCallbackInfo& info,
-    duckdb::RebindQueryInfo current_rebind) final;
-
   void QueryBegin(duckdb::ClientContext& context) final;
   void QueryEnd(duckdb::ClientContext& context) final;
 
-  void EnsureCopyProgress(ObjectId table_id);
+  void ArmCopyProgress(ObjectId table_id, pg::copy_progress::Command command,
+                       pg::copy_progress::Type type);
+  void EnsureCopyProgress(ObjectId table_id, pg::copy_progress::Command command,
+                          pg::copy_progress::Type type);
+  void EnsureCreateIndexProgress(ObjectId datid, ObjectId relid,
+                                 duckdb::idx_t estimated_cardinality);
+  void EnsureCreateTableAsProgress(ObjectId datid, ObjectId relid,
+                                   duckdb::idx_t estimated_cardinality);
+  void EnsureAnalyzeProgress(ObjectId datid, ObjectId relid);
+  void EnsureVacuumProgress(ObjectId datid, ObjectId relid);
+
+  // Set by the wire session before PendingQuery; consumed by the Ensure*
+  // arming paths to tell COPY apart from plain DML sharing the same plan
+  // shape. Reset in QueryEnd.
+  duckdb::StatementType current_statement_type =
+    duckdb::StatementType::INVALID_STATEMENT;
 
  private:
   std::shared_ptr<ConnectionContext> _connection_ctx;

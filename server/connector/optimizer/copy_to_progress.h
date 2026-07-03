@@ -18,17 +18,15 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "pg/progress_tracker.h"
+#pragma once
 
-namespace sdb::pg {
+namespace duckdb {
 
-ProgressReporter::ProgressReporter(int32_t pid, ObjectId datid, ObjectId relid,
-                                   ProgressCommand command)
-  : _tracker{ProgressTracker::Instance()},
-    _id{_tracker.StartCommand(
-      {.pid = pid, .datid = datid, .relid = relid, .command_type = command})},
-    _params{_tracker.GetParams(_id)} {}
+class DatabaseInstance;
 
-ProgressReporter::~ProgressReporter() { _tracker.EndCommand(_id); }
+}  // namespace duckdb
+namespace sdb::optimizer {
 
-}  // namespace sdb::pg
+void RegisterCopyToProgressOptimizer(duckdb::DatabaseInstance& db);
+
+}  // namespace sdb::optimizer

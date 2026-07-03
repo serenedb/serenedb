@@ -556,28 +556,10 @@ statement ok
 SET profiling_renderer_settings = {'deterministic': true};
 
 
+# its render depends on filename
 skipif postgres
-query
+statement ok
 EXPLAIN ANALYZE COPY arelav_consumer FROM '${__TEST_DIR__}/arelav_consuma.csv';
-----
-QUERY PLAN
-╭─ Summary ───────────╮
-│ Total Time: 0.0000s │
-╰─────────────────────╯
-╭─ BATCH_INSERT ──────────────────────────╮
-│ 1 row                               0µs │
-╰────────────────────┒┎───────────────────╯
-╭─ EXTENSION ────────┚┖───────────────────╮
-│ 10 rows                             0µs │
-╰────────────────────┒┎───────────────────╯
-╭─ TABLE_SCAN ───────┚┖───────────────────╮
-│ Function: READ_CSV                      │
-│ Projections: eater                      │
-│ Total Files Read: 1                     │
-│ Filename(s):                            │
-<slt:ignore>
-│ 10 rows                             0µs │
-╰─────────────────────────────────────────╯
 
 
 skipif postgres

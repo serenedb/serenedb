@@ -27,15 +27,12 @@
 #include <duckdb/common/exception.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/main/prepared_statement_data.hpp>
 #include <utility>
 
 #include "basics/assert.h"
 #include "basics/system-compiler.h"
 #include "catalog/database.h"
 #include "catalog/store/store.h"
-#include "connector/duckdb_physical_create_index.h"
-#include "connector/duckdb_physical_progress.h"
 #include "pg/connection_context.h"
 #include "pg/copy_messages_queue.h"
 #include "pg/errcodes.h"
@@ -46,53 +43,40 @@ namespace sdb::connector {
 namespace {
 
 std::unique_ptr<pg::ProgressReporter> MakeCopyProgressReporter(
-  ObjectId datid, ObjectId table_id) {
+  int32_t pid, ObjectId datid, ObjectId table_id,
+  pg::copy_progress::Command command, pg::copy_progress::Type type) {
   auto reporter = std::make_unique<pg::ProgressReporter>(
-    datid, table_id, pg::ProgressCommand::Copy);
-  reporter->SetCommand(pg::copy_progress::Command::CopyFrom);
-  reporter->SetType(pg::copy_progress::Type::File);
+    pid, datid, table_id, pg::ProgressCommand::Copy);
+  reporter->SetCommand(command);
+  reporter->SetType(type);
   return reporter;
 }
 
-std::unique_ptr<pg::ProgressReporter> MakeProgressReporter(
-  ObjectId datid, const duckdb::PreparedStatementData& prepared) {
-  if (!prepared.physical_plan) {
-    return nullptr;
+std::unique_ptr<pg::ProgressReporter> MakeCreateIndexProgressReporter(
+  int32_t pid, ObjectId datid, ObjectId relid,
+  duckdb::idx_t estimated_cardinality) {
+  auto reporter = std::make_unique<pg::ProgressReporter>(
+    pid, datid, relid, pg::ProgressCommand::CreateIndex);
+  reporter->SetCommand(pg::create_index_progress::Command::CreateIndex);
+  reporter->SetPhase(pg::create_index_progress::Phase::Initializing);
+  if (estimated_cardinality > 0) {
+    reporter->Set(pg::create_index_progress::Param::TuplesTotal,
+                  static_cast<int64_t>(estimated_cardinality));
   }
-  const auto& root = prepared.physical_plan->Root();
+  return reporter;
+}
 
-  if (prepared.statement_type == duckdb::StatementType::COPY_STATEMENT) {
-    // COPY FROM plans as a native insert with the SDB_PROGRESS pass-through
-    // (carrying the facade table) directly underneath.
-    const SereneDBPhysicalProgress* progress_op = nullptr;
-    if (!root.children.empty()) {
-      progress_op =
-        dynamic_cast<const SereneDBPhysicalProgress*>(&root.children[0].get());
-    }
-    if (!progress_op) {
-      return nullptr;
-    }
-    return MakeCopyProgressReporter(datid, progress_op->TargetTableId());
+std::unique_ptr<pg::ProgressReporter> MakeCreateTableAsProgressReporter(
+  int32_t pid, ObjectId datid, ObjectId relid,
+  duckdb::idx_t estimated_cardinality) {
+  auto reporter = std::make_unique<pg::ProgressReporter>(
+    pid, datid, relid, pg::ProgressCommand::CreateTableAs);
+  reporter->SetPhase(pg::create_table_as_progress::Phase::Ingesting);
+  if (estimated_cardinality > 0) {
+    reporter->Set(pg::create_table_as_progress::Param::TuplesTotal,
+                  static_cast<int64_t>(estimated_cardinality));
   }
-
-  if (prepared.statement_type == duckdb::StatementType::CREATE_STATEMENT) {
-    const auto* ci = dynamic_cast<const SereneDBPhysicalCreateIndex*>(&root);
-    if (!ci) {
-      return nullptr;
-    }
-    auto reporter = std::make_unique<pg::ProgressReporter>(
-      ci->DatabaseId(), ci->TargetRelationId(),
-      pg::ProgressCommand::CreateIndex);
-    reporter->SetCommand(pg::create_index_progress::Command::CreateIndex);
-    reporter->SetPhase(pg::create_index_progress::Phase::Initializing);
-    if (ci->estimated_cardinality > 0) {
-      reporter->Set(pg::create_index_progress::Param::TuplesTotal,
-                    static_cast<int64_t>(ci->estimated_cardinality));
-    }
-    return reporter;
-  }
-
-  return nullptr;
+  return reporter;
 }
 
 }  // namespace
@@ -272,20 +256,13 @@ void SereneDBClientState::TransactionRollback(
   }
 }
 
-duckdb::RebindQueryInfo SereneDBClientState::OnExecutePrepared(
-  duckdb::ClientContext& context, duckdb::PreparedStatementCallbackInfo& info,
-  duckdb::RebindQueryInfo current_rebind) {
-  if (const auto& db = _connection_ctx->GetDatabasePtr()) {
-    progress = MakeProgressReporter(db->GetId(), info.prepared_statement);
-  }
-  return current_rebind;
-}
-
 void SereneDBClientState::QueryBegin(duckdb::ClientContext& context) {
   _connection_ctx->OnStatementBegin();
 }
 
-void SereneDBClientState::EnsureCopyProgress(ObjectId table_id) {
+void SereneDBClientState::ArmCopyProgress(ObjectId table_id,
+                                          pg::copy_progress::Command command,
+                                          pg::copy_progress::Type type) {
   if (progress) {
     return;
   }
@@ -293,7 +270,64 @@ void SereneDBClientState::EnsureCopyProgress(ObjectId table_id) {
   if (!db) {
     return;
   }
-  progress = MakeCopyProgressReporter(db->GetId(), table_id);
+  progress = MakeCopyProgressReporter(_connection_ctx->GetBackendPid(),
+                                      db->GetId(), table_id, command, type);
+}
+
+void SereneDBClientState::EnsureCopyProgress(ObjectId table_id,
+                                             pg::copy_progress::Command command,
+                                             pg::copy_progress::Type type) {
+  // The SDB_PROGRESS pass-through wraps every native insert; only a COPY
+  // statement may surface in pg_stat_progress_copy.
+  if (current_statement_type != duckdb::StatementType::COPY_STATEMENT) {
+    return;
+  }
+  if (command == pg::copy_progress::Command::CopyFrom) {
+    // The stdin bridge is armed per COPY ... FROM STDIN statement before
+    // Prepare; a file COPY never sets it.
+    type = _connection_ctx->GetCopyInBridge() ? pg::copy_progress::Type::Pipe
+                                              : pg::copy_progress::Type::File;
+  }
+  ArmCopyProgress(table_id, command, type);
+}
+
+void SereneDBClientState::EnsureCreateIndexProgress(
+  ObjectId datid, ObjectId relid, duckdb::idx_t estimated_cardinality) {
+  if (progress) {
+    return;
+  }
+  progress = MakeCreateIndexProgressReporter(
+    _connection_ctx->GetBackendPid(), datid, relid, estimated_cardinality);
+}
+
+void SereneDBClientState::EnsureCreateTableAsProgress(
+  ObjectId datid, ObjectId relid, duckdb::idx_t estimated_cardinality) {
+  if (progress) {
+    return;
+  }
+  progress = MakeCreateTableAsProgressReporter(
+    _connection_ctx->GetBackendPid(), datid, relid, estimated_cardinality);
+}
+
+void SereneDBClientState::EnsureAnalyzeProgress(ObjectId datid,
+                                                ObjectId relid) {
+  if (progress) {
+    return;
+  }
+  progress = std::make_unique<pg::ProgressReporter>(
+    _connection_ctx->GetBackendPid(), datid, relid,
+    pg::ProgressCommand::Analyze);
+  progress->SetPhase(pg::analyze_progress::Phase::Initializing);
+}
+
+void SereneDBClientState::EnsureVacuumProgress(ObjectId datid, ObjectId relid) {
+  if (progress) {
+    return;
+  }
+  progress = std::make_unique<pg::ProgressReporter>(
+    _connection_ctx->GetBackendPid(), datid, relid,
+    pg::ProgressCommand::Vacuum);
+  progress->SetPhase(pg::vacuum_progress::Phase::Initializing);
 }
 
 void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {
@@ -303,6 +337,7 @@ void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {
   copy_stdin_open_count = 0;
   copy_stdin_done = false;
   progress.reset();
+  current_statement_type = duckdb::StatementType::INVALID_STATEMENT;
   _connection_ctx->OnStatementEnd();
 }
 

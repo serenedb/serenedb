@@ -329,9 +329,10 @@ void InvertedIndexStorage::StartTasks() {
   _search.StartTasks(shared_from_this());
 }
 
-void InvertedIndexStorage::Refresh() {
+void InvertedIndexStorage::Refresh(
+  const irs::ProgressReportCallback& progress) {
   RefreshResult code = RefreshResult::Undefined;
-  std::ignore = RefreshUnsafe(/*wait=*/true, nullptr, code);
+  std::ignore = RefreshUnsafe(/*wait=*/true, progress, code);
 }
 
 void InvertedIndexStorage::CheckpointRefresh() {

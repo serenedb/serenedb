@@ -144,6 +144,45 @@ struct BindInfo {
   duckdb::vector<duckdb::Value> param_values;
 };
 
+// Owning handle for a pending query the session opened: destruction and
+// replacement Close() an unexecuted pending so its active-query lifecycle is
+// released eagerly, never deferred into the next statement (where duckdb's
+// InitialCleanup would fire QueryEnd after the statement-scoped catalog
+// snapshot was already acquired). Session scopes never hold the duckdb
+// context lock, so Close() here cannot deadlock.
+class ClosingPending {
+ public:
+  ClosingPending() = default;
+  ClosingPending(duckdb::unique_ptr<duckdb::PendingQueryResult> pending)
+    : _pending{std::move(pending)} {}
+  ClosingPending(ClosingPending&& other) noexcept = default;
+  ClosingPending& operator=(ClosingPending&& other) noexcept {
+    if (this != &other) {
+      Reset();
+      _pending = std::move(other._pending);
+    }
+    return *this;
+  }
+  ~ClosingPending() { Reset(); }
+
+  void Reset() noexcept {
+    if (_pending) {
+      try {
+        _pending->Close();
+      } catch (...) {
+      }
+      _pending.reset();
+    }
+  }
+
+  duckdb::PendingQueryResult* operator->() const { return _pending.get(); }
+  duckdb::PendingQueryResult& operator*() const { return *_pending; }
+  explicit operator bool() const { return _pending != nullptr; }
+
+ private:
+  duckdb::unique_ptr<duckdb::PendingQueryResult> _pending;
+};
+
 // A portal's execution lifecycle. The old started/exhausted bool pair only had
 // three valid states (exhausted-but-not-started never happened).
 //   Unstarted -> planned + executed exactly once
@@ -157,7 +196,7 @@ enum class PortalState : uint8_t { Unstarted, Paging, Exhausted };
 // retains `wire` (the Direct collector ctx) + `pending` (the parked pipeline)
 // across re-Executes; each re-Execute raises wire->row_budget and resumes.
 struct PortalExecution {
-  duckdb::unique_ptr<duckdb::PendingQueryResult> pending;
+  ClosingPending pending;
   std::shared_ptr<WireSinkContext> wire;
   PortalState state = PortalState::Unstarted;
 };

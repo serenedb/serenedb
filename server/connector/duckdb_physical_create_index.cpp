@@ -181,6 +181,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
 
   if (auto sdb_state = context.registered_state->Get<SereneDBClientState>(
         kSereneDBClientStateKey)) {
+    sdb_state->EnsureCreateIndexProgress(_database_id, _relation->GetId(),
+                                         estimated_cardinality);
     state->progress = sdb_state->progress.get();
   }
 
@@ -594,6 +596,9 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   if (gstate.progress) {
     gstate.progress->Add(pg::create_index_progress::Param::TuplesDone,
                          num_rows);
+    SDB_IF_FAILURE("pause_create_index_mid_build") {
+      sdb::WaitWhileFailurePointDebugging("pause_create_index_mid_build");
+    }
   }
   return duckdb::SinkResultType::NEED_MORE_INPUT;
 }

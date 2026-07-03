@@ -23,16 +23,20 @@
 #include <duckdb/execution/physical_operator.hpp>
 
 #include "catalog/identifiers/object_id.h"
+#include "pg/progress_tracker.h"
 
 namespace sdb::connector {
 
-// Pass-through operator above the native insert: feeds the session
-// progress reporter (pg_stat_progress_copy) with per-chunk tuple/byte
-// counts and identifies the facade table for the reporter factory.
+// Pass-through operator feeding the session progress reporter
+// (pg_stat_progress_copy) with per-chunk tuple/byte counts: above the native
+// insert for COPY FROM, below the file sink for COPY TO.
 class SereneDBPhysicalProgress final : public duckdb::PhysicalOperator {
  public:
-  SereneDBPhysicalProgress(duckdb::PhysicalPlan& plan,
-                           duckdb::PhysicalOperator& child, ObjectId table_id);
+  SereneDBPhysicalProgress(
+    duckdb::PhysicalPlan& plan, duckdb::PhysicalOperator& child,
+    ObjectId table_id,
+    pg::copy_progress::Command command = pg::copy_progress::Command::CopyFrom,
+    pg::copy_progress::Type type = pg::copy_progress::Type::File);
 
   duckdb::unique_ptr<duckdb::GlobalOperatorState> GetGlobalOperatorState(
     duckdb::ClientContext& context) const final;
@@ -50,6 +54,8 @@ class SereneDBPhysicalProgress final : public duckdb::PhysicalOperator {
 
  private:
   ObjectId _table_id;
+  pg::copy_progress::Command _command;
+  pg::copy_progress::Type _type;
 };
 
 }  // namespace sdb::connector

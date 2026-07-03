@@ -28,6 +28,7 @@
 #include <duckdb/main/prepared_statement_data.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 
+#include "basics/debugging.h"
 #include "connector/duckdb_client_state.h"
 #include "network/connection.h"
 #include "network/pg/wire_frames.h"
@@ -69,6 +70,10 @@ class PgWireCollectorLocalState : public duckdb::LocalSinkState {
   // Committed-bytes watermark at the last Seal; the gap to the buffer's
   // TotalCommitted() drives the next seal. Direct mode reads ctx.send instead.
   size_t sealed_total = 0;
+  // Armed by the session only for COPY ... TO STDOUT (binary/text); the
+  // collector then feeds pg_stat_progress_copy per chunk. Null on every other
+  // statement.
+  sdb::pg::ProgressReporter* progress = nullptr;
   bool initialized = false;
 };
 
@@ -90,6 +95,13 @@ class PhysicalPgWireCollector : public duckdb::PhysicalResultCollector {
       for (size_t column = 0; column < types.size(); ++column) {
         lstate.serializers.push_back(sdb::pg::GetSerialization(
           types[column], FormatFor(ctx.formats, column), lstate.sctx));
+      }
+      if (ctx.row_encoding != RowEncoding::DataRow) {
+        if (auto state = context.client.registered_state
+                           ->Get<connector::SereneDBClientState>(
+                             connector::kSereneDBClientStateKey)) {
+          lstate.progress = state->progress.get();
+        }
       }
       lstate.initialized = true;
     }
@@ -143,6 +155,15 @@ class PhysicalPgWireCollector : public duckdb::PhysicalResultCollector {
         break;
     }
     ctx.rows.fetch_add(chunk.size(), std::memory_order_relaxed);
+    if (lstate.progress) {
+      lstate.progress->Add(sdb::pg::copy_progress::Param::TuplesProcessed,
+                           static_cast<int64_t>(chunk.size()));
+      lstate.progress->Add(sdb::pg::copy_progress::Param::BytesProcessed,
+                           static_cast<int64_t>(chunk.GetAllocationSize()));
+      SDB_IF_FAILURE("pause_copy_to_mid_stream") {
+        sdb::WaitWhileFailurePointDebugging("pause_copy_to_mid_stream");
+      }
+    }
 
     if (ctx.mode == WireSinkContext::Mode::Direct) {
       // Publish progress for the session's backpressure/unblock checks; the

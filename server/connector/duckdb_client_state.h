@@ -118,6 +118,14 @@ class SereneDBClientState final : public duckdb::ClientContextState {
   duckdb::StatementType current_statement_type =
     duckdb::StatementType::INVALID_STATEMENT;
 
+  // Transaction-scoped compensation for work staged on a side transaction
+  // (CTAS): registered when the side transaction starts, run in
+  // TransactionPreRollback while the MetaTransaction is alive, cleared by the
+  // owner right before its commit point. Never runs from a destructor -- a
+  // sink state outlives the statement (it dies with the cached plan), so a
+  // destructor-time MetaTransaction reference is a use-after-free.
+  std::function<void(duckdb::MetaTransaction&)> transaction_abort_cleanup;
+
  private:
   std::shared_ptr<ConnectionContext> _connection_ctx;
 };

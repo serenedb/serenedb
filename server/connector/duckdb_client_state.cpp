@@ -30,6 +30,7 @@
 #include <utility>
 
 #include "basics/assert.h"
+#include "basics/log.h"
 #include "basics/system-compiler.h"
 #include "catalog/database.h"
 #include "catalog/store/store.h"
@@ -225,6 +226,13 @@ void SereneDBClientState::TransactionPreCheckpoint(duckdb::AttachedDatabase& db,
 void SereneDBClientState::TransactionPreRollback(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context,
   duckdb::optional_ptr<duckdb::ErrorData> error) {
+  if (auto cleanup = std::exchange(transaction_abort_cleanup, nullptr)) {
+    try {
+      cleanup(transaction);
+    } catch (const std::exception& e) {
+      SDB_WARN(GENERAL, "transaction abort cleanup failed: ", e.what());
+    }
+  }
   _connection_ctx->PreRollback();
 }
 

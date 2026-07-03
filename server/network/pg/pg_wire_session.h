@@ -282,7 +282,8 @@ class PgWireSession
   // to the socket during the drive and is fully drained before Execute.
   yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> DriveToResult(
     duckdb::PreparedStatement& prepared, duckdb::vector<duckdb::Value>& values,
-    ClosingPending& pending, std::shared_ptr<WireSinkContext> wire);
+    ClosingPending& pending, std::shared_ptr<WireSinkContext> wire,
+    std::shared_ptr<const catalog::Snapshot> bound_snapshot = nullptr);
   yaclib::Task<> RunSimpleQuery(std::string_view query);
   yaclib::Task<> RunCopyFromStdin(
     duckdb::unique_ptr<duckdb::SQLStatement> statement);

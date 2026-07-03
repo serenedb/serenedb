@@ -101,6 +101,12 @@ class Config {
 
   void DropCatalogSnapshot() { _snapshot.reset(); }
 
+  // Installs the snapshot a prepared statement was bound against, so its plan
+  // executes against the same catalog view that pinned its bound entries.
+  void SetCatalogSnapshot(std::shared_ptr<const catalog::Snapshot> snapshot) {
+    _snapshot = std::move(snapshot);
+  }
+
   // Acquires the statement's catalog snapshot. Called only at statement
   // boundaries on the connection thread (OnStatementBegin, the wire message
   // handlers that bind or serialize before a query lifecycle starts); all

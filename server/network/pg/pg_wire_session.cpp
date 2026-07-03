@@ -1305,10 +1305,16 @@ yaclib::Task<duckdb::PendingExecutionResult> PgWireSession<Kind>::DriveQuery(
 
 template<SocketKind Kind>
 yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>>
-PgWireSession<Kind>::DriveToResult(duckdb::PreparedStatement& prepared,
-                                   duckdb::vector<duckdb::Value>& values,
-                                   ClosingPending& pending,
-                                   std::shared_ptr<WireSinkContext> wire) {
+PgWireSession<Kind>::DriveToResult(
+  duckdb::PreparedStatement& prepared, duckdb::vector<duckdb::Value>& values,
+  ClosingPending& pending, std::shared_ptr<WireSinkContext> wire,
+  std::shared_ptr<const catalog::Snapshot> bound_snapshot) {
+  // bound_snapshot pins the catalog snapshot the plan was bound against for
+  // the duration of this frame -- the whole drive runs inside it, and the
+  // bound entries live in snapshot-owned materializations. Reads still go
+  // through the freshly acquired snapshot (cached plans see current catalog
+  // data per execution); named statements pin via Statement::BindSnapshot()
+  // instead, which spans portal re-Executes.
   pending = PendingQueryEnsured(prepared, values, wire);
   ThrowIfError(*pending);
   // One armed span over the whole drive (DriveQuery + the FinishWireDrain
@@ -1415,12 +1421,13 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   duckdb::unique_ptr<duckdb::PreparedStatement> prepared;
   duckdb::unique_ptr<duckdb::QueryResult> result;
   try {
-    _connection_ctx->AcquireCatalogSnapshot();
+    auto bind_snapshot = _connection_ctx->AcquireCatalogSnapshot();
     prepared = _conn->Prepare(std::move(statement));  // sniffs /dev/stdin
     ThrowIfError(*prepared);
     duckdb::vector<duckdb::Value> params;
     ClosingPending pending;
-    result = co_await DriveToResult(*prepared, params, pending, nullptr);
+    result = co_await DriveToResult(*prepared, params, pending, nullptr,
+                                    std::move(bind_snapshot));
   } catch (...) {
     error = std::current_exception();
   }
@@ -1461,7 +1468,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
     RejectBinaryCopyOptions(*copy.info);
   }
   auto inner = ExtractCopyToQuery(copy);
-  _connection_ctx->AcquireCatalogSnapshot();
+  auto bind_snapshot = _connection_ctx->AcquireCatalogSnapshot();
   auto prepared = _conn->Prepare(std::move(inner));
   ThrowIfError(*prepared);
 
@@ -1509,7 +1516,8 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
     sdb::pg::copy_progress::Type::Pipe);
   duckdb::vector<duckdb::Value> params;
   ClosingPending pending;
-  co_await DriveToResult(*prepared, params, pending, wire);
+  co_await DriveToResult(*prepared, params, pending, wire,
+                         std::move(bind_snapshot));
 
   // Binary: trailer (int16 -1 CopyData frame). Both: CopyDone closes the
   // stream, then the COPY N tag (postgres reports COPY, not SELECT, for COPY TO
@@ -1539,7 +1547,7 @@ template<SocketKind Kind>
 yaclib::Task<> PgWireSession<Kind>::RunCopyToStdoutViaFormat(
   duckdb::unique_ptr<duckdb::SQLStatement> statement, CopyFormat format) {
   auto probe = statement->Copy();
-  _connection_ctx->AcquireCatalogSnapshot();
+  auto bind_snapshot = _connection_ctx->AcquireCatalogSnapshot();
   auto prepared = _conn->Prepare(std::move(statement));
   ThrowIfError(*prepared);
   auto inner = ExtractCopyToQuery(probe->Cast<duckdb::CopyStatement>());
@@ -1551,7 +1559,8 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdoutViaFormat(
                        static_cast<int16_t>(inner_prepared->ColumnCount()));
   duckdb::vector<duckdb::Value> params;
   ClosingPending pending;
-  auto result = co_await DriveToResult(*prepared, params, pending, nullptr);
+  auto result = co_await DriveToResult(*prepared, params, pending, nullptr,
+                                       std::move(bind_snapshot));
   WriteCopyDone(this->_send);
   WriteCommandTag(*prepared, *result,
                   prepared->GetStatementProperties().return_type);
@@ -1809,7 +1818,7 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
   if (extracted.size() == 1) {
     // The temp-DDL scaffolding above ran full query lifecycles whose statement
     // end released the Parse-time snapshot.
-    _connection_ctx->AcquireCatalogSnapshot();
+    auto bind_snapshot = _connection_ctx->AcquireCatalogSnapshot();
     auto prepared = _conn->Prepare(std::move(extracted[0]),
                                    type_hints.empty() ? nullptr : &type_hints);
     if (prepared->HasError()) {
@@ -1819,7 +1828,7 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
       _proto.statements.Undefine(statement_name);
       error.Throw();
     }
-    statement.SetPrepared(std::move(prepared));
+    statement.SetPrepared(std::move(prepared), std::move(bind_snapshot));
   } else {
     // One user command expanded into several statements (wrap_multi=false left
     // the body bare, no BEGIN/COMMIT). Keep them UNPREPARED: a later
@@ -2170,7 +2179,8 @@ yaclib::Task<> PgWireSession<Kind>::ExecutePrepared(Portal& portal,
       // DDL/DML/SET: materialize, write the command tag (affected-row count),
       // done in this Execute -- these never page.
       auto result = co_await DriveToResult(
-        prepared, portal.bind_info.param_values, exec.pending, nullptr);
+        prepared, portal.bind_info.param_values, exec.pending, nullptr,
+        portal.stmt->BindSnapshot());
       WriteCommandTag(prepared, *result, return_type);
       exec.state = PortalState::Exhausted;
       if (prepared.GetStatementType() ==
@@ -2186,7 +2196,7 @@ yaclib::Task<> PgWireSession<Kind>::ExecutePrepared(Portal& portal,
       // Full drain: rows flow executor -> _send via the wire collector; the
       // portal completes within this Execute.
       co_await DriveToResult(prepared, portal.bind_info.param_values,
-                             exec.pending, wire);
+                             exec.pending, wire, portal.stmt->BindSnapshot());
       exec.state = PortalState::Exhausted;
       WriteCommandComplete(this->_send, prepared,
                            wire->rows.load(std::memory_order_relaxed));
@@ -2257,16 +2267,17 @@ yaclib::Task<> PgWireSession<Kind>::ExecuteCompound(Portal& portal) {
   auto& body = portal.stmt->GetCompound();
   duckdb::vector<duckdb::Value> no_params;
   for (duckdb::idx_t i = 0; i + 1 < body.size(); ++i) {
-    _connection_ctx->AcquireCatalogSnapshot();
+    auto bind_snapshot = _connection_ctx->AcquireCatalogSnapshot();
     auto prepared = _conn->Prepare(std::move(body[i]));
     ThrowIfError(*prepared);
     ClosingPending pending;
-    co_await DriveToResult(*prepared, no_params, pending, nullptr);
+    co_await DriveToResult(*prepared, no_params, pending, nullptr,
+                           std::move(bind_snapshot));
   }
-  _connection_ctx->AcquireCatalogSnapshot();
+  auto bind_snapshot = _connection_ctx->AcquireCatalogSnapshot();
   auto last = _conn->Prepare(std::move(body.back()));
   ThrowIfError(*last);
-  portal.stmt->SetCompoundResult(std::move(last));
+  portal.stmt->SetCompoundResult(std::move(last), std::move(bind_snapshot));
   co_return {};
 }
 

@@ -341,6 +341,18 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
                           _info->GetIndexName().GetIdentifierName());
   SDB_ASSERT(catalog_index);
   state->index_id = catalog_index->GetId();
+  if (auto sdb_state = context.registered_state->Get<SereneDBClientState>(
+        kSereneDBClientStateKey)) {
+    // Timely abort path (by id: idempotent with the sink-state destructor's
+    // fallback and immune to the name being reused before the plan dies).
+    SDB_ASSERT(!sdb_state->transaction_abort_cleanup);
+    sdb_state->transaction_abort_cleanup =
+      [database_id = _database_id,
+       index_id = state->index_id](duckdb::MetaTransaction&) {
+        std::ignore =
+          catalog::GetCatalog().DropIndexById(database_id, index_id, true);
+      };
+  }
   if (state->progress) {
     state->progress->SetPhase(pg::create_index_progress::Phase::BuildingIndex);
   }
@@ -649,6 +661,10 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   if (!r.ok()) {
     throw duckdb::InternalException("Failed to remove tombstone: %s",
                                     r.errorMessage());
+  }
+  if (auto sdb_state = context.registered_state->Get<SereneDBClientState>(
+        kSereneDBClientStateKey)) {
+    sdb_state->transaction_abort_cleanup = nullptr;
   }
   gstate.finalized = true;
 

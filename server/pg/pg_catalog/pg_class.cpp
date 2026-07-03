@@ -196,7 +196,7 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
   }
 
   // Synthetic pg_class entries for primary key indexes (PG semantics).
-  // Name is '<table>_pkey', OID is PkIndexOid(table_oid). Kept in separate
+  // Name is '<table>_pkey', OID is the PK's backing-index id. Kept in separate
   // storage to survive the value push_backs above.
   for (const auto& schema : catalog.GetSchemas(database_id)) {
     const auto schema_id = schema->GetId();
@@ -209,7 +209,7 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
                                  ? std::string{table->GetName()} + "_pkey"
                                  : std::string{table->PKName()});
       PgClass row{
-        .oid = PkIndexOid(table->GetId().id()),
+        .oid = table->PKIndexId().id(),
         .relname = pk_index_names.back(),
         .relnamespace = schema_id.id(),
         .reltype = 0,
@@ -246,7 +246,7 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
   }
 
   // Synthetic pg_class entries for UNIQUE constraint indexes (PG semantics).
-  // Name is the constraint name, OID is UniqueIndexOid(table_oid, ordinal).
+  // Name is the constraint name, OID is the constraint's backing-index id.
   for (const auto& schema : catalog.GetSchemas(database_id)) {
     const auto schema_id = schema->GetId();
     for (const auto& table :
@@ -257,7 +257,7 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
                                    ? std::string{table->GetName()} + "_key"
                                    : uniques[uq_idx].name);
         PgClass row{
-          .oid = UniqueIndexOid(table->GetId().id(), uq_idx),
+          .oid = uniques[uq_idx].index_id.id(),
           .relname = uq_index_names.back(),
           .relnamespace = schema_id.id(),
           .reltype = 0,

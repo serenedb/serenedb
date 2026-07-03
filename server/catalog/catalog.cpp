@@ -2166,11 +2166,29 @@ Result Catalog::CreateTable(ObjectId database_id, std::string_view schema,
     sequences.push_back(std::move(pk_seq));
   }
 
+  // Constraints get real catalog OIDs like every other object: one for the
+  // constraint itself and one for its backing index relation (PG allocates a
+  // pg_class entry per PK/UNIQUE index; the pg_catalog views expose these).
+  ObjectId pk_constraint_id;
+  ObjectId pk_index_id;
+  if (!options.pk_columns.empty()) {
+    pk_constraint_id = NextId();
+    pk_index_id = NextId();
+  }
+  for (auto& unique : options.unique_constraints) {
+    unique.id = NextId();
+    unique.index_id = NextId();
+  }
+  for (auto& fk : options.foreign_keys) {
+    fk.id = NextId();
+  }
+
   auto table = std::make_shared<Table>(
     *schema_id, table_id, options.name, std::move(options.columns),
     std::move(options.pk_columns), std::move(options.check_constraints),
     generated_pk_seq_id, options.engine, std::move(options.unique_constraints),
-    std::move(options.foreign_keys), std::move(options.pk_name));
+    std::move(options.foreign_keys), std::move(options.pk_name),
+    pk_constraint_id, pk_index_id);
   if (with_tombstone) {
     table->SetTombstoned(true);
   }

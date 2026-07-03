@@ -151,6 +151,9 @@ struct TableForeignKey {
   std::vector<Column::Id> columns;
   ObjectId referenced_table;
   std::vector<Column::Id> referenced_columns;
+  // Constraint OID (pg_constraint.oid); allocated when the constraint is
+  // created, stable for its lifetime.
+  ObjectId id;
 };
 
 // One UNIQUE constraint of a table over `columns`, with its constraint `name`
@@ -158,6 +161,11 @@ struct TableForeignKey {
 struct TableUnique {
   std::string name;
   std::vector<Column::Id> columns;
+  // Constraint OID (pg_constraint.oid) and the OID of its backing index
+  // relation (pg_class.oid / pg_index.indexrelid / pg_constraint.conindid).
+  // Allocated when the constraint is created, stable for its lifetime.
+  ObjectId id;
+  ObjectId index_id;
 };
 
 struct CreateTableOptions {

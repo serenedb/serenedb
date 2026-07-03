@@ -47,7 +47,8 @@ class Table final : public Object {
         TableEngine engine = TableEngine::Transactional,
         std::vector<TableUnique> unique_constraints = {},
         std::vector<TableForeignKey> foreign_keys = {},
-        std::string pk_name = {});
+        std::string pk_name = {}, ObjectId pk_constraint_id = {},
+        ObjectId pk_index_id = {});
 
   static std::shared_ptr<Table> Deserialize(duckdb::Deserializer& src,
                                             ReadContext ctx);
@@ -57,6 +58,11 @@ class Table final : public Object {
   const auto& Columns() const noexcept { return _columns; }
   const auto& PKColumns() const noexcept { return _pk_columns; }
   std::string_view PKName() const noexcept { return _pk_name; }
+  // Constraint OID of the primary key (pg_constraint.oid) and the OID of its
+  // backing index relation (pg_class.oid / pg_index.indexrelid); unset when
+  // the table has no PK.
+  ObjectId PKConstraintId() const noexcept { return _pk_constraint_id; }
+  ObjectId PKIndexId() const noexcept { return _pk_index_id; }
 
   // O(1) id -> column lookup (built once at construction). Use these instead of
   // a linear scan over Columns(); a scan nested in a per-key/per-index loop is
@@ -151,6 +157,8 @@ class Table final : public Object {
   containers::FlatHashMap<Column::Id, const Column*> _column_index;
   std::vector<Column::Id> _pk_columns;
   std::string _pk_name;
+  ObjectId _pk_constraint_id;
+  ObjectId _pk_index_id;
   std::vector<CheckConstraint> _check_constraints;
   ObjectId _generated_pk_seq_id;
   TableEngine _engine = TableEngine::Transactional;

@@ -44,8 +44,6 @@ constexpr uint64_t kFkNullMask =
   kNullMask & ~(uint64_t{1} << GetIndex(&PgConstraint::confkey));
 // FKs carry no stored ObjectId; synthesize a constraint OID. Bit 61 keeps it
 // clear of raw ObjectIds and the bit-62 synthetic PK index OIDs.
-constexpr uint64_t kSyntheticFkBit = uint64_t{1} << 61;
-constexpr uint64_t kSyntheticUniqueBit = uint64_t{1} << 60;
 
 }  // namespace
 
@@ -80,7 +78,7 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
                                     : std::string{table->PKName()});
         conkey_storage.push_back(std::move(conkey));
         values.push_back({
-          .oid = table->GetId().id(),
+          .oid = table->PKConstraintId().id(),
           .conname = conname_storage.back(),
           .connamespace = schema->GetId().id(),
           .contype = PgConstraint::Contype::PrimaryKey,
@@ -90,8 +88,7 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
           .convalidated = true,
           .conrelid = table->GetId().id(),
           .contypid = 0,
-          // Synthetic PK index OID (see PkIndexOid in fwd.h and pg_index.cpp).
-          .conindid = PkIndexOid(table->GetId().id()),
+          .conindid = table->PKIndexId().id(),
           .conparentid = 0,
           .confrelid = 0,
           .confupdtype = PgConstraint::Confchgtype::NoAction,
@@ -180,7 +177,7 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
         conkey_storage.push_back(std::move(conkey));
         confkey_storage.push_back(std::move(confkey));
         values.push_back({
-          .oid = kSyntheticFkBit | (table->GetId().id() * 256 + fk_idx),
+          .oid = fk.id.id(),
           .conname = conname_storage.back(),
           .connamespace = schema->GetId().id(),
           .contype = PgConstraint::Contype::ForeignKey,
@@ -190,7 +187,8 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
           .convalidated = true,
           .conrelid = table->GetId().id(),
           .contypid = 0,
-          .conindid = 0,
+          // PG points conindid at the index backing the referenced key.
+          .conindid = ref.PKIndexId().id(),
           .conparentid = 0,
           .confrelid = ref.GetId().id(),
           .confupdtype = PgConstraint::Confchgtype::NoAction,
@@ -228,7 +226,7 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
                                     : uq.name);
         conkey_storage.push_back(std::move(conkey));
         values.push_back({
-          .oid = kSyntheticUniqueBit | (table->GetId().id() * 256 + uq_idx),
+          .oid = uniques[uq_idx].id.id(),
           .conname = conname_storage.back(),
           .connamespace = schema->GetId().id(),
           .contype = PgConstraint::Contype::Unique,
@@ -238,7 +236,7 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
           .convalidated = true,
           .conrelid = table->GetId().id(),
           .contypid = 0,
-          .conindid = UniqueIndexOid(table->GetId().id(), uq_idx),
+          .conindid = uniques[uq_idx].index_id.id(),
           .conparentid = 0,
           .confrelid = 0,
           .confupdtype = PgConstraint::Confchgtype::NoAction,

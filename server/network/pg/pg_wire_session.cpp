@@ -1991,12 +1991,6 @@ void PgWireSession<Kind>::DescribeStatement(Statement& stmt) {
     }
   }
   WriteRowDescription(this->_send, *types, *names, {});
-  if (pending) {
-    // ~PendingQueryResult is a no-op: without an explicit Close the dummy
-    // query's lifecycle (and its statement snapshot) stays open until the
-    // next duckdb entry point's InitialCleanup.
-    pending->Close();
-  }
 }
 
 template<SocketKind Kind>

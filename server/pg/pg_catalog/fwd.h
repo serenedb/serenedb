@@ -94,23 +94,6 @@ constexpr uint64_t MaskFromNonNulls(std::span<const size_t> indicies) {
   return ~MaskFromNulls(indicies);
 }
 
-// Synthetic OID for the backing index of a primary key constraint.
-// PG allocates a separate pg_class entry for every PK index; SereneDB does
-// not, so derive a deterministic distinct OID from the table's OID using the
-// top bit. Real catalog OIDs never set this bit.
-constexpr uint64_t kSyntheticPkIndexBit = uint64_t{1} << 62;
-constexpr uint64_t PkIndexOid(uint64_t table_oid) {
-  return table_oid | kSyntheticPkIndexBit;
-}
-
-// Synthetic OID for the backing index of a UNIQUE constraint. PG allocates a
-// pg_class entry for each UNIQUE constraint's index; SereneDB derives a
-// deterministic distinct OID from the table OID and the constraint's ordinal.
-constexpr uint64_t kSyntheticUniqueIndexBit = uint64_t{1} << 59;
-constexpr uint64_t UniqueIndexOid(uint64_t table_oid, uint64_t unique_ordinal) {
-  return (table_oid * 256 + unique_ordinal) | kSyntheticUniqueIndexBit;
-}
-
 template<typename ClassType, typename MemberType>
 constexpr size_t GetIndex(MemberType ClassType::* member_ptr) {
   size_t index = -1;

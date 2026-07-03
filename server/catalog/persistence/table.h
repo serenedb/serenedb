@@ -38,6 +38,8 @@ struct TableData {
   std::vector<TableUnique> unique_constraints;
   std::vector<TableForeignKey> foreign_keys;
   std::string comment;
+  ObjectId pk_constraint_id;
+  ObjectId pk_index_id;
 };
 
 }  // namespace sdb::catalog::persistence

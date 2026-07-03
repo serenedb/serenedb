@@ -128,7 +128,7 @@ catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
       auto natts = static_cast<int16_t>(indkey.size());
       indkey_storage.push_back(std::move(indkey));
       values.push_back({
-        .indexrelid = PkIndexOid(table->GetId().id()),
+        .indexrelid = table->PKIndexId().id(),
         .indrelid = table->GetId().id(),
         .indnatts = natts,
         .indnkeyatts = natts,
@@ -163,7 +163,7 @@ catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
         auto natts = static_cast<int16_t>(indkey.size());
         indkey_storage.push_back(std::move(indkey));
         values.push_back({
-          .indexrelid = UniqueIndexOid(table->GetId().id(), uq_idx),
+          .indexrelid = uniques[uq_idx].index_id.id(),
           .indrelid = table->GetId().id(),
           .indnatts = natts,
           .indnkeyatts = natts,

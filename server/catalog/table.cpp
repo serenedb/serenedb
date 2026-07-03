@@ -36,6 +36,7 @@
 #include "basics/serializer.h"
 #include "catalog/column_expr.h"
 #include "catalog/persistence/table.h"
+#include "database/ticks.h"
 
 namespace sdb::catalog {
 namespace {
@@ -49,11 +50,14 @@ Table::Table(ObjectId schema_id, ObjectId id, std::string_view name,
              std::vector<CheckConstraint> check_constraints,
              ObjectId generated_pk_seq_id, TableEngine engine,
              std::vector<TableUnique> unique_constraints,
-             std::vector<TableForeignKey> foreign_keys, std::string pk_name)
+             std::vector<TableForeignKey> foreign_keys, std::string pk_name,
+             ObjectId pk_constraint_id, ObjectId pk_index_id)
   : Object{schema_id, id, std::string{name}, ObjectType::Table},
     _columns{std::move(columns)},
     _pk_columns{std::move(pk_columns)},
     _pk_name{std::move(pk_name)},
+    _pk_constraint_id{pk_constraint_id},
+    _pk_index_id{pk_index_id},
     _check_constraints{std::move(check_constraints)},
     _generated_pk_seq_id{generated_pk_seq_id},
     _engine{engine},
@@ -66,6 +70,17 @@ Table::Table(ObjectId schema_id, ObjectId id, std::string_view name,
   }
   for (auto& c : _check_constraints) {
     c.SetParentId(_id);
+  }
+  // Constraint ids are plain ObjectId fields, not Objects: nothing else
+  // advances the tick allocator past them on catalog load.
+  UpdateTickServer(_pk_constraint_id.id());
+  UpdateTickServer(_pk_index_id.id());
+  for (const auto& u : _unique_constraints) {
+    UpdateTickServer(u.id.id());
+    UpdateTickServer(u.index_id.id());
+  }
+  for (const auto& fk : _foreign_keys) {
+    UpdateTickServer(fk.id.id());
   }
 }
 
@@ -85,7 +100,8 @@ std::shared_ptr<Table> Table::Deserialize(duckdb::Deserializer& src,
     ctx.schema_id, ctx.id, data.name, std::move(data.columns),
     std::move(data.pk_columns), std::move(data.check_constraints),
     data.generated_pk_seq_id, data.engine, std::move(data.unique_constraints),
-    std::move(data.foreign_keys), std::move(data.pk_name));
+    std::move(data.foreign_keys), std::move(data.pk_name),
+    data.pk_constraint_id, data.pk_index_id);
   table->_comment = std::move(data.comment);
   return table;
 }
@@ -102,6 +118,8 @@ void Table::Serialize(duckdb::Serializer& sink) const {
     .unique_constraints = _unique_constraints,
     .foreign_keys = _foreign_keys,
     .comment = _comment,
+    .pk_constraint_id = _pk_constraint_id,
+    .pk_index_id = _pk_index_id,
   };
   basics::WriteTuple(sink, data);
 }
@@ -207,6 +225,8 @@ Result Table::DropCheckConstraint(std::shared_ptr<Table>& result,
       new_table->_pk_name == constraint_name) {
     new_table->_pk_columns.clear();
     new_table->_pk_name.clear();
+    new_table->_pk_constraint_id = ObjectId{};
+    new_table->_pk_index_id = ObjectId{};
     result = std::move(new_table);
     return {};
   }
@@ -336,6 +356,8 @@ Result Table::AddPrimaryKey(std::shared_ptr<Table>& result,
   auto new_table = basics::downCast<Table>(Clone());
   new_table->_pk_columns = pk_columns;
   new_table->_pk_name = std::move(name);
+  new_table->_pk_constraint_id = NextId();
+  new_table->_pk_index_id = NextId();
   // A PK implies NOT NULL on each key column. Reuse SetNotNull so the implied
   // not-null CHECKs match the CREATE-TABLE-with-PK path exactly. Iterate the
   // local `pk_columns`: SetNotNull reassigns new_table below, which would free
@@ -362,7 +384,7 @@ Result Table::AddUniqueConstraint(std::shared_ptr<Table>& result,
   }
   auto new_table = basics::downCast<Table>(Clone());
   new_table->_unique_constraints.push_back(
-    TableUnique{std::move(name), std::move(columns)});
+    TableUnique{std::move(name), std::move(columns), NextId(), NextId()});
   result = std::move(new_table);
   return {};
 }
@@ -371,7 +393,7 @@ std::shared_ptr<Object> Table::Clone() const {
   auto cloned = std::make_shared<Table>(
     GetParentId(), GetId(), GetName(), _columns, _pk_columns,
     _check_constraints, _generated_pk_seq_id, _engine, _unique_constraints,
-    _foreign_keys, _pk_name);
+    _foreign_keys, _pk_name, _pk_constraint_id, _pk_index_id);
   cloned->SetTombstoned(Tombstoned());
   cloned->SetData(_data);
   cloned->_comment = _comment;

@@ -316,7 +316,7 @@ statement ok
 CREATE TABLE biksalen(kek BOOLEAN);
 
 
-statement ok
+statement error
 COPY biksalen FROM '${__TEST_DIR__}/deadinside.tsv' (ON_ERROR IGNORE, REJECT_LIMIT 9);
 
 
@@ -564,20 +564,20 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ BATCH_INSERT ─────────────────────╮
-│ 1 row                          0µs │
-╰──────────────────┒┎────────────────╯
-╭─ EXTENSION ──────┚┖────────────────╮
-│ 10 rows                        0µs │
-╰──────────────────┒┎────────────────╯
-╭─ TABLE_SCAN ─────┚┖────────────────╮
-│ Function: READ_CSV                 │
-│ Projections: eater                 │
-│ Total Files Read: 1                │
-│ Filename(s):                       │
+╭─ BATCH_INSERT ──────────────────────────╮
+│ 1 row                               0µs │
+╰────────────────────┒┎───────────────────╯
+╭─ EXTENSION ────────┚┖───────────────────╮
+│ 10 rows                             0µs │
+╰────────────────────┒┎───────────────────╯
+╭─ TABLE_SCAN ───────┚┖───────────────────╮
+│ Function: READ_CSV                      │
+│ Projections: eater                      │
+│ Total Files Read: 1                     │
+│ Filename(s):                            │
 <slt:ignore>
-│ 10 rows                        0µs │
-╰────────────────────────────────────╯
+│ 10 rows                             0µs │
+╰─────────────────────────────────────────╯
 
 
 skipif postgres

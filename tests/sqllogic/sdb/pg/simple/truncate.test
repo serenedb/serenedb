@@ -787,48 +787,36 @@ query
 EXPLAIN DELETE FROM explain_t;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           DELETE          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│      Table: explain_t     │
-│   Type: Sequential Scan   │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
+╭─ DELETE ──────────────╮
+╰───────────┬───────────╯
+╭─ SEQ_SCAN ┴───────────╮
+│ Table: explain_t      │
+│ Type: Sequential Scan │
+│ ~3 rows               │
+╰───────────────────────╯
 
 
 query
 EXPLAIN TRUNCATE explain_t;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           DELETE          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│      Table: explain_t     │
-│   Type: Sequential Scan   │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
+╭─ DELETE ──────────────╮
+╰───────────┬───────────╯
+╭─ SEQ_SCAN ┴───────────╮
+│ Table: explain_t      │
+│ Type: Sequential Scan │
+│ ~3 rows               │
+╰───────────────────────╯
 
 
 query
 EXPLAIN TRUNCATE TABLE explain_t;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           DELETE          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│      Table: explain_t     │
-│   Type: Sequential Scan   │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
+╭─ DELETE ──────────────╮
+╰───────────┬───────────╯
+╭─ SEQ_SCAN ┴───────────╮
+│ Table: explain_t      │
+│ Type: Sequential Scan │
+│ ~3 rows               │
+╰───────────────────────╯

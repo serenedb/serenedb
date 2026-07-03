@@ -41,7 +41,7 @@ query
 SELECT *
 FROM tbl;
 ----
-id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
+id	name	col1	col2	Some Column Name	i	a	b	c	number	number1	number2
 1	mark	1	2	alpha	1	10	20	30	10	100	1000
 3	bookmark	4	5	beta	2	11	21	31	20	200	2000
 7	other	9	16	gamma	3	12	22	32	NULL	300	3000
@@ -55,7 +55,7 @@ SELECT tbl.*
 FROM tbl
 JOIN other_tbl USING (id);
 ----
-id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
+id	name	col1	col2	Some Column Name	i	a	b	c	number	number1	number2
 1	mark	1	2	alpha	1	10	20	30	10	100	1000
 3	bookmark	4	5	beta	2	11	21	31	20	200	2000
 
@@ -103,7 +103,7 @@ query
 SELECT * EXCLUDE (col)
 FROM tbl;
 ----
-id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
+id	name	col1	col2	Some Column Name	i	a	b	c	number	number1	number2
 1	mark	1	2	alpha	1	10	20	30	10	100	1000
 3	bookmark	4	5	beta	2	11	21	31	20	200	2000
 7	other	9	16	gamma	3	12	22	32	NULL	300	3000
@@ -141,7 +141,7 @@ query
 SELECT * REPLACE (col1 / 1_000 AS col1, col2 / 1_000 AS col2)
 FROM tbl;
 ----
-id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
+id	name	col1	col2	Some Column Name	i	a	b	c	number	number1	number2
 1	mark	0.001	0.002	alpha	1	10	20	30	10	100	1000
 3	bookmark	0.004	0.005	beta	2	11	21	31	20	200	2000
 7	other	0.009	0.016	gamma	3	12	22	32	NULL	300	3000
@@ -154,7 +154,7 @@ query
 SELECT * RENAME (col1 AS height, col2 AS width)
 FROM tbl;
 ----
-id	name	height	width	some column name	i	a	b	c	number	number1	number2
+id	name	height	width	Some Column Name	i	a	b	c	number	number1	number2
 1	mark	1	2	alpha	1	10	20	30	10	100	1000
 3	bookmark	4	5	beta	2	11	21	31	20	200	2000
 7	other	9	16	gamma	3	12	22	32	NULL	300	3000

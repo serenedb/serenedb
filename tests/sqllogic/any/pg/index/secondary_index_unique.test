@@ -298,22 +298,13 @@ query
 EXPLAIN SELECT pid, district FROM vedernikoff_safehouse WHERE code = 100;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│           Table:          │
-│   vedernikoff_safehouse   │
-│                           │
-│   Type: Sequential Scan   │
-│                           │
-│        Projections:       │
-│            pid            │
-│          district         │
-│                           │
-│   Filters: (code = 100)   │
-│                           │
-│          ~2 rows          │
-└───────────────────────────┘
+╭─ SEQ_SCAN ───────────────────╮
+│ Table: vedernikoff_safehouse │
+│ Type: Sequential Scan        │
+│ Projections: pid, district   │
+│ Filters: code = 100          │
+│ ~2 rows                      │
+╰──────────────────────────────╯
 
 
 onlyif serenedb
@@ -321,45 +312,26 @@ query
 EXPLAIN SELECT pid, district FROM vedernikoff_safehouse WHERE code IS NULL;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│           Table:          │
-│   vedernikoff_safehouse   │
-│                           │
-│   Type: Sequential Scan   │
-│                           │
-│        Projections:       │
-│            pid            │
-│          district         │
-│                           │
-│          Filters:         │
-│       (code IS NULL)      │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ SEQ_SCAN ───────────────────╮
+│ Table: vedernikoff_safehouse │
+│ Type: Sequential Scan        │
+│ Projections: pid, district   │
+│ Filters: code IS NULL        │
+│ ~1 row                       │
+╰──────────────────────────────╯
 
 onlyif serenedb
 query
 EXPLAIN SELECT pid, district FROM vedernikoff_safehouse WHERE code > 100;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│           Table:          │
-│   vedernikoff_safehouse   │
-│                           │
-│   Type: Sequential Scan   │
-│                           │
-│        Projections:       │
-│            pid            │
-│          district         │
-│                           │
-│   Filters: (code > 100)   │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ SEQ_SCAN ───────────────────╮
+│ Table: vedernikoff_safehouse │
+│ Type: Sequential Scan        │
+│ Projections: pid, district   │
+│ Filters: code > 100          │
+│ ~1 row                       │
+╰──────────────────────────────╯
 
 
 query
@@ -374,23 +346,13 @@ query
 EXPLAIN SELECT pid, district FROM vedernikoff_safehouse WHERE code IS NOT NULL;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│           Table:          │
-│   vedernikoff_safehouse   │
-│                           │
-│   Type: Sequential Scan   │
-│                           │
-│        Projections:       │
-│            pid            │
-│          district         │
-│                           │
-│          Filters:         │
-│     (code IS NOT NULL)    │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ SEQ_SCAN ───────────────────╮
+│ Table: vedernikoff_safehouse │
+│ Type: Sequential Scan        │
+│ Projections: pid, district   │
+│ Filters: code IS NOT NULL    │
+│ ~1 row                       │
+╰──────────────────────────────╯
 
 
 query
@@ -578,24 +540,14 @@ query
 EXPLAIN SELECT pid, note FROM vedernikoff_ledger WHERE region = 1 AND tier = 10;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│           Table:          │
-│     vedernikoff_ledger    │
-│                           │
-│   Type: Sequential Scan   │
-│                           │
-│        Projections:       │
-│            pid            │
-│            note           │
-│                           │
-│          Filters:         │
-│        (region = 1)       │
-│        (tier = 10)        │
-│                           │
-│          ~2 rows          │
-└───────────────────────────┘
+╭─ SEQ_SCAN ────────────────╮
+│ Table: vedernikoff_ledger │
+│ Type: Sequential Scan     │
+│ Projections: pid, note    │
+│ Filters: region = 1,      │
+│          tier = 10        │
+│ ~2 rows                   │
+╰───────────────────────────╯
 
 query
 SELECT pid, note FROM vedernikoff_ledger WHERE region = 1 AND tier = 10;
@@ -1096,25 +1048,14 @@ query
 EXPLAIN SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b = 1 AND c = 1;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│           Table:          │
-│    vedernikoff_tri_uniq   │
-│                           │
-│   Type: Sequential Scan   │
-│                           │
-│        Projections:       │
-│            pid            │
-│            note           │
-│                           │
-│          Filters:         │
-│          (a = 1)          │
-│          (b = 1)          │
-│          (c = 1)          │
-│                           │
-│          ~2 rows          │
-└───────────────────────────┘
+╭─ SEQ_SCAN ──────────────────╮
+│ Table: vedernikoff_tri_uniq │
+│ Type: Sequential Scan       │
+│ Projections: pid, note      │
+│ Filters: a = 1, b = 1,      │
+│          c = 1              │
+│ ~2 rows                     │
+╰─────────────────────────────╯
 
 query
 SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b = 1 AND c = 1;
@@ -1252,25 +1193,14 @@ query
 EXPLAIN SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 and b IS NULL and c IS NULL;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│           Table:          │
-│    vedernikoff_tri_uniq   │
-│                           │
-│   Type: Sequential Scan   │
-│                           │
-│        Projections:       │
-│            pid            │
-│            note           │
-│                           │
-│          Filters:         │
-│          (a = 1)          │
-│        (b IS NULL)        │
-│        (c IS NULL)        │
-│                           │
-│          ~9 rows          │
-└───────────────────────────┘
+╭─ SEQ_SCAN ──────────────────╮
+│ Table: vedernikoff_tri_uniq │
+│ Type: Sequential Scan       │
+│ Projections: pid, note      │
+│ Filters: a = 1, b IS NULL,  │
+│          c IS NULL          │
+│ ~9 rows                     │
+╰─────────────────────────────╯
 
 query
 SELECT * FROM vedernikoff_tri_uniq WHERE a = 1 and b IS NULL and c IS NULL ORDER BY pid;
@@ -1384,39 +1314,21 @@ query
 EXPLAIN SELECT pid, tag FROM babsky_uniq_in WHERE code IN (100, 300);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #1            │
-│             #2            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│  ((code = 100) OR (code = │
-│            300))          │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│   Table: babsky_uniq_in   │
-│   Type: Sequential Scan   │
-│                           │
-│        Projections:       │
-│            code           │
-│            pid            │
-│            tag            │
-│                           │
-│          Filters:         │
-│  optional: (code IN (100, │
-│            300))          │
-│                           │
-│          ~6 rows          │
-└───────────────────────────┘
+╭─ PROJECTION ─────────────────────────────╮
+│ Projections: #1, #2                      │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ FILTER ────────────┴────────────────────╮
+│ Expression: (code = 100) OR (code = 300) │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ SEQ_SCAN ──────────┴────────────────────╮
+│ Table: babsky_uniq_in                    │
+│ Type: Sequential Scan                    │
+│ Projections: code, pid, tag              │
+│ Filters: optional: (code IN (100, 300))  │
+│ ~6 rows                                  │
+╰──────────────────────────────────────────╯
 
 query
 SELECT pid, tag FROM babsky_uniq_in WHERE code IN (100, 300) ORDER BY pid;
@@ -1505,24 +1417,14 @@ query
 EXPLAIN SELECT pid, tag FROM vedernikoff_uniq_rem WHERE key = 100 AND level = 10;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│           Table:          │
-│    vedernikoff_uniq_rem   │
-│                           │
-│   Type: Sequential Scan   │
-│                           │
-│        Projections:       │
-│            pid            │
-│            tag            │
-│                           │
-│          Filters:         │
-│        (key = 100)        │
-│        (level = 10)       │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ SEQ_SCAN ──────────────────╮
+│ Table: vedernikoff_uniq_rem │
+│ Type: Sequential Scan       │
+│ Projections: pid, tag       │
+│ Filters: key = 100,         │
+│          level = 10         │
+│ ~1 row                      │
+╰─────────────────────────────╯
 
 query
 SELECT pid, tag FROM vedernikoff_uniq_rem WHERE key = 100 AND level = 10;
@@ -2064,33 +1966,17 @@ query
 EXPLAIN SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx WHERE code = 20;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│            pid            │
-│            code           │
-│            name           │
-│                           │
-│          ~2 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│           Table:          │
-│vedernikoff_uniq_idx_scan_c│
-│          ode_idx          │
-│                           │
-│   Type: Sequential Scan   │
-│                           │
-│        Projections:       │
-│            code           │
-│            pid            │
-│            name           │
-│                           │
-│    Filters: (code = 20)   │
-│                           │
-│          ~2 rows          │
-└───────────────────────────┘
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: pid, code, name              │
+│ ~2 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ SEQ_SCAN ──────────┴─────────────────────╮
+│ Table: vedernikoff_uniq_idx_scan_code_idx │
+│ Type: Sequential Scan                     │
+│ Projections: code, pid, name              │
+│ Filters: code = 20                        │
+│ ~2 rows                                   │
+╰───────────────────────────────────────────╯
 
 onlyif serenedb
 query

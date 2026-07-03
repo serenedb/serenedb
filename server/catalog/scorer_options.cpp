@@ -47,7 +47,7 @@ const duckdb::Value* TryGetConstantValue(const duckdb::Expression& expr) {
   if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CONSTANT) {
     return nullptr;
   }
-  return &expr.Cast<duckdb::BoundConstantExpression>().value;
+  return &expr.Cast<duckdb::BoundConstantExpression>().GetValue();
 }
 
 }  // namespace
@@ -95,9 +95,9 @@ std::optional<ScorerOptions> ExtractScorerFromBound(
 
   if (name == S::Bm25::Owner::type_name()) {
     S::Bm25 p;
-    if (func.children.size() == 3) {
-      auto* k1v = TryGetConstantValue(*func.children[1]);
-      auto* bv = TryGetConstantValue(*func.children[2]);
+    if (func.GetChildren().size() == 3) {
+      auto* k1v = TryGetConstantValue(*func.GetChildren()[1]);
+      auto* bv = TryGetConstantValue(*func.GetChildren()[2]);
       if (!k1v || !bv) {
         return std::nullopt;
       }
@@ -107,8 +107,8 @@ std::optional<ScorerOptions> ExtractScorerFromBound(
     scorer.params = p;
   } else if (name == S::Tfidf::Owner::type_name()) {
     S::Tfidf p;
-    if (func.children.size() == 2) {
-      auto* cv = TryGetConstantValue(*func.children[1]);
+    if (func.GetChildren().size() == 2) {
+      auto* cv = TryGetConstantValue(*func.GetChildren()[1]);
       if (!cv) {
         return std::nullopt;
       }
@@ -117,8 +117,8 @@ std::optional<ScorerOptions> ExtractScorerFromBound(
     scorer.params = p;
   } else if (name == S::LmJm::Owner::type_name()) {
     S::LmJm p;
-    if (func.children.size() == 2) {
-      auto* lv = TryGetConstantValue(*func.children[1]);
+    if (func.GetChildren().size() == 2) {
+      auto* lv = TryGetConstantValue(*func.GetChildren()[1]);
       if (!lv) {
         return std::nullopt;
       }
@@ -132,8 +132,8 @@ std::optional<ScorerOptions> ExtractScorerFromBound(
     scorer.params = p;
   } else if (name == S::LmDirichlet::Owner::type_name()) {
     S::LmDirichlet p;
-    if (func.children.size() == 2) {
-      auto* mv = TryGetConstantValue(*func.children[1]);
+    if (func.GetChildren().size() == 2) {
+      auto* mv = TryGetConstantValue(*func.GetChildren()[1]);
       if (!mv) {
         return std::nullopt;
       }
@@ -148,8 +148,8 @@ std::optional<ScorerOptions> ExtractScorerFromBound(
     scorer.params = p;
   } else if (name == S::IndriDirichlet::Owner::type_name()) {
     S::IndriDirichlet p;
-    if (func.children.size() == 2) {
-      auto* mv = TryGetConstantValue(*func.children[1]);
+    if (func.GetChildren().size() == 2) {
+      auto* mv = TryGetConstantValue(*func.GetChildren()[1]);
       if (!mv) {
         return std::nullopt;
       }
@@ -165,8 +165,8 @@ std::optional<ScorerOptions> ExtractScorerFromBound(
     scorer.params = p;
   } else if (name == S::Dfi::Owner::type_name()) {
     S::Dfi p;
-    if (func.children.size() == 2) {
-      auto* mv = TryGetConstantValue(*func.children[1]);
+    if (func.GetChildren().size() == 2) {
+      auto* mv = TryGetConstantValue(*func.GetChildren()[1]);
       if (!mv) {
         return std::nullopt;
       }
@@ -223,11 +223,13 @@ ScorerOptions ParseScorerExpression(duckdb::ClientContext& context,
   // Prepend a tableoid placeholder to match the SQL `BM25(idx.tableoid, ...)`
   // overload that ConstantBinder will resolve.
   auto& fn = fn_expr->Cast<FunctionExpression>();
-  fn.children.insert(fn.children.begin(),
-                     make_uniq<ConstantExpression>(Value::BIGINT(0)));
+  fn.GetArgumentsMutable().insert(
+    fn.GetArgumentsMutable().begin(),
+    FunctionArgument{unique_ptr<ParsedExpression>(
+      make_uniq<ConstantExpression>(Value::BIGINT(0)))});
 
   // Capture the name now -- Bind() consumes fn_expr.
-  std::string name = fn.function_name;
+  std::string name = fn.FunctionName().GetIdentifierName();
   absl::AsciiStrToLower(&name);
 
   auto binder = Binder::CreateBinder(context);
@@ -242,7 +244,7 @@ ScorerOptions ParseScorerExpression(duckdb::ClientContext& context,
   }
 
   auto& bound_fn = bound->Cast<BoundFunctionExpression>();
-  for (auto& child : bound_fn.children) {
+  for (auto& child : bound_fn.GetChildrenMutable()) {
     if (child->GetExpressionClass() != ExpressionClass::BOUND_CONSTANT &&
         child->IsFoldable()) {
       auto val = ExpressionExecutor::EvaluateScalar(context, *child);

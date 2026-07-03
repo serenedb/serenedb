@@ -147,7 +147,7 @@ duckdb::TableFunction SystemTableEntry::GetScanFunction(
 
   auto row_type = _virtual_table.RowType();
   for (auto& [name, type] : duckdb::StructType::GetChildTypes(row_type)) {
-    data->column_names.push_back(name);
+    data->column_names.emplace_back(name.GetIdentifierName());
   }
 
   bind_data = std::move(data);

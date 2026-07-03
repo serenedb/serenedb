@@ -137,7 +137,7 @@ MERGE INTO ct USING (SELECT 20 AS id) src ON ct.id = src.id
 
 # no rejected statement ever mutated the table: every surviving row is valid
 
-query I
+query
 SELECT count(*) FROM ct WHERE s <> 'y'
 ----
 count

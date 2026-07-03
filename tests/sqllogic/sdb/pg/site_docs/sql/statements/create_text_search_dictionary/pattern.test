@@ -9,7 +9,7 @@ CREATE TEXT SEARCH DICTIONARY caps (
     group = 0
 );
 
-query ?
+query
 SELECT ts_lexize('caps', 'The Quick Brown fox jumps over Lazy Dog');
 ----
 ts_lexize
@@ -26,7 +26,7 @@ CREATE TEXT SEARCH DICTIONARY ws_split (
     group = -1
 );
 
-query ?
+query
 SELECT ts_lexize('ws_split', 'alpha  beta   gamma');
 ----
 ts_lexize
@@ -43,7 +43,7 @@ CREATE TEXT SEARCH DICTIONARY id_split (
     group = -1
 );
 
-query ?
+query
 SELECT ts_lexize('id_split', 'SereneDB-2024_v1.2');
 ----
 ts_lexize
@@ -60,7 +60,7 @@ CREATE TEXT SEARCH DICTIONARY trailing_digits (
     group = 2
 );
 
-query ?
+query
 SELECT ts_lexize('trailing_digits', 'abc123def456ghi');
 ----
 ts_lexize

@@ -28,7 +28,7 @@ x	y	z
 
 # DOCS_TEST_BODY
 
-query ??
+query
 SELECT * FROM t1;
 ----
 grp	val

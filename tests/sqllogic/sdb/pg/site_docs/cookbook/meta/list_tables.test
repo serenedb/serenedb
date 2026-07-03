@@ -86,7 +86,7 @@ CREATE TABLE db61.s1.schema_tbl (v VARCHAR);
 
 # DOCS_TEST_BODY
 
-query rowsort
+query
 SHOW TABLES FROM db61;
 ----
 name

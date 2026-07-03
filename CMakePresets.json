@@ -41,7 +41,8 @@
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "STATIC_EXECUTABLES": "Off",
         "SDB_DEV": "On",
-        "SDB_ALLOC": "JE"
+        "SDB_ALLOC": "JE",
+        "USE_JEMALLOC_PROF": "On"
       }
     },
     {

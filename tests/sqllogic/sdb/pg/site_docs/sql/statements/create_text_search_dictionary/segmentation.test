@@ -9,7 +9,7 @@ CREATE TEXT SEARCH DICTIONARY seg_dict (
     BREAK = 'alpha'
 );
 
-query ?
+query
 SELECT ts_lexize('seg_dict', 'The Quick fox-trot.');
 ----
 ts_lexize
@@ -26,7 +26,7 @@ CREATE TEXT SEARCH DICTIONARY seg_all (
     BREAK = 'all'
 );
 
-query ?
+query
 SELECT ts_lexize('seg_all', 'The Quick fox-trot.');
 ----
 ts_lexize
@@ -42,7 +42,7 @@ CREATE TEXT SEARCH DICTIONARY seg_graphic (
     BREAK = 'graphic'
 );
 
-query ?
+query
 SELECT ts_lexize('seg_graphic', 'The Quick fox-trot.');
 ----
 ts_lexize

@@ -43,7 +43,7 @@ statement ok
 COPY FROM DATABASE db9 TO db10;
 
 skipif pg-wire-extended
-query ?
+query
 SELECT db10.two_x_plus_y(x, y) AS z FROM db10.tbl;
 ----
 z

@@ -190,7 +190,7 @@ catalog::Column::Id ViewScanBindData::ColumnIdByName(
   std::string_view name) const {
   const auto& info = view->GetInfo();
   for (size_t i = 0; i < info.names.size(); ++i) {
-    if (info.names[i] == name) {
+    if (info.names[i].GetIdentifierName() == name) {
       return static_cast<catalog::Column::Id>(i);
     }
   }
@@ -202,7 +202,7 @@ std::string_view ViewScanBindData::ColumnNameById(
   const auto& info = view->GetInfo();
   const auto idx = static_cast<size_t>(col_id);
   if (idx < info.names.size()) {
-    return info.names[idx];
+    return info.names[idx].GetIdentifierName();
   }
   return {};
 }
@@ -339,16 +339,12 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
 
 void SearchScan::AppendSummary(
   const SereneDBScanBindData& bind,
-  duckdb::InsertionOrderPreservingMap<std::string>& out) const {
-  if (bind.inverted_index) {
-    const auto resolver = MakeFieldNameResolver(bind, *bind.inverted_index);
-    if (vector_scorer) {
-      const auto display =
-        MakeVectorFilter(*vector_scorer, stored_filter, vector_scorer->radius);
-      out.insert("Filter", irs::ToStringDemangled(*display, resolver));
-    } else if (stored_filter) {
-      out.insert("Filter", irs::ToStringDemangled(*stored_filter, resolver));
-    }
+  duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>& out) const {
+  if (!vector_scorer && stored_filter && bind.inverted_index) {
+    out.insert("Filter", duckdb::ExplainValue(irs::ToExplainNode(
+                           *stored_filter,
+                           MakeFieldNameResolver(bind, *bind.inverted_index),
+                           MakeFieldKindResolver(bind, *bind.inverted_index))));
   }
   if (count_only) {
     out.insert("Output", "row-count only");
@@ -363,6 +359,19 @@ void SearchScan::AppendSummary(
       absl::StrAppend(&topk_val, ", optimized");
     }
     out.insert("Top", std::move(topk_val));
+  }
+  if (vector_scorer) {
+    if (vector_scorer->radius != std::numeric_limits<float>::max()) {
+      out.insert("Radius", absl::StrCat(vector_scorer->radius));
+    }
+    out.insert("Dims", absl::StrCat(vector_scorer->query_vector.size()));
+    if (stored_filter && bind.inverted_index) {
+      out.insert(
+        "TextFilter",
+        duckdb::ExplainValue(irs::ToExplainNode(
+          *stored_filter, MakeFieldNameResolver(bind, *bind.inverted_index),
+          MakeFieldKindResolver(bind, *bind.inverted_index))));
+    }
   }
   if (EmitOffsets()) {
     auto cols =
@@ -505,20 +514,36 @@ std::string FormatProjections(const std::vector<ProjectionEntry>& entries,
   return out;
 }
 
-static duckdb::InsertionOrderPreservingMap<std::string> SereneDBScanToString(
-  duckdb::TableFunctionToStringInput& input) {
-  duckdb::InsertionOrderPreservingMap<std::string> result;
+static duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>
+SereneDBScanToValue(duckdb::TableFunctionToStringInput& input) {
+  duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> result;
   if (!input.bind_data) {
     return result;
   }
   auto& bind = input.bind_data->Cast<SereneDBScanBindData>();
+  const auto search_tag = [&]() -> const char* {
+    if (!bind.scan_source) {
+      return "";
+    }
+    if (bind.scan_source->Kind() == ScanSourceKind::Search &&
+        bind.scan_source->Cast<SearchScan>().vector_scorer) {
+      const auto& ss = bind.scan_source->Cast<SearchScan>();
+      if (!ss.score_top_k &&
+          ss.vector_scorer->radius != std::numeric_limits<float>::max()) {
+        return " (ANN range)";
+      }
+      return " (ANN)";
+    }
+    return "";
+  }();
   if (bind.table_entry) {
     const char* kind =
       bind.entry_kind == ScanEntryKind::BaseTable ? "Table" : "Index";
-    result.insert(kind, std::string{bind.table_entry->name});
+    result.insert(kind, absl::StrCat(bind.table_entry->name.GetIdentifierName(),
+                                     search_tag));
   } else {
     const char* kind = bind.IsViewBacked() ? "View" : "Table";
-    result.insert(kind, std::string{bind.RelationName()});
+    result.insert(kind, absl::StrCat(bind.RelationName(), search_tag));
   }
   const auto entries = BuildProjectionEntries(bind, input);
   bool has_index = false;
@@ -563,7 +588,7 @@ static void SetCommonCallbacks(duckdb::TableFunction& func) {
   // TODO: Better cardinality estimates
   func.cardinality = SereneDBScanCardinality;
   func.get_metrics = CommonScanGetMetrics;
-  func.to_string = SereneDBScanToString;
+  func.to_string_value = SereneDBScanToValue;
   // TODO: Implement dynamic_to_string
   // TODO: Implement table_scan_progress
   // TODO: Use get_partition_data for partition pruning of partitioned

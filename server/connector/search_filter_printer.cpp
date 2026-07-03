@@ -20,14 +20,10 @@
 
 #include "search_filter_printer.hpp"
 
-#include <absl/base/internal/endian.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
-#include <absl/strings/str_split.h>
 
-#include <duckdb/common/render_tree.hpp>
-#include <duckdb/common/tree_renderer/text_tree_renderer.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/automaton_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
@@ -50,7 +46,7 @@
 #include <iresearch/search/vector_similarity_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/search/wildcard_ngram_filter.hpp>
-#include <sstream>
+#include <iresearch/utils/numeric_utils.hpp>
 
 #include "basics/down_cast.h"
 #include "basics/exceptions.h"
@@ -58,7 +54,9 @@
 namespace irs {
 namespace {
 
+using duckdb::ExplainNode;
 using sdb::basics::downCast;
+using sdb::catalog::term_dict::Kind;
 
 // Prints a binary term byte-by-byte, escaping non-printable chars.
 template<typename Term>
@@ -74,37 +72,73 @@ std::string TermToString(Term term) {
   return s;
 }
 
-std::string TermToString(const std::vector<bstring>& terms) {
-  return absl::StrCat("( ",
-                      absl::StrJoin(terms, " ",
-                                    [](std::string* out, const bstring& t) {
-                                      absl::StrAppend(out, TermToString(t));
-                                    }),
-                      " )");
+// Decodes a NumericTokenizer term back to the number it encodes. The leading
+// byte is `shift + TYPE_MAGIC` with disjoint magic ranges per width, so the
+// value type is recovered from the term itself (which also disambiguates the
+// shared JSON-leaf numeric field).
+std::string DecodeNumericTerm(bytes_view term) {
+  namespace nu = irs::numeric_utils;
+  if (term.empty()) {
+    return "";
+  }
+  const auto marker = term[0];
+  if (marker < 0x20) {
+    return absl::StrCat(nu::numeric_traits<int32_t>::decode(term.data()));
+  }
+  if (marker < 0x40) {
+    return absl::StrCat(nu::numeric_traits<float>::decode(term.data()));
+  }
+  if (marker >= 0x60 && marker < 0xA0) {
+    return absl::StrCat(nu::numeric_traits<int64_t>::decode(term.data()));
+  }
+  if (marker >= 0xA0 && marker < 0xE0) {
+    return absl::StrCat(nu::numeric_traits<double>::decode(term.data()));
+  }
+  return TermToString(term);
+}
+
+std::string TermValue(bytes_view term, Kind kind) {
+  if (kind == Kind::Bool) {
+    return !term.empty() && term[0] ? "true" : "false";
+  }
+  if (sdb::catalog::term_dict::IsNumeric(kind)) {
+    return DecodeNumericTerm(term);
+  }
+  return TermToString(term);
+}
+
+std::string TermValue(const bstring& term, Kind kind) {
+  return TermValue(bytes_view{term}, kind);
+}
+
+// A granular-range bound is a vector of granularity levels; the first entry is
+// the exact (shift 0) value.
+std::string TermValue(const std::vector<bstring>& terms, Kind kind) {
+  if (terms.empty()) {
+    return "";
+  }
+  return TermValue(bytes_view{terms.front()}, kind);
 }
 
 template<typename T>
-std::string RangeToString(const SearchRange<T>& range) {
+std::string RangeValue(const SearchRange<T>& range, Kind kind) {
   std::string s;
   if (!range.min.empty()) {
-    absl::StrAppend(&s, " ",
-                    range.min_type == BoundType::Inclusive ? ">=" : ">",
-                    TermToString(range.min));
+    absl::StrAppend(&s, range.min_type == BoundType::Inclusive ? ">=" : ">",
+                    TermValue(range.min, kind));
   }
   if (!range.max.empty()) {
-    if (!range.min.empty()) {
+    if (!s.empty()) {
       absl::StrAppend(&s, ", ");
-    } else {
-      absl::StrAppend(&s, " ");
     }
     absl::StrAppend(&s, range.max_type == BoundType::Inclusive ? "<=" : "<",
-                    TermToString(range.max));
+                    TermValue(range.max, kind));
   }
   return s;
 }
 
-// Renders one phrase-part option variant. Shared between PHRASE and
-// WILDCARD_NGRAM filters which both hold ByPhraseOptions parts.
+// Renders one phrase-part option variant. Shared between Phrase and
+// WildcardNgram filters which both hold ByPhraseOptions parts.
 struct PhrasePartVisitor : util::Noncopyable {
   auto operator()(const ByTermOptions& opts) const {
     absl::StrAppend(out, "Term:", TermToString(opts.term));
@@ -198,67 +232,6 @@ std::string_view GeoShapeTypeName(sdb::geo::ShapeContainer::Type type) {
   return "?";
 }
 
-// Resolves a binary field id to a display name. IdentityField prints the raw
-// id; ToStringDemangled supplies a column-name resolver.
-using FieldResolver = std::function<std::string(field_id)>;
-
-std::string PhrasePartsString(const ByPhrase& filter) {
-  std::string s;
-  for (const auto& part : filter.options()) {
-    std::string part_str;
-    part.part.visit(PhrasePartVisitor{.out = &part_str});
-    absl::StrAppend(&s, part_str, "(", part.offs_max, ", ", part.offs_min, ")",
-                    "; ");
-  }
-  return s;
-}
-
-std::string WildcardNgramPartsString(const ByWildcardNgram& filter) {
-  std::string s;
-  for (const auto& phrase : filter.options().parts) {
-    absl::StrAppend(&s, "<");
-    for (const auto& part : phrase) {
-      std::string part_str;
-      part.part.visit(PhrasePartVisitor{.out = &part_str});
-      absl::StrAppend(&s, part_str, "(", part.offs_max, ", ", part.offs_min,
-                      ")", "; ");
-    }
-    absl::StrAppend(&s, ">; ");
-  }
-  return s;
-}
-
-std::string TermsListString(const ByTerms& filter) {
-  return absl::StrJoin(
-    filter.options().terms, "", [](std::string* o, const auto& term_boost) {
-      const auto& [term, boost] = term_boost;
-      absl::StrAppend(o, "['", TermToString(term), "', ", boost, "],");
-    });
-}
-
-std::string NgramListString(const ByNGramSimilarity& filter) {
-  return absl::StrJoin(filter.options().ngrams, "",
-                       [](std::string* o, const auto& ngram) {
-                         absl::StrAppend(o, TermToString(ngram));
-                       });
-}
-
-std::string GeoDistanceRangeString(const GeoDistanceFilter& filter) {
-  const auto& range = filter.options().range;
-  std::string s;
-  if (range.min_type == BoundType::Unbounded) {
-    absl::StrAppend(&s, "*");
-  } else {
-    absl::StrAppend(&s, range.min_type == BoundType::Inclusive ? ">=" : ">",
-                    range.min);
-  }
-  if (range.max_type != BoundType::Unbounded) {
-    absl::StrAppend(
-      &s, ", ", range.max_type == BoundType::Inclusive ? "<=" : "<", range.max);
-  }
-  return s;
-}
-
 std::string_view VectorMetricName(VectorMetric metric) {
   switch (metric) {
     case VectorMetric::L2Sqr:
@@ -269,328 +242,329 @@ std::string_view VectorMetricName(VectorMetric metric) {
       return "cosine";
     case VectorMetric::L1:
       return "l1";
-    default:
-      SDB_UNREACHABLE();
   }
+  return "?";
 }
 
-struct FilterNode {
-  std::string label;
-  std::string detail;
-  std::vector<FilterNode> children;
-};
+struct FilterPrinter {
+  const FieldNameResolver& name_of;
+  const FieldKindResolver& kind_of;
 
-FilterNode BuildNode(const Filter& filter, const FieldResolver& field) {
-  const auto& type = filter.type();
-  if (type == Type<All>::id()) {
-    return {.label = "ALL",
-            .detail = absl::StrCat(downCast<const All>(filter).Boost())};
+  std::string FieldName(field_id fid) const {
+    return name_of(sdb::catalog::Column::Id{fid});
   }
-  if (type == Type<And>::id()) {
-    FilterNode node{.label = "AND"};
-    for (const auto& sub : downCast<const And>(filter)) {
-      node.children.push_back(BuildNode(*sub, field));
+  Kind FieldKind(field_id fid) const {
+    return kind_of(sdb::catalog::Column::Id{fid});
+  }
+
+  std::string PhraseParts(const ByPhrase& filter) const {
+    std::string s;
+    for (const auto& part : filter.options()) {
+      std::string part_str;
+      part.part.visit(PhrasePartVisitor{.out = &part_str});
+      absl::StrAppend(&s, part_str, "(", part.offs_max, ", ", part.offs_min,
+                      ")", "; ");
+    }
+    return s;
+  }
+
+  std::string WildcardNgramParts(const ByWildcardNgram& filter) const {
+    std::string s;
+    for (const auto& phrase : filter.options().parts) {
+      absl::StrAppend(&s, "<");
+      for (const auto& part : phrase) {
+        std::string part_str;
+        part.part.visit(PhrasePartVisitor{.out = &part_str});
+        absl::StrAppend(&s, part_str, "(", part.offs_max, ", ", part.offs_min,
+                        ")", "; ");
+      }
+      absl::StrAppend(&s, ">; ");
+    }
+    return s;
+  }
+
+  std::string TermsList(const ByTerms& filter, Kind kind) const {
+    return absl::StrJoin(filter.options().terms, ", ",
+                         [&](std::string* o, const auto& term_boost) {
+                           const auto& [term, boost] = term_boost;
+                           absl::StrAppend(o, "'", TermValue(term, kind), "'");
+                           if (boost != kNoBoost) {
+                             absl::StrAppend(o, "(", boost, ")");
+                           }
+                         });
+  }
+
+  std::string NgramList(const ByNGramSimilarity& filter) const {
+    return absl::StrJoin(filter.options().ngrams, "",
+                         [](std::string* o, const auto& ngram) {
+                           absl::StrAppend(o, TermToString(ngram));
+                         });
+  }
+
+  std::string GeoDistanceRange(const GeoDistanceFilter& filter) const {
+    const auto& range = filter.options().range;
+    std::string s;
+    if (range.min_type == BoundType::Unbounded) {
+      absl::StrAppend(&s, "*");
+    } else {
+      absl::StrAppend(&s, range.min_type == BoundType::Inclusive ? ">=" : ">",
+                      range.min);
+    }
+    if (range.max_type != BoundType::Unbounded) {
+      absl::StrAppend(&s, ", ",
+                      range.max_type == BoundType::Inclusive ? "<=" : "<",
+                      range.max);
+    }
+    return s;
+  }
+
+  ExplainNode Build(const Filter& filter) const {
+    auto node = BuildNode(filter);
+    if (const auto boost = filter.BoostImpl(); boost != kNoBoost) {
+      node.attributes["Boost"] = absl::StrCat(boost);
     }
     return node;
   }
-  if (type == Type<Or>::id()) {
-    const auto& f = downCast<const Or>(filter);
-    FilterNode node{.label = f.min_match_count() != 1
-                               ? absl::StrCat("OR(", f.min_match_count(), ")")
-                               : "OR"};
-    for (const auto& sub : f) {
-      node.children.push_back(BuildNode(*sub, field));
+
+  ExplainNode BuildNode(const Filter& filter) const {
+    const auto& type = filter.type();
+    if (type == Type<All>::id()) {
+      return ExplainNode{"All"};
     }
-    return node;
-  }
-  if (type == Type<Not>::id()) {
-    SDB_THROW(sdb::ERROR_INTERNAL,
-              "Not filter must be lowered to Exclusion by the optimizer before "
-              "printing");
-  }
-  if (type == Type<Exclusion>::id()) {
-    const auto& f = downCast<const Exclusion>(filter);
-    const auto& incl = f.GetInclude();
-    const auto excludes = f.GetExcludes();
-    // A pure negation (implicit all-docs include) reads better as NOT[X].
-    if (incl == nullptr) {
-      FilterNode node{.label = "NOT"};
-      for (const auto& excl : excludes) {
-        node.children.push_back(BuildNode(*excl, field));
+    if (type == Type<And>::id()) {
+      ExplainNode node{"And"};
+      for (const auto& sub : downCast<const And>(filter)) {
+        node.children.push_back(Build(*sub));
       }
       return node;
     }
-    FilterNode node{.label = "EXCLUSION"};
-    node.children.push_back(BuildNode(*incl, field));
-    for (const auto& excl : excludes) {
-      node.children.push_back(BuildNode(*excl, field));
+    if (type == Type<Or>::id()) {
+      const auto& f = downCast<const Or>(filter);
+      ExplainNode node{"Or"};
+      if (f.min_match_count() != 1) {
+        node.attributes["Min Match"] = absl::StrCat(f.min_match_count());
+      }
+      for (const auto& sub : f) {
+        node.children.push_back(Build(*sub));
+      }
+      return node;
     }
+    if (type == Type<Not>::id()) {
+      SDB_THROW(sdb::ERROR_INTERNAL,
+                "Not filter must be lowered to Exclusion by the optimizer "
+                "before printing");
+    }
+    if (type == Type<Exclusion>::id()) {
+      const auto& f = downCast<const Exclusion>(filter);
+      const auto& incl = f.GetInclude();
+      const auto excludes = f.GetExcludes();
+      // A pure negation (implicit all-docs include) reads better as Not[X].
+      if (incl == nullptr) {
+        ExplainNode node{"Not"};
+        for (const auto& excl : excludes) {
+          node.children.push_back(Build(*excl));
+        }
+        return node;
+      }
+      ExplainNode node{"Exclusion"};
+      node.children.push_back(Build(*incl));
+      for (const auto& excl : excludes) {
+        node.children.push_back(Build(*excl));
+      }
+      return node;
+    }
+    if (type == Type<MixedBooleanFilter>::id()) {
+      const auto& f = downCast<const MixedBooleanFilter>(filter);
+      ExplainNode node{"Mixed"};
+      node.children.push_back(Build(f.GetRequired()));
+      node.children.push_back(Build(f.GetOptional()));
+      return node;
+    }
+    if (type == Type<ByTerm>::id()) {
+      const auto& f = downCast<const ByTerm>(filter);
+      ExplainNode node{"Term"};
+      node.attributes["Field"] = FieldName(f.field_id());
+      node.attributes["Value"] =
+        TermValue(f.options().term, FieldKind(f.field_id()));
+      return node;
+    }
+    if (type == Type<ByTerms>::id()) {
+      const auto& f = downCast<const ByTerms>(filter);
+      ExplainNode node{"Terms"};
+      node.attributes["Field"] = FieldName(f.field_id());
+      node.attributes["Values"] = TermsList(f, FieldKind(f.field_id()));
+      node.attributes["Min Match"] = absl::StrCat(f.options().min_match);
+      return node;
+    }
+    if (type == Type<ByRange>::id()) {
+      const auto& f = downCast<const ByRange>(filter);
+      ExplainNode node{"Range"};
+      node.attributes["Field"] = FieldName(f.field_id());
+      node.attributes["Range"] =
+        RangeValue(f.options().range, FieldKind(f.field_id()));
+      return node;
+    }
+    if (type == Type<ByGranularRange>::id()) {
+      const auto& f = downCast<const ByGranularRange>(filter);
+      ExplainNode node{"Granular Range"};
+      node.attributes["Field"] = FieldName(f.field_id());
+      node.attributes["Range"] =
+        RangeValue(f.options().range, FieldKind(f.field_id()));
+      return node;
+    }
+    if (type == Type<ByNGramSimilarity>::id()) {
+      const auto& f = downCast<const ByNGramSimilarity>(filter);
+      ExplainNode node{"Ngram Similarity"};
+      node.attributes["Field"] = FieldName(f.field_id());
+      node.attributes["Ngrams"] = NgramList(f);
+      node.attributes["Threshold"] = absl::StrCat(f.options().threshold);
+      return node;
+    }
+    if (type == Type<ByEditDistance>::id()) {
+      SDB_THROW(sdb::ERROR_INTERNAL,
+                "ByEditDistance filter must be lowered to "
+                "LevenshteinAutomatonFilter by the optimizer before printing");
+    }
+    if (type == Type<LevenshteinAutomatonFilter>::id()) {
+      const auto& f = downCast<const LevenshteinAutomatonFilter>(filter);
+      const auto& o = f.options();
+      ExplainNode node{"Levenshtein"};
+      node.attributes["Field"] = FieldName(f.field_id());
+      node.attributes["Target"] = TermToString(o.target);
+      node.attributes["Max Terms"] = absl::StrCat(o.max_terms);
+      return node;
+    }
+    if (type == Type<ByPrefix>::id()) {
+      const auto& f = downCast<const ByPrefix>(filter);
+      ExplainNode node{"Starts With"};
+      node.attributes["Field"] = FieldName(f.field_id());
+      node.attributes["Prefix"] = TermToString(f.options().term);
+      node.attributes["Limit"] = absl::StrCat(f.options().scored_terms_limit);
+      return node;
+    }
+    if (type == Type<ByNestedFilter>::id()) {
+      const auto& f = downCast<const ByNestedFilter>(filter);
+      auto& [parent, child, match, _] = f.options();
+      ExplainNode node{"Nested"};
+      if (auto* range = std::get_if<Match>(&match); range != nullptr) {
+        node.attributes["Match"] = absl::StrCat(range->min, ", ", range->max);
+      } else if (std::get_if<DocIteratorProvider>(&match) != nullptr) {
+        node.attributes["Match"] = "<Predicate>";
+      }
+      node.children.push_back(Build(*child));
+      return node;
+    }
+    if (type == Type<ByColumnExistence>::id()) {
+      ExplainNode node{"Exists"};
+      node.attributes["Field"] =
+        FieldName(downCast<const ByColumnExistence>(filter).id());
+      return node;
+    }
+    if (type == Type<ByWildcard>::id()) {
+      SDB_THROW(sdb::ERROR_INTERNAL,
+                "ByWildcard filter must be lowered to "
+                "ByTerm/ByPrefix/AutomatonFilter by the optimizer before "
+                "printing");
+    }
+    if (type == Type<ByRegexp>::id()) {
+      SDB_THROW(sdb::ERROR_INTERNAL,
+                "ByRegexp filter must be lowered to "
+                "ByTerm/ByPrefix/AutomatonFilter by the optimizer before "
+                "printing");
+    }
+    if (type == Type<AutomatonFilter>::id()) {
+      const auto& f = downCast<const AutomatonFilter>(filter);
+      ExplainNode node{"Automaton"};
+      node.attributes["Field"] = FieldName(f.field_id());
+      node.attributes["Pattern"] = TermToString(f.options().pattern);
+      return node;
+    }
+    if (type == Type<ByWildcardNgram>::id()) {
+      const auto& f = downCast<const ByWildcardNgram>(filter);
+      ExplainNode node{"Wildcard Ngram"};
+      node.attributes["Field"] = FieldName(f.field_id());
+      node.attributes["Token"] = TermToString(f.options().token);
+      node.attributes["Has Pos"] = f.options().has_pos ? "true" : "false";
+      node.attributes["Parts"] = WildcardNgramParts(f);
+      return node;
+    }
+    if (type == Type<Empty>::id()) {
+      return ExplainNode{"Empty"};
+    }
+    if (type == Type<ByPhrase>::id()) {
+      const auto& f = downCast<const ByPhrase>(filter);
+      ExplainNode node{"Phrase"};
+      node.attributes["Field"] = FieldName(f.field_id());
+      node.attributes["Parts"] = PhraseParts(f);
+      return node;
+    }
+    if (type == Type<GeoFilter>::id()) {
+      const auto& f = downCast<const GeoFilter>(filter);
+      ExplainNode node{"Geo"};
+      node.attributes["Field"] = FieldName(f.field_id());
+      node.attributes["Op"] = std::string{GeoFilterTypeName(f.options().type)};
+      node.attributes["Shape"] =
+        std::string{GeoShapeTypeName(f.options().shape.type())};
+      return node;
+    }
+    if (type == Type<GeoDistanceFilter>::id()) {
+      const auto& f = downCast<const GeoDistanceFilter>(filter);
+      ExplainNode node{"Geo Distance"};
+      node.attributes["Field"] = FieldName(f.field_id());
+      node.attributes["Range"] = GeoDistanceRange(f);
+      return node;
+    }
+    if (type == Type<ByVectorSimilarity>::id()) {
+      const auto& f = downCast<const ByVectorSimilarity>(filter);
+      const auto& o = f.options();
+      ExplainNode node{"Vector KNN"};
+      node.attributes["Field"] = FieldName(f.field_id());
+      node.attributes["Metric"] = std::string{VectorMetricName(o.metric)};
+      node.attributes["Dims"] = absl::StrCat(o.query.size());
+      if (o.inner) {
+        node.children.push_back(Build(*o.inner));
+      }
+      return node;
+    }
+    if (type == Type<ByRadius>::id()) {
+      const auto& f = downCast<const ByRadius>(filter);
+      const auto& o = f.options();
+      ExplainNode node{"Vector Range"};
+      node.attributes["Field"] = FieldName(f.field_id());
+      node.attributes["Metric"] = std::string{VectorMetricName(o.metric)};
+      node.attributes["Dims"] = absl::StrCat(o.query.size());
+      node.attributes["Radius"] =
+        absl::StrCat(o.inclusive ? "<= " : "< ", o.radius);
+      if (o.inner) {
+        node.children.push_back(Build(*o.inner));
+      }
+      return node;
+    }
+    if (type == Type<ProxyFilter>::id()) {
+      return Build(downCast<const ProxyFilter>(filter).inner());
+    }
+    ExplainNode node{"Unknown"};
+    node.attributes["Type"] = std::string{type().name()};
     return node;
   }
-  if (type == Type<MixedBooleanFilter>::id()) {
-    const auto& f = downCast<const MixedBooleanFilter>(filter);
-    FilterNode node{.label = "MIXED"};
-    node.children.push_back(BuildNode(f.GetRequired(), field));
-    node.children.push_back(BuildNode(f.GetOptional(), field));
-    return node;
-  }
-  if (type == Type<ByTerm>::id()) {
-    const auto& f = downCast<const ByTerm>(filter);
-    return {.label = "Term",
-            .detail = absl::StrCat(field(f.field_id()), " = ",
-                                   TermToString(f.options().term))};
-  }
-  if (type == Type<ByTerms>::id()) {
-    const auto& f = downCast<const ByTerms>(filter);
-    return {
-      .label = "TERMS",
-      .detail = absl::StrCat(field(f.field_id()), " {", TermsListString(f),
-                             "} min_match=", f.options().min_match)};
-  }
-  if (type == Type<ByRange>::id()) {
-    const auto& f = downCast<const ByRange>(filter);
-    return {.label = "Range",
-            .detail = absl::StrCat(field(f.field_id()),
-                                   RangeToString(f.options().range))};
-  }
-  if (type == Type<ByGranularRange>::id()) {
-    const auto& f = downCast<const ByGranularRange>(filter);
-    return {.label = "GranularRange",
-            .detail = absl::StrCat(field(f.field_id()),
-                                   RangeToString(f.options().range))};
-  }
-  if (type == Type<ByNGramSimilarity>::id()) {
-    const auto& f = downCast<const ByNGramSimilarity>(filter);
-    return {.label = "NGRAM_SIMILARITY",
-            .detail =
-              absl::StrCat(field(f.field_id()), " ngrams=", NgramListString(f),
-                           " threshold=", f.options().threshold)};
-  }
-  if (type == Type<ByEditDistance>::id()) {
-    SDB_THROW(sdb::ERROR_INTERNAL,
-              "ByEditDistance filter must be lowered to "
-              "LevenshteinAutomatonFilter by the optimizer before printing");
-  }
-  if (type == Type<LevenshteinAutomatonFilter>::id()) {
-    const auto& f = downCast<const LevenshteinAutomatonFilter>(filter);
-    const auto& o = f.options();
-    return {
-      .label = "LEVENSHTEIN_AUTOMATON",
-      .detail = absl::StrCat(field(f.field_id()), " '", TermToString(o.target),
-                             "' max_terms=", o.max_terms)};
-  }
-  if (type == Type<ByPrefix>::id()) {
-    const auto& f = downCast<const ByPrefix>(filter);
-    return {.label = "STARTS_WITH",
-            .detail = absl::StrCat(field(f.field_id()), " '",
-                                   TermToString(f.options().term),
-                                   "' limit=", f.options().scored_terms_limit)};
-  }
-  if (type == Type<ByNestedFilter>::id()) {
-    const auto& f = downCast<const ByNestedFilter>(filter);
-    auto& [parent, child, match, _] = f.options();
-    std::string match_str;
-    if (auto* range = std::get_if<Match>(&match); range != nullptr) {
-      match_str = absl::StrCat(range->min, ", ", range->max);
-    } else if (std::get_if<DocIteratorProvider>(&match) != nullptr) {
-      match_str = "<Predicate>";
-    }
-    FilterNode node{.label = absl::StrCat("NESTED match=[", match_str, "]")};
-    node.children.push_back(BuildNode(*child, field));
-    return node;
-  }
-  if (type == Type<ByColumnExistence>::id()) {
-    return {.label = "EXISTS",
-            .detail = field(downCast<const ByColumnExistence>(filter).id())};
-  }
-  if (type == Type<ByWildcard>::id()) {
-    SDB_THROW(sdb::ERROR_INTERNAL,
-              "ByWildcard filter must be lowered to "
-              "ByTerm/ByPrefix/AutomatonFilter by the optimizer before "
-              "printing");
-  }
-  if (type == Type<ByRegexp>::id()) {
-    SDB_THROW(sdb::ERROR_INTERNAL,
-              "ByRegexp filter must be lowered to "
-              "ByTerm/ByPrefix/AutomatonFilter by the optimizer before "
-              "printing");
-  }
-  if (type == Type<AutomatonFilter>::id()) {
-    const auto& f = downCast<const AutomatonFilter>(filter);
-    return {.label = "AUTOMATON",
-            .detail = absl::StrCat(field(f.field_id()), " ",
-                                   TermToString(f.options().pattern))};
-  }
-  if (type == Type<ByWildcardNgram>::id()) {
-    const auto& f = downCast<const ByWildcardNgram>(filter);
-    return {.label = "WILDCARD_NGRAM",
-            .detail = absl::StrCat(
-              field(f.field_id()), " '", TermToString(f.options().token),
-              "' has_pos=", f.options().has_pos, " parts=[",
-              WildcardNgramPartsString(f), "]")};
-  }
-  if (type == Type<Empty>::id()) {
-    return {.label = "EMPTY"};
-  }
-  if (type == Type<ByPhrase>::id()) {
-    const auto& f = downCast<const ByPhrase>(filter);
-    return {.label = "PHRASE",
-            .detail = absl::StrCat(field(f.field_id()), " = <",
-                                   PhrasePartsString(f), ">")};
-  }
-  if (type == Type<GeoFilter>::id()) {
-    const auto& f = downCast<const GeoFilter>(filter);
-    return {.label = "GEO",
-            .detail = absl::StrCat(
-              field(f.field_id()), " op=", GeoFilterTypeName(f.options().type),
-              " shape=", GeoShapeTypeName(f.options().shape.type()))};
-  }
-  if (type == Type<GeoDistanceFilter>::id()) {
-    const auto& f = downCast<const GeoDistanceFilter>(filter);
-    return {.label = "GEO_DISTANCE",
-            .detail = absl::StrCat(field(f.field_id()), " ",
-                                   GeoDistanceRangeString(f))};
-  }
-  if (type == Type<ByVectorSimilarity>::id()) {
-    const auto& f = downCast<const ByVectorSimilarity>(filter);
-    const auto& o = f.options();
-    FilterNode node{.label = "VECTOR_KNN",
-                    .detail = absl::StrCat(field(f.field_id()), " metric=",
-                                           VectorMetricName(o.metric),
-                                           " dims=", o.query.size())};
-    if (o.inner) {
-      node.children.push_back(BuildNode(*o.inner, field));
-    }
-    return node;
-  }
-  if (type == Type<ByRadius>::id()) {
-    const auto& f = downCast<const ByRadius>(filter);
-    const auto& o = f.options();
-    FilterNode node{
-      .label = "VECTOR_RANGE",
-      .detail = absl::StrCat(
-        field(f.field_id()), " metric=", VectorMetricName(o.metric),
-        " dims=", o.query.size(), o.inclusive ? " <= " : " < ", o.radius)};
-    if (o.inner) {
-      node.children.push_back(BuildNode(*o.inner, field));
-    }
-    return node;
-  }
-  if (type == Type<ProxyFilter>::id()) {
-    return BuildNode(downCast<const ProxyFilter>(filter).inner(), field);
-  }
-  return {.label = "Unknown", .detail = std::string{type().name()}};
+};
+
+std::string IdentityField(sdb::catalog::Column::Id id) {
+  return absl::StrCat(static_cast<irs::field_id>(id));
 }
 
-void ComputeSize(const FilterNode& node, duckdb::idx_t& width,
-                 duckdb::idx_t& height) {
-  if (node.children.empty()) {
-    width = 1;
-    height = 1;
-    return;
-  }
-  width = 0;
-  height = 0;
-  for (const auto& child : node.children) {
-    duckdb::idx_t cw = 0;
-    duckdb::idx_t ch = 0;
-    ComputeSize(child, cw, ch);
-    width += cw;
-    height = std::max(height, ch);
-  }
-  ++height;
-}
-
-duckdb::unique_ptr<duckdb::RenderTreeNode> MakeRenderNode(
-  const FilterNode& node) {
-  duckdb::InsertionOrderPreservingMap<std::string> extra;
-  if (!node.detail.empty()) {
-    // A "__"-prefixed key renders the value with no "Key:" prefix.
-    extra.insert("__detail__", node.detail);
-  }
-  return duckdb::make_uniq<duckdb::RenderTreeNode>(node.label,
-                                                   std::move(extra));
-}
-
-duckdb::idx_t FillTree(duckdb::RenderTree& tree, const FilterNode& node,
-                       duckdb::idx_t x, duckdb::idx_t y) {
-  auto render_node = MakeRenderNode(node);
-  if (node.children.empty()) {
-    tree.SetNode(x, y, std::move(render_node));
-    return 1;
-  }
-  duckdb::idx_t width = 0;
-  for (const auto& child : node.children) {
-    const auto child_x = x + width;
-    const auto child_y = y + 1;
-    render_node->AddChildPosition(child_x, child_y);
-    width += FillTree(tree, child, child_x, child_y);
-  }
-  tree.SetNode(x, y, std::move(render_node));
-  return width;
-}
-
-size_t DisplayWidth(std::string_view s) {
-  size_t n = 0;
-  for (unsigned char c : s) {
-    if ((c & 0xC0) != 0x80) {
-      ++n;
-    }
-  }
-  return n;
-}
-
-std::string RenderBoxTree(const FilterNode& root) {
-  duckdb::idx_t width = 0;
-  duckdb::idx_t height = 0;
-  ComputeSize(root, width, height);
-
-  duckdb::RenderTree tree(width, height);
-  FillTree(tree, root, 0, 0);
-
-  duckdb::TextTreeRendererConfig config;
-  config.node_render_width = 21;
-  duckdb::TextTreeRenderer renderer{config};
-
-  std::ostringstream ss;
-  renderer.ToStream(tree, ss);
-  std::vector<std::string> lines = absl::StrSplit(ss.str(), '\n');
-  while (!lines.empty() && lines.back().empty()) {
-    lines.pop_back();
-  }
-
-  size_t inner = 0;
-  for (const auto& line : lines) {
-    inner = std::max(inner, DisplayWidth(line));
-  }
-  std::string bound;
-  bound.reserve(inner * sizeof("─"));
-  for (size_t i = 0; i < inner; ++i) {
-    absl::StrAppend(&bound, "─");
-  }
-  std::string out = absl::StrCat("┌", bound, "┐");
-  for (const auto& line : lines) {
-    absl::StrAppend(&out, "\n│", line,
-                    std::string(inner - DisplayWidth(line), ' '), "│");
-  }
-  absl::StrAppend(&out, "\n└", bound, "┘");
-  return out;
-}
-
-std::string IdentityField(field_id id) { return absl::StrCat(id); }
+Kind UnknownKind(sdb::catalog::Column::Id) { return Kind::Unsupported; }
 
 }  // namespace
 
-std::string ToString(const Filter& f) {
-  return RenderBoxTree(BuildNode(f, IdentityField));
+duckdb::ExplainNode ToExplainNode(const Filter& f) {
+  return ToExplainNode(f, IdentityField, UnknownKind);
 }
 
-std::string ToStringDemangled(
-  const Filter& f,
-  const std::function<std::string(sdb::catalog::Column::Id)>& col_name) {
-  return RenderBoxTree(BuildNode(f, [&](field_id id) -> std::string {
-    return std::string{col_name(sdb::catalog::Column::Id{id})};
-  }));
+duckdb::ExplainNode ToExplainNode(const Filter& f,
+                                  const FieldNameResolver& name_of,
+                                  const FieldKindResolver& kind_of) {
+  return FilterPrinter{.name_of = name_of, .kind_of = kind_of}.Build(f);
 }
 
 }  // namespace irs

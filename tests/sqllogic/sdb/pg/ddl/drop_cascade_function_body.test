@@ -191,8 +191,8 @@ INSERT INTO ml_paper_runs (tag) VALUES ('vedernikoff_run1');
 query
 SELECT id, tag FROM ml_paper_runs;
 ----
-id    tag
-1001  vedernikoff_run1
+id	tag
+1001	vedernikoff_run1
 
 
 # Plain DROP FUNCTION must be refused -- ml_paper_runs.id's DEFAULT
@@ -214,9 +214,9 @@ INSERT INTO ml_paper_runs (tag) VALUES ('vedernikoff_run2');
 query
 SELECT id, tag FROM ml_paper_runs ORDER BY tag;
 ----
-id    tag
-1001  vedernikoff_run1
-NULL  vedernikoff_run2
+id	tag
+1001	vedernikoff_run1
+NULL	vedernikoff_run2
 
 
 statement ok

@@ -1309,3 +1309,13 @@ SELECT pg_backend_pid();
 ----
 pg_backend_pid
 <slt:ignore>
+
+
+# unnamed trailing function parameters use PG-style column1, column2 naming
+
+skipif postgres
+query
+SELECT DISTINCT parameters FROM duckdb_functions() WHERE function_name = 'arg_max' AND len(parameters) = 3;
+----
+parameters
+{arg,val,column3}

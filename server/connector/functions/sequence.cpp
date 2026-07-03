@@ -47,18 +47,20 @@ namespace {
 std::shared_ptr<catalog::Sequence> ResolveSequence(
   duckdb::ClientContext& context, std::string_view qualified) {
   auto qname = duckdb::QualifiedName::Parse(std::string{qualified});
-  std::string_view schema_name =
-    qname.schema.empty() ? StaticStrings::kPublic : qname.schema;
+  std::string_view schema_name = qname.Schema().empty()
+                                   ? StaticStrings::kPublic
+                                   : qname.Schema().GetIdentifierName();
 
   auto& conn_ctx = GetSereneDBContext(context);
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  auto snapshot = conn_ctx.CatalogSnapshot();
   auto database_id = conn_ctx.GetDatabaseId();
   auto schema = snapshot->GetSchema(database_id, schema_name);
   if (!schema) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                     ERR_MSG("schema \"", schema_name, "\" does not exist"));
   }
-  auto seq = snapshot->GetSequence(database_id, schema->GetId(), qname.name);
+  auto seq = snapshot->GetSequence(database_id, schema->GetId(),
+                                   qname.Name().GetIdentifierName());
   if (!seq) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("relation \"", qualified, "\" does not exist"));
@@ -232,7 +234,7 @@ void RegisterSequenceFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader{db, "serenedb"};
   {
     duckdb::ScalarFunction func{
-      std::string{kNextval},
+      duckdb::Identifier{kNextval},
       {duckdb::LogicalType::VARCHAR},
       duckdb::LogicalType::BIGINT,
       NextvalFunction,
@@ -242,7 +244,7 @@ void RegisterSequenceFunctions(duckdb::DatabaseInstance& db) {
   }
   {
     duckdb::ScalarFunction func{
-      std::string{kCurrval},
+      duckdb::Identifier{kCurrval},
       {duckdb::LogicalType::VARCHAR},
       duckdb::LogicalType::BIGINT,
       CurrvalFunction,
@@ -252,7 +254,7 @@ void RegisterSequenceFunctions(duckdb::DatabaseInstance& db) {
   }
   {
     duckdb::ScalarFunction func{
-      std::string{kSetval},
+      duckdb::Identifier{kSetval},
       {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BIGINT},
       duckdb::LogicalType::BIGINT,
       Setval2Function,
@@ -262,7 +264,7 @@ void RegisterSequenceFunctions(duckdb::DatabaseInstance& db) {
   }
   {
     duckdb::ScalarFunction func{
-      std::string{kSetval},
+      duckdb::Identifier{kSetval},
       {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BIGINT,
        duckdb::LogicalType::BOOLEAN},
       duckdb::LogicalType::BIGINT,

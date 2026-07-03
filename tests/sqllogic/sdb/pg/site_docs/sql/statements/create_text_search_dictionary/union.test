@@ -12,7 +12,7 @@ CREATE TEXT SEARCH DICTIONARY union_dict (
     TOKENIZER2_MAXGRAM = 2
 );
 
-query ?
+query
 SELECT ts_lexize('union_dict', 'abcd');
 ----
 ts_lexize
@@ -31,7 +31,7 @@ CREATE TEXT SEARCH DICTIONARY union_word_phrase (
     TOKENIZER2_TEMPLATE = 'keyword'
 );
 
-query ?
+query
 SELECT ts_lexize('union_word_phrase', 'hello world');
 ----
 ts_lexize

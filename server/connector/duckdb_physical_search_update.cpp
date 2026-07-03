@@ -86,7 +86,7 @@ duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<SearchUpdateGlobalState>();
   auto& conn_ctx = GetSereneDBContext(context);
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  auto snapshot = conn_ctx.CatalogSnapshot();
 
   state->table_id = _table->GetId();
 

@@ -8,7 +8,7 @@ CREATE TEXT SEARCH DICTIONARY path_dict (
     delimiter = '/'
 );
 
-query ?
+query
 SELECT ts_lexize('path_dict', '/usr/local/bin');
 ----
 ts_lexize
@@ -25,7 +25,7 @@ CREATE TEXT SEARCH DICTIONARY domain_dict (
     reverse = true
 );
 
-query ?
+query
 SELECT ts_lexize('domain_dict', 'docs.serenedb.com');
 ----
 ts_lexize
@@ -42,7 +42,7 @@ CREATE TEXT SEARCH DICTIONARY path_skip (
     skip = 1
 );
 
-query ?
+query
 SELECT ts_lexize('path_skip', '/usr/local/bin');
 ----
 ts_lexize

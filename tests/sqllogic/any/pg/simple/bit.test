@@ -37,8 +37,8 @@ b
 query
 SELECT '111'::BIT(3) AS ones, '000'::BIT(3) AS zeros
 ----
-ones zeros
-111 000
+ones	zeros
+111	000
 
 
 # stored round-trip (value flows through the result serializer per row)
@@ -56,7 +56,7 @@ INSERT INTO bit_rt VALUES
 query
 SELECT id, b FROM bit_rt ORDER BY id
 ----
-id b
-1 0000000001
-2 1011001110
-3 1111111111
+id	b
+1	0000000001
+2	1011001110
+3	1111111111

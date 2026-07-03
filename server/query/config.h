@@ -28,7 +28,10 @@
 #include <string>
 #include <string_view>
 
+#include "basics/assert.h"
 #include "basics/containers/node_hash_map.h"
+#include "basics/errors.h"
+#include "basics/exceptions.h"
 #include "catalog/types.h"
 
 namespace duckdb {
@@ -98,7 +101,27 @@ class Config {
 
   void DropCatalogSnapshot() { _snapshot.reset(); }
 
-  std::shared_ptr<const catalog::Snapshot> EnsureCatalogSnapshot() const;
+  // Installs the snapshot a prepared statement was bound against, so its plan
+  // executes against the same catalog view that pinned its bound entries.
+  void SetCatalogSnapshot(std::shared_ptr<const catalog::Snapshot> snapshot) {
+    _snapshot = std::move(snapshot);
+  }
+
+  // Acquires the statement's catalog snapshot. Called only at statement
+  // boundaries on the connection thread (OnStatementBegin, the wire message
+  // handlers that bind or serialize before a query lifecycle starts); all
+  // other code reads via CatalogSnapshot().
+  std::shared_ptr<const catalog::Snapshot> AcquireCatalogSnapshot();
+
+  // Read-only access to the snapshot acquired for the current statement.
+  // Never acquires: a lazy first-acquire from an executor worker would race
+  // the connection thread. The check stays in release builds -- a scope hole
+  // must surface as an error, not a null dereference.
+  const std::shared_ptr<const catalog::Snapshot>& CatalogSnapshot() const {
+    SDB_ENSURE(_snapshot, ERROR_INTERNAL,
+               "no catalog snapshot acquired for the current statement");
+    return _snapshot;
+  }
 
   // Returns the current value of a setting, or std::nullopt if not found.
   std::optional<std::string> Get(std::string_view key) const;
@@ -148,7 +171,7 @@ class Config {
   // hold string_views that outlive the caller.
   // TODO: use FlatHashMap, there're now problems with ASAN build
   containers::NodeHashMap<std::string, TxnVariable> _transaction;
-  mutable std::shared_ptr<const catalog::Snapshot> _snapshot;
+  std::shared_ptr<const catalog::Snapshot> _snapshot;
   duckdb::ClientContext& _client_ctx;
 };
 

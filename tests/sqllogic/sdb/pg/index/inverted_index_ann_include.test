@@ -50,38 +50,19 @@ EXPLAIN SELECT label, tag FROM vec_t_idx
   ORDER BY emb <-> [1, 0, 0]::FLOAT[3] LIMIT 1;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           TOP_N           │
-│    ────────────────────   │
-│           Top: 1          │
-│      Order By: #2 ASC     │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│      Index: vec_t_idx     │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││     VECTOR_KNN    ││  │
-│  ││    ────────────   ││  │
-│  ││ emb metric=l2 dims││  │
-│  ││         =3        ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│           Top: 1          │
-│                           │
-│        Projections:       │
-│           label           │
-│            tag            │
-│  sdb_inverted_index_score │
-│                           │
-│          ~4 rows          │
-└───────────────────────────┘
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 1                                 │
+│ Order By: #2 ASC                       │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: vec_t_idx (ANN)                 │
+│ Top: 1                                 │
+│ Dims: 3                                │
+│ Projections: label, tag,               │
+│              sdb_inverted_index_score  │
+│ ~4 rows                                │
+╰────────────────────────────────────────╯
 
 
 query
@@ -99,40 +80,21 @@ EXPLAIN SELECT pk, label, body FROM vec_t_idx
   ORDER BY emb <-> [10, 10, 10]::FLOAT[3] LIMIT 1;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           TOP_N           │
-│    ────────────────────   │
-│           Top: 1          │
-│      Order By: #3 ASC     │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│      Index: vec_t_idx     │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││     VECTOR_KNN    ││  │
-│  ││    ────────────   ││  │
-│  ││ emb metric=l2 dims││  │
-│  ││         =3        ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│           Top: 1          │
-│                           │
-│        Projections:       │
-│           pk (l)          │
-│         label (i)         │
-│          body (l)         │
-│  sdb_inverted_index_score │
-│                           │
-│          ~4 rows          │
-└───────────────────────────┘
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 1                                 │
+│ Order By: #3 ASC                       │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: vec_t_idx (ANN)                 │
+│ Lookup: table                          │
+│ Top: 1                                 │
+│ Dims: 3                                │
+│ Projections: pk (l), label (i),        │
+│              body (l),                 │
+│              sdb_inverted_index_score  │
+│ ~4 rows                                │
+╰────────────────────────────────────────╯
 
 
 query

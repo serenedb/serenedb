@@ -41,7 +41,7 @@ ViewFileIndexSourceBase::ViewFileIndexSourceBase(
   if (!_fast_path.projection_columns.empty()) {
     name_to_file_col.reserve(multi_bd.names.size());
     for (duckdb::idx_t i = 0; i < multi_bd.names.size(); ++i) {
-      name_to_file_col.emplace(multi_bd.names[i], i);
+      name_to_file_col.emplace(multi_bd.names[i].GetIdentifierName(), i);
     }
   }
   _column_indexes.reserve(projected_columns.size());

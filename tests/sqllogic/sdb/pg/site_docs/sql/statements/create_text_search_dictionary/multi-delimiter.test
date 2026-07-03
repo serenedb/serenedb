@@ -18,7 +18,7 @@ CREATE TEXT SEARCH DICTIONARY tok_multi_delim (
     delimiters = '":", ";", " "'
 );
 
-query ?
+query
 SELECT ts_lexize('tok_multi_delim', 'key:value; key2:value2');
 ----
 ts_lexize

@@ -32,21 +32,24 @@
 #include "basics/debugging.h"
 #include "catalog/catalog.h"
 #include "catalog/store/store.h"
+#include "connector/duckdb_client_state.h"
+#include "pg/progress_tracker.h"
 
 namespace sdb::connector {
 namespace {
 
-// Wraps the nested PhysicalInsert's sink state and owns the second __sdb_store
-// transaction the whole load runs under. The destructor is the abort/error
-// safety net: if Finalize never ran, it pops the scoped override, rolls back
-// the second transaction, and drops the tombstoned catalog table.
+// Wraps the nested PhysicalInsert's sink state and holds the second
+// __sdb_store transaction the whole load runs under. Abort/error compensation
+// is NOT done here: a sink state dies with the cached physical plan (possibly
+// long after the statement's MetaTransaction), so it must never touch the
+// transaction machinery. The abort path is the transaction_abort_cleanup hook
+// registered on SereneDBClientState, run at TransactionPreRollback while the
+// MetaTransaction is alive.
 struct CTASGlobalSinkState final : public duckdb::GlobalSinkState {
-  CTASGlobalSinkState(duckdb::MetaTransaction& meta,
-                      duckdb::AttachedDatabase& store_db, ObjectId database_id,
+  CTASGlobalSinkState(duckdb::AttachedDatabase& store_db, ObjectId database_id,
                       std::string database_name, std::string schema_name,
                       std::string table_name)
-    : meta(meta),
-      store_db(store_db),
+    : store_db(store_db),
       database_id(database_id),
       database_name(std::move(database_name)),
       schema_name(std::move(schema_name)),
@@ -60,30 +63,6 @@ struct CTASGlobalSinkState final : public duckdb::GlobalSinkState {
                          : source_max_threads;
   }
 
-  ~CTASGlobalSinkState() final {
-    if (override_pushed) {
-      try {
-        meta.PopTransactionOverride(store_db);
-      } catch (...) {
-      }
-      override_pushed = false;
-    }
-    if (second_txn && !committed) {
-      try {
-        store_db.GetTransactionManager().RollbackTransaction(*second_txn);
-      } catch (...) {
-      }
-    }
-    if (table_created && !finalized) {
-      try {
-        std::ignore = catalog::GetCatalog().DropTable(
-          database_name, schema_name, table_name, true);
-      } catch (...) {
-      }
-    }
-  }
-
-  duckdb::MetaTransaction& meta;
   duckdb::AttachedDatabase& store_db;
   // Valid until committed/rolled back; the manager destroys it afterwards.
   duckdb::optional_ptr<duckdb::DuckTransaction> second_txn;
@@ -92,15 +71,14 @@ struct CTASGlobalSinkState final : public duckdb::GlobalSinkState {
   std::string schema_name;
   std::string table_name;
   duckdb::unique_ptr<duckdb::GlobalSinkState> insert_gstate;
-  bool table_created = false;
-  bool override_pushed = false;
-  bool committed = false;
   bool finalized = false;
   // Summed in Sink (operator-agnostic: the nested batch/insert global-state
   // types are unrelated and BatchInsertGlobalState is not header-visible). A
   // CTAS into a fresh store table never drops rows, so the chunk-size sum is
   // the exact inserted count.
   std::atomic<duckdb::idx_t> insert_count{0};
+
+  pg::ProgressReporter* progress = nullptr;
 };
 
 struct CTASSourceState final : public duckdb::GlobalSourceState {
@@ -156,11 +134,10 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   }
 
   auto& store_db = *duckdb::DatabaseManager::Get(context).GetDatabase(
-    context, std::string{catalog::kStoreDatabaseName});
+    context, duckdb::Identifier{catalog::kStoreDatabaseName});
   auto& meta = duckdb::MetaTransaction::Get(context);
   auto state = duckdb::make_uniq<CTASGlobalSinkState>(
-    meta, store_db, _database_id, _database_name, _schema_name, _options.name);
-  state->table_created = true;
+    store_db, _database_id, _database_name, _schema_name, _options.name);
 
   auto& second_txn = store_db.GetTransactionManager()
                        .StartTransaction(context)
@@ -173,13 +150,31 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   // life of the pipeline. Pushed before the nested sink state is built, so the
   // CTAS-variant insert creates the store table under the second transaction.
   meta.PushTransactionOverride(store_db, second_txn);
-  state->override_pushed = true;
   // Mark __sdb_store as the modified database so creating the store catalog
   // entry passes DuckSchemaEntry's modified-database check. The facade catalog
   // forwards its writes, so it never occupies the single-writable-db slot.
   meta.ModifyDatabase(store_db,
                       duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY |
                         duckdb::DatabaseModificationType::INSERT_DATA);
+  auto sdb_state =
+    context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);
+  SDB_ASSERT(sdb_state);
+  SDB_ASSERT(!sdb_state->transaction_abort_cleanup);
+  // Abort path: run while the MetaTransaction is alive. The override slot is
+  // separate from the meta's transaction map, so the meta's own rollback never
+  // rolls the side transaction back -- this hook is its sole owner.
+  sdb_state->transaction_abort_cleanup =
+    [&store_db, &second_txn, database_name = _database_name,
+     schema_name = _schema_name,
+     table_name = _options.name](duckdb::MetaTransaction& meta_txn) {
+      meta_txn.PopTransactionOverride(store_db);
+      store_db.GetTransactionManager().RollbackTransaction(second_txn);
+      std::ignore = catalog::GetCatalog().DropTable(database_name, schema_name,
+                                                    table_name, true);
+    };
+  sdb_state->EnsureCreateTableAsProgress(_database_id, _table_id,
+                                         estimated_cardinality);
+  state->progress = sdb_state->progress.get();
   state->insert_gstate = _insert.GetGlobalSinkState(context);
   return state;
 }
@@ -195,6 +190,15 @@ duckdb::SinkResultType SereneDBPhysicalCTAS::Sink(
   duckdb::OperatorSinkInput& input) const {
   auto& gstate = input.global_state.Cast<CTASGlobalSinkState>();
   gstate.insert_count.fetch_add(chunk.size(), std::memory_order_relaxed);
+  if (gstate.progress) {
+    gstate.progress->Add(pg::create_table_as_progress::Param::TuplesProcessed,
+                         static_cast<int64_t>(chunk.size()));
+    gstate.progress->Add(pg::create_table_as_progress::Param::BytesProcessed,
+                         static_cast<int64_t>(chunk.GetAllocationSize()));
+    SDB_IF_FAILURE("pause_ctas_mid_ingest") {
+      sdb::WaitWhileFailurePointDebugging("pause_ctas_mid_ingest");
+    }
+  }
   duckdb::OperatorSinkInput insert_input{
     *gstate.insert_gstate, input.local_state, input.interrupt_state};
   return _insert.Sink(context, chunk, insert_input);
@@ -231,16 +235,29 @@ duckdb::SinkFinalizeType SereneDBPhysicalCTAS::Finalize(
   // tombstone-named; a crash here must drop it on recovery.
   SDB_IF_FAILURE("crash_sst_sink_after_ingest") { SDB_IMMEDIATE_ABORT(); }
 
-  gstate.meta.PopTransactionOverride(gstate.store_db);
-  gstate.override_pushed = false;
+  if (gstate.progress) {
+    gstate.progress->SetPhase(pg::create_table_as_progress::Phase::Committing);
+  }
+  // Commit point: from here the side transaction is consumed either way, so
+  // the abort hook must not fire anymore (a failed commit already rolled the
+  // transaction back inside the manager).
+  if (auto sdb_state = context.registered_state->Get<SereneDBClientState>(
+        kSereneDBClientStateKey)) {
+    sdb_state->transaction_abort_cleanup = nullptr;
+  }
+  duckdb::MetaTransaction::Get(context).PopTransactionOverride(gstate.store_db);
   auto err = gstate.store_db.GetTransactionManager().CommitTransaction(
     context, *gstate.second_txn);
   if (err.HasError()) {
+    std::ignore = catalog::GetCatalog().DropTable(
+      gstate.database_name, gstate.schema_name, gstate.table_name, true);
     err.Throw("Failed to commit CREATE TABLE AS data transaction");
   }
-  gstate.committed = true;
 
   SDB_IF_FAILURE("crash_before_remove_tombstone") { SDB_IMMEDIATE_ABORT(); }
+  if (gstate.progress) {
+    gstate.progress->SetPhase(pg::create_table_as_progress::Phase::Finalizing);
+  }
   auto r = catalog::GetCatalog().RemoveTombstone(
     gstate.database_id, gstate.schema_name, gstate.table_name);
   if (!r.ok()) {

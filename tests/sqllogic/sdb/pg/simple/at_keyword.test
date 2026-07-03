@@ -83,7 +83,7 @@ at
 # the factorial postfix operator; if the AT reclassification had broken
 # target_el → a_expr → `a_expr qual_Op %prec POSTFIXOP`, this would
 # regress to a syntax error.
-query I
+query
 SELECT 5!;
 ----
 factorial

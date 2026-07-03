@@ -29,7 +29,7 @@ CALL enable_profiling(
     metrics := ['QUERY_NAME', 'LATENCY', 'OPERATOR_TIMING']
 );
 ----
-success
+Success
 
 # DOCS_TEST: example_003
 
@@ -38,7 +38,7 @@ success
 query
 CALL enable_profiling(['LATENCY', 'RESULT_SET_SIZE']);
 ----
-success
+Success
 
 # DOCS_TEST: example_004
 
@@ -47,4 +47,4 @@ success
 query
 CALL disable_profiling();
 ----
-success
+Success

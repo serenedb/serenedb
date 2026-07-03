@@ -105,7 +105,7 @@ id	name
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT ts_lexize('english_dict', 'Running SHOES');
 ----
 ts_lexize

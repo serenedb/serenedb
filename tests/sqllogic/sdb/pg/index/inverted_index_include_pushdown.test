@@ -64,34 +64,24 @@ EXPLAIN SELECT id FROM logs_idx
 WHERE body @@ 'connection' AND service = 'frontend' AND sev >= 13;
 ----
 QUERY PLAN
-┌─────────────────────────────────────────────────────────────────┐
-│                          IRESEARCH_SCAN                         │
-│    ──────────────────────────────────────────────────────────   │
-│                         Index: logs_idx                         │
-│                          Lookup: table                          │
-│                                                                 │
-│                             Filter:                             │
-│┌───────────────────────────────────────────────────────────────┐│
-││┌───────────────────┐                                          ││
-│││        AND        ├──────────┬────────────────────┐          ││
-││└─────────┬─────────┘          │                    │          ││
-││┌─────────┴─────────┐┌─────────┴─────────┐┌─────────┴─────────┐││
-│││        Term       ││   GranularRange   ││        Term       │││
-│││    ────────────   ││    ────────────   ││    ────────────   │││
-│││   body(string) =  ││ sev(numeric) >=(  ││ service(string) = │││
-│││     connection    ││ \\x0\\x80\\x0\\x0\\xd  ││      frontend     │││
-│││                   ││   \\x10\\x80\\x0 )   ││                   │││
-││└───────────────────┘└───────────────────┘└───────────────────┘││
-│└───────────────────────────────────────────────────────────────┘│
-│                                                                 │
-│                         Projections: id                         │
-│                                                                 │
-│                              ~1 row                             │
-└─────────────────────────────────────────────────────────────────┘
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────╮
+│ Index: logs_idx                                                              │
+│ Lookup: table                                                                │
+│ Filter:                                                                      │
+│ ╭─ And ───────────────╮                                                      │
+│ ╰──────────┬──────────╯                                                      │
+│            ├────────────────────────┬──────────────────────────╮             │
+│ ╭─ Term ───┴──────────╮  ╭─ Granular Range ────╮  ╭─ Term ─────┴───────────╮ │
+│ │ Field: body(string) │  │ Field: sev(numeric) │  │ Field: service(string) │ │
+│ │ Value: connection   │  │ Range: >=13         │  │ Value: frontend        │ │
+│ ╰─────────────────────╯  ╰─────────────────────╯  ╰────────────────────────╯ │
+│ Projections: id                                                              │
+│ ~1 row                                                                       │
+╰──────────────────────────────────────────────────────────────────────────────╯
 
 
 # Result matches the brute-force interpretation.
-query I
+query
 SELECT id FROM logs_idx
 WHERE body @@ 'connection' AND service = 'frontend' AND sev >= 13
 ORDER BY id;
@@ -109,45 +99,29 @@ EXPLAIN SELECT id FROM logs_idx
 WHERE body @@ 'connection' AND tag = 'a';
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #1            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│        (tag = 'a')        │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│      Index: logs_idx      │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││   body(string) =  ││  │
-│  ││     connection    ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│        Projections:       │
-│          tag (i)          │
-│           id (l)          │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ PROJECTION ────────────╮
+│ Projections: #1         │
+│ ~1 row                  │
+╰────────────┬────────────╯
+╭─ FILTER ───┴────────────╮
+│ Expression: tag = 'a'   │
+│ ~1 row                  │
+╰────────────┬────────────╯
+╭─ IRESEARCH_SCAN ────────╮
+│ Index: logs_idx         │
+│ Lookup: table           │
+│ Filter:                 │
+│ ╭─ Term ──────────────╮ │
+│ │ Field: body(string) │ │
+│ │ Value: connection   │ │
+│ ╰─────────────────────╯ │
+│ Projections: tag (i),   │
+│              id (l)     │
+│ ~1 row                  │
+╰─────────────────────────╯
 
 
-query I
+query
 SELECT id FROM logs_idx
 WHERE body @@ 'connection' AND tag = 'a'
 ORDER BY id;
@@ -159,7 +133,7 @@ id
 
 # --- Each inverted+INCLUDE column individually serves its own filter ---
 
-query I
+query
 SELECT id FROM logs_idx
 WHERE service = 'frontend'
 ORDER BY id;
@@ -170,7 +144,7 @@ id
 4
 
 
-query I
+query
 SELECT id FROM logs_idx
 WHERE sev >= 13
 ORDER BY id;

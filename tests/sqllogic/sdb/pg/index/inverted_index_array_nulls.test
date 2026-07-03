@@ -56,28 +56,17 @@ query
 EXPLAIN SELECT pk, vec FROM arr_n_idx WHERE text_for_search @@ ts_phrase('second');
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│      Index: arr_n_idx     │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││  text_for_search  ││  │
-│  ││ (string) = second ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│        Projections:       │
-│           pk (l)          │
-│          vec (i)          │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ───────────────────╮
+│ Index: arr_n_idx                   │
+│ Lookup: table                      │
+│ Filter:                            │
+│ ╭─ Term ─────────────────────────╮ │
+│ │ Field: text_for_search(string) │ │
+│ │ Value: second                  │ │
+│ ╰────────────────────────────────╯ │
+│ Projections: pk (l), vec (i)       │
+│ ~1 row                             │
+╰────────────────────────────────────╯
 
 
 # Materialise an explicit NULL row through the index path.

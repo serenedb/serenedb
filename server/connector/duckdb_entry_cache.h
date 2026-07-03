@@ -82,7 +82,7 @@ class DuckDBEntryCache {
     SchemaCache(duckdb::Catalog& catalog, std::string_view schema_name)
       : info{[&] {
           duckdb::CreateSchemaInfo i;
-          i.schema = schema_name;
+          i.SetSchema(duckdb::Identifier{schema_name});
           return i;
         }()},
         entry{catalog, info} {}

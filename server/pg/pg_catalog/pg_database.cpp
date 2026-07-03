@@ -39,7 +39,7 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgDatabase>::GetTableData() {
-  auto catalog = _config.EnsureCatalogSnapshot();
+  auto catalog = _config.CatalogSnapshot();
 
   std::vector<PgDatabase> values;
   for (const auto& db : catalog->GetDatabases()) {

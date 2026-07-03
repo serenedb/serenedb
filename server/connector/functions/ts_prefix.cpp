@@ -32,9 +32,10 @@ namespace sdb::connector {
 void FromPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
                 const SearchColumnInfo& column_info,
                 const duckdb::BoundFunctionExpression& func) {
-  SDB_ASSERT(func.children.size() == 1);
+  SDB_ASSERT(func.GetChildren().size() == 1);
   std::string prefix;
-  if (auto r = GetVarcharArg(*func.children[0], "ts_starts_with text", prefix);
+  if (auto r =
+        GetVarcharArg(*func.GetChildren()[0], "ts_starts_with text", prefix);
       !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()),

@@ -35,7 +35,7 @@ VACUUM (REFRESH_TABLE) mt;
 # --- ByPrefix: prefix 'a' expands to {apple, avocado} ---
 
 # Counting: 3 apple + 1 avocado.
-query I
+query
 SELECT COUNT(*) FROM mt_idx WHERE body @@ ts_starts_with('a');
 ----
 count
@@ -102,7 +102,7 @@ id	body	score
 
 # ts_lt('c') matches {apple, avocado, banana, blueberry}; the three df-1 terms
 # share the top score, apple (df 3) sits below.
-query I
+query
 SELECT COUNT(*) FROM mt_idx WHERE body @@ ts_lt('c');
 ----
 count
@@ -154,7 +154,7 @@ VACUUM (REFRESH_TABLE) mt;
 
 
 # apple x4, avocado x2, apricot x1.
-query I
+query
 SELECT COUNT(*) FROM mt_idx WHERE body @@ ts_starts_with('a');
 ----
 count

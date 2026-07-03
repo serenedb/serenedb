@@ -34,8 +34,10 @@ class SereneDBIndexEntry final : public duckdb::IndexCatalogEntry {
                      duckdb::SchemaCatalogEntry& schema,
                      duckdb::CreateIndexInfo& info, std::string table_name);
 
-  std::string GetSchemaName() const final { return schema.name; }
-  std::string GetTableName() const final { return _table_name; }
+  duckdb::Identifier GetSchemaName() const final { return schema.name; }
+  duckdb::Identifier GetTableName() const final {
+    return duckdb::Identifier{_table_name};
+  }
 
  private:
   std::string _table_name;

@@ -115,132 +115,68 @@ EXPLAIN SELECT pk FROM m_vec_ivf_st
   ORDER BY emb <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3] LIMIT 1;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           TOP_N           │
-│    ────────────────────   │
-│           Top: 1          │
-│      Order By: #1 ASC     │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│    Index: m_vec_ivf_st    │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││     VECTOR_KNN    ││  │
-│  ││    ────────────   ││  │
-│  ││ emb metric=l2 dims││  │
-│  ││         =3        ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│           Top: 1          │
-│                           │
-│        Projections:       │
-│             pk            │
-│  sdb_inverted_index_score │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 1                                 │
+│ Order By: #1 ASC                       │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: m_vec_hnsw_st (ANN)             │
+│ Lookup: table                          │
+│ Top: 1                                 │
+│ Dims: 3                                │
+│ Projections: pk,                       │
+│              sdb_inverted_index_score  │
+│ ~3 rows                                │
+╰────────────────────────────────────────╯
 
 query
 EXPLAIN SELECT pk FROM m_vec_ivf_expr_ns
   ORDER BY (emb) <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3] LIMIT 1;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           TOP_N           │
-│    ────────────────────   │
-│           Top: 1          │
-│      Order By: #1 ASC     │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│     m_vec_ivf_expr_ns     │
-│                           │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││     VECTOR_KNN    ││  │
-│  ││    ────────────   ││  │
-│  ││ emb metric=l2 dims││  │
-│  ││         =3        ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│           Top: 1          │
-│                           │
-│        Projections:       │
-│             pk            │
-│  sdb_inverted_index_score │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 1                                 │
+│ Order By: #1 ASC                       │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: m_vec_hnsw_expr_ns (ANN)        │
+│ Lookup: table                          │
+│ Top: 1                                 │
+│ Dims: 3                                │
+│ Projections: pk,                       │
+│              sdb_inverted_index_score  │
+│ ~3 rows                                │
+╰────────────────────────────────────────╯
 
 query
 EXPLAIN SELECT pk FROM m_vec_ivf_st
   WHERE emb <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3] < 1.5;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│    Index: m_vec_ivf_st    │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││    VECTOR_RANGE   ││  │
-│  ││    ────────────   ││  │
-│  ││ emb metric=l2 dims││  │
-│  ││      =3 < 1.5     ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│      Projections: pk      │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ─────────────────╮
+│ Index: m_vec_hnsw_st (ANN range) │
+│ Lookup: table                    │
+│ Radius: 1.5                      │
+│ Dims: 3                          │
+│ Projections: pk                  │
+│ ~3 rows                          │
+╰──────────────────────────────────╯
 
 query
 EXPLAIN SELECT pk FROM m_vec_ivf_expr_ns
   WHERE (emb) <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3] < 1.5;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│     m_vec_ivf_expr_ns     │
-│                           │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││    VECTOR_RANGE   ││  │
-│  ││    ────────────   ││  │
-│  ││ emb metric=l2 dims││  │
-│  ││      =3 < 1.5     ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│      Projections: pk      │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ──────────────────────╮
+│ Index: m_vec_hnsw_expr_ns (ANN range) │
+│ Lookup: table                         │
+│ Radius: 1.5                           │
+│ Dims: 3                               │
+│ Projections: pk                       │
+│ ~3 rows                               │
+╰───────────────────────────────────────╯
 
 query
 SELECT pk FROM m_vec_floats_expr_ns

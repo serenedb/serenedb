@@ -68,7 +68,7 @@ CREATE TEXT SEARCH DICTIONARY tok_text_stem (
     accent = true
 );
 
-query ?
+query
 SELECT ts_lexize('tok_text_stem', 'The runners were running quickly');
 ----
 ts_lexize
@@ -87,7 +87,7 @@ CREATE TEXT SEARCH DICTIONARY tok_text_exact (
     accent = true
 );
 
-query ?
+query
 SELECT ts_lexize('tok_text_exact', 'The Runners Café');
 ----
 ts_lexize
@@ -106,7 +106,7 @@ CREATE TEXT SEARCH DICTIONARY tok_text_stop (
     stopwords = '"the","a","an","is"'
 );
 
-query ?
+query
 SELECT ts_lexize('tok_text_stop', 'The cat is a hunter');
 ----
 ts_lexize
@@ -126,7 +126,7 @@ CREATE TEXT SEARCH DICTIONARY tok_text_edge (
     preserveoriginal = true
 );
 
-query ?
+query
 SELECT ts_lexize('tok_text_edge', 'Search');
 ----
 ts_lexize

@@ -323,7 +323,8 @@ void WriteCopyBinaryHeader(message::Buffer& out) {
 }
 
 void WriteCopyTextHeader(message::Buffer& out,
-                         std::span<const std::string> names, char delim) {
+                         std::span<const duckdb::Identifier> names,
+                         char delim) {
   message::Writer w{out};
   const auto start = w.Written();
   auto* prefix = w.Alloc(kFrameHeader);
@@ -333,7 +334,7 @@ void WriteCopyTextHeader(message::Buffer& out,
       *w.Alloc(1) = delim;
     }
     first = false;
-    for (const char c : name) {
+    for (const char c : name.GetIdentifierName()) {
       switch (c) {
         case '\\':
           w.Write("\\\\");
@@ -398,7 +399,7 @@ void WriteParameterStatus(message::Buffer& out, std::string_view name,
 
 void WriteRowDescription(message::Buffer& out,
                          std::span<const duckdb::LogicalType> types,
-                         std::span<const std::string> names,
+                         std::span<const duckdb::Identifier> names,
                          std::span<const sdb::pg::VarFormat> formats) {
   message::Writer w{out};
   const auto num_fields = static_cast<uint16_t>(types.size());
@@ -409,7 +410,7 @@ void WriteRowDescription(message::Buffer& out,
   for (uint16_t i = 0; i < num_fields; ++i) {
     // ToAlias is a pure view (substr of the name); write it straight out,
     // no per-query vector<string> of owned copies.
-    w.Write(query::ToAlias(names[i]));
+    w.Write(query::ToAlias(names[i].GetIdentifierName()));
     w.Write(kNull);
     absl::big_endian::Store32(w.Alloc(kInt32), 0);
     absl::big_endian::Store16(w.Alloc(kInt16), 0);

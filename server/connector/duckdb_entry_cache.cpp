@@ -82,7 +82,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> MakeViewEntry(
   auto info =
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateViewInfo>(
       view.GetInfo().Copy());
-  info->schema = schema_name;
+  info->SetSchema(duckdb::Identifier{schema_name});
   info->temporary = false;
   info->internal = false;
   return duckdb::make_uniq<duckdb::ViewCatalogEntry>(catalog, schema, *info);
@@ -132,8 +132,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> MakeMacroEntry(
   auto info =
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
       func.GetInfo().Copy());
-  info->schema = schema_name;
-  info->name = name;
+  info->SetSchema(duckdb::Identifier{schema_name});
+  info->SetFunctionName(duckdb::Identifier{name});
   info->temporary = false;
   info->internal = internal;
   if (info->type == duckdb::CatalogType::TABLE_MACRO_ENTRY) {
@@ -226,8 +226,8 @@ TableInfoAndIndices BuildTableInfoAndIndices(
   const catalog::Table& table, const catalog::Snapshot& snapshot) {
   TableInfoAndIndices out;
   out.info = duckdb::make_uniq<duckdb::CreateTableInfo>();
-  out.info->table = name;
-  out.info->schema = schema_name;
+  out.info->SetTableName(duckdb::Identifier{name});
+  out.info->SetSchema(duckdb::Identifier{schema_name});
   // Surface the table-level comment (empty == none) so duckdb_tables().comment
   // reflects COMMENT ON TABLE.
   if (!table.Comment().empty()) {
@@ -241,7 +241,8 @@ TableInfoAndIndices BuildTableInfoAndIndices(
     if (col.GetId() == catalog::Column::kGeneratedPKId) {
       continue;
     }
-    auto cd = duckdb::ColumnDefinition(std::string{col.GetName()}, col.type);
+    auto cd =
+      duckdb::ColumnDefinition(duckdb::Identifier{col.GetName()}, col.type);
     if (!col.comment.empty()) {
       cd.SetComment(duckdb::Value(col.comment));
     }
@@ -260,7 +261,7 @@ TableInfoAndIndices BuildTableInfoAndIndices(
   // PK constraint
   const auto& pk_col_ids = table.PKColumns();
   if (!pk_col_ids.empty()) {
-    duckdb::vector<duckdb::string> pk_names;
+    duckdb::vector<duckdb::Identifier> pk_names;
     for (auto pk_id : pk_col_ids) {
       for (const auto& col : table.Columns()) {
         if (col.GetId() == pk_id) {
@@ -276,9 +277,9 @@ TableInfoAndIndices BuildTableInfoAndIndices(
   // Non-PK UNIQUE constraints -- surface them so the binder can resolve a
   // FOREIGN KEY that references a UNIQUE (non-PK) column and ON CONFLICT can
   // target it, matching a native duckdb table.
-  for (const auto& unique_col_ids : table.UniqueConstraints()) {
-    duckdb::vector<duckdb::string> unique_names;
-    for (auto uid : unique_col_ids) {
+  for (const auto& unique : table.UniqueConstraints()) {
+    duckdb::vector<duckdb::Identifier> unique_names;
+    for (auto uid : unique.columns) {
       for (const auto& col : table.Columns()) {
         if (col.GetId() == uid) {
           unique_names.emplace_back(col.GetName());
@@ -333,8 +334,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildTableEntry(
   if (!table) {
     return nullptr;
   }
-  auto built =
-    BuildTableInfoAndIndices(table_name, schema.name, *table, snapshot);
+  auto built = BuildTableInfoAndIndices(
+    table_name, schema.name.GetIdentifierName(), *table, snapshot);
   return duckdb::make_uniq<SereneDBTableEntry>(
     catalog, schema, *built.info, std::move(table),
     std::move(built.indexed_col_indices));
@@ -353,8 +354,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
       std::static_pointer_cast<const catalog::PgSqlView>(relation_obj);
     const auto& vinfo = view->GetInfo();
     auto info = duckdb::make_uniq<duckdb::CreateTableInfo>();
-    info->table = std::string{name};
-    info->schema = std::string{schema.name};
+    info->SetTableName(duckdb::Identifier{name});
+    info->SetSchema(schema.name);
     for (size_t i = 0; i < vinfo.names.size(); ++i) {
       info->columns.AddColumn(
         duckdb::ColumnDefinition(vinfo.names[i], vinfo.types[i]));
@@ -380,7 +381,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
     return nullptr;
   }
   auto table = std::static_pointer_cast<catalog::Table>(relation_obj);
-  auto built = BuildTableInfoAndIndices(name, schema.name, *table, snapshot);
+  auto built = BuildTableInfoAndIndices(name, schema.name.GetIdentifierName(),
+                                        *table, snapshot);
 
   if (index.GetType() == catalog::ObjectType::InvertedIndex) {
     auto inverted_index_ptr =
@@ -612,8 +614,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
           auto* vtable = pg::GetSystemTable(schema, name);
           if (vtable) {
             auto info = duckdb::make_uniq<duckdb::CreateTableInfo>();
-            info->table = name;
-            info->schema = schema;
+            info->SetTableName(duckdb::Identifier{name});
+            info->SetSchema(duckdb::Identifier{schema});
             for (auto& [col_name, col_type] :
                  duckdb::StructType::GetChildTypes(vtable->RowType())) {
               info->columns.AddColumn(
@@ -675,10 +677,11 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
           auto& index = basics::downCast<const catalog::Index>(*relation);
           auto index_relation = snapshot.GetObject(index.GetRelationId());
           auto info = duckdb::make_uniq<duckdb::CreateIndexInfo>();
-          info->schema = schema;
-          info->table = index_relation ? std::string{index_relation->GetName()}
-                                       : std::string{};
-          info->index_name = name;
+          info->SetSchema(duckdb::Identifier{schema});
+          info->table = index_relation
+                          ? duckdb::Identifier{index_relation->GetName()}
+                          : duckdb::Identifier{};
+          info->SetIndexName(duckdb::Identifier{name});
           info->index_type =
             relation->GetType() == catalog::ObjectType::InvertedIndex
               ? "inverted"
@@ -689,8 +692,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
           info->constraint_type = is_unique
                                     ? duckdb::IndexConstraintType::UNIQUE
                                     : duckdb::IndexConstraintType::NONE;
-          return duckdb::make_uniq<SereneDBIndexEntry>(catalog, entry, *info,
-                                                       info->table);
+          return duckdb::make_uniq<SereneDBIndexEntry>(
+            catalog, entry, *info, info->table.GetIdentifierName());
         }
         default:
           return nullptr;
@@ -715,7 +718,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
           auto type_info =
             duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateTypeInfo>(
               sdb_type->GetInfo().Copy());
-          type_info->schema = schema;
+          type_info->SetSchema(duckdb::Identifier{schema});
           type_info->type = sdb_type->GetLogicalType();
           return duckdb::make_uniq<duckdb::TypeCatalogEntry>(catalog, entry,
                                                              *type_info);
@@ -735,8 +738,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
         return nullptr;
       }
       duckdb::CreateSequenceInfo info;
-      info.schema = schema;
-      info.name = name;
+      info.SetSchema(duckdb::Identifier{schema});
+      info.SetSequenceName(duckdb::Identifier{name});
       info.start_value = seq->Options().start_value;
       info.increment = seq->Options().increment;
       info.min_value = seq->Options().min_value;

@@ -50,18 +50,20 @@ int64_t Param(const ProgressSnapshot& s, create_index_progress::Param p) {
 }
 
 TEST(ProgressReporterTest, CopyLifecycleAndInitialParams) {
+  const int32_t pid = 4242;
   const ObjectId datid{42};
   const ObjectId relid{2'000'001};
   ASSERT_FALSE(SnapshotForRelid(relid, ProgressCommand::Copy).has_value())
     << "tracker dirty at start -- another test leaked its relid";
 
   {
-    ProgressReporter reporter{datid, relid, ProgressCommand::Copy};
+    ProgressReporter reporter{pid, datid, relid, ProgressCommand::Copy};
     reporter.SetCommand(copy_progress::Command::CopyFrom);
     reporter.SetType(copy_progress::Type::File);
 
     auto snap = SnapshotForRelid(relid, ProgressCommand::Copy);
     ASSERT_TRUE(snap.has_value());
+    EXPECT_EQ(snap->pid, pid);
     EXPECT_EQ(snap->datid, datid);
     EXPECT_EQ(snap->relid, relid);
     EXPECT_EQ(snap->command_type, ProgressCommand::Copy);
@@ -84,7 +86,7 @@ TEST(ProgressReporterTest, CopyLifecycleAndInitialParams) {
 TEST(ProgressReporterTest, SetIsAbsoluteAddAccumulates) {
   const ObjectId datid{42};
   const ObjectId relid{2'000'002};
-  ProgressReporter reporter{datid, relid, ProgressCommand::Copy};
+  ProgressReporter reporter{4242, datid, relid, ProgressCommand::Copy};
 
   reporter.Set(copy_progress::Param::BytesTotal, 1'000'000);
   reporter.Add(copy_progress::Param::TuplesProcessed, 10);
@@ -131,7 +133,7 @@ TEST(ProgressReporterTest, AllCopyCommandAndTypeVariantsRoundTrip) {
   const ObjectId datid{42};
 
   for (const auto& c : cases) {
-    ProgressReporter reporter{datid, c.relid, ProgressCommand::Copy};
+    ProgressReporter reporter{4242, datid, c.relid, ProgressCommand::Copy};
     reporter.SetCommand(c.cmd);
     reporter.SetType(c.type);
 
@@ -147,7 +149,7 @@ TEST(ProgressReporterTest, AllCopyCommandAndTypeVariantsRoundTrip) {
 TEST(ProgressReporterTest, CreateIndexPhasesAndCounters) {
   const ObjectId datid{42};
   const ObjectId relid{2'000'003};
-  ProgressReporter reporter{datid, relid, ProgressCommand::CreateIndex};
+  ProgressReporter reporter{4242, datid, relid, ProgressCommand::CreateIndex};
 
   reporter.SetCommand(create_index_progress::Command::CreateIndex);
   reporter.SetPhase(create_index_progress::Phase::Initializing);

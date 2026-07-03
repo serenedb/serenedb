@@ -151,7 +151,8 @@ class ListTokenSink {
 
 const TsLexizeBindData& GetBindData(duckdb::ExpressionState& state) {
   return state.expr.Cast<duckdb::BoundFunctionExpression>()
-    .bind_info->Cast<TsLexizeBindData>();
+    .BindInfo()
+    ->Cast<TsLexizeBindData>();
 }
 
 void TsLexizeFunctionConstant(duckdb::DataChunk& args,
@@ -337,7 +338,7 @@ duckdb::unique_ptr<duckdb::FunctionData> TsLexizeBind(
   auto& context = input.GetClientContext();
   auto& conn_ctx = GetSereneDBContext(context);
   DynamicCtx ctx{
-    .snapshot = conn_ctx.EnsureCatalogSnapshot(),
+    .snapshot = conn_ctx.CatalogSnapshot(),
     .db_id = conn_ctx.GetDatabaseId(),
     .current_schema = conn_ctx.GetCurrentSchema(),
   };

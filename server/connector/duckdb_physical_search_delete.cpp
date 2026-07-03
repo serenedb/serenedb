@@ -138,11 +138,6 @@ duckdb::SinkFinalizeType SereneDBSearchDelete::Finalize(
   duckdb::Pipeline& /*pipeline*/, duckdb::Event& /*event*/,
   duckdb::ClientContext& context,
   duckdb::OperatorSinkFinalizeInput& /*input*/) const {
-  auto& gstate = sink_state->Cast<SearchDeleteGlobalState>();
-  if (gstate.delete_count > 0) {
-    GetSereneDBContext(context).UpdateNumRows(
-      gstate.table_id, -static_cast<int64_t>(gstate.delete_count));
-  }
   return duckdb::SinkFinalizeType::READY;
 }
 

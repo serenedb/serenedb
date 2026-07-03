@@ -61,22 +61,16 @@ query
 EXPLAIN SELECT x FROM variant_values;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│      CAST(#0 AS JSON)     │
-│                           │
-│          ~4 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│   Table: variant_values   │
-│   Type: Sequential Scan   │
-│       Projections: x      │
-│                           │
-│          ~4 rows          │
-└───────────────────────────┘
+╭─ PROJECTION ──────────────────╮
+│ Projections: CAST(#0 AS JSON) │
+│ ~4 rows                       │
+╰───────────────┬───────────────╯
+╭─ SEQ_SCAN ────┴───────────────╮
+│ Table: variant_values         │
+│ Type: Sequential Scan         │
+│ Projections: x                │
+│ ~4 rows                       │
+╰───────────────────────────────╯
 
 
 query
@@ -93,26 +87,17 @@ query
 EXPLAIN SELECT id, x FROM variant_values;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #0            │
-│      CAST(#1 AS JSON)     │
-│                           │
-│          ~4 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│   Table: variant_values   │
-│   Type: Sequential Scan   │
-│                           │
-│        Projections:       │
-│             id            │
-│             x             │
-│                           │
-│          ~4 rows          │
-└───────────────────────────┘
+╭─ PROJECTION ───────────────────╮
+│ Projections: #0,               │
+│              CAST(#1 AS JSON)  │
+│ ~4 rows                        │
+╰────────────────┬───────────────╯
+╭─ SEQ_SCAN ─────┴───────────────╮
+│ Table: variant_values          │
+│ Type: Sequential Scan          │
+│ Projections: id, x             │
+│ ~4 rows                        │
+╰────────────────────────────────╯
 
 
 query
@@ -129,15 +114,12 @@ query
 EXPLAIN SELECT id FROM variant_values;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│   Table: variant_values   │
-│   Type: Sequential Scan   │
-│      Projections: id      │
-│                           │
-│          ~4 rows          │
-└───────────────────────────┘
+╭─ SEQ_SCAN ────────────╮
+│ Table: variant_values │
+│ Type: Sequential Scan │
+│ Projections: id       │
+│ ~4 rows               │
+╰───────────────────────╯
 
 
 query
@@ -166,23 +148,17 @@ query
 EXPLAIN SELECT x FROM variant_pk WHERE id = 2;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│      CAST(#0 AS JSON)     │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│     Table: variant_pk     │
-│   Type: Sequential Scan   │
-│       Projections: x      │
-│     Filters: (id = 2)     │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ PROJECTION ──────────────────╮
+│ Projections: CAST(#0 AS JSON) │
+│ ~1 row                        │
+╰───────────────┬───────────────╯
+╭─ SEQ_SCAN ────┴───────────────╮
+│ Table: variant_pk             │
+│ Type: Sequential Scan         │
+│ Projections: x                │
+│ Filters: id = 2               │
+│ ~1 row                        │
+╰───────────────────────────────╯
 
 
 query
@@ -196,28 +172,18 @@ query
 EXPLAIN SELECT id, x FROM variant_pk WHERE id = 3;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #0            │
-│      CAST(#1 AS JSON)     │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│     Table: variant_pk     │
-│   Type: Sequential Scan   │
-│                           │
-│        Projections:       │
-│             id            │
-│             x             │
-│                           │
-│     Filters: (id = 3)     │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ PROJECTION ───────────────────╮
+│ Projections: #0,               │
+│              CAST(#1 AS JSON)  │
+│ ~1 row                         │
+╰────────────────┬───────────────╯
+╭─ SEQ_SCAN ─────┴───────────────╮
+│ Table: variant_pk              │
+│ Type: Sequential Scan          │
+│ Projections: id, x             │
+│ Filters: id = 3                │
+│ ~1 row                         │
+╰────────────────────────────────╯
 
 
 query
@@ -231,16 +197,13 @@ query
 EXPLAIN SELECT id FROM variant_pk WHERE id = 1;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│     Table: variant_pk     │
-│   Type: Sequential Scan   │
-│      Projections: id      │
-│     Filters: (id = 1)     │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ SEQ_SCAN ────────────╮
+│ Table: variant_pk     │
+│ Type: Sequential Scan │
+│ Projections: id       │
+│ Filters: id = 1       │
+│ ~1 row                │
+╰───────────────────────╯
 
 
 query

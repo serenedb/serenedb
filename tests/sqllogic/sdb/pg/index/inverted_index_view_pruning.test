@@ -38,19 +38,13 @@ query
 EXPLAIN CREATE INDEX prune_idx1 ON prune_v1 USING inverted(body prune_en);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         EXTENSION         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│        READ_PARQUET       │
-│    ────────────────────   │
-│         Function:         │
-│        READ_PARQUET       │
-│                           │
-│     Projections: body     │
-│                           │
-│          ~5 rows          │
-└───────────────────────────┘
+╭─ EXTENSION ────────────╮
+╰────────────┬───────────╯
+╭─ READ_PARQUET ─────────╮
+│ Function: READ_PARQUET │
+│ Projections: body      │
+│ ~5 rows                │
+╰────────────────────────╯
 
 statement ok
 CREATE INDEX prune_idx1 ON prune_v1 USING inverted(body prune_en);
@@ -77,21 +71,13 @@ query
 EXPLAIN CREATE INDEX prune_idx2 ON prune_v2 USING inverted(id, body prune_en);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         EXTENSION         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│        READ_PARQUET       │
-│    ────────────────────   │
-│         Function:         │
-│        READ_PARQUET       │
-│                           │
-│        Projections:       │
-│             id            │
-│            body           │
-│                           │
-│          ~5 rows          │
-└───────────────────────────┘
+╭─ EXTENSION ────────────╮
+╰────────────┬───────────╯
+╭─ READ_PARQUET ─────────╮
+│ Function: READ_PARQUET │
+│ Projections: id, body  │
+│ ~5 rows                │
+╰────────────────────────╯
 
 statement ok
 CREATE INDEX prune_idx2 ON prune_v2 USING inverted(id, body prune_en);
@@ -115,26 +101,17 @@ query
 EXPLAIN CREATE INDEX prune_idx3 ON prune_v3 USING inverted(body prune_en);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         EXTENSION         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│            body           │
-│                           │
-│          ~5 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│        READ_PARQUET       │
-│    ────────────────────   │
-│         Function:         │
-│        READ_PARQUET       │
-│                           │
-│     Projections: body     │
-│                           │
-│          ~5 rows          │
-└───────────────────────────┘
+╭─ EXTENSION ────────────╮
+╰────────────┬───────────╯
+╭─ PROJECTION ───────────╮
+│ Projections: body      │
+│ ~5 rows                │
+╰────────────┬───────────╯
+╭─ READ_PARQUET ─────────╮
+│ Function: READ_PARQUET │
+│ Projections: body      │
+│ ~5 rows                │
+╰────────────────────────╯
 
 statement ok
 CREATE INDEX prune_idx3 ON prune_v3 USING inverted(body prune_en);
@@ -160,37 +137,22 @@ query
 EXPLAIN CREATE INDEX prune_idx4 ON prune_v4 USING inverted(body prune_en);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         EXTENSION         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          ORDER_BY         │
-│    ────────────────────   │
-│    read_parquet.id ASC    │
-│                           │
-│          ~5 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│    CAST(#0 AS TINYINT)    │
-│             #1            │
-│             #2            │
-│                           │
-│          ~5 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│        READ_PARQUET       │
-│    ────────────────────   │
-│         Function:         │
-│        READ_PARQUET       │
-│                           │
-│        Projections:       │
-│             id            │
-│            body           │
-│                           │
-│          ~5 rows          │
-└───────────────────────────┘
+╭─ EXTENSION ───────────────────────╮
+╰─────────────────┬─────────────────╯
+╭─ ORDER_BY ──────┴─────────────────╮
+│ Order By: read_parquet.id ASC     │
+│ ~5 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ PROJECTION ────┴─────────────────╮
+│ Projections: CAST(#0 AS TINYINT), │
+│              #1, #2               │
+│ ~5 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ READ_PARQUET ──┴─────────────────╮
+│ Function: READ_PARQUET            │
+│ Projections: id, body             │
+│ ~5 rows                           │
+╰───────────────────────────────────╯
 
 statement ok
 CREATE INDEX prune_idx4 ON prune_v4 USING inverted(body prune_en);
@@ -217,63 +179,37 @@ query
 EXPLAIN CREATE INDEX prune_idx5 ON prune_v5 USING inverted(body prune_en);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         EXTENSION         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          ORDER_BY         │
-│    ────────────────────   │
-│  read_parquet.unused1 ASC │
-│                           │
-│          ~5 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         HASH_JOIN         │
-│    ────────────────────   │
-│      Join Type: SEMI      │
-│                           │
-│        Conditions:        │
-│  file_index = file_index  ├──────────────┐
-│     file_row_number =     │              │
-│       file_row_number     │              │
-│                           │              │
-│          ~5 rows          │              │
-└─────────────┬─────────────┘              │
-┌─────────────┴─────────────┐┌─────────────┴─────────────┐
-│        READ_PARQUET       ││           TOP_N           │
-│    ────────────────────   ││    ────────────────────   │
-│         Function:         ││           Top: 4          │
-│        READ_PARQUET       ││                           │
-│                           ││         Order By:         │
-│        Projections:       ││  read_parquet.unused1 ASC │
-│            body           ││                           │
-│          unused1          ││                           │
-│                           ││                           │
-│          ~5 rows          ││          ~4 rows          │
-└───────────────────────────┘└─────────────┬─────────────┘
-                             ┌─────────────┴─────────────┐
-                             │         PROJECTION        │
-                             │    ────────────────────   │
-                             │          unused1          │
-                             │         file_index        │
-                             │      file_row_number      │
-                             │                           │
-                             │          ~5 rows          │
-                             └─────────────┬─────────────┘
-                             ┌─────────────┴─────────────┐
-                             │        READ_PARQUET       │
-                             │    ────────────────────   │
-                             │         Function:         │
-                             │        READ_PARQUET       │
-                             │                           │
-                             │    Projections: unused1   │
-                             │                           │
-                             │          Filters:         │
-                             │ optional: Dynamic Filter  │
-                             │         (unused1)         │
-                             │                           │
-                             │          ~5 rows          │
-                             └───────────────────────────┘
+╭─ EXTENSION ────────────────────────╮
+╰──────────────────┬─────────────────╯
+╭─ ORDER_BY ───────┴─────────────────╮
+│ Order By: read_parquet.unused1 ASC │
+│ ~5 rows                            │
+╰──────────────────┬─────────────────╯
+╭─ HASH_JOIN ──────┴─────────────────╮
+│ Join Type: SEMI                    │
+│ Conditions:                        │
+│ file_index = file_index,           │
+│ file_row_number = file_row_number  │
+│ ~5 rows                            │
+╰──────────────────┬─────────────────╯
+                   ├───────────────────────────────────────╮
+╭─ READ_PARQUET ───┴─────────────────╮  ╭─ TOP_N ──────────┴─────────────────╮
+│ Function: READ_PARQUET             │  │ Top: 4                             │
+│ Projections: body, unused1         │  │ Order By: read_parquet.unused1 ASC │
+│ ~5 rows                            │  │ ~4 rows                            │
+╰────────────────────────────────────╯  ╰──────────────────┬─────────────────╯
+                                        ╭─ PROJECTION ─────┴─────────────────╮
+                                        │ Projections: unused1, file_index,  │
+                                        │              file_row_number       │
+                                        │ ~5 rows                            │
+                                        ╰──────────────────┬─────────────────╯
+                                        ╭─ READ_PARQUET ───┴─────────────────╮
+                                        │ Function: READ_PARQUET             │
+                                        │ Projections: unused1               │
+                                        │ Filters:                           │
+                                        │ optional: Dynamic Filter (unused1) │
+                                        │ ~5 rows                            │
+                                        ╰────────────────────────────────────╯
 
 statement ok
 CREATE INDEX prune_idx5 ON prune_v5 USING inverted(body prune_en);
@@ -317,18 +253,14 @@ query
 EXPLAIN CREATE INDEX prune_idx6 ON prune_v6 USING inverted(body);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         EXTENSION         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│     Table: prune_base     │
-│   Type: Sequential Scan   │
-│     Projections: body     │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
+╭─ EXTENSION ───────────╮
+╰───────────┬───────────╯
+╭─ SEQ_SCAN ┴───────────╮
+│ Table: prune_base     │
+│ Type: Sequential Scan │
+│ Projections: body     │
+│ ~3 rows               │
+╰───────────────────────╯
 
 statement ok
 CREATE INDEX prune_idx6 ON prune_v6 USING inverted(body);
@@ -350,21 +282,14 @@ query
 EXPLAIN CREATE INDEX prune_idx7 ON prune_v7 USING inverted(id, body);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         EXTENSION         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│     Table: prune_base     │
-│   Type: Sequential Scan   │
-│                           │
-│        Projections:       │
-│             id            │
-│            body           │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
+╭─ EXTENSION ───────────╮
+╰───────────┬───────────╯
+╭─ SEQ_SCAN ┴───────────╮
+│ Table: prune_base     │
+│ Type: Sequential Scan │
+│ Projections: id, body │
+│ ~3 rows               │
+╰───────────────────────╯
 
 statement ok
 CREATE INDEX prune_idx7 ON prune_v7 USING inverted(id, body);
@@ -386,19 +311,13 @@ query
 EXPLAIN CREATE INDEX prune_idx8 ON prune_v8 USING inverted(body);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         EXTENSION         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│        READ_PARQUET       │
-│    ────────────────────   │
-│         Function:         │
-│        READ_PARQUET       │
-│                           │
-│     Projections: body     │
-│                           │
-│          ~5 rows          │
-└───────────────────────────┘
+╭─ EXTENSION ────────────╮
+╰────────────┬───────────╯
+╭─ READ_PARQUET ─────────╮
+│ Function: READ_PARQUET │
+│ Projections: body      │
+│ ~5 rows                │
+╰────────────────────────╯
 
 statement ok
 CREATE INDEX prune_idx8 ON prune_v8 USING inverted(body);

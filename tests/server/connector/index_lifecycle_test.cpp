@@ -89,7 +89,7 @@ class ProbeIndex final : public duckdb::BoundIndex {
   static constexpr const char* kTypeName = "sdb_probe";
 
   ProbeIndex(
-    const std::string& name, duckdb::TableIOManager& io,
+    const duckdb::Identifier& name, duckdb::TableIOManager& io,
     const duckdb::vector<duckdb::column_t>& column_ids,
     const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& exprs,
     duckdb::AttachedDatabase& db)
@@ -169,7 +169,7 @@ void RegisterProbeIndexType(duckdb::DatabaseInstance& db) {
     -> duckdb::unique_ptr<duckdb::IndexBuildGlobalState> {
     auto state = duckdb::make_uniq<ProbeBuildGlobalState>();
     state->index = duckdb::make_uniq<ProbeIndex>(
-      input.info.index_name,
+      input.info.GetIndexName(),
       duckdb::TableIOManager::Get(input.table.GetStorage()), input.storage_ids,
       input.expressions, input.table.GetStorage().db);
     return std::move(state);

@@ -1,5 +1,8 @@
 control substitution on
 
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
 # DOCS_TEST: example_001
 
 statement ok
@@ -33,28 +36,17 @@ query
 EXPLAIN SELECT * FROM tbl;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│         Table: tbl        │
-│   Type: Sequential Scan   │
-│                           │
-│        Projections:       │
-│             id            │
-│            name           │
-│            col1           │
-│            col2           │
-│      Some Column Name     │
-│             i             │
-│             a             │
-│             b             │
-│             c             │
-│           number          │
-│          number1          │
-│          number2          │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
+╭─ SEQ_SCAN ─────────────────────╮
+│ Table: tbl                     │
+│ Type: Sequential Scan          │
+│ Projections: id, name, col1,   │
+│              col2,             │
+│              Some Column Name, │
+│              i, a, b, c,       │
+│              number, number1,  │
+│              number2           │
+│ ~3 rows                        │
+╰────────────────────────────────╯
 
 # DOCS_TEST: example_002
 
@@ -80,35 +72,24 @@ EXPLAIN
     WHERE name LIKE 'Ma%';
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│            name           │
-│                           │
-│           ~1 row          │
-<slt:ignore>
-│         HASH_JOIN         │
-│    ────────────────────   │
-│      Join Type: INNER     │
-│   Conditions: sid = sid   ├──────────────┐
-│                           │              │
-│           ~1 row          │              │
-<slt:ignore>
-│          SEQ_SCAN         ││          SEQ_SCAN         │
-│    ────────────────────   ││    ────────────────────   │
-│        Table: exams       ││      Table: students      │
-│   Type: Sequential Scan   ││   Type: Sequential Scan   │
-│      Projections: sid     ││                           │
-│                           ││        Projections:       │
-│                           ││            sid            │
-│                           ││            name           │
-│                           ││                           │
-│                           ││          Filters:         │
-│                           ││ ((name >= 'Ma') AND (name │
-│                           ││          < 'Mb'))         │
-│                           ││                           │
-│          ~3 rows          ││           ~1 row          │
-└───────────────────────────┘└───────────────────────────┘
+╭─ PROJECTION ──────────╮
+│ Projections: name     │
+│ ~1 row                │
+╰───────────┬───────────╯
+╭─ HASH_JOIN ───────────╮
+│ Join Type: INNER      │
+│ Conditions: sid = sid │
+│ ~1 row                │
+╰───────────┬───────────╯
+            ├────────────────────────────────╮
+╭─ SEQ_SCAN ┴───────────╮  ╭─ SEQ_SCAN ──────┴────────────────╮
+│ Table: exams          │  │ Table: students                  │
+│ Type: Sequential Scan │  │ Type: Sequential Scan            │
+│ Projections: sid      │  │ Projections: sid, name           │
+│ ~3 rows               │  │ Filters:                         │
+╰───────────────────────╯  │ (name >= 'Ma') AND (name < 'Mb') │
+                           │ ~1 row                           │
+                           ╰──────────────────────────────────╯
 
 # DOCS_TEST: example_003
 
@@ -125,28 +106,17 @@ query
 EXPLAIN SELECT * FROM tbl;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│         Table: tbl        │
-│   Type: Sequential Scan   │
-│                           │
-│        Projections:       │
-│             id            │
-│            name           │
-│            col1           │
-│            col2           │
-│      Some Column Name     │
-│             i             │
-│             a             │
-│             b             │
-│             c             │
-│           number          │
-│          number1          │
-│          number2          │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
+╭─ SEQ_SCAN ─────────────────────╮
+│ Table: tbl                     │
+│ Type: Sequential Scan          │
+│ Projections: id, name, col1,   │
+│              col2,             │
+│              Some Column Name, │
+│              i, a, b, c,       │
+│              number, number1,  │
+│              number2           │
+│ ~3 rows                        │
+╰────────────────────────────────╯
 
 # DOCS_TEST: example_004
 
@@ -163,33 +133,20 @@ query
 EXPLAIN SELECT * FROM tbl;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│        Expressions:       │
-│             id            │
-│            name           │
-│            col1           │
-│            col2           │
-│      Some Column Name     │
-│             i             │
-│             a             │
-│             b             │
-│             c             │
-│           number          │
-│          number1          │
-│          number2          │
-│                           │
-│          ~3 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│         Table: tbl        │
-│   Type: Sequential Scan   │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
+╭─ PROJECTION ───────────────────╮
+│ Expressions: id, name, col1,   │
+│              col2,             │
+│              Some Column Name, │
+│              i, a, b, c,       │
+│              number, number1,  │
+│              number2           │
+│ ~3 rows                        │
+╰────────────────┬───────────────╯
+╭─ SEQ_SCAN ─────┴───────────────╮
+│ Table: tbl                     │
+│ Type: Sequential Scan          │
+│ ~3 rows                        │
+╰────────────────────────────────╯
 
 # DOCS_TEST: example_005
 
@@ -206,75 +163,40 @@ query
 EXPLAIN SELECT * FROM tbl;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│        Expressions:       │
-│             id            │
-│            name           │
-│            col1           │
-│            col2           │
-│      Some Column Name     │
-│             i             │
-│             a             │
-│             b             │
-│             c             │
-│           number          │
-│          number1          │
-│          number2          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│         Table: tbl        │
-│   Type: Sequential Scan   │
-└───────────────────────────┘
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│        Expressions:       │
-│             id            │
-│            name           │
-│            col1           │
-│            col2           │
-│      Some Column Name     │
-│             i             │
-│             a             │
-│             b             │
-│             c             │
-│           number          │
-│          number1          │
-│          number2          │
-│                           │
-│          ~3 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│         Table: tbl        │
-│   Type: Sequential Scan   │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
-┌───────────────────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│         Table: tbl        │
-│   Type: Sequential Scan   │
-│                           │
-│        Projections:       │
-│             id            │
-│            name           │
-│            col1           │
-│            col2           │
-│      Some Column Name     │
-│             i             │
-│             a             │
-│             b             │
-│             c             │
-│           number          │
-│          number1          │
-│          number2          │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
+╭─ PROJECTION ───────────────────╮
+│ Expressions: id, name, col1,   │
+│              col2,             │
+│              Some Column Name, │
+│              i, a, b, c,       │
+│              number, number1,  │
+│              number2           │
+╰────────────────┬───────────────╯
+╭─ SEQ_SCAN ─────┴───────────────╮
+│ Table: tbl                     │
+│ Type: Sequential Scan          │
+╰────────────────────────────────╯
+╭─ PROJECTION ───────────────────╮
+│ Expressions: id, name, col1,   │
+│              col2,             │
+│              Some Column Name, │
+│              i, a, b, c,       │
+│              number, number1,  │
+│              number2           │
+│ ~3 rows                        │
+╰────────────────┬───────────────╯
+╭─ SEQ_SCAN ─────┴───────────────╮
+│ Table: tbl                     │
+│ Type: Sequential Scan          │
+│ ~3 rows                        │
+╰────────────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────╮
+│ Table: tbl                     │
+│ Type: Sequential Scan          │
+│ Projections: id, name, col1,   │
+│              col2,             │
+│              Some Column Name, │
+│              i, a, b, c,       │
+│              number, number1,  │
+│              number2           │
+│ ~3 rows                        │
+╰────────────────────────────────╯

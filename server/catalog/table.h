@@ -45,8 +45,10 @@ class Table final : public Object {
         std::vector<CheckConstraint> check_constraints,
         ObjectId generated_pk_seq_id,
         TableEngine engine = TableEngine::Transactional,
-        std::vector<std::vector<Column::Id>> unique_constraints = {},
-        std::vector<TableForeignKey> foreign_keys = {});
+        std::vector<TableUnique> unique_constraints = {},
+        std::vector<TableForeignKey> foreign_keys = {},
+        std::string pk_name = {}, ObjectId pk_constraint_id = {},
+        ObjectId pk_index_id = {});
 
   static std::shared_ptr<Table> Deserialize(duckdb::Deserializer& src,
                                             ReadContext ctx);
@@ -55,6 +57,12 @@ class Table final : public Object {
 
   const auto& Columns() const noexcept { return _columns; }
   const auto& PKColumns() const noexcept { return _pk_columns; }
+  std::string_view PKName() const noexcept { return _pk_name; }
+  // Constraint OID of the primary key (pg_constraint.oid) and the OID of its
+  // backing index relation (pg_class.oid / pg_index.indexrelid); unset when
+  // the table has no PK.
+  ObjectId PKConstraintId() const noexcept { return _pk_constraint_id; }
+  ObjectId PKIndexId() const noexcept { return _pk_index_id; }
 
   // O(1) id -> column lookup (built once at construction). Use these instead of
   // a linear scan over Columns(); a scan nested in a per-key/per-index loop is
@@ -108,10 +116,12 @@ class Table final : public Object {
   // for each key column. Errors ERROR_SERVER_DUPLICATE_NAME if a PK already
   // exists (a table can have only one).
   Result AddPrimaryKey(std::shared_ptr<Table>& result,
-                       std::vector<Column::Id> pk_columns) const;
+                       std::vector<Column::Id> pk_columns,
+                       std::string name = {}) const;
   // Appends a UNIQUE constraint over `columns` (by id).
   Result AddUniqueConstraint(std::shared_ptr<Table>& result,
-                             std::vector<Column::Id> columns) const;
+                             std::vector<Column::Id> columns,
+                             std::string name = {}) const;
   std::shared_ptr<Table> DropCheckConstraint(ObjectId constraint_id) const;
   std::shared_ptr<Table> DropColumnDefault(Column::Id column_id) const;
   std::shared_ptr<Table> DropColumn(Column::Id column_id) const;
@@ -146,10 +156,13 @@ class Table final : public Object {
   // construction.
   containers::FlatHashMap<Column::Id, const Column*> _column_index;
   std::vector<Column::Id> _pk_columns;
+  std::string _pk_name;
+  ObjectId _pk_constraint_id;
+  ObjectId _pk_index_id;
   std::vector<CheckConstraint> _check_constraints;
   ObjectId _generated_pk_seq_id;
   TableEngine _engine = TableEngine::Transactional;
-  std::vector<std::vector<Column::Id>> _unique_constraints;
+  std::vector<TableUnique> _unique_constraints;
   std::vector<TableForeignKey> _foreign_keys;
   mutable std::shared_ptr<search::SearchTable> _data;
   std::string _comment;

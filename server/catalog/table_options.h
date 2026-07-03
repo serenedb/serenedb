@@ -145,10 +145,27 @@ enum class TableEngine : uint8_t {
 
 // One FOREIGN KEY of a table: `columns` (on the owning table) reference
 // `referenced_columns` of `referenced_table`, which must be its PRIMARY KEY.
+// `name` is the constraint name (explicit `CONSTRAINT <name>` or PG auto-name).
 struct TableForeignKey {
+  std::string name;
   std::vector<Column::Id> columns;
   ObjectId referenced_table;
   std::vector<Column::Id> referenced_columns;
+  // Constraint OID (pg_constraint.oid); allocated when the constraint is
+  // created, stable for its lifetime.
+  ObjectId id;
+};
+
+// One UNIQUE constraint of a table over `columns`, with its constraint `name`
+// (explicit `CONSTRAINT <name>` or PG auto-name `<table>_<col>_key`).
+struct TableUnique {
+  std::string name;
+  std::vector<Column::Id> columns;
+  // Constraint OID (pg_constraint.oid) and the OID of its backing index
+  // relation (pg_class.oid / pg_index.indexrelid / pg_constraint.conindid).
+  // Allocated when the constraint is created, stable for its lifetime.
+  ObjectId id;
+  ObjectId index_id;
 };
 
 struct CreateTableOptions {
@@ -162,9 +179,10 @@ struct CreateTableOptions {
   std::string name;
   std::vector<Column> columns;
   std::vector<Column::Id> pk_columns;
+  std::string pk_name;
   std::vector<CheckConstraint> check_constraints;
   std::vector<SerialSequenceOption> sequences;
-  std::vector<std::vector<Column::Id>> unique_constraints;
+  std::vector<TableUnique> unique_constraints;
   std::vector<TableForeignKey> foreign_keys;
   TableEngine engine = TableEngine::Transactional;
 };

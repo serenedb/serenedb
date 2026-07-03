@@ -44,11 +44,11 @@ struct AnnFunctionInfo : public duckdb::ScalarFunctionInfo {
 
 inline std::optional<AnnFunctionInfo> GetAnnFunctionInfo(
   const duckdb::BoundFunctionExpression& func) {
-  if (!func.function.HasExtraFunctionInfo()) {
+  if (!func.Function().HasExtraFunctionInfo()) {
     return std::nullopt;
   }
   if (const auto* info = dynamic_cast<const AnnFunctionInfo*>(
-        &func.function.GetExtraFunctionInfo())) {
+        &func.Function().GetExtraFunctionInfo())) {
     return *info;
   }
   return std::nullopt;

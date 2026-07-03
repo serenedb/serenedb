@@ -29,7 +29,7 @@ namespace sdb::pg {
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgOpclass>::GetTableData() {
-  auto catalog = _config.EnsureCatalogSnapshot();
+  auto catalog = _config.CatalogSnapshot();
 
   std::vector<PgOpclass> values;
 

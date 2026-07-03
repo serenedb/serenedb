@@ -20,18 +20,13 @@
 
 #include "pg/progress_tracker.h"
 
-#include <sys/types.h>
-#include <unistd.h>
-
 namespace sdb::pg {
 
-ProgressReporter::ProgressReporter(ObjectId datid, ObjectId relid,
+ProgressReporter::ProgressReporter(int32_t pid, ObjectId datid, ObjectId relid,
                                    ProgressCommand command)
   : _tracker{ProgressTracker::Instance()},
-    _id{_tracker.StartCommand({.pid = gettid(),
-                               .datid = datid,
-                               .relid = relid,
-                               .command_type = command})},
+    _id{_tracker.StartCommand(
+      {.pid = pid, .datid = datid, .relid = relid, .command_type = command})},
     _params{_tracker.GetParams(_id)} {}
 
 ProgressReporter::~ProgressReporter() { _tracker.EndCommand(_id); }

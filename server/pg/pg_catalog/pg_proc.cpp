@@ -51,7 +51,7 @@ constexpr Oid kLangSql = 14;
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
-  auto catalog = _config.EnsureCatalogSnapshot();
+  auto catalog = _config.CatalogSnapshot();
 
   std::vector<PgProc> values;
   std::vector<std::vector<Oid>> argtypes_storage;

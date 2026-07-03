@@ -32,38 +32,20 @@ query
 EXPLAIN SELECT pk FROM wal_ivf_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           TOP_N           │
-│    ────────────────────   │
-│           Top: 1          │
-│      Order By: #1 ASC     │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│     Index: wal_ivf_idx    │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││     VECTOR_KNN    ││  │
-│  ││    ────────────   ││  │
-│  ││ emb metric=l2 dims││  │
-│  ││         =3        ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│           Top: 1          │
-│                           │
-│        Projections:       │
-│             pk            │
-│  sdb_inverted_index_score │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 1                                 │
+│ Order By: #1 ASC                       │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: wal_hnsw_idx (ANN)              │
+│ Lookup: table                          │
+│ Top: 1                                 │
+│ Dims: 3                                │
+│ Projections: pk,                       │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
 
 # Pre-crash row reads from the on-disk .cs + graph.
 query

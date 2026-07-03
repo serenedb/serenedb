@@ -350,8 +350,8 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
   options.pk_columns.push_back(id_column.GetId());
   {
     // PK implies NOT NULL, mirroring CREATE TABLE's constraint expansion.
-    auto col_ref =
-      duckdb::make_uniq<duckdb::ColumnRefExpression>(std::string{kIdColumn});
+    auto col_ref = duckdb::make_uniq<duckdb::ColumnRefExpression>(
+      duckdb::Identifier{kIdColumn});
     auto is_not_null = duckdb::make_uniq<duckdb::OperatorExpression>(
       duckdb::ExpressionType::OPERATOR_IS_NOT_NULL, std::move(col_ref));
     options.check_constraints.push_back(catalog::CheckConstraint{
@@ -438,7 +438,7 @@ void EsMappingExecute(duckdb::ClientContext& context,
 
   auto& conn_ctx = GetSereneDBContext(context);
   const auto database_id = conn_ctx.GetDatabaseId();
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  auto snapshot = conn_ctx.CatalogSnapshot();
 
   auto table = snapshot->GetTable(database_id, kEsSchema, data.index);
   if (!table) {
@@ -514,7 +514,7 @@ void EsCatIndicesExecute(duckdb::ClientContext& context,
     state.loaded = true;
     auto& conn_ctx = GetSereneDBContext(context);
     const auto database_id = conn_ctx.GetDatabaseId();
-    auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+    auto snapshot = conn_ctx.CatalogSnapshot();
     if (snapshot->GetSchema(database_id, kEsSchema)) {
       for (const auto& table : snapshot->GetTables(database_id, kEsSchema)) {
         uint64_t docs_count = 0;
@@ -605,7 +605,7 @@ duckdb::unique_ptr<EsWriteBindData> BindWriteTarget(
   data->index = index_arg.GetValue<std::string>();
 
   auto& conn_ctx = GetSereneDBContext(context);
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  auto snapshot = conn_ctx.CatalogSnapshot();
   data->table =
     snapshot->GetTable(conn_ctx.GetDatabaseId(), kEsSchema, data->index);
   if (!data->table) {
@@ -1057,7 +1057,7 @@ void EsRefreshExecute(duckdb::ClientContext& context,
 
   auto& conn_ctx = GetSereneDBContext(context);
   const auto database_id = conn_ctx.GetDatabaseId();
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  auto snapshot = conn_ctx.CatalogSnapshot();
 
   auto refresh_table = [&](const catalog::Table& table) {
     for (const auto& index : snapshot->GetIndexesByRelation(table.GetId())) {

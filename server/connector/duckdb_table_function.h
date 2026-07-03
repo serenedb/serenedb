@@ -62,7 +62,7 @@ struct ScanSource {
 
   virtual void AppendSummary(
     const SereneDBScanBindData& /*bind*/,
-    duckdb::InsertionOrderPreservingMap<std::string>& /*out*/) const {}
+    duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>& /*out*/) const {}
 
   // Subclasses with non-copyable state (e.g. prepared queries) return a
   // default FullTableScan.
@@ -184,7 +184,7 @@ struct SearchScan : ScanSource {
 
   void AppendSummary(
     const SereneDBScanBindData& bind,
-    duckdb::InsertionOrderPreservingMap<std::string>& out) const final;
+    duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>& out) const final;
   std::unique_ptr<ScanSource> Clone() const final;
 };
 
@@ -383,6 +383,49 @@ inline auto MakeFieldNameResolver(const SereneDBScanBindData& bind_data,
       catalog::InvertedIndex::AppendKindSuffix(base, column_type);
     }
     return base;
+  };
+}
+
+inline auto MakeFieldKindResolver(const SereneDBScanBindData& bind_data,
+                                  const catalog::InvertedIndex& index) {
+  return [&bind_data,
+          &index](catalog::Column::Id col_id) -> catalog::term_dict::Kind {
+    using catalog::term_dict::Kind;
+    const auto fid = static_cast<irs::field_id>(col_id);
+    const auto lookup = index.LookupField(fid);
+    if (lookup.entry_field_id == catalog::term_dict::kPKFieldId) {
+      return Kind::NumericI64;
+    }
+    if (lookup.entry) {
+      const auto& entry = *lookup.entry;
+      if (fid == lookup.entry_field_id) {
+        const auto* expr = index.ExpressionByFieldId(fid);
+        if (expr) {
+          return catalog::term_dict::Classify(expr->return_type.id());
+        }
+        const auto column_type = bind_data.ColumnTypeById(col_id);
+        if (column_type.id() != duckdb::LogicalTypeId::INVALID) {
+          return catalog::term_dict::Classify(column_type.id());
+        }
+        return Kind::String;
+      }
+      if (fid == entry.null_field_id) {
+        return Kind::Null;
+      }
+      if (fid == entry.bool_field_id) {
+        return Kind::Bool;
+      }
+      if (fid == entry.numeric_field_id) {
+        // shared across all numeric widths; the term's marker byte picks the
+        // concrete decode
+        return Kind::NumericF64;
+      }
+    }
+    const auto column_type = bind_data.ColumnTypeById(col_id);
+    if (column_type.id() != duckdb::LogicalTypeId::INVALID) {
+      return catalog::term_dict::Classify(column_type.id());
+    }
+    return Kind::Unsupported;
   };
 }
 

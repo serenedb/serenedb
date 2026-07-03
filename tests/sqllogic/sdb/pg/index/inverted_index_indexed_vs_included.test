@@ -76,36 +76,21 @@ query
 EXPLAIN SELECT pk, body FROM m_idx WHERE body @@ ts_phrase('alpha');
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             pk            │
-│            body           │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│        Index: m_idx       │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││   body(string) =  ││  │
-│  ││        alpha      ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│        Projections:       │
-│            body           │
-│             pk            │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ PROJECTION ────────────╮
+│ Projections: pk, body   │
+│ ~1 row                  │
+╰────────────┬────────────╯
+╭─ IRESEARCH_SCAN ────────╮
+│ Index: m_idx            │
+│ Lookup: table           │
+│ Filter:                 │
+│ ╭─ Term ──────────────╮ │
+│ │ Field: body(string) │ │
+│ │ Value: alpha        │ │
+│ ╰─────────────────────╯ │
+│ Projections: body, pk   │
+│ ~1 row                  │
+╰─────────────────────────╯
 
 
 query
@@ -120,36 +105,21 @@ query
 EXPLAIN SELECT pk, tag FROM m_idx WHERE tag = 100;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             pk            │
-│            tag            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│        Index: m_idx       │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││ tag(numeric) = \\x0││  │
-│  ││    \\x80\\x0\\x0d    ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│        Projections:       │
-│            tag            │
-│             pk            │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ PROJECTION ────────────╮
+│ Projections: pk, tag    │
+│ ~1 row                  │
+╰────────────┬────────────╯
+╭─ IRESEARCH_SCAN ────────╮
+│ Index: m_idx            │
+│ Lookup: table           │
+│ Filter:                 │
+│ ╭─ Term ──────────────╮ │
+│ │ Field: tag(numeric) │ │
+│ │ Value: 100          │ │
+│ ╰─────────────────────╯ │
+│ Projections: tag, pk    │
+│ ~1 row                  │
+╰─────────────────────────╯
 
 
 query
@@ -164,27 +134,17 @@ query
 EXPLAIN SELECT note, extra FROM m_idx WHERE body @@ ts_phrase('alpha');
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│        Index: m_idx       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││   body(string) =  ││  │
-│  ││        alpha      ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│        Projections:       │
-│            note           │
-│           extra           │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ────────╮
+│ Index: m_idx            │
+│ Filter:                 │
+│ ╭─ Term ──────────────╮ │
+│ │ Field: body(string) │ │
+│ │ Value: alpha        │ │
+│ ╰─────────────────────╯ │
+│ Projections: note,      │
+│              extra      │
+│ ~1 row                  │
+╰─────────────────────────╯
 
 
 query
@@ -202,42 +162,26 @@ EXPLAIN SELECT pk, note FROM m_idx
 WHERE body @@ ts_phrase('cat') AND note IS NULL;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             pk            │
-│            note           │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│       (note IS NULL)      │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│        Index: m_idx       │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││ body(string) = cat││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│        Projections:       │
-│          note (i)         │
-│           pk (l)          │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ PROJECTION ─────────────╮
+│ Projections: pk, note    │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ FILTER ────┴────────────╮
+│ Expression: note IS NULL │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: m_idx             │
+│ Lookup: table            │
+│ Filter:                  │
+│ ╭─ Term ──────────────╮  │
+│ │ Field: body(string) │  │
+│ │ Value: cat          │  │
+│ ╰─────────────────────╯  │
+│ Projections: note (i),   │
+│              pk (l)      │
+│ ~1 row                   │
+╰──────────────────────────╯
 
 
 query
@@ -258,44 +202,29 @@ EXPLAIN SELECT pk, body, tag, note, extra, dual FROM m_idx
 WHERE body @@ ts_phrase('alpha');
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             pk            │
-│            body           │
-│            tag            │
-│            note           │
-│           extra           │
-│            dual           │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│        Index: m_idx       │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││   body(string) =  ││  │
-│  ││        alpha      ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│        Projections:       │
-│          body (l)         │
-│           pk (l)          │
-│          tag (l)          │
-│          note (i)         │
-│         extra (i)         │
-│          dual (i)         │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ PROJECTION ────────────╮
+│ Projections: pk, body,  │
+│              tag, note, │
+│              extra,     │
+│              dual       │
+│ ~1 row                  │
+╰────────────┬────────────╯
+╭─ IRESEARCH_SCAN ────────╮
+│ Index: m_idx            │
+│ Lookup: table           │
+│ Filter:                 │
+│ ╭─ Term ──────────────╮ │
+│ │ Field: body(string) │ │
+│ │ Value: alpha        │ │
+│ ╰─────────────────────╯ │
+│ Projections: body (l),  │
+│              pk (l),    │
+│              tag (l),   │
+│              note (i),  │
+│              extra (i), │
+│              dual (i)   │
+│ ~1 row                  │
+╰─────────────────────────╯
 
 
 query
@@ -314,35 +243,22 @@ query
 EXPLAIN SELECT pk, dual FROM m_idx WHERE dual @@ ts_phrase('red');
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             pk            │
-│            dual           │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│        Index: m_idx       │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││ dual(string) = red││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│        Projections:       │
-│          dual (i)         │
-│           pk (l)          │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ PROJECTION ────────────╮
+│ Projections: pk, dual   │
+│ ~1 row                  │
+╰────────────┬────────────╯
+╭─ IRESEARCH_SCAN ────────╮
+│ Index: m_idx            │
+│ Lookup: table           │
+│ Filter:                 │
+│ ╭─ Term ──────────────╮ │
+│ │ Field: dual(string) │ │
+│ │ Value: red          │ │
+│ ╰─────────────────────╯ │
+│ Projections: dual (i),  │
+│              pk (l)     │
+│ ~1 row                  │
+╰─────────────────────────╯
 
 
 query
@@ -361,35 +277,22 @@ query
 EXPLAIN SELECT pk, dual FROM m_idx WHERE dual IS NULL;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             pk            │
-│            dual           │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│        Index: m_idx       │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││    dual(null) =   ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│        Projections:       │
-│          dual (i)         │
-│           pk (l)          │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ PROJECTION ───────────╮
+│ Projections: pk, dual  │
+│ ~1 row                 │
+╰────────────┬───────────╯
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: m_idx           │
+│ Lookup: table          │
+│ Filter:                │
+│ ╭─ Term ────────────╮  │
+│ │ Field: dual(null) │  │
+│ │ Value:            │  │
+│ ╰───────────────────╯  │
+│ Projections: dual (i), │
+│              pk (l)    │
+│ ~1 row                 │
+╰────────────────────────╯
 
 
 query

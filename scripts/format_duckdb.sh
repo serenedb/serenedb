@@ -175,6 +175,12 @@ echo "total scope: $TOTAL file(s)"
 # the post-processed output instead of using clang-format's --dry-run.
 PACK_FIXUP='s/ARGS &&\.\.\.args/ARGS \&\&... args/g'
 
+# Both modes render each file's formatted (and pack-fixed) output to a temp
+# file and compare bytes: check mode reports differing files, write mode
+# overwrites ONLY differing files. Never touching identical files keeps their
+# mtime intact, so a formatting run over common headers doesn't trigger a
+# rebuild of everything that includes them. The per-file work runs under
+# xargs -P (batches amortize the shell spawn; clang-format dominates anyway).
 cat >"$INNER_SCRIPT" <<INNER
 #!/bin/sh
 set -e
@@ -182,26 +188,35 @@ pip install --quiet --disable-pip-version-check --root-user-action=ignore --no-w
 export PATH="/tmp/.local/bin:\$PATH"
 cd /work
 echo "clang-format: \$(clang-format --version)"
-if [ "$CHECK_ONLY" -eq 1 ]; then
-	status=0
-	while IFS= read -r f; do
-		case "\$f" in
-		*.cpp | *.hpp)
-			clang-format --style=file --sort-includes=0 "\$f" | sed '$PACK_FIXUP' >/tmp/formatted
-			;;
-		*)
-			clang-format --style=file --sort-includes=0 "\$f" >/tmp/formatted
-			;;
-		esac
-		if ! cmp -s /tmp/formatted "\$f"; then
+cat >/tmp/one.sh <<'ONE'
+#!/bin/sh
+tmp="/tmp/formatted.\$\$"
+for f in "\$@"; do
+	case "\$f" in
+	*.cpp | *.hpp)
+		clang-format --style=file --sort-includes=0 "\$f" | sed '$PACK_FIXUP' >"\$tmp"
+		;;
+	*)
+		clang-format --style=file --sort-includes=0 "\$f" >"\$tmp"
+		;;
+	esac
+	if ! cmp -s "\$tmp" "\$f"; then
+		if [ -n "\$FMT_CHECK" ]; then
 			echo "needs formatting: \$f"
-			status=1
+			touch /tmp/fmt_failed
+		else
+			cat "\$tmp" >"\$f"
 		fi
-	done </tmp/files.txt
-	exit \$status
-fi
-xargs -a /tmp/files.txt -n 50 -P 4 clang-format -i --style=file --sort-includes=0
-grep -E '\\.(cpp|hpp)\$' /tmp/files.txt | xargs -r sed -i '$PACK_FIXUP'
+	fi
+done
+rm -f "\$tmp"
+ONE
+rm -f /tmp/fmt_failed
+FMT_CHECK=""
+[ "$CHECK_ONLY" -eq 1 ] && FMT_CHECK=1
+export FMT_CHECK
+xargs -a /tmp/files.txt -n 24 -P "\$(nproc)" sh /tmp/one.sh
+[ ! -e /tmp/fmt_failed ]
 INNER
 
 # --- run --------------------------------------------------------------------

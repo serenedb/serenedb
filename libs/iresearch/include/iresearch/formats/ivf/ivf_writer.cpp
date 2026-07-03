@@ -190,27 +190,72 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
   {
     std::mt19937_64 rng{kClusterSeed};
     uint64_t seen = 0;
-    StreamRowBatches(
-      *child, rows, d, ctx,
-      [&](uint64_t first, duckdb::idx_t n, const float* p) {
-        for (duckdb::idx_t k = 0; k < n; ++k) {
-          if (!valid[first + k]) {
-            continue;
-          }
-          const float* v = p + static_cast<size_t>(k) * d;
-          if (seen < n_train) {
-            std::memcpy(sample.data() + seen * d, v, d * sizeof(float));
-          } else {
-            const uint64_t j =
-              std::uniform_int_distribution<uint64_t>{0, seen}(rng);
-            if (j < n_train) {
-              std::memcpy(sample.data() + j * d, v, d * sizeof(float));
-            }
-          }
-          ++seen;
+    const auto reservoir_sink = [&](uint64_t first, duckdb::idx_t n,
+                                    const float* p) {
+      for (duckdb::idx_t k = 0; k < n; ++k) {
+        if (!valid[first + k]) {
+          continue;
         }
-      });
-    SDB_ASSERT(seen == valid_count);
+        const float* v = p + static_cast<size_t>(k) * d;
+        if (seen < n_train) {
+          std::memcpy(sample.data() + seen * d, v, d * sizeof(float));
+        } else {
+          const uint64_t j =
+            std::uniform_int_distribution<uint64_t>{0, seen}(rng);
+          if (j < n_train) {
+            std::memcpy(sample.data() + j * d, v, d * sizeof(float));
+          }
+        }
+        ++seen;
+      }
+    };
+
+    // The training sample needs only `n_train` random vectors, but a uniform
+    // random-row gather would touch every ~256 KB storage segment (rows have no
+    // per-row offset), reading the whole column anyway. Instead sample a random
+    // subset of whole segments -- far fewer segment reads/decodes -- and
+    // reservoir-sample within them. Falls back to the full stream when the
+    // oversampled target already covers the column (small/dense data).
+    const uint64_t target = (n_train > valid_count / kSampleSegmentOversample)
+                              ? valid_count
+                              : n_train * kSampleSegmentOversample;
+    const size_t n_seg = child->DataRgCount();
+    if (target >= valid_count || n_seg <= 1) {
+      StreamRowBatches(*child, rows, d, ctx, reservoir_sink);
+      SDB_ASSERT(seen == valid_count);
+    } else {
+      std::vector<size_t> order(n_seg);
+      std::iota(order.begin(), order.end(), size_t{0});
+      std::mt19937_64 seg_rng{kClusterSeed};
+      std::shuffle(order.begin(), order.end(), seg_rng);
+
+      std::vector<std::pair<uint64_t, uint64_t>> ranges;
+      uint64_t valid_selected = 0;
+      for (size_t i = 0; i < n_seg && valid_selected < target; ++i) {
+        const auto w = child->DataRgWindow(order[i]);
+        // Rows fully contained in this segment; a straddling boundary row would
+        // force decoding an unselected neighbor, so drop it (<=1 per boundary).
+        const uint64_t r_lo = (static_cast<uint64_t>(w.begin) + d - 1) / d;
+        const uint64_t r_hi = static_cast<uint64_t>(w.end) / d;
+        if (r_lo >= r_hi) {
+          continue;
+        }
+        uint64_t vc = 0;
+        for (uint64_t r = r_lo; r < r_hi; ++r) {
+          vc += valid[r] ? 1 : 0;
+        }
+        if (vc == 0) {
+          continue;
+        }
+        ranges.emplace_back(r_lo, r_hi - r_lo);
+        valid_selected += vc;
+      }
+      std::sort(ranges.begin(), ranges.end());
+      StreamSelectedRanges(
+        *child, std::span<const std::pair<uint64_t, uint64_t>>{ranges}, d, ctx,
+        reservoir_sink);
+      SDB_ASSERT(seen >= n_train && seen <= valid_count);
+    }
   }
 
   const VectorMetric m = _info.metric;

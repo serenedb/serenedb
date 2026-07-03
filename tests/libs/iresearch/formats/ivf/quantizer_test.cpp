@@ -47,7 +47,7 @@ TEST_P(rabitq_quantizer_test, roundtrip_ranking_across_dims) {
   constexpr size_t n = 3;
 
   auto writer = MakeQuantizerWriter(VectorQuantization::RaBitQ, d, metric,
-                                    /*pq_m=*/0, nb_bits);
+                                    /*pq_m=*/0, /*pq_niter=*/0, nb_bits);
   ASSERT_NE(writer, nullptr);
   EXPECT_EQ(writer->Kind(), VectorQuantization::RaBitQ);
   EXPECT_EQ(writer->StatsBytes().size(), 2 * sizeof(uint32_t));
@@ -99,7 +99,7 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_l2) {
   constexpr size_t n = 3;
 
   auto writer = MakeQuantizerWriter(VectorQuantization::RaBitQ, d, metric,
-                                    /*pq_m=*/0, nb_bits);
+                                    /*pq_m=*/0, /*pq_niter=*/0, nb_bits);
   ASSERT_NE(writer, nullptr);
   writer->SetClusterCentroid(centroid.data());
 
@@ -167,7 +167,7 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_inner_product) {
   constexpr size_t n = 3;
 
   auto writer = MakeQuantizerWriter(VectorQuantization::RaBitQ, d, metric,
-                                    /*pq_m=*/0, nb_bits);
+                                    /*pq_m=*/0, /*pq_niter=*/0, nb_bits);
   ASSERT_NE(writer, nullptr);
   writer->SetClusterCentroid(centroid.data());
 

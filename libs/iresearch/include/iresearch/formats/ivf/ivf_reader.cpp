@@ -87,4 +87,17 @@ const float* IvfVectorReader::ReadDoc(doc_id_t doc) {
   return _scratch.data();
 }
 
+const float* IvfVectorReader::ReadDocRun(doc_id_t first, size_t count) {
+  SDB_ASSERT(count >= 1);
+  const uint64_t row0 = static_cast<uint64_t>(first) - doc_limits::min();
+  _batch.resize(count * _d);
+  for (size_t k = 0; k < count; ++k) {
+    _scan.Scan((row0 + k) * _d, _d, _buf, /*out_offset=*/0);
+    const float* p = duckdb::FlatVector::GetData<float>(_buf);
+    std::memcpy(_batch.data() + k * _d, p,
+                static_cast<size_t>(_d) * sizeof(float));
+  }
+  return _batch.data();
+}
+
 }  // namespace irs

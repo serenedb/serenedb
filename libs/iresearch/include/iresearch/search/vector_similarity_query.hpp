@@ -42,11 +42,11 @@ namespace irs {
 class KnnVectorQuery : public QueryBuilder {
  public:
   KnnVectorQuery(const SubReader& segment, VectorState&& state,
-                 std::vector<float>&& query, VectorMetric metric, score_t boost,
-                 QueryBuilder::ptr&& inner = nullptr)
+                 std::span<const float> query, VectorMetric metric,
+                 score_t boost, QueryBuilder::ptr&& inner = nullptr)
     : QueryBuilder{segment},
       _state{std::move(state)},
-      _query{std::move(query)},
+      _query{query},
       _inner{std::move(inner)},
       _metric{metric},
       _boost{boost} {}
@@ -60,7 +60,7 @@ class KnnVectorQuery : public QueryBuilder {
 
  private:
   VectorState _state;
-  std::vector<float> _query;
+  std::span<const float> _query;
   QueryBuilder::ptr _inner;
   VectorMetric _metric;
   score_t _boost;
@@ -74,12 +74,12 @@ class KnnVectorQuery : public QueryBuilder {
 class RangeVectorQuery : public QueryBuilder {
  public:
   RangeVectorQuery(const SubReader& segment, VectorState&& state,
-                   std::vector<float>&& query, VectorMetric metric,
+                   std::span<const float> query, VectorMetric metric,
                    float radius, bool inclusive, score_t boost,
                    QueryBuilder::ptr&& inner = nullptr)
     : QueryBuilder{segment},
       _state{std::move(state)},
-      _query{std::move(query)},
+      _query{query},
       _inner{std::move(inner)},
       _metric{metric},
       _radius{radius},
@@ -95,7 +95,7 @@ class RangeVectorQuery : public QueryBuilder {
 
  private:
   VectorState _state;
-  std::vector<float> _query;
+  std::span<const float> _query;
   QueryBuilder::ptr _inner;
   VectorMetric _metric;
   float _radius;

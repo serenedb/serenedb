@@ -21,6 +21,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <vector>
 
@@ -39,6 +40,7 @@ struct IResourceManager;
 struct L2BodyView {
   const byte_type* l2_centroids = nullptr;
   std::span<const uint32_t> fine_ids;
+  std::span<const float> radii;
   bstring buf;
   uint32_t n_l2 = 0;
 };
@@ -58,6 +60,10 @@ class TwoLayerCentroids {
                 std::vector<uint32_t>& out) const;
 
   void ReadL2Body(IndexInput& in, uint32_t l1_id, L2BodyView& view) const;
+
+  using FineClusterVisitor =
+    std::function<void(uint32_t, const byte_type*, float)>;
+  void ForEachFineCluster(IndexInput& in, const FineClusterVisitor& fn) const;
 
   void SearchL2(std::span<const float> query, uint32_t nprobe,
                 std::span<uint32_t> l1_ids, IndexInput& in,

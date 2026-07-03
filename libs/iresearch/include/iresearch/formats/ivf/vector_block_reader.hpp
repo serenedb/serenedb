@@ -48,9 +48,12 @@ class VectorBlockReader {
       _cur = index;
     }
     const size_t bytes = count * size_t{_record_size};
+    _cur += count;
+    if (const byte_type* p = _in.ReadStable(bytes)) {
+      return p;
+    }
     _buf.resize(bytes);
     _in.ReadData(_buf.data(), bytes);
-    _cur += count;
     return _buf.data();
   }
 

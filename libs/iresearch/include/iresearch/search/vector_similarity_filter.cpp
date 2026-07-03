@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <span>
 #include <vector>
 
 #include "basics/memory.hpp"
@@ -30,6 +31,7 @@
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/ivf/centroids.hpp"
 #include "iresearch/formats/ivf/ivf_reader.hpp"
+#include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -74,13 +76,22 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
                        (postings->meta().index_features & IndexFeatures::Pay);
   const bool metric_ok = opts.metric == VectorMetric::L2Sqr ||
                          opts.metric == VectorMetric::InnerProduct;
-  const VectorQuantization quant =
+  VectorQuantization quant =
     (has_pay && metric_ok && !ivf->QuantStats().empty())
       ? opts.quant
       : VectorQuantization::None;
+  const uint32_t d = ivf->Dimension();
+
+  std::shared_ptr<const QuantizerCodebook> codebook;
+  if (quant != VectorQuantization::None) {
+    codebook = MakeQuantizerCodebook(quant, d, ivf->QuantStats(), opts.query,
+                                     opts.metric);
+    if (!codebook) {
+      quant = VectorQuantization::None;
+    }
+  }
   const bool needs_centroids =
     quant == VectorQuantization::PQ || quant == VectorQuantization::RaBitQ;
-  const uint32_t d = ivf->Dimension();
 
   std::vector<uint32_t> fine_ids;
   std::vector<float> probed_centroids;
@@ -101,10 +112,7 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
   state.vector_column = vector_col;
   state.quant = quant;
   state.d = d;
-  if (quant != VectorQuantization::None) {
-    const auto stats = ivf->QuantStats();
-    state.quant_stats.assign(stats.begin(), stats.end());
-  }
+  state.codebook = std::move(codebook);
 
   std::array<byte_type, kCentroidTermWidth> term_buf{};
   CostAttr::Type estimation = 0;
@@ -147,7 +155,7 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
   }
 
   return memory::make_tracked<KnnVectorQuery>(
-    ctx.memory, segment, std::move(state), std::vector<float>{opts.query},
+    ctx.memory, segment, std::move(state), std::span<const float>{opts.query},
     opts.metric, ctx.boost * Boost(), std::move(inner));
 }
 

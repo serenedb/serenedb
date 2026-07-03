@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cstring>
 #include <limits>
+#include <numeric>
 #include <utility>
 
 #include "basics/errors.h"
@@ -51,6 +52,33 @@ void TopK(std::vector<std::pair<float, uint32_t>>& scored, uint32_t k,
   out.reserve(out.size() + k);
   for (auto it = scored.begin(); it != mid; ++it) {
     out.push_back(it->second);
+  }
+}
+
+void SortProbedAscending(std::vector<uint32_t>& out_ids,
+                         std::vector<float>* out_centroids, uint32_t d) {
+  const size_t k = out_ids.size();
+  if (k <= 1) {
+    return;
+  }
+  std::vector<uint32_t> perm(k);
+  std::iota(perm.begin(), perm.end(), 0u);
+  std::sort(perm.begin(), perm.end(), [&](uint32_t a, uint32_t b) noexcept {
+    return out_ids[a] < out_ids[b];
+  });
+  std::vector<uint32_t> ids(k);
+  for (size_t i = 0; i < k; ++i) {
+    ids[i] = out_ids[perm[i]];
+  }
+  out_ids = std::move(ids);
+  if (out_centroids != nullptr) {
+    std::vector<float> cens(k * d);
+    for (size_t i = 0; i < k; ++i) {
+      std::memcpy(cens.data() + i * d,
+                  out_centroids->data() + static_cast<size_t>(perm[i]) * d,
+                  static_cast<size_t>(d) * sizeof(float));
+    }
+    *out_centroids = std::move(cens);
   }
 }
 
@@ -148,7 +176,8 @@ void TwoLayerCentroids::ReadL2Body(IndexInput& in, uint32_t l1_id,
 
   const size_t centroids_bytes = static_cast<size_t>(n_l2) * _d * sizeof(float);
   const size_t ids_bytes = static_cast<size_t>(n_l2) * sizeof(uint32_t);
-  const size_t total = centroids_bytes + ids_bytes;
+  const size_t radii_bytes = static_cast<size_t>(n_l2) * sizeof(float);
+  const size_t total = centroids_bytes + ids_bytes + radii_bytes;
 
   const byte_type* p = in.ReadStable(total);
   if (p == nullptr) {
@@ -161,6 +190,20 @@ void TwoLayerCentroids::ReadL2Body(IndexInput& in, uint32_t l1_id,
   const byte_type* ids = p + centroids_bytes;
 
   view.fine_ids = std::span{reinterpret_cast<const uint32_t*>(ids), n_l2};
+  view.radii = std::span{
+    reinterpret_cast<const float*>(p + centroids_bytes + ids_bytes), n_l2};
+}
+
+void TwoLayerCentroids::ForEachFineCluster(IndexInput& in,
+                                           const FineClusterVisitor& fn) const {
+  const size_t stride = static_cast<size_t>(_d) * sizeof(float);
+  L2BodyView body;
+  for (uint32_t l1 = 0; l1 < _n_l1; ++l1) {
+    ReadL2Body(in, l1, body);
+    for (uint32_t s = 0; s < body.n_l2; ++s) {
+      fn(body.fine_ids[s], body.l2_centroids + s * stride, body.radii[s]);
+    }
+  }
 }
 
 void TwoLayerCentroids::SearchL2(std::span<const float> query, uint32_t nprobe,
@@ -174,6 +217,8 @@ void TwoLayerCentroids::SearchL2(std::span<const float> query, uint32_t nprobe,
   const auto* q = reinterpret_cast<const byte_type*>(query.data());
   const auto d = static_cast<uint16_t>(_d);
   const size_t stride = static_cast<size_t>(_d) * sizeof(float);
+
+  absl::c_sort(l1_ids);
 
   std::vector<std::pair<float, uint32_t>> scored;
   std::vector<uint32_t> cand_fine_id;
@@ -258,6 +303,7 @@ void TwoLayerCentroids::SearchGlobal(std::span<const float> query,
     return;
   }
   SearchL2(query, nprobe, l1_ids, in, out_ids, out_centroids);
+  SortProbedAscending(out_ids, out_centroids, _d);
 }
 
 }  // namespace irs

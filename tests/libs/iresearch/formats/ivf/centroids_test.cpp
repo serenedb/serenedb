@@ -58,6 +58,9 @@ Serialized WriteEntry(IndexOutput& out, VectorMetric metric, uint32_t d,
                   static_cast<size_t>(n_l2) * d * sizeof(float));
     out.WriteData(reinterpret_cast<const byte_type*>(b.fine_ids.data()),
                   static_cast<size_t>(n_l2) * sizeof(uint32_t));
+    const std::vector<float> radii(n_l2, 0.f);
+    out.WriteData(reinterpret_cast<const byte_type*>(radii.data()),
+                  static_cast<size_t>(n_l2) * sizeof(float));
   }
   Serialized s;
   s.resident_offset = out.Position();

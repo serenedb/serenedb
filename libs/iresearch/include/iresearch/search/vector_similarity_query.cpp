@@ -369,10 +369,25 @@ void RerankExactDistances(const SubReader& segment,
   if (!col_reader) {
     return;
   }
-  RawVectorReader reader{vector_column, *col_reader, d};
-  reader.SetQuery(query, metric);
-  for (auto& hit : hits) {
-    reader.ComputeDistance(hit.doc, kNoBoost, hit.score);
+  ReadContext read_ctx{*col_reader};
+  IvfVectorReader vreader{vector_column, read_ctx};
+  const VectorDistanceFn dist = ResolveVectorDistance(metric);
+  const auto* q = reinterpret_cast<const byte_type*>(query.data());
+  const auto dd = static_cast<uint16_t>(d);
+  size_t i = 0;
+  while (i < hits.size()) {
+    size_t run = 1;
+    while (i + run < hits.size() &&
+           hits[i + run].doc == hits[i + run - 1].doc + 1) {
+      ++run;
+    }
+    const float* base = vreader.ReadDocRun(hits[i].doc, run);
+    for (size_t k = 0; k < run; ++k) {
+      hits[i + k].score =
+        dist(q, reinterpret_cast<const byte_type*>(base + k * d), dd) *
+        kNoBoost;
+    }
+    i += run;
   }
 }
 
@@ -390,10 +405,9 @@ DocIterator::ptr KnnVectorQuery::Execute(const ExecutionContext& ctx,
   if (_state.quant != VectorQuantization::None) {
     SDB_ASSERT(_state.pay_starts.size() == _state.cookies.size());
     SDB_ASSERT(_state.cluster_counts.size() == _state.cookies.size());
+    SDB_ASSERT(_state.codebook);
 
-    const auto codebook = MakeQuantizerCodebook(
-      _state.quant, _state.d,
-      {_state.quant_stats.data(), _state.quant_stats.size()}, query, _metric);
+    const auto& codebook = _state.codebook;
 
     ScoreAdapters children;
     children.reserve(_state.cookies.size());

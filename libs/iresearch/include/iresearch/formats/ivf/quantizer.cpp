@@ -27,6 +27,7 @@
 #include <faiss/utils/random.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -64,36 +65,50 @@ std::span<const byte_type> FloatSpan(const std::vector<float>& v) noexcept {
 
 constexpr int64_t kRaBitQRotationSeed = 0x5a17b17c5eed5eedULL;
 
-// out = rotation * in (row-major rotation, out[i] = <rotation_row_i, in>).
-void RotateInto(const float* rotation, const float* in, float* out,
-                uint32_t d) {
-  for (uint32_t i = 0; i < d; ++i) {
-    out[i] =
-      faiss::fvec_inner_product(rotation + static_cast<size_t>(i) * d, in, d);
+uint32_t RotatedDim(uint32_t d) noexcept {
+  uint32_t p = 1;
+  while (p < d) {
+    p <<= 1;
+  }
+  return p;
+}
+
+void GenerateSigns(uint32_t rotated_d, int64_t seed,
+                   std::vector<float>& signs) {
+  signs.resize(rotated_d);
+  faiss::float_randn(signs.data(), signs.size(), seed);
+  for (uint32_t i = 0; i < rotated_d; ++i) {
+    signs[i] = signs[i] < 0.f ? -1.f : 1.f;
   }
 }
 
-// Builds a random d x d orthogonal matrix via modified Gram-Schmidt on a
-// seeded Gaussian matrix (rows are orthonormalized in place), so encode and
-// query share a byte-identical rotation without needing faiss's LAPACK-backed
-// QR path (disabled in this trimmed build).
-void GenerateRotation(uint32_t d, int64_t seed, std::vector<float>& rotation) {
-  rotation.resize(static_cast<size_t>(d) * d);
-  faiss::float_randn(rotation.data(), rotation.size(), seed);
-
-  auto orthogonalize_pass = [&] {
-    for (uint32_t j = 0; j < d; ++j) {
-      float* vj = rotation.data() + static_cast<size_t>(j) * d;
-      for (uint32_t i = 0; i < j; ++i) {
-        const float* qi = rotation.data() + static_cast<size_t>(i) * d;
-        const float r_ij = faiss::fvec_inner_product(qi, vj, d);
-        faiss::fvec_madd(d, vj, -r_ij, qi, vj);
+// In-place Fast Walsh-Hadamard transform; len must be a power of two.
+void Fwht(float* a, uint32_t len) noexcept {
+  for (uint32_t h = 1; h < len; h <<= 1) {
+    for (uint32_t i = 0; i < len; i += (h << 1)) {
+      for (uint32_t j = i; j < i + h; ++j) {
+        const float x = a[j];
+        const float y = a[j + h];
+        a[j] = x + y;
+        a[j + h] = x - y;
       }
-      faiss::fvec_renorm_L2(d, 1, vj);
     }
-  };
-  orthogonalize_pass();
-  orthogonalize_pass();  // re-orthogonalize: brings fp32 drift back to ~eps.
+  }
+}
+
+void RotateInto(const float* signs, const float* in, float* out, uint32_t d,
+                uint32_t rotated_d) noexcept {
+  for (uint32_t i = 0; i < d; ++i) {
+    out[i] = in[i] * signs[i];
+  }
+  for (uint32_t i = d; i < rotated_d; ++i) {
+    out[i] = 0.f;
+  }
+  Fwht(out, rotated_d);
+  const float scale = 1.f / std::sqrt(static_cast<float>(rotated_d));
+  for (uint32_t i = 0; i < rotated_d; ++i) {
+    out[i] *= scale;
+  }
 }
 
 class ScalarQuantizerWriter final : public QuantizerWriter {
@@ -452,20 +467,18 @@ std::unique_ptr<QuantizerReader> ProductQuantizerCodebook::MakeReader(
 class RaBitQuantizerWriter final : public QuantizerWriter {
  public:
   RaBitQuantizerWriter(uint32_t d, VectorMetric metric, uint32_t nb_bits)
-    : _d{d}, _rabitq{d, FaissMetric(metric), nb_bits} {
-    GenerateRotation(d, kRaBitQRotationSeed, _rotation);
-    _stats.resize(2 * sizeof(uint32_t) + _rotation.size() * sizeof(float));
+    : _d{d}, _rd{RotatedDim(d)}, _rabitq{_rd, FaissMetric(metric), nb_bits} {
+    GenerateSigns(_rd, kRaBitQRotationSeed, _signs);
+    _stats.resize(2 * sizeof(uint32_t));
     std::memcpy(_stats.data(), &nb_bits, sizeof(nb_bits));
     std::memcpy(_stats.data() + sizeof(nb_bits), &d, sizeof(d));
-    std::memcpy(_stats.data() + 2 * sizeof(uint32_t), _rotation.data(),
-                _rotation.size() * sizeof(float));
   }
 
   void Train(const float* /*vecs*/, size_t /*n*/) final {}
 
   void SetClusterCentroid(const float* centroid) final {
-    _centroid.resize(_d);
-    RotateInto(_rotation.data(), centroid, _centroid.data(), _d);
+    _centroid.resize(_rd);
+    RotateInto(_signs.data(), centroid, _centroid.data(), _d, _rd);
   }
 
   void EncodeCluster(IndexOutput& out, const float* vecs,
@@ -473,10 +486,11 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
     if (n == 0) {
       return;
     }
-    SDB_ASSERT(_centroid.size() == _d);
-    _rotated.resize(n * _d);
+    SDB_ASSERT(_centroid.size() == _rd);
+    _rotated.resize(n * _rd);
     for (size_t i = 0; i < n; ++i) {
-      RotateInto(_rotation.data(), vecs + i * _d, _rotated.data() + i * _d, _d);
+      RotateInto(_signs.data(), vecs + i * _d, _rotated.data() + i * _rd, _d,
+                 _rd);
     }
     _code.resize(n * _rabitq.code_size);
     _rabitq.compute_codes_core(_rotated.data(), _code.data(), n,
@@ -498,8 +512,9 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
 
  private:
   uint32_t _d;
+  uint32_t _rd;
   faiss::RaBitQuantizer _rabitq;
-  std::vector<float> _rotation;
+  std::vector<float> _signs;
   std::vector<float> _centroid;
   std::vector<byte_type> _stats;
   mutable std::vector<float> _rotated;
@@ -511,18 +526,15 @@ class RaBitQuantizerCodebook final : public QuantizerCodebook {
   RaBitQuantizerCodebook(uint32_t d, std::span<const byte_type> stats,
                          std::span<const float> query, VectorMetric metric) {
     const Header hdr = ReadHeader(stats);
-    const size_t want =
-      2 * sizeof(uint32_t) + static_cast<size_t>(d) * d * sizeof(float);
     if (hdr.nb_bits >= 1 && hdr.nb_bits <= 9 && hdr.d == d &&
-        stats.size() >= want) {
+        stats.size() >= 2 * sizeof(uint32_t)) {
       _d = d;
-      _rabitq = std::make_unique<faiss::RaBitQuantizer>(d, FaissMetric(metric),
-                                                        hdr.nb_bits);
-      _rotation.resize(static_cast<size_t>(d) * d);
-      std::memcpy(_rotation.data(), stats.data() + 2 * sizeof(uint32_t),
-                  _rotation.size() * sizeof(float));
-      _rotated_query.resize(d);
-      RotateInto(_rotation.data(), query.data(), _rotated_query.data(), d);
+      _rd = RotatedDim(d);
+      _rabitq = std::make_unique<faiss::RaBitQuantizer>(
+        _rd, FaissMetric(metric), hdr.nb_bits);
+      GenerateSigns(_rd, kRaBitQRotationSeed, _signs);
+      _rotated_query.resize(_rd);
+      RotateInto(_signs.data(), query.data(), _rotated_query.data(), _d, _rd);
       _valid = true;
     }
   }
@@ -533,11 +545,12 @@ class RaBitQuantizerCodebook final : public QuantizerCodebook {
     std::unique_ptr<IndexInput> pay_in) const final;
 
   const faiss::RaBitQuantizer& Rabitq() const noexcept { return *_rabitq; }
-  const std::vector<float>& Rotation() const noexcept { return _rotation; }
+  const std::vector<float>& Signs() const noexcept { return _signs; }
   const std::vector<float>& RotatedQuery() const noexcept {
     return _rotated_query;
   }
-  uint32_t D() const noexcept { return _d; }
+  uint32_t SrcDim() const noexcept { return _d; }
+  uint32_t RotDim() const noexcept { return _rd; }
 
  private:
   struct Header {
@@ -555,8 +568,9 @@ class RaBitQuantizerCodebook final : public QuantizerCodebook {
   }
 
   uint32_t _d = 0;
+  uint32_t _rd = 0;
   std::unique_ptr<faiss::RaBitQuantizer> _rabitq;
-  std::vector<float> _rotation;
+  std::vector<float> _signs;
   std::vector<float> _rotated_query;
   bool _valid = false;
 };
@@ -576,9 +590,9 @@ class RaBitQuantizerReader final : public QuantizerReader {
       return;
     }
     SDB_ASSERT(centroid != nullptr);
-    const uint32_t d = _cb->D();
-    _rotated_centroid.resize(d);
-    RotateInto(_cb->Rotation().data(), centroid, _rotated_centroid.data(), d);
+    _rotated_centroid.resize(_cb->RotDim());
+    RotateInto(_cb->Signs().data(), centroid, _rotated_centroid.data(),
+               _cb->SrcDim(), _cb->RotDim());
     _dc.reset(
       _cb->Rabitq().get_distance_computer(0, _rotated_centroid.data(), false));
     _dc->set_query(_cb->RotatedQuery().data());

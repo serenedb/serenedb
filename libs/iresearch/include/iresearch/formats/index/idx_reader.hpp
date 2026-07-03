@@ -53,7 +53,7 @@ struct TermDictMeta {
 
 inline constexpr std::string_view kIdxFormatExt = "idx";
 inline constexpr std::string_view kIdxFormatName = "iresearch_index";
-inline constexpr int32_t kIdxFormatVersion = 0;
+inline constexpr int32_t kIdxFormatVersion = 1;
 
 enum class IdxSlotKind : uint8_t {
   TermDict = 0,

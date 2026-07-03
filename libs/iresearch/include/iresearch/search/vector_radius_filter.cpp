@@ -20,11 +20,16 @@
 
 #include "iresearch/search/vector_radius_filter.hpp"
 
+#include <array>
+#include <cmath>
+#include <span>
 #include <vector>
 
 #include "basics/memory.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/formats.hpp"
+#include "iresearch/formats/ivf/centroids.hpp"
+#include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/vector_similarity_query.hpp"
 
@@ -57,15 +62,49 @@ QueryBuilder::ptr ByRadius::PrepareSegment(const SubReader& segment,
   state.reader = postings;
   state.vector_column = vector_col;
 
-  // Range search probes every cluster: a doc within the ball may be assigned
-  // to any cell (cell-radius pruning needs the not-yet-persisted radii).
+  const auto* ivf = field_limits::valid(opts.centroids_id)
+                      ? segment.Ivf(opts.centroids_id)
+                      : nullptr;
+  auto idx_in = segment.ReopenIvf();
+  const bool prunable =
+    (opts.metric == VectorMetric::L2Sqr || opts.metric == VectorMetric::L1) &&
+    ivf != nullptr && !ivf->Empty() && idx_in != nullptr &&
+    opts.query.size() == ivf->Dimension();
+
   CostAttr::Type estimation = 0;
-  while (terms->next()) {
-    terms->read();
-    if (term_meta) {
-      estimation += term_meta->docs_count;
+  if (!prunable) {
+    while (terms->next()) {
+      terms->read();
+      if (term_meta) {
+        estimation += term_meta->docs_count;
+      }
+      state.cookies.emplace_back(terms->cookie());
     }
-    state.cookies.emplace_back(terms->cookie());
+  } else {
+    const auto dist = ResolveVectorDistance(opts.metric);
+    const auto* q = reinterpret_cast<const byte_type*>(opts.query.data());
+    const auto d16 = static_cast<uint16_t>(opts.query.size());
+    const float rt =
+      opts.metric == VectorMetric::L2Sqr ? std::sqrt(opts.radius) : opts.radius;
+    std::array<byte_type, kCentroidTermWidth> term_buf{};
+    ivf->ForEachFineCluster(
+      *idx_in, [&](uint32_t fine_id, const byte_type* centroid, float radius) {
+        const float dqc = dist(q, centroid, d16);
+        const float dqc_lin =
+          opts.metric == VectorMetric::L2Sqr ? std::sqrt(dqc) : dqc;
+        if (dqc_lin - radius > rt) {
+          return;
+        }
+        EncodeCentroidTerm(fine_id, term_buf.data());
+        if (!terms->seek(bytes_view{term_buf.data(), term_buf.size()})) {
+          return;
+        }
+        terms->read();
+        if (term_meta) {
+          estimation += term_meta->docs_count;
+        }
+        state.cookies.emplace_back(terms->cookie());
+      });
   }
   state.estimation = estimation;
 
@@ -84,7 +123,7 @@ QueryBuilder::ptr ByRadius::PrepareSegment(const SubReader& segment,
   }
 
   return memory::make_tracked<RangeVectorQuery>(
-    ctx.memory, segment, std::move(state), std::vector<float>{opts.query},
+    ctx.memory, segment, std::move(state), std::span<const float>{opts.query},
     opts.metric, opts.radius, opts.inclusive, ctx.boost * Boost(),
     std::move(inner));
 }

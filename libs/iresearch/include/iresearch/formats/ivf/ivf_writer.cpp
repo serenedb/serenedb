@@ -254,14 +254,13 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
   uint32_t next_fine_id = 0;
   std::vector<float> l2_centroids;
   std::vector<float> cell_sample;
-  std::vector<uint32_t> fine_ids;
+  std::vector<uint32_t> fine_ids_scratch;
   std::vector<float> residual_sample;
   if (pq) {
     residual_sample.reserve(static_cast<size_t>(n_train) * d);
   }
 
   for (uint32_t c = 0; c < n_l1; ++c) {
-    body_offsets.push_back(bout.Position());
     const float* l1c = l1_centroids.data() + static_cast<size_t>(c) * d;
     const auto& sidx = sample_groups[c];
     const size_t ms = sidx.size();
@@ -300,16 +299,6 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
       }
     }
 
-    bout.WriteU32(n_l2);
-    bout.WriteData(reinterpret_cast<const byte_type*>(l2_centroids.data()),
-                   static_cast<size_t>(n_l2) * d * sizeof(float));
-    fine_ids.resize(n_l2);
-    for (uint32_t s = 0; s < n_l2; ++s) {
-      fine_ids[s] = next_fine_id + s;
-    }
-    bout.WriteData(reinterpret_cast<const byte_type*>(fine_ids.data()),
-                   static_cast<size_t>(n_l2) * sizeof(uint32_t));
-
     out.fine_centroids.insert(
       out.fine_centroids.end(), l2_centroids.data(),
       l2_centroids.data() + static_cast<size_t>(n_l2) * d);
@@ -333,6 +322,8 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
   }
 
   const uint32_t n_fine = next_fine_id;
+  const auto radius_dist = ResolveVectorDistance(m);
+  std::vector<float> radii(n_fine, 0.f);
   std::vector<uint32_t> doc_fine;
   doc_fine.reserve(valid_count);
   {
@@ -349,11 +340,22 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
           const float* cc = out.fine_centroids.data() +
                             static_cast<size_t>(cell_fine_base[cell]) * d;
           const uint32_t best = NearestCentroid(m, v, cc, cell_n_l2[cell], d);
-          doc_fine.push_back(cell_fine_base[cell] + best);
+          const uint32_t fine = cell_fine_base[cell] + best;
+          doc_fine.push_back(fine);
+          const float* fc = cc + static_cast<size_t>(best) * d;
+          const float dcur = radius_dist(reinterpret_cast<const byte_type*>(v),
+                                         reinterpret_cast<const byte_type*>(fc),
+                                         static_cast<uint16_t>(d));
+          radii[fine] = std::max(radii[fine], dcur);
         }
       });
     SDB_ASSERT(seen == valid_count);
     SDB_ASSERT(doc_fine.size() == valid_count);
+  }
+  if (m == VectorMetric::L2Sqr) {
+    for (auto& x : radii) {
+      x = std::sqrt(x);
+    }
   }
 
   out.cluster_offsets.assign(n_fine + 1, 0);
@@ -385,6 +387,26 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
       qw->Train(residual_sample.data(), residual_sample.size() / d);
     }
     stats = qw->StatsBytes();
+  }
+
+  // Bodies are emitted here (not during training) because each carries the
+  // per-fine bounding radius, which is only known after the doc_fine pass.
+  for (uint32_t c = 0; c < n_l1; ++c) {
+    body_offsets.push_back(bout.Position());
+    const uint32_t n_l2 = cell_n_l2[c];
+    const uint32_t base = cell_fine_base[c];
+    bout.WriteU32(n_l2);
+    bout.WriteData(reinterpret_cast<const byte_type*>(
+                     out.fine_centroids.data() + static_cast<size_t>(base) * d),
+                   static_cast<size_t>(n_l2) * d * sizeof(float));
+    fine_ids_scratch.resize(n_l2);
+    for (uint32_t s = 0; s < n_l2; ++s) {
+      fine_ids_scratch[s] = base + s;
+    }
+    bout.WriteData(reinterpret_cast<const byte_type*>(fine_ids_scratch.data()),
+                   static_cast<size_t>(n_l2) * sizeof(uint32_t));
+    bout.WriteData(reinterpret_cast<const byte_type*>(radii.data() + base),
+                   static_cast<size_t>(n_l2) * sizeof(float));
   }
 
   out.resident_offset = bout.Position();

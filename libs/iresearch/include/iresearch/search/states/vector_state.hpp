@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <memory>
+
 #include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/search/cost.hpp"
@@ -29,13 +31,13 @@ namespace irs {
 
 struct TermReader;
 class ColumnReader;
+class QuantizerCodebook;
 
 struct VectorState {
   explicit VectorState(IResourceManager& memory) noexcept
     : cookies{{memory}},
       pay_starts{{memory}},
       cluster_counts{{memory}},
-      quant_stats{{memory}},
       cluster_centroids{{memory}} {}
 
   const TermReader* reader = nullptr;
@@ -48,7 +50,7 @@ struct VectorState {
   ManagedVector<uint64_t> pay_starts;
   ManagedVector<uint32_t> cluster_counts;
 
-  ManagedVector<byte_type> quant_stats;
+  std::shared_ptr<const QuantizerCodebook> codebook;
   ManagedVector<float> cluster_centroids;
 };
 

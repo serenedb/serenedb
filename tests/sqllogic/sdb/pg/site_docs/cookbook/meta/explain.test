@@ -1,5 +1,8 @@
 control substitution on
 
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
 # DOCS_TEST: example_001
 
 statement ok
@@ -69,36 +72,24 @@ EXPLAIN
     WHERE name LIKE 'Ma%';
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: name                 │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections:                      │
-│ CAST(#0 AS INTEGER),              │
-│ __internal_decompress_string(#1)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ HASH_JOIN ─────┴─────────────────╮
-│ Join Type: INNER                  │
-│ Conditions: sid = sid             │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-                  ├─────────────────────────────────────────╮
-╭─ PROJECTION ────┴─────────────────╮  ╭─ PROJECTION ───────┴────────────────────╮
-│ Projections: CAST(#0 AS TINYINT)  │  │ Projections:                            │
-│ ~3 rows                           │  │ CAST(#0 AS TINYINT),                    │
-╰─────────────────┬─────────────────╯  │ __internal_compress_string_ubigint(#1)  │
-╭─ SEQ_SCAN ──────┴─────────────────╮  │ ~1 row                                  │
-│ Table: exams                      │  ╰────────────────────┬────────────────────╯
-│ Type: Sequential Scan             │  ╭─ SEQ_SCAN ─────────┴────────────────────╮
-│ Projections: sid                  │  │ Table: students                         │
-│ ~3 rows                           │  │ Type: Sequential Scan                   │
-╰───────────────────────────────────╯  │ Projections: sid, name                  │
-                                       │ Filters:                                │
-                                       │ (name >= 'Ma') AND (name < 'Mb')        │
-                                       │ ~1 row                                  │
-                                       ╰─────────────────────────────────────────╯
+╭─ PROJECTION ──────────╮
+│ Projections: name     │
+│ ~1 row                │
+╰───────────┬───────────╯
+╭─ HASH_JOIN ───────────╮
+│ Join Type: INNER      │
+│ Conditions: sid = sid │
+│ ~1 row                │
+╰───────────┬───────────╯
+            ├────────────────────────────────╮
+╭─ SEQ_SCAN ┴───────────╮  ╭─ SEQ_SCAN ──────┴────────────────╮
+│ Table: exams          │  │ Table: students                  │
+│ Type: Sequential Scan │  │ Type: Sequential Scan            │
+│ Projections: sid      │  │ Projections: sid, name           │
+│ ~3 rows               │  │ Filters:                         │
+╰───────────────────────╯  │ (name >= 'Ma') AND (name < 'Mb') │
+                           │ ~1 row                           │
+                           ╰──────────────────────────────────╯
 
 # DOCS_TEST: example_003
 

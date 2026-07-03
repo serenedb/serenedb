@@ -671,10 +671,10 @@ if(NOT "${SDB_SANITIZE}" STREQUAL "")
     endif()
 endif()
 
-include(Runtime)
-
 add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-nostdinc++>)
 add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-nostdlib++>)
+
+include(Runtime)
 
 if(NOT "${SDB_SANITIZE}" STREQUAL "")
     # if will be some strange link error just enable this

@@ -1,3 +1,6 @@
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
 # Tests that point lookups are chosen when the point filter fully covers
 # the primary key, and that the full scan variants are chosen otherwise.
 # Uses EXPLAIN to verify the number of rows read by the TableScan.
@@ -37,26 +40,16 @@ query
 EXPLAIN SELECT * FROM t_choice ORDER BY id;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER)  │
-│ ~3 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_choice.id ASC         │
-│ ~3 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT)  │
-│ ~3 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_choice                   │
-│ Type: Sequential Scan             │
-│ Projections: id, val              │
-│ ~3 rows                           │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ────────────────╮
+│ Order By: t_choice.id ASC │
+│ ~3 rows                   │
+╰─────────────┬─────────────╯
+╭─ SEQ_SCAN ──┴─────────────╮
+│ Table: t_choice           │
+│ Type: Sequential Scan     │
+│ Projections: id, val      │
+│ ~3 rows                   │
+╰───────────────────────────╯
 
 
 query
@@ -157,29 +150,17 @@ query
 EXPLAIN SELECT * FROM t_choice_cpk WHERE a = 3 ORDER BY b;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER), │
-│              CAST(#2 AS INTEGER)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_choice_cpk.b ASC      │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT), │
-│              CAST(#2 AS TINYINT)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_choice_cpk               │
-│ Type: Sequential Scan             │
-│ Projections: a, b, val            │
-│ Filters: a = 3                    │
-│ ~1 row                            │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ───────────────────╮
+│ Order By: t_choice_cpk.b ASC │
+│ ~1 row                       │
+╰───────────────┬──────────────╯
+╭─ SEQ_SCAN ────┴──────────────╮
+│ Table: t_choice_cpk          │
+│ Type: Sequential Scan        │
+│ Projections: a, b, val       │
+│ Filters: a = 3               │
+│ ~1 row                       │
+╰──────────────────────────────╯
 
 
 # No filter -> full scan
@@ -188,28 +169,16 @@ query
 EXPLAIN SELECT * FROM t_choice_cpk ORDER BY a;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER), │
-│              CAST(#2 AS INTEGER)  │
-│ ~3 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_choice_cpk.a ASC      │
-│ ~3 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT), │
-│              CAST(#2 AS TINYINT)  │
-│ ~3 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_choice_cpk               │
-│ Type: Sequential Scan             │
-│ Projections: a, b, val            │
-│ ~3 rows                           │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ───────────────────╮
+│ Order By: t_choice_cpk.a ASC │
+│ ~3 rows                      │
+╰───────────────┬──────────────╯
+╭─ SEQ_SCAN ────┴──────────────╮
+│ Table: t_choice_cpk          │
+│ Type: Sequential Scan        │
+│ Projections: a, b, val       │
+│ ~3 rows                      │
+╰──────────────────────────────╯
 
 
 statement ok
@@ -242,16 +211,8 @@ query
 EXPLAIN SELECT * FROM t_choice_cpk WHERE (a=1 AND b=2) OR (a=3 AND b=4) ORDER BY a, b;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────────────────────────────────────────────────────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), CAST(#1 AS INTEGER), CAST(#2 AS INTEGER)                         │
-│ ~1 row                                                                                             │
-╰──────────────────────────────────────────────────┬─────────────────────────────────────────────────╯
-╭─ ORDER_BY ───────────────────────────────────────┴─────────────────────────────────────────────────╮
+╭─ ORDER_BY ─────────────────────────────────────────────────────────────────────────────────────────╮
 │ Order By: t_choice_cpk.a ASC, t_choice_cpk.b ASC                                                   │
-│ ~1 row                                                                                             │
-╰──────────────────────────────────────────────────┬─────────────────────────────────────────────────╯
-╭─ PROJECTION ─────────────────────────────────────┴─────────────────────────────────────────────────╮
-│ Projections: CAST(#0 AS TINYINT), CAST(#1 AS TINYINT), CAST(#2 AS TINYINT)                         │
 │ ~1 row                                                                                             │
 ╰──────────────────────────────────────────────────┬─────────────────────────────────────────────────╯
 ╭─ FILTER ─────────────────────────────────────────┴─────────────────────────────────────────────────╮
@@ -279,21 +240,9 @@ query
 EXPLAIN SELECT * FROM t_choice_cpk WHERE a=1 AND (b=2 OR b=4) ORDER BY a, b;
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────────────╮
-│ Projections: CAST(#0 AS INTEGER),        │
-│              CAST(#1 AS INTEGER),        │
-│              CAST(#2 AS INTEGER)         │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
-╭─ ORDER_BY ──────────┴────────────────────╮
+╭─ ORDER_BY ───────────────────────────────╮
 │ Order By: t_choice_cpk.a ASC,            │
 │           t_choice_cpk.b ASC             │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
-╭─ PROJECTION ────────┴────────────────────╮
-│ Projections: CAST(#0 AS TINYINT),        │
-│              CAST(#1 AS TINYINT),        │
-│              CAST(#2 AS TINYINT)         │
 │ ~1 row                                   │
 ╰─────────────────────┬────────────────────╯
 ╭─ FILTER ────────────┴────────────────────╮
@@ -328,21 +277,9 @@ query
 EXPLAIN SELECT * FROM t_choice_cpk WHERE (a=1 OR b=2) AND (a=2 OR b=4) ORDER BY a, b;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────────────────╮
-│ Projections: CAST(#0 AS INTEGER),             │
-│              CAST(#1 AS INTEGER),             │
-│              CAST(#2 AS INTEGER)              │
-│ ~1 row                                        │
-╰───────────────────────┬───────────────────────╯
-╭─ ORDER_BY ────────────┴───────────────────────╮
+╭─ ORDER_BY ────────────────────────────────────╮
 │ Order By: t_choice_cpk.a ASC,                 │
 │           t_choice_cpk.b ASC                  │
-│ ~1 row                                        │
-╰───────────────────────┬───────────────────────╯
-╭─ PROJECTION ──────────┴───────────────────────╮
-│ Projections: CAST(#0 AS TINYINT),             │
-│              CAST(#1 AS TINYINT),             │
-│              CAST(#2 AS TINYINT)              │
 │ ~1 row                                        │
 ╰───────────────────────┬───────────────────────╯
 ╭─ FILTER ──────────────┴───────────────────────╮
@@ -366,33 +303,21 @@ query
 EXPLAIN SELECT * FROM t_choice_cpk WHERE (a=1 OR b=2) AND 1=1 ORDER BY a, b;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER), │
-│              CAST(#2 AS INTEGER)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_choice_cpk.a ASC,     │
-│           t_choice_cpk.b ASC      │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT), │
-│              CAST(#2 AS TINYINT)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ FILTER ────────┴─────────────────╮
-│ Expression: (a = 1) OR (b = 2)    │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_choice_cpk               │
-│ Type: Sequential Scan             │
-│ Projections: a, b, val            │
-│ ~8 rows                           │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ─────────────────────╮
+│ Order By: t_choice_cpk.a ASC,  │
+│           t_choice_cpk.b ASC   │
+│ ~1 row                         │
+╰────────────────┬───────────────╯
+╭─ FILTER ───────┴───────────────╮
+│ Expression: (a = 1) OR (b = 2) │
+│ ~1 row                         │
+╰────────────────┬───────────────╯
+╭─ SEQ_SCAN ─────┴───────────────╮
+│ Table: t_choice_cpk            │
+│ Type: Sequential Scan          │
+│ Projections: a, b, val         │
+│ ~8 rows                        │
+╰────────────────────────────────╯
 
 
 # 1=2 -> AnyFilterNode; first point emitted by OrFilter is {a:1} (partial) -> full scan.
@@ -401,33 +326,21 @@ query
 EXPLAIN SELECT * FROM t_choice_cpk WHERE (a=1 OR b=2) OR (1=2) ORDER BY a, b;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER), │
-│              CAST(#2 AS INTEGER)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_choice_cpk.a ASC,     │
-│           t_choice_cpk.b ASC      │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT), │
-│              CAST(#2 AS TINYINT)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ FILTER ────────┴─────────────────╮
-│ Expression: (a = 1) OR (b = 2)    │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_choice_cpk               │
-│ Type: Sequential Scan             │
-│ Projections: a, b, val            │
-│ ~8 rows                           │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ─────────────────────╮
+│ Order By: t_choice_cpk.a ASC,  │
+│           t_choice_cpk.b ASC   │
+│ ~1 row                         │
+╰────────────────┬───────────────╯
+╭─ FILTER ───────┴───────────────╮
+│ Expression: (a = 1) OR (b = 2) │
+│ ~1 row                         │
+╰────────────────┬───────────────╯
+╭─ SEQ_SCAN ─────┴───────────────╮
+│ Table: t_choice_cpk            │
+│ Type: Sequential Scan          │
+│ Projections: a, b, val         │
+│ ~8 rows                        │
+╰────────────────────────────────╯
 
 
 # 1=2 -> AnyFilterNode; first point emitted by OrFilter is {a:1, b:2}, but
@@ -437,30 +350,18 @@ query
 EXPLAIN SELECT * FROM t_choice_cpk WHERE (a=1 and b=2) OR (1=2) ORDER BY a, b;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER), │
-│              CAST(#2 AS INTEGER)  │
-│ ~2 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_choice_cpk.a ASC,     │
-│           t_choice_cpk.b ASC      │
-│ ~2 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT), │
-│              CAST(#2 AS TINYINT)  │
-│ ~2 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_choice_cpk               │
-│ Type: Sequential Scan             │
-│ Projections: a, b, val            │
-│ Filters: a = 1, b = 2             │
-│ ~2 rows                           │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ────────────────────╮
+│ Order By: t_choice_cpk.a ASC, │
+│           t_choice_cpk.b ASC  │
+│ ~2 rows                       │
+╰───────────────┬───────────────╯
+╭─ SEQ_SCAN ────┴───────────────╮
+│ Table: t_choice_cpk           │
+│ Type: Sequential Scan         │
+│ Projections: a, b, val        │
+│ Filters: a = 1, b = 2         │
+│ ~2 rows                       │
+╰───────────────────────────────╯
 
 
 # a IN (1,3) -> OrFilter({a:1},{a:3}); b IN (2,6) -> OrFilter({b:2},{b:6}).
@@ -479,21 +380,9 @@ query
 EXPLAIN SELECT * FROM t_choice_cpk WHERE a IN (1,3) AND b IN (2,6) ORDER BY a, b;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────────────────╮
-│ Projections: CAST(#0 AS INTEGER),             │
-│              CAST(#1 AS INTEGER),             │
-│              CAST(#2 AS INTEGER)              │
-│ ~1 row                                        │
-╰───────────────────────┬───────────────────────╯
-╭─ ORDER_BY ────────────┴───────────────────────╮
+╭─ ORDER_BY ────────────────────────────────────╮
 │ Order By: t_choice_cpk.a ASC,                 │
 │           t_choice_cpk.b ASC                  │
-│ ~1 row                                        │
-╰───────────────────────┬───────────────────────╯
-╭─ PROJECTION ──────────┴───────────────────────╮
-│ Projections: CAST(#0 AS TINYINT),             │
-│              CAST(#1 AS TINYINT),             │
-│              CAST(#2 AS TINYINT)              │
 │ ~1 row                                        │
 ╰───────────────────────┬───────────────────────╯
 ╭─ FILTER ──────────────┴───────────────────────╮
@@ -651,27 +540,17 @@ query
 EXPLAIN SELECT * FROM t_choice_nulls WHERE id IN (2,3) ORDER BY id;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_choice_nulls.id ASC   │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_choice_nulls             │
-│ Type: Sequential Scan             │
-│ Projections: id, val              │
-│ Filters: id >= 2                  │
-│ ~1 row                            │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ──────────────────────╮
+│ Order By: t_choice_nulls.id ASC │
+│ ~1 row                          │
+╰────────────────┬────────────────╯
+╭─ SEQ_SCAN ─────┴────────────────╮
+│ Table: t_choice_nulls           │
+│ Type: Sequential Scan           │
+│ Projections: id, val            │
+│ Filters: id >= 2                │
+│ ~1 row                          │
+╰─────────────────────────────────╯
 
 
 query
@@ -824,18 +703,8 @@ query
 EXPLAIN SELECT * FROM t_range1 WHERE a < 2 OR a > 8 ORDER BY a;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────────────────╮
-│ Projections: CAST(#0 AS INTEGER),       │
-│              CAST(#1 AS INTEGER)        │
-│ ~1 row                                  │
-╰────────────────────┬────────────────────╯
-╭─ ORDER_BY ─────────┴────────────────────╮
+╭─ ORDER_BY ──────────────────────────────╮
 │ Order By: t_range1.a ASC                │
-│ ~1 row                                  │
-╰────────────────────┬────────────────────╯
-╭─ PROJECTION ───────┴────────────────────╮
-│ Projections: CAST(#0 AS TINYINT),       │
-│              CAST(#1 AS TINYINT)        │
 │ ~1 row                                  │
 ╰────────────────────┬────────────────────╯
 ╭─ FILTER ───────────┴────────────────────╮
@@ -866,27 +735,17 @@ query
 EXPLAIN SELECT * FROM t_range1 WHERE a > 2 AND a >= 3 ORDER BY a;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_range1.a ASC          │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_range1                   │
-│ Type: Sequential Scan             │
-│ Projections: a, val               │
-│ Filters: a >= 3                   │
-│ ~1 row                            │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ───────────────╮
+│ Order By: t_range1.a ASC │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: t_range1          │
+│ Type: Sequential Scan    │
+│ Projections: a, val      │
+│ Filters: a >= 3          │
+│ ~1 row                   │
+╰──────────────────────────╯
 
 # Single lower bound: a >= 5
 query
@@ -903,27 +762,17 @@ query
 EXPLAIN SELECT * FROM t_range1 WHERE a >= 5 ORDER BY a;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_range1.a ASC          │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_range1                   │
-│ Type: Sequential Scan             │
-│ Projections: a, val               │
-│ Filters: a >= 5                   │
-│ ~1 row                            │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ───────────────╮
+│ Order By: t_range1.a ASC │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: t_range1          │
+│ Type: Sequential Scan    │
+│ Projections: a, val      │
+│ Filters: a >= 5          │
+│ ~1 row                   │
+╰──────────────────────────╯
 
 # Single upper bound: a < 5
 query
@@ -939,27 +788,17 @@ query
 EXPLAIN SELECT * FROM t_range1 WHERE a < 5 ORDER BY a;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_range1.a ASC          │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_range1                   │
-│ Type: Sequential Scan             │
-│ Projections: a, val               │
-│ Filters: a < 5                    │
-│ ~1 row                            │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ───────────────╮
+│ Order By: t_range1.a ASC │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: t_range1          │
+│ Type: Sequential Scan    │
+│ Projections: a, val      │
+│ Filters: a < 5           │
+│ ~1 row                   │
+╰──────────────────────────╯
 
 # Closed interval: a >= 2 AND a <= 8
 query
@@ -976,27 +815,17 @@ query
 EXPLAIN SELECT * FROM t_range1 WHERE a >= 2 AND a <= 8 ORDER BY a;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_range1.a ASC          │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_range1                   │
-│ Type: Sequential Scan             │
-│ Projections: a, val               │
-│ Filters: (a >= 2) AND (a <= 8)    │
-│ ~1 row                            │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ─────────────────────╮
+│ Order By: t_range1.a ASC       │
+│ ~1 row                         │
+╰────────────────┬───────────────╯
+╭─ SEQ_SCAN ─────┴───────────────╮
+│ Table: t_range1                │
+│ Type: Sequential Scan          │
+│ Projections: a, val            │
+│ Filters: (a >= 2) AND (a <= 8) │
+│ ~1 row                         │
+╰────────────────────────────────╯
 
 statement ok
 DROP TABLE t_range1;
@@ -1032,29 +861,17 @@ query
 EXPLAIN SELECT * FROM t_range WHERE a = 1 AND b > 5 ORDER BY b;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER), │
-│              CAST(#2 AS INTEGER)  │
-│ ~5 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_range.b ASC           │
-│ ~5 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT), │
-│              CAST(#2 AS TINYINT)  │
-│ ~5 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_range                    │
-│ Type: Sequential Scan             │
-│ Projections: a, b, val            │
-│ Filters: a = 1, b > 5             │
-│ ~5 rows                           │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ──────────────╮
+│ Order By: t_range.b ASC │
+│ ~5 rows                 │
+╰────────────┬────────────╯
+╭─ SEQ_SCAN ─┴────────────╮
+│ Table: t_range          │
+│ Type: Sequential Scan   │
+│ Projections: a, b, val  │
+│ Filters: a = 1, b > 5   │
+│ ~5 rows                 │
+╰─────────────────────────╯
 
 # Inclusive lower bound: a=1 AND b >= 5
 query
@@ -1070,29 +887,17 @@ query
 EXPLAIN SELECT * FROM t_range WHERE a = 1 AND b >= 5 ORDER BY b;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER), │
-│              CAST(#2 AS INTEGER)  │
-│ ~5 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_range.b ASC           │
-│ ~5 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT), │
-│              CAST(#2 AS TINYINT)  │
-│ ~5 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_range                    │
-│ Type: Sequential Scan             │
-│ Projections: a, b, val            │
-│ Filters: a = 1, b >= 5            │
-│ ~5 rows                           │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ──────────────╮
+│ Order By: t_range.b ASC │
+│ ~5 rows                 │
+╰────────────┬────────────╯
+╭─ SEQ_SCAN ─┴────────────╮
+│ Table: t_range          │
+│ Type: Sequential Scan   │
+│ Projections: a, b, val  │
+│ Filters: a = 1, b >= 5  │
+│ ~5 rows                 │
+╰─────────────────────────╯
 
 # Exclusive upper bound only: a=2 AND b < 7
 query
@@ -1108,29 +913,17 @@ query
 EXPLAIN SELECT * FROM t_range WHERE a = 2 AND b < 7 ORDER BY b;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER), │
-│              CAST(#2 AS INTEGER)  │
-│ ~5 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_range.b ASC           │
-│ ~5 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT), │
-│              CAST(#2 AS TINYINT)  │
-│ ~5 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_range                    │
-│ Type: Sequential Scan             │
-│ Projections: a, b, val            │
-│ Filters: a = 2, b < 7             │
-│ ~5 rows                           │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ──────────────╮
+│ Order By: t_range.b ASC │
+│ ~5 rows                 │
+╰────────────┬────────────╯
+╭─ SEQ_SCAN ─┴────────────╮
+│ Table: t_range          │
+│ Type: Sequential Scan   │
+│ Projections: a, b, val  │
+│ Filters: a = 2, b < 7   │
+│ ~5 rows                 │
+╰─────────────────────────╯
 
 # Closed interval: a=1 AND b >= 3 AND b <= 7
 query
@@ -1146,30 +939,18 @@ query
 EXPLAIN SELECT * FROM t_range WHERE a = 1 AND b >= 3 AND b <= 7 ORDER BY b;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER), │
-│              CAST(#2 AS INTEGER)  │
-│ ~5 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_range.b ASC           │
-│ ~5 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT), │
-│              CAST(#2 AS TINYINT)  │
-│ ~5 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_range                    │
-│ Type: Sequential Scan             │
-│ Projections: a, b, val            │
-│ Filters: a = 1,                   │
-│          (b >= 3) AND (b <= 7)    │
-│ ~5 rows                           │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ──────────────────────╮
+│ Order By: t_range.b ASC         │
+│ ~5 rows                         │
+╰────────────────┬────────────────╯
+╭─ SEQ_SCAN ─────┴────────────────╮
+│ Table: t_range                  │
+│ Type: Sequential Scan           │
+│ Projections: a, b, val          │
+│ Filters: a = 1,                 │
+│          (b >= 3) AND (b <= 7)  │
+│ ~5 rows                         │
+╰─────────────────────────────────╯
 
 # Half-open exclusive on both sides: a=1 AND b > 1 AND b < 9
 query
@@ -1185,30 +966,18 @@ query
 EXPLAIN SELECT * FROM t_range WHERE a = 1 AND b > 1 AND b < 9 ORDER BY b;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER), │
-│              CAST(#2 AS INTEGER)  │
-│ ~5 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_range.b ASC           │
-│ ~5 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT), │
-│              CAST(#2 AS TINYINT)  │
-│ ~5 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_range                    │
-│ Type: Sequential Scan             │
-│ Projections: a, b, val            │
-│ Filters: a = 1,                   │
-│          (b > 1) AND (b < 9)      │
-│ ~5 rows                           │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ────────────────────╮
+│ Order By: t_range.b ASC       │
+│ ~5 rows                       │
+╰───────────────┬───────────────╯
+╭─ SEQ_SCAN ────┴───────────────╮
+│ Table: t_range                │
+│ Type: Sequential Scan         │
+│ Projections: a, b, val        │
+│ Filters: a = 1,               │
+│          (b > 1) AND (b < 9)  │
+│ ~5 rows                       │
+╰───────────────────────────────╯
 
 # --- OR of ranges ---
 
@@ -1225,20 +994,8 @@ query
 EXPLAIN SELECT * FROM t_range WHERE a = 1 AND (b < 3 OR b > 7) ORDER BY b;
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────────────╮
-│ Projections: CAST(#0 AS INTEGER),        │
-│              CAST(#1 AS INTEGER),        │
-│              CAST(#2 AS INTEGER)         │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
-╭─ ORDER_BY ──────────┴────────────────────╮
+╭─ ORDER_BY ───────────────────────────────╮
 │ Order By: t_range.b ASC                  │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
-╭─ PROJECTION ────────┴────────────────────╮
-│ Projections: CAST(#0 AS TINYINT),        │
-│              CAST(#1 AS TINYINT),        │
-│              CAST(#2 AS TINYINT)         │
 │ ~1 row                                   │
 ╰─────────────────────┬────────────────────╯
 ╭─ FILTER ────────────┴────────────────────╮
@@ -1270,20 +1027,8 @@ query
 EXPLAIN SELECT * FROM t_range WHERE (a=1 AND b >= 3 AND b <= 7) OR (a=1 AND b >= 5 AND b <= 9) ORDER BY b;
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────────╮
-│ Projections: CAST(#0 AS INTEGER),    │
-│              CAST(#1 AS INTEGER),    │
-│              CAST(#2 AS INTEGER)     │
-│ ~5 rows                              │
-╰───────────────────┬──────────────────╯
-╭─ ORDER_BY ────────┴──────────────────╮
+╭─ ORDER_BY ───────────────────────────╮
 │ Order By: t_range.b ASC              │
-│ ~5 rows                              │
-╰───────────────────┬──────────────────╯
-╭─ PROJECTION ──────┴──────────────────╮
-│ Projections: CAST(#0 AS TINYINT),    │
-│              CAST(#1 AS TINYINT),    │
-│              CAST(#2 AS TINYINT)     │
 │ ~5 rows                              │
 ╰───────────────────┬──────────────────╯
 ╭─ SEQ_SCAN ────────┴──────────────────╮
@@ -1310,16 +1055,8 @@ query
 EXPLAIN SELECT * FROM t_range WHERE (a=1 AND b > 7) OR (a=2 AND b > 5) ORDER BY a, b;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────────────────────────────────────────────────────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), CAST(#1 AS INTEGER), CAST(#2 AS INTEGER)                         │
-│ ~2 rows                                                                                            │
-╰──────────────────────────────────────────────────┬─────────────────────────────────────────────────╯
-╭─ ORDER_BY ───────────────────────────────────────┴─────────────────────────────────────────────────╮
+╭─ ORDER_BY ─────────────────────────────────────────────────────────────────────────────────────────╮
 │ Order By: t_range.a ASC, t_range.b ASC                                                             │
-│ ~2 rows                                                                                            │
-╰──────────────────────────────────────────────────┬─────────────────────────────────────────────────╯
-╭─ PROJECTION ─────────────────────────────────────┴─────────────────────────────────────────────────╮
-│ Projections: CAST(#0 AS TINYINT), CAST(#1 AS TINYINT), CAST(#2 AS TINYINT)                         │
 │ ~2 rows                                                                                            │
 ╰──────────────────────────────────────────────────┬─────────────────────────────────────────────────╯
 ╭─ FILTER ─────────────────────────────────────────┴─────────────────────────────────────────────────╮
@@ -1355,30 +1092,18 @@ query
 EXPLAIN SELECT * FROM t_range WHERE a > 1 ORDER BY a, b;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER), │
-│              CAST(#2 AS INTEGER)  │
-│ ~2 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_range.a ASC,          │
-│           t_range.b ASC           │
-│ ~2 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT), │
-│              CAST(#2 AS TINYINT)  │
-│ ~2 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_range                    │
-│ Type: Sequential Scan             │
-│ Projections: a, b, val            │
-│ Filters: a > 1                    │
-│ ~2 rows                           │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ───────────────╮
+│ Order By: t_range.a ASC, │
+│           t_range.b ASC  │
+│ ~2 rows                  │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: t_range           │
+│ Type: Sequential Scan    │
+│ Projections: a, b, val   │
+│ Filters: a > 1           │
+│ ~2 rows                  │
+╰──────────────────────────╯
 
 query
 SELECT * FROM t_range WHERE a <= 1 OR a > 2 ORDER BY a, b;
@@ -1398,20 +1123,8 @@ query
 EXPLAIN SELECT * FROM t_range WHERE a <= 1 OR a > 2 ORDER BY a, b;
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────────────╮
-│ Projections: CAST(#0 AS INTEGER),        │
-│              CAST(#1 AS INTEGER),        │
-│              CAST(#2 AS INTEGER)         │
-│ ~2 rows                                  │
-╰─────────────────────┬────────────────────╯
-╭─ ORDER_BY ──────────┴────────────────────╮
+╭─ ORDER_BY ───────────────────────────────╮
 │ Order By: t_range.a ASC, t_range.b ASC   │
-│ ~2 rows                                  │
-╰─────────────────────┬────────────────────╯
-╭─ PROJECTION ────────┴────────────────────╮
-│ Projections: CAST(#0 AS TINYINT),        │
-│              CAST(#1 AS TINYINT),        │
-│              CAST(#2 AS TINYINT)         │
 │ ~2 rows                                  │
 ╰─────────────────────┬────────────────────╯
 ╭─ FILTER ────────────┴────────────────────╮
@@ -1442,34 +1155,22 @@ query
 EXPLAIN SELECT * FROM t_range WHERE b > 5 ORDER BY a, b;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER), │
-│              CAST(#2 AS INTEGER)  │
-│ ~2 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_range.a ASC,          │
-│           t_range.b ASC           │
-│ ~2 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT), │
-│              CAST(#2 AS TINYINT)  │
-│ ~2 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: a, b, val            │
-│ ~2 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_range                    │
-│ Type: Sequential Scan             │
-│ Projections: b, a, val            │
-│ Filters: b > 5                    │
-│ ~2 rows                           │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ───────────────╮
+│ Order By: t_range.a ASC, │
+│           t_range.b ASC  │
+│ ~2 rows                  │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: a, b, val   │
+│ ~2 rows                  │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: t_range           │
+│ Type: Sequential Scan    │
+│ Projections: b, a, val   │
+│ Filters: b > 5           │
+│ ~2 rows                  │
+╰──────────────────────────╯
 
 # OR mixing a range-scannable branch with a non-range-scannable one → full scan.
 # b > 3 alone has no equality prefix → forces full scan.
@@ -1491,18 +1192,8 @@ query
 EXPLAIN SELECT * FROM t_range WHERE (a=1 AND b > 5) OR (b > 3) ORDER BY a, b;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────────────────────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), CAST(#1 AS INTEGER),      │
-│              CAST(#2 AS INTEGER)                            │
-│ ~2 rows                                                     │
-╰──────────────────────────────┬──────────────────────────────╯
-╭─ ORDER_BY ───────────────────┴──────────────────────────────╮
+╭─ ORDER_BY ──────────────────────────────────────────────────╮
 │ Order By: t_range.a ASC, t_range.b ASC                      │
-│ ~2 rows                                                     │
-╰──────────────────────────────┬──────────────────────────────╯
-╭─ PROJECTION ─────────────────┴──────────────────────────────╮
-│ Projections: CAST(#0 AS TINYINT), CAST(#1 AS TINYINT),      │
-│              CAST(#2 AS TINYINT)                            │
 │ ~2 rows                                                     │
 ╰──────────────────────────────┬──────────────────────────────╯
 ╭─ FILTER ─────────────────────┴──────────────────────────────╮
@@ -1532,30 +1223,18 @@ query
 EXPLAIN SELECT * FROM t_range WHERE a > 1 AND b > 5 ORDER BY a, b;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER), │
-│              CAST(#2 AS INTEGER)  │
-│ ~2 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_range.a ASC,          │
-│           t_range.b ASC           │
-│ ~2 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT), │
-│              CAST(#2 AS TINYINT)  │
-│ ~2 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_range                    │
-│ Type: Sequential Scan             │
-│ Projections: a, b, val            │
-│ Filters: a > 1, b > 5             │
-│ ~2 rows                           │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ───────────────╮
+│ Order By: t_range.a ASC, │
+│           t_range.b ASC  │
+│ ~2 rows                  │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: t_range           │
+│ Type: Sequential Scan    │
+│ Projections: a, b, val   │
+│ Filters: a > 1, b > 5    │
+│ ~2 rows                  │
+╰──────────────────────────╯
 
 # Impossible range (b > 9 AND b < 1) → contradiction → 0 rows, full scan.
 query
@@ -1673,31 +1352,19 @@ query
 EXPLAIN SELECT * FROM t_range3 WHERE a = 1 AND b = 2 AND c > 3 ORDER BY c;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────╮
-│ Projections: CAST(#0 AS INTEGER),  │
-│              CAST(#1 AS INTEGER),  │
-│              CAST(#2 AS INTEGER),  │
-│              CAST(#3 AS INTEGER)   │
-│ ~4 rows                            │
-╰──────────────────┬─────────────────╯
-╭─ ORDER_BY ───────┴─────────────────╮
-│ Order By: t_range3.c ASC           │
-│ ~4 rows                            │
-╰──────────────────┬─────────────────╯
-╭─ PROJECTION ─────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT),  │
-│              CAST(#1 AS TINYINT),  │
-│              CAST(#2 AS TINYINT),  │
-│              CAST(#3 AS UTINYINT)  │
-│ ~4 rows                            │
-╰──────────────────┬─────────────────╯
-╭─ SEQ_SCAN ───────┴─────────────────╮
-│ Table: t_range3                    │
-│ Type: Sequential Scan              │
-│ Projections: a, b, c, val          │
-│ Filters: a = 1, b = 2, c > 3       │
-│ ~4 rows                            │
-╰────────────────────────────────────╯
+╭─ ORDER_BY ───────────────╮
+│ Order By: t_range3.c ASC │
+│ ~4 rows                  │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: t_range3          │
+│ Type: Sequential Scan    │
+│ Projections: a, b, c,    │
+│              val         │
+│ Filters: a = 1, b = 2,   │
+│          c > 3           │
+│ ~4 rows                  │
+╰──────────────────────────╯
 
 # a=1 AND b=2 (only equalities, no range col) → range lookup on equality prefix.
 query
@@ -1714,31 +1381,18 @@ query
 EXPLAIN SELECT * FROM t_range3 WHERE a = 1 AND b = 2 ORDER BY c;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────╮
-│ Projections: CAST(#0 AS INTEGER),  │
-│              CAST(#1 AS INTEGER),  │
-│              CAST(#2 AS INTEGER),  │
-│              CAST(#3 AS INTEGER)   │
-│ ~4 rows                            │
-╰──────────────────┬─────────────────╯
-╭─ ORDER_BY ───────┴─────────────────╮
-│ Order By: t_range3.c ASC           │
-│ ~4 rows                            │
-╰──────────────────┬─────────────────╯
-╭─ PROJECTION ─────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT),  │
-│              CAST(#1 AS TINYINT),  │
-│              CAST(#2 AS TINYINT),  │
-│              CAST(#3 AS UTINYINT)  │
-│ ~4 rows                            │
-╰──────────────────┬─────────────────╯
-╭─ SEQ_SCAN ───────┴─────────────────╮
-│ Table: t_range3                    │
-│ Type: Sequential Scan              │
-│ Projections: a, b, c, val          │
-│ Filters: a = 1, b = 2              │
-│ ~4 rows                            │
-╰────────────────────────────────────╯
+╭─ ORDER_BY ───────────────╮
+│ Order By: t_range3.c ASC │
+│ ~4 rows                  │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: t_range3          │
+│ Type: Sequential Scan    │
+│ Projections: a, b, c,    │
+│              val         │
+│ Filters: a = 1, b = 2    │
+│ ~4 rows                  │
+╰──────────────────────────╯
 
 # a=1 AND c>3 (gap: b not constrained) → not a valid prefix → full scan.
 query
@@ -1754,36 +1408,22 @@ query
 EXPLAIN SELECT * FROM t_range3 WHERE a = 1 AND c > 3 ORDER BY b, c;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────╮
-│ Projections: CAST(#0 AS INTEGER),  │
-│              CAST(#1 AS INTEGER),  │
-│              CAST(#2 AS INTEGER),  │
-│              CAST(#3 AS INTEGER)   │
-│ ~4 rows                            │
-╰──────────────────┬─────────────────╯
-╭─ ORDER_BY ───────┴─────────────────╮
-│ Order By: t_range3.b ASC,          │
-│           t_range3.c ASC           │
-│ ~4 rows                            │
-╰──────────────────┬─────────────────╯
-╭─ PROJECTION ─────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT),  │
-│              CAST(#1 AS TINYINT),  │
-│              CAST(#2 AS TINYINT),  │
-│              CAST(#3 AS UTINYINT)  │
-│ ~4 rows                            │
-╰──────────────────┬─────────────────╯
-╭─ PROJECTION ─────┴─────────────────╮
-│ Projections: a, b, c, val          │
-│ ~4 rows                            │
-╰──────────────────┬─────────────────╯
-╭─ SEQ_SCAN ───────┴─────────────────╮
-│ Table: t_range3                    │
-│ Type: Sequential Scan              │
-│ Projections: a, c, b, val          │
-│ Filters: a = 1, c > 3              │
-│ ~4 rows                            │
-╰────────────────────────────────────╯
+╭─ ORDER_BY ────────────────╮
+│ Order By: t_range3.b ASC, │
+│           t_range3.c ASC  │
+│ ~4 rows                   │
+╰─────────────┬─────────────╯
+╭─ PROJECTION ┴─────────────╮
+│ Projections: a, b, c, val │
+│ ~4 rows                   │
+╰─────────────┬─────────────╯
+╭─ SEQ_SCAN ──┴─────────────╮
+│ Table: t_range3           │
+│ Type: Sequential Scan     │
+│ Projections: a, c, b, val │
+│ Filters: a = 1, c > 3     │
+│ ~4 rows                   │
+╰───────────────────────────╯
 
 # a > 1 range on first col of 3-col PK → range lookup on a.
 query
@@ -1798,33 +1438,19 @@ query
 EXPLAIN SELECT * FROM t_range3 WHERE a > 1 ORDER BY a, b, c;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────╮
-│ Projections: CAST(#0 AS INTEGER),  │
-│              CAST(#1 AS INTEGER),  │
-│              CAST(#2 AS INTEGER),  │
-│              CAST(#3 AS INTEGER)   │
-│ ~1 row                             │
-╰──────────────────┬─────────────────╯
-╭─ ORDER_BY ───────┴─────────────────╮
-│ Order By: t_range3.a ASC,          │
-│           t_range3.b ASC,          │
-│           t_range3.c ASC           │
-│ ~1 row                             │
-╰──────────────────┬─────────────────╯
-╭─ PROJECTION ─────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT),  │
-│              CAST(#1 AS TINYINT),  │
-│              CAST(#2 AS TINYINT),  │
-│              CAST(#3 AS UTINYINT)  │
-│ ~1 row                             │
-╰──────────────────┬─────────────────╯
-╭─ SEQ_SCAN ───────┴─────────────────╮
-│ Table: t_range3                    │
-│ Type: Sequential Scan              │
-│ Projections: a, b, c, val          │
-│ Filters: a > 1                     │
-│ ~1 row                             │
-╰────────────────────────────────────╯
+╭─ ORDER_BY ────────────────╮
+│ Order By: t_range3.a ASC, │
+│           t_range3.b ASC, │
+│           t_range3.c ASC  │
+│ ~1 row                    │
+╰─────────────┬─────────────╯
+╭─ SEQ_SCAN ──┴─────────────╮
+│ Table: t_range3           │
+│ Type: Sequential Scan     │
+│ Projections: a, b, c, val │
+│ Filters: a > 1            │
+│ ~1 row                    │
+╰───────────────────────────╯
 
 # OR of two complete-prefix ranges on 3-col PK.
 query
@@ -1839,16 +1465,8 @@ query
 EXPLAIN SELECT * FROM t_range3 WHERE (a=1 AND b=2 AND c>5) OR (a=2 AND b=2 AND c<5) ORDER BY a, b, c;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────────────────────────────────────────────────────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), CAST(#1 AS INTEGER), CAST(#2 AS INTEGER), CAST(#3 AS INTEGER)    │
-│ ~1 row                                                                                             │
-╰──────────────────────────────────────────────────┬─────────────────────────────────────────────────╯
-╭─ ORDER_BY ───────────────────────────────────────┴─────────────────────────────────────────────────╮
+╭─ ORDER_BY ─────────────────────────────────────────────────────────────────────────────────────────╮
 │ Order By: t_range3.a ASC, t_range3.b ASC, t_range3.c ASC                                           │
-│ ~1 row                                                                                             │
-╰──────────────────────────────────────────────────┬─────────────────────────────────────────────────╯
-╭─ PROJECTION ─────────────────────────────────────┴─────────────────────────────────────────────────╮
-│ Projections: CAST(#0 AS TINYINT), CAST(#1 AS TINYINT), CAST(#2 AS TINYINT), CAST(#3 AS UTINYINT)   │
 │ ~1 row                                                                                             │
 ╰──────────────────────────────────────────────────┬─────────────────────────────────────────────────╯
 ╭─ FILTER ─────────────────────────────────────────┴─────────────────────────────────────────────────╮
@@ -1881,16 +1499,8 @@ query
 EXPLAIN SELECT * FROM t_range3 WHERE (a <= 1 AND b <= 2) OR (a < 2 AND b < 3) ORDER BY a, b, c;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────────────────────────────────────────────────────────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), CAST(#1 AS INTEGER), CAST(#2 AS INTEGER), CAST(#3 AS INTEGER)        │
-│ ~1 row                                                                                                 │
-╰────────────────────────────────────────────────────┬───────────────────────────────────────────────────╯
-╭─ ORDER_BY ─────────────────────────────────────────┴───────────────────────────────────────────────────╮
+╭─ ORDER_BY ─────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Order By: t_range3.a ASC, t_range3.b ASC, t_range3.c ASC                                               │
-│ ~1 row                                                                                                 │
-╰────────────────────────────────────────────────────┬───────────────────────────────────────────────────╯
-╭─ PROJECTION ───────────────────────────────────────┴───────────────────────────────────────────────────╮
-│ Projections: CAST(#0 AS TINYINT), CAST(#1 AS TINYINT), CAST(#2 AS TINYINT), CAST(#3 AS UTINYINT)       │
 │ ~1 row                                                                                                 │
 ╰────────────────────────────────────────────────────┬───────────────────────────────────────────────────╯
 ╭─ FILTER ───────────────────────────────────────────┴───────────────────────────────────────────────────╮
@@ -1931,27 +1541,17 @@ query
 EXPLAIN SELECT * FROM t_not WHERE NOT (a > 5) ORDER BY a;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_not.a ASC             │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_not                      │
-│ Type: Sequential Scan             │
-│ Projections: a, val               │
-│ Filters: NOT (a > 5)              │
-│ ~1 row                            │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ────────────╮
+│ Order By: t_not.a ASC │
+│ ~1 row                │
+╰───────────┬───────────╯
+╭─ SEQ_SCAN ┴───────────╮
+│ Table: t_not          │
+│ Type: Sequential Scan │
+│ Projections: a, val   │
+│ Filters: NOT (a > 5)  │
+│ ~1 row                │
+╰───────────────────────╯
 
 # NOT(a >= v) → a < v  (range_lookup)
 query
@@ -1966,27 +1566,17 @@ query
 EXPLAIN SELECT * FROM t_not WHERE NOT (a >= 5) ORDER BY a;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_not.a ASC             │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_not                      │
-│ Type: Sequential Scan             │
-│ Projections: a, val               │
-│ Filters: NOT (a >= 5)             │
-│ ~1 row                            │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ────────────╮
+│ Order By: t_not.a ASC │
+│ ~1 row                │
+╰───────────┬───────────╯
+╭─ SEQ_SCAN ┴───────────╮
+│ Table: t_not          │
+│ Type: Sequential Scan │
+│ Projections: a, val   │
+│ Filters: NOT (a >= 5) │
+│ ~1 row                │
+╰───────────────────────╯
 
 # NOT(a < v) → a >= v  (range_lookup)
 query
@@ -2002,27 +1592,17 @@ query
 EXPLAIN SELECT * FROM t_not WHERE NOT (a < 5) ORDER BY a;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_not.a ASC             │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_not                      │
-│ Type: Sequential Scan             │
-│ Projections: a, val               │
-│ Filters: NOT (a < 5)              │
-│ ~1 row                            │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ────────────╮
+│ Order By: t_not.a ASC │
+│ ~1 row                │
+╰───────────┬───────────╯
+╭─ SEQ_SCAN ┴───────────╮
+│ Table: t_not          │
+│ Type: Sequential Scan │
+│ Projections: a, val   │
+│ Filters: NOT (a < 5)  │
+│ ~1 row                │
+╰───────────────────────╯
 
 # NOT(a <= v) → a > v  (range_lookup)
 query
@@ -2037,27 +1617,17 @@ query
 EXPLAIN SELECT * FROM t_not WHERE NOT (a <= 5) ORDER BY a;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_not.a ASC             │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_not                      │
-│ Type: Sequential Scan             │
-│ Projections: a, val               │
-│ Filters: NOT (a <= 5)             │
-│ ~1 row                            │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ────────────╮
+│ Order By: t_not.a ASC │
+│ ~1 row                │
+╰───────────┬───────────╯
+╭─ SEQ_SCAN ┴───────────╮
+│ Table: t_not          │
+│ Type: Sequential Scan │
+│ Projections: a, val   │
+│ Filters: NOT (a <= 5) │
+│ ~1 row                │
+╰───────────────────────╯
 
 # NOT(NOT(a > v)) → double negation → a > v  (range_lookup)
 query
@@ -2072,27 +1642,17 @@ query
 EXPLAIN SELECT * FROM t_not WHERE NOT (NOT (a > 5)) ORDER BY a;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_not.a ASC             │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_not                      │
-│ Type: Sequential Scan             │
-│ Projections: a, val               │
-│ Filters: NOT (NOT (a > 5))        │
-│ ~1 row                            │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ─────────────────╮
+│ Order By: t_not.a ASC      │
+│ ~1 row                     │
+╰──────────────┬─────────────╯
+╭─ SEQ_SCAN ───┴─────────────╮
+│ Table: t_not               │
+│ Type: Sequential Scan      │
+│ Projections: a, val        │
+│ Filters: NOT (NOT (a > 5)) │
+│ ~1 row                     │
+╰────────────────────────────╯
 
 # NOT(a > x AND a < y) → De Morgan → a <= x OR a >= y  (two ranges)
 query
@@ -2109,18 +1669,8 @@ query
 EXPLAIN SELECT * FROM t_not WHERE NOT (a > 3 AND a < 7) ORDER BY a;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────╮
-│ Projections: CAST(#0 AS INTEGER),  │
-│              CAST(#1 AS INTEGER)   │
-│ ~1 row                             │
-╰──────────────────┬─────────────────╯
-╭─ ORDER_BY ───────┴─────────────────╮
+╭─ ORDER_BY ─────────────────────────╮
 │ Order By: t_not.a ASC              │
-│ ~1 row                             │
-╰──────────────────┬─────────────────╯
-╭─ PROJECTION ─────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT),  │
-│              CAST(#1 AS TINYINT)   │
 │ ~1 row                             │
 ╰──────────────────┬─────────────────╯
 ╭─ SEQ_SCAN ───────┴─────────────────╮
@@ -2145,18 +1695,8 @@ query
 EXPLAIN SELECT * FROM t_not WHERE NOT (a > 7 OR a < 3) ORDER BY a;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
+╭─ ORDER_BY ────────────────────────╮
 │ Order By: t_not.a ASC             │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT)  │
 │ ~1 row                            │
 ╰─────────────────┬─────────────────╯
 ╭─ SEQ_SCAN ──────┴─────────────────╮
@@ -2182,27 +1722,17 @@ query
 EXPLAIN SELECT * FROM t_not WHERE NOT (a = 5) ORDER BY a;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_not.a ASC             │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_not                      │
-│ Type: Sequential Scan             │
-│ Projections: a, val               │
-│ Filters: NOT (a = 5)              │
-│ ~1 row                            │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ────────────╮
+│ Order By: t_not.a ASC │
+│ ~1 row                │
+╰───────────┬───────────╯
+╭─ SEQ_SCAN ┴───────────╮
+│ Table: t_not          │
+│ Type: Sequential Scan │
+│ Projections: a, val   │
+│ Filters: NOT (a = 5)  │
+│ ~1 row                │
+╰───────────────────────╯
 
 # NOT(a IN (...)) → full scan (IN negation not pushed to range)
 query
@@ -2218,27 +1748,17 @@ query
 EXPLAIN SELECT * FROM t_not WHERE NOT (a IN (3, 7)) ORDER BY a;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_not.a ASC             │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_not                      │
-│ Type: Sequential Scan             │
-│ Projections: a, val               │
-│ Filters: NOT (a IN (3, 7))        │
-│ ~1 row                            │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ─────────────────╮
+│ Order By: t_not.a ASC      │
+│ ~1 row                     │
+╰──────────────┬─────────────╯
+╭─ SEQ_SCAN ───┴─────────────╮
+│ Table: t_not               │
+│ Type: Sequential Scan      │
+│ Projections: a, val        │
+│ Filters: NOT (a IN (3, 7)) │
+│ ~1 row                     │
+╰────────────────────────────╯
 
 statement ok
 DROP TABLE t_not;
@@ -2265,30 +1785,18 @@ query
 EXPLAIN SELECT * FROM t_not2 WHERE NOT (a > 3) ORDER BY a, b;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER), │
-│              CAST(#2 AS INTEGER)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_not2.a ASC,           │
-│           t_not2.b ASC            │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT), │
-│              CAST(#2 AS TINYINT)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_not2                     │
-│ Type: Sequential Scan             │
-│ Projections: a, b, val            │
-│ Filters: NOT (a > 3)              │
-│ ~1 row                            │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ──────────────╮
+│ Order By: t_not2.a ASC, │
+│           t_not2.b ASC  │
+│ ~1 row                  │
+╰────────────┬────────────╯
+╭─ SEQ_SCAN ─┴────────────╮
+│ Table: t_not2           │
+│ Type: Sequential Scan   │
+│ Projections: a, b, val  │
+│ Filters: NOT (a > 3)    │
+│ ~1 row                  │
+╰─────────────────────────╯
 
 # NOT(NOT(a = 1 AND b > 2)) → double negation → a = 1 AND b > 2  (range_lookup with prefix)
 query
@@ -2302,34 +1810,22 @@ query
 EXPLAIN SELECT * FROM t_not2 WHERE NOT (NOT (a = 1 AND b > 2)) ORDER BY a, b;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER), │
-│              CAST(#2 AS INTEGER)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: t_not2.a ASC,           │
-│           t_not2.b ASC            │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT), │
-│              CAST(#2 AS TINYINT)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ FILTER ────────┴─────────────────╮
-│ Expression:                       │
-│ NOT (NOT ((a = 1) AND (b > 2)))   │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_not2                     │
-│ Type: Sequential Scan             │
-│ Projections: a, b, val            │
-│ ~6 rows                           │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ──────────────────────╮
+│ Order By: t_not2.a ASC,         │
+│           t_not2.b ASC          │
+│ ~1 row                          │
+╰────────────────┬────────────────╯
+╭─ FILTER ───────┴────────────────╮
+│ Expression:                     │
+│ NOT (NOT ((a = 1) AND (b > 2))) │
+│ ~1 row                          │
+╰────────────────┬────────────────╯
+╭─ SEQ_SCAN ─────┴────────────────╮
+│ Table: t_not2                   │
+│ Type: Sequential Scan           │
+│ Projections: a, b, val          │
+│ ~6 rows                         │
+╰─────────────────────────────────╯
 
 # NOT(a > 4 OR a < 2) → De Morgan → a <= 4 AND a >= 2 → [2, 4]  (range_lookup)
 query
@@ -2344,21 +1840,9 @@ query
 EXPLAIN SELECT * FROM t_not2 WHERE NOT (a > 4 OR a < 2) ORDER BY a, b;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), │
-│              CAST(#1 AS INTEGER), │
-│              CAST(#2 AS INTEGER)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ ORDER_BY ──────┴─────────────────╮
+╭─ ORDER_BY ────────────────────────╮
 │ Order By: t_not2.a ASC,           │
 │           t_not2.b ASC            │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT), │
-│              CAST(#1 AS TINYINT), │
-│              CAST(#2 AS TINYINT)  │
 │ ~1 row                            │
 ╰─────────────────┬─────────────────╯
 ╭─ SEQ_SCAN ──────┴─────────────────╮
@@ -2384,21 +1868,9 @@ query
 EXPLAIN SELECT * FROM t_not2 WHERE NOT (a > 1 AND a < 5) ORDER BY a, b;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────╮
-│ Projections: CAST(#0 AS INTEGER),  │
-│              CAST(#1 AS INTEGER),  │
-│              CAST(#2 AS INTEGER)   │
-│ ~1 row                             │
-╰──────────────────┬─────────────────╯
-╭─ ORDER_BY ───────┴─────────────────╮
+╭─ ORDER_BY ─────────────────────────╮
 │ Order By: t_not2.a ASC,            │
 │           t_not2.b ASC             │
-│ ~1 row                             │
-╰──────────────────┬─────────────────╯
-╭─ PROJECTION ─────┴─────────────────╮
-│ Projections: CAST(#0 AS TINYINT),  │
-│              CAST(#1 AS TINYINT),  │
-│              CAST(#2 AS TINYINT)   │
 │ ~1 row                             │
 ╰──────────────────┬─────────────────╯
 ╭─ SEQ_SCAN ───────┴─────────────────╮
@@ -2425,20 +1897,8 @@ query
 EXPLAIN SELECT * FROM t_not2 WHERE NOT (a = 1 AND b > 2) ORDER BY a, b;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────────╮
-│ Projections: CAST(#0 AS INTEGER),     │
-│              CAST(#1 AS INTEGER),     │
-│              CAST(#2 AS INTEGER)      │
-│ ~1 row                                │
-╰───────────────────┬───────────────────╯
-╭─ ORDER_BY ────────┴───────────────────╮
+╭─ ORDER_BY ────────────────────────────╮
 │ Order By: t_not2.a ASC, t_not2.b ASC  │
-│ ~1 row                                │
-╰───────────────────┬───────────────────╯
-╭─ PROJECTION ──────┴───────────────────╮
-│ Projections: CAST(#0 AS TINYINT),     │
-│              CAST(#1 AS TINYINT),     │
-│              CAST(#2 AS TINYINT)      │
 │ ~1 row                                │
 ╰───────────────────┬───────────────────╯
 ╭─ FILTER ──────────┴───────────────────╮
@@ -2513,35 +1973,20 @@ query
 EXPLAIN SELECT * FROM t_complex WHERE region = 1 AND priority = 10 AND name <= 'bob' ORDER BY name;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────────────────╮
-│ Projections:                            │
-│ CAST(#0 AS BIGINT),                     │
-│ CAST(#1 AS INTEGER),                    │
-│ __internal_decompress_string(#2),       │
-│ CAST(#3 AS INTEGER)                     │
-│ ~2 rows                                 │
-╰────────────────────┬────────────────────╯
-╭─ ORDER_BY ─────────┴────────────────────╮
-│ Order By: t_complex."name" ASC          │
-│ ~2 rows                                 │
-╰────────────────────┬────────────────────╯
-╭─ PROJECTION ───────┴────────────────────╮
-│ Projections:                            │
-│ CAST(#0 AS TINYINT),                    │
-│ CAST(#1 AS TINYINT),                    │
-│ __internal_compress_string_ubigint(#2), │
-│ CAST(#3 AS SMALLINT)                    │
-│ ~2 rows                                 │
-╰────────────────────┬────────────────────╯
-╭─ SEQ_SCAN ─────────┴────────────────────╮
-│ Table: t_complex                        │
-│ Type: Sequential Scan                   │
-│ Projections: region, priority, name,    │
-│              score                      │
-│ Filters: region = 1, priority = 10,     │
-│          name <= 'bob'                  │
-│ ~2 rows                                 │
-╰─────────────────────────────────────────╯
+╭─ ORDER_BY ─────────────────────╮
+│ Order By: t_complex."name" ASC │
+│ ~2 rows                        │
+╰────────────────┬───────────────╯
+╭─ SEQ_SCAN ─────┴───────────────╮
+│ Table: t_complex               │
+│ Type: Sequential Scan          │
+│ Projections: region, priority, │
+│              name, score       │
+│ Filters: region = 1,           │
+│          priority = 10,        │
+│          name <= 'bob'         │
+│ ~2 rows                        │
+╰────────────────────────────────╯
 
 # Equality on first + range on second column (priority > 15).
 query
@@ -2556,35 +2001,20 @@ query
 EXPLAIN SELECT * FROM t_complex WHERE region = 1 AND priority > 15 ORDER BY priority, name;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────────────────╮
-│ Projections:                            │
-│ CAST(#0 AS BIGINT),                     │
-│ CAST(#1 AS INTEGER),                    │
-│ __internal_decompress_string(#2),       │
-│ CAST(#3 AS INTEGER)                     │
-│ ~3 rows                                 │
-╰────────────────────┬────────────────────╯
-╭─ ORDER_BY ─────────┴────────────────────╮
-│ Order By: t_complex.priority ASC,       │
-│           t_complex."name" ASC          │
-│ ~3 rows                                 │
-╰────────────────────┬────────────────────╯
-╭─ PROJECTION ───────┴────────────────────╮
-│ Projections:                            │
-│ CAST(#0 AS TINYINT),                    │
-│ CAST(#1 AS TINYINT),                    │
-│ __internal_compress_string_ubigint(#2), │
-│ CAST(#3 AS SMALLINT)                    │
-│ ~3 rows                                 │
-╰────────────────────┬────────────────────╯
-╭─ SEQ_SCAN ─────────┴────────────────────╮
-│ Table: t_complex                        │
-│ Type: Sequential Scan                   │
-│ Projections: region, priority, name,    │
-│              score                      │
-│ Filters: region = 1, priority > 15      │
-│ ~3 rows                                 │
-╰─────────────────────────────────────────╯
+╭─ ORDER_BY ────────────────────────╮
+│ Order By: t_complex.priority ASC, │
+│           t_complex."name" ASC    │
+│ ~3 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ SEQ_SCAN ──────┴─────────────────╮
+│ Table: t_complex                  │
+│ Type: Sequential Scan             │
+│ Projections: region, priority,    │
+│              name, score          │
+│ Filters: region = 1,              │
+│          priority > 15            │
+│ ~3 rows                           │
+╰───────────────────────────────────╯
 
 # OR of two prefix ranges on first column.
 query
@@ -2603,24 +2033,10 @@ query
 EXPLAIN SELECT * FROM t_complex WHERE region <= 1 OR region >= 3 ORDER BY region, priority, name;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────────────╮
-│ Projections:                               │
-│ CAST(#0 AS BIGINT), CAST(#1 AS INTEGER),   │
-│ __internal_decompress_string(#2),          │
-│ CAST(#3 AS INTEGER)                        │
-│ ~1 row                                     │
-╰──────────────────────┬─────────────────────╯
-╭─ ORDER_BY ───────────┴─────────────────────╮
+╭─ ORDER_BY ─────────────────────────────────╮
 │ Order By: t_complex.region ASC,            │
 │           t_complex.priority ASC,          │
 │           t_complex."name" ASC             │
-│ ~1 row                                     │
-╰──────────────────────┬─────────────────────╯
-╭─ PROJECTION ─────────┴─────────────────────╮
-│ Projections:                               │
-│ CAST(#0 AS TINYINT), CAST(#1 AS TINYINT),  │
-│ __internal_compress_string_ubigint(#2),    │
-│ CAST(#3 AS SMALLINT)                       │
 │ ~1 row                                     │
 ╰──────────────────────┬─────────────────────╯
 ╭─ FILTER ─────────────┴─────────────────────╮
@@ -2655,40 +2071,24 @@ query
 EXPLAIN SELECT * FROM t_complex WHERE NOT (region > 1 AND priority < 20) ORDER BY region, priority, name;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────────────────╮
-│ Projections:                            │
-│ CAST(#0 AS BIGINT),                     │
-│ CAST(#1 AS INTEGER),                    │
-│ __internal_decompress_string(#2),       │
-│ CAST(#3 AS INTEGER)                     │
-│ ~1 row                                  │
-╰────────────────────┬────────────────────╯
-╭─ ORDER_BY ─────────┴────────────────────╮
-│ Order By: t_complex.region ASC,         │
-│           t_complex.priority ASC,       │
-│           t_complex."name" ASC          │
-│ ~1 row                                  │
-╰────────────────────┬────────────────────╯
-╭─ PROJECTION ───────┴────────────────────╮
-│ Projections:                            │
-│ CAST(#0 AS TINYINT),                    │
-│ CAST(#1 AS TINYINT),                    │
-│ __internal_compress_string_ubigint(#2), │
-│ CAST(#3 AS SMALLINT)                    │
-│ ~1 row                                  │
-╰────────────────────┬────────────────────╯
-╭─ FILTER ───────────┴────────────────────╮
-│ Expression:                             │
-│ NOT ((region > 1) AND (priority < 20))  │
-│ ~1 row                                  │
-╰────────────────────┬────────────────────╯
-╭─ SEQ_SCAN ─────────┴────────────────────╮
-│ Table: t_complex                        │
-│ Type: Sequential Scan                   │
-│ Projections: region, priority, name,    │
-│              score                      │
-│ ~8 rows                                 │
-╰─────────────────────────────────────────╯
+╭─ ORDER_BY ─────────────────────────────╮
+│ Order By: t_complex.region ASC,        │
+│           t_complex.priority ASC,      │
+│           t_complex."name" ASC         │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ FILTER ───────────┴───────────────────╮
+│ Expression:                            │
+│ NOT ((region > 1) AND (priority < 20)) │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ SEQ_SCAN ─────────┴───────────────────╮
+│ Table: t_complex                       │
+│ Type: Sequential Scan                  │
+│ Projections: region, priority, name,   │
+│              score                     │
+│ ~8 rows                                │
+╰────────────────────────────────────────╯
 
 # NOT + OR on first column: NOT(region < 1 OR region > 2) → 1 <= region <= 2.
 query
@@ -2707,36 +2107,20 @@ query
 EXPLAIN SELECT * FROM t_complex WHERE NOT (region < 1 OR region > 2) ORDER BY region, priority, name;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────────────────╮
-│ Projections:                            │
-│ CAST(#0 AS BIGINT),                     │
-│ CAST(#1 AS INTEGER),                    │
-│ __internal_decompress_string(#2),       │
-│ CAST(#3 AS INTEGER)                     │
-│ ~1 row                                  │
-╰────────────────────┬────────────────────╯
-╭─ ORDER_BY ─────────┴────────────────────╮
-│ Order By: t_complex.region ASC,         │
-│           t_complex.priority ASC,       │
-│           t_complex."name" ASC          │
-│ ~1 row                                  │
-╰────────────────────┬────────────────────╯
-╭─ PROJECTION ───────┴────────────────────╮
-│ Projections:                            │
-│ CAST(#0 AS TINYINT),                    │
-│ CAST(#1 AS TINYINT),                    │
-│ __internal_compress_string_ubigint(#2), │
-│ CAST(#3 AS SMALLINT)                    │
-│ ~1 row                                  │
-╰────────────────────┬────────────────────╯
-╭─ SEQ_SCAN ─────────┴────────────────────╮
-│ Table: t_complex                        │
-│ Type: Sequential Scan                   │
-│ Projections: region, priority, name,    │
-│              score                      │
-│ Filters: NOT (region > 2)               │
-│ ~1 row                                  │
-╰─────────────────────────────────────────╯
+╭─ ORDER_BY ────────────────────────╮
+│ Order By: t_complex.region ASC,   │
+│           t_complex.priority ASC, │
+│           t_complex."name" ASC    │
+│ ~1 row                            │
+╰─────────────────┬─────────────────╯
+╭─ SEQ_SCAN ──────┴─────────────────╮
+│ Table: t_complex                  │
+│ Type: Sequential Scan             │
+│ Projections: region, priority,    │
+│              name, score          │
+│ Filters: NOT (region > 2)         │
+│ ~1 row                            │
+╰───────────────────────────────────╯
 
 # AND of prefix equality + NOT on range: region = 2 AND NOT(priority > 20).
 query
@@ -2750,36 +2134,20 @@ query
 EXPLAIN SELECT * FROM t_complex WHERE region = 2 AND NOT (priority > 20) ORDER BY priority, name;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────────────────╮
-│ Projections:                            │
-│ CAST(#0 AS BIGINT),                     │
-│ CAST(#1 AS INTEGER),                    │
-│ __internal_decompress_string(#2),       │
-│ CAST(#3 AS INTEGER)                     │
-│ ~3 rows                                 │
-╰────────────────────┬────────────────────╯
-╭─ ORDER_BY ─────────┴────────────────────╮
-│ Order By: t_complex.priority ASC,       │
-│           t_complex."name" ASC          │
-│ ~3 rows                                 │
-╰────────────────────┬────────────────────╯
-╭─ PROJECTION ───────┴────────────────────╮
-│ Projections:                            │
-│ CAST(#0 AS TINYINT),                    │
-│ CAST(#1 AS TINYINT),                    │
-│ __internal_compress_string_ubigint(#2), │
-│ CAST(#3 AS SMALLINT)                    │
-│ ~3 rows                                 │
-╰────────────────────┬────────────────────╯
-╭─ SEQ_SCAN ─────────┴────────────────────╮
-│ Table: t_complex                        │
-│ Type: Sequential Scan                   │
-│ Projections: region, priority, name,    │
-│              score                      │
-│ Filters: region = 2,                    │
-│          NOT (priority > 20)            │
-│ ~3 rows                                 │
-╰─────────────────────────────────────────╯
+╭─ ORDER_BY ────────────────────────╮
+│ Order By: t_complex.priority ASC, │
+│           t_complex."name" ASC    │
+│ ~3 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ SEQ_SCAN ──────┴─────────────────╮
+│ Table: t_complex                  │
+│ Type: Sequential Scan             │
+│ Projections: region, priority,    │
+│              name, score          │
+│ Filters: region = 2,              │
+│          NOT (priority > 20)      │
+│ ~3 rows                           │
+╰───────────────────────────────────╯
 
 # Complex: (region = 1 AND priority <= 10) OR (region = 3 AND priority <= 10).
 query
@@ -2795,24 +2163,10 @@ query
 EXPLAIN SELECT * FROM t_complex WHERE (region = 1 AND priority <= 10) OR (region = 3 AND priority <= 10) ORDER BY region, priority, name;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────────────╮
-│ Projections:                              │
-│ CAST(#0 AS BIGINT), CAST(#1 AS INTEGER),  │
-│ __internal_decompress_string(#2),         │
-│ CAST(#3 AS INTEGER)                       │
-│ ~1 row                                    │
-╰─────────────────────┬─────────────────────╯
-╭─ ORDER_BY ──────────┴─────────────────────╮
+╭─ ORDER_BY ────────────────────────────────╮
 │ Order By: t_complex.region ASC,           │
 │           t_complex.priority ASC,         │
 │           t_complex."name" ASC            │
-│ ~1 row                                    │
-╰─────────────────────┬─────────────────────╯
-╭─ PROJECTION ────────┴─────────────────────╮
-│ Projections:                              │
-│ CAST(#0 AS TINYINT), CAST(#1 AS TINYINT), │
-│ __internal_compress_string_ubigint(#2),   │
-│ CAST(#3 AS SMALLINT)                      │
 │ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ FILTER ────────────┴─────────────────────╮
@@ -3230,18 +2584,8 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ Projections:                                                                                                                                        │
-│ CAST(#0 AS INTEGER), CAST(#1 AS INTEGER), CAST(#2 AS INTEGER), __internal_decompress_integral_integer(#3, 111)                                      │
-│ ~5 rows                                                                                                                                             │
-╰──────────────────────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────────────────╯
-╭─ ORDER_BY ───────────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────────╮
+╭─ ORDER_BY ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Order By: t_sweep3.a ASC, t_sweep3.b ASC, t_sweep3.c ASC                                                                                            │
-│ ~5 rows                                                                                                                                             │
-╰──────────────────────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────────────────╯
-╭─ PROJECTION ─────────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────────╮
-│ Projections:                                                                                                                                        │
-│ CAST(#0 AS TINYINT), CAST(#1 AS TINYINT), CAST(#2 AS TINYINT), __internal_compress_integral_utinyint(#3, 111)                                       │
 │ ~5 rows                                                                                                                                             │
 ╰──────────────────────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────────────────╯
 ╭─ FILTER ─────────────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────────╮
@@ -3274,32 +2618,20 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────────────────────╮
-│ Projections:                                     │
-│ CAST(#0 AS INTEGER), CAST(#1 AS INTEGER),        │
-│ CAST(#2 AS INTEGER),                             │
-│ __internal_decompress_integral_integer(#3, 111)  │
-│ ~9 rows                                          │
-╰─────────────────────────┬────────────────────────╯
-╭─ ORDER_BY ──────────────┴────────────────────────╮
-│ Order By: t_sweep3.a ASC, t_sweep3.b ASC,        │
-│           t_sweep3.c ASC                         │
-│ ~9 rows                                          │
-╰─────────────────────────┬────────────────────────╯
-╭─ PROJECTION ────────────┴────────────────────────╮
-│ Projections:                                     │
-│ CAST(#0 AS TINYINT), CAST(#1 AS TINYINT),        │
-│ CAST(#2 AS TINYINT),                             │
-│ __internal_compress_integral_utinyint(#3, 111)   │
-│ ~9 rows                                          │
-╰─────────────────────────┬────────────────────────╯
-╭─ SEQ_SCAN ──────────────┴────────────────────────╮
-│ Table: t_sweep3                                  │
-│ Type: Sequential Scan                            │
-│ Projections: a, b, c, val                        │
-│ Filters: a = 3, b = 3, c = 3                     │
-│ ~9 rows                                          │
-╰──────────────────────────────────────────────────╯
+╭─ ORDER_BY ────────────────╮
+│ Order By: t_sweep3.a ASC, │
+│           t_sweep3.b ASC, │
+│           t_sweep3.c ASC  │
+│ ~9 rows                   │
+╰─────────────┬─────────────╯
+╭─ SEQ_SCAN ──┴─────────────╮
+│ Table: t_sweep3           │
+│ Type: Sequential Scan     │
+│ Projections: a, b, c, val │
+│ Filters: a = 3, b = 3,    │
+│          c = 3            │
+│ ~9 rows                   │
+╰───────────────────────────╯
 
 
 # ── 3-D: c adjacent (inclusive+exclusive) fuses to b-level range ─────────────
@@ -3354,37 +2686,24 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────────────────────╮
-│ Projections:                                     │
-│ CAST(#0 AS INTEGER), CAST(#1 AS INTEGER),        │
-│ CAST(#2 AS INTEGER),                             │
-│ __internal_decompress_integral_integer(#3, 111)  │
-│ ~1 row                                           │
-╰─────────────────────────┬────────────────────────╯
-╭─ ORDER_BY ──────────────┴────────────────────────╮
-│ Order By: t_sweep3.a ASC, t_sweep3.b ASC,        │
-│           t_sweep3.c ASC                         │
-│ ~1 row                                           │
-╰─────────────────────────┬────────────────────────╯
-╭─ PROJECTION ────────────┴────────────────────────╮
-│ Projections:                                     │
-│ CAST(#0 AS TINYINT), CAST(#1 AS TINYINT),        │
-│ CAST(#2 AS TINYINT),                             │
-│ __internal_compress_integral_utinyint(#3, 111)   │
-│ ~1 row                                           │
-╰─────────────────────────┬────────────────────────╯
-╭─ FILTER ────────────────┴────────────────────────╮
-│ Expression: (b <= 2) OR (b > 2)                  │
-│ ~1 row                                           │
-╰─────────────────────────┬────────────────────────╯
-╭─ SEQ_SCAN ──────────────┴────────────────────────╮
-│ Table: t_sweep3                                  │
-│ Type: Sequential Scan                            │
-│ Projections: a, b, c, val                        │
-│ Filters: a = 2, optional: ((b <= 2) OR (b > 2)), │
-│          c = 1                                   │
-│ ~9 rows                                          │
-╰──────────────────────────────────────────────────╯
+╭─ ORDER_BY ────────────────────────────────╮
+│ Order By: t_sweep3.a ASC, t_sweep3.b ASC, │
+│           t_sweep3.c ASC                  │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ FILTER ────────────┴─────────────────────╮
+│ Expression: (b <= 2) OR (b > 2)           │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ SEQ_SCAN ──────────┴─────────────────────╮
+│ Table: t_sweep3                           │
+│ Type: Sequential Scan                     │
+│ Projections: a, b, c, val                 │
+│ Filters: a = 2,                           │
+│          optional: ((b <= 2) OR (b > 2)), │
+│          c = 1                            │
+│ ~9 rows                                   │
+╰───────────────────────────────────────────╯
 
 
 # ── 3-D: all three columns overlapping → full scan ───────────────────────────
@@ -3432,37 +2751,23 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────────────────────╮
-│ Projections:                                     │
-│ CAST(#0 AS INTEGER), CAST(#1 AS INTEGER),        │
-│ CAST(#2 AS INTEGER),                             │
-│ __internal_decompress_integral_integer(#3, 111)  │
-│ ~1 row                                           │
-╰─────────────────────────┬────────────────────────╯
-╭─ ORDER_BY ──────────────┴────────────────────────╮
-│ Order By: t_sweep3.a ASC, t_sweep3.b ASC,        │
-│           t_sweep3.c ASC                         │
-│ ~1 row                                           │
-╰─────────────────────────┬────────────────────────╯
-╭─ PROJECTION ────────────┴────────────────────────╮
-│ Projections:                                     │
-│ CAST(#0 AS TINYINT), CAST(#1 AS TINYINT),        │
-│ CAST(#2 AS TINYINT),                             │
-│ __internal_compress_integral_utinyint(#3, 111)   │
-│ ~1 row                                           │
-╰─────────────────────────┬────────────────────────╯
-╭─ FILTER ────────────────┴────────────────────────╮
-│ Expression: (c < 2) OR (c > 2)                   │
-│ ~1 row                                           │
-╰─────────────────────────┬────────────────────────╯
-╭─ SEQ_SCAN ──────────────┴────────────────────────╮
-│ Table: t_sweep3                                  │
-│ Type: Sequential Scan                            │
-│ Projections: a, b, c, val                        │
-│ Filters: a = 1, b = 2,                           │
-│          optional: ((c < 2) OR (c > 2))          │
-│ ~9 rows                                          │
-╰──────────────────────────────────────────────────╯
+╭─ ORDER_BY ───────────────────────────────╮
+│ Order By: t_sweep3.a ASC,                │
+│           t_sweep3.b ASC, t_sweep3.c ASC │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ FILTER ────────────┴────────────────────╮
+│ Expression: (c < 2) OR (c > 2)           │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ SEQ_SCAN ──────────┴────────────────────╮
+│ Table: t_sweep3                          │
+│ Type: Sequential Scan                    │
+│ Projections: a, b, c, val                │
+│ Filters: a = 1, b = 2,                   │
+│          optional: ((c < 2) OR (c > 2))  │
+│ ~9 rows                                  │
+╰──────────────────────────────────────────╯
 
 
 # ── 3-D: three-way triple point OR deduplicated ───────────────────────────────
@@ -3486,18 +2791,8 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ Projections:                                                                                                                                                                             │
-│ CAST(#0 AS INTEGER), CAST(#1 AS INTEGER), CAST(#2 AS INTEGER), __internal_decompress_integral_integer(#3, 111)                                                                           │
-│ ~5 rows                                                                                                                                                                                  │
-╰─────────────────────────────────────────────────────────────────────────────────────────────┬────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ ORDER_BY ──────────────────────────────────────────────────────────────────────────────────┴────────────────────────────────────────────────────────────────────────────────────────────╮
+╭─ ORDER_BY ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Order By: t_sweep3.a ASC, t_sweep3.b ASC, t_sweep3.c ASC                                                                                                                                 │
-│ ~5 rows                                                                                                                                                                                  │
-╰─────────────────────────────────────────────────────────────────────────────────────────────┬────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ PROJECTION ────────────────────────────────────────────────────────────────────────────────┴────────────────────────────────────────────────────────────────────────────────────────────╮
-│ Projections:                                                                                                                                                                             │
-│ CAST(#0 AS TINYINT), CAST(#1 AS TINYINT), CAST(#2 AS TINYINT), __internal_compress_integral_utinyint(#3, 111)                                                                            │
 │ ~5 rows                                                                                                                                                                                  │
 ╰─────────────────────────────────────────────────────────────────────────────────────────────┬────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ FILTER ────────────────────────────────────────────────────────────────────────────────────┴────────────────────────────────────────────────────────────────────────────────────────────╮
@@ -3539,20 +2834,8 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────────────────────────────────────────────────────────────────────╮
-│ Projections:                                                                                       │
-│ CAST(#0 AS INTEGER), CAST(#1 AS INTEGER), CAST(#2 AS INTEGER),                                     │
-│ __internal_decompress_integral_integer(#3, 111)                                                    │
-│ ~5 rows                                                                                            │
-╰──────────────────────────────────────────────────┬─────────────────────────────────────────────────╯
-╭─ ORDER_BY ───────────────────────────────────────┴─────────────────────────────────────────────────╮
+╭─ ORDER_BY ─────────────────────────────────────────────────────────────────────────────────────────╮
 │ Order By: t_sweep3.a ASC, t_sweep3.b ASC, t_sweep3.c ASC                                           │
-│ ~5 rows                                                                                            │
-╰──────────────────────────────────────────────────┬─────────────────────────────────────────────────╯
-╭─ PROJECTION ─────────────────────────────────────┴─────────────────────────────────────────────────╮
-│ Projections:                                                                                       │
-│ CAST(#0 AS TINYINT), CAST(#1 AS TINYINT), CAST(#2 AS TINYINT),                                     │
-│ __internal_compress_integral_utinyint(#3, 111)                                                     │
 │ ~5 rows                                                                                            │
 ╰──────────────────────────────────────────────────┬─────────────────────────────────────────────────╯
 ╭─ FILTER ─────────────────────────────────────────┴─────────────────────────────────────────────────╮
@@ -3590,20 +2873,8 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────────────────────────────────────────────────────────────────────╮
-│ Projections:                                                                                       │
-│ CAST(#0 AS INTEGER), CAST(#1 AS INTEGER), CAST(#2 AS INTEGER),                                     │
-│ __internal_decompress_integral_integer(#3, 111)                                                    │
-│ ~5 rows                                                                                            │
-╰──────────────────────────────────────────────────┬─────────────────────────────────────────────────╯
-╭─ ORDER_BY ───────────────────────────────────────┴─────────────────────────────────────────────────╮
+╭─ ORDER_BY ─────────────────────────────────────────────────────────────────────────────────────────╮
 │ Order By: t_sweep3.a ASC, t_sweep3.b ASC, t_sweep3.c ASC                                           │
-│ ~5 rows                                                                                            │
-╰──────────────────────────────────────────────────┬─────────────────────────────────────────────────╯
-╭─ PROJECTION ─────────────────────────────────────┴─────────────────────────────────────────────────╮
-│ Projections:                                                                                       │
-│ CAST(#0 AS TINYINT), CAST(#1 AS TINYINT), CAST(#2 AS TINYINT),                                     │
-│ __internal_compress_integral_utinyint(#3, 111)                                                     │
 │ ~5 rows                                                                                            │
 ╰──────────────────────────────────────────────────┬─────────────────────────────────────────────────╯
 ╭─ FILTER ─────────────────────────────────────────┴─────────────────────────────────────────────────╮
@@ -3639,18 +2910,8 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ Projections:                                                                                                                                        │
-│ CAST(#0 AS INTEGER), CAST(#1 AS INTEGER), CAST(#2 AS INTEGER), __internal_decompress_integral_integer(#3, 111)                                      │
-│ ~5 rows                                                                                                                                             │
-╰──────────────────────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────────────────╯
-╭─ ORDER_BY ───────────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────────╮
+╭─ ORDER_BY ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Order By: t_sweep3.a ASC, t_sweep3.b ASC, t_sweep3.c ASC                                                                                            │
-│ ~5 rows                                                                                                                                             │
-╰──────────────────────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────────────────╯
-╭─ PROJECTION ─────────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────────╮
-│ Projections:                                                                                                                                        │
-│ CAST(#0 AS TINYINT), CAST(#1 AS TINYINT), CAST(#2 AS TINYINT), __internal_compress_integral_utinyint(#3, 111)                                       │
 │ ~5 rows                                                                                                                                             │
 ╰──────────────────────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────────────────╯
 ╭─ FILTER ─────────────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────────╮
@@ -3693,20 +2954,8 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────────────────────────────────────────────╮
-│ Projections:                                                             │
-│ CAST(#0 AS INTEGER), CAST(#1 AS INTEGER), CAST(#2 AS INTEGER),           │
-│ __internal_decompress_integral_integer(#3, 111)                          │
-│ ~1 row                                                                   │
-╰─────────────────────────────────────┬────────────────────────────────────╯
-╭─ ORDER_BY ──────────────────────────┴────────────────────────────────────╮
+╭─ ORDER_BY ───────────────────────────────────────────────────────────────╮
 │ Order By: t_sweep3.a ASC, t_sweep3.b ASC, t_sweep3.c ASC                 │
-│ ~1 row                                                                   │
-╰─────────────────────────────────────┬────────────────────────────────────╯
-╭─ PROJECTION ────────────────────────┴────────────────────────────────────╮
-│ Projections:                                                             │
-│ CAST(#0 AS TINYINT), CAST(#1 AS TINYINT), CAST(#2 AS TINYINT),           │
-│ __internal_compress_integral_utinyint(#3, 111)                           │
 │ ~1 row                                                                   │
 ╰─────────────────────────────────────┬────────────────────────────────────╯
 ╭─ FILTER ────────────────────────────┴────────────────────────────────────╮
@@ -3742,20 +2991,8 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ Projections:                                                                                                │
-│ CAST(#0 AS INTEGER), CAST(#1 AS INTEGER), CAST(#2 AS INTEGER),                                              │
-│ __internal_decompress_integral_integer(#3, 111)                                                             │
-│ ~1 row                                                                                                      │
-╰──────────────────────────────────────────────────────┬──────────────────────────────────────────────────────╯
-╭─ ORDER_BY ───────────────────────────────────────────┴──────────────────────────────────────────────────────╮
+╭─ ORDER_BY ──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Order By: t_sweep3.a ASC, t_sweep3.b ASC, t_sweep3.c ASC                                                    │
-│ ~1 row                                                                                                      │
-╰──────────────────────────────────────────────────────┬──────────────────────────────────────────────────────╯
-╭─ PROJECTION ─────────────────────────────────────────┴──────────────────────────────────────────────────────╮
-│ Projections:                                                                                                │
-│ CAST(#0 AS TINYINT), CAST(#1 AS TINYINT), CAST(#2 AS TINYINT),                                              │
-│ __internal_compress_integral_utinyint(#3, 111)                                                              │
 │ ~1 row                                                                                                      │
 ╰──────────────────────────────────────────────────────┬──────────────────────────────────────────────────────╯
 ╭─ FILTER ─────────────────────────────────────────────┴──────────────────────────────────────────────────────╮
@@ -3826,38 +3063,25 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────────────────────╮
-│ Projections:                                     │
-│ CAST(#0 AS INTEGER), CAST(#1 AS INTEGER),        │
-│ CAST(#2 AS INTEGER),                             │
-│ __internal_decompress_integral_integer(#3, 111)  │
-│ ~1 row                                           │
-╰─────────────────────────┬────────────────────────╯
-╭─ ORDER_BY ──────────────┴────────────────────────╮
-│ Order By: t_sweep3.a ASC, t_sweep3.b ASC,        │
-│           t_sweep3.c ASC                         │
-│ ~1 row                                           │
-╰─────────────────────────┬────────────────────────╯
-╭─ PROJECTION ────────────┴────────────────────────╮
-│ Projections:                                     │
-│ CAST(#0 AS TINYINT), CAST(#1 AS TINYINT),        │
-│ CAST(#2 AS TINYINT),                             │
-│ __internal_compress_integral_utinyint(#3, 111)   │
-│ ~1 row                                           │
-╰─────────────────────────┬────────────────────────╯
-╭─ FILTER ────────────────┴────────────────────────╮
-│ Expression:                                      │
-│ ((a = 1) OR (a = 3)) AND ((b = 1) OR (b = 3))    │
-│ ~1 row                                           │
-╰─────────────────────────┬────────────────────────╯
-╭─ SEQ_SCAN ──────────────┴────────────────────────╮
-│ Table: t_sweep3                                  │
-│ Type: Sequential Scan                            │
-│ Projections: a, b, c, val                        │
-│ Filters: optional: ((a = 1) OR (a = 3)),         │
-│          optional: ((b = 1) OR (b = 3)), c = 2   │
-│ ~9 rows                                          │
-╰──────────────────────────────────────────────────╯
+╭─ ORDER_BY ────────────────────────────────────╮
+│ Order By: t_sweep3.a ASC, t_sweep3.b ASC,     │
+│           t_sweep3.c ASC                      │
+│ ~1 row                                        │
+╰───────────────────────┬───────────────────────╯
+╭─ FILTER ──────────────┴───────────────────────╮
+│ Expression:                                   │
+│ ((a = 1) OR (a = 3)) AND ((b = 1) OR (b = 3)) │
+│ ~1 row                                        │
+╰───────────────────────┬───────────────────────╯
+╭─ SEQ_SCAN ────────────┴───────────────────────╮
+│ Table: t_sweep3                               │
+│ Type: Sequential Scan                         │
+│ Projections: a, b, c, val                     │
+│ Filters: optional: ((a = 1) OR (a = 3)),      │
+│          optional: ((b = 1) OR (b = 3)),      │
+│          c = 2                                │
+│ ~9 rows                                       │
+╰───────────────────────────────────────────────╯
 
 # Range on a, range on b, OR on c -> a is range column (prefix=1), b/c beyond prefix.
 # Scan uses a=[1,2] with original expression as remaining filter.
@@ -3883,37 +3107,23 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────────────────────╮
-│ Projections:                                     │
-│ CAST(#0 AS INTEGER), CAST(#1 AS INTEGER),        │
-│ CAST(#2 AS INTEGER),                             │
-│ __internal_decompress_integral_integer(#3, 111)  │
-│ ~1 row                                           │
-╰─────────────────────────┬────────────────────────╯
-╭─ ORDER_BY ──────────────┴────────────────────────╮
-│ Order By: t_sweep3.a ASC, t_sweep3.b ASC,        │
-│           t_sweep3.c ASC                         │
-│ ~1 row                                           │
-╰─────────────────────────┬────────────────────────╯
-╭─ PROJECTION ────────────┴────────────────────────╮
-│ Projections:                                     │
-│ CAST(#0 AS TINYINT), CAST(#1 AS TINYINT),        │
-│ CAST(#2 AS TINYINT),                             │
-│ __internal_compress_integral_utinyint(#3, 111)   │
-│ ~1 row                                           │
-╰─────────────────────────┬────────────────────────╯
-╭─ FILTER ────────────────┴────────────────────────╮
-│ Expression: (c = 1) OR (c = 3)                   │
-│ ~1 row                                           │
-╰─────────────────────────┬────────────────────────╯
-╭─ SEQ_SCAN ──────────────┴────────────────────────╮
-│ Table: t_sweep3                                  │
-│ Type: Sequential Scan                            │
-│ Projections: a, b, c, val                        │
-│ Filters: a <= 2, b >= 2,                         │
-│          optional: ((c = 1) OR (c = 3))          │
-│ ~5 rows                                          │
-╰──────────────────────────────────────────────────╯
+╭─ ORDER_BY ───────────────────────────────╮
+│ Order By: t_sweep3.a ASC,                │
+│           t_sweep3.b ASC, t_sweep3.c ASC │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ FILTER ────────────┴────────────────────╮
+│ Expression: (c = 1) OR (c = 3)           │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ SEQ_SCAN ──────────┴────────────────────╮
+│ Table: t_sweep3                          │
+│ Type: Sequential Scan                    │
+│ Projections: a, b, c, val                │
+│ Filters: a <= 2, b >= 2,                 │
+│          optional: ((c = 1) OR (c = 3))  │
+│ ~5 rows                                  │
+╰──────────────────────────────────────────╯
 
 # OR on a (point), neq on b, range on c -> prefix=2 (a equality + b range), c beyond.
 # Scan uses {a=1,b<2},{a=1,b>2},{a=2,b<2},{a=2,b>2} with remaining filter.
@@ -3939,38 +3149,25 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────────────────────╮
-│ Projections:                                     │
-│ CAST(#0 AS INTEGER), CAST(#1 AS INTEGER),        │
-│ CAST(#2 AS INTEGER),                             │
-│ __internal_decompress_integral_integer(#3, 111)  │
-│ ~1 row                                           │
-╰─────────────────────────┬────────────────────────╯
-╭─ ORDER_BY ──────────────┴────────────────────────╮
-│ Order By: t_sweep3.a ASC, t_sweep3.b ASC,        │
-│           t_sweep3.c ASC                         │
-│ ~1 row                                           │
-╰─────────────────────────┬────────────────────────╯
-╭─ PROJECTION ────────────┴────────────────────────╮
-│ Projections:                                     │
-│ CAST(#0 AS TINYINT), CAST(#1 AS TINYINT),        │
-│ CAST(#2 AS TINYINT),                             │
-│ __internal_compress_integral_utinyint(#3, 111)   │
-│ ~1 row                                           │
-╰─────────────────────────┬────────────────────────╯
-╭─ FILTER ────────────────┴────────────────────────╮
-│ Expression:                                      │
-│ ((a = 1) OR (a = 2)) AND ((b < 2) OR (b > 2))    │
-│ ~1 row                                           │
-╰─────────────────────────┬────────────────────────╯
-╭─ SEQ_SCAN ──────────────┴────────────────────────╮
-│ Table: t_sweep3                                  │
-│ Type: Sequential Scan                            │
-│ Projections: a, b, c, val                        │
-│ Filters: optional: ((a = 1) OR (a = 2)),         │
-│          optional: ((b < 2) OR (b > 2)), c >= 2  │
-│ ~5 rows                                          │
-╰──────────────────────────────────────────────────╯
+╭─ ORDER_BY ────────────────────────────────────╮
+│ Order By: t_sweep3.a ASC, t_sweep3.b ASC,     │
+│           t_sweep3.c ASC                      │
+│ ~1 row                                        │
+╰───────────────────────┬───────────────────────╯
+╭─ FILTER ──────────────┴───────────────────────╮
+│ Expression:                                   │
+│ ((a = 1) OR (a = 2)) AND ((b < 2) OR (b > 2)) │
+│ ~1 row                                        │
+╰───────────────────────┬───────────────────────╯
+╭─ SEQ_SCAN ────────────┴───────────────────────╮
+│ Table: t_sweep3                               │
+│ Type: Sequential Scan                         │
+│ Projections: a, b, c, val                     │
+│ Filters: optional: ((a = 1) OR (a = 2)),      │
+│          optional: ((b < 2) OR (b > 2)),      │
+│          c >= 2                               │
+│ ~5 rows                                       │
+╰───────────────────────────────────────────────╯
 
 # Tautological per-column ORs -> always true -> full scan.
 # (x > 1 OR x < 2) is true for every integer x.
@@ -4755,16 +3952,8 @@ query
 EXPLAIN SELECT a, nums, labels FROM choices_array WHERE a = 1 OR a = 3 OR a = 4 OR a = 5 ORDER BY a;
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────────────────────────╮
-│ Projections: CAST(#0 AS INTEGER), #1, #2             │
-│ ~1 row                                               │
-╰───────────────────────────┬──────────────────────────╯
-╭─ ORDER_BY ────────────────┴──────────────────────────╮
+╭─ ORDER_BY ───────────────────────────────────────────╮
 │ Order By: choices_array.a ASC                        │
-│ ~1 row                                               │
-╰───────────────────────────┬──────────────────────────╯
-╭─ PROJECTION ──────────────┴──────────────────────────╮
-│ Projections: CAST(#0 AS TINYINT), #1, #2             │
 │ ~1 row                                               │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ FILTER ──────────────────┴──────────────────────────╮

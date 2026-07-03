@@ -281,9 +281,9 @@ static void ValidateArrayArgs(duckdb::BindScalarFunctionInput& input) {
   auto& args = input.GetArguments();
   for (auto& a : args) {
     if (a->GetReturnType().id() != duckdb::LogicalTypeId::ARRAY) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
-        ERR_MSG(bound.GetName().GetIdentifierName(), " requires ARRAY arguments"));
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+                      ERR_MSG(bound.GetName().GetIdentifierName(),
+                              " requires ARRAY arguments"));
     }
   }
 }

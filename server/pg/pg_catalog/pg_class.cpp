@@ -408,8 +408,7 @@ catalog::MaterializedData SystemTableSnapshot<PgClass>::GetTableData() {
   auto result = CreateColumns<PgClass>(values.size());
 
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row,
-              *_config.CatalogSnapshot());
+    WriteData(result, values[row], kNullMask, row, *_config.CatalogSnapshot());
   }
 
   return {std::move(result), values.size()};

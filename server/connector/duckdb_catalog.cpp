@@ -941,10 +941,10 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       }
     };
     auto snapshot = GetSereneDBContext(binder.context).CatalogSnapshot();
-    auto relation_obj = snapshot->GetRelation(
-      catalog::NoAccessCheck(), GetDatabaseId(),
-      target.ParentSchema().name.GetIdentifierName(),
-      target.name.GetIdentifierName());
+    auto relation_obj =
+      snapshot->GetRelation(catalog::NoAccessCheck(), GetDatabaseId(),
+                            target.ParentSchema().name.GetIdentifierName(),
+                            target.name.GetIdentifierName());
     std::optional<ViewFastPath> fp;
     if (relation_obj &&
         relation_obj->GetType() == catalog::ObjectType::PgSqlView) {

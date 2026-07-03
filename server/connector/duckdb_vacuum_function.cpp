@@ -535,8 +535,8 @@ void DispatchRecomputeStats(duckdb::ClientContext& context,
       conn.Query(absl::StrCat("VACUUM ANALYZE \"", catalog::kStoreDatabaseName,
                               "\".main.\"", quoted, "\"", column_clause));
     if (result->HasError()) {
-      throw duckdb::InternalException("recompute_stats failed: %s",
-                                      result->GetError());
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                      ERR_MSG("recompute_stats failed: ", result->GetError()));
     }
     if (progress) {
       progress->Add(pg::analyze_progress::Param::ChildTablesDone, 1);

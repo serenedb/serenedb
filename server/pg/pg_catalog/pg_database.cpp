@@ -75,8 +75,7 @@ catalog::MaterializedData SystemTableSnapshot<PgDatabase>::GetTableData() {
 
   auto result = CreateColumns<PgDatabase>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row,
-              *_config.CatalogSnapshot());
+    WriteData(result, values[row], kNullMask, row, *_config.CatalogSnapshot());
   }
   return {std::move(result), values.size()};
 }

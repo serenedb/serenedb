@@ -343,10 +343,10 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
 
   // Get fresh snapshot with the new index
   auto snapshot = catalog_impl.GetCatalogSnapshot();
-  auto catalog_index = snapshot->GetRelation(
-    catalog::NoAccessCheck(), _database_id,
-    _schema_entry.name.GetIdentifierName(),
-    _info->GetIndexName().GetIdentifierName());
+  auto catalog_index =
+    snapshot->GetRelation(catalog::NoAccessCheck(), _database_id,
+                          _schema_entry.name.GetIdentifierName(),
+                          _info->GetIndexName().GetIdentifierName());
   SDB_ASSERT(catalog_index);
   state->index_id = catalog_index->GetId();
   if (auto sdb_state = context.registered_state->Get<SereneDBClientState>(
@@ -741,10 +741,9 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
     // and synthesise a column list from its bound schema.
     auto& conn_ctx = GetSereneDBContext(input.context);
     auto snapshot = conn_ctx.CatalogSnapshot();
-    relation = snapshot->GetRelation(
-      catalog::NoAccessCheck(), database_id,
-      schema_entry.name.GetIdentifierName(),
-      op.table.name.GetIdentifierName());
+    relation = snapshot->GetRelation(catalog::NoAccessCheck(), database_id,
+                                     schema_entry.name.GetIdentifierName(),
+                                     op.table.name.GetIdentifierName());
     if (!relation || relation->GetType() != catalog::ObjectType::PgSqlView) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                       ERR_MSG("view \"", op.table.name.GetIdentifierName(),

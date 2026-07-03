@@ -175,10 +175,9 @@ void CollectAndEnforce(duckdb::ClientContext& context, duckdb::Binder& binder) {
       if (!closure.Can(*obj, catalog::AclMode::Select)) {
         const char* kind =
           req.table->type == duckdb::CatalogType::VIEW_ENTRY ? "view" : "table";
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-          ERR_MSG("permission denied for ", kind, " ",
-                  req.table->name.GetIdentifierName()));
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                        ERR_MSG("permission denied for ", kind, " ",
+                                req.table->name.GetIdentifierName()));
       }
       continue;
     }

@@ -59,9 +59,9 @@ std::shared_ptr<catalog::Sequence> ResolveSequence(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                     ERR_MSG("schema \"", schema_name, "\" does not exist"));
   }
-  auto seq = snapshot->GetSequence(catalog::RequireAccess(context, need),
-                                   database_id, schema->GetId(),
-                                   qname.Name().GetIdentifierName());
+  auto seq =
+    snapshot->GetSequence(catalog::RequireAccess(context, need), database_id,
+                          schema->GetId(), qname.Name().GetIdentifierName());
   if (!seq) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("relation \"", qualified, "\" does not exist"));

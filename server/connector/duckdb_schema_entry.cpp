@@ -120,8 +120,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::LookupEntry(
     lookup_info.GetCatalogType(), catalog, *this, GetDatabaseId(),
     name.GetIdentifierName(), lookup_info.GetEntryName(), *snapshot);
   if (result) {
-    if (object &&
-        name.GetIdentifierName() != StaticStrings::kPgCatalogSchema) {
+    if (object && name.GetIdentifierName() != StaticStrings::kPgCatalogSchema) {
       const auto need = [&] {
         switch (object->GetType()) {
           case catalog::ObjectType::PgSqlFunction:
@@ -325,9 +324,10 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
                 return col.GetName() == col_name;
               });
               if (it == options.columns.end()) {
-                THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-                                ERR_MSG("column \"", col_name.GetIdentifierName(),
-                                        "\" named in key does not exist"));
+                THROW_SQL_ERROR(
+                  ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                  ERR_MSG("column \"", col_name.GetIdentifierName(),
+                          "\" named in key does not exist"));
               }
               cols.push_back(it->GetId());
             }
@@ -512,8 +512,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
   // access context.
   const ObjectId role{GetSereneDBContext(transaction.GetContext()).GetRoleId()};
   auto r = catalog_impl.CreateTable(catalog::ActingAs(role), database_id,
-                                    name.GetIdentifierName(), std::move(options),
-                                    op_options);
+                                    name.GetIdentifierName(),
+                                    std::move(options), op_options);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (if_not_exists) {
       return nullptr;
@@ -722,14 +722,14 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
     }
 
     auto function = std::make_shared<catalog::PgSqlFunction>(
-      role, ObjectId{}, ObjectId{},
-      info.GetFunctionName().GetIdentifierName(), std::move(merged_info));
+      role, ObjectId{}, ObjectId{}, info.GetFunctionName().GetIdentifierName(),
+      std::move(merged_info));
     // Always replace=true for the catalog layer since we're replacing
     // the whole PgSqlFunction with the merged version. CreateFunction
     // preserves the prior owner on replace (PG semantics).
-    auto r = catalog_impl.CreateFunction(catalog::ActingAs(role), database_id,
-                                         name.GetIdentifierName(), function,
-                                         true);
+    auto r =
+      catalog_impl.CreateFunction(catalog::ActingAs(role), database_id,
+                                  name.GetIdentifierName(), function, true);
     if (!r.ok()) {
       SDB_THROW(std::move(r));
     }
@@ -738,11 +738,11 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
 
   // No existing function -- create new.
   auto function = std::make_shared<catalog::PgSqlFunction>(
-    role, ObjectId{}, ObjectId{},
-    info.GetFunctionName().GetIdentifierName(), std::move(new_macro_info));
-  auto r = catalog_impl.CreateFunction(catalog::ActingAs(role), database_id,
-                                       name.GetIdentifierName(), function,
-                                       false);
+    role, ObjectId{}, ObjectId{}, info.GetFunctionName().GetIdentifierName(),
+    std::move(new_macro_info));
+  auto r =
+    catalog_impl.CreateFunction(catalog::ActingAs(role), database_id,
+                                name.GetIdentifierName(), function, false);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {
       return nullptr;
@@ -1508,9 +1508,8 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       const std::string& root_column = (*column_path)[0].GetIdentifierName();
 
       auto fld_snapshot = catalog_impl.GetCatalogSnapshot();
-      auto table_obj =
-        fld_snapshot->GetTable(catalog::NoAccessCheck(), db,
-                               name.GetIdentifierName(), table_name);
+      auto table_obj = fld_snapshot->GetTable(
+        catalog::NoAccessCheck(), db, name.GetIdentifierName(), table_name);
       if (!table_obj) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_UNDEFINED_TABLE),

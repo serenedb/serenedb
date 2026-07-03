@@ -185,10 +185,15 @@ QUERY PLAN
 │ ~4 rows                                │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: deadinside_alias_idx (ANN)      │
+│ Index: deadinside_alias_idx            │
 │ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Vector KNN ──────╮                  │
+│ │ Field: clickclack │                  │
+│ │ Metric: l2        │                  │
+│ │ Dims: 3           │                  │
+│ ╰───────────────────╯                  │
 │ Top: 2                                 │
-│ Dims: 3                                │
 │ Projections: kostya,                   │
 │              sdb_inverted_index_score  │
 │ ~4 rows                                │

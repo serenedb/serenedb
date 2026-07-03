@@ -1350,10 +1350,15 @@ QUERY PLAN
 │ ~2 rows                                │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: hnsw_e_idx (ANN)                │
+│ Index: ivf_e_idx                       │
 │ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Vector KNN ────────────────╮        │
+│ │ Field: array_value(x, y, z) │        │
+│ │ Metric: l2                  │        │
+│ │ Dims: 3                     │        │
+│ ╰─────────────────────────────╯        │
 │ Top: 2                                 │
-│ Dims: 3                                │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
 │ ~4 rows                                │

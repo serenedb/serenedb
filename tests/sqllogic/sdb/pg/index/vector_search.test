@@ -24,10 +24,15 @@ QUERY PLAN
 │ ~2 rows                                │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: l2_index (ANN)                  │
+│ Index: l2_index                        │
 │ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Vector KNN ─╮                       │
+│ │ Field: emb   │                       │
+│ │ Metric: l2   │                       │
+│ │ Dims: 3      │                       │
+│ ╰──────────────╯                       │
 │ Top: 2                                 │
-│ Dims: 3                                │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
 │ ~4 rows                                │
@@ -44,10 +49,15 @@ QUERY PLAN
 │ ~4 rows                                │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: l2_index (ANN)                  │
+│ Index: l2_index                        │
 │ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Vector KNN ─╮                       │
+│ │ Field: emb   │                       │
+│ │ Metric: l2   │                       │
+│ │ Dims: 3      │                       │
+│ ╰──────────────╯                       │
 │ Top: 5                                 │
-│ Dims: 3                                │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
 │ ~4 rows                                │
@@ -65,10 +75,15 @@ QUERY PLAN
 │ ~4 rows                                │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: l2_index (ANN)                  │
+│ Index: l2_index                        │
 │ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Vector KNN ─╮                       │
+│ │ Field: emb   │                       │
+│ │ Metric: l2   │                       │
+│ │ Dims: 3      │                       │
+│ ╰──────────────╯                       │
 │ Top: 10                                │
-│ Dims: 3                                │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
 │ ~4 rows                                │
@@ -137,14 +152,19 @@ query
 EXPLAIN SELECT id FROM l2_index WHERE [0, 0, 0]::FLOAT[3] <-> emb < 0.7;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ────────────╮
-│ Index: l2_index (ANN range) │
-│ Lookup: table               │
-│ Radius: 0.7                 │
-│ Dims: 3                     │
-│ Projections: id             │
-│ ~4 rows                     │
-╰─────────────────────────────╯
+╭─ IRESEARCH_SCAN ───╮
+│ Index: l2_index    │
+│ Lookup: table      │
+│ Filter:            │
+│ ╭─ Vector Range ─╮ │
+│ │ Field: emb     │ │
+│ │ Metric: l2     │ │
+│ │ Dims: 3        │ │
+│ │ Radius: < 0.7  │ │
+│ ╰────────────────╯ │
+│ Projections: id    │
+│ ~4 rows            │
+╰────────────────────╯
 
 
 
@@ -173,18 +193,23 @@ query
 EXPLAIN SELECT id FROM l2_index WHERE 1 > l2_distance(emb, [1, 1, 1]::FLOAT[3]) ORDER BY id;
 ----
 QUERY PLAN
-╭─ ORDER_BY ──────────────────╮
-│ Order By: l2_index.id ASC   │
-│ ~4 rows                     │
-╰──────────────┬──────────────╯
-╭─ IRESEARCH_SCAN ────────────╮
-│ Index: l2_index (ANN range) │
-│ Lookup: table               │
-│ Radius: 1                   │
-│ Dims: 3                     │
-│ Projections: id             │
-│ ~4 rows                     │
-╰─────────────────────────────╯
+╭─ ORDER_BY ────────────────╮
+│ Order By: l2_index.id ASC │
+│ ~4 rows                   │
+╰─────────────┬─────────────╯
+╭─ IRESEARCH_SCAN ──────────╮
+│ Index: l2_index           │
+│ Lookup: table             │
+│ Filter:                   │
+│ ╭─ Vector Range ─╮        │
+│ │ Field: emb     │        │
+│ │ Metric: l2     │        │
+│ │ Dims: 3        │        │
+│ │ Radius: < 1    │        │
+│ ╰────────────────╯        │
+│ Projections: id           │
+│ ~4 rows                   │
+╰───────────────────────────╯
 
 
 query
@@ -199,18 +224,23 @@ query
 EXPLAIN SELECT id FROM l2_index WHERE emb <-> [0, 0, 0]::FLOAT[3] < 100 AND id % 2 = 0;
 ----
 QUERY PLAN
-╭─ FILTER ────────────────────╮
-│ Expression: (id % 2) = 0    │
-│ ~1 row                      │
-╰──────────────┬──────────────╯
-╭─ IRESEARCH_SCAN ────────────╮
-│ Index: l2_index (ANN range) │
-│ Lookup: table               │
-│ Radius: 100                 │
-│ Dims: 3                     │
-│ Projections: id             │
-│ ~4 rows                     │
-╰─────────────────────────────╯
+╭─ FILTER ─────────────────╮
+│ Expression: (id % 2) = 0 │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: l2_index          │
+│ Lookup: table            │
+│ Filter:                  │
+│ ╭─ Vector Range ─╮       │
+│ │ Field: emb     │       │
+│ │ Metric: l2     │       │
+│ │ Dims: 3        │       │
+│ │ Radius: < 100  │       │
+│ ╰────────────────╯       │
+│ Projections: id          │
+│ ~4 rows                  │
+╰──────────────────────────╯
 
 
 
@@ -254,14 +284,19 @@ query
 EXPLAIN SELECT id FROM l2_index WHERE emb <-> '[0, 0, 0]'::FLOAT[3] < (0.5 + 0.2);
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ────────────╮
-│ Index: l2_index (ANN range) │
-│ Lookup: table               │
-│ Radius: 0.7                 │
-│ Dims: 3                     │
-│ Projections: id             │
-│ ~4 rows                     │
-╰─────────────────────────────╯
+╭─ IRESEARCH_SCAN ───╮
+│ Index: l2_index    │
+│ Lookup: table      │
+│ Filter:            │
+│ ╭─ Vector Range ─╮ │
+│ │ Field: emb     │ │
+│ │ Metric: l2     │ │
+│ │ Dims: 3        │ │
+│ │ Radius: < 0.7  │ │
+│ ╰────────────────╯ │
+│ Projections: id    │
+│ ~4 rows            │
+╰────────────────────╯
 
 
 query
@@ -274,10 +309,15 @@ QUERY PLAN
 │ ~4 rows                                │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: l2_index (ANN)                  │
+│ Index: l2_index                        │
 │ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Vector KNN ─╮                       │
+│ │ Field: emb   │                       │
+│ │ Metric: l2   │                       │
+│ │ Dims: 3      │                       │
+│ ╰──────────────╯                       │
 │ Top: 10                                │
-│ Dims: 3                                │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
 │ ~4 rows                                │
@@ -379,10 +419,15 @@ QUERY PLAN
 │ ~4 rows                                │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: l1_index (ANN)                  │
+│ Index: l1_index                        │
 │ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Vector KNN ─╮                       │
+│ │ Field: emb   │                       │
+│ │ Metric: l1   │                       │
+│ │ Dims: 3      │                       │
+│ ╰──────────────╯                       │
 │ Top: 5                                 │
-│ Dims: 3                                │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
 │ ~4 rows                                │
@@ -400,10 +445,15 @@ QUERY PLAN
 │ ~4 rows                                │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: l1_index (ANN)                  │
+│ Index: l1_index                        │
 │ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Vector KNN ─╮                       │
+│ │ Field: emb   │                       │
+│ │ Metric: l1   │                       │
+│ │ Dims: 3      │                       │
+│ ╰──────────────╯                       │
 │ Top: 5                                 │
-│ Dims: 3                                │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
 │ ~4 rows                                │
@@ -453,10 +503,15 @@ QUERY PLAN
 │ ~2 rows                                │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: cos_index (ANN)                 │
+│ Index: cos_index                       │
 │ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Vector KNN ───╮                     │
+│ │ Field: emb     │                     │
+│ │ Metric: cosine │                     │
+│ │ Dims: 3        │                     │
+│ ╰────────────────╯                     │
 │ Top: 2                                 │
-│ Dims: 3                                │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
 │ ~4 rows                                │
@@ -481,10 +536,15 @@ QUERY PLAN
 │ ~2 rows                                │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: cos_index (ANN)                 │
+│ Index: cos_index                       │
 │ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Vector KNN ───╮                     │
+│ │ Field: emb     │                     │
+│ │ Metric: cosine │                     │
+│ │ Dims: 3        │                     │
+│ ╰────────────────╯                     │
 │ Top: 2                                 │
-│ Dims: 3                                │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
 │ ~4 rows                                │
@@ -501,10 +561,15 @@ QUERY PLAN
 │ ~2 rows                                │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: cos_index (ANN)                 │
+│ Index: cos_index                       │
 │ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Vector KNN ───╮                     │
+│ │ Field: emb     │                     │
+│ │ Metric: cosine │                     │
+│ │ Dims: 3        │                     │
+│ ╰────────────────╯                     │
 │ Top: 2                                 │
-│ Dims: 3                                │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
 │ ~4 rows                                │
@@ -515,14 +580,19 @@ query
 EXPLAIN SELECT id FROM cos_index WHERE cosine_distance(emb, [1.0, 0.0, 0.0]::FLOAT[3]) < 0.5;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────╮
-│ Index: cos_index (ANN range) │
-│ Lookup: table                │
-│ Radius: 0.5                  │
-│ Dims: 3                      │
-│ Projections: id              │
-│ ~4 rows                      │
-╰──────────────────────────────╯
+╭─ IRESEARCH_SCAN ───╮
+│ Index: cos_index   │
+│ Lookup: table      │
+│ Filter:            │
+│ ╭─ Vector Range ─╮ │
+│ │ Field: emb     │ │
+│ │ Metric: cosine │ │
+│ │ Dims: 3        │ │
+│ │ Radius: < 0.5  │ │
+│ ╰────────────────╯ │
+│ Projections: id    │
+│ ~4 rows            │
+╰────────────────────╯
 
 
 query
@@ -539,9 +609,14 @@ QUERY PLAN
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: cos_index (ANN)                 │
+│ Index: cos_index                       │
 │ Lookup: table                          │
-│ Dims: 3                                │
+│ Filter:                                │
+│ ╭─ Vector KNN ───╮                     │
+│ │ Field: emb     │                     │
+│ │ Metric: cosine │                     │
+│ │ Dims: 3        │                     │
+│ ╰────────────────╯                     │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
 │ ~4 rows                                │
@@ -570,10 +645,15 @@ QUERY PLAN
 │ ~2 rows                                │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: ip_index (ANN)                  │
+│ Index: ip_index                        │
 │ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Vector KNN ─╮                       │
+│ │ Field: emb   │                       │
+│ │ Metric: ip   │                       │
+│ │ Dims: 3      │                       │
+│ ╰──────────────╯                       │
 │ Top: 2                                 │
-│ Dims: 3                                │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
 │ ~4 rows                                │
@@ -598,10 +678,15 @@ QUERY PLAN
 │ ~2 rows                                │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: ip_index (ANN)                  │
+│ Index: ip_index                        │
 │ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Vector KNN ─╮                       │
+│ │ Field: emb   │                       │
+│ │ Metric: ip   │                       │
+│ │ Dims: 3      │                       │
+│ ╰──────────────╯                       │
 │ Top: 2                                 │
-│ Dims: 3                                │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
 │ ~4 rows                                │
@@ -618,10 +703,15 @@ QUERY PLAN
 │ ~2 rows                                │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: ip_index (ANN)                  │
+│ Index: ip_index                        │
 │ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Vector KNN ─╮                       │
+│ │ Field: emb   │                       │
+│ │ Metric: ip   │                       │
+│ │ Dims: 3      │                       │
+│ ╰──────────────╯                       │
 │ Top: 2                                 │
-│ Dims: 3                                │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
 │ ~4 rows                                │
@@ -632,14 +722,19 @@ query
 EXPLAIN SELECT id FROM ip_index WHERE negative_inner_product(emb, [1.0, 0.0, 0.0]::FLOAT[3]) < 0.0;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ────────────╮
-│ Index: ip_index (ANN range) │
-│ Lookup: table               │
-│ Radius: 0                   │
-│ Dims: 3                     │
-│ Projections: id             │
-│ ~4 rows                     │
-╰─────────────────────────────╯
+╭─ IRESEARCH_SCAN ───╮
+│ Index: ip_index    │
+│ Lookup: table      │
+│ Filter:            │
+│ ╭─ Vector Range ─╮ │
+│ │ Field: emb     │ │
+│ │ Metric: ip     │ │
+│ │ Dims: 3        │ │
+│ │ Radius: < 0    │ │
+│ ╰────────────────╯ │
+│ Projections: id    │
+│ ~4 rows            │
+╰────────────────────╯
 
 
 query
@@ -656,9 +751,14 @@ QUERY PLAN
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: ip_index (ANN)                  │
+│ Index: ip_index                        │
 │ Lookup: table                          │
-│ Dims: 3                                │
+│ Filter:                                │
+│ ╭─ Vector KNN ─╮                       │
+│ │ Field: emb   │                       │
+│ │ Metric: ip   │                       │
+│ │ Dims: 3      │                       │
+│ ╰──────────────╯                       │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
 │ ~4 rows                                │
@@ -798,9 +898,14 @@ QUERY PLAN
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: l2_index (ANN)                  │
+│ Index: l2_index                        │
 │ Lookup: table                          │
-│ Dims: 3                                │
+│ Filter:                                │
+│ ╭─ Vector KNN ─╮                       │
+│ │ Field: emb   │                       │
+│ │ Metric: l2   │                       │
+│ │ Dims: 3      │                       │
+│ ╰──────────────╯                       │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
 │ ~4 rows                                │
@@ -887,9 +992,14 @@ QUERY PLAN
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: proj_idx (ANN)                  │
+│ Index: proj_idx                        │
 │ Lookup: table                          │
-│ Dims: 3                                │
+│ Filter:                                │
+│ ╭─ Vector KNN ─╮                       │
+│ │ Field: emb   │                       │
+│ │ Metric: l2   │                       │
+│ │ Dims: 3      │                       │
+│ ╰──────────────╯                       │
 │ Projections: category, id,             │
 │              sdb_inverted_index_score  │
 │ ~4 rows                                │
@@ -910,10 +1020,15 @@ QUERY PLAN
 │ ~1 row                                │
 ╰───────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ──┴───────────────────╮
-│ Index: l2_index (ANN range)           │
+│ Index: l2_index                       │
 │ Lookup: table                         │
-│ Radius: 200                           │
-│ Dims: 3                               │
+│ Filter:                               │
+│ ╭─ Vector Range ─╮                    │
+│ │ Field: emb     │                    │
+│ │ Metric: l2     │                    │
+│ │ Dims: 3        │                    │
+│ │ Radius: < 200  │                    │
+│ ╰────────────────╯                    │
 │ Projections: emb (i), id (l)          │
 │ ~4 rows                               │
 ╰───────────────────────────────────────╯
@@ -933,10 +1048,15 @@ QUERY PLAN
 │ ~1 row                                │
 ╰───────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ──┴───────────────────╮
-│ Index: l2_index (ANN range)           │
+│ Index: l2_index                       │
 │ Lookup: table                         │
-│ Radius: 200                           │
-│ Dims: 3                               │
+│ Filter:                               │
+│ ╭─ Vector Range ─╮                    │
+│ │ Field: emb     │                    │
+│ │ Metric: l2     │                    │
+│ │ Dims: 3        │                    │
+│ │ Radius: < 200  │                    │
+│ ╰────────────────╯                    │
 │ Projections: emb (i), id (l)          │
 │ ~4 rows                               │
 ╰───────────────────────────────────────╯
@@ -946,22 +1066,28 @@ query
 EXPLAIN SELECT id FROM proj_idx WHERE category = 1 AND emb <-> [0, 0, 0]::FLOAT[3] < 200;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────╮
-│ Projections: #1             │
-│ ~1 row                      │
-╰──────────────┬──────────────╯
-╭─ FILTER ─────┴──────────────╮
-│ Expression: category = 1    │
-│ ~1 row                      │
-╰──────────────┬──────────────╯
-╭─ IRESEARCH_SCAN ────────────╮
-│ Index: proj_idx (ANN range) │
-│ Lookup: table               │
-│ Radius: 200                 │
-│ Dims: 3                     │
-│ Projections: category, id   │
-│ ~4 rows                     │
-╰─────────────────────────────╯
+╭─ PROJECTION ─────────────╮
+│ Projections: #1          │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ FILTER ────┴────────────╮
+│ Expression: category = 1 │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: proj_idx          │
+│ Lookup: table            │
+│ Filter:                  │
+│ ╭─ Vector Range ─╮       │
+│ │ Field: emb     │       │
+│ │ Metric: l2     │       │
+│ │ Dims: 3        │       │
+│ │ Radius: < 200  │       │
+│ ╰────────────────╯       │
+│ Projections: category,   │
+│              id          │
+│ ~4 rows                  │
+╰──────────────────────────╯
 
 
 statement ok
@@ -1017,15 +1143,19 @@ QUERY PLAN
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: mixed_idx (ANN)                 │
+│ Index: mixed_idx                       │
 │ Lookup: table                          │
-│ Top: 2                                 │
-│ Dims: 3                                │
-│ TextFilter:                            │
-│ ╭─ Term ──────────────╮                │
+│ Filter:                                │
+│ ╭─ Vector KNN ────────╮                │
+│ │ Field: emb          │                │
+│ │ Metric: l2          │                │
+│ │ Dims: 3             │                │
+│ ╰──────────┬──────────╯                │
+│ ╭─ Term ───┴──────────╮                │
 │ │ Field: body(string) │                │
 │ │ Value: red          │                │
 │ ╰─────────────────────╯                │
+│ Top: 2                                 │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
 │ ~1 row                                 │
@@ -1159,11 +1289,15 @@ QUERY PLAN
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: mixed_idx (ANN)                 │
+│ Index: mixed_idx                       │
 │ Lookup: table                          │
-│ Dims: 3                                │
-│ TextFilter:                            │
-│ ╭─ Terms ───────────────╮              │
+│ Filter:                                │
+│ ╭─ Vector KNN ──────────╮              │
+│ │ Field: emb            │              │
+│ │ Metric: l2            │              │
+│ │ Dims: 3               │              │
+│ ╰───────────┬───────────╯              │
+│ ╭─ Terms ───┴───────────╮              │
 │ │ Field: body(string)   │              │
 │ │ Values: 'blue', 'red' │              │
 │ │ Min Match: 1          │              │

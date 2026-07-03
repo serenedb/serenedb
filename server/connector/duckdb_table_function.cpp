@@ -340,11 +340,18 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
 void SearchScan::AppendSummary(
   const SereneDBScanBindData& bind,
   duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>& out) const {
-  if (!vector_scorer && stored_filter && bind.inverted_index) {
-    out.insert("Filter", duckdb::ExplainValue(irs::ToExplainNode(
-                           *stored_filter,
-                           MakeFieldNameResolver(bind, *bind.inverted_index),
-                           MakeFieldKindResolver(bind, *bind.inverted_index))));
+  if (bind.inverted_index) {
+    const auto name_of = MakeFieldNameResolver(bind, *bind.inverted_index);
+    const auto kind_of = MakeFieldKindResolver(bind, *bind.inverted_index);
+    if (vector_scorer) {
+      const auto display =
+        MakeVectorFilter(*vector_scorer, stored_filter, vector_scorer->radius);
+      out.insert("Filter", duckdb::ExplainValue(
+                             irs::ToExplainNode(*display, name_of, kind_of)));
+    } else if (stored_filter) {
+      out.insert("Filter", duckdb::ExplainValue(irs::ToExplainNode(
+                             *stored_filter, name_of, kind_of)));
+    }
   }
   if (count_only) {
     out.insert("Output", "row-count only");
@@ -359,19 +366,6 @@ void SearchScan::AppendSummary(
       absl::StrAppend(&topk_val, ", optimized");
     }
     out.insert("Top", std::move(topk_val));
-  }
-  if (vector_scorer) {
-    if (vector_scorer->radius != std::numeric_limits<float>::max()) {
-      out.insert("Radius", absl::StrCat(vector_scorer->radius));
-    }
-    out.insert("Dims", absl::StrCat(vector_scorer->query_vector.size()));
-    if (stored_filter && bind.inverted_index) {
-      out.insert(
-        "TextFilter",
-        duckdb::ExplainValue(irs::ToExplainNode(
-          *stored_filter, MakeFieldNameResolver(bind, *bind.inverted_index),
-          MakeFieldKindResolver(bind, *bind.inverted_index))));
-    }
   }
   if (EmitOffsets()) {
     auto cols =
@@ -521,29 +515,14 @@ SereneDBScanToValue(duckdb::TableFunctionToStringInput& input) {
     return result;
   }
   auto& bind = input.bind_data->Cast<SereneDBScanBindData>();
-  const auto search_tag = [&]() -> const char* {
-    if (!bind.scan_source) {
-      return "";
-    }
-    if (bind.scan_source->Kind() == ScanSourceKind::Search &&
-        bind.scan_source->Cast<SearchScan>().vector_scorer) {
-      const auto& ss = bind.scan_source->Cast<SearchScan>();
-      if (!ss.score_top_k &&
-          ss.vector_scorer->radius != std::numeric_limits<float>::max()) {
-        return " (ANN range)";
-      }
-      return " (ANN)";
-    }
-    return "";
-  }();
   if (bind.table_entry) {
     const char* kind =
       bind.entry_kind == ScanEntryKind::BaseTable ? "Table" : "Index";
-    result.insert(kind, absl::StrCat(bind.table_entry->name.GetIdentifierName(),
-                                     search_tag));
+    result.insert(kind,
+                  std::string{bind.table_entry->name.GetIdentifierName()});
   } else {
     const char* kind = bind.IsViewBacked() ? "View" : "Table";
-    result.insert(kind, absl::StrCat(bind.RelationName(), search_tag));
+    result.insert(kind, std::string{bind.RelationName()});
   }
   const auto entries = BuildProjectionEntries(bind, input);
   bool has_index = false;

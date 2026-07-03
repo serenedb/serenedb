@@ -127,9 +127,14 @@ QUERY PLAN
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: src_hnsw_only_idx (ANN)         │
+│ Index: src_ivf_only_idx                │
+│ Filter:                                │
+│ ╭─ Vector KNN ─╮                       │
+│ │ Field: emb   │                       │
+│ │ Metric: l2   │                       │
+│ │ Dims: 3      │                       │
+│ ╰──────────────╯                       │
 │ Top: 1                                 │
-│ Dims: 3                                │
 │ Projections: emb,                      │
 │              sdb_inverted_index_score  │
 │ ~2 rows                                │
@@ -148,10 +153,15 @@ QUERY PLAN
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: src_hnsw_only_idx (ANN)         │
+│ Index: src_ivf_only_idx                │
 │ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Vector KNN ─╮                       │
+│ │ Field: emb   │                       │
+│ │ Metric: l2   │                       │
+│ │ Dims: 3      │                       │
+│ ╰──────────────╯                       │
 │ Top: 1                                 │
-│ Dims: 3                                │
 │ Projections: id (l), emb (i),          │
 │              sdb_inverted_index_score  │
 │ ~2 rows                                │
@@ -187,10 +197,15 @@ QUERY PLAN
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: src_hnsw_mixed_idx (ANN)        │
+│ Index: src_ivf_mixed_idx               │
 │ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Vector KNN ─╮                       │
+│ │ Field: emb   │                       │
+│ │ Metric: l2   │                       │
+│ │ Dims: 3      │                       │
+│ ╰──────────────╯                       │
 │ Top: 1                                 │
-│ Dims: 3                                │
 │ Projections: emb (i), label (l),       │
 │              sdb_inverted_index_score  │
 │ ~2 rows                                │

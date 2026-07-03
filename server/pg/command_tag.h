@@ -27,8 +27,10 @@
 namespace duckdb {
 
 class PreparedStatement;
-}
+class SQLStatement;
+class ClientContext;
 
+}  // namespace duckdb
 namespace sdb::pg {
 
 struct CommandTag {
@@ -52,5 +54,11 @@ struct CommandTag {
 // trailing row count is written straight into the send buffer by
 // WriteCommandComplete (no intermediate string).
 CommandTag BuildCommandTag(const duckdb::PreparedStatement& prepared);
+
+// Same, computed straight from the parsed statement (the single-lifecycle
+// simple-protocol path has no PreparedStatement). `context` resolves the
+// underlying statement of EXECUTE tags.
+CommandTag BuildCommandTag(const duckdb::SQLStatement& statement,
+                           duckdb::ClientContext& context);
 
 }  // namespace sdb::pg

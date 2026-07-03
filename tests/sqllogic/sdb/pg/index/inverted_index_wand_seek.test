@@ -32,7 +32,7 @@ CREATE INDEX wand_seek_idx ON wand_seek USING inverted(id, body en_wand_seek)
 statement ok
 VACUUM (REFRESH_TABLE) wand_seek;
 
-query I
+query
 SELECT count(*) FROM wand_seek_idx
 WHERE body @@ ts_phrase('gate')
   AND body @@ ts_any(['r1', 'r2', 'r3']);
@@ -40,7 +40,7 @@ WHERE body @@ ts_phrase('gate')
 count
 2
 
-query I
+query
 WITH disj AS (
   SELECT id, BM25(wand_seek_idx.tableoid) AS s FROM wand_seek_idx
   WHERE body @@ ts_phrase('gate')

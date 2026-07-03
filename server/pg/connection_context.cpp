@@ -56,8 +56,7 @@ std::string ConnectionContext::GetCurrentSchemaFromSnapshot(
 }
 
 std::string ConnectionContext::GetCurrentSchema() const {
-  auto snapshot = EnsureCatalogSnapshot();
-  return GetCurrentSchemaFromSnapshot(snapshot);
+  return GetCurrentSchemaFromSnapshot(CatalogSnapshot());
 }
 
 }  // namespace sdb

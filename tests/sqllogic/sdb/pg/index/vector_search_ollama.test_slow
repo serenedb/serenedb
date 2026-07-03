@@ -25,7 +25,7 @@ SELECT array_length(
 t
 
 
-query I
+query
 SELECT ai_embed(NULL, '${OLLAMA_MODEL}', 'ollama_${__DATABASE__}') IS NULL;
 ----
 ?column?
@@ -45,7 +45,7 @@ INSERT INTO ollama_src VALUES
   (6, 'pear');
 
 
-query II
+query
 SELECT
   count(*) FILTER (WHERE e IS NOT NULL) AS embedded,
   count(*) FILTER (WHERE e IS NULL) AS skipped
@@ -98,28 +98,20 @@ ORDER BY emb <=> ai_embed(
 LIMIT 3;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           TOP_N           │
-│    ────────────────────   │
-│           Top: 3          │
-│      Order By: #1 ASC     │
-│                           │
-│          ~3 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│   Index: docs_ann (ANN)   │
-│       Lookup: table       │
-│           Top: 3          │
-│         Dims: 384         │
-│                           │
-│        Projections:       │
-│             id            │
-│  sdb_inverted_index_score │
-│                           │
-│          ~4 rows          │
-└───────────────────────────┘
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 3                                 │
+│ Order By: #1 ASC                       │
+│ ~3 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: docs_ann (ANN)                  │
+│ Lookup: table                          │
+│ Top: 3                                 │
+│ Dims: 384                              │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~4 rows                                │
+╰────────────────────────────────────────╯
 
 
 query error

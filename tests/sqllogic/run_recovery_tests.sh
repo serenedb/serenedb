@@ -28,12 +28,13 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 
 cd "$SCRIPT_DIR"
 
-export RETRY_ATTEMPTS=10
-export BACKOFF_DURATION=500ms
+export RETRY_ATTEMPTS="${RETRY_ATTEMPTS:-10}"
+export BACKOFF_DURATION="${BACKOFF_DURATION:-500ms}"
 
 # --- Parse arguments ---
 
 RUNNER_ARGS=()
+EXPLICIT_TESTS=()
 FAST=${SKIP_SLOW_TESTS:-false}
 
 while [[ $# -gt 0 ]]; do
@@ -50,9 +51,15 @@ while [[ $# -gt 0 ]]; do
 		FAST=true
 		shift
 		;;
+	*.test | *.test_slow)
+		EXPLICIT_TESTS+=("$1")
+		shift
+		;;
 	*)
-		echo "Unknown option: $1" >&2
-		exit 1
+		# Anything else is forwarded to run.sh (e.g. --override to regenerate
+		# expected output in place).
+		RUNNER_ARGS+=("$1")
+		shift
 		;;
 	esac
 done
@@ -64,9 +71,13 @@ declare -a find_args=(recovery/ -type f \( -name "*.test" -o -name "*.test_slow"
 if [[ "$FAST" == "true" ]]; then
 	find_args=(recovery/ -type f -name "*.test")
 fi
-while IFS= read -r -d '' file; do
-	test_files+=("${file#./}")
-done < <(find "${find_args[@]}" -print0 | sort -z)
+if [[ ${#EXPLICIT_TESTS[@]} -gt 0 ]]; then
+	test_files=("${EXPLICIT_TESTS[@]}")
+else
+	while IFS= read -r -d '' file; do
+		test_files+=("${file#./}")
+	done < <(find "${find_args[@]}" -print0 | sort -z)
+fi
 
 if [[ ${#test_files[@]} -eq 0 ]]; then
 	echo "No test files found in recovery/ directory"

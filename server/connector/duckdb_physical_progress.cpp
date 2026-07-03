@@ -30,11 +30,24 @@ namespace sdb::connector {
 
 SereneDBPhysicalProgress::SereneDBPhysicalProgress(
   duckdb::PhysicalPlan& plan, duckdb::PhysicalOperator& child,
-  ObjectId table_id)
+  ObjectId table_id, pg::copy_progress::Command command,
+  pg::copy_progress::Type type)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              child.types, child.estimated_cardinality),
-    _table_id(table_id) {
+    _table_id(table_id),
+    _command(command),
+    _type(type) {
   children.push_back(child);
+}
+
+duckdb::unique_ptr<duckdb::GlobalOperatorState>
+SereneDBPhysicalProgress::GetGlobalOperatorState(
+  duckdb::ClientContext& context) const {
+  if (auto state = context.registered_state->Get<SereneDBClientState>(
+        kSereneDBClientStateKey)) {
+    state->EnsureCopyProgress(_table_id, _command, _type);
+  }
+  return duckdb::PhysicalOperator::GetGlobalOperatorState(context);
 }
 
 duckdb::OperatorResultType SereneDBPhysicalProgress::Execute(
@@ -48,8 +61,14 @@ duckdb::OperatorResultType SereneDBPhysicalProgress::Execute(
                          static_cast<int64_t>(input.size()));
     state->progress->Add(pg::copy_progress::Param::BytesProcessed,
                          static_cast<int64_t>(input.GetAllocationSize()));
-    SDB_IF_FAILURE("pause_sst_sink_mid_copy") {
-      sdb::WaitWhileFailurePointDebugging("pause_sst_sink_mid_copy");
+    if (_command == pg::copy_progress::Command::CopyFrom) {
+      SDB_IF_FAILURE("pause_sst_sink_mid_copy") {
+        sdb::WaitWhileFailurePointDebugging("pause_sst_sink_mid_copy");
+      }
+    } else {
+      SDB_IF_FAILURE("pause_copy_to_mid_stream") {
+        sdb::WaitWhileFailurePointDebugging("pause_copy_to_mid_stream");
+      }
     }
   }
   chunk.Reference(input);

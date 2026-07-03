@@ -69,9 +69,10 @@ SereneDBTableEntry& RequireBaseTable(duckdb::TableCatalogEntry& table) {
   // duckdb::TableCatalogEntry doesn't expose a tag we can extend.
   auto* base = dynamic_cast<SereneDBTableEntry*>(&table);
   if (!base) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-                    ERR_MSG("cannot open relation \"", table.name, "\""),
-                    ERR_DETAIL("This operation is not supported for indexes."));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+      ERR_MSG("cannot open relation \"", table.name.GetIdentifierName(), "\""),
+      ERR_DETAIL("This operation is not supported for indexes."));
   }
   return *base;
 }
@@ -95,11 +96,14 @@ duckdb::unique_ptr<duckdb::BaseStatistics> SereneDBTableEntry::GetStatistics(
 
 duckdb::TableCatalogEntry& SereneDBTableEntry::ResolveStoreEntry(
   duckdb::ClientContext& context) const {
-  auto store_name = catalog::StoreTableName(ParentCatalog().GetName(),
-                                            ParentSchema().name, name);
-  return duckdb::Catalog::GetEntry(context, duckdb::CatalogType::TABLE_ENTRY,
-                                   std::string{catalog::kStoreDatabaseName},
-                                   "main", store_name)
+  auto store_name = catalog::StoreTableName(
+    ParentCatalog().GetName().GetIdentifierName(),
+    ParentSchema().name.GetIdentifierName(), name.GetIdentifierName());
+  return duckdb::Catalog::GetEntry(
+           context, duckdb::CatalogType::TABLE_ENTRY,
+           duckdb::QualifiedName(
+             duckdb::Identifier{catalog::kStoreDatabaseName},
+             duckdb::Identifier{"main"}, duckdb::Identifier{store_name}))
     .Cast<duckdb::TableCatalogEntry>();
 }
 
@@ -130,7 +134,7 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   if (bind_data) {
     if (auto* table_bind =
           dynamic_cast<duckdb::TableScanBindData*>(bind_data.get())) {
-      table_bind->display_name = name;
+      table_bind->display_name = name.GetIdentifierName();
     }
   }
   // tableoid binds on tables (scoring functions and PG compatibility take
@@ -260,9 +264,10 @@ duckdb::virtual_column_map_t SereneDBTableEntry::BuildVirtualColumns(
   for (auto pk_id : pk_col_ids) {
     const auto pos = table.ColumnPosById(pk_id);
     if (pos < columns.size()) {
-      result.insert({duckdb::VIRTUAL_COLUMN_START + pos,
-                     duckdb::TableColumn(std::string{columns[pos].GetName()},
-                                         columns[pos].type)});
+      result.insert(
+        {duckdb::VIRTUAL_COLUMN_START + pos,
+         duckdb::TableColumn(duckdb::Identifier{columns[pos].GetName()},
+                             columns[pos].type)});
     }
   }
 
@@ -270,9 +275,9 @@ duckdb::virtual_column_map_t SereneDBTableEntry::BuildVirtualColumns(
   for (auto idx : indexed_col_indices) {
     auto virt_id = duckdb::VIRTUAL_COLUMN_START + idx;
     if (!result.contains(virt_id)) {
-      result.insert(
-        {virt_id, duckdb::TableColumn(std::string{columns[idx].GetName()},
-                                      columns[idx].type)});
+      result.insert({virt_id, duckdb::TableColumn(
+                                duckdb::Identifier{columns[idx].GetName()},
+                                columns[idx].type)});
     }
   }
 
@@ -320,12 +325,12 @@ duckdb::TableStorageInfo SereneDBTableEntry::BuildStorageInfo(
   // Report UNIQUE constraints as unique indexes too, so the binder can resolve
   // ON CONFLICT (unique_col) against them (enforcement already happens; without
   // this the conflict target binds only to the PK).
-  for (const auto& unique_col_ids : table.UniqueConstraints()) {
+  for (const auto& unique : table.UniqueConstraints()) {
     duckdb::IndexInfo idx_info;
     idx_info.is_unique = true;
     idx_info.is_primary = false;
     idx_info.is_foreign = false;
-    for (auto col_id : unique_col_ids) {
+    for (auto col_id : unique.columns) {
       const auto pos = table.ColumnPosById(col_id);
       if (pos < table.Columns().size()) {
         idx_info.column_set.insert(pos);

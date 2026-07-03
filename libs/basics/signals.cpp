@@ -20,6 +20,7 @@
 
 #include "basics/signals.h"
 
+#include "basics/lifecycle.h"
 #include "basics/operating-system.h"
 
 #ifdef SERENEDB_HAVE_SIGNAL_H
@@ -48,6 +49,17 @@ void UnmaskAllSignals() {
   sigset_t all;
   sigfillset(&all);
   pthread_sigmask(SIG_UNBLOCK, &all, nullptr);
+#endif
+}
+
+void InstallShutdownHandlers() {
+#ifdef SERENEDB_HAVE_SIGNAL_H
+  struct sigaction action = {};
+  action.sa_handler = +[](int) { lifecycle::BeginShutdown(); };
+  sigemptyset(&action.sa_mask);
+  ::sigaction(SIGTERM, &action, nullptr);
+  ::sigaction(SIGINT, &action, nullptr);
+  ::sigaction(SIGQUIT, &action, nullptr);
 #endif
 }
 

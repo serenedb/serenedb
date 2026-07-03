@@ -44,13 +44,12 @@ constexpr uint64_t kFkNullMask =
   kNullMask & ~(uint64_t{1} << GetIndex(&PgConstraint::confkey));
 // FKs carry no stored ObjectId; synthesize a constraint OID. Bit 61 keeps it
 // clear of raw ObjectIds and the bit-62 synthetic PK index OIDs.
-constexpr uint64_t kSyntheticFkBit = uint64_t{1} << 61;
 
 }  // namespace
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
-  auto catalog = _config.EnsureCatalogSnapshot();
+  auto catalog = _config.CatalogSnapshot();
 
   std::vector<PgConstraint> values;
   std::deque<std::string> conname_storage;
@@ -74,10 +73,12 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
           }
         }
 
-        conname_storage.push_back(std::string{table->GetName()} + "_pkey");
+        conname_storage.push_back(table->PKName().empty()
+                                    ? std::string{table->GetName()} + "_pkey"
+                                    : std::string{table->PKName()});
         conkey_storage.push_back(std::move(conkey));
         values.push_back({
-          .oid = table->GetId().id(),
+          .oid = table->PKConstraintId().id(),
           .conname = conname_storage.back(),
           .connamespace = schema->GetId().id(),
           .contype = PgConstraint::Contype::PrimaryKey,
@@ -87,8 +88,7 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
           .convalidated = true,
           .conrelid = table->GetId().id(),
           .contypid = 0,
-          // Synthetic PK index OID (see PkIndexOid in fwd.h and pg_index.cpp).
-          .conindid = PkIndexOid(table->GetId().id()),
+          .conindid = table->PKIndexId().id(),
           .conparentid = 0,
           .confrelid = 0,
           .confupdtype = PgConstraint::Confchgtype::NoAction,
@@ -170,12 +170,14 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
           }
         }
 
-        conname_storage.push_back(std::string{table->GetName()} + "_" +
-                                  first_col + "_fkey");
+        conname_storage.push_back(fk.name.empty()
+                                    ? std::string{table->GetName()} + "_" +
+                                        first_col + "_fkey"
+                                    : fk.name);
         conkey_storage.push_back(std::move(conkey));
         confkey_storage.push_back(std::move(confkey));
         values.push_back({
-          .oid = kSyntheticFkBit | (table->GetId().id() * 256 + fk_idx),
+          .oid = fk.id.id(),
           .conname = conname_storage.back(),
           .connamespace = schema->GetId().id(),
           .contype = PgConstraint::Contype::ForeignKey,
@@ -185,7 +187,8 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
           .convalidated = true,
           .conrelid = table->GetId().id(),
           .contypid = 0,
-          .conindid = 0,
+          // PG points conindid at the index backing the referenced key.
+          .conindid = ref.PKIndexId().id(),
           .conparentid = 0,
           .confrelid = ref.GetId().id(),
           .confupdtype = PgConstraint::Confchgtype::NoAction,
@@ -197,6 +200,53 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
           .conperiod = false,
           .conkey = conkey_storage.back(),
           .confkey = confkey_storage.back(),
+        });
+      }
+
+      // Unique constraints (contype 'u'). Non-PK UNIQUE; a native duckdb table
+      // surfaces these in pg_constraint, so the facade must too.
+      const auto& uniques = table->UniqueConstraints();
+      for (size_t uq_idx = 0; uq_idx < uniques.size(); ++uq_idx) {
+        const auto& uq = uniques[uq_idx];
+        std::vector<int16_t> conkey;
+        conkey.reserve(uq.columns.size());
+        std::string first_col;
+        for (auto col_id : uq.columns) {
+          const auto pos = table->ColumnPosById(col_id);
+          if (pos < columns.size()) {
+            conkey.push_back(static_cast<int16_t>(pos + 1));
+            if (first_col.empty()) {
+              first_col = std::string{columns[pos].GetName()};
+            }
+          }
+        }
+        conname_storage.push_back(uq.name.empty()
+                                    ? std::string{table->GetName()} + "_" +
+                                        first_col + "_key"
+                                    : uq.name);
+        conkey_storage.push_back(std::move(conkey));
+        values.push_back({
+          .oid = uniques[uq_idx].id.id(),
+          .conname = conname_storage.back(),
+          .connamespace = schema->GetId().id(),
+          .contype = PgConstraint::Contype::Unique,
+          .condeferrable = false,
+          .condeferred = false,
+          .conenforced = true,
+          .convalidated = true,
+          .conrelid = table->GetId().id(),
+          .contypid = 0,
+          .conindid = uniques[uq_idx].index_id.id(),
+          .conparentid = 0,
+          .confrelid = 0,
+          .confupdtype = PgConstraint::Confchgtype::NoAction,
+          .confdeltype = PgConstraint::Confchgtype::NoAction,
+          .confmatchtype = PgConstraint::Confmatchtype::Simple,
+          .conislocal = true,
+          .coninhcount = 0,
+          .connoinherit = false,
+          .conperiod = false,
+          .conkey = conkey_storage.back(),
         });
       }
     }

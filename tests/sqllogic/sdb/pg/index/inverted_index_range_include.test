@@ -49,21 +49,13 @@ EXPLAIN SELECT label, tag FROM vec_r_idx
   WHERE l2_distance(emb, [1, 0, 0]::FLOAT[3]) < 1.0;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│   vec_r_idx (ANN range)   │
-│                           │
-│         Radius: 1         │
-│          Dims: 3          │
-│                           │
-│        Projections:       │
-│           label           │
-│            tag            │
-│                           │
-│          ~4 rows          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ─────────────╮
+│ Index: vec_r_idx (ANN range) │
+│ Radius: 1                    │
+│ Dims: 3                      │
+│ Projections: label, tag      │
+│ ~4 rows                      │
+╰──────────────────────────────╯
 
 
 query
@@ -82,23 +74,16 @@ EXPLAIN SELECT pk, label, body FROM vec_r_idx
   WHERE l2_distance(emb, [10, 10, 10]::FLOAT[3]) < 1.0;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│   vec_r_idx (ANN range)   │
-│                           │
-│       Lookup: table       │
-│         Radius: 1         │
-│          Dims: 3          │
-│                           │
-│        Projections:       │
-│           pk (l)          │
-│         label (i)         │
-│          body (l)         │
-│                           │
-│          ~4 rows          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ─────────────╮
+│ Index: vec_r_idx (ANN range) │
+│ Lookup: table                │
+│ Radius: 1                    │
+│ Dims: 3                      │
+│ Projections: pk (l),         │
+│              label (i),      │
+│              body (l)        │
+│ ~4 rows                      │
+╰──────────────────────────────╯
 
 
 query

@@ -70,7 +70,7 @@ TEST(NetworkPgFrames, ReadyForQuery) {
 TEST(NetworkPgFrames, RowDescriptionSingleInt) {
   message::Buffer buf{256, 4096};
   const std::vector<duckdb::LogicalType> types{duckdb::LogicalType::INTEGER};
-  const std::vector<std::string> names{"answer"};
+  const std::vector<duckdb::Identifier> names{"answer"};
   const std::vector<sdb::pg::VarFormat> formats{};
   WriteRowDescription(buf, types, names, formats);
   const std::string bytes = Flatten(buf.Written());

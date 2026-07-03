@@ -31,6 +31,12 @@ std::string_view CommandToString(ProgressCommand cmd) {
       return "COPY";
     case ProgressCommand::CreateIndex:
       return "CREATE INDEX";
+    case ProgressCommand::CreateTableAs:
+      return "CREATE TABLE AS";
+    case ProgressCommand::Analyze:
+      return "ANALYZE";
+    case ProgressCommand::Vacuum:
+      return "VACUUM";
   }
 }
 

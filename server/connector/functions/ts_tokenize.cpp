@@ -34,20 +34,20 @@ void FromTokenize(irs::BooleanFilter& parent, const FilterContext& ctx,
                   const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_tokenize('quick fox') or ts_tokenize('foo', 'keyword').";
-  SDB_ASSERT(func.children.size() >= 1 && func.children.size() <= 2);
+  SDB_ASSERT(func.GetChildren().size() >= 1 && func.GetChildren().size() <= 2);
   std::string text;
-  if (auto r = GetVarcharArg(*func.children[0], "ts_tokenize text", text);
+  if (auto r = GetVarcharArg(*func.GetChildren()[0], "ts_tokenize text", text);
       !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
   }
-  if (func.children.size() == 1) {
+  if (func.GetChildren().size() == 1) {
     BuildFtsTokens(parent, ctx, column_info, text, /*require_all=*/false);
     return;
   }
   std::string analyzer_name;
-  if (auto r = GetVarcharArg(*func.children[1], "ts_tokenize analyzer name",
-                             analyzer_name);
+  if (auto r = GetVarcharArg(*func.GetChildren()[1],
+                             "ts_tokenize analyzer name", analyzer_name);
       !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));

@@ -173,7 +173,7 @@ duckdb::TableFunction LookupSingleStringReader(duckdb::ClientContext& context,
   auto tx = duckdb::CatalogTransaction::GetSystemTransaction(*context.db);
   auto& schema = sys.GetSchema(tx, DEFAULT_SCHEMA);
   auto entry = schema.GetEntry(tx, duckdb::CatalogType::TABLE_FUNCTION_ENTRY,
-                               std::string{name});
+                               duckdb::Identifier{name});
   if (!entry) {
     throw duckdb::CatalogException(
       "fast-path source function \"%s\" not registered", name);
@@ -212,7 +212,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
     switch (mod->type) {
       case duckdb::ResultModifierType::ORDER_MODIFIER:
       case duckdb::ResultModifierType::LIMIT_MODIFIER:
-      case duckdb::ResultModifierType::LIMIT_PERCENT_MODIFIER:
+      case duckdb::ResultModifierType::LEGACY_LIMIT_PERCENT_MODIFIER:
         break;
       default:
         return std::nullopt;
@@ -229,7 +229,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
     for (const auto& item : select_node.select_list) {
       const duckdb::ParsedExpression* cur = item.get();
       while (cur->GetExpressionClass() == duckdb::ExpressionClass::CAST) {
-        cur = cur->Cast<duckdb::CastExpression>().child.get();
+        cur = &cur->Cast<duckdb::CastExpression>().Child();
       }
       if (cur->GetExpressionClass() != duckdb::ExpressionClass::COLUMN_REF) {
         return std::nullopt;
@@ -238,7 +238,8 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       if (colref.IsQualified()) {
         return std::nullopt;
       }
-      projection_columns.push_back(colref.GetColumnName());
+      projection_columns.emplace_back(
+        colref.GetColumnName().GetIdentifierName());
     }
   }
   if (!select_node.from_table) {
@@ -246,10 +247,11 @@ std::optional<ViewFastPath> ResolveViewFastPath(
   }
   if (select_node.from_table->type == duckdb::TableReferenceType::BASE_TABLE) {
     const auto& base_ref = select_node.from_table->Cast<duckdb::BaseTableRef>();
+    const auto& qname = base_ref.GetQualifiedName();
     duckdb::EntryLookupInfo entry_lookup(duckdb::CatalogType::TABLE_ENTRY,
-                                         base_ref.table_name);
+                                         duckdb::QualifiedName(qname.Name()));
     auto generic = duckdb::Catalog::GetEntry(
-      context, base_ref.catalog_name, base_ref.schema_name, entry_lookup,
+      context, qname.Catalog(), qname.Schema(), entry_lookup,
       duckdb::OnEntryNotFound::RETURN_NULL);
     if (!generic) {
       return std::nullopt;
@@ -266,10 +268,10 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       }
       ViewFastPath out;
       out.function_name = std::string{registry_entry->function_name};
-      out.catalog_ref =
-        CatalogTableRef{.catalog = entry.ParentCatalog().GetName(),
-                        .schema = entry.ParentSchema().name,
-                        .table = entry.name};
+      out.catalog_ref = CatalogTableRef{
+        .catalog = entry.ParentCatalog().GetName().GetIdentifierName(),
+        .schema = entry.ParentSchema().name.GetIdentifierName(),
+        .table = entry.name.GetIdentifierName()};
       out.is_glob = true;
       out.projection_columns = std::move(projection_columns);
       out.pk_spec = registry_entry->glob_pk_spec;
@@ -283,9 +285,10 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       }
       ViewFastPath out;
       out.function_name = "read_duckdb";
-      out.catalog_ref = CatalogTableRef{.catalog = src_catalog.GetName(),
-                                        .schema = entry.ParentSchema().name,
-                                        .table = entry.name};
+      out.catalog_ref =
+        CatalogTableRef{.catalog = src_catalog.GetName().GetIdentifierName(),
+                        .schema = entry.ParentSchema().name.GetIdentifierName(),
+                        .table = entry.name.GetIdentifierName()};
       out.projection_columns = std::move(projection_columns);
       out.pk_spec = catalog::PkSpec::DuckDBRowId;
       return out;
@@ -306,8 +309,9 @@ std::optional<ViewFastPath> ResolveViewFastPath(
         CatalogTableRef{.catalog = std::string{catalog::kStoreDatabaseName},
                         .schema = "main",
                         .table = catalog::StoreTableName(
-                          entry.ParentCatalog().GetName(),
-                          entry.ParentSchema().name, entry.name)};
+                          entry.ParentCatalog().GetName().GetIdentifierName(),
+                          entry.ParentSchema().name.GetIdentifierName(),
+                          entry.name.GetIdentifierName())};
       out.pk_spec = catalog::PkSpec::DuckDBRowId;
       out.projection_columns = std::move(projection_columns);
       return out;
@@ -326,27 +330,28 @@ std::optional<ViewFastPath> ResolveViewFastPath(
   const auto& fn_expr = tf_ref.function->Cast<duckdb::FunctionExpression>();
   duckdb::vector<duckdb::Value> args;
   duckdb::named_parameter_map_t named_params;
-  args.reserve(fn_expr.children.size());
+  args.reserve(fn_expr.GetArguments().size());
   // CAST targets are unbound here; coercion happens in BindFastPathSource.
   auto peel_cast =
     [](this auto& self,
        const duckdb::ParsedExpression& expr) -> std::optional<duckdb::Value> {
     const duckdb::ParsedExpression* cur = &expr;
     while (cur->GetExpressionClass() == duckdb::ExpressionClass::CAST) {
-      cur = cur->Cast<duckdb::CastExpression>().child.get();
+      cur = &cur->Cast<duckdb::CastExpression>().Child();
     }
     if (cur->GetExpressionClass() == duckdb::ExpressionClass::CONSTANT) {
       return cur->Cast<duckdb::ConstantExpression>().GetValue();
     }
     if (cur->GetExpressionType() == duckdb::ExpressionType::FUNCTION) {
       const auto& fn = cur->Cast<duckdb::FunctionExpression>();
-      if (fn.function_name == "list_value" ||
-          fn.function_name == "array_value") {
+      if (fn.FunctionName() == "list_value" ||
+          fn.FunctionName() == "array_value") {
         duckdb::vector<duckdb::Value> elements;
-        elements.reserve(fn.children.size());
+        elements.reserve(fn.GetArguments().size());
         duckdb::LogicalType child_type = duckdb::LogicalType::SQLNULL;
-        for (const auto& c : fn.children) {
-          auto folded = self(*c);
+        for (const auto& arg : fn.GetArguments()) {
+          const auto& c = arg.GetExpression();
+          auto folded = self(c);
           if (!folded) {
             return std::nullopt;
           }
@@ -357,18 +362,19 @@ std::optional<ViewFastPath> ResolveViewFastPath(
         }
         return duckdb::Value::LIST(child_type, std::move(elements));
       }
-      if (fn.function_name == "struct_pack") {
+      if (fn.FunctionName() == "struct_pack") {
         duckdb::child_list_t<duckdb::Value> fields;
-        fields.reserve(fn.children.size());
-        for (const auto& c : fn.children) {
-          if (c->GetAlias().empty()) {
+        fields.reserve(fn.GetArguments().size());
+        for (const auto& arg : fn.GetArguments()) {
+          const auto& c = arg.GetExpression();
+          if (c.GetAlias().empty()) {
             return std::nullopt;
           }
-          auto folded = self(*c);
+          auto folded = self(c);
           if (!folded) {
             return std::nullopt;
           }
-          fields.emplace_back(c->GetAlias(), std::move(*folded));
+          fields.emplace_back(c.GetAlias(), std::move(*folded));
         }
         return duckdb::Value::STRUCT(std::move(fields));
       }
@@ -376,28 +382,31 @@ std::optional<ViewFastPath> ResolveViewFastPath(
     return std::nullopt;
   };
 
-  for (const auto& child : fn_expr.children) {
-    if (child->GetExpressionType() == duckdb::ExpressionType::COMPARE_EQUAL) {
-      auto& comp = child->Cast<duckdb::ComparisonExpression>();
-      if (comp.left->GetExpressionType() ==
+  for (const auto& arg : fn_expr.GetArguments()) {
+    const auto& child = arg.GetExpression();
+    if (child.GetExpressionType() == duckdb::ExpressionType::COMPARE_EQUAL) {
+      auto& comp = child.Cast<duckdb::ComparisonExpression>();
+      if (comp.Left().GetExpressionType() ==
           duckdb::ExpressionType::COLUMN_REF) {
-        const auto& colref = comp.left->Cast<duckdb::ColumnRefExpression>();
+        const auto& colref = comp.Left().Cast<duckdb::ColumnRefExpression>();
         if (!colref.IsQualified()) {
-          if (auto v = peel_cast(*comp.right)) {
-            named_params.emplace(colref.GetColumnName(), std::move(*v));
+          if (auto v = peel_cast(comp.Right())) {
+            named_params.emplace(colref.GetColumnName().GetIdentifierName(),
+                                 std::move(*v));
             continue;
           }
         }
       }
       return std::nullopt;
     }
-    if (auto v = peel_cast(*child)) {
+    if (auto v = peel_cast(child)) {
       args.push_back(std::move(*v));
       continue;
     }
     return std::nullopt;
   }
-  auto canonical = std::string{ResolveAlias(fn_expr.function_name)};
+  auto canonical =
+    std::string{ResolveAlias(fn_expr.FunctionName().GetIdentifierName())};
   const auto* entry = LookupRegistry(canonical);
   if (!entry) {
     return std::nullopt;
@@ -479,9 +488,11 @@ duckdb::unique_ptr<duckdb::FunctionData> BindFastPathSource(
   duckdb::ClientContext& context, const ViewFastPath& fp) {
   if (fp.catalog_ref) {
     auto& entry =
-      duckdb::Catalog::GetEntry(context, duckdb::CatalogType::TABLE_ENTRY,
-                                fp.catalog_ref->catalog, fp.catalog_ref->schema,
-                                fp.catalog_ref->table)
+      duckdb::Catalog::GetEntry(
+        context, duckdb::CatalogType::TABLE_ENTRY,
+        duckdb::QualifiedName(duckdb::Identifier{fp.catalog_ref->catalog},
+                              duckdb::Identifier{fp.catalog_ref->schema},
+                              duckdb::Identifier{fp.catalog_ref->table}))
         .Cast<duckdb::TableCatalogEntry>();
     duckdb::unique_ptr<duckdb::FunctionData> bind_data;
     std::optional<duckdb::BoundAtClause> at_clause;
@@ -490,7 +501,8 @@ duckdb::unique_ptr<duckdb::FunctionData> BindFastPathSource(
                         duckdb::Value::BIGINT(fp.pinned_iceberg_snapshot_id));
     }
     duckdb::EntryLookupInfo lookup(
-      duckdb::CatalogType::TABLE_ENTRY, fp.catalog_ref->table,
+      duckdb::CatalogType::TABLE_ENTRY,
+      duckdb::QualifiedName(duckdb::Identifier{fp.catalog_ref->table}),
       at_clause ? duckdb::optional_ptr<duckdb::BoundAtClause>(&*at_clause)
                 : duckdb::optional_ptr<duckdb::BoundAtClause>{},
       duckdb::QueryErrorContext{});
@@ -519,9 +531,9 @@ duckdb::unique_ptr<duckdb::FunctionData> BindFastPathSource(
     if (!coerced.DefaultTryCastAs(it->second)) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("named argument `", k, "` for `", fp.function_name,
-                "` cannot be coerced from ", v.type().ToString(), " to ",
-                it->second.ToString()));
+        ERR_MSG("named argument `", k.GetIdentifierName(), "` for `",
+                fp.function_name, "` cannot be coerced from ",
+                v.type().ToString(), " to ", it->second.ToString()));
     }
     named_params.emplace(k, std::move(coerced));
   }
@@ -531,7 +543,7 @@ duckdb::unique_ptr<duckdb::FunctionData> BindFastPathSource(
       static_cast<uint64_t>(fp.pinned_iceberg_snapshot_id));
   }
   duckdb::vector<duckdb::LogicalType> unused_types;
-  duckdb::vector<std::string> unused_names;
+  duckdb::vector<duckdb::Identifier> unused_names;
   duckdb::TableFunctionRef unused_ref;
   duckdb::TableFunctionBindInput input(inputs, named_params, unused_types,
                                        unused_names, reader.function_info.get(),

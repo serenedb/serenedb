@@ -190,7 +190,6 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
                    table_id.id(), " tick=", ctx.max_tick);
       auto& info = shards.at(table_id);
       info.search->Commit();
-      info.search->SyncNumRowsFromIndex();
       ++recovered_shards;
     }
   }

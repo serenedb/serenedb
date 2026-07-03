@@ -319,7 +319,7 @@ bool PgRegclassToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
                              duckdb::idx_t count,
                              duckdb::CastParameters& params) {
   auto snap = GetSereneDBContext(*params.cast_data->Cast<RegCastData>().ctx)
-                .EnsureCatalogSnapshot();
+                .CatalogSnapshot();
   return PgOidToVarcharCast(source, result, count, [&](uint64_t oid) {
     return pg::RegclassOut(*snap, oid);
   });
@@ -337,7 +337,7 @@ bool PgRegnamespaceToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
                                  duckdb::idx_t count,
                                  duckdb::CastParameters& params) {
   auto snap = GetSereneDBContext(*params.cast_data->Cast<RegCastData>().ctx)
-                .EnsureCatalogSnapshot();
+                .CatalogSnapshot();
   return PgOidToVarcharCast(source, result, count, [&](uint64_t oid) {
     return pg::RegnamespaceOut(*snap, oid);
   });

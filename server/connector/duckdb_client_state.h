@@ -98,18 +98,40 @@ class SereneDBClientState final : public duckdb::ClientContextState {
   void TransactionRollback(duckdb::MetaTransaction& transaction,
                            duckdb::ClientContext& context) final;
 
-  duckdb::RebindQueryInfo OnExecutePrepared(
-    duckdb::ClientContext& context, duckdb::PreparedStatementCallbackInfo& info,
-    duckdb::RebindQueryInfo current_rebind) final;
-
   void QueryBegin(duckdb::ClientContext& context) final;
   void QueryEnd(duckdb::ClientContext& context) final;
+
+  void ArmCopyProgress(ObjectId table_id, pg::copy_progress::Command command,
+                       pg::copy_progress::Type type);
+  void EnsureCopyProgress(ObjectId table_id, pg::copy_progress::Command command,
+                          pg::copy_progress::Type type);
+  void EnsureCreateIndexProgress(ObjectId datid, ObjectId relid,
+                                 duckdb::idx_t estimated_cardinality);
+  void EnsureCreateTableAsProgress(ObjectId datid, ObjectId relid,
+                                   duckdb::idx_t estimated_cardinality);
+  void EnsureAnalyzeProgress(ObjectId datid, ObjectId relid);
+  void EnsureVacuumProgress(ObjectId datid, ObjectId relid);
+
+  // Set by the wire session before PendingQuery; consumed by the Ensure*
+  // arming paths to tell COPY apart from plain DML sharing the same plan
+  // shape. Reset in QueryEnd.
+  duckdb::StatementType current_statement_type =
+    duckdb::StatementType::INVALID_STATEMENT;
+
+  // Transaction-scoped compensation for work staged on a side transaction
+  // (CTAS): registered when the side transaction starts, run in
+  // TransactionPreRollback while the MetaTransaction is alive, cleared by the
+  // owner right before its commit point. Never runs from a destructor -- a
+  // sink state outlives the statement (it dies with the cached plan), so a
+  // destructor-time MetaTransaction reference is a use-after-free.
+  std::function<void(duckdb::MetaTransaction&)> transaction_abort_cleanup;
 
  private:
   std::shared_ptr<ConnectionContext> _connection_ctx;
 };
 
 // Helper to get the ConnectionContext from a DuckDB ClientContext.
+ConnectionContext* GetSereneDBContextPtr(duckdb::ClientContext& context);
 ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context);
 
 }  // namespace sdb::connector

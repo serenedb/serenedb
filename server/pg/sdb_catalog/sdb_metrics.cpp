@@ -89,7 +89,7 @@ catalog::MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
     masks.emplace_back(kPerProcessMask);
   }
 
-  auto catalog = _config.EnsureCatalogSnapshot();
+  auto catalog = _config.CatalogSnapshot();
   for (const auto& schema : catalog->GetSchemas(GetDatabaseId())) {
     SDB_ASSERT(schema);
     for (const auto& index_ptr :

@@ -129,8 +129,8 @@ duckdb::unique_ptr<duckdb::Expression> FoldConstantCasts(
     });
   if (expr->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
     auto& cast = expr->Cast<duckdb::BoundCastExpression>();
-    if (cast.child && cast.child->GetExpressionClass() ==
-                        duckdb::ExpressionClass::BOUND_CONSTANT) {
+    if (cast.Child().GetExpressionClass() ==
+        duckdb::ExpressionClass::BOUND_CONSTANT) {
       duckdb::Value folded;
       SDB_ENSURE(
         duckdb::ExpressionExecutor::TryEvaluateScalar(context, *expr, folded),
@@ -172,15 +172,15 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
     e.SetQueryLocation(duckdb::optional_idx{});
     if (e.GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
       auto& cref = e.Cast<duckdb::BoundColumnRefExpression>();
-      const auto idx = cref.binding.column_index.GetIndex();
+      const auto idx = cref.Binding().column_index.GetIndex();
       SDB_ASSERT(idx < col_index_to_id.size());
       const auto col_id = col_index_to_id[idx];
-      cref.binding = duckdb::ColumnBinding(
+      cref.BindingMutable() = duckdb::ColumnBinding(
         duckdb::TableIndex(table_id.id()),
         duckdb::ProjectionIndex(static_cast<duckdb::idx_t>(col_id)));
     } else if (e.GetExpressionClass() ==
                duckdb::ExpressionClass::BOUND_FUNCTION) {
-      e.Cast<duckdb::BoundFunctionExpression>().is_operator = false;
+      e.Cast<duckdb::BoundFunctionExpression>().IsOperatorMutable() = false;
     }
     duckdb::ExpressionIterator::EnumerateChildren(
       e, [&](duckdb::Expression& child) { self(self, child); });
@@ -192,31 +192,35 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
 const duckdb::BoundColumnRefExpression* TryGetJsonLeafColumnRef(
   const duckdb::Expression& expr) {
   if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION ||
-      !IsJsonExtractString(
-        expr.Cast<duckdb::BoundFunctionExpression>().function.GetName())) {
+      !IsJsonExtractString(expr.Cast<duckdb::BoundFunctionExpression>()
+                             .Function()
+                             .GetName()
+                             .GetIdentifierName())) {
     return nullptr;
   }
   const duckdb::Expression* cur = &expr;
   while (cur->GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
     const auto& f = cur->Cast<duckdb::BoundFunctionExpression>();
-    if (!IsJsonExtract(f.function.GetName()) || f.children.size() < 2) {
+    if (!IsJsonExtract(f.Function().GetName().GetIdentifierName()) ||
+        f.GetChildren().size() < 2) {
       return nullptr;
     }
-    for (size_t i = 1; i < f.children.size(); ++i) {
-      const auto* key_expr = f.children[i].get();
+    for (size_t i = 1; i < f.GetChildren().size(); ++i) {
+      const auto* key_expr = f.GetChildren()[i].get();
       if (key_expr->GetExpressionClass() !=
           duckdb::ExpressionClass::BOUND_CONSTANT) {
         return nullptr;
       }
       const auto& key_const = key_expr->Cast<duckdb::BoundConstantExpression>();
-      if (key_const.value.IsNull()) {
+      if (key_const.GetValue().IsNull()) {
         return nullptr;
       }
-      if (!IsValidKey(key_const.value) && !IsValidPathList(key_const.value)) {
+      if (!IsValidKey(key_const.GetValue()) &&
+          !IsValidPathList(key_const.GetValue())) {
         return nullptr;
       }
     }
-    cur = f.children[0].get();
+    cur = f.GetChildren()[0].get();
   }
   if (cur->GetExpressionClass() != duckdb::ExpressionClass::BOUND_COLUMN_REF) {
     return nullptr;
@@ -234,7 +238,8 @@ std::vector<catalog::Column::Id> CollectDependentColumns(
         duckdb::ExpressionClass::BOUND_COLUMN_REF) {
       out.push_back(static_cast<catalog::Column::Id>(
         node.Cast<duckdb::BoundColumnRefExpression>()
-          .binding.column_index.GetIndex()));
+          .Binding()
+          .column_index.GetIndex()));
     }
     duckdb::ExpressionIterator::EnumerateChildren(
       node, [&](const duckdb::Expression& child) { self(self, child); });
@@ -250,14 +255,15 @@ void RejectUserDefinedFunctions(const duckdb::Expression& expr,
   auto visit = [&](auto& self, const duckdb::Expression& node) -> void {
     if (node.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
       const auto& f = node.Cast<duckdb::BoundFunctionExpression>();
-      const auto& schema = f.function.GetSchemaName();
-      const auto& cat = f.function.GetCatalogName();
+      const auto& schema = f.Function().GetSchemaName();
+      const auto& cat = f.Function().GetCatalogName();
       bool is_user_defined = !cat.empty() && cat != SYSTEM_CATALOG;
       if (!is_user_defined) {
         auto& sys = duckdb::Catalog::GetSystemCatalog(context);
         auto entry = sys.GetEntry<duckdb::ScalarFunctionCatalogEntry>(
-          context, schema.empty() ? std::string{DEFAULT_SCHEMA} : schema,
-          f.function.GetName(), duckdb::OnEntryNotFound::RETURN_NULL);
+          context,
+          schema.empty() ? duckdb::Identifier::DefaultSchema() : schema,
+          f.Function().GetName(), duckdb::OnEntryNotFound::RETURN_NULL);
         if (!entry) {
           is_user_defined = true;
         } else if (!entry->internal) {
@@ -268,7 +274,7 @@ void RejectUserDefinedFunctions(const duckdb::Expression& expr,
         throw duckdb::BinderException(
           "user-defined functions in indexed expressions are not supported "
           "yet (function: %s)",
-          f.function.GetName());
+          f.Function().GetName());
       }
     }
     duckdb::ExpressionIterator::EnumerateChildren(
@@ -287,12 +293,14 @@ void RejectUserDefinedFunctions(const duckdb::ParsedExpression& expr,
           "user-defined functions in indexed expressions are not supported "
           "yet");
       };
-      const auto schema =
-        f.schema.empty() ? std::string{DEFAULT_SCHEMA} : f.schema;
+      const auto& parsed_schema = f.GetQualifiedName().Schema();
+      const auto schema = parsed_schema.empty()
+                            ? duckdb::Identifier::DefaultSchema()
+                            : parsed_schema;
       auto check_catalog = [&](duckdb::Catalog& cat) {
         for (auto type : {duckdb::CatalogType::MACRO_ENTRY,
                           duckdb::CatalogType::SCALAR_FUNCTION_ENTRY}) {
-          auto entry = cat.GetEntry(context, type, schema, f.function_name,
+          auto entry = cat.GetEntry(context, type, schema, f.FunctionName(),
                                     duckdb::OnEntryNotFound::RETURN_NULL);
           if (!entry) {
             continue;
@@ -306,8 +314,9 @@ void RejectUserDefinedFunctions(const duckdb::ParsedExpression& expr,
           }
         }
       };
-      if (!f.catalog.empty()) {
-        auto cat = duckdb::Catalog::GetCatalogEntry(context, f.catalog);
+      if (!f.GetQualifiedName().Catalog().empty()) {
+        auto cat = duckdb::Catalog::GetCatalogEntry(
+          context, f.GetQualifiedName().Catalog());
         if (cat) {
           check_catalog(*cat);
         }

@@ -61,7 +61,7 @@ void SereneDBTransactionManager::Checkpoint(duckdb::ClientContext& context,
   // database. Forward the user's CHECKPOINT to the store so its WAL is flushed
   // and deleted rows are vacuumed/compacted -- the user never names the store.
   auto store = duckdb::DatabaseManager::Get(context).GetDatabase(
-    context, std::string{catalog::kStoreDatabaseName});
+    context, duckdb::Identifier{catalog::kStoreDatabaseName});
   if (store) {
     store->GetTransactionManager().Checkpoint(context, force);
   }

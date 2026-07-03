@@ -16,7 +16,7 @@ COPY (SELECT * FROM (VALUES
 query
 SELECT * FROM '${__TEST_DIR__}/data_import_and_export_json_overview_example_001_1_todos_json.json';
 ----
-userid	id	title	completed
+userId	id	title	completed
 1	1	write docs fixtures	f
 1	2	run sqllogictest	t
 

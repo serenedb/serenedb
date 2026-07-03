@@ -61,7 +61,8 @@ class WriteContext final : public duckdb::BlockManager {
 
   // duckdb::BlockManager interface -- read side (unused for writes)
   void Read(duckdb::QueryContext context, duckdb::Block& block) final;
-  void ReadBlocks(duckdb::FileBuffer& buffer, duckdb::block_id_t start_block,
+  void ReadBlocks(duckdb::QueryContext context, duckdb::FileBuffer& buffer,
+                  duckdb::block_id_t start_block,
                   duckdb::idx_t block_count) final;
 
   // Stubs / no-ops shared with the read side.

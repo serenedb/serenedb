@@ -8,7 +8,7 @@ CREATE TABLE articles AS SELECT * FROM (VALUES
 
 # DOCS_TEST_BODY
 
-query ??
+query
 SELECT published_at AS time, views
 FROM articles
 ORDER BY published_at;

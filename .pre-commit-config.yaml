@@ -80,7 +80,7 @@ repos:
         # against all tests and vice versa), so the script scans the trees
         # itself instead of the staged files -- but only when a file that can
         # affect the result changed.
-        files: \.(test|test_slow|cpp|cc|c|hpp|hh|h|ipp|tpp)$
+        files: \.(test|test_slow|cpp|cc|c|hpp|hh|h|ipp|tpp|py)$
         pass_filenames: false
       - id: check-substitution-directive
         name: Check sqllogic substitution directive

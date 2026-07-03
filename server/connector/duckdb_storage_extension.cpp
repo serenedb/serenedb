@@ -32,6 +32,7 @@
 #include "connector/duckdb_catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_transaction.h"
+#include "connector/optimizer/copy_to_progress.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/optimizer/wrap_unsupported_types.h"
 #include "pg/connection_context.h"
@@ -94,13 +95,9 @@ duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(
 }  // namespace
 
 void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
-  auto state =
-    context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);
-  if (state) {
-    state->GetConnectionContext().DropCatalogSnapshot();
-  }
   duckdb::shared_ptr<void> keep_alive = GetAttached().shared_from_this();
-  auto r = catalog::DropDatabase(GetName(), std::move(keep_alive));
+  auto r =
+    catalog::DropDatabase(GetName().GetIdentifierName(), std::move(keep_alive));
   SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
   if (!r.ok()) {
     SDB_THROW(std::move(r));
@@ -120,6 +117,7 @@ void RegisterSereneDBStorage(duckdb::DBConfig& config) {
 void RegisterSereneDBOptimizers(duckdb::DatabaseInstance& db) {
   optimizer::RegisterWrapUnsupportedTypesExtension(db);
   optimizer::RegisterIResearchPlanOptimizer(db);
+  optimizer::RegisterCopyToProgressOptimizer(db);
 }
 
 }  // namespace sdb::connector

@@ -612,8 +612,8 @@ class SearchFilterBuilderTest : public ::testing::Test {
       // Mismatched table_index would mean the query referenced a table we
       // didn't set up -- always a bug in the test itself. SDB_VERIFY (not
       // SDB_ASSERT) so `ti` is used in release builds too.
-      SDB_VERIFY(ref.binding.table_index == ti);
-      const auto local = ref.binding.column_index.GetIndexUnsafe();
+      SDB_VERIFY(ref.Binding().table_index == ti);
+      const auto local = ref.Binding().column_index.GetIndexUnsafe();
       const auto phys = projected[local].GetPrimaryIndex();
       // FromIsNull SDB_ENSUREs `null_field_id` is valid; production mints a
       // separate NextId() for the IS-NULL marker. The test schema doesn't
@@ -672,8 +672,11 @@ class SearchFilterBuilderTest : public ::testing::Test {
       << "MakeSearchFilter threw unexpectedly: " << caught_message;
     ASSERT_EQ(claimed > 0, must_succeed);
     if (must_succeed) {
-      ASSERT_EQ(root, expected) << "actual:   " << irs::ToString(root) << "\n"
-                                << "expected: " << irs::ToString(expected);
+      ASSERT_EQ(root, expected)
+        << "actual:   "
+        << duckdb::ExplainValue(irs::ToExplainNode(root)).ToString() << "\n"
+        << "expected: "
+        << duckdb::ExplainValue(irs::ToExplainNode(expected)).ToString();
     }
   }
 

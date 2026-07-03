@@ -79,7 +79,7 @@ namespace sdb::query {
 // Views release eagerly -- per-statement views at statement end, the
 // transaction-held ones at commit/rollback -- so they never pin MVCC versions
 // or index segments against background cleanup, and re-acquire lazily on first
-// use (EnsureCatalogSnapshot / EnsureSearchSnapshot). The one per-statement
+// use (CatalogSnapshot / EnsureSearchSnapshot). The one per-statement
 // step that must run at statement *start* is advancing the native read view:
 // RefreshStartTime() captures "now", so to see everything committed before the
 // statement it has to run when the statement begins, not when the prior ended.
@@ -99,6 +99,9 @@ bool Transaction::IsStableSnapshot() const {
 }
 
 void Transaction::OnStatementBegin() {
+  // Statement-scoped views are acquired here, on the connection thread,
+  // before binding starts and before any executor task can read them.
+  AcquireCatalogSnapshot();
   if (IsStableSnapshot()) {
     return;
   }
@@ -204,7 +207,7 @@ void Transaction::CommitSearch() noexcept {
   bool has_cursor = false;
   if (auto store =
         duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance())
-          .GetDatabase(std::string{catalog::kStoreDatabaseName})) {
+          .GetDatabase(duckdb::Identifier{catalog::kStoreDatabaseName})) {
     auto& sm = store->GetStorageManager();
     cursor = search::WalCursor{sm.GetBlockManager().GetCheckpointIteration(),
                                sm.GetWALSize()};
@@ -265,7 +268,6 @@ Result Transaction::Commit() {
     }
   }
 
-  ApplyTableStatsDiffs();
   Destroy();
 
   return {};
@@ -287,8 +289,7 @@ search::InvertedIndexSnapshotPtr Transaction::EnsureSearchSnapshot(
   ObjectId index_id) {
   auto it = _search_snapshots.find(index_id);
   if (it == _search_snapshots.end()) {
-    auto index =
-      EnsureCatalogSnapshot()->GetObject<catalog::InvertedIndex>(index_id);
+    auto index = CatalogSnapshot()->GetObject<catalog::InvertedIndex>(index_id);
     SDB_ASSERT(index);
     auto storage = index->GetData();
     SDB_ASSERT(storage);
@@ -309,25 +310,6 @@ void Transaction::Destroy() noexcept {
   _had_dml = false;
   _statement_is_dml = false;
   _statement_is_ddl = false;
-}
-
-void Transaction::ApplyTableStatsDiffs() noexcept {
-  if (_table_rows_deltas.empty()) {
-    return;
-  }
-  auto snapshot = EnsureCatalogSnapshot();
-  for (const auto& [table_id, delta] : _table_rows_deltas) {
-    auto table = snapshot->GetObject<catalog::Table>(table_id);
-    if (!table) {
-      continue;  // table dropped mid-transaction
-    }
-    // Only Search tables track row counts here; Transactional store tables
-    // maintain their own statistics. GetData() asserts the store is bound.
-    if (table->GetEngine() == catalog::TableEngine::Search) {
-      table->GetData()->UpdateNumRows(delta);
-    }
-  }
-  _table_rows_deltas.clear();
 }
 
 }  // namespace sdb::query

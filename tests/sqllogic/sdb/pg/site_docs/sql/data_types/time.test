@@ -15,7 +15,7 @@ time
 query
 SELECT TIMETZ '1992-09-20 11:30:00.123456';
 ----
-time with time zone
+timetz
 11:30:00.123456+00:00
 
 # DOCS_TEST: example_003
@@ -25,7 +25,7 @@ time with time zone
 query
 SELECT TIMETZ '1992-09-20 11:30:00.123456-02:00';
 ----
-time with time zone
+timetz
 13:30:00.123456+00:00
 
 # DOCS_TEST: example_004
@@ -35,7 +35,7 @@ time with time zone
 query
 SELECT TIMETZ '1992-09-20 11:30:00.123456+05:30';
 ----
-time with time zone
+timetz
 06:00:00.123456+00:00
 
 # DOCS_TEST: example_005

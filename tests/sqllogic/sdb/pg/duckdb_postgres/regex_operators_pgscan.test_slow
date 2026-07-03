@@ -13,7 +13,7 @@ DETACH IF EXISTS pg;
 statement ok
 ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pg (TYPE postgres);
 
-query I
+query
 SELECT count(*) FROM (
   SELECT (SELECT r FROM postgres_query('pg', 'SELECT (''aaa'' ~ ''(a|b)'')::text r'))   AS pg, ('aaa' ~ '(a|b)')::text   AS sdb
   UNION ALL SELECT (SELECT r FROM postgres_query('pg', 'SELECT (''AAA'' ~* ''(a|b)'')::text r')),  ('AAA' ~* '(a|b)')::text

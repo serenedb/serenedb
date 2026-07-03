@@ -58,13 +58,13 @@ VACUUM (REFRESH_TABLE) movies;
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT ts_lexize('basic_dict', 'Café Résumé');
 ----
 ts_lexize
 {cafe,resume}
 
-query ?
+query
 -- {cafe,resume}
 SELECT ts_lexize('exact_dict', 'Café Résumé');
 ----
@@ -206,7 +206,7 @@ CREATE TEXT SEARCH DICTIONARY upper_dict (
     accent = false
 );
 
-query ?
+query
 SELECT ts_lexize('upper_dict', 'Café Résumé');
 ----
 ts_lexize

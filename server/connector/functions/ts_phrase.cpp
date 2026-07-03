@@ -98,7 +98,7 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_phrase('quick brown fox') or ts_phrase('a', 1, 'b'). "
     "INTEGER / INTEGER[] gap allowed between text args.";
-  SDB_ASSERT(!func.children.empty());
+  SDB_ASSERT(!func.GetChildren().empty());
 
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
       column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
@@ -129,8 +129,8 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
 
   std::optional<PhraseGap> pending_gap;
 
-  for (size_t i = 0; i < func.children.size(); ++i) {
-    const auto* const_val = TryGetConstant(*func.children[i]);
+  for (size_t i = 0; i < func.GetChildren().size(); ++i) {
+    const auto* const_val = TryGetConstant(*func.GetChildren()[i]);
     if (!const_val) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG("ts_phrase argument ", i, " must be a constant"),
@@ -308,8 +308,8 @@ bool IsPhraseSeqNode(const duckdb::Expression& expr) {
     return false;
   }
   const auto& f = unwrapped.Cast<duckdb::BoundFunctionExpression>();
-  return f.function.GetName() == kTSQueryPhraseSeq ||
-         f.function.GetName() == kTsqueryPhrase;
+  const auto& f_name = f.Function().GetName().GetIdentifierName();
+  return f_name == kTSQueryPhraseSeq || f_name == kTsqueryPhrase;
 }
 
 }  // namespace
@@ -358,10 +358,11 @@ void FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq) {
     return;
   }
   const auto& func = unwrapped.Cast<duckdb::BoundFunctionExpression>();
-  if (func.function.GetName() == kTsqueryPhrase) {
-    SDB_ASSERT(func.children.size() == 2 || func.children.size() == 3);
-    FlattenPhraseSeq(*func.children[0], seq);
-    if (func.children.size() == 3) {
+  if (func.Function().GetName().GetIdentifierName() == kTsqueryPhrase) {
+    SDB_ASSERT(func.GetChildren().size() == 2 ||
+               func.GetChildren().size() == 3);
+    FlattenPhraseSeq(*func.GetChildren()[0], seq);
+    if (func.GetChildren().size() == 3) {
       if (seq.pending) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -369,16 +370,17 @@ void FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq) {
           ERR_HINT("A `##` gap must be followed by a part, not by another "
                    "tsquery_phrase distance."));
       }
-      seq.pending = ParseTsqueryPhraseDistance(*func.children[2]);
+      seq.pending = ParseTsqueryPhraseDistance(*func.GetChildren()[2]);
     }
-    AttachPart(seq, *func.children[1]);
+    AttachPart(seq, *func.GetChildren()[1]);
     return;
   }
   // `##` operator: left-associative binary tree.
-  SDB_ASSERT(func.function.GetName() == kTSQueryPhraseSeq);
-  SDB_ASSERT(func.children.size() == 2);
-  FlattenPhraseSeq(*func.children[0], seq);
-  const auto& right = *func.children[1];
+  SDB_ASSERT(func.Function().GetName().GetIdentifierName() ==
+             kTSQueryPhraseSeq);
+  SDB_ASSERT(func.GetChildren().size() == 2);
+  FlattenPhraseSeq(*func.GetChildren()[0], seq);
+  const auto& right = *func.GetChildren()[1];
   if (IsPhraseSeqGapType(right)) {
     if (seq.pending) {
       THROW_SQL_ERROR(
@@ -451,7 +453,7 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
     if (part_expr_ref.GetExpressionClass() ==
         duckdb::ExpressionClass::BOUND_CONSTANT) {
       const auto& val =
-        part_expr_ref.Cast<duckdb::BoundConstantExpression>().value;
+        part_expr_ref.Cast<duckdb::BoundConstantExpression>().GetValue();
       if (val.IsNull() || (val.type().id() != duckdb::LogicalTypeId::VARCHAR &&
                            val.type().id() != duckdb::LogicalTypeId::BLOB)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -463,7 +465,8 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
     } else if (part_expr_ref.GetExpressionClass() ==
                duckdb::ExpressionClass::BOUND_FUNCTION) {
       f = &part_expr_ref.Cast<duckdb::BoundFunctionExpression>();
-      leaf_op = ClassifyTSQueryFunction(f->function.GetName());
+      leaf_op =
+        ClassifyTSQueryFunction(f->Function().GetName().GetIdentifierName());
     } else {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -478,14 +481,16 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
         out = bare_text;
         return out;
       }
-      if (f->children.size() != 1) {
+      if (f->GetChildren().size() != 1) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("## ", f->function.GetName(),
-                  " phrase part expects 1 argument, got ", f->children.size()),
+          ERR_MSG("## ", f->Function().GetName().GetIdentifierName(),
+                  " phrase part expects 1 argument, got ",
+                  f->GetChildren().size()),
           ERR_HINT(kSyntaxHint));
       }
-      if (auto r = GetVarcharArg(*f->children[0], "## phrase part text", out);
+      if (auto r =
+            GetVarcharArg(*f->GetChildren()[0], "## phrase part text", out);
           !r.ok()) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
@@ -522,17 +527,17 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
         // emit one term part per token. The FIRST token uses the
         // incoming gap; subsequent tokens are strictly adjacent. Shared
         // with BuildFtsPhrase via EmitPhraseTokens.
-        if (f->children.empty() || f->children.size() > 2) {
+        if (f->GetChildren().empty() || f->GetChildren().size() > 2) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
             ERR_MSG("## ts_phrase phrase part expects 1 or 2 arguments "
                     "(text[, slop]), got ",
-                    f->children.size()),
+                    f->GetChildren().size()),
             ERR_HINT(kSyntaxHint));
         }
         std::string phrase_text;
-        if (auto r =
-              GetVarcharArg(*f->children[0], "## ts_phrase text", phrase_text);
+        if (auto r = GetVarcharArg(*f->GetChildren()[0], "## ts_phrase text",
+                                   phrase_text);
             !r.ok()) {
           THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                           ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
@@ -608,8 +613,9 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
       default:
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("## part type not supported yet: ",
-                  f ? f->function.GetName() : "<bare-const>"),
+          ERR_MSG(
+            "## part type not supported yet: ",
+            f ? f->Function().GetName().GetIdentifierName() : "<bare-const>"),
           ERR_HINT("Supported phrase parts: bare 'word', ts_starts_with, "
                    "ts_like, ts_levenshtein, ts_phrase, ts_any, ts_between."));
     }

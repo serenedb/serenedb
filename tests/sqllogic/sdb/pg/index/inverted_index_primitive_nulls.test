@@ -76,35 +76,26 @@ EXPLAIN SELECT pk, v_int, v_big, v_flt, v_dbl, v_bool, v_str, v_blob, v_date, v_
 FROM prim_n_idx WHERE t @@ ts_phrase('one');
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│     Index: prim_n_idx     │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││  t(string) = one  ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│        Projections:       │
-│           pk (l)          │
-│         v_int (i)         │
-│         v_big (i)         │
-│         v_flt (i)         │
-│         v_dbl (i)         │
-│         v_bool (i)        │
-│         v_str (i)         │
-│         v_blob (i)        │
-│         v_date (i)        │
-│          v_ts (i)         │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: prim_n_idx        │
+│ Lookup: table            │
+│ Filter:                  │
+│ ╭─ Term ───────────╮     │
+│ │ Field: t(string) │     │
+│ │ Value: one       │     │
+│ ╰──────────────────╯     │
+│ Projections: pk (l),     │
+│              v_int (i),  │
+│              v_big (i),  │
+│              v_flt (i),  │
+│              v_dbl (i),  │
+│              v_bool (i), │
+│              v_str (i),  │
+│              v_blob (i), │
+│              v_date (i), │
+│              v_ts (i)    │
+│ ~1 row                   │
+╰──────────────────────────╯
 
 
 # Materialised round-trip with explicit NULLs.

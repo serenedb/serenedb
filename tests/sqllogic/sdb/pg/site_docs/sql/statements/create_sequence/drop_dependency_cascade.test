@@ -17,7 +17,7 @@ INSERT INTO tbl(s) VALUES ('default is the next value from id_sequence');
 statement ok
 DROP SEQUENCE id_sequence CASCADE;
 
-query ??
+query
 SELECT * FROM tbl;
 ----
 id	s

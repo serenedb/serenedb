@@ -24,11 +24,15 @@
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
+#include <atomic>
+#include <duckdb/common/file_buffer.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
+#include <duckdb/storage/block_allocator.hpp>
 #include <duckdb/storage/buffer/block_handle.hpp>
 #include <duckdb/storage/buffer/buffer_handle.hpp>
+#include <duckdb/storage/buffer/buffer_pool_reservation.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
 #include <duckdb/storage/compression/dict_fsst/decompression.hpp>
@@ -37,6 +41,7 @@
 #include <duckdb/storage/statistics/list_stats.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <duckdb/storage/statistics/struct_stats.hpp>
+#include <duckdb/storage/storage_info.hpp>
 #include <utility>
 
 #include "iresearch/formats/column/col_reader.hpp"
@@ -373,6 +378,28 @@ void ColumnReader::RangeScan::Scan(uint64_t row_pos, duckdb::idx_t count,
   }
 }
 
+namespace {
+
+class MmapFileBuffer final : public duckdb::FileBuffer {
+ public:
+  MmapFileBuffer(duckdb::BlockAllocator& allocator, const byte_type* data,
+                 duckdb::idx_t byte_size)
+    : duckdb::FileBuffer{allocator, duckdb::FileBufferType::TINY_BUFFER,
+                         /*user_size=*/0, /*block_header_size=*/0} {
+    buffer = internal_buffer = const_cast<byte_type*>(data);
+    size = internal_size = byte_size;
+  }
+
+  ~MmapFileBuffer() final { internal_buffer = nullptr; }
+};
+
+duckdb::block_id_t NextMmapBlockId() {
+  static std::atomic<duckdb::block_id_t> counter{MAXIMUM_BLOCK};
+  return counter.fetch_add(1, std::memory_order_relaxed);
+}
+
+}  // namespace
+
 duckdb::unique_ptr<duckdb::ColumnSegment> ColumnReader::OpenSegmentImpl(
   const duckdb::DataPointer& p, const duckdb::LogicalType& type,
   ReadContext& ctx) const {
@@ -400,10 +427,27 @@ duckdb::unique_ptr<duckdb::ColumnSegment> ColumnReader::OpenSegmentImpl(
   }
 
   auto& bm = duckdb::BufferManager::GetBufferManager(db);
-  auto handle = bm.RegisterTransientMemory(byte_size, ctx);
-  auto buf = bm.Pin(handle);
   const uint64_t file_offset = p.block_pointer.block_id;
-  ctx.In().ReadData(file_offset, buf.GetDataMutable(), byte_size);
+
+  duckdb::shared_ptr<duckdb::BlockHandle> handle;
+  duckdb::BufferHandle buf;
+  if (const byte_type* mapped = ctx.In().ReadStable(file_offset, byte_size);
+      mapped != nullptr) {
+    auto fb = duckdb::make_uniq<MmapFileBuffer>(duckdb::BlockAllocator::Get(db),
+                                                mapped, byte_size);
+    duckdb::BufferPoolReservation reservation{duckdb::MemoryTag::IN_MEMORY_TABLE,
+                                              bm.GetBufferPool()};
+    reservation.Resize(byte_size);
+    handle = duckdb::make_shared_ptr<duckdb::BlockHandle>(
+      bm.GetTemporaryBlockManager(), NextMmapBlockId(),
+      duckdb::MemoryTag::IN_MEMORY_TABLE, std::move(fb),
+      duckdb::DestroyBufferUpon::BLOCK, byte_size, std::move(reservation));
+  } else {
+    handle = bm.RegisterTransientMemory(byte_size, ctx);
+    buf = bm.Pin(handle);
+    ctx.In().ReadData(file_offset, buf.GetDataMutable(), byte_size);
+  }
+
   auto segment = duckdb::make_uniq<duckdb::ColumnSegment>(
     db, std::move(handle), duckdb::ColumnSegmentType::PERSISTENT,
     static_cast<duckdb::idx_t>(p.tuple_count), *codec, std::move(stats),

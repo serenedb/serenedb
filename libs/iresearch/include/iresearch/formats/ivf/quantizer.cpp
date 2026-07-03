@@ -234,8 +234,12 @@ std::unique_ptr<QuantizerReader> ScalarQuantizerCodebook::MakeReader(
 
 class ProductQuantizerWriter final : public QuantizerWriter {
  public:
-  ProductQuantizerWriter(uint32_t d, uint32_t m)
-    : _d{d}, _pq{d, m == 0 ? 1 : m, 8} {}
+  ProductQuantizerWriter(uint32_t d, uint32_t m, uint32_t niter)
+    : _d{d}, _pq{d, m == 0 ? 1 : m, 8} {
+    if (niter != 0) {
+      _pq.cp.niter = static_cast<int>(niter);
+    }
+  }
 
   void Train(const float* vecs, size_t n) final {
     if (n == 0) {
@@ -610,11 +614,9 @@ std::unique_ptr<QuantizerReader> RaBitQuantizerCodebook::MakeReader(
 
 }  // namespace
 
-std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(VectorQuantization quant,
-                                                     uint32_t d,
-                                                     VectorMetric metric,
-                                                     uint32_t pq_m,
-                                                     uint32_t nb_bits) {
+std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
+  VectorQuantization quant, uint32_t d,
+  VectorMetric metric, uint32_t pq_m, uint32_t pq_niter, uint32_t nb_bits) {
   switch (quant) {
     case VectorQuantization::None:
       return nullptr;
@@ -622,7 +624,7 @@ std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(VectorQuantization quant,
     case VectorQuantization::SQ4:
       return std::make_unique<ScalarQuantizerWriter>(d, quant);
     case VectorQuantization::PQ:
-      return std::make_unique<ProductQuantizerWriter>(d, pq_m);
+      return std::make_unique<ProductQuantizerWriter>(d, pq_m, pq_niter);
     case VectorQuantization::RaBitQ:
       return std::make_unique<RaBitQuantizerWriter>(d, metric, nb_bits);
   }

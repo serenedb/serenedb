@@ -272,6 +272,27 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_rerank_factor",
+      {
+        LogicalTypeId::INTEGER,
+        "Multiplier applied to LIMIT k to size the candidate pool re-scored "
+        "with exact distances for a quantized IVF vector-similarity query "
+        "(pool = sdb_rerank_factor * k). Higher values improve recall at the "
+        "cost of latency; 0 disables reranking (top-k picked by the "
+        "approximate quantized distance). Default 4. Unquantized (quant = "
+        "'none') indexes never rerank, regardless of this setting.",
+        [] { return duckdb::Value::INTEGER(4); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          auto n = value.GetValue<int32_t>();
+          if (n < 0) {
+            throw duckdb::InvalidInputException{
+              "invalid value for parameter \"sdb_rerank_factor\": \"%s\"",
+              value.ToString()};
+          }
+        },
+      },
+    },
+    {
       "sdb_scored_terms_limit",
       {
         LogicalTypeId::INTEGER,

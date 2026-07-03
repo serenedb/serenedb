@@ -582,9 +582,12 @@ void IvfWriter::OnCommit(ColWriter& cw, IdxWriter& idx,
       continue;
     }
     const auto d = static_cast<uint32_t>(col->ArraySize());
-    auto qw = MakeQuantizerWriter(
-      opts.ivf_info->quant.kind, d, opts.ivf_info->metric,
-      opts.ivf_info->quant.pq_m, opts.ivf_info->quant.nb_bits);
+    const uint32_t pq_niter = opts.ivf_info->cluster_iters != 0
+                                ? opts.ivf_info->cluster_iters
+                                : kDefaultClusterIters;
+    auto qw =
+      MakeQuantizerWriter(opts.ivf_info->quant.kind, d, opts.ivf_info->metric,
+                          opts.ivf_info->quant.pq_m, pq_niter, opts.ivf_info->quant.nb_bits);
 
     IvfBuilder builder{*opts.ivf_info};
     BuiltIvf built = builder.Build(*col, cw.CommitReadContext(), idx, qw.get());

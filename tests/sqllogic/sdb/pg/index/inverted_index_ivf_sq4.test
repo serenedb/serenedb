@@ -213,3 +213,45 @@ statement error
 CREATE INDEX sq4_bad_l1 ON sq4_bad USING inverted(pk, emb ivf (metric = 'l1', quant = 'sq4'));
 ----
 db error: ERROR: Failed to create index: Column 'emb': ivf quantization supports only metric 'l2' or 'ip'
+
+# ===========================================================================
+# 7. sdb_rerank_factor: sizes the exact-rerank candidate pool for quantized
+#    top-k queries (pool = sdb_rerank_factor * k). 0 disables reranking, so
+#    the returned top-k is picked by the raw quantized distance instead --
+#    still correct here since sq4_mc_idx's clusters are well separated.
+# ===========================================================================
+
+statement ok
+SET sdb_rerank_factor = 0
+
+query
+SELECT pk FROM sq4_mc_idx ORDER BY emb <-> [100, 0, 0]::FLOAT[3] LIMIT 2;
+----
+pk
+1
+2
+
+statement ok
+SET sdb_rerank_factor = 20
+
+query
+SELECT pk FROM sq4_mc_idx ORDER BY emb <-> [0, 0, 100]::FLOAT[3] LIMIT 2;
+----
+pk
+5
+6
+
+statement ok
+RESET sdb_rerank_factor
+
+query
+SELECT pk FROM sq4_mc_idx ORDER BY emb <-> [100, 0, 0]::FLOAT[3] LIMIT 2;
+----
+pk
+1
+2
+
+statement error
+SET sdb_rerank_factor = -1;
+----
+db error: ERROR: invalid value for parameter "sdb_rerank_factor": "-1"

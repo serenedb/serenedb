@@ -68,7 +68,16 @@ const irs::Filter& MatchAllFilter() {
   return kInstance;
 }
 
-constexpr uint32_t kRerankFactor = 4;
+uint32_t ReadRerankFactor(duckdb::ClientContext& context) {
+  duckdb::Value v;
+  if (context.TryGetCurrentSetting("sdb_rerank_factor", v) && !v.IsNull()) {
+    const auto n = v.GetValue<int32_t>();
+    if (n >= 0) {
+      return static_cast<uint32_t>(n);
+    }
+  }
+  return 4;
+}
 
 void RerankHits(SearchFullScanGlobalState& g, std::span<irs::ScoreDoc> hits) {
   SDB_ASSERT(g.vector_scorer != nullptr);
@@ -145,7 +154,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
     if (ss.vector_scorer &&
         ss.vector_scorer->quant != irs::VectorQuantization::None) {
       state->rerank_pool =
-        kRerankFactor * static_cast<uint32_t>(*ss.score_top_k);
+        ReadRerankFactor(context) * static_cast<uint32_t>(*ss.score_top_k);
     }
   }
   if (ss.score_order && *ss.score_order == duckdb::OrderType::ASCENDING) {

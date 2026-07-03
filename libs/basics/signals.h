@@ -33,4 +33,11 @@ void MaskAllSignalsServer();
 // signals (the main thread, just before installing the shutdown handlers).
 void UnmaskAllSignals();
 
+// Routes SIGTERM / SIGINT / SIGQUIT into lifecycle::BeginShutdown() so
+// WaitForShutdown() unblocks and the server tears down gracefully. Installed
+// after the absl failure handler on purpose: it takes SIGTERM over from it
+// (absl treats SIGTERM as failure-class and dumps a crash-style stack, which
+// is exactly what a plain `docker stop` must not look like).
+void InstallShutdownHandlers();
+
 }  // namespace sdb::signals

@@ -435,8 +435,8 @@ duckdb::unique_ptr<duckdb::ColumnSegment> ColumnReader::OpenSegmentImpl(
       mapped != nullptr) {
     auto fb = duckdb::make_uniq<MmapFileBuffer>(duckdb::BlockAllocator::Get(db),
                                                 mapped, byte_size);
-    duckdb::BufferPoolReservation reservation{duckdb::MemoryTag::IN_MEMORY_TABLE,
-                                              bm.GetBufferPool()};
+    duckdb::BufferPoolReservation reservation{
+      duckdb::MemoryTag::IN_MEMORY_TABLE, bm.GetBufferPool()};
     reservation.Resize(byte_size);
     handle = duckdb::make_shared_ptr<duckdb::BlockHandle>(
       bm.GetTemporaryBlockManager(), NextMmapBlockId(),

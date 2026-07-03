@@ -45,6 +45,15 @@
 namespace sdb::connector {
 namespace {
 
+std::unique_ptr<pg::ProgressReporter> MakeCopyProgressReporter(
+  ObjectId datid, ObjectId table_id) {
+  auto reporter = std::make_unique<pg::ProgressReporter>(
+    datid, table_id, pg::ProgressCommand::Copy);
+  reporter->SetCommand(pg::copy_progress::Command::CopyFrom);
+  reporter->SetType(pg::copy_progress::Type::File);
+  return reporter;
+}
+
 std::unique_ptr<pg::ProgressReporter> MakeProgressReporter(
   ObjectId datid, const duckdb::PreparedStatementData& prepared) {
   if (!prepared.physical_plan) {
@@ -63,11 +72,7 @@ std::unique_ptr<pg::ProgressReporter> MakeProgressReporter(
     if (!progress_op) {
       return nullptr;
     }
-    auto reporter = std::make_unique<pg::ProgressReporter>(
-      datid, progress_op->TargetTableId(), pg::ProgressCommand::Copy);
-    reporter->SetCommand(pg::copy_progress::Command::CopyFrom);
-    reporter->SetType(pg::copy_progress::Type::File);
-    return reporter;
+    return MakeCopyProgressReporter(datid, progress_op->TargetTableId());
   }
 
   if (prepared.statement_type == duckdb::StatementType::CREATE_STATEMENT) {
@@ -278,6 +283,17 @@ duckdb::RebindQueryInfo SereneDBClientState::OnExecutePrepared(
 
 void SereneDBClientState::QueryBegin(duckdb::ClientContext& context) {
   _connection_ctx->OnStatementBegin();
+}
+
+void SereneDBClientState::EnsureCopyProgress(ObjectId table_id) {
+  if (progress) {
+    return;
+  }
+  const auto& db = _connection_ctx->GetDatabasePtr();
+  if (!db) {
+    return;
+  }
+  progress = MakeCopyProgressReporter(db->GetId(), table_id);
 }
 
 void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {

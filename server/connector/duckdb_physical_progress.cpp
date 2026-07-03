@@ -37,6 +37,16 @@ SereneDBPhysicalProgress::SereneDBPhysicalProgress(
   children.push_back(child);
 }
 
+duckdb::unique_ptr<duckdb::GlobalOperatorState>
+SereneDBPhysicalProgress::GetGlobalOperatorState(
+  duckdb::ClientContext& context) const {
+  if (auto state = context.registered_state->Get<SereneDBClientState>(
+        kSereneDBClientStateKey)) {
+    state->EnsureCopyProgress(_table_id);
+  }
+  return duckdb::PhysicalOperator::GetGlobalOperatorState(context);
+}
+
 duckdb::OperatorResultType SereneDBPhysicalProgress::Execute(
   duckdb::ExecutionContext& context, duckdb::DataChunk& input,
   duckdb::DataChunk& chunk, duckdb::GlobalOperatorState&,

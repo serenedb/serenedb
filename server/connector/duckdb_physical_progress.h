@@ -34,6 +34,9 @@ class SereneDBPhysicalProgress final : public duckdb::PhysicalOperator {
   SereneDBPhysicalProgress(duckdb::PhysicalPlan& plan,
                            duckdb::PhysicalOperator& child, ObjectId table_id);
 
+  duckdb::unique_ptr<duckdb::GlobalOperatorState> GetGlobalOperatorState(
+    duckdb::ClientContext& context) const final;
+
   duckdb::OperatorResultType Execute(duckdb::ExecutionContext& context,
                                      duckdb::DataChunk& input,
                                      duckdb::DataChunk& chunk,

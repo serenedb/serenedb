@@ -105,6 +105,8 @@ class SereneDBClientState final : public duckdb::ClientContextState {
   void QueryBegin(duckdb::ClientContext& context) final;
   void QueryEnd(duckdb::ClientContext& context) final;
 
+  void EnsureCopyProgress(ObjectId table_id);
+
  private:
   std::shared_ptr<ConnectionContext> _connection_ctx;
 };

@@ -523,7 +523,7 @@ cell_emit() {
 	local width="$1" lbl med mbps
 	for lbl in "${CELL_ORDER[@]}"; do
 		med=$(printf '%s\n' ${CELL_TIMES[${lbl}]} | sort -g | awk '{a[NR] = $1} END {print a[int((NR + 1) / 2)]}')
-		mbps=$(awk -v mb="${CELL_MB[${lbl}]}" -v med="${med}" 'BEGIN {printf "%d", med > 0 ? mb / med : 0}')
+		mbps=$(awk -v mb="${CELL_MB[${lbl}]}" -v med="${med}" 'BEGIN {if (med > 0) printf "%d", mb / med; else printf "0"}')
 		printf '%s\t%s\t%s\t%s\t0\t0\n' "${lbl}" "${mbps}" "${med}" "${CELL_MB[${lbl}]}" >>"${OUT_DIR}/results.tsv"
 		printf "  %-${width}s %8s MB/s  (%ss, %s MB) %s\n" "${lbl}" "${mbps}" "${med}" "${CELL_MB[${lbl}]}" \
 			"${CELL_STATUS[${lbl}]}"

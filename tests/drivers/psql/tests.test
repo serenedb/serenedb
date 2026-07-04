@@ -1084,12 +1084,14 @@ skipif postgres
 skipif postgres
 \db
 ----
->     List of tablespaces
-> +------+-------+----------+
-> | Name | Owner | Location |
-> +------+-------+----------+
-> +------+-------+----------+
-> (0 rows)
+>         List of tablespaces
+> +------------+----------+----------+
+> |    Name    |  Owner   | Location |
+> +------------+----------+----------+
+> | pg_default | postgres |          |
+> | pg_global  | postgres |          |
+> +------------+----------+----------+
+> (2 rows)
 
 # Non-default config knobs differ per server; serened additionally has no
 # pg_settings.source/boot_val so \dconfig is unconditionally empty here.

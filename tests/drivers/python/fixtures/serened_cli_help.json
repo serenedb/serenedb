@@ -150,6 +150,16 @@
           "categoryLabel": "Server"
         },
         {
+          "name": "hba_config",
+          "flag": "--hba_config",
+          "type": "",
+          "defaultValue": "",
+          "description": "Path to the host-based authentication config file. Empty (the default) uses <datadir>/pg_hba.conf; a relative path is resolved against the data directory.",
+          "source": "server",
+          "category": "server",
+          "categoryLabel": "Server"
+        },
+        {
           "name": "http_body_timeout",
           "flag": "--http_body_timeout",
           "type": "",

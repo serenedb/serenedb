@@ -196,6 +196,7 @@ void SereneDBTableEntry::BindUpdateConstraints(duckdb::Binder& binder,
   duckdb::LogicalUpdate::BindExtraColumns(*this, get, proj, update,
                                           all_physical);
   update.update_is_del_and_insert = true;
+  update.update_column_count = 0;
 }
 
 duckdb::DuckTableEntry& SereneDBTableEntry::GetStorageTableEntry(

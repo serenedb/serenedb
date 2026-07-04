@@ -1,0 +1,75 @@
+# MERGE ... WHEN MATCHED THEN UPDATE ... RETURNING must stay on the in-place
+# update path and preserve rowid, exactly like a plain UPDATE ... RETURNING.
+# Regression: RETURNING projected every column into the UPDATE set, and the
+# per-action update_column_count was dropped on the way to the physical plan, so
+# the merge update fell onto the delete+insert path (bumping rowid) or fed index/
+# LIST columns to the in-place update.
+
+statement ok
+CREATE TABLE mr(a INTEGER PRIMARY KEY, b INTEGER);
+
+statement count 2
+INSERT INTO mr VALUES (1, 10), (2, 20);
+
+query
+SELECT a, b, rowid FROM mr ORDER BY a;
+----
+a	b	rowid
+1	10	0
+2	20	1
+
+# Matched UPDATE of a non-PK column with RETURNING: in-place, rowid unchanged.
+query
+MERGE INTO mr t USING (SELECT * FROM (VALUES (1, 111)) AS v(a, b)) s
+  ON t.a = s.a
+  WHEN MATCHED THEN UPDATE SET b = s.b
+  RETURNING t.a, t.b;
+----
+a	b
+1	111
+
+query
+SELECT a, b, rowid FROM mr ORDER BY a;
+----
+a	b	rowid
+1	111	0
+2	20	1
+
+statement ok
+DROP TABLE mr;
+
+
+# Same via a LIST column: RETURNING the LIST column projected it into the merge
+# update set; only the regular column changes, so the update must stay in-place.
+
+statement ok
+CREATE TABLE ml(a INTEGER PRIMARY KEY, b INTEGER, l INTEGER[]);
+
+statement count 2
+INSERT INTO ml VALUES (1, 10, ARRAY[1, 2, 3]), (2, 20, ARRAY[4, 5]);
+
+query
+SELECT a, b, l, rowid FROM ml ORDER BY a;
+----
+a	b	l	rowid
+1	10	{1,2,3}	0
+2	20	{4,5}	1
+
+query
+MERGE INTO ml t USING (SELECT * FROM (VALUES (1, 111)) AS v(a, b)) s
+  ON t.a = s.a
+  WHEN MATCHED THEN UPDATE SET b = s.b
+  RETURNING t.a, t.b, t.l;
+----
+a	b	l
+1	111	{1,2,3}
+
+query
+SELECT a, b, l, rowid FROM ml ORDER BY a;
+----
+a	b	l	rowid
+1	111	{1,2,3}	0
+2	20	{4,5}	1
+
+statement ok
+DROP TABLE ml;

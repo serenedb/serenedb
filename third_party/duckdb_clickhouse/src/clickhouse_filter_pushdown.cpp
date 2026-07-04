@@ -238,7 +238,8 @@ static string TransformFilter(const string &column_name, const TableFilter &filt
 
 string ClickHouseFilterPushdown::TransformFilters(const vector<column_t> &column_ids, optional_ptr<TableFilterSet> filters,
                                                   const vector<std::string> &names, vector<idx_t> *inexact_filters,
-                                                  const vector<bool> *stringified) {
+                                                  const vector<bool> *stringified, const vector<LogicalType> *types,
+                                                  const vector<std::string> *clickhouse_types) {
 	if (!filters || !filters->HasFilters()) {
 		return string();
 	}
@@ -248,7 +249,18 @@ string ClickHouseFilterPushdown::TransformFilters(const vector<column_t> &column
 		auto &filter = entry.Filter();
 		string filter_text;
 		bool exact = true;
-		if (IsVirtualColumn(column_id)) {
+		// A column whose remote comparison can diverge from DuckDB's (NaN floats,
+		// timezone-parsed timestamps, Enum/IP text) must not be pushed: the remote
+		// predicate could wrongly EXCLUDE rows, and re-applying locally cannot
+		// recover rows that were never transferred. Leave filter_text empty so the
+		// whole filter stays local (reported in inexact_filters below).
+		std::string ch_type;
+		if (clickhouse_types && column_id < clickhouse_types->size()) {
+			ch_type = (*clickhouse_types)[column_id];
+		}
+		bool comparison_unsafe =
+		    types && column_id < types->size() && ClickHouseComparisonUnsafe((*types)[column_id], ch_type);
+		if (IsVirtualColumn(column_id) || comparison_unsafe) {
 			exact = false;
 		} else {
 			string column_name = ClickHouseQuoteIdentifier(names[column_id]);

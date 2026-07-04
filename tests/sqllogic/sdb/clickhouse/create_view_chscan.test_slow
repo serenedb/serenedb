@@ -82,6 +82,19 @@ SELECT id, val FROM chv.default.cv_filter ORDER BY id;
 id	val
 3	c
 
+# 6) A view whose query references a table in a DIFFERENT catalog is REFUSED,
+#    not silently retargeted: blanking the foreign catalog qualifier would run
+#    the query against THIS server and read the wrong table. Attach a second
+#    ClickHouse catalog and reference its table from a chv view.
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chv2 (TYPE clickhouse);
+
+statement error
+CREATE VIEW chv.default.cv_cross AS SELECT id FROM chv2.default.cv_src;
+
+statement ok
+DETACH chv2;
+
 statement ok
 DROP TABLE chv.default.cv_filter;
 

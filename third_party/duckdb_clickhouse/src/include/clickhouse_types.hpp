@@ -54,4 +54,19 @@ std::string LogicalTypeToClickHouseType(const LogicalType &type, bool nullable);
 //! DuckDB type). Used by the INSERT sink to turn a DataChunk into a clickhouse::Block.
 clickhouse::ColumnRef ClickHouseColumnFromVector(const std::string &ch_type, Vector &vec, idx_t count);
 
+//! True when pushing a COMPARISON on a column of this type to ClickHouse can return a
+//! different row set than DuckDB's own evaluation, so the filter must stay local:
+//! FLOAT/DOUBLE (NaN semantics + Float32 literal round-trip), DATE (Date32 saturation /
+//! ±infinity abort), TIMESTAMP*/TIME* (server-timezone literal parsing), UUID (internal
+//! vs canonical order), and -- via `ch_type` -- Enum (ordinal vs label, unknown-label
+//! abort) and IPv4/IPv6 (address vs text). `ch_type` is the server-declared type string.
+bool ClickHouseComparisonUnsafe(const LogicalType &duckdb_type, const std::string &ch_type);
+
+//! True when pushing an ORDER BY on a column of this type to ClickHouse can order rows
+//! differently than DuckDB (so a TOP_N must not fold): FLOAT/DOUBLE (NaN placement),
+//! UUID (internal vs canonical order), and -- via `ch_type` -- Enum and IPv4/IPv6.
+//! Narrower than the comparison set: DATE/TIMESTAMP/TIME order by the stored value
+//! identically in both engines (no literal parsing is involved).
+bool ClickHouseOrderingUnsafe(const LogicalType &duckdb_type, const std::string &ch_type);
+
 } // namespace duckdb

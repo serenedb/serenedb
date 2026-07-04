@@ -200,15 +200,18 @@ optional_ptr<CatalogEntry> ClickHouseSchemaEntry::CreateIndex(CatalogTransaction
 // The view's parsed SELECT references ClickHouse tables via this catalog's ATTACH
 // alias, e.g. `ch`.`db`.`t` -- a three-part name that ClickHouse (which knows only
 // `db`.`t`) cannot parse. Strip the catalog qualifier from every table reference,
-// including those nested in joins and sub-queries, before rendering the DDL.
-static void StripCatalogFromTableRef(TableRef &ref);
-static void StripCatalogFromQueryNode(QueryNode &node);
+// including those nested in joins and sub-queries, before rendering the DDL. A
+// reference qualified with a DIFFERENT catalog is REFUSED, not silently
+// retargeted: blanking `other_ch.db.t` -> `db.t` would run it on this server and
+// read the wrong table.
+static void StripCatalogFromTableRef(TableRef &ref, const string &catalog_name);
+static void StripCatalogFromQueryNode(QueryNode &node, const string &catalog_name);
 
-static void StripCatalogFromExpression(unique_ptr<ParsedExpression> &expr) {
+static void StripCatalogFromExpression(unique_ptr<ParsedExpression> &expr, const string &catalog_name) {
 	if (expr->GetExpressionClass() == ExpressionClass::SUBQUERY) {
 		auto &subquery = expr->Cast<SubqueryExpression>();
 		if (subquery.Subquery() && subquery.Subquery()->node) {
-			StripCatalogFromQueryNode(*subquery.Subquery()->node);
+			StripCatalogFromQueryNode(*subquery.Subquery()->node, catalog_name);
 		}
 	} else if (expr->GetExpressionClass() == ExpressionClass::FUNCTION) {
 		// DuckDB renders COUNT(*) as count_star(); ClickHouse spells it count().
@@ -217,32 +220,46 @@ static void StripCatalogFromExpression(unique_ptr<ParsedExpression> &expr) {
 			func.SetFunctionName("count");
 		}
 	}
-	ParsedExpressionIterator::EnumerateChildren(*expr, StripCatalogFromExpression);
+	ParsedExpressionIterator::EnumerateChildren(
+	    *expr, [&](unique_ptr<ParsedExpression> &child) { StripCatalogFromExpression(child, catalog_name); });
 }
 
-static void StripCatalogFromTableRef(TableRef &ref) {
+static void StripCatalogFromTableRef(TableRef &ref, const string &catalog_name) {
 	// Leaf action only. EnumerateQueryNodeChildren / EnumerateTableRefChildren already
 	// invoke this callback on every nested table ref (joins, sub-queries) -- and
 	// EnumerateTableRefChildren calls ref_callback on the ref itself at the end, so
 	// re-entering Enumerate here would recurse on `ref` forever (stack overflow).
-	if (ref.type == TableReferenceType::BASE_TABLE) {
-		auto &base = ref.Cast<BaseTableRef>();
-		base.SetQualifiedName(Identifier(), base.GetQualifiedName().Schema(), base.GetQualifiedName().Name());
+	if (ref.type != TableReferenceType::BASE_TABLE) {
+		return;
 	}
+	auto &base = ref.Cast<BaseTableRef>();
+	const auto &catalog = base.GetQualifiedName().Catalog();
+	// Only strip our own catalog's qualifier. A different catalog would be
+	// silently rewritten to run on THIS server against a same-named table --
+	// wrong data -- so refuse it instead.
+	if (!catalog.empty() && !(catalog == catalog_name)) {
+		throw BinderException(
+		    "cannot create a ClickHouse view whose query references table \"%s\" in a different "
+		    "catalog \"%s\": a ClickHouse view can only read tables in its own server (\"%s\")",
+		    base.GetQualifiedName().Name().GetIdentifierName(), catalog.GetIdentifierName(), catalog_name);
+	}
+	base.SetQualifiedName(Identifier(), base.GetQualifiedName().Schema(), base.GetQualifiedName().Name());
 }
 
-static void StripCatalogFromQueryNode(QueryNode &node) {
-	ParsedExpressionIterator::EnumerateQueryNodeChildren(node, StripCatalogFromExpression, StripCatalogFromTableRef);
+static void StripCatalogFromQueryNode(QueryNode &node, const string &catalog_name) {
+	ParsedExpressionIterator::EnumerateQueryNodeChildren(
+	    node, [&](unique_ptr<ParsedExpression> &child) { StripCatalogFromExpression(child, catalog_name); },
+	    [&](TableRef &ref) { StripCatalogFromTableRef(ref, catalog_name); });
 }
 
-static string GetCreateViewSQL(const string &database, CreateViewInfo &info) {
+static string GetCreateViewSQL(const string &catalog_name, const string &database, CreateViewInfo &info) {
 	// ClickHouse CREATE VIEW takes no column-alias list after the name (unlike
 	// postgres); the SELECT's own output names define the view's columns. Render a
 	// catalog-stripped copy of the query so its table references are valid CH SQL.
 	auto query = info.query->Copy();
 	auto &select = query->Cast<SelectStatement>();
 	if (select.node) {
-		StripCatalogFromQueryNode(*select.node);
+		StripCatalogFromQueryNode(*select.node, catalog_name);
 	}
 	// Conflict handling delegated to ClickHouse (atomic OR REPLACE / IF NOT EXISTS),
 	// as in GetCreateTableSQL.
@@ -263,7 +280,8 @@ optional_ptr<CatalogEntry> ClickHouseSchemaEntry::CreateView(CatalogTransaction 
 		throw BinderException("Cannot create a ClickHouse view from an empty SQL statement");
 	}
 	// Conflict handling delegated to ClickHouse, as in CreateTable.
-	RunClickHouseDDL(GetClickHouseCatalog(), GetCreateViewSQL(database, info));
+	RunClickHouseDDL(GetClickHouseCatalog(),
+	                 GetCreateViewSQL(GetClickHouseCatalog().GetName().GetIdentifierName(), database, info));
 	{
 		std::lock_guard<std::mutex> l(tables_lock);
 		RetireTableLocked(info.GetViewName().GetIdentifierName());

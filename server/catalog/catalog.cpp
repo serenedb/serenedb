@@ -5379,7 +5379,8 @@ void InitCatalog() {
           auto result = conn->Query(query);
           if (result->HasError()) {
             SDB_WARN(GENERAL, "Failed to re-attach foreign server ",
-                     server->GetName(), ": ", result->GetError());
+                     server->GetName(), ": ",
+                     RedactConnstrSecrets(result->GetError()));
           }
         }
       }

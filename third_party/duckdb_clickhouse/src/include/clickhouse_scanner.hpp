@@ -32,6 +32,11 @@ struct ClickHouseBindData : public FunctionData {
 	//! DuckDB mapping and the column degrades to VARCHAR -- the scan then projects
 	//! toString(col) so one exotic column cannot make the whole table unreadable.
 	vector<bool> stringified;
+	//! Server-declared ClickHouse type string per table column (parallel to names).
+	//! Lets pushdown detect types whose remote comparison/ordering diverges from
+	//! DuckDB's (Enum/IPv4/IPv6/JSON), which the VARCHAR-mapped DuckDB type hides.
+	//! May be empty (older bind paths); callers must bounds-check.
+	vector<std::string> clickhouse_types;
 	//! Remote LIMIT/OFFSET clause pushed down by ClickHouseOptimizer (empty = none).
 	std::string limit;
 	//! Remote "ORDER BY ... LIMIT n+offset" row reducer annotated by ClickHouseOptimizer

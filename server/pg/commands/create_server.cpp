@@ -78,9 +78,10 @@ void RunAttach(const catalog::ForeignServer& server) {
   auto conn = DuckDBEngine::Instance().CreateConnection();
   auto result = conn->Query(sql);
   if (result->HasError()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_CONNECTION_EXCEPTION),
-                    ERR_MSG("could not connect foreign server \"",
-                            server.GetName(), "\": ", result->GetError()));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_CONNECTION_EXCEPTION),
+      ERR_MSG("could not connect foreign server \"", server.GetName(),
+              "\": ", catalog::RedactConnstrSecrets(result->GetError())));
   }
 }
 
@@ -119,7 +120,9 @@ std::string ProbeAttach(const catalog::ForeignServer& server,
   conn->Query(DetachSql(alias));
   auto result = conn->Query(sql);
   if (result->HasError()) {
-    return result->GetError();
+    // Redact here so every caller that surfaces this string (error or log) is
+    // covered -- the postgres connector echoes the full DSN, password included.
+    return catalog::RedactConnstrSecrets(result->GetError());
   }
   conn->Query(DetachSql(alias));
   return {};
@@ -168,14 +171,14 @@ void ReattachServer(ObjectId db_id, std::string_view server_name,
   if (attach_result->HasError()) {
     // The probe connected but the live re-ATTACH failed (e.g. a transient).
     // Surface it instead of silently leaving the server detached.
+    auto err = catalog::RedactConnstrSecrets(attach_result->GetError());
     if (throw_on_error) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_CONNECTION_EXCEPTION),
                       ERR_MSG("re-attach of foreign server \"", server_name,
-                              "\" failed after a successful probe: ",
-                              attach_result->GetError()));
+                              "\" failed after a successful probe: ", err));
     }
     SDB_WARN(GENERAL, "Re-attach of foreign server \"", server_name,
-             "\" failed after a successful probe: ", attach_result->GetError());
+             "\" failed after a successful probe: ", err);
   }
 }
 

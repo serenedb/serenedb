@@ -1,0 +1,75 @@
+control substitution on
+
+# Pushdown must NOT be applied to columns whose ClickHouse comparison/ordering
+# semantics differ from DuckDB's -- pushing such a predicate can silently EXCLUDE
+# rows the local scan must return, and a local re-check cannot recover rows that
+# never crossed the wire. So these filters/orderings are kept local
+# (ClickHouseComparisonUnsafe / ClickHouseOrderingUnsafe):
+#   * Float NaN: DuckDB treats NaN as greater than everything and NaN = NaN;
+#     ClickHouse uses IEEE (NaN compares false), so `f > x` would drop NaN rows.
+#   * Enum: mapped to VARCHAR, compared by label locally but by ordinal remotely,
+#     and an unknown label ABORTS the remote query instead of returning 0 rows.
+# The fixture is created server-side via clickhouse_execute so it can hold a NaN.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chdiv (TYPE clickhouse);
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}',
+  'DROP TABLE IF EXISTS default.pdiv');
+----
+n
+1
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}',
+  'CREATE TABLE default.pdiv (id Int64, f Float64, e Enum8(''zebra''=1, ''apple''=2)) ENGINE = MergeTree ORDER BY id');
+----
+n
+1
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}',
+  'INSERT INTO default.pdiv VALUES (1, 0.1, ''zebra''), (2, nan, ''apple''), (3, 5.0, ''zebra'')');
+----
+n
+1
+
+# NaN > 0.5 is TRUE in DuckDB -> id=2 (NaN) and id=3 (5.0) both return. If the
+# filter were pushed to ClickHouse, the NaN row would be silently dropped.
+query
+SELECT id FROM chdiv.default.pdiv WHERE f > 0.5 ORDER BY id;
+----
+id
+2
+3
+
+# An unknown enum label returns 0 rows in DuckDB; pushing it to ClickHouse would
+# abort the whole query with "Unknown element". It must not.
+query
+SELECT count(*) AS n FROM chdiv.default.pdiv WHERE e = 'notalabel';
+----
+n
+0
+
+# Enum equality on a KNOWN label still works (kept local, correct rows).
+query
+SELECT id FROM chdiv.default.pdiv WHERE e = 'apple' ORDER BY id;
+----
+id
+2
+
+# Enum ORDER BY is by label text in DuckDB ('apple' < 'zebra'); the native CH
+# order is by ordinal (zebra=1 < apple=2). A folded remote TOP_N would ship the
+# 'zebra' row; the correct answer is 'apple'.
+query
+SELECT e FROM chdiv.default.pdiv ORDER BY e LIMIT 1;
+----
+e
+apple
+
+statement ok
+DROP TABLE chdiv.default.pdiv;
+
+statement ok
+DETACH chdiv;

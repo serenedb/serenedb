@@ -41,6 +41,7 @@ unique_ptr<FunctionData> ClickHouseBindData::Copy() const {
 	result->names = names;
 	result->types = types;
 	result->stringified = stringified;
+	result->clickhouse_types = clickhouse_types;
 	result->limit = limit;
 	result->order_by = order_by;
 	result->rowid_column = rowid_column;
@@ -92,7 +93,7 @@ struct ClickHouseGlobalState : public GlobalTableFunctionState {
 
 void ClickHouseDiscoverColumns(ClickHouseConnection &connection, const std::string &describe_sql,
                                vector<LogicalType> &return_types, vector<std::string> &names, bool binary_as_blob,
-                               vector<bool> &stringified) {
+                               vector<bool> &stringified, vector<std::string> &clickhouse_types) {
 	auto &client = connection.GetClient();
 	ClickHouseConnection::LogQuery(describe_sql);
 	client.BeginSelect(describe_sql);
@@ -135,6 +136,7 @@ void ClickHouseDiscoverColumns(ClickHouseConnection &connection, const std::stri
 				logical_type = LogicalType::BLOB;
 			}
 			stringified.push_back(needs_to_string);
+			clickhouse_types.push_back(col_type);
 			return_types.push_back(logical_type);
 		}
 	}
@@ -150,7 +152,8 @@ static unique_ptr<FunctionData> ClickHouseBind(ClientContext &context, TableFunc
 	bind_data->table = input.inputs[2].GetValue<string>();
 
 	auto describe_sql =
-	    StringUtil::Format("DESCRIBE TABLE `%s`.`%s`", bind_data->database, bind_data->table);
+	    StringUtil::Format("DESCRIBE TABLE %s.%s", ClickHouseQuoteIdentifier(bind_data->database),
+	                       ClickHouseQuoteIdentifier(bind_data->table));
 
 	Value binary_setting;
 	bool binary_as_blob =
@@ -158,7 +161,7 @@ static unique_ptr<FunctionData> ClickHouseBind(ClientContext &context, TableFunc
 	try {
 		auto connection = ClickHouseConnection::Open(bind_data->params);
 		ClickHouseDiscoverColumns(connection, describe_sql, return_types, names, binary_as_blob,
-		                          bind_data->stringified);
+		                          bind_data->stringified, bind_data->clickhouse_types);
 	} catch (const clickhouse::Error &e) {
 		ClickHouseConnection::ThrowError("describing table", describe_sql, e);
 	}
@@ -206,8 +209,9 @@ static std::string BuildScanSQL(const ClickHouseBindData &bind_data, const vecto
 	}
 
 	if (filter_pushdown && filters) {
-		auto filter_string = ClickHouseFilterPushdown::TransformFilters(column_ids, filters, bind_data.names,
-		                                                                inexact_filters, &bind_data.stringified);
+		auto filter_string = ClickHouseFilterPushdown::TransformFilters(
+		    column_ids, filters, bind_data.names, inexact_filters, &bind_data.stringified, &bind_data.types,
+		    &bind_data.clickhouse_types);
 		if (!filter_string.empty()) {
 			query += " WHERE " + filter_string;
 		}
@@ -473,6 +477,22 @@ static void OptimizeTopNPushdown(unique_ptr<LogicalOperator> &op) {
 						// toString() text order differs from the native value order.
 						foldable = false;
 						break;
+					}
+					// An order key whose native ClickHouse order differs from DuckDB's
+					// (float NaN placement, UUID/Enum/IP) must not fold: the remote LIMIT
+					// would ship a different top-k than DuckDB, and the kept local sort
+					// cannot recover rows that never crossed the wire.
+					{
+						LogicalType key_type = column_id < bind_data.types.size()
+						                           ? bind_data.types[column_id]
+						                           : LogicalType(LogicalTypeId::INVALID);
+						std::string key_ch_type = column_id < bind_data.clickhouse_types.size()
+						                              ? bind_data.clickhouse_types[column_id]
+						                              : std::string();
+						if (ClickHouseOrderingUnsafe(key_type, key_ch_type)) {
+							foldable = false;
+							break;
+						}
 					}
 					if (!clause.empty()) {
 						clause += ", ";

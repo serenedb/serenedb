@@ -77,6 +77,7 @@ TableFunction ClickHouseTableEntry::GetScanFunction(ClientContext &context, uniq
 	bd->names = GetColumns().GetColumnNames();
 	bd->types = GetColumns().GetColumnTypes();
 	bd->stringified = stringified;
+	bd->clickhouse_types = clickhouse_types;
 	string rowid_column;
 	if (TryGetRowIdColumn(rowid_column)) {
 		bd->rowid_column = std::move(rowid_column);

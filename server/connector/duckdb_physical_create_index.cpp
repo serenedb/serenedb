@@ -341,13 +341,24 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     if (it->second.GetValue<std::string>() == "nothing") {
       state->collapse_dup_keys = true;
     } else {
-      // Stamped only when BindCreateIndex resolved the view to an
-      // ExternalDBKey fast path; resolving the same view again yields it.
-      SDB_ASSERT(_relation &&
-                 _relation->GetType() == catalog::ObjectType::PgSqlView);
-      auto fast_path = ResolveViewFastPath(
-        context, static_cast<const catalog::PgSqlView&>(*_relation));
-      SDB_ASSERT(fast_path && fast_path->catalog_ref);
+      // 'throw': probe the source for duplicate keys before building. The
+      // option is stamped by BindCreateIndex only for an ExternalDBKey view,
+      // but the source can change between bind and execute (DETACH, CREATE OR
+      // REPLACE VIEW, a remote PK ALTER), so re-resolve and error cleanly
+      // rather than blindly trusting the earlier decision -- a stale assumption
+      // here would be UB in release (asserts compiled out).
+      std::optional<ViewFastPath> fast_path;
+      if (_relation && _relation->GetType() == catalog::ObjectType::PgSqlView) {
+        fast_path = ResolveViewFastPath(
+          context, static_cast<const catalog::PgSqlView&>(*_relation));
+      }
+      if (!fast_path || !fast_path->catalog_ref) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("cannot build index \"", state->index_name,
+                  "\": its source is no longer an attached external-database "
+                  "table with a single-column key"));
+      }
       ThrowOnDuplicateExternalKeys(context, *fast_path);
     }
   }

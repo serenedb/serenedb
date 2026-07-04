@@ -21,7 +21,9 @@
 #include "catalog/foreign_server.h"
 
 #include <absl/strings/ascii.h>
+#include <absl/strings/match.h>
 
+#include <cctype>
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
@@ -93,6 +95,56 @@ std::string QuoteSqlIdentifier(std::string_view name) {
     }
   }
   out += "\"";
+  return out;
+}
+
+std::string RedactConnstrSecrets(std::string_view text) {
+  static constexpr std::string_view kSecretKeys[] = {"password", "passwd"};
+  auto is_ident = [](char c) {
+    return (std::isalnum(static_cast<unsigned char>(c)) != 0) || c == '_';
+  };
+  std::string out;
+  out.reserve(text.size());
+  size_t i = 0;
+  while (i < text.size()) {
+    bool matched = false;
+    for (const auto key : kSecretKeys) {
+      // Match `<key>=` where <key> is a whole word (not a suffix of a longer
+      // identifier such as "xpassword=").
+      if (i + key.size() < text.size() &&
+          absl::EqualsIgnoreCase(text.substr(i, key.size()), key) &&
+          text[i + key.size()] == '=' && (i == 0 || !is_ident(text[i - 1]))) {
+        out.append(key);
+        out += "=<redacted>";
+        size_t j = i + key.size() + 1;  // first char of the value
+        if (j < text.size() && text[j] == '\'') {
+          // DSN-quoted value: skip to the closing unescaped quote (\' and \\
+          // are escapes, per QuoteConnstrValue).
+          for (++j; j < text.size(); ++j) {
+            if (text[j] == '\\' && j + 1 < text.size()) {
+              ++j;
+            } else if (text[j] == '\'') {
+              ++j;
+              break;
+            }
+          }
+        } else {
+          // Bare value: runs to the next whitespace.
+          while (j < text.size() && text[j] != ' ' && text[j] != '\t' &&
+                 text[j] != '\n') {
+            ++j;
+          }
+        }
+        i = j;
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) {
+      out += text[i];
+      ++i;
+    }
+  }
   return out;
 }
 

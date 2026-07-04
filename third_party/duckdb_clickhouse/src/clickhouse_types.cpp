@@ -1119,4 +1119,46 @@ clickhouse::ColumnRef ClickHouseColumnFromVector(const std::string &ch_type, Vec
   return col;
 }
 
+// CH types whose VARCHAR mapping makes text comparison/ordering diverge from the
+// server's own: Enum (compares by ordinal, aborts on an unknown label), IPv4/IPv6
+// (compares as an address), and the schemaless JSON family. Matched by substring
+// so wrappers -- Nullable(Enum8(...)), LowCardinality(...), Array(IPv4) -- are
+// caught too; a plain String/FixedString type string contains none of these.
+static bool ClickHouseTypeTextDiverges(const std::string &ch_type) {
+  return ch_type.find("Enum8(") != std::string::npos || ch_type.find("Enum16(") != std::string::npos ||
+         ch_type.find("IPv4") != std::string::npos || ch_type.find("IPv6") != std::string::npos ||
+         ch_type.find("JSON") != std::string::npos || ch_type.find("Variant(") != std::string::npos ||
+         ch_type.find("Dynamic") != std::string::npos;
+}
+
+bool ClickHouseComparisonUnsafe(const LogicalType &duckdb_type, const std::string &ch_type) {
+  switch (duckdb_type.id()) {
+  case LogicalTypeId::FLOAT:
+  case LogicalTypeId::DOUBLE:
+  case LogicalTypeId::DATE:
+  case LogicalTypeId::TIMESTAMP:
+  case LogicalTypeId::TIMESTAMP_TZ:
+  case LogicalTypeId::TIMESTAMP_NS:
+  case LogicalTypeId::TIMESTAMP_MS:
+  case LogicalTypeId::TIMESTAMP_SEC:
+  case LogicalTypeId::TIME:
+  case LogicalTypeId::TIME_TZ:
+  case LogicalTypeId::UUID:
+    return true;
+  default:
+    return ClickHouseTypeTextDiverges(ch_type);
+  }
+}
+
+bool ClickHouseOrderingUnsafe(const LogicalType &duckdb_type, const std::string &ch_type) {
+  switch (duckdb_type.id()) {
+  case LogicalTypeId::FLOAT:
+  case LogicalTypeId::DOUBLE:
+  case LogicalTypeId::UUID:
+    return true;
+  default:
+    return ClickHouseTypeTextDiverges(ch_type);
+  }
+}
+
 } // namespace duckdb

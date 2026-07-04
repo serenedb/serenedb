@@ -17,7 +17,7 @@ namespace duckdb {
 
 void ClickHouseDiscoverColumns(ClickHouseConnection &connection, const std::string &describe_sql,
                                vector<LogicalType> &return_types, vector<std::string> &names, bool binary_as_blob,
-                               vector<bool> &stringified);
+                               vector<bool> &stringified, vector<std::string> &clickhouse_types);
 
 static unique_ptr<FunctionData> ClickHouseQueryBind(ClientContext &context, TableFunctionBindInput &input,
                                                     vector<LogicalType> &return_types, vector<std::string> &names) {
@@ -40,7 +40,7 @@ static unique_ptr<FunctionData> ClickHouseQueryBind(ClientContext &context, Tabl
 	try {
 		auto connection = ClickHouseConnection::Open(bind_data->params);
 		ClickHouseDiscoverColumns(connection, describe_sql, return_types, names, binary_as_blob,
-		                          bind_data->stringified);
+		                          bind_data->stringified, bind_data->clickhouse_types);
 	} catch (const clickhouse::Error &e) {
 		ClickHouseConnection::ThrowError("describing query", describe_sql, e);
 	}

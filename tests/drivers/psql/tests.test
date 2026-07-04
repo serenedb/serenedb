@@ -1088,8 +1088,8 @@ skipif postgres
 > +------------+----------+----------+
 > |    Name    |  Owner   | Location |
 > +------------+----------+----------+
-> | pg_default | postgres |          |
-> | pg_global  | postgres |          |
+> | pg_default | postgres | [NULL]   |
+> | pg_global  | postgres | [NULL]   |
 > +------------+----------+----------+
 > (2 rows)
 

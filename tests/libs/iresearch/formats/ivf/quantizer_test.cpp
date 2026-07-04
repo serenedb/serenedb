@@ -286,9 +286,30 @@ TEST(pq_quantizer_test, roundtrip_ranking_matches_exact_inner_product) {
   const std::vector<float> centroid(d, 0.f);
 
   const std::vector<float> points{
-    /*p0 aligned with query*/ 2.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f,
-    /*p1 orthogonal*/         0.f, 2.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f,
-    /*p2 opposed*/            -2.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f,
+    /*p0 aligned with query*/ 2.f,
+    0.f,
+    0.f,
+    0.f,
+    0.f,
+    0.f,
+    0.f,
+    0.f,
+    /*p1 orthogonal*/ 0.f,
+    2.f,
+    0.f,
+    0.f,
+    0.f,
+    0.f,
+    0.f,
+    0.f,
+    /*p2 opposed*/ -2.f,
+    0.f,
+    0.f,
+    0.f,
+    0.f,
+    0.f,
+    0.f,
+    0.f,
   };
   const std::vector<float> query{3.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
 

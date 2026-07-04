@@ -393,8 +393,8 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
           _pq.compute_inner_prod_table(_query.data(), ip_table.data());
           std::vector<byte_type> lutq(nsq * ksub);
           faiss::quantize_lut::quantize_LUT_and_bias(
-            1, _pq.M, ksub, false, ip_table.data(), nullptr, lutq.data(),
-            nsq, nullptr, &_ip_a, &_ip_b);
+            1, _pq.M, ksub, false, ip_table.data(), nullptr, lutq.data(), nsq,
+            nullptr, &_ip_a, &_ip_b);
           _packed_ip_lut.resize(nsq * ksub);
           faiss::pq4_pack_LUT(1, static_cast<int>(nsq), lutq.data(),
                               _packed_ip_lut.data());
@@ -476,8 +476,8 @@ class ProductQuantizerReader final : public QuantizerReader {
 
       _lutq.resize(nsq * ksub);
       faiss::quantize_lut::quantize_LUT_and_bias(
-        1, m, ksub, false, _table.data(), nullptr, _lutq.data(), nsq,
-        nullptr, &a, &b);
+        1, m, ksub, false, _table.data(), nullptr, _lutq.data(), nsq, nullptr,
+        &a, &b);
       _packed_lut.resize(nsq * ksub);
       faiss::pq4_pack_LUT(1, static_cast<int>(nsq), _lutq.data(),
                           _packed_lut.data());

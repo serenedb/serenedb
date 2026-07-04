@@ -132,7 +132,6 @@ void RegisterSereneDBStorage(duckdb::DBConfig& config) {
 void RegisterSereneDBOptimizers(duckdb::DatabaseInstance& db) {
   optimizer::RegisterWrapUnsupportedTypesExtension(db);
   optimizer::RegisterIResearchPlanOptimizer(db);
-  optimizer::RegisterCopyToProgressOptimizer(db);
   optimizer::RegisterRbacAccessCheck(db);
 }
 

@@ -30,11 +30,13 @@
 #include <memory>
 #include <vector>
 
+#include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
 #include "catalog/object.h"
+#include "catalog/store/store.h"
 #include "catalog/table.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_scan_entry.h"
@@ -107,6 +109,11 @@ const catalog::Object* SereneDBRelation(const duckdb::CatalogEntry* entry) {
   return nullptr;
 }
 
+bool IsStoreEntry(const duckdb::CatalogEntry& entry) {
+  return entry.ParentCatalog().GetName().GetIdentifierName() ==
+         catalog::kStoreDatabaseName;
+}
+
 void RequireColumns(const auth::RoleClosure& closure,
                     const catalog::Table& table, catalog::AclMode need,
                     const duckdb::unordered_set<uint64_t>& logical) {
@@ -145,15 +152,49 @@ void CollectAndEnforce(duckdb::ClientContext& context, duckdb::Binder& binder) {
 
   std::vector<const catalog::Object*> objects;
   objects.reserve(reqs.size());
-  containers::FlatHashSet<uint64_t> write_targets;
+  bool store_orphans = false;
   for (const auto& req : reqs) {
     const catalog::Object* obj =
       req.table ? SereneDBRelation(req.table) : nullptr;
     objects.push_back(obj);
+    store_orphans |= !obj && req.table && IsStoreEntry(*req.table);
+  }
+
+  // DML records the plan's scan table -- the store-side entry, not the user
+  // facade. Map store entries back through the facades bound alongside them
+  // (forward-composed store name; never parsed).
+  if (store_orphans) {
+    containers::FlatHashMap<std::string, const catalog::Object*> facades;
+    for (size_t i = 0; i < reqs.size(); ++i) {
+      const auto* entry = reqs[i].table;
+      if (!objects[i] || !entry ||
+          !dynamic_cast<const connector::SereneDBTableEntry*>(entry)) {
+        continue;
+      }
+      facades.emplace(catalog::StoreTableName(
+                        entry->ParentCatalog().GetName().GetIdentifierName(),
+                        entry->ParentSchema().name.GetIdentifierName(),
+                        entry->name.GetIdentifierName()),
+                      objects[i]);
+    }
+    for (size_t i = 0; i < reqs.size(); ++i) {
+      if (objects[i] || !reqs[i].table || !IsStoreEntry(*reqs[i].table)) {
+        continue;
+      }
+      const auto it = facades.find(reqs[i].table->name.GetIdentifierName());
+      if (it != facades.end()) {
+        objects[i] = it->second;
+      }
+    }
+  }
+
+  containers::FlatHashSet<uint64_t> write_targets;
+  for (size_t i = 0; i < reqs.size(); ++i) {
+    const catalog::Object* obj = objects[i];
     if (obj && obj->GetType() == catalog::ObjectType::Table &&
-        Has(req.verb, duckdb::AccessVerb::INSERT | duckdb::AccessVerb::UPDATE |
-                        duckdb::AccessVerb::DELETE |
-                        duckdb::AccessVerb::TRUNCATE)) {
+        Has(reqs[i].verb,
+            duckdb::AccessVerb::INSERT | duckdb::AccessVerb::UPDATE |
+              duckdb::AccessVerb::DELETE | duckdb::AccessVerb::TRUNCATE)) {
       write_targets.insert(obj->GetId().id());
     }
   }

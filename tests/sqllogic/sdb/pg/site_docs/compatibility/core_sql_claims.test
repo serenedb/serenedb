@@ -102,6 +102,11 @@ statement error
 ALTER TABLE ddl_alter_t ALTER COLUMN a TYPE BIGINT;
 
 # ddl_priv: CREATE ROLE
+# Roles are cluster-global and both engine passes share one server, so the
+# create must be idempotent across passes.
+statement ok
+DROP ROLE IF EXISTS ddl_priv_role1;
+
 statement ok
 CREATE ROLE ddl_priv_role1;
 
@@ -139,6 +144,9 @@ statement ok
 SET ROLE postgres;
 
 # ddl_priv: INHERIT
+statement ok
+DROP ROLE IF EXISTS ddl_priv_inherit1;
+
 statement ok
 CREATE ROLE ddl_priv_inherit1 INHERIT;
 
@@ -215,6 +223,9 @@ statement ok
 CREATE VIEW ddl_misc_v1 AS SELECT 1 AS x;
 
 # ddl_misc: Databases
+statement ok
+DROP DATABASE IF EXISTS ddl_misc_db1;
+
 statement ok
 CREATE DATABASE ddl_misc_db1;
 

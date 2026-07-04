@@ -20,37 +20,20 @@ query
 EXPLAIN SELECT id FROM chtop.chtest.vedernikoff ORDER BY id LIMIT 3;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           TOP_N           │
-│    ────────────────────   │
-│           Top: 3          │
-│                           │
-│         Order By:         │
-│     vedernikoff.id ASC    │
-│                           │
-│          ~3 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│           Table:          │
-│     chtest.vedernikoff    │
-│                           │
-│       Pushed Order:       │
-│  ORDER BY `id` ASC NULLS  │
-│        LAST LIMIT 3       │
-│                           │
-│      Projections: id      │
-│                           │
-│          Filters:         │
-│ optional: Dynamic Filter  │
-│            (id)           │
-│                           │
-│          ~6 rows          │
-└───────────────────────────┘
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 3                                 │
+│ Order By: vedernikoff.id ASC           │
+│ ~3 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN     │
+│ Table: chtest.vedernikoff              │
+│ Pushed Order:                          │
+│ ORDER BY `id` ASC NULLS LAST LIMIT 3   │
+│ Projections: id                        │
+│ Filters: optional: Dynamic Filter (id) │
+│ ~6 rows                                │
+╰────────────────────────────────────────╯
 
 query
 SELECT id FROM chtop.chtest.vedernikoff ORDER BY id LIMIT 3;
@@ -65,38 +48,21 @@ query
 EXPLAIN SELECT id FROM chtop.chtest.vedernikoff ORDER BY id DESC LIMIT 2 OFFSET 1;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           TOP_N           │
-│    ────────────────────   │
-│           Top: 2          │
-│         Offset: 1         │
-│                           │
-│         Order By:         │
-│    vedernikoff.id DESC    │
-│                           │
-│          ~2 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│           Table:          │
-│     chtest.vedernikoff    │
-│                           │
-│       Pushed Order:       │
-│  ORDER BY `id` DESC NULLS │
-│        LAST LIMIT 3       │
-│                           │
-│      Projections: id      │
-│                           │
-│          Filters:         │
-│ optional: Dynamic Filter  │
-│            (id)           │
-│                           │
-│          ~6 rows          │
-└───────────────────────────┘
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 2                                 │
+│ Offset: 1                              │
+│ Order By: vedernikoff.id DESC          │
+│ ~2 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN     │
+│ Table: chtest.vedernikoff              │
+│ Pushed Order:                          │
+│ ORDER BY `id` DESC NULLS LAST LIMIT 3  │
+│ Projections: id                        │
+│ Filters: optional: Dynamic Filter (id) │
+│ ~6 rows                                │
+╰────────────────────────────────────────╯
 
 query
 SELECT id FROM chtop.chtest.vedernikoff ORDER BY id DESC LIMIT 2 OFFSET 1;
@@ -128,33 +94,19 @@ query
 EXPLAIN SELECT id FROM chtop.chtest.vedernikoff WHERE id > 1 ORDER BY id LIMIT 2;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           TOP_N           │
-│    ────────────────────   │
-│           Top: 2          │
-│                           │
-│         Order By:         │
-│     vedernikoff.id ASC    │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│           Table:          │
-│     chtest.vedernikoff    │
-│                           │
-│      Projections: id      │
-│                           │
-│          Filters:         │
-│  ((id > 1) AND optional:  │
-│    Dynamic Filter (id))   │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ TOP_N ────────────────────────────────────╮
+│ Top: 2                                     │
+│ Order By: vedernikoff.id ASC               │
+│ ~1 row                                     │
+╰──────────────────────┬─────────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN         │
+│ Table: chtest.vedernikoff                  │
+│ Projections: id                            │
+│ Filters:                                   │
+│ (id > 1) AND optional: Dynamic Filter (id) │
+│ ~1 row                                     │
+╰────────────────────────────────────────────╯
 
 query
 SELECT id FROM chtop.chtest.vedernikoff WHERE id > 1 ORDER BY id LIMIT 2;

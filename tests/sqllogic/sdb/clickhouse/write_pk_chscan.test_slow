@@ -211,9 +211,9 @@ SELECT "order", v FROM chpk.default.pk_reserved ORDER BY "order";
 order	v
 2	B
 
-# Mixed-case PK column name. serenedb normalises identifiers to lower case (so
-# the underlying ClickHouse column is `myid`); the point here is that the
-# UPDATE/DELETE still resolve and mutate the right rows through that name.
+# Mixed-case PK column name. Quoted identifiers keep their case (the ClickHouse
+# column is `MyId`); the point here is that the UPDATE/DELETE resolve and
+# mutate the right rows through that name.
 statement ok
 CREATE TABLE chpk.default.pk_mixedcase ("MyId" BIGINT PRIMARY KEY, v VARCHAR);
 
@@ -229,7 +229,7 @@ DELETE FROM chpk.default.pk_mixedcase WHERE "MyId" = 2;
 query
 SELECT "MyId", v FROM chpk.default.pk_mixedcase ORDER BY "MyId";
 ----
-myid	v
+MyId	v
 1	A
 
 # PK column name with a space.

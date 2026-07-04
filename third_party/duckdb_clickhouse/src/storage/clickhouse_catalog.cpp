@@ -72,7 +72,7 @@ optional_ptr<CatalogEntry> ClickHouseCatalog::CreateSchema(CatalogTransaction tr
 	if (info.on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
 		sql += "IF NOT EXISTS ";
 	}
-	sql += ClickHouseQuoteIdentifier(info.schema);
+	sql += ClickHouseQuoteIdentifier(info.GetQualifiedName().Schema().GetIdentifierName());
 	try {
 		ClickHouseConnection::LogQuery(sql);
 		connection.GetClient().Execute(sql);
@@ -81,17 +81,17 @@ optional_ptr<CatalogEntry> ClickHouseCatalog::CreateSchema(CatalogTransaction tr
 	}
 	ReturnConnection(std::move(connection));
 	std::lock_guard<std::mutex> l(schema_lock);
-	auto entry = schemas.find(info.schema);
+	auto entry = schemas.find(info.GetQualifiedName().Schema().GetIdentifierName());
 	if (entry == schemas.end()) {
-		auto schema_entry = make_uniq<ClickHouseSchemaEntry>(*this, info, info.schema);
-		entry = schemas.emplace(info.schema, std::move(schema_entry)).first;
+		auto schema_entry = make_uniq<ClickHouseSchemaEntry>(*this, info, info.GetQualifiedName().Schema().GetIdentifierName());
+		entry = schemas.emplace(info.GetQualifiedName().Schema().GetIdentifierName(), std::move(schema_entry)).first;
 	}
 	return entry->second.get();
 }
 
 void ClickHouseCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 	auto connection = OpenConnection();
-	auto sql = "DROP DATABASE IF EXISTS " + ClickHouseQuoteIdentifier(info.name);
+	auto sql = "DROP DATABASE IF EXISTS " + ClickHouseQuoteIdentifier(info.GetQualifiedName().Name().GetIdentifierName());
 	try {
 		ClickHouseConnection::LogQuery(sql);
 		connection.GetClient().Execute(sql);
@@ -100,7 +100,7 @@ void ClickHouseCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 	}
 	ReturnConnection(std::move(connection));
 	std::lock_guard<std::mutex> l(schema_lock);
-	auto it = schemas.find(info.name);
+	auto it = schemas.find(info.GetQualifiedName().Name().GetIdentifierName());
 	if (it != schemas.end()) {
 		// Retire (do not destroy) the entry: a concurrently-bound statement may
 		// still hold a raw pointer into it or its (retired) table entries.
@@ -154,7 +154,7 @@ void ClickHouseCatalog::ScanSchemas(ClientContext &context, std::function<void(S
 		auto entry = schemas.find(schema_name);
 		if (entry == schemas.end()) {
 			CreateSchemaInfo info;
-			info.schema = schema_name;
+			info.SetSchema(Identifier(schema_name));
 			auto schema_entry = make_uniq<ClickHouseSchemaEntry>(*this, info, schema_name);
 			entry = schemas.emplace(schema_name, std::move(schema_entry)).first;
 		}
@@ -192,7 +192,7 @@ optional_ptr<SchemaCatalogEntry> ClickHouseCatalog::LookupSchema(CatalogTransact
 	auto entry = schemas.find(schema_name);
 	if (entry == schemas.end()) {
 		CreateSchemaInfo info;
-		info.schema = schema_name;
+		info.SetSchema(Identifier(schema_name));
 		auto schema_entry = make_uniq<ClickHouseSchemaEntry>(*this, info, schema_name);
 		entry = schemas.emplace(schema_name, std::move(schema_entry)).first;
 	}

@@ -126,7 +126,7 @@ string ClickHouseDelete::GetName() const {
 
 InsertionOrderPreservingMap<string> ClickHouseDelete::ParamsToString() const {
 	InsertionOrderPreservingMap<string> result;
-	result["Table Name"] = table.name;
+	result["Table Name"] = table.name.GetIdentifierName();
 	return result;
 }
 
@@ -146,7 +146,7 @@ PhysicalOperator &ClickHouseCatalog::PlanDelete(ClientContext &context, Physical
 		                      ch_table.name);
 	}
 	auto &bound_ref = op.expressions[0]->Cast<BoundReferenceExpression>();
-	auto &delete_op = planner.Make<ClickHouseDelete>(op, op.table, bound_ref.index, std::move(pk_column));
+	auto &delete_op = planner.Make<ClickHouseDelete>(op, op.table, bound_ref.Index(), std::move(pk_column));
 	delete_op.children.push_back(plan);
 	return delete_op;
 }

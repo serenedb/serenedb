@@ -246,7 +246,7 @@ static unique_ptr<GlobalTableFunctionState> ClickHouseInitGlobalStateInternal(Cl
 			result->local_filter = std::move(conjuncts[0]);
 		} else if (!conjuncts.empty()) {
 			auto conjunction = make_uniq<BoundConjunctionExpression>(ExpressionType::CONJUNCTION_AND);
-			conjunction->children = std::move(conjuncts);
+			conjunction->GetChildrenMutable() = std::move(conjuncts);
 			result->local_filter = std::move(conjunction);
 		}
 		if (result->local_filter) {
@@ -371,7 +371,7 @@ static void OptimizeLimitPushdown(unique_ptr<LogicalOperator> &op) {
 			                   limit.limit_val.Type() == LimitNodeType::UNSET;
 			bool const_offset = limit.offset_val.Type() == LimitNodeType::CONSTANT_VALUE ||
 			                    limit.offset_val.Type() == LimitNodeType::UNSET;
-			if (IsClickHouseScan(get.function.name) && const_limit && const_offset &&
+			if (IsClickHouseScan(get.function.name.GetIdentifierName()) && const_limit && const_offset &&
 			    !get.table_filters.HasFilters()) {
 				auto &bind_data = get.bind_data->Cast<ClickHouseBindData>();
 				string clause;
@@ -413,7 +413,7 @@ static void OptimizeTopNPushdown(unique_ptr<LogicalOperator> &op) {
 		}
 		if (child.get().type == LogicalOperatorType::LOGICAL_GET) {
 			auto &get = child.get().Cast<LogicalGet>();
-			if (IsClickHouseScan(get.function.name) && get.bind_data) {
+			if (IsClickHouseScan(get.function.name.GetIdentifierName()) && get.bind_data) {
 				auto &bind_data = get.bind_data->Cast<ClickHouseBindData>();
 				bool only_optional_filters = true;
 				for (auto &entry : get.table_filters) {
@@ -439,7 +439,7 @@ static void OptimizeTopNPushdown(unique_ptr<LogicalOperator> &op) {
 						foldable = false;
 						break;
 					}
-					auto binding = order.expression->Cast<BoundColumnRefExpression>().binding;
+					auto binding = order.expression->Cast<BoundColumnRefExpression>().Binding();
 					for (auto &proj_ref : projections) {
 						auto &proj = proj_ref.get();
 						if (binding.table_index != proj.table_index ||
@@ -452,7 +452,7 @@ static void OptimizeTopNPushdown(unique_ptr<LogicalOperator> &op) {
 							foldable = false;
 							break;
 						}
-						binding = proj_expr.Cast<BoundColumnRefExpression>().binding;
+						binding = proj_expr.Cast<BoundColumnRefExpression>().Binding();
 					}
 					if (!foldable || binding.table_index != get.table_index) {
 						foldable = false;
@@ -514,7 +514,7 @@ static unique_ptr<NodeStatistics> ClickHouseScanCardinality(ClientContext &conte
 // appending its own Projections/Filters sections after these keys.
 static InsertionOrderPreservingMap<string> ClickHouseScanToString(TableFunctionToStringInput &input) {
 	InsertionOrderPreservingMap<string> result;
-	result["Function"] = StringUtil::Upper(input.table_function.name);
+	result["Function"] = StringUtil::Upper(input.table_function.name.GetIdentifierName());
 	if (!input.bind_data) {
 		return result;
 	}

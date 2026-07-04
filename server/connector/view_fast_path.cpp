@@ -339,7 +339,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
         if (unique.GetColumnNames().size() != 1) {
           return std::nullopt;
         }
-        pk_name = unique.GetColumnNames()[0];
+        pk_name = unique.GetColumnNames()[0].GetIdentifierName();
       }
       if (!pk_name) {
         return std::nullopt;
@@ -364,9 +364,10 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       }
       ViewFastPath out;
       out.catalog_ref =
-        CatalogTableRef{.catalog = entry.ParentCatalog().GetName(),
-                        .schema = entry.ParentSchema().name,
-                        .table = entry.name};
+        CatalogTableRef{
+          .catalog = entry.ParentCatalog().GetName().GetIdentifierName(),
+          .schema = entry.ParentSchema().name.GetIdentifierName(),
+          .table = entry.name.GetIdentifierName()};
       out.pk_spec = catalog::PkSpec::ExternalDBKey;
       out.pk_column_index = *pk_index;
       out.pk_column_name = std::move(*pk_name);

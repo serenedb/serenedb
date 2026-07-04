@@ -42,7 +42,7 @@ unique_ptr<GlobalSinkState> ClickHouseUpdate::GetGlobalSinkState(ClientContext &
 	auto &ch_table = table.Cast<ClickHouseTableEntry>();
 	auto result = make_uniq<ClickHouseUpdateGlobalState>(ch_table);
 	for (auto &column : columns) {
-		result->column_names.push_back(ch_table.GetColumns().GetColumn(LogicalIndex(column.index)).GetName());
+		result->column_names.push_back(ch_table.GetColumns().GetColumn(LogicalIndex(column.index)).GetName().GetIdentifierName());
 	}
 	result->values.resize(columns.size());
 	return std::move(result);
@@ -64,7 +64,7 @@ SinkResultType ClickHouseUpdate::Sink(ExecutionContext &context, DataChunk &chun
 		}
 		D_ASSERT(expressions[i]->GetExpressionType() == ExpressionType::BOUND_REF);
 		auto &binding = expressions[i]->Cast<BoundReferenceExpression>();
-		auto &value_vector = chunk.data[binding.index];
+		auto &value_vector = chunk.data[binding.Index()];
 		for (idx_t r = 0; r < chunk.size(); r++) {
 			gstate.values[i].push_back(ClickHouseValueLiteral(value_vector.GetValue(r)));
 		}
@@ -173,7 +173,7 @@ string ClickHouseUpdate::GetName() const {
 
 InsertionOrderPreservingMap<string> ClickHouseUpdate::ParamsToString() const {
 	InsertionOrderPreservingMap<string> result;
-	result["Table Name"] = table.name;
+	result["Table Name"] = table.name.GetIdentifierName();
 	return result;
 }
 

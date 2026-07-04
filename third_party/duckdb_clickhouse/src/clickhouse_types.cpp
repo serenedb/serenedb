@@ -161,7 +161,7 @@ LogicalType ClickHouseToLogicalType(const clickhouse::Type &type) {
     child_list_t<LogicalType> children;
     for (idx_t i = 0; i < item_types.size(); i++) {
       std::string name = i < item_names.size() ? item_names[i] : "entry_" + std::to_string(i);
-      children.push_back(make_pair(std::move(name), ClickHouseToLogicalType(*item_types[i])));
+      children.push_back(make_pair(Identifier(std::move(name)), ClickHouseToLogicalType(*item_types[i])));
     }
     return LogicalType::STRUCT(std::move(children));
   }
@@ -398,7 +398,7 @@ static Value ClickHouseColumnValueAt(const clickhouse::Column &col, idx_t row) {
     child_list_t<Value> children;
     for (idx_t i = 0; i < tuple->TupleSize(); i++) {
       std::string name = i < item_names.size() ? item_names[i] : "entry_" + std::to_string(i);
-      children.push_back(make_pair(std::move(name), ClickHouseColumnValueAt(*tuple->At(i), row)));
+      children.push_back(make_pair(Identifier(std::move(name)), ClickHouseColumnValueAt(*tuple->At(i), row)));
     }
     return Value::STRUCT(std::move(children));
   }
@@ -749,7 +749,7 @@ std::string LogicalTypeToClickHouseType(const LogicalType &type, bool nullable) 
       auto &field = StructType::GetChildType(type, i);
       bool field_nullable = field.id() != LogicalTypeId::LIST && field.id() != LogicalTypeId::STRUCT &&
                             field.id() != LogicalTypeId::MAP;
-      s += ClickHouseQuoteIdentifier(StructType::GetChildName(type, i)) + " " +
+      s += ClickHouseQuoteIdentifier(StructType::GetChildName(type, i).GetIdentifierName()) + " " +
            LogicalTypeToClickHouseType(field, field_nullable);
     }
     s += ")";

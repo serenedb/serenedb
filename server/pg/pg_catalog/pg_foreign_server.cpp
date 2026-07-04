@@ -46,7 +46,7 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgForeignServer>::GetTableData() {
-  auto catalog = _config.EnsureCatalogSnapshot();
+  auto catalog = _config.CatalogSnapshot();
   const auto database_id = GetDatabaseId();
 
   std::vector<PgForeignServer> values;

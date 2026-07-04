@@ -1910,7 +1910,7 @@ Result Catalog::RegisterForeignServer(
   ObjectId database_id, ObjectId schema_id,
   std::shared_ptr<ForeignServer> foreign_server) {
   absl::MutexLock lock{&_mutex};
-  return Apply(_snapshot, _snapshot_mutex, [&](auto& clone) {
+  return Apply(_snapshot, [&](auto& clone) {
     return clone->RegisterObject(std::move(foreign_server), schema_id, false);
   });
 }
@@ -1918,7 +1918,7 @@ Result Catalog::RegisterForeignServer(
 Result Catalog::RegisterUserMapping(ObjectId database_id, ObjectId schema_id,
                                     std::shared_ptr<UserMapping> user_mapping) {
   absl::MutexLock lock{&_mutex};
-  return Apply(_snapshot, _snapshot_mutex, [&](auto& clone) {
+  return Apply(_snapshot, [&](auto& clone) {
     return clone->RegisterObject(std::move(user_mapping), schema_id, false);
   });
 }
@@ -2868,7 +2868,7 @@ Result Catalog::CreateForeignServer(
   foreign_server->SetParentId(*schema_id);
 
   return Apply(
-    _snapshot, _snapshot_mutex,
+    _snapshot,
     [&](std::shared_ptr<Snapshot>& clone) {
       auto r = clone->RegisterObject(foreign_server, *schema_id, false);
       if (!r.ok()) {
@@ -2895,7 +2895,7 @@ Result Catalog::CreateUserMapping(ObjectId database_id, std::string_view schema,
   user_mapping->SetParentId(*schema_id);
 
   return Apply(
-    _snapshot, _snapshot_mutex,
+    _snapshot,
     [&](std::shared_ptr<Snapshot>& clone) {
       auto r = clone->RegisterObject(user_mapping, *schema_id, false);
       if (!r.ok()) {
@@ -4615,7 +4615,7 @@ Result Catalog::DropForeignServer(std::string_view database,
   }
 
   return Apply(
-    _snapshot, _snapshot_mutex, [&](std::shared_ptr<Snapshot>& clone) {
+    _snapshot, [&](std::shared_ptr<Snapshot>& clone) {
       SDB_ASSERT(clone);
       auto foreign_server = clone->GetObject<ForeignServer>(*foreign_server_id);
       SDB_ASSERT(foreign_server);
@@ -4630,7 +4630,7 @@ Result Catalog::DropForeignServer(std::string_view database,
       }
 
       clone->UnregisterObject(std::move(foreign_server), *schema_id);
-      clone->ApplyDropPlan(*database_id, plan);
+      clone->ApplyDropPlan(_pending_drops, *database_id, plan);
       return Result{};
     });
 }
@@ -4663,7 +4663,7 @@ Result Catalog::DropUserMapping(std::string_view database,
   }
 
   return Apply(
-    _snapshot, _snapshot_mutex, [&](std::shared_ptr<Snapshot>& clone) {
+    _snapshot, [&](std::shared_ptr<Snapshot>& clone) {
       SDB_ASSERT(clone);
       auto user_mapping = clone->GetObject<UserMapping>(*user_mapping_id);
       SDB_ASSERT(user_mapping);
@@ -4678,7 +4678,7 @@ Result Catalog::DropUserMapping(std::string_view database,
       }
 
       clone->UnregisterObject(std::move(user_mapping), *schema_id);
-      clone->ApplyDropPlan(*database_id, plan);
+      clone->ApplyDropPlan(_pending_drops, *database_id, plan);
       return Result{};
     });
 }

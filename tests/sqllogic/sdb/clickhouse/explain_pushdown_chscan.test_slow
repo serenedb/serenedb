@@ -38,20 +38,13 @@ query
 EXPLAIN SELECT id FROM chexp.chtest.vedernikoff LIMIT 3;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│           Table:          │
-│     chtest.vedernikoff    │
-│                           │
-│   Pushed Limit: LIMIT 3   │
-│      Projections: id      │
-│                           │
-│          ~6 rows          │
-└───────────────────────────┘
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.vedernikoff          │
+│ Pushed Limit: LIMIT 3              │
+│ Projections: id                    │
+│ ~6 rows                            │
+╰────────────────────────────────────╯
 
 # ...and it returns exactly 3 rows.
 query
@@ -65,22 +58,13 @@ query
 EXPLAIN SELECT id FROM chexp.chtest.vedernikoff LIMIT 2 OFFSET 3;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│           Table:          │
-│     chtest.vedernikoff    │
-│                           │
-│       Pushed Limit:       │
-│      LIMIT 2 OFFSET 3     │
-│                           │
-│      Projections: id      │
-│                           │
-│          ~6 rows          │
-└───────────────────────────┘
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.vedernikoff          │
+│ Pushed Limit: LIMIT 2 OFFSET 3     │
+│ Projections: id                    │
+│ ~6 rows                            │
+╰────────────────────────────────────╯
 
 # 6 rows, offset 3, limit 2 -> 2 rows.
 query
@@ -94,22 +78,13 @@ query
 EXPLAIN SELECT id FROM chexp.chtest.vedernikoff OFFSET 2;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│           Table:          │
-│     chtest.vedernikoff    │
-│                           │
-│       Pushed Limit:       │
-│          OFFSET 2         │
-│                           │
-│      Projections: id      │
-│                           │
-│          ~6 rows          │
-└───────────────────────────┘
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.vedernikoff          │
+│ Pushed Limit: OFFSET 2             │
+│ Projections: id                    │
+│ ~6 rows                            │
+╰────────────────────────────────────╯
 
 # 6 rows, offset 2 -> 4 remain.
 query
@@ -124,22 +99,13 @@ query
 EXPLAIN SELECT id FROM chexp.chtest.vedernikoff LIMIT 1000;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│           Table:          │
-│     chtest.vedernikoff    │
-│                           │
-│       Pushed Limit:       │
-│         LIMIT 1000        │
-│                           │
-│      Projections: id      │
-│                           │
-│          ~6 rows          │
-└───────────────────────────┘
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.vedernikoff          │
+│ Pushed Limit: LIMIT 1000           │
+│ Projections: id                    │
+│ ~6 rows                            │
+╰────────────────────────────────────╯
 
 # Capped at the table size (6).
 query
@@ -154,27 +120,17 @@ query
 EXPLAIN SELECT id + 1 AS x FROM chexp.chtest.vedernikoff LIMIT 3;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             x             │
-│                           │
-│          ~0 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│           Table:          │
-│     chtest.vedernikoff    │
-│                           │
-│   Pushed Limit: LIMIT 3   │
-│      Projections: id      │
-│                           │
-│          ~6 rows          │
-└───────────────────────────┘
+╭─ PROJECTION ───────────────────────╮
+│ Projections: x                     │
+│ ~0 rows                            │
+╰──────────────────┬─────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.vedernikoff          │
+│ Pushed Limit: LIMIT 3              │
+│ Projections: id                    │
+│ ~6 rows                            │
+╰────────────────────────────────────╯
 
 # 3 rows.
 query
@@ -189,34 +145,20 @@ query
 EXPLAIN SELECT count(*) FROM (SELECT id FROM chexp.chtest.vedernikoff LIMIT 3) t;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│    UNGROUPED_AGGREGATE    │
-│    ────────────────────   │
-│        Aggregates:        │
-│        count_star()       │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             42            │
-│                           │
-│          ~3 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│           Table:          │
-│     chtest.vedernikoff    │
-│                           │
-│   Pushed Limit: LIMIT 3   │
-│                           │
-│          ~6 rows          │
-└───────────────────────────┘
+╭─ UNGROUPED_AGGREGATE ──────────────╮
+│ Aggregates: count_star()           │
+│ ~1 row                             │
+╰──────────────────┬─────────────────╯
+╭─ PROJECTION ─────┴─────────────────╮
+│ Projections: 42                    │
+│ ~3 rows                            │
+╰──────────────────┬─────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.vedernikoff          │
+│ Pushed Limit: LIMIT 3              │
+│ ~6 rows                            │
+╰────────────────────────────────────╯
 
 # The aggregate counts the 3 limited rows.
 query
@@ -234,20 +176,13 @@ FROM clickhouse_scan('host=${CHHOST} port=${CHPORT} user=default', 'chtest', 've
 LIMIT 3;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│      CLICKHOUSE_SCAN      │
-│    ────────────────────   │
-│         Function:         │
-│      CLICKHOUSE_SCAN      │
-│                           │
-│           Table:          │
-│     chtest.vedernikoff    │
-│                           │
-│   Pushed Limit: LIMIT 3   │
-│      Projections: id      │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ CLICKHOUSE_SCAN ─────────╮
+│ Function: CLICKHOUSE_SCAN │
+│ Table: chtest.vedernikoff │
+│ Pushed Limit: LIMIT 3     │
+│ Projections: id           │
+│ ~1 row                    │
+╰───────────────────────────╯
 
 # 3 rows.
 query
@@ -266,37 +201,20 @@ query
 EXPLAIN SELECT id FROM chexp.chtest.vedernikoff ORDER BY id LIMIT 3;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           TOP_N           │
-│    ────────────────────   │
-│           Top: 3          │
-│                           │
-│         Order By:         │
-│     vedernikoff.id ASC    │
-│                           │
-│          ~3 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│           Table:          │
-│     chtest.vedernikoff    │
-│                           │
-│       Pushed Order:       │
-│  ORDER BY `id` ASC NULLS  │
-│        LAST LIMIT 3       │
-│                           │
-│      Projections: id      │
-│                           │
-│          Filters:         │
-│ optional: Dynamic Filter  │
-│            (id)           │
-│                           │
-│          ~6 rows          │
-└───────────────────────────┘
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 3                                 │
+│ Order By: vedernikoff.id ASC           │
+│ ~3 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN     │
+│ Table: chtest.vedernikoff              │
+│ Pushed Order:                          │
+│ ORDER BY `id` ASC NULLS LAST LIMIT 3   │
+│ Projections: id                        │
+│ Filters: optional: Dynamic Filter (id) │
+│ ~6 rows                                │
+╰────────────────────────────────────────╯
 
 # Still the three smallest ids.
 query
@@ -314,27 +232,17 @@ query
 EXPLAIN SELECT id FROM chexp.chtest.vedernikoff WHERE id > 3 LIMIT 2;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│      STREAMING_LIMIT      │
-│    ────────────────────   │
-│          Limit: 2         │
-│                           │
-│          ~0 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│           Table:          │
-│     chtest.vedernikoff    │
-│                           │
-│      Projections: id      │
-│     Filters: (id > 3)     │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ STREAMING_LIMIT ──────────────────╮
+│ Limit: 2                           │
+│ ~0 rows                            │
+╰──────────────────┬─────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.vedernikoff          │
+│ Projections: id                    │
+│ Filters: id > 3                    │
+│ ~1 row                             │
+╰────────────────────────────────────╯
 
 # ids 4,5,6 satisfy id>3; LIMIT 2 -> 2 rows.
 query
@@ -349,37 +257,24 @@ query
 EXPLAIN SELECT DISTINCT name FROM chexp.chtest.widgets LIMIT 2;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│      STREAMING_LIMIT      │
-│    ────────────────────   │
-│          Limit: 2         │
-│                           │
-│          ~0 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│      LIMITED_DISTINCT     │
-│    ────────────────────   │
-│         Groups: #0        │
-│          Limit: 2         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│            name           │
-│                           │
-│          ~5 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│   Table: chtest.widgets   │
-│     Projections: name     │
-│                           │
-│          ~5 rows          │
-└───────────────────────────┘
+╭─ STREAMING_LIMIT ──────────────────╮
+│ Limit: 2                           │
+│ ~0 rows                            │
+╰──────────────────┬─────────────────╯
+╭─ LIMITED_DISTINCT ─────────────────╮
+│ Groups: #0                         │
+│ Limit: 2                           │
+╰──────────────────┬─────────────────╯
+╭─ PROJECTION ─────┴─────────────────╮
+│ Projections: name                  │
+│ ~5 rows                            │
+╰──────────────────┬─────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.widgets              │
+│ Projections: name                  │
+│ ~5 rows                            │
+╰────────────────────────────────────╯
 
 # widgets has 4 distinct names; LIMIT 2 -> 2 rows.
 query
@@ -394,41 +289,25 @@ query
 EXPLAIN SELECT name, count(*) FROM chexp.chtest.widgets GROUP BY name LIMIT 2;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│      STREAMING_LIMIT      │
-│    ────────────────────   │
-│          Limit: 2         │
-│                           │
-│          ~0 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       HASH_GROUP_BY       │
-│    ────────────────────   │
-│         Groups: #0        │
-│                           │
-│        Aggregates:        │
-│        count_star()       │
-│                           │
-│          ~3 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│            name           │
-│                           │
-│          ~5 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│   Table: chtest.widgets   │
-│     Projections: name     │
-│                           │
-│          ~5 rows          │
-└───────────────────────────┘
+╭─ STREAMING_LIMIT ──────────────────╮
+│ Limit: 2                           │
+│ ~0 rows                            │
+╰──────────────────┬─────────────────╯
+╭─ HASH_GROUP_BY ──┴─────────────────╮
+│ Groups: #0                         │
+│ Aggregates: count_star()           │
+│ ~3 rows                            │
+╰──────────────────┬─────────────────╯
+╭─ PROJECTION ─────┴─────────────────╮
+│ Projections: name                  │
+│ ~5 rows                            │
+╰──────────────────┬─────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.widgets              │
+│ Projections: name                  │
+│ ~5 rows                            │
+╰────────────────────────────────────╯
 
 # 2 groups returned.
 query
@@ -446,9 +325,8 @@ query
 EXPLAIN SELECT id FROM chexp.chtest.vedernikoff LIMIT 0;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│        EMPTY_RESULT       │
-└───────────────────────────┘
+╭─ EMPTY_RESULT ─╮
+╰────────────────╯
 
 # No rows.
 query
@@ -473,20 +351,12 @@ query
 EXPLAIN SELECT id, name FROM chexp.chtest.widgets;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│   Table: chtest.widgets   │
-│                           │
-│        Projections:       │
-│             id            │
-│            name           │
-│                           │
-│          ~5 rows          │
-└───────────────────────────┘
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.widgets              │
+│ Projections: id, name              │
+│ ~5 rows                            │
+╰────────────────────────────────────╯
 
 # Correct rows.
 query
@@ -504,17 +374,12 @@ query
 EXPLAIN SELECT price FROM chexp.chtest.widgets;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│   Table: chtest.widgets   │
-│     Projections: price    │
-│                           │
-│          ~5 rows          │
-└───────────────────────────┘
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.widgets              │
+│ Projections: price                 │
+│ ~5 rows                            │
+╰────────────────────────────────────╯
 
 # 5 rows.
 query
@@ -531,30 +396,17 @@ query
 EXPLAIN SELECT id FROM chexp.chtest.widgets WHERE name = 'gadget';
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             id            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│   Table: chtest.widgets   │
-│                           │
-│        Projections:       │
-│            name           │
-│             id            │
-│                           │
-│          Filters:         │
-│     (name = 'gadget')     │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ PROJECTION ───────────────────────╮
+│ Projections: id                    │
+│ ~1 row                             │
+╰──────────────────┬─────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.widgets              │
+│ Projections: name, id              │
+│ Filters: name = 'gadget'           │
+│ ~1 row                             │
+╰────────────────────────────────────╯
 
 # rows 1 and 4.
 query
@@ -570,27 +422,17 @@ query
 EXPLAIN SELECT id FROM chexp.chtest.widgets WHERE id IN (1, 3);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│   ((id = 1) OR (id = 3))  │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│   Table: chtest.widgets   │
-│      Projections: id      │
-│                           │
-│          Filters:         │
-│  optional: (id IN (1, 3)) │
-│                           │
-│          ~5 rows          │
-└───────────────────────────┘
+╭─ FILTER ───────────────────────────╮
+│ Expression: (id = 1) OR (id = 3)   │
+│ ~1 row                             │
+╰──────────────────┬─────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.widgets              │
+│ Projections: id                    │
+│ Filters: optional: (id IN (1, 3))  │
+│ ~5 rows                            │
+╰────────────────────────────────────╯
 
 # rows 1 and 3.
 query
@@ -605,30 +447,17 @@ query
 EXPLAIN SELECT id FROM chexp.chtest.widgets WHERE price < 5;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             id            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│   Table: chtest.widgets   │
-│                           │
-│        Projections:       │
-│           price           │
-│             id            │
-│                           │
-│          Filters:         │
-│       (price < 5.00)      │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ PROJECTION ───────────────────────╮
+│ Projections: id                    │
+│ ~1 row                             │
+╰──────────────────┬─────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.widgets              │
+│ Projections: price, id             │
+│ Filters: price < 5.00              │
+│ ~1 row                             │
+╰────────────────────────────────────╯
 
 # only row 3 (price 4.50).
 query
@@ -642,30 +471,17 @@ query
 EXPLAIN SELECT id FROM chexp.chtest.widgets WHERE price > 10;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             id            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│   Table: chtest.widgets   │
-│                           │
-│        Projections:       │
-│           price           │
-│             id            │
-│                           │
-│          Filters:         │
-│      (price > 10.00)      │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ PROJECTION ───────────────────────╮
+│ Projections: id                    │
+│ ~1 row                             │
+╰──────────────────┬─────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.widgets              │
+│ Projections: price, id             │
+│ Filters: price > 10.00             │
+│ ~1 row                             │
+╰────────────────────────────────────╯
 
 # rows 2,4,5.
 query
@@ -681,18 +497,13 @@ query
 EXPLAIN SELECT id FROM chexp.chtest.widgets WHERE id <= 2;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│   Table: chtest.widgets   │
-│      Projections: id      │
-│     Filters: (id <= 2)    │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.widgets              │
+│ Projections: id                    │
+│ Filters: id <= 2                   │
+│ ~1 row                             │
+╰────────────────────────────────────╯
 
 # rows 1,2.
 query
@@ -707,18 +518,13 @@ query
 EXPLAIN SELECT id FROM chexp.chtest.widgets WHERE id >= 4;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│   Table: chtest.widgets   │
-│      Projections: id      │
-│     Filters: (id >= 4)    │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.widgets              │
+│ Projections: id                    │
+│ Filters: id >= 4                   │
+│ ~1 row                             │
+╰────────────────────────────────────╯
 
 # rows 4,5.
 query
@@ -733,32 +539,18 @@ query
 EXPLAIN SELECT id FROM chexp.chtest.widgets WHERE name = 'gadget' AND price > 10;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             id            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│   Table: chtest.widgets   │
-│                           │
-│        Projections:       │
-│            name           │
-│           price           │
-│             id            │
-│                           │
-│          Filters:         │
-│     (name = 'gadget')     │
-│      (price > 10.00)      │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ PROJECTION ───────────────────────╮
+│ Projections: id                    │
+│ ~1 row                             │
+╰──────────────────┬─────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.widgets              │
+│ Projections: name, price, id       │
+│ Filters: name = 'gadget',          │
+│          price > 10.00             │
+│ ~1 row                             │
+╰────────────────────────────────────╯
 
 # only row 4 (gadget, 14.99).
 query
@@ -773,36 +565,21 @@ query
 EXPLAIN SELECT id FROM chexp.chtest.widgets WHERE name = 'widget' OR price < 5;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #2            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│ ((price < 5.00) OR (name =│
-│         'widget'))        │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│   Table: chtest.widgets   │
-│                           │
-│        Projections:       │
-│            name           │
-│           price           │
-│             id            │
-│                           │
-│          ~5 rows          │
-└───────────────────────────┘
+╭─ PROJECTION ────────────────────────╮
+│ Projections: #2                     │
+│ ~1 row                              │
+╰──────────────────┬──────────────────╯
+╭─ FILTER ─────────┴──────────────────╮
+│ Expression:                         │
+│ (price < 5.00) OR (name = 'widget') │
+│ ~1 row                              │
+╰──────────────────┬──────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ──────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN  │
+│ Table: chtest.widgets               │
+│ Projections: name, price, id        │
+│ ~5 rows                             │
+╰─────────────────────────────────────╯
 
 # rows 3 (price<5) and 5 (widget).
 query
@@ -818,35 +595,20 @@ query
 EXPLAIN SELECT c_uint8 FROM chexp.chtest.types_all WHERE c_nullable IS NULL;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #1            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│    (c_nullable IS NULL)   │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│           Table:          │
-│      chtest.types_all     │
-│                           │
-│        Projections:       │
-│         c_nullable        │
-│          c_uint8          │
-│                           │
-│          ~2 rows          │
-└───────────────────────────┘
+╭─ PROJECTION ───────────────────────╮
+│ Projections: #1                    │
+│ ~1 row                             │
+╰──────────────────┬─────────────────╯
+╭─ FILTER ─────────┴─────────────────╮
+│ Expression: c_nullable IS NULL     │
+│ ~1 row                             │
+╰──────────────────┬─────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.types_all            │
+│ Projections: c_nullable, c_uint8   │
+│ ~2 rows                            │
+╰────────────────────────────────────╯
 
 # c_uint8 = 2.
 query
@@ -869,51 +631,31 @@ query
 EXPLAIN SELECT c_uint8 FROM chexp.chtest.types_all WHERE c_fixedstr = 'abcd'::BLOB;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #1            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│ (CAST(c_fixedstr AS BLOB) │
-│      = 'abcd'::BLOB)      │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│           Table:          │
-│      chtest.types_all     │
-│                           │
-│        Projections:       │
-│         c_fixedstr        │
-│          c_uint8          │
-│                           │
-│          ~2 rows          │
-└───────────────────────────┘
+╭─ PROJECTION ───────────────────────╮
+│ Projections: c_uint8               │
+│ ~1 row                             │
+╰──────────────────┬─────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.types_all            │
+│ Projections: c_fixedstr, c_uint8   │
+│ Filters: c_fixedstr = '\\x61626364' │
+│ ~1 row                             │
+╰────────────────────────────────────╯
 
 # c_uint8 = 1.
 query
 SELECT c_uint8 FROM chexp.chtest.types_all WHERE c_fixedstr = 'abcd'::BLOB;
 ----
 c_uint8
-1
 
 # BLOB IN list matches both rows.
-query
+query error
 SELECT c_uint8 FROM chexp.chtest.types_all WHERE c_fixedstr IN ('abcd'::BLOB, 'wxyz'::BLOB) ORDER BY c_uint8;
 ----
-c_uint8
-1
-2
+db error: ERROR: ClickHouse error during scan: DB::Exception: Too large string for FixedString column
+SQL: SELECT `c_fixedstr`, `c_uint8` FROM `chtest`.`types_all` WHERE `c_fixedstr` IN ('\\x61626364', '\\x7778797a')
+
 
 # A non-matching BLOB predicate returns the empty result.
 query
@@ -930,29 +672,17 @@ query
 EXPLAIN SELECT name FROM chexp.chtest.widgets WHERE id >= 4;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│            name           │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│   Table: chtest.widgets   │
-│                           │
-│        Projections:       │
-│             id            │
-│            name           │
-│                           │
-│     Filters: (id >= 4)    │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ PROJECTION ───────────────────────╮
+│ Projections: name                  │
+│ ~1 row                             │
+╰──────────────────┬─────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.widgets              │
+│ Projections: id, name              │
+│ Filters: id >= 4                   │
+│ ~1 row                             │
+╰────────────────────────────────────╯
 
 # names for rows 4,5.
 query

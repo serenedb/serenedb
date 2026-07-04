@@ -55,7 +55,7 @@ unique_ptr<BaseSecret> ClickHouseSecrets::CreateFunction(ClientContext &context,
 		    std::find(other_option_names.begin(), other_option_names.end(), name) == other_option_names.end()) {
 			throw InternalException("Unknown named parameter for a ClickHouse secret: '" + named_param.first + "'");
 		}
-		result->secret_map[name] = named_param.second.ToString();
+		result->secret_map[Identifier(std::string(name))] = named_param.second.ToString();
 	}
 	result->redact_keys = {"password", "uri"};
 	return std::move(result);
@@ -63,13 +63,13 @@ unique_ptr<BaseSecret> ClickHouseSecrets::CreateFunction(ClientContext &context,
 
 void ClickHouseSecrets::SetSecretParameters(CreateSecretFunction &function) {
 	for (const std::string &name : connection_option_names) {
-		function.named_parameters[name] = LogicalType::VARCHAR;
+		function.named_parameters[Identifier(name)] = LogicalType::VARCHAR;
 	}
 	for (auto &en : connection_option_aliases) {
-		function.named_parameters[en.first] = LogicalType::VARCHAR;
+		function.named_parameters[Identifier(en.first)] = LogicalType::VARCHAR;
 	}
 	// other options
-	function.named_parameters["uri"] = LogicalType::VARCHAR;
+	function.named_parameters[Identifier("uri")] = LogicalType::VARCHAR;
 }
 
 } // namespace duckdb

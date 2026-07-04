@@ -12,35 +12,23 @@ query
 EXPLAIN SELECT id FROM chcard.chtest.vedernikoff;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│           Table:          │
-│     chtest.vedernikoff    │
-│                           │
-│      Projections: id      │
-│                           │
-│          ~6 rows          │
-└───────────────────────────┘
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.vedernikoff          │
+│ Projections: id                    │
+│ ~6 rows                            │
+╰────────────────────────────────────╯
 
 query
 EXPLAIN SELECT id FROM chcard.chtest.widgets;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│   Table: chtest.widgets   │
-│      Projections: id      │
-│                           │
-│          ~5 rows          │
-└───────────────────────────┘
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.widgets              │
+│ Projections: id                    │
+│ ~5 rows                            │
+╰────────────────────────────────────╯
 
 statement ok
 DETACH chcard;

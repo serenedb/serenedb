@@ -21,11 +21,11 @@ ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pg_${__
 
 
 statement ok
-CREATE SCHEMA pg_${__DATABASE__}.${__DATABASE__}_docs;
+CREATE SCHEMA pg_${__DATABASE__}.iipgscan_docs;
 
 
 statement ok
-CREATE TABLE pg_${__DATABASE__}.${__DATABASE__}_docs.articles (
+CREATE TABLE pg_${__DATABASE__}.iipgscan_docs.articles (
   id    BIGINT PRIMARY KEY,
   body  TEXT,
   tag   TEXT,
@@ -34,7 +34,7 @@ CREATE TABLE pg_${__DATABASE__}.${__DATABASE__}_docs.articles (
 
 
 statement count 5
-INSERT INTO pg_${__DATABASE__}.${__DATABASE__}_docs.articles VALUES
+INSERT INTO pg_${__DATABASE__}.iipgscan_docs.articles VALUES
   (1, 'pudge goes mid and dominates the lane', 'gameplay', 1200),
   (2, 'anchin reads manga every weekend',      'reading',  340),
   (3, 'pudge plays again in a ranked match',   'gameplay', 870),
@@ -57,7 +57,7 @@ CREATE TEXT SEARCH DICTIONARY pg_en_${__DATABASE__}(
 statement ok
 CREATE VIEW pg_articles_v_${__DATABASE__} AS
   SELECT id, body, tag, views
-  FROM pg_${__DATABASE__}.${__DATABASE__}_docs.articles;
+  FROM pg_${__DATABASE__}.iipgscan_docs.articles;
 
 
 statement ok
@@ -127,11 +127,11 @@ id	body
 
 
 statement ok
-DROP TABLE pg_${__DATABASE__}.${__DATABASE__}_docs.articles;
+DROP TABLE pg_${__DATABASE__}.iipgscan_docs.articles;
 
 
 statement ok
-DROP SCHEMA pg_${__DATABASE__}.${__DATABASE__}_docs;
+DROP SCHEMA pg_${__DATABASE__}.iipgscan_docs;
 
 
 statement ok

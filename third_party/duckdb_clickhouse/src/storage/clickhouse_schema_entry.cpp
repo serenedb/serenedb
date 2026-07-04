@@ -7,6 +7,7 @@
 #include "duckdb/parser/expression/subquery_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/query_node.hpp"
+#include "duckdb/parser/query_node/select_node.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
@@ -14,6 +15,7 @@
 #include "duckdb/parser/parsed_data/alter_info.hpp"
 #include "duckdb/parser/column_definition.hpp"
 #include "duckdb/parser/column_list.hpp"
+#include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/constraints/unique_constraint.hpp"
 #include "duckdb/parser/constraints/not_null_constraint.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
@@ -68,6 +70,22 @@ static string RenderConstantDefault(const ColumnDefinition &col) {
 	if (value.IsNull()) {
 		return "";
 	}
+	// The stored default_expression round-trips through LoadTableEntry's
+	// constants-only parser, so render plain literals here rather than the
+	// typed casts (toDecimal128 / toDate32 / ...) ClickHouseValueLiteral uses
+	// for filter/assignment exactness -- in a DEFAULT the column type already
+	// governs, and a function expression would be dropped on reload.
+	switch (value.type().id()) {
+	case LogicalTypeId::DECIMAL:
+		return value.ToString();
+	case LogicalTypeId::DATE:
+	case LogicalTypeId::TIMESTAMP:
+	case LogicalTypeId::TIMESTAMP_NS:
+	case LogicalTypeId::UUID:
+		return ClickHouseStringLiteral(value.ToString());
+	default:
+		break;
+	}
 	try {
 		return ClickHouseValueLiteral(value);
 	} catch (const NotImplementedException &) {
@@ -91,10 +109,10 @@ static string GetCreateTableSQL(const string &database, CreateTableInfo &info) {
 				continue;
 			}
 			if (unique.HasIndex()) {
-				order_by.push_back(columns.GetColumn(unique.GetIndex()).GetName());
+				order_by.push_back(columns.GetColumn(unique.GetIndex()).GetName().GetIdentifierName());
 			} else {
 				for (auto &col_name : unique.GetColumnNames()) {
-					order_by.push_back(col_name);
+					order_by.push_back(col_name.GetIdentifierName());
 				}
 			}
 		}
@@ -124,14 +142,14 @@ static string GetCreateTableSQL(const string &database, CreateTableInfo &info) {
 	if (info.on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
 		sql += "IF NOT EXISTS ";
 	}
-	sql += ClickHouseQuoteIdentifier(database) + "." + ClickHouseQuoteIdentifier(info.table) + " (";
+	sql += ClickHouseQuoteIdentifier(database) + "." + ClickHouseQuoteIdentifier(info.GetTableName().GetIdentifierName()) + " (";
 	for (idx_t i = 0; i < columns.LogicalColumnCount(); i++) {
 		auto &col = columns.GetColumn(LogicalIndex(i));
 		if (i > 0) {
 			sql += ", ";
 		}
-		bool nullable = !is_not_null(i, col.GetName());
-		sql += ClickHouseQuoteIdentifier(col.GetName()) + " " + LogicalTypeToClickHouseType(col.GetType(), nullable);
+		bool nullable = !is_not_null(i, col.GetName().GetIdentifierName());
+		sql += ClickHouseQuoteIdentifier(col.GetName().GetIdentifierName()) + " " + LogicalTypeToClickHouseType(col.GetType(), nullable);
 		auto default_literal = RenderConstantDefault(col);
 		if (!default_literal.empty()) {
 			sql += " DEFAULT " + default_literal;
@@ -164,9 +182,9 @@ optional_ptr<CatalogEntry> ClickHouseSchemaEntry::CreateTable(CatalogTransaction
 
 	{
 		std::lock_guard<std::mutex> l(tables_lock);
-		RetireTableLocked(base.table);
+		RetireTableLocked(base.GetTableName().GetIdentifierName());
 	}
-	return &GetOrCreateTableEntry(base.table);
+	return &GetOrCreateTableEntry(base.GetTableName().GetIdentifierName());
 }
 
 optional_ptr<CatalogEntry> ClickHouseSchemaEntry::CreateFunction(CatalogTransaction transaction,
@@ -189,14 +207,14 @@ static void StripCatalogFromQueryNode(QueryNode &node);
 static void StripCatalogFromExpression(unique_ptr<ParsedExpression> &expr) {
 	if (expr->GetExpressionClass() == ExpressionClass::SUBQUERY) {
 		auto &subquery = expr->Cast<SubqueryExpression>();
-		if (subquery.subquery && subquery.subquery->node) {
-			StripCatalogFromQueryNode(*subquery.subquery->node);
+		if (subquery.Subquery() && subquery.Subquery()->node) {
+			StripCatalogFromQueryNode(*subquery.Subquery()->node);
 		}
 	} else if (expr->GetExpressionClass() == ExpressionClass::FUNCTION) {
 		// DuckDB renders COUNT(*) as count_star(); ClickHouse spells it count().
 		auto &func = expr->Cast<FunctionExpression>();
-		if (func.function_name == "count_star" && func.children.empty()) {
-			func.function_name = "count";
+		if (func.FunctionName() == "count_star" && func.GetArguments().empty()) {
+			func.SetFunctionName("count");
 		}
 	}
 	ParsedExpressionIterator::EnumerateChildren(*expr, StripCatalogFromExpression);
@@ -208,7 +226,8 @@ static void StripCatalogFromTableRef(TableRef &ref) {
 	// EnumerateTableRefChildren calls ref_callback on the ref itself at the end, so
 	// re-entering Enumerate here would recurse on `ref` forever (stack overflow).
 	if (ref.type == TableReferenceType::BASE_TABLE) {
-		ref.Cast<BaseTableRef>().catalog_name = "";
+		auto &base = ref.Cast<BaseTableRef>();
+		base.SetQualifiedName(Identifier(), base.GetQualifiedName().Schema(), base.GetQualifiedName().Name());
 	}
 }
 
@@ -235,7 +254,7 @@ static string GetCreateViewSQL(const string &database, CreateViewInfo &info) {
 	if (info.on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
 		sql += "IF NOT EXISTS ";
 	}
-	return sql + ClickHouseQuoteIdentifier(database) + "." + ClickHouseQuoteIdentifier(info.view_name) + " AS " +
+	return sql + ClickHouseQuoteIdentifier(database) + "." + ClickHouseQuoteIdentifier(info.GetViewName().GetIdentifierName()) + " AS " +
 	       select.ToString();
 }
 
@@ -247,9 +266,9 @@ optional_ptr<CatalogEntry> ClickHouseSchemaEntry::CreateView(CatalogTransaction 
 	RunClickHouseDDL(GetClickHouseCatalog(), GetCreateViewSQL(database, info));
 	{
 		std::lock_guard<std::mutex> l(tables_lock);
-		RetireTableLocked(info.view_name);
+		RetireTableLocked(info.GetViewName().GetIdentifierName());
 	}
-	return &GetOrCreateTableEntry(info.view_name);
+	return &GetOrCreateTableEntry(info.GetViewName().GetIdentifierName());
 }
 
 optional_ptr<CatalogEntry> ClickHouseSchemaEntry::CreateSequence(CatalogTransaction transaction,
@@ -286,31 +305,31 @@ void ClickHouseSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &inf
 		throw NotImplementedException("ClickHouse: only ALTER TABLE is supported");
 	}
 	auto &alter = info.Cast<AlterTableInfo>();
-	string qualified = ClickHouseQuoteIdentifier(database) + "." + ClickHouseQuoteIdentifier(alter.name);
+	string qualified = ClickHouseQuoteIdentifier(database) + "." + ClickHouseQuoteIdentifier(alter.GetQualifiedName().Name().GetIdentifierName());
 
 	string sql;
 	switch (alter.alter_table_type) {
 	case AlterTableType::RENAME_TABLE: {
 		auto &rename = alter.Cast<RenameTableInfo>();
 		sql = "RENAME TABLE " + qualified + " TO " + ClickHouseQuoteIdentifier(database) + "." +
-		      ClickHouseQuoteIdentifier(rename.new_table_name);
+		      ClickHouseQuoteIdentifier(rename.new_table_name.GetIdentifierName());
 		break;
 	}
 	case AlterTableType::RENAME_COLUMN: {
 		auto &rename = alter.Cast<RenameColumnInfo>();
-		sql = "ALTER TABLE " + qualified + " RENAME COLUMN " + ClickHouseQuoteIdentifier(rename.old_name) + " TO " +
-		      ClickHouseQuoteIdentifier(rename.new_name);
+		sql = "ALTER TABLE " + qualified + " RENAME COLUMN " + ClickHouseQuoteIdentifier(rename.old_name.GetIdentifierName()) + " TO " +
+		      ClickHouseQuoteIdentifier(rename.new_name.GetIdentifierName());
 		break;
 	}
 	case AlterTableType::ADD_COLUMN: {
 		auto &add = alter.Cast<AddColumnInfo>();
-		sql = "ALTER TABLE " + qualified + " ADD COLUMN " + ClickHouseQuoteIdentifier(add.new_column.GetName()) + " " +
+		sql = "ALTER TABLE " + qualified + " ADD COLUMN " + ClickHouseQuoteIdentifier(add.new_column.GetName().GetIdentifierName()) + " " +
 		      LogicalTypeToClickHouseType(add.new_column.GetType(), true);
 		break;
 	}
 	case AlterTableType::REMOVE_COLUMN: {
 		auto &remove = alter.Cast<RemoveColumnInfo>();
-		sql = "ALTER TABLE " + qualified + " DROP COLUMN " + ClickHouseQuoteIdentifier(remove.removed_column);
+		sql = "ALTER TABLE " + qualified + " DROP COLUMN " + ClickHouseQuoteIdentifier(remove.removed_column.GetIdentifierName());
 		break;
 	}
 	default:
@@ -319,7 +338,7 @@ void ClickHouseSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &inf
 
 	RunClickHouseDDL(GetClickHouseCatalog(), sql);
 	std::lock_guard<std::mutex> l(tables_lock);
-	RetireTableLocked(alter.name);
+	RetireTableLocked(alter.GetQualifiedName().Name().GetIdentifierName());
 }
 
 ClickHouseTableEntry &ClickHouseSchemaEntry::LoadTableEntry(const string &table_name) {
@@ -327,17 +346,17 @@ ClickHouseTableEntry &ClickHouseSchemaEntry::LoadTableEntry(const string &table_
 	auto &params = clickhouse_catalog.GetConnectionParams();
 
 	CreateTableInfo create_info;
-	create_info.schema = name;
-	create_info.table = table_name;
+	create_info.SetSchema(Identifier(name));
+	create_info.SetName(Identifier(table_name));
 
 	// PK columns from the engine's own metadata. ClickHouse's primary key is the
 	// MergeTree sorting prefix -- not a uniqueness constraint -- but it is the
 	// stable lookup key serenedb keys an inverted index on (PkSpec::ExternalDBKey).
-	vector<string> pk_columns;
+	vector<Identifier> pk_columns;
 	vector<string> clickhouse_types;
 	vector<bool> stringified_columns;
 	{
-		string sql = "SELECT name, type, is_in_primary_key FROM system.columns WHERE database = " +
+		string sql = "SELECT name, type, is_in_primary_key, default_kind, default_expression FROM system.columns WHERE database = " +
 		             ClickHouseStringLiteral(database) + " AND table = " + ClickHouseStringLiteral(table_name) +
 		             " ORDER BY position";
 		auto conn = clickhouse_catalog.OpenConnection();
@@ -351,6 +370,8 @@ ClickHouseTableEntry &ClickHouseSchemaEntry::LoadTableEntry(const string &table_
 				auto names = block[0]->As<clickhouse::ColumnString>();
 				auto types = block[1]->As<clickhouse::ColumnString>();
 				auto in_pk = block[2]->As<clickhouse::ColumnUInt8>();
+				auto def_kinds = block.GetColumnCount() > 4 ? block[3]->As<clickhouse::ColumnString>() : nullptr;
+				auto def_exprs = block.GetColumnCount() > 4 ? block[4]->As<clickhouse::ColumnString>() : nullptr;
 				for (size_t row = 0; row < block.GetRowCount(); row++) {
 					string column_name(names->At(row));
 					string type_str(types->At(row));
@@ -365,11 +386,34 @@ ClickHouseTableEntry &ClickHouseSchemaEntry::LoadTableEntry(const string &table_
 						logical_type = LogicalType::VARCHAR;
 						needs_to_string = true;
 					}
-					create_info.columns.AddColumn(ColumnDefinition(column_name, std::move(logical_type)));
+					ColumnDefinition column(Identifier(column_name), std::move(logical_type));
+					// Since the binder materialises INSERT defaults client-side (the
+					// input-projection rework), an omitted column no longer reaches the
+					// server as "missing" -- surface the remote DEFAULT expression on the
+					// column so the projection evaluates it. A ClickHouse-dialect default
+					// DuckDB cannot parse degrades to NULL for omitted columns.
+					if (def_kinds && def_exprs && string(def_kinds->At(row)) == "DEFAULT") {
+						string default_expr(def_exprs->At(row));
+						if (!default_expr.empty()) {
+							try {
+								auto expressions = Parser::ParseExpressionList(default_expr);
+								// Constants only: a ClickHouse-dialect function default
+								// (today(), toDecimal128(...)) neither parses nor binds as
+								// DuckDB SQL; dropping it means an omitted column fills with
+								// NULL instead of failing the INSERT at bind.
+								if (!expressions.empty() &&
+								    expressions[0]->GetExpressionClass() == ExpressionClass::CONSTANT) {
+									column.SetDefaultValue(std::move(expressions[0]));
+								}
+							} catch (...) {
+							}
+						}
+					}
+					create_info.columns.AddColumn(std::move(column));
 					clickhouse_types.push_back(type_str);
 					stringified_columns.push_back(needs_to_string);
 					if (in_pk && in_pk->At(row) != 0) {
-						pk_columns.push_back(column_name);
+						pk_columns.push_back(Identifier(column_name));
 					}
 				}
 			});
@@ -475,10 +519,10 @@ void ClickHouseSchemaEntry::DropEntry(ClientContext &context, DropInfo &info) {
 		throw NotImplementedException("ClickHouse: cannot drop entry of this type");
 	}
 	const char *kind = info.type == CatalogType::VIEW_ENTRY ? "VIEW" : "TABLE";
-	string sql = string("DROP ") + kind + " IF EXISTS " + ClickHouseQuoteIdentifier(database) + "." + ClickHouseQuoteIdentifier(info.name);
+	string sql = string("DROP ") + kind + " IF EXISTS " + ClickHouseQuoteIdentifier(database) + "." + ClickHouseQuoteIdentifier(info.GetQualifiedName().Name().GetIdentifierName());
 	RunClickHouseDDL(GetClickHouseCatalog(), sql);
 	std::lock_guard<std::mutex> l(tables_lock);
-	RetireTableLocked(info.name);
+	RetireTableLocked(info.GetQualifiedName().Name().GetIdentifierName());
 }
 
 optional_ptr<CatalogEntry> ClickHouseSchemaEntry::LookupEntry(CatalogTransaction transaction,

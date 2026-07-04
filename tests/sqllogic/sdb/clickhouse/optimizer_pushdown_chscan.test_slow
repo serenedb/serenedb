@@ -25,20 +25,13 @@ query
 EXPLAIN SELECT id FROM chl.chtest.vedernikoff LIMIT 3;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│           Table:          │
-│     chtest.vedernikoff    │
-│                           │
-│   Pushed Limit: LIMIT 3   │
-│      Projections: id      │
-│                           │
-│          ~6 rows          │
-└───────────────────────────┘
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.vedernikoff          │
+│ Pushed Limit: LIMIT 3              │
+│ Projections: id                    │
+│ ~6 rows                            │
+╰────────────────────────────────────╯
 
 query
 SELECT count(*) AS n FROM (SELECT id FROM chl.chtest.vedernikoff LIMIT 3);
@@ -51,22 +44,13 @@ query
 EXPLAIN SELECT id FROM chl.chtest.vedernikoff LIMIT 100;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│           Table:          │
-│     chtest.vedernikoff    │
-│                           │
-│       Pushed Limit:       │
-│         LIMIT 100         │
-│                           │
-│      Projections: id      │
-│                           │
-│          ~6 rows          │
-└───────────────────────────┘
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.vedernikoff          │
+│ Pushed Limit: LIMIT 100            │
+│ Projections: id                    │
+│ ~6 rows                            │
+╰────────────────────────────────────╯
 
 query
 SELECT count(*) AS n FROM (SELECT id FROM chl.chtest.vedernikoff LIMIT 100);
@@ -79,22 +63,13 @@ query
 EXPLAIN SELECT id FROM chl.chtest.vedernikoff LIMIT 10 OFFSET 4;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│           Table:          │
-│     chtest.vedernikoff    │
-│                           │
-│       Pushed Limit:       │
-│     LIMIT 10 OFFSET 4     │
-│                           │
-│      Projections: id      │
-│                           │
-│          ~6 rows          │
-└───────────────────────────┘
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.vedernikoff          │
+│ Pushed Limit: LIMIT 10 OFFSET 4    │
+│ Projections: id                    │
+│ ~6 rows                            │
+╰────────────────────────────────────╯
 
 query
 SELECT count(*) AS n FROM (SELECT id FROM chl.chtest.vedernikoff LIMIT 10 OFFSET 4);
@@ -107,23 +82,13 @@ query
 EXPLAIN SELECT id, val FROM chl.chtest.vedernikoff LIMIT 2;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│           Table:          │
-│     chtest.vedernikoff    │
-│                           │
-│   Pushed Limit: LIMIT 2   │
-│                           │
-│        Projections:       │
-│             id            │
-│            val            │
-│                           │
-│          ~6 rows          │
-└───────────────────────────┘
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.vedernikoff          │
+│ Pushed Limit: LIMIT 2              │
+│ Projections: id, val               │
+│ ~6 rows                            │
+╰────────────────────────────────────╯
 
 query
 SELECT count(*) AS n FROM (SELECT id, val FROM chl.chtest.vedernikoff LIMIT 2);
@@ -141,37 +106,20 @@ query
 EXPLAIN SELECT id FROM chl.chtest.vedernikoff ORDER BY id LIMIT 3;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           TOP_N           │
-│    ────────────────────   │
-│           Top: 3          │
-│                           │
-│         Order By:         │
-│     vedernikoff.id ASC    │
-│                           │
-│          ~3 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│           Table:          │
-│     chtest.vedernikoff    │
-│                           │
-│       Pushed Order:       │
-│  ORDER BY `id` ASC NULLS  │
-│        LAST LIMIT 3       │
-│                           │
-│      Projections: id      │
-│                           │
-│          Filters:         │
-│ optional: Dynamic Filter  │
-│            (id)           │
-│                           │
-│          ~6 rows          │
-└───────────────────────────┘
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 3                                 │
+│ Order By: vedernikoff.id ASC           │
+│ ~3 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN     │
+│ Table: chtest.vedernikoff              │
+│ Pushed Order:                          │
+│ ORDER BY `id` ASC NULLS LAST LIMIT 3   │
+│ Projections: id                        │
+│ Filters: optional: Dynamic Filter (id) │
+│ ~6 rows                                │
+╰────────────────────────────────────────╯
 
 query
 SELECT id FROM chl.chtest.vedernikoff ORDER BY id LIMIT 3;
@@ -187,27 +135,17 @@ query
 EXPLAIN SELECT id FROM chl.chtest.vedernikoff WHERE id > 3 LIMIT 2;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│      STREAMING_LIMIT      │
-│    ────────────────────   │
-│          Limit: 2         │
-│                           │
-│          ~0 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│    ────────────────────   │
-│         Function:         │
-│  CLICKHOUSE_SCAN_PUSHDOWN │
-│                           │
-│           Table:          │
-│     chtest.vedernikoff    │
-│                           │
-│      Projections: id      │
-│     Filters: (id > 3)     │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ STREAMING_LIMIT ──────────────────╮
+│ Limit: 2                           │
+│ ~0 rows                            │
+╰──────────────────┬─────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.vedernikoff          │
+│ Projections: id                    │
+│ Filters: id > 3                    │
+│ ~1 row                             │
+╰────────────────────────────────────╯
 
 query
 SELECT count(*) AS n FROM (SELECT id FROM chl.chtest.vedernikoff WHERE id > 3 LIMIT 2);

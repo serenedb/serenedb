@@ -46,15 +46,15 @@ bool ClickHouseTableEntry::TryGetRowIdColumn(string &result) const {
 		}
 		string column_name;
 		if (unique.HasIndex()) {
-			column_name = GetColumns().GetColumn(unique.GetIndex()).GetName();
+			column_name = GetColumns().GetColumn(unique.GetIndex()).GetName().GetIdentifierName();
 		} else {
 			auto &names = unique.GetColumnNames();
 			if (names.size() != 1) {
 				return false;
 			}
-			column_name = names[0];
+			column_name = names[0].GetIdentifierName();
 		}
-		auto &col = GetColumns().GetColumn(column_name);
+		auto &col = GetColumns().GetColumn(Identifier(column_name));
 		if (IsRowIdInteger(col.GetType())) {
 			result = column_name;
 			return true;

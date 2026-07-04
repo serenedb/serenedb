@@ -55,8 +55,11 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
   const auto& ref = *_fast_path.catalog_ref;
 
   auto& entry =
-    duckdb::Catalog::GetEntry(context, duckdb::CatalogType::TABLE_ENTRY,
-                              ref.catalog, ref.schema, ref.table)
+    duckdb::Catalog::GetEntry(
+      context, duckdb::CatalogType::TABLE_ENTRY,
+      duckdb::QualifiedName(duckdb::Identifier(ref.catalog),
+                            duckdb::Identifier(ref.schema),
+                            duckdb::Identifier(ref.table)))
       .Cast<duckdb::TableCatalogEntry>();
   auto names = entry.GetColumns().GetColumnNames();
   auto types = entry.GetColumns().GetColumnTypes();

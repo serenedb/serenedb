@@ -60,7 +60,7 @@ std::pair<std::vector<std::string>, std::vector<std::string>> SplitOptions(
   keys.reserve(options.size());
   values.reserve(options.size());
   for (const auto& [key, value] : options) {
-    keys.push_back(absl::AsciiStrToLower(key));
+    keys.push_back(absl::AsciiStrToLower(key.GetIdentifierName()));
     values.push_back(value.ToString());
   }
   return {std::move(keys), std::move(values)};

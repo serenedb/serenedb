@@ -71,20 +71,20 @@ static string TransformExpressionSubject(const string &column_name, const Expres
 	case ExpressionClass::BOUND_FUNCTION: {
 		auto &func = expr.Cast<BoundFunctionExpression>();
 		idx_t child_idx;
-		if (!TryGetStructExtractChildIndex(func, child_idx) || func.children.empty()) {
+		if (!TryGetStructExtractChildIndex(func, child_idx) || func.GetChildren().empty()) {
 			return string();
 		}
-		auto parent_name = TransformExpressionSubject(column_name, *func.children[0]);
+		auto parent_name = TransformExpressionSubject(column_name, *func.GetChildren()[0]);
 		if (parent_name.empty()) {
 			return string();
 		}
-		auto &struct_type = func.children[0]->GetReturnType();
+		auto &struct_type = func.GetChildren()[0]->GetReturnType();
 		if (struct_type.id() != LogicalTypeId::STRUCT || StructType::IsUnnamed(struct_type)) {
 			return string();
 		}
 		// ClickHouse addresses Tuple fields as tupleElement(col, 'name').
 		return "tupleElement(" + parent_name + ", " +
-		       ClickHouseStringLiteral(StructType::GetChildName(struct_type, child_idx)) + ")";
+		       ClickHouseStringLiteral(StructType::GetChildName(struct_type, child_idx).GetIdentifierName()) + ")";
 	}
 	default:
 		return string();
@@ -138,11 +138,11 @@ static string TransformExpression(const string &column_name, const Expression &e
 		auto subject = TransformExpressionSubject(column_name, left);
 		const Value *constant = nullptr;
 		if (!subject.empty() && right.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT) {
-			constant = &right.Cast<BoundConstantExpression>().value;
+			constant = &right.Cast<BoundConstantExpression>().GetValue();
 		} else {
 			subject = TransformExpressionSubject(column_name, right);
 			if (!subject.empty() && left.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT) {
-				constant = &left.Cast<BoundConstantExpression>().value;
+				constant = &left.Cast<BoundConstantExpression>().GetValue();
 				comparison_type = FlipComparisonExpression(comparison_type);
 			}
 		}
@@ -157,16 +157,16 @@ static string TransformExpression(const string &column_name, const Expression &e
 		auto &conjunction = expr.Cast<BoundConjunctionExpression>();
 		switch (conjunction.GetExpressionType()) {
 		case ExpressionType::CONJUNCTION_AND:
-			return CreateExpression(column_name, conjunction.children, "AND", column_id, exact);
+			return CreateExpression(column_name, conjunction.GetChildren(), "AND", column_id, exact);
 		case ExpressionType::CONJUNCTION_OR:
-			return CreateExpression(column_name, conjunction.children, "OR", column_id, exact);
+			return CreateExpression(column_name, conjunction.GetChildren(), "OR", column_id, exact);
 		default:
 			return string();
 		}
 	}
 	case ExpressionClass::BOUND_OPERATOR: {
 		auto &op = expr.Cast<BoundOperatorExpression>();
-		auto subject = op.children.empty() ? string() : TransformExpressionSubject(column_name, *op.children[0]);
+		auto subject = op.GetChildren().empty() ? string() : TransformExpressionSubject(column_name, *op.GetChildren()[0]);
 		switch (op.GetExpressionType()) {
 		case ExpressionType::OPERATOR_IS_NULL:
 			return !subject.empty() ? subject + " IS NULL" : string();
@@ -177,14 +177,14 @@ static string TransformExpression(const string &column_name, const Expression &e
 				return string();
 			}
 			string in_list;
-			for (idx_t i = 1; i < op.children.size(); i++) {
-				if (op.children[i]->GetExpressionClass() != ExpressionClass::BOUND_CONSTANT) {
+			for (idx_t i = 1; i < op.GetChildren().size(); i++) {
+				if (op.GetChildren()[i]->GetExpressionClass() != ExpressionClass::BOUND_CONSTANT) {
 					return string();
 				}
 				if (!in_list.empty()) {
 					in_list += ", ";
 				}
-				auto &constant = op.children[i]->Cast<BoundConstantExpression>().value;
+				auto &constant = op.GetChildren()[i]->Cast<BoundConstantExpression>().GetValue();
 				if (constant.IsNull()) {
 					// NULL in an IN list: keep the whole filter local (correct
 					// three-valued semantics) rather than push "IN (NULL)".
@@ -212,14 +212,14 @@ static string TransformExpression(const string &column_name, const Expression &e
 		// Failures inside an advisory wrapper never affect correctness, so exactness is
 		// tracked with a throwaway flag.
 		bool optional_exact = true;
-		if (func.function.GetName() == OptionalFilterScalarFun::NAME && func.bind_info) {
-			auto &data = func.bind_info->Cast<OptionalFilterFunctionData>();
+		if (func.Function().GetName() == OptionalFilterScalarFun::NAME && func.BindInfo()) {
+			auto &data = func.BindInfo()->Cast<OptionalFilterFunctionData>();
 			return data.child_filter_expr
 			           ? TransformExpression(column_name, *data.child_filter_expr, column_id, optional_exact)
 			           : string();
 		}
-		if (func.function.GetName() == SelectivityOptionalFilterScalarFun::NAME && func.bind_info) {
-			auto &data = func.bind_info->Cast<SelectivityOptionalFilterFunctionData>();
+		if (func.Function().GetName() == SelectivityOptionalFilterScalarFun::NAME && func.BindInfo()) {
+			auto &data = func.BindInfo()->Cast<SelectivityOptionalFilterFunctionData>();
 			return data.child_filter_expr
 			           ? TransformExpression(column_name, *data.child_filter_expr, column_id, optional_exact)
 			           : string();

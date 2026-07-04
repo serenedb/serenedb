@@ -39,7 +39,7 @@ namespace {}  // namespace
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgUserMapping>::GetTableData() {
-  auto catalog = _config.EnsureCatalogSnapshot();
+  auto catalog = _config.CatalogSnapshot();
   const auto database_id = GetDatabaseId();
 
   std::vector<PgUserMapping> values;

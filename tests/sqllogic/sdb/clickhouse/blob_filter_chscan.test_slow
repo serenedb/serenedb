@@ -1,33 +1,36 @@
 control substitution on
 
 # BLOB filter pushdown: a binary constant is rendered as ClickHouse unhex('..')
-# so equality/IN predicates on a FixedString/String-as-bytes column match
-# exactly. (val.ToString() would hex-escape the bytes as TEXT and never match,
-# so before the fix these queries returned 0 / the wrong rows.) Fixture
+# so equality/IN predicates on a bytes column match exactly (val.ToString()
+# would hex-escape the bytes as TEXT and never match). A BLOB-typed comparison
+# needs a BLOB-typed column: since the binder folds a BLOB constant compared
+# against a VARCHAR column into its hex-escaped TEXT form, the predicate only
+# stays binary under ch_binary_as_blob (String/FixedString read as BLOB), which
+# applies on the clickhouse_query path (re-described per query). Fixture
 # chtest.types_all: c_fixedstr FixedString(4) with values 'abcd' (c_uint8=1) and
 # 'wxyz' (c_uint8=2).
 
 statement ok
-ATTACH 'host=${CHHOST} port=${CHPORT} database=chtest' AS chb (TYPE clickhouse);
+SET SESSION ch_binary_as_blob = true;
 
 query
-SELECT count(*) AS n FROM chb.chtest.types_all WHERE c_fixedstr = 'abcd'::BLOB;
+SELECT count(*) AS n FROM clickhouse_query('host=${CHHOST} port=${CHPORT} user=default', 'SELECT c_uint8, c_fixedstr FROM chtest.types_all') WHERE c_fixedstr = 'abcd'::BLOB;
 ----
 n
 1
 
 query
-SELECT count(*) AS n FROM chb.chtest.types_all WHERE c_fixedstr = 'zzzz'::BLOB;
+SELECT count(*) AS n FROM clickhouse_query('host=${CHHOST} port=${CHPORT} user=default', 'SELECT c_uint8, c_fixedstr FROM chtest.types_all') WHERE c_fixedstr = 'zzzz'::BLOB;
 ----
 n
 0
 
 query
-SELECT c_uint8 FROM chb.chtest.types_all WHERE c_fixedstr IN ('abcd'::BLOB, 'wxyz'::BLOB) ORDER BY c_uint8;
+SELECT c_uint8 FROM clickhouse_query('host=${CHHOST} port=${CHPORT} user=default', 'SELECT c_uint8, c_fixedstr FROM chtest.types_all') WHERE c_fixedstr IN ('abcd'::BLOB, 'wxyz'::BLOB) ORDER BY c_uint8;
 ----
 c_uint8
 1
 2
 
 statement ok
-DETACH chb;
+SET SESSION ch_binary_as_blob = false;

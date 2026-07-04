@@ -87,7 +87,7 @@ unique_ptr<GlobalSinkState> ClickHouseInsert::GetGlobalSinkState(ClientContext &
 	auto indexes = GetInsertColumnIndexes(*this, *insert_table);
 	auto &columns = insert_table->GetColumns();
 	for (auto col_index : indexes) {
-		result->column_names.push_back(columns.GetColumn(LogicalIndex(col_index)).GetName());
+		result->column_names.push_back(columns.GetColumn(LogicalIndex(col_index)).GetName().GetIdentifierName());
 		if (col_index >= insert_table->clickhouse_types.size()) {
 			throw InternalException("ClickHouse INSERT: column index out of range for type metadata");
 		}
@@ -153,7 +153,7 @@ string ClickHouseInsert::GetName() const {
 
 InsertionOrderPreservingMap<string> ClickHouseInsert::ParamsToString() const {
 	InsertionOrderPreservingMap<string> result;
-	result["Table Name"] = table ? table->name : info->Base().table;
+	result["Table Name"] = table ? table->name.GetIdentifierName() : info->Base().GetTableName().GetIdentifierName();
 	return result;
 }
 

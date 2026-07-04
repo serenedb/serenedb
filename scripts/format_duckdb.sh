@@ -27,7 +27,7 @@ set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 THIRD_PARTY="$REPO_ROOT/third_party"
-SUBMODULES=(duckdb duckdb_avro duckdb_httpfs duckdb_iceberg)
+SUBMODULES=(duckdb duckdb_avro duckdb_inet duckdb_httpfs duckdb_iceberg duckdb_postgres database-connector)
 # Track duckdb's own CI (CheckIssueForCodeFormatting.yml uses Python 3.12).
 IMAGE="python:3.12-slim"
 

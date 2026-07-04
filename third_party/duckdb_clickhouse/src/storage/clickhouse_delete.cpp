@@ -11,6 +11,8 @@
 #include <clickhouse/client.h>
 #include <clickhouse/exceptions.h>
 
+#include <unordered_set>
+
 namespace duckdb {
 
 ClickHouseDelete::ClickHouseDelete(PhysicalPlan &physical_plan, LogicalOperator &op, TableCatalogEntry &table,
@@ -28,33 +30,12 @@ public:
 	}
 
 	ClickHouseTableEntry &table;
-	string id_list;
+	//! Rowid of every matched row, buffered until Finalize. A single mutation keeps the
+	//! statement atomic, and the shared-key coverage guard must see ALL matched rows at
+	//! once -- per-batch verification would falsely refuse a key whose rows straddle a
+	//! batch boundary.
+	vector<int64_t> ids;
 	idx_t delete_count;
-	//! Number of rowids currently accumulated in id_list (its element count), for the
-	//! shared-key coverage guard.
-	idx_t id_count = 0;
-
-	void Flush(ClientContext &context) {
-		if (id_list.empty()) {
-			return;
-		}
-		auto &transaction = ClickHouseTransaction::Get(context, table.catalog);
-		auto &connection = transaction.GetConnection();
-		// Guard against deleting rows that merely share a (non-unique) key value.
-		VerifyRowIdCoverage(connection, table.database, table.table, pk_column, id_list, id_count, "DELETE");
-		string sql = "ALTER TABLE " + ClickHouseQuoteIdentifier(table.database) + "." +
-		             ClickHouseQuoteIdentifier(table.table) + " DELETE WHERE " +
-		             ClickHouseQuoteIdentifier(pk_column) + " IN (" + id_list + ") SETTINGS mutations_sync = 1";
-		try {
-			ClickHouseConnection::LogQuery(sql);
-			connection.GetClient().Execute(sql);
-		} catch (const clickhouse::Error &e) {
-			throw IOException("ClickHouse error during DELETE: %s", e.what());
-		}
-		id_list = "";
-		id_count = 0;
-	}
-
 	string pk_column;
 };
 
@@ -75,14 +56,7 @@ SinkResultType ClickHouseDelete::Sink(ExecutionContext &context, DataChunk &chun
 	auto &row_identifiers = chunk.data[row_id_index];
 	auto row_data = FlatVector::GetData<int64_t>(row_identifiers);
 	for (idx_t i = 0; i < chunk.size(); i++) {
-		if (!gstate.id_list.empty()) {
-			gstate.id_list += ",";
-		}
-		gstate.id_list += to_string(row_data[i]);
-		gstate.id_count++;
-		if (gstate.id_list.size() > 1000000) {
-			gstate.Flush(context.client);
-		}
+		gstate.ids.push_back(row_data[i]);
 	}
 	gstate.delete_count += chunk.size();
 	return SinkResultType::NEED_MORE_INPUT;
@@ -94,7 +68,41 @@ SinkResultType ClickHouseDelete::Sink(ExecutionContext &context, DataChunk &chun
 SinkFinalizeType ClickHouseDelete::Finalize(Pipeline &pipeline, Event &event, ClientContext &context,
                                             OperatorSinkFinalizeInput &input) const {
 	auto &gstate = input.global_state.Cast<ClickHouseDeleteGlobalState>();
-	gstate.Flush(context);
+	if (gstate.ids.empty()) {
+		return SinkFinalizeType::READY;
+	}
+
+	// Deleting by key removes every row of that key, so duplicate occurrences (rows
+	// sharing a non-unique key) collapse into one IN entry; the coverage guard still
+	// compares against the pre-dedup matched-row count.
+	unordered_set<int64_t> seen;
+	string id_list;
+	for (auto id : gstate.ids) {
+		if (!seen.insert(id).second) {
+			continue;
+		}
+		if (!id_list.empty()) {
+			id_list += ",";
+		}
+		id_list += to_string(id);
+	}
+
+	auto &transaction = ClickHouseTransaction::Get(context, gstate.table.catalog);
+	auto &connection = transaction.GetConnection();
+	// Guard against deleting rows that merely share a (non-unique) key value. Very
+	// large id lists can exceed the server's max_query_size -- a loud error
+	// (per-statement settings would lift it).
+	VerifyRowIdCoverage(connection, gstate.table.database, gstate.table.table, gstate.pk_column, id_list, seen.size(),
+	                    "DELETE");
+	string sql = "ALTER TABLE " + ClickHouseQuoteIdentifier(gstate.table.database) + "." +
+	             ClickHouseQuoteIdentifier(gstate.table.table) + " DELETE WHERE " +
+	             ClickHouseQuoteIdentifier(gstate.pk_column) + " IN (" + id_list + ") SETTINGS mutations_sync = 1";
+	try {
+		ClickHouseConnection::LogQuery(sql);
+		connection.GetClient().Execute(sql);
+	} catch (const clickhouse::Error &e) {
+		ClickHouseConnection::ThrowError("during DELETE", sql, e);
+	}
 	return SinkFinalizeType::READY;
 }
 

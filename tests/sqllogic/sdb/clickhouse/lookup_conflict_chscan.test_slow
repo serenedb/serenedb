@@ -1,0 +1,122 @@
+control substitution on
+
+# WITH (on_conflict = 'throw' | 'nothing') -- duplicate lookup-key policy for
+# inverted indexes over ATTACHed external-DB tables. The index re-fetches
+# matched rows by the key VALUE (`WHERE pk IN (...)`), which needs one row per
+# key. A ClickHouse "primary key" is only the MergeTree sorting prefix, NOT a
+# uniqueness constraint, so:
+#   throw (default)  -- probe the source at CREATE INDEX time; refuse the build
+#                       on the first duplicated key value.
+#   nothing          -- index the FIRST row seen per key, drop the rest (which
+#                       row survives follows scan arrival order).
+# Unique attach/object names (choc*) to stay clear of parallel _chscan files.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS choc (TYPE clickhouse);
+
+statement ok
+DROP TABLE IF EXISTS choc.default.oc;
+
+statement ok
+CREATE TABLE choc.default.oc (id BIGINT PRIMARY KEY, val VARCHAR);
+
+# id=1 is duplicated (identical payload, so every assertion below stays
+# deterministic no matter which row survives a collapse); 2 and 3 are unique.
+statement ok
+INSERT INTO choc.default.oc VALUES (1, 'apple pie'), (1, 'apple pie'), (2, 'banana split'), (3, 'cherry cake');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY choc_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE VIEW choc_v AS SELECT * FROM choc.default.oc;
+
+# Default policy is throw: id=1 appears twice -> the build is refused before
+# any indexing work starts.
+statement error
+CREATE INDEX choc_idx ON choc_v USING inverted(id, val choc_en);
+
+# Explicit throw behaves identically.
+statement error
+CREATE INDEX choc_idx ON choc_v USING inverted(id, val choc_en) WITH (on_conflict = 'throw');
+
+# Unknown policy values are rejected.
+statement error
+CREATE INDEX choc_idx ON choc_v USING inverted(id, val choc_en) WITH (on_conflict = 'update');
+
+# nothing: the build succeeds and keeps exactly one document per key.
+statement ok
+CREATE INDEX choc_idx ON choc_v USING inverted(id, val choc_en) WITH (on_conflict = 'nothing');
+
+# Both id=1 source rows match 'apple', but only one document was indexed.
+query
+SELECT count(*) FROM choc_idx WHERE val @@ ts_phrase('apple');
+----
+count
+1
+
+# Materialisation re-fetches by key; the source still holds TWO id=1 rows, the
+# lookup fills the slot from the first and ignores the sibling.
+query
+SELECT id, val FROM choc_idx WHERE val @@ ts_phrase('apple');
+----
+id	val
+1	apple pie
+
+# Unique keys behave as usual.
+query
+SELECT id, val FROM choc_idx WHERE val @@ ts_phrase('banana') ORDER BY id;
+----
+id	val
+2	banana split
+
+query
+SELECT count(*) FROM choc_idx WHERE val @@ ts_phrase('cherry');
+----
+count
+1
+
+statement ok
+DROP INDEX choc_idx;
+
+# With no duplicates in the table the default (throw) probe passes.
+statement ok
+DROP TABLE choc.default.oc;
+
+statement ok
+CREATE TABLE choc.default.oc (id BIGINT PRIMARY KEY, val VARCHAR);
+
+statement ok
+INSERT INTO choc.default.oc VALUES (2, 'banana split'), (3, 'cherry cake');
+
+statement ok
+CREATE INDEX choc_idx2 ON choc_v USING inverted(id, val choc_en);
+
+query
+SELECT id, val FROM choc_idx2 WHERE val @@ ts_phrase('cherry') ORDER BY id;
+----
+id	val
+3	cherry cake
+
+statement ok
+DROP INDEX choc_idx2;
+
+statement ok
+DROP VIEW choc_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY choc_en;
+
+statement ok
+DROP TABLE choc.default.oc;
+
+statement ok
+DETACH choc;

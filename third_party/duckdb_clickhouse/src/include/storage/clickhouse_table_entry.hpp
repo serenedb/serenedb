@@ -12,6 +12,8 @@
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "clickhouse_connection.hpp"
 
+#include <mutex>
+
 namespace duckdb {
 
 class ClickHouseTableEntry : public TableCatalogEntry {
@@ -44,17 +46,23 @@ private:
 	//! Approximate row count from system.tables.total_rows, fetched lazily on the first
 	//! scan and cached for the entry's lifetime (clickhouse_clear_cache rebuilds it).
 	//! row_count_known is false when the server reports NULL (non-MergeTree engines).
+	//! Guarded by row_count_lock: concurrent binds of the same entry race otherwise.
+	std::mutex row_count_lock;
 	idx_t cached_row_count = 0;
 	bool cached_row_count_known = false;
 	bool row_count_fetched = false;
 };
 
-//! Refuse an UPDATE/DELETE that would mutate rows the statement did not target. A
-//! ClickHouse MergeTree ORDER BY key is a sorting prefix, not a uniqueness constraint,
-//! so `WHERE pk IN (id_list)` can match rows that merely share a key value. Counts the
-//! rows the mutation would touch and throws if that exceeds `affected_count` (the rows
-//! actually selected). `id_list` is the comma-joined rowid list; `op` is "UPDATE"/"DELETE".
+//! Refuse an UPDATE/DELETE whose key values are not unique in the table. A ClickHouse
+//! MergeTree ORDER BY key is a sorting prefix, not a uniqueness constraint, so
+//! `WHERE pk IN (id_list)` would mutate every row sharing a key value. Matching the
+//! server row count against the number of MATCHED rows is unsound -- a join
+//! (UPDATE..FROM / DELETE..USING) can emit the same rowid several times, inflating the
+//! matched count until unmatched sibling rows slip through -- so the guard is strict:
+//! the mutation must touch exactly one server row per distinct key. `id_list` is the
+//! comma-joined DEDUPLICATED rowid list, `distinct_keys` its element count; `op` is
+//! "UPDATE"/"DELETE".
 void VerifyRowIdCoverage(ClickHouseConnection &connection, const string &database, const string &table_name,
-                         const string &pk_column, const string &id_list, idx_t affected_count, const char *op);
+                         const string &pk_column, const string &id_list, idx_t distinct_keys, const char *op);
 
 } // namespace duckdb

@@ -86,6 +86,7 @@ TableFunction ClickHouseTableEntry::GetScanFunction(ClientContext &context, uniq
 	// Lazily capture an approximate row count for the optimizer's cardinality estimate.
 	// ifNull(...) keeps the count as a non-null UInt64; the second column flags whether
 	// the server actually knows it (NULL for View / Distributed engines).
+	std::lock_guard<std::mutex> row_count_guard(row_count_lock);
 	if (!row_count_fetched) {
 		row_count_fetched = true;
 		try {
@@ -125,12 +126,13 @@ TableStorageInfo ClickHouseTableEntry::GetStorageInfo(ClientContext &context) {
 }
 
 void VerifyRowIdCoverage(ClickHouseConnection &connection, const string &database, const string &table_name,
-                         const string &pk_column, const string &id_list, idx_t affected_count, const char *op) {
+                         const string &pk_column, const string &id_list, idx_t distinct_keys, const char *op) {
 	if (id_list.empty()) {
 		return;
 	}
-	// How many rows does `pk IN (id_list)` actually match on the server? If that is more
-	// than the rows the statement selected, the shared-key rows would be mutated too.
+	// How many rows does `pk IN (id_list)` match on the server? More than one row per
+	// distinct key means the key is not unique: the mutation would also touch sibling
+	// rows the statement may not have matched (undetectable from here -- see header).
 	string sql = "SELECT count() FROM " + ClickHouseQuoteIdentifier(database) + "." + ClickHouseQuoteIdentifier(table_name) +
 	             " WHERE " + ClickHouseQuoteIdentifier(pk_column) + " IN (" + id_list + ")";
 	ClickHouseConnection::LogQuery(sql);
@@ -148,12 +150,13 @@ void VerifyRowIdCoverage(ClickHouseConnection &connection, const string &databas
 	} catch (const clickhouse::Error &e) {
 		throw IOException("ClickHouse error verifying row identity for %s: %s", op, e.what());
 	}
-	if (table_count > affected_count) {
+	if (table_count > distinct_keys) {
 		throw InvalidInputException(
 		    "Refusing to %s ClickHouse table \"%s\": the key \"%s\" used as the row identifier is not "
 		    "unique (a MergeTree ORDER BY key is a sorting prefix, not a uniqueness constraint), so this "
-		    "statement would %s %llu unintended row(s) sharing a key value. Use a table whose key is unique.",
-		    op, table_name, pk_column, op, static_cast<unsigned long long>(table_count - affected_count));
+		    "statement could %s row(s) sharing a key value that it did not match. Use a table whose key "
+		    "is unique.",
+		    op, table_name, pk_column, op);
 	}
 }
 

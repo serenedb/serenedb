@@ -370,6 +370,8 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       out.pk_spec = catalog::PkSpec::ExternalDBKey;
       out.pk_column_index = *pk_index;
       out.pk_column_name = std::move(*pk_name);
+      out.pk_uniqueness = cat_type == "postgres" ? PkUniqueness::Enforced
+                                                 : PkUniqueness::Unverified;
       out.projection_columns = std::move(projection_columns);
       return out;
     }

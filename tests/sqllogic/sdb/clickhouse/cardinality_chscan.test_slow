@@ -18,6 +18,9 @@ QUERY PLAN
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
 │                           │
+│           Table:          │
+│     chtest.vedernikoff    │
+│                           │
 │      Projections: id      │
 │                           │
 │          ~6 rows          │
@@ -33,6 +36,7 @@ QUERY PLAN
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
 │                           │
+│   Table: chtest.widgets   │
 │      Projections: id      │
 │                           │
 │          ~5 rows          │

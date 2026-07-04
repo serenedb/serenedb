@@ -34,6 +34,10 @@ struct ClickHouseBindData : public FunctionData {
 	vector<bool> stringified;
 	//! Remote LIMIT/OFFSET clause pushed down by ClickHouseOptimizer (empty = none).
 	std::string limit;
+	//! Remote "ORDER BY ... LIMIT n+offset" row reducer annotated by ClickHouseOptimizer
+	//! under a TOP_N that is KEPT in the plan: the local re-sort makes any remote
+	//! ordering discrepancy harmless while the transfer shrinks to limit+offset rows.
+	std::string order_by;
 	//! Column to emit (cast to Int64) for COLUMN_IDENTIFIER_ROW_ID, enabling UPDATE/DELETE.
 	//! Empty when the table has no integer primary key usable as a row identifier.
 	std::string rowid_column;

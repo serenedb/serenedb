@@ -44,8 +44,8 @@ static string TransformComparison(ExpressionType type) {
 	}
 }
 
-static string TransformConstantFilter(const string &column_name, ExpressionType comparison_type, const Value &constant,
-                                      column_t column_id) {
+static string TransformConstantFilter(const string &column_name, ExpressionType comparison_type,
+                                      const Value &constant) {
 	if (constant.IsNull()) {
 		// A NULL constant has three-valued semantics that a textual "col <op> NULL"
 		// predicate gets wrong; keep the filter local instead of pushing it.
@@ -149,7 +149,7 @@ static string TransformExpression(const string &column_name, const Expression &e
 		if (!constant || subject.empty()) {
 			return string();
 		}
-		return TransformConstantFilter(subject, comparison_type, *constant, column_id);
+		return TransformConstantFilter(subject, comparison_type, *constant);
 	}
 
 	switch (expr.GetExpressionClass()) {

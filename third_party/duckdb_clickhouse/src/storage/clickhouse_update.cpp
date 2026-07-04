@@ -86,10 +86,10 @@ SinkFinalizeType ClickHouseUpdate::Finalize(Pipeline &pipeline, Event &event, Cl
 		return SinkFinalizeType::READY;
 	}
 
-	// The rowid key is a MergeTree sorting prefix, not a uniqueness constraint, so the
-	// same id can appear for several matched rows. `CASE pk WHEN id THEN ...` can only
-	// express ONE value per id (the first WHEN wins): dedup occurrences whose rendered
-	// values agree, refuse when they differ -- per-row identities are inexpressible.
+	// The same id can reach the sink several times -- rows sharing a non-unique key, or
+	// one row matched repeatedly through a join (UPDATE .. FROM). The keyed multiIf can
+	// only express ONE value per id: dedup occurrences whose rendered values agree,
+	// refuse when they differ -- per-row identities are inexpressible via the key.
 	unordered_map<int64_t, idx_t> first_occurrence;
 	vector<idx_t> rows;
 	for (idx_t r = 0; r < gstate.ids.size(); r++) {
@@ -139,8 +139,10 @@ SinkFinalizeType ClickHouseUpdate::Finalize(Pipeline &pipeline, Event &event, Cl
 
 	auto &transaction = ClickHouseTransaction::Get(context, gstate.table.catalog);
 	auto &connection = transaction.GetConnection();
-	// Guard against mutating rows that merely share a (non-unique) key value.
-	VerifyRowIdCoverage(connection, gstate.table.database, gstate.table.table, pk_column, id_list, gstate.ids.size(),
+	// Guard against mutating rows that merely share a (non-unique) key value. `rows`
+	// holds one entry per distinct key. Very large id lists can exceed the server's
+	// max_query_size -- a loud error (per-statement settings would lift it).
+	VerifyRowIdCoverage(connection, gstate.table.database, gstate.table.table, pk_column, id_list, rows.size(),
 	                    "UPDATE");
 	try {
 		ClickHouseConnection::LogQuery(sql);

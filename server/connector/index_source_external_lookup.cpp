@@ -18,9 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/index_source_external_db_key.h"
+#include "connector/index_source_external_lookup.h"
 
-#include <cstddef>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -46,7 +45,7 @@ std::string Quote(const std::string& id) {
 
 }  // namespace
 
-ExternalDBKeyIndexSource::ExternalDBKeyIndexSource(
+ExternalLookupIndexSource::ExternalLookupIndexSource(
   duckdb::ClientContext& context, ViewFastPath fast_path,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
@@ -54,9 +53,6 @@ ExternalDBKeyIndexSource::ExternalDBKeyIndexSource(
   : ViewIndexSourceBase{std::move(fast_path)} {
   SDB_ASSERT(_fast_path.catalog_ref);
   const auto& ref = *_fast_path.catalog_ref;
-  _qualified_table =
-    Quote(ref.catalog) + "." + Quote(ref.schema) + "." + Quote(ref.table);
-  _pk_quoted = Quote(_fast_path.pk_column_name);
 
   auto& entry =
     duckdb::Catalog::GetEntry(context, duckdb::CatalogType::TABLE_ENTRY,
@@ -87,21 +83,20 @@ ExternalDBKeyIndexSource::ExternalDBKeyIndexSource(
       return types[source_col];
     });
 
-  // The PK is selected FIRST (column 0), then the projected real columns
-  // (1..N). Keeping the PK at a fixed leading index avoids an offset bug when
-  // no real columns are projected (the list would otherwise start with a "NULL"
-  // placeholder and shift the PK). Only the IN list varies per Materialize()
-  // call, so build the constant prefix once here.
-  std::string select_list = _pk_quoted;
+  // The key is always column 0 of the result; the projected real columns
+  // follow at 1..N. A fixed leading key keeps the layout valid even when no
+  // real column is projected.
+  std::string select_list = Quote(_fast_path.pk_column_name);
   for (const auto& name : select_names) {
     select_list += ", " + Quote(name);
   }
-  _sql_prefix = "SELECT " + select_list + " FROM " + _qualified_table +
-                " WHERE " + _pk_quoted + " IN (";
+  _sql_prefix = "SELECT " + select_list + " FROM " + Quote(ref.catalog) + "." +
+                Quote(ref.schema) + "." + Quote(ref.table) + " WHERE " +
+                Quote(_fast_path.pk_column_name) + " IN (";
   _num_proj_cols = select_names.size();
 }
 
-duckdb::idx_t ExternalDBKeyIndexSource::Materialize(
+duckdb::idx_t ExternalLookupIndexSource::Materialize(
   duckdb::ClientContext& context, PrimaryKeyBatch& batch, duckdb::idx_t start,
   duckdb::idx_t count, duckdb::DataChunk& output) {
   output.SetCardinality(count);
@@ -111,44 +106,35 @@ duckdb::idx_t ExternalDBKeyIndexSource::Materialize(
   auto& pk = std::get<PrimaryKeyI64>(batch);
   SDB_ASSERT(start + count <= pk.rows.size());
 
-  // Map each requested PK value to the output position(s) that asked for it.
-  // ClickHouse's "primary key" is the MergeTree sorting prefix and is NOT
-  // guaranteed unique, so one key may be requested by several positions and the
-  // `WHERE pk IN (...)` re-fetch may return several rows for it; returned rows
-  // are fanned out to the requesting positions in order (best-effort -- with a
-  // truly unique key it is exactly one row per position).
-  containers::FlatHashMap<int64_t, std::vector<duckdb::idx_t>> pos_by_key;
-  pos_by_key.reserve(count);
-  std::string in_list;
+  // Key -> output slots still waiting for their row. One slot per key in the
+  // ordinary case (the build kept one document per key); if a key somehow
+  // reaches the batch twice, all its slots receive the same source row.
+  containers::FlatHashMap<int64_t, std::vector<duckdb::idx_t>> pending;
+  pending.reserve(count);
+  std::string key_list;
   for (duckdb::idx_t i = 0; i < count; ++i) {
     const int64_t key = pk.rows[start + i];
-    auto it = pos_by_key.find(key);
-    if (it == pos_by_key.end()) {
-      it = pos_by_key.emplace(key, std::vector<duckdb::idx_t>{}).first;
-      if (!in_list.empty()) {
-        in_list += ",";
+    auto [it, inserted] = pending.try_emplace(key);
+    if (inserted) {
+      if (!key_list.empty()) {
+        key_list += ",";
       }
-      in_list += std::to_string(key);
+      key_list += std::to_string(key);
     }
     it->second.push_back(i);
   }
 
-  const auto sql = _sql_prefix + in_list + ")";
-
   duckdb::Connection con(*context.db);
-  auto result = con.Query(sql);
+  auto result = con.Query(_sql_prefix + key_list + ")");
   if (result->HasError()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
-      ERR_MSG("external-key materialisation failed: ", result->GetError()));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
+                    ERR_MSG("external lookup failed: ", result->GetError()));
   }
 
   AliasOutput(output);
   _tf_target.SetCardinality(count);
 
-  // Pre-null every real-column slot. Positions whose key the source did not
-  // return -- a row deleted after indexing, or a non-unique key with fewer
-  // source rows than requesting positions -- must read as NULL, never as stale
+  // Slots whose key the source does not return must read NULL, never stale
   // data left in a recycled chunk.
   for (duckdb::idx_t c = 0; c < _num_proj_cols; ++c) {
     for (duckdb::idx_t k = 0; k < count; ++k) {
@@ -156,23 +142,19 @@ duckdb::idx_t ExternalDBKeyIndexSource::Materialize(
     }
   }
 
-  containers::FlatHashMap<int64_t, std::size_t> cursor;
   const auto rows = result->RowCount();
-  for (duckdb::idx_t row = 0; row < rows; ++row) {
+  for (duckdb::idx_t row = 0; row < rows && !pending.empty(); ++row) {
     const auto key = result->GetValue(0, row).GetValue<int64_t>();
-    auto it = pos_by_key.find(key);
-    if (it == pos_by_key.end()) {
+    auto it = pending.find(key);
+    if (it == pending.end()) {
       continue;
     }
-    const auto& positions = it->second;
-    auto& cur = cursor[key];
-    if (cur >= positions.size()) {
-      continue;  // more source rows for this key than positions requested it
+    for (const auto slot : it->second) {
+      for (duckdb::idx_t c = 0; c < _num_proj_cols; ++c) {
+        _tf_target.data[c].SetValue(slot, result->GetValue(c + 1, row));
+      }
     }
-    const auto out_row = positions[cur++];
-    for (duckdb::idx_t c = 0; c < _num_proj_cols; ++c) {
-      _tf_target.data[c].SetValue(out_row, result->GetValue(c + 1, row));
-    }
+    pending.erase(it);
   }
 
   RunCastPass(output, count);

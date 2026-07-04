@@ -60,8 +60,19 @@ void ClickHouseCatalog::ReturnConnection(ClickHouseConnection connection) {
 }
 
 optional_ptr<CatalogEntry> ClickHouseCatalog::CreateSchema(CatalogTransaction transaction, CreateSchemaInfo &info) {
+	if (info.on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
+		// Replacing a database silently drops every table in it and ClickHouse has no
+		// atomic OR REPLACE DATABASE -- require an explicit DROP instead.
+		throw NotImplementedException("CREATE OR REPLACE SCHEMA is not supported for ClickHouse; DROP it explicitly");
+	}
 	auto connection = OpenConnection();
-	auto sql = "CREATE DATABASE IF NOT EXISTS " + ClickHouseQuoteIdentifier(info.schema);
+	// Conflict handling delegated to ClickHouse: IF NOT EXISTS only when the statement
+	// asked for it; a plain CREATE on an existing database is CH's own loud error.
+	string sql = "CREATE DATABASE ";
+	if (info.on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
+		sql += "IF NOT EXISTS ";
+	}
+	sql += ClickHouseQuoteIdentifier(info.schema);
 	try {
 		ClickHouseConnection::LogQuery(sql);
 		connection.GetClient().Execute(sql);

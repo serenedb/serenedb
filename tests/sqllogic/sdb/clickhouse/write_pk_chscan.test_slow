@@ -311,3 +311,6 @@ DROP TABLE chpk.default.pk_space;
 
 statement ok
 DROP TABLE chpk.default.pk_backtick;
+
+statement ok
+DETACH chpk;

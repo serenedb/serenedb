@@ -79,7 +79,12 @@ CREATE VIEW union_v AS
   UNION ALL SELECT 3, 'pudge plays again';
 
 statement ok
-CREATE INDEX union_idx ON union_v USING inverted(id, body view_idx_en) WITH (pk = 'id');
+CREATE INDEX union_idx ON union_v USING inverted(id, body view_idx_en);
+
+# on_conflict governs duplicate lookup keys for indexes over attached
+# external-DB tables only; a plain view has no external lookup key.
+statement error
+CREATE INDEX union_oc_idx ON union_v USING inverted(id, body view_idx_en) WITH (on_conflict = 'nothing');
 
 query
 SELECT count(*) FROM union_idx WHERE body @@ ts_phrase('pudge');

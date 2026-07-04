@@ -1,0 +1,43 @@
+control substitution on
+
+# UPDATE of DATE / TIMESTAMP / UUID columns. The keyed multiIf assignment has no
+# String<->Date/DateTime/UUID supertype in ClickHouse (NO_COMMON_TYPE), so bare
+# quoted-string literals -- fine in comparisons, which coerce -- broke these UPDATEs.
+# ClickHouseValueLiteral now renders typed casts (toDate32 / toDateTime64 / toUUID),
+# which are exact in both assignment and filter contexts.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chty (TYPE clickhouse);
+
+statement ok
+DROP TABLE IF EXISTS chty.default.ut;
+
+statement ok
+CREATE TABLE chty.default.ut (id BIGINT PRIMARY KEY, d DATE, ts TIMESTAMP, u UUID);
+
+statement ok
+INSERT INTO chty.default.ut VALUES (1, DATE '2020-01-01', TIMESTAMP '2020-01-01 00:00:00', '00000000-0000-0000-0000-000000000001');
+
+statement ok
+UPDATE chty.default.ut
+SET d = DATE '2021-06-19', ts = TIMESTAMP '2021-06-19 12:00:00.123456', u = '00000000-0000-0000-0000-000000000002'
+WHERE id = 1;
+
+query
+SELECT d, ts, u FROM chty.default.ut WHERE id = 1;
+----
+d	ts	u
+2021-06-19	2021-06-19 12:00:00.123456	00000000-0000-0000-0000-000000000002
+
+# The typed literals stay exact in pushed filters too.
+query
+SELECT count(*) AS n FROM chty.default.ut WHERE d = DATE '2021-06-19' AND ts = TIMESTAMP '2021-06-19 12:00:00.123456';
+----
+n
+1
+
+statement ok
+DROP TABLE chty.default.ut;
+
+statement ok
+DETACH chty;

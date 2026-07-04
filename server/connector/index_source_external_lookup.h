@@ -24,7 +24,6 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <span>
 #include <string>
-#include <vector>
 
 #include "catalog/table_options.h"
 #include "connector/index_source.h"
@@ -33,18 +32,23 @@
 
 namespace sdb::connector {
 
-// Materialiser for a view over an attached external-DB table (e.g. ClickHouse)
-// whose PK comes from the engine's own metadata (PkSpec::ExternalDBKey). The
-// index keys postings by the PK column's value; at search time we re-fetch the
-// matched rows engine-agnostically by running
-//   SELECT <projection>, <pk> FROM <catalog>.<schema>.<table> WHERE <pk> IN
-//   (...)
-// through the catalog -- which routes to the connector's own scan + filter
-// pushdown -- and map each returned row back to its output slot by PK. No
-// dependency on the connector extension itself: this is pure DuckDB SQL.
-class ExternalDBKeyIndexSource final : public ViewIndexSourceBase {
+// Point lookup for a view over an attached external-DB table (ClickHouse,
+// postgres) keyed by the table's own primary-key value
+// (PkSpec::ExternalDBKey). Matched rows are re-fetched with
+//   SELECT <pk>, <projection> FROM <catalog>.<schema>.<table>
+//   WHERE <pk> IN (<keys>)
+// -- plain DuckDB SQL through the attached catalog, so the connector's own
+// scan, projection and filter pushdown do the work.
+//
+// CREATE INDEX guarantees at most one indexed document per key value
+// (on_conflict = 'throw' refused duplicates, 'nothing' collapsed them), so
+// each key resolves to one row: the first source row returned for a key fills
+// every output slot that requested it; further rows with the same key --
+// duplicates written after a 'nothing' build, ClickHouse's sorting key is not
+// unique -- are ignored; a key the source no longer has leaves its slots NULL.
+class ExternalLookupIndexSource final : public ViewIndexSourceBase {
  public:
-  ExternalDBKeyIndexSource(
+  ExternalLookupIndexSource(
     duckdb::ClientContext& context, ViewFastPath fast_path,
     std::span<const duckdb::idx_t> projected_columns,
     std::span<const duckdb::LogicalType> projected_types,
@@ -60,13 +64,9 @@ class ExternalDBKeyIndexSource final : public ViewIndexSourceBase {
                             duckdb::DataChunk& output) final;
 
  private:
-  // Quoted "catalog"."schema"."table" and the quoted PK column name.
-  std::string _qualified_table;
-  std::string _pk_quoted;
-  // Cached "SELECT <pk>, <cols> FROM <table> WHERE <pk> IN (" -- everything but
-  // the per-call IN list, which is all that varies between Materialize() calls.
+  // "SELECT <pk>, <cols> FROM <table> WHERE <pk> IN (" -- constant across
+  // Materialize() calls; only the key list varies.
   std::string _sql_prefix;
-  // Number of projected real columns (scratch columns, in _tf_target order).
   duckdb::idx_t _num_proj_cols = 0;
 };
 

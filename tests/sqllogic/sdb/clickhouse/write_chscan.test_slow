@@ -102,3 +102,6 @@ DROP TABLE chwr.default.wr_anchin;
 
 statement ok
 DROP TABLE chwr.default.wr_pudge;
+
+statement ok
+DETACH chwr;

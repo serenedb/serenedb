@@ -113,7 +113,18 @@ static string GetCreateTableSQL(const string &database, CreateTableInfo &info) {
 		return false;
 	};
 
-	string sql = "CREATE TABLE " + ClickHouseQuoteIdentifier(database) + "." + ClickHouseQuoteIdentifier(info.table) + " (";
+	// Conflict handling is delegated to ClickHouse: OR REPLACE / IF NOT EXISTS are
+	// atomic server-side, where a client-side probe/drop sequence is racy and costs
+	// extra round-trips.
+	string sql = "CREATE ";
+	if (info.on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
+		sql += "OR REPLACE ";
+	}
+	sql += "TABLE ";
+	if (info.on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
+		sql += "IF NOT EXISTS ";
+	}
+	sql += ClickHouseQuoteIdentifier(database) + "." + ClickHouseQuoteIdentifier(info.table) + " (";
 	for (idx_t i = 0; i < columns.LogicalColumnCount(); i++) {
 		auto &col = columns.GetColumn(LogicalIndex(i));
 		if (i > 0) {
@@ -146,22 +157,10 @@ optional_ptr<CatalogEntry> ClickHouseSchemaEntry::CreateTable(CatalogTransaction
                                                               BoundCreateTableInfo &info) {
 	auto &base = info.Base();
 
-	if (base.on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
-		DropInfo drop;
-		drop.type = CatalogType::TABLE_ENTRY;
-		drop.name = base.table;
-		drop.schema = name;
-		drop.if_not_found = OnEntryNotFound::RETURN_NULL;
-		drop.cascade = false;
-		DropEntry(transaction.GetContext(), drop);
-	} else if (base.on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
-		auto existing = LookupEntry(transaction, EntryLookupInfo(CatalogType::TABLE_ENTRY, base.table));
-		if (existing) {
-			return existing;
-		}
-	}
-
-	RunClickHouseDDL(GetClickHouseCatalog(),GetCreateTableSQL(database, base));
+	// OR REPLACE / IF NOT EXISTS are rendered into the DDL (see GetCreateTableSQL):
+	// ClickHouse resolves the conflict atomically, and a plain CREATE on an existing
+	// table is its loud "already exists" error -- no client-side probe or drop needed.
+	RunClickHouseDDL(GetClickHouseCatalog(), GetCreateTableSQL(database, base));
 
 	{
 		std::lock_guard<std::mutex> l(tables_lock);
@@ -226,29 +225,26 @@ static string GetCreateViewSQL(const string &database, CreateViewInfo &info) {
 	if (select.node) {
 		StripCatalogFromQueryNode(*select.node);
 	}
-	return "CREATE VIEW " + ClickHouseQuoteIdentifier(database) + "." + ClickHouseQuoteIdentifier(info.view_name) +
-	       " AS " + select.ToString();
+	// Conflict handling delegated to ClickHouse (atomic OR REPLACE / IF NOT EXISTS),
+	// as in GetCreateTableSQL.
+	string sql = "CREATE ";
+	if (info.on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
+		sql += "OR REPLACE ";
+	}
+	sql += "VIEW ";
+	if (info.on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
+		sql += "IF NOT EXISTS ";
+	}
+	return sql + ClickHouseQuoteIdentifier(database) + "." + ClickHouseQuoteIdentifier(info.view_name) + " AS " +
+	       select.ToString();
 }
 
 optional_ptr<CatalogEntry> ClickHouseSchemaEntry::CreateView(CatalogTransaction transaction, CreateViewInfo &info) {
 	if (!info.query) {
 		throw BinderException("Cannot create a ClickHouse view from an empty SQL statement");
 	}
-	if (info.on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
-		DropInfo drop;
-		drop.type = CatalogType::VIEW_ENTRY;
-		drop.name = info.view_name;
-		drop.schema = name;
-		drop.if_not_found = OnEntryNotFound::RETURN_NULL;
-		drop.cascade = false;
-		DropEntry(transaction.GetContext(), drop);
-	} else if (info.on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
-		auto existing = LookupEntry(transaction, EntryLookupInfo(CatalogType::TABLE_ENTRY, info.view_name));
-		if (existing) {
-			return existing;
-		}
-	}
-	RunClickHouseDDL(GetClickHouseCatalog(),GetCreateViewSQL(database, info));
+	// Conflict handling delegated to ClickHouse, as in CreateTable.
+	RunClickHouseDDL(GetClickHouseCatalog(), GetCreateViewSQL(database, info));
 	{
 		std::lock_guard<std::mutex> l(tables_lock);
 		RetireTableLocked(info.view_name);
@@ -321,7 +317,7 @@ void ClickHouseSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &inf
 		throw NotImplementedException("ClickHouse: unsupported ALTER TABLE operation");
 	}
 
-	RunClickHouseDDL(GetClickHouseCatalog(),sql);
+	RunClickHouseDDL(GetClickHouseCatalog(), sql);
 	std::lock_guard<std::mutex> l(tables_lock);
 	RetireTableLocked(alter.name);
 }
@@ -480,7 +476,7 @@ void ClickHouseSchemaEntry::DropEntry(ClientContext &context, DropInfo &info) {
 	}
 	const char *kind = info.type == CatalogType::VIEW_ENTRY ? "VIEW" : "TABLE";
 	string sql = string("DROP ") + kind + " IF EXISTS " + ClickHouseQuoteIdentifier(database) + "." + ClickHouseQuoteIdentifier(info.name);
-	RunClickHouseDDL(GetClickHouseCatalog(),sql);
+	RunClickHouseDDL(GetClickHouseCatalog(), sql);
 	std::lock_guard<std::mutex> l(tables_lock);
 	RetireTableLocked(info.name);
 }

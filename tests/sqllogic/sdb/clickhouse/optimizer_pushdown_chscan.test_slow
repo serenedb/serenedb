@@ -5,9 +5,12 @@ control substitution on
 # query proves the result is correct.
 #
 #   FOLDED   (LIMIT/OFFSET pushed into the remote SQL): NO limit operator remains
-#            above the CLICKHOUSE_SCAN_PUSHDOWN box.
+#            above the CLICKHOUSE_SCAN_PUSHDOWN box; the scan box shows the clause
+#            as `Pushed Limit:`.
 #   REFUSED  (an ORDER BY or a pushed WHERE sits between the LIMIT and the scan):
-#            a TOP_N or STREAMING_LIMIT operator is left above the scan.
+#            a TOP_N or STREAMING_LIMIT operator is left above the scan. The
+#            filter-free TOP_N shape still gets a remote `Pushed Order:` row
+#            reducer (see topn_pushdown_chscan) -- the node itself remains.
 #
 # Fixture chtest.vedernikoff has 6 rows.
 
@@ -28,6 +31,10 @@ QUERY PLAN
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
 │                           │
+│           Table:          │
+│     chtest.vedernikoff    │
+│                           │
+│   Pushed Limit: LIMIT 3   │
 │      Projections: id      │
 │                           │
 │          ~6 rows          │
@@ -49,6 +56,12 @@ QUERY PLAN
 │    ────────────────────   │
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│           Table:          │
+│     chtest.vedernikoff    │
+│                           │
+│       Pushed Limit:       │
+│         LIMIT 100         │
 │                           │
 │      Projections: id      │
 │                           │
@@ -72,6 +85,12 @@ QUERY PLAN
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
 │                           │
+│           Table:          │
+│     chtest.vedernikoff    │
+│                           │
+│       Pushed Limit:       │
+│     LIMIT 10 OFFSET 4     │
+│                           │
 │      Projections: id      │
 │                           │
 │          ~6 rows          │
@@ -93,6 +112,11 @@ QUERY PLAN
 │    ────────────────────   │
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│           Table:          │
+│     chtest.vedernikoff    │
+│                           │
+│   Pushed Limit: LIMIT 2   │
 │                           │
 │        Projections:       │
 │             id            │
@@ -133,6 +157,13 @@ QUERY PLAN
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
 │                           │
+│           Table:          │
+│     chtest.vedernikoff    │
+│                           │
+│       Pushed Order:       │
+│  ORDER BY `id` ASC NULLS  │
+│        LAST LIMIT 3       │
+│                           │
 │      Projections: id      │
 │                           │
 │          Filters:         │
@@ -168,6 +199,9 @@ QUERY PLAN
 │    ────────────────────   │
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│           Table:          │
+│     chtest.vedernikoff    │
 │                           │
 │      Projections: id      │
 │     Filters: (id > 3)     │

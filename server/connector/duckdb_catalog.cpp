@@ -902,6 +902,47 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindAlterAddIndex(
     duckdb::LogicalOperatorType::LOGICAL_ALTER, std::move(alter_info));
 }
 
+namespace {
+
+// WITH (on_conflict = 'throw' | 'nothing') -- duplicate lookup-key policy for
+// indexes over attached external-DB tables (PkSpec::ExternalDBKey), whose key
+// is a column VALUE the engine may not keep unique (a ClickHouse "primary
+// key" is only the sorting prefix). 'throw' (default) probes the source at
+// build time and refuses on the first duplicated key; 'nothing' indexes the
+// first row seen per key and drops the rest. Either way the built index holds
+// at most one document per key, which lookup correctness rests on. The
+// validated policy is stamped for SereneDBPhysicalCreateIndex; when the
+// engine enforces uniqueness itself (PkUniqueness::Enforced) there is nothing
+// to check or collapse, so nothing is stamped.
+void ApplyExternalKeyOnConflict(duckdb::CreateIndexInfo& info,
+                                const std::optional<ViewFastPath>& fast_path) {
+  const bool external_key =
+    fast_path && fast_path->pk_spec == catalog::PkSpec::ExternalDBKey;
+  std::string action = "throw";
+  if (auto it = info.options.find("on_conflict"); it != info.options.end()) {
+    if (!external_key) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("on_conflict only applies to indexes over views of attached "
+                "external database tables"));
+    }
+    action = absl::AsciiStrToLower(
+      it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR)
+        .GetValue<std::string>());
+    if (action != "throw" && action != "nothing") {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("invalid on_conflict value \"", action,
+                              "\": expected 'throw' or 'nothing'"));
+    }
+  }
+  if (external_key && fast_path->pk_uniqueness == PkUniqueness::Unverified) {
+    info.options["_sdb_external_on_conflict"] =
+      duckdb::Value(std::move(action));
+  }
+}
+
+}  // namespace
+
 duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   duckdb::Binder& binder, duckdb::CreateStatement& stmt,
   duckdb::CatalogEntry& target,
@@ -1085,6 +1126,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       ERR_MSG("plain indexes on views are not supported; use an inverted "
               "index instead"));
   }
+
+  ApplyExternalKeyOnConflict(*create_index_info, view_fast_path);
 
   std::vector<std::pair<std::string, duckdb::LogicalType>> rel_columns;
   // Populated for base-table indexes; used below to drive the narrow

@@ -233,3 +233,6 @@ DROP TABLE chsit.default.sit_archive;
 
 statement ok
 DROP TABLE chsit.default.sit_players;
+
+statement ok
+DETACH chsit;

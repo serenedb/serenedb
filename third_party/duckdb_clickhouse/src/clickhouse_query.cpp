@@ -59,6 +59,7 @@ ClickHouseQueryFunction::ClickHouseQueryFunction()
 	function = scan_function.function;
 	serialize = scan_function.serialize;
 	deserialize = scan_function.deserialize;
+	to_string = scan_function.to_string;
 	projection_pushdown = true;
 }
 

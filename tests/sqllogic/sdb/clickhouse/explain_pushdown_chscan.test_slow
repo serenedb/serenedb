@@ -8,7 +8,9 @@ control substitution on
 # The remote scan appears as CLICKHOUSE_SCAN_PUSHDOWN (the catalog / ATTACH
 # path, filter_pushdown=true) or CLICKHOUSE_SCAN (the clickhouse_scan() table
 # function). Projection pushdown shows as `Projections: <cols>` and filter
-# pushdown as `Filters: (<expr>)` inside that scan box.
+# pushdown as `Filters: (<expr>)` inside that scan box; the scan's to_string
+# callback adds `Table:` plus `Pushed Limit:` / `Pushed Order:` lines for the
+# clauses folded into the remote SQL.
 #
 # LIMIT/OFFSET pushdown (ClickHouseOptimizer, an OptimizerExtension): a constant
 # LIMIT/OFFSET directly above a clickhouse scan -- walking only through
@@ -42,6 +44,10 @@ QUERY PLAN
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
 │                           │
+│           Table:          │
+│     chtest.vedernikoff    │
+│                           │
+│   Pushed Limit: LIMIT 3   │
 │      Projections: id      │
 │                           │
 │          ~6 rows          │
@@ -64,6 +70,12 @@ QUERY PLAN
 │    ────────────────────   │
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│           Table:          │
+│     chtest.vedernikoff    │
+│                           │
+│       Pushed Limit:       │
+│      LIMIT 2 OFFSET 3     │
 │                           │
 │      Projections: id      │
 │                           │
@@ -88,6 +100,12 @@ QUERY PLAN
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
 │                           │
+│           Table:          │
+│     chtest.vedernikoff    │
+│                           │
+│       Pushed Limit:       │
+│          OFFSET 2         │
+│                           │
 │      Projections: id      │
 │                           │
 │          ~6 rows          │
@@ -111,6 +129,12 @@ QUERY PLAN
 │    ────────────────────   │
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│           Table:          │
+│     chtest.vedernikoff    │
+│                           │
+│       Pushed Limit:       │
+│         LIMIT 1000        │
 │                           │
 │      Projections: id      │
 │                           │
@@ -143,6 +167,10 @@ QUERY PLAN
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
 │                           │
+│           Table:          │
+│     chtest.vedernikoff    │
+│                           │
+│   Pushed Limit: LIMIT 3   │
 │      Projections: id      │
 │                           │
 │          ~6 rows          │
@@ -182,6 +210,11 @@ QUERY PLAN
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
 │                           │
+│           Table:          │
+│     chtest.vedernikoff    │
+│                           │
+│   Pushed Limit: LIMIT 3   │
+│                           │
 │          ~6 rows          │
 └───────────────────────────┘
 
@@ -207,6 +240,10 @@ QUERY PLAN
 │         Function:         │
 │      CLICKHOUSE_SCAN      │
 │                           │
+│           Table:          │
+│     chtest.vedernikoff    │
+│                           │
+│   Pushed Limit: LIMIT 3   │
 │      Projections: id      │
 │                           │
 │           ~1 row          │
@@ -245,6 +282,13 @@ QUERY PLAN
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
 │                           │
+│           Table:          │
+│     chtest.vedernikoff    │
+│                           │
+│       Pushed Order:       │
+│  ORDER BY `id` ASC NULLS  │
+│        LAST LIMIT 3       │
+│                           │
 │      Projections: id      │
 │                           │
 │          Filters:         │
@@ -282,6 +326,9 @@ QUERY PLAN
 │    ────────────────────   │
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│           Table:          │
+│     chtest.vedernikoff    │
 │                           │
 │      Projections: id      │
 │     Filters: (id > 3)     │
@@ -328,6 +375,7 @@ QUERY PLAN
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
 │                           │
+│   Table: chtest.widgets   │
 │     Projections: name     │
 │                           │
 │          ~5 rows          │
@@ -376,6 +424,7 @@ QUERY PLAN
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
 │                           │
+│   Table: chtest.widgets   │
 │     Projections: name     │
 │                           │
 │          ~5 rows          │
@@ -430,6 +479,8 @@ QUERY PLAN
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
 │                           │
+│   Table: chtest.widgets   │
+│                           │
 │        Projections:       │
 │             id            │
 │            name           │
@@ -459,6 +510,7 @@ QUERY PLAN
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
 │                           │
+│   Table: chtest.widgets   │
 │     Projections: price    │
 │                           │
 │          ~5 rows          │
@@ -491,6 +543,8 @@ QUERY PLAN
 │    ────────────────────   │
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│   Table: chtest.widgets   │
 │                           │
 │        Projections:       │
 │            name           │
@@ -529,6 +583,7 @@ QUERY PLAN
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
 │                           │
+│   Table: chtest.widgets   │
 │      Projections: id      │
 │                           │
 │          Filters:         │
@@ -562,6 +617,8 @@ QUERY PLAN
 │    ────────────────────   │
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│   Table: chtest.widgets   │
 │                           │
 │        Projections:       │
 │           price           │
@@ -598,6 +655,8 @@ QUERY PLAN
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
 │                           │
+│   Table: chtest.widgets   │
+│                           │
 │        Projections:       │
 │           price           │
 │             id            │
@@ -628,6 +687,7 @@ QUERY PLAN
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
 │                           │
+│   Table: chtest.widgets   │
 │      Projections: id      │
 │     Filters: (id <= 2)    │
 │                           │
@@ -653,6 +713,7 @@ QUERY PLAN
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
 │                           │
+│   Table: chtest.widgets   │
 │      Projections: id      │
 │     Filters: (id >= 4)    │
 │                           │
@@ -684,6 +745,8 @@ QUERY PLAN
 │    ────────────────────   │
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│   Table: chtest.widgets   │
 │                           │
 │        Projections:       │
 │            name           │
@@ -731,6 +794,8 @@ QUERY PLAN
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
 │                           │
+│   Table: chtest.widgets   │
+│                           │
 │        Projections:       │
 │            name           │
 │           price           │
@@ -772,6 +837,9 @@ QUERY PLAN
 │    ────────────────────   │
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│           Table:          │
+│      chtest.types_all     │
 │                           │
 │        Projections:       │
 │         c_nullable        │
@@ -822,6 +890,9 @@ QUERY PLAN
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
 │                           │
+│           Table:          │
+│      chtest.types_all     │
+│                           │
 │        Projections:       │
 │         c_fixedstr        │
 │          c_uint8          │
@@ -871,6 +942,8 @@ QUERY PLAN
 │    ────────────────────   │
 │         Function:         │
 │  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│   Table: chtest.widgets   │
 │                           │
 │        Projections:       │
 │             id            │

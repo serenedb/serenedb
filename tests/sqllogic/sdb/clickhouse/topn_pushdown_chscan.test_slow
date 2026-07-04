@@ -1,0 +1,167 @@
+control substitution on
+
+# TOP_N (ORDER BY + LIMIT) pushdown, annotate-and-keep: the local TOP_N node is KEPT
+# (a remote ordering discrepancy can never corrupt results -- the local re-sort wins),
+# but the scan's remote SQL gains "ORDER BY ... LIMIT limit+offset" as a row reducer,
+# shrinking the transfer from the whole table to limit+offset rows. Visible in EXPLAIN
+# as the scan box's `Pushed Order:` line (via the scan's to_string callback).
+#
+# Refusal gates (the reducer must NOT appear): a REQUIRED filter on the scan (the
+# local-safety-net interplay could under-deliver rows), non-column order keys.
+#
+# Fixtures: chtest.vedernikoff (6 rows, ids 1..6), chtest.widgets (5 rows, note has
+# 2 NULLs at ids 2 and 4).
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=chtest' AS chtop (TYPE clickhouse);
+
+# ORDER BY + LIMIT: TOP_N remains, scan box shows the pushed reducer.
+query
+EXPLAIN SELECT id FROM chtop.chtest.vedernikoff ORDER BY id LIMIT 3;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 3          │
+│                           │
+│         Order By:         │
+│     vedernikoff.id ASC    │
+│                           │
+│          ~3 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│           Table:          │
+│     chtest.vedernikoff    │
+│                           │
+│       Pushed Order:       │
+│  ORDER BY `id` ASC NULLS  │
+│        LAST LIMIT 3       │
+│                           │
+│      Projections: id      │
+│                           │
+│          Filters:         │
+│ optional: Dynamic Filter  │
+│            (id)           │
+│                           │
+│          ~6 rows          │
+└───────────────────────────┘
+
+query
+SELECT id FROM chtop.chtest.vedernikoff ORDER BY id LIMIT 3;
+----
+id
+1
+2
+3
+
+# DESC with an OFFSET: reducer is LIMIT limit+offset.
+query
+EXPLAIN SELECT id FROM chtop.chtest.vedernikoff ORDER BY id DESC LIMIT 2 OFFSET 1;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 2          │
+│         Offset: 1         │
+│                           │
+│         Order By:         │
+│    vedernikoff.id DESC    │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│           Table:          │
+│     chtest.vedernikoff    │
+│                           │
+│       Pushed Order:       │
+│  ORDER BY `id` DESC NULLS │
+│        LAST LIMIT 3       │
+│                           │
+│      Projections: id      │
+│                           │
+│          Filters:         │
+│ optional: Dynamic Filter  │
+│            (id)           │
+│                           │
+│          ~6 rows          │
+└───────────────────────────┘
+
+query
+SELECT id FROM chtop.chtest.vedernikoff ORDER BY id DESC LIMIT 2 OFFSET 1;
+----
+id
+5
+4
+
+# Multi-key with explicit NULLS FIRST: the two NULL-note rows come first.
+query
+SELECT id FROM chtop.chtest.widgets ORDER BY note NULLS FIRST, id LIMIT 2;
+----
+id
+2
+4
+
+# NULLS LAST puts them at the end.
+query
+SELECT id FROM chtop.chtest.widgets ORDER BY note NULLS LAST, id LIMIT 3;
+----
+id
+5
+1
+3
+
+# Refusal: a required WHERE filter on the scan keeps the reducer off (no Pushed Order
+# in the scan box), and the result is still correct.
+query
+EXPLAIN SELECT id FROM chtop.chtest.vedernikoff WHERE id > 1 ORDER BY id LIMIT 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 2          │
+│                           │
+│         Order By:         │
+│     vedernikoff.id ASC    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│    ────────────────────   │
+│         Function:         │
+│  CLICKHOUSE_SCAN_PUSHDOWN │
+│                           │
+│           Table:          │
+│     chtest.vedernikoff    │
+│                           │
+│      Projections: id      │
+│                           │
+│          Filters:         │
+│  ((id > 1) AND optional:  │
+│    Dynamic Filter (id))   │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query
+SELECT id FROM chtop.chtest.vedernikoff WHERE id > 1 ORDER BY id LIMIT 2;
+----
+id
+2
+3
+
+statement ok
+DETACH chtop;

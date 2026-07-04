@@ -48,6 +48,15 @@ struct CatalogTableRef {
   std::string table;
 };
 
+// What the source engine promises about the lookup key's uniqueness.
+enum class PkUniqueness {
+  // Only a sorting/ordering hint (a ClickHouse MergeTree "primary key") --
+  // duplicates are possible, CREATE INDEX must handle them (on_conflict).
+  Unverified,
+  // The engine enforces uniqueness itself (a postgres PRIMARY KEY).
+  Enforced,
+};
+
 struct ViewFastPath {
   duckdb::vector<duckdb::Value> args;
   duckdb::named_parameter_map_t named_params;
@@ -64,6 +73,7 @@ struct ViewFastPath {
   // column's position in the source table (for BackfillPkVirtualColumns).
   duckdb::column_t pk_column_index = 0;
   std::string pk_column_name;
+  PkUniqueness pk_uniqueness = PkUniqueness::Unverified;
 };
 
 std::optional<ViewFastPath> ResolveViewFastPath(duckdb::ClientContext& context,

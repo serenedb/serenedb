@@ -2,11 +2,14 @@
 
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/string_util.hpp"
-#include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_limit.hpp"
+#include "duckdb/planner/operator/logical_projection.hpp"
+#include "duckdb/planner/operator/logical_top_n.hpp"
+#include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/expression/bound_conjunction_expression.hpp"
+#include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/optimizer/optimizer_extension.hpp"
 
@@ -39,6 +42,7 @@ unique_ptr<FunctionData> ClickHouseBindData::Copy() const {
 	result->types = types;
 	result->stringified = stringified;
 	result->limit = limit;
+	result->order_by = order_by;
 	result->rowid_column = rowid_column;
 	result->table_entry = table_entry;
 	result->has_cardinality = has_cardinality;
@@ -208,7 +212,9 @@ static std::string BuildScanSQL(const ClickHouseBindData &bind_data, const vecto
 			query += " WHERE " + filter_string;
 		}
 	}
-	// A LIMIT/OFFSET the optimizer proved safe to push (see ClickHouseOptimizer).
+	// A TOP_N row reducer and/or LIMIT/OFFSET the optimizer proved safe to push
+	// (see ClickHouseOptimizer); at most one of the two is ever set.
+	query += bind_data.order_by;
 	query += bind_data.limit;
 	return query;
 }
@@ -388,8 +394,107 @@ static void OptimizeLimitPushdown(unique_ptr<LogicalOperator> &op) {
 	}
 }
 
+// Annotate a ClickHouse scan under a TOP_N with a remote "ORDER BY ... LIMIT n+offset"
+// row reducer. The TOP_N node itself is KEPT -- the local re-sort makes any remote
+// ordering discrepancy (collation, tie order) harmless; the remote clause only shrinks
+// the transfer from the whole table to limit+offset rows. Gates: every order key must
+// resolve (through pure column-reference projections) to a plain, non-stringified scan
+// column with explicit ASC/DESC and NULLS placement, the scan must carry no REQUIRED
+// table filters (optional/advisory ones never change the row set, so they are fine),
+// and nothing may already be folded into the scan.
+static void OptimizeTopNPushdown(unique_ptr<LogicalOperator> &op) {
+	if (op->type == LogicalOperatorType::LOGICAL_TOP_N) {
+		auto &topn = op->Cast<LogicalTopN>();
+		vector<reference<LogicalProjection>> projections;
+		reference<LogicalOperator> child = *op->children[0];
+		while (child.get().type == LogicalOperatorType::LOGICAL_PROJECTION) {
+			projections.push_back(child.get().Cast<LogicalProjection>());
+			child = *child.get().children[0];
+		}
+		if (child.get().type == LogicalOperatorType::LOGICAL_GET) {
+			auto &get = child.get().Cast<LogicalGet>();
+			if (IsClickHouseScan(get.function.name) && get.bind_data) {
+				auto &bind_data = get.bind_data->Cast<ClickHouseBindData>();
+				bool only_optional_filters = true;
+				for (auto &entry : get.table_filters) {
+					if (!ExpressionFilter::IsOptionalFilter(entry.Filter())) {
+						only_optional_filters = false;
+						break;
+					}
+				}
+				bool foldable = bind_data.order_by.empty() && bind_data.limit.empty() && only_optional_filters &&
+				                topn.limit <= NumericLimits<idx_t>::Maximum() - topn.offset;
+				string clause;
+				for (auto &order : topn.orders) {
+					if (!foldable) {
+						break;
+					}
+					if ((order.type != OrderType::ASCENDING && order.type != OrderType::DESCENDING) ||
+					    (order.null_order != OrderByNullType::NULLS_FIRST &&
+					     order.null_order != OrderByNullType::NULLS_LAST)) {
+						foldable = false;
+						break;
+					}
+					if (order.expression->GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
+						foldable = false;
+						break;
+					}
+					auto binding = order.expression->Cast<BoundColumnRefExpression>().binding;
+					for (auto &proj_ref : projections) {
+						auto &proj = proj_ref.get();
+						if (binding.table_index != proj.table_index ||
+						    binding.column_index.GetIndex() >= proj.expressions.size()) {
+							foldable = false;
+							break;
+						}
+						auto &proj_expr = *proj.expressions[binding.column_index.GetIndex()];
+						if (proj_expr.GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
+							foldable = false;
+							break;
+						}
+						binding = proj_expr.Cast<BoundColumnRefExpression>().binding;
+					}
+					if (!foldable || binding.table_index != get.table_index) {
+						foldable = false;
+						break;
+					}
+					auto &column_ids = get.GetColumnIds();
+					if (binding.column_index.GetIndex() >= column_ids.size()) {
+						foldable = false;
+						break;
+					}
+					auto column_id = column_ids[binding.column_index.GetIndex()].GetPrimaryIndex();
+					if (column_id >= bind_data.names.size()) {
+						// Virtual column (rowid) or out of range.
+						foldable = false;
+						break;
+					}
+					if (column_id < bind_data.stringified.size() && bind_data.stringified[column_id]) {
+						// toString() text order differs from the native value order.
+						foldable = false;
+						break;
+					}
+					if (!clause.empty()) {
+						clause += ", ";
+					}
+					clause += ClickHouseQuoteIdentifier(bind_data.names[column_id]);
+					clause += order.type == OrderType::DESCENDING ? " DESC" : " ASC";
+					clause += order.null_order == OrderByNullType::NULLS_FIRST ? " NULLS FIRST" : " NULLS LAST";
+				}
+				if (foldable && !clause.empty()) {
+					bind_data.order_by = " ORDER BY " + clause + " LIMIT " + to_string(topn.limit + topn.offset);
+				}
+			}
+		}
+	}
+	for (auto &child : op->children) {
+		OptimizeTopNPushdown(child);
+	}
+}
+
 void ClickHouseOptimizer::Optimize(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan) {
 	OptimizeLimitPushdown(plan);
+	OptimizeTopNPushdown(plan);
 }
 
 // Report the remote table's approximate row count (captured at bind from
@@ -404,6 +509,32 @@ static unique_ptr<NodeStatistics> ClickHouseScanCardinality(ClientContext &conte
 	return make_uniq<NodeStatistics>(bind_data.approx_row_count);
 }
 
+// EXPLAIN rendering: name the remote table and surface the pushed-down ORDER BY /
+// LIMIT clauses. "Projections" is deliberately NOT emitted so the framework keeps
+// appending its own Projections/Filters sections after these keys.
+static InsertionOrderPreservingMap<string> ClickHouseScanToString(TableFunctionToStringInput &input) {
+	InsertionOrderPreservingMap<string> result;
+	result["Function"] = StringUtil::Upper(input.table_function.name);
+	if (!input.bind_data) {
+		return result;
+	}
+	auto &bind_data = input.bind_data->Cast<ClickHouseBindData>();
+	if (!bind_data.from_query) {
+		result["Table"] = bind_data.database + "." + bind_data.table;
+	}
+	auto trim_leading = [](const std::string &s) {
+		auto pos = s.find_first_not_of(' ');
+		return pos == std::string::npos ? s : s.substr(pos);
+	};
+	if (!bind_data.order_by.empty()) {
+		result["Pushed Order"] = trim_leading(bind_data.order_by);
+	}
+	if (!bind_data.limit.empty()) {
+		result["Pushed Limit"] = trim_leading(bind_data.limit);
+	}
+	return result;
+}
+
 ClickHouseScanFunction::ClickHouseScanFunction()
     : TableFunction("clickhouse_scan", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
                     ClickHouseScan, ClickHouseBind, ClickHouseInitGlobalState) {
@@ -411,6 +542,7 @@ ClickHouseScanFunction::ClickHouseScanFunction()
 	deserialize = ClickHouseScanDeserialize;
 	get_bind_info = ClickHouseGetBindInfo;
 	cardinality = ClickHouseScanCardinality;
+	to_string = ClickHouseScanToString;
 	projection_pushdown = true;
 }
 
@@ -421,6 +553,7 @@ ClickHouseScanFunctionFilterPushdown::ClickHouseScanFunctionFilterPushdown()
 	deserialize = ClickHouseScanDeserialize;
 	get_bind_info = ClickHouseGetBindInfo;
 	cardinality = ClickHouseScanCardinality;
+	to_string = ClickHouseScanToString;
 	projection_pushdown = true;
 	filter_pushdown = true;
 }

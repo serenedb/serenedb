@@ -474,12 +474,14 @@ void ClickHouseColumnToVector(const clickhouse::Column &col, Vector &out, idx_t 
     return BulkCopyNumeric<clickhouse::ColumnFloat32, float>(col, out, src_offset, count);
   case clickhouse::Type::Float64:
     return BulkCopyNumeric<clickhouse::ColumnFloat64, double>(col, out, src_offset, count);
+  // AddStringOrBlob, not AddString: with ch_binary_as_blob the target vector
+  // is BLOB, which AddString rejects.
   case clickhouse::Type::String: {
     auto typed = col.As<clickhouse::ColumnString>();
     auto data = FlatVector::GetDataMutable<string_t>(out);
     for (idx_t row = 0; row < count; row++) {
       auto view = typed->At(src_offset + row);
-      data[row] = StringVector::AddString(out, view.data(), view.size());
+      data[row] = StringVector::AddStringOrBlob(out, view.data(), view.size());
     }
     return;
   }
@@ -488,7 +490,7 @@ void ClickHouseColumnToVector(const clickhouse::Column &col, Vector &out, idx_t 
     auto data = FlatVector::GetDataMutable<string_t>(out);
     for (idx_t row = 0; row < count; row++) {
       auto view = typed->At(src_offset + row);
-      data[row] = StringVector::AddString(out, view.data(), view.size());
+      data[row] = StringVector::AddStringOrBlob(out, view.data(), view.size());
     }
     return;
   }
@@ -610,6 +612,20 @@ std::string ClickHouseValueLiteral(const Value &value) {
     return "toDecimal128('" + value.ToString() + "', " + std::to_string(DecimalType::GetScale(value.type())) + ")";
   case LogicalTypeId::BLOB:
     return ClickHouseBlobLiteral(value.GetValueUnsafe<string_t>());
+  case LogicalTypeId::DATE:
+    // Typed casts, not bare quoted strings: comparisons coerce strings, but multiIf /
+    // assignment contexts have no String<->Date/DateTime/UUID supertype (NO_COMMON_TYPE).
+    return "toDate32(" + ClickHouseStringLiteral(value.ToString()) + ")";
+  case LogicalTypeId::TIMESTAMP_SEC:
+    return "toDateTime64(" + ClickHouseStringLiteral(value.ToString()) + ", 0)";
+  case LogicalTypeId::TIMESTAMP_MS:
+    return "toDateTime64(" + ClickHouseStringLiteral(value.ToString()) + ", 3)";
+  case LogicalTypeId::TIMESTAMP:
+    return "toDateTime64(" + ClickHouseStringLiteral(value.ToString()) + ", 6)";
+  case LogicalTypeId::TIMESTAMP_NS:
+    return "toDateTime64(" + ClickHouseStringLiteral(value.ToString()) + ", 9)";
+  case LogicalTypeId::UUID:
+    return "toUUID(" + ClickHouseStringLiteral(value.ToString()) + ")";
   case LogicalTypeId::LIST:
   case LogicalTypeId::ARRAY:
   case LogicalTypeId::STRUCT:
@@ -819,6 +835,21 @@ static void AppendScalarColumn(const clickhouse::ColumnRef &col, Vector &vec, id
     auto data = FlatVector::GetData<uhugeint_t>(vec);
     for (idx_t row = 0; row < count; row++) {
       typed->Append(absl::MakeUint128(data[row].upper, data[row].lower));
+    }
+    return;
+  }
+  case clickhouse::Type::UUID: {
+    auto typed = col->As<clickhouse::ColumnUUID>();
+    auto data = FlatVector::GetData<hugeint_t>(vec);
+    for (idx_t row = 0; row < count; row++) {
+      if (!validity.RowIsValid(row)) {
+        typed->Append(clickhouse::UUID {0, 0});
+        continue;
+      }
+      // Inverse of the read decode: DuckDB stores a UUID as hugeint with the sign bit
+      // of the high half flipped for ordering.
+      typed->Append(clickhouse::UUID {static_cast<uint64_t>(data[row].upper) ^ (static_cast<uint64_t>(1) << 63),
+                                      data[row].lower});
     }
     return;
   }

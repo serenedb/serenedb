@@ -97,8 +97,6 @@ EXPLAIN COPY reversed(id, name) FROM '${__TEST_DIR__}/lmao' WITH (FORMAT CSV, HE
 QUERY PLAN
 ╭─ BATCH_INSERT ─────╮
 ╰──────────┬─────────╯
-╭─ SDB_PROGRESS ─────╮
-╰──────────┬─────────╯
 ╭─ PROJECTION ───────╮
 │ Projections: #1,   │
 │              #0    │

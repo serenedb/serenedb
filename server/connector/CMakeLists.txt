@@ -37,7 +37,6 @@ add_library(
     duckdb_pg_binary_copy.cpp
     duckdb_pg_text_copy.cpp
     duckdb_physical_ctas.cpp
-    duckdb_physical_progress.cpp
     duckdb_tokenizer_function.cpp
     duckdb_rbac_function.cpp
     duckdb_physical_create_index.cpp

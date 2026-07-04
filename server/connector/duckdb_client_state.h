@@ -24,7 +24,8 @@
 #include <duckdb/main/client_context_state.hpp>
 #include <memory>
 
-#include "pg/progress_tracker.h"
+#include "catalog/identifiers/object_id.h"
+#include "pg/progress_registry.h"
 
 namespace sdb {
 
@@ -63,9 +64,21 @@ class SereneDBClientState final : public duckdb::ClientContextState {
     std::shared_ptr<ConnectionContext> connection_ctx)
     : _connection_ctx{std::move(connection_ctx)} {}
 
+  ~SereneDBClientState() final {
+    if (progress_source) {
+      progress_source->Detach();
+      pg::ProgressRegistry::Instance().Unregister(progress_source.get());
+    }
+  }
+
   ConnectionContext& GetConnectionContext() const { return *_connection_ctx; }
 
-  std::unique_ptr<pg::ProgressReporter> progress;
+  // The connection's row in sdb_progress. Execution paths write the
+  // command-specific counters straight into Progress(); the registry snapshots
+  // them from any thread.
+  std::shared_ptr<pg::ProgressSource> progress_source;
+
+  pg::ProgressMetrics& Progress() { return progress_source->metrics; }
 
   // COPY FROM STDIN state shared across handles within a single query. The
   // non-seekable wire stream is read SINGLE-PASS: our binary/text functions
@@ -101,22 +114,13 @@ class SereneDBClientState final : public duckdb::ClientContextState {
   void QueryBegin(duckdb::ClientContext& context) final;
   void QueryEnd(duckdb::ClientContext& context) final;
 
-  void ArmCopyProgress(ObjectId table_id, pg::copy_progress::Command command,
-                       pg::copy_progress::Type type);
-  void EnsureCopyProgress(ObjectId table_id, pg::copy_progress::Command command,
-                          pg::copy_progress::Type type);
-  void EnsureCreateIndexProgress(ObjectId datid, ObjectId relid,
-                                 duckdb::idx_t estimated_cardinality);
-  void EnsureCreateTableAsProgress(ObjectId datid, ObjectId relid,
-                                   duckdb::idx_t estimated_cardinality);
-  void EnsureAnalyzeProgress(ObjectId datid, ObjectId relid);
-  void EnsureVacuumProgress(ObjectId datid, ObjectId relid);
-
-  // Set by the wire session before PendingQuery; consumed by the Ensure*
-  // arming paths to tell COPY apart from plain DML sharing the same plan
-  // shape. Reset in QueryEnd.
-  duckdb::StatementType current_statement_type =
-    duckdb::StatementType::INVALID_STATEMENT;
+  // COPY classification for the NEXT query, staged by the wire session before
+  // PendingQuery. QueryBegin resets the metrics of the previous statement, so
+  // the session cannot write them directly; QueryBegin applies these after the
+  // reset and clears them.
+  pg::ProgressCommand pending_copy_command = pg::ProgressCommand::None;
+  pg::ProgressIoType pending_copy_io = pg::ProgressIoType::None;
+  ObjectId pending_copy_relid;
 
   // Transaction-scoped compensation for work staged on a side transaction
   // (CTAS): registered when the side transaction starts, run in

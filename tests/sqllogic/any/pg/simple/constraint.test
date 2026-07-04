@@ -23,8 +23,6 @@ INSERT INTO iamkay DEFAULT VALUES;
 QUERY PLAN
 ╭─ INSERT ───────────╮
 ╰──────────┬─────────╯
-╭─ SDB_PROGRESS ─────╮
-╰──────────┬─────────╯
 ╭─ PROJECTION ───────╮
 │ Projections: NULL, │
 │              NULL  │

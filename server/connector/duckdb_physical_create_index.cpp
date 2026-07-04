@@ -57,7 +57,7 @@
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
-#include "pg/progress_tracker.h"
+#include "pg/progress_registry.h"
 #include "pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
 
@@ -108,7 +108,7 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
 
   std::string value_buffer;
 
-  pg::ProgressReporter* progress = nullptr;
+  pg::ProgressMetrics* progress = nullptr;
 
   ~CreateIndexGlobalState() {
     search_trx.reset();
@@ -181,9 +181,16 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
 
   if (auto sdb_state = context.registered_state->Get<SereneDBClientState>(
         kSereneDBClientStateKey)) {
-    sdb_state->EnsureCreateIndexProgress(_database_id, _relation->GetId(),
-                                         estimated_cardinality);
-    state->progress = sdb_state->progress.get();
+    auto& metrics = sdb_state->Progress();
+    metrics.SetCommand(pg::ProgressCommand::CreateIndex);
+    metrics.SetPhase(pg::progress_phase::CreateIndex::Initializing);
+    pg::ProgressMetrics::Set(metrics.relid,
+                             static_cast<int64_t>(_relation->GetId().id()));
+    if (estimated_cardinality > 0) {
+      pg::ProgressMetrics::Set(metrics.tuples_total,
+                               static_cast<int64_t>(estimated_cardinality));
+    }
+    state->progress = &metrics;
   }
 
   auto& catalog_impl = catalog::GetCatalog();
@@ -362,7 +369,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       };
   }
   if (state->progress) {
-    state->progress->SetPhase(pg::create_index_progress::Phase::BuildingIndex);
+    state->progress->SetPhase(pg::progress_phase::CreateIndex::BuildingIndex);
   }
   // Inverted indexes carry their iresearch storage (bound in CreateIndexImpl);
   // secondary indexes do not, so this is null for them.
@@ -614,8 +621,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   writer->Finish();
   gstate.backfill_count_atomic.fetch_add(num_rows, std::memory_order_relaxed);
   if (gstate.progress) {
-    gstate.progress->Add(pg::create_index_progress::Param::TuplesDone,
-                         num_rows);
+    pg::ProgressMetrics::Add(gstate.progress->tuples_processed, num_rows);
     SDB_IF_FAILURE("pause_create_index_mid_build") {
       sdb::WaitWhileFailurePointDebugging("pause_create_index_mid_build");
     }
@@ -648,7 +654,7 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   if (gstate.index_type == catalog::ObjectType::InvertedIndex &&
       gstate.index_storage) {
     if (gstate.progress) {
-      gstate.progress->SetPhase(pg::create_index_progress::Phase::Committing);
+      gstate.progress->SetPhase(pg::progress_phase::CreateIndex::Committing);
     }
     gstate.writer.reset();
     gstate.search_trx.reset();
@@ -660,7 +666,7 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   }
 
   if (gstate.progress) {
-    gstate.progress->SetPhase(pg::create_index_progress::Phase::Finalizing);
+    gstate.progress->SetPhase(pg::progress_phase::CreateIndex::Finalizing);
   }
   SDB_IF_FAILURE("crash_before_remove_tombstone") { SDB_IMMEDIATE_ABORT(); }
   auto& catalog = catalog::GetCatalog();

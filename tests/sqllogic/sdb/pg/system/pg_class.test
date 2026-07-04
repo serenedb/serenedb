@@ -73,7 +73,7 @@ oid	relname	reltablespace	relkind
 169	pg_hba_file_rules	0	v
 999994	sdb_settings	0	r
 999995	sdb_metrics	0	r
-999997	sdb_stat_progress	0	r
+999997	sdb_progress	0	r
 <slt:ignore>	pg_roles	0	v
 <slt:ignore>	pg_shadow	0	v
 <slt:ignore>	pg_user	0	v

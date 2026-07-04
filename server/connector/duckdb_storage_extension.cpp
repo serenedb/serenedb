@@ -32,7 +32,6 @@
 #include "connector/duckdb_catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_transaction.h"
-#include "connector/optimizer/copy_to_progress.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/optimizer/rbac.h"
 #include "connector/optimizer/wrap_unsupported_types.h"

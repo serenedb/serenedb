@@ -35,9 +35,9 @@ namespace sdb::connector {
 struct SearchTableScanGlobalState : public CommonScanGlobalState {
   std::shared_ptr<irs::DirectoryReader> reader;
 
-  size_t segment_idx = 0;
   // Live-docs iterator over the current segment (skips deleted/masked docs via
-  // SubReader::mask); null until the segment is opened.
+  // SubReader::mask); null until the segment is opened. The segment cursor is
+  // the base's next_segment, so scan progress reports claimed segments.
   irs::DocIterator::ptr live_docs;
   std::unique_ptr<ColumnstoreMaterializer> materializer;
   // Scratch: the current batch's live columnstore row ids (doc_id - min).

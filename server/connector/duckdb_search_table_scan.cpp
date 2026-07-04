@@ -53,6 +53,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchTableScanInitGlobal(
 
   state->reader = conn_ctx.SearchTxn().EnsureSearchTableReader(
     tbd.table->GetId(), [&] { return search->GetDirectoryReader(); });
+  state->total_segments = state->reader->size();
 
   // COUNT(*)-style scan projects no real columns -- answer with the live row
   // count instead of materialising columns.
@@ -127,15 +128,17 @@ void SearchTableScanFunction(duckdb::ClientContext& /*context*/,
 
   duckdb::idx_t produced = 0;
   // One segment per batch: SelectByDocIds writes from output slot 0, so two
-  // segments cannot share a batch.
-  while (produced == 0 && gstate.segment_idx < reader.size()) {
-    auto& segment = reader[gstate.segment_idx];
+  // segments cannot share a batch. next_segment is the base's cursor so scan
+  // progress reports it; this scan is single-threaded (MaxThreads() == 1).
+  while (produced == 0 &&
+         gstate.next_segment.load(std::memory_order_relaxed) < reader.size()) {
+    auto& segment = reader[gstate.next_segment.load(std::memory_order_relaxed)];
 
     if (!gstate.materializer) {
       const auto* cs_reader = segment.GetColReader();
       if (!cs_reader) {
         // Segment has no columnstore (e.g. an empty pre-INSERT commit).
-        ++gstate.segment_idx;
+        gstate.next_segment.fetch_add(1, std::memory_order_relaxed);
         continue;
       }
       gstate.materializer = std::make_unique<ColumnstoreMaterializer>(
@@ -152,7 +155,7 @@ void SearchTableScanFunction(duckdb::ClientContext& /*context*/,
                                irs::doc_limits::min());
     }
     if (gstate.row_ids.empty()) {
-      ++gstate.segment_idx;
+      gstate.next_segment.fetch_add(1, std::memory_order_relaxed);
       gstate.materializer.reset();
       gstate.live_docs.reset();
       continue;

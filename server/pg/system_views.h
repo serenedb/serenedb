@@ -920,30 +920,29 @@ inline constexpr SystemView kExternalViews[] = {
   {"pg_catalog", "pg_stat_activity",
    R"(SELECT
               S.datid AS datid,
-              D.datname AS datname,
+              S.datname AS datname,
               S.pid,
-              S.leader_pid,
-              S.usesysid,
-              U.rolname AS usename,
-              S.application_name,
-              S.client_addr,
-              S.client_hostname,
-              S.client_port,
-              S.backend_start,
-              S.xact_start,
-              S.query_start,
-              S.state_change,
-              S.wait_event_type,
-              S.wait_event,
-              S.state,
-              S.backend_xid,
-              s.backend_xmin,
-              S.query_id,
-              S.query,
-              S.backend_type
-      FROM pg_stat_get_activity(NULL) AS S
-          LEFT JOIN pg_database AS D ON (S.datid = D.oid)
-          LEFT JOIN pg_authid AS U ON (S.usesysid = U.oid))"},
+              NULL::INTEGER AS leader_pid,
+              U.oid AS usesysid,
+              S.usename AS usename,
+              NULL::TEXT AS application_name,
+              NULL::TEXT AS client_addr,
+              NULL::TEXT AS client_hostname,
+              NULL::INTEGER AS client_port,
+              to_timestamp(S.backend_start_us / 1000000.0) AS backend_start,
+              NULL::TIMESTAMPTZ AS xact_start,
+              to_timestamp(S.query_start_us / 1000000.0) AS query_start,
+              NULL::TIMESTAMPTZ AS state_change,
+              NULL::TEXT AS wait_event_type,
+              NULL::TEXT AS wait_event,
+              S.state AS state,
+              NULL::TEXT AS backend_xid,
+              NULL::TEXT AS backend_xmin,
+              NULL::BIGINT AS query_id,
+              S.query AS query,
+              'client backend' AS backend_type
+      FROM sdb_progress AS S
+          LEFT JOIN pg_authid AS U ON (S.usename = U.rolname))"},
 
   {"pg_catalog", "pg_stat_replication",
    R"(SELECT
@@ -1245,164 +1244,99 @@ inline constexpr SystemView kExternalViews[] = {
 
   {"pg_catalog", "pg_stat_progress_analyze",
    R"(SELECT
-          S.pid AS pid, S.datid AS datid, D.datname AS datname,
-          CAST(S.relid AS oid) AS relid,
-          CASE S.param1 WHEN 0 THEN 'initializing'
-                        WHEN 1 THEN 'acquiring sample rows'
-                        WHEN 2 THEN 'acquiring inherited sample rows'
-                        WHEN 3 THEN 'computing statistics'
-                        WHEN 4 THEN 'computing extended statistics'
-                        WHEN 5 THEN 'finalizing analyze'
-                        END AS phase,
-          S.param2 AS sample_blks_total,
-          S.param3 AS sample_blks_scanned,
-          S.param4 AS ext_stats_total,
-          S.param5 AS ext_stats_computed,
-          S.param6 AS child_tables_total,
-          S.param7 AS child_tables_done,
-          CAST(S.param8 AS oid) AS current_child_table_relid,
-          S.param9 / 1000000::double precision AS delay_time
-      FROM pg_stat_get_progress_info('ANALYZE') AS S
-          LEFT JOIN pg_database D ON S.datid = D.oid)"},
+          S.pid AS pid, S.datid AS datid, S.datname AS datname,
+          S.relid AS relid,
+          S.phase AS phase,
+          0::BIGINT AS sample_blks_total,
+          0::BIGINT AS sample_blks_scanned,
+          0::BIGINT AS ext_stats_total,
+          0::BIGINT AS ext_stats_computed,
+          S.items_total AS child_tables_total,
+          S.items_processed AS child_tables_done,
+          S.current_relid AS current_child_table_relid,
+          0::double precision AS delay_time
+      FROM sdb_progress S WHERE S.command = 'ANALYZE')"},
 
   {"pg_catalog", "pg_stat_progress_vacuum",
    R"(SELECT
-          S.pid AS pid, S.datid AS datid, D.datname AS datname,
+          S.pid AS pid, S.datid AS datid, S.datname AS datname,
           S.relid AS relid,
-          CASE S.param1 WHEN 0 THEN 'initializing'
-                        WHEN 1 THEN 'scanning heap'
-                        WHEN 2 THEN 'vacuuming indexes'
-                        WHEN 3 THEN 'vacuuming heap'
-                        WHEN 4 THEN 'cleaning up indexes'
-                        WHEN 5 THEN 'truncating heap'
-                        WHEN 6 THEN 'performing final cleanup'
-                        END AS phase,
-          S.param2 AS heap_blks_total, S.param3 AS heap_blks_scanned,
-          S.param4 AS heap_blks_vacuumed, S.param5 AS index_vacuum_count,
-          S.param6 AS max_dead_tuple_bytes, S.param7 AS dead_tuple_bytes,
-          S.param8 AS num_dead_item_ids, S.param9 AS indexes_total,
-          S.param10 AS indexes_processed,
-          S.param11 / 1000000::double precision AS delay_time
-      FROM pg_stat_get_progress_info('VACUUM') AS S
-          LEFT JOIN pg_database D ON S.datid = D.oid)"},
+          S.phase AS phase,
+          S.steps_total AS heap_blks_total, S.step AS heap_blks_scanned,
+          0::BIGINT AS heap_blks_vacuumed, 0::BIGINT AS index_vacuum_count,
+          0::BIGINT AS max_dead_tuple_bytes, 0::BIGINT AS dead_tuple_bytes,
+          0::BIGINT AS num_dead_item_ids, S.items_total AS indexes_total,
+          S.items_processed AS indexes_processed,
+          0::double precision AS delay_time
+      FROM sdb_progress S WHERE S.command = 'VACUUM')"},
 
   {"pg_catalog", "pg_stat_progress_cluster",
    R"(SELECT
           S.pid AS pid,
           S.datid AS datid,
-          D.datname AS datname,
+          S.datname AS datname,
           S.relid AS relid,
-          CASE S.param1 WHEN 1 THEN 'CLUSTER'
-                        WHEN 2 THEN 'VACUUM FULL'
-                        END AS command,
-          CASE S.param2 WHEN 0 THEN 'initializing'
-                        WHEN 1 THEN 'seq scanning heap'
-                        WHEN 2 THEN 'index scanning heap'
-                        WHEN 3 THEN 'sorting tuples'
-                        WHEN 4 THEN 'writing new heap'
-                        WHEN 5 THEN 'swapping relation files'
-                        WHEN 6 THEN 'rebuilding index'
-                        WHEN 7 THEN 'performing final cleanup'
-                        END AS phase,
-          CAST(S.param3 AS oid) AS cluster_index_relid,
-          S.param4 AS heap_tuples_scanned,
-          S.param5 AS heap_tuples_written,
-          S.param6 AS heap_blks_total,
-          S.param7 AS heap_blks_scanned,
-          S.param8 AS index_rebuild_count
-      FROM pg_stat_get_progress_info('CLUSTER') AS S
-          LEFT JOIN pg_database D ON S.datid = D.oid)"},
+          S.command AS command,
+          S.phase AS phase,
+          S.current_relid AS cluster_index_relid,
+          S.tuples_processed AS heap_tuples_scanned,
+          0::BIGINT AS heap_tuples_written,
+          S.steps_total AS heap_blks_total,
+          S.step AS heap_blks_scanned,
+          0::BIGINT AS index_rebuild_count
+      FROM sdb_progress S WHERE S.command = 'CLUSTER')"},
 
   {"pg_catalog", "pg_stat_progress_create_index",
    R"(SELECT
-          S.pid AS pid, S.datid AS datid, D.datname AS datname,
+          S.pid AS pid, S.datid AS datid, S.datname AS datname,
           S.relid AS relid,
-          CAST(S.param7 AS oid) AS index_relid,
-          CASE S.param1 WHEN 1 THEN 'CREATE INDEX'
-                        WHEN 2 THEN 'CREATE INDEX CONCURRENTLY'
-                        WHEN 3 THEN 'REINDEX'
-                        WHEN 4 THEN 'REINDEX CONCURRENTLY'
-                        END AS command,
-       -- CASE S.param10 WHEN 0 THEN 'initializing'
-       --                WHEN 1 THEN 'waiting for writers before build'
-       --                WHEN 2 THEN 'building index' ||
-       --                    COALESCE((': ' || pg_indexam_progress_phasename(S.param9::oid, S.param11)),
-       --                             '')
-       --                WHEN 3 THEN 'waiting for writers before validation'
-       --                WHEN 4 THEN 'index validation: scanning index'
-       --                WHEN 5 THEN 'index validation: sorting tuples'
-       --                WHEN 6 THEN 'index validation: scanning table'
-       --                WHEN 7 THEN 'waiting for old snapshots'
-       --                WHEN 8 THEN 'waiting for readers before marking dead'
-       --                WHEN 9 THEN 'waiting for readers before dropping'
-       --                END as phase,
-          CASE S.param10 WHEN 1 THEN 'initializing'
-                         WHEN 2 THEN 'building index'
-                         WHEN 3 THEN 'committing'
-                         WHEN 4 THEN 'finalizing'
-                         END AS phase,
-          S.param4 AS lockers_total,
-          S.param5 AS lockers_done,
-          S.param6 AS current_locker_pid,
-          S.param16 AS blocks_total,
-          S.param17 AS blocks_done,
-          S.param12 AS tuples_total,
-          S.param13 AS tuples_done,
-          S.param14 AS partitions_total,
-          S.param15 AS partitions_done
-      FROM pg_stat_get_progress_info('CREATE INDEX') AS S
-          LEFT JOIN pg_database D ON S.datid = D.oid)"},
+          S.current_relid AS index_relid,
+          S.command AS command,
+          S.phase AS phase,
+          0::BIGINT AS lockers_total,
+          0::BIGINT AS lockers_done,
+          0::BIGINT AS current_locker_pid,
+          0::BIGINT AS blocks_total,
+          0::BIGINT AS blocks_done,
+          S.tuples_total AS tuples_total,
+          S.tuples_processed AS tuples_done,
+          0::BIGINT AS partitions_total,
+          0::BIGINT AS partitions_done
+      FROM sdb_progress S WHERE S.command = 'CREATE INDEX')"},
 
   {"pg_catalog", "pg_stat_progress_basebackup",
    R"(SELECT
           S.pid AS pid,
-          CASE S.param1 WHEN 0 THEN 'initializing'
-                        WHEN 1 THEN 'waiting for checkpoint to finish'
-                        WHEN 2 THEN 'estimating backup size'
-                        WHEN 3 THEN 'streaming database files'
-                        WHEN 4 THEN 'waiting for wal archiving to finish'
-                        WHEN 5 THEN 'transferring wal files'
-                        END AS phase,
-          CASE S.param2 WHEN -1 THEN NULL ELSE S.param2 END AS backup_total,
-          S.param3 AS backup_streamed,
-          S.param4 AS tablespaces_total,
-          S.param5 AS tablespaces_streamed
-      FROM pg_stat_get_progress_info('BASEBACKUP') AS S)"},
+          S.phase AS phase,
+          S.bytes_total AS backup_total,
+          S.bytes_processed AS backup_streamed,
+          S.items_total AS tablespaces_total,
+          S.items_processed AS tablespaces_streamed
+      FROM sdb_progress S WHERE S.command = 'BASEBACKUP')"},
 
   {"pg_catalog", "pg_stat_progress_copy",
    R"(SELECT
-          S.pid AS pid, S.datid AS datid, D.datname AS datname,
+          S.pid AS pid, S.datid AS datid, S.datname AS datname,
           S.relid AS relid,
-          CASE S.param5 WHEN 1 THEN 'COPY FROM'
-                        WHEN 2 THEN 'COPY TO'
-                        END AS command,
-          CASE S.param6 WHEN 1 THEN 'FILE'
-                        WHEN 2 THEN 'PROGRAM'
-                        WHEN 3 THEN 'PIPE'
-                        WHEN 4 THEN 'CALLBACK'
-                        END AS "type",
-          S.param1 AS bytes_processed,
-          S.param2 AS bytes_total,
-          S.param3 AS tuples_processed,
-          S.param4 AS tuples_excluded,
-          S.param7 AS tuples_skipped
-      FROM pg_stat_get_progress_info('COPY') AS S
-          LEFT JOIN pg_database D ON S.datid = D.oid)"},
+          S.command AS command,
+          S.io_type AS "type",
+          S.bytes_processed AS bytes_processed,
+          S.bytes_total AS bytes_total,
+          S.tuples_processed AS tuples_processed,
+          0::BIGINT AS tuples_excluded,
+          0::BIGINT AS tuples_skipped
+      FROM sdb_progress S WHERE S.command IN ('COPY FROM', 'COPY TO'))"},
 
   {"pg_catalog", "pg_stat_progress_create_table_as",
    R"(SELECT
-          S.pid AS pid, S.datid AS datid, D.datname AS datname,
+          S.pid AS pid, S.datid AS datid, S.datname AS datname,
           S.relid AS relid,
-          'CREATE TABLE AS' AS command,
-          CASE S.param1 WHEN 1 THEN 'ingesting'
-                        WHEN 2 THEN 'committing'
-                        WHEN 3 THEN 'finalizing'
-                        END AS phase,
-          S.param2 AS tuples_processed,
-          S.param3 AS bytes_processed,
-          S.param4 AS tuples_total
-      FROM pg_stat_get_progress_info('CREATE TABLE AS') AS S
-          LEFT JOIN pg_database D ON S.datid = D.oid)"},
+          S.command AS command,
+          S.phase AS phase,
+          S.tuples_processed AS tuples_processed,
+          S.bytes_processed AS bytes_processed,
+          S.tuples_total AS tuples_total
+      FROM sdb_progress S WHERE S.command = 'CREATE TABLE AS')"},
 
   {"pg_catalog", "pg_user_mappings",
    R"(SELECT

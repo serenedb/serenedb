@@ -35,7 +35,7 @@
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
-#include "pg/progress_tracker.h"
+#include "pg/progress_registry.h"
 #include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
@@ -81,7 +81,7 @@ struct CTASGlobalSinkState final : public duckdb::GlobalSinkState {
   // the exact inserted count.
   std::atomic<duckdb::idx_t> insert_count{0};
 
-  pg::ProgressReporter* progress = nullptr;
+  pg::ProgressMetrics* progress = nullptr;
 };
 
 struct CTASSourceState final : public duckdb::GlobalSourceState {
@@ -179,9 +179,18 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
       std::ignore = catalog::GetCatalog().DropTable(
         catalog::NoAccessCheck(), database_name, schema_name, table_name, true);
     };
-  sdb_state->EnsureCreateTableAsProgress(_database_id, _table_id,
-                                         estimated_cardinality);
-  state->progress = sdb_state->progress.get();
+  auto& metrics = sdb_state->Progress();
+  metrics.SetCommand(pg::ProgressCommand::CreateTableAs);
+  metrics.SetPhase(pg::progress_phase::CreateTableAs::Ingesting);
+  pg::ProgressMetrics::Set(metrics.relid, static_cast<int64_t>(_table_id.id()));
+  // The CTAS operator's own estimate is its single count row; the expected
+  // ingest size is the source child's estimate.
+  if (!children.empty() && children[0].get().estimated_cardinality > 0) {
+    pg::ProgressMetrics::Set(
+      metrics.tuples_total,
+      static_cast<int64_t>(children[0].get().estimated_cardinality));
+  }
+  state->progress = &metrics;
   state->insert_gstate = _insert.GetGlobalSinkState(context);
   return state;
 }
@@ -197,18 +206,18 @@ duckdb::SinkResultType SereneDBPhysicalCTAS::Sink(
   duckdb::OperatorSinkInput& input) const {
   auto& gstate = input.global_state.Cast<CTASGlobalSinkState>();
   gstate.insert_count.fetch_add(chunk.size(), std::memory_order_relaxed);
+  duckdb::OperatorSinkInput insert_input{
+    *gstate.insert_gstate, input.local_state, input.interrupt_state};
+  const auto result = _insert.Sink(context, chunk, insert_input);
+  // Tuple/byte counting happens in the nested insert's sink via the
+  // sink_progress_callback; pause after it so the counters of the ingested
+  // chunk are visible while parked.
   if (gstate.progress) {
-    gstate.progress->Add(pg::create_table_as_progress::Param::TuplesProcessed,
-                         static_cast<int64_t>(chunk.size()));
-    gstate.progress->Add(pg::create_table_as_progress::Param::BytesProcessed,
-                         static_cast<int64_t>(chunk.GetAllocationSize()));
     SDB_IF_FAILURE("pause_ctas_mid_ingest") {
       sdb::WaitWhileFailurePointDebugging("pause_ctas_mid_ingest");
     }
   }
-  duckdb::OperatorSinkInput insert_input{
-    *gstate.insert_gstate, input.local_state, input.interrupt_state};
-  return _insert.Sink(context, chunk, insert_input);
+  return result;
 }
 
 duckdb::SinkNextBatchType SereneDBPhysicalCTAS::NextBatch(
@@ -243,7 +252,7 @@ duckdb::SinkFinalizeType SereneDBPhysicalCTAS::Finalize(
   SDB_IF_FAILURE("crash_sst_sink_after_ingest") { SDB_IMMEDIATE_ABORT(); }
 
   if (gstate.progress) {
-    gstate.progress->SetPhase(pg::create_table_as_progress::Phase::Committing);
+    gstate.progress->SetPhase(pg::progress_phase::CreateTableAs::Committing);
   }
   // Commit point: from here the side transaction is consumed either way, so
   // the abort hook must not fire anymore (a failed commit already rolled the
@@ -264,7 +273,7 @@ duckdb::SinkFinalizeType SereneDBPhysicalCTAS::Finalize(
 
   SDB_IF_FAILURE("crash_before_remove_tombstone") { SDB_IMMEDIATE_ABORT(); }
   if (gstate.progress) {
-    gstate.progress->SetPhase(pg::create_table_as_progress::Phase::Finalizing);
+    gstate.progress->SetPhase(pg::progress_phase::CreateTableAs::Finalizing);
   }
   auto r = catalog::GetCatalog().RemoveTombstone(
     gstate.database_id, gstate.schema_name, gstate.table_name);

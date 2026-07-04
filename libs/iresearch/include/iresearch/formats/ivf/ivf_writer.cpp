@@ -640,6 +640,7 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
   if (n == 0) {
     return;
   }
+  _qw->BeginCluster(n);
   constexpr size_t kBatch = STANDARD_VECTOR_SIZE;
   ColumnReader::RangeScan scan{*_vectors->Child(), *_ctx};
   duckdb::Vector batch{duckdb::LogicalType::FLOAT,
@@ -657,6 +658,7 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
   if (filled != 0) {
     _qw->EncodeCluster(out, vecs, filled);
   }
+  _qw->FinishCluster(out);
 }
 
 void IvfTermReader::Finish(IndexOutput& /*out*/) { SDB_ASSERT(_qw); }

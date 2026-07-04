@@ -1,13 +1,13 @@
 hash-threshold 100
 
 # Residual Product-Quantization IVF vector index. One global codebook (M
-# subquantizers, ksub=256 centroids, nbits=8) is trained on the reservoir
-# sample's centroid-relative residuals and stored once in the .idx; each cluster
-# stores only M-byte codes. PQ is lossy + approximate, so determinism here comes
-# from far-separated "landmark" vectors (queries can't miss them) plus an
-# exhaustive nprobe. PQ training needs >= 256 points, so the table is padded
-# with filler rows. quant='pq' supports only metric l2 and ip; pq_m must divide
-# the dimension.
+# subquantizers, ksub=16 centroids, nbits=4) is trained on the reservoir
+# sample's centroid-relative residuals and stored once in the .idx; each
+# cluster's codes are packed into faiss SIMD fast-scan blocks. PQ is lossy +
+# approximate, so determinism here comes from far-separated "landmark"
+# vectors (queries can't miss them) plus an exhaustive nprobe. PQ training
+# needs >= 16 points, so the table is padded with filler rows. quant='pq'
+# supports only metric l2 and ip; pq_m must divide the dimension.
 
 statement ok
 SET sdb_nprobe = 1000

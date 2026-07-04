@@ -114,6 +114,15 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
   state.d = d;
   state.codebook = std::move(codebook);
 
+  state.cookies.reserve(fine_ids.size());
+  if (quant != VectorQuantization::None) {
+    state.pay_starts.reserve(fine_ids.size());
+    state.cluster_counts.reserve(fine_ids.size());
+  }
+  if (needs_centroids) {
+    state.cluster_centroids.reserve(fine_ids.size() * d);
+  }
+
   std::array<byte_type, kCentroidTermWidth> term_buf{};
   CostAttr::Type estimation = 0;
   for (size_t i = 0; i < fine_ids.size(); ++i) {

@@ -18,8 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <vector>
 
 #include "iresearch/formats/ivf/quantizer.hpp"
@@ -28,6 +30,61 @@
 #include "tests_shared.hpp"
 
 using namespace irs;
+
+namespace {
+
+// Builds a writer, trains it on `n_train` copies of the 3 canonical
+// `points` (so k-means has >= ksub=16 samples to work with), then encodes
+// exactly `points` (n=3) as a single fast-scan cluster and returns the
+// scores from a fresh reader positioned on that cluster.
+std::array<score_t, 3> PqRoundtrip(uint32_t d, uint32_t pq_m,
+                                   VectorMetric metric,
+                                   const std::vector<float>& centroid,
+                                   const std::vector<float>& points,
+                                   const std::vector<float>& query) {
+  auto writer = MakeQuantizerWriter(VectorQuantization::PQ, d, metric, pq_m,
+                                    /*pq_niter=*/0, /*nb_bits=*/0);
+  EXPECT_EQ(writer->Kind(), VectorQuantization::PQ);
+  writer->SetClusterCentroid(centroid.data());
+
+  std::vector<float> residual_train;
+  constexpr size_t kCopiesPerPoint = 6;
+  for (size_t c = 0; c < kCopiesPerPoint; ++c) {
+    for (size_t p = 0; p < 3; ++p) {
+      for (uint32_t j = 0; j < d; ++j) {
+        residual_train.push_back(points[p * d + j] - centroid[j]);
+      }
+    }
+  }
+  writer->Train(residual_train.data(), residual_train.size() / d);
+
+  SimpleMemoryAccounter memory;
+  MemoryFile file{memory};
+  uint64_t pay_start;
+  {
+    MemoryIndexOutput out{file};
+    pay_start = out.Position();
+    writer->BeginCluster(3);
+    writer->EncodeCluster(out, points.data(), 3);
+    writer->FinishCluster(out);
+    out.Flush();
+  }
+
+  auto codebook = MakeQuantizerCodebook(VectorQuantization::PQ, d,
+                                        writer->StatsBytes(), query, metric);
+  EXPECT_NE(codebook, nullptr);
+
+  auto reader =
+    MakeQuantizerReader(codebook, std::make_unique<MemoryIndexInput>(file));
+  EXPECT_NE(reader, nullptr);
+  reader->StartCluster(pay_start, 3, centroid.data());
+
+  std::array<score_t, 3> scores{};
+  reader->ComputeBlock(0, 3, /*boost=*/1.f, scores.data());
+  return scores;
+}
+
+}  // namespace
 
 class rabitq_quantizer_test : public ::testing::TestWithParam<uint32_t> {};
 
@@ -198,4 +255,113 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_inner_product) {
   // Exact order by <query, p_i> is p0 (6) > p1 (0) > p2 (-6).
   EXPECT_GT(scores[0], scores[1]);
   EXPECT_GT(scores[1], scores[2]);
+}
+
+TEST(pq_quantizer_test, roundtrip_ranking_matches_exact_l2) {
+  constexpr uint32_t d = 8;
+  constexpr uint32_t pq_m = 2;
+  const VectorMetric metric = VectorMetric::L2Sqr;
+  const std::vector<float> centroid(d, 0.f);
+
+  // Well-separated points along one axis: distances to centroid 1, 4, 20.
+  const std::vector<float> points{
+    /*p0*/ 1.f,  0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f,
+    /*p1*/ 4.f,  0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f,
+    /*p2*/ 20.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f,
+  };
+  // Query closest to p0 (distance 0.25), then p1 (6.25), then p2 (342.25).
+  const std::vector<float> query{1.5f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
+
+  const auto scores = PqRoundtrip(d, pq_m, metric, centroid, points, query);
+
+  // L2: lower score means closer. Exact order is p0 < p1 < p2.
+  EXPECT_LT(scores[0], scores[1]);
+  EXPECT_LT(scores[1], scores[2]);
+}
+
+TEST(pq_quantizer_test, roundtrip_ranking_matches_exact_inner_product) {
+  constexpr uint32_t d = 8;
+  constexpr uint32_t pq_m = 2;
+  const VectorMetric metric = VectorMetric::InnerProduct;
+  const std::vector<float> centroid(d, 0.f);
+
+  const std::vector<float> points{
+    /*p0 aligned with query*/ 2.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f,
+    /*p1 orthogonal*/         0.f, 2.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f,
+    /*p2 opposed*/            -2.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f,
+  };
+  const std::vector<float> query{3.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
+
+  const auto scores = PqRoundtrip(d, pq_m, metric, centroid, points, query);
+
+  // IP: higher raw value means a larger inner product with the query.
+  // Exact order by <query, p_i> is p0 (6) > p1 (0) > p2 (-6).
+  EXPECT_GT(scores[0], scores[1]);
+  EXPECT_GT(scores[1], scores[2]);
+}
+
+// A cluster spanning more than one 32-vector fast-scan SIMD block (bbs=32),
+// with an odd M (M=3, rounded up to nsq=4 for packing/scanning) to exercise
+// the padding subquantizer. Near/far points are interleaved so both blocks
+// mix the two groups instead of neatly separating along the block boundary.
+TEST(pq_quantizer_test, cluster_spans_multiple_fastscan_blocks_with_odd_m) {
+  constexpr uint32_t d = 9;
+  constexpr uint32_t pq_m = 3;
+  constexpr size_t kNear = 20;
+  constexpr size_t kFar = 20;
+  constexpr size_t n = kNear + kFar;
+  const VectorMetric metric = VectorMetric::L2Sqr;
+  const std::vector<float> centroid(d, 0.f);
+
+  std::vector<float> points(n * d, 0.f);
+  std::vector<bool> is_near(n);
+  for (size_t i = 0; i < n; ++i) {
+    is_near[i] = (i % 2 == 0);
+    points[i * d] = is_near[i] ? 1.f : 100.f;
+  }
+
+  auto writer = MakeQuantizerWriter(VectorQuantization::PQ, d, metric, pq_m,
+                                    /*pq_niter=*/0, /*nb_bits=*/0);
+  ASSERT_NE(writer, nullptr);
+  writer->SetClusterCentroid(centroid.data());
+  writer->Train(points.data(), n);
+
+  SimpleMemoryAccounter memory;
+  MemoryFile file{memory};
+  uint64_t pay_start;
+  {
+    MemoryIndexOutput out{file};
+    pay_start = out.Position();
+    writer->BeginCluster(n);
+    writer->EncodeCluster(out, points.data(), n);
+    writer->FinishCluster(out);
+    out.Flush();
+  }
+
+  const std::vector<float> query{1.5f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
+  auto codebook = MakeQuantizerCodebook(VectorQuantization::PQ, d,
+                                        writer->StatsBytes(), query, metric);
+  ASSERT_NE(codebook, nullptr);
+
+  auto reader =
+    MakeQuantizerReader(codebook, std::make_unique<MemoryIndexInput>(file));
+  ASSERT_NE(reader, nullptr);
+  reader->StartCluster(pay_start, n, centroid.data());
+
+  std::vector<score_t> scores(n);
+  reader->ComputeBlock(0, n, /*boost=*/1.f, scores.data());
+
+  score_t max_near = -std::numeric_limits<score_t>::infinity();
+  score_t min_far = std::numeric_limits<score_t>::infinity();
+  for (size_t i = 0; i < n; ++i) {
+    if (is_near[i]) {
+      max_near = std::max(max_near, scores[i]);
+    } else {
+      min_far = std::min(min_far, scores[i]);
+    }
+  }
+  // L2: lower score means closer. Near/far are separated by two orders of
+  // magnitude, so quantization noise shouldn't be able to flip the group
+  // ordering even though it can perturb individual scores within a group.
+  EXPECT_LT(max_near, min_far);
 }

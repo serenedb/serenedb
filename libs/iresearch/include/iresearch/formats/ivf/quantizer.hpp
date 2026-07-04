@@ -43,8 +43,12 @@ class QuantizerWriter {
 
   virtual void SetClusterCentroid(const float* /*centroid*/) {}
 
+  virtual void BeginCluster(size_t /*total_docs*/) {}
+
   virtual void EncodeCluster(IndexOutput& out, const float* vecs,
                              size_t n) const = 0;
+
+  virtual void FinishCluster(IndexOutput& /*out*/) {}
 
   virtual std::span<const byte_type> StatsBytes() const = 0;
 

@@ -23,7 +23,9 @@
 #include <faiss/impl/ProductQuantizer.h>
 #include <faiss/impl/RaBitQuantizer.h>
 #include <faiss/impl/ScalarQuantizer.h>
+#include <faiss/impl/pq4_fast_scan.h>
 #include <faiss/utils/distances.h>
+#include <faiss/utils/quantize_lut.h>
 #include <faiss/utils/random.h>
 
 #include <algorithm>
@@ -62,6 +64,14 @@ std::span<const byte_type> FloatSpan(const std::vector<float>& v) noexcept {
   return {reinterpret_cast<const byte_type*>(v.data()),
           v.size() * sizeof(float)};
 }
+
+constexpr size_t kFastScanBbs = 32;
+
+size_t RoundUp(size_t n, size_t multiple) noexcept {
+  return (n + multiple - 1) / multiple * multiple;
+}
+
+size_t FastScanNsq(size_t m) noexcept { return m + (m & 1); }
 
 constexpr int64_t kRaBitQRotationSeed = 0x5a17b17c5eed5eedULL;
 
@@ -250,7 +260,7 @@ std::unique_ptr<QuantizerReader> ScalarQuantizerCodebook::MakeReader(
 class ProductQuantizerWriter final : public QuantizerWriter {
  public:
   ProductQuantizerWriter(uint32_t d, uint32_t m, uint32_t niter)
-    : _d{d}, _pq{d, m == 0 ? 1 : m, 8} {
+    : _d{d}, _pq{d, m == 0 ? 1 : m, 4} {
     if (niter != 0) {
       _pq.cp.niter = static_cast<int>(niter);
     }
@@ -279,23 +289,44 @@ class ProductQuantizerWriter final : public QuantizerWriter {
     _centroid.assign(centroid, centroid + _d);
   }
 
-  void EncodeCluster(IndexOutput& out, const float* vecs,
+  void BeginCluster(size_t total_docs) final {
+    _cluster_codes.assign(total_docs * _pq.code_size, 0);
+    _cluster_filled = 0;
+  }
+
+  void EncodeCluster(IndexOutput& /*out*/, const float* vecs,
                      size_t n) const final {
     if (n == 0) {
       return;
     }
     SDB_ASSERT(_trained);
     SDB_ASSERT(_centroid.size() == _d);
-    _code.resize(n * _pq.code_size);
+    SDB_ASSERT((_cluster_filled + n) * _pq.code_size <= _cluster_codes.size());
     std::vector<float> res(_d);
     for (size_t i = 0; i < n; ++i) {
       const float* v = vecs + i * _d;
       for (uint32_t j = 0; j < _d; ++j) {
         res[j] = v[j] - _centroid[j];
       }
-      _pq.compute_code(res.data(), _code.data() + i * _pq.code_size);
+      _pq.compute_code(res.data(), _cluster_codes.data() +
+                                     (_cluster_filled + i) * _pq.code_size);
     }
-    out.WriteData(_code.data(), _code.size());
+    _cluster_filled += n;
+  }
+
+  void FinishCluster(IndexOutput& out) final {
+    if (_cluster_filled == 0) {
+      _cluster_codes.clear();
+      return;
+    }
+    const size_t m = _pq.M;
+    const size_t nsq = FastScanNsq(m);
+    const size_t nb = RoundUp(_cluster_filled, kFastScanBbs);
+    _packed.assign(nb * nsq / 2, 0);
+    faiss::pq4_pack_codes(_cluster_codes.data(), _cluster_filled, m, nb,
+                          kFastScanBbs, nsq, _packed.data());
+    out.WriteData(_packed.data(), _packed.size());
+    _cluster_codes.clear();
   }
 
   std::span<const byte_type> StatsBytes() const final {
@@ -326,7 +357,9 @@ class ProductQuantizerWriter final : public QuantizerWriter {
   bool _trained = false;
   std::vector<byte_type> _stats;
   std::vector<float> _centroid;
-  mutable std::vector<uint8_t> _code;
+  mutable std::vector<uint8_t> _cluster_codes;
+  mutable size_t _cluster_filled = 0;
+  std::vector<uint8_t> _packed;
 };
 
 class ProductQuantizerCodebook final : public QuantizerCodebook {
@@ -340,7 +373,7 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
     if (hdr.m != 0 && d % hdr.m == 0 && hdr.ksub != 0) {
       _pq.d = d;
       _pq.M = hdr.m;
-      _pq.nbits = 8;
+      _pq.nbits = 4;
       _pq.set_derived_values();
       const size_t want = _pq.centroids.size() * sizeof(float);
       if (hdr.ksub == static_cast<uint32_t>(_pq.ksub) &&
@@ -349,8 +382,22 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
                     want);
         _valid = true;
         if (_metric == VectorMetric::InnerProduct) {
-          _ip_table.resize(static_cast<size_t>(_pq.M) * _pq.ksub);
-          _pq.compute_inner_prod_table(_query.data(), _ip_table.data());
+          // IpTable() (unlike the L2 residual table) depends only on the
+          // query, not the probed cluster's centroid, so its uint8
+          // quantization + SIMD packing is done once here per query
+          // instead of once per StartCluster() call (i.e. once per
+          // nprobe'd cluster).
+          const size_t ksub = _pq.ksub;
+          const size_t nsq = FastScanNsq(_pq.M);
+          std::vector<float> ip_table(static_cast<size_t>(_pq.M) * ksub);
+          _pq.compute_inner_prod_table(_query.data(), ip_table.data());
+          std::vector<byte_type> lutq(nsq * ksub);
+          faiss::quantize_lut::quantize_LUT_and_bias(
+            1, _pq.M, ksub, false, ip_table.data(), nullptr, lutq.data(),
+            nsq, nullptr, &_ip_a, &_ip_b);
+          _packed_ip_lut.resize(nsq * ksub);
+          faiss::pq4_pack_LUT(1, static_cast<int>(nsq), lutq.data(),
+                              _packed_ip_lut.data());
         }
       }
     }
@@ -364,7 +411,9 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
   const faiss::ProductQuantizer& Pq() const noexcept { return _pq; }
   std::span<const float> Query() const noexcept { return _query; }
   VectorMetric Metric() const noexcept { return _metric; }
-  const float* IpTable() const noexcept { return _ip_table.data(); }
+  const uint8_t* PackedIpLut() const noexcept { return _packed_ip_lut.data(); }
+  float IpA() const noexcept { return _ip_a; }
+  float IpB() const noexcept { return _ip_b; }
 
  private:
   struct Header {
@@ -384,7 +433,9 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
   faiss::ProductQuantizer _pq;
   VectorMetric _metric;
   std::vector<float> _query;
-  std::vector<float> _ip_table;
+  std::vector<uint8_t> _packed_ip_lut;
+  float _ip_a = 1.f;
+  float _ip_b = 0.f;
   bool _valid = false;
 };
 
@@ -392,9 +443,7 @@ class ProductQuantizerReader final : public QuantizerReader {
  public:
   ProductQuantizerReader(std::shared_ptr<const ProductQuantizerCodebook> cb,
                          std::unique_ptr<IndexInput> pay_in)
-    : _cb{std::move(cb)},
-      _pay_in{std::move(pay_in)},
-      _codes_reader{*_pay_in, static_cast<uint32_t>(_cb->Pq().code_size)} {}
+    : _cb{std::move(cb)}, _pay_in{std::move(pay_in)} {}
 
   void StartCluster(uint64_t pay_start, size_t num_docs,
                     const float* centroid) final {
@@ -404,55 +453,82 @@ class ProductQuantizerReader final : public QuantizerReader {
     }
     SDB_ASSERT(centroid != nullptr);
     const faiss::ProductQuantizer& pq = _cb->Pq();
+    const size_t m = pq.M;
+    const size_t ksub = pq.ksub;
+    const size_t nsq = FastScanNsq(m);
     const std::span<const float> query = _cb->Query();
-    if (_cb->Metric() == VectorMetric::L2Sqr) {
+
+    const uint8_t* packed_lut;
+    float a;
+    float b;
+    float ip_offset = 0.f;
+    const bool is_l2 = _cb->Metric() == VectorMetric::L2Sqr;
+    if (is_l2) {
       // ||q - (c + r)||^2 = ||(q - c) - r||^2: ADC table for the residual
-      // query.
-      _table.resize(static_cast<size_t>(pq.M) * pq.ksub);
+      // query. Unlike IP, this depends on the probed cluster's centroid,
+      // so it (and its quantized/packed form) must be rebuilt per cluster.
       _qr.resize(query.size());
       for (size_t j = 0; j < query.size(); ++j) {
         _qr[j] = query[j] - centroid[j];
       }
+      _table.resize(m * ksub);
       pq.compute_distance_table(_qr.data(), _table.data());
-      _table_ptr = _table.data();
-      _ip_offset = 0.f;
+
+      _lutq.resize(nsq * ksub);
+      faiss::quantize_lut::quantize_LUT_and_bias(
+        1, m, ksub, false, _table.data(), nullptr, _lutq.data(), nsq,
+        nullptr, &a, &b);
+      _packed_lut.resize(nsq * ksub);
+      faiss::pq4_pack_LUT(1, static_cast<int>(nsq), _lutq.data(),
+                          _packed_lut.data());
+      packed_lut = _packed_lut.data();
     } else {
-      // IP(q, c + r) = IP(q, c) + IP(q, r).
-      _table_ptr = _cb->IpTable();
-      float off = 0.f;
+      // IP(q, c + r) = IP(q, c) + IP(q, r); the packed LUT for IP(q, r) is
+      // query-only and precomputed once per query in the codebook.
+      packed_lut = _cb->PackedIpLut();
+      a = _cb->IpA();
+      b = _cb->IpB();
       for (size_t j = 0; j < query.size(); ++j) {
-        off += query[j] * centroid[j];
+        ip_offset += query[j] * centroid[j];
       }
-      _ip_offset = off;
     }
-    _codes_reader.Reset(pay_start);
+
+    const size_t nb = RoundUp(_n, kFastScanBbs);
+    const size_t packed_bytes = nb * nsq / 2;
+    const byte_type* codes = _pay_in->ReadStable(pay_start, packed_bytes);
+    if (!codes) {
+      _codes_buf.resize(packed_bytes);
+      _pay_in->ReadData(pay_start, _codes_buf.data(), packed_bytes);
+      codes = _codes_buf.data();
+    }
+    _accu.resize(nb);
+    faiss::accumulate_to_mem(1, nb, static_cast<int>(nsq), codes, packed_lut,
+                             _accu.data());
+
+    _scores.resize(_n);
+    const float inv_a = 1.f / a;
+    for (size_t i = 0; i < _n; ++i) {
+      const float dist = static_cast<float>(_accu[i]) * inv_a + b;
+      _scores[i] = is_l2 ? dist : dist + ip_offset;
+    }
   }
 
   void ComputeBlock(size_t offset, size_t count, score_t /*boost*/,
                     score_t* out) final {
     SDB_ASSERT(offset + count <= _n);
-    const byte_type* block = _codes_reader.Read(offset, count);
-    const size_t m = _cb->Pq().M;
-    const size_t ksub = _cb->Pq().ksub;
-    const float* table = _table_ptr;
-    for (size_t i = 0; i < count; ++i) {
-      const byte_type* code = block + i * m;
-      float acc = _ip_offset;
-      for (size_t j = 0; j < m; ++j) {
-        acc += table[j * ksub + code[j]];
-      }
-      out[i] = acc;
-    }
+    std::memcpy(out, _scores.data() + offset, count * sizeof(score_t));
   }
 
  private:
   std::shared_ptr<const ProductQuantizerCodebook> _cb;
   std::unique_ptr<IndexInput> _pay_in;
-  VectorBlockReader _codes_reader;
   std::vector<float> _table;
   std::vector<float> _qr;
-  const float* _table_ptr = nullptr;
-  float _ip_offset = 0.f;
+  std::vector<uint8_t> _lutq;
+  std::vector<uint8_t> _packed_lut;
+  std::vector<byte_type> _codes_buf;
+  std::vector<uint16_t> _accu;
+  std::vector<score_t> _scores;
   size_t _n = 0;
 };
 

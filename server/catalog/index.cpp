@@ -419,7 +419,8 @@ std::string DescribeIVFOptions() {
          "cluster_iters (int >= 1, k-means iterations, default auto), "
          "quant (string: sq8|sq4|pq|rabitq|none, default none; sq4/pq/rabitq "
          "need l2|ip), "
-         "pq_m (int >= 1, divides dimension, quant='pq' only, default auto), "
+         "pq_m (int >= 1, divides dimension, quant='pq' only, default auto "
+         "~d/2), "
          "rabitq_bits (int 1-9, quant='rabitq' only, default 1), "
          "compression (string, default 'auto'), "
          "row_group_size (int >= 1)";
@@ -613,9 +614,7 @@ Result ApplyIVFOptions(
   }
   if (cfg.quant == irs::VectorQuantization::PQ) {
     if (cfg.pq_m == 0) {
-      // Default: snap the number of subquantizers to a divisor of d giving a
-      // subvector dimension close to 8.
-      constexpr int kTargetDsub = 8;
+      constexpr int kTargetDsub = 2;
       uint32_t best = 1;
       int best_diff = cfg.d;
       for (int m = 1; m <= cfg.d; ++m) {

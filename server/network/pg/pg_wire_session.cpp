@@ -1579,16 +1579,16 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   // to the command-loop boundary -- this is the reason for the exception_ptr,
   // not laziness.
   std::exception_ptr error;
-  duckdb::unique_ptr<duckdb::PreparedStatement> prepared;
   duckdb::unique_ptr<duckdb::QueryResult> result;
+  duckdb::StatementReturnType return_type{};
+  const auto tag = sdb::pg::BuildCommandTag(*statement, *_conn->context);
   try {
-    auto bind_snapshot = _connection_ctx->AcquireCatalogSnapshot();
-    prepared = _conn->Prepare(std::move(statement));  // sniffs /dev/stdin
-    ThrowIfError(*prepared);
-    duckdb::vector<duckdb::Value> params;
+    // COPY prepare now is defer to execution.
+    auto wire = MakeWireContext({});
     ClosingPending pending;
-    result = co_await DriveToResult(*prepared, params, pending, nullptr,
-                                    std::move(bind_snapshot));
+    result =
+      co_await DriveStatementToResult(std::move(statement), pending, wire);
+    return_type = pending->properties.return_type;
   } catch (...) {
     error = std::current_exception();
   }
@@ -1606,8 +1606,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   if (error) {
     std::rethrow_exception(error);
   }
-  WriteCommandTag(*prepared, *result,
-                  prepared->GetStatementProperties().return_type);
+  WriteCommandTag(tag, *result, return_type);
   co_return {};
 }
 
@@ -2114,7 +2113,11 @@ void PgWireSession<Kind>::HandleBind(std::string_view payload) {
   }
 
   Portal portal;
-  portal.stmt = slot;
+  portal.stmt = slot;  // co-own the plan
+  // Only a Prepared statement carries parameters and result columns; a deferred
+  // COPY or the empty query binds with none. Planning (PendingQuery) is
+  // deferred to Execute, where max_rows picks the wire-collector (full drain)
+  // vs the streaming (cursor paging) path; plan-time errors surface there.
   if (statement.GetKind() == Statement::Kind::Prepared) {
     portal.bind_info = ParseBindVars(payload, statement, statement_name);
   }

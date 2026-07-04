@@ -179,6 +179,29 @@ inline ObjectId ResolveCopyTableId(ConnectionContext& conn,
   return table ? table->GetId() : ObjectId{};
 }
 
+// Stage pg_stat_progress_copy classification for the statement about to run.
+// Staged (not written to the metrics) because QueryBegin resets the metrics
+// before applying it.
+inline void StagePendingCopyProgress(connector::SereneDBClientState& state,
+                                     ConnectionContext& conn,
+                                     duckdb::SQLStatement& statement) {
+  if (statement.type != duckdb::StatementType::COPY_STATEMENT) {
+    return;
+  }
+  auto& copy = statement.Cast<duckdb::CopyStatement>();
+  if (!copy.info) {
+    return;
+  }
+  const auto& info = *copy.info;
+  state.pending_copy_command = info.is_from ? sdb::pg::ProgressCommand::CopyFrom
+                                            : sdb::pg::ProgressCommand::CopyTo;
+  state.pending_copy_io =
+    info.file_path == "/dev/stdin" || info.file_path == "/dev/stdout"
+      ? sdb::pg::ProgressIoType::Pipe
+      : sdb::pg::ProgressIoType::File;
+  state.pending_copy_relid = ResolveCopyTableId(conn, info);
+}
+
 // A temporary CREATE -- e.g. a value-extracting PIVOT's bind-time enum, which
 // the parser emits ahead of the SELECT (TEMPORARY + REPLACE_ON_CONFLICT,
 // session scoped). Leading scaffolding like this is run at Parse and dropped
@@ -380,8 +403,32 @@ bool PgWireSession<Kind>::SetupConnection() {
     static_cast<int32_t>(_cancel_key >> 32), _cancel);
   _client_state =
     &connector::SereneDBClientState::Register(*_conn->context, _connection_ctx);
-  duckdb::ClientConfig::GetConfig(*_conn->context).get_result_collector =
-    MakeWireCollector;
+  auto& client_config = duckdb::ClientConfig::GetConfig(*_conn->context);
+  client_config.get_result_collector = MakeWireCollector;
+  client_config.enable_progress_bar = true;
+  client_config.print_progress_bar = false;
+  // Fires per chunk on every write sink (INSERT/DELETE/UPDATE/MERGE and
+  // COPY ... TO), so every write statement reports exact tuple/byte counts.
+  client_config.sink_progress_callback =
+    [state = _client_state](duckdb::idx_t rows, duckdb::idx_t bytes) {
+      auto& metrics = state->Progress();
+      sdb::pg::ProgressMetrics::Add(metrics.tuples_processed,
+                                    static_cast<int64_t>(rows));
+      sdb::pg::ProgressMetrics::Add(metrics.bytes_processed,
+                                    static_cast<int64_t>(bytes));
+      const auto command = static_cast<sdb::pg::ProgressCommand>(
+        metrics.command.load(std::memory_order_relaxed));
+      SDB_IF_FAILURE("pause_sst_sink_mid_copy") {
+        if (command == sdb::pg::ProgressCommand::CopyFrom) {
+          sdb::WaitWhileFailurePointDebugging("pause_sst_sink_mid_copy");
+        }
+      }
+      SDB_IF_FAILURE("pause_copy_to_mid_stream") {
+        if (command == sdb::pg::ProgressCommand::CopyTo) {
+          sdb::WaitWhileFailurePointDebugging("pause_copy_to_mid_stream");
+        }
+      }
+    };
 
   _conn->context->session_user = std::string{UserName()};
   std::vector<duckdb::CatalogSearchEntry> default_paths{
@@ -480,7 +527,11 @@ PgWireSession<Kind>::PendingQueryEnsured(
   duckdb::PreparedStatement& prepared, duckdb::vector<duckdb::Value>& values,
   std::shared_ptr<WireSinkContext> wire) {
   _connection_ctx->AcquireCatalogSnapshot();
-  _client_state->current_statement_type = prepared.GetStatementType();
+  if (prepared.GetStatementType() == duckdb::StatementType::COPY_STATEMENT &&
+      prepared.data && prepared.data->unbound_statement) {
+    StagePendingCopyProgress(*_client_state, *_connection_ctx,
+                             *prepared.data->unbound_statement);
+  }
   const bool is_ddl = IsCatalogDdl(prepared.GetStatementType());
   NoticeDdlInTransaction(prepared.GetStatementType());
   // Once an explicit transaction has run a snapshot-taking statement it can no
@@ -547,7 +598,7 @@ PgWireSession<Kind>::PendingStatementEnsured(
   duckdb::unique_ptr<duckdb::SQLStatement> statement,
   const std::shared_ptr<WireSinkContext>& wire) {
   _connection_ctx->AcquireCatalogSnapshot();
-  _client_state->current_statement_type = statement->type;
+  StagePendingCopyProgress(*_client_state, *_connection_ctx, *statement);
   // Statement type is parse-time, and the check must precede PendingQuery:
   // execution tasks (including the DDL itself) can run inside it.
   NoticeDdlInTransaction(statement->type);
@@ -1467,6 +1518,9 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
   if (binary) {
     RejectBinaryCopyOptions(*copy.info);
   }
+  // The wire collector runs the extracted INNER query, so the generic COPY
+  // staging in PendingQueryEnsured never sees this statement.
+  StagePendingCopyProgress(*_client_state, *_connection_ctx, *statement);
   auto inner = ExtractCopyToQuery(copy);
   auto bind_snapshot = _connection_ctx->AcquireCatalogSnapshot();
   auto prepared = _conn->Prepare(std::move(inner));
@@ -1510,10 +1564,6 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
       WriteCopyTextHeader(this->_send, prepared->GetNames(), opts.delim);
     }
   }
-  _client_state->ArmCopyProgress(
-    ResolveCopyTableId(*_connection_ctx, *copy.info),
-    sdb::pg::copy_progress::Command::CopyTo,
-    sdb::pg::copy_progress::Type::Pipe);
   duckdb::vector<duckdb::Value> params;
   ClosingPending pending;
   co_await DriveToResult(*prepared, params, pending, wire,

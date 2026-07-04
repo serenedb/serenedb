@@ -96,8 +96,6 @@ EXPLAIN COPY reversed(id, name) FROM '${__TEST_DIR__}/lmao.parquet' WITH (FORMAT
 QUERY PLAN
 ╭─ BATCH_INSERT ─────────╮
 ╰────────────┬───────────╯
-╭─ SDB_PROGRESS ─────────╮
-╰────────────┬───────────╯
 ╭─ PROJECTION ───────────╮
 │ Projections: #1, #0    │
 │ ~3 rows                │

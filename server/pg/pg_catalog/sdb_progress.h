@@ -24,42 +24,45 @@
 
 namespace sdb::pg {
 
-// Single underlying table for all pg_stat_progress_* views.
-// Matches PostgreSQL's pg_stat_get_progress_info() design:
-// one generic table with numbered param slots, views do the mapping.
+// All live connections with their current statement, DuckDB query progress
+// (percent + estimate-normalized rows) and the command-specific counters
+// written by the execution paths. pg_stat_activity and the
+// pg_stat_progress_* views derive from this table.
 // NOLINTBEGIN
-struct SdbStatProgress {
+struct SdbProgress {
   static constexpr uint64_t kId = 999997;
-  static constexpr std::string_view kName = "sdb_stat_progress";
+  static constexpr std::string_view kName = "sdb_progress";
 
-  int64_t pid;
+  int32_t pid;
   Oid datid;
-  Oid relid;
+  std::string usename;
+  std::string datname;
+  std::string_view state;
+  std::string query;
+  int64_t backend_start_us;
+  int64_t query_start_us;
+  double percent;
+  int64_t rows_processed;
+  int64_t rows_total;
   std::string_view command;
-  int64_t param1;
-  int64_t param2;
-  int64_t param3;
-  int64_t param4;
-  int64_t param5;
-  int64_t param6;
-  int64_t param7;
-  int64_t param8;
-  int64_t param9;
-  int64_t param10;
-  int64_t param11;
-  int64_t param12;
-  int64_t param13;
-  int64_t param14;
-  int64_t param15;
-  int64_t param16;
-  int64_t param17;
-  int64_t param18;
-  int64_t param19;
-  int64_t param20;
+  std::string_view io_type;
+  Oid relid;
+  Oid current_relid;
+  std::string_view phase;
+  int64_t bytes_processed;
+  int64_t bytes_total;
+  int64_t tuples_processed;
+  int64_t tuples_total;
+  int64_t stage;
+  int64_t stages_total;
+  int64_t step;
+  int64_t steps_total;
+  int64_t items_processed;
+  int64_t items_total;
 };
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<SdbStatProgress>::GetTableData();
+catalog::MaterializedData SystemTableSnapshot<SdbProgress>::GetTableData();
 
 }  // namespace sdb::pg

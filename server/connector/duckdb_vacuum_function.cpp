@@ -220,14 +220,14 @@ ObjectId LookupDatabaseId(const catalog::Snapshot& snapshot,
 void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
                             const catalog::InvertedIndex& index,
                             duckdb::ClientContext& context,
-                            pg::ProgressReporter* progress) {
+                            pg::ProgressMetrics* progress) {
   static const auto kPolicy = irs::index_utils::MakePolicy(
     irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
   // Fired by the merge every ~16k docs: feeds the sub-index progress counter
   // and aborts the merge on user cancellation.
   const irs::MergeWriter::FlushProgress tick = [&context, progress] {
     if (progress) {
-      progress->Add(pg::vacuum_progress::Param::StepsDone, 1);
+      pg::ProgressMetrics::Add(progress->step, 1);
     }
     return !context.IsInterrupted();
   };
@@ -283,7 +283,7 @@ void CollectInvertedSteps(const catalog::Snapshot& snapshot,
 void DispatchInverted(duckdb::ClientContext& context,
                       const catalog::Snapshot& snapshot, Action action,
                       Scope scope, const ResolvedName& target,
-                      pg::ProgressReporter* progress) {
+                      pg::ProgressMetrics* progress) {
   std::vector<InvertedStep> steps;
 
   auto walk_schema = [&](ObjectId db_id, std::string_view schema) {
@@ -358,8 +358,8 @@ void DispatchInverted(duckdb::ClientContext& context,
     for (const auto& step : steps) {
       total += step.index ? 1 : 0;
     }
-    progress->Set(pg::vacuum_progress::Param::IndexesTotal, total);
-    progress->SetPhase(pg::vacuum_progress::Phase::VacuumingIndexes);
+    pg::ProgressMetrics::Set(progress->items_total, total);
+    progress->SetPhase(pg::progress_phase::Vacuum::VacuumingIndexes);
   }
   for (auto& step : steps) {
     context.InterruptCheck();
@@ -369,19 +369,29 @@ void DispatchInverted(duckdb::ClientContext& context,
       if (action == Action::Refresh) {
         irs::ProgressReportCallback report;
         if (progress) {
-          report = [progress](std::string_view, size_t current, size_t total) {
-            progress->Set(pg::vacuum_progress::Param::StepsTotal,
-                          static_cast<int64_t>(total));
-            progress->Set(pg::vacuum_progress::Param::StepsDone,
-                          static_cast<int64_t>(current));
+          // RefreshCommit reports 4 named stages, each iterating its own
+          // work list; a stage transition is observed as a phase-name change.
+          report = [progress, last_stage = std::string{}](
+                     std::string_view stage_name, size_t current,
+                     size_t total) mutable {
+            if (stage_name != last_stage) {
+              last_stage = stage_name;
+              pg::ProgressMetrics::Add(progress->stage, 1);
+            }
+            pg::ProgressMetrics::Set(progress->steps_total,
+                                     static_cast<int64_t>(total));
+            pg::ProgressMetrics::Set(progress->step,
+                                     static_cast<int64_t>(current));
           };
+          pg::ProgressMetrics::Set(progress->stages_total, 4);
+          pg::ProgressMetrics::Set(progress->stage, 0);
         }
         step.storage->Refresh(report);
       } else {
         CompactInvertedStorage(*step.storage, inverted, context, progress);
       }
       if (progress) {
-        progress->Add(pg::vacuum_progress::Param::IndexesProcessed, 1);
+        pg::ProgressMetrics::Add(progress->items_processed, 1);
         SDB_IF_FAILURE("pause_vacuum_mid_walk") {
           sdb::WaitWhileFailurePointDebugging("pause_vacuum_mid_walk");
         }
@@ -398,7 +408,7 @@ void DispatchInverted(duckdb::ClientContext& context,
 void DispatchRecomputeStats(duckdb::ClientContext& context,
                             const catalog::Snapshot& snapshot, Scope scope,
                             const ResolvedName& target,
-                            pg::ProgressReporter* progress) {
+                            pg::ProgressMetrics* progress) {
   struct AnalyzeTarget {
     std::string database;
     std::string schema;
@@ -470,16 +480,16 @@ void DispatchRecomputeStats(duckdb::ClientContext& context,
   }
 
   if (progress) {
-    progress->Set(pg::analyze_progress::Param::ChildTablesTotal,
-                  static_cast<int64_t>(targets.size()));
-    progress->SetPhase(pg::analyze_progress::Phase::ComputingStatistics);
+    pg::ProgressMetrics::Set(progress->items_total,
+                             static_cast<int64_t>(targets.size()));
+    progress->SetPhase(pg::progress_phase::Analyze::ComputingStatistics);
   }
   duckdb::Connection conn(*context.db);
   for (const auto& t : targets) {
     context.InterruptCheck();
     if (progress) {
-      progress->Set(pg::analyze_progress::Param::CurrentChildTableRelid,
-                    static_cast<int64_t>(t.table->GetId().id()));
+      pg::ProgressMetrics::Set(progress->current_relid,
+                               static_cast<int64_t>(t.table->GetId().id()));
     }
     auto store_name =
       catalog::StoreTableName(t.database, t.schema, t.table->GetName());
@@ -497,7 +507,7 @@ void DispatchRecomputeStats(duckdb::ClientContext& context,
                                       result->GetError());
     }
     if (progress) {
-      progress->Add(pg::analyze_progress::Param::ChildTablesDone, 1);
+      pg::ProgressMetrics::Add(progress->items_processed, 1);
       SDB_IF_FAILURE("pause_recompute_stats_mid_walk") {
         sdb::WaitWhileFailurePointDebugging("pause_recompute_stats_mid_walk");
       }
@@ -530,7 +540,7 @@ void VacuumExecute(duckdb::ClientContext& context,
 
   auto target = ResolveName(bind_data, verb->scope, conn_ctx, *snapshot);
 
-  pg::ProgressReporter* progress = nullptr;
+  pg::ProgressMetrics* progress = nullptr;
   if (auto client_state = context.registered_state->Get<SereneDBClientState>(
         kSereneDBClientStateKey)) {
     const auto datid = verb->scope == Scope::All
@@ -543,12 +553,16 @@ void VacuumExecute(duckdb::ClientContext& context,
         relid = table->GetId();
       }
     }
+    auto& metrics = client_state->Progress();
     if (verb->action == Action::RecomputeStats) {
-      client_state->EnsureAnalyzeProgress(datid, relid);
+      metrics.SetCommand(pg::ProgressCommand::Analyze);
+      metrics.SetPhase(pg::progress_phase::Analyze::Initializing);
     } else {
-      client_state->EnsureVacuumProgress(datid, relid);
+      metrics.SetCommand(pg::ProgressCommand::Vacuum);
+      metrics.SetPhase(pg::progress_phase::Vacuum::Initializing);
     }
-    progress = client_state->progress.get();
+    pg::ProgressMetrics::Set(metrics.relid, static_cast<int64_t>(relid.id()));
+    progress = &metrics;
   }
 
   switch (verb->action) {

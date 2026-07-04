@@ -73,7 +73,7 @@ class PgWireCollectorLocalState : public duckdb::LocalSinkState {
   // Armed by the session only for COPY ... TO STDOUT (binary/text); the
   // collector then feeds pg_stat_progress_copy per chunk. Null on every other
   // statement.
-  sdb::pg::ProgressReporter* progress = nullptr;
+  sdb::pg::ProgressMetrics* progress = nullptr;
   bool initialized = false;
 };
 
@@ -100,7 +100,7 @@ class PhysicalPgWireCollector : public duckdb::PhysicalResultCollector {
         if (auto state = context.client.registered_state
                            ->Get<connector::SereneDBClientState>(
                              connector::kSereneDBClientStateKey)) {
-          lstate.progress = state->progress.get();
+          lstate.progress = &state->Progress();
         }
       }
       lstate.initialized = true;
@@ -156,10 +156,11 @@ class PhysicalPgWireCollector : public duckdb::PhysicalResultCollector {
     }
     ctx.rows.fetch_add(chunk.size(), std::memory_order_relaxed);
     if (lstate.progress) {
-      lstate.progress->Add(sdb::pg::copy_progress::Param::TuplesProcessed,
-                           static_cast<int64_t>(chunk.size()));
-      lstate.progress->Add(sdb::pg::copy_progress::Param::BytesProcessed,
-                           static_cast<int64_t>(chunk.GetAllocationSize()));
+      sdb::pg::ProgressMetrics::Add(lstate.progress->tuples_processed,
+                                    static_cast<int64_t>(chunk.size()));
+      sdb::pg::ProgressMetrics::Add(
+        lstate.progress->bytes_processed,
+        static_cast<int64_t>(chunk.GetAllocationSize()));
       SDB_IF_FAILURE("pause_copy_to_mid_stream") {
         sdb::WaitWhileFailurePointDebugging("pause_copy_to_mid_stream");
       }

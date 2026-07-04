@@ -72,7 +72,7 @@ oid	relname	reltablespace	relkind
 168	sql_sizing	0	r
 999994	sdb_settings	0	r
 999995	sdb_metrics	0	r
-999997	sdb_stat_progress	0	r
+999997	sdb_progress	0	r
 <slt:ignore>	pg_roles	0	v
 <slt:ignore>	pg_shadow	0	v
 <slt:ignore>	pg_user	0	v

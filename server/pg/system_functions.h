@@ -75,44 +75,7 @@ inline constexpr SystemMacro kExternalMacros[] = {
       FROM duckdb_settings();
   END;)"},
 
-  {"pg_catalog", "pg_stat_get_progress_info",
-   R"((cmd TEXT)
-  RETURNS TABLE( pid BIGINT,
-                 datid OID,
-                 relid OID,
-                 param1 BIGINT,
-                 param2 BIGINT,
-                 param3 BIGINT,
-                 param4 BIGINT,
-                 param5 BIGINT,
-                 param6 BIGINT,
-                 param7 BIGINT,
-                 param8 BIGINT,
-                 param9 BIGINT,
-                 param10 BIGINT,
-                 param11 BIGINT,
-                 param12 BIGINT,
-                 param13 BIGINT,
-                 param14 BIGINT,
-                 param15 BIGINT,
-                 param16 BIGINT,
-                 param17 BIGINT,
-                 param18 BIGINT,
-                 param19 BIGINT,
-                 param20 BIGINT)
-  LANGUAGE SQL
-  BEGIN ATOMIC
-      SELECT
-        pid, datid, relid,
-        param1, param2, param3, param4, param5,
-        param6, param7, param8, param9, param10,
-        param11, param12, param13, param14, param15,
-        param16, param17, param18, param19, param20
-      FROM sdb_stat_progress
-      WHERE command = cmd;
-  END;)"},
-
-  // A few supporting functions first ...
+    // A few supporting functions first ...
 
   // Expand any 1-D array into a set with integers 1..N
 

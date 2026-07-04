@@ -77,7 +77,6 @@
 #include "connector/duckdb_entry_cache.h"
 #include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_physical_ctas.h"
-#include "connector/duckdb_physical_progress.h"
 #include "connector/duckdb_physical_search_delete.h"
 #include "connector/duckdb_physical_search_insert.h"
 #include "connector/duckdb_physical_search_truncate.h"
@@ -750,11 +749,6 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
     plan = &planner.ResolveDefaultsProjection(op, *plan);
     op.column_index_map.clear();
   }
-  if (plan) {
-    plan = &planner.Make<SereneDBPhysicalProgress>(
-      *plan, table_entry.GetSereneDBTable()->GetId());
-  }
-
   return store_entry.ParentCatalog().Cast<duckdb::DuckCatalog>().PlanInsert(
     context, planner, op, plan);
 }

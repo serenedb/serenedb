@@ -550,6 +550,20 @@ SereneDBScanToValue(duckdb::TableFunctionToStringInput& input) {
   return result;
 }
 
+// Segment-level scan progress: claimed segments over the snapshot's total.
+static double CommonScanProgress(
+  duckdb::ClientContext&, const duckdb::FunctionData*,
+  const duckdb::GlobalTableFunctionState* gstate_p) {
+  const auto& gstate = gstate_p->Cast<CommonScanGlobalState>();
+  if (gstate.total_segments == 0) {
+    return -1;
+  }
+  const auto claimed = std::min<uint64_t>(
+    gstate.next_segment.load(std::memory_order_relaxed), gstate.total_segments);
+  return 100.0 * static_cast<double>(claimed) /
+         static_cast<double>(gstate.total_segments);
+}
+
 static void SetCommonCallbacks(duckdb::TableFunction& func) {
   // TODO(mbkkt) Maybe we can use bind_replace/bind_operator to make indexes?
   func.init_local = CommonScanInitLocal;  // TODO: Use separate callbacks
@@ -557,8 +571,8 @@ static void SetCommonCallbacks(duckdb::TableFunction& func) {
   func.cardinality = SereneDBScanCardinality;
   func.get_metrics = CommonScanGetMetrics;
   func.to_string_value = SereneDBScanToValue;
+  func.table_scan_progress = CommonScanProgress;
   // TODO: Implement dynamic_to_string
-  // TODO: Implement table_scan_progress
   // TODO: Use get_partition_data for partition pruning of partitioned
   // tables/indexes
   func.get_bind_info = SereneDBGetBindInfo;

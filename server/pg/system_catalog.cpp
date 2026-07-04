@@ -91,7 +91,6 @@
 #include "pg/pg_catalog/pg_shdepend.h"
 #include "pg/pg_catalog/pg_shdescription.h"
 #include "pg/pg_catalog/pg_shseclabel.h"
-#include "pg/pg_catalog/pg_stat_progress.h"
 #include "pg/pg_catalog/pg_statistic.h"
 #include "pg/pg_catalog/pg_statistic_ext.h"
 #include "pg/pg_catalog/pg_statistic_ext_data.h"
@@ -107,6 +106,7 @@
 #include "pg/pg_catalog/pg_ts_template.h"
 #include "pg/pg_catalog/pg_type.h"
 #include "pg/pg_catalog/pg_user_mapping.h"
+#include "pg/pg_catalog/sdb_progress.h"
 #include "pg/sdb_catalog/sdb_metrics.h"
 #include "pg/sdb_catalog/sdb_settings.h"
 #include "pg/system_functions.h"
@@ -198,7 +198,7 @@ const PgSystemSchema kPgCatalog{
   MakeTable<SystemTable<PgShseclabel>>(),
   MakeTable<SystemTable<PgStatistic>>(),
   MakeTable<SystemTable<PgStatisticExt>>(),
-  MakeTable<SystemTable<SdbStatProgress>>(),
+  MakeTable<SystemTable<SdbProgress>>(),
   MakeTable<SystemTable<PgStatisticExtData>>(),
   MakeTable<SystemTable<PgSubscription>>(),
   MakeTable<SystemTable<PgSubscriptionRel>>(),

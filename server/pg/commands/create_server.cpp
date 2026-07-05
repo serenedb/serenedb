@@ -35,6 +35,7 @@
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
 #include "catalog/foreign_server.h"
+#include "catalog/role.h"
 #include "catalog/user_mapping.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
@@ -225,10 +226,13 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
 }
 
 void DropForeignServer(ConnectionContext& conn_ctx, std::string_view name,
-                       bool missing_ok) {
+                       bool missing_ok, bool cascade) {
   auto& catalog = catalog::GetCatalog();
+  // The catalog drops the server and, under CASCADE, its user mappings in one
+  // atomic transaction (server<-mapping dependency). RESTRICT (the default)
+  // returns ERROR_BAD_PARAMETER while any mapping still depends on the server.
   auto r =
-    catalog.DropForeignServer(conn_ctx.GetDatabase(), kSchema, name, false);
+    catalog.DropForeignServer(conn_ctx.GetDatabase(), kSchema, name, cascade);
 
   if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
     if (!missing_ok) {
@@ -237,21 +241,16 @@ void DropForeignServer(ConnectionContext& conn_ctx, std::string_view name,
     }
     return;
   }
+  if (r.is(ERROR_BAD_PARAMETER)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+      ERR_MSG("cannot drop server \"", name,
+              "\" because other objects depend on it"),
+      ERR_HINT("Use DROP SERVER ... CASCADE to drop the dependent objects "
+               "too."));
+  }
   if (!r.ok()) {
     SDB_THROW(std::move(r));
-  }
-
-  // Cascade: drop the server's user mappings. Otherwise they are orphaned, and
-  // a future server created with the same name would silently inherit the old
-  // PUBLIC mapping's credentials (boot replay / ReattachServer merges by name).
-  auto db_id = conn_ctx.GetDatabaseId();
-  for (const auto& m :
-       catalog.GetCatalogSnapshot()->GetUserMappings(db_id, kSchema)) {
-    if (m->GetServerName() == name) {
-      // Best-effort cleanup; the server itself is already dropped.
-      (void)catalog.DropUserMapping(conn_ctx.GetDatabase(), kSchema,
-                                    std::string{m->GetName()}, false);
-    }
   }
 
   RunDetach(name);
@@ -271,6 +270,18 @@ void CreateUserMapping(ConnectionContext& conn_ctx, std::string_view user,
                     ERR_MSG("server \"", server, "\" does not exist"));
   }
 
+  // A non-PUBLIC mapping is FOR an RBAC role, which must exist -- link it by id
+  // so DROP ROLE is refused while the mapping references it (PG semantics).
+  ObjectId role_id;
+  if (role != "public") {
+    auto role_obj = snapshot->GetRole(role);
+    if (!role_obj) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                      ERR_MSG("role \"", role, "\" does not exist"));
+    }
+    role_id = role_obj->GetId();
+  }
+
   const auto name = catalog::MakeUserMappingName(role, server);
   if (snapshot->GetUserMapping(db_id, kSchema, name)) {
     if (if_not_exists) {
@@ -285,7 +296,7 @@ void CreateUserMapping(ConnectionContext& conn_ctx, std::string_view user,
 
   auto mapping = std::make_shared<catalog::UserMapping>(
     ObjectId{}, ObjectId{}, name, std::string{server}, role, std::move(keys),
-    std::move(values));
+    std::move(values), server_obj->GetId(), role_id);
 
   // A PUBLIC mapping drives the live (instance-global) attachment. Validate the
   // merged credentials on a throwaway alias BEFORE persisting, so a bad mapping

@@ -23,6 +23,8 @@
 #include <string>
 #include <vector>
 
+#include "catalog/identifiers/object_id.h"
+
 namespace sdb::catalog::persistence {
 
 struct UserMappingData {
@@ -31,6 +33,11 @@ struct UserMappingData {
   std::string user_name;
   std::vector<std::string> option_keys;
   std::vector<std::string> option_values;
+  // The owning FOREIGN SERVER and, for a non-PUBLIC mapping, the RBAC role this
+  // mapping is FOR (both unset for legacy rows / PUBLIC). Persisted so the
+  // server->mapping cascade and role->mapping dependency survive restart.
+  ObjectId server_id;
+  ObjectId role_id;
 };
 
 }  // namespace sdb::catalog::persistence

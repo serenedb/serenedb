@@ -741,6 +741,10 @@ void Snapshot::ModifyRoleDependencies(const Object& obj, EdgeAction action) {
     for (const auto& col : basics::downCast<const Table>(obj).Columns()) {
       touch_acl(col.GetAcl());
     }
+  } else if (obj.GetType() == ObjectType::UserMapping) {
+    // A USER MAPPING FOR <role> references that role, so DROP ROLE is refused
+    // while the mapping exists (PG-style). PUBLIC mappings have no role id.
+    touch(basics::downCast<const UserMapping>(obj).GetRoleId());
   } else if (obj.GetType() == ObjectType::Role) {
     const auto& defaults = basics::downCast<const Role>(obj).DefaultAcls();
     if (!defaults.empty()) {
@@ -783,10 +787,17 @@ void Snapshot::AddDependencies(ObjectId parent_id, const Object& obj) {
       GetDependencyForWrite<SchemaDependency>(parent_id)
         ->foreign_servers.insert(id);
       break;
-    case ObjectType::UserMapping:
+    case ObjectType::UserMapping: {
       GetDependencyForWrite<SchemaDependency>(parent_id)->user_mappings.insert(
         id);
-      break;
+      // Edge to the owning server so DROP SERVER cascades / RESTRICT-blocks.
+      if (auto server_id = basics::downCast<const UserMapping>(obj).GetServerId();
+          server_id.isSet()) {
+        _deps.AddDependency<ForeignServerDependency>(server_id);
+        GetDependencyForWrite<ForeignServerDependency>(server_id)
+          ->user_mappings.insert(id);
+      }
+    } break;
     case ObjectType::Table: {
       GetDependencyForWrite<SchemaDependency>(parent_id)->tables.insert(id);
       const auto& table = basics::downCast<Table>(obj);
@@ -1692,10 +1703,18 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
         GetDependencyForWrite<SchemaDependency>(parent_id)
           ->foreign_servers.erase(id);
         break;
-      case ObjectType::UserMapping:
+      case ObjectType::UserMapping: {
         GetDependencyForWrite<SchemaDependency>(parent_id)->user_mappings.erase(
           id);
-        break;
+        if (auto server_id =
+              basics::downCast<const UserMapping>(*obj).GetServerId();
+            server_id.isSet()) {
+          if (_deps.TryGetDependency(server_id)) {
+            GetDependencyForWrite<ForeignServerDependency>(server_id)
+              ->user_mappings.erase(id);
+          }
+        }
+      } break;
       case ObjectType::Table: {
         GetDependencyForWrite<SchemaDependency>(parent_id)->tables.erase(id);
         const auto& t = basics::downCast<Table>(*obj);
@@ -4608,11 +4627,19 @@ Result Catalog::DropForeignServer(std::string_view database,
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
 
-  auto plan = _snapshot->ComputeDropPlan(*foreign_server_id);
-  if (!cascade && plan.IsCascade()) {
-    return Result{ERROR_BAD_PARAMETER,
-                  plan.FormatDependentsDetail(*_snapshot, "server", name)};
+  // The server's dependent user mappings (see ForeignServerDependency). PG-style
+  // RESTRICT (the default) refuses the drop while any exist; CASCADE removes
+  // them together with the server, in one transaction.
+  const auto server_dep =
+    _snapshot->GetDependency<ForeignServerDependency>(*foreign_server_id);
+  std::vector<ObjectId> mapping_ids{server_dep->user_mappings.begin(),
+                                    server_dep->user_mappings.end()};
+  if (!cascade && !mapping_ids.empty()) {
+    std::string detail = "server has dependent user mapping(s); use CASCADE";
+    return Result{ERROR_BAD_PARAMETER, std::move(detail)};
   }
+
+  auto plan = _snapshot->ComputeDropPlan(*foreign_server_id);
 
   return Apply(
     _snapshot, [&](std::shared_ptr<Snapshot>& clone) {
@@ -4620,7 +4647,19 @@ Result Catalog::DropForeignServer(std::string_view database,
       auto foreign_server = clone->GetObject<ForeignServer>(*foreign_server_id);
       SDB_ASSERT(foreign_server);
 
+      std::vector<std::shared_ptr<UserMapping>> mappings;
+      mappings.reserve(mapping_ids.size());
+      for (auto mid : mapping_ids) {
+        if (auto m = clone->GetObject<UserMapping>(mid)) {
+          mappings.push_back(std::move(m));
+        }
+      }
+
       auto wr = _engine->Write([&](auto& ctx) {
+        for (const auto& m : mappings) {
+          ctx.DropDefinition(m->GetParentId(), ObjectType::UserMapping,
+                             m->GetId());
+        }
         ctx.DropDefinition(*schema_id, ObjectType::ForeignServer,
                            *foreign_server_id);
         clone->CommitDropPlan(ctx, plan);
@@ -4629,6 +4668,9 @@ Result Catalog::DropForeignServer(std::string_view database,
         return wr;
       }
 
+      for (const auto& m : mappings) {
+        clone->UnregisterObject(m, m->GetParentId());
+      }
       clone->UnregisterObject(std::move(foreign_server), *schema_id);
       clone->ApplyDropPlan(_pending_drops, *database_id, plan);
       return Result{};

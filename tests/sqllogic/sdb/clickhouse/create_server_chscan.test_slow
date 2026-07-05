@@ -39,10 +39,21 @@ SELECT srvname FROM pg_foreign_server WHERE srvname = 'chsrv';
 srvname
 chsrv
 
+# CREATE USER MAPPING FOR <role> requires the role to exist (PG-style, RBAC).
+statement error
+CREATE USER MAPPING FOR nobody_role SERVER chsrv OPTIONS (user 'x');
+
+statement ok
+CREATE ROLE alice;
+
 # A per-user mapping is stored (visible, not enforced at runtime in 2a). The
 # join confirms pg_user_mapping.umserver resolves to the server's oid.
 statement ok
 CREATE USER MAPPING FOR alice SERVER chsrv OPTIONS (user 'alice_ch', password 'secret');
+
+# The mapping references role alice, so DROP ROLE is refused while it exists.
+statement error
+DROP ROLE alice;
 
 query
 SELECT count(*) FROM pg_user_mapping um
@@ -57,14 +68,14 @@ statement ok
 CREATE SERVER IF NOT EXISTS chsrv FOREIGN DATA WRAPPER clickhouse_fdw
   OPTIONS (host '${CHHOST}', port '${CHPORT}');
 
-statement ok
-DROP USER MAPPING FOR alice SERVER chsrv;
-
-statement ok
-DROP USER MAPPING FOR PUBLIC SERVER chsrv;
-
-statement ok
+# DROP SERVER (RESTRICT, the default) is refused while user mappings depend on
+# it -- PG server<-mapping semantics.
+statement error
 DROP SERVER chsrv;
+
+# DROP SERVER CASCADE drops the server AND its user mappings in one transaction.
+statement ok
+DROP SERVER chsrv CASCADE;
 
 # Gone from the catalog after drop.
 query
@@ -72,6 +83,19 @@ SELECT count(*) FROM pg_foreign_server WHERE srvname = 'chsrv';
 ----
 count
 0
+
+# The dependent user mappings went with it (cascade), so none remain.
+query
+SELECT count(*) FROM pg_user_mapping um
+JOIN pg_foreign_server s ON um.umserver = s.oid
+WHERE s.srvname = 'chsrv';
+----
+count
+0
+
+# With its mapping cascade-dropped, role alice is now droppable.
+statement ok
+DROP ROLE alice;
 
 # And the attachment is detached (querying the dropped server errors).
 statement error

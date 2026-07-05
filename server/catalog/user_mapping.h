@@ -47,10 +47,17 @@ class UserMapping : public Object {
   UserMapping(ObjectId schema_id, ObjectId id, std::string_view name,
               std::string server_name, std::string user_name,
               std::vector<std::string> option_keys,
-              std::vector<std::string> option_values);
+              std::vector<std::string> option_values,
+              ObjectId server_id = {}, ObjectId role_id = {});
 
   std::string_view GetServerName() const noexcept { return _server_name; }
   std::string_view GetUserName() const noexcept { return _user_name; }
+
+  // The owning FOREIGN SERVER's id (drives the server->mapping drop cascade).
+  ObjectId GetServerId() const noexcept { return _server_id; }
+  // The RBAC role this mapping is FOR; unset for a PUBLIC mapping (registers a
+  // role->mapping dependency so DROP ROLE is aware of it).
+  ObjectId GetRoleId() const noexcept { return _role_id; }
 
   const std::vector<std::string>& GetOptionKeys() const noexcept {
     return _option_keys;
@@ -64,6 +71,8 @@ class UserMapping : public Object {
   std::string _user_name;
   std::vector<std::string> _option_keys;
   std::vector<std::string> _option_values;
+  ObjectId _server_id;
+  ObjectId _role_id;
 };
 
 // Schema-unique synthetic name for a user mapping:

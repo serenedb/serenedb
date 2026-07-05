@@ -51,19 +51,20 @@ void CreateForeignServerPragma(duckdb::ClientContext& context,
                           params.named_parameters);
 }
 
-// PRAGMA drop_foreign_server('name', missing_ok)
+// PRAGMA drop_foreign_server('name', missing_ok, cascade)
 void DropForeignServerPragma(duckdb::ClientContext& context,
                              const duckdb::FunctionParameters& params) {
   auto& args = params.values;
-  if (args.size() < 2) {
+  if (args.size() < 3) {
     throw duckdb::InvalidInputException(
-      "drop_foreign_server requires name and missing_ok");
+      "drop_foreign_server requires name, missing_ok and cascade");
   }
   const auto name = args[0].GetValue<std::string>();
   const auto missing_ok = args[1].GetValue<bool>();
+  const auto cascade = args[2].GetValue<bool>();
 
   auto& conn_ctx = GetSereneDBContext(context);
-  pg::DropForeignServer(conn_ctx, name, missing_ok);
+  pg::DropForeignServer(conn_ctx, name, missing_ok, cascade);
 }
 
 // PRAGMA create_user_mapping('user', 'server', if_not_exists, user := ..., ...)
@@ -114,7 +115,8 @@ void RegisterForeignServerPragma(duckdb::DatabaseInstance& db) {
 
   auto drop_pragma = duckdb::PragmaFunction::PragmaCall(
     "drop_foreign_server", DropForeignServerPragma,
-    {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BOOLEAN});
+    {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BOOLEAN,
+     duckdb::LogicalType::BOOLEAN});
   loader.RegisterFunction(drop_pragma);
 
   auto create_um = duckdb::PragmaFunction::PragmaCall(

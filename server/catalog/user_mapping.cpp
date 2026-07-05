@@ -40,12 +40,15 @@ using persistence::UserMappingData;
 UserMapping::UserMapping(ObjectId schema_id, ObjectId id, std::string_view name,
                          std::string server_name, std::string user_name,
                          std::vector<std::string> option_keys,
-                         std::vector<std::string> option_values)
+                         std::vector<std::string> option_values,
+                         ObjectId server_id, ObjectId role_id)
   : Object{Permissions{}, schema_id, id, name, ObjectType::UserMapping},
     _server_name{std::move(server_name)},
     _user_name{std::move(user_name)},
     _option_keys{std::move(option_keys)},
-    _option_values{std::move(option_values)} {}
+    _option_values{std::move(option_values)},
+    _server_id{server_id},
+    _role_id{role_id} {}
 
 std::shared_ptr<UserMapping> UserMapping::Deserialize(duckdb::Deserializer& src,
                                                       ReadContext ctx) {
@@ -55,7 +58,7 @@ std::shared_ptr<UserMapping> UserMapping::Deserialize(duckdb::Deserializer& src,
   return std::make_shared<UserMapping>(
     ctx.schema_id, ctx.id, data.name, std::move(data.server_name),
     std::move(data.user_name), std::move(data.option_keys),
-    std::move(data.option_values));
+    std::move(data.option_values), data.server_id, data.role_id);
 }
 
 void UserMapping::Serialize(duckdb::Serializer& sink) const {
@@ -65,6 +68,8 @@ void UserMapping::Serialize(duckdb::Serializer& sink) const {
     .user_name = _user_name,
     .option_keys = _option_keys,
     .option_values = _option_values,
+    .server_id = _server_id,
+    .role_id = _role_id,
   };
   basics::WriteTuple(sink, data);
 }

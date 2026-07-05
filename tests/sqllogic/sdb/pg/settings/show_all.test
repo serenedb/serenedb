@@ -27,7 +27,7 @@ arrow_lossless_conversion	off	Whenever a DuckDB type does not have a clear nativ
 arrow_output_list_view	off	Whether export to Arrow format should use ListView as the physical layout for LIST columns
 arrow_output_version	1.0	Whether strings should be produced by DuckDB in Utf8View format instead of Utf8
 asof_loop_join_threshold	64	The maximum number of rows we need on the left side of an ASOF join to use a nested loop join
-async_threads	64	The number of total async threads used by the system for tasks like I/O.
+async_threads	<slt:ignore>	The number of total async threads used by the system for tasks like I/O.
 auto_checkpoint_skip_wal_threshold	100000	The estimated WAL write size at which point we will skip writing to the WAL and only checkpoint. Skipping writing to the WAL means concurrent commits are blocked while the checkpoint is happening.
 auto_fallback_to_full_download	on	Allows automatically falling back to full file downloads when possible.
 autoinstall_extension_repository	(empty)	Overrides the custom endpoint for extension installation on autoloading
@@ -300,7 +300,7 @@ arrow_lossless_conversion	off	Whenever a DuckDB type does not have a clear nativ
 arrow_output_list_view	off	Whether export to Arrow format should use ListView as the physical layout for LIST columns
 arrow_output_version	1.0	Whether strings should be produced by DuckDB in Utf8View format instead of Utf8
 asof_loop_join_threshold	64	The maximum number of rows we need on the left side of an ASOF join to use a nested loop join
-async_threads	64	The number of total async threads used by the system for tasks like I/O.
+async_threads	<slt:ignore>	The number of total async threads used by the system for tasks like I/O.
 auto_checkpoint_skip_wal_threshold	100000	The estimated WAL write size at which point we will skip writing to the WAL and only checkpoint. Skipping writing to the WAL means concurrent commits are blocked while the checkpoint is happening.
 auto_fallback_to_full_download	on	Allows automatically falling back to full file downloads when possible.
 autoinstall_extension_repository	(empty)	Overrides the custom endpoint for extension installation on autoloading

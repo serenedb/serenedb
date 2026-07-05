@@ -152,7 +152,7 @@ ForeignServer::ForeignServer(ObjectId schema_id, ObjectId id,
                              std::string_view name, std::string fdw_name,
                              std::vector<std::string> option_keys,
                              std::vector<std::string> option_values)
-  : Object{schema_id, id, name, ObjectType::ForeignServer},
+  : Object{Permissions{}, schema_id, id, name, ObjectType::ForeignServer},
     _fdw_name{std::move(fdw_name)},
     _option_keys{std::move(option_keys)},
     _option_values{std::move(option_values)} {}

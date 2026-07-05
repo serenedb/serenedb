@@ -66,6 +66,11 @@ AclMode ClassPrivs(ObjectType type) noexcept {
       return AclMode::Execute;
     case ObjectType::PgSqlType:
       return AclMode::Usage;
+    // A FOREIGN SERVER carries USAGE (PG-style); a USER MAPPING has no ACL of
+    // its own -- access is governed through its server and owner.
+    case ObjectType::ForeignServer:
+      return AclMode::Usage;
+    case ObjectType::UserMapping:
     case ObjectType::Invalid:
     case ObjectType::Tombstone:
     case ObjectType::Role:
@@ -96,6 +101,8 @@ AclMode PublicDefaultPrivs(ObjectType type) noexcept {
     case ObjectType::Table:
     case ObjectType::Sequence:
     case ObjectType::Schema:
+    case ObjectType::ForeignServer:
+    case ObjectType::UserMapping:
     case ObjectType::Invalid:
     case ObjectType::Tombstone:
     case ObjectType::Role:

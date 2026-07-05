@@ -41,7 +41,7 @@ UserMapping::UserMapping(ObjectId schema_id, ObjectId id, std::string_view name,
                          std::string server_name, std::string user_name,
                          std::vector<std::string> option_keys,
                          std::vector<std::string> option_values)
-  : Object{schema_id, id, name, ObjectType::UserMapping},
+  : Object{Permissions{}, schema_id, id, name, ObjectType::UserMapping},
     _server_name{std::move(server_name)},
     _user_name{std::move(user_name)},
     _option_keys{std::move(option_keys)},

@@ -75,7 +75,7 @@ catalog::MaterializedData SystemTableSnapshot<PgUserMapping>::GetTableData() {
 
   auto result = CreateColumns<PgUserMapping>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], /*null_mask=*/0, row);
+    WriteData(result, values[row], /*null_mask=*/0, row, *catalog);
   }
   return {std::move(result), values.size()};
 }

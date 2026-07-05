@@ -1,0 +1,216 @@
+# Single-table privilege matrix, by GRANT SOURCE: a role's effective privilege
+# on a table is the UNION of (a) direct grants, (b) grants to PUBLIC, and
+# (c) grants inherited through role membership. Each source is exercised in
+# isolation and then in combination, always asserted through the byte-identical
+# has_table_privilege oracle. The table owner implicitly holds every privilege.
+#
+# Objects prefixed pm_ (clickclack/vedernikoff/iceberg/mop lore); idempotent and
+# self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS pm_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS pm_salam;
+
+
+statement ok
+DROP ROLE IF EXISTS pm_zhidky;
+
+
+statement ok
+DROP ROLE IF EXISTS pm_myasnig;
+
+
+statement ok
+CREATE TABLE pm_babsky (id int, iceberg text);
+
+
+# ============================================================================
+# Source (a): direct grant to PUBLIC reaches an arbitrary role.
+# ============================================================================
+
+statement ok
+CREATE ROLE pm_salam;
+
+
+# Before any PUBLIC grant: nothing held.
+query
+SELECT has_table_privilege('pm_salam','pm_babsky','SELECT') AS sel,
+       has_table_privilege('pm_salam','pm_babsky','INSERT') AS ins,
+       has_table_privilege('pm_salam','pm_babsky','UPDATE') AS upd;
+----
+sel	ins	upd
+f	f	f
+
+
+statement ok
+GRANT SELECT ON pm_babsky TO PUBLIC;
+
+
+# PUBLIC SELECT is now visible to pm_salam; INSERT/UPDATE still not.
+query
+SELECT has_table_privilege('pm_salam','pm_babsky','SELECT') AS sel,
+       has_table_privilege('pm_salam','pm_babsky','INSERT') AS ins,
+       has_table_privilege('pm_salam','pm_babsky','UPDATE') AS upd;
+----
+sel	ins	upd
+t	f	f
+
+
+statement ok
+GRANT INSERT, UPDATE ON pm_babsky TO PUBLIC;
+
+
+query
+SELECT has_table_privilege('pm_salam','pm_babsky','SELECT')   AS sel,
+       has_table_privilege('pm_salam','pm_babsky','INSERT')   AS ins,
+       has_table_privilege('pm_salam','pm_babsky','UPDATE')   AS upd,
+       has_table_privilege('pm_salam','pm_babsky','DELETE')   AS del;
+----
+sel	ins	upd	del
+t	t	t	f
+
+
+# Revoking SELECT from PUBLIC drops only that bit; INSERT/UPDATE survive.
+statement ok
+REVOKE SELECT ON pm_babsky FROM PUBLIC;
+
+
+query
+SELECT has_table_privilege('pm_salam','pm_babsky','SELECT')   AS sel,
+       has_table_privilege('pm_salam','pm_babsky','INSERT')   AS ins,
+       has_table_privilege('pm_salam','pm_babsky','UPDATE')   AS upd;
+----
+sel	ins	upd
+f	t	t
+
+
+# Clean the PUBLIC grants back off so later sections start from a blank slate.
+statement ok
+REVOKE ALL ON pm_babsky FROM PUBLIC;
+
+
+query
+SELECT has_table_privilege('pm_salam','pm_babsky','SELECT')   AS sel,
+       has_table_privilege('pm_salam','pm_babsky','INSERT')   AS ins,
+       has_table_privilege('pm_salam','pm_babsky','UPDATE')   AS upd;
+----
+sel	ins	upd
+f	f	f
+
+
+# ============================================================================
+# Source (b) + (c): membership-inherited grant, and the UNION with a direct
+# grant. pm_zhidky inherits SELECT through pm_myasnig, then gets INSERT
+# directly -- the effective set is the union.
+# ============================================================================
+
+statement ok
+CREATE ROLE pm_myasnig;
+
+
+statement ok
+CREATE ROLE pm_zhidky;
+
+
+statement ok
+GRANT SELECT ON pm_babsky TO pm_myasnig;
+
+
+# Group holds SELECT, but the member is not yet in the group.
+query
+SELECT has_table_privilege('pm_zhidky','pm_babsky','SELECT')    AS member_sel,
+       has_table_privilege('pm_myasnig','pm_babsky','SELECT') AS group_sel;
+----
+member_sel	group_sel
+f	t
+
+
+statement ok
+GRANT pm_myasnig TO pm_zhidky;
+
+
+# Membership now confers the group's SELECT on the member.
+query
+SELECT has_table_privilege('pm_zhidky','pm_babsky','SELECT') AS sel,
+       has_table_privilege('pm_zhidky','pm_babsky','INSERT') AS ins;
+----
+sel	ins
+t	f
+
+
+# Direct INSERT grant unions with the inherited SELECT.
+statement ok
+GRANT INSERT ON pm_babsky TO pm_zhidky;
+
+
+query
+SELECT has_table_privilege('pm_zhidky','pm_babsky','SELECT')   AS sel,
+       has_table_privilege('pm_zhidky','pm_babsky','INSERT')   AS ins,
+       has_table_privilege('pm_zhidky','pm_babsky','UPDATE')   AS upd;
+----
+sel	ins	upd
+t	t	f
+
+
+# Revoking the membership removes the inherited SELECT but leaves the direct
+# INSERT intact -- proving the two sources are tracked independently.
+statement ok
+REVOKE pm_myasnig FROM pm_zhidky;
+
+
+query
+SELECT has_table_privilege('pm_zhidky','pm_babsky','SELECT')   AS sel,
+       has_table_privilege('pm_zhidky','pm_babsky','INSERT')   AS ins;
+----
+sel	ins
+f	t
+
+
+# pg_has_role reflects that the membership edge is gone.
+query
+SELECT pg_has_role('pm_zhidky','pm_myasnig','USAGE')  AS usage,
+       pg_has_role('pm_zhidky','pm_myasnig','MEMBER') AS member;
+----
+usage	member
+f	f
+
+
+# ============================================================================
+# The table owner (bootstrap superuser) implicitly holds every privilege,
+# regardless of explicit grants.
+# ============================================================================
+
+query
+SELECT has_table_privilege('postgres','pm_babsky','SELECT')     AS sel,
+       has_table_privilege('postgres','pm_babsky','INSERT')     AS ins,
+       has_table_privilege('postgres','pm_babsky','UPDATE')     AS upd,
+       has_table_privilege('postgres','pm_babsky','DELETE')     AS del,
+       has_table_privilege('postgres','pm_babsky','TRUNCATE')   AS trunc,
+       has_table_privilege('postgres','pm_babsky','REFERENCES') AS refs,
+       has_table_privilege('postgres','pm_babsky','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	t	t	t	t
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE pm_babsky;
+
+
+statement ok
+DROP ROLE pm_zhidky;
+
+
+statement ok
+DROP ROLE pm_myasnig;
+
+
+statement ok
+DROP ROLE pm_salam;

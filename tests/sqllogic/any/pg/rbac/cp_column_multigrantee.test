@@ -1,0 +1,257 @@
+# Column-level privileges with multiple grantees on the same column. GRANT to
+# distinct roles accumulates as separate pg_attribute.attacl elements; a second
+# GRANT to a role already present merges the new priv letter into that role's
+# existing element (SELECT 'r' + UPDATE 'w' -> 'rw'). A GRANT to PUBLIC adds the
+# empty-grantee element '=r/postgres'. REVOKE from one grantee leaves the others
+# untouched. Two columns with disjoint grantees stay isolated -- no cross-leak.
+# Byte-identical to PostgreSQL's attacl accumulation order and enforcement.
+#
+# Lore: vedernikoff's crew (r1/r2/r3) splits the iceberg's columns.
+
+statement ok
+DROP TABLE IF EXISTS cmg_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS cmg_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS cmg_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS cmg_clickclack;
+
+
+statement ok
+CREATE TABLE cmg_iceberg (mop int, drift int);
+
+
+statement ok
+INSERT INTO cmg_iceberg VALUES (10, 20);
+
+
+statement ok
+CREATE ROLE cmg_vedernikoff LOGIN PASSWORD 'cmg_vedernikoff_pw';
+
+
+statement ok
+CREATE ROLE cmg_babsky LOGIN PASSWORD 'cmg_babsky_pw';
+
+
+statement ok
+CREATE ROLE cmg_clickclack LOGIN PASSWORD 'cmg_clickclack_pw';
+
+
+# Two grantees read the same column; one of them also gets UPDATE on it.
+statement ok
+GRANT SELECT (mop) ON cmg_iceberg TO cmg_vedernikoff;
+
+
+statement ok
+GRANT SELECT (mop) ON cmg_iceberg TO cmg_babsky;
+
+
+statement ok
+GRANT UPDATE (mop) ON cmg_iceberg TO cmg_vedernikoff;
+
+
+# attacl accumulates: vedernikoff's element merges SELECT+UPDATE into 'rw',
+# babsky stays 'r'. Order follows grant insertion. Byte-identical to PG.
+query
+SELECT a.attname, COALESCE(a.attacl::text, '(none)') AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'cmg_iceberg' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+mop	<slt:ignore>cmg_vedernikoff=rw/postgres<slt:ignore>cmg_babsky=r/postgres<slt:ignore>
+drift	(none)
+
+
+# vedernikoff reads mop (granted SELECT).
+connection c_ved user=cmg_vedernikoff password=cmg_vedernikoff_pw
+query
+SELECT mop FROM cmg_iceberg ORDER BY mop;
+----
+mop
+10
+
+
+# vedernikoff updates mop with a constant (granted UPDATE, reads nothing).
+connection c_ved2 user=cmg_vedernikoff password=cmg_vedernikoff_pw
+statement ok
+UPDATE cmg_iceberg SET mop = 11;
+
+
+# babsky reads mop (granted SELECT).
+connection c_bab user=cmg_babsky password=cmg_babsky_pw
+query
+SELECT mop FROM cmg_iceberg ORDER BY mop;
+----
+mop
+11
+
+
+# babsky has only SELECT on mop, not UPDATE -> refused.
+connection c_bab2 user=cmg_babsky password=cmg_babsky_pw
+statement error
+UPDATE cmg_iceberg SET mop = 99;
+----
+db error: ERROR: permission denied for table cmg_iceberg<slt:ignore>
+
+
+# A GRANT to PUBLIC adds the empty-grantee element '=r/postgres' after the
+# named roles. Byte-identical to PG.
+statement ok
+GRANT SELECT (mop) ON cmg_iceberg TO PUBLIC;
+
+
+query
+SELECT a.attname, COALESCE(a.attacl::text, '(none)') AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'cmg_iceberg' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+mop	<slt:ignore>cmg_vedernikoff=rw/postgres<slt:ignore>cmg_babsky=r/postgres<slt:ignore>=r/postgres<slt:ignore>
+drift	(none)
+
+
+# clickclack was never granted mop directly, yet reads it via PUBLIC.
+connection c_click user=cmg_clickclack password=cmg_clickclack_pw
+query
+SELECT mop FROM cmg_iceberg ORDER BY mop;
+----
+mop
+11
+
+
+# REVOKE SELECT(mop) from babsky drops only babsky's element; vedernikoff's
+# 'rw' and the PUBLIC '=r' element survive. Byte-identical to PG.
+statement ok
+REVOKE SELECT (mop) ON cmg_iceberg FROM cmg_babsky;
+
+
+query
+SELECT a.attname, COALESCE(a.attacl::text, '(none)') AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'cmg_iceberg' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+mop	<slt:ignore>cmg_vedernikoff=rw/postgres<slt:ignore>=r/postgres<slt:ignore>
+drift	(none)
+
+
+# vedernikoff still reads and updates mop after the unrelated revoke.
+connection c_ved3 user=cmg_vedernikoff password=cmg_vedernikoff_pw
+query
+SELECT mop FROM cmg_iceberg ORDER BY mop;
+----
+mop
+11
+
+
+connection c_ved4 user=cmg_vedernikoff password=cmg_vedernikoff_pw
+statement ok
+UPDATE cmg_iceberg SET mop = 12;
+
+
+# clickclack still reads mop via the surviving PUBLIC element.
+connection c_click2 user=cmg_clickclack password=cmg_clickclack_pw
+query
+SELECT mop FROM cmg_iceberg ORDER BY mop;
+----
+mop
+12
+
+
+# === Two columns, disjoint grantees: no cross-leak ===
+
+statement ok
+DROP TABLE IF EXISTS cmg_split;
+
+
+statement ok
+CREATE TABLE cmg_split (mop int, drift int);
+
+
+statement ok
+INSERT INTO cmg_split VALUES (10, 20);
+
+
+# vedernikoff gets only mop; babsky gets only drift.
+statement ok
+GRANT SELECT (mop) ON cmg_split TO cmg_vedernikoff;
+
+
+statement ok
+GRANT SELECT (drift) ON cmg_split TO cmg_babsky;
+
+
+# Each column carries exactly its one grantee. Byte-identical to PG.
+query
+SELECT a.attname, COALESCE(a.attacl::text, '(none)') AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'cmg_split' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+mop	<slt:ignore>cmg_vedernikoff=r/postgres<slt:ignore>
+drift	<slt:ignore>cmg_babsky=r/postgres<slt:ignore>
+
+
+# vedernikoff reads mop (granted).
+connection c_ved5 user=cmg_vedernikoff password=cmg_vedernikoff_pw
+query
+SELECT mop FROM cmg_split ORDER BY mop;
+----
+mop
+10
+
+
+# vedernikoff has no grant on drift -> refused.
+connection c_ved6 user=cmg_vedernikoff password=cmg_vedernikoff_pw
+statement error
+SELECT drift FROM cmg_split;
+----
+db error: ERROR: permission denied for table cmg_split<slt:ignore>
+
+
+# babsky reads drift (granted).
+connection c_bab3 user=cmg_babsky password=cmg_babsky_pw
+query
+SELECT drift FROM cmg_split ORDER BY drift;
+----
+drift
+20
+
+
+# babsky has no grant on mop -> refused.
+connection c_bab4 user=cmg_babsky password=cmg_babsky_pw
+statement error
+SELECT mop FROM cmg_split;
+----
+db error: ERROR: permission denied for table cmg_split<slt:ignore>
+
+
+statement ok
+DROP TABLE cmg_split;
+
+
+statement ok
+DROP TABLE cmg_iceberg;
+
+
+statement ok
+DROP ROLE cmg_vedernikoff;
+
+
+statement ok
+DROP ROLE cmg_babsky;
+
+
+statement ok
+DROP ROLE cmg_clickclack;

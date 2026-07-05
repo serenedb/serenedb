@@ -70,8 +70,10 @@ void CreateTSDictionaryPragma(duckdb::ClientContext& context,
                               const duckdb::FunctionParameters& params) {
   auto& args = params.values;
   if (args.size() < 2) {
-    throw duckdb::InvalidInputException(
-      "create_text_search_dictionary requires at least name and if_not_exists");
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("create_text_search_dictionary requires at least name and "
+              "if_not_exists"));
   }
 
   auto dict_name = args[0].GetValue<std::string>();
@@ -91,8 +93,9 @@ void DropTSDictionaryPragma(duckdb::ClientContext& context,
                             const duckdb::FunctionParameters& params) {
   auto& args = params.values;
   if (args.size() < 2) {
-    throw duckdb::InvalidInputException(
-      "drop_text_search_dictionary requires name and missing_ok");
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("drop_text_search_dictionary requires name and missing_ok"));
   }
 
   const auto dict_name = args[0].GetValue<std::string>();

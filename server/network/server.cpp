@@ -31,10 +31,13 @@
 
 #include "basics/log.h"
 #include "basics/number_of_cores.h"
+#include "catalog/catalog.h"
+#include "catalog/role.h"
 #include "network/connection.h"
 #include "network/credentials.h"
 #include "network/http/es/handlers.h"
 #include "network/http/test/handlers.h"
+#include "network/pg/hba.h"
 #include "network/socket.h"
 #include "network/tls_context.h"
 
@@ -119,6 +122,18 @@ ABSL_FLAG(absl::Duration, http_body_timeout, absl::Seconds(30),
 namespace sdb {
 namespace {
 
+const char* AuthMethodName(network::pg::AuthMethod method) {
+  switch (method) {
+    case network::pg::AuthMethod::Scram:
+      return "scram-sha-256";
+    case network::pg::AuthMethod::Md5:
+      return "md5";
+    case network::pg::AuthMethod::Cleartext:
+      return "password";
+  }
+  return "password";
+}
+
 // Throwaway credential source: one user from the config flags. RBAC will
 // provide a real CredentialProvider via the same seam.
 class ConfigCredentialProvider final : public network::CredentialProvider {
@@ -137,6 +152,36 @@ class ConfigCredentialProvider final : public network::CredentialProvider {
  private:
   std::string _user;
   network::Credential _credential;
+};
+
+// Per-role credential source: looks the connecting user up in the catalog and,
+// if the role carries a stored SCRAM verifier (rolpassword), returns it so the
+// connection must authenticate. A role with no stored password returns nullopt
+// -> the pg-wire/http layer treats that as trust (logs in without a password),
+// matching PostgreSQL's "no password set" behaviour.
+class CatalogCredentialProvider final : public network::CredentialProvider {
+ public:
+  std::optional<network::Credential> LookupCredential(
+    std::string_view username) const override {
+    auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
+    auto role = snapshot->GetRole(username);
+    if (!role) {
+      return std::nullopt;
+    }
+    const auto stored = role->PasswordVerifier();
+    if (stored.empty()) {
+      return std::nullopt;
+    }
+    network::Credential credential;
+    if (auto verifier = network::ParseScramVerifier(stored)) {
+      credential.scram = std::move(*verifier);
+    } else if (network::IsMd5Verifier(stored)) {
+      credential.md5 = std::string{stored};
+    } else {
+      return std::nullopt;
+    }
+    return credential;
+  }
 };
 
 }  // namespace
@@ -206,12 +251,12 @@ void Server::SetupAuth() {
     }
     _credentials = std::make_unique<ConfigCredentialProvider>(
       _auth_user, std::move(credential));
-    const char* method_name =
-      _auth_method == network::pg::AuthMethod::Scram ? "scram-sha-256"
-      : _auth_method == network::pg::AuthMethod::Md5 ? "md5"
-                                                     : "cleartext";
     SDB_INFO(GENERAL, "network auth enabled for user '", _auth_user, "' (",
-             method_name, ")");
+             AuthMethodName(_auth_method), ")");
+  } else {
+    _credentials = std::make_unique<CatalogCredentialProvider>();
+    SDB_INFO(GENERAL, "network auth using per-role catalog passwords (",
+             AuthMethodName(_auth_method), ")");
   }
   if (!_api_key.empty()) {
     const auto colon = _api_key.find(':');
@@ -227,6 +272,8 @@ void Server::SetupAuth() {
       _bearer_token, _auth_user);
     SDB_INFO(GENERAL, "network http Bearer auth enabled");
   }
+
+  network::pg::hba::LoadPersistedHba();
 }
 
 asio_ns::ssl::context* Server::BuildTls(const network::ListenSpec& spec) {

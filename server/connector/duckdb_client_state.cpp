@@ -20,9 +20,9 @@
 
 #include "connector/duckdb_client_state.h"
 
-#include <absl/container/flat_hash_set.h>
 #include <absl/strings/match.h>
 
+#include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -30,9 +30,9 @@
 #include <utility>
 
 #include "basics/assert.h"
+#include "basics/containers/flat_hash_set.h"
 #include "basics/log.h"
 #include "basics/system-compiler.h"
-#include "catalog/database.h"
 #include "catalog/store/store.h"
 #include "pg/connection_context.h"
 #include "pg/copy_messages_queue.h"
@@ -122,7 +122,7 @@ SereneDBClientState& SereneDBClientState::Register(
                                      const std::string& name) {
     // Internal knobs -- hidden from SHOW ALL / pg_settings / duckdb_settings().
     // Still settable/readable by name.
-    static const absl::flat_hash_set<std::string_view> kHidden = {
+    static const containers::FlatHashSet<std::string_view> kHidden = {
       "sdb_faults", "debug_verification"};
     return !kHidden.contains(name);
   };

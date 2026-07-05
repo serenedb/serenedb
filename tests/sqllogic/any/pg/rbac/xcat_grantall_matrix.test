@@ -1,0 +1,155 @@
+# Cross-catalog: the full table-privilege matrix as it renders in
+# pg_class.relacl for a (non-owner) grantee. The seven standard table
+# privileges have canonical letters arwdDxt:
+#   a INSERT, r SELECT, w UPDATE, d DELETE, D TRUNCATE, x REFERENCES, t TRIGGER.
+# These are granted EXPLICITLY by name (not via GRANT ALL) on purpose: on
+# PostgreSQL 19 the keyword GRANT ALL ALSO grants MAINTAIN ('m'), so a GRANT ALL
+# grantee renders "arwdDxtm" on PG but only "arwdDxt" on serenedb (serenedb does
+# not synthesize the MAINTAIN bit). Granting the seven by name sidesteps that
+# divergence and renders "arwdDxt" identically on both engines. WITH GRANT
+# OPTION stars EVERY letter, also identical.
+#
+# Vedernikoff lore: the iceberg table; the cast as grantees. Idempotent + clean.
+
+statement ok
+DROP TABLE IF EXISTS xcat_ga_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS xcat_ga_full;
+
+
+statement ok
+DROP ROLE IF EXISTS xcat_ga_grantable;
+
+
+statement ok
+CREATE TABLE xcat_ga_iceberg (id int, payload text);
+
+
+statement ok
+CREATE ROLE xcat_ga_full;
+
+
+statement ok
+CREATE ROLE xcat_ga_grantable;
+
+
+# Grant all seven privileges BY NAME to a grantee: relacl element holds the
+# letters in canonical order arwdDxt, grantor postgres, no stars.
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON xcat_ga_iceberg TO xcat_ga_full;
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_ga_iceberg'
+) g WHERE e LIKE 'xcat_ga_full=%';
+----
+e
+xcat_ga_full=arwdDxt/postgres
+
+
+# The same privileges surface as seven rows in information_schema.table_
+# privileges, is_grantable NO on each.
+query
+SELECT privilege_type, is_grantable FROM information_schema.table_privileges
+WHERE table_name = 'xcat_ga_iceberg' AND grantee = 'xcat_ga_full'
+ORDER BY privilege_type;
+----
+privilege_type	is_grantable
+DELETE	NO
+INSERT	NO
+REFERENCES	NO
+SELECT	NO
+TRIGGER	NO
+TRUNCATE	NO
+UPDATE	NO
+
+
+# has_table_privilege agrees for every privilege name (including the
+# action-aliases TRUNCATE/REFERENCES/TRIGGER).
+query
+SELECT has_table_privilege('xcat_ga_full', 'xcat_ga_iceberg', 'SELECT') AS sel,
+       has_table_privilege('xcat_ga_full', 'xcat_ga_iceberg', 'INSERT') AS ins,
+       has_table_privilege('xcat_ga_full', 'xcat_ga_iceberg', 'UPDATE') AS upd,
+       has_table_privilege('xcat_ga_full', 'xcat_ga_iceberg', 'DELETE') AS del,
+       has_table_privilege('xcat_ga_full', 'xcat_ga_iceberg', 'TRUNCATE') AS trunc,
+       has_table_privilege('xcat_ga_full', 'xcat_ga_iceberg', 'REFERENCES') AS ref,
+       has_table_privilege('xcat_ga_full', 'xcat_ga_iceberg', 'TRIGGER') AS trig;
+----
+sel	ins	upd	del	trunc	ref	trig
+t	t	t	t	t	t	t
+
+
+# The seven by name WITH GRANT OPTION: every letter is starred (arwdDxt each
+# with '*').
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON xcat_ga_iceberg TO xcat_ga_grantable WITH GRANT OPTION;
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_ga_iceberg'
+) g WHERE e LIKE 'xcat_ga_grantable=%';
+----
+e
+xcat_ga_grantable=a*r*w*d*D*x*t*/postgres
+
+
+# Under WITH GRANT OPTION every table_privileges row is is_grantable YES.
+query
+SELECT privilege_type, is_grantable FROM information_schema.table_privileges
+WHERE table_name = 'xcat_ga_iceberg' AND grantee = 'xcat_ga_grantable'
+ORDER BY privilege_type;
+----
+privilege_type	is_grantable
+DELETE	YES
+INSERT	YES
+REFERENCES	YES
+SELECT	YES
+TRIGGER	YES
+TRUNCATE	YES
+UPDATE	YES
+
+
+# REVOKE ALL clears the grantee element entirely.
+statement ok
+REVOKE ALL ON xcat_ga_iceberg FROM xcat_ga_full;
+
+
+query
+SELECT count(*) AS rows_left FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_ga_iceberg'
+) g WHERE e LIKE 'xcat_ga_full=%';
+----
+rows_left
+0
+
+
+# Revoking a SINGLE privilege out of the grant-option grantee mutates the
+# element: dropping TRUNCATE (and its grant option) removes only the D* token,
+# leaving the other six starred letters in canonical order.
+statement ok
+REVOKE TRUNCATE ON xcat_ga_iceberg FROM xcat_ga_grantable;
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_ga_iceberg'
+) g WHERE e LIKE 'xcat_ga_grantable=%';
+----
+e
+xcat_ga_grantable=a*r*w*d*x*t*/postgres
+
+
+statement ok
+DROP TABLE xcat_ga_iceberg;
+
+
+statement ok
+DROP ROLE xcat_ga_full;
+
+
+statement ok
+DROP ROLE xcat_ga_grantable;

@@ -1,0 +1,122 @@
+# has_table_privilege OID forms for ownership. The (role_oid, table_oid, priv)
+# overloads must agree with the (name, name, priv) forms on both engines.
+# Edge cases verified here:
+#   - the owner, addressed by oid, holds every privilege implicitly;
+#   - a grantee, addressed by oid, holds exactly its granted privilege;
+#   - an unknown ROLE oid does NOT error -- it evaluates (to f, since it is
+#     neither the owner nor a grantee);
+#   - a NULL TABLE oid (missing relation subquery) yields NULL, not an error.
+#
+# vedernikoff runs the clickclack pudge by oid.
+
+statement ok
+DROP ROLE IF EXISTS own_oid_vedernikoff;
+
+
+statement ok
+DROP TABLE IF EXISTS own_oid_pudge;
+
+
+statement ok
+CREATE TABLE own_oid_pudge (id int);
+
+
+statement ok
+CREATE ROLE own_oid_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON own_oid_pudge TO own_oid_vedernikoff;
+
+
+# Owner by oid holds all seven privileges (same as the name form).
+query
+SELECT
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='postgres'),
+                      (SELECT oid FROM pg_class WHERE relname='own_oid_pudge'), 'SELECT')     AS sel,
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='postgres'),
+                      (SELECT oid FROM pg_class WHERE relname='own_oid_pudge'), 'INSERT')     AS ins,
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='postgres'),
+                      (SELECT oid FROM pg_class WHERE relname='own_oid_pudge'), 'UPDATE')     AS upd,
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='postgres'),
+                      (SELECT oid FROM pg_class WHERE relname='own_oid_pudge'), 'DELETE')     AS del,
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='postgres'),
+                      (SELECT oid FROM pg_class WHERE relname='own_oid_pudge'), 'TRUNCATE')   AS trunc,
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='postgres'),
+                      (SELECT oid FROM pg_class WHERE relname='own_oid_pudge'), 'REFERENCES') AS refs,
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='postgres'),
+                      (SELECT oid FROM pg_class WHERE relname='own_oid_pudge'), 'TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	t	t	t	t
+
+
+# Grantee by oid holds exactly SELECT (granted), not INSERT.
+query
+SELECT
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='own_oid_vedernikoff'),
+                      (SELECT oid FROM pg_class WHERE relname='own_oid_pudge'), 'SELECT') AS sel,
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='own_oid_vedernikoff'),
+                      (SELECT oid FROM pg_class WHERE relname='own_oid_pudge'), 'INSERT') AS ins;
+----
+sel	ins
+t	f
+
+
+# The oid form and the name form agree (mixed forms in one query).
+query
+SELECT
+  has_table_privilege('own_oid_vedernikoff', 'own_oid_pudge', 'SELECT') AS by_name,
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='own_oid_vedernikoff'),
+                      (SELECT oid FROM pg_class WHERE relname='own_oid_pudge'), 'SELECT') AS by_oid,
+  (has_table_privilege('own_oid_vedernikoff', 'own_oid_pudge', 'SELECT')
+   = has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='own_oid_vedernikoff'),
+                         (SELECT oid FROM pg_class WHERE relname='own_oid_pudge'), 'SELECT')) AS agree;
+----
+by_name	by_oid	agree
+t	t	t
+
+
+# Mixed: role name + table oid, and role oid + table name -- both supported.
+query
+SELECT
+  has_table_privilege('own_oid_vedernikoff',
+                      (SELECT oid FROM pg_class WHERE relname='own_oid_pudge'), 'SELECT') AS name_oid,
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='own_oid_vedernikoff'),
+                      'own_oid_pudge', 'SELECT') AS oid_name;
+----
+name_oid	oid_name
+t	t
+
+
+# An unknown ROLE oid evaluates instead of erroring: it is not the owner and has
+# no grant, so every privilege is f. (Compare: an unknown role NAME would error
+# with 'role ... does not exist'; the oid form is the safe, error-free path.)
+query
+SELECT
+  has_table_privilege(9999999, (SELECT oid FROM pg_class WHERE relname='own_oid_pudge'), 'SELECT') AS sel,
+  has_table_privilege(9999999, (SELECT oid FROM pg_class WHERE relname='own_oid_pudge'), 'INSERT') AS ins;
+----
+sel	ins
+f	f
+
+
+# A NULL table oid (the relation does not exist, so the subquery yields NULL)
+# makes has_table_privilege return NULL rather than erroring -- even for the
+# owner role.
+query
+SELECT
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='postgres'),
+                      (SELECT oid FROM pg_class WHERE relname='own_oid_gul'),
+                      'SELECT') IS NULL AS missing_table_is_null;
+----
+missing_table_is_null
+t
+
+
+statement ok
+DROP TABLE own_oid_pudge;
+
+
+statement ok
+DROP ROLE own_oid_vedernikoff;

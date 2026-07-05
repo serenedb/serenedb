@@ -61,13 +61,13 @@ VACUUM (REFRESH_TABLE) t;
 statement error
 VACUUM (REFRESH_TABLE) wrong_t_name;
 ----
-db error: ERROR: relation 'wrong_t_name' not found.
+db error: ERROR: relation "wrong_t_name" does not exist<slt:ignore>
 
 
 statement error
 VACUUM (REFRESH_TABLE) index_t;
 ----
-db error: ERROR: relation 'index_t' not found.
+db error: ERROR: relation "index_t" does not exist<slt:ignore>
 
 
 query

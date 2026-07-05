@@ -104,7 +104,7 @@ struct PgType {
   Oid typcollation;
   PgNodeTree typdefaultbin;
   Text typdefault;
-  Array<Aclitem> typacl;
+  AclColumn typacl;
 };
 // NOLINTEND
 

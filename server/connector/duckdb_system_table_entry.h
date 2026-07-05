@@ -23,9 +23,20 @@
 #include <duckdb.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 
+#include "catalog/object.h"
 #include "catalog/virtual_table.h"
 
 namespace sdb::connector {
+
+class SystemRelationObject final : public catalog::Object {
+ public:
+  SystemRelationObject(ObjectId id, std::string_view name, catalog::Acl acl)
+    : Object{catalog::Permissions{id::kRootUser, std::move(acl)}, ObjectId{},
+             id, std::string{name}, catalog::ObjectType::Table} {}
+
+  void Serialize(duckdb::Serializer&) const final {}
+  std::shared_ptr<catalog::Object> Clone() const final { return nullptr; }
+};
 
 // DuckDB table entry for SereneDB system tables (pg_catalog,
 // information_schema). Wraps a VirtualTable and provides a scan function that
@@ -50,8 +61,11 @@ class SystemTableEntry final : public duckdb::TableCatalogEntry {
   std::shared_ptr<catalog::VirtualTableSnapshot> CreateSnapshot(
     duckdb::ClientContext& context);
 
+  const catalog::Object& GetSystemObject() const { return _system_object; }
+
  private:
   const catalog::VirtualTable& _virtual_table;
+  SystemRelationObject _system_object;
 };
 
 }  // namespace sdb::connector

@@ -1,0 +1,163 @@
+# VIEW security_invoker semantics, and nesting (RULE R).
+#
+# WITH (security_invoker=true) makes a view run with the CALLER's privileges:
+# the base table is checked against the reader, not the view owner. This is the
+# inverse of the default (definer rights, enf_view_definer_rights.test).
+#
+# RULE R: a relation reference (base table OR view) is checked against an
+# effective user determined ONLY by the view that DIRECTLY encloses it --
+# enclosed by a DEFINER view => checked as that view's OWNER; by an INVOKER
+# view => checked as the SESSION CALLER; not enclosed => caller. Only the
+# innermost enclosing view matters; outer views do NOT propagate. So a definer
+# view over an invoker view does NOT shield the base: the invoker layer still
+# checks the base against the session caller. Verified on PostgreSQL 18.3.
+#
+# Lore: vedernikoff reads the clickclack views; iceberg is the base he was never
+# granted.
+
+statement ok
+DROP VIEW IF EXISTS evi_invoker;
+
+
+statement ok
+DROP VIEW IF EXISTS evi_definer;
+
+
+statement ok
+DROP VIEW IF EXISTS evi_def_over_inv;
+
+
+statement ok
+DROP VIEW IF EXISTS evi_inv_over_def;
+
+
+statement ok
+DROP TABLE IF EXISTS evi_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS evi_vedernikoff;
+
+
+statement ok
+CREATE TABLE evi_iceberg (id int, av int, secret int);
+
+
+statement ok
+INSERT INTO evi_iceberg VALUES (1, 10, 100), (2, 20, 200);
+
+
+# Invoker view: base checked against the caller.
+statement ok
+CREATE VIEW evi_invoker WITH (security_invoker=true) AS SELECT id, av FROM evi_iceberg;
+
+
+# Definer view (default): base checked against the owner.
+statement ok
+CREATE VIEW evi_definer AS SELECT id, av FROM evi_iceberg;
+
+
+statement ok
+CREATE ROLE evi_vedernikoff LOGIN PASSWORD 'evi_vedernikoff_pw';
+
+
+# Grant SELECT on every view, but NOTHING on the base table.
+statement ok
+GRANT SELECT ON evi_invoker TO evi_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON evi_definer TO evi_vedernikoff;
+
+
+# === Invoker view: caller lacks the base -> DENIED ===
+connection c_inv user=evi_vedernikoff password=evi_vedernikoff_pw
+statement error
+SELECT id, av FROM evi_invoker;
+----
+db error: ERROR: permission denied for table evi_iceberg<slt:ignore>
+
+
+# === Definer view (same base): ALLOWED ===
+connection c_def user=evi_vedernikoff password=evi_vedernikoff_pw
+query
+SELECT id, av FROM evi_definer ORDER BY id;
+----
+id	av
+1	10
+2	20
+
+
+# === Nesting: definer view OVER an invoker view -> DENIED ===
+# evi_def_over_inv (definer) selects from evi_invoker (invoker). Under RULE R the
+# base evi_iceberg is directly enclosed by the INVOKER view, so it is checked
+# against the session caller (vedernikoff), NOT the definer's owner. The outer
+# definer layer does not shield the base. vedernikoff lacks the base -> DENIED.
+statement ok
+CREATE VIEW evi_def_over_inv AS SELECT id FROM evi_invoker;
+
+
+statement ok
+GRANT SELECT ON evi_def_over_inv TO evi_vedernikoff;
+
+
+connection c_doi user=evi_vedernikoff password=evi_vedernikoff_pw
+statement error
+SELECT id FROM evi_def_over_inv ORDER BY id;
+----
+db error: ERROR: permission denied for table evi_iceberg<slt:ignore>
+
+
+# === Nesting: invoker view OVER a definer view -> ALLOWED ===
+# evi_inv_over_def (invoker) selects from evi_definer (definer). RULE R: the
+# reference to evi_definer is directly enclosed by the INVOKER view -> checked
+# as the session caller, who holds SELECT on evi_definer. The base evi_iceberg
+# is directly enclosed by the DEFINER view evi_definer -> checked as its owner,
+# who owns the base. Both pass, so vedernikoff reads through.
+statement ok
+CREATE VIEW evi_inv_over_def WITH (security_invoker=true) AS SELECT id FROM evi_definer;
+
+
+statement ok
+GRANT SELECT ON evi_inv_over_def TO evi_vedernikoff;
+
+
+connection c_iod user=evi_vedernikoff password=evi_vedernikoff_pw
+query
+SELECT id FROM evi_inv_over_def ORDER BY id;
+----
+id
+1
+2
+
+
+# Control: direct base read is still refused.
+connection c_base user=evi_vedernikoff password=evi_vedernikoff_pw
+statement error
+SELECT id FROM evi_iceberg;
+----
+db error: ERROR: permission denied for table evi_iceberg<slt:ignore>
+
+
+statement ok
+DROP VIEW evi_inv_over_def;
+
+
+statement ok
+DROP VIEW evi_def_over_inv;
+
+
+statement ok
+DROP VIEW evi_invoker;
+
+
+statement ok
+DROP VIEW evi_definer;
+
+
+statement ok
+DROP TABLE evi_iceberg;
+
+
+statement ok
+DROP ROLE evi_vedernikoff;

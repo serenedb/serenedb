@@ -35,7 +35,7 @@ using persistence::DatabaseOptions;
 
 class Database final : public Object {
  public:
-  Database(ObjectId id, DatabaseOptions opts);
+  Database(Permissions perm, ObjectId id, std::string_view name);
 
   static std::shared_ptr<Database> Deserialize(duckdb::Deserializer& src,
                                                ReadContext ctx);

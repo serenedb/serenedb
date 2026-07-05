@@ -1,0 +1,154 @@
+# PostgreSQL requires SELECT on an UPDATE/DELETE target only when the statement
+# reads an existing column value. A constant SET with no column-reading predicate
+# needs only UPDATE; DELETE with no predicate needs only DELETE. SELECT becomes
+# required the moment a column is read -- in the SET RHS (SET c = c + 1), the
+# WHERE clause (WHERE id = 1), or RETURNING. serenedb matches this.
+#
+# Lore: vedernikoff has UPDATE (and later DELETE) but not SELECT on clickclack's
+# ledger. Idempotent + self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS enf_us_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS enf_us_vedernikoff;
+
+
+statement ok
+CREATE ROLE enf_us_vedernikoff LOGIN PASSWORD 'enf_us_vedernikoff_pw';
+
+
+statement ok
+CREATE TABLE enf_us_ledger (id int, amount int);
+
+
+statement ok
+INSERT INTO enf_us_ledger VALUES (1, 10), (2, 20);
+
+
+statement ok
+GRANT UPDATE ON enf_us_ledger TO enf_us_vedernikoff;
+
+
+# Constant SET, no WHERE: reads nothing -> UPDATE alone suffices.
+connection c_us user=enf_us_vedernikoff password=enf_us_vedernikoff_pw
+statement ok
+UPDATE enf_us_ledger SET amount = 99;
+
+
+# Constant SET, constant predicate (no column read): UPDATE alone suffices.
+connection c_us user=enf_us_vedernikoff password=enf_us_vedernikoff_pw
+statement ok
+UPDATE enf_us_ledger SET amount = 88 WHERE true;
+
+
+# WHERE reads a column -> SELECT is required, which vedernikoff lacks.
+connection c_us user=enf_us_vedernikoff password=enf_us_vedernikoff_pw
+statement error
+UPDATE enf_us_ledger SET amount = 77 WHERE id = 1;
+----
+db error: ERROR: permission denied for table enf_us_ledger<slt:ignore>
+
+
+# SET RHS reads a column -> SELECT is required.
+connection c_us user=enf_us_vedernikoff password=enf_us_vedernikoff_pw
+statement error
+UPDATE enf_us_ledger SET amount = amount + 1;
+----
+db error: ERROR: permission denied for table enf_us_ledger<slt:ignore>
+
+
+# RETURNING reads a column -> SELECT is required.
+connection c_us user=enf_us_vedernikoff password=enf_us_vedernikoff_pw
+statement error
+UPDATE enf_us_ledger SET amount = 5 RETURNING amount;
+----
+db error: ERROR: permission denied for table enf_us_ledger<slt:ignore>
+
+
+# Once SELECT is granted, the column-reading UPDATE succeeds.
+statement ok
+GRANT SELECT ON enf_us_ledger TO enf_us_vedernikoff;
+
+
+connection c_us2 user=enf_us_vedernikoff password=enf_us_vedernikoff_pw
+statement ok
+UPDATE enf_us_ledger SET amount = 77 WHERE id = 1;
+
+
+connection c_us2 user=enf_us_vedernikoff password=enf_us_vedernikoff_pw
+statement ok
+UPDATE enf_us_ledger SET amount = amount + 1;
+
+
+# DELETE parity: no predicate reads nothing -> DELETE alone suffices; a predicate
+# that reads a column requires SELECT.
+statement ok
+DROP ROLE IF EXISTS enf_us_pudge;
+
+
+statement ok
+CREATE ROLE enf_us_pudge LOGIN PASSWORD 'enf_us_pudge_pw';
+
+
+statement ok
+GRANT DELETE ON enf_us_ledger TO enf_us_pudge;
+
+
+# DELETE with no predicate: needs only DELETE.
+connection c_del user=enf_us_pudge password=enf_us_pudge_pw
+statement ok
+DELETE FROM enf_us_ledger;
+
+
+statement ok
+INSERT INTO enf_us_ledger VALUES (1, 10), (2, 20);
+
+
+# DELETE with a column-reading predicate: needs SELECT, which pudge lacks.
+connection c_del user=enf_us_pudge password=enf_us_pudge_pw
+statement error
+DELETE FROM enf_us_ledger WHERE id = 1;
+----
+db error: ERROR: permission denied for table enf_us_ledger<slt:ignore>
+
+
+# A role with neither UPDATE nor SELECT is denied even the constant UPDATE.
+statement ok
+DROP ROLE IF EXISTS enf_us_nobody;
+
+
+statement ok
+CREATE ROLE enf_us_nobody LOGIN PASSWORD 'enf_us_nobody_pw';
+
+
+connection c_nobody user=enf_us_nobody password=enf_us_nobody_pw
+statement error
+UPDATE enf_us_ledger SET amount = 1;
+----
+db error: ERROR: permission denied for table enf_us_ledger<slt:ignore>
+
+
+# Plain SELECT still requires the SELECT privilege.
+connection c_nobody user=enf_us_nobody password=enf_us_nobody_pw
+statement error
+SELECT * FROM enf_us_ledger;
+----
+db error: ERROR: permission denied for table enf_us_ledger<slt:ignore>
+
+
+statement ok
+DROP TABLE enf_us_ledger;
+
+
+statement ok
+DROP ROLE enf_us_vedernikoff;
+
+
+statement ok
+DROP ROLE enf_us_pudge;
+
+
+statement ok
+DROP ROLE enf_us_nobody;

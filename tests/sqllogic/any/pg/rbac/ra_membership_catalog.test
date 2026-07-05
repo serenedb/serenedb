@@ -1,0 +1,195 @@
+# Membership edges in the role catalog: a group role with multiple members, the
+# three pg_has_role privilege kinds (MEMBER / USAGE / SET), and how REVOKE prunes
+# individual edges. Every value here was dual-checked byte-identical on
+# PostgreSQL 19beta1 and serenedb.
+#
+# Idempotent: drop everything first, recreate, assert, drop again.
+
+statement ok
+DROP ROLE IF EXISTS ra_clickclack_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS ra_ved_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS ra_ved_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS ra_ved_pavel;
+
+
+# A group role and three login members.
+statement ok
+CREATE ROLE ra_clickclack_mop;
+
+
+statement ok
+CREATE ROLE ra_ved_kostya LOGIN;
+
+
+statement ok
+CREATE ROLE ra_ved_babsky LOGIN;
+
+
+statement ok
+CREATE ROLE ra_ved_pavel LOGIN;
+
+
+# Grant two of the three into the group.
+statement ok
+GRANT ra_clickclack_mop TO ra_ved_kostya;
+
+
+statement ok
+GRANT ra_clickclack_mop TO ra_ved_babsky;
+
+
+# ----------------------------------------------------------------------
+# pg_auth_members now has exactly two edges into the group; the third role is not
+# a member. Names resolve through pg_roles and come out sorted.
+# ----------------------------------------------------------------------
+
+query
+SELECT count(*) FROM pg_auth_members m
+JOIN pg_roles g ON g.oid = m.roleid
+WHERE g.rolname = 'ra_clickclack_mop';
+----
+count
+2
+
+
+query
+SELECT v.rolname AS member
+FROM pg_auth_members m
+JOIN pg_roles g ON g.oid = m.roleid
+JOIN pg_roles v ON v.oid = m.member
+WHERE g.rolname = 'ra_clickclack_mop'
+ORDER BY v.rolname;
+----
+member
+ra_ved_babsky
+ra_ved_kostya
+
+
+# ----------------------------------------------------------------------
+# pg_has_role: the three privilege kinds. A direct GRANT role TO role confers
+# MEMBER, USAGE (it inherits) and SET (it may SET ROLE) -- all true for members,
+# all false for the non-member.
+# ----------------------------------------------------------------------
+
+query
+SELECT pg_has_role('ra_ved_kostya', 'ra_clickclack_mop', 'MEMBER') AS member,
+       pg_has_role('ra_ved_kostya', 'ra_clickclack_mop', 'USAGE') AS usage,
+       pg_has_role('ra_ved_kostya', 'ra_clickclack_mop', 'SET') AS setrole;
+----
+member	usage	setrole
+t	t	t
+
+
+query
+SELECT pg_has_role('ra_ved_pavel', 'ra_clickclack_mop', 'MEMBER') AS member,
+       pg_has_role('ra_ved_pavel', 'ra_clickclack_mop', 'USAGE') AS usage,
+       pg_has_role('ra_ved_pavel', 'ra_clickclack_mop', 'SET') AS setrole;
+----
+member	usage	setrole
+f	f	f
+
+
+# A role is trivially a MEMBER of itself.
+query
+SELECT pg_has_role('ra_ved_kostya', 'ra_ved_kostya', 'MEMBER') AS self_member;
+----
+self_member
+t
+
+
+# ----------------------------------------------------------------------
+# The membership option flags are the GRANT defaults on every edge.
+# ----------------------------------------------------------------------
+
+query
+SELECT m.admin_option, m.inherit_option, m.set_option
+FROM pg_auth_members m
+JOIN pg_roles g ON g.oid = m.roleid
+JOIN pg_roles v ON v.oid = m.member
+WHERE g.rolname = 'ra_clickclack_mop' AND v.rolname = 'ra_ved_babsky';
+----
+admin_option	inherit_option	set_option
+f	t	t
+
+
+# ----------------------------------------------------------------------
+# REVOKE prunes just one edge. After revoking kostya the group has one member left
+# (babsky), kostya's pg_has_role flips to false, babsky's stays true.
+# ----------------------------------------------------------------------
+
+statement ok
+REVOKE ra_clickclack_mop FROM ra_ved_kostya;
+
+
+query
+SELECT v.rolname AS member
+FROM pg_auth_members m
+JOIN pg_roles g ON g.oid = m.roleid
+JOIN pg_roles v ON v.oid = m.member
+WHERE g.rolname = 'ra_clickclack_mop'
+ORDER BY v.rolname;
+----
+member
+ra_ved_babsky
+
+
+query
+SELECT pg_has_role('ra_ved_kostya', 'ra_clickclack_mop', 'MEMBER') AS kostya,
+       pg_has_role('ra_ved_babsky', 'ra_clickclack_mop', 'MEMBER') AS babsky;
+----
+kostya	babsky
+f	t
+
+
+# ----------------------------------------------------------------------
+# Dropping the remaining member removes its edge; the group then has zero members
+# but still exists as a role.
+# ----------------------------------------------------------------------
+
+statement ok
+REVOKE ra_clickclack_mop FROM ra_ved_babsky;
+
+
+query
+SELECT count(*) FROM pg_auth_members m
+JOIN pg_roles g ON g.oid = m.roleid
+WHERE g.rolname = 'ra_clickclack_mop';
+----
+count
+0
+
+
+query
+SELECT count(*) FROM pg_roles WHERE rolname = 'ra_clickclack_mop';
+----
+count
+1
+
+
+# ----------------------------------------------------------------------
+# Cleanup.
+# ----------------------------------------------------------------------
+
+statement ok
+DROP ROLE ra_ved_kostya;
+
+
+statement ok
+DROP ROLE ra_ved_babsky;
+
+
+statement ok
+DROP ROLE ra_ved_pavel;
+
+
+statement ok
+DROP ROLE ra_clickclack_mop;

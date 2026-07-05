@@ -1,0 +1,175 @@
+# The grant option as it surfaces in the catalog: the '*' bit in relacl
+# aclitem text, the is_grantable boolean from aclexplode(), and the
+# is_grantable (YES/NO) column of information_schema.table_privileges. All three
+# are byte-identical on PostgreSQL and serenedb for these scenarios.
+#
+# Lore: the mop role curates the iceberg_log; postgres owns it.
+
+statement ok
+DROP TABLE IF EXISTS go_iceberg_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS go_acl_mop;
+
+
+statement ok
+CREATE TABLE go_iceberg_kostya (id int, payload text);
+
+
+statement ok
+CREATE ROLE go_acl_mop;
+
+
+# ---- Plain grant: aclexplode reports is_grantable = f. ----
+statement ok
+GRANT SELECT ON go_iceberg_kostya TO go_acl_mop;
+
+
+query
+SELECT privilege_type, is_grantable
+FROM pg_class c, aclexplode(c.relacl)
+WHERE c.relname = 'go_iceberg_kostya'
+  AND pg_get_userbyid(grantee) = 'go_acl_mop'
+ORDER BY privilege_type;
+----
+privilege_type	is_grantable
+SELECT	f
+
+
+# ---- Same picture from information_schema (is_grantable rendered NO). ----
+query
+SELECT privilege_type, is_grantable
+FROM information_schema.table_privileges
+WHERE table_name = 'go_iceberg_kostya' AND grantee = 'go_acl_mop'
+ORDER BY privilege_type;
+----
+privilege_type	is_grantable
+SELECT	NO
+
+
+# ---- Re-grant the same privilege WITH GRANT OPTION: the '*' bit appears. ----
+statement ok
+GRANT SELECT, INSERT ON go_iceberg_kostya TO go_acl_mop WITH GRANT OPTION;
+
+
+# relacl aclitem text shows '*' on both granted privileges (grantee row only;
+# we never assert the owner row -- PG19 stamps a MAINTAIN 'm' bit there).
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'go_iceberg_kostya'
+) sub
+WHERE e LIKE 'go_acl_mop=%';
+----
+e
+go_acl_mop=a*r*/postgres
+
+
+# aclexplode now reports is_grantable = t for both privileges.
+query
+SELECT pg_get_userbyid(grantee) AS grantee_name, privilege_type, is_grantable
+FROM pg_class c, aclexplode(c.relacl)
+WHERE c.relname = 'go_iceberg_kostya'
+  AND pg_get_userbyid(grantee) = 'go_acl_mop'
+ORDER BY privilege_type;
+----
+grantee_name	privilege_type	is_grantable
+go_acl_mop	INSERT	t
+go_acl_mop	SELECT	t
+
+
+# information_schema agrees (YES for both).
+query
+SELECT privilege_type, is_grantable
+FROM information_schema.table_privileges
+WHERE table_name = 'go_iceberg_kostya' AND grantee = 'go_acl_mop'
+ORDER BY privilege_type;
+----
+privilege_type	is_grantable
+INSERT	YES
+SELECT	YES
+
+
+# ---- Mixed: a second role gets SELECT,INSERT plain and UPDATE with option, so
+#      aclexplode shows a per-privilege is_grantable split. ----
+statement ok
+DROP ROLE IF EXISTS go_acl_vedernikoff;
+
+
+statement ok
+CREATE ROLE go_acl_vedernikoff;
+
+
+statement ok
+GRANT SELECT, INSERT ON go_iceberg_kostya TO go_acl_vedernikoff;
+
+
+statement ok
+GRANT UPDATE ON go_iceberg_kostya TO go_acl_vedernikoff WITH GRANT OPTION;
+
+
+query
+SELECT privilege_type, is_grantable
+FROM pg_class c, aclexplode(c.relacl)
+WHERE c.relname = 'go_iceberg_kostya'
+  AND pg_get_userbyid(grantee) = 'go_acl_vedernikoff'
+ORDER BY privilege_type;
+----
+privilege_type	is_grantable
+INSERT	f
+SELECT	f
+UPDATE	t
+
+
+# relacl text for the mixed grantee: only UPDATE (w) carries '*'.
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'go_iceberg_kostya'
+) sub
+WHERE e LIKE 'go_acl_vedernikoff=%';
+----
+e
+go_acl_vedernikoff=arw*/postgres
+
+
+# information_schema split for the mixed grantee.
+query
+SELECT privilege_type, is_grantable
+FROM information_schema.table_privileges
+WHERE table_name = 'go_iceberg_kostya' AND grantee = 'go_acl_vedernikoff'
+ORDER BY privilege_type;
+----
+privilege_type	is_grantable
+INSERT	NO
+SELECT	NO
+UPDATE	YES
+
+
+# ---- REVOKE INSERT from go_acl_mop drops that privilege (and its option); the
+#      SELECT option survives. ----
+statement ok
+REVOKE INSERT ON go_iceberg_kostya FROM go_acl_mop;
+
+
+query
+SELECT privilege_type, is_grantable
+FROM pg_class c, aclexplode(c.relacl)
+WHERE c.relname = 'go_iceberg_kostya'
+  AND pg_get_userbyid(grantee) = 'go_acl_mop'
+ORDER BY privilege_type;
+----
+privilege_type	is_grantable
+SELECT	t
+
+
+# ---- Cleanup (table first to clear dependencies). ----
+statement ok
+DROP TABLE go_iceberg_kostya;
+
+
+statement ok
+DROP ROLE go_acl_vedernikoff;
+
+
+statement ok
+DROP ROLE go_acl_mop;

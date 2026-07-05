@@ -251,8 +251,9 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       const auto& col_name = col_ref.GetColumnName().GetIdentifierName();
       const auto* cat_col = resolve_column(col_name);
       if (!cat_col) {
-        throw duckdb::CatalogException("column \"%s\" not found in table",
-                                       col_name);
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+          ERR_MSG("column \"", col_name, "\" not found in table"));
       }
       idx_columns.emplace_back(cat_col->GetName(), cat_col, std::nullopt,
                                std::move(opclass), std::move(opclass_options));
@@ -268,8 +269,10 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     std::string serialized = SerializeBoundExpression(*normalized);
     auto dependent_columns = CollectDependentColumns(*normalized);
     if (dependent_columns.empty()) {
-      throw duckdb::CatalogException(
-        "indexed expression must reference at least one base table column");
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_TABLE_DEFINITION),
+        ERR_MSG(
+          "indexed expression must reference at least one base table column"));
     }
     auto return_type = normalized->GetReturnType();
     auto& indexed_column = idx_columns.emplace_back(
@@ -287,6 +290,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   bool if_not_exists =
     _info->on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
 
+  // CREATE INDEX requires ownership of the target relation; the mutation
+  // enforces it and throws "must be owner of table <name>" on a non-owner.
   Result create_result;
   if (state->index_type == catalog::ObjectType::InvertedIndex) {
     auto find_with = [&](std::string_view name) -> const duckdb::Value* {
@@ -317,17 +322,18 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     }
 
     create_result = catalog_impl.CreateInvertedIndex(
-      context, _database_id, _schema_entry.name.GetIdentifierName(),
-      _relation->GetName(), _info->GetIndexName().GetIdentifierName(),
-      std::move(idx_columns), std::move(options),
-      {.create_with_tombstone = true});
+      catalog::ActingAs(context), context, _database_id,
+      _schema_entry.name.GetIdentifierName(), _relation->GetName(),
+      _info->GetIndexName().GetIdentifierName(), std::move(idx_columns),
+      std::move(options), {.create_with_tombstone = true});
   } else {
     bool unique =
       (_info->constraint_type == duckdb::IndexConstraintType::UNIQUE);
     create_result = catalog_impl.CreateSecondaryIndex(
-      _database_id, _schema_entry.name.GetIdentifierName(),
-      _relation->GetName(), _info->GetIndexName().GetIdentifierName(),
-      std::move(idx_columns), unique, {.create_with_tombstone = true});
+      catalog::ActingAs(context), _database_id,
+      _schema_entry.name.GetIdentifierName(), _relation->GetName(),
+      _info->GetIndexName().GetIdentifierName(), std::move(idx_columns), unique,
+      {.create_with_tombstone = true});
   }
 
   if (create_result.is(ERROR_SERVER_DUPLICATE_NAME) && if_not_exists) {
@@ -335,8 +341,9 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     return state;
   }
   if (!create_result.ok()) {
-    throw duckdb::CatalogException("Failed to create index: %s",
-                                   create_result.errorMessage());
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INTERNAL_ERROR),
+      ERR_MSG("Failed to create index: ", create_result.errorMessage()));
   }
 
   state->created = true;
@@ -344,7 +351,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   // Get fresh snapshot with the new index
   auto snapshot = catalog_impl.GetCatalogSnapshot();
   auto catalog_index =
-    snapshot->GetRelation(_database_id, _schema_entry.name.GetIdentifierName(),
+    snapshot->GetRelation(catalog::NoAccessCheck(), _database_id,
+                          _schema_entry.name.GetIdentifierName(),
                           _info->GetIndexName().GetIdentifierName());
   SDB_ASSERT(catalog_index);
   state->index_id = catalog_index->GetId();
@@ -665,8 +673,8 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   auto r = catalog.RemoveTombstone(_database_id, gstate.schema_name,
                                    gstate.index_name);
   if (!r.ok()) {
-    throw duckdb::InternalException("Failed to remove tombstone: %s",
-                                    r.errorMessage());
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("Failed to remove tombstone: ", r.errorMessage()));
   }
   if (auto sdb_state = context.registered_state->Get<SereneDBClientState>(
         kSereneDBClientStateKey)) {
@@ -704,7 +712,8 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
   duckdb::PlanIndexInput& input) {
   auto& op = input.op;
   if (!op.info) {
-    throw duckdb::InternalException("CreateIndexInfo is null in create_plan");
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("CreateIndexInfo is null in create_plan"));
   }
 
   auto* sdb_catalog = dynamic_cast<SereneDBCatalog*>(&op.table.ParentCatalog());
@@ -738,9 +747,9 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
     // and synthesise a column list from its bound schema.
     auto& conn_ctx = GetSereneDBContext(input.context);
     auto snapshot = conn_ctx.CatalogSnapshot();
-    relation =
-      snapshot->GetRelation(database_id, schema_entry.name.GetIdentifierName(),
-                            op.table.name.GetIdentifierName());
+    relation = snapshot->GetRelation(catalog::NoAccessCheck(), database_id,
+                                     schema_entry.name.GetIdentifierName(),
+                                     op.table.name.GetIdentifierName());
     if (!relation || relation->GetType() != catalog::ObjectType::PgSqlView) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                       ERR_MSG("view \"", op.table.name.GetIdentifierName(),

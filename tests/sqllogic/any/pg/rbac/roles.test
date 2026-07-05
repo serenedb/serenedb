@@ -1,0 +1,187 @@
+# RBAC role management surface, observed as the bootstrap superuser, on the
+# byte-identical surface shared by PostgreSQL and serenedb: role attributes in
+# pg_authid, membership edges in pg_auth_members, cycle/self-membership and
+# missing-role rejection, and DROP. Uses native PostgreSQL RBAC syntax.
+#
+# The runner replays this file once per wire protocol against the same server,
+# so start from a clean slate idempotently.
+
+statement ok
+DROP ROLE IF EXISTS role_ved;
+
+
+statement ok
+DROP ROLE IF EXISTS role_ice;
+
+
+statement ok
+DROP ROLE IF EXISTS role_cyc_a;
+
+
+statement ok
+DROP ROLE IF EXISTS role_cyc_b;
+
+
+# ----------------------------------------------------------------------
+# CREATE ROLE: attributes land in pg_authid.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE ROLE role_ved LOGIN SUPERUSER;
+
+
+statement ok
+CREATE ROLE role_ice;
+
+
+# role_ved: login + superuser; role_ice: neither.
+query
+SELECT rolname, rolsuper, rolcanlogin FROM pg_authid
+WHERE rolname IN ('role_ved', 'role_ice') ORDER BY rolname;
+----
+rolname	rolsuper	rolcanlogin
+role_ice	f	f
+role_ved	t	t
+
+
+# postgres is the bootstrap superuser.
+query
+SELECT rolname, rolsuper FROM pg_authid WHERE rolname = 'postgres';
+----
+rolname	rolsuper
+postgres	t
+
+
+# Duplicate role is rejected.
+statement error
+CREATE ROLE role_ved LOGIN;
+----
+db error: ERROR: role "role_ved" already exists
+
+
+# ----------------------------------------------------------------------
+# Role membership: GRANT role_ice TO role_ved shows in
+# pg_auth_members, with the PG16 inherit/set/admin options.
+# ----------------------------------------------------------------------
+
+statement ok
+GRANT role_ice TO role_ved;
+
+
+query
+SELECT m.admin_option, m.inherit_option, m.set_option
+FROM pg_auth_members m
+JOIN pg_authid g ON g.oid = m.roleid
+JOIN pg_authid v ON v.oid = m.member
+WHERE g.rolname = 'role_ice' AND v.rolname = 'role_ved';
+----
+admin_option	inherit_option	set_option
+f	t	t
+
+
+# REVOKE removes the edge.
+statement ok
+REVOKE role_ice FROM role_ved;
+
+
+query
+SELECT count(*) FROM pg_auth_members m
+JOIN pg_authid g ON g.oid = m.roleid
+JOIN pg_authid v ON v.oid = m.member
+WHERE g.rolname = 'role_ice' AND v.rolname = 'role_ved';
+----
+count
+0
+
+
+# ----------------------------------------------------------------------
+# Self-membership and membership cycles are rejected (identical on both engines).
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE ROLE role_cyc_a;
+
+
+statement ok
+CREATE ROLE role_cyc_b;
+
+
+statement ok
+GRANT role_cyc_a TO role_cyc_b;
+
+
+statement error
+GRANT role_cyc_a TO role_cyc_a;
+----
+db error: ERROR: role "role_cyc_a" is a member of role "role_cyc_a"
+
+
+# A grant that would close the loop (b already reaches a) is refused, naming the
+# existing membership edge.
+statement error
+GRANT role_cyc_b TO role_cyc_a;
+----
+db error: ERROR: role "role_cyc_b" is a member of role "role_cyc_a"
+
+
+# ----------------------------------------------------------------------
+# Granting membership of/to a non-existent role errors.
+# ----------------------------------------------------------------------
+
+statement error
+GRANT nonesuch TO role_cyc_a;
+----
+db error: ERROR: role "nonesuch" does not exist
+
+
+# ----------------------------------------------------------------------
+# ALTER ROLE password: the password is stored (as a SCRAM verifier).
+# ----------------------------------------------------------------------
+
+statement ok
+ALTER ROLE role_ved PASSWORD 'newclickclack';
+
+
+# ----------------------------------------------------------------------
+# DROP ROLE removes it from pg_authid; missing_ok suppresses the error.
+# ----------------------------------------------------------------------
+
+statement ok
+DROP ROLE role_ice;
+
+
+query
+SELECT count(*) FROM pg_authid WHERE rolname = 'role_ice';
+----
+count
+0
+
+
+statement error
+DROP ROLE role_ice;
+----
+db error: ERROR: role "role_ice" does not exist
+
+
+statement ok
+DROP ROLE IF EXISTS role_ice;
+
+
+# The session's own role (the bootstrap superuser postgres) cannot be dropped.
+statement error
+DROP ROLE postgres;
+----
+db error: ERROR: current user cannot be dropped
+
+
+# Cleanup.
+statement ok
+DROP ROLE role_cyc_b;
+
+
+statement ok
+DROP ROLE role_cyc_a;
+
+
+statement ok
+DROP ROLE role_ved;

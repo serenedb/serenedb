@@ -37,8 +37,11 @@ class DatabasePathFeature final {
   const std::string& directory() const { return _directory; }
   std::string subdirectoryName(std::string_view sub_directory) const;
 
+  const std::string& hbaConfigFile() const { return _hba_config_file; }
+
  private:
   std::string _directory;
+  std::string _hba_config_file;
 };
 
 }  // namespace sdb

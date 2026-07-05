@@ -87,7 +87,7 @@ struct PgClass {
   Oid relrewrite;
   Xid relfrozenxid;
   Xid relminmxid;
-  Array<Aclitem> relacl;
+  AclColumn relacl;
   Array<Text> reloptions;
   PgNodeTree relpartbound;
 };

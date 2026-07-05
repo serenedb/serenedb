@@ -1,0 +1,87 @@
+# GRANT on a DATABASE and GRANT EXECUTE on a FUNCTION populate the per-object
+# ACL catalog columns (pg_database.datacl, pg_proc.proacl) and flip the
+# matching has_*_privilege oracle, exactly like PostgreSQL.
+#
+# Lore: vedernikoff the cast member. Idempotent + self-cleaning.
+
+statement ok
+DROP FUNCTION IF EXISTS dca_clickclack();
+
+
+statement ok
+DROP ROLE IF EXISTS dca_vedernikoff;
+
+
+statement ok
+CREATE ROLE dca_vedernikoff;
+
+
+# DATABASE: CONNECT is a PUBLIC default, so every role already holds it; the
+# grant's observable effect is the explicit datacl entry it adds.
+statement ok
+GRANT CONNECT ON DATABASE postgres TO dca_vedernikoff;
+
+
+# datacl is now populated with the grantee's CONNECT (c) entry. pg_database is a
+# shared catalog, so the grant lands on `postgres` (the target) regardless of
+# the connected database.
+query
+SELECT datacl::text LIKE '%dca_vedernikoff=c/%' AS has_grant FROM pg_database WHERE datname = 'postgres';
+----
+has_grant
+t
+
+
+query
+SELECT has_database_privilege('dca_vedernikoff', current_database(), 'CONNECT') AS ok;
+----
+ok
+t
+
+
+# FUNCTION: EXECUTE is granted to PUBLIC by default, so revoke it first to make
+# the explicit grant observable.
+statement ok
+CREATE FUNCTION dca_clickclack() RETURNS int AS 'SELECT 1' LANGUAGE sql;
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION dca_clickclack FROM PUBLIC;
+
+
+query
+SELECT has_function_privilege('dca_vedernikoff', 'dca_clickclack()', 'EXECUTE') AS ok;
+----
+ok
+f
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION dca_clickclack TO dca_vedernikoff;
+
+
+# proacl now carries the grantee's EXECUTE (X) entry.
+query
+SELECT proacl::text LIKE '%dca_vedernikoff=X/%' AS has_grant FROM pg_proc WHERE proname = 'dca_clickclack';
+----
+has_grant
+t
+
+
+query
+SELECT has_function_privilege('dca_vedernikoff', 'dca_clickclack()', 'EXECUTE') AS ok;
+----
+ok
+t
+
+
+statement ok
+DROP FUNCTION dca_clickclack();
+
+
+statement ok
+REVOKE CONNECT ON DATABASE postgres FROM dca_vedernikoff;
+
+
+statement ok
+DROP ROLE dca_vedernikoff;

@@ -1,0 +1,109 @@
+# A full ownership round-trip on a table: postgres -> A -> B -> C -> back to A,
+# with the owner asserted after every hop (covering the object-transferred
+# 0/1/2/3-times states). Superuser-driven, so byte-identical on PostgreSQL and
+# serenedb.
+#
+# Lore: clickclack circulates among vedernikoff (A), mop (B) and iceberg (C).
+
+statement ok
+DROP TABLE IF EXISTS xao_rtt_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_rtt_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_rtt_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_rtt_iceberg;
+
+
+statement ok
+CREATE ROLE xao_rtt_vedernikoff;
+
+
+statement ok
+CREATE ROLE xao_rtt_mop;
+
+
+statement ok
+CREATE ROLE xao_rtt_iceberg;
+
+
+statement ok
+CREATE TABLE xao_rtt_clickclack (id int);
+
+
+# 0 transfers: postgres.
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='xao_rtt_clickclack';
+----
+owner
+postgres
+
+
+# hop 1: -> A (vedernikoff)
+statement ok
+ALTER TABLE xao_rtt_clickclack OWNER TO xao_rtt_vedernikoff;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='xao_rtt_clickclack';
+----
+owner
+xao_rtt_vedernikoff
+
+
+# hop 2: -> B (mop)
+statement ok
+ALTER TABLE xao_rtt_clickclack OWNER TO xao_rtt_mop;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='xao_rtt_clickclack';
+----
+owner
+xao_rtt_mop
+
+
+# hop 3: -> C (iceberg)
+statement ok
+ALTER TABLE xao_rtt_clickclack OWNER TO xao_rtt_iceberg;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='xao_rtt_clickclack';
+----
+owner
+xao_rtt_iceberg
+
+
+# hop 4: back to A (vedernikoff) -- the round-trip closes.
+statement ok
+ALTER TABLE xao_rtt_clickclack OWNER TO xao_rtt_vedernikoff;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='xao_rtt_clickclack';
+----
+owner
+xao_rtt_vedernikoff
+
+
+statement ok
+DROP TABLE xao_rtt_clickclack;
+
+
+statement ok
+DROP ROLE xao_rtt_vedernikoff;
+
+
+statement ok
+DROP ROLE xao_rtt_mop;
+
+
+statement ok
+DROP ROLE xao_rtt_iceberg;

@@ -36,6 +36,7 @@
 #include "catalog/catalog.h"
 #include "catalog/store/store.h"
 #include "duckdb_shell.hpp"
+#include "network/pg/hba.h"
 #include "network/server.h"
 #include "query/server_engine.h"
 #include "rest_server/database_path_feature.h"
@@ -118,6 +119,7 @@ int RunServer(int argc, char** argv) {
 
     CrashHandler::SetState("starting");
     store.Initialize(db_path.directory());
+    network::pg::hba::SetHbaConfig(db_path.hbaConfigFile());
     up_store = true;
     background.start();
     up_background = true;

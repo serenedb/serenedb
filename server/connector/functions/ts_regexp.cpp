@@ -86,7 +86,8 @@ void FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
       column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
-    throw duckdb::InvalidInputException("ts_regexp field is not VARCHAR");
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+                    ERR_MSG("ts_regexp field is not VARCHAR"));
   }
   auto regexp = irs::CreateByRegexp(
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),

@@ -16,6 +16,13 @@ n
 1
 
 
+query error
+SELECT d > '1992-01-01'::VARCHAR
+FROM (VALUES (DATE '1992-01-01')) t(d);
+----
+db error: ERROR: Cannot compare values of type DATE and type VARCHAR - an explicit cast is required
+
+
 statement ok
 DETACH pg_${__DATABASE__};
 

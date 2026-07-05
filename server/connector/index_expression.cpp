@@ -271,10 +271,11 @@ void RejectUserDefinedFunctions(const duckdb::Expression& expr,
         }
       }
       if (is_user_defined) {
-        throw duckdb::BinderException(
-          "user-defined functions in indexed expressions are not supported "
-          "yet (function: %s)",
-          f.Function().GetName());
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("user-defined functions in indexed expressions are not "
+                  "supported yet (function: ",
+                  f.Function().GetName().GetIdentifierName(), ")"));
       }
     }
     duckdb::ExpressionIterator::EnumerateChildren(
@@ -289,9 +290,9 @@ void RejectUserDefinedFunctions(const duckdb::ParsedExpression& expr,
     if (node.GetExpressionClass() == duckdb::ExpressionClass::FUNCTION) {
       const auto& f = node.Cast<duckdb::FunctionExpression>();
       auto fail = [&] {
-        throw duckdb::BinderException(
-          "user-defined functions in indexed expressions are not supported "
-          "yet");
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                        ERR_MSG("user-defined functions in indexed "
+                                "expressions are not supported yet"));
       };
       const auto& parsed_schema = f.GetQualifiedName().Schema();
       const auto schema = parsed_schema.empty()

@@ -1,0 +1,81 @@
+# DDL on a relation requires ownership (or superuser), like PostgreSQL: a
+# non-owner role must NOT be able to DROP / ALTER / CREATE INDEX / RENAME another
+# role's table or view. (Regression guard for an escalation where any logged-in
+# role could drop any table.) All objects here are owned by the bootstrap
+# superuser, so the unprivileged role owns nothing and every DDL is refused;
+# the superuser performs the same DDL successfully as a positive control.
+
+statement ok
+DROP TABLE IF EXISTS ddlo_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS ddlo_vedernikoff;
+
+
+statement ok
+CREATE TABLE ddlo_kostya (id int, payload text);
+
+
+statement ok
+INSERT INTO ddlo_kostya VALUES (1, 'mop');
+
+
+statement ok
+CREATE ROLE ddlo_vedernikoff LOGIN PASSWORD 'ddlo_vedernikoff_pw';
+
+
+# ---- non-owner DDL must be refused (PG: "must be owner of table/...") ----
+
+connection c_ved user=ddlo_vedernikoff password=ddlo_vedernikoff_pw
+statement error
+DROP TABLE ddlo_kostya;
+----
+db error: ERROR: must be owner of table ddlo_kostya<slt:ignore>
+
+
+connection c_ved user=ddlo_vedernikoff password=ddlo_vedernikoff_pw
+statement error
+ALTER TABLE ddlo_kostya ADD COLUMN sneaky int;
+----
+db error: ERROR: must be owner of table ddlo_kostya<slt:ignore>
+
+
+connection c_ved user=ddlo_vedernikoff password=ddlo_vedernikoff_pw
+statement error
+ALTER TABLE ddlo_kostya RENAME TO ddlo_pwned;
+----
+db error: ERROR: must be owner of table ddlo_kostya<slt:ignore>
+
+
+# Note: CREATE INDEX by a non-owner is also refused, but on serenedb the
+# table-scan SELECT check fires first ("permission denied"/"lacks SELECT")
+# rather than the ownership message PG emits. Both deny -- no escalation --
+# but the wording differs, so it is asserted in the serenedb-only suite, not
+# here where PG-identical text is required.
+
+
+# The table is intact after the refused DDL.
+connection default
+query
+SELECT count(*) AS n FROM ddlo_kostya;
+----
+n
+1
+
+
+# Positive control: the owner (superuser) performs the same DDL fine.
+connection default
+statement ok
+CREATE INDEX ddlo_ok ON ddlo_kostya (id);
+
+
+connection default
+statement ok
+DROP TABLE ddlo_kostya;
+
+
+# ---- cleanup ----
+
+statement ok
+DROP ROLE ddlo_vedernikoff;

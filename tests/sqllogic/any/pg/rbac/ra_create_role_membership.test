@@ -1,0 +1,128 @@
+# Membership-at-creation on CREATE ROLE. IN ROLE g: the new role becomes a
+# member of g. ROLE m1,m2: m1/m2 become members of the new role. ADMIN a: a
+# becomes a member of the new role WITH ADMIN OPTION. Each clause is tested in
+# isolation. Byte-identical on PostgreSQL and serenedb.
+#
+# Lore: the overseers admit vedernikoff; vedernikoff admits his interns.
+
+statement ok
+DROP ROLE IF EXISTS mem_overseer;
+
+
+statement ok
+DROP ROLE IF EXISTS mem_intern1;
+
+
+statement ok
+DROP ROLE IF EXISTS mem_intern2;
+
+
+statement ok
+DROP ROLE IF EXISTS mem_admin;
+
+
+statement ok
+DROP ROLE IF EXISTS mem_in;
+
+
+statement ok
+DROP ROLE IF EXISTS mem_has;
+
+
+statement ok
+DROP ROLE IF EXISTS mem_adm;
+
+
+statement ok
+CREATE ROLE mem_overseer;
+
+
+statement ok
+CREATE ROLE mem_intern1;
+
+
+statement ok
+CREATE ROLE mem_intern2;
+
+
+statement ok
+CREATE ROLE mem_admin;
+
+
+# IN ROLE: mem_in becomes a member of mem_overseer.
+statement ok
+CREATE ROLE mem_in IN ROLE mem_overseer;
+
+
+query
+SELECT r.rolname AS group, m.rolname AS member, am.admin_option
+FROM pg_auth_members am
+JOIN pg_roles r ON r.oid = am.roleid
+JOIN pg_roles m ON m.oid = am.member
+WHERE m.rolname = 'mem_in';
+----
+group	member	admin_option
+mem_overseer	mem_in	f
+
+
+# ROLE: mem_intern1, mem_intern2 become members of mem_has.
+statement ok
+CREATE ROLE mem_has ROLE mem_intern1, mem_intern2;
+
+
+query
+SELECT r.rolname AS group, m.rolname AS member, am.admin_option
+FROM pg_auth_members am
+JOIN pg_roles r ON r.oid = am.roleid
+JOIN pg_roles m ON m.oid = am.member
+WHERE r.rolname = 'mem_has'
+ORDER BY m.rolname;
+----
+group	member	admin_option
+mem_has	mem_intern1	f
+mem_has	mem_intern2	f
+
+
+# ADMIN: mem_admin becomes a member of mem_adm WITH ADMIN OPTION.
+statement ok
+CREATE ROLE mem_adm ADMIN mem_admin;
+
+
+query
+SELECT r.rolname AS group, m.rolname AS member, am.admin_option
+FROM pg_auth_members am
+JOIN pg_roles r ON r.oid = am.roleid
+JOIN pg_roles m ON m.oid = am.member
+WHERE r.rolname = 'mem_adm';
+----
+group	member	admin_option
+mem_adm	mem_admin	t
+
+
+# Cleanup.
+statement ok
+DROP ROLE mem_in;
+
+
+statement ok
+DROP ROLE mem_has;
+
+
+statement ok
+DROP ROLE mem_adm;
+
+
+statement ok
+DROP ROLE mem_overseer;
+
+
+statement ok
+DROP ROLE mem_intern1;
+
+
+statement ok
+DROP ROLE mem_intern2;
+
+
+statement ok
+DROP ROLE mem_admin;

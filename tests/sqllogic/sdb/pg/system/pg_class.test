@@ -70,6 +70,7 @@ oid	relname	reltablespace	relkind
 166	sql_implementation_info	0	r
 167	sql_parts	0	r
 168	sql_sizing	0	r
+169	pg_hba_file_rules	0	v
 999994	sdb_settings	0	r
 999995	sdb_metrics	0	r
 999997	sdb_progress	0	r
@@ -92,7 +93,6 @@ oid	relname	reltablespace	relkind
 <slt:ignore>	pg_seclabels	0	v
 <slt:ignore>	pg_settings	0	v
 <slt:ignore>	pg_file_settings	0	v
-<slt:ignore>	pg_hba_file_rules	0	v
 <slt:ignore>	pg_ident_file_mappings	0	v
 <slt:ignore>	pg_timezone_abbrevs	0	v
 <slt:ignore>	pg_timezone_names	0	v

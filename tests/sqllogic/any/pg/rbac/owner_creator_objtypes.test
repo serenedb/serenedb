@@ -1,0 +1,70 @@
+# Creator-owns-object: an object's owner is the role that created it. Driven by
+# the bootstrap superuser so the result is byte-identical on PG and serenedb
+# (every object here is owned by postgres because postgres created it). The
+# non-superuser-creator case lives in sdb/pg/rbac/ownership_creator.test, which
+# SereneDB can run without PG 15's public-schema lockdown.
+
+statement ok
+DROP SCHEMA IF EXISTS oco_s CASCADE;
+
+
+statement ok
+CREATE SCHEMA oco_s;
+
+
+statement ok
+CREATE TABLE oco_s.clickclack (id int);
+
+
+statement ok
+CREATE VIEW oco_s.iceberg AS SELECT 1 AS x;
+
+
+statement ok
+CREATE SEQUENCE oco_s.mop_seq;
+
+
+# Relations created by postgres are owned by postgres.
+query
+SELECT relname, pg_get_userbyid(relowner) AS owner FROM pg_class
+WHERE relname IN ('clickclack','iceberg','mop_seq') ORDER BY relname;
+----
+relname	owner
+clickclack	postgres
+iceberg	postgres
+mop_seq	postgres
+
+
+# The schema too.
+query
+SELECT pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname='oco_s';
+----
+owner
+postgres
+
+
+# A table created by postgres confers all privileges on postgres implicitly
+# (NULL acl default), independent of any explicit grant.
+query
+SELECT has_table_privilege('postgres','oco_s.clickclack','SELECT') AS s,
+       has_table_privilege('postgres','oco_s.clickclack','INSERT') AS i,
+       has_table_privilege('postgres','oco_s.clickclack','DELETE') AS d;
+----
+s	i	d
+t	t	t
+
+
+# CREATE TABLE AS is owned by its creator, like a plain CREATE TABLE.
+statement ok
+CREATE TABLE oco_s.kostya AS SELECT 1 AS x;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname = 'kostya';
+----
+owner
+postgres
+
+
+statement ok
+DROP SCHEMA oco_s CASCADE;

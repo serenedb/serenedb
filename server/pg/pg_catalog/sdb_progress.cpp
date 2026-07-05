@@ -115,7 +115,7 @@ catalog::MaterializedData SystemTableSnapshot<SdbProgress>::GetTableData() {
         mask &= ~kPercentNullBit;
       }
     }
-    WriteData(result, value, mask, row++);
+    WriteData(result, value, mask, row++, *_config.CatalogSnapshot());
   }
   return {std::move(result), snapshots.size()};
 }

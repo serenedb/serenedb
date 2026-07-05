@@ -22,11 +22,14 @@
 
 #include <duckdb/function/macro_function.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
+#include <string>
+#include <vector>
 
 #include "app/app_server.h"
 #include "catalog/catalog.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
+#include "catalog/role.h"
 #include "catalog/schema.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
@@ -42,7 +45,6 @@ constexpr uint64_t kNullMask = MaskFromNulls({
   GetIndex(&PgProc::protrftypes),
   GetIndex(&PgProc::prosqlbody),
   GetIndex(&PgProc::proconfig),
-  GetIndex(&PgProc::proacl),
 });
 
 constexpr Oid kLangSql = 14;
@@ -87,11 +89,11 @@ catalog::MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
 
         auto pronargs = static_cast<int16_t>(argtypes.size());
         argtypes_storage.push_back(std::move(argtypes));
-        values.push_back({
+        values.push_back(PgProc{
           .oid = func->GetId().id(),
           .proname = func->GetName(),
           .pronamespace = schema->GetId().id(),
-          .proowner = id::kRootUser.id(),
+          .proowner = func->GetOwner().id(),
           .prolang = kLangSql,
           .procost = 0.0f,
           .prorows = 0.0f,
@@ -109,6 +111,7 @@ catalog::MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
           .prorettype = rettype,
           .proargtypes = argtypes_storage.back(),
           .prosrc = func->GetName(),
+          .proacl = {func->GetAcl()},
         });
       }
     }
@@ -117,7 +120,7 @@ catalog::MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
   auto result = CreateColumns<PgProc>(values.size());
 
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row);
+    WriteData(result, values[row], kNullMask, row, *_config.CatalogSnapshot());
   }
 
   return {std::move(result), values.size()};

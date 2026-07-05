@@ -1,0 +1,83 @@
+# GRANT/REVOKE EXECUTE on a function can name it by its argument-type signature
+# fn(int), as a ROUTINE (a FUNCTION synonym), or in bulk via ALL FUNCTIONS IN
+# SCHEMA -- exactly like PostgreSQL. Each form materializes pg_proc.proacl the
+# same way, asserted per-element so it is portable across engines.
+#
+# Vedernikoff lore: babsky the function; vedernikoff the grantee.
+# Idempotent + self-cleaning.
+
+statement ok
+DROP FUNCTION IF EXISTS gobjacl_arg_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS gobjacl_arg_vedernikoff;
+
+
+statement ok
+CREATE FUNCTION gobjacl_arg_babsky(x int) RETURNS int LANGUAGE sql AS 'SELECT $1 + 1';
+
+
+statement ok
+CREATE ROLE gobjacl_arg_vedernikoff;
+
+
+# Functions are EXECUTE-to-PUBLIC by default; revoke that so an explicit grant
+# is observable in proacl.
+statement ok
+REVOKE EXECUTE ON FUNCTION gobjacl_arg_babsky FROM PUBLIC;
+
+
+# Argument-type signature: GRANT ... ON FUNCTION fn(int).
+statement ok
+GRANT EXECUTE ON FUNCTION gobjacl_arg_babsky(int) TO gobjacl_arg_vedernikoff;
+
+
+query
+SELECT e
+FROM pg_proc p, LATERAL unnest(p.proacl::text[]) AS e
+WHERE p.proname = 'gobjacl_arg_babsky' AND e LIKE 'gobjacl_arg_vedernikoff=%';
+----
+e
+gobjacl_arg_vedernikoff=X/postgres
+
+
+# ROUTINE is accepted as a synonym for FUNCTION (idempotent re-grant).
+statement ok
+GRANT EXECUTE ON ROUTINE gobjacl_arg_babsky(int) TO gobjacl_arg_vedernikoff;
+
+
+# ALL FUNCTIONS IN SCHEMA applies to every function in the schema.
+statement ok
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO gobjacl_arg_vedernikoff;
+
+
+query
+SELECT e
+FROM pg_proc p, LATERAL unnest(p.proacl::text[]) AS e
+WHERE p.proname = 'gobjacl_arg_babsky' AND e LIKE 'gobjacl_arg_vedernikoff=%';
+----
+e
+gobjacl_arg_vedernikoff=X/postgres
+
+
+# REVOKE via the same signature removes the grant.
+statement ok
+REVOKE EXECUTE ON FUNCTION gobjacl_arg_babsky(int) FROM gobjacl_arg_vedernikoff;
+
+
+query
+SELECT count(*) AS n
+FROM pg_proc p, LATERAL unnest(p.proacl::text[]) AS e
+WHERE p.proname = 'gobjacl_arg_babsky' AND e LIKE 'gobjacl_arg_vedernikoff=%';
+----
+n
+0
+
+
+statement ok
+DROP FUNCTION gobjacl_arg_babsky;
+
+
+statement ok
+DROP ROLE gobjacl_arg_vedernikoff;

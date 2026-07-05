@@ -20,6 +20,7 @@
 
 #include "pg/pg_catalog/pg_ts_dict.h"
 
+#include "basics/assert.h"
 #include "catalog/catalog.h"
 #include "pg/pg_catalog/fwd.h"
 
@@ -45,7 +46,7 @@ catalog::MaterializedData SystemTableSnapshot<PgTsDict>::GetTableData() {
         .oid = tokenizer->GetId().id(),
         .dictname = tokenizer->GetName(),
         .dictnamespace = tokenizer->GetParentId().id(),
-        .dictowner = id::kRootUser.id(),
+        .dictowner = tokenizer->GetOwner().id(),
         .dicttemplate = 0,
       });
     }
@@ -53,7 +54,7 @@ catalog::MaterializedData SystemTableSnapshot<PgTsDict>::GetTableData() {
 
   auto result = CreateColumns<PgTsDict>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row);
+    WriteData(result, values[row], kNullMask, row, *_config.CatalogSnapshot());
   }
   return {std::move(result), values.size()};
 }

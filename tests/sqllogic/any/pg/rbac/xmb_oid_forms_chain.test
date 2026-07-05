@@ -1,0 +1,99 @@
+# Cross-membership: pg_has_role argument forms (name+name, name+oid, oid+oid)
+# all agree along a 2-hop membership chain, and has_table_privilege accepts the
+# table OID as well. Exercising the OID overloads guards the catalog lookups.
+#
+# Chain (-> reads "is a member of"):
+#   xmb_ofc_mop -> xmb_ofc_kostya -> xmb_ofc_iceberg   (leaf holds SELECT on xmb_ofc_clickclack)
+#
+# Byte-identical on real PostgreSQL and serenedb.
+
+statement ok
+DROP ROLE IF EXISTS xmb_ofc_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_ofc_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_ofc_iceberg;
+
+
+statement ok
+DROP TABLE IF EXISTS xmb_ofc_clickclack;
+
+
+statement ok
+CREATE TABLE xmb_ofc_clickclack (id int);
+
+
+statement ok
+CREATE ROLE xmb_ofc_mop;
+
+
+statement ok
+CREATE ROLE xmb_ofc_kostya;
+
+
+statement ok
+CREATE ROLE xmb_ofc_iceberg;
+
+
+statement ok
+GRANT xmb_ofc_kostya TO xmb_ofc_mop;
+
+
+statement ok
+GRANT xmb_ofc_iceberg TO xmb_ofc_kostya;
+
+
+statement ok
+GRANT SELECT ON xmb_ofc_clickclack TO xmb_ofc_iceberg;
+
+
+# name+name, name+oid, and oid+oid forms all answer t for the 2-hop reach.
+query
+SELECT pg_has_role('xmb_ofc_mop', 'xmb_ofc_iceberg', 'USAGE') AS name_name,
+       pg_has_role('xmb_ofc_mop'::name, (SELECT oid FROM pg_roles WHERE rolname = 'xmb_ofc_iceberg'), 'USAGE') AS name_oid,
+       pg_has_role((SELECT oid FROM pg_roles WHERE rolname = 'xmb_ofc_mop'),
+                   (SELECT oid FROM pg_roles WHERE rolname = 'xmb_ofc_iceberg'), 'MEMBER') AS oid_oid;
+----
+name_name	name_oid	oid_oid
+t	t	t
+
+
+# has_table_privilege accepts the relation OID; same answer as the name form.
+query
+SELECT has_table_privilege('xmb_ofc_mop', 'xmb_ofc_clickclack', 'SELECT') AS by_name,
+       has_table_privilege('xmb_ofc_mop', 'xmb_ofc_clickclack'::regclass::oid, 'SELECT') AS by_oid;
+----
+by_name	by_oid
+t	t
+
+
+# Reverse direction is false in every form (membership is not symmetric).
+query
+SELECT pg_has_role('xmb_ofc_iceberg', 'xmb_ofc_mop', 'USAGE') AS rev_name,
+       pg_has_role((SELECT oid FROM pg_roles WHERE rolname = 'xmb_ofc_iceberg'),
+                   (SELECT oid FROM pg_roles WHERE rolname = 'xmb_ofc_mop'), 'MEMBER') AS rev_oid;
+----
+rev_name	rev_oid
+f	f
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP TABLE IF EXISTS xmb_ofc_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_ofc_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_ofc_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_ofc_iceberg;

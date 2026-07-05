@@ -23,12 +23,14 @@
 #include <string>
 
 #include "catalog/identifiers/object_id.h"
+#include "catalog/object.h"
 
 namespace sdb::catalog::persistence {
 
 struct SchemaOptions {
   ObjectId id;
   std::string name;
+  Permissions perm;
 };
 
 }  // namespace sdb::catalog::persistence

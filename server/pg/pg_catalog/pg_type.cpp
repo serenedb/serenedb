@@ -22,9 +22,11 @@
 
 #include <deque>
 #include <string>
+#include <vector>
 
 #include "basics/containers/flat_hash_set.h"
 #include "catalog/catalog.h"
+#include "catalog/role.h"
 #include "catalog/user_type.h"
 #include "pg/pg_catalog/fwd.h"
 
@@ -1507,7 +1509,6 @@ constexpr auto kSampleData = std::to_array<PgType>({
 constexpr uint64_t kNullMask = MaskFromNulls({
   GetIndex(&PgType::typdefaultbin),
   GetIndex(&PgType::typdefault),
-  GetIndex(&PgType::typacl),
 });
 
 }  // namespace
@@ -1599,13 +1600,14 @@ catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
       const auto namespace_oid = schema->GetId().id();
       const auto array_oid = type->GetArrayOid().id();
       const auto array_name = make_array_name(type->GetName());
+      const AclColumn type_acl{type->GetAcl()};
 
       auto make_row = [&](bool as_array) {
         return PgType{
           .oid = as_array ? array_oid : type_oid,
           .typname = as_array ? array_name : std::string_view{type->GetName()},
           .typnamespace = namespace_oid,
-          .typowner = id::kRootUser.id(),
+          .typowner = type->GetOwner().id(),
           .typlen = (!as_array && is_enum) ? int16_t{4} : int16_t{-1},
           .typbyval = !as_array && is_enum,
           .typtype = as_array       ? PgType::Typetype::Base
@@ -1640,7 +1642,9 @@ catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
           .typcollation = 0,
           .typdefaultbin = {},
           .typdefault = {},
-          .typacl = {},
+          // Only the scalar type carries an ACL; the array type's typacl is
+          // NULL in PG.
+          .typacl = as_array ? AclColumn{} : type_acl,
         };
       };
 
@@ -1651,7 +1655,7 @@ catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
 
   auto result = CreateColumns<PgType>(rows.size());
   for (size_t i = 0; i < rows.size(); ++i) {
-    WriteData(result, rows[i], kNullMask, i);
+    WriteData(result, rows[i], kNullMask, i, *_config.GetCatalogSnapshot());
   }
   return {std::move(result), rows.size()};
 }

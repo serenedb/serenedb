@@ -32,8 +32,11 @@ struct PgDbRoleSetting {
 
   Oid setdatabase;
   Oid setrole;
-  Array<Text> setconfig;
+  Array<std::string> setconfig;
 };
 // NOLINTEND
+
+template<>
+catalog::MaterializedData SystemTableSnapshot<PgDbRoleSetting>::GetTableData();
 
 }  // namespace sdb::pg

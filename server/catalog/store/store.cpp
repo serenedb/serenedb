@@ -65,6 +65,8 @@
 #include "catalog/schema.h"
 #include "catalog/secondary_index.h"
 #include "catalog/table.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::catalog {
 namespace {
@@ -1328,9 +1330,8 @@ void CatalogStore::EnsureSystemDatabase() {
     return;
   }
 
-  Database database{
-    id::kSystemDB,
-    DatabaseOptions{std::string{StaticStrings::kDefaultDatabase}}};
+  Database database{catalog::Permissions{id::kRootUser}, id::kSystemDB,
+                    StaticStrings::kDefaultDatabase};
   duckdb::MemoryStream stream;
   auto database_bytes = SerializeObject(database, stream);
   auto r = CreateDefinition(id::kInstance, ObjectType::Database, id::kSystemDB,
@@ -1340,9 +1341,8 @@ void CatalogStore::EnsureSystemDatabase() {
   }
 
   const auto schema_id = NextId();
-  Schema schema{id::kSystemDB,
-                SchemaOptions{.id = schema_id,
-                              .name = std::string{StaticStrings::kPublic}}};
+  Schema schema{catalog::Permissions{id::kRootUser}, id::kSystemDB, schema_id,
+                StaticStrings::kPublic};
   auto schema_bytes = SerializeObject(schema, stream);
   r = CreateDefinition(id::kSystemDB, ObjectType::Schema, schema_id,
                        schema_bytes);
@@ -1363,8 +1363,8 @@ void CheckInitInput(const duckdb::vector<duckdb::LogicalType>& types,
                   [](duckdb::LogicalTypeId id, const duckdb::LogicalType& t) {
                     return t.id() == id;
                   })) {
-    throw duckdb::BinderException(
-      absl::StrCat(fn, ": unexpected input table shape"));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG(fn, ": unexpected input table shape"));
   }
 }
 

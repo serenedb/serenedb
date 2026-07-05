@@ -32,6 +32,8 @@
 #include <duckdb/main/extension/extension_loader.hpp>
 
 #include "basics/assert.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {
@@ -52,11 +54,13 @@ class JsonParser {
     simdjson::ondemand::document doc;
     auto ec = _parser.iterate(_padded_input).get(doc);
     if (ec != simdjson::SUCCESS) {
-      throw duckdb::InvalidInputException("Invalid JSON input: %s",
-                                          simdjson::error_message(ec));
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+        ERR_MSG("Invalid JSON input: ", simdjson::error_message(ec)));
     }
     if (doc.type().error()) {
-      throw duckdb::InvalidInputException("Invalid JSON input: tape error");
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                      ERR_MSG("Invalid JSON input: tape error"));
     }
     return doc;
   }
@@ -236,8 +240,8 @@ void JsonInFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       simdjson::ondemand::document doc;
       auto ec = parser.iterate(padded).get(doc);
       if (ec != simdjson::SUCCESS || !ValidateJson(doc)) {
-        throw duckdb::InvalidInputException(
-          "Invalid input syntax for type json: %s", sv);
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                        ERR_MSG("Invalid input syntax for type json: ", sv));
       }
       return duckdb::StringVector::AddString(result, input);
     });
@@ -563,7 +567,8 @@ void JsonStripNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       simdjson::padded_string padded(sv);
       simdjson::ondemand::document doc;
       if (parser.iterate(padded).get(doc) != simdjson::SUCCESS) {
-        throw duckdb::InvalidInputException("invalid JSON");
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                        ERR_MSG("invalid JSON"));
       }
       std::string out;
       // Document-level handling

@@ -1,0 +1,125 @@
+# Cross-product file I: the WITH GRANT OPTION oracle swept across all seven
+# privileges. has_table_privilege('role','tab','X WITH GRANT OPTION') is true
+# only when the role may re-grant X. The owner is grantable on every privilege
+# implicitly (no relacl row). A grantee is grantable only on the privileges it
+# was given WITH GRANT OPTION; the plain-privilege oracle is true for both
+# grantable and non-grantable grants.
+#
+# Lore: xog_i_mop is the superuser-owned table; xog_i_kostya is the grantee
+# given a mix of grantable and plain privileges.
+
+statement ok
+DROP TABLE IF EXISTS xog_i_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_i_kostya;
+
+
+statement ok
+CREATE TABLE xog_i_mop (id int);
+
+
+statement ok
+CREATE ROLE xog_i_kostya LOGIN;
+
+
+# Owner holds all seven WITH GRANT OPTION implicitly.
+query
+SELECT has_table_privilege('postgres','xog_i_mop','SELECT WITH GRANT OPTION')     AS sel,
+       has_table_privilege('postgres','xog_i_mop','INSERT WITH GRANT OPTION')     AS ins,
+       has_table_privilege('postgres','xog_i_mop','UPDATE WITH GRANT OPTION')     AS upd,
+       has_table_privilege('postgres','xog_i_mop','DELETE WITH GRANT OPTION')     AS del,
+       has_table_privilege('postgres','xog_i_mop','TRUNCATE WITH GRANT OPTION')   AS trc,
+       has_table_privilege('postgres','xog_i_mop','REFERENCES WITH GRANT OPTION') AS ref,
+       has_table_privilege('postgres','xog_i_mop','TRIGGER WITH GRANT OPTION')    AS trg;
+----
+sel	ins	upd	del	trc	ref	trg
+t	t	t	t	t	t	t
+
+
+# Grant SELECT, INSERT, UPDATE WITH GRANT OPTION; grant DELETE, TRUNCATE,
+# REFERENCES, TRIGGER WITHOUT it.
+statement ok
+GRANT SELECT, INSERT, UPDATE ON xog_i_mop TO xog_i_kostya WITH GRANT OPTION;
+
+
+statement ok
+GRANT DELETE, TRUNCATE, REFERENCES, TRIGGER ON xog_i_mop TO xog_i_kostya;
+
+
+# Plain privilege: the grantee holds all seven regardless of grant option.
+query
+SELECT has_table_privilege('xog_i_kostya','xog_i_mop','SELECT')     AS sel,
+       has_table_privilege('xog_i_kostya','xog_i_mop','INSERT')     AS ins,
+       has_table_privilege('xog_i_kostya','xog_i_mop','UPDATE')     AS upd,
+       has_table_privilege('xog_i_kostya','xog_i_mop','DELETE')     AS del,
+       has_table_privilege('xog_i_kostya','xog_i_mop','TRUNCATE')   AS trc,
+       has_table_privilege('xog_i_kostya','xog_i_mop','REFERENCES') AS ref,
+       has_table_privilege('xog_i_kostya','xog_i_mop','TRIGGER')    AS trg;
+----
+sel	ins	upd	del	trc	ref	trg
+t	t	t	t	t	t	t
+
+
+# Grant option: true only on the three granted WITH GRANT OPTION.
+query
+SELECT has_table_privilege('xog_i_kostya','xog_i_mop','SELECT WITH GRANT OPTION')     AS sel,
+       has_table_privilege('xog_i_kostya','xog_i_mop','INSERT WITH GRANT OPTION')     AS ins,
+       has_table_privilege('xog_i_kostya','xog_i_mop','UPDATE WITH GRANT OPTION')     AS upd,
+       has_table_privilege('xog_i_kostya','xog_i_mop','DELETE WITH GRANT OPTION')     AS del,
+       has_table_privilege('xog_i_kostya','xog_i_mop','TRUNCATE WITH GRANT OPTION')   AS trc,
+       has_table_privilege('xog_i_kostya','xog_i_mop','REFERENCES WITH GRANT OPTION') AS ref,
+       has_table_privilege('xog_i_kostya','xog_i_mop','TRIGGER WITH GRANT OPTION')    AS trg;
+----
+sel	ins	upd	del	trc	ref	trg
+t	t	t	f	f	f	f
+
+
+# The ACL row carries '*' on the grantable letters and plain letters for the
+# rest. PostgreSQL canonicalizes the letters into the fixed arwdDxt order
+# regardless of grant order, so the grantable trio renders as the leading
+# a* r* w* and the plain four as d D x t.
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_i_mop'
+) g WHERE e LIKE 'xog_i_kostya=%';
+----
+e
+xog_i_kostya=a*r*w*dDxt/postgres
+
+
+# ---- Upgrade a plain privilege to grantable by re-granting it WITH GRANT
+# OPTION: DELETE was granted without the option above; re-granting it with the
+# option turns on its grant option without touching the others. ----
+statement ok
+GRANT DELETE ON xog_i_mop TO xog_i_kostya WITH GRANT OPTION;
+
+
+# DELETE is now grantable; the others' grant-option state is unchanged.
+query
+SELECT has_table_privilege('xog_i_kostya','xog_i_mop','DELETE WITH GRANT OPTION')     AS del,
+       has_table_privilege('xog_i_kostya','xog_i_mop','SELECT WITH GRANT OPTION')     AS sel,
+       has_table_privilege('xog_i_kostya','xog_i_mop','TRUNCATE WITH GRANT OPTION')   AS trc;
+----
+del	sel	trc
+t	t	f
+
+
+# 'd' now carries a star; the four originally-grantable/plain letters are
+# otherwise unchanged (a* r* w* d* D x t).
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_i_mop'
+) g WHERE e LIKE 'xog_i_kostya=%';
+----
+e
+xog_i_kostya=a*r*w*d*Dxt/postgres
+
+
+statement ok
+DROP TABLE xog_i_mop;
+
+
+statement ok
+DROP ROLE xog_i_kostya;

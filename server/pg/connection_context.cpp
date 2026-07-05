@@ -22,13 +22,45 @@
 
 #include "app/app_server.h"
 #include "catalog/catalog.h"
+#include "catalog/database.h"
 #include "catalog/identifiers/object_id.h"
+#include "catalog/role.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "query/transaction.h"
 
+namespace sdb::pg {
+
+LoginCheck RequireLoginRole(const catalog::Snapshot& snapshot,
+                            std::string_view user,
+                            const catalog::Database& database) {
+  auto role = snapshot.GetRole(user);
+  if (!role) {
+    return {.error = SQL_ERROR_DATA(
+              ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
+              ERR_MSG("role \"", user, "\" does not exist"))};
+  }
+  if (!role->CanLogin()) {
+    return {.error = SQL_ERROR_DATA(
+              ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
+              ERR_MSG("role \"", user, "\" is not permitted to log in"))};
+  }
+  if (!snapshot.ClosureFor(role->GetId())
+         .Can(database, catalog::AclMode::Connect)) {
+    return {
+      .error = SQL_ERROR_DATA(
+        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+        ERR_MSG("permission denied for database \"", database.GetName(), "\""),
+        ERR_DETAIL("User does not have CONNECT privilege."))};
+  }
+  return {.role = std::move(role)};
+}
+
+}  // namespace sdb::pg
 namespace sdb {
 
 ConnectionContext::ConnectionContext(
-  duckdb::ClientContext& duckdb_ctx, std::string_view user,
+  duckdb::ClientContext& duckdb_ctx, std::string_view user, ObjectId role_id,
   std::string_view dbname, ObjectId database_id,
   std::shared_ptr<catalog::Database> database, message::Buffer* send_buffer,
   pg::CopyMessagesQueue* copy_queue, int32_t backend_pid,
@@ -41,7 +73,28 @@ ConnectionContext::ConnectionContext(
     _cancel_registry{cancel_registry},
     _database{std::move(database)},
     _send_buffer{send_buffer},
-    _copy_queue{copy_queue} {}
+    _copy_queue{copy_queue},
+    _login_role_id{role_id},
+    _session_role_id{role_id},
+    _effective_role_id{role_id} {}
+
+namespace {
+
+std::string RoleName(const catalog::Snapshot& snapshot, ObjectId role,
+                     const std::string& fallback) {
+  auto obj = snapshot.GetObject<catalog::Role>(role);
+  return obj ? std::string{obj->GetName()} : fallback;
+}
+
+}  // namespace
+
+std::string ConnectionContext::EffectiveUserName() const {
+  return RoleName(*CatalogSnapshot(), _effective_role_id, _user);
+}
+
+std::string ConnectionContext::SessionUserName() const {
+  return RoleName(*CatalogSnapshot(), _session_role_id, _user);
+}
 
 std::string ConnectionContext::GetCurrentSchemaFromSnapshot(
   std::shared_ptr<const catalog::Snapshot> snapshot) const {

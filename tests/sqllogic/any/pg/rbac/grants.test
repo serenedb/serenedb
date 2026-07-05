@@ -1,0 +1,184 @@
+# Table privilege GRANT / REVOKE, verified through has_table_privilege (a real
+# RBAC-backed function). Single superuser session; cross-role answers come from
+# the role argument to has_table_privilege.
+
+statement ok
+DROP ROLE IF EXISTS grantee_a;
+
+
+statement ok
+DROP ROLE IF EXISTS grantee_b;
+
+
+statement ok
+DROP TABLE IF EXISTS iceberg_log;
+
+
+statement ok
+CREATE TABLE iceberg_log (id int, payload text);
+
+
+statement ok
+CREATE ROLE grantee_a;
+
+
+statement ok
+CREATE ROLE grantee_b;
+
+
+# Before any grant: the non-owner role has nothing.
+query
+SELECT
+  has_table_privilege('grantee_a', 'iceberg_log', 'SELECT'),
+  has_table_privilege('grantee_a', 'iceberg_log', 'INSERT'),
+  has_table_privilege('grantee_a', 'iceberg_log', 'UPDATE'),
+  has_table_privilege('grantee_a', 'iceberg_log', 'DELETE');
+----
+has_table_privilege	has_table_privilege	has_table_privilege	has_table_privilege
+f	f	f	f
+
+
+# The owner (postgres) implicitly holds everything.
+query
+SELECT
+  has_table_privilege('postgres', 'iceberg_log', 'SELECT'),
+  has_table_privilege('postgres', 'iceberg_log', 'TRUNCATE');
+----
+has_table_privilege	has_table_privilege
+t	t
+
+
+# GRANT a single privilege.
+statement ok
+GRANT SELECT ON iceberg_log TO grantee_a;
+
+
+query
+SELECT
+  has_table_privilege('grantee_a', 'iceberg_log', 'SELECT'),
+  has_table_privilege('grantee_a', 'iceberg_log', 'INSERT');
+----
+has_table_privilege	has_table_privilege
+t	f
+
+
+# GRANT multiple privileges at once.
+statement ok
+GRANT INSERT, UPDATE, DELETE ON iceberg_log TO grantee_a;
+
+
+query
+SELECT
+  has_table_privilege('grantee_a', 'iceberg_log', 'SELECT'),
+  has_table_privilege('grantee_a', 'iceberg_log', 'INSERT'),
+  has_table_privilege('grantee_a', 'iceberg_log', 'UPDATE'),
+  has_table_privilege('grantee_a', 'iceberg_log', 'DELETE');
+----
+has_table_privilege	has_table_privilege	has_table_privilege	has_table_privilege
+t	t	t	t
+
+
+# Comma-separated privilege text uses any-of semantics in has_table_privilege.
+query
+SELECT has_table_privilege('grantee_b', 'iceberg_log', 'SELECT, INSERT');
+----
+has_table_privilege
+f
+
+
+statement ok
+GRANT TRUNCATE ON iceberg_log TO grantee_b;
+
+
+query
+SELECT has_table_privilege('grantee_b', 'iceberg_log', 'SELECT, TRUNCATE');
+----
+has_table_privilege
+t
+
+
+# REVOKE one privilege; others are unaffected (per-grant accumulation).
+statement ok
+REVOKE UPDATE ON iceberg_log FROM grantee_a;
+
+
+query
+SELECT
+  has_table_privilege('grantee_a', 'iceberg_log', 'SELECT'),
+  has_table_privilege('grantee_a', 'iceberg_log', 'UPDATE'),
+  has_table_privilege('grantee_a', 'iceberg_log', 'DELETE');
+----
+has_table_privilege	has_table_privilege	has_table_privilege
+t	f	t
+
+
+# REVOKE the rest.
+statement ok
+REVOKE SELECT, INSERT, DELETE ON iceberg_log FROM grantee_a;
+
+
+query
+SELECT
+  has_table_privilege('grantee_a', 'iceberg_log', 'SELECT'),
+  has_table_privilege('grantee_a', 'iceberg_log', 'INSERT'),
+  has_table_privilege('grantee_a', 'iceberg_log', 'DELETE');
+----
+has_table_privilege	has_table_privilege	has_table_privilege
+f	f	f
+
+
+# REVOKE of a privilege the role never held is a silent no-op.
+statement ok
+REVOKE SELECT ON iceberg_log FROM grantee_a;
+
+
+# Each table privilege bit individually round-trips through grant/revoke.
+statement ok
+GRANT REFERENCES ON iceberg_log TO grantee_a;
+
+
+query
+SELECT has_table_privilege('grantee_a', 'iceberg_log', 'REFERENCES'),
+       has_table_privilege('grantee_a', 'iceberg_log', 'TRIGGER');
+----
+has_table_privilege	has_table_privilege
+t	f
+
+
+statement ok
+GRANT TRIGGER ON iceberg_log TO grantee_a;
+
+
+query
+SELECT has_table_privilege('grantee_a', 'iceberg_log', 'TRIGGER');
+----
+has_table_privilege
+t
+
+
+# GRANT ALL [PRIVILEGES] grants every table privilege at once; REVOKE ALL clears
+# them. grantee_b held only TRUNCATE before this block.
+statement ok
+GRANT ALL PRIVILEGES ON iceberg_log TO grantee_b;
+
+
+query
+SELECT has_table_privilege('grantee_b', 'iceberg_log', 'SELECT'),
+       has_table_privilege('grantee_b', 'iceberg_log', 'DELETE'),
+       has_table_privilege('grantee_b', 'iceberg_log', 'REFERENCES'),
+       has_table_privilege('grantee_b', 'iceberg_log', 'TRIGGER');
+----
+has_table_privilege	has_table_privilege	has_table_privilege	has_table_privilege
+t	t	t	t
+
+
+statement ok
+REVOKE ALL ON iceberg_log FROM grantee_b;
+
+
+query
+SELECT has_table_privilege('grantee_b', 'iceberg_log', 'SELECT'),
+       has_table_privilege('grantee_b', 'iceberg_log', 'TRUNCATE');
+----
+has_table_privilege	has_table_privilege
+f	f

@@ -1,0 +1,149 @@
+# serenedb-only: enforcement genuinely FOLLOWS the identity switch. Complements
+# enf_set_role.test (which covers identity / is_superuser / read-denial /
+# membership): here we prove that after SET ROLE / SET SESSION AUTHORIZATION to
+# an unprivileged role, WRITES and CREATEs are refused too, that a GRANT to the
+# switched-to role takes effect on the very next statement, that privilege is
+# per-verb (SELECT granted does not imply INSERT), and that a forbidden op is
+# denied under SET SESSION AUTHORIZATION -- not just the current_user label.
+#
+# Runner note: SET ROLE is session-scoped, so the superuser blocks run on the
+# shared default connection (no directive) to keep the switch in effect across
+# statements, and each block RESETs before the next superuser action. The
+# SESSION AUTHORIZATION block uses an isolated named connection so it never
+# leaves the default connection switched.
+#
+# Lore: vedernikoff the overseer drops into the intern role and cannot touch the
+# mop ledger until clickclack grants him a peek.
+
+statement ok
+DROP TABLE IF EXISTS sre_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS sre_intern;
+
+
+statement ok
+CREATE TABLE sre_mop (id int, note text);
+
+
+statement ok
+INSERT INTO sre_mop VALUES (1, 'clickclack');
+
+
+statement ok
+CREATE ROLE sre_intern LOGIN;
+
+
+# ---- (1) under SET ROLE to an ungranted role: read, write, create all denied.
+statement ok
+SET ROLE sre_intern;
+
+
+query
+SELECT current_user;
+----
+current_user
+sre_intern
+
+
+statement error
+SELECT * FROM sre_mop;
+----
+db error: ERROR: permission denied for table sre_mop<slt:ignore>
+
+
+statement error
+INSERT INTO sre_mop VALUES (2, 'sneaked');
+----
+db error: ERROR: permission denied for table sre_mop<slt:ignore>
+
+
+statement error
+CREATE TABLE sre_intern_tbl (x int);
+----
+db error: ERROR: permission denied for schema public<slt:ignore>
+
+
+statement ok
+RESET ROLE;
+
+
+# The denied writes never landed, and the superuser reads fine again.
+query
+SELECT id, note FROM sre_mop;
+----
+id	note
+1	clickclack
+
+
+# ---- (2) a GRANT to the switched-to role applies on the next statement, and
+# privilege is per-verb: SELECT granted, INSERT still denied.
+statement ok
+GRANT SELECT ON sre_mop TO sre_intern;
+
+
+statement ok
+SET ROLE sre_intern;
+
+
+query
+SELECT id, note FROM sre_mop;
+----
+id	note
+1	clickclack
+
+
+statement error
+INSERT INTO sre_mop VALUES (3, 'still no');
+----
+db error: ERROR: permission denied for table sre_mop<slt:ignore>
+
+
+statement ok
+RESET ROLE;
+
+
+# ---- (3) enforcement follows SET SESSION AUTHORIZATION, not just the label.
+# Isolated named connection so the default connection stays superuser.
+connection c_sess user=postgres
+statement ok
+SET SESSION AUTHORIZATION sre_intern;
+
+
+connection c_sess user=postgres
+query
+SELECT current_user, session_user;
+----
+current_user	session_user
+sre_intern	sre_intern
+
+
+connection c_sess user=postgres
+statement error
+INSERT INTO sre_mop VALUES (4, 'nope');
+----
+db error: ERROR: permission denied for table sre_mop<slt:ignore>
+
+
+# sre_intern has the SELECT grant from (2), so a read succeeds under session auth.
+connection c_sess user=postgres
+query
+SELECT id FROM sre_mop;
+----
+id
+1
+
+
+# ---- cleanup (default connection = postgres superuser)
+connection default
+statement ok
+DROP TABLE IF EXISTS sre_intern_tbl;
+
+
+statement ok
+DROP TABLE sre_mop;
+
+
+statement ok
+DROP ROLE sre_intern;

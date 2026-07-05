@@ -61,16 +61,17 @@ std::optional<size_t> CheckConstraint::IsNotNull(
 void Column::Serialize(duckdb::Serializer& sink) const {
   basics::WriteTuple(
     sink, std::forward_as_tuple(GetId(), type, std::string{GetName()}, expr,
-                                generated_type, comment));
+                                generated_type, GetAcl(), comment));
 }
 
 Column Column::Deserialize(duckdb::Deserializer& src) {
   std::tuple<ObjectId, duckdb::LogicalType, std::string,
-             std::shared_ptr<ColumnExpr>, GeneratedType, std::string>
+             std::shared_ptr<ColumnExpr>, GeneratedType, Acl, std::string>
     tup;
   basics::ReadTuple(src, tup);
-  auto& [id, type, name, expr, gt, comment] = tup;
-  Column col{ObjectId{}, id, name, std::move(type), std::move(expr), gt};
+  auto& [id, type, name, expr, gt, acl, comment] = tup;
+  Column col{ObjectId{},      id, name,          std::move(type),
+             std::move(expr), gt, std::move(acl)};
   col.comment = std::move(comment);
   return col;
 }

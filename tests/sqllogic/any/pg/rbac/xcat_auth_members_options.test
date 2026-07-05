@@ -1,0 +1,209 @@
+# Cross-catalog: the option columns on pg_auth_members edges. GRANT role TO
+# member [WITH ADMIN|INHERIT|SET ...] writes one edge row carrying three
+# booleans -- admin_option, inherit_option, set_option. Defaults are
+# admin=f, inherit=t, set=t. We pin every edge by joining roleid/member back to
+# pg_roles BY NAME (oids differ between PG19 and serenedb) and ORDER BY member.
+# The booleans are byte-identical on both engines.
+#
+# Vedernikoff lore: the myasnig_team group, members from the cast.
+# Idempotent + self-cleaning; roles are cluster-global so we prefix + drop.
+
+statement ok
+DROP ROLE IF EXISTS xcat_am_team;
+
+
+statement ok
+DROP ROLE IF EXISTS xcat_am_default;
+
+
+statement ok
+DROP ROLE IF EXISTS xcat_am_admin;
+
+
+statement ok
+DROP ROLE IF EXISTS xcat_am_noinherit;
+
+
+statement ok
+DROP ROLE IF EXISTS xcat_am_noset;
+
+
+statement ok
+CREATE ROLE xcat_am_team;
+
+
+statement ok
+CREATE ROLE xcat_am_default;
+
+
+statement ok
+CREATE ROLE xcat_am_admin;
+
+
+statement ok
+CREATE ROLE xcat_am_noinherit;
+
+
+statement ok
+CREATE ROLE xcat_am_noset;
+
+
+# Plain GRANT role TO member: the edge defaults are admin f, inherit t, set t.
+statement ok
+GRANT xcat_am_team TO xcat_am_default;
+
+
+query
+SELECT am.admin_option, am.inherit_option, am.set_option
+FROM pg_auth_members am
+JOIN pg_roles gr ON gr.oid = am.roleid
+JOIN pg_roles mr ON mr.oid = am.member
+WHERE gr.rolname = 'xcat_am_team' AND mr.rolname = 'xcat_am_default';
+----
+admin_option	inherit_option	set_option
+f	t	t
+
+
+# WITH ADMIN OPTION flips admin_option to t (inherit/set stay default t).
+statement ok
+GRANT xcat_am_team TO xcat_am_admin WITH ADMIN OPTION;
+
+
+query
+SELECT am.admin_option, am.inherit_option, am.set_option
+FROM pg_auth_members am
+JOIN pg_roles gr ON gr.oid = am.roleid
+JOIN pg_roles mr ON mr.oid = am.member
+WHERE gr.rolname = 'xcat_am_team' AND mr.rolname = 'xcat_am_admin';
+----
+admin_option	inherit_option	set_option
+t	t	t
+
+
+# WITH INHERIT FALSE flips inherit_option to f.
+statement ok
+GRANT xcat_am_team TO xcat_am_noinherit WITH INHERIT FALSE;
+
+
+query
+SELECT am.admin_option, am.inherit_option, am.set_option
+FROM pg_auth_members am
+JOIN pg_roles gr ON gr.oid = am.roleid
+JOIN pg_roles mr ON mr.oid = am.member
+WHERE gr.rolname = 'xcat_am_team' AND mr.rolname = 'xcat_am_noinherit';
+----
+admin_option	inherit_option	set_option
+f	f	t
+
+
+# WITH SET FALSE flips set_option to f.
+statement ok
+GRANT xcat_am_team TO xcat_am_noset WITH SET FALSE;
+
+
+query
+SELECT am.admin_option, am.inherit_option, am.set_option
+FROM pg_auth_members am
+JOIN pg_roles gr ON gr.oid = am.roleid
+JOIN pg_roles mr ON mr.oid = am.member
+WHERE gr.rolname = 'xcat_am_team' AND mr.rolname = 'xcat_am_noset';
+----
+admin_option	inherit_option	set_option
+f	t	f
+
+
+# The full set of edges into the group, member name + the three flags, ordered
+# by member so the row order is deterministic regardless of oid assignment.
+query
+SELECT mr.rolname AS member, am.admin_option, am.inherit_option, am.set_option
+FROM pg_auth_members am
+JOIN pg_roles gr ON gr.oid = am.roleid
+JOIN pg_roles mr ON mr.oid = am.member
+WHERE gr.rolname = 'xcat_am_team'
+ORDER BY mr.rolname;
+----
+member	admin_option	inherit_option	set_option
+xcat_am_admin	t	t	t
+xcat_am_default	f	t	t
+xcat_am_noinherit	f	f	t
+xcat_am_noset	f	t	f
+
+
+# Re-granting an existing edge with a new option UPDATES it in place rather than
+# adding a second row: grant ADMIN to the default member, still exactly one edge
+# for it, now with admin_option = t.
+statement ok
+GRANT xcat_am_team TO xcat_am_default WITH ADMIN OPTION;
+
+
+query
+SELECT count(*) AS edges FROM pg_auth_members am
+JOIN pg_roles gr ON gr.oid = am.roleid
+JOIN pg_roles mr ON mr.oid = am.member
+WHERE gr.rolname = 'xcat_am_team' AND mr.rolname = 'xcat_am_default';
+----
+edges
+1
+
+
+query
+SELECT am.admin_option FROM pg_auth_members am
+JOIN pg_roles gr ON gr.oid = am.roleid
+JOIN pg_roles mr ON mr.oid = am.member
+WHERE gr.rolname = 'xcat_am_team' AND mr.rolname = 'xcat_am_default';
+----
+admin_option
+t
+
+
+# A plain REVOKE role FROM member removes the whole edge. (REVOKE ADMIN OPTION
+# FOR ... -- which would keep the edge and clear only admin_option -- is NOT
+# exercised: serenedb's parser rejects the "ADMIN OPTION FOR" form. So the
+# cross-engine REVOKE path is the full membership revoke.)
+statement ok
+REVOKE xcat_am_team FROM xcat_am_admin;
+
+
+query
+SELECT count(*) AS edges FROM pg_auth_members am
+JOIN pg_roles gr ON gr.oid = am.roleid
+JOIN pg_roles mr ON mr.oid = am.member
+WHERE gr.rolname = 'xcat_am_team' AND mr.rolname = 'xcat_am_admin';
+----
+edges
+0
+
+
+# REVOKE another membership removes its edge too.
+statement ok
+REVOKE xcat_am_team FROM xcat_am_noset;
+
+
+query
+SELECT count(*) AS edges FROM pg_auth_members am
+JOIN pg_roles gr ON gr.oid = am.roleid
+JOIN pg_roles mr ON mr.oid = am.member
+WHERE gr.rolname = 'xcat_am_team' AND mr.rolname = 'xcat_am_noset';
+----
+edges
+0
+
+
+statement ok
+DROP ROLE xcat_am_default;
+
+
+statement ok
+DROP ROLE xcat_am_admin;
+
+
+statement ok
+DROP ROLE xcat_am_noinherit;
+
+
+statement ok
+DROP ROLE xcat_am_noset;
+
+
+statement ok
+DROP ROLE xcat_am_team;

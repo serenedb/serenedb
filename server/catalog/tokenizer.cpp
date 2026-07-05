@@ -75,10 +75,11 @@ irs::analysis::Analyzer::ptr Tokenizer::CreateAnalyzer() const {
   return irs::analysis::CreateAnalyzer(irs::analysis::Clone(_config));
 }
 
-Tokenizer::Tokenizer(ObjectId schema_id, ObjectId id, std::string_view name,
-                     search::Features features, uint32_t norm_row_group_size,
+Tokenizer::Tokenizer(Permissions perm, ObjectId schema_id, ObjectId id,
+                     std::string_view name, search::Features features,
+                     uint32_t norm_row_group_size,
                      irs::analysis::TokenizerConfig config)
-  : Object{schema_id, id, name, ObjectType::Tokenizer},
+  : Object{std::move(perm), schema_id, id, name, ObjectType::Tokenizer},
     _config{std::move(config)},
     _features{features},
     _norm_row_group_size{norm_row_group_size} {}
@@ -88,9 +89,9 @@ std::shared_ptr<Tokenizer> Tokenizer::Deserialize(duckdb::Deserializer& src,
   TokenizerData data;
   basics::ReadTuple(src, data);
 
-  return std::make_shared<Tokenizer>(ctx.schema_id, ctx.id, data.name,
-                                     data.features, data.norm_row_group_size,
-                                     std::move(data.config));
+  return std::make_shared<Tokenizer>(
+    std::move(data.perm), ctx.schema_id, ctx.id, data.name, data.features,
+    data.norm_row_group_size, std::move(data.config));
 }
 
 void Tokenizer::Serialize(duckdb::Serializer& sink) const {
@@ -99,6 +100,7 @@ void Tokenizer::Serialize(duckdb::Serializer& sink) const {
     .config = irs::analysis::Clone(_config),
     .features = _features,
     .norm_row_group_size = _norm_row_group_size,
+    .perm = GetPermissions(),
   };
   basics::WriteTuple(sink, data);
 }

@@ -563,7 +563,7 @@ std::shared_ptr<Tokenizer> LookupTokenizer(const Snapshot& snapshot,
   if (object_name.schema != schema_name) {
     return nullptr;
   }
-  return snapshot.GetTokenizer(database_id, object_name.schema,
+  return snapshot.GetTokenizer(NoAccessCheck(), database_id, object_name.schema,
                                object_name.relation);
 }
 
@@ -828,7 +828,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
 Index::Index(ObjectId database_id, ObjectId schema_id, ObjectId id,
              ObjectId relation_id, std::string name, DerivedColumnIds derived,
              ObjectType type)
-  : Object{schema_id, id, std::move(name), type},
+  : Object{Permissions{}, schema_id, id, std::move(name), type},
     _database_id{database_id},
     _relation_id{relation_id},
     _columns{std::move(derived.columns)},

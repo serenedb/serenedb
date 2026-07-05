@@ -1,0 +1,192 @@
+# Column-level privilege oracle vs. the REAL query path.
+#
+# has_column_privilege answers a column question, but the column privilege is
+# inherited wholesale from the TABLE grant. This file proves the column oracle
+# agrees with what the query engine actually allows: where has_column_privilege
+# returns t for a column SELECT/INSERT, a real SELECT / INSERT by the granted
+# role on a second connection succeeds. Both the oracle (t) and the allowed DML
+# are byte-identical on real PostgreSQL and serenedb.
+#
+# Only the allow direction is exercised on the query path -- it is identical on
+# both engines. Objects are prefixed cp_ (clickclack / vedernikoff lore);
+# idempotent and self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS cp_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS cp_abramov;
+
+
+statement ok
+DROP ROLE IF EXISTS cp_zhidky;
+
+
+statement ok
+DROP ROLE IF EXISTS cp_salam;
+
+
+statement ok
+CREATE TABLE cp_kostya (id int, payload text, headcount int);
+
+
+statement ok
+INSERT INTO cp_kostya VALUES (1, 'iceberg', 4), (2, 'vedernikoff', 8);
+
+
+# ============================================================================
+# Reader role: table SELECT grant => every column carries column SELECT, and a
+# real SELECT of those columns on the reader's own connection succeeds.
+# ============================================================================
+
+statement ok
+CREATE ROLE cp_abramov LOGIN PASSWORD 'cp_abramov_pw';
+
+
+statement ok
+GRANT SELECT ON cp_kostya TO cp_abramov;
+
+
+# Oracle: column SELECT is t on every column.
+query
+SELECT has_column_privilege('cp_abramov','cp_kostya','id','SELECT')        AS id_sel,
+       has_column_privilege('cp_abramov','cp_kostya','payload','SELECT')    AS pay_sel,
+       has_column_privilege('cp_abramov','cp_kostya','headcount','SELECT')  AS head_sel;
+----
+id_sel	pay_sel	head_sel
+t	t	t
+
+
+# Query path agrees: the reader can really select every one of those columns.
+connection c_abramov user=cp_abramov password=cp_abramov_pw
+query
+SELECT id AS row_id, payload AS row_payload, headcount AS row_headcount
+FROM cp_kostya ORDER BY id;
+----
+row_id	row_payload	row_headcount
+1	iceberg	4
+2	vedernikoff	8
+
+
+# ============================================================================
+# Writer role: table INSERT grant => every column carries column INSERT, and a
+# real INSERT touching those columns succeeds.
+# ============================================================================
+
+statement ok
+CREATE ROLE cp_zhidky LOGIN PASSWORD 'cp_zhidky_pw';
+
+
+statement ok
+GRANT INSERT ON cp_kostya TO cp_zhidky;
+
+
+# Oracle: column INSERT is t on every column.
+query
+SELECT has_column_privilege('cp_zhidky','cp_kostya','id','INSERT')        AS id_ins,
+       has_column_privilege('cp_zhidky','cp_kostya','payload','INSERT')    AS pay_ins,
+       has_column_privilege('cp_zhidky','cp_kostya','headcount','INSERT')  AS head_ins;
+----
+id_ins	pay_ins	head_ins
+t	t	t
+
+
+# Query path agrees: the writer can really insert a full row.
+connection c_zhidky user=cp_zhidky password=cp_zhidky_pw
+statement ok
+INSERT INTO cp_kostya VALUES (3, 'pudge', 5);
+
+
+# Owner confirms the insert landed.
+query
+SELECT count(*) AS n FROM cp_kostya;
+----
+n
+3
+
+
+# ============================================================================
+# PUBLIC reader: a role with no individual grant inherits column SELECT through
+# a PUBLIC grant, and the real SELECT on its connection succeeds.
+# ============================================================================
+
+statement ok
+CREATE ROLE cp_salam LOGIN PASSWORD 'cp_salam_pw';
+
+
+statement ok
+GRANT SELECT ON cp_kostya TO PUBLIC;
+
+
+# Oracle: cp_salam (never named in a grant) still has column SELECT via PUBLIC.
+query
+SELECT has_column_privilege('cp_salam','cp_kostya','id','SELECT')       AS id_sel,
+       has_column_privilege('cp_salam','cp_kostya','payload','SELECT')   AS pay_sel;
+----
+id_sel	pay_sel
+t	t
+
+
+# Query path agrees: the PUBLIC grant lets cp_salam really read.
+connection c_salam user=cp_salam password=cp_salam_pw
+query
+SELECT count(*) AS n FROM cp_kostya;
+----
+n
+3
+
+
+statement ok
+REVOKE SELECT ON cp_kostya FROM PUBLIC;
+
+
+# ============================================================================
+# GRANT ALL writer: every column privilege held, and a real UPDATE succeeds.
+# ============================================================================
+
+statement ok
+GRANT ALL ON cp_kostya TO cp_zhidky;
+
+
+# Oracle: with ALL, the writer now also has column SELECT and UPDATE.
+query
+SELECT has_column_privilege('cp_zhidky','cp_kostya','payload','SELECT')  AS pay_sel,
+       has_column_privilege('cp_zhidky','cp_kostya','payload','UPDATE')  AS pay_upd;
+----
+pay_sel	pay_upd
+t	t
+
+
+# Query path agrees: the writer can really update.
+connection c_zhidky user=cp_zhidky password=cp_zhidky_pw
+statement ok
+UPDATE cp_kostya SET payload = 'babsky' WHERE id = 3;
+
+
+connection c_zhidky user=cp_zhidky password=cp_zhidky_pw
+query
+SELECT payload AS row_payload FROM cp_kostya WHERE id = 3;
+----
+row_payload
+babsky
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE cp_kostya;
+
+
+statement ok
+DROP ROLE cp_abramov;
+
+
+statement ok
+DROP ROLE cp_zhidky;
+
+
+statement ok
+DROP ROLE cp_salam;

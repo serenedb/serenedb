@@ -10,7 +10,7 @@ __delta_only_variant_encoding_enabled	off	Enables the Parquet reader to identify
 access_mode	automatic	Access mode of the database (AUTOMATIC, READ_ONLY or READ_WRITE)
 allocator_background_threads	off	Whether to enable the allocator background thread.
 allocator_bulk_deallocation_flush_threshold	512.0 MiB	If a bulk deallocation larger than this occurs, flush outstanding allocations.
-allocator_flush_threshold	<slt:ignore>	Peak allocation threshold at which to flush the allocator after completing a task.
+allocator_flush_threshold	134217728B	Peak allocation threshold at which to flush the allocator after completing a task.
 allow_asterisks_in_http_paths	off	Allow '*' character in URLs users can query
 allow_community_extensions	on	Allow to load community built extensions
 allow_extensions_metadata_mismatch	off	Allow to load extensions with not compatible metadata
@@ -27,7 +27,7 @@ arrow_lossless_conversion	off	Whenever a DuckDB type does not have a clear nativ
 arrow_output_list_view	off	Whether export to Arrow format should use ListView as the physical layout for LIST columns
 arrow_output_version	1.0	Whether strings should be produced by DuckDB in Utf8View format instead of Utf8
 asof_loop_join_threshold	64	The maximum number of rows we need on the left side of an ASOF join to use a nested loop join
-async_threads	<slt:ignore>	The number of total async threads used by the system for tasks like I/O.
+async_threads	64	The number of total async threads used by the system for tasks like I/O.
 auto_checkpoint_skip_wal_threshold	100000	The estimated WAL write size at which point we will skip writing to the WAL and only checkpoint. Skipping writing to the WAL means concurrent commits are blocked while the checkpoint is happening.
 auto_fallback_to_full_download	on	Allows automatically falling back to full file downloads when possible.
 autoinstall_extension_repository	(empty)	Overrides the custom endpoint for extension installation on autoloading
@@ -105,7 +105,7 @@ enable_fsst_vectors	off	Allow scans on FSST compressed segments to emit compress
 enable_geoparquet_conversion	on	Attempt to decode/encode geometry data in/as GeoParquet files if the spatial extension is present.
 enable_global_s3_configuration	on	Automatically fetch AWS credentials from environment variables.
 enable_http_metadata_cache	off	Whether or not the global http metadata is used to cache HTTP metadata
-enable_logging	<slt:ignore>	Enables the logger
+enable_logging	1	Enables the logger
 enable_macro_dependencies	off	Enable created MACROs to create dependencies on the referenced objects (such as tables)
 enable_object_cache	off	[PLACEHOLDER] Legacy setting - does nothing
 enable_optimizer	on	Whether or not query optimization is enabled
@@ -135,6 +135,7 @@ force_mbedtls_unsafe	off	Enable mbedtls for encryption (WARNING: unsafe to use)
 force_update_to_del_and_insert	off	DEBUG SETTING: forces all updates to use the delete + insert code path instead of in-place updates
 force_variant_shredding	INVALID	Forces the VARIANT shredding that happens at checkpoint to use the provided schema for the shredding.
 geometry_minimum_shredding_size	30000	Minimum size of a rowgroup to enable GEOMETRY shredding, or set to -1 to disable entirely. Defaults to 1/4th of a rowgroup
+hba	(empty)	Host-based authentication ruleset (pg_hba.conf syntax) as a single string: one rule per line, first match wins, applied to connections opened after the SET. An un-removable local + loopback trust rule is force-prepended so a bad ruleset cannot lock you out; an empty value restores the default (unix trust + SCRAM for TCP). Server-global.
 hf_max_per_page	0	Debug option to limit number of items returned in list requests
 home_directory	(empty)	Sets the home directory used by the system
 http_keep_alive	on	Keep alive connections. Setting this to false can help when running into connection failures
@@ -229,35 +230,7 @@ profiling_coverage	SELECT	The profiling coverage (SELECT or ALL)
 profiling_mode	NULL	DEPRECATED: Sets the profiling mode
 profiling_output	(empty)	The file to which profile output should be saved, or empty to print to the terminal
 profiling_renderer_settings	{}	A map of settings passed to the renderer of the profiler output (e.g. {'max_extra_lines': 100}) - settings not recognized by the active renderer are ignored
-progress_bar_time	2000	Sets the time (in milliseconds) how long a query needs to take before we start printing a progress bar
-refresh_interval	1000	Background refresh interval (ms) for newly created inverted indexes. Per-index WITH (refresh_interval = ...) overrides. 0 disables the refresh task. Default: 1000.
-regex_match_operator_semantics	partial	Configures whether regex match operators use partial or full string matching
-role	postgres	Sets the current role.
-row_group_size	122880	Default column row-group size for INCLUDEd in newly created inverted indexes. Per-column (row_group_size = ...) and per-index WITH (row_group_size = ...) override. Reads from existing indexes are unaffected. Default: 122'880.
-s3_access_key_id	NULL	S3 Access Key ID
-s3_allow_recursive_globbing	on	Whether globs on S3-like storage are optimized with recursive strategy (alterative is listing)
-s3_endpoint	NULL	S3 Endpoint
-s3_kms_key_id	NULL	S3 KMS Key ID
-s3_region	NULL	S3 Region
-s3_requester_pays	off	S3 use requester pays mode
-s3_secret_access_key	NULL	S3 Access Key
-s3_session_token	NULL	S3 Session Token
-s3_uploader_max_filesize	800GB	S3 Uploader max filesize (between 50GB and 5TB)
-s3_uploader_max_parts_per_file	10000	S3 Uploader max parts per file (between 1 and 10000)
-s3_uploader_thread_limit	50	S3 Uploader global thread limit
-s3_url_compatibility_mode	off	Disable Globs and Query Parameters on S3 URLs
-s3_url_style	vhost	S3 URL style
-s3_use_ssl	on	S3 use SSL
-s3_version_id_pinning	off	Pin S3 reads to a specific object version for consistency
-scalar_subquery_error_on_multiple_rows	on	When a scalar subquery returns multiple rows - return a random row instead of returning an error.
-scheduler_process_partial	off	Partially process tasks before rescheduling - allows for more scheduler fairness between separate queries
-schema	public	Sets the default search schema. Equivalent to setting search_path to a single value.
-scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
-sdb_disable_top_k_optimization	off	When true, the optimizer skips pulling `ORDER BY <scorer>(...) DESC LIMIT k` into the inverted-index scan, so WAND (Block-Max top-K) pruning never engages. Default: false (optimization on).
-sdb_ef_search	0	Per-session override for the HNSW search-time neighbourhood size (efSearch). 0 (default) uses Top-K value instead.
-sdb_scored_terms_limit	1024	The maximum number of terms to consider for scoring in multi-term filters. Higher values give more accurate IDF-style scoring at the cost of memory and per-query work. 0 disables scored-term collection entirely.
-sdb_strict_ddl	off	When enabled, DDL inside a transaction block fails instead of committing immediately (DDL is not transactional).
-search_path	"$user", public	Sets the default catalog search path as a comma-separated list of values
+progress_bar_time	<slt:ignore>	Sets <slt:ignore>
 secret_directory	<slt:ignore>	Set the directory to which persistent secrets are stored
 server_encoding	UTF8	Shows the server (database) character set encoding.
 server_version	18.3	Shows the server version.
@@ -278,8 +251,8 @@ transaction_isolation	repeatable read	Sets the current transaction's isolation l
 unsafe_disable_etag_checks	off	Disable checks on ETag consistency
 unsafe_enable_version_guessing	off	Enable globbing the filesystem (if possible) to find the latest version metadata. This could result in reading an uncommitted version.
 unsafe_iceberg_ignore_sort_order	off	Allow INSERT/UPDATE on iceberg tables that declare a sort order, without applying that sort order to the written data. The Iceberg spec permits this (writers are not required to honour a declared sort order, and readers do not assume files are sorted), but skipping the sort may reduce later file-pruning effectiveness and compression.
-user	(empty)	The username to use. Ignored for legacy compatibility.
-username	(empty)	The username to use. Ignored for legacy compatibility.
+user	<slt:ignore>	The username to use. Ignored for legacy compatibility.
+username	<slt:ignore>	The username to use. Ignored for legacy compatibility.
 vacuum_rebuild_indexes	0	(Experimental) Allow vacuum to compact row groups on tables with bound ART indexes, rebuilding the indexes afterward. Tables with a row count exceeding this threshold are skipped. 0 = disabled. Can also be set per-database via the 'vacuum_rebuild_indexes' ATTACH option, which overrides this default.
 validate_external_file_cache	VALIDATE_ALL	Cache validation mode: VALIDATE_ALL (default, validate all cache entries), VALIDATE_REMOTE (validate only remote cache entries), or NO_VALIDATION (disable cache validation).
 variant_minimum_shredding_size	30000	Minimum size of a rowgroup to enable VARIANT shredding, or set to -1 to disable entirely. Defaults to 1/4th of a rowgroup
@@ -310,7 +283,7 @@ __delta_only_variant_encoding_enabled	off	Enables the Parquet reader to identify
 access_mode	automatic	Access mode of the database (AUTOMATIC, READ_ONLY or READ_WRITE)
 allocator_background_threads	off	Whether to enable the allocator background thread.
 allocator_bulk_deallocation_flush_threshold	512.0 MiB	If a bulk deallocation larger than this occurs, flush outstanding allocations.
-allocator_flush_threshold	<slt:ignore>	Peak allocation threshold at which to flush the allocator after completing a task.
+allocator_flush_threshold	134217728B	Peak allocation threshold at which to flush the allocator after completing a task.
 allow_asterisks_in_http_paths	off	Allow '*' character in URLs users can query
 allow_community_extensions	on	Allow to load community built extensions
 allow_extensions_metadata_mismatch	off	Allow to load extensions with not compatible metadata
@@ -327,7 +300,7 @@ arrow_lossless_conversion	off	Whenever a DuckDB type does not have a clear nativ
 arrow_output_list_view	off	Whether export to Arrow format should use ListView as the physical layout for LIST columns
 arrow_output_version	1.0	Whether strings should be produced by DuckDB in Utf8View format instead of Utf8
 asof_loop_join_threshold	64	The maximum number of rows we need on the left side of an ASOF join to use a nested loop join
-async_threads	<slt:ignore>	The number of total async threads used by the system for tasks like I/O.
+async_threads	64	The number of total async threads used by the system for tasks like I/O.
 auto_checkpoint_skip_wal_threshold	100000	The estimated WAL write size at which point we will skip writing to the WAL and only checkpoint. Skipping writing to the WAL means concurrent commits are blocked while the checkpoint is happening.
 auto_fallback_to_full_download	on	Allows automatically falling back to full file downloads when possible.
 autoinstall_extension_repository	(empty)	Overrides the custom endpoint for extension installation on autoloading
@@ -405,7 +378,7 @@ enable_fsst_vectors	off	Allow scans on FSST compressed segments to emit compress
 enable_geoparquet_conversion	on	Attempt to decode/encode geometry data in/as GeoParquet files if the spatial extension is present.
 enable_global_s3_configuration	on	Automatically fetch AWS credentials from environment variables.
 enable_http_metadata_cache	off	Whether or not the global http metadata is used to cache HTTP metadata
-enable_logging	<slt:ignore>	Enables the logger
+enable_logging	1	Enables the logger
 enable_macro_dependencies	off	Enable created MACROs to create dependencies on the referenced objects (such as tables)
 enable_object_cache	off	[PLACEHOLDER] Legacy setting - does nothing
 enable_optimizer	on	Whether or not query optimization is enabled
@@ -435,6 +408,7 @@ force_mbedtls_unsafe	off	Enable mbedtls for encryption (WARNING: unsafe to use)
 force_update_to_del_and_insert	off	DEBUG SETTING: forces all updates to use the delete + insert code path instead of in-place updates
 force_variant_shredding	INVALID	Forces the VARIANT shredding that happens at checkpoint to use the provided schema for the shredding.
 geometry_minimum_shredding_size	30000	Minimum size of a rowgroup to enable GEOMETRY shredding, or set to -1 to disable entirely. Defaults to 1/4th of a rowgroup
+hba	(empty)	Host-based authentication ruleset (pg_hba.conf syntax) as a single string: one rule per line, first match wins, applied to connections opened after the SET. An un-removable local + loopback trust rule is force-prepended so a bad ruleset cannot lock you out; an empty value restores the default (unix trust + SCRAM for TCP). Server-global.
 hf_max_per_page	0	Debug option to limit number of items returned in list requests
 home_directory	(empty)	Sets the home directory used by the system
 http_keep_alive	on	Keep alive connections. Setting this to false can help when running into connection failures
@@ -532,7 +506,7 @@ profiling_renderer_settings	{}	A map of settings passed to the renderer of the p
 progress_bar_time	2000	Sets the time (in milliseconds) how long a query needs to take before we start printing a progress bar
 refresh_interval	1000	Background refresh interval (ms) for newly created inverted indexes. Per-index WITH (refresh_interval = ...) overrides. 0 disables the refresh task. Default: 1000.
 regex_match_operator_semantics	partial	Configures whether regex match operators use partial or full string matching
-role	postgres	Sets the current role.
+role	none	Sets the current role.
 row_group_size	122880	Default column row-group size for INCLUDEd in newly created inverted indexes. Per-column (row_group_size = ...) and per-index WITH (row_group_size = ...) override. Reads from existing indexes are unaffected. Default: 122'880.
 s3_access_key_id	NULL	S3 Access Key ID
 s3_allow_recursive_globbing	on	Whether globs on S3-like storage are optimized with recursive strategy (alterative is listing)
@@ -557,7 +531,7 @@ sdb_disable_top_k_optimization	off	When true, the optimizer skips pulling `ORDER
 sdb_ef_search	0	Per-session override for the HNSW search-time neighbourhood size (efSearch). 0 (default) uses Top-K value instead.
 sdb_scored_terms_limit	1024	The maximum number of terms to consider for scoring in multi-term filters. Higher values give more accurate IDF-style scoring at the cost of memory and per-query work. 0 disables scored-term collection entirely.
 sdb_strict_ddl	off	When enabled, DDL inside a transaction block fails instead of committing immediately (DDL is not transactional).
-search_path	"$user", public	Sets the default catalog search path as a comma-separated list of values
+search_path	<slt:ignore>	Sets the default catalog search path as a comma-separated list of values
 secret_directory	<slt:ignore>	Set the directory to which persistent secrets are stored
 server_encoding	UTF8	Shows the server (database) character set encoding.
 server_version	18.3	Shows the server version.
@@ -578,8 +552,8 @@ transaction_isolation	read committed	Sets the current transaction's isolation le
 unsafe_disable_etag_checks	off	Disable checks on ETag consistency
 unsafe_enable_version_guessing	off	Enable globbing the filesystem (if possible) to find the latest version metadata. This could result in reading an uncommitted version.
 unsafe_iceberg_ignore_sort_order	off	Allow INSERT/UPDATE on iceberg tables that declare a sort order, without applying that sort order to the written data. The Iceberg spec permits this (writers are not required to honour a declared sort order, and readers do not assume files are sorted), but skipping the sort may reduce later file-pruning effectiveness and compression.
-user	(empty)	The username to use. Ignored for legacy compatibility.
-username	(empty)	The username to use. Ignored for legacy compatibility.
+user	<slt:ignore>	The username to use. Ignored for legacy compatibility.
+username	<slt:ignore>	The username to use. Ignored for legacy compatibility.
 vacuum_rebuild_indexes	0	(Experimental) Allow vacuum to compact row groups on tables with bound ART indexes, rebuilding the indexes afterward. Tables with a row count exceeding this threshold are skipped. 0 = disabled. Can also be set per-database via the 'vacuum_rebuild_indexes' ATTACH option, which overrides this default.
 validate_external_file_cache	VALIDATE_ALL	Cache validation mode: VALIDATE_ALL (default, validate all cache entries), VALIDATE_REMOTE (validate only remote cache entries), or NO_VALIDATION (disable cache validation).
 variant_minimum_shredding_size	30000	Minimum size of a rowgroup to enable VARIANT shredding, or set to -1 to disable entirely. Defaults to 1/4th of a rowgroup

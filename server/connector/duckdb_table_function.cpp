@@ -48,6 +48,8 @@
 #include "connector/search_filter_printer.hpp"
 #include "functions/search.h"
 #include "pg/connection_context.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
@@ -239,8 +241,9 @@ duckdb::unique_ptr<duckdb::FunctionData> SereneDBScanBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::string>& names) {
-  throw duckdb::InternalException(
-    "SereneDBScanBind: should be provided via GetScanFunction");
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INTERNAL_ERROR),
+    ERR_MSG("SereneDBScanBind: should be provided via GetScanFunction"));
 }
 
 static duckdb::unique_ptr<duckdb::NodeStatistics> SereneDBScanCardinality(

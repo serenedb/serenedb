@@ -20,8 +20,6 @@
 
 #include "connector/optimizer/iresearch_plan.h"
 
-#include <absl/container/flat_hash_set.h>
-
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/optimizer/optimizer_extension.hpp>
@@ -41,6 +39,7 @@
 #include <iresearch/search/proxy_filter.hpp>
 
 #include "basics/containers/flat_hash_map.h"
+#include "basics/containers/flat_hash_set.h"
 #include "catalog/inverted_index.h"
 #include "catalog/scorer_options.h"
 #include "connector/duckdb_client_state.h"
@@ -318,7 +317,7 @@ duckdb::unique_ptr<duckdb::Expression> MakeScoreRefExpression(
 
 bool IsScorerFunctionName(std::string_view name) {
   using S = catalog::ScorerOptions;
-  static const absl::flat_hash_set<std::string_view> kScorerNames{
+  static const containers::FlatHashSet<std::string_view> kScorerNames{
     S::Bm25::Owner::type_name(),           S::Tfidf::Owner::type_name(),
     S::LmJm::Owner::type_name(),           S::LmDirichlet::Owner::type_name(),
     S::IndriDirichlet::Owner::type_name(), S::Dfi::Owner::type_name(),
@@ -619,8 +618,10 @@ duckdb::unique_ptr<duckdb::Expression> RewriteCallInExpr(
       }
       // Native scans cannot materialize the tableoid argument, so the
       // runtime stub would never be reached; raise its error here.
-      throw duckdb::InvalidInputException(
-        "%s() requires an inverted index scan in the same sub-query", name);
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG(name,
+                              "() requires an inverted index scan in the same "
+                              "sub-query"));
     } else if (name == connector::kOffsets) {
       if (auto repl = PushdownOffsetsCall(func, root)) {
         return repl;

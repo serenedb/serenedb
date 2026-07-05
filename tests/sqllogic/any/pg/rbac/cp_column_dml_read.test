@@ -1,0 +1,115 @@
+# Column-level SELECT gates which columns a DELETE/UPDATE may READ: with table
+# DELETE/UPDATE plus column SELECT on only some columns, a predicate (WHERE) or
+# SET right-hand side that reads a granted column succeeds, but reading an
+# ungranted column is refused -- exactly like PostgreSQL (the read columns must
+# each be covered by SELECT, at column granularity).
+#
+# Lore: vedernikoff may write the iceberg but only read column clickclack.
+
+statement ok
+DROP TABLE IF EXISTS cdr_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS cdr_vedernikoff;
+
+
+statement ok
+CREATE TABLE cdr_iceberg (clickclack int, babsky int, mop int);
+
+
+statement ok
+INSERT INTO cdr_iceberg VALUES (1, 2, 3), (4, 5, 6);
+
+
+statement ok
+CREATE ROLE cdr_vedernikoff LOGIN PASSWORD 'cdr_vedernikoff_pw';
+
+
+statement ok
+GRANT DELETE, UPDATE ON cdr_iceberg TO cdr_vedernikoff;
+
+
+# Column SELECT on clickclack only (babsky, mop unreadable).
+statement ok
+GRANT SELECT (clickclack) ON cdr_iceberg TO cdr_vedernikoff;
+
+
+# === DELETE: the WHERE column must be SELECT-granted ===
+
+# WHERE reads the granted column -> allowed.
+connection c_ved user=cdr_vedernikoff password=cdr_vedernikoff_pw
+statement ok
+DELETE FROM cdr_iceberg WHERE clickclack = 1;
+
+
+# WHERE reads an ungranted column -> refused.
+connection c_ved2 user=cdr_vedernikoff password=cdr_vedernikoff_pw
+statement error
+DELETE FROM cdr_iceberg WHERE babsky = 5;
+----
+db error: ERROR: permission denied for table cdr_iceberg<slt:ignore>
+
+
+# Predicate mixing a granted and an ungranted column -> refused (every read
+# column needs SELECT).
+connection c_ved3 user=cdr_vedernikoff password=cdr_vedernikoff_pw
+statement error
+DELETE FROM cdr_iceberg WHERE clickclack = 4 AND mop = 6;
+----
+db error: ERROR: permission denied for table cdr_iceberg<slt:ignore>
+
+
+# A blind DELETE reads no column -> only DELETE needed.
+connection c_ved4 user=cdr_vedernikoff password=cdr_vedernikoff_pw
+statement ok
+DELETE FROM cdr_iceberg WHERE false;
+
+
+# === UPDATE: WHERE and SET-RHS columns must be SELECT-granted ===
+
+connection default
+statement ok
+INSERT INTO cdr_iceberg VALUES (1, 2, 3), (4, 5, 6);
+
+
+# WHERE reads granted clickclack, SET is constant -> allowed.
+connection c_ved5 user=cdr_vedernikoff password=cdr_vedernikoff_pw
+statement ok
+UPDATE cdr_iceberg SET babsky = 9 WHERE clickclack = 1;
+
+
+# WHERE reads ungranted mop -> refused.
+connection c_ved6 user=cdr_vedernikoff password=cdr_vedernikoff_pw
+statement error
+UPDATE cdr_iceberg SET babsky = 9 WHERE mop = 3;
+----
+db error: ERROR: permission denied for table cdr_iceberg<slt:ignore>
+
+
+# SET right-hand side reads the granted column -> allowed.
+connection c_ved7 user=cdr_vedernikoff password=cdr_vedernikoff_pw
+statement ok
+UPDATE cdr_iceberg SET babsky = clickclack + 1;
+
+
+# SET right-hand side reads an ungranted column -> refused.
+connection c_ved8 user=cdr_vedernikoff password=cdr_vedernikoff_pw
+statement error
+UPDATE cdr_iceberg SET babsky = mop + 1;
+----
+db error: ERROR: permission denied for table cdr_iceberg<slt:ignore>
+
+
+# A constant SET with no predicate reads nothing -> only UPDATE needed.
+connection c_ved9 user=cdr_vedernikoff password=cdr_vedernikoff_pw
+statement ok
+UPDATE cdr_iceberg SET babsky = 0;
+
+
+statement ok
+DROP TABLE cdr_iceberg;
+
+
+statement ok
+DROP ROLE cdr_vedernikoff;

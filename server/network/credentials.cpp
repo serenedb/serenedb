@@ -20,15 +20,19 @@
 
 #include "network/credentials.h"
 
+#include <absl/strings/ascii.h>
 #include <absl/strings/escaping.h>
+#include <absl/strings/str_cat.h>
 #include <fast_float/fast_float.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/rand.h>
 #include <openssl/sha.h>
 
+#include <algorithm>
 #include <charconv>
 #include <cstring>
+#include <ranges>
 
 // SCRAM-SHA-256 crypto (RFC 5802) over OpenSSL -- the same primitives libpq's
 // scram-common wraps. SASLprep (RFC 4013) is not applied: ASCII passwords are
@@ -137,6 +141,31 @@ std::optional<ScramVerifier> ParseScramVerifier(std::string_view verifier) {
   return result;
 }
 
+bool IsScramVerifier(std::string_view s) {
+  return ParseScramVerifier(s).has_value();
+}
+
+std::optional<std::string> BuildScramVerifierString(std::string_view password) {
+  auto verifier = BuildScramVerifier(password);
+  if (!verifier) {
+    return std::nullopt;
+  }
+  return ScramVerifierToString(*verifier);
+}
+
+std::string ScramVerifierToString(const ScramVerifier& verifier) {
+  return absl::StrCat(
+    "SCRAM-SHA-256$", verifier.iterations, ":",
+    absl::Base64Escape(verifier.salt), "$",
+    absl::Base64Escape(std::string_view{
+      reinterpret_cast<const char*>(verifier.stored_key.data()),
+      verifier.stored_key.size()}),
+    ":",
+    absl::Base64Escape(std::string_view{
+      reinterpret_cast<const char*>(verifier.server_key.data()),
+      verifier.server_key.size()}));
+}
+
 bool ConstantTimeEqual(std::span<const uint8_t> a, std::span<const uint8_t> b) {
   if (a.size() != b.size()) {
     return false;
@@ -194,13 +223,41 @@ std::array<uint8_t, kScramKeyLen> ScramServerSignature(
 std::string BuildMd5Password(std::string_view username,
                              std::string_view password,
                              std::span<const uint8_t> salt) {
+  return BuildMd5Response(BuildMd5Verifier(username, password), salt);
+}
+
+bool IsMd5Verifier(std::string_view s) {
+  return s.size() == 35 && s.starts_with("md5") &&
+         std::ranges::all_of(s.substr(3), [](unsigned char c) {
+           return absl::ascii_isxdigit(c);
+         });
+}
+
+std::string BuildMd5Verifier(std::string_view username,
+                             std::string_view password) {
   std::string inner;
   inner.reserve(password.size() + username.size());
   inner.append(password);
   inner.append(username);
-  std::string with_salt = Md5Hex(inner);
+  return "md5" + Md5Hex(inner);
+}
+
+std::string BuildMd5Response(std::string_view stored_md5,
+                             std::span<const uint8_t> salt) {
+  // stored_md5 == "md5" + md5_hex(pw+user); the response re-hashes that hex
+  // with the per-connection salt, so no plaintext is needed.
+  std::string with_salt{stored_md5.substr(3)};
   with_salt.append(reinterpret_cast<const char*>(salt.data()), salt.size());
   return "md5" + Md5Hex(with_salt);
+}
+
+bool VerifyCleartextAgainstMd5(std::string_view stored_md5,
+                               std::string_view username,
+                               std::string_view cleartext) {
+  const std::string computed = BuildMd5Verifier(username, cleartext);
+  return ConstantTimeEqual(
+    {reinterpret_cast<const uint8_t*>(computed.data()), computed.size()},
+    {reinterpret_cast<const uint8_t*>(stored_md5.data()), stored_md5.size()});
 }
 
 }  // namespace sdb::network

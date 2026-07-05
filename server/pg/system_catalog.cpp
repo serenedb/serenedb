@@ -66,6 +66,7 @@
 #include "pg/pg_catalog/pg_foreign_data_wrapper.h"
 #include "pg/pg_catalog/pg_foreign_server.h"
 #include "pg/pg_catalog/pg_foreign_table.h"
+#include "pg/pg_catalog/pg_hba_file_rules.h"
 #include "pg/pg_catalog/pg_index.h"
 #include "pg/pg_catalog/pg_inherits.h"
 #include "pg/pg_catalog/pg_init_privs.h"
@@ -171,6 +172,7 @@ const PgSystemSchema kPgCatalog{
   MakeTable<SystemTable<PgForeignDataWrapper>>(),
   MakeTable<SystemTable<PgForeignServer>>(),
   MakeTable<SystemTable<PgForeignTable>>(),
+  MakeTable<SystemTable<PgHbaFileRule>>(),
   MakeTable<SystemTable<PgIndex>>(),
   MakeTable<SystemTable<PgInherits>>(),
   MakeTable<SystemTable<PgInitPrivs>>(),
@@ -372,8 +374,13 @@ void InitSystemViews(duckdb::Parser& parser) {
       duckdb::unique_ptr_cast<duckdb::SQLStatement, duckdb::SelectStatement>(
         std::move(parser.statements[0]));
 
+    catalog::Acl acl;
+    if (!view.superuser_only) {
+      acl.push_back(catalog::kSystemPublicSelect);
+    }
     auto entry = std::make_shared<catalog::PgSqlView>(
-      ObjectId{}, ObjectId{}, view.name, std::move(info));
+      catalog::Permissions{id::kRootUser, std::move(acl)}, ObjectId{},
+      ObjectId{}, view.name, std::move(info));
 
     auto& map = (view.schema == StaticStrings::kInformationSchema)
                   ? gInfoSchemaViews
@@ -434,7 +441,8 @@ void InitSystemFunctions(duckdb::Parser& parser) {
       }
     } else {
       map[macro.name] = std::make_shared<catalog::PgSqlFunction>(
-        ObjectId{}, ObjectId{}, macro.name, std::move(info));
+        catalog::Permissions{}, ObjectId{}, ObjectId{}, macro.name,
+        std::move(info));
     }
   }
 }

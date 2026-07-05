@@ -59,6 +59,8 @@
 #include "network/io_executor.h"
 #include "network/socket.h"
 #include "pg/connection_context.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::network {
 
@@ -145,11 +147,17 @@ class HttpSession final
       const auto database_id = database->GetId();
       const std::string_view user =
         _user.empty() ? StaticStrings::kDefaultUser : _user;
+      auto login = sdb::pg::RequireLoginRole(*snapshot, user, *database);
+      if (!login.role) {
+        THROW_SQL_ERROR_FROM_DATA(std::move(login.error));
+      }
+      const auto& role = login.role;
 
       _conn = DuckDBEngine::Instance().CreateConnection();
       _connection_ctx = std::make_shared<ConnectionContext>(
-        *_conn->context, user, dbname, database_id, std::move(database),
-        nullptr, nullptr, /*backend_pid=*/0, /*cancel_registry=*/nullptr);
+        *_conn->context, user, role->GetId(), dbname, database_id,
+        std::move(database), nullptr, nullptr, /*backend_pid=*/0,
+        /*cancel_registry=*/nullptr);
       connector::SereneDBClientState::Register(*_conn->context,
                                                _connection_ctx);
       _conn->context->session_user = std::string{user};
@@ -175,15 +183,16 @@ class HttpSession final
   // whole query and starve the pool under concurrent requests.
   yaclib::Task<duckdb::unique_ptr<duckdb::MaterializedQueryResult>> RunQuery(
     std::string sql, bool /*writes*/) override {
-    auto& conn = Connection();
-    auto& sdb_ctx = connector::GetSereneDBContext(*conn.context);
-    sdb_ctx.AcquireCatalogSnapshot();
-
     // Connection::Query() captures execution exceptions into the result's
     // ErrorData; the manual drive must do the same (table functions
     // THROW_SQL_ERROR), preserving the typed exception so the handlers'
-    // sqlstate->ES-error mapping still works.
+    // sqlstate->ES-error mapping still works. Connection() itself can throw
+    // (unknown / NOLOGIN role) -- keep it under the same guard so that surfaces
+    // as an ErrorData result too, not an escaped exception.
     try {
+      auto& conn = Connection();
+      auto& ctx = connector::GetSereneDBContext(*conn.context);
+      ctx.AcquireCatalogSnapshot();
       auto pending = conn.PendingQuery(sql, /*allow_stream_result=*/false);
       if (!pending->HasError()) {
         // In debug interleave queries more often to see more bugs.

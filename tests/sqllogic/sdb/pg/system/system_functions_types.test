@@ -102,14 +102,14 @@ t
 # ====== has_schema_privilege: oid-role overloads ======
 
 query
-SELECT has_schema_privilege(10::oid, 'public', 'USAGE');
+SELECT has_schema_privilege((SELECT oid FROM pg_authid WHERE rolname = 'postgres'), 'public', 'USAGE');
 ----
 has_schema_privilege
 t
 
 
 query
-SELECT has_schema_privilege(10::oid, 11::oid, 'USAGE');
+SELECT has_schema_privilege((SELECT oid FROM pg_authid WHERE rolname = 'postgres'), (SELECT oid FROM pg_namespace WHERE nspname = 'public'), 'USAGE');
 ----
 has_schema_privilege
 t
@@ -118,14 +118,14 @@ t
 # ====== pg_has_role: oid-role overloads ======
 
 query
-SELECT pg_has_role(10::oid, 'postgres', 'USAGE');
+SELECT pg_has_role((SELECT oid FROM pg_authid WHERE rolname = 'postgres'), 'postgres', 'USAGE');
 ----
 pg_has_role
 t
 
 
 query
-SELECT pg_has_role(10::oid, 10::oid, 'USAGE');
+SELECT pg_has_role((SELECT oid FROM pg_authid WHERE rolname = 'postgres'), (SELECT oid FROM pg_authid WHERE rolname = 'postgres'), 'USAGE');
 ----
 pg_has_role
 t
@@ -146,14 +146,14 @@ t
 
 
 query
-SELECT has_column_privilege(10::oid, 'col_priv_test', 1::int2, 'SELECT');
+SELECT has_column_privilege((SELECT oid FROM pg_authid WHERE rolname = 'postgres'), 'col_priv_test', 1::int2, 'SELECT');
 ----
 has_column_privilege
 t
 
 
 query
-SELECT has_column_privilege(10::oid, 'col_priv_test'::regclass, 1::int2, 'SELECT');
+SELECT has_column_privilege((SELECT oid FROM pg_authid WHERE rolname = 'postgres'), 'col_priv_test'::regclass, 1::int2, 'SELECT');
 ----
 has_column_privilege
 t

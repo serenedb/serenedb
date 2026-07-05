@@ -480,10 +480,14 @@ void InvertedStoreIndex::CheckpointBarrier() const {
   // checkpoint is skipped/aborted and the WAL is retained -- a restart replays
   // the delta, an explicit REINDEX clears it. Resolved from the GLOBAL snapshot
   // (checkpoint runs with no connection).
-  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
-  if (!snapshot) {
-    return;
+  auto* catalog = catalog::TryGetCatalog();
+  if (!catalog) {
+    SDB_THROW(ERROR_INTERNAL, "inverted index ", _index_id.id(),
+              ": catalog is shut down, cannot verify index durability; "
+              "refusing to checkpoint (WAL retained for replay)");
   }
+  auto snapshot = catalog->GetCatalogSnapshot();
+  SDB_ASSERT(snapshot);
   // The index's storage is bound at CREATE INDEX before this point; a null
   // lookup means a checkpoint racing the CREATE INDEX that defines us, so both
   // the catalog existence gate and the storage handle non-asserting

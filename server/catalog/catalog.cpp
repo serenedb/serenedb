@@ -1744,7 +1744,7 @@ Catalog::Catalog()
   : _snapshot(std::make_shared<Snapshot>()), _engine{&GetCatalogStore()} {}
 
 Result Catalog::RegisterRole(std::shared_ptr<Role> role) {
-  SDB_INFO(GENERAL, "Register role ", role->GetName());
+  SDB_DEBUG(GENERAL, "Register role ", role->GetName());
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     return clone->RegisterObject(std::move(role), id::kInstance, false);
@@ -1885,7 +1885,7 @@ Result Catalog::CreateSchema(const AccessContext& ax, ObjectId database_id,
 
 Result Catalog::CreateRole(const AccessContext& ax,
                            std::shared_ptr<Role> role) {
-  SDB_INFO(GENERAL, "Creating role: ", role->GetName());
+  SDB_DEBUG(GENERAL, "Creating role: ", role->GetName());
   absl::MutexLock lock{&_mutex};
   RequireRoleAttribute(
     *_snapshot, ax.role, RoleOption::CreateRole, "create role",
@@ -5059,5 +5059,7 @@ Catalog& GetCatalog() {
   SDB_ASSERT(g_catalog, "Catalog is not initialized");
   return *g_catalog;
 }
+
+Catalog* TryGetCatalog() { return g_catalog.get(); }
 
 }  // namespace sdb::catalog

@@ -575,5 +575,8 @@ void ShutdownCatalog();
 ResultOr<std::shared_ptr<Database>> GetDatabase(ObjectId database_id);
 ResultOr<std::shared_ptr<Database>> GetDatabase(std::string_view name);
 Catalog& GetCatalog();
+// Null before InitCatalog and after ShutdownCatalog, for callers that can run
+// during startup-failure or shutdown teardown.
+Catalog* TryGetCatalog();
 
 }  // namespace sdb::catalog

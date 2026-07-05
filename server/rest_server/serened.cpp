@@ -109,11 +109,11 @@ int RunServer(int argc, char** argv) {
       if (up_background) {
         stop("background", [&] { background.stop(); });
       }
+      if (up_store) {
+        stop("store", [&] { store.Shutdown(); });
+      }
       if (up_catalog) {
         stop("catalog", [&] { catalog::ShutdownCatalog(); });
-      }
-      if (up_store) {
-        stop("store", [&] { store.Shutdown(); });  // detach + checkpoint
       }
     };
 

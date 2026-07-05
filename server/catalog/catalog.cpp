@@ -5060,4 +5060,6 @@ Catalog& GetCatalog() {
   return *g_catalog;
 }
 
+Catalog* TryGetCatalog() { return g_catalog.get(); }
+
 }  // namespace sdb::catalog

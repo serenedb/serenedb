@@ -93,6 +93,10 @@ vedernikoff kostya
 anchin reads manga
 
 
+# CREATE USER MAPPING FOR <role> requires the role to exist (PG-style, RBAC).
+statement ok
+CREATE ROLE vedernikoff;
+
 # A per-user mapping is stored (visible, not enforced at runtime in 2a). The
 # join confirms pg_user_mapping.umserver resolves to the server's oid; two
 # mappings now exist (PUBLIC + vedernikoff).
@@ -140,9 +144,17 @@ statement ok
 DROP SCHEMA srv_${__DATABASE__}.${__DATABASE__}_ved;
 
 
-# DROP SERVER cascades its USER MAPPINGs and detaches.
-statement ok
+# DROP SERVER CASCADE drops its USER MAPPINGs and detaches (RESTRICT would be
+# refused while the two mappings depend on it).
+statement error
 DROP SERVER srv_${__DATABASE__};
+
+statement ok
+DROP SERVER srv_${__DATABASE__} CASCADE;
+
+# The vedernikoff mapping cascade-dropped, so the role is now droppable.
+statement ok
+DROP ROLE vedernikoff;
 
 
 # Gone from the catalog after drop.
@@ -189,7 +201,7 @@ statement ok
 CREATE USER MAPPING FOR PUBLIC SERVER srv_${__DATABASE__} OPTIONS (user '${PGUSER}');
 
 statement ok
-DROP SERVER srv_${__DATABASE__};
+DROP SERVER srv_${__DATABASE__} CASCADE;
 
 
 # DROP SERVER IF EXISTS on a missing server is a no-op.

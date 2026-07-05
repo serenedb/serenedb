@@ -118,8 +118,13 @@ SELECT count(*) FROM pg_user_mapping um JOIN pg_foreign_server fs ON um.umserver
 count
 1
 
-statement ok
+# RESTRICT (default) refuses while the mapping depends on the server...
+statement error
 DROP SERVER fc_drop;
+
+# ...CASCADE drops the server and its mapping atomically.
+statement ok
+DROP SERVER fc_drop CASCADE;
 
 # Re-create the server + a fresh PUBLIC mapping. This succeeds only if the DROP
 # cascaded; an orphaned public@fc_drop mapping would make this "already exists".
@@ -130,18 +135,18 @@ CREATE SERVER fc_drop FOREIGN DATA WRAPPER clickhouse_fdw
 statement ok
 CREATE USER MAPPING FOR PUBLIC SERVER fc_drop OPTIONS (user 'scanner', password 'pass word');
 
-# ===== cleanup (DROP SERVER cascades the mappings) =====
+# ===== cleanup (CASCADE also drops each server's PUBLIC mapping) =====
 statement ok
-DROP SERVER fc_space;
+DROP SERVER fc_space CASCADE;
 
 statement ok
-DROP SERVER fc_pwkey;
+DROP SERVER fc_pwkey CASCADE;
 
 statement ok
-DROP SERVER fc_passwd;
+DROP SERVER fc_passwd CASCADE;
 
 statement ok
-DROP SERVER fc_atomic;
+DROP SERVER fc_atomic CASCADE;
 
 statement ok
-DROP SERVER fc_drop;
+DROP SERVER fc_drop CASCADE;

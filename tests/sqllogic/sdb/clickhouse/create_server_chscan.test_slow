@@ -42,6 +42,9 @@ chsrv
 # CREATE USER MAPPING FOR <role> requires the role to exist (PG-style, RBAC).
 statement error
 CREATE USER MAPPING FOR nobody_role SERVER chsrv OPTIONS (user 'x');
+----
+db error: ERROR: role "nobody_role" does not exist<slt:ignore>
+
 
 statement ok
 CREATE ROLE alice;
@@ -54,6 +57,9 @@ CREATE USER MAPPING FOR alice SERVER chsrv OPTIONS (user 'alice_ch', password 's
 # The mapping references role alice, so DROP ROLE is refused while it exists.
 statement error
 DROP ROLE alice;
+----
+db error: ERROR: role "alice" cannot be dropped because some objects depend on it<slt:ignore>
+
 
 query
 SELECT count(*) FROM pg_user_mapping um
@@ -62,6 +68,27 @@ WHERE s.srvname = 'chsrv';
 ----
 count
 2
+
+# The explicit release path (as opposed to DROP SERVER CASCADE below): a fresh
+# role bob whose mapping is dropped first becomes droppable on its own.
+statement ok
+CREATE ROLE bob;
+
+statement ok
+CREATE USER MAPPING FOR bob SERVER chsrv OPTIONS (user 'bob_ch');
+
+statement error
+DROP ROLE bob;
+----
+db error: ERROR: role "bob" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+DROP USER MAPPING FOR bob SERVER chsrv;
+
+# With its mapping gone, bob drops without CASCADE.
+statement ok
+DROP ROLE bob;
 
 # IF NOT EXISTS is a no-op on an existing server.
 statement ok
@@ -72,6 +99,9 @@ CREATE SERVER IF NOT EXISTS chsrv FOREIGN DATA WRAPPER clickhouse_fdw
 # it -- PG server<-mapping semantics.
 statement error
 DROP SERVER chsrv;
+----
+db error: ERROR: cannot drop server "chsrv" because other objects depend on it<slt:ignore>
+
 
 # DROP SERVER CASCADE drops the server AND its user mappings in one transaction.
 statement ok

@@ -1,0 +1,140 @@
+control substitution on
+
+# Recovery for the RBAC-wired FOREIGN SERVER / USER MAPPING dependencies, the
+# companion to catalog_foreign_server_chscan.test_slow (which only exercises a
+# PUBLIC mapping and so never touches a role). A USER MAPPING FOR <role> stores
+# the role's id, and every USER MAPPING stores its owning server's id; both
+# edges are rebuilt from the persisted catalog by AddDependencies on boot. This
+# test asserts that after a crash + restart:
+#   - the role->mapping dependency still refuses DROP ROLE, and releasing it
+#     (DROP USER MAPPING) then lets the role drop, and
+#   - the server->mapping dependency still refuses DROP SERVER (RESTRICT) and
+#     still cascades under CASCADE.
+# The `_chscan.` suffix makes run.sh launch a ClickHouse container that outlives
+# serened's crash so boot replay can re-ATTACH. Fixture chtest.vedernikoff (6
+# rows) is pre-seeded. Unique names (umrec / grcka) avoid ATTACH-alias / role
+# collisions with other tests sharing the run.
+#
+# NB: a multiline error body under `----` ends on TWO blank lines (or EOF), so
+# each `statement error` block is followed by a double blank line.
+
+statement ok
+CREATE ROLE grcka;
+
+statement ok
+CREATE SERVER umrec FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+
+# PUBLIC mapping drives the live (instance-global) attach; the per-role mapping
+# is stored metadata whose whole job here is to carry the role->mapping edge.
+statement ok
+CREATE USER MAPPING FOR PUBLIC SERVER umrec OPTIONS (user 'default');
+
+statement ok
+CREATE USER MAPPING FOR grcka SERVER umrec OPTIONS (user 'grcka_ch', password 'secret');
+
+# Pre-crash: the mapping references role grcka, so DROP ROLE is refused, and the
+# server is queryable through the connector.
+statement error
+DROP ROLE grcka;
+----
+db error: ERROR: role "grcka" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+query
+SELECT count(*) FROM umrec.chtest.vedernikoff;
+----
+count
+6
+
+# Crash serened mid-connection; run_serened_loop.sh restarts it on the same
+# datadir, triggering catalog load + foreign-server boot replay.
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+# Post-restart: role, server, and both user mappings persisted (public + grcka).
+connection after_crash
+query
+SELECT count(*) FROM pg_roles WHERE rolname = 'grcka';
+----
+count
+1
+
+connection after_crash
+query
+SELECT count(*) FROM pg_user_mapping um JOIN pg_foreign_server fs ON um.umserver = fs.oid WHERE fs.srvname = 'umrec';
+----
+count
+2
+
+# ...boot replay re-ATTACHed to ClickHouse, so the server is still queryable.
+connection after_crash
+query
+SELECT count(*) FROM umrec.chtest.vedernikoff;
+----
+count
+6
+
+# ...and the role->mapping dependency was rebuilt from the persisted role_id, so
+# DROP ROLE is STILL refused after recovery (the crux of this test).
+connection after_crash
+statement error
+DROP ROLE grcka;
+----
+db error: ERROR: role "grcka" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Releasing the mapping frees the role -- the explicit (non-cascade) release path
+# works after recovery too.
+connection after_crash
+statement ok
+DROP USER MAPPING FOR grcka SERVER umrec;
+
+connection after_crash
+statement ok
+DROP ROLE grcka;
+
+connection after_crash
+query
+SELECT count(*) FROM pg_roles WHERE rolname = 'grcka';
+----
+count
+0
+
+# The server->mapping dependency also survived: the remaining PUBLIC mapping
+# still blocks a RESTRICT drop...
+connection after_crash
+statement error
+DROP SERVER umrec;
+----
+db error: ERROR: cannot drop server "umrec" because other objects depend on it<slt:ignore>
+
+
+# ...and CASCADE drops the server together with its PUBLIC mapping.
+connection after_crash
+statement ok
+DROP SERVER umrec CASCADE;
+
+connection after_crash
+query
+SELECT count(*) FROM pg_foreign_server WHERE srvname = 'umrec';
+----
+count
+0
+
+connection after_crash
+query
+SELECT count(*) FROM pg_user_mapping um JOIN pg_foreign_server fs ON um.umserver = fs.oid WHERE fs.srvname = 'umrec';
+----
+count
+0

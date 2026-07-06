@@ -1,0 +1,184 @@
+hash-threshold 100
+
+# Multiple ts_dict_agg aggregations over different fields in one query: each
+# field is enumerated independently and returns its own list (lists may differ
+# in length). Internally each field's terms occupy their own scan rows with the
+# other fields' columns NULL, and each list aggregate skips the NULLs.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY mf(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+)
+
+
+statement ok
+CREATE TABLE mf_docs(id INTEGER PRIMARY KEY, title VARCHAR, body VARCHAR,
+                     tag VARCHAR)
+
+
+statement ok
+CREATE INDEX mf_idx ON mf_docs USING inverted(title mf, body mf, tag mf)
+
+
+statement ok
+INSERT INTO mf_docs VALUES
+  (1, 'red',       'apple banana cherry', 'hot'),
+  (2, 'red green', 'date',                'cold')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mf_docs;
+
+
+# Two fields, different list lengths.
+query TT
+SELECT list_sort(ts_dict_agg(title)) AS titles, list_sort(ts_dict_agg(body)) AS bodies FROM mf_idx
+----
+titles	bodies
+{green,red}	{apple,banana,cherry,date}
+
+
+# Mixed kinds across fields: title terms, body terms, and per-body-term counts.
+query TTT
+SELECT list_sort(ts_dict_agg(title)) AS t, list_sort(ts_dict_agg(body)) AS b, list_sort(ts_dict_count(body)) AS bc
+FROM mf_idx
+----
+t	b	bc
+{green,red}	{apple,banana,cherry,date}	{1,1,1,1}
+
+
+# Per-field scalars and lists together over multiple fields' aggregates.
+query TI
+SELECT ts_dict_max(body) AS hi_body,
+       list_sort(ts_dict_count(title)) AS title_counts
+FROM mf_idx
+----
+hi_body	title_counts
+date	{1,2}
+
+
+# Unnesting different fields independently (each its own row count).
+query T
+SELECT unnest(ts_dict_agg(title)) AS term FROM mf_idx ORDER BY term
+----
+term
+green
+red
+
+
+# Unnesting two fields in one query: DuckDB positionally zips the per-field
+# lists, padding the shorter one with NULLs (the single-field unnest->scan
+# collapse is disabled for multiple fields so the zip is preserved).
+query TT
+SELECT unnest(list_sort(ts_dict_agg(title))) AS t, unnest(list_sort(ts_dict_agg(body))) AS b FROM mf_idx
+----
+t	b
+green	apple
+red	banana
+NULL	cherry
+NULL	date
+
+
+# Unnest one field while aggregating another as a list in the same query.
+query TT
+SELECT unnest(list_sort(ts_dict_agg(title))) AS t, list_sort(ts_dict_agg(body)) AS bodies FROM mf_idx
+----
+t	bodies
+green	{apple,banana,cherry,date}
+red	{apple,banana,cherry,date}
+
+
+# Plan check: with multiple fields the unnest->scan collapse is disabled, so an
+# UNNEST over an UNGROUPED_AGGREGATE remains above the term-dict scan.
+query
+EXPLAIN SELECT unnest(ts_dict_agg(title)), unnest(ts_dict_agg(body)) FROM mf_idx
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────╮
+│ Projections: UNNEST(ts_dict_agg(title)),   │
+│              UNNEST(ts_dict_agg(body))     │
+│ ~1 row                                     │
+╰──────────────────────┬─────────────────────╯
+╭─ UNNEST ─────────────┴─────────────────────╮
+╰──────────────────────┬─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ┴─────────────────────╮
+│ Aggregates:                                │
+│ list(#0) FILTER (WHERE #1) Filter: #1,     │
+│ list(#2) FILTER (WHERE #3) Filter: #3      │
+│ ~1 row                                     │
+╰──────────────────────┬─────────────────────╯
+╭─ PROJECTION ─────────┴─────────────────────╮
+│ Projections:                               │
+│ sdb_inverted_index_term$title,             │
+│ sdb_inverted_index_term$title IS NOT NULL, │
+│ sdb_inverted_index_term$body,              │
+│ sdb_inverted_index_term$body IS NOT NULL   │
+│ ~2 rows                                    │
+╰──────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ──────┴─────────────────────╮
+│ Groups: #0, #1                             │
+│ ~2 rows                                    │
+╰──────────────────────┬─────────────────────╯
+╭─ PROJECTION ─────────┴─────────────────────╮
+│ Projections: #0, #1                        │
+│ ~4 rows                                    │
+╰──────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
+│ Index: mf_idx                              │
+│ TsDict: title, body                        │
+│ Projections:                               │
+│ sdb_inverted_index_term$title,             │
+│ sdb_inverted_index_term$body               │
+│ ~4 rows                                    │
+╰────────────────────────────────────────────╯
+
+
+# Multi-field WHERE: each conjunct routes to the enumerated field it names and
+# filters only that field's terms.
+query TT
+SELECT list_sort(ts_dict_agg(title)) AS t, list_sort(ts_dict_agg(body)) AS b FROM mf_idx
+WHERE title @@ ts_starts_with('r') AND body @@ ts_starts_with('a')
+----
+t	b
+{red}	{apple,banana,cherry}
+
+# A one-field WHERE leaves the other field's enumeration unconstrained.
+query TT
+SELECT list_sort(ts_dict_agg(title)) AS t, list_sort(ts_dict_agg(body)) AS b FROM mf_idx
+WHERE body @@ ts_starts_with('d')
+----
+t	b
+{green,red}	{date}
+
+# A condition on a non-enumerated field restricts the documents; both
+# enumerations count against the shared doc set.
+query TT
+SELECT list_sort(ts_dict_agg(title)), list_sort(ts_dict_agg(body)) FROM mf_idx
+WHERE tag @@ ts_starts_with('h')
+----
+list_sort	list_sort
+{red}	{apple,banana,cherry}
+
+
+# Scalar residues cannot post-filter multi-field rows (the other fields' term
+# columns are NULL on them), so they are rejected too.
+statement error
+SELECT ts_dict_agg(title), ts_dict_agg(body) FROM mf_idx
+WHERE length(title) = 3
+----
+db error: ERROR: multi-field ts_dict_agg() WHERE accepts indexed document predicates and keyword term acceptors only
+HINT: scalar term conditions are not supported here; filter in an outer query over unnest(ts_dict_agg(...))
+
+
+statement ok
+DROP TABLE mf_docs
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY mf

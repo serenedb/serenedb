@@ -1994,7 +1994,7 @@ class SingleTermIterator : public SeekTermIterator {
 
   bytes_view value() const noexcept final { return _value.value; }
 
-  bool next() final { throw NotSupported(); }
+  bool next() final { return false; }
 
   SeekResult seek_ge(bytes_view) final { throw NotSupported(); }
 

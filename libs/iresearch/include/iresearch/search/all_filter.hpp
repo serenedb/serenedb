@@ -22,7 +22,13 @@
 
 #pragma once
 
-#include "filter.hpp"
+#include <memory>
+
+#include "iresearch/index/iterators.hpp"
+#include "iresearch/search/filter.hpp"
+#include "iresearch/search/term_iterator.hpp"
+#include "iresearch/utils/automaton_decl.hpp"
+#include "iresearch/utils/string.hpp"
 
 namespace irs {
 
@@ -35,6 +41,12 @@ class All : public FilterWithBoost {
   PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 
   TypeInfo::type_id type() const noexcept final { return irs::Type<All>::id(); }
+
+  TermPredicate::ptr CompileTermPredicate() const final {
+    return MakeTermPredicate(AcceptAllTerms{});
+  }
+
+  TermIterator::ptr CompileTermIterator(const TermReader& reader) const final;
 };
 
 QueryBuilder::ptr MakeAllQuery(const SubReader& segment,

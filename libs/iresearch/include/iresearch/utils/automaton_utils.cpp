@@ -22,6 +22,9 @@
 
 #include "iresearch/utils/automaton_utils.hpp"
 
+#include "fst/arcsort.h"
+#include "fst/union.h"
+#include "fstext/determinize-star.h"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/limited_sample_selector.hpp"
 #include "iresearch/search/multiterm_query.hpp"
@@ -241,6 +244,134 @@ QueryBuilder::ptr PrepareAutomatonSegment(
                               query->State()};
   Visit(segment, *reader, matcher, mtv);
   return query;
+}
+
+std::optional<automaton> IntersectAcceptors(const automaton& lhs,
+                                            const automaton& rhs,
+                                            size_t state_budget) {
+  if (fst::kNoStateId == lhs.Start() || fst::kNoStateId == rhs.Start()) {
+    return std::nullopt;
+  }
+  automaton out;
+  absl::flat_hash_map<uint64_t, automaton::StateId> ids;
+  std::vector<std::pair<automaton::StateId, automaton::StateId>> pending;
+  const auto key = [](automaton::StateId l, automaton::StateId r) {
+    return (static_cast<uint64_t>(static_cast<uint32_t>(l)) << 32) |
+           static_cast<uint32_t>(r);
+  };
+  const auto product_state = [&](automaton::StateId l, automaton::StateId r) {
+    const auto [it, added] = ids.try_emplace(key(l, r), 0);
+    if (added) {
+      it->second = out.AddState();
+      if (lhs.Final(l) && rhs.Final(r)) {
+        out.SetFinal(it->second, true);
+      }
+      pending.emplace_back(l, r);
+    }
+    return it->second;
+  };
+  out.SetStart(product_state(lhs.Start(), rhs.Start()));
+  while (!pending.empty()) {
+    const auto [l, r] = pending.back();
+    pending.pop_back();
+    const auto from = ids.at(key(l, r));
+    for (fst::ArcIterator lit{lhs, l}; !lit.Done(); lit.Next()) {
+      const auto& la = lit.Value();
+      if (la.ilabel == 0) {
+        return std::nullopt;
+      }
+      for (fst::ArcIterator rit{rhs, r}; !rit.Done(); rit.Next()) {
+        const auto& ra = rit.Value();
+        if (ra.ilabel == 0) {
+          return std::nullopt;
+        }
+        const auto lo = std::max(la.min, ra.min);
+        const auto hi = std::min(la.max, ra.max);
+        if (lo > hi) {
+          continue;
+        }
+        out.EmplaceArc(from, RangeLabel::From(lo, hi),
+                       product_state(la.nextstate, ra.nextstate));
+        if (ids.size() > state_budget) {
+          return std::nullopt;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+automaton MakeRangeAcceptor(bytes_view min, bytes_view max, bool min_inclusive,
+                            bool max_inclusive) {
+  const bool has_min = !IsNull(min);
+  const bool has_max = !IsNull(max);
+
+  const auto empty = [] {
+    automaton a;
+    a.SetStart(a.AddState());
+    return a;
+  };
+  const auto all = [] {
+    automaton a;
+    const auto s = a.AddState();
+    a.SetStart(s);
+    a.SetFinal(s, true);
+    a.EmplaceArc(s, RangeLabel::From(0, 255), s);
+    return a;
+  };
+
+  const auto greater_or_equal = [&](bytes_view bound, bool inclusive) {
+    automaton a;
+    const auto free = a.AddState();
+    a.SetFinal(free, true);
+    a.EmplaceArc(free, RangeLabel::From(0, 255), free);
+    auto state = a.AddState();
+    a.SetStart(state);
+    for (const auto byte : bound) {
+      const auto next = a.AddState();
+      a.EmplaceArc(state, RangeLabel::From(byte), next);
+      if (byte != 255) {
+        a.EmplaceArc(state, RangeLabel::From(byte + 1, 255), free);
+      }
+      state = next;
+    }
+    a.SetFinal(state, inclusive);
+    a.EmplaceArc(state, RangeLabel::From(0, 255), free);
+    return a;
+  };
+  const auto less_or_equal = [&](bytes_view bound, bool inclusive) {
+    automaton a;
+    const auto free = a.AddState();
+    a.SetFinal(free, true);
+    a.EmplaceArc(free, RangeLabel::From(0, 255), free);
+    auto state = a.AddState();
+    a.SetStart(state);
+    for (const auto byte : bound) {
+      a.SetFinal(state, true);
+      const auto next = a.AddState();
+      if (byte != 0) {
+        a.EmplaceArc(state, RangeLabel::From(0, byte - 1), free);
+      }
+      a.EmplaceArc(state, RangeLabel::From(byte), next);
+      state = next;
+    }
+    a.SetFinal(state, inclusive);
+    return a;
+  };
+
+  if (!has_min && !has_max) {
+    return all();
+  }
+  if (!has_min) {
+    return less_or_equal(max, max_inclusive);
+  }
+  if (!has_max) {
+    return greater_or_equal(min, min_inclusive);
+  }
+  auto product = IntersectAcceptors(greater_or_equal(min, min_inclusive),
+                                    less_or_equal(max, max_inclusive),
+                                    2 * (min.size() + max.size()) + 8);
+  return product ? std::move(*product) : empty();
 }
 
 }  // namespace irs

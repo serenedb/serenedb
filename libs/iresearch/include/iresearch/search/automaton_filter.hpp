@@ -23,6 +23,7 @@
 #include <memory>
 #include <utility>
 
+#include "iresearch/index/iterators.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/utils/automaton.hpp"
 #include "iresearch/utils/string.hpp"
@@ -58,6 +59,13 @@ class AutomatonFilter final : public FilterWithField<AutomatonOptions> {
                                    const PrepareContext& ctx) const final;
 
   PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
+
+  TermPredicate::ptr CompileTermPredicate() const final;
+
+  TermIterator::ptr CompileTermIterator(const TermReader& reader) const final;
 };
+
+TermPredicate::ptr MakeAutomatonTermPredicate(
+  std::shared_ptr<const CompiledAcceptor> compiled);
 
 }  // namespace irs

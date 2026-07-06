@@ -39,7 +39,7 @@ class AllTermsVisitor : public FilterVisitor, util::Noncopyable {
     : _state{state}, _field_stats{field_stats}, _term_stats{term_stats} {}
 
   void Prepare(const SubReader& /*segment*/, const TermReader& field,
-               const SeekTermIterator& terms) noexcept final {
+               SeekTermIterator& terms) noexcept final {
     if (_field_stats) {
       _field_stats->Collect(field);
     }
@@ -51,8 +51,9 @@ class AllTermsVisitor : public FilterVisitor, util::Noncopyable {
     _docs_count = meta ? &meta->docs_count : &_no_docs;
   }
 
-  void Visit(score_t boost) final {
+  bool Visit(score_t boost) final {
     SDB_ASSERT(_terms);
+    _terms->read();
     if (_term_stats) {
       (*_term_stats)[_stat_index].Collect(*_terms);
     }
@@ -63,6 +64,7 @@ class AllTermsVisitor : public FilterVisitor, util::Noncopyable {
       .boost = boost,
       .stat_offset = _stat_index,
     });
+    return true;
   }
 
   void SetIndex(uint32_t term_idx) noexcept { _stat_index = term_idx; }
@@ -71,7 +73,7 @@ class AllTermsVisitor : public FilterVisitor, util::Noncopyable {
   State& _state;
   FieldCollector* _field_stats;
   ByTermsCollector::TermsData* _term_stats;
-  const SeekTermIterator* _terms{};
+  SeekTermIterator* _terms{};
   const uint32_t* _docs_count{};
   uint32_t _stat_index = 0;
   const decltype(TermMeta::docs_count) _no_docs = 0;

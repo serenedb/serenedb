@@ -83,12 +83,39 @@ uint64_t EstimateFilterMatchCount(const irs::Filter& filter,
   return std::max<uint64_t>(live_docs * kDefaultFilterSelectivity, 1U);
 }
 
+duckdb::unique_ptr<duckdb::NodeStatistics> TsDictEstimation(
+  const SearchScan& ss, uint64_t live) {
+  uint64_t estimate = 0;
+  for (const auto& req : ss.ts_dicts) {
+    const uint64_t rows = [&] -> uint64_t {
+      if (req.term_uses == (TsDictTermUses::kMin | TsDictTermUses::kMax)) {
+        return 2;
+      } else if (req.term_uses == TsDictTermUses::kMin ||
+                 req.term_uses == TsDictTermUses::kMax) {
+        return 1;
+      } else {
+        return live;
+      }
+    }();
+    estimate += req.having_filter
+                  ? EstimateFilterMatchCount(*req.having_filter, rows)
+                  : rows;
+  }
+  if (ss.stored_filter) {
+    estimate = EstimateFilterMatchCount(*ss.stored_filter, estimate);
+  }
+  return duckdb::make_uniq<duckdb::NodeStatistics>(estimate);
+}
+
 duckdb::unique_ptr<duckdb::NodeStatistics> InvertedIndexCardinality(
   const SereneDBScanBindData& bind) {
   const auto& ss = bind.scan_source->Cast<SearchScan>();
   const auto live = ss.snapshot->reader.live_docs_count();
-  const auto estimate =
-    ss.stored_filter ? EstimateFilterMatchCount(*ss.stored_filter, live) : live;
+  if (ss.TsDictMode()) {
+    return TsDictEstimation(ss, live);
+  }
+  const auto* filter = ss.stored_filter.get();
+  const auto estimate = filter ? EstimateFilterMatchCount(*filter, live) : live;
   return duckdb::make_uniq<duckdb::NodeStatistics>(estimate, live);
 }
 
@@ -433,6 +460,29 @@ void SearchScan::AppendSummary(
                            MakeFieldNameResolver(bind, *bind.inverted_index),
                            MakeFieldKindResolver(bind, *bind.inverted_index))));
   }
+  if (bind.inverted_index) {
+    for (const auto& req : ts_dicts) {
+      if (!req.having_filter) {
+        continue;
+      }
+      auto key = ts_dicts.size() == 1
+                   ? std::string{"Filter"}
+                   : absl::StrCat(
+                       "Filter(",
+                       ColumnNameFor(
+                         bind, static_cast<catalog::Column::Id>(req.field_id)),
+                       ")");
+      out.insert(
+        std::move(key),
+        duckdb::ExplainValue(irs::ToExplainNode(
+          *req.having_filter, MakeFieldNameResolver(bind, *bind.inverted_index),
+          MakeFieldKindResolver(bind, *bind.inverted_index))));
+    }
+  }
+  if (count_only) {
+    out.insert("Output", "row-count only");
+    return;
+  }
   if (text_scorer) {
     out.insert("Score", text_scorer->ToString());
   }
@@ -463,6 +513,14 @@ void SearchScan::AppendSummary(
                     }),
                     ", ");
     out.insert("Offsets", std::move(cols));
+  }
+  if (TsDictMode()) {
+    auto names = absl::StrJoin(
+      ts_dicts | std::views::transform([&](const auto& req) {
+        return ColumnNameFor(bind, catalog::Column::Id{req.field_id});
+      }),
+      ", ");
+    out.insert("TsDict", std::move(names));
   }
 }
 
@@ -543,7 +601,12 @@ bool ProjectionIsVirtual(const SereneDBScanBindData& bind,
   }
   const auto catalog_col_id = bind.column_ids[col_id];
   return catalog_col_id == catalog::Column::kInvertedIndexScoreId ||
-         catalog_col_id == catalog::Column::kInvertedIndexOffsetsId;
+         catalog_col_id == catalog::Column::kInvertedIndexOffsetsId ||
+         catalog_col_id == catalog::Column::kInvertedIndexTermId ||
+         catalog_col_id == catalog::Column::kInvertedIndexTermRawId ||
+         catalog_col_id == catalog::Column::kInvertedIndexTermCountId ||
+         catalog_col_id == catalog::Column::kInvertedIndexTermFreqId ||
+         catalog_col_id == catalog::Column::kInvertedIndexTermScoreId;
 }
 
 std::vector<ProjectionEntry> BuildProjectionEntries(

@@ -87,6 +87,8 @@ class ByRegexp final : public FilterWithField<ByRegexpOptions> {
  public:
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
+
+  TermPredicate::ptr CompileTermPredicate() const final;
 };
 
 }  // namespace irs

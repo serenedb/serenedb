@@ -1,0 +1,98 @@
+hash-threshold 100
+
+# ts_dict_agg() WHERE accepts one predicate per field. Boolean combinations,
+# negation, and per-field constraints in a multi-field query are composed by the
+# caller with SQL set operations / outer filters over unnest(ts_dict_agg(...)).
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY cmpd(template = 'text', locale = 'en_US.UTF-8',
+    case = 'none', stemming = false, accent = false, frequency = true,
+    position = true)
+
+statement ok
+CREATE TABLE cmp(id INTEGER PRIMARY KEY, body VARCHAR, title VARCHAR)
+
+statement ok
+CREATE INDEX cmp_idx ON cmp USING inverted(body cmpd, title cmpd)
+
+statement ok
+INSERT INTO cmp VALUES
+  (1, 'apple apricot', 'red'),
+  (2, 'banana berry',  'green'),
+  (3, 'cherry apple',  'blue')
+
+statement ok
+VACUUM (REFRESH_TABLE) cmp;
+
+# OR  ->  UNION
+query T
+SELECT term FROM (
+  SELECT unnest(ts_dict_agg(body)) AS term FROM cmp_idx WHERE body @@ ts_starts_with('a')
+  UNION
+  SELECT unnest(ts_dict_agg(body)) AS term FROM cmp_idx WHERE body @@ ts_starts_with('b')
+) q ORDER BY term
+----
+term
+apple
+apricot
+banana
+berry
+cherry
+
+# AND  ->  INTERSECT
+query T
+SELECT term FROM (
+  SELECT unnest(ts_dict_agg(body)) AS term FROM cmp_idx WHERE body @@ ts_starts_with('a')
+  INTERSECT
+  SELECT unnest(ts_dict_agg(body)) AS term FROM cmp_idx WHERE body LIKE '%e'
+) q ORDER BY term
+----
+term
+apple
+
+# NOT  ->  EXCEPT (full dictionary minus the excluded set)
+query T
+SELECT term FROM (
+  SELECT unnest(ts_dict_agg(body)) AS term FROM cmp_idx
+  EXCEPT
+  SELECT unnest(ts_dict_agg(body)) AS term FROM cmp_idx WHERE body @@ ts_starts_with('a')
+) q ORDER BY term
+----
+term
+banana
+berry
+
+# A AND NOT B  ->  (A) EXCEPT (B)
+query T
+SELECT term FROM (
+  SELECT unnest(ts_dict_agg(body)) AS term FROM cmp_idx WHERE body @@ ts_starts_with('a')
+  EXCEPT
+  SELECT unnest(ts_dict_agg(body)) AS term FROM cmp_idx WHERE body = 'apple'
+) q ORDER BY term
+----
+term
+apricot
+cherry
+
+# Arbitrary scalar over the term  ->  outer filter on unnest
+query T
+SELECT term FROM (SELECT unnest(ts_dict_agg(body)) AS term FROM cmp_idx) q
+WHERE length(term) = 5 ORDER BY term
+----
+term
+apple
+berry
+
+# Multi-field constraints  ->  one single-field subquery per field
+query TT
+SELECT (SELECT list_sort(ts_dict_agg(body)) FROM cmp_idx WHERE body @@ ts_starts_with('a')) AS b,
+       (SELECT list_sort(ts_dict_agg(title)) FROM cmp_idx WHERE title = 'red') AS t
+----
+b	t
+{apple,apricot,cherry}	{red}
+
+statement ok
+DROP TABLE cmp
+
+statement ok
+DROP TEXT SEARCH DICTIONARY cmpd

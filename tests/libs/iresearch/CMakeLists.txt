@@ -73,6 +73,7 @@ set(iresearch-tests_sources
     ./search/all_filter_tests.cpp
     ./search/term_filter_tests.cpp
     ./search/terms_filter_test.cpp
+    ./search/term_predicate_test.cpp
     ./search/prefix_filter_test.cpp
     ./search/range_filter_test.cpp
     ./search/phrase_filter_tests.cpp

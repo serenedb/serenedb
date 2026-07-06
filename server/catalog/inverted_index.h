@@ -240,6 +240,9 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   ColumnTokenizer GetTokenizer(const std::shared_ptr<const Snapshot>& snapshot,
                                irs::field_id field_id) const;
 
+  bool IsKeywordField(const Snapshot& snapshot,
+                      irs::field_id field_id) const noexcept;
+
   irs::field_id FindFieldIdBySerialized(
     std::string_view serialized_expr) const noexcept;
 

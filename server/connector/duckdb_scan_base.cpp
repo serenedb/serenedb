@@ -103,6 +103,21 @@ void InitCommonState(CommonScanGlobalState& state,
       } else if (catalog_col_id == catalog::Column::kInvertedIndexOffsetsId) {
         state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
         state.projected_types.push_back(catalog::Column::MakeOffsetsType());
+      } else if (catalog_col_id == catalog::Column::kInvertedIndexTermId) {
+        state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
+        state.projected_types.push_back(duckdb::LogicalType::VARCHAR);
+      } else if (catalog_col_id == catalog::Column::kInvertedIndexTermRawId) {
+        state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
+        state.projected_types.push_back(duckdb::LogicalType::BLOB);
+      } else if (catalog_col_id == catalog::Column::kInvertedIndexTermCountId) {
+        state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
+        state.projected_types.push_back(duckdb::LogicalType::INTEGER);
+      } else if (catalog_col_id == catalog::Column::kInvertedIndexTermFreqId) {
+        state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
+        state.projected_types.push_back(duckdb::LogicalType::BIGINT);
+      } else if (catalog_col_id == catalog::Column::kInvertedIndexTermScoreId) {
+        state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
+        state.projected_types.push_back(duckdb::LogicalType::FLOAT);
       } else {
         state.projected_columns.push_back(col_id);
         state.projected_types.push_back(bind_data.column_types[col_id]);

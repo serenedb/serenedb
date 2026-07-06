@@ -80,23 +80,26 @@ struct TopTermsVisitor final : FilterVisitor {
   explicit TopTermsVisitor(size_t size) : _impl{size} { SDB_ASSERT(size); }
 
   void Prepare(const SubReader& segment, const TermReader& field,
-               const SeekTermIterator& terms) final {
+               SeekTermIterator& terms) final {
     _impl.Prepare(segment, field, terms);
   }
 
-  void Visit(score_t boost) final { _impl.Visit(boost); }
+  bool Visit(score_t boost) final {
+    _impl.Visit(boost);
+    return true;
+  }
 
   field_visitor ToVisitor() {
     // TODO(mbkkt) we can avoid by_terms, but needs to change
     // TopTermsSelector, to make it able keep equal elements
-    ByTermsOptions::search_terms terms;
+    ByTermsOptions options;
     _impl.Visit([&](TopTerm<score_t>& term) {
-      terms.emplace(std::move(term.term), term.key);
+      options.terms.emplace(std::move(term.term), term.key);
     });
-    return [terms = std::move(terms)](const SubReader& segment,
-                                      const TermReader& field,
-                                      FilterVisitor& visitor) {
-      return ByTerms::visit(segment, field, terms, visitor);
+    return [options = std::move(options)](const SubReader& segment,
+                                          const TermReader& field,
+                                          FilterVisitor& visitor) {
+      return ByTerms::visit(segment, field, options, visitor);
     };
   }
 
@@ -105,49 +108,45 @@ struct TopTermsVisitor final : FilterVisitor {
 };
 
 struct GetVisitor {
-  field_visitor operator()(const ByTermOptions& part) const {
-    return [term = bytes_view(part.term)](const SubReader& segment,
-                                          const TermReader& field,
-                                          FilterVisitor& visitor) {
-      return ByTerm::Visit(segment, field, term, visitor);
+  field_visitor operator()(const ByTermOptions& options) const {
+    return [&](const SubReader& segment, const TermReader& field,
+               FilterVisitor& visitor) {
+      return ByTerm::Visit(segment, field, options, visitor);
     };
   }
 
-  field_visitor operator()(const ByPrefixOptions& part) const {
-    return [term = bytes_view(part.term)](const SubReader& segment,
-                                          const TermReader& field,
-                                          FilterVisitor& visitor) {
-      return ByPrefix::visit(segment, field, term, visitor);
+  field_visitor operator()(const ByPrefixOptions& options) const {
+    return [&](const SubReader& segment, const TermReader& field,
+               FilterVisitor& visitor) {
+      return ByPrefix::visit(segment, field, options, visitor);
     };
   }
   field_visitor operator()(const auto&) const { SDB_UNREACHABLE(); }
 
-  field_visitor operator()(const AutomatonOptions& part) const {
-    SDB_ASSERT(part.compiled);
-    return AutomatonFilter::visitor(part.compiled->acceptor);
+  field_visitor operator()(const AutomatonOptions& options) const {
+    SDB_ASSERT(options.compiled);
+    return AutomatonFilter::visitor(options.compiled->acceptor);
   }
 
-  field_visitor operator()(const LevenshteinAutomatonOptions& part) const {
-    if (part.max_terms != 0) {
+  field_visitor operator()(const LevenshteinAutomatonOptions& options) const {
+    if (options.max_terms != 0) {
       return {};
     }
-    return LevenshteinAutomatonFilter::visitor(part);
+    return LevenshteinAutomatonFilter::visitor(options);
   }
 
-  field_visitor operator()(const ByTermsOptions& part) const {
-    return
-      [terms = &part.terms](const SubReader& segment, const TermReader& field,
-                            FilterVisitor& visitor) {
-        return ByTerms::visit(segment, field, *terms, visitor);
-      };
+  field_visitor operator()(const ByTermsOptions& options) const {
+    return [&](const SubReader& segment, const TermReader& field,
+               FilterVisitor& visitor) {
+      return ByTerms::visit(segment, field, options, visitor);
+    };
   }
 
-  field_visitor operator()(const ByRangeOptions& part) const {
-    return
-      [range = &part.range](const SubReader& segment, const TermReader& field,
-                            FilterVisitor& visitor) {
-        return ByRange::visit(segment, field, *range, visitor);
-      };
+  field_visitor operator()(const ByRangeOptions& options) const {
+    return [&](const SubReader& segment, const TermReader& field,
+               FilterVisitor& visitor) {
+      return ByRange::visit(segment, field, options, visitor);
+    };
   }
 };
 
@@ -160,15 +159,16 @@ class PhraseTermVisitor final : public FilterVisitor,
     : _phrase_states(phrase_states) {}
 
   void Prepare(const SubReader& segment, const TermReader& field,
-               const SeekTermIterator& terms) noexcept final {
+               SeekTermIterator& terms) noexcept final {
     _segment = &segment;
     _reader = &field;
     _terms = &terms;
     _found = true;
   }
 
-  void Visit(score_t boost) final {
+  bool Visit(score_t boost) final {
     SDB_ASSERT(_terms && _segment && _reader);
+    _terms->read();
 
     // disallow negative boost
     boost = std::max(0.f, boost);
@@ -183,6 +183,7 @@ class PhraseTermVisitor final : public FilterVisitor,
       _volatile_boost |= (boost != kNoBoost);
     }
     _phrase_states.emplace_back(_terms->cookie(), boost);
+    return true;
   }
 
   void Reset() noexcept { _volatile_boost = false; }
@@ -203,7 +204,7 @@ class PhraseTermVisitor final : public FilterVisitor,
   const TermReader* _reader{};
   PhraseStates& _phrase_states;
   std::vector<TermCollector>* _part = nullptr;
-  const SeekTermIterator* _terms = nullptr;
+  SeekTermIterator* _terms = nullptr;
   size_t _term_offset = 0;
   bool _found = false;
   bool _volatile_boost = false;
@@ -276,8 +277,7 @@ QueryBuilder::ptr FixedPrepareSegment(const SubReader& segment,
     for (const auto& word : options) {
       SDB_ASSERT(std::get_if<ByTermOptions>(&word.part));
       ptv.Reset(collector ? &collector->Part(part++) : nullptr);
-      ByTerm::Visit(segment, *reader, std::get<ByTermOptions>(word.part).term,
-                    ptv);
+      ByTerm::Visit(segment, *reader, std::get<ByTermOptions>(word.part), ptv);
       if (!ptv.Found() && is_ord_empty) {
         break;
       }

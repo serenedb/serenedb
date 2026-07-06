@@ -31,11 +31,8 @@
 
 namespace irs {
 
-static constexpr uint64_t kHeaderSize = sizeof(uint8_t) + 2 * sizeof(uint32_t);
-
 class IndexInput;
 class IndexOutput;
-struct IResourceManager;
 
 struct L2BodyView {
   const byte_type* l2_centroids = nullptr;
@@ -96,6 +93,9 @@ class TwoLayerCentroids {
   }
 
  private:
+  static constexpr uint64_t kHeaderSize =
+    sizeof(uint8_t) + 2 * sizeof(uint32_t);
+
   const float* L1Centroid(uint32_t i) const noexcept {
     return _l1_centroids.data() + static_cast<size_t>(i) * _d;
   }

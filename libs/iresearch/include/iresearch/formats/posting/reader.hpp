@@ -122,6 +122,12 @@ inline void PostingsReaderBase::prepare(DataInput& in, const ReaderState& state,
                                         IndexFeatures features) {
   std::string buf;
 
+  SDB_ASSERT(IndexFeatures::None == (features & IndexFeatures::Offs) ||
+             IndexFeatures::None == (features & IndexFeatures::Pay));
+  const bool needs_pay =
+    IndexFeatures::None !=
+    (features & (IndexFeatures::Offs | IndexFeatures::Pay));
+
   // prepare document input
   PrepareInput(buf, _doc_in, IOAdvice::RANDOM, state,
                PostingsWriterBase::kDocExt, PostingsWriterBase::kDocFormatName,
@@ -149,30 +155,20 @@ inline void PostingsReaderBase::prepare(DataInput& in, const ReaderState& state,
     // error detection which could recognize
     // some forms of corruption.
     format_utils::ReadChecksum(*_pos_in);
-
-    if (IndexFeatures::None != (features & IndexFeatures::Offs)) {
-      // prepare positions input
-      PrepareInput(buf, _pay_in, IOAdvice::RANDOM, state,
-                   PostingsWriterBase::kPayExt,
-                   PostingsWriterBase::kPayFormatName,
-                   static_cast<int32_t>(PostingsFormat::Min),
-                   static_cast<int32_t>(PostingsFormat::Max));
-
-      // Since terms pos postings too large
-      // it is too costly to verify checksum of
-      // the entire file. Here we perform cheap
-      // error detection which could recognize
-      // some forms of corruption.
-      format_utils::ReadChecksum(*_pay_in);
-    }
   }
 
-  if (!_pay_in && IndexFeatures::None != (features & IndexFeatures::Pay)) {
+  if (needs_pay) {
     PrepareInput(buf, _pay_in, IOAdvice::RANDOM, state,
                  PostingsWriterBase::kPayExt,
                  PostingsWriterBase::kPayFormatName,
                  static_cast<int32_t>(PostingsFormat::Min),
                  static_cast<int32_t>(PostingsFormat::Max));
+
+    // Since terms pos postings too large
+    // it is too costly to verify checksum of
+    // the entire file. Here we perform cheap
+    // error detection which could recognize
+    // some forms of corruption.
     format_utils::ReadChecksum(*_pay_in);
   }
 

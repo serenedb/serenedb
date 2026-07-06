@@ -23,10 +23,12 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/field_meta.hpp"
@@ -36,8 +38,8 @@
 
 namespace irs {
 
+class ColReader;
 class ColumnReader;
-class ColWriter;
 class ReadContext;
 class IvfTermIterator;
 class IdxWriter;
@@ -111,9 +113,8 @@ class IvfWriter {
 
   ~IvfWriter();
 
-  void OnCommit(ColWriter& cw, IdxWriter& idx,
-                std::span<const field_id> column_ids,
-                const IndexFieldOptions* field_options);
+  void BuildColumn(std::unique_ptr<ColumnReader> col, ReadContext& ctx,
+                   IdxWriter& idx, const IvfInfo& info);
 
   bool Empty() const noexcept { return _results.empty(); }
 
@@ -134,5 +135,14 @@ class IvfWriter {
   std::vector<std::unique_ptr<IvfTermReader>> _readers;
   std::vector<const BasicTermReader*> _reader_ptrs;
 };
+
+inline std::span<const BasicTermReader* const> PrepareIvfClusterReaders(
+  IvfWriter* writer, ColReader* col_reader, std::optional<ReadContext>& ctx) {
+  if (writer == nullptr || col_reader == nullptr) {
+    return {};
+  }
+  ctx.emplace(*col_reader);
+  return writer->ClusterReaders(ctx.value());
+}
 
 }  // namespace irs

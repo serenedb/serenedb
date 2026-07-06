@@ -20,39 +20,23 @@
 
 #pragma once
 
-#include <cstddef>
 #include <cstdint>
-#include <vector>
+#include <span>
 
-#include "basics/assert.h"
-#include "iresearch/store/data_input.hpp"
-#include "iresearch/types.hpp"
+#include "iresearch/formats/ivf/ivf_reader.hpp"
+#include "iresearch/utils/string.hpp"
 
 namespace irs {
 
-class VectorBlockReader {
- public:
-  VectorBlockReader(IndexInput& in, uint32_t record_size)
-    : _in{in}, _record_size{record_size} {}
-
-  void Reset(uint64_t base_offset) { _base = base_offset; }
-
-  const byte_type* Read(size_t index, size_t count) {
-    const uint64_t offset = _base + static_cast<uint64_t>(index) * _record_size;
-    const size_t bytes = count * size_t{_record_size};
-    if (const byte_type* p = _in.ReadStable(offset, bytes)) {
-      return p;
-    }
-    _buf.resize(bytes);
-    _in.ReadData(offset, _buf.data(), bytes);
-    return _buf.data();
+template<typename TermIterator>
+bool SeekClusterTerm(TermIterator& terms, uint32_t cluster_id,
+                     std::span<byte_type, kCentroidTermWidth> term_buf) {
+  EncodeCentroidTerm(cluster_id, term_buf.data());
+  if (!terms.seek(bytes_view{term_buf.data(), term_buf.size()})) {
+    return false;
   }
-
- private:
-  IndexInput& _in;
-  std::vector<byte_type> _buf;
-  uint64_t _base = 0;
-  uint32_t _record_size;
-};
+  terms.read();
+  return true;
+}
 
 }  // namespace irs

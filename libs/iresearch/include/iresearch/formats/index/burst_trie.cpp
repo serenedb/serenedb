@@ -750,6 +750,7 @@ void FieldWriter::Impl::prepare(const FlushState& state) {
   _suffix.Reset();
 
   _blocks_out = &_idx->BlocksOut();
+  _idx->SetTermsBodyStart(_blocks_out->Position());
 
   _pw->Prepare(*_blocks_out, state);
 

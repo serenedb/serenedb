@@ -46,6 +46,7 @@ namespace {
 
 constexpr duckdb::field_id_t kFooterSlotTermDict = 100;
 constexpr duckdb::field_id_t kFooterSlotIvf = 101;
+constexpr duckdb::field_id_t kFooterSlotTermsBodyStart = 102;
 
 IndexInput::ptr OpenAndCheckHeader(const Directory& dir,
                                    std::string_view filename) {
@@ -145,7 +146,6 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
         _impl->term_dict_by_id.emplace(id, idx);
       });
     });
-  uint64_t terms_start = _impl->body_start;
   deserializer.ReadList(
     kFooterSlotIvf, "ivf",
     [&](duckdb::Deserializer::List& list, duckdb::idx_t /*i*/) {
@@ -158,17 +158,14 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
         body->Seek(offset);
         auto entry = TwoLayerCentroids::Deserialize(*body, byte_size);
 
-        if (offset + byte_size > terms_start) {
-          terms_start = offset + byte_size;
-        }
-
         const size_t idx = _impl->ivf_entries.size();
         _impl->ivf_entries.emplace_back(id, std::move(entry));
         _impl->ivf_by_id.emplace(id, idx);
       });
     });
+  _impl->body_start = deserializer.ReadPropertyWithExplicitDefault<uint64_t>(
+    kFooterSlotTermsBodyStart, "terms_start", _impl->body_start);
   deserializer.End();
-  _impl->body_start = terms_start;
 }
 
 IdxReader::~IdxReader() = default;

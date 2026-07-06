@@ -38,10 +38,15 @@ QUERY PLAN
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: wal_hnsw_idx (ANN)              │
+│ Index: wal_ivf_idx                     │
 │ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Vector KNN ─╮                       │
+│ │ Field: emb   │                       │
+│ │ Metric: l2   │                       │
+│ │ Dims: 3      │                       │
+│ ╰──────────────╯                       │
 │ Top: 1                                 │
-│ Dims: 3                                │
 │ Projections: pk,                       │
 │              sdb_inverted_index_score  │
 │ ~1 row                                 │

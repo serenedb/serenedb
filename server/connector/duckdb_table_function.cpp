@@ -52,6 +52,20 @@
 #include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
+
+uint32_t ReadBoundedIntSetting(duckdb::ClientContext& context,
+                               std::string_view name, int32_t min_inclusive,
+                               uint32_t default_value) {
+  duckdb::Value v;
+  if (context.TryGetCurrentSetting(std::string{name}, v) && !v.IsNull()) {
+    const auto n = v.GetValue<int32_t>();
+    if (n >= min_inclusive) {
+      return static_cast<uint32_t>(n);
+    }
+  }
+  return default_value;
+}
+
 namespace {
 
 void CopyCommon(const SereneDBScanBindData& src, SereneDBScanBindData& dst) {
@@ -674,36 +688,24 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   bind_data.scan_source->Cast<SearchScan>().count_only =
     IsCountOnlyScan(bind_data, input);
 
-  switch (bind_data.scan_source->Kind()) {
-    case ScanSourceKind::Search:
-      return SearchFullScanInitGlobal(context, input);
-    case ScanSourceKind::FullTable:
-      SDB_UNREACHABLE();
-  }
+  SDB_ASSERT(bind_data.scan_source->Kind() == ScanSourceKind::Search);
+  return SearchFullScanInitGlobal(context, input);
 }
 
 duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
   duckdb::ExecutionContext& context, duckdb::TableFunctionInitInput& input,
   duckdb::GlobalTableFunctionState* global_state) {
   auto& bind_data = input.bind_data->Cast<SereneDBScanBindData>();
-  switch (bind_data.scan_source->Kind()) {
-    case ScanSourceKind::Search:
-      return SearchFullScanInitLocal(context, input, global_state);
-    case ScanSourceKind::FullTable:
-      SDB_UNREACHABLE();
-  }
+  SDB_ASSERT(bind_data.scan_source->Kind() == ScanSourceKind::Search);
+  return SearchFullScanInitLocal(context, input, global_state);
 }
 
 void IResearchScanFunction(duckdb::ClientContext& context,
                            duckdb::TableFunctionInput& data,
                            duckdb::DataChunk& output) {
   auto& bind_data = data.bind_data->Cast<SereneDBScanBindData>();
-  switch (bind_data.scan_source->Kind()) {
-    case ScanSourceKind::Search:
-      return SearchFullScanFunction(context, data, output);
-    case ScanSourceKind::FullTable:
-      SDB_UNREACHABLE();
-  }
+  SDB_ASSERT(bind_data.scan_source->Kind() == ScanSourceKind::Search);
+  return SearchFullScanFunction(context, data, output);
 }
 
 }  // namespace

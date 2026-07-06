@@ -118,7 +118,7 @@ struct ColWriter::Impl {
   std::vector<std::unique_ptr<NormColumnWriter>> norm_writers;
   sdb::containers::FlatHashMap<field_id, NormColumnWriter*> norm_by_id;
   std::unique_ptr<IvfWriter> ivf;
-  std::optional<ReadContext> commit_ctx;
+  bool has_ivf_column = false;
 };
 
 ColWriter::ColWriter(Directory& dir, std::string_view segment_name,
@@ -167,6 +167,9 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
   if (_impl->field_options) {
     opts = _impl->field_options->GetColumnOptions(id);
   }
+  if (opts.ivf_info) {
+    _impl->has_ivf_column = true;
+  }
   auto& cw =
     OpenColumn(id, std::move(type), opts.skip_validity, opts.row_group_size,
                opts.compression, opts.hyperloglog);
@@ -213,6 +216,8 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
   return back;
 }
 
+void ColWriter::NoteIvfColumn() noexcept { _impl->has_ivf_column = true; }
+
 std::unique_ptr<IvfWriter> ColWriter::TakeIvf() noexcept {
   return std::move(_impl->ivf);
 }
@@ -223,12 +228,6 @@ std::unique_ptr<ColumnReader> ColWriter::ReopenColumn(field_id id) const {
     return nullptr;
   }
   return MakeColumnReader(it->second->id, Clone(it->second->root));
-}
-
-ReadContext& ColWriter::CommitReadContext() noexcept {
-  SDB_ASSERT(_impl->commit_ctx.has_value(),
-             "ColWriter::CommitReadContext: only valid during the IVF build");
-  return *_impl->commit_ctx;
 }
 
 std::span<const std::unique_ptr<NormColumnWriter>> ColWriter::NormWriters()
@@ -270,16 +269,10 @@ void ColWriter::Commit(uint64_t target_row, IdxWriter* idx) {
     nw->PadTo(target_row);
     nw->Finalize();
   }
-  bool has_ivf = false;
-  if (_impl->field_options) {
-    for (const auto& e : _impl->column_entries) {
-      if (_impl->field_options->GetColumnOptions(e->id).ivf_info) {
-        has_ivf = true;
-        break;
-      }
-    }
-  }
-  if (has_ivf) {
+  if (_impl->has_ivf_column) {
+    SDB_ASSERT(idx,
+               "ColWriter::Commit requires an IdxWriter when an IVF "
+               "column is present");
     _impl->out->Flush();
     auto in = _impl->dir->open(_impl->filename, IOAdvice::RANDOM);
     if (!in) {
@@ -287,22 +280,19 @@ void ColWriter::Commit(uint64_t target_row, IdxWriter* idx) {
         absl::StrCat("failed to open .col writer for derived index build: ",
                      _impl->filename)};
     }
-    _impl->commit_ctx.emplace(*_impl->db, std::move(in));
-    std::vector<field_id> column_ids;
-    column_ids.reserve(_impl->column_entries.size());
-    for (const auto& e : _impl->column_entries) {
-      column_ids.push_back(e->id);
-    }
-    const size_t before = _impl->column_writers.size();
-    SDB_ASSERT(idx,
-               "ColWriter::Commit requires an IdxWriter when an IVF "
-               "column is present");
+    ReadContext ctx{*_impl->db, std::move(in)};
     _impl->ivf = std::make_unique<IvfWriter>();
-    _impl->ivf->OnCommit(*this, *idx, column_ids, _impl->field_options);
-    for (size_t i = before; i < _impl->column_writers.size(); ++i) {
-      _impl->column_writers[i]->Finalize();
+    for (const auto& e : _impl->column_entries) {
+      const auto opts = _impl->field_options->GetColumnOptions(e->id);
+      if (!opts.ivf_info) {
+        continue;
+      }
+      auto col = ReopenColumn(e->id);
+      if (!col) {
+        continue;
+      }
+      _impl->ivf->BuildColumn(std::move(col), ctx, *idx, *opts.ivf_info);
     }
-    _impl->commit_ctx.reset();
   }
 
   const uint64_t footer_offset = _impl->out->Position();

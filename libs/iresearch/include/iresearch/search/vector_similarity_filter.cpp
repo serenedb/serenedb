@@ -35,6 +35,7 @@
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/vector_filter_util.hpp"
 #include "iresearch/search/vector_similarity_query.hpp"
 
 namespace irs {
@@ -127,11 +128,9 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
   CostAttr::Type estimation = 0;
   for (size_t i = 0; i < fine_ids.size(); ++i) {
     const uint32_t c = fine_ids[i];
-    EncodeCentroidTerm(c, term_buf.data());
-    if (!terms->seek(bytes_view{term_buf.data(), term_buf.size()})) {
+    if (!SeekClusterTerm(*terms, c, term_buf)) {
       continue;
     }
-    terms->read();
     if (term_meta) {
       estimation += term_meta->docs_count;
     }

@@ -174,12 +174,9 @@ void SegmentWriter::FlushFields(FlushState& state,
 
   if (state.doc_count != 0) {
     _field_writer->SetIdxWriter(idx);
-    std::span<const BasicTermReader* const> cluster_readers;
     std::optional<ReadContext> ivf_ctx;
-    if (ivf_writer) {
-      ivf_ctx.emplace(*_col_reader);
-      cluster_readers = ivf_writer->ClusterReaders(*ivf_ctx);
-    }
+    const auto cluster_readers =
+      PrepareIvfClusterReaders(ivf_writer.get(), _col_reader.get(), ivf_ctx);
     FlushFields(state, cluster_readers);
   }
 

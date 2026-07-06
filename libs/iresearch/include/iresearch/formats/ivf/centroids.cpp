@@ -22,7 +22,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <limits>
 #include <numeric>
 #include <utility>
 
@@ -40,16 +39,12 @@ void TopK(std::vector<std::pair<float, uint32_t>>& scored, uint32_t k,
   const auto mid = scored.begin() + k;
   irs::ResolveBool(nearest_is_largest, [&]<bool NearestIsLarger>() {
     std::partial_sort(scored.begin(), mid, scored.end(),
-                      [&](const auto& l, const auto& r) noexcept {
-                        if constexpr (NearestIsLarger) {
-                          return l.first > r.first;
-                        } else {
-                          return l.first < r.first;
-                        }
+                      [](const auto& l, const auto& r) noexcept {
+                        return Better(NearestIsLarger, l.first, r.first);
                       });
   });
   SDB_ASSERT(out.empty());
-  out.reserve(out.size() + k);
+  out.reserve(k);
   for (auto it = scored.begin(); it != mid; ++it) {
     out.push_back(it->second);
   }
@@ -222,11 +217,9 @@ void TwoLayerCentroids::SearchL2(std::span<const float> query, uint32_t nprobe,
 
   std::vector<std::pair<float, uint32_t>> scored;
   std::vector<uint32_t> cand_fine_id;
-  std::vector<uint32_t> cand_begin;
-  cand_begin.reserve(l1_ids.size() + 1);
+  std::vector<float> cand_centroids;
   L2BodyView body;
   for (const uint32_t l1 : l1_ids) {
-    cand_begin.push_back(static_cast<uint32_t>(cand_fine_id.size()));
     ReadL2Body(in, l1, body);
     scored.reserve(scored.size() + body.n_l2);
     cand_fine_id.reserve(cand_fine_id.size() + body.n_l2);
@@ -235,9 +228,13 @@ void TwoLayerCentroids::SearchL2(std::span<const float> query, uint32_t nprobe,
       const auto cand = static_cast<uint32_t>(cand_fine_id.size());
       scored.emplace_back(dist(q, cv, d), cand);
       cand_fine_id.push_back(body.fine_ids[s]);
+      if (out_centroids != nullptr) {
+        const size_t base = cand_centroids.size();
+        cand_centroids.resize(base + _d);
+        std::memcpy(cand_centroids.data() + base, cv, stride);
+      }
     }
   }
-  cand_begin.push_back(static_cast<uint32_t>(cand_fine_id.size()));
   if (scored.empty()) {
     return;
   }
@@ -255,32 +252,11 @@ void TwoLayerCentroids::SearchL2(std::span<const float> query, uint32_t nprobe,
     return;
   }
 
-  constexpr uint32_t kUnselected = std::numeric_limits<uint32_t>::max();
-  std::vector<uint32_t> rank_of(cand_fine_id.size(), kUnselected);
-  for (uint32_t p = 0; p < cand_idx.size(); ++p) {
-    rank_of[cand_idx[p]] = p;
-  }
   out_centroids->resize(static_cast<size_t>(cand_idx.size()) * _d);
-  for (size_t li = 0; li < l1_ids.size(); ++li) {
-    const uint32_t begin = cand_begin[li];
-    const uint32_t end = cand_begin[li + 1];
-    bool selected = false;
-    for (uint32_t ci = begin; ci < end && !selected; ++ci) {
-      selected = rank_of[ci] != kUnselected;
-    }
-    if (!selected) {
-      continue;
-    }
-    ReadL2Body(in, l1_ids[li], body);
-    SDB_ASSERT(body.n_l2 == end - begin);
-    for (uint32_t s = 0; s < body.n_l2; ++s) {
-      const uint32_t p = rank_of[begin + s];
-      if (p == kUnselected) {
-        continue;
-      }
-      std::memcpy(out_centroids->data() + static_cast<size_t>(p) * _d,
-                  body.l2_centroids + s * stride, stride);
-    }
+  for (uint32_t p = 0; p < cand_idx.size(); ++p) {
+    std::memcpy(out_centroids->data() + static_cast<size_t>(p) * _d,
+                cand_centroids.data() + static_cast<size_t>(cand_idx[p]) * _d,
+                stride);
   }
 }
 

@@ -22,6 +22,7 @@
 
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
+#include "catalog/index.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
 
@@ -36,7 +37,7 @@ catalog::MaterializedData SystemTableSnapshot<PgOpclass>::GetTableData() {
   values.push_back({
     .oid = id::kPgOpclassIvf.id(),
     .opcmethod = id::kPgAmInverted.id(),
-    .opcname = "ivf",
+    .opcname = catalog::kIVFKind,
     .opcnamespace = id::kPgCatalogSchema.id(),
     .opcowner = id::kRootUser.id(),
     .opcfamily = 0,
@@ -48,7 +49,7 @@ catalog::MaterializedData SystemTableSnapshot<PgOpclass>::GetTableData() {
   values.push_back({
     .oid = id::kPgOpclassIncluded.id(),
     .opcmethod = id::kPgAmInverted.id(),
-    .opcname = "included",
+    .opcname = catalog::kIncludedKind,
     .opcnamespace = id::kPgCatalogSchema.id(),
     .opcowner = id::kRootUser.id(),
     .opcfamily = 0,

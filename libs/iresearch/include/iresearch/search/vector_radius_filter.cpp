@@ -31,6 +31,7 @@
 #include "iresearch/formats/ivf/centroids.hpp"
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/vector_filter_util.hpp"
 #include "iresearch/search/vector_similarity_query.hpp"
 
 namespace irs {
@@ -95,11 +96,9 @@ QueryBuilder::ptr ByRadius::PrepareSegment(const SubReader& segment,
         if (dqc_lin - radius > rt) {
           return;
         }
-        EncodeCentroidTerm(fine_id, term_buf.data());
-        if (!terms->seek(bytes_view{term_buf.data(), term_buf.size()})) {
+        if (!SeekClusterTerm(*terms, fine_id, term_buf)) {
           return;
         }
-        terms->read();
         if (term_meta) {
           estimation += term_meta->docs_count;
         }

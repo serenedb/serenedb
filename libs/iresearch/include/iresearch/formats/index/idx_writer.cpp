@@ -24,6 +24,7 @@
 
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/types.hpp>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -43,6 +44,7 @@ namespace {
 
 constexpr duckdb::field_id_t kFooterSlotTermDict = 100;
 constexpr duckdb::field_id_t kFooterSlotIvf = 101;
+constexpr duckdb::field_id_t kFooterSlotTermsBodyStart = 102;
 
 }  // namespace
 
@@ -65,6 +67,7 @@ struct IdxWriter::Impl {
   IndexOutput::ptr out;
   std::vector<IvfCentroidEntry> ivf_entries;
   std::vector<TermDictEntry> term_dict_entries;
+  std::optional<uint64_t> terms_body_start;
 };
 
 IdxWriter::IdxWriter(Directory& dir, std::string_view segment_name,
@@ -125,6 +128,12 @@ void IdxWriter::AddTermDictEntry(field_id id, TermDictMeta meta) {
     TermDictEntry{.id = id, .meta = std::move(meta)});
 }
 
+void IdxWriter::SetTermsBodyStart(uint64_t offset) noexcept {
+  if (!_impl->terms_body_start.has_value()) {
+    _impl->terms_body_start = offset;
+  }
+}
+
 bool IdxWriter::Empty() const noexcept {
   return _impl->ivf_entries.empty() && _impl->term_dict_entries.empty();
 }
@@ -168,6 +177,10 @@ void IdxWriter::Commit() {
                                                        e.byte_size);
                          });
                        });
+  if (_impl->terms_body_start.has_value()) {
+    serializer.WriteProperty<uint64_t>(kFooterSlotTermsBodyStart, "terms_start",
+                                       *_impl->terms_body_start);
+  }
   serializer.End();
 
   IndexOutput* trailer_out = _impl->out.get();
@@ -190,6 +203,7 @@ void IdxWriter::Rollback() noexcept {
   _impl->cipher.reset();
   _impl->ivf_entries.clear();
   _impl->term_dict_entries.clear();
+  _impl->terms_body_start.reset();
 }
 
 }  // namespace irs

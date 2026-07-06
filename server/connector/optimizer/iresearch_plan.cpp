@@ -38,7 +38,6 @@
 #include <duckdb/planner/operator/logical_top_n.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/filter_optimizer.hpp>
-#include <iresearch/search/proxy_filter.hpp>
 
 #include "basics/containers/flat_hash_map.h"
 #include "catalog/inverted_index.h"
@@ -393,14 +392,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownScorerCall(
 }
 
 uint32_t ReadNprobe(duckdb::ClientContext& context) {
-  duckdb::Value v;
-  if (context.TryGetCurrentSetting("sdb_nprobe", v) && !v.IsNull()) {
-    const auto n = v.GetValue<int32_t>();
-    if (n >= 1) {
-      return static_cast<uint32_t>(n);
-    }
-  }
-  return 1;
+  return connector::ReadBoundedIntSetting(context, "sdb_nprobe", 1, 1);
 }
 
 duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(

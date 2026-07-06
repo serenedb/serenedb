@@ -44,7 +44,6 @@ class Directory;
 class ColumnReader;
 class ColumnWriter;
 class NormColumnWriter;
-class ReadContext;
 class IvfWriter;
 class IdxWriter;
 
@@ -68,6 +67,8 @@ class ColWriter final {
                            duckdb::CompressionType compression,
                            bool hyperloglog);
 
+  void NoteIvfColumn() noexcept;
+
   NormColumnWriter* OpenNormColumn(field_id id);
 
   NormColumnWriter& OpenNormColumn(field_id id, uint32_t row_group_size);
@@ -81,10 +82,7 @@ class ColWriter final {
   void Rollback() noexcept;
 
  private:
-  friend class IvfWriter;
-
   std::unique_ptr<ColumnReader> ReopenColumn(field_id id) const;
-  ReadContext& CommitReadContext() noexcept;
 
   void EnsureOut();
   bool Empty() const noexcept;

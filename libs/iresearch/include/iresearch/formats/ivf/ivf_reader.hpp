@@ -29,6 +29,7 @@
 #include "iresearch/formats/ivf/vector_block_reader.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/bytes_utils.hpp"
 
 namespace irs {
 
@@ -38,10 +39,8 @@ class ColReader;
 inline constexpr size_t kCentroidTermWidth = 4;
 
 inline void EncodeCentroidTerm(uint32_t id, byte_type* out) noexcept {
-  out[0] = static_cast<byte_type>(id >> 24);
-  out[1] = static_cast<byte_type>(id >> 16);
-  out[2] = static_cast<byte_type>(id >> 8);
-  out[3] = static_cast<byte_type>(id);
+  auto* p = out;
+  irs::WriteBE<uint32_t>(id, p);
 }
 
 using VectorDistanceFn = float (*)(const byte_type*, const byte_type*,
@@ -51,6 +50,13 @@ VectorDistanceFn ResolveVectorDistance(VectorMetric metric);
 
 bool VectorMetricNearestIsLargest(VectorMetric metric) noexcept;
 
+bool VectorMetricIsAngular(VectorMetric metric) noexcept;
+
+inline constexpr bool Better(bool nearest_is_largest, float candidate,
+                             float best) noexcept {
+  return nearest_is_largest ? candidate > best : candidate < best;
+}
+
 class IvfVectorReader {
  public:
   IvfVectorReader(const ColumnReader& vector_column, ReadContext& ctx);
@@ -59,14 +65,12 @@ class IvfVectorReader {
 
   const float* ReadDoc(doc_id_t doc);
 
-  const float* ReadDocRun(doc_id_t first, size_t count);
+  const float* ReadDocBatch(doc_id_t first, size_t count);
 
  private:
   uint32_t _d;
   ColumnReader::RangeScan _scan;
   duckdb::Vector _buf;
-  std::vector<float> _scratch;
-  std::vector<float> _batch;
 };
 
 }  // namespace irs

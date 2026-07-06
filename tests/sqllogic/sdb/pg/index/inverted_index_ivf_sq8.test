@@ -66,7 +66,7 @@ count
 # ===========================================================================
 # 1b. L2 + SQ8, single cluster, LIMIT covers the whole cluster: the exact
 #     rerank pass (rerank_pool = rerank_factor * k) pulls in every doc as one
-#     contiguous run, exercising IvfVectorReader::ReadDocRun's multi-row
+#     contiguous run, exercising IvfVectorReader::ReadDocBatch's multi-row
 #     batched Scan (not just the single-doc path).
 # ===========================================================================
 

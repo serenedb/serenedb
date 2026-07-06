@@ -54,7 +54,7 @@ namespace {
 constexpr uint32_t kClusterSeed = 42;
 constexpr double kNlistSqrtMultiplier = 2.0;
 constexpr uint64_t kTrainPointsPerCentroid = 64;
-constexpr uint32_t kDefaultClusterIters = 10;
+constexpr uint32_t kDefaultClusterIters = 25;
 constexpr uint32_t kClusterRedo = 1;
 constexpr uint64_t kSampleSegmentOversample = 4;
 
@@ -356,7 +356,7 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
         for (uint32_t j = 0; j < d; ++j) {
           l2_centroids[j] *= inv;
         }
-        if (m == VectorMetric::InnerProduct || m == VectorMetric::Cosine) {
+        if (VectorMetricIsAngular(m)) {
           NormalizeRows(l2_centroids.data(), 1, d);
         }
       } else {
@@ -647,10 +647,14 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
                        static_cast<duckdb::idx_t>(std::min(n, kBatch) * _d)};
   const float* vecs = duckdb::FlatVector::GetData<float>(batch);
   size_t filled = 0;
-  for (size_t k = 0; k < n; ++k) {
+  size_t k = 0;
+  while (k < n) {
+    const size_t run = std::min(ConsecutiveRunLength(docs, k), kBatch - filled);
     const uint64_t r = static_cast<uint64_t>(docs[k]) - doc_limits::min();
-    scan.Scan(r * _d, _d, batch, static_cast<duckdb::idx_t>(filled) * _d);
-    if (++filled == kBatch) {
+    scan.Scan(r * _d, run * _d, batch, static_cast<duckdb::idx_t>(filled) * _d);
+    filled += run;
+    k += run;
+    if (filled == kBatch) {
       _qw->EncodeCluster(out, vecs, filled);
       filled = 0;
     }
@@ -663,45 +667,28 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
 
 void IvfTermReader::Finish(IndexOutput& /*out*/) { SDB_ASSERT(_qw); }
 
-void IvfWriter::OnCommit(ColWriter& cw, IdxWriter& idx,
-                         std::span<const field_id> column_ids,
-                         const IndexFieldOptions* field_options) {
-  if (!field_options) {
+void IvfWriter::BuildColumn(std::unique_ptr<ColumnReader> col, ReadContext& ctx,
+                            IdxWriter& idx, const IvfInfo& info) {
+  const auto d = static_cast<uint32_t>(col->ArraySize());
+  const uint32_t pq_niter =
+    info.cluster_iters != 0 ? info.cluster_iters : kDefaultClusterIters;
+  auto qw = MakeQuantizerWriter(info.quant.kind, d, info.metric,
+                                info.quant.pq_m, pq_niter, info.quant.nb_bits);
+
+  IvfBuilder builder{info};
+  BuiltIvf built = builder.Build(*col, ctx, idx, qw.get());
+  if (built.empty) {
     return;
   }
-  for (const field_id id : column_ids) {
-    const auto opts = field_options->GetColumnOptions(id);
-    if (!opts.ivf_info) {
-      continue;
-    }
-    auto col = cw.ReopenColumn(id);
-    if (!col) {
-      continue;
-    }
-    const auto d = static_cast<uint32_t>(col->ArraySize());
-    const uint32_t pq_niter = opts.ivf_info->cluster_iters != 0
-                                ? opts.ivf_info->cluster_iters
-                                : kDefaultClusterIters;
-    auto qw = MakeQuantizerWriter(
-      opts.ivf_info->quant.kind, d, opts.ivf_info->metric,
-      opts.ivf_info->quant.pq_m, pq_niter, opts.ivf_info->quant.nb_bits);
-
-    IvfBuilder builder{*opts.ivf_info};
-    BuiltIvf built = builder.Build(*col, cw.CommitReadContext(), idx, qw.get());
-    if (built.empty) {
-      continue;
-    }
-    idx.AddCentroidsEntry(opts.ivf_info->centroids_id, built.resident_offset,
-                          built.resident_size);
-    _results.push_back(
-      Result{.postings_id = opts.ivf_info->postings_id,
-             .cluster_docs = std::move(built.cluster_docs),
-             .cluster_offsets = std::move(built.cluster_offsets),
-             .fine_centroids = std::move(built.fine_centroids),
-             .qw = std::move(qw),
-             .vector_column = std::move(col),
-             .d = d});
-  }
+  idx.AddCentroidsEntry(info.centroids_id, built.resident_offset,
+                        built.resident_size);
+  _results.push_back(Result{.postings_id = info.postings_id,
+                            .cluster_docs = std::move(built.cluster_docs),
+                            .cluster_offsets = std::move(built.cluster_offsets),
+                            .fine_centroids = std::move(built.fine_centroids),
+                            .qw = std::move(qw),
+                            .vector_column = std::move(col),
+                            .d = d});
 }
 
 std::span<const BasicTermReader* const> IvfWriter::ClusterReaders(

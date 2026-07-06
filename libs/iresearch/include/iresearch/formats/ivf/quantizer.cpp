@@ -24,11 +24,13 @@
 #include <faiss/impl/RaBitQuantizer.h>
 #include <faiss/impl/ScalarQuantizer.h>
 #include <faiss/impl/pq4_fast_scan.h>
+#include <faiss/utils/AlignedTable.h>
 #include <faiss/utils/distances.h>
 #include <faiss/utils/quantize_lut.h>
 #include <faiss/utils/random.h>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -66,6 +68,7 @@ std::span<const byte_type> FloatSpan(const std::vector<float>& v) noexcept {
 }
 
 constexpr size_t kFastScanBbs = 32;
+constexpr uint32_t kPqNbits = 4;
 
 size_t RoundUp(size_t n, size_t multiple) noexcept {
   return (n + multiple - 1) / multiple * multiple;
@@ -75,13 +78,7 @@ size_t FastScanNsq(size_t m) noexcept { return m + (m & 1); }
 
 constexpr int64_t kRaBitQRotationSeed = 0x5a17b17c5eed5eedULL;
 
-uint32_t RotatedDim(uint32_t d) noexcept {
-  uint32_t p = 1;
-  while (p < d) {
-    p <<= 1;
-  }
-  return p;
-}
+uint32_t RotatedDim(uint32_t d) noexcept { return std::bit_ceil(d); }
 
 void GenerateSigns(uint32_t rotated_d, int64_t seed,
                    std::vector<float>& signs) {
@@ -120,6 +117,30 @@ void RotateInto(const float* signs, const float* in, float* out, uint32_t d,
     out[i] *= scale;
   }
 }
+
+template<typename H>
+void WritePodHeader(const H& h, byte_type* out) noexcept {
+  std::memcpy(out, &h, sizeof(H));
+}
+
+template<typename H>
+H ReadPodHeader(std::span<const byte_type> in) noexcept {
+  H h{};
+  if (in.size() >= sizeof(H)) {
+    std::memcpy(&h, in.data(), sizeof(H));
+  }
+  return h;
+}
+
+struct PqStatsHeader {
+  uint32_t m;
+  uint32_t ksub;
+};
+
+struct RaBitQStatsHeader {
+  uint32_t nb_bits;
+  uint32_t d;
+};
 
 class ScalarQuantizerWriter final : public QuantizerWriter {
  public:
@@ -250,17 +271,24 @@ class ScalarQuantizerReader final : public QuantizerReader {
   size_t _n = 0;
 };
 
+template<class Codebook, class Reader>
+std::unique_ptr<QuantizerReader> MakeReaderT(const Codebook* self,
+                                             std::unique_ptr<IndexInput> in) {
+  return std::make_unique<Reader>(
+    std::static_pointer_cast<const Codebook>(self->shared_from_this()),
+    std::move(in));
+}
+
 std::unique_ptr<QuantizerReader> ScalarQuantizerCodebook::MakeReader(
   std::unique_ptr<IndexInput> pay_in) const {
-  return std::make_unique<ScalarQuantizerReader>(
-    std::static_pointer_cast<const ScalarQuantizerCodebook>(shared_from_this()),
-    std::move(pay_in));
+  return MakeReaderT<ScalarQuantizerCodebook, ScalarQuantizerReader>(
+    this, std::move(pay_in));
 }
 
 class ProductQuantizerWriter final : public QuantizerWriter {
  public:
   ProductQuantizerWriter(uint32_t d, uint32_t m, uint32_t niter)
-    : _d{d}, _pq{d, m == 0 ? 1 : m, 4} {
+    : _d{d}, _pq{d, m == 0 ? 1 : m, kPqNbits} {
     if (niter != 0) {
       _pq.cp.niter = static_cast<int>(niter);
     }
@@ -302,14 +330,14 @@ class ProductQuantizerWriter final : public QuantizerWriter {
     SDB_ASSERT(_trained);
     SDB_ASSERT(_centroid.size() == _d);
     SDB_ASSERT((_cluster_filled + n) * _pq.code_size <= _cluster_codes.size());
-    std::vector<float> res(_d);
+    _res.resize(_d);
     for (size_t i = 0; i < n; ++i) {
       const float* v = vecs + i * _d;
       for (uint32_t j = 0; j < _d; ++j) {
-        res[j] = v[j] - _centroid[j];
+        _res[j] = v[j] - _centroid[j];
       }
-      _pq.compute_code(res.data(), _cluster_codes.data() +
-                                     (_cluster_filled + i) * _pq.code_size);
+      _pq.compute_code(_res.data(), _cluster_codes.data() +
+                                      (_cluster_filled + i) * _pq.code_size);
     }
     _cluster_filled += n;
   }
@@ -345,10 +373,9 @@ class ProductQuantizerWriter final : public QuantizerWriter {
   void BuildStats() {
     const uint32_t m = static_cast<uint32_t>(_pq.M);
     const uint32_t ksub = static_cast<uint32_t>(_pq.ksub);
-    _stats.resize(2 * sizeof(uint32_t) + _pq.centroids.size() * sizeof(float));
-    std::memcpy(_stats.data(), &m, sizeof(m));
-    std::memcpy(_stats.data() + sizeof(m), &ksub, sizeof(ksub));
-    std::memcpy(_stats.data() + 2 * sizeof(uint32_t), _pq.centroids.data(),
+    _stats.resize(sizeof(PqStatsHeader) + _pq.centroids.size() * sizeof(float));
+    WritePodHeader(PqStatsHeader{m, ksub}, _stats.data());
+    std::memcpy(_stats.data() + sizeof(PqStatsHeader), _pq.centroids.data(),
                 _pq.centroids.size() * sizeof(float));
   }
 
@@ -359,6 +386,7 @@ class ProductQuantizerWriter final : public QuantizerWriter {
   std::vector<float> _centroid;
   mutable std::vector<uint8_t> _cluster_codes;
   mutable size_t _cluster_filled = 0;
+  mutable std::vector<float> _res;
   std::vector<uint8_t> _packed;
 };
 
@@ -369,16 +397,16 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
     : _metric{metric}, _query(query.begin(), query.end()) {
     SDB_ASSERT(metric == VectorMetric::L2Sqr ||
                metric == VectorMetric::InnerProduct);
-    const Header hdr = ReadHeader(stats);
+    const PqStatsHeader hdr = ReadHeader(stats);
     if (hdr.m != 0 && d % hdr.m == 0 && hdr.ksub != 0) {
       _pq.d = d;
       _pq.M = hdr.m;
-      _pq.nbits = 4;
+      _pq.nbits = kPqNbits;
       _pq.set_derived_values();
       const size_t want = _pq.centroids.size() * sizeof(float);
       if (hdr.ksub == static_cast<uint32_t>(_pq.ksub) &&
-          stats.size() >= 2 * sizeof(uint32_t) + want) {
-        std::memcpy(_pq.centroids.data(), stats.data() + 2 * sizeof(uint32_t),
+          stats.size() >= sizeof(PqStatsHeader) + want) {
+        std::memcpy(_pq.centroids.data(), stats.data() + sizeof(PqStatsHeader),
                     want);
         _valid = true;
         if (_metric == VectorMetric::InnerProduct) {
@@ -416,24 +444,14 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
   float IpB() const noexcept { return _ip_b; }
 
  private:
-  struct Header {
-    uint32_t m;
-    uint32_t ksub;
-  };
-
-  static Header ReadHeader(std::span<const byte_type> stats) noexcept {
-    Header h{0, 0};
-    if (stats.size() >= 2 * sizeof(uint32_t)) {
-      std::memcpy(&h.m, stats.data(), sizeof(h.m));
-      std::memcpy(&h.ksub, stats.data() + sizeof(h.m), sizeof(h.ksub));
-    }
-    return h;
+  static PqStatsHeader ReadHeader(std::span<const byte_type> stats) noexcept {
+    return ReadPodHeader<PqStatsHeader>(stats);
   }
 
   faiss::ProductQuantizer _pq;
   VectorMetric _metric;
   std::vector<float> _query;
-  std::vector<uint8_t> _packed_ip_lut;
+  faiss::AlignedTable<uint8_t> _packed_ip_lut;
   float _ip_a = 1.f;
   float _ip_b = 0.f;
   bool _valid = false;
@@ -525,7 +543,7 @@ class ProductQuantizerReader final : public QuantizerReader {
   std::vector<float> _table;
   std::vector<float> _qr;
   std::vector<uint8_t> _lutq;
-  std::vector<uint8_t> _packed_lut;
+  faiss::AlignedTable<uint8_t> _packed_lut;
   std::vector<byte_type> _codes_buf;
   std::vector<uint16_t> _accu;
   std::vector<score_t> _scores;
@@ -534,10 +552,8 @@ class ProductQuantizerReader final : public QuantizerReader {
 
 std::unique_ptr<QuantizerReader> ProductQuantizerCodebook::MakeReader(
   std::unique_ptr<IndexInput> pay_in) const {
-  return std::make_unique<ProductQuantizerReader>(
-    std::static_pointer_cast<const ProductQuantizerCodebook>(
-      shared_from_this()),
-    std::move(pay_in));
+  return MakeReaderT<ProductQuantizerCodebook, ProductQuantizerReader>(
+    this, std::move(pay_in));
 }
 
 class RaBitQuantizerWriter final : public QuantizerWriter {
@@ -545,9 +561,8 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
   RaBitQuantizerWriter(uint32_t d, VectorMetric metric, uint32_t nb_bits)
     : _d{d}, _rd{RotatedDim(d)}, _rabitq{_rd, FaissMetric(metric), nb_bits} {
     GenerateSigns(_rd, kRaBitQRotationSeed, _signs);
-    _stats.resize(2 * sizeof(uint32_t));
-    std::memcpy(_stats.data(), &nb_bits, sizeof(nb_bits));
-    std::memcpy(_stats.data() + sizeof(nb_bits), &d, sizeof(d));
+    _stats.resize(sizeof(RaBitQStatsHeader));
+    WritePodHeader(RaBitQStatsHeader{nb_bits, d}, _stats.data());
   }
 
   void Train(const float* /*vecs*/, size_t /*n*/) final {}
@@ -601,9 +616,9 @@ class RaBitQuantizerCodebook final : public QuantizerCodebook {
  public:
   RaBitQuantizerCodebook(uint32_t d, std::span<const byte_type> stats,
                          std::span<const float> query, VectorMetric metric) {
-    const Header hdr = ReadHeader(stats);
-    if (hdr.nb_bits >= 1 && hdr.nb_bits <= 9 && hdr.d == d &&
-        stats.size() >= 2 * sizeof(uint32_t)) {
+    const RaBitQStatsHeader hdr = ReadHeader(stats);
+    if (hdr.nb_bits >= kRaBitQMinBits && hdr.nb_bits <= kRaBitQMaxBits &&
+        hdr.d == d && stats.size() >= 2 * sizeof(uint32_t)) {
       _d = d;
       _rd = RotatedDim(d);
       _rabitq = std::make_unique<faiss::RaBitQuantizer>(
@@ -629,18 +644,9 @@ class RaBitQuantizerCodebook final : public QuantizerCodebook {
   uint32_t RotDim() const noexcept { return _rd; }
 
  private:
-  struct Header {
-    uint32_t nb_bits;
-    uint32_t d;
-  };
-
-  static Header ReadHeader(std::span<const byte_type> stats) noexcept {
-    Header h{0, 0};
-    if (stats.size() >= 2 * sizeof(uint32_t)) {
-      std::memcpy(&h.nb_bits, stats.data(), sizeof(h.nb_bits));
-      std::memcpy(&h.d, stats.data() + sizeof(h.nb_bits), sizeof(h.d));
-    }
-    return h;
+  static RaBitQStatsHeader ReadHeader(
+    std::span<const byte_type> stats) noexcept {
+    return ReadPodHeader<RaBitQStatsHeader>(stats);
   }
 
   uint32_t _d = 0;
@@ -697,9 +703,8 @@ class RaBitQuantizerReader final : public QuantizerReader {
 
 std::unique_ptr<QuantizerReader> RaBitQuantizerCodebook::MakeReader(
   std::unique_ptr<IndexInput> pay_in) const {
-  return std::make_unique<RaBitQuantizerReader>(
-    std::static_pointer_cast<const RaBitQuantizerCodebook>(shared_from_this()),
-    std::move(pay_in));
+  return MakeReaderT<RaBitQuantizerCodebook, RaBitQuantizerReader>(
+    this, std::move(pay_in));
 }
 
 }  // namespace

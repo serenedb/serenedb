@@ -49,6 +49,9 @@ enum class VectorQuantization : uint8_t {
   RaBitQ,
 };
 
+inline constexpr uint32_t kRaBitQMinBits = 1;
+inline constexpr uint32_t kRaBitQMaxBits = 9;
+
 struct IvfInfo {
   struct Quantizer {
     VectorQuantization kind = VectorQuantization::None;
@@ -58,7 +61,6 @@ struct IvfInfo {
 
   field_id centroids_id = field_limits::invalid();
   field_id postings_id = field_limits::invalid();
-  field_id sq_id = field_limits::invalid();
 
   // dimensionality of the data
   int d = 0;

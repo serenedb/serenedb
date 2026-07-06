@@ -304,6 +304,10 @@ inline bool IsSereneDBScan(const duckdb::LogicalGet& get) {
   return get.bind_data && get.function.bind == &SereneDBScanBind;
 }
 
+uint32_t ReadBoundedIntSetting(duckdb::ClientContext& context,
+                               std::string_view name, int32_t min_inclusive,
+                               uint32_t default_value);
+
 // Full-table scan for search-backed (TableEngine::Search) tables. Selected by
 // SereneDBTableEntry::GetScanFunction; iresearch columnstore -> DuckDB
 // DataChunk via ColumnstoreMaterializer::Scan.

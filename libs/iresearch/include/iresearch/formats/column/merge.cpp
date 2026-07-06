@@ -111,6 +111,9 @@ void MergeInto(std::span<const MergeSource> sources, ColWriter& output,
     auto& cw =
       output.OpenColumn(field_id_v, first_col->Type(), opts.skip_validity,
                         opts.row_group_size, opts.compression, false);
+    if (opts.ivf_info) {
+      output.NoteIvfColumn();
+    }
 
     HyperLogLogMerger hyperloglog;
     if (opts.hyperloglog) {

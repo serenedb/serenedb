@@ -318,6 +318,15 @@ struct FilterPrinter {
     return s;
   }
 
+  ExplainNode BuildVectorNodeCommon(std::string title, field_id fid,
+                                    VectorMetric metric, size_t dims) const {
+    ExplainNode node{std::move(title)};
+    node.attributes["Field"] = FieldName(fid);
+    node.attributes["Metric"] = std::string{VectorMetricName(metric)};
+    node.attributes["Dims"] = absl::StrCat(dims);
+    return node;
+  }
+
   ExplainNode Build(const Filter& filter) const {
     auto node = BuildNode(filter);
     if (const auto boost = filter.BoostImpl(); boost != kNoBoost) {
@@ -517,10 +526,8 @@ struct FilterPrinter {
     if (type == Type<ByVectorSimilarity>::id()) {
       const auto& f = downCast<const ByVectorSimilarity>(filter);
       const auto& o = f.options();
-      ExplainNode node{"Vector KNN"};
-      node.attributes["Field"] = FieldName(f.field_id());
-      node.attributes["Metric"] = std::string{VectorMetricName(o.metric)};
-      node.attributes["Dims"] = absl::StrCat(o.query.size());
+      ExplainNode node = BuildVectorNodeCommon("Vector KNN", f.field_id(),
+                                               o.metric, o.query.size());
       if (o.inner) {
         node.children.push_back(Build(*o.inner));
       }
@@ -529,10 +536,8 @@ struct FilterPrinter {
     if (type == Type<ByRadius>::id()) {
       const auto& f = downCast<const ByRadius>(filter);
       const auto& o = f.options();
-      ExplainNode node{"Vector Range"};
-      node.attributes["Field"] = FieldName(f.field_id());
-      node.attributes["Metric"] = std::string{VectorMetricName(o.metric)};
-      node.attributes["Dims"] = absl::StrCat(o.query.size());
+      ExplainNode node = BuildVectorNodeCommon("Vector Range", f.field_id(),
+                                               o.metric, o.query.size());
       node.attributes["Radius"] =
         absl::StrCat(o.inclusive ? "<= " : "< ", o.radius);
       if (o.inner) {

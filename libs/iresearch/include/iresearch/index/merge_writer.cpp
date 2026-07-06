@@ -782,16 +782,11 @@ bool MergeWriter::Flush(SegmentMeta& segment,
     col_reader = std::make_unique<ColReader>(track_dir, segment.name, _db);
     norm_provider.reader = col_reader.get();
   }
-  std::span<const BasicTermReader* const> cluster_readers;
   std::optional<ReadContext> ivf_ctx;
-  if (ivf_writer && col_reader) {
-    ivf_ctx.emplace(*col_reader);
-    cluster_readers = ivf_writer->ClusterReaders(*ivf_ctx);
-    // Extra cluster readers contribute their features (e.g. IndexFeatures::Pay
-    // for quantized codes) so the ".pay" stream is opened during flush.
-    for (const auto* reader : cluster_readers) {
-      index_features |= reader->properties().index_features;
-    }
+  const auto cluster_readers =
+    PrepareIvfClusterReaders(ivf_writer.get(), col_reader.get(), ivf_ctx);
+  for (const auto* reader : cluster_readers) {
+    index_features |= reader->properties().index_features;
   }
 
   if (!progress_callback()) {

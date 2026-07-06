@@ -178,17 +178,6 @@ void InvertedIndex::BumpTickServerForEntryIds() {
     if (irs::field_limits::valid(entry.numeric_field_id)) {
       UpdateTickServer(entry.numeric_field_id);
     }
-    if (entry.ivf_config) {
-      if (irs::field_limits::valid(entry.ivf_config->centroids_id)) {
-        UpdateTickServer(entry.ivf_config->centroids_id);
-      }
-      if (irs::field_limits::valid(entry.ivf_config->postings_id)) {
-        UpdateTickServer(entry.ivf_config->postings_id);
-      }
-      if (irs::field_limits::valid(entry.ivf_config->sq_id)) {
-        UpdateTickServer(entry.ivf_config->sq_id);
-      }
-    }
   }
 }
 
@@ -415,9 +404,8 @@ std::optional<irs::IvfInfo> InvertedIndex::GetIvfInfo(
   }
   const auto& cfg = *entry->ivf_config;
   return irs::IvfInfo{
-    .centroids_id = cfg.centroids_id,
-    .postings_id = cfg.postings_id,
-    .sq_id = cfg.sq_id,
+    .centroids_id = field_id,
+    .postings_id = field_id,
     .d = cfg.d,
     .metric = cfg.metric,
     .quant = {.kind = cfg.quant, .pq_m = cfg.pq_m, .nb_bits = cfg.rabitq_bits},

@@ -45,7 +45,7 @@ uint32_t NearestImpl(VectorDistanceFn dist, bool nearest_is_largest,
     const auto* cv = reinterpret_cast<const byte_type*>(
       centroids + static_cast<size_t>(s) * d);
     const float score = dist(q, cv, dd);
-    if (nearest_is_largest ? score > best_score : score < best_score) {
+    if (Better(nearest_is_largest, score, best_score)) {
       best_score = score;
       best = s;
     }
@@ -76,8 +76,7 @@ std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
                                   size_t n, uint32_t k, uint32_t d,
                                   uint32_t seed, uint32_t niter,
                                   uint32_t nredo) {
-  const bool angular =
-    metric == VectorMetric::InnerProduct || metric == VectorMetric::Cosine;
+  const bool angular = VectorMetricIsAngular(metric);
 
   faiss::ClusteringParameters cp;
   cp.niter = static_cast<int>(std::max<uint32_t>(1, niter));

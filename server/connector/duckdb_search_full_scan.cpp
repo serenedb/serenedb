@@ -34,8 +34,6 @@
 #include <iresearch/search/doc_collector.hpp>
 #include <iresearch/search/score_function.hpp>
 #include <iresearch/search/scorer.hpp>
-#include <iresearch/search/vector_radius_filter.hpp>
-#include <iresearch/search/vector_similarity_filter.hpp>
 #include <iresearch/search/vector_similarity_query.hpp>
 #include <iresearch/search/vector_similarity_scorer.hpp>
 #include <iresearch/utils/string.hpp>
@@ -69,14 +67,7 @@ const irs::Filter& MatchAllFilter() {
 }
 
 uint32_t ReadRerankFactor(duckdb::ClientContext& context) {
-  duckdb::Value v;
-  if (context.TryGetCurrentSetting("sdb_rerank_factor", v) && !v.IsNull()) {
-    const auto n = v.GetValue<int32_t>();
-    if (n >= 0) {
-      return static_cast<uint32_t>(n);
-    }
-  }
-  return 4;
+  return ReadBoundedIntSetting(context, "sdb_rerank_factor", 0, 4);
 }
 
 void RerankHits(SearchFullScanGlobalState& g, std::span<irs::ScoreDoc> hits) {
@@ -122,7 +113,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
   state->total_segments = ss.snapshot->reader.size();
   state->vector_scorer = ss.vector_scorer ? &*ss.vector_scorer : nullptr;
 
-  if ((state->count_only = ss.count_only) && !ss.stored_filter) {
+  if ((state->count_only = ss.count_only) && ss.IsMatchAll()) {
     return duckdb::unique_ptr_cast<SearchFullScanGlobalState,
                                    duckdb::GlobalTableFunctionState>(
       std::move(state));
@@ -372,15 +363,15 @@ void CollectSegmentTopK(SearchFullScanTopKLocalState& s,
   } else {
     const bool wand_enabled =
       WandEnabled(s.bind_data->inverted_index.get(), search.text_scorer);
-    auto it =
-      seg.mask(seg_query.Execute({.wand = {.wand_enabled = wand_enabled}},
-                                 stats));
+    auto it = seg.mask(
+      seg_query.Execute({.wand = {.wand_enabled = wand_enabled}}, stats));
     auto score_func = it->PrepareScore({
       .scorer = g.scorer_obj.get(),
       .segment = &seg,
       .fetcher = &s.score_fetcher,
     });
-    if (auto* it_threshold = irs::GetMutable<irs::ScoreThresholdAttr>(it.get())) {
+    if (auto* it_threshold =
+          irs::GetMutable<irs::ScoreThresholdAttr>(it.get())) {
       collector.SetScoreThreshold(it_threshold->value);
     }
     it->Collect(score_func, s.score_fetcher, collector);

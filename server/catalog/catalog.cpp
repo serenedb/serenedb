@@ -5414,11 +5414,14 @@ void InitCatalog() {
           auto pub = snapshot->GetUserMapping(
             db->GetId(), schema->GetName(),
             MakeUserMappingName("public", server->GetName()));
-          auto query = BuildForeignServerAttachSql(*server, pub.get());
+          const auto secret = MakeForeignServerSecretName(server->GetName());
+          auto query = PrepareForeignServerAttach(*conn->context, secret,
+                                                  *server, pub.get());
           if (query.empty()) {
             continue;
           }
           auto result = conn->Query(query);
+          DropForeignServerSecret(*conn->context, secret);
           if (result->HasError()) {
             SDB_WARN(GENERAL, "Failed to re-attach foreign server ",
                      server->GetName(), ": ",

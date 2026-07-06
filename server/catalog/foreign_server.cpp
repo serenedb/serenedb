@@ -24,9 +24,15 @@
 #include <absl/strings/match.h>
 
 #include <cctype>
+#include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/common/enums/on_create_conflict.hpp>
+#include <duckdb/common/enums/on_entry_not_found.hpp>
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/main/secret/secret.hpp>
+#include <duckdb/main/secret/secret_manager.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -41,46 +47,72 @@ namespace {
 
 using persistence::ForeignServerData;
 
-std::string QuoteLiteral(std::string_view s) {
-  std::string out = "'";
-  for (char c : s) {
-    if (c == '\'') {
-      out += "''";
-    } else {
-      out += c;
-    }
+// Map an FDW name to the DuckDB connector storage type; "" if unsupported.
+std::string StorageTypeForFdw(std::string_view fdw) {
+  if (fdw == "clickhouse_fdw" || fdw == "clickhouse") {
+    return "clickhouse";
   }
-  out += "'";
-  return out;
+  if (fdw == "postgres_fdw" || fdw == "postgres") {
+    return "postgres";
+  }
+  return {};
 }
 
-// Quote a connection-string option VALUE so it round-trips through the
-// space-delimited "key=value" connstr even when it contains a space, quote,
-// backslash, or is empty (e.g. a password with a space). Uses libpq DSN quoting
-// rules -- wrap in single quotes and backslash-escape embedded ' and \ -- which
-// both libpq (postgres_fdw) and the ClickHouse connstr parser understand. Plain
-// values are emitted unquoted, so the common case is unchanged.
-std::string QuoteConnstrValue(std::string_view v) {
-  bool needs_quote = v.empty();
-  for (char c : v) {
-    if (c == ' ' || c == '\t' || c == '\n' || c == '\'' || c == '\\' ||
-        c == '=') {
-      needs_quote = true;
-      break;
+// Canonicalise a (lower-cased) option key to the connector's secret parameter
+// name. The connectors resolve aliases in their connstr parser, but their secret
+// overlays read exact keys, so we resolve the aliases here instead.
+std::string CanonicalOptionKey(std::string_view storage, std::string key) {
+  if (key == "hostname") {
+    return "host";
+  }
+  if (key == "username") {
+    return "user";
+  }
+  if (key == "passwd") {
+    return "password";
+  }
+  if (storage == "clickhouse") {
+    if (key == "dbname" || key == "db") {
+      return "database";
+    }
+    if (key == "ssl") {
+      return "secure";
+    }
+  } else if (storage == "postgres" && key == "database") {
+    return "dbname";
+  }
+  return key;
+}
+
+// Server options merged with a PUBLIC user mapping's (the mapping wins per key),
+// keys lower-cased and canonicalised to the connector's secret parameters.
+std::vector<std::pair<std::string, std::string>> MergeConnectionOptions(
+  std::string_view storage, const ForeignServer& server,
+  const UserMapping* public_mapping) {
+  std::vector<std::pair<std::string, std::string>> merged;
+  auto set_opt = [&](std::string_view raw_key, std::string_view value) {
+    auto key = CanonicalOptionKey(storage, absl::AsciiStrToLower(raw_key));
+    for (auto& kv : merged) {
+      if (kv.first == key) {
+        kv.second = std::string{value};
+        return;
+      }
+    }
+    merged.emplace_back(std::move(key), std::string{value});
+  };
+  const auto& skeys = server.GetOptionKeys();
+  const auto& svals = server.GetOptionValues();
+  for (size_t i = 0; i < skeys.size(); ++i) {
+    set_opt(skeys[i], svals[i]);
+  }
+  if (public_mapping != nullptr) {
+    const auto& mkeys = public_mapping->GetOptionKeys();
+    const auto& mvals = public_mapping->GetOptionValues();
+    for (size_t i = 0; i < mkeys.size(); ++i) {
+      set_opt(mkeys[i], mvals[i]);
     }
   }
-  if (!needs_quote) {
-    return std::string{v};
-  }
-  std::string out = "'";
-  for (char c : v) {
-    if (c == '\'' || c == '\\') {
-      out += '\\';
-    }
-    out += c;
-  }
-  out += "'";
-  return out;
+  return merged;
 }
 
 }  // namespace
@@ -119,7 +151,7 @@ std::string RedactConnstrSecrets(std::string_view text) {
         size_t j = i + key.size() + 1;  // first char of the value
         if (j < text.size() && text[j] == '\'') {
           // DSN-quoted value: skip to the closing unescaped quote (\' and \\
-          // are escapes, per QuoteConnstrValue).
+          // are escapes, as libpq DSN quoting emits).
           for (++j; j < text.size(); ++j) {
             if (text[j] == '\\' && j + 1 < text.size()) {
               ++j;
@@ -184,64 +216,65 @@ std::shared_ptr<Object> ForeignServer::Clone() const {
     {.id = GetId(), .schema_id = GetParentId()});
 }
 
-std::string BuildForeignServerAttachSql(const ForeignServer& server,
-                                        const UserMapping* public_mapping,
-                                        std::string_view alias) {
-  const auto fdw = server.GetFdwName();
-  std::string storage;
-  if (fdw == "clickhouse_fdw" || fdw == "clickhouse") {
-    storage = "clickhouse";
-  } else if (fdw == "postgres_fdw" || fdw == "postgres") {
-    storage = "postgres";
-  } else {
+std::string MakeForeignServerSecretName(std::string_view alias) {
+  std::string out = "__sdb_fdw_secret_";
+  for (char c : alias) {
+    out += (std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_') ? c
+                                                                          : '_';
+  }
+  return out;
+}
+
+std::string PrepareForeignServerAttach(duckdb::ClientContext& context,
+                                       std::string_view secret_name,
+                                       const ForeignServer& server,
+                                       const UserMapping* public_mapping,
+                                       std::string_view alias) {
+  const auto storage = StorageTypeForFdw(server.GetFdwName());
+  if (storage.empty()) {
     return {};
   }
 
-  // Merge connection options: the server's first, then a PUBLIC user mapping's
-  // options override by key (so its user/password win). Keys are normalised to
-  // the connector's dialect (database <-> dbname).
-  std::vector<std::pair<std::string, std::string>> merged;
-  auto set_opt = [&](std::string_view raw_key, std::string_view value) {
-    auto key = absl::AsciiStrToLower(raw_key);
-    if (storage == "postgres" && key == "database") {
-      key = "dbname";
-    } else if (storage == "clickhouse" && key == "dbname") {
-      key = "database";
-    }
-    for (auto& kv : merged) {
-      if (kv.first == key) {
-        kv.second = std::string{value};
-        return;
-      }
-    }
-    merged.emplace_back(std::move(key), std::string{value});
-  };
-  const auto& skeys = server.GetOptionKeys();
-  const auto& svals = server.GetOptionValues();
-  for (size_t i = 0; i < skeys.size(); ++i) {
-    set_opt(skeys[i], svals[i]);
+  // Carry the merged options in a TEMPORARY secret: values are duckdb Values,
+  // so nothing needs connstr quoting and no password ever enters the SQL text.
+  auto secret = duckdb::make_uniq<duckdb::KeyValueSecret>(
+    std::vector<std::string>{}, duckdb::Identifier{storage}, "config",
+    duckdb::Identifier{secret_name});
+  for (const auto& [key, value] : MergeConnectionOptions(storage, server,
+                                                         public_mapping)) {
+    secret->secret_map[duckdb::Identifier{key}] = duckdb::Value(value);
   }
-  if (public_mapping != nullptr) {
-    const auto& mkeys = public_mapping->GetOptionKeys();
-    const auto& mvals = public_mapping->GetOptionValues();
-    for (size_t i = 0; i < mkeys.size(); ++i) {
-      set_opt(mkeys[i], mvals[i]);
-    }
-  }
+  secret->redact_keys = {"password"};
 
-  std::string connstr;
-  for (const auto& [key, value] : merged) {
-    if (!connstr.empty()) {
-      connstr += ' ';
-    }
-    connstr += key;
-    connstr += '=';
-    connstr += QuoteConnstrValue(value);
-  }
+  auto& secret_manager = duckdb::SecretManager::Get(context);
+  // RegisterSecret needs an active transaction; these attach paths run on a
+  // fresh connection with none, so wrap it (begins + commits one).
+  context.RunFunctionInTransaction([&]() {
+    auto transaction =
+      duckdb::CatalogTransaction::GetSystemCatalogTransaction(context);
+    secret_manager.RegisterSecret(transaction, std::move(secret),
+                                  duckdb::OnCreateConflict::REPLACE_ON_CONFLICT,
+                                  duckdb::SecretPersistType::TEMPORARY);
+  });
 
   const std::string_view attach_name = alias.empty() ? server.GetName() : alias;
-  return "ATTACH " + QuoteLiteral(connstr) + " AS " +
-         QuoteSqlIdentifier(attach_name) + " (TYPE " + storage + ")";
+  return "ATTACH '' AS " + QuoteSqlIdentifier(attach_name) + " (TYPE " +
+         storage + ", SECRET " + std::string{secret_name} + ")";
+}
+
+void DropForeignServerSecret(duckdb::ClientContext& context,
+                             std::string_view secret_name) {
+  auto& secret_manager = duckdb::SecretManager::Get(context);
+  // Like RegisterSecret, dropping needs an active transaction; wrap it (the
+  // ATTACH query has already returned the connection to autocommit).
+  context.RunFunctionInTransaction([&]() {
+    auto transaction =
+      duckdb::CatalogTransaction::GetSystemCatalogTransaction(context);
+    secret_manager.DropSecretByName(
+      transaction, duckdb::Identifier{std::string{secret_name}},
+      duckdb::OnEntryNotFound::RETURN_NULL,
+      duckdb::SecretPersistType::TEMPORARY);
+  });
 }
 
 }  // namespace sdb::catalog

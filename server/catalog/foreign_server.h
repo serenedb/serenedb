@@ -32,6 +32,7 @@ namespace duckdb {
 
 class Serializer;
 class Deserializer;
+class ClientContext;
 
 }  // namespace duckdb
 namespace sdb::catalog {
@@ -65,18 +66,32 @@ class ForeignServer : public Object {
 
 class UserMapping;
 
-// Builds `ATTACH '<connstr>' AS "<name>" (TYPE <storage>)` for a foreign
-// server, mapping the FDW name to the connector storage type (clickhouse_fdw ->
-// clickhouse, postgres_fdw -> postgres) and the option keys to that dialect
-// (database <-> dbname). Returns "" if the FDW is not a supported connector.
-// If a `public_mapping` is supplied (a PUBLIC USER MAPPING for this server),
-// its options override the server's (e.g. user/password). Shared by create-time
-// attach and boot replay so both stay in sync. `alias` overrides the ATTACH
-// name (defaults to the server name); used to probe-attach to a throwaway name
-// when validating new credentials before detaching the live attachment.
-std::string BuildForeignServerAttachSql(
+// The deterministic transient-secret name serenedb registers for a foreign
+// server's ATTACH `alias` (sanitised to an identifier). Pass it to
+// PrepareForeignServerAttach and DropForeignServerSecret.
+std::string MakeForeignServerSecretName(std::string_view alias);
+
+// Registers a TEMPORARY DuckDB secret named `secret_name` carrying the server's
+// connection options merged with a PUBLIC user mapping's (its user/password
+// win), keys canonicalised to the connector's secret parameters, and returns the
+// `ATTACH '' AS "<alias>" (TYPE <storage>, SECRET <secret_name>)` statement that
+// consumes it. Option values are stored as duckdb Values (no connstr quoting),
+// so a password may contain spaces/quotes freely and never appears in SQL text.
+// Maps the FDW name to the connector storage type (clickhouse_fdw -> clickhouse,
+// postgres_fdw -> postgres); returns "" (registering nothing) for an unsupported
+// FDW. `alias` defaults to the server name; a throwaway alias probes new
+// credentials before detaching the live attachment. Shared by create-time attach
+// and boot replay. Drop the secret with DropForeignServerSecret once the ATTACH
+// has run -- the connector captures the resolved params at attach time.
+std::string PrepareForeignServerAttach(
+  duckdb::ClientContext& context, std::string_view secret_name,
   const ForeignServer& server, const UserMapping* public_mapping = nullptr,
   std::string_view alias = {});
+
+// Drops a transient secret registered by PrepareForeignServerAttach; a missing
+// secret is ignored (best-effort cleanup).
+void DropForeignServerSecret(duckdb::ClientContext& context,
+                             std::string_view secret_name);
 
 // Quote an SQL identifier with double quotes, doubling any embedded quote.
 std::string QuoteSqlIdentifier(std::string_view name);

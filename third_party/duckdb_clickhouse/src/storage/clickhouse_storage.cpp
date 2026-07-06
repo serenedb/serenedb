@@ -79,6 +79,17 @@ static void OverlaySecretParams(optional_ptr<SecretEntry> secret_entry, ClickHou
 		auto lvalue = StringUtil::Lower(secure_val.ToString());
 		params.secure = lvalue == "true" || lvalue == "1" || lvalue == "yes" || lvalue == "on";
 	}
+	Value compression_val = kv_secret.TryGetValue("compression");
+	if (!compression_val.IsNull()) {
+		auto lvalue = StringUtil::Lower(compression_val.ToString());
+		if (lvalue == "none") {
+			params.compression = clickhouse::CompressionMethod::None;
+		} else if (lvalue == "zstd") {
+			params.compression = clickhouse::CompressionMethod::ZSTD;
+		} else if (lvalue == "lz4") {
+			params.compression = clickhouse::CompressionMethod::LZ4;
+		}
+	}
 }
 
 // Quote a value so it round-trips through FromConnectionString even when it

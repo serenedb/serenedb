@@ -24,6 +24,8 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_replace.h>
 
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/main/connection.hpp>
 #include <memory>
 #include <string>
 #include <utility>
@@ -69,15 +71,18 @@ std::pair<std::vector<std::string>, std::vector<std::string>> SplitOptions(
 
 // Establish the live attachment for a server (validates connectivity too).
 void RunAttach(const catalog::ForeignServer& server) {
-  auto sql = catalog::BuildForeignServerAttachSql(server);
+  auto conn = DuckDBEngine::Instance().CreateConnection();
+  const auto secret = catalog::MakeForeignServerSecretName(server.GetName());
+  auto sql =
+    catalog::PrepareForeignServerAttach(*conn->context, secret, server);
   if (sql.empty()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("foreign-data wrapper \"", server.GetFdwName(),
                             "\" is not supported"),
                     ERR_HINT("Use clickhouse_fdw or postgres_fdw."));
   }
-  auto conn = DuckDBEngine::Instance().CreateConnection();
   auto result = conn->Query(sql);
+  catalog::DropForeignServerSecret(*conn->context, secret);
   if (result->HasError()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_CONNECTION_EXCEPTION),
@@ -112,21 +117,26 @@ std::string ResolveRole(ConnectionContext& conn_ctx, std::string_view user) {
 std::string ProbeAttach(const catalog::ForeignServer& server,
                         const catalog::UserMapping* pub) {
   const auto alias = absl::StrCat("__sdb_fdw_probe_", server.GetName());
-  auto sql = catalog::BuildForeignServerAttachSql(server, pub, alias);
+  auto conn = DuckDBEngine::Instance().CreateConnection();
+  const auto secret = catalog::MakeForeignServerSecretName(alias);
+  auto sql = catalog::PrepareForeignServerAttach(*conn->context, secret, server,
+                                                 pub, alias);
   if (sql.empty()) {
     return {};  // unsupported FDW is reported elsewhere; nothing to probe
   }
-  auto conn = DuckDBEngine::Instance().CreateConnection();
   // Clear any stale probe left by a crash between attach and detach.
   conn->Query(DetachSql(alias));
   auto result = conn->Query(sql);
+  std::string err;
   if (result->HasError()) {
     // Redact here so every caller that surfaces this string (error or log) is
     // covered -- the postgres connector echoes the full DSN, password included.
-    return catalog::RedactConnstrSecrets(result->GetError());
+    err = catalog::RedactConnstrSecrets(result->GetError());
+  } else {
+    conn->Query(DetachSql(alias));
   }
-  conn->Query(DetachSql(alias));
-  return {};
+  catalog::DropForeignServerSecret(*conn->context, secret);
+  return err;
 }
 
 // Re-establish a server's attachment with current credentials (server OPTIONS
@@ -142,10 +152,6 @@ void ReattachServer(ObjectId db_id, std::string_view server_name,
   }
   auto pub = snapshot->GetUserMapping(
     db_id, kSchema, catalog::MakeUserMappingName("public", server_name));
-  auto sql = catalog::BuildForeignServerAttachSql(*server, pub.get());
-  if (sql.empty()) {
-    return;
-  }
 
   auto conn = DuckDBEngine::Instance().CreateConnection();
   auto err = ProbeAttach(*server, pub.get());
@@ -166,9 +172,18 @@ void ReattachServer(ObjectId db_id, std::string_view server_name,
     return;
   }
 
-  // Credentials verified by the probe: swap the live attachment.
+  // Credentials verified by the probe: swap the live attachment under a
+  // freshly-registered secret.
+  const auto secret = catalog::MakeForeignServerSecretName(server_name);
+  auto sql =
+    catalog::PrepareForeignServerAttach(*conn->context, secret, *server,
+                                        pub.get());
+  if (sql.empty()) {
+    return;
+  }
   conn->Query(DetachSql(server_name));
   auto attach_result = conn->Query(sql);
+  catalog::DropForeignServerSecret(*conn->context, secret);
   if (attach_result->HasError()) {
     // The probe connected but the live re-ATTACH failed (e.g. a transient).
     // Surface it instead of silently leaving the server detached.

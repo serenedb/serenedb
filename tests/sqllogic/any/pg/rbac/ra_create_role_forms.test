@@ -1,0 +1,95 @@
+# CREATE ROLE syntax forms PG accepts beyond the bare attribute list: the WITH
+# noise keyword, ENCRYPTED PASSWORD (legacy synonym), REPLICATION / BYPASSRLS
+# attributes, and membership-at-creation (IN ROLE / ROLE / ADMIN). Byte-identical
+# on PostgreSQL and serenedb.
+#
+# Lore: vedernikoff is minted into the overseers, and mints two interns under him.
+
+statement ok
+DROP ROLE IF EXISTS crf_overseer;
+
+
+statement ok
+DROP ROLE IF EXISTS crf_intern1;
+
+
+statement ok
+DROP ROLE IF EXISTS crf_intern2;
+
+
+statement ok
+DROP ROLE IF EXISTS crf_admin;
+
+
+statement ok
+DROP ROLE IF EXISTS crf_vedernikoff;
+
+
+statement ok
+CREATE ROLE crf_overseer;
+
+
+statement ok
+CREATE ROLE crf_intern1;
+
+
+statement ok
+CREATE ROLE crf_intern2;
+
+
+statement ok
+CREATE ROLE crf_admin;
+
+
+# WITH keyword + REPLICATION/BYPASSRLS + ENCRYPTED PASSWORD, plus membership in
+# all three directions, in one statement.
+statement ok
+CREATE ROLE crf_vedernikoff WITH LOGIN REPLICATION BYPASSRLS ENCRYPTED PASSWORD 'mop'
+  IN ROLE crf_overseer ROLE crf_intern1, crf_intern2 ADMIN crf_admin;
+
+
+# Attributes landed.
+query
+SELECT rolcanlogin, rolreplication, rolbypassrls
+FROM pg_roles WHERE rolname = 'crf_vedernikoff';
+----
+rolcanlogin	rolreplication	rolbypassrls
+t	t	t
+
+
+# Membership-at-creation: vedernikoff is a member of overseer; intern1/intern2
+# and admin are members of vedernikoff (admin with the admin option).
+query
+SELECT r.rolname AS role, m.rolname AS member, am.admin_option
+FROM pg_auth_members am
+JOIN pg_roles r ON r.oid = am.roleid
+JOIN pg_roles m ON m.oid = am.member
+WHERE r.rolname = 'crf_vedernikoff' OR m.rolname = 'crf_vedernikoff'
+ORDER BY r.rolname, m.rolname;
+----
+role	member	admin_option
+crf_overseer	crf_vedernikoff	f
+crf_vedernikoff	crf_admin	t
+crf_vedernikoff	crf_intern1	f
+crf_vedernikoff	crf_intern2	f
+
+
+# Cleanup.
+statement ok
+DROP ROLE crf_vedernikoff;
+
+
+statement ok
+DROP ROLE crf_overseer;
+
+
+statement ok
+DROP ROLE crf_intern1;
+
+
+statement ok
+DROP ROLE crf_intern2;
+
+
+statement ok
+DROP ROLE crf_admin;

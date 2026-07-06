@@ -137,7 +137,7 @@ void DecodeExtractPath(const duckdb::ColumnIndex& column_index,
       const auto node_index = node->GetPrimaryIndex();
       const auto& children = duckdb::StructType::GetChildTypes(*cur_type);
       SDB_ASSERT(node_index < children.size(), "Invalid index node");
-      out.emplace_back(children[node_index].first);
+      out.emplace_back(children[node_index].first.GetIdentifierName());
       cur_type = &children[node_index].second;
     } else {
       out.emplace_back(node->GetFieldName());

@@ -1,0 +1,289 @@
+# GRANT accumulation across SOURCES: the effective privilege of a role is the
+# UNION of (a) grants made directly to it, (b) grants to PUBLIC, and (c) grants
+# inherited through role membership. Overlapping sources are idempotent against
+# each other -- holding a privilege from two sources is the same single t bit,
+# and dropping one source leaves the privilege intact if another source still
+# supplies it. All assertions go through the byte-identical has_table_privilege
+# oracle (and pg_has_role for membership edges).
+#
+# Objects prefixed idem_ under the vedernikoff/clickclack/mop lore; single
+# superuser session. Idempotent and self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS idem_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS idem_deadinside;
+
+
+statement ok
+DROP ROLE IF EXISTS idem_negaimorit;
+
+
+statement ok
+DROP ROLE IF EXISTS idem_pavel;
+
+
+statement ok
+DROP ROLE IF EXISTS idem_salam;
+
+
+statement ok
+CREATE TABLE idem_mop (id int, vedernikoff text);
+
+
+# ============================================================================
+# PUBLIC + direct accumulate. idem_deadinside gets SELECT from PUBLIC and
+# INSERT directly; the effective set is the union {SELECT, INSERT}.
+# ============================================================================
+
+statement ok
+CREATE ROLE idem_deadinside;
+
+
+statement ok
+GRANT SELECT ON idem_mop TO PUBLIC;
+
+
+statement ok
+GRANT INSERT ON idem_mop TO idem_deadinside;
+
+
+query
+SELECT has_table_privilege('idem_deadinside','idem_mop','SELECT') AS sel,
+       has_table_privilege('idem_deadinside','idem_mop','INSERT') AS ins,
+       has_table_privilege('idem_deadinside','idem_mop','UPDATE') AS upd;
+----
+sel	ins	upd
+t	t	f
+
+
+# ============================================================================
+# Overlapping sources are idempotent. Grant SELECT directly too -- the role
+# now holds SELECT from BOTH PUBLIC and a direct grant, yet it is still a
+# single t bit (not "doubled").
+# ============================================================================
+
+statement ok
+GRANT SELECT ON idem_mop TO idem_deadinside;
+
+
+query
+SELECT has_table_privilege('idem_deadinside','idem_mop','SELECT') AS sel,
+       has_table_privilege('idem_deadinside','idem_mop','INSERT') AS ins;
+----
+sel	ins
+t	t
+
+
+# Revoking SELECT from PUBLIC does NOT drop SELECT: the direct grant still
+# supplies it. The remaining source keeps the bit alive.
+statement ok
+REVOKE SELECT ON idem_mop FROM PUBLIC;
+
+
+query
+SELECT has_table_privilege('idem_deadinside','idem_mop','SELECT') AS sel,
+       has_table_privilege('idem_deadinside','idem_mop','INSERT') AS ins;
+----
+sel	ins
+t	t
+
+
+# Now revoke SELECT from the direct grant: the last remaining source is gone,
+# so SELECT finally drops. INSERT (only ever direct) is untouched.
+statement ok
+REVOKE SELECT ON idem_mop FROM idem_deadinside;
+
+
+query
+SELECT has_table_privilege('idem_deadinside','idem_mop','SELECT') AS sel,
+       has_table_privilege('idem_deadinside','idem_mop','INSERT') AS ins;
+----
+sel	ins
+f	t
+
+
+# Clean the leftover direct INSERT off so later sections start blank.
+statement ok
+REVOKE ALL ON idem_mop FROM idem_deadinside;
+
+
+# ============================================================================
+# Inherited + direct accumulate, and overlap between them is idempotent.
+# idem_pavel inherits {SELECT, UPDATE} through idem_negaimorit, and also holds
+# UPDATE directly. The overlap (UPDATE) is one bit; the union is {SELECT,
+# UPDATE} plus any direct-only bit.
+# ============================================================================
+
+statement ok
+CREATE ROLE idem_negaimorit;
+
+
+statement ok
+CREATE ROLE idem_pavel;
+
+
+statement ok
+GRANT SELECT, UPDATE ON idem_mop TO idem_negaimorit;
+
+
+# Member not yet in the group: holds nothing through inheritance.
+query
+SELECT has_table_privilege('idem_pavel','idem_mop','SELECT') AS sel,
+       has_table_privilege('idem_pavel','idem_mop','UPDATE') AS upd;
+----
+sel	upd
+f	f
+
+
+statement ok
+GRANT idem_negaimorit TO idem_pavel;
+
+
+# Membership confers the group's {SELECT, UPDATE}.
+query
+SELECT has_table_privilege('idem_pavel','idem_mop','SELECT') AS sel,
+       has_table_privilege('idem_pavel','idem_mop','UPDATE') AS upd,
+       has_table_privilege('idem_pavel','idem_mop','INSERT') AS ins;
+----
+sel	upd	ins
+t	t	f
+
+
+# Direct grant overlapping the inherited UPDATE plus a new INSERT: UPDATE stays
+# a single t bit (held from two sources now), INSERT is added.
+statement ok
+GRANT UPDATE, INSERT ON idem_mop TO idem_pavel;
+
+
+query
+SELECT has_table_privilege('idem_pavel','idem_mop','SELECT') AS sel,
+       has_table_privilege('idem_pavel','idem_mop','UPDATE') AS upd,
+       has_table_privilege('idem_pavel','idem_mop','INSERT') AS ins;
+----
+sel	upd	ins
+t	t	t
+
+
+# Revoke the membership: SELECT (inherited-only) drops; UPDATE survives via the
+# direct grant; INSERT (direct-only) survives. Proves sources are independent.
+statement ok
+REVOKE idem_negaimorit FROM idem_pavel;
+
+
+query
+SELECT has_table_privilege('idem_pavel','idem_mop','SELECT') AS sel,
+       has_table_privilege('idem_pavel','idem_mop','UPDATE') AS upd,
+       has_table_privilege('idem_pavel','idem_mop','INSERT') AS ins;
+----
+sel	upd	ins
+f	t	t
+
+
+# pg_has_role confirms the membership edge is gone.
+query
+SELECT pg_has_role('idem_pavel','idem_negaimorit','USAGE')  AS usage,
+       pg_has_role('idem_pavel','idem_negaimorit','MEMBER') AS member;
+----
+usage	member
+f	f
+
+
+# ============================================================================
+# All three sources at once. idem_salam gets DELETE from PUBLIC, SELECT direct,
+# and inherits INSERT through idem_negaimorit. Effective set is the full union.
+# ============================================================================
+
+statement ok
+CREATE ROLE idem_salam;
+
+
+statement ok
+GRANT DELETE ON idem_mop TO PUBLIC;
+
+
+statement ok
+GRANT SELECT ON idem_mop TO idem_salam;
+
+
+statement ok
+GRANT INSERT ON idem_mop TO idem_negaimorit;
+
+
+statement ok
+GRANT idem_negaimorit TO idem_salam;
+
+
+# idem_negaimorit now has {SELECT, UPDATE, INSERT}; via membership idem_salam
+# inherits all three. Plus DELETE from PUBLIC and SELECT directly -> the union
+# is {SELECT, INSERT, UPDATE, DELETE}.
+query
+SELECT has_table_privilege('idem_salam','idem_mop','SELECT')   AS sel,
+       has_table_privilege('idem_salam','idem_mop','INSERT')   AS ins,
+       has_table_privilege('idem_salam','idem_mop','UPDATE')   AS upd,
+       has_table_privilege('idem_salam','idem_mop','DELETE')   AS del,
+       has_table_privilege('idem_salam','idem_mop','TRUNCATE') AS trunc;
+----
+sel	ins	upd	del	trunc
+t	t	t	t	f
+
+
+# Revoke DELETE from PUBLIC: only DELETE drops (no other source supplied it).
+statement ok
+REVOKE DELETE ON idem_mop FROM PUBLIC;
+
+
+query
+SELECT has_table_privilege('idem_salam','idem_mop','SELECT') AS sel,
+       has_table_privilege('idem_salam','idem_mop','INSERT') AS ins,
+       has_table_privilege('idem_salam','idem_mop','UPDATE') AS upd,
+       has_table_privilege('idem_salam','idem_mop','DELETE') AS del;
+----
+sel	ins	upd	del
+t	t	t	f
+
+
+# Revoke SELECT from the direct grant: SELECT survives because it is STILL
+# inherited through idem_negaimorit. Accumulation keeps the bit alive.
+statement ok
+REVOKE SELECT ON idem_mop FROM idem_salam;
+
+
+query
+SELECT has_table_privilege('idem_salam','idem_mop','SELECT') AS sel,
+       has_table_privilege('idem_salam','idem_mop','INSERT') AS ins,
+       has_table_privilege('idem_salam','idem_mop','UPDATE') AS upd;
+----
+sel	ins	upd
+t	t	t
+
+
+# ============================================================================
+# Cleanup. Drop the table first so its grants vanish, then the roles. Roles are
+# dropped in member-before-group order so no membership edge blocks the drop.
+# ============================================================================
+
+statement ok
+REVOKE ALL ON idem_mop FROM PUBLIC;
+
+
+statement ok
+DROP TABLE idem_mop;
+
+
+statement ok
+DROP ROLE idem_salam;
+
+
+statement ok
+DROP ROLE idem_pavel;
+
+
+statement ok
+DROP ROLE idem_negaimorit;
+
+
+statement ok
+DROP ROLE idem_deadinside;

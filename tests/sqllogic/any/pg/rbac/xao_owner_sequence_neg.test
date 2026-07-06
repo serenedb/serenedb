@@ -1,0 +1,123 @@
+# Owner-driven ALTER SEQUENCE ... OWNER TO authorization matrix. The sequence is
+# created by the superuser and handed to a non-superuser owner; that owner (and
+# a non-owner) then attempt transfers. Every case is an error or a no-op, so the
+# result is byte-identical on PostgreSQL and serenedb. The error noun for a
+# sequence is "sequence".
+#
+# Lore: mop_seq is the sequence. clickclack is the owner; it can SET ROLE to the
+# iceberg group but not to mop; babsky is an unrelated non-owner.
+
+statement ok
+DROP SEQUENCE IF EXISTS xao_osn_mop_seq;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_osn_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_osn_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_osn_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_osn_babsky;
+
+
+statement ok
+CREATE ROLE xao_osn_clickclack LOGIN PASSWORD 'xao_osn_clickclack_pw';
+
+
+statement ok
+CREATE ROLE xao_osn_iceberg;
+
+
+statement ok
+CREATE ROLE xao_osn_mop;
+
+
+statement ok
+CREATE ROLE xao_osn_babsky LOGIN PASSWORD 'xao_osn_babsky_pw';
+
+
+statement ok
+GRANT xao_osn_iceberg TO xao_osn_clickclack;
+
+
+statement ok
+GRANT xao_osn_mop TO xao_osn_clickclack WITH SET FALSE, INHERIT TRUE;
+
+
+statement ok
+CREATE SEQUENCE xao_osn_mop_seq;
+
+
+statement ok
+ALTER SEQUENCE xao_osn_mop_seq OWNER TO xao_osn_clickclack;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='xao_osn_mop_seq';
+----
+owner
+xao_osn_clickclack
+
+
+# (a) non-owner cannot transfer
+connection cbabsky user=xao_osn_babsky password=xao_osn_babsky_pw
+statement error
+ALTER SEQUENCE xao_osn_mop_seq OWNER TO xao_osn_babsky;
+----
+db error: ERROR: must be owner of sequence xao_osn_mop_seq<slt:ignore>
+
+
+# (b) owner cannot transfer to a role it cannot SET ROLE to
+connection cclick user=xao_osn_clickclack password=xao_osn_clickclack_pw
+statement error
+ALTER SEQUENCE xao_osn_mop_seq OWNER TO xao_osn_mop;
+----
+db error: ERROR: must be able to SET ROLE "xao_osn_mop"<slt:ignore>
+
+
+# (c) owner cannot transfer to a nonexistent role
+connection cclick2 user=xao_osn_clickclack password=xao_osn_clickclack_pw
+statement error
+ALTER SEQUENCE xao_osn_mop_seq OWNER TO xao_osn_ghost;
+----
+db error: ERROR: role "xao_osn_ghost" does not exist<slt:ignore>
+
+
+# (d) owner -> CURRENT_USER no-op success
+connection cclick3 user=xao_osn_clickclack password=xao_osn_clickclack_pw
+statement ok
+ALTER SEQUENCE xao_osn_mop_seq OWNER TO CURRENT_USER;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='xao_osn_mop_seq';
+----
+owner
+xao_osn_clickclack
+
+
+statement ok
+DROP SEQUENCE xao_osn_mop_seq;
+
+
+statement ok
+DROP ROLE xao_osn_clickclack;
+
+
+statement ok
+DROP ROLE xao_osn_iceberg;
+
+
+statement ok
+DROP ROLE xao_osn_mop;
+
+
+statement ok
+DROP ROLE xao_osn_babsky;

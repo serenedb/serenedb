@@ -138,8 +138,8 @@ InvertedStoreIndex::InvertedStoreIndex(
   const duckdb::vector<duckdb::column_t>& column_ids,
   const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& exprs,
   duckdb::AttachedDatabase& db, ObjectId table_id, ObjectId index_id)
-  : BoundIndex(name, kTypeName, duckdb::IndexConstraintType::NONE, column_ids,
-               io, exprs, db),
+  : BoundIndex(duckdb::Identifier{name}, kTypeName,
+               duckdb::IndexConstraintType::NONE, column_ids, io, exprs, db),
     _table_id{table_id},
     _index_id{index_id} {}
 
@@ -321,7 +321,7 @@ duckdb::ErrorData InvertedStoreIndex::AppendImpl(duckdb::DataChunk& chunk,
     ReplayAppend(chunk, row_ids);
     return {};
   }
-  auto snapshot = conn->EnsureCatalogSnapshot();
+  auto snapshot = conn->CatalogSnapshot();
   auto table = snapshot->GetObject<catalog::Table>(_table_id);
   if (!table) {
     return {};
@@ -347,7 +347,7 @@ duckdb::ErrorData InvertedStoreIndex::AppendRows(
   if (!writer) {
     return {};
   }
-  auto snapshot = conn.EnsureCatalogSnapshot();
+  auto snapshot = conn.CatalogSnapshot();
   auto table = snapshot->GetObject<catalog::Table>(_table_id);
   if (!table) {
     return {};
@@ -480,10 +480,14 @@ void InvertedStoreIndex::CheckpointBarrier() const {
   // checkpoint is skipped/aborted and the WAL is retained -- a restart replays
   // the delta, an explicit REINDEX clears it. Resolved from the GLOBAL snapshot
   // (checkpoint runs with no connection).
-  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
-  if (!snapshot) {
-    return;
+  auto* catalog = catalog::TryGetCatalog();
+  if (!catalog) {
+    SDB_THROW(ERROR_INTERNAL, "inverted index ", _index_id.id(),
+              ": catalog is shut down, cannot verify index durability; "
+              "refusing to checkpoint (WAL retained for replay)");
   }
+  auto snapshot = catalog->GetCatalogSnapshot();
+  SDB_ASSERT(snapshot);
   // The index's storage is bound at CREATE INDEX before this point; a null
   // lookup means a checkpoint racing the CREATE INDEX that defines us, so both
   // the catalog existence gate and the storage handle non-asserting
@@ -538,7 +542,7 @@ void AttachInvertedStoreIndexCallbacks(duckdb::IndexType& type) {
     -> duckdb::unique_ptr<duckdb::IndexBuildGlobalState> {
     auto state = duckdb::make_uniq<InvertedStoreBuildGlobalState>();
     state->index = duckdb::make_uniq<InvertedStoreIndex>(
-      input.info.index_name,
+      input.info.GetIndexName().GetIdentifierName(),
       duckdb::TableIOManager::Get(input.table.GetStorage()), input.storage_ids,
       input.expressions, input.table.GetStorage().db,
       OptionId(input.info.options, InvertedStoreIndex::kTableIdOption),
@@ -563,7 +567,7 @@ void AttachInvertedStoreIndexCallbacks(duckdb::IndexType& type) {
   type.create_instance = [](duckdb::CreateIndexInput& input)
     -> duckdb::unique_ptr<duckdb::BoundIndex> {
     return duckdb::make_uniq<InvertedStoreIndex>(
-      input.name, input.table_io_manager, input.column_ids,
+      input.name.GetIdentifierName(), input.table_io_manager, input.column_ids,
       input.unbound_expressions, input.db,
       OptionId(input.storage_info.options, InvertedStoreIndex::kTableIdOption),
       OptionId(input.storage_info.options, InvertedStoreIndex::kIndexIdOption));

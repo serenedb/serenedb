@@ -1,0 +1,136 @@
+# Error surface of the role catalog: duplicate CREATE ROLE, DROP / membership of
+# a role that does not exist, and the missing-ok DROP ROLE IF EXISTS form. Every
+# error string here was dual-checked byte-identical on PostgreSQL 19beta1 and
+# serenedb (no trailing DETAIL line on either side for these cases).
+#
+# Idempotent: clean slate first, full cleanup at the end.
+
+statement ok
+DROP ROLE IF EXISTS ra_iceberg_dup;
+
+
+statement ok
+DROP ROLE IF EXISTS ra_iceberg_grp;
+
+
+statement ok
+DROP ROLE IF EXISTS ra_iceberg_mem;
+
+
+# ----------------------------------------------------------------------
+# Duplicate CREATE ROLE is rejected with the same message on both engines.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE ROLE ra_iceberg_dup NOLOGIN;
+
+
+statement error
+CREATE ROLE ra_iceberg_dup;
+----
+db error: ERROR: role "ra_iceberg_dup" already exists
+
+
+# A LOGIN/PASSWORD variant of the duplicate is rejected the same way -- the
+# clash is on the name, not the attributes.
+statement error
+CREATE ROLE ra_iceberg_dup LOGIN;
+----
+db error: ERROR: role "ra_iceberg_dup" already exists
+
+
+# CREATE USER collides with an existing role of the same name identically.
+statement error
+CREATE USER ra_iceberg_dup;
+----
+db error: ERROR: role "ra_iceberg_dup" already exists
+
+
+# ----------------------------------------------------------------------
+# DROP ROLE of a missing role errors; the IF EXISTS form suppresses it.
+# ----------------------------------------------------------------------
+
+statement error
+DROP ROLE ra_negaimorit_mop;
+----
+db error: ERROR: role "ra_negaimorit_mop" does not exist
+
+
+statement ok
+DROP ROLE IF EXISTS ra_negaimorit_mop;
+
+
+# ALTER ROLE PASSWORD on a missing role errors on both engines, but with
+# engine-specific text: PostgreSQL reaches the role lookup and reports the
+# missing name, while serenedb rejects PASSWORD before the lookup runs. Match
+# the shared error prefix so the same file passes against either engine.
+statement error
+ALTER ROLE ra_negaimorit_mop PASSWORD 'x';
+----
+db error: ERROR: <slt:ignore>
+
+
+# ----------------------------------------------------------------------
+# Membership grants referencing a non-existent role error on the missing name,
+# identically on both engines.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE ROLE ra_iceberg_grp;
+
+
+statement error
+GRANT ra_negaimorit_mop TO ra_iceberg_grp;
+----
+db error: ERROR: role "ra_negaimorit_mop" does not exist
+
+
+statement error
+GRANT ra_iceberg_grp TO ra_negaimorit_mop;
+----
+db error: ERROR: role "ra_negaimorit_mop" does not exist
+
+
+# REVOKE of a membership where the granted role does not exist errors likewise.
+statement error
+REVOKE ra_negaimorit_mop FROM ra_iceberg_grp;
+----
+db error: ERROR: role "ra_negaimorit_mop" does not exist
+
+
+# ----------------------------------------------------------------------
+# A successful DROP really removes the role: the catalog row is gone and a
+# second DROP errors with "does not exist".
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE ROLE ra_iceberg_mem NOLOGIN;
+
+
+statement ok
+DROP ROLE ra_iceberg_mem;
+
+
+query
+SELECT count(*) FROM pg_roles WHERE rolname = 'ra_iceberg_mem';
+----
+count
+0
+
+
+statement error
+DROP ROLE ra_iceberg_mem;
+----
+db error: ERROR: role "ra_iceberg_mem" does not exist
+
+
+# ----------------------------------------------------------------------
+# Cleanup.
+# ----------------------------------------------------------------------
+
+statement ok
+DROP ROLE ra_iceberg_dup;
+
+
+statement ok
+DROP ROLE ra_iceberg_grp;

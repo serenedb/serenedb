@@ -1,0 +1,177 @@
+# SET ROLE switches the session's EFFECTIVE role (current_user), and objects
+# created afterwards are owned by that effective role -- not the login role.
+# session_user stays the login role throughout. All of this is superuser-driven
+# on a single connection, so it is byte-identical on PostgreSQL and serenedb.
+#
+# Ownership is checked for a table, a sequence and a view: each lands on the
+# role in effect at CREATE time (sr_grp), which is exactly the creator-owns rule
+# applied to current_user. RESET ROLE / SET ROLE NONE restore the login role.
+#
+# Lore: overseer vedernikoff (the bootstrap superuser) drops into the mop group
+# and the objects he builds there belong to the group, not to him.
+
+statement ok
+DROP TABLE IF EXISTS sroi_tbl;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS sroi_seq;
+
+
+statement ok
+DROP VIEW IF EXISTS sroi_view;
+
+
+statement ok
+DROP ROLE IF EXISTS sroi_grp;
+
+
+statement ok
+DROP ROLE IF EXISTS sroi_other;
+
+
+statement ok
+CREATE ROLE sroi_grp;
+
+
+statement ok
+CREATE ROLE sroi_other;
+
+
+# The group needs CREATE on the schema to build objects while it is the
+# effective role.
+statement ok
+GRANT CREATE ON SCHEMA public TO sroi_grp;
+
+
+# Before any switch: current_user == session_user == the login superuser.
+query
+SELECT current_user = session_user AS same;
+----
+same
+t
+
+
+# Switch the effective role. current_user follows; session_user does not.
+statement ok
+SET ROLE sroi_grp;
+
+
+query
+SELECT current_user AS cu, session_user AS su;
+----
+cu	su
+sroi_grp	postgres
+
+
+# A table created now is owned by the effective role sroi_grp.
+statement ok
+CREATE TABLE sroi_tbl (x int);
+
+
+# A sequence created now is owned by sroi_grp too.
+statement ok
+CREATE SEQUENCE sroi_seq;
+
+
+# And a view.
+statement ok
+CREATE VIEW sroi_view AS SELECT 1 AS c;
+
+
+# RESET ROLE restores the login superuser.
+statement ok
+RESET ROLE;
+
+
+query
+SELECT current_user AS cu, session_user AS su;
+----
+cu	su
+postgres	postgres
+
+
+# All three objects are owned by sroi_grp -- the role in effect at CREATE, not
+# the login role postgres.
+query
+SELECT c.relname AS name,
+       (SELECT rolname FROM pg_authid WHERE oid = c.relowner) AS owner
+FROM pg_class c
+WHERE c.relname IN ('sroi_tbl', 'sroi_seq', 'sroi_view')
+ORDER BY c.relname;
+----
+name	owner
+sroi_seq	sroi_grp
+sroi_tbl	sroi_grp
+sroi_view	sroi_grp
+
+
+# SET ROLE NONE is equivalent to RESET ROLE: back to the login role.
+statement ok
+SET ROLE sroi_grp;
+
+
+statement ok
+SET ROLE NONE;
+
+
+query
+SELECT current_user;
+----
+current_user
+postgres
+
+
+# Nested chaining: a superuser can switch effective role repeatedly; each SET
+# ROLE replaces current_user, session_user is unchanged.
+statement ok
+SET ROLE sroi_grp;
+
+
+statement ok
+SET ROLE sroi_other;
+
+
+query
+SELECT current_user AS cu, session_user AS su;
+----
+cu	su
+sroi_other	postgres
+
+
+statement ok
+RESET ROLE;
+
+
+# SET ROLE to a non-existent role fails.
+statement error
+SET ROLE sroi_no_such;
+----
+db error: ERROR: role "sroi_no_such" does not exist<slt:ignore>
+
+
+# ---- cleanup (login superuser owns nothing here; sroi_grp owns the objects,
+# so drop them, revoke the schema grant, then the roles) ----
+
+statement ok
+DROP VIEW sroi_view;
+
+
+statement ok
+DROP SEQUENCE sroi_seq;
+
+
+statement ok
+DROP TABLE sroi_tbl;
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM sroi_grp;
+
+
+statement ok
+DROP ROLE sroi_grp;
+
+
+statement ok
+DROP ROLE sroi_other;

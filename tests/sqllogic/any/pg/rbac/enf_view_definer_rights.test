@@ -1,0 +1,101 @@
+# VIEW definer/owner-rights SELECT semantics.
+#
+# In PostgreSQL a non-materialized view runs with the VIEW OWNER's privileges:
+# a role granted SELECT on the view -- and NOTHING on the view's base table --
+# can read through the view, because the base-table access is checked against
+# the view owner, not the caller (rangeTableEntry->checkAsUser / definer
+# rights). Verified on PostgreSQL 17/19. SereneDB matches this (definer is the
+# default; WITH (security_invoker=true) switches to caller rights).
+#
+# The companion any/pg/rbac/cp_view_column_reads.test asserts only the
+# byte-identical directions (a view grant does not leak the base table); this
+# file asserts the one direction that diverges and must converge.
+#
+# Lore: vedernikoff is granted only the clickclack VIEW; iceberg is the base
+# table he was never granted, and secret the column the view never exposes.
+
+statement ok
+DROP VIEW IF EXISTS vdr_clickclack;
+
+
+statement ok
+DROP TABLE IF EXISTS vdr_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS vdr_vedernikoff;
+
+
+statement ok
+CREATE TABLE vdr_iceberg (id int, av int, secret int);
+
+
+statement ok
+INSERT INTO vdr_iceberg VALUES (1, 10, 100), (2, 20, 200);
+
+
+# Owner-defined view exposing only (id, av) of the base table.
+statement ok
+CREATE VIEW vdr_clickclack AS SELECT id, av FROM vdr_iceberg;
+
+
+statement ok
+CREATE ROLE vdr_vedernikoff LOGIN PASSWORD 'vdr_vedernikoff_pw';
+
+
+# Grant SELECT on the VIEW only -- vedernikoff gets nothing on vdr_iceberg.
+statement ok
+GRANT SELECT ON vdr_clickclack TO vdr_vedernikoff;
+
+
+# Oracle: vedernikoff holds NO privilege on the base table vdr_iceberg. (The
+# view privilege is asserted by the GRANT above succeeding; has_table_privilege
+# is intentionally NOT probed on the view name here -- PG resolves view names
+# but SereneDB's oracle rejects them with "relation does not exist", so probing
+# it would itself diverge and is out of scope for this B1 target.)
+query
+SELECT has_table_privilege('vdr_vedernikoff', 'vdr_iceberg', 'SELECT') AS base_sel;
+----
+base_sel
+f
+
+
+# Read through the view -> ALLOWED under definer rights (the base is checked
+# against the view owner, who owns vdr_iceberg).
+connection c_ved user=vdr_vedernikoff password=vdr_vedernikoff_pw
+query
+SELECT id, av FROM vdr_clickclack ORDER BY id;
+----
+id	av
+1	10
+2	20
+
+
+# Aggregate through the view is likewise allowed under definer rights.
+connection c_ved2 user=vdr_vedernikoff password=vdr_vedernikoff_pw
+query
+SELECT count(*) AS n FROM vdr_clickclack;
+----
+n
+2
+
+
+# === Control (byte-identical on PG and SereneDB): the view grant does NOT leak
+# the base table -- reading vdr_iceberg directly is still refused. ===
+connection c_ved3 user=vdr_vedernikoff password=vdr_vedernikoff_pw
+statement error
+SELECT id FROM vdr_iceberg;
+----
+db error: ERROR: permission denied for table vdr_iceberg<slt:ignore>
+
+
+statement ok
+DROP VIEW vdr_clickclack;
+
+
+statement ok
+DROP TABLE vdr_iceberg;
+
+
+statement ok
+DROP ROLE vdr_vedernikoff;

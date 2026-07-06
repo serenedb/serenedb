@@ -1,0 +1,220 @@
+# Single-table privilege matrix, enforcement half: prove the has_table_privilege
+# oracle matches the REAL query path. A second connection authenticates as a
+# non-superuser role; with the privilege granted, the DML is `statement ok`,
+# and without it the denial fires.
+#
+# Deny blocks use a TRAILING <slt:ignore> on the message line because serenedb
+# appends a `DETAIL: role "..." lacks the ... privilege` line that PG does not;
+# the marker swallows that tail so the same block is green on both engines.
+#
+# Objects are prefixed pm_ (clickclack/vedernikoff lore); file is idempotent
+# and self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS pm_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS pm_negaimorit;
+
+
+statement ok
+CREATE TABLE pm_kostya (id int, mop text);
+
+
+statement ok
+INSERT INTO pm_kostya VALUES (1, 'iceberg'), (2, 'vedernikoff');
+
+
+statement ok
+CREATE ROLE pm_negaimorit LOGIN PASSWORD 'pm_negaimorit_pw';
+
+
+# ---- Baseline: oracle says no privileges for a fresh role ----
+
+query
+SELECT has_table_privilege('pm_negaimorit','pm_kostya','SELECT') AS sel,
+       has_table_privilege('pm_negaimorit','pm_kostya','INSERT') AS ins;
+----
+sel	ins
+f	f
+
+
+# ---- And the real query path agrees: both SELECT and INSERT are denied ----
+
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
+statement error
+SELECT * FROM pm_kostya;
+----
+db error: ERROR: permission denied for table pm_kostya<slt:ignore>
+
+
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
+statement error
+INSERT INTO pm_kostya VALUES (3, 'pudge');
+----
+db error: ERROR: permission denied for table pm_kostya<slt:ignore>
+
+
+# ---- Grant SELECT: oracle flips, real read works, write still denied ----
+
+statement ok
+GRANT SELECT ON pm_kostya TO pm_negaimorit;
+
+
+query
+SELECT has_table_privilege('pm_negaimorit','pm_kostya','SELECT') AS sel,
+       has_table_privilege('pm_negaimorit','pm_kostya','INSERT') AS ins;
+----
+sel	ins
+t	f
+
+
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
+query
+SELECT id, mop FROM pm_kostya ORDER BY id;
+----
+id	mop
+1	iceberg
+2	vedernikoff
+
+
+# INSERT is still refused -- the SELECT grant does not leak into write access.
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
+statement error
+INSERT INTO pm_kostya VALUES (3, 'babsky');
+----
+db error: ERROR: permission denied for table pm_kostya<slt:ignore>
+
+
+# ---- Grant INSERT too: oracle shows both, the real insert now succeeds ----
+
+statement ok
+GRANT INSERT ON pm_kostya TO pm_negaimorit;
+
+
+query
+SELECT has_table_privilege('pm_negaimorit','pm_kostya','SELECT') AS sel,
+       has_table_privilege('pm_negaimorit','pm_kostya','INSERT') AS ins;
+----
+sel	ins
+t	t
+
+
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
+statement ok
+INSERT INTO pm_kostya VALUES (3, 'clickclack');
+
+
+# The row pm_negaimorit just inserted is visible to pm_negaimorit's own SELECT.
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
+query
+SELECT count(*) AS n FROM pm_kostya;
+----
+n
+3
+
+
+# ---- Revoke SELECT only: oracle drops SELECT but keeps INSERT; reads now
+#      refused again while inserts still go through ----
+
+statement ok
+REVOKE SELECT ON pm_kostya FROM pm_negaimorit;
+
+
+query
+SELECT has_table_privilege('pm_negaimorit','pm_kostya','SELECT') AS sel,
+       has_table_privilege('pm_negaimorit','pm_kostya','INSERT') AS ins;
+----
+sel	ins
+f	t
+
+
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
+statement error
+SELECT * FROM pm_kostya;
+----
+db error: ERROR: permission denied for table pm_kostya<slt:ignore>
+
+
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
+statement ok
+INSERT INTO pm_kostya VALUES (4, 'myasnig');
+
+
+# ---- GRANT ALL: every privilege held, both real read and write succeed ----
+
+statement ok
+GRANT ALL ON pm_kostya TO pm_negaimorit;
+
+
+query
+SELECT has_table_privilege('pm_negaimorit','pm_kostya','SELECT')   AS sel,
+       has_table_privilege('pm_negaimorit','pm_kostya','INSERT')   AS ins,
+       has_table_privilege('pm_negaimorit','pm_kostya','UPDATE')   AS upd,
+       has_table_privilege('pm_negaimorit','pm_kostya','DELETE')   AS del;
+----
+sel	ins	upd	del
+t	t	t	t
+
+
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
+query
+SELECT count(*) AS n FROM pm_kostya;
+----
+n
+4
+
+
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
+statement ok
+DELETE FROM pm_kostya WHERE id = 4;
+
+
+# ---- REVOKE ALL: oracle all-f, and the real read/write are denied again ----
+
+statement ok
+REVOKE ALL ON pm_kostya FROM pm_negaimorit;
+
+
+query
+SELECT has_table_privilege('pm_negaimorit','pm_kostya','SELECT')   AS sel,
+       has_table_privilege('pm_negaimorit','pm_kostya','INSERT')   AS ins,
+       has_table_privilege('pm_negaimorit','pm_kostya','UPDATE')   AS upd,
+       has_table_privilege('pm_negaimorit','pm_kostya','DELETE')   AS del;
+----
+sel	ins	upd	del
+f	f	f	f
+
+
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
+statement error
+SELECT * FROM pm_kostya;
+----
+db error: ERROR: permission denied for table pm_kostya<slt:ignore>
+
+
+connection c_negaimorit user=pm_negaimorit password=pm_negaimorit_pw
+statement error
+INSERT INTO pm_kostya VALUES (5, 'zhidky');
+----
+db error: ERROR: permission denied for table pm_kostya<slt:ignore>
+
+
+# ---- The superuser owner is never denied (positive control) ----
+
+query
+SELECT count(*) AS n FROM pm_kostya;
+----
+n
+3
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP TABLE pm_kostya;
+
+
+statement ok
+DROP ROLE pm_negaimorit;

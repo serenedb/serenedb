@@ -20,8 +20,6 @@
 
 #include "catalog/search_analyzer_impl.h"
 
-#include <absl/container/flat_hash_set.h>
-
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
@@ -32,6 +30,7 @@
 #include <iresearch/analysis/wildcard_analyzer.hpp>
 #include <iresearch/index/norm.hpp>
 
+#include "basics/containers/flat_hash_set.h"
 #include "basics/serializer.h"
 #include "catalog/object.h"
 
@@ -104,7 +103,7 @@ Result Features::Validate(std::string_view type) const {
 }
 
 bool IsGeoAnalyzer(std::string_view type) noexcept {
-  static const absl::flat_hash_set<std::string_view> kGeoAnalyzers = {
+  static const containers::FlatHashSet<std::string_view> kGeoAnalyzers = {
     irs::analysis::GeoJsonAnalyzer::type_name(),
     irs::analysis::GeoPointAnalyzer::type_name(),
   };

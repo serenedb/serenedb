@@ -1,0 +1,180 @@
+# DROP ROLE and a role that owns / is granted a FUNCTION (or PROCEDURE, and
+# overloaded variants).
+#
+# In PostgreSQL a role that owns a function -- or holds an EXECUTE grant on one,
+# or is the grantor of one -- is a dependency: DROP ROLE is refused with
+# 2BP01 ("cannot be dropped because some objects depend on it", DETAIL "owner of
+# function ..." / "privileges for function ..."). The drop becomes possible once
+# the dependency is removed (DROP FUNCTION, ALTER FUNCTION OWNER TO, or REVOKE).
+#
+# This file lives in any/ (must pass on BOTH PostgreSQL and SereneDB), so it only
+# asserts behaviour that is identical on both engines: the function lifecycle
+# (create / overload / drop by signature / RESTRICT / CASCADE), CREATE/DROP
+# PROCEDURE, and the DROP ROLE *success* paths once no dependency remains.
+#
+# DIVERGENCE (NOT asserted here -- would fail on SereneDB): SereneDB's DROP ROLE
+# dependency graph tracks TABLE ownership and grants (see
+# dr_drop_role_dependency.test) but does NOT yet track FUNCTION ownership or
+# function EXECUTE grants. Verified against PG 19 + a live serened: where PG
+# refuses DROP ROLE with "owner of function dofn_count(integer)" /
+# "privileges for function dofn_count(integer)", SereneDB silently drops the role
+# and leaves the function's proowner pointing at the now-deleted role (an
+# un-revokable ghost owner). Those PG-only refusals are documented inline below
+# but cannot be asserted in an any/ test until SereneDB wires function
+# dependencies into the role-dependency graph.
+#
+# Also unsupported by SereneDB and therefore skipped: ALTER FUNCTION ... OWNER TO,
+# REASSIGN OWNED BY, DROP OWNED BY (all parse-error in serened).
+
+
+statement ok
+DROP FUNCTION IF EXISTS dofn_count(int);
+
+
+statement ok
+DROP FUNCTION IF EXISTS dofn_count(text);
+
+
+statement ok
+DROP PROCEDURE IF EXISTS dofn_iceberg(int);
+
+
+statement ok
+DROP ROLE IF EXISTS dofn_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS dofn_clickclack;
+
+
+statement ok
+CREATE ROLE dofn_vedernikoff;
+
+
+statement ok
+CREATE ROLE dofn_clickclack;
+
+
+# A role with no function (or any other) dependency drops cleanly on both engines.
+statement ok
+DROP ROLE dofn_clickclack;
+
+
+statement ok
+CREATE ROLE dofn_clickclack;
+
+
+# --- Function lifecycle: create, overload, drop by signature -----------------
+
+statement ok
+CREATE FUNCTION dofn_count(int) RETURNS int LANGUAGE sql AS 'SELECT $1 + 1';
+
+
+# Same name, different argument type -> a distinct overloaded function.
+statement ok
+CREATE FUNCTION dofn_count(text) RETURNS int LANGUAGE sql AS 'SELECT length($1)::int';
+
+
+# Each overload is dropped independently by its full signature.
+statement ok
+DROP FUNCTION dofn_count(int);
+
+
+# DROP FUNCTION ... RESTRICT is the default: no dependents -> succeeds.
+statement ok
+DROP FUNCTION dofn_count(text) RESTRICT;
+
+
+# Re-create and drop with explicit CASCADE (no dependents -> same as RESTRICT).
+statement ok
+CREATE FUNCTION dofn_count(int) RETURNS int LANGUAGE sql AS 'SELECT $1 + 1';
+
+
+statement ok
+DROP FUNCTION dofn_count(int) CASCADE;
+
+
+# --- A PROCEDURE behaves the same way for DROP-by-signature ------------------
+
+statement ok
+CREATE PROCEDURE dofn_iceberg(int) LANGUAGE sql AS 'SELECT $1';
+
+
+statement ok
+DROP PROCEDURE dofn_iceberg(int);
+
+
+# --- Ownership dependency: PG refuses, then drop the function -> drop ok ------
+#
+# PG (NOT asserted -- SereneDB does not track function ownership):
+#   In PostgreSQL, a function owned by dofn_vedernikoff makes the role
+#   un-droppable:
+#     DROP ROLE dofn_vedernikoff;
+#     -> ERROR: role "dofn_vedernikoff" cannot be dropped because some objects
+#        depend on it / DETAIL: owner of function dofn_count(integer)
+#   In SereneDB the same DROP ROLE succeeds (divergence). We therefore set up an
+#   owned function and verify the engine-agnostic remedy path: once the function
+#   is dropped, DROP ROLE succeeds on both engines.
+
+statement ok
+CREATE FUNCTION dofn_count(int) RETURNS int LANGUAGE sql AS 'SELECT $1 + 1';
+
+
+# Remove the function -> in PG the ownership dependency is gone; in SereneDB it
+# was never tracked. Either way the role is now freely droppable.
+statement ok
+DROP FUNCTION dofn_count(int);
+
+
+statement ok
+DROP ROLE dofn_vedernikoff;
+
+
+# --- EXECUTE-grant dependency: PG refuses, then REVOKE -> drop ok ------------
+#
+# PG (NOT asserted -- SereneDB does not track function EXECUTE grants):
+#   GRANT EXECUTE ON FUNCTION dofn_count(int) TO dofn_clickclack;
+#   DROP ROLE dofn_clickclack;
+#   -> ERROR: role "dofn_clickclack" cannot be dropped because some objects
+#      depend on it / DETAIL: privileges for function dofn_count(integer)
+#   In SereneDB the grant lands in pg_proc.proacl (dofn_clickclack=X/postgres)
+#   but DROP ROLE still succeeds (divergence). We assert the engine-agnostic
+#   GRANT/REVOKE mechanics and the post-REVOKE drop.
+
+statement ok
+CREATE FUNCTION dofn_count(int) RETURNS int LANGUAGE sql AS 'SELECT $1 + 1';
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION dofn_count(int) TO dofn_clickclack;
+
+
+# Revoke the grant -> the dependency (in PG) is gone; the role drops on both.
+statement ok
+REVOKE EXECUTE ON FUNCTION dofn_count(int) FROM dofn_clickclack;
+
+
+statement ok
+DROP ROLE dofn_clickclack;
+
+
+# --- Cleanup -----------------------------------------------------------------
+
+statement ok
+DROP FUNCTION IF EXISTS dofn_count(int);
+
+
+statement ok
+DROP FUNCTION IF EXISTS dofn_count(text);
+
+
+statement ok
+DROP PROCEDURE IF EXISTS dofn_iceberg(int);
+
+
+statement ok
+DROP ROLE IF EXISTS dofn_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS dofn_clickclack;

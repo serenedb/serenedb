@@ -71,10 +71,6 @@ class Transaction : public Config {
 
   Result Rollback();
 
-  void UpdateNumRows(ObjectId table_id, int64_t delta) noexcept {
-    _table_rows_deltas[table_id] += delta;
-  }
-
   // True once any statement that reads or writes the current database ran
   // inside the active explicit transaction; gates late SET TRANSACTION
   // ISOLATION LEVEL changes.
@@ -133,7 +129,7 @@ class Transaction : public Config {
   template<typename Visit, typename Filter = std::nullptr_t>
   void EnsureIndexesTransactions(ObjectId table_id, Visit&& visit,
                                  Filter&& filter = nullptr) {
-    auto snapshot = EnsureCatalogSnapshot();
+    auto snapshot = CatalogSnapshot();
     SDB_ASSERT(snapshot->GetObject(table_id)->GetType() ==
                catalog::ObjectType::Table);
 
@@ -187,8 +183,6 @@ class Transaction : public Config {
   containers::FlatHashMap<ObjectId, SearchTransaction> _search_transactions;
   containers::FlatHashMap<ObjectId, search::InvertedIndexSnapshotPtr>
     _search_snapshots;
-  containers::FlatHashMap<ObjectId, int64_t> _table_rows_deltas;
-  void ApplyTableStatsDiffs() noexcept;
   // All search-table (TableEngine::Search) state + WAL commit logic. Engaged
   // lazily via SearchTxn(); reset in Destroy. The inverted-index trxs above
   // stay here -- they commit on the store-table tick, not the engine WAL tick.

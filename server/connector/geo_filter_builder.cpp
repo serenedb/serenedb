@@ -55,16 +55,13 @@ const duckdb::Expression& PeelSameTypeIdCast(const duckdb::Expression& expr) {
     return expr;
   }
   const auto& cast = expr.Cast<duckdb::BoundCastExpression>();
-  if (!cast.child) {
-    return expr;
-  }
-  if (cast.GetReturnType().id() != cast.child->GetReturnType().id()) {
+  if (cast.GetReturnType().id() != cast.Child().GetReturnType().id()) {
     return expr;
   }
   if (cast.GetReturnType().IsNested()) {
     return expr;
   }
-  return *cast.child;
+  return cast.Child();
 }
 
 // Populate the iresearch geo filter base options from the column's geo
@@ -161,7 +158,7 @@ ResultOr<std::pair<irs::GeoDistanceFilter*, double>> PrepareGeoDistanceFilter(
   irs::BooleanFilter& parent, const FilterContext& ctx,
   const duckdb::BoundFunctionExpression& geo_call,
   const duckdb::Expression& dist_expr) {
-  SDB_ASSERT(geo_call.children.size() == 2);
+  SDB_ASSERT(geo_call.GetChildren().size() == 2);
 
   // Distance is commutative on its first two arguments, so accept either
   // `field <-> centroid` / `ST_Distance_Centroid(field, centroid)` or the
@@ -169,10 +166,10 @@ ResultOr<std::pair<irs::GeoDistanceFilter*, double>> PrepareGeoDistanceFilter(
   // field)`. Same column-on-either-side pattern as ST_Intersects below.
   size_t centroid_idx = 1;
   const auto* column_info =
-    FindColumnInfoForExpr(ctx, PeelSameTypeIdCast(*geo_call.children[0]));
+    FindColumnInfoForExpr(ctx, PeelSameTypeIdCast(*geo_call.GetChildren()[0]));
   if (!column_info) {
-    column_info =
-      FindColumnInfoForExpr(ctx, PeelSameTypeIdCast(*geo_call.children[1]));
+    column_info = FindColumnInfoForExpr(
+      ctx, PeelSameTypeIdCast(*geo_call.GetChildren()[1]));
     if (!column_info) {
       return std::unexpected<Result>{
         std::in_place, ERROR_BAD_PARAMETER,
@@ -182,7 +179,7 @@ ResultOr<std::pair<irs::GeoDistanceFilter*, double>> PrepareGeoDistanceFilter(
   }
 
   const auto* centroid_val =
-    TryGetConstant(PeelSameTypeIdCast(*geo_call.children[centroid_idx]));
+    TryGetConstant(PeelSameTypeIdCast(*geo_call.GetChildren()[centroid_idx]));
   if (!centroid_val) {
     return std::unexpected<Result>{
       std::in_place, ERROR_BAD_PARAMETER,
@@ -243,34 +240,34 @@ ResultOr<std::pair<irs::GeoDistanceFilter*, double>> PrepareGeoDistanceFilter(
 
 Result FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
                       const duckdb::BoundFunctionExpression& func) {
-  const auto num_inputs = func.children.size();
+  const auto num_inputs = func.GetChildren().size();
   if (num_inputs < 4 || num_inputs > 6) {
     return {ERROR_BAD_PARAMETER, "ST_Distance_Between has ", num_inputs,
             " inputs but 4 to 6 expected"};
   }
 
   const auto* column_info =
-    FindColumnInfoForExpr(ctx, PeelSameTypeIdCast(*func.children[0]));
+    FindColumnInfoForExpr(ctx, PeelSameTypeIdCast(*func.GetChildren()[0]));
   if (!column_info) {
     return {ERROR_BAD_PARAMETER,
             "ST_Distance_Between first input must be an indexed column"};
   }
 
   const auto* centroid_val =
-    TryGetConstant(PeelSameTypeIdCast(*func.children[1]));
+    TryGetConstant(PeelSameTypeIdCast(*func.GetChildren()[1]));
   if (!centroid_val) {
     return {ERROR_BAD_PARAMETER,
             "ST_Distance_Between centroid must be a constant"};
   }
 
-  const auto* min_val = TryGetConstant(*func.children[2]);
+  const auto* min_val = TryGetConstant(*func.GetChildren()[2]);
   if (!min_val || min_val->type().id() != duckdb::LogicalTypeId::DOUBLE) {
     return {ERROR_BAD_PARAMETER,
             "ST_Distance_Between min_distance must be a constant DOUBLE"};
   }
   const double min_distance = min_val->GetValue<double>();
 
-  const auto* max_val = TryGetConstant(*func.children[3]);
+  const auto* max_val = TryGetConstant(*func.GetChildren()[3]);
   if (!max_val || max_val->type().id() != duckdb::LogicalTypeId::DOUBLE) {
     return {ERROR_BAD_PARAMETER,
             "ST_Distance_Between max_distance must be a constant DOUBLE"};
@@ -279,7 +276,7 @@ Result FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
 
   bool include_min = true;
   if (num_inputs >= 5) {
-    const auto* v = TryGetConstant(*func.children[4]);
+    const auto* v = TryGetConstant(*func.GetChildren()[4]);
     if (!v || v->type().id() != duckdb::LogicalTypeId::BOOLEAN) {
       return {ERROR_BAD_PARAMETER,
               "ST_Distance_Between include_min must be a constant BOOLEAN"};
@@ -288,7 +285,7 @@ Result FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
   }
   bool include_max = true;
   if (num_inputs >= 6) {
-    const auto* v = TryGetConstant(*func.children[5]);
+    const auto* v = TryGetConstant(*func.GetChildren()[5]);
     if (!v || v->type().id() != duckdb::LogicalTypeId::BOOLEAN) {
       return {ERROR_BAD_PARAMETER,
               "ST_Distance_Between include_max must be a constant BOOLEAN"};
@@ -347,21 +344,22 @@ Result FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
 
 Result FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
                      const duckdb::BoundFunctionExpression& func) {
-  if (func.children.size() != 2) {
-    return {ERROR_BAD_PARAMETER, func.function.GetName(), " has ",
-            func.children.size(), " inputs but 2 expected"};
+  if (func.GetChildren().size() != 2) {
+    return {ERROR_BAD_PARAMETER, func.Function().GetName().GetIdentifierName(),
+            " has ", func.GetChildren().size(), " inputs but 2 expected"};
   }
 
   // Either argument can be the column reference; the other must be constant.
   size_t field_idx = 0;
   size_t shape_idx = 1;
   const auto* column_info =
-    FindColumnInfoForExpr(ctx, PeelSameTypeIdCast(*func.children[0]));
+    FindColumnInfoForExpr(ctx, PeelSameTypeIdCast(*func.GetChildren()[0]));
   if (!column_info) {
     column_info =
-      FindColumnInfoForExpr(ctx, PeelSameTypeIdCast(*func.children[1]));
+      FindColumnInfoForExpr(ctx, PeelSameTypeIdCast(*func.GetChildren()[1]));
     if (!column_info) {
-      return {ERROR_BAD_PARAMETER, func.function.GetName(),
+      return {ERROR_BAD_PARAMETER,
+              func.Function().GetName().GetIdentifierName(),
               ": one argument must be an indexed column reference"};
     }
     field_idx = 1;
@@ -369,19 +367,19 @@ Result FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
   }
 
   const auto* shape_val =
-    TryGetConstant(PeelSameTypeIdCast(*func.children[shape_idx]));
+    TryGetConstant(PeelSameTypeIdCast(*func.GetChildren()[shape_idx]));
   if (!shape_val) {
-    return {ERROR_BAD_PARAMETER, func.function.GetName(),
+    return {ERROR_BAD_PARAMETER, func.Function().GetName().GetIdentifierName(),
             ": shape argument must be a constant"};
   }
 
   if (column_info->logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
       column_info->logical_type.id() != duckdb::LogicalTypeId::GEOMETRY) {
-    return {ERROR_BAD_PARAMETER, func.function.GetName(),
+    return {ERROR_BAD_PARAMETER, func.Function().GetName().GetIdentifierName(),
             ": field must be JSON (GeoJSON) or GEOMETRY"};
   }
   if (!column_info->tokenizer.analyzer) {
-    return {ERROR_BAD_PARAMETER, func.function.GetName(),
+    return {ERROR_BAD_PARAMETER, func.Function().GetName().GetIdentifierName(),
             ": field has no analyzer attached"};
   }
 
@@ -401,10 +399,10 @@ Result FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
   }
   options->shape = std::move(shape);
 
-  if (func.function.GetName() == kGeoIntersects) {
+  if (func.Function().GetName().GetIdentifierName() == kGeoIntersects) {
     options->type = irs::GeoFilterType::Intersects;
   } else {
-    SDB_ASSERT(func.function.GetName() == kGeoContains);
+    SDB_ASSERT(func.Function().GetName().GetIdentifierName() == kGeoContains);
     // ST_Contains(field, shape): indexed contains shape -> filter type
     //   IsContained ("the filter shape is contained within indexed data").
     // ST_Contains(shape, field): shape contains indexed -> filter type
@@ -440,13 +438,13 @@ const duckdb::BoundFunctionExpression* TryGetGeoDistanceCall(
     return nullptr;
   }
   const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
-  if (func.children.size() != 2) {
+  if (func.GetChildren().size() != 2) {
     return nullptr;
   }
-  if (func.function.GetName() == kGeoDistance) {
+  if (func.Function().GetName().GetIdentifierName() == kGeoDistance) {
     return &func;
   }
-  if (func.function.GetName() == kL2DistanceOp) {
+  if (func.Function().GetName().GetIdentifierName() == kL2DistanceOp) {
     auto is_geo_col = [&ctx](const duckdb::Expression& child) {
       const auto* info = FindColumnInfoForExpr(ctx, PeelSameTypeIdCast(child));
       if (!info) {
@@ -455,7 +453,8 @@ const duckdb::BoundFunctionExpression* TryGetGeoDistanceCall(
       return info->logical_type.IsJSONType() ||
              info->logical_type.id() == duckdb::LogicalTypeId::GEOMETRY;
     };
-    if (is_geo_col(*func.children[0]) || is_geo_col(*func.children[1])) {
+    if (is_geo_col(*func.GetChildren()[0]) ||
+        is_geo_col(*func.GetChildren()[1])) {
       return &func;
     }
   }
@@ -516,7 +515,7 @@ Result FromGeoDistanceBinaryEq(irs::BooleanFilter& filter,
 std::optional<Result> TryDispatchGeoFunction(
   irs::BooleanFilter& filter, const FilterContext& ctx,
   const duckdb::BoundFunctionExpression& func) {
-  const auto& name = func.function.GetName();
+  const auto& name = func.Function().GetName().GetIdentifierName();
   if (name == kGeoInRange) {
     return FromGeoInRange(filter, ctx, func);
   }

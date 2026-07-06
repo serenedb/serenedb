@@ -1,0 +1,118 @@
+# Beyond pg_authid/pg_shadow (covered in cat_authid_shadow_superuser_only.test),
+# PostgreSQL withholds a PUBLIC SELECT grant from several more system catalogs
+# because their contents are sensitive: pg_largeobject (large-object data),
+# pg_statistic and pg_statistic_ext_data (column statistics can leak stored
+# values), and pg_user_mapping (holds foreign-server passwords). A non-superuser
+# reading any of them directly is refused with "permission denied for table
+# <name>". serenedb matches this.
+#
+# Contrast: pg_subscription is NOT blanket-restricted on PostgreSQL -- it is
+# row-filtered, so a non-superuser gets an empty result rather than an error;
+# and pg_class (the relation catalog) is world-readable. Both stay readable here.
+#
+# Lore: vedernikoff the intern again, denied the sensitive catalogs.
+# Idempotent + self-cleaning; the intern role is file-unique.
+
+statement ok
+DROP ROLE IF EXISTS cat_su_intern;
+
+
+statement ok
+CREATE ROLE cat_su_intern LOGIN PASSWORD 'cat_su_intern_pw';
+
+
+# Sanity: the intern is a non-superuser.
+connection c_su_intern user=cat_su_intern password=cat_su_intern_pw
+query
+SELECT rolsuper FROM pg_roles WHERE rolname = current_user;
+----
+rolsuper
+f
+
+
+# pg_largeobject: superuser-only (large-object data).
+connection c_su_intern user=cat_su_intern password=cat_su_intern_pw
+statement error
+SELECT count(*) FROM pg_largeobject;
+----
+db error: ERROR: permission denied for table pg_largeobject<slt:ignore>
+
+
+# pg_statistic: superuser-only (statistics can expose stored column values).
+connection c_su_intern user=cat_su_intern password=cat_su_intern_pw
+statement error
+SELECT count(*) FROM pg_statistic;
+----
+db error: ERROR: permission denied for table pg_statistic<slt:ignore>
+
+
+# pg_statistic_ext_data: superuser-only (extended statistics data).
+connection c_su_intern user=cat_su_intern password=cat_su_intern_pw
+statement error
+SELECT count(*) FROM pg_statistic_ext_data;
+----
+db error: ERROR: permission denied for table pg_statistic_ext_data<slt:ignore>
+
+
+# pg_user_mapping: superuser-only (holds foreign-server passwords).
+connection c_su_intern user=cat_su_intern password=cat_su_intern_pw
+statement error
+SELECT count(*) FROM pg_user_mapping;
+----
+db error: ERROR: permission denied for table pg_user_mapping<slt:ignore>
+
+
+# pg_subscription is row-filtered, not blanket-denied: the intern gets an empty
+# result, not an error.
+connection c_su_intern user=cat_su_intern password=cat_su_intern_pw
+query
+SELECT count(*) AS visible FROM pg_subscription;
+----
+visible
+0
+
+
+# pg_class is world-readable: the intern enumerates the relation catalog fine.
+connection c_su_intern user=cat_su_intern password=cat_su_intern_pw
+query
+SELECT count(*) > 0 AS readable FROM pg_class;
+----
+readable
+t
+
+
+# The superuser owner reads every restricted catalog directly without error.
+connection default
+query
+SELECT count(*) >= 0 AS largeobject_readable FROM pg_largeobject;
+----
+largeobject_readable
+t
+
+
+query
+SELECT count(*) >= 0 AS statistic_readable FROM pg_statistic;
+----
+statistic_readable
+t
+
+
+query
+SELECT count(*) >= 0 AS statistic_ext_readable FROM pg_statistic_ext_data;
+----
+statistic_ext_readable
+t
+
+
+query
+SELECT count(*) >= 0 AS user_mapping_readable FROM pg_user_mapping;
+----
+user_mapping_readable
+t
+
+
+# ---- cleanup ----
+
+connection default
+statement ok
+DROP ROLE cat_su_intern;

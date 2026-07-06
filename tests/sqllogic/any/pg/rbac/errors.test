@@ -1,0 +1,149 @@
+# Error paths for the RBAC management surface, as the bootstrap superuser, that
+# render identically on PostgreSQL and serenedb. Uses native PG RBAC syntax.
+
+statement ok
+DROP ROLE IF EXISTS err_role;
+
+
+statement ok
+DROP ROLE IF EXISTS err_other;
+
+
+statement ok
+DROP TABLE IF EXISTS err_tbl;
+
+
+statement ok
+CREATE TABLE err_tbl (id int);
+
+
+statement ok
+CREATE ROLE err_role;
+
+
+statement ok
+CREATE ROLE err_other;
+
+
+# ---- CREATE ROLE ----
+
+statement error
+CREATE ROLE err_role;
+----
+db error: ERROR: role "err_role" already exists
+
+
+# ---- DROP ROLE ----
+
+statement error
+DROP ROLE ghost;
+----
+db error: ERROR: role "ghost" does not exist
+
+
+# missing_ok suppresses the error.
+statement ok
+DROP ROLE IF EXISTS ghost;
+
+
+# The session's own role (bootstrap superuser) cannot be dropped.
+statement error
+DROP ROLE postgres;
+----
+db error: ERROR: current user cannot be dropped
+
+
+# ---- GRANT TABLE ----
+
+statement error
+GRANT SELECT ON err_tbl TO no_such_role;
+----
+db error: ERROR: role "no_such_role" does not exist
+
+
+# GRANT on a missing relation: the relation cache reports "relation".
+statement error
+GRANT SELECT ON no_such_table TO err_role;
+----
+db error: ERROR: relation "no_such_table" does not exist
+
+
+# A privilege keyword that is not valid for a relation names the object class.
+statement error
+GRANT EXECUTE ON err_tbl TO err_role;
+----
+db error: ERROR: invalid privilege type EXECUTE for relation
+
+
+# An unknown privilege keyword diverges by engine: PG accepts any identifier in
+# the privilege slot and rejects it semantically ("unrecognized privilege type",
+# 42601), while serenedb's grammar only admits the fixed keyword set, so it is a
+# parser syntax error.
+skipif serenedb
+statement error
+GRANT FLY ON err_tbl TO err_role;
+----
+db error: ERROR: unrecognized privilege type "fly"
+
+
+onlyif serenedb
+statement error
+GRANT FLY ON err_tbl TO err_role;
+----
+db error: ERROR: syntax error at or near "ON"<slt:ignore>
+
+
+# ---- GRANT ROLE ----
+
+statement error
+GRANT nobody TO err_role;
+----
+db error: ERROR: role "nobody" does not exist
+
+
+statement error
+GRANT err_role TO nobody;
+----
+db error: ERROR: role "nobody" does not exist
+
+
+# Self-membership (identical message on both engines).
+statement error
+GRANT err_role TO err_role;
+----
+db error: ERROR: role "err_role" is a member of role "err_role"
+
+
+# ---- has_table_privilege error paths ----
+
+statement error
+SELECT has_table_privilege('err_role', 'nope', 'SELECT');
+----
+db error: ERROR: relation "nope" does not exist
+
+
+statement error
+SELECT has_table_privilege('err_role', 'err_tbl', 'BOGUS');
+----
+db error: ERROR: unrecognized privilege type: "BOGUS"
+
+
+# An unknown ROLE in the name-addressed has_table_privilege raises (matching
+# PostgreSQL: only the oid-addressed form returns NULL).
+statement error
+SELECT has_table_privilege('phantom', 'err_tbl', 'SELECT');
+----
+db error: ERROR: role "phantom" does not exist
+
+
+# Cleanup.
+statement ok
+DROP TABLE err_tbl;
+
+
+statement ok
+DROP ROLE err_role;
+
+
+statement ok
+DROP ROLE err_other;

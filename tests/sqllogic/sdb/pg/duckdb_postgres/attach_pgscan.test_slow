@@ -16,6 +16,13 @@ n
 1
 
 
+query error
+SELECT d > '1992-01-01'::VARCHAR
+FROM (VALUES (DATE '1992-01-01')) t(d);
+----
+db error: ERROR: Cannot compare values of type DATE and type VARCHAR - an explicit cast is required
+
+
 statement ok
 DETACH pg_${__DATABASE__};
 
@@ -24,6 +31,40 @@ DETACH pg_${__DATABASE__};
 # state left behind).
 statement ok
 ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pg_${__DATABASE__} (TYPE postgres);
+
+
+# While a remote catalog is attached the remote-pushdown rewriter constant-folds
+# statements pre-bind. Folding must not change local semantics: a set-returning
+# function at the top level of a SELECT list still expands to rows, a FROM-clause
+# unnest keeps its arguments, and an explicit cast still fails the comparison
+# type check instead of being folded away (all regressed before).
+query
+SELECT generate_series(2);
+----
+generate_series
+0
+1
+2
+
+query
+SELECT generate_series(1, 1 + 1) AS g;
+----
+g
+1
+2
+
+query
+SELECT * FROM unnest(ARRAY[7, 8]) AS t(x);
+----
+x
+7
+8
+
+query error
+SELECT d > '1992-01-01'::VARCHAR
+FROM (VALUES (DATE '1992-01-01')) t(d);
+----
+db error: ERROR: Cannot compare values of type DATE and type VARCHAR - an explicit cast is required
 
 
 statement ok

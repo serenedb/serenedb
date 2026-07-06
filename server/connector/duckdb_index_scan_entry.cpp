@@ -65,6 +65,7 @@ TableInvertedIndexScanEntry::TableInvertedIndexScanEntry(
                            std::move(inverted_index)),
     _sdb_table(std::move(sdb_table)) {
   SDB_ASSERT(_sdb_table);
+  _relation = _sdb_table.get();
 }
 
 duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
@@ -120,6 +121,7 @@ ViewInvertedIndexScanEntry::ViewInvertedIndexScanEntry(
                            std::move(inverted_index)),
     _sdb_view(std::move(sdb_view)) {
   SDB_ASSERT(_sdb_view);
+  _relation = _sdb_view.get();
 }
 
 duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
@@ -196,6 +198,7 @@ TableSecondaryIndexScanEntry::TableSecondaryIndexScanEntry(
                             sk_unique),
     _sdb_table(std::move(sdb_table)) {
   SDB_ASSERT(_sdb_table);
+  _relation = _sdb_table.get();
 }
 
 duckdb::TableFunction TableSecondaryIndexScanEntry::GetScanFunction(
@@ -204,17 +207,20 @@ duckdb::TableFunction TableSecondaryIndexScanEntry::GetScanFunction(
   // Scanning a secondary index by name reads the table: the index itself
   // is a native ART on the store table.
   auto store_name = catalog::StoreTableName(
-    ParentCatalog().GetName(), ParentSchema().name, _sdb_table->GetName());
+    ParentCatalog().GetName().GetIdentifierName(),
+    ParentSchema().name.GetIdentifierName(), _sdb_table->GetName());
   auto& store_entry =
-    duckdb::Catalog::GetEntry(context, duckdb::CatalogType::TABLE_ENTRY,
-                              std::string{catalog::kStoreDatabaseName}, "main",
-                              store_name)
+    duckdb::Catalog::GetEntry(
+      context, duckdb::CatalogType::TABLE_ENTRY,
+      duckdb::QualifiedName(duckdb::Identifier{catalog::kStoreDatabaseName},
+                            duckdb::Identifier{"main"},
+                            duckdb::Identifier{store_name}))
       .Cast<duckdb::TableCatalogEntry>();
   auto function = store_entry.GetScanFunction(context, bind_data);
   if (bind_data) {
     if (auto* table_bind =
           dynamic_cast<duckdb::TableScanBindData*>(bind_data.get())) {
-      table_bind->display_name = name;
+      table_bind->display_name = name.GetIdentifierName();
     }
   }
   return function;

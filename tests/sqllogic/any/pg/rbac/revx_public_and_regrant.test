@@ -1,0 +1,276 @@
+# REVOKE edge cases, PUBLIC-asymmetry and re-GRANT family.
+#
+# Two PostgreSQL semantics pinned here, both byte-identical on serenedb:
+#   1. A role that holds a privilege ONLY via PUBLIC has no per-role grant of
+#      its own. REVOKE <priv> FROM <that role> finds nothing to strip, so it is
+#      a no-op: the role still has the privilege through the untouched PUBLIC
+#      grant. Only REVOKE ... FROM PUBLIC removes it.
+#   2. REVOKE then re-GRANT round-trips cleanly: the bit drops, then comes back,
+#      with no residue and no accumulation.
+#
+# Objects prefixed revx_ (vedernikoff lore); idempotent and self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS revx_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS revx_androed;
+
+
+statement ok
+DROP ROLE IF EXISTS revx_myasnig;
+
+
+statement ok
+DROP ROLE IF EXISTS revx_zhidky;
+
+
+statement ok
+CREATE TABLE revx_iceberg (id int, mop text);
+
+
+statement ok
+CREATE ROLE revx_androed;
+
+
+statement ok
+CREATE ROLE revx_myasnig;
+
+
+statement ok
+CREATE ROLE revx_zhidky;
+
+
+# ============================================================================
+# REVOKE from a role that holds the privilege only via PUBLIC: a no-op.
+# Grant SELECT to PUBLIC, then REVOKE SELECT from one specific role. There is
+# no per-role grant to remove, the PUBLIC grant is untouched, so the role
+# still reads t. Other roles are likewise unaffected.
+# ============================================================================
+
+statement ok
+GRANT SELECT ON revx_iceberg TO PUBLIC;
+
+
+query
+SELECT has_table_privilege('revx_androed','revx_iceberg','SELECT') AS andro_sel,
+       has_table_privilege('revx_myasnig','revx_iceberg','SELECT') AS mya_sel;
+----
+andro_sel	mya_sel
+t	t
+
+
+# Revoke SELECT from a SPECIFIC role -- no-op, the PUBLIC SELECT survives.
+statement ok
+REVOKE SELECT ON revx_iceberg FROM revx_androed;
+
+
+query
+SELECT has_table_privilege('revx_androed','revx_iceberg','SELECT') AS andro_sel,
+       has_table_privilege('revx_myasnig','revx_iceberg','SELECT') AS mya_sel;
+----
+andro_sel	mya_sel
+t	t
+
+
+# Revoking the same per-role SELECT again is still a no-op.
+statement ok
+REVOKE SELECT ON revx_iceberg FROM revx_androed;
+
+
+query
+SELECT has_table_privilege('revx_androed','revx_iceberg','SELECT') AS andro_sel;
+----
+andro_sel
+t
+
+
+# Only REVOKE ... FROM PUBLIC actually clears it -- and then it is gone for all.
+statement ok
+REVOKE SELECT ON revx_iceberg FROM PUBLIC;
+
+
+query
+SELECT has_table_privilege('revx_androed','revx_iceberg','SELECT') AS andro_sel,
+       has_table_privilege('revx_myasnig','revx_iceberg','SELECT') AS mya_sel;
+----
+andro_sel	mya_sel
+f	f
+
+
+# ============================================================================
+# PUBLIC grant unioned with a direct grant: REVOKE FROM the role drops only the
+# direct bit, the PUBLIC bit persists; REVOKE FROM PUBLIC drops only the PUBLIC
+# bit, the direct bit persists. The two grant paths are independent.
+# ============================================================================
+
+statement ok
+GRANT INSERT ON revx_iceberg TO PUBLIC;
+
+
+statement ok
+GRANT INSERT ON revx_iceberg TO revx_zhidky;
+
+
+# revx_zhidky now holds INSERT via BOTH PUBLIC and a direct grant.
+query
+SELECT has_table_privilege('revx_zhidky','revx_iceberg','INSERT')  AS zhi_ins,
+       has_table_privilege('revx_myasnig','revx_iceberg','INSERT') AS mya_ins;
+----
+zhi_ins	mya_ins
+t	t
+
+
+# Revoke the direct grant from revx_zhidky: the PUBLIC INSERT keeps it t.
+statement ok
+REVOKE INSERT ON revx_iceberg FROM revx_zhidky;
+
+
+query
+SELECT has_table_privilege('revx_zhidky','revx_iceberg','INSERT')  AS zhi_ins,
+       has_table_privilege('revx_myasnig','revx_iceberg','INSERT') AS mya_ins;
+----
+zhi_ins	mya_ins
+t	t
+
+
+# Now revoke the PUBLIC grant: INSERT vanishes for everyone, including zhidky.
+statement ok
+REVOKE INSERT ON revx_iceberg FROM PUBLIC;
+
+
+query
+SELECT has_table_privilege('revx_zhidky','revx_iceberg','INSERT')  AS zhi_ins,
+       has_table_privilege('revx_myasnig','revx_iceberg','INSERT') AS mya_ins;
+----
+zhi_ins	mya_ins
+f	f
+
+
+# Reverse order: direct grant outlives a PUBLIC revoke when the role kept its
+# own grant. Re-establish both, then revoke ONLY from PUBLIC.
+statement ok
+GRANT UPDATE ON revx_iceberg TO PUBLIC;
+
+
+statement ok
+GRANT UPDATE ON revx_iceberg TO revx_zhidky;
+
+
+statement ok
+REVOKE UPDATE ON revx_iceberg FROM PUBLIC;
+
+
+# zhidky keeps UPDATE through its own grant; myasnig loses the PUBLIC one.
+query
+SELECT has_table_privilege('revx_zhidky','revx_iceberg','UPDATE')  AS zhi_upd,
+       has_table_privilege('revx_myasnig','revx_iceberg','UPDATE') AS mya_upd;
+----
+zhi_upd	mya_upd
+t	f
+
+
+# ============================================================================
+# REVOKE then re-GRANT: a clean round-trip with no residue.
+# ============================================================================
+
+statement ok
+GRANT SELECT, INSERT, DELETE ON revx_iceberg TO revx_myasnig;
+
+
+query
+SELECT has_table_privilege('revx_myasnig','revx_iceberg','SELECT') AS sel,
+       has_table_privilege('revx_myasnig','revx_iceberg','INSERT') AS ins,
+       has_table_privilege('revx_myasnig','revx_iceberg','DELETE') AS del;
+----
+sel	ins	del
+t	t	t
+
+
+# Revoke all three.
+statement ok
+REVOKE SELECT, INSERT, DELETE ON revx_iceberg FROM revx_myasnig;
+
+
+query
+SELECT has_table_privilege('revx_myasnig','revx_iceberg','SELECT') AS sel,
+       has_table_privilege('revx_myasnig','revx_iceberg','INSERT') AS ins,
+       has_table_privilege('revx_myasnig','revx_iceberg','DELETE') AS del;
+----
+sel	ins	del
+f	f	f
+
+
+# Re-grant only SELECT: exactly that bit returns, the others stay gone.
+statement ok
+GRANT SELECT ON revx_iceberg TO revx_myasnig;
+
+
+query
+SELECT has_table_privilege('revx_myasnig','revx_iceberg','SELECT') AS sel,
+       has_table_privilege('revx_myasnig','revx_iceberg','INSERT') AS ins,
+       has_table_privilege('revx_myasnig','revx_iceberg','DELETE') AS del;
+----
+sel	ins	del
+t	f	f
+
+
+# Revoke SELECT once more, then re-grant ALL: full matrix, no double-counting.
+statement ok
+REVOKE SELECT ON revx_iceberg FROM revx_myasnig;
+
+
+statement ok
+GRANT ALL ON revx_iceberg TO revx_myasnig;
+
+
+query
+SELECT has_table_privilege('revx_myasnig','revx_iceberg','SELECT')     AS sel,
+       has_table_privilege('revx_myasnig','revx_iceberg','INSERT')     AS ins,
+       has_table_privilege('revx_myasnig','revx_iceberg','UPDATE')     AS upd,
+       has_table_privilege('revx_myasnig','revx_iceberg','DELETE')     AS del,
+       has_table_privilege('revx_myasnig','revx_iceberg','TRUNCATE')   AS trunc,
+       has_table_privilege('revx_myasnig','revx_iceberg','REFERENCES') AS refs,
+       has_table_privilege('revx_myasnig','revx_iceberg','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	t	t	t	t
+
+
+# REVOKE ALL then re-GRANT a single privilege: back to exactly one bit, proving
+# the earlier full grant left no residue once revoked.
+statement ok
+REVOKE ALL ON revx_iceberg FROM revx_myasnig;
+
+
+statement ok
+GRANT TRUNCATE ON revx_iceberg TO revx_myasnig;
+
+
+query
+SELECT has_table_privilege('revx_myasnig','revx_iceberg','SELECT')   AS sel,
+       has_table_privilege('revx_myasnig','revx_iceberg','TRUNCATE') AS trunc;
+----
+sel	trunc
+f	t
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE revx_iceberg;
+
+
+statement ok
+DROP ROLE revx_androed;
+
+
+statement ok
+DROP ROLE revx_myasnig;
+
+
+statement ok
+DROP ROLE revx_zhidky;

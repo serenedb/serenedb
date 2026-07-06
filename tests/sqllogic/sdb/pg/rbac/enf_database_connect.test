@@ -1,0 +1,91 @@
+# serenedb-only: the DATABASE CONNECT privilege is enforced at connect time,
+# exactly like PostgreSQL's InitPostgres (FATAL 42501 "permission denied for
+# database" when the login role lacks CONNECT, superusers excepted). A fresh
+# database grants CONNECT to PUBLIC by default (acldefault 'd'), so the gate is
+# invisible until PUBLIC's CONNECT is revoked.
+#
+# Needs the `database=` connection directive (a serenedb sqllogictest-rs
+# extension): the deny path must connect a low-priv role to a specific
+# CONNECT-revoked database, which the stock runner cannot target. Runs
+# serenedb-only -- the shared PG test container runs HBA trust and never
+# reaches this per-database check the same way.
+#
+# Lore: vedernikoff is barred from the mop vault until clickclack lets him in.
+
+statement ok
+DROP DATABASE IF EXISTS dbc_vault;
+
+
+statement ok
+DROP ROLE IF EXISTS dbc_vedernikoff;
+
+
+statement ok
+CREATE ROLE dbc_vedernikoff LOGIN PASSWORD 'mop_secret';
+
+
+statement ok
+CREATE DATABASE dbc_vault;
+
+
+# ---- (1) default PUBLIC CONNECT: the role reaches the new database.
+connection c_default user=dbc_vedernikoff password=mop_secret database=dbc_vault
+query
+SELECT current_database();
+----
+current_database
+dbc_vault
+
+
+# ---- (2) revoke CONNECT from PUBLIC: the role can no longer connect. The
+# denial is at connect, so it surfaces as a FATAL on the first statement of a
+# fresh connection to that database.
+connection default
+statement ok
+REVOKE CONNECT ON DATABASE dbc_vault FROM PUBLIC;
+
+
+connection c_denied user=dbc_vedernikoff password=mop_secret database=dbc_vault
+statement error
+SELECT 1;
+----
+db error: FATAL: permission denied for database "dbc_vault"<slt:ignore>
+
+
+# ---- (3) an explicit grant to the role re-admits it.
+connection default
+statement ok
+GRANT CONNECT ON DATABASE dbc_vault TO dbc_vedernikoff;
+
+
+connection c_regranted user=dbc_vedernikoff password=mop_secret database=dbc_vault
+query
+SELECT current_database();
+----
+current_database
+dbc_vault
+
+
+# ---- (4) the revoke is per-database: the default database, where PUBLIC still
+# holds CONNECT, stays reachable for the same role.
+connection default
+statement ok
+REVOKE CONNECT ON DATABASE dbc_vault FROM dbc_vedernikoff;
+
+
+connection c_other user=dbc_vedernikoff password=mop_secret
+query
+SELECT 1 AS ok;
+----
+ok
+1
+
+
+# ---- cleanup
+connection default
+statement ok
+DROP DATABASE dbc_vault;
+
+
+statement ok
+DROP ROLE dbc_vedernikoff;

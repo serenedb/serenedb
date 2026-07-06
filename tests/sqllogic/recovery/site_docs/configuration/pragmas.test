@@ -419,27 +419,6 @@ SET profiling_output = '/path/to/file.json';
 statement ok
 SET profile_output = '/path/to/file.json';
 
-# DOCS_TEST: example_039
-
-# DOCS_TEST_BODY
-
-statement ok
-SET profiling_mode = 'standard';
-
-# DOCS_TEST: example_040
-
-# DOCS_TEST_BODY
-
-statement ok
-SET profiling_mode = 'detailed';
-
-# DOCS_TEST: example_041
-
-# DOCS_TEST_BODY
-
-statement ok
-SET profiling_mode = 'all';
-
 # DOCS_TEST: example_043
 
 # DOCS_TEST_BODY

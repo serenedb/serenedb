@@ -1,0 +1,82 @@
+control substitution on
+
+# Database ACL grants across a crash + WAL recovery.
+#
+# GRANT CONNECT,TEMP ON DATABASE postgres is durable: pg_database is a shared
+# catalog, so the grant lands on `postgres` (the target) regardless of the
+# connected per-test database, and the ACL is persisted with the database
+# definition. The grant therefore survives a crash + restart, exactly like the
+# table/sequence relacl and object ownership pinned in the sibling
+# rbac_acl_*_recovery.test files.
+#
+# Vedernikoff is granted CONNECT,TEMP on the postgres database.
+
+statement ok
+DROP ROLE IF EXISTS rbac_acl_dg_vedernikoff;
+
+
+statement ok
+CREATE ROLE rbac_acl_dg_vedernikoff;
+
+
+# The GRANT is accepted (PG-compatible syntax; this used to be a syntax error).
+statement ok
+GRANT CONNECT, TEMP ON DATABASE postgres TO rbac_acl_dg_vedernikoff;
+
+
+# has_database_privilege reflects the grant (stub: always t for CONNECT/TEMP).
+query
+SELECT
+  has_database_privilege('rbac_acl_dg_vedernikoff', 'postgres', 'CONNECT') AS conn,
+  has_database_privilege('rbac_acl_dg_vedernikoff', 'postgres', 'TEMP') AS temp;
+----
+conn	temp
+t	t
+
+
+# ====================== CRASH ======================
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+# --- restart ---
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# ====================== POST-RECOVERY ======================
+
+# The role survived recovery (role/membership state IS persisted).
+connection after_crash
+query
+SELECT rolname FROM pg_authid WHERE rolname = 'rbac_acl_dg_vedernikoff';
+----
+rolname
+rbac_acl_dg_vedernikoff
+
+
+# The grant's apparent effect survives (stub still answers t).
+connection after_crash
+query
+SELECT
+  has_database_privilege('rbac_acl_dg_vedernikoff', 'postgres', 'CONNECT') AS conn,
+  has_database_privilege('rbac_acl_dg_vedernikoff', 'postgres', 'TEMP') AS temp;
+----
+conn	temp
+t	t
+
+
+# The database ACL survives recovery: pg_database.datacl for postgres still
+# carries the grantee's CONNECT+TEMP (Tc) entry after the restart.
+connection after_crash
+query
+SELECT datacl::text LIKE '%rbac_acl_dg_vedernikoff=Tc/%' AS has_grant
+FROM pg_database WHERE datname = 'postgres';
+----
+has_grant
+t

@@ -135,7 +135,7 @@ class InvertedIndexStorage final
   ResultWithTime CleanupUnsafe();
   Stats UpdateStatsUnsafe(InvertedIndexSnapshotPtr data) const;
 
-  void Refresh();
+  void Refresh(const irs::ProgressReportCallback& progress = nullptr);
   // Refresh driven by the checkpoint barrier: the store WAL is about to be
   // truncated and its iteration bumped, so the stamped durable cursor must
   // carry the NEXT generation (offset 0), not the live one (see

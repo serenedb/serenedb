@@ -20,6 +20,8 @@
 
 #include "connector/functions/math.h"
 
+#include <absl/strings/str_format.h>
+
 #include <cmath>
 #include <cstdint>
 #include <duckdb/common/types/date.hpp>
@@ -30,6 +32,9 @@
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <limits>
 #include <random>
+
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {
@@ -68,10 +73,12 @@ void DivIntFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], args.data[1], result, args.size(),
     [](int64_t y, int64_t x) -> int64_t {
       if (x == 0) {
-        throw duckdb::InvalidInputException("division by zero");
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
+                        ERR_MSG("division by zero"));
       }
       if (y == std::numeric_limits<int64_t>::min() && x == -1) {
-        throw duckdb::InvalidInputException("bigint out of range");
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                        ERR_MSG("bigint out of range"));
       }
       return y / x;
     });
@@ -83,14 +90,16 @@ void DivDoubleFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], args.data[1], result, args.size(),
     [](double y, double x) -> int64_t {
       if (x == 0.0) {
-        throw duckdb::InvalidInputException("division by zero");
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
+                        ERR_MSG("division by zero"));
       }
       double truncated = std::trunc(y / x);
       if (truncated <
             static_cast<double>(std::numeric_limits<int64_t>::min()) ||
           truncated >
             static_cast<double>(std::numeric_limits<int64_t>::max())) {
-        throw duckdb::InvalidInputException("bigint out of range");
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                        ERR_MSG("bigint out of range"));
       }
       return static_cast<int64_t>(truncated);
     });
@@ -104,7 +113,8 @@ void GcdInt32Function(duckdb::DataChunk& args, duckdb::ExpressionState&,
     [](int32_t a, int32_t b) -> int32_t {
       if (a == std::numeric_limits<int32_t>::min() ||
           b == std::numeric_limits<int32_t>::min()) {
-        throw duckdb::InvalidInputException("integer out of range");
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                        ERR_MSG("integer out of range"));
       }
       return static_cast<int32_t>(std::gcd(a, b));
     });
@@ -118,7 +128,8 @@ void GcdInt64Function(duckdb::DataChunk& args, duckdb::ExpressionState&,
     [](int64_t a, int64_t b) -> int64_t {
       if (a == std::numeric_limits<int64_t>::min() ||
           b == std::numeric_limits<int64_t>::min()) {
-        throw duckdb::InvalidInputException("bigint out of range");
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                        ERR_MSG("bigint out of range"));
       }
       return std::gcd(a, b);
     });
@@ -145,7 +156,7 @@ S LcmImpl(S s1, S s2, const char* msg) {
   U ur;
   if (__builtin_mul_overflow(u1, u2, &ur) ||
       ur > static_cast<U>(std::numeric_limits<S>::max())) {
-    throw duckdb::InvalidInputException(msg);
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE), ERR_MSG(msg));
   }
   return static_cast<S>(ur);
 }
@@ -175,21 +186,24 @@ void LogBaseFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], args.data[1], result, args.size(),
     [](double base, double value) -> double {
       if (value == 0.0) {
-        throw duckdb::InvalidInputException("cannot take logarithm of zero");
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_ARGUMENT_FOR_LOG),
+                        ERR_MSG("cannot take logarithm of zero"));
       }
       if (value < 0.0) {
-        throw duckdb::InvalidInputException(
-          "cannot take logarithm of a negative number");
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_ARGUMENT_FOR_LOG),
+                        ERR_MSG("cannot take logarithm of a negative number"));
       }
       if (base == 0.0) {
-        throw duckdb::InvalidInputException("cannot take logarithm of zero");
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_ARGUMENT_FOR_LOG),
+                        ERR_MSG("cannot take logarithm of zero"));
       }
       if (base < 0.0) {
-        throw duckdb::InvalidInputException(
-          "cannot take logarithm of a negative number");
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_ARGUMENT_FOR_LOG),
+                        ERR_MSG("cannot take logarithm of a negative number"));
       }
       if (base == 1.0) {
-        throw duckdb::InvalidInputException("division by zero");
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
+                        ERR_MSG("division by zero"));
       }
       return std::log(value) / std::log(base);
     });
@@ -204,7 +218,8 @@ void CotDFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], result, args.size(), [](double x) -> double {
       double t = std::tan(x * kDegreesToRadians);
       if (t == 0.0) {
-        throw duckdb::InvalidInputException("division by zero");
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
+                        ERR_MSG("division by zero"));
       }
       return 1.0 / t;
     });
@@ -254,12 +269,15 @@ void MakeTimestampFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 
     duckdb::date_t date;
     if (!duckdb::Date::TryFromDate(year, month, day, date)) {
-      throw duckdb::InvalidInputException(
-        "date field value out of range: %d-%02d-%02d", year, month, day);
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DATETIME_FIELD_OVERFLOW),
+        ERR_MSG(absl::StrFormat("date field value out of range: %d-%02d-%02d",
+                                year, month, day)));
     }
     if (hour < 0 || hour > 23 || min < 0 || min > 59 || sec < 0.0 ||
         sec > 60.0) {
-      throw duckdb::InvalidInputException("date/time field value out of range");
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATETIME_FIELD_OVERFLOW),
+                      ERR_MSG("date/time field value out of range"));
     }
     int32_t whole_sec = static_cast<int32_t>(sec);
     double frac = sec - whole_sec;
@@ -282,18 +300,20 @@ void DateBinFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     [](duckdb::interval_t stride, duckdb::timestamp_t source,
        duckdb::timestamp_t origin) -> duckdb::timestamp_t {
       if (stride.micros <= 0 && stride.days <= 0 && stride.months <= 0) {
-        throw duckdb::InvalidInputException("stride must be greater than zero");
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("stride must be greater than zero"));
       }
       if (stride.months != 0) {
-        throw duckdb::InvalidInputException(
-          "timestamps cannot be binned into intervals containing "
-          "months or years");
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                        ERR_MSG("timestamps cannot be binned into intervals "
+                                "containing months or years"));
       }
 
       int64_t stride_us =
         stride.micros + static_cast<int64_t>(stride.days) * 86400'000'000LL;
       if (stride_us <= 0) {
-        throw duckdb::InvalidInputException("stride must be greater than zero");
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("stride must be greater than zero"));
       }
 
       int64_t src_us = source.value;

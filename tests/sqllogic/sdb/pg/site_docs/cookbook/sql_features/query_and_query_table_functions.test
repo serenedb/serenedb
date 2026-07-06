@@ -48,7 +48,7 @@ FROM (
     FROM query_table(table_name::VARCHAR)
 );
 
-query ???
+query
 SELECT *
 FROM my_summarize('ontime')
 LIMIT 3;
@@ -71,7 +71,7 @@ FROM query(
     || ')) INTO NAME ' || name || ' VALUES ' || values
 );
 
-query ????
+query
 WITH cities AS (
     FROM (
         VALUES

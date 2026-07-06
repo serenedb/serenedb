@@ -1,0 +1,203 @@
+# serenedb-only: real query-path enforcement -- a non-superuser role is actually
+# denied/allowed DML through the planner hooks (not just the has_table_privilege
+# oracle). Cannot run on PostgreSQL, and diverges from it, for two reasons:
+#
+#   1. The `connection ... user=` directive relies on serenedb's Trust-stub
+#      auth (connect as any role without a password); real PG needs HBA/passwords.
+#   2. SELECT FROM <index_name> is treated by serenedb as a table-privilege check
+#      (the M1 path); PostgreSQL rejects it outright with "cannot open relation
+#      ... this operation is not supported for indexes".
+#
+# What we exercise is AUTHORIZATION: the EnforceTablePrivilege hooks on
+# scan/insert/update/delete and the index-scan path.
+
+# Setup as the bootstrap superuser (default connection).
+
+statement ok
+DROP TABLE IF EXISTS enf_secret;
+
+
+statement ok
+DROP ROLE IF EXISTS enf_user;
+
+
+statement ok
+CREATE TABLE enf_secret (id int, ssn text);
+
+
+statement ok
+INSERT INTO enf_secret VALUES (1, '111-22-3333'), (2, '444-55-6666');
+
+
+statement ok
+CREATE INDEX enf_secret_idx ON enf_secret(id);
+
+
+statement ok
+CREATE ROLE enf_user LOGIN;
+
+
+# ---- As enf_user (non-superuser, no grants): every access denied ----
+
+connection c_enf user=enf_user
+statement error
+SELECT * FROM enf_secret;
+----
+db error: ERROR: permission denied for table enf_secret
+
+
+# M1 regression: reading the table via its INDEX name must ALSO be denied.
+connection c_enf user=enf_user
+statement error
+SELECT * FROM enf_secret_idx;
+----
+db error: ERROR: permission denied for table enf_secret
+
+
+connection c_enf user=enf_user
+statement error
+INSERT INTO enf_secret VALUES (3, '777-88-9999');
+----
+db error: ERROR: permission denied for table enf_secret
+
+
+connection c_enf user=enf_user
+statement error
+UPDATE enf_secret SET ssn = 'x' WHERE id = 1;
+----
+db error: ERROR: permission denied for table enf_secret
+
+
+connection c_enf user=enf_user
+statement error
+DELETE FROM enf_secret WHERE id = 1;
+----
+db error: ERROR: permission denied for table enf_secret
+
+
+# ---- Owner grants SELECT; enf_user can now read but still not write ----
+
+
+statement ok
+GRANT SELECT ON enf_secret TO enf_user;
+
+
+connection c_enf user=enf_user
+query
+SELECT id, ssn FROM enf_secret ORDER BY id;
+----
+id	ssn
+1	111-22-3333
+2	444-55-6666
+
+
+# SELECT via the index name now also works (same privilege).
+connection c_enf user=enf_user
+query
+SELECT count(*) FROM enf_secret_idx;
+----
+count
+2
+
+
+connection c_enf user=enf_user
+statement error
+INSERT INTO enf_secret VALUES (3, '777-88-9999');
+----
+db error: ERROR: permission denied for table enf_secret
+
+
+# ---- Grant INSERT too; now the insert succeeds ----
+
+
+statement ok
+GRANT INSERT ON enf_secret TO enf_user;
+
+
+connection c_enf user=enf_user
+statement ok
+INSERT INTO enf_secret VALUES (3, '777-88-9999');
+
+
+connection c_enf user=enf_user
+query
+SELECT count(*) FROM enf_secret;
+----
+count
+3
+
+
+# ---- Revoke SELECT; reads are denied again, even though INSERT remains ----
+
+
+statement ok
+REVOKE SELECT ON enf_secret FROM enf_user;
+
+
+connection c_enf user=enf_user
+statement error
+SELECT * FROM enf_secret;
+----
+db error: ERROR: permission denied for table enf_secret
+
+
+# ---- Inheritance through a group is honored on the real query path ----
+
+
+statement ok
+DROP ROLE IF EXISTS enf_group;
+
+
+
+statement ok
+CREATE ROLE enf_group;
+
+
+
+statement ok
+GRANT SELECT ON enf_secret TO enf_group;
+
+
+
+statement ok
+GRANT enf_group TO enf_user;
+
+
+connection c_enf user=enf_user
+query
+SELECT count(*) FROM enf_secret;
+----
+count
+3
+
+
+# ---- Superuser is never denied ----
+
+
+query
+SELECT count(*) FROM enf_secret;
+----
+count
+3
+
+
+# ---- World-readable catalogs (PG parity) ----
+# pg_roles/pg_user/pg_group must work for ordinary roles (they are views over
+# pg_authid; their internal pg_authid read runs with definer rights and so is
+# ungated). A DIRECT read of pg_authid by a non-superuser is refused, matching
+# PostgreSQL -- see any/pg/rbac/cat_authid_shadow_superuser_only.test.
+
+connection c_enf user=enf_user
+query
+SELECT (count(*) >= 1) AS sees_roles FROM pg_roles WHERE rolname = 'postgres';
+----
+sees_roles
+t
+
+
+connection c_enf user=enf_user
+statement error
+SELECT (rolpassword IS NULL) AS password_masked
+FROM pg_authid WHERE rolname = 'postgres';
+----
+db error: ERROR: permission denied for table pg_authid<slt:ignore>

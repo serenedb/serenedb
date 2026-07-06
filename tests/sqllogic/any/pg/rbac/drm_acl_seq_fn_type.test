@@ -1,0 +1,468 @@
+# DROP ROLE must refuse while the role is the GRANTEE of a privilege on a
+# non-table object -- CONNECT on a database, USAGE/CREATE on a schema,
+# USAGE/SELECT/UPDATE on a sequence, EXECUTE on a function, USAGE on a composite
+# type. PostgreSQL records each such grant in the object's ACL (pg_shdepend), so
+# the role has a dependency and cannot be dropped until the grant is removed.
+# Dropping becomes possible once the dependency is gone -- by REVOKE, or by
+# dropping the granted object itself. Every assertion here was validated against
+# a live PostgreSQL 19 oracle.
+#
+# (CREATE DOMAIN and DROP OWNED BY are not supported by serenedb, so the
+# domain-USAGE and DROP-OWNED-BY clearing paths are omitted -- see the report.)
+
+statement ok
+DROP ROLE IF EXISTS daft_vedernikoff;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS daft_clickclack_seq;
+
+
+statement ok
+DROP FUNCTION IF EXISTS daft_mop_fn(int);
+
+
+statement ok
+DROP TYPE IF EXISTS daft_iceberg_type;
+
+
+statement ok
+DROP SCHEMA IF EXISTS daft_kostya_schema;
+
+
+statement ok
+CREATE SEQUENCE daft_clickclack_seq;
+
+
+statement ok
+CREATE FUNCTION daft_mop_fn(x int) RETURNS int LANGUAGE sql AS 'SELECT x + 1';
+
+
+statement ok
+CREATE TYPE daft_iceberg_type AS (a int, b text);
+
+
+statement ok
+CREATE SCHEMA daft_kostya_schema;
+
+
+# ---------------------------------------------------------------------------
+# DATABASE: CONNECT
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE ROLE daft_vedernikoff;
+
+
+statement ok
+GRANT CONNECT ON DATABASE postgres TO daft_vedernikoff;
+
+
+# The CONNECT grant makes the role a dependency of the database.
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE CONNECT ON DATABASE postgres FROM daft_vedernikoff;
+
+
+statement ok
+DROP ROLE daft_vedernikoff;
+
+
+# ---------------------------------------------------------------------------
+# SCHEMA: USAGE
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE ROLE daft_vedernikoff;
+
+
+statement ok
+GRANT USAGE ON SCHEMA daft_kostya_schema TO daft_vedernikoff;
+
+
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE USAGE ON SCHEMA daft_kostya_schema FROM daft_vedernikoff;
+
+
+statement ok
+DROP ROLE daft_vedernikoff;
+
+
+# ---------------------------------------------------------------------------
+# SCHEMA: CREATE
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE ROLE daft_vedernikoff;
+
+
+statement ok
+GRANT CREATE ON SCHEMA daft_kostya_schema TO daft_vedernikoff;
+
+
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE CREATE ON SCHEMA daft_kostya_schema FROM daft_vedernikoff;
+
+
+statement ok
+DROP ROLE daft_vedernikoff;
+
+
+# REVOKE ALL clears every schema privilege held by the role at once.
+statement ok
+CREATE ROLE daft_vedernikoff;
+
+
+statement ok
+GRANT USAGE, CREATE ON SCHEMA daft_kostya_schema TO daft_vedernikoff;
+
+
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE ALL ON SCHEMA daft_kostya_schema FROM daft_vedernikoff;
+
+
+statement ok
+DROP ROLE daft_vedernikoff;
+
+
+# ---------------------------------------------------------------------------
+# SEQUENCE: USAGE
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE ROLE daft_vedernikoff;
+
+
+statement ok
+GRANT USAGE ON SEQUENCE daft_clickclack_seq TO daft_vedernikoff;
+
+
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE USAGE ON SEQUENCE daft_clickclack_seq FROM daft_vedernikoff;
+
+
+statement ok
+DROP ROLE daft_vedernikoff;
+
+
+# SEQUENCE: SELECT + UPDATE; remove the dependency by DROPping the sequence.
+statement ok
+CREATE ROLE daft_vedernikoff;
+
+
+statement ok
+GRANT SELECT, UPDATE ON SEQUENCE daft_clickclack_seq TO daft_vedernikoff;
+
+
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+DROP SEQUENCE daft_clickclack_seq;
+
+
+statement ok
+DROP ROLE daft_vedernikoff;
+
+
+statement ok
+CREATE SEQUENCE daft_clickclack_seq;
+
+
+# SEQUENCE: WITH GRANT OPTION is still a dependency; revoking only the grant
+# option leaves the base privilege, so the role is still held.
+statement ok
+CREATE ROLE daft_vedernikoff;
+
+
+statement ok
+GRANT USAGE ON SEQUENCE daft_clickclack_seq TO daft_vedernikoff WITH GRANT OPTION;
+
+
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE GRANT OPTION FOR USAGE ON SEQUENCE daft_clickclack_seq FROM daft_vedernikoff;
+
+
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE USAGE ON SEQUENCE daft_clickclack_seq FROM daft_vedernikoff;
+
+
+statement ok
+DROP ROLE daft_vedernikoff;
+
+
+# ---------------------------------------------------------------------------
+# FUNCTION: EXECUTE
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE ROLE daft_vedernikoff;
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION daft_mop_fn(int) TO daft_vedernikoff;
+
+
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION daft_mop_fn(int) FROM daft_vedernikoff;
+
+
+statement ok
+DROP ROLE daft_vedernikoff;
+
+
+# FUNCTION: REVOKE ALL clears the EXECUTE grant.
+statement ok
+CREATE ROLE daft_vedernikoff;
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION daft_mop_fn(int) TO daft_vedernikoff;
+
+
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE ALL ON FUNCTION daft_mop_fn(int) FROM daft_vedernikoff;
+
+
+statement ok
+DROP ROLE daft_vedernikoff;
+
+
+# FUNCTION: remove the dependency by DROPping the function itself.
+statement ok
+CREATE ROLE daft_vedernikoff;
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION daft_mop_fn(int) TO daft_vedernikoff;
+
+
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+DROP FUNCTION daft_mop_fn(int);
+
+
+statement ok
+DROP ROLE daft_vedernikoff;
+
+
+statement ok
+CREATE FUNCTION daft_mop_fn(x int) RETURNS int LANGUAGE sql AS 'SELECT x + 1';
+
+
+# ---------------------------------------------------------------------------
+# TYPE: USAGE
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE ROLE daft_vedernikoff;
+
+
+statement ok
+GRANT USAGE ON TYPE daft_iceberg_type TO daft_vedernikoff;
+
+
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE USAGE ON TYPE daft_iceberg_type FROM daft_vedernikoff;
+
+
+statement ok
+DROP ROLE daft_vedernikoff;
+
+
+# TYPE: remove the dependency by DROPping the type itself.
+statement ok
+CREATE ROLE daft_vedernikoff;
+
+
+statement ok
+GRANT USAGE ON TYPE daft_iceberg_type TO daft_vedernikoff;
+
+
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+DROP TYPE daft_iceberg_type;
+
+
+statement ok
+DROP ROLE daft_vedernikoff;
+
+
+statement ok
+CREATE TYPE daft_iceberg_type AS (a int, b text);
+
+
+# ---------------------------------------------------------------------------
+# MULTIPLE OBJECTS: every held grant is a separate dependency; the role can be
+# dropped only once the last one is revoked. Partial revoke still refuses.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE ROLE daft_vedernikoff;
+
+
+statement ok
+GRANT CONNECT ON DATABASE postgres TO daft_vedernikoff;
+
+
+statement ok
+GRANT USAGE ON SCHEMA daft_kostya_schema TO daft_vedernikoff;
+
+
+statement ok
+GRANT USAGE ON SEQUENCE daft_clickclack_seq TO daft_vedernikoff;
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION daft_mop_fn(int) TO daft_vedernikoff;
+
+
+statement ok
+GRANT USAGE ON TYPE daft_iceberg_type TO daft_vedernikoff;
+
+
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE CONNECT ON DATABASE postgres FROM daft_vedernikoff;
+
+
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE USAGE ON SCHEMA daft_kostya_schema FROM daft_vedernikoff;
+
+
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE USAGE ON SEQUENCE daft_clickclack_seq FROM daft_vedernikoff;
+
+
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION daft_mop_fn(int) FROM daft_vedernikoff;
+
+
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE USAGE ON TYPE daft_iceberg_type FROM daft_vedernikoff;
+
+
+# Last grant gone -> the role drops cleanly.
+statement ok
+DROP ROLE daft_vedernikoff;
+
+
+# ---------------------------------------------------------------------------
+# Cleanup
+# ---------------------------------------------------------------------------
+
+statement ok
+DROP SEQUENCE daft_clickclack_seq;
+
+
+statement ok
+DROP FUNCTION daft_mop_fn(int);
+
+
+statement ok
+DROP TYPE daft_iceberg_type;
+
+
+statement ok
+DROP SCHEMA daft_kostya_schema;

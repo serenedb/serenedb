@@ -1,0 +1,204 @@
+# Cross-view consistency of the role catalog over a mixed population: two login
+# roles and two nologin roles. pg_roles holds all four; pg_user and pg_shadow
+# hold exactly the two login roles (they share the rolcanlogin = t filter), and
+# the difference pg_roles \ pg_user recovers precisely the nologin roles.
+#
+# Every assertion is a count or a set of names (set operators + ORDER BY) --
+# never a raw oid -- so the result is byte-identical on PostgreSQL 19beta1 and
+# serenedb. Every query is scoped to this file's own four names (an explicit IN
+# list), so the counts hold regardless of any other catm_ roles a sibling file
+# may carry concurrently. Objects prefixed catm_ under the Vedernikoff lore;
+# idempotent and self-cleaning.
+
+statement ok
+DROP ROLE IF EXISTS catm_gul_login;
+
+
+statement ok
+DROP ROLE IF EXISTS catm_salam_login;
+
+
+statement ok
+DROP ROLE IF EXISTS catm_makak_nologin;
+
+
+statement ok
+DROP ROLE IF EXISTS catm_vitalik_nologin;
+
+
+statement ok
+CREATE ROLE catm_gul_login LOGIN;
+
+
+statement ok
+CREATE ROLE catm_salam_login LOGIN;
+
+
+statement ok
+CREATE ROLE catm_makak_nologin NOLOGIN;
+
+
+statement ok
+CREATE ROLE catm_vitalik_nologin NOLOGIN;
+
+
+# ----------------------------------------------------------------------
+# pg_roles holds all four; the two login-only views hold exactly two each.
+# ----------------------------------------------------------------------
+
+query
+SELECT count(*) FROM pg_roles
+WHERE rolname IN ('catm_gul_login', 'catm_salam_login', 'catm_makak_nologin', 'catm_vitalik_nologin');
+----
+count
+4
+
+
+query
+SELECT count(*) FROM pg_user
+WHERE usename IN ('catm_gul_login', 'catm_salam_login', 'catm_makak_nologin', 'catm_vitalik_nologin');
+----
+count
+2
+
+
+query
+SELECT count(*) FROM pg_shadow
+WHERE usename IN ('catm_gul_login', 'catm_salam_login', 'catm_makak_nologin', 'catm_vitalik_nologin');
+----
+count
+2
+
+
+# ----------------------------------------------------------------------
+# pg_user and pg_shadow apply the identical login filter: over this name set,
+# neither view has a name the other lacks. Both set-differences are empty.
+# ----------------------------------------------------------------------
+
+query
+SELECT usename FROM pg_user
+WHERE usename IN ('catm_gul_login', 'catm_salam_login', 'catm_makak_nologin', 'catm_vitalik_nologin')
+EXCEPT
+SELECT usename FROM pg_shadow
+WHERE usename IN ('catm_gul_login', 'catm_salam_login', 'catm_makak_nologin', 'catm_vitalik_nologin');
+----
+usename
+
+
+query
+SELECT usename FROM pg_shadow
+WHERE usename IN ('catm_gul_login', 'catm_salam_login', 'catm_makak_nologin', 'catm_vitalik_nologin')
+EXCEPT
+SELECT usename FROM pg_user
+WHERE usename IN ('catm_gul_login', 'catm_salam_login', 'catm_makak_nologin', 'catm_vitalik_nologin');
+----
+usename
+
+
+# ----------------------------------------------------------------------
+# The login-only projection is exactly the two LOGIN roles, sorted.
+# ----------------------------------------------------------------------
+
+query
+SELECT usename FROM pg_user
+WHERE usename IN ('catm_gul_login', 'catm_salam_login', 'catm_makak_nologin', 'catm_vitalik_nologin')
+ORDER BY usename;
+----
+usename
+catm_gul_login
+catm_salam_login
+
+
+# ----------------------------------------------------------------------
+# The roles in pg_roles but not in pg_user are exactly the NOLOGIN roles.
+# ----------------------------------------------------------------------
+
+query
+SELECT rolname FROM pg_roles
+WHERE rolname IN ('catm_gul_login', 'catm_salam_login', 'catm_makak_nologin', 'catm_vitalik_nologin')
+EXCEPT
+SELECT usename FROM pg_user
+WHERE usename IN ('catm_gul_login', 'catm_salam_login', 'catm_makak_nologin', 'catm_vitalik_nologin')
+ORDER BY rolname;
+----
+rolname
+catm_makak_nologin
+catm_vitalik_nologin
+
+
+# ----------------------------------------------------------------------
+# rolcanlogin in pg_roles is the predicate that drives membership of pg_user:
+# the two roles flagged t are exactly the two in pg_user.
+# ----------------------------------------------------------------------
+
+query
+SELECT count(*) FROM pg_roles
+WHERE rolname IN ('catm_gul_login', 'catm_salam_login', 'catm_makak_nologin', 'catm_vitalik_nologin')
+  AND rolcanlogin;
+----
+count
+2
+
+
+query
+SELECT rolname FROM pg_roles
+WHERE rolname IN ('catm_gul_login', 'catm_salam_login', 'catm_makak_nologin', 'catm_vitalik_nologin')
+  AND rolcanlogin
+INTERSECT
+SELECT usename FROM pg_user
+WHERE usename IN ('catm_gul_login', 'catm_salam_login', 'catm_makak_nologin', 'catm_vitalik_nologin')
+ORDER BY rolname;
+----
+rolname
+catm_gul_login
+catm_salam_login
+
+
+# ----------------------------------------------------------------------
+# Dropping one login role shrinks pg_roles and pg_user in lockstep; the nologin
+# roles are unaffected.
+# ----------------------------------------------------------------------
+
+statement ok
+DROP ROLE catm_gul_login;
+
+
+query
+SELECT count(*) FROM pg_roles
+WHERE rolname IN ('catm_gul_login', 'catm_salam_login', 'catm_makak_nologin', 'catm_vitalik_nologin');
+----
+count
+3
+
+
+query
+SELECT count(*) FROM pg_user
+WHERE usename IN ('catm_gul_login', 'catm_salam_login', 'catm_makak_nologin', 'catm_vitalik_nologin');
+----
+count
+1
+
+
+query
+SELECT usename FROM pg_user
+WHERE usename IN ('catm_gul_login', 'catm_salam_login', 'catm_makak_nologin', 'catm_vitalik_nologin')
+ORDER BY usename;
+----
+usename
+catm_salam_login
+
+
+# ----------------------------------------------------------------------
+# Cleanup.
+# ----------------------------------------------------------------------
+
+statement ok
+DROP ROLE catm_salam_login;
+
+
+statement ok
+DROP ROLE catm_makak_nologin;
+
+
+statement ok
+DROP ROLE catm_vitalik_nologin;

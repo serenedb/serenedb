@@ -1,0 +1,168 @@
+# Cross-product file B: a table owned by a NON-superuser role. The owner is set
+# by ALTER TABLE ... OWNER TO after the superuser creates the table (a
+# non-super cannot CREATE in public under PG15). The non-super OWNER still holds
+# all privileges implicitly with no relacl row, and -- on a real authenticated
+# connection -- can read/write its own table while a non-owner cannot DROP it.
+#
+# Lore: xog_iceberg is the table; xog_b_mop is its non-super owner; xog_b_babsky
+# is an unrelated login role.
+
+statement ok
+DROP TABLE IF EXISTS xog_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_b_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_b_babsky;
+
+
+statement ok
+CREATE ROLE xog_b_mop LOGIN;
+
+
+statement ok
+CREATE ROLE xog_b_babsky LOGIN;
+
+
+statement ok
+CREATE TABLE xog_iceberg (id int, payload text);
+
+
+statement ok
+INSERT INTO xog_iceberg VALUES (1, 'clickclack'), (2, 'vedernikoff');
+
+
+# Hand ownership to the non-super role.
+statement ok
+ALTER TABLE xog_iceberg OWNER TO xog_b_mop;
+
+
+# Ownership lives on the non-super role now (OID join, cross-engine stable).
+query
+SELECT EXISTS(
+  SELECT 1 FROM pg_class c JOIN pg_authid a ON a.oid = c.relowner
+  WHERE c.relname = 'xog_iceberg' AND a.rolname = 'xog_b_mop'
+) AS owned_by_mop;
+----
+owned_by_mop
+t
+
+
+# The non-super owner holds all seven privileges implicitly, even though it is
+# not a superuser -- ownership alone confers them.
+query
+SELECT has_table_privilege('xog_b_mop','xog_iceberg','SELECT')     AS sel,
+       has_table_privilege('xog_b_mop','xog_iceberg','INSERT')     AS ins,
+       has_table_privilege('xog_b_mop','xog_iceberg','UPDATE')     AS upd,
+       has_table_privilege('xog_b_mop','xog_iceberg','DELETE')     AS del,
+       has_table_privilege('xog_b_mop','xog_iceberg','TRUNCATE')   AS trc,
+       has_table_privilege('xog_b_mop','xog_iceberg','REFERENCES') AS ref,
+       has_table_privilege('xog_b_mop','xog_iceberg','TRIGGER')    AS trg;
+----
+sel	ins	upd	del	trc	ref	trg
+t	t	t	t	t	t	t
+
+
+# An unrelated login role holds none of them, and ownership did not create any
+# grantee row in relacl (the owner's privileges are implicit).
+query
+SELECT has_table_privilege('xog_b_babsky','xog_iceberg','SELECT') AS babsky_sel,
+       has_table_privilege('xog_b_babsky','xog_iceberg','INSERT') AS babsky_ins;
+----
+babsky_sel	babsky_ins
+f	f
+
+
+query
+SELECT count(*) AS acl_rows FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_iceberg'
+) g WHERE e LIKE 'xog_b_%';
+----
+acl_rows
+0
+
+
+# Real query path: the non-super owner can SELECT, INSERT, UPDATE, DELETE on its
+# own table over an authenticated connection -- ownership bypasses the ACL.
+connection c_mop user=xog_b_mop
+query
+SELECT count(*) AS n FROM xog_iceberg;
+----
+n
+2
+
+
+connection c_mop user=xog_b_mop
+statement ok
+INSERT INTO xog_iceberg VALUES (3, 'mop');
+
+
+connection c_mop user=xog_b_mop
+statement ok
+UPDATE xog_iceberg SET payload = 'reowned' WHERE id = 1;
+
+
+connection c_mop user=xog_b_mop
+statement ok
+DELETE FROM xog_iceberg WHERE id = 2;
+
+
+# The unrelated role cannot even SELECT (it has no grant of any kind).
+connection c_babsky user=xog_b_babsky
+statement error
+SELECT * FROM xog_iceberg;
+----
+db error: ERROR: permission denied for table xog_iceberg<slt:ignore>
+
+
+# The unrelated role is not the owner, so DROP TABLE is refused with the
+# canonical ownership error.
+connection c_babsky user=xog_b_babsky
+statement error
+DROP TABLE xog_iceberg;
+----
+db error: ERROR: must be owner of table xog_iceberg<slt:ignore>
+
+
+# Even granting the non-owner full DML does not make it the owner: DROP is still
+# refused (DDL needs ownership, not DML privileges).
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE ON xog_iceberg TO xog_b_babsky;
+
+
+connection c_babsky user=xog_b_babsky
+statement error
+DROP TABLE xog_iceberg;
+----
+db error: ERROR: must be owner of table xog_iceberg<slt:ignore>
+
+
+# But with full DML, the now-granted babsky can read and write for real.
+connection c_babsky user=xog_b_babsky
+query
+SELECT count(*) AS n FROM xog_iceberg;
+----
+n
+2
+
+
+connection c_babsky user=xog_b_babsky
+statement ok
+INSERT INTO xog_iceberg VALUES (4, 'babsky');
+
+
+# The owner can drop its own table -- recreate it afterward so cleanup is clean.
+connection c_mop user=xog_b_mop
+statement ok
+DROP TABLE xog_iceberg;
+
+
+statement ok
+DROP ROLE xog_b_mop;
+
+
+statement ok
+DROP ROLE xog_b_babsky;

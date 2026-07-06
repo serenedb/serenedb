@@ -1,0 +1,123 @@
+# ALTER ... OWNER TO authorization matrix (PostgreSQL rules, verified on PG18):
+#   - the caller must own the object (or be superuser),
+#   - the caller must be able to SET ROLE to the new owner,
+#   - the new owner must hold CREATE on the object's containing schema.
+# Table created by the superuser, then transferred to vedernikoff.
+#
+# Lore: vedernikoff, mop and iceberg are the roles; clickclack the table.
+
+statement ok
+DROP ROLE IF EXISTS oam_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS oam_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS oam_iceberg;
+
+
+statement ok
+DROP TABLE IF EXISTS oam_clickclack;
+
+
+statement ok
+CREATE ROLE oam_vedernikoff LOGIN;
+
+
+statement ok
+CREATE ROLE oam_mop;
+
+
+statement ok
+CREATE ROLE oam_iceberg LOGIN;
+
+
+# vedernikoff can SET ROLE to oam_mop (default GRANT carries the set option).
+statement ok
+GRANT oam_mop TO oam_vedernikoff;
+
+
+# mop needs CREATE on the schema to be allowed to receive ownership.
+statement ok
+GRANT CREATE ON SCHEMA public TO oam_mop;
+
+
+statement ok
+CREATE TABLE oam_clickclack (id int);
+
+
+# superuser hands the table to vedernikoff
+statement ok
+ALTER TABLE oam_clickclack OWNER TO oam_vedernikoff;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='oam_clickclack';
+----
+owner
+oam_vedernikoff
+
+
+# (a) owner transfers to a role it can SET ROLE to, which holds schema CREATE
+connection c user=oam_vedernikoff
+statement ok
+ALTER TABLE oam_clickclack OWNER TO oam_mop;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='oam_clickclack';
+----
+owner
+oam_mop
+
+
+connection default
+statement ok
+ALTER TABLE oam_clickclack OWNER TO oam_vedernikoff;
+
+
+# (b) owner cannot transfer to a role it cannot SET ROLE to
+connection c user=oam_vedernikoff
+statement error
+ALTER TABLE oam_clickclack OWNER TO oam_iceberg;
+----
+db error: ERROR: must be able to SET ROLE "oam_iceberg"<slt:ignore>
+
+
+# (c) non-owner cannot transfer
+connection c2 user=oam_iceberg
+statement error
+ALTER TABLE oam_clickclack OWNER TO oam_iceberg;
+----
+db error: ERROR: must be owner of table oam_clickclack<slt:ignore>
+
+
+# owner unchanged after the failed transfers
+connection default
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='oam_clickclack';
+----
+owner
+oam_vedernikoff
+
+
+statement ok
+DROP TABLE oam_clickclack;
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM oam_mop;
+
+
+statement ok
+DROP ROLE oam_iceberg;
+
+
+statement ok
+DROP ROLE oam_vedernikoff;
+
+
+statement ok
+DROP ROLE oam_mop;

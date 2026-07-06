@@ -1,0 +1,113 @@
+# Superuser-driven ALTER TABLE ... OWNER TO across the new-owner cross-product:
+# plain role, a group the superuser is (not) a member of, CURRENT_USER, and a
+# nonexistent role. The superuser is exempt from the new-owner schema-CREATE
+# check, so every successful transfer is byte-identical on PostgreSQL and
+# serenedb. Owner is read back through pg_class.relowner.
+#
+# Lore: the clickclack table is handed to mop, then to the iceberg group.
+
+statement ok
+DROP TABLE IF EXISTS xao_sut_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_sut_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_sut_iceberg;
+
+
+statement ok
+CREATE ROLE xao_sut_mop;
+
+
+statement ok
+CREATE ROLE xao_sut_iceberg;
+
+
+statement ok
+CREATE TABLE xao_sut_clickclack (id int);
+
+
+# Object previously transferred 0 times: starts owned by the bootstrap superuser.
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='xao_sut_clickclack';
+----
+owner
+postgres
+
+
+# (1) superuser -> plain role
+statement ok
+ALTER TABLE xao_sut_clickclack OWNER TO xao_sut_mop;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='xao_sut_clickclack';
+----
+owner
+xao_sut_mop
+
+
+# (2) superuser -> a group (transferred once already)
+statement ok
+ALTER TABLE xao_sut_clickclack OWNER TO xao_sut_iceberg;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='xao_sut_clickclack';
+----
+owner
+xao_sut_iceberg
+
+
+# (3) superuser -> CURRENT_USER resolves to postgres (transferred twice already)
+statement ok
+ALTER TABLE xao_sut_clickclack OWNER TO CURRENT_USER;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='xao_sut_clickclack';
+----
+owner
+postgres
+
+
+# (4) superuser -> nonexistent role: same error string on both engines
+statement error
+ALTER TABLE xao_sut_clickclack OWNER TO xao_sut_ghost;
+----
+db error: ERROR: role "xao_sut_ghost" does not exist<slt:ignore>
+
+
+# The failed transfer left ownership untouched.
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='xao_sut_clickclack';
+----
+owner
+postgres
+
+
+# Re-granting to the current owner is a no-op.
+statement ok
+ALTER TABLE xao_sut_clickclack OWNER TO postgres;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='xao_sut_clickclack';
+----
+owner
+postgres
+
+
+statement ok
+DROP TABLE xao_sut_clickclack;
+
+
+statement ok
+DROP ROLE xao_sut_mop;
+
+
+statement ok
+DROP ROLE xao_sut_iceberg;

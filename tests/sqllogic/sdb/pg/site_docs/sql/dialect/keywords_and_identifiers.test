@@ -102,7 +102,7 @@ t
 query error
 SELECT {'a': 1, 'A': 2};
 ----
-db error: ERROR: Duplicate struct entry name "A"
+db error: ERROR: Duplicate named argument 'A' in function call to 'struct_pack'
 
 
 statement ok

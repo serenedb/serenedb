@@ -139,8 +139,8 @@ using AnalyzerProvider = std::function<catalog::ColumnTokenizer(uint64_t)>;
 
 catalog::ColumnTokenizer IdentityAnalyzerProvider(uint64_t) {
   static catalog::Tokenizer gStringTokenizer(
-    ObjectId{0}, ObjectId{12345}, "test_string_verbartim", {},
-    DEFAULT_ROW_GROUP_SIZE,
+    catalog::Permissions{}, ObjectId{0}, ObjectId{12345},
+    "test_string_verbartim", {}, DEFAULT_ROW_GROUP_SIZE,
     irs::analysis::TokenizerConfig{.config = irs::StringTokenizer::Options{}});
   auto tokenizer = gStringTokenizer.GetTokenizer();
   EXPECT_TRUE(tokenizer);
@@ -151,8 +151,8 @@ catalog::ColumnTokenizer IdentityAnalyzerProvider(uint64_t) {
 template<irs::IndexFeatures Features>
 catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
   static catalog::Tokenizer gStringTokenizer(
-    ObjectId{0}, ObjectId{12346}, "test_segmentation", {},
-    DEFAULT_ROW_GROUP_SIZE,
+    catalog::Permissions{}, ObjectId{0}, ObjectId{12346}, "test_segmentation",
+    {}, DEFAULT_ROW_GROUP_SIZE,
     irs::analysis::TokenizerConfig{
       .config = irs::analysis::SegmentationTokenizer::Options{}});
   auto tokenizer = gStringTokenizer.GetTokenizer();
@@ -173,7 +173,8 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
     .stream_bytes_type = irs::analysis::NGramTokenizerBase::InputType::UTF8,
   };
   static catalog::Tokenizer gNgramTokenizer(
-    ObjectId{0}, ObjectId{12347}, "test_ngram", {}, DEFAULT_ROW_GROUP_SIZE,
+    catalog::Permissions{}, ObjectId{0}, ObjectId{12347}, "test_ngram", {},
+    DEFAULT_ROW_GROUP_SIZE,
     irs::analysis::TokenizerConfig{.config = std::move(ngram_opts)});
   auto tokenizer = gNgramTokenizer.GetTokenizer();
   EXPECT_TRUE(tokenizer);
@@ -189,7 +190,8 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
     .ngram_size = 3,
   };
   static catalog::Tokenizer gWildcardTokenizer(
-    ObjectId{0}, ObjectId{12348}, "test_wildcard", {}, DEFAULT_ROW_GROUP_SIZE,
+    catalog::Permissions{}, ObjectId{0}, ObjectId{12348}, "test_wildcard", {},
+    DEFAULT_ROW_GROUP_SIZE,
     irs::analysis::TokenizerConfig{.config = std::move(wildcard_opts)});
   auto tokenizer = gWildcardTokenizer.GetTokenizer();
   EXPECT_TRUE(tokenizer);
@@ -202,7 +204,8 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
 
 [[maybe_unused]] catalog::ColumnTokenizer GeoJsonAnalyzerProvider(uint64_t) {
   static catalog::Tokenizer gGeoTokenizer(
-    ObjectId{0}, ObjectId{12349}, "test_geojson", {}, DEFAULT_ROW_GROUP_SIZE,
+    catalog::Permissions{}, ObjectId{0}, ObjectId{12349}, "test_geojson", {},
+    DEFAULT_ROW_GROUP_SIZE,
     irs::analysis::TokenizerConfig{
       .config = irs::analysis::GeoJsonAnalyzer::Options{}});
   auto tokenizer = gGeoTokenizer.GetTokenizer();
@@ -612,8 +615,8 @@ class SearchFilterBuilderTest : public ::testing::Test {
       // Mismatched table_index would mean the query referenced a table we
       // didn't set up -- always a bug in the test itself. SDB_VERIFY (not
       // SDB_ASSERT) so `ti` is used in release builds too.
-      SDB_VERIFY(ref.binding.table_index == ti);
-      const auto local = ref.binding.column_index.GetIndexUnsafe();
+      SDB_VERIFY(ref.Binding().table_index == ti);
+      const auto local = ref.Binding().column_index.GetIndexUnsafe();
       const auto phys = projected[local].GetPrimaryIndex();
       // FromIsNull SDB_ENSUREs `null_field_id` is valid; production mints a
       // separate NextId() for the IS-NULL marker. The test schema doesn't
@@ -672,8 +675,11 @@ class SearchFilterBuilderTest : public ::testing::Test {
       << "MakeSearchFilter threw unexpectedly: " << caught_message;
     ASSERT_EQ(claimed > 0, must_succeed);
     if (must_succeed) {
-      ASSERT_EQ(root, expected) << "actual:   " << irs::ToString(root) << "\n"
-                                << "expected: " << irs::ToString(expected);
+      ASSERT_EQ(root, expected)
+        << "actual:   "
+        << duckdb::ExplainValue(irs::ToExplainNode(root)).ToString() << "\n"
+        << "expected: "
+        << duckdb::ExplainValue(irs::ToExplainNode(expected)).ToString();
     }
   }
 

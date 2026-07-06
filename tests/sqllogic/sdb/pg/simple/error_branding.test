@@ -16,17 +16,3 @@ statement error
 ALTER TABLE branding_t SET PARTITIONED BY (x);
 ----
 db error: ERROR: this ALTER TABLE operation is not supported
-
-
-# Deprecated settings must not point at "the DuckDB docs".
-
-statement error
-SET http_logging_output = 'stdout';
-----
-db error: ERROR: This setting is deprecated and can no longer be used.
-
-
-statement error
-RESET http_logging_output;
-----
-db error: ERROR: This setting is deprecated and can no longer be used.

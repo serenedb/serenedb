@@ -1,0 +1,66 @@
+control substitution on
+
+# Sequence ACL grants must survive a crash + WAL recovery. GRANT USAGE,SELECT
+# ON SEQUENCE writes the sequence's relacl through the same catalog-definition
+# path as a table; after recovery the relacl must re-render byte-identically.
+# Sequence privilege bits: r=SELECT, w=UPDATE, U=USAGE -- so the owner
+# self-grant is rwU and the grantee (USAGE,SELECT only) is rU.
+#
+# Vedernikoff is granted USAGE,SELECT on the clickclack mop-counter sequence.
+
+statement ok
+DROP SEQUENCE IF EXISTS rbac_acl_sg_mop_counter;
+
+
+statement ok
+DROP ROLE IF EXISTS rbac_acl_sg_vedernikoff;
+
+
+statement ok
+CREATE SEQUENCE rbac_acl_sg_mop_counter;
+
+
+statement ok
+CREATE ROLE rbac_acl_sg_vedernikoff;
+
+
+statement ok
+GRANT USAGE, SELECT ON SEQUENCE rbac_acl_sg_mop_counter TO rbac_acl_sg_vedernikoff;
+
+
+# relacl BEFORE the crash: owner self-grant rwU, grantee rU. Sorted.
+query
+SELECT unnest(relacl::text[]) AS e FROM pg_class
+WHERE relname = 'rbac_acl_sg_mop_counter' ORDER BY e;
+----
+e
+postgres=rwU/postgres
+rbac_acl_sg_vedernikoff=rU/postgres
+
+
+# ====================== CRASH ======================
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+# --- restart ---
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# ====================== POST-RECOVERY ======================
+
+# The sequence relacl is byte-identical after recovery.
+connection after_crash
+query
+SELECT unnest(relacl::text[]) AS e FROM pg_class
+WHERE relname = 'rbac_acl_sg_mop_counter' ORDER BY e;
+----
+e
+postgres=rwU/postgres
+rbac_acl_sg_vedernikoff=rU/postgres

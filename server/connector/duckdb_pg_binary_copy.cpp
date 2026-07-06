@@ -101,7 +101,7 @@ void DrainToHandle(message::Buffer& buffer, duckdb::FileHandle& handle) {
 
 duckdb::unique_ptr<duckdb::FunctionData> BindCopyTo(
   duckdb::ClientContext&, duckdb::CopyFunctionBindInput&,
-  const duckdb::vector<std::string>&,
+  const duckdb::vector<duckdb::Identifier>&,
   const duckdb::vector<duckdb::LogicalType>& sql_types) {
   return duckdb::make_uniq<PgBinaryCopyBindData>(sql_types);
 }
@@ -264,7 +264,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitGlobalFrom(
                 "on a server-side PostgreSQL wire connection"));
     }
     auto& conn = state->GetConnectionContext();
-    result->snapshot = conn.EnsureCatalogSnapshot();
+    result->snapshot = conn.CatalogSnapshot();
     // pg-stdin: borrow the recv-buffer view the bridge already holds; skip the
     // FileHandle (and its per-field memcpy) entirely. Binary COPY opens stdin
     // once (single-pass), so nothing else reads the handle, and the session has
@@ -280,7 +280,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitGlobalFrom(
     return result;
   }
   if (state) {
-    result->snapshot = state->GetConnectionContext().EnsureCatalogSnapshot();
+    result->snapshot = state->GetConnectionContext().CatalogSnapshot();
   }
   // file / real-stdin: block-buffered reader over the OS FileHandle.
   result->source = std::make_unique<HandleByteSource>(

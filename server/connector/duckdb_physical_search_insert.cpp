@@ -87,8 +87,8 @@ struct SearchInsertGlobalState : duckdb::GlobalSinkState {
     if (ctas_mode && !ctas_finalized && !ctas_table_name.empty()) {
       try {
         auto& catalog = catalog::GetCatalog();
-        auto r = catalog.DropTable(ctas_database_name, ctas_schema_name,
-                                   ctas_table_name, true);
+        auto r = catalog.DropTable(catalog::NoAccessCheck(), ctas_database_name,
+                                   ctas_schema_name, ctas_table_name, true);
         if (!r.ok()) {
           SDB_WARN(SEARCH, "CTAS rollback: failed to drop half-created table '",
                    ctas_table_name, "': ", r.errorMessage());
@@ -126,9 +126,10 @@ std::shared_ptr<catalog::Table> CreateCtasTable(
   auto& table_info = create_info.Cast<duckdb::CreateTableInfo>();
 
   catalog::CreateTableOptions options;
-  options.name = table_info.table;
+  options.name = table_info.GetTableName().GetIdentifierName();
   for (auto& col : table_info.columns.Logical()) {
-    catalog::Column sdb_col{{}, catalog::NextId(), col.Name(), col.Type()};
+    catalog::Column sdb_col{
+      {}, catalog::NextId(), col.Name().GetIdentifierName(), col.Type()};
     if (col.Generated()) {
       sdb_col.generated_type = catalog::Column::GeneratedType::kStored;
       sdb_col.expr =
@@ -152,7 +153,8 @@ std::shared_ptr<catalog::Table> CreateCtasTable(
   // no backing store table (a Search table never has one).
   op_options.table_id = catalog::NextId();
 
-  auto r = catalog_impl.CreateTable(database_id, schema.name,
+  auto r = catalog_impl.CreateTable(catalog::NoAccessCheck(), database_id,
+                                    schema.name.GetIdentifierName(),
                                     std::move(options), op_options);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (if_not_exists) {
@@ -160,7 +162,8 @@ std::shared_ptr<catalog::Table> CreateCtasTable(
     }
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_DUPLICATE_TABLE),
-      ERR_MSG("relation \"", table_info.table, "\" already exists"));
+      ERR_MSG("relation \"", table_info.GetTableName().GetIdentifierName(),
+              "\" already exists"));
   }
   if (!r.ok()) {
     SDB_THROW(std::move(r));
@@ -169,8 +172,9 @@ std::shared_ptr<catalog::Table> CreateCtasTable(
   // Fetch the new (tombstoned) table from a fresh global snapshot -- the
   // connection's snapshot predates the create.
   auto snapshot = catalog_impl.GetCatalogSnapshot();
-  auto catalog_table =
-    snapshot->GetTable(database_id, schema.name, std::string{table_info.table});
+  auto catalog_table = snapshot->GetTable(
+    catalog::NoAccessCheck(), database_id, schema.name.GetIdentifierName(),
+    table_info.GetTableName().GetIdentifierName());
   SDB_ASSERT(catalog_table);
   auto database = snapshot->GetDatabase(database_id);
   SDB_ASSERT(database);
@@ -178,8 +182,8 @@ std::shared_ptr<catalog::Table> CreateCtasTable(
   state.ctas_mode = true;
   state.ctas_database_id = database_id;
   state.ctas_database_name = database->GetName();
-  state.ctas_schema_name = schema.name;
-  state.ctas_table_name = table_info.table;
+  state.ctas_schema_name = schema.name.GetIdentifierName();
+  state.ctas_table_name = table_info.GetTableName().GetIdentifierName();
   return catalog_table;
 }
 
@@ -205,8 +209,10 @@ void RemoveCtasTombstoneIfNeeded(SearchInsertGlobalState& state) {
   // until the next boot. The table must exist post-reveal, and CTAS tables are
   // always Search-engine (asserted in CreateCtasTable), so GetData() is bound.
   auto snapshot = catalog.GetCatalogSnapshot();
-  auto table = snapshot->GetTable(
-    state.ctas_database_id, state.ctas_schema_name, state.ctas_table_name);
+  auto table = snapshot->GetTable(catalog::NoAccessCheck(),
+                                  state.ctas_database_id,
+                                  state.ctas_schema_name,
+                                  state.ctas_table_name);
   SDB_ASSERT(table);
   table->GetData()->StartTasks();
 }
@@ -243,12 +249,11 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
     if (!table) {
       return nullptr;  // IF NOT EXISTS hit an existing relation.
     }
-    conn_ctx.DropCatalogSnapshot();
     auto& catalog_impl = catalog::GetCatalog();
     snapshot = catalog_impl.GetCatalogSnapshot();
   } else {
     table = _table;
-    snapshot = conn_ctx.EnsureCatalogSnapshot();
+    snapshot = conn_ctx.CatalogSnapshot();
   }
 
   state->table_id = table->GetId();
@@ -391,8 +396,6 @@ duckdb::SinkFinalizeType SereneDBSearchInsert::Finalize(
                                               std::move(gstate.bulk_chunks));
   }
 
-  auto& conn_ctx = GetSereneDBContext(context);
-  conn_ctx.UpdateNumRows(gstate.table_id, gstate.insert_count);
   RemoveCtasTombstoneIfNeeded(gstate);
   return duckdb::SinkFinalizeType::READY;
 }

@@ -65,6 +65,8 @@
 #include "catalog/schema.h"
 #include "catalog/secondary_index.h"
 #include "catalog/table.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::catalog {
 namespace {
@@ -300,7 +302,7 @@ StoreTableDef MakeStoreTableDef(std::string_view database,
   names_for(table.PKColumns(), def.pk_columns);
   for (const auto& unique : table.UniqueConstraints()) {
     std::vector<std::string> names;
-    names_for(unique, names);
+    names_for(unique.columns, names);
     if (!names.empty()) {
       def.unique_constraints.push_back(std::move(names));
     }
@@ -736,13 +738,15 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
         case WriteContext::Op::DropStoreCheck: {
           auto r = basics::SafeCall([&]() -> Result {
             auto& context = *_conn->context;
-            duckdb::AlterEntryData data{std::string{kStoreAlias}, "main",
-                                        entry.store_table.name,
-                                        duckdb::OnEntryNotFound::RETURN_NULL};
+            duckdb::AlterEntryData data{
+              duckdb::QualifiedName{duckdb::Identifier{kStoreAlias},
+                                    duckdb::Identifier{"main"},
+                                    duckdb::Identifier{entry.store_table.name}},
+              duckdb::OnEntryNotFound::RETURN_NULL};
             duckdb::DropConstraintInfo info{std::move(data), entry.name_a, true,
                                             false};
-            auto& catalog =
-              duckdb::Catalog::GetCatalog(context, std::string{kStoreAlias});
+            auto& catalog = duckdb::Catalog::GetCatalog(
+              context, duckdb::Identifier{kStoreAlias});
             catalog.Alter(context, info);
             return {};
           });
@@ -864,19 +868,21 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
         case WriteContext::Op::DropStoreForeignKey: {
           auto r = basics::SafeCall([&]() -> Result {
             auto& context = *_conn->context;
-            duckdb::AlterEntryData data{std::string{kStoreAlias}, "main",
-                                        entry.store_table.name,
-                                        duckdb::OnEntryNotFound::RETURN_NULL};
+            duckdb::AlterEntryData data{
+              duckdb::QualifiedName{duckdb::Identifier{kStoreAlias},
+                                    duckdb::Identifier{"main"},
+                                    duckdb::Identifier{entry.store_table.name}},
+              duckdb::OnEntryNotFound::RETURN_NULL};
             duckdb::AlterForeignKeyInfo info{
               std::move(data),
-              entry.name_a,
+              duckdb::Identifier{entry.name_a},
               {},
               {},
               {},
               {},
               duckdb::AlterForeignKeyType::AFT_DELETE};
-            auto& catalog =
-              duckdb::Catalog::GetCatalog(context, std::string{kStoreAlias});
+            auto& catalog = duckdb::Catalog::GetCatalog(
+              context, duckdb::Identifier{kStoreAlias});
             catalog.Alter(context, info);
             return {};
           });
@@ -960,45 +966,48 @@ Result CatalogStore::ExecuteCreateStoreTable(const StoreTableDef& def) {
 Result CatalogStore::ExecuteCreateStoreTableImpl(const StoreTableDef& def,
                                                  bool with_checks) {
   return basics::SafeCall([&]() -> Result {
-    auto info = duckdb::make_uniq<duckdb::CreateTableInfo>(
-      std::string{kStoreAlias}, "main", def.name);
+    auto info =
+      duckdb::make_uniq<duckdb::CreateTableInfo>(duckdb::QualifiedName{
+        duckdb::Identifier{kStoreAlias}, duckdb::Identifier{"main"},
+        duckdb::Identifier{def.name}});
     for (const auto& col : def.columns) {
-      info->columns.AddColumn(duckdb::ColumnDefinition{col.name, col.type});
+      info->columns.AddColumn(
+        duckdb::ColumnDefinition{duckdb::Identifier{col.name}, col.type});
     }
     for (auto idx : def.not_null) {
       info->constraints.push_back(duckdb::make_uniq<duckdb::NotNullConstraint>(
         duckdb::LogicalIndex{idx}));
     }
     if (!def.pk_columns.empty()) {
-      duckdb::vector<std::string> pk;
+      duckdb::vector<duckdb::Identifier> pk;
       pk.reserve(def.pk_columns.size());
       for (const auto& name : def.pk_columns) {
-        pk.push_back(name);
+        pk.emplace_back(name);
       }
       info->constraints.push_back(
         duckdb::make_uniq<duckdb::UniqueConstraint>(std::move(pk), true));
     }
     for (const auto& unique : def.unique_constraints) {
-      duckdb::vector<std::string> names;
+      duckdb::vector<duckdb::Identifier> names;
       names.reserve(unique.size());
       for (const auto& name : unique) {
-        names.push_back(name);
+        names.emplace_back(name);
       }
       info->constraints.push_back(
         duckdb::make_uniq<duckdb::UniqueConstraint>(std::move(names), false));
     }
     for (const auto& fk : def.foreign_keys) {
-      duckdb::vector<std::string> fk_cols;
-      duckdb::vector<std::string> pk_cols;
+      duckdb::vector<duckdb::Identifier> fk_cols;
+      duckdb::vector<duckdb::Identifier> pk_cols;
       for (const auto& name : fk.columns) {
-        fk_cols.push_back(name);
+        fk_cols.emplace_back(name);
       }
       for (const auto& name : fk.referenced_columns) {
-        pk_cols.push_back(name);
+        pk_cols.emplace_back(name);
       }
       duckdb::ForeignKeyInfo fk_info;
       fk_info.type = duckdb::ForeignKeyType::FK_TYPE_FOREIGN_KEY_TABLE;
-      fk_info.table = fk.referenced_table;
+      fk_info.table = duckdb::Identifier{fk.referenced_table};
       info->constraints.push_back(
         duckdb::make_uniq<duckdb::ForeignKeyConstraint>(
           std::move(pk_cols), std::move(fk_cols), std::move(fk_info)));
@@ -1011,7 +1020,7 @@ Result CatalogStore::ExecuteCreateStoreTableImpl(const StoreTableDef& def,
     }
     auto& context = *_conn->context;
     auto& catalog =
-      duckdb::Catalog::GetCatalog(context, std::string{kStoreAlias});
+      duckdb::Catalog::GetCatalog(context, duckdb::Identifier{kStoreAlias});
     // Acquire the store's (shared) checkpoint lock before creating the table.
     // The direct catalog.CreateTable() call bypasses the statement-execution
     // path that normally registers the modification and takes this lock (which
@@ -1040,10 +1049,13 @@ void CatalogStore::ValidateStoreTable(const StoreTableDef& def) {
   }
   std::ignore = basics::SafeCall([&]() -> Result {
     auto& context = *_conn->context;
-    duckdb::EntryLookupInfo lookup{duckdb::CatalogType::TABLE_ENTRY, def.name};
-    auto entry =
-      duckdb::Catalog::GetEntry(context, std::string{kStoreAlias}, "main",
-                                lookup, duckdb::OnEntryNotFound::RETURN_NULL);
+    duckdb::EntryLookupInfo lookup{
+      duckdb::CatalogType::TABLE_ENTRY,
+      duckdb::QualifiedName{duckdb::Identifier{kStoreAlias},
+                            duckdb::Identifier{"main"},
+                            duckdb::Identifier{def.name}}};
+    auto entry = duckdb::Catalog::GetEntry(
+      context, lookup, duckdb::OnEntryNotFound::RETURN_NULL);
     SDB_ASSERT(entry, "store table missing for ", def.name);
     if (!entry) {
       return {};
@@ -1056,9 +1068,9 @@ void CatalogStore::ValidateStoreTable(const StoreTableDef& def) {
       if (i >= def.columns.size()) {
         break;
       }
-      SDB_ASSERT(col.Name() == def.columns[i].name,
+      SDB_ASSERT(col.Name().GetIdentifierName() == def.columns[i].name,
                  "store table column name mismatch for ", def.name, ": ",
-                 col.Name(), " vs ", def.columns[i].name);
+                 col.Name().GetIdentifierName(), " vs ", def.columns[i].name);
       SDB_ASSERT(col.Type() == def.columns[i].type,
                  "store table column type mismatch for ", def.name, ".",
                  def.columns[i].name);
@@ -1316,9 +1328,8 @@ void CatalogStore::EnsureSystemDatabase() {
     return;
   }
 
-  Database database{
-    id::kSystemDB,
-    DatabaseOptions{std::string{StaticStrings::kDefaultDatabase}}};
+  Database database{catalog::Permissions{id::kRootUser}, id::kSystemDB,
+                    StaticStrings::kDefaultDatabase};
   duckdb::MemoryStream stream;
   auto database_bytes = SerializeObject(database, stream);
   auto r = CreateDefinition(id::kInstance, ObjectType::Database, id::kSystemDB,
@@ -1328,9 +1339,8 @@ void CatalogStore::EnsureSystemDatabase() {
   }
 
   const auto schema_id = NextId();
-  Schema schema{id::kSystemDB,
-                SchemaOptions{.id = schema_id,
-                              .name = std::string{StaticStrings::kPublic}}};
+  Schema schema{catalog::Permissions{id::kRootUser}, id::kSystemDB, schema_id,
+                StaticStrings::kPublic};
   auto schema_bytes = SerializeObject(schema, stream);
   r = CreateDefinition(id::kSystemDB, ObjectType::Schema, schema_id,
                        schema_bytes);
@@ -1351,8 +1361,8 @@ void CheckInitInput(const duckdb::vector<duckdb::LogicalType>& types,
                   [](duckdb::LogicalTypeId id, const duckdb::LogicalType& t) {
                     return t.id() == id;
                   })) {
-    throw duckdb::BinderException(
-      absl::StrCat(fn, ": unexpected input table shape"));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG(fn, ": unexpected input table shape"));
   }
 }
 

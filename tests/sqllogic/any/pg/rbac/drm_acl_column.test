@@ -1,0 +1,359 @@
+# DROP ROLE must refuse while a role is the grantee of a COLUMN-level privilege
+# (e.g. GRANT SELECT (c) ON t TO r), exactly like PostgreSQL -- the role id is
+# pinned in the column ACL and would otherwise linger as an un-revokable ghost
+# grant. The drop becomes possible once the column grant is removed, by any of:
+# REVOKE <priv> (col), REVOKE ALL (col), a table-level REVOKE ALL that also
+# sweeps column grants, ALTER TABLE DROP COLUMN, or DROP TABLE.
+#
+# All outcomes below were validated against the PostgreSQL 19 oracle. The
+# DETAIL line PG emits ("privileges for column <c> of table <t>") differs in
+# wording across engines, so it is swallowed with <slt:ignore>.
+
+statement ok
+DROP TABLE IF EXISTS dacl_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS dacl_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS dacl_clickclack;
+
+
+statement ok
+CREATE TABLE dacl_iceberg (id int, payload text, mop int);
+
+
+statement ok
+CREATE ROLE dacl_vedernikoff;
+
+
+# ---------------------------------------------------------------------------
+# SELECT (column): grant pins the role; REVOKE of that column grant frees it.
+# ---------------------------------------------------------------------------
+statement ok
+GRANT SELECT (payload) ON dacl_iceberg TO dacl_vedernikoff;
+
+
+statement error
+DROP ROLE dacl_vedernikoff;
+----
+db error: ERROR: role "dacl_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE SELECT (payload) ON dacl_iceberg FROM dacl_vedernikoff;
+
+
+statement ok
+DROP ROLE dacl_vedernikoff;
+
+
+# ---------------------------------------------------------------------------
+# INSERT (column): same dependency, removed via REVOKE.
+# ---------------------------------------------------------------------------
+statement ok
+CREATE ROLE dacl_vedernikoff;
+
+
+statement ok
+GRANT INSERT (mop) ON dacl_iceberg TO dacl_vedernikoff;
+
+
+statement error
+DROP ROLE dacl_vedernikoff;
+----
+db error: ERROR: role "dacl_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE INSERT (mop) ON dacl_iceberg FROM dacl_vedernikoff;
+
+
+statement ok
+DROP ROLE dacl_vedernikoff;
+
+
+# ---------------------------------------------------------------------------
+# UPDATE (column): same dependency, removed via REVOKE.
+# ---------------------------------------------------------------------------
+statement ok
+CREATE ROLE dacl_vedernikoff;
+
+
+statement ok
+GRANT UPDATE (payload) ON dacl_iceberg TO dacl_vedernikoff;
+
+
+statement error
+DROP ROLE dacl_vedernikoff;
+----
+db error: ERROR: role "dacl_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE UPDATE (payload) ON dacl_iceberg FROM dacl_vedernikoff;
+
+
+statement ok
+DROP ROLE dacl_vedernikoff;
+
+
+# ---------------------------------------------------------------------------
+# REFERENCES (column): the fourth column-grantable privilege; same dependency.
+# ---------------------------------------------------------------------------
+statement ok
+CREATE ROLE dacl_vedernikoff;
+
+
+statement ok
+GRANT REFERENCES (id) ON dacl_iceberg TO dacl_vedernikoff;
+
+
+statement error
+DROP ROLE dacl_vedernikoff;
+----
+db error: ERROR: role "dacl_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE REFERENCES (id) ON dacl_iceberg FROM dacl_vedernikoff;
+
+
+statement ok
+DROP ROLE dacl_vedernikoff;
+
+
+# ---------------------------------------------------------------------------
+# REVOKE ALL (column) clears a single-privilege column grant.
+# ---------------------------------------------------------------------------
+statement ok
+CREATE ROLE dacl_vedernikoff;
+
+
+statement ok
+GRANT SELECT (payload) ON dacl_iceberg TO dacl_vedernikoff;
+
+
+statement error
+DROP ROLE dacl_vedernikoff;
+----
+db error: ERROR: role "dacl_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE ALL (payload) ON dacl_iceberg FROM dacl_vedernikoff;
+
+
+statement ok
+DROP ROLE dacl_vedernikoff;
+
+
+# ---------------------------------------------------------------------------
+# Two columns granted in one statement: revoking ONE column still leaves the
+# role pinned by the OTHER. The drop succeeds only after both are revoked.
+# ---------------------------------------------------------------------------
+statement ok
+CREATE ROLE dacl_vedernikoff;
+
+
+statement ok
+GRANT SELECT (payload), SELECT (mop) ON dacl_iceberg TO dacl_vedernikoff;
+
+
+statement error
+DROP ROLE dacl_vedernikoff;
+----
+db error: ERROR: role "dacl_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Revoke only the payload column -> still blocked by the mop column grant.
+statement ok
+REVOKE SELECT (payload) ON dacl_iceberg FROM dacl_vedernikoff;
+
+
+statement error
+DROP ROLE dacl_vedernikoff;
+----
+db error: ERROR: role "dacl_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Revoke the second column -> dependency fully gone -> drop succeeds.
+statement ok
+REVOKE SELECT (mop) ON dacl_iceberg FROM dacl_vedernikoff;
+
+
+statement ok
+DROP ROLE dacl_vedernikoff;
+
+
+# ---------------------------------------------------------------------------
+# Mixed table-level + column-level grants. Revoking the table-level privilege
+# alone leaves the column grant pinning the role; both must go.
+# ---------------------------------------------------------------------------
+statement ok
+CREATE ROLE dacl_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON dacl_iceberg TO dacl_vedernikoff;
+
+
+statement ok
+GRANT INSERT (mop) ON dacl_iceberg TO dacl_vedernikoff;
+
+
+statement error
+DROP ROLE dacl_vedernikoff;
+----
+db error: ERROR: role "dacl_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Revoke only the table-level SELECT -> column INSERT still pins the role.
+statement ok
+REVOKE SELECT ON dacl_iceberg FROM dacl_vedernikoff;
+
+
+statement error
+DROP ROLE dacl_vedernikoff;
+----
+db error: ERROR: role "dacl_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE INSERT (mop) ON dacl_iceberg FROM dacl_vedernikoff;
+
+
+statement ok
+DROP ROLE dacl_vedernikoff;
+
+
+# ---------------------------------------------------------------------------
+# A table-level REVOKE ALL (no column list) also sweeps away column grants in
+# PG, so it is enough to free a role pinned only by a column privilege.
+# ---------------------------------------------------------------------------
+statement ok
+CREATE ROLE dacl_vedernikoff;
+
+
+statement ok
+GRANT SELECT (payload) ON dacl_iceberg TO dacl_vedernikoff;
+
+
+statement error
+DROP ROLE dacl_vedernikoff;
+----
+db error: ERROR: role "dacl_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE ALL ON dacl_iceberg FROM dacl_vedernikoff;
+
+
+statement ok
+DROP ROLE dacl_vedernikoff;
+
+
+# ---------------------------------------------------------------------------
+# WITH GRANT OPTION on a column privilege still pins the role. Revoking only
+# the grant option (REVOKE GRANT OPTION FOR ...) leaves the base privilege, so
+# the role stays pinned until the privilege itself is revoked.
+# ---------------------------------------------------------------------------
+statement ok
+CREATE ROLE dacl_vedernikoff;
+
+
+statement ok
+GRANT SELECT (payload) ON dacl_iceberg TO dacl_vedernikoff WITH GRANT OPTION;
+
+
+statement error
+DROP ROLE dacl_vedernikoff;
+----
+db error: ERROR: role "dacl_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Dropping just the grant option keeps the underlying SELECT (payload) grant.
+statement ok
+REVOKE GRANT OPTION FOR SELECT (payload) ON dacl_iceberg FROM dacl_vedernikoff;
+
+
+statement error
+DROP ROLE dacl_vedernikoff;
+----
+db error: ERROR: role "dacl_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE SELECT (payload) ON dacl_iceberg FROM dacl_vedernikoff;
+
+
+statement ok
+DROP ROLE dacl_vedernikoff;
+
+
+# ---------------------------------------------------------------------------
+# Dropping the granted COLUMN (ALTER TABLE DROP COLUMN) removes the column ACL
+# entry, so the role is no longer pinned and the drop succeeds.
+# ---------------------------------------------------------------------------
+statement ok
+CREATE ROLE dacl_vedernikoff;
+
+
+statement ok
+GRANT SELECT (mop) ON dacl_iceberg TO dacl_vedernikoff;
+
+
+statement error
+DROP ROLE dacl_vedernikoff;
+----
+db error: ERROR: role "dacl_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+ALTER TABLE dacl_iceberg DROP COLUMN mop;
+
+
+statement ok
+DROP ROLE dacl_vedernikoff;
+
+
+# ---------------------------------------------------------------------------
+# Dropping the whole TABLE removes every column ACL on it, freeing the role.
+# ---------------------------------------------------------------------------
+statement ok
+CREATE ROLE dacl_vedernikoff;
+
+
+statement ok
+GRANT SELECT (payload) ON dacl_iceberg TO dacl_vedernikoff;
+
+
+statement error
+DROP ROLE dacl_vedernikoff;
+----
+db error: ERROR: role "dacl_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+DROP TABLE dacl_iceberg;
+
+
+statement ok
+DROP ROLE dacl_vedernikoff;
+
+
+# ---------------------------------------------------------------------------
+# Cleanup.
+# ---------------------------------------------------------------------------
+statement ok
+DROP TABLE IF EXISTS dacl_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS dacl_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS dacl_clickclack;

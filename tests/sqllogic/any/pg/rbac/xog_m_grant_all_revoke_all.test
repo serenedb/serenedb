@@ -1,0 +1,150 @@
+# Cross-product file M: the GRANT ALL PRIVILEGES shorthand vs an explicit
+# seven-privilege list, and REVOKE ALL. Through the byte-identical oracle, GRANT
+# ALL confers exactly the same seven standard table privileges as the explicit
+# list, and the owner already holds that same set implicitly. REVOKE ALL clears
+# the grantee row entirely.
+#
+# (We do NOT assert the full ALL relacl letter string: the engines differ on
+# whether ALL includes the MAINTAIN letter. The oracle over the seven standard
+# privileges is identical, and that is what we check.)
+#
+# Lore: xog_m_clickclack is the superuser-owned table; xog_m_all gets ALL,
+# xog_m_list gets the explicit seven -- they end up equivalent.
+
+statement ok
+DROP TABLE IF EXISTS xog_m_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_m_all;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_m_list;
+
+
+statement ok
+CREATE TABLE xog_m_clickclack (id int);
+
+
+statement ok
+CREATE ROLE xog_m_all LOGIN;
+
+
+statement ok
+CREATE ROLE xog_m_list LOGIN;
+
+
+# GRANT ALL to one role, the explicit seven to the other.
+statement ok
+GRANT ALL PRIVILEGES ON xog_m_clickclack TO xog_m_all;
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON xog_m_clickclack TO xog_m_list;
+
+
+# Both grantees hold all seven standard privileges -- ALL and the explicit list
+# are equivalent over the standard set.
+query
+SELECT has_table_privilege('xog_m_all','xog_m_clickclack','SELECT')     AS sel,
+       has_table_privilege('xog_m_all','xog_m_clickclack','INSERT')     AS ins,
+       has_table_privilege('xog_m_all','xog_m_clickclack','UPDATE')     AS upd,
+       has_table_privilege('xog_m_all','xog_m_clickclack','DELETE')     AS del,
+       has_table_privilege('xog_m_all','xog_m_clickclack','TRUNCATE')   AS trc,
+       has_table_privilege('xog_m_all','xog_m_clickclack','REFERENCES') AS ref,
+       has_table_privilege('xog_m_all','xog_m_clickclack','TRIGGER')    AS trg;
+----
+sel	ins	upd	del	trc	ref	trg
+t	t	t	t	t	t	t
+
+
+query
+SELECT has_table_privilege('xog_m_list','xog_m_clickclack','SELECT')     AS sel,
+       has_table_privilege('xog_m_list','xog_m_clickclack','INSERT')     AS ins,
+       has_table_privilege('xog_m_list','xog_m_clickclack','UPDATE')     AS upd,
+       has_table_privilege('xog_m_list','xog_m_clickclack','DELETE')     AS del,
+       has_table_privilege('xog_m_list','xog_m_clickclack','TRUNCATE')   AS trc,
+       has_table_privilege('xog_m_list','xog_m_clickclack','REFERENCES') AS ref,
+       has_table_privilege('xog_m_list','xog_m_clickclack','TRIGGER')    AS trg;
+----
+sel	ins	upd	del	trc	ref	trg
+t	t	t	t	t	t	t
+
+
+# The owner holds the same seven implicitly.
+query
+SELECT has_table_privilege('postgres','xog_m_clickclack','SELECT')     AS sel,
+       has_table_privilege('postgres','xog_m_clickclack','TRUNCATE')   AS trc,
+       has_table_privilege('postgres','xog_m_clickclack','TRIGGER')    AS trg;
+----
+sel	trc	trg
+t	t	t
+
+
+# ---- REVOKE ALL from the list role: every standard privilege drops and the
+# grantee row disappears. The ALL role is untouched. ----
+statement ok
+REVOKE ALL PRIVILEGES ON xog_m_clickclack FROM xog_m_list;
+
+
+query
+SELECT has_table_privilege('xog_m_list','xog_m_clickclack','SELECT')   AS sel,
+       has_table_privilege('xog_m_list','xog_m_clickclack','INSERT')   AS ins,
+       has_table_privilege('xog_m_list','xog_m_clickclack','TRUNCATE') AS trc;
+----
+sel	ins	trc
+f	f	f
+
+
+query
+SELECT count(*) AS list_rows FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_m_clickclack'
+) g WHERE e LIKE 'xog_m_list=%';
+----
+list_rows
+0
+
+
+# The ALL role still holds everything -- REVOKE on one grantee is isolated.
+query
+SELECT has_table_privilege('xog_m_all','xog_m_clickclack','SELECT')   AS sel,
+       has_table_privilege('xog_m_all','xog_m_clickclack','TRUNCATE') AS trc;
+----
+sel	trc
+t	t
+
+
+# ---- REVOKE ALL from the ALL role too: now no grantee rows remain at all. ----
+statement ok
+REVOKE ALL PRIVILEGES ON xog_m_clickclack FROM xog_m_all;
+
+
+query
+SELECT count(*) AS grantee_rows FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_m_clickclack'
+) g WHERE e NOT LIKE 'postgres=%';
+----
+grantee_rows
+0
+
+
+# The owner's implicit privileges are entirely unaffected by the revokes.
+query
+SELECT has_table_privilege('postgres','xog_m_clickclack','SELECT') AS sel,
+       has_table_privilege('postgres','xog_m_clickclack','DELETE') AS del;
+----
+sel	del
+t	t
+
+
+statement ok
+DROP TABLE xog_m_clickclack;
+
+
+statement ok
+DROP ROLE xog_m_all;
+
+
+statement ok
+DROP ROLE xog_m_list;

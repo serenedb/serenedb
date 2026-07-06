@@ -1,0 +1,108 @@
+# An explicit grant survives an owner change untouched: a role granted exactly
+# SELECT before the transfer still holds exactly SELECT afterwards (and nothing
+# more). The owner change rewrites only the implicit owner privileges, not the
+# explicit ACL entries. Observed through has_table_privilege, byte-identical on
+# PostgreSQL and serenedb.
+#
+# Lore: iceberg is the table. babsky holds an explicit SELECT grant; ownership
+# moves from mop to vedernikoff around it.
+
+statement ok
+DROP TABLE IF EXISTS xao_agp_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_agp_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_agp_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_agp_babsky;
+
+
+statement ok
+CREATE ROLE xao_agp_mop;
+
+
+statement ok
+CREATE ROLE xao_agp_vedernikoff;
+
+
+statement ok
+CREATE ROLE xao_agp_babsky;
+
+
+statement ok
+CREATE TABLE xao_agp_iceberg (id int);
+
+
+statement ok
+ALTER TABLE xao_agp_iceberg OWNER TO xao_agp_mop;
+
+
+# babsky gets exactly SELECT (and SELECT is never on PUBLIC for this table, so a
+# false reading on the other privileges is meaningful).
+statement ok
+GRANT SELECT ON xao_agp_iceberg TO xao_agp_babsky;
+
+
+# Before the owner change: babsky holds exactly SELECT.
+query
+SELECT
+  has_table_privilege('xao_agp_babsky','xao_agp_iceberg','SELECT') AS sel,
+  has_table_privilege('xao_agp_babsky','xao_agp_iceberg','INSERT') AS ins,
+  has_table_privilege('xao_agp_babsky','xao_agp_iceberg','UPDATE') AS upd,
+  has_table_privilege('xao_agp_babsky','xao_agp_iceberg','DELETE') AS del;
+----
+sel	ins	upd	del
+t	f	f	f
+
+
+# Move ownership mop -> vedernikoff.
+statement ok
+ALTER TABLE xao_agp_iceberg OWNER TO xao_agp_vedernikoff;
+
+
+# After the owner change: babsky's explicit grant is exactly as before.
+query
+SELECT
+  has_table_privilege('xao_agp_babsky','xao_agp_iceberg','SELECT') AS sel,
+  has_table_privilege('xao_agp_babsky','xao_agp_iceberg','INSERT') AS ins,
+  has_table_privilege('xao_agp_babsky','xao_agp_iceberg','UPDATE') AS upd,
+  has_table_privilege('xao_agp_babsky','xao_agp_iceberg','DELETE') AS del;
+----
+sel	ins	upd	del
+t	f	f	f
+
+
+# Move it once more, back to mop -- the grant still survives unchanged.
+statement ok
+ALTER TABLE xao_agp_iceberg OWNER TO xao_agp_mop;
+
+
+query
+SELECT
+  has_table_privilege('xao_agp_babsky','xao_agp_iceberg','SELECT') AS sel,
+  has_table_privilege('xao_agp_babsky','xao_agp_iceberg','INSERT') AS ins;
+----
+sel	ins
+t	f
+
+
+statement ok
+DROP TABLE xao_agp_iceberg;
+
+
+statement ok
+DROP ROLE xao_agp_mop;
+
+
+statement ok
+DROP ROLE xao_agp_vedernikoff;
+
+
+statement ok
+DROP ROLE xao_agp_babsky;

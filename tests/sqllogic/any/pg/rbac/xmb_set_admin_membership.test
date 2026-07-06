@@ -1,0 +1,107 @@
+# Cross-membership SET and ADMIN axes through pg_has_role + onward GRANT.
+# Byte-identical on PostgreSQL 19 and serenedb:
+#   1. WITH SET FALSE   -> SET false, MEMBER/USAGE still true.
+#   2. WITH ADMIN OPTION -> MEMBER/USAGE WITH ADMIN OPTION probes true.
+#   3. a member holding ADMIN OPTION may GRANT the role onward; a plain
+#      non-superuser member may not.
+#
+# Lore: iceberg is the group; mop holds it (with admin), babsky the onward
+# grantee, vedernikoff the unprivileged outsider.
+
+statement ok
+DROP ROLE IF EXISTS xmb_sa_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_sa_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_sa_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_sa_vedernikoff;
+
+
+statement ok
+CREATE ROLE xmb_sa_iceberg;
+
+
+statement ok
+CREATE ROLE xmb_sa_mop LOGIN PASSWORD 'xmb_sa_mop_pw';
+
+
+statement ok
+CREATE ROLE xmb_sa_babsky;
+
+
+statement ok
+CREATE ROLE xmb_sa_vedernikoff LOGIN PASSWORD 'xmb_sa_vedernikoff_pw';
+
+
+# (1) WITH SET FALSE: SET is false, MEMBER and USAGE unaffected.
+statement ok
+GRANT xmb_sa_iceberg TO xmb_sa_mop WITH SET FALSE;
+
+
+query
+SELECT pg_has_role('xmb_sa_mop', 'xmb_sa_iceberg', 'MEMBER') AS member,
+       pg_has_role('xmb_sa_mop', 'xmb_sa_iceberg', 'USAGE') AS usage,
+       pg_has_role('xmb_sa_mop', 'xmb_sa_iceberg', 'SET') AS setrole;
+----
+member	usage	setrole
+t	t	f
+
+
+# (2) WITH ADMIN OPTION: the admin-option probes are surfaced.
+statement ok
+GRANT xmb_sa_iceberg TO xmb_sa_mop WITH ADMIN OPTION;
+
+
+query
+SELECT pg_has_role('xmb_sa_mop', 'xmb_sa_iceberg', 'MEMBER WITH ADMIN OPTION') AS member_admin,
+       pg_has_role('xmb_sa_mop', 'xmb_sa_iceberg', 'USAGE WITH ADMIN OPTION') AS usage_admin;
+----
+member_admin	usage_admin
+t	t
+
+
+# (3) mop, holding ADMIN OPTION on iceberg, may grant it onward to babsky.
+connection c_mop user=xmb_sa_mop password=xmb_sa_mop_pw
+statement ok
+GRANT xmb_sa_iceberg TO xmb_sa_babsky;
+
+
+connection default
+query
+SELECT pg_has_role('xmb_sa_babsky', 'xmb_sa_iceberg', 'MEMBER') AS member;
+----
+member
+t
+
+
+# A plain non-superuser without ADMIN OPTION may not grant the role.
+connection c_ved user=xmb_sa_vedernikoff password=xmb_sa_vedernikoff_pw
+statement error
+GRANT xmb_sa_iceberg TO xmb_sa_babsky;
+----
+db error: ERROR: permission denied to grant role "xmb_sa_iceberg"<slt:ignore>
+
+
+# ---- cleanup ----
+
+statement ok
+DROP ROLE xmb_sa_vedernikoff;
+
+
+statement ok
+DROP ROLE xmb_sa_babsky;
+
+
+statement ok
+DROP ROLE xmb_sa_mop;
+
+
+statement ok
+DROP ROLE xmb_sa_iceberg;

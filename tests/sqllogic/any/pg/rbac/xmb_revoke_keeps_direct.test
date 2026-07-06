@@ -1,0 +1,147 @@
+# Cross-membership: REVOKE-ing a role membership removes ONLY the inherited
+# contribution; a privilege the member holds directly (granted to the member by
+# name) is untouched. The two grant kinds are independent ledger entries.
+#
+# Setup: xmb_rkd_mop holds SELECT directly AND is a member of xmb_rkd_iceberg, which
+# holds INSERT. After REVOKE-ing the membership, SELECT (direct) stays and
+# INSERT (inherited) goes.
+#
+# Byte-identical on real PostgreSQL and serenedb.
+
+statement ok
+DROP ROLE IF EXISTS xmb_rkd_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_rkd_iceberg;
+
+
+statement ok
+DROP TABLE IF EXISTS xmb_rkd_clickclack;
+
+
+statement ok
+CREATE TABLE xmb_rkd_clickclack (id int, payload text);
+
+
+statement ok
+INSERT INTO xmb_rkd_clickclack VALUES (1, 'vedernikoff');
+
+
+statement ok
+CREATE ROLE xmb_rkd_mop LOGIN PASSWORD 'xmb_rkd_mop_pw';
+
+
+statement ok
+CREATE ROLE xmb_rkd_iceberg;
+
+
+# Direct SELECT to the member; INSERT to the group it joins.
+statement ok
+GRANT SELECT ON xmb_rkd_clickclack TO xmb_rkd_mop;
+
+
+statement ok
+GRANT INSERT ON xmb_rkd_clickclack TO xmb_rkd_iceberg;
+
+
+statement ok
+GRANT xmb_rkd_iceberg TO xmb_rkd_mop;
+
+
+# Both privileges visible: SELECT (direct) + INSERT (inherited).
+query
+SELECT has_table_privilege('xmb_rkd_mop', 'xmb_rkd_clickclack', 'SELECT') AS sel,
+       has_table_privilege('xmb_rkd_mop', 'xmb_rkd_clickclack', 'INSERT') AS ins;
+----
+sel	ins
+t	t
+
+
+connection c_mop user=xmb_rkd_mop password=xmb_rkd_mop_pw
+query
+SELECT count(*) FROM xmb_rkd_clickclack;
+----
+count
+1
+
+
+connection c_mop user=xmb_rkd_mop password=xmb_rkd_mop_pw
+statement ok
+INSERT INTO xmb_rkd_clickclack VALUES (2, 'babsky');
+
+
+# ---- Revoke the membership: inherited INSERT goes, direct SELECT stays ----
+
+statement ok
+REVOKE xmb_rkd_iceberg FROM xmb_rkd_mop;
+
+
+query
+SELECT has_table_privilege('xmb_rkd_mop', 'xmb_rkd_clickclack', 'SELECT') AS sel,
+       has_table_privilege('xmb_rkd_mop', 'xmb_rkd_clickclack', 'INSERT') AS ins,
+       pg_has_role('xmb_rkd_mop', 'xmb_rkd_iceberg', 'MEMBER') AS still_member;
+----
+sel	ins	still_member
+t	f	f
+
+
+# Real query path: SELECT still works, INSERT is now denied.
+connection c_mop2 user=xmb_rkd_mop password=xmb_rkd_mop_pw
+query
+SELECT count(*) FROM xmb_rkd_clickclack;
+----
+count
+2
+
+
+connection c_mop2 user=xmb_rkd_mop password=xmb_rkd_mop_pw
+statement error
+INSERT INTO xmb_rkd_clickclack VALUES (3, 'gone');
+----
+db error: ERROR: permission denied for table xmb_rkd_clickclack<slt:ignore>
+
+
+# ---- Symmetric check: REVOKE the direct SELECT, re-add membership ----
+# Now only the inherited INSERT is present.
+
+statement ok
+REVOKE SELECT ON xmb_rkd_clickclack FROM xmb_rkd_mop;
+
+
+statement ok
+GRANT xmb_rkd_iceberg TO xmb_rkd_mop;
+
+
+query
+SELECT has_table_privilege('xmb_rkd_mop', 'xmb_rkd_clickclack', 'SELECT') AS sel,
+       has_table_privilege('xmb_rkd_mop', 'xmb_rkd_clickclack', 'INSERT') AS ins;
+----
+sel	ins
+f	t
+
+
+connection c_mop3 user=xmb_rkd_mop password=xmb_rkd_mop_pw
+statement error
+SELECT * FROM xmb_rkd_clickclack;
+----
+db error: ERROR: permission denied for table xmb_rkd_clickclack<slt:ignore>
+
+
+connection c_mop3 user=xmb_rkd_mop password=xmb_rkd_mop_pw
+statement ok
+INSERT INTO xmb_rkd_clickclack VALUES (4, 'kostya');
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP TABLE IF EXISTS xmb_rkd_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_rkd_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_rkd_iceberg;

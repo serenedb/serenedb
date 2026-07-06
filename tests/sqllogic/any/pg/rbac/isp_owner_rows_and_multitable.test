@@ -1,0 +1,212 @@
+# The owner's own rows in information_schema.table_privileges, and the view
+# across several tables at once. A freshly created table has exactly the seven
+# owner rows: grantor = grantee = postgres, is_grantable YES on every one
+# (ownership implies grant authority), with_hierarchy YES only on SELECT. These
+# owner rows are byte-identical on PostgreSQL 19beta1 and serenedb in THIS view
+# (the relacl-text MAINTAIN 'm' bit that diverges does not surface here). We
+# still scope every assertion to our own tables/roles.
+#
+# Vedernikoff lore: kostya owns a small cluster of clickclack tables.
+
+statement ok
+DROP TABLE IF EXISTS isp_mop_a;
+
+
+statement ok
+DROP TABLE IF EXISTS isp_mop_b;
+
+
+statement ok
+DROP TABLE IF EXISTS isp_mop_c;
+
+
+statement ok
+DROP ROLE IF EXISTS isp_vitalik;
+
+
+statement ok
+DROP ROLE IF EXISTS isp_shlepach;
+
+
+statement ok
+CREATE TABLE isp_mop_a (id int);
+
+
+statement ok
+CREATE TABLE isp_mop_b (id int);
+
+
+statement ok
+CREATE TABLE isp_mop_c (id int);
+
+
+statement ok
+CREATE ROLE isp_vitalik;
+
+
+statement ok
+CREATE ROLE isp_shlepach;
+
+
+# ============================================================================
+# A fresh table's owner rows: seven privileges, grantor = grantee = owner,
+# is_grantable YES throughout, with_hierarchy YES only on SELECT.
+# ============================================================================
+
+query
+SELECT grantor, grantee, privilege_type, is_grantable, with_hierarchy
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_mop_a'
+ORDER BY privilege_type;
+----
+grantor	grantee	privilege_type	is_grantable	with_hierarchy
+postgres	postgres	DELETE	YES	NO
+postgres	postgres	INSERT	YES	NO
+postgres	postgres	REFERENCES	YES	NO
+postgres	postgres	SELECT	YES	YES
+postgres	postgres	TRIGGER	YES	NO
+postgres	postgres	TRUNCATE	YES	NO
+postgres	postgres	UPDATE	YES	NO
+
+
+# A table with no extra grants has exactly seven rows total (the owner's).
+query
+SELECT count(*) AS owner_rows FROM information_schema.table_privileges
+WHERE table_name = 'isp_mop_a';
+----
+owner_rows
+7
+
+
+# ============================================================================
+# Granting to a role adds rows ALONGSIDE the owner rows; the owner rows are
+# unchanged. We assert the owner row count stays seven and the grantee rows
+# appear separately.
+# ============================================================================
+
+statement ok
+GRANT SELECT, DELETE ON isp_mop_a TO isp_vitalik;
+
+
+query
+SELECT grantee, privilege_type, is_grantable
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_mop_a' AND grantee = 'isp_vitalik'
+ORDER BY privilege_type;
+----
+grantee	privilege_type	is_grantable
+isp_vitalik	DELETE	NO
+isp_vitalik	SELECT	NO
+
+
+# Owner still has its seven rows; total is now seven owner + two grantee = nine.
+query
+SELECT
+  (SELECT count(*) FROM information_schema.table_privileges
+     WHERE table_name = 'isp_mop_a' AND grantee = 'postgres') AS owner_rows,
+  (SELECT count(*) FROM information_schema.table_privileges
+     WHERE table_name = 'isp_mop_a') AS total_rows;
+----
+owner_rows	total_rows
+7	9
+
+
+# ============================================================================
+# Across multiple tables: grant different privileges on b and c, then list
+# every grantee row for our role across all three tables, ordered by
+# table_name then privilege_type. table_name is part of the row identity.
+# ============================================================================
+
+statement ok
+GRANT INSERT ON isp_mop_b TO isp_vitalik;
+
+
+statement ok
+GRANT UPDATE, REFERENCES ON isp_mop_c TO isp_vitalik;
+
+
+query
+SELECT table_name, privilege_type, is_grantable, with_hierarchy
+FROM information_schema.table_privileges
+WHERE grantee = 'isp_vitalik'
+  AND table_name IN ('isp_mop_a', 'isp_mop_b', 'isp_mop_c')
+ORDER BY table_name, privilege_type;
+----
+table_name	privilege_type	is_grantable	with_hierarchy
+isp_mop_a	DELETE	NO	NO
+isp_mop_a	SELECT	NO	YES
+isp_mop_b	INSERT	NO	NO
+isp_mop_c	REFERENCES	NO	NO
+isp_mop_c	UPDATE	NO	NO
+
+
+# ============================================================================
+# A second grantee on the same table is a distinct row family; the two
+# grantees never collide. Granting shlepach ALL on b yields seven rows.
+# ============================================================================
+
+statement ok
+GRANT ALL ON isp_mop_b TO isp_shlepach;
+
+
+query
+SELECT grantee, count(*) AS rows
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_mop_b' AND grantee IN ('isp_vitalik', 'isp_shlepach')
+GROUP BY grantee
+ORDER BY grantee;
+----
+grantee	rows
+isp_shlepach	7
+isp_vitalik	1
+
+
+# ============================================================================
+# Dropping a grantee role removes all of its rows from the view (the grants go
+# with the role). The owner rows and the other grantee survive.
+# ============================================================================
+
+statement ok
+REVOKE ALL ON isp_mop_b FROM isp_shlepach;
+
+
+statement ok
+DROP ROLE isp_shlepach;
+
+
+query
+SELECT count(*) AS shlepach_rows FROM information_schema.table_privileges
+WHERE grantee = 'isp_shlepach';
+----
+shlepach_rows
+0
+
+
+# vitalik's rows are still intact across the three tables.
+query
+SELECT count(*) AS vitalik_rows FROM information_schema.table_privileges
+WHERE grantee = 'isp_vitalik'
+  AND table_name IN ('isp_mop_a', 'isp_mop_b', 'isp_mop_c');
+----
+vitalik_rows
+5
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE isp_mop_a;
+
+
+statement ok
+DROP TABLE isp_mop_b;
+
+
+statement ok
+DROP TABLE isp_mop_c;
+
+
+statement ok
+DROP ROLE isp_vitalik;

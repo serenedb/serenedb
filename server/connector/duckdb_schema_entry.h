@@ -30,9 +30,6 @@
 
 namespace sdb::connector {
 
-// Reads SereneDB-specific column-mode keys from a CREATE TABLE WITH-clause
-// options map and applies the corresponding flags to `columns`.
-// Throws on unknown column names or unsupported value shapes.
 class SereneDBSchemaEntry final : public duckdb::SchemaCatalogEntry {
  public:
   using SchemaCatalogEntry::SchemaCatalogEntry;

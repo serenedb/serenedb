@@ -33,10 +33,10 @@ namespace sdb::connector {
 RangeArgs ParseRangeArgs(const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_between('a', 'z', true, false). NULL bound = unbounded.";
-  SDB_ASSERT(func.children.size() == 4);
+  SDB_ASSERT(func.GetChildren().size() == 4);
   RangeArgs out;
   for (size_t i = 0; i < 2; ++i) {
-    const auto* val = TryGetConstant(*func.children[i]);
+    const auto* val = TryGetConstant(*func.GetChildren()[i]);
     if (!val) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG("ts_between bound ", i, " must be a constant"),
@@ -47,13 +47,13 @@ RangeArgs ParseRangeArgs(const duckdb::BoundFunctionExpression& func) {
     }
   }
   if (auto r =
-        GetBoolArg(*func.children[2], "ts_between min_incl", out.min_incl);
+        GetBoolArg(*func.GetChildren()[2], "ts_between min_incl", out.min_incl);
       !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
   }
   if (auto r =
-        GetBoolArg(*func.children[3], "ts_between max_incl", out.max_incl);
+        GetBoolArg(*func.GetChildren()[3], "ts_between max_incl", out.max_incl);
       !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
@@ -91,8 +91,8 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_lt('m') or ts_ge(42). Bound must be non-null; "
     "use ts_between(NULL, ...) for unbounded.";
-  SDB_ASSERT(func.children.size() == 1);
-  const auto* bound_val = TryGetConstant(*func.children[0]);
+  SDB_ASSERT(func.GetChildren().size() == 1);
+  const auto* bound_val = TryGetConstant(*func.GetChildren()[0]);
   if (!bound_val) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(label, " bound must be a constant"),

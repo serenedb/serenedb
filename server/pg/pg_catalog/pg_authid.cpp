@@ -20,6 +20,8 @@
 
 #include "pg/pg_catalog/pg_authid.h"
 
+#include <duckdb/common/types/timestamp.hpp>
+
 #include "app/app_server.h"
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
@@ -31,32 +33,42 @@ namespace {
 
 constexpr uint64_t kNullMask = MaskFromNulls({
   GetIndex(&PgAuthid::rolpassword),
-  GetIndex(&PgAuthid::rolvaliduntil),
 });
+
+Timestamptz ValidUntilOf(const catalog::Role& role) {
+  if (!role.HasValidUntil()) {
+    return {};
+  }
+  return Timestamptz{.micros = role.ValidUntil(), .is_null = false};
+}
 
 }  // namespace
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgAuthid>::GetTableData() {
-  // RBAC/roles were removed; pg_authid (and pg_roles / \du layered on it) keeps
-  // working off one static superuser row for the default login role.
   std::vector<PgAuthid> values;
-  values.push_back(PgAuthid{
-    .oid = id::kRootUser.id(),
-    .rolname = StaticStrings::kDefaultUser,
-    .rolsuper = true,
-    .rolinherit = true,
-    .rolcreaterole = true,
-    .rolcreatedb = true,
-    .rolcanlogin = true,
-    .rolreplication = true,
-    .rolbypassrls = true,
-    .rolconnlimit = -1,
-  });
+  auto catalog = _config.CatalogSnapshot();
+  for (const auto& role : catalog->GetRoles()) {
+    using catalog::RoleOption;
+    PgAuthid row{
+      .oid = role->GetId().id(),
+      .rolname = role->GetName(),
+      .rolsuper = role->Has(RoleOption::Superuser),
+      .rolinherit = role->Has(RoleOption::Inherit),
+      .rolcreaterole = role->Has(RoleOption::CreateRole),
+      .rolcreatedb = role->Has(RoleOption::CreateDb),
+      .rolcanlogin = role->CanLogin(),
+      .rolreplication = role->Has(RoleOption::Replication),
+      .rolbypassrls = role->Has(RoleOption::BypassRls),
+      .rolconnlimit = role->ConnLimit(),
+      .rolvaliduntil = ValidUntilOf(*role),
+    };
+    values.push_back(std::move(row));
+  }
 
   auto result = CreateColumns<PgAuthid>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row);
+    WriteData(result, values[row], kNullMask, row, *catalog);
   }
   return {std::move(result), values.size()};
 }

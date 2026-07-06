@@ -95,31 +95,19 @@ query
 EXPLAIN COPY reversed(id, name) FROM '${__TEST_DIR__}/lmao' WITH (FORMAT CSV, HEADER TRUE);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│        BATCH_INSERT       │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│        SDB_PROGRESS       │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #1            │
-│             #0            │
-│                           │
-│          ~4 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          READ_CSV         │
-│    ────────────────────   │
-│     Function: READ_CSV    │
-│                           │
-│        Projections:       │
-│             id            │
-│            name           │
-│                           │
-│          ~4 rows          │
-└───────────────────────────┘
+╭─ BATCH_INSERT ─────╮
+╰──────────┬─────────╯
+╭─ PROJECTION ───────╮
+│ Projections: #1,   │
+│              #0    │
+│ ~4 rows            │
+╰──────────┬─────────╯
+╭─ READ_CSV ─────────╮
+│ Function: READ_CSV │
+│ Projections: id,   │
+│              name  │
+│ ~4 rows            │
+╰────────────────────╯
 
 
 skipif postgres
@@ -127,23 +115,15 @@ query
 EXPLAIN COPY tindex TO '${__TEST_DIR__}/lmao' WITH (FORMAT CSV, HEADER TRUE);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│     BATCH_COPY_TO_FILE    │
-│    ────────────────────   │
-│        FORMAT: CSV        │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│       Table: tindex       │
-│   Type: Sequential Scan   │
-│                           │
-│        Projections:       │
-│             id            │
-│            name           │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
+╭─ BATCH_COPY_TO_FILE ──╮
+│ FORMAT: CSV           │
+╰───────────┬───────────╯
+╭─ SEQ_SCAN ┴───────────╮
+│ Table: tindex         │
+│ Type: Sequential Scan │
+│ Projections: id, name │
+│ ~3 rows               │
+╰───────────────────────╯
 
 
 skipif postgres
@@ -570,52 +550,14 @@ eater
 
 
 skipif postgres
-query
+statement ok
+SET profiling_renderer_settings = {'deterministic': true};
+
+
+# its render depends on filename
+skipif postgres
+statement ok
 EXPLAIN ANALYZE COPY arelav_consumer FROM '${__TEST_DIR__}/arelav_consuma.csv';
-----
-QUERY PLAN
-┌─────────────────────────────────────┐
-│┌───────────────────────────────────┐│
-││    Query Profiling Information    ││
-│└───────────────────────────────────┘│
-└─────────────────────────────────────┘
-<slt:ignore>
-┌───────────────────────────┐
-│      RESULT_COLLECTOR     │
-│    ────────────────────   │
-│                           │
-│           0 rows          │
-<slt:ignore>
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│      EXPLAIN_ANALYZE      │
-│    ────────────────────   │
-│                           │
-│           0 rows          │
-<slt:ignore>
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│        BATCH_INSERT       │
-│    ────────────────────   │
-│                           │
-│           1 row           │
-<slt:ignore>
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         TABLE_SCAN        │
-│    ────────────────────   │
-│     Function: READ_CSV    │
-│     Projections: eater    │
-│    Total Files Read: 1    │
-│                           │
-│        Filename(s):       │
-<slt:ignore>
-│                           │
-│                           │
-│                           │
-│          10 rows          │
-<slt:ignore>
-└───────────────────────────┘
 
 
 skipif postgres

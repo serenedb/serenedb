@@ -1,0 +1,118 @@
+# Object-ACL surface: GRANT EXECUTE ON FUNCTION materializes pg_proc.proacl,
+# byte for byte identical on PostgreSQL 19beta1 and serenedb. proacl is an
+# aclitem[]; each grant is one "grantee=privs/grantor" element. The only
+# function privilege is X = EXECUTE; a '*' is the grant option; a PUBLIC grant
+# has an empty grantee.
+#
+# A function gets EXECUTE granted to PUBLIC by default, so the moment proacl is
+# materialized it already carries an owner element and a PUBLIC default
+# (=X/postgres). We therefore filter to the prefixed grantee, unnest, and assert
+# its element -- the owner/PUBLIC rows are excluded by the LIKE filter.
+#
+# The function is named WITHOUT an argument-type signature in the GRANT
+# (`GRANT EXECUTE ON FUNCTION babsky TO ...`): this is the form both engines
+# accept. serenedb does not parse the `babsky(int)` argument-list form (see the
+# divergence test gobjacl_function_argtypes in sdb/pg/rbac).
+#
+# Vedernikoff lore: babsky the secret function; grantees from the usual cast.
+# Idempotent + self-cleaning.
+
+statement ok
+DROP FUNCTION IF EXISTS gobjacl_fn_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS gobjacl_fn_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS gobjacl_fn_iceberg;
+
+
+statement ok
+CREATE FUNCTION gobjacl_fn_babsky(x int) RETURNS int LANGUAGE sql AS 'SELECT $1 + 1';
+
+
+statement ok
+CREATE ROLE gobjacl_fn_vedernikoff;
+
+
+statement ok
+CREATE ROLE gobjacl_fn_iceberg;
+
+
+# Before any explicit grant the prefixed grantee has no proacl element.
+query
+SELECT count(*) AS rows_before
+FROM pg_proc p, LATERAL unnest(p.proacl::text[]) AS e
+WHERE p.proname = 'gobjacl_fn_babsky' AND e LIKE 'gobjacl_fn_vedernikoff=%';
+----
+rows_before
+0
+
+
+# GRANT EXECUTE: the grantee element carries just 'X'.
+statement ok
+GRANT EXECUTE ON FUNCTION gobjacl_fn_babsky TO gobjacl_fn_vedernikoff;
+
+
+query
+SELECT e
+FROM pg_proc p, LATERAL unnest(p.proacl::text[]) AS e
+WHERE p.proname = 'gobjacl_fn_babsky' AND e LIKE 'gobjacl_fn_vedernikoff=%';
+----
+e
+gobjacl_fn_vedernikoff=X/postgres
+
+
+# GRANT EXECUTE WITH GRANT OPTION: the 'X' carries a trailing '*'.
+statement ok
+GRANT EXECUTE ON FUNCTION gobjacl_fn_babsky TO gobjacl_fn_iceberg WITH GRANT OPTION;
+
+
+query
+SELECT e
+FROM pg_proc p, LATERAL unnest(p.proacl::text[]) AS e
+WHERE p.proname = 'gobjacl_fn_babsky' AND e LIKE 'gobjacl_fn_iceberg=%';
+----
+e
+gobjacl_fn_iceberg=X*/postgres
+
+
+# Both prefixed grantee elements together, ordered by element text. The owner
+# and PUBLIC (=X/postgres) elements are excluded by the LIKE filter.
+query
+SELECT e
+FROM pg_proc p, LATERAL unnest(p.proacl::text[]) AS e
+WHERE p.proname = 'gobjacl_fn_babsky' AND e LIKE 'gobjacl_fn_%=%'
+ORDER BY e COLLATE "C";
+----
+e
+gobjacl_fn_iceberg=X*/postgres
+gobjacl_fn_vedernikoff=X/postgres
+
+
+# Revoking the only privilege removes the whole grantee element.
+statement ok
+REVOKE EXECUTE ON FUNCTION gobjacl_fn_babsky FROM gobjacl_fn_vedernikoff;
+
+
+query
+SELECT count(*) AS rows_left
+FROM pg_proc p, LATERAL unnest(p.proacl::text[]) AS e
+WHERE p.proname = 'gobjacl_fn_babsky' AND e LIKE 'gobjacl_fn_vedernikoff=%';
+----
+rows_left
+0
+
+
+statement ok
+DROP FUNCTION gobjacl_fn_babsky;
+
+
+statement ok
+DROP ROLE gobjacl_fn_vedernikoff;
+
+
+statement ok
+DROP ROLE gobjacl_fn_iceberg;

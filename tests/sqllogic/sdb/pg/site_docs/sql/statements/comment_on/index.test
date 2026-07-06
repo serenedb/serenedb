@@ -63,7 +63,7 @@ db error: ERROR: index
 statement error
 COMMENT ON SEQUENCE test_sequence IS 'very nice sequence';
 ----
-db error: ERROR: object
+db error: ERROR: sequence
 
 
 # DOCS_TEST: example_006

@@ -1,0 +1,136 @@
+# serenedb-only (needs a non-superuser password session): a CREATEROLE role may
+# only confer a privileged attribute it holds itself. It cannot mint or promote
+# a role with SUPERUSER / CREATEDB / REPLICATION / BYPASSRLS it lacks -- closing
+# a privilege-escalation-to-superuser path. Behavior is byte-identical to
+# PostgreSQL, but the shared trust PG container cannot run per-role password
+# sessions, so this lives in the sdb tree.
+#
+# Lore: vedernikoff (a mere role-creator) tries to crown himself and his minions.
+
+statement ok
+DROP ROLE IF EXISTS era_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS era_dbmaker;
+
+
+statement ok
+DROP ROLE IF EXISTS era_minion;
+
+
+statement ok
+DROP ROLE IF EXISTS era_child;
+
+
+# A plain CREATEROLE non-superuser (holds none of the privileged attributes).
+statement ok
+CREATE ROLE era_vedernikoff CREATEROLE LOGIN PASSWORD 'ved_pw';
+
+
+# He may create ordinary roles ...
+connection c_ved user=era_vedernikoff password=ved_pw
+statement ok
+CREATE ROLE era_minion LOGIN;
+
+
+# ... but not a SUPERUSER role (the escalation this fix blocks).
+connection c_ved user=era_vedernikoff password=ved_pw
+statement error
+CREATE ROLE era_super SUPERUSER;
+----
+db error: ERROR: permission denied to create role<slt:ignore>
+
+
+# ... nor confer CREATEDB / REPLICATION / BYPASSRLS he does not hold.
+connection c_ved user=era_vedernikoff password=ved_pw
+statement error
+CREATE ROLE era_dbc CREATEDB;
+----
+db error: ERROR: permission denied to create role<slt:ignore>
+
+
+connection c_ved user=era_vedernikoff password=ved_pw
+statement error
+CREATE ROLE era_repl REPLICATION;
+----
+db error: ERROR: permission denied to create role<slt:ignore>
+
+
+connection c_ved user=era_vedernikoff password=ved_pw
+statement error
+CREATE ROLE era_rls BYPASSRLS;
+----
+db error: ERROR: permission denied to create role<slt:ignore>
+
+
+# ALTER is gated the same way: he holds implicit ADMIN on era_minion (he created
+# it) yet still cannot add SUPERUSER to it.
+connection c_ved user=era_vedernikoff password=ved_pw
+statement error
+ALTER ROLE era_minion SUPERUSER;
+----
+db error: ERROR: permission denied to alter role<slt:ignore>
+
+
+connection c_ved user=era_vedernikoff password=ved_pw
+statement error
+ALTER ROLE era_minion CREATEDB;
+----
+db error: ERROR: permission denied to alter role<slt:ignore>
+
+
+# The minion stayed a plain role -- no bits leaked through.
+connection default
+query
+SELECT rolsuper, rolcreatedb, rolreplication, rolbypassrls
+FROM pg_roles WHERE rolname = 'era_minion';
+----
+rolsuper	rolcreatedb	rolreplication	rolbypassrls
+f	f	f	f
+
+
+# The gate is "must hold the attribute", not "always deny": a CREATEDB creator
+# CAN confer CREATEDB.
+statement ok
+CREATE ROLE era_dbmaker CREATEDB CREATEROLE LOGIN PASSWORD 'db_pw';
+
+
+connection c_dbm user=era_dbmaker password=db_pw
+statement ok
+CREATE ROLE era_child CREATEDB LOGIN;
+
+
+connection default
+query
+SELECT rolcreatedb FROM pg_roles WHERE rolname = 'era_child';
+----
+rolcreatedb
+t
+
+
+# ... but a CREATEDB holder still cannot reach SUPERUSER (one attribute does not
+# grant the others).
+connection c_dbm user=era_dbmaker password=db_pw
+statement error
+CREATE ROLE era_dbm_super SUPERUSER;
+----
+db error: ERROR: permission denied to create role<slt:ignore>
+
+
+# cleanup
+connection default
+statement ok
+DROP ROLE era_child;
+
+
+statement ok
+DROP ROLE era_minion;
+
+
+statement ok
+DROP ROLE era_dbmaker;
+
+
+statement ok
+DROP ROLE era_vedernikoff;

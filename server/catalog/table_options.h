@@ -77,12 +77,13 @@ class Column final : public Object {
     return duckdb::LogicalType::LIST(duckdb::LogicalType::INTEGER);
   }
 
-  Column() : Object{{}, {}, {}, ObjectType::Column} {}
+  Column() : Object{Permissions{}, {}, {}, {}, ObjectType::Column} {}
 
   Column(ObjectId owner_table_id, ObjectId id, std::string_view name,
          duckdb::LogicalType ty, std::shared_ptr<ColumnExpr> e = nullptr,
-         GeneratedType gt = kNone)
-    : Object{owner_table_id, id, std::string{name}, ObjectType::Column},
+         GeneratedType gt = kNone, Acl acl = {})
+    : Object{Permissions{ObjectId{}, std::move(acl)}, owner_table_id, id,
+             std::string{name}, ObjectType::Column},
       type{std::move(ty)},
       expr{std::move(e)},
       generated_type{gt} {}
@@ -113,11 +114,12 @@ inline std::shared_ptr<Object> Column::Clone() const {
 // Persistent on-disk catalog format.
 class CheckConstraint final : public Object {
  public:
-  CheckConstraint() : Object{{}, {}, {}, ObjectType::CheckConstraint} {}
+  CheckConstraint()
+    : Object{Permissions{}, {}, {}, {}, ObjectType::CheckConstraint} {}
 
   CheckConstraint(ObjectId owner_table_id, ObjectId id, std::string_view name,
                   std::shared_ptr<ColumnExpr> e)
-    : Object{owner_table_id, id, std::string{name},
+    : Object{Permissions{}, owner_table_id, id, std::string{name},
              ObjectType::CheckConstraint},
       expr{std::move(e)} {}
 
@@ -146,10 +148,27 @@ enum class TableEngine : uint8_t {
 
 // One FOREIGN KEY of a table: `columns` (on the owning table) reference
 // `referenced_columns` of `referenced_table`, which must be its PRIMARY KEY.
+// `name` is the constraint name (explicit `CONSTRAINT <name>` or PG auto-name).
 struct TableForeignKey {
+  std::string name;
   std::vector<Column::Id> columns;
   ObjectId referenced_table;
   std::vector<Column::Id> referenced_columns;
+  // Constraint OID (pg_constraint.oid); allocated when the constraint is
+  // created, stable for its lifetime.
+  ObjectId id;
+};
+
+// One UNIQUE constraint of a table over `columns`, with its constraint `name`
+// (explicit `CONSTRAINT <name>` or PG auto-name `<table>_<col>_key`).
+struct TableUnique {
+  std::string name;
+  std::vector<Column::Id> columns;
+  // Constraint OID (pg_constraint.oid) and the OID of its backing index
+  // relation (pg_class.oid / pg_index.indexrelid / pg_constraint.conindid).
+  // Allocated when the constraint is created, stable for its lifetime.
+  ObjectId id;
+  ObjectId index_id;
 };
 
 struct CreateTableOptions {
@@ -163,9 +182,10 @@ struct CreateTableOptions {
   std::string name;
   std::vector<Column> columns;
   std::vector<Column::Id> pk_columns;
+  std::string pk_name;
   std::vector<CheckConstraint> check_constraints;
   std::vector<SerialSequenceOption> sequences;
-  std::vector<std::vector<Column::Id>> unique_constraints;
+  std::vector<TableUnique> unique_constraints;
   std::vector<TableForeignKey> foreign_keys;
   TableEngine engine = TableEngine::Transactional;
   // Background-maintenance options for Search-engine tables (empty otherwise).

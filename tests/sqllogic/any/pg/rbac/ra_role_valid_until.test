@@ -1,0 +1,66 @@
+# VALID UNTIL (rolvaliduntil) storage and surfacing through pg_authid, identical
+# on PostgreSQL and serenedb. CREATE ROLE / ALTER ROLE accept a timestamptz, an
+# invalid literal is refused, and no clause leaves it NULL. Login enforcement
+# (password expiry) cannot run on the shared trust-auth PG container, so it lives
+# in sdb/pg/rbac/enf_valid_until.test.
+#
+# Lore: vedernikoff's clearance to guard the MOP expires. Idempotent + self-cleaning.
+
+statement ok
+DROP ROLE IF EXISTS vu_vedernikoff;
+
+
+statement ok
+CREATE ROLE vu_vedernikoff LOGIN PASSWORD 'mop_secret' VALID UNTIL '2099-12-31 00:00:00+00';
+
+
+query
+SELECT rolname, rolcanlogin, rolvaliduntil
+FROM pg_authid WHERE rolname = 'vu_vedernikoff';
+----
+rolname	rolcanlogin	rolvaliduntil
+vu_vedernikoff	t	2099-12-31 00:00:00+00
+
+
+# ALTER ROLE replaces the expiry with a new timestamp.
+statement ok
+ALTER ROLE vu_vedernikoff VALID UNTIL '2000-01-01 00:00:00+00';
+
+
+query
+SELECT rolvaliduntil FROM pg_authid WHERE rolname = 'vu_vedernikoff';
+----
+rolvaliduntil
+2000-01-01 00:00:00+00
+
+
+# An unparseable timestamp is refused with the timestamptz input-syntax error.
+statement error
+CREATE ROLE vu_garbage VALID UNTIL 'not-a-timestamp';
+----
+db error: ERROR: invalid input syntax for type timestamp with time zone: "not-a-timestamp"<slt:ignore>
+
+
+# No VALID UNTIL clause -> rolvaliduntil is NULL.
+statement ok
+DROP ROLE IF EXISTS vu_noexpiry;
+
+
+statement ok
+CREATE ROLE vu_noexpiry LOGIN;
+
+
+query
+SELECT rolvaliduntil IS NULL AS expiry_null FROM pg_authid WHERE rolname = 'vu_noexpiry';
+----
+expiry_null
+t
+
+
+# Cleanup.
+statement ok
+DROP ROLE vu_vedernikoff;
+
+
+statement ok
+DROP ROLE vu_noexpiry;

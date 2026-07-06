@@ -120,7 +120,7 @@ PIVOT cities
 ON country, name
 USING sum(population);
 ----
-year	nl_amsterdam	nl_new york city	nl_seattle	us_amsterdam	us_new york city	us_seattle
+year	NL_Amsterdam	NL_New York City	NL_Seattle	US_Amsterdam	US_New York City	US_Seattle
 2000	1005	NULL	NULL	NULL	8015	564
 2010	1065	NULL	NULL	NULL	8175	608
 2020	1158	NULL	NULL	NULL	8772	738
@@ -135,7 +135,7 @@ PIVOT cities
 ON country || '_' || name
 USING sum(population);
 ----
-year	nl_amsterdam	us_new york city	us_seattle
+year	NL_Amsterdam	US_New York City	US_Seattle
 2000	1005	8015	564
 2010	1065	8175	608
 2020	1158	8772	738
@@ -218,7 +218,7 @@ FROM (PIVOT cities ON year USING sum(population) GROUP BY country) year_pivot
 JOIN (PIVOT cities ON name USING sum(population) GROUP BY country) name_pivot
 USING (country);
 ----
-country	2000	2010	2020	amsterdam	new york city	seattle
+country	2000	2010	2020	Amsterdam	New York City	Seattle
 NL	1005	1065	1158	3228	NULL	NULL
 US	8579	8783	9510	NULL	24962	1910
 
@@ -273,7 +273,7 @@ PIVOT (
         country IN ('NL', 'US')
 );
 ----
-name	2000_nl_total	2000_nl_count	2000_us_total	2000_us_count	2010_nl_total	2010_nl_count	2010_us_total	2010_us_count
+name	2000_NL_total	2000_NL_count	2000_US_total	2000_US_count	2010_NL_total	2010_NL_count	2010_US_total	2010_US_count
 Amsterdam	1005	1	NULL	0	1065	1	NULL	0
 New York City	NULL	0	8015	1	NULL	0	8175	1
 Seattle	NULL	0	564	1	NULL	0	608	1

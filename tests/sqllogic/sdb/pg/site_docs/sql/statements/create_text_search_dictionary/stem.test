@@ -8,7 +8,7 @@ CREATE TEXT SEARCH DICTIONARY stem_dict (
     locale = 'en'
 );
 
-query ?
+query
 SELECT ts_lexize('stem_dict', 'running');
 ----
 ts_lexize
@@ -27,7 +27,7 @@ CREATE TEXT SEARCH DICTIONARY stem_dict_words (
     step2_locale = 'en'
 );
 
-query ?
+query
 SELECT ts_lexize('stem_dict_words', 'running runners ran');
 ----
 ts_lexize

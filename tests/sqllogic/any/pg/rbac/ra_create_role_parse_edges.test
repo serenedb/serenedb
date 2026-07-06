@@ -1,0 +1,118 @@
+# CREATE/ALTER ROLE parse-level behaviors that match PostgreSQL: attributes and
+# membership clauses freely interleaved, conflicting/redundant options refused,
+# PASSWORD NULL accepted at CREATE, and the legacy SYSID no-op.
+#
+# Lore: the vedernikoffs are minted with attributes scattered around their group
+# memberships, the way a careless DBA actually types them.
+
+statement ok
+DROP ROLE IF EXISTS cpe_group;
+
+
+statement ok
+DROP ROLE IF EXISTS cpe_woven;
+
+
+statement ok
+DROP ROLE IF EXISTS cpe_woven2;
+
+
+statement ok
+CREATE ROLE cpe_group;
+
+
+# --- attributes and membership interleaved in any order ---
+statement ok
+CREATE ROLE cpe_woven WITH LOGIN IN ROLE cpe_group SUPERUSER CREATEDB;
+
+
+query
+SELECT rolcanlogin, rolsuper, rolcreatedb FROM pg_roles WHERE rolname = 'cpe_woven';
+----
+rolcanlogin	rolsuper	rolcreatedb
+t	t	t
+
+
+# membership in the middle of the attribute list
+statement ok
+CREATE ROLE cpe_woven2 SUPERUSER IN ROLE cpe_group LOGIN;
+
+
+query
+SELECT rolsuper, rolcanlogin FROM pg_roles WHERE rolname = 'cpe_woven2';
+----
+rolsuper	rolcanlogin
+t	t
+
+
+# --- conflicting / redundant options are refused (same option twice, or a flag
+# and its negation) ---
+statement error
+CREATE ROLE cpe_bad LOGIN NOLOGIN;
+----
+db error: ERROR: conflicting or redundant options<slt:ignore>
+
+
+statement error
+CREATE ROLE cpe_bad CREATEDB CREATEDB;
+----
+db error: ERROR: conflicting or redundant options<slt:ignore>
+
+
+statement error
+CREATE ROLE cpe_bad SUPERUSER NOSUPERUSER;
+----
+db error: ERROR: conflicting or redundant options<slt:ignore>
+
+
+# ALTER ROLE rejects conflicts too
+statement error
+ALTER ROLE cpe_group SUPERUSER NOSUPERUSER;
+----
+db error: ERROR: conflicting or redundant options<slt:ignore>
+
+
+# --- PASSWORD NULL at CREATE: accepted, leaves no stored password ---
+statement ok
+DROP ROLE IF EXISTS cpe_nopw;
+
+
+statement ok
+CREATE ROLE cpe_nopw PASSWORD NULL;
+
+
+query
+SELECT rolpassword IS NULL AS pw_null FROM pg_authid WHERE rolname = 'cpe_nopw';
+----
+pw_null
+t
+
+
+# --- SYSID is a legacy no-op, accepted for compatibility ---
+statement ok
+DROP ROLE IF EXISTS cpe_sysid;
+
+
+statement ok
+CREATE ROLE cpe_sysid SYSID 100;
+
+
+# Cleanup.
+statement ok
+DROP ROLE cpe_woven;
+
+
+statement ok
+DROP ROLE cpe_woven2;
+
+
+statement ok
+DROP ROLE cpe_nopw;
+
+
+statement ok
+DROP ROLE cpe_sysid;
+
+
+statement ok
+DROP ROLE cpe_group;

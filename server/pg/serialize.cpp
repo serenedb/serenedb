@@ -2182,7 +2182,7 @@ void ByteaOutEscape(char* buf, std::string_view value) {
 void FillContext(const Config& config, SerializationContext& context) {
   context.extra_float_digits = config.GetExtraFloatDigits();
   context.bytea_output = config.GetByteaOutput();
-  context.snapshot = config.EnsureCatalogSnapshot().get();
+  context.snapshot = config.CatalogSnapshot().get();
   // types_cache stays lazy (GetSerializersCache); record results only.
   context.types_cache.reset();
 }

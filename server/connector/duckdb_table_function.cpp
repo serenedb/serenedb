@@ -48,6 +48,8 @@
 #include "connector/search_filter_printer.hpp"
 #include "functions/search.h"
 #include "pg/connection_context.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
@@ -189,7 +191,7 @@ catalog::Column::Id ViewScanBindData::ColumnIdByName(
   std::string_view name) const {
   const auto& info = view->GetInfo();
   for (size_t i = 0; i < info.names.size(); ++i) {
-    if (info.names[i] == name) {
+    if (info.names[i].GetIdentifierName() == name) {
       return static_cast<catalog::Column::Id>(i);
     }
   }
@@ -201,7 +203,7 @@ std::string_view ViewScanBindData::ColumnNameById(
   const auto& info = view->GetInfo();
   const auto idx = static_cast<size_t>(col_id);
   if (idx < info.names.size()) {
-    return info.names[idx];
+    return info.names[idx].GetIdentifierName();
   }
   return {};
 }
@@ -239,8 +241,9 @@ duckdb::unique_ptr<duckdb::FunctionData> SereneDBScanBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::string>& names) {
-  throw duckdb::InternalException(
-    "SereneDBScanBind: should be provided via GetScanFunction");
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INTERNAL_ERROR),
+    ERR_MSG("SereneDBScanBind: should be provided via GetScanFunction"));
 }
 
 static duckdb::unique_ptr<duckdb::NodeStatistics> SereneDBScanCardinality(
@@ -307,11 +310,12 @@ static std::string ColumnNameFor(const SereneDBScanBindData& bind,
 
 void SearchScan::AppendSummary(
   const SereneDBScanBindData& bind,
-  duckdb::InsertionOrderPreservingMap<std::string>& out) const {
+  duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>& out) const {
   if (!vector_scorer && stored_filter && bind.inverted_index) {
-    out.insert("Filter", irs::ToStringDemangled(
+    out.insert("Filter", duckdb::ExplainValue(irs::ToExplainNode(
                            *stored_filter,
-                           MakeFieldNameResolver(bind, *bind.inverted_index)));
+                           MakeFieldNameResolver(bind, *bind.inverted_index),
+                           MakeFieldKindResolver(bind, *bind.inverted_index))));
   }
   if (count_only) {
     out.insert("Output", "row-count only");
@@ -335,8 +339,9 @@ void SearchScan::AppendSummary(
     if (stored_filter && bind.inverted_index) {
       out.insert(
         "TextFilter",
-        irs::ToStringDemangled(
-          *stored_filter, MakeFieldNameResolver(bind, *bind.inverted_index)));
+        duckdb::ExplainValue(irs::ToExplainNode(
+          *stored_filter, MakeFieldNameResolver(bind, *bind.inverted_index),
+          MakeFieldKindResolver(bind, *bind.inverted_index))));
     }
   }
   if (EmitOffsets()) {
@@ -480,9 +485,9 @@ std::string FormatProjections(const std::vector<ProjectionEntry>& entries,
   return out;
 }
 
-static duckdb::InsertionOrderPreservingMap<std::string> SereneDBScanToString(
-  duckdb::TableFunctionToStringInput& input) {
-  duckdb::InsertionOrderPreservingMap<std::string> result;
+static duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>
+SereneDBScanToValue(duckdb::TableFunctionToStringInput& input) {
+  duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> result;
   if (!input.bind_data) {
     return result;
   }
@@ -505,7 +510,8 @@ static duckdb::InsertionOrderPreservingMap<std::string> SereneDBScanToString(
   if (bind.table_entry) {
     const char* kind =
       bind.entry_kind == ScanEntryKind::BaseTable ? "Table" : "Index";
-    result.insert(kind, absl::StrCat(bind.table_entry->name, search_tag));
+    result.insert(kind, absl::StrCat(bind.table_entry->name.GetIdentifierName(),
+                                     search_tag));
   } else {
     const char* kind = bind.IsViewBacked() ? "View" : "Table";
     result.insert(kind, absl::StrCat(bind.RelationName(), search_tag));
@@ -547,15 +553,29 @@ static duckdb::InsertionOrderPreservingMap<std::string> SereneDBScanToString(
   return result;
 }
 
+// Segment-level scan progress: claimed segments over the snapshot's total.
+static double CommonScanProgress(
+  duckdb::ClientContext&, const duckdb::FunctionData*,
+  const duckdb::GlobalTableFunctionState* gstate_p) {
+  const auto& gstate = gstate_p->Cast<CommonScanGlobalState>();
+  if (gstate.total_segments == 0) {
+    return -1;
+  }
+  const auto claimed = std::min<uint64_t>(
+    gstate.next_segment.load(std::memory_order_relaxed), gstate.total_segments);
+  return 100.0 * static_cast<double>(claimed) /
+         static_cast<double>(gstate.total_segments);
+}
+
 static void SetCommonCallbacks(duckdb::TableFunction& func) {
   // TODO(mbkkt) Maybe we can use bind_replace/bind_operator to make indexes?
   func.init_local = CommonScanInitLocal;  // TODO: Use separate callbacks
   // TODO: Better cardinality estimates
   func.cardinality = SereneDBScanCardinality;
   func.get_metrics = CommonScanGetMetrics;
-  func.to_string = SereneDBScanToString;
+  func.to_string_value = SereneDBScanToValue;
+  func.table_scan_progress = CommonScanProgress;
   // TODO: Implement dynamic_to_string
-  // TODO: Implement table_scan_progress
   // TODO: Use get_partition_data for partition pruning of partitioned
   // tables/indexes
   func.get_bind_info = SereneDBGetBindInfo;

@@ -151,22 +151,22 @@ INSERT INTO vedernikoff_mop_listings_charlie (tag) VALUES ('outreach_c');
 query
 SELECT id, tag FROM vedernikoff_mop_listings_alpha;
 ----
-id   tag
-100  outreach_a
+id	tag
+100	outreach_a
 
 
 query
 SELECT id, tag FROM vedernikoff_mop_listings_bravo;
 ----
-id   tag
-101  outreach_b
+id	tag
+101	outreach_b
 
 
 query
 SELECT id, tag FROM vedernikoff_mop_listings_charlie;
 ----
-id   tag
-102  outreach_c
+id	tag
+102	outreach_c
 
 
 statement error (?i)cannot drop sequence .*vedernikoff_mop_offer_seq.*
@@ -193,25 +193,25 @@ INSERT INTO vedernikoff_mop_listings_charlie (tag) VALUES ('after_c');
 query
 SELECT id, tag FROM vedernikoff_mop_listings_alpha ORDER BY tag;
 ----
-id    tag
-NULL  after_a
-100   outreach_a
+id	tag
+NULL	after_a
+100	outreach_a
 
 
 query
 SELECT id, tag FROM vedernikoff_mop_listings_bravo ORDER BY tag;
 ----
-id    tag
-NULL  after_b
-101   outreach_b
+id	tag
+NULL	after_b
+101	outreach_b
 
 
 query
 SELECT id, tag FROM vedernikoff_mop_listings_charlie ORDER BY tag;
 ----
-id    tag
-NULL  after_c
-102   outreach_c
+id	tag
+NULL	after_c
+102	outreach_c
 
 
 statement ok
@@ -309,8 +309,8 @@ INSERT INTO vedernikoff_clickclack_dashboard (payload) VALUES ('post_cascade');
 query
 SELECT id, payload FROM vedernikoff_clickclack_dashboard;
 ----
-id    payload
-NULL  post_cascade
+id	payload
+NULL	post_cascade
 
 
 statement ok
@@ -571,9 +571,9 @@ INSERT INTO vedernikoff_solid_b (msg) VALUES ('four');
 query
 SELECT id, msg FROM vedernikoff_solid_a ORDER BY msg;
 ----
-id    msg
-1000  one
-NULL  three
+id	msg
+1000	one
+NULL	three
 
 
 statement ok

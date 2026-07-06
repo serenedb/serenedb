@@ -25,6 +25,7 @@
 #include <absl/strings/str_replace.h>
 #include <absl/strings/str_split.h>
 
+#include <algorithm>
 #include <duckdb/common/assert.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/types/string.hpp>
@@ -35,10 +36,13 @@
 #include <magic_enum/magic_enum.hpp>
 #include <string>
 
+#include "auth/role_closure.h"
 #include "basics/debugging.h"
 #include "basics/serializer.h"
 #include "basics/static_strings.h"
+#include "catalog/catalog.h"
 #include "connector/duckdb_client_state.h"
+#include "pg/commands/rbac.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
@@ -49,18 +53,24 @@ namespace sdb {
 
 using duckdb::LogicalTypeId;
 
+// Defined in network/pg/hba.cpp; declared here to drive the `hba` GUC without
+// pulling in the heavy hba/session headers (resolved at link time). Applies the
+// ruleset and returns a formatted "line N: <msg>" error string on a parse
+// failure (leaving the live ruleset untouched), or nullopt on success.
+namespace network::pg::hba {
+
+std::optional<std::string> SetHbaFromTextString(std::string_view text);
+
+}  // namespace network::pg::hba
 namespace {
 
 template<basics::detail::FixedString Name>
 void Readonly(duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {
-  throw duckdb::InvalidInputException{"parameter \"%s\" cannot be changed",
-                                      std::string_view{Name}.data()};
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_CANT_CHANGE_RUNTIME_PARAM),
+    ERR_MSG("parameter \"", std::string_view{Name}, "\" cannot be changed"));
 }
 
-// Settings that are writable in principle but where serened doesn't yet honor
-// the change. Emit a NOTICE so clients that care can see the SET is a no-op
-// on the server side; the value still flows into DuckDB session state so
-// SHOW round-trips what the client set.
 template<basics::detail::FixedString Name>
 void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
                  duckdb::Value& value) {
@@ -87,9 +97,40 @@ void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
       "\" is accepted for compatibility but is not enforced by serened")));
 }
 
-// PostgreSQL drivers supply client_encoding in many forms (UTF8, UTF-8, utf_8,
-// utf8, 'utf-8', "utf-8", ...).
-// To tackle this we have a special overload for encoding.
+void RequireHbaSuperuser(duckdb::ClientContext& ctx) {
+  auto& conn = connector::GetSereneDBContext(ctx);
+  if (!conn.CatalogSnapshot()->ClosureFor(conn.GetRoleId()).is_superuser) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+      ERR_MSG("permission denied to set parameter \"hba\""),
+      ERR_DETAIL("Only roles with the SUPERUSER attribute may change the "
+                 "host-based authentication ruleset."));
+  }
+}
+
+// The `role` / `session_authorization` GUCs are thin shims over the identity
+// switches in pg/commands/rbac (which own the catalog/authz logic, next to
+// CREATE/ALTER ROLE); they only bridge the DuckDB Value <-> the string API.
+void SetRoleCallback(duckdb::ClientContext& ctx, duckdb::SetScope,
+                     duckdb::Value& value) {
+  value = duckdb::Value{
+    pg::SetRole(connector::GetSereneDBContext(ctx), value.ToString())};
+}
+
+void ResetRoleCallback(duckdb::ClientContext& ctx, duckdb::SetScope) {
+  pg::ResetRole(connector::GetSereneDBContext(ctx));
+}
+
+void SetSessionAuthCallback(duckdb::ClientContext& ctx, duckdb::SetScope,
+                            duckdb::Value& value) {
+  value = duckdb::Value{pg::SetSessionAuthorization(
+    connector::GetSereneDBContext(ctx), value.ToString())};
+}
+
+void ResetSessionAuthCallback(duckdb::ClientContext& ctx, duckdb::SetScope) {
+  pg::ResetSessionAuthorization(connector::GetSereneDBContext(ctx));
+}
+
 void NoOverwriteClientEncoding(duckdb::ClientContext& ctx, duckdb::SetScope,
                                duckdb::Value& value) {
   auto canonicalize = [](std::string_view name) {
@@ -112,16 +153,13 @@ void NoOverwriteClientEncoding(duckdb::ClientContext& ctx, duckdb::SetScope,
   if (got_current && canonicalize(current.ToString()) == new_canonical) {
     return;
   }
-  throw duckdb::InvalidInputException{
-    "parameter \"client_encoding\" cannot be changed from \"%s\" to \"%s\"",
-    got_current ? current.ToString() : std::string{}, new_str};
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_CANT_CHANGE_RUNTIME_PARAM),
+                  ERR_MSG("parameter \"client_encoding\" cannot be changed "
+                          "from \"",
+                          got_current ? current.ToString() : std::string{},
+                          "\" to \"", new_str, "\""));
 }
 
-// PG validates DateStyle as an output format (ISO / SQL / Postgres / German)
-// and/or a field order (YMD / DMY / MDY, plus the EURO*, NONEURO* and US
-// aliases), comma-separated in either order; an unrecognized token is
-// invalid_parameter_value. serenedb only renders ISO, but it still rejects
-// garbage so a bad value is a user error, not silently stored.
 void CheckDateStyle(duckdb::ClientContext&, duckdb::SetScope,
                     duckdb::Value& value) {
   if (value.IsNull()) {
@@ -132,20 +170,18 @@ void CheckDateStyle(duckdb::ClientContext&, duckdb::SetScope,
     const auto token = absl::AsciiStrToUpper(absl::StripAsciiWhitespace(field));
     static constexpr std::string_view kKnown[] = {
       "ISO", "SQL", "POSTGRES", "GERMAN", "YMD", "DMY", "MDY", "US", "DEFAULT"};
-    bool ok =
-      absl::StartsWith(token, "EURO") || absl::StartsWith(token, "NONEURO");
-    for (const auto known : kKnown) {
-      ok = ok || token == known;
-    }
+    const bool ok = absl::StartsWith(token, "EURO") ||
+                    absl::StartsWith(token, "NONEURO") ||
+                    std::ranges::any_of(
+                      kKnown, [&](std::string_view k) { return k == token; });
     if (!ok) {
-      throw duckdb::InvalidInputException(
-        "invalid value for parameter \"DateStyle\": \"%s\"", raw);
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("invalid value for parameter \"DateStyle\": \"", raw, "\""));
     }
   }
 }
 
-// PG's IntervalStyle is an enum GUC: postgres / postgres_verbose /
-// sql_standard / iso_8601. Anything else is invalid_parameter_value.
 void CheckIntervalStyle(duckdb::ClientContext&, duckdb::SetScope,
                         duckdb::Value& value) {
   if (value.IsNull()) {
@@ -154,9 +190,10 @@ void CheckIntervalStyle(duckdb::ClientContext&, duckdb::SetScope,
   const auto token = absl::AsciiStrToUpper(value.ToString());
   if (token != "POSTGRES" && token != "POSTGRES_VERBOSE" &&
       token != "SQL_STANDARD" && token != "ISO_8601") {
-    throw duckdb::InvalidInputException(
-      "invalid value for parameter \"IntervalStyle\": \"%s\"",
-      value.ToString());
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("invalid value for parameter \"IntervalStyle\": "
+                            "\"",
+                            value.ToString(), "\""));
   }
 }
 
@@ -184,7 +221,32 @@ void CheckApplicationName(duckdb::ClientContext&, duckdb::SetScope,
 
 constexpr std::pair<std::string_view, VariableDescription>
   kVariableDescription[] = {
-// serenedb specific variables
+    // serenedb specific variables
+    {
+      "hba",
+      {
+        LogicalTypeId::VARCHAR,
+        "Host-based authentication ruleset (pg_hba.conf syntax) as a single "
+        "string: one rule per line, first match wins, applied to connections "
+        "opened after the SET. An un-removable local + loopback trust rule is "
+        "force-prepended so a bad ruleset cannot lock you out; an empty value "
+        "restores the default (unix trust + SCRAM for TCP). Server-global.",
+        [] { return duckdb::Value{""}; },
+        [](duckdb::ClientContext& ctx, duckdb::SetScope, duckdb::Value& value) {
+          RequireHbaSuperuser(ctx);
+          if (auto err =
+                network::pg::hba::SetHbaFromTextString(value.ToString())) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                            ERR_MSG("invalid hba ruleset: ", *err));
+          }
+        },
+        [](duckdb::ClientContext& ctx, duckdb::SetScope) {
+          RequireHbaSuperuser(ctx);
+          network::pg::hba::SetHbaFromTextString("");  // RESET => default
+        },
+        duckdb::SetScope::GLOBAL,
+      },
+    },
 #ifdef SDB_FAULT_INJECTION
     {
       "sdb_faults",
@@ -198,13 +260,13 @@ constexpr std::pair<std::string_view, VariableDescription>
           auto s = value.ToString();
           if (s.starts_with('-')) {
             if (!RemoveFailurePointDebugging(std::string_view{s}.substr(1))) {
-              throw duckdb::InvalidInputException("failure point '%s' not set",
-                                                  s);
+              THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                              ERR_MSG("failure point '", s, "' not set"));
             }
           } else {
             if (!AddFailurePointDebugging(s)) {
-              throw duckdb::InvalidInputException(
-                "failure point '%s' already set", s);
+              THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                              ERR_MSG("failure point '", s, "' already set"));
             }
           }
           auto points = GetFailurePointsDebugging();
@@ -265,9 +327,10 @@ constexpr std::pair<std::string_view, VariableDescription>
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto n = value.GetValue<int32_t>();
           if (n < 0) {
-            throw duckdb::InvalidInputException{
-              "invalid value for parameter \"sdb_ef_search\": \"%s\"",
-              value.ToString()};
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                            ERR_MSG("invalid value for parameter "
+                                    "\"sdb_ef_search\": \"",
+                                    value.ToString(), "\""));
           }
         },
       },
@@ -284,10 +347,10 @@ constexpr std::pair<std::string_view, VariableDescription>
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto n = value.GetValue<int32_t>();
           if (n < 0) {
-            throw duckdb::InvalidInputException{
-              "invalid value for parameter \"sdb_scored_terms_limit\": "
-              "\"%s\"",
-              value.ToString()};
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                            ERR_MSG("invalid value for parameter "
+                                    "\"sdb_scored_terms_limit\": \"",
+                                    value.ToString(), "\""));
           }
         },
       },
@@ -316,9 +379,10 @@ constexpr std::pair<std::string_view, VariableDescription>
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           const auto n = value.GetValue<uint32_t>();
           if (n == 0) {
-            throw duckdb::InvalidInputException{
-              "invalid value for parameter \"row_group_size\": \"%s\"",
-              value.ToString()};
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                            ERR_MSG("invalid value for parameter "
+                                    "\"row_group_size\": \"",
+                                    value.ToString(), "\""));
           }
         },
       },
@@ -336,9 +400,10 @@ constexpr std::pair<std::string_view, VariableDescription>
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           const auto n = value.GetValue<uint32_t>();
           if (n == 0) {
-            throw duckdb::InvalidInputException{
-              "invalid value for parameter \"norm_row_group_size\": \"%s\"",
-              value.ToString()};
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                            ERR_MSG("invalid value for parameter "
+                                    "\"norm_row_group_size\": \"",
+                                    value.ToString(), "\""));
           }
         },
       },
@@ -386,9 +451,10 @@ constexpr std::pair<std::string_view, VariableDescription>
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto n = value.GetValue<int32_t>();
           if (!(-15 <= n && n <= 3)) {
-            throw duckdb::InvalidInputException{
-              "invalid value for parameter \"extra_float_digits\": \"%s\"",
-              value.ToString()};
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                            ERR_MSG("invalid value for parameter "
+                                    "\"extra_float_digits\": \"",
+                                    value.ToString(), "\""));
           }
         },
       },
@@ -403,9 +469,10 @@ constexpr std::pair<std::string_view, VariableDescription>
           if (!magic_enum::enum_cast<ByteaOutput>(value.ToString(),
                                                   magic_enum::case_insensitive)
                  .has_value()) {
-            throw duckdb::InvalidInputException(
-              "invalid value for parameter \"bytea_output\": \"%s\"",
-              value.ToString());
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                            ERR_MSG("invalid value for parameter "
+                                    "\"bytea_output\": \"",
+                                    value.ToString(), "\""));
           }
         },
       },
@@ -516,7 +583,8 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::VARCHAR,
         "Sets the current session's user name.",
         [] { return duckdb::Value{std::string{StaticStrings::kDefaultUser}}; },
-        NoOverwrite<"session_authorization">,
+        SetSessionAuthCallback,
+        ResetSessionAuthCallback,
       },
     },
     {
@@ -524,8 +592,9 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::VARCHAR,
         "Sets the current role.",
-        [] { return duckdb::Value{std::string{StaticStrings::kDefaultUser}}; },
-        NoOverwrite<"role">,
+        [] { return duckdb::Value{"none"}; },
+        SetRoleCallback,
+        ResetRoleCallback,
       },
     },
     {

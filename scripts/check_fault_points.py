@@ -52,6 +52,10 @@ TESTNET_LITERAL = re.compile(
     r'(?:SDB_IF_FAILURE|AddFailurePointDebugging|ShouldFailDebugging|'
     r'WaitWhileFailurePointDebugging)\s*\(\s*"([^"]+)"'
 )
+# Python driver tests activate faults through f-strings (`SET sdb_faults =
+# '{name}'`), so the SET literal itself carries no name; the names live in
+# module constants by convention: <SOMETHING>_FAULT = "name".
+PY_FAULT_CONST = re.compile(r'FAULT\w*\s*=\s*"([^"]+)"')
 
 # faults.test is the test of the fault FRAMEWORK itself; its names (some1, some2,
 # some3) are synthetic and intentionally have no source definition.
@@ -155,6 +159,9 @@ def main():
         if has_lit:
             for m in TESTNET_LITERAL.finditer(text):
                 exercised.add(m.group(1))
+        if path.endswith(".py") and (has_set or has_lit):
+            for m in PY_FAULT_CONST.finditer(text):
+                exercised.add(m.group(1))
 
     # ----- check #2: test -> source -----
     for name, loc in sorted(test_faults.items()):
@@ -178,7 +185,8 @@ def main():
             continue
         errors.append(
             f"{loc}: fault '{name}' is defined in C++ source but no test exercises "
-            "it (add a recovery .test or a gtest reference)"
+            "it (add a recovery .test, a gtest reference, or a python driver-test "
+            "*_FAULT constant)"
         )
 
     for e in errors:

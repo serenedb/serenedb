@@ -285,17 +285,17 @@ INSERT INTO vedernikoff_mop_archived (body) VALUES ('arch2');
 query
 SELECT id, body FROM vedernikoff_mop_active ORDER BY body;
 ----
-id    body
-1     a1
-NULL  a2
+id	body
+1	a1
+NULL	a2
 
 
 query
 SELECT id, body FROM vedernikoff_mop_archived ORDER BY body;
 ----
-id    body
-2     arch1
-NULL  arch2
+id	body
+2	arch1
+NULL	arch2
 
 
 statement ok
@@ -432,9 +432,9 @@ INSERT INTO vedernikoff_grand_records (payload) VALUES ('after');
 query
 SELECT id, payload FROM vedernikoff_grand_records ORDER BY payload;
 ----
-id    payload
-NULL  after
-100   start
+id	payload
+NULL	after
+100	start
 
 
 statement ok
@@ -552,8 +552,8 @@ INSERT INTO vedernikoff_ml_runs (name) VALUES ('first');
 query
 SELECT id, name FROM vedernikoff_ml_runs;
 ----
-id  name
-12  first
+id	name
+12	first
 
 
 statement error (?i)cannot drop function .*vedernikoff_ml_base.*
@@ -576,9 +576,9 @@ INSERT INTO vedernikoff_ml_runs (name) VALUES ('after');
 query
 SELECT id, name FROM vedernikoff_ml_runs ORDER BY name;
 ----
-id    name
-NULL  after
-12    first
+id	name
+NULL	after
+12	first
 
 
 statement ok

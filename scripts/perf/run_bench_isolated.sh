@@ -27,6 +27,7 @@ set -euo pipefail
 # cpu0's housekeeping stays with the rest of the system). BENCH_CORES overrides
 # with an explicit cpuset list.
 PHYS="${BENCH_PHYS_CORES:-8}"
+CLIENT_CORES="${PERF_CLIENT_CORES:-}"
 if [[ -n "${BENCH_CORES:-}" ]]; then
 	CORES="${BENCH_CORES}"
 else
@@ -41,7 +42,29 @@ else
 		echo "${_sel[*]}"
 	)"
 	echo "reserving $PHYS whole physical cores -> siblings: ${_sel[*]}"
+	# One EXTRA whole physical core for the single-threaded drain/copy clients
+	# (wire_serialize_drain.py / wire_copy_in.py). Unpinned they race the server
+	# workers for the same cores and the ser/copy cells go bimodal (~4 vs ~9
+	# GB/s depending on scheduling luck). Must be on the same package as the
+	# server cores so the client doesn't pay cross-NUMA latency.
+	if [[ -z "${CLIENT_CORES}" ]] && ((PHYS + 1 <= ${#_coresets[@]})); then
+		_server_pkg="$(cat "/sys/devices/system/cpu/cpu${_sel[0]%%[,-]*}/topology/physical_package_id")"
+		for ((_i = ${#_coresets[@]} - PHYS - 1; _i >= 0; _i--)); do
+			_cand="${_coresets[${_i}]}"
+			_cand_pkg="$(cat "/sys/devices/system/cpu/cpu${_cand%%[,-]*}/topology/physical_package_id")"
+			if [[ "${_cand_pkg}" == "${_server_pkg}" ]]; then
+				CLIENT_CORES="${_cand}"
+				break
+			fi
+		done
+		if [[ -n "${CLIENT_CORES}" ]]; then
+			echo "reserving client core -> siblings: ${CLIENT_CORES}"
+		else
+			echo "no same-package core left for the client; drain clients stay unpinned"
+		fi
+	fi
 fi
+export PERF_CLIENT_CORES="${CLIENT_CORES}"
 CG=/sys/fs/cgroup/wirebench
 ROOT="$(cd "$(dirname "$0")"/../.. && pwd)"
 RUN_USER="${SUDO_USER:-$(id -un)}"
@@ -132,12 +155,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# The client core joins the partition: the drain clients run inside the bench's
+# cgroup, and the exclusive claim evicts co-tenants from their core as well.
+ALL_CORES="${CORES}${CLIENT_CORES:+,${CLIENT_CORES}}"
 mkdir -p "$CG"
-echo "$CORES" >"$CG/cpuset.cpus"
+echo "$ALL_CORES" >"$CG/cpuset.cpus"
 cat /sys/devices/system/node/online >"$CG/cpuset.mems"
 # Claim the cores exclusively then promote to a root partition; the kernel then
 # removes these cpus from every other cgroup's effective set.
-echo "$CORES" >"$CG/cpuset.cpus.exclusive" 2>/dev/null || true
+echo "$ALL_CORES" >"$CG/cpuset.cpus.exclusive" 2>/dev/null || true
 echo root >"$CG/cpuset.cpus.partition"
 
 state="$(cat "$CG/cpuset.cpus.partition")"
@@ -158,7 +184,10 @@ echo "reserved cores ${CORES}; running bench as ${RUN_USER}"
 # requested (the seeding already honored it). reuse-only is a no-op for engines
 # PERF_DB didn't select, so passing "all" is safe. PERF_SDB_DOCKER=0 is forced:
 # only a bare serened can schedule inside the partition.
+# taskset keeps the bench shell (serened, pgbench, perf) on the server cores even
+# though the partition also contains the client core; the drain clients re-pin
+# themselves to PERF_CLIENT_CORES inside bench_wire_old_vs_new.sh.
 sudo -H -u "$RUN_USER" --preserve-env=PATH "${fwd[@]}" \
 	PERF_BENCH_CORES="${CORES}" PERF_REUSE_ONLY_DB=all PERF_SDB_DOCKER=0 \
-	bash "$ROOT/scripts/perf/bench_wire_old_vs_new.sh"
+	taskset -c "${CORES}" bash "$ROOT/scripts/perf/bench_wire_old_vs_new.sh"
 # trap cleanup releases the partition

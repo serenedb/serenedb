@@ -33,7 +33,7 @@ CREATE TEXT SEARCH DICTIONARY english_no_stem (
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT ts_lexize('english_dict', 'running flies');
 ----
 ts_lexize
@@ -43,7 +43,7 @@ ts_lexize
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT ts_lexize('english_no_stem', 'running flies');
 ----
 ts_lexize

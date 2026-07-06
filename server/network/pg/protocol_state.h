@@ -44,6 +44,11 @@
 #include "pg/serialize.h"
 #include "pg/sql_exception_macro.h"
 
+namespace sdb::catalog {
+
+struct Snapshot;
+}
+
 namespace sdb::network::pg {
 
 // Per-execution wire-collector contract (wire_collector.h); a paged portal
@@ -82,9 +87,19 @@ class Statement {
     _statements.push_back(std::move(copy));
     _kind = Kind::Copy;
   }
-  void SetPrepared(duckdb::unique_ptr<duckdb::PreparedStatement> prepared) {
+  void SetPrepared(duckdb::unique_ptr<duckdb::PreparedStatement> prepared,
+                   std::shared_ptr<const catalog::Snapshot> snapshot) {
     _prepared = std::move(prepared);
+    _snapshot = std::move(snapshot);
     _kind = Kind::Prepared;
+  }
+
+  // The catalog snapshot the plan was bound against. Installed for every
+  // execution of this plan: the bound catalog entries live in materialized
+  // system tables owned by this snapshot, so plan validity == snapshot
+  // validity (plan-cache semantics).
+  const std::shared_ptr<const catalog::Snapshot>& BindSnapshot() const {
+    return _snapshot;
   }
   // One user command the parser expanded into several statements (ALTER TABLE
   // ADD COLUMN ... DEFAULT <volatile> -> [ADD; UPDATE; SET DEFAULT]). The body
@@ -111,8 +126,10 @@ class Statement {
 
   // Install the prepared last sub-statement once the leading ones have run, so
   // ExecutePrepared drives it (command tag, paging, re-Execute) like any plan.
-  void SetCompoundResult(duckdb::unique_ptr<duckdb::PreparedStatement> last) {
+  void SetCompoundResult(duckdb::unique_ptr<duckdb::PreparedStatement> last,
+                         std::shared_ptr<const catalog::Snapshot> snapshot) {
     _prepared = std::move(last);
+    _snapshot = std::move(snapshot);
   }
 
   // The plan that owns the param/result metadata (for a Compound, the last
@@ -133,6 +150,7 @@ class Statement {
  private:
   Kind _kind = Kind::Unbound;
   duckdb::unique_ptr<duckdb::PreparedStatement> _prepared;
+  std::shared_ptr<const catalog::Snapshot> _snapshot;
   duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> _statements;
 };
 
@@ -142,6 +160,45 @@ using StatementPtr = std::shared_ptr<Statement>;
 struct BindInfo {
   std::vector<sdb::pg::VarFormat> output_formats;
   duckdb::vector<duckdb::Value> param_values;
+};
+
+// Owning handle for a pending query the session opened: destruction and
+// replacement Close() an unexecuted pending so its active-query lifecycle is
+// released eagerly, never deferred into the next statement (where duckdb's
+// InitialCleanup would fire QueryEnd after the statement-scoped catalog
+// snapshot was already acquired). Session scopes never hold the duckdb
+// context lock, so Close() here cannot deadlock.
+class ClosingPending {
+ public:
+  ClosingPending() = default;
+  ClosingPending(duckdb::unique_ptr<duckdb::PendingQueryResult> pending)
+    : _pending{std::move(pending)} {}
+  ClosingPending(ClosingPending&& other) noexcept = default;
+  ClosingPending& operator=(ClosingPending&& other) noexcept {
+    if (this != &other) {
+      Reset();
+      _pending = std::move(other._pending);
+    }
+    return *this;
+  }
+  ~ClosingPending() { Reset(); }
+
+  void Reset() noexcept {
+    if (_pending) {
+      try {
+        _pending->Close();
+      } catch (...) {
+      }
+      _pending.reset();
+    }
+  }
+
+  duckdb::PendingQueryResult* operator->() const { return _pending.get(); }
+  duckdb::PendingQueryResult& operator*() const { return *_pending; }
+  explicit operator bool() const { return _pending != nullptr; }
+
+ private:
+  duckdb::unique_ptr<duckdb::PendingQueryResult> _pending;
 };
 
 // A portal's execution lifecycle. The old started/exhausted bool pair only had
@@ -157,7 +214,7 @@ enum class PortalState : uint8_t { Unstarted, Paging, Exhausted };
 // retains `wire` (the Direct collector ctx) + `pending` (the parked pipeline)
 // across re-Executes; each re-Execute raises wire->row_budget and resumes.
 struct PortalExecution {
-  duckdb::unique_ptr<duckdb::PendingQueryResult> pending;
+  ClosingPending pending;
   std::shared_ptr<WireSinkContext> wire;
   PortalState state = PortalState::Unstarted;
 };

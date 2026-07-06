@@ -20,77 +20,26 @@
 
 #include "connector/duckdb_client_state.h"
 
-#include <absl/container/flat_hash_set.h>
 #include <absl/strings/match.h>
 
+#include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/main/prepared_statement_data.hpp>
 #include <utility>
 
 #include "basics/assert.h"
+#include "basics/containers/flat_hash_set.h"
+#include "basics/log.h"
 #include "basics/system-compiler.h"
-#include "catalog/database.h"
 #include "catalog/store/store.h"
-#include "connector/duckdb_physical_create_index.h"
-#include "connector/duckdb_physical_progress.h"
 #include "pg/connection_context.h"
 #include "pg/copy_messages_queue.h"
 #include "pg/errcodes.h"
-#include "pg/progress_tracker.h"
 #include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
-namespace {
-
-std::unique_ptr<pg::ProgressReporter> MakeProgressReporter(
-  ObjectId datid, const duckdb::PreparedStatementData& prepared) {
-  if (!prepared.physical_plan) {
-    return nullptr;
-  }
-  const auto& root = prepared.physical_plan->Root();
-
-  if (prepared.statement_type == duckdb::StatementType::COPY_STATEMENT) {
-    // COPY FROM plans as a native insert with the SDB_PROGRESS pass-through
-    // (carrying the facade table) directly underneath.
-    const SereneDBPhysicalProgress* progress_op = nullptr;
-    if (!root.children.empty()) {
-      progress_op =
-        dynamic_cast<const SereneDBPhysicalProgress*>(&root.children[0].get());
-    }
-    if (!progress_op) {
-      return nullptr;
-    }
-    auto reporter = std::make_unique<pg::ProgressReporter>(
-      datid, progress_op->TargetTableId(), pg::ProgressCommand::Copy);
-    reporter->SetCommand(pg::copy_progress::Command::CopyFrom);
-    reporter->SetType(pg::copy_progress::Type::File);
-    return reporter;
-  }
-
-  if (prepared.statement_type == duckdb::StatementType::CREATE_STATEMENT) {
-    const auto* ci = dynamic_cast<const SereneDBPhysicalCreateIndex*>(&root);
-    if (!ci) {
-      return nullptr;
-    }
-    auto reporter = std::make_unique<pg::ProgressReporter>(
-      ci->DatabaseId(), ci->TargetRelationId(),
-      pg::ProgressCommand::CreateIndex);
-    reporter->SetCommand(pg::create_index_progress::Command::CreateIndex);
-    reporter->SetPhase(pg::create_index_progress::Phase::Initializing);
-    if (ci->estimated_cardinality > 0) {
-      reporter->Set(pg::create_index_progress::Param::TuplesTotal,
-                    static_cast<int64_t>(ci->estimated_cardinality));
-    }
-    return reporter;
-  }
-
-  return nullptr;
-}
-
-}  // namespace
 
 SereneDBClientState& SereneDBClientState::Register(
   duckdb::ClientContext& client_ctx,
@@ -98,6 +47,18 @@ SereneDBClientState& SereneDBClientState::Register(
   auto state =
     duckdb::make_shared_ptr<SereneDBClientState>(std::move(connection_ctx));
   auto& registered = *state;
+
+  auto source = std::make_shared<pg::ProgressSource>();
+  source->pid = registered._connection_ctx->GetBackendPid();
+  if (const auto& db = registered._connection_ctx->GetDatabasePtr()) {
+    source->datid = static_cast<int64_t>(db->GetId().id());
+  }
+  source->user = registered._connection_ctx->user();
+  source->database = registered._connection_ctx->GetDatabase();
+  source->backend_start_us = duckdb::Timestamp::GetCurrentTimestamp().value;
+  source->ctx = &client_ctx;
+  registered.progress_source = source;
+  pg::ProgressRegistry::Instance().Register(std::move(source));
   client_ctx.registered_state->Insert(kSereneDBClientStateKey,
                                       std::move(state));
   client_ctx.warning_handler = [](duckdb::ClientContext& ctx,
@@ -161,7 +122,7 @@ SereneDBClientState& SereneDBClientState::Register(
                                      const std::string& name) {
     // Internal knobs -- hidden from SHOW ALL / pg_settings / duckdb_settings().
     // Still settable/readable by name.
-    static const absl::flat_hash_set<std::string_view> kHidden = {
+    static const containers::FlatHashSet<std::string_view> kHidden = {
       "sdb_faults", "debug_verification"};
     return !kHidden.contains(name);
   };
@@ -227,7 +188,7 @@ void SereneDBClientState::TransactionPreCheckpoint(duckdb::AttachedDatabase& db,
   // in-commit checkpoint, so the checkpoint's force-refresh never waits on an
   // un-committed in-flight batch. Only the store database carries indexed
   // tables, so settle on its commit.
-  if (db.GetName() != catalog::kStoreDatabaseName) {
+  if (db.GetName().GetIdentifierName() != catalog::kStoreDatabaseName) {
     return;
   }
   _connection_ctx->CommitSearch();
@@ -236,6 +197,13 @@ void SereneDBClientState::TransactionPreCheckpoint(duckdb::AttachedDatabase& db,
 void SereneDBClientState::TransactionPreRollback(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context,
   duckdb::optional_ptr<duckdb::ErrorData> error) {
+  if (auto cleanup = std::exchange(transaction_abort_cleanup, nullptr)) {
+    try {
+      cleanup(transaction);
+    } catch (const std::exception& e) {
+      SDB_WARN(GENERAL, "transaction abort cleanup failed: ", e.what());
+    }
+  }
   _connection_ctx->PreRollback();
 }
 
@@ -267,17 +235,19 @@ void SereneDBClientState::TransactionRollback(
   }
 }
 
-duckdb::RebindQueryInfo SereneDBClientState::OnExecutePrepared(
-  duckdb::ClientContext& context, duckdb::PreparedStatementCallbackInfo& info,
-  duckdb::RebindQueryInfo current_rebind) {
-  if (const auto& db = _connection_ctx->GetDatabasePtr()) {
-    progress = MakeProgressReporter(db->GetId(), info.prepared_statement);
-  }
-  return current_rebind;
-}
-
 void SereneDBClientState::QueryBegin(duckdb::ClientContext& context) {
   _connection_ctx->OnStatementBegin();
+  progress_source->BeginQuery(context.GetCurrentQuery());
+  if (pending_copy_command != pg::ProgressCommand::None) {
+    auto& metrics = progress_source->metrics;
+    metrics.SetCommand(pending_copy_command);
+    metrics.SetIoType(pending_copy_io);
+    pg::ProgressMetrics::Set(metrics.relid,
+                             static_cast<int64_t>(pending_copy_relid.id()));
+    pending_copy_command = pg::ProgressCommand::None;
+    pending_copy_io = pg::ProgressIoType::None;
+    pending_copy_relid = {};
+  }
 }
 
 void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {
@@ -286,16 +256,24 @@ void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {
   }
   copy_stdin_open_count = 0;
   copy_stdin_done = false;
-  progress.reset();
+  progress_source->EndQuery();
   _connection_ctx->OnStatementEnd();
 }
 
-ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context) {
+ConnectionContext* GetSereneDBContextPtr(duckdb::ClientContext& context) {
   auto state =
     context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);
-  SDB_ASSERT(state, "SereneDB client state not registered; active query: ",
+  if (!state) {
+    return nullptr;
+  }
+  return &state->GetConnectionContext();
+}
+
+ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context) {
+  auto* ctx = GetSereneDBContextPtr(context);
+  SDB_ASSERT(ctx, "SereneDB client state not registered; active query: ",
              context.GetCurrentQuery());
-  return state->GetConnectionContext();
+  return *ctx;
 }
 
 }  // namespace sdb::connector

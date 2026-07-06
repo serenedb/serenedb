@@ -53,7 +53,7 @@ struct PgDatabase {
   Text datlocale;
   Text daticurules;
   Text datcollversion;
-  Array<Aclitem> datacl;
+  AclColumn datacl;
 };
 // NOLINTEND
 

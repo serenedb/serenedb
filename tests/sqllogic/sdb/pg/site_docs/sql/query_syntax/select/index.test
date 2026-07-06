@@ -44,7 +44,7 @@ INSERT INTO tbl VALUES
 query
 SELECT * FROM tbl;
 ----
-id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
+id	name	col1	col2	Some Column Name	i	a	b	c	number	number1	number2
 1	mark	1	2	alpha	1	10	20	30	10	100	1000
 3	bookmark	4	5	beta	2	11	21	31	20	200	2000
 7	other	9	16	gamma	3	12	22	32	NULL	300	3000
@@ -186,7 +186,7 @@ address	city	street_name	income	zip	country	population	number1	number2
 query
 SELECT "Some Column Name" FROM tbl;
 ----
-some column name
+Some Column Name
 alpha
 beta
 gamma
@@ -199,7 +199,7 @@ query
 SELECT *
 FROM tbl;
 ----
-id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
+id	name	col1	col2	Some Column Name	i	a	b	c	number	number1	number2
 1	mark	1	2	alpha	1	10	20	30	10	100	1000
 3	bookmark	4	5	beta	2	11	21	31	20	200	2000
 7	other	9	16	gamma	3	12	22	32	NULL	300	3000
@@ -257,7 +257,7 @@ INSERT INTO cities VALUES
 
 # DOCS_TEST_BODY
 
-query ??
+query
 SELECT DISTINCT ON(country) city, population
 FROM cities
 ORDER BY population DESC;
@@ -296,7 +296,7 @@ Mallard	2
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT row_number() OVER ()
 FROM sales;
 ----
@@ -308,7 +308,7 @@ row_number
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT amount - lag(amount) OVER (ORDER BY time)
 FROM sales;
 ----

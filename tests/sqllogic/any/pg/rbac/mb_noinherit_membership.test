@@ -1,0 +1,121 @@
+# NOINHERIT membership: a NOINHERIT member does NOT automatically wield the
+# privileges of the groups it belongs to (PG has_privs_of_role follows only
+# INHERIT edges), even though it IS a member (is_member_of / pg_has_role MEMBER
+# stays true). Asserted on the byte-identical surface: has_table_privilege,
+# pg_has_role, and real DML on a second connection.
+#
+# Two axes control inheritance, and the edge wins:
+#   * the member role's own INHERIT/NOINHERIT attribute (the GRANT-time default)
+#   * the per-edge WITH INHERIT TRUE/FALSE override
+
+statement ok
+DROP ROLE IF EXISTS ni_mop_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS ni_mop_clickclack;
+
+
+statement ok
+DROP TABLE IF EXISTS ni_mop_iceberg;
+
+
+statement ok
+CREATE TABLE ni_mop_iceberg (id int, payload int);
+
+
+statement ok
+GRANT SELECT, INSERT ON ni_mop_iceberg TO public;
+
+
+# A NOINHERIT login role and a group holding privileges on the table.
+statement ok
+CREATE ROLE ni_mop_vedernikoff LOGIN NOINHERIT PASSWORD 'ni_mop_vedernikoff_pw';
+
+
+statement ok
+CREATE ROLE ni_mop_clickclack;
+
+
+statement ok
+REVOKE SELECT, INSERT ON ni_mop_iceberg FROM public;
+
+
+statement ok
+GRANT SELECT ON ni_mop_iceberg TO ni_mop_clickclack;
+
+
+# ---- Membership with the NOINHERIT default: member but no inherited privilege
+
+statement ok
+GRANT ni_mop_clickclack TO ni_mop_vedernikoff;
+
+
+# IS a member (pg_has_role MEMBER true), but does NOT inherit USAGE-style privs:
+# pg_has_role USAGE is false, and the table privilege does not flow through.
+query
+SELECT pg_has_role('ni_mop_vedernikoff', 'ni_mop_clickclack', 'MEMBER') AS member,
+       pg_has_role('ni_mop_vedernikoff', 'ni_mop_clickclack', 'USAGE') AS usage,
+       has_table_privilege('ni_mop_vedernikoff', 'ni_mop_iceberg', 'SELECT') AS sel;
+----
+member	usage	sel
+t	f	f
+
+
+# Real query path agrees: SELECT is denied for the NOINHERIT member.
+connection c_ved user=ni_mop_vedernikoff password=ni_mop_vedernikoff_pw
+statement error
+SELECT * FROM ni_mop_iceberg;
+----
+db error: ERROR: permission denied for table ni_mop_iceberg<slt:ignore>
+
+
+# ---- Per-edge override: WITH INHERIT TRUE turns the same edge inheriting ----
+
+statement ok
+GRANT ni_mop_clickclack TO ni_mop_vedernikoff WITH INHERIT TRUE;
+
+
+# Now the privilege flows through the (re-granted) edge.
+query
+SELECT pg_has_role('ni_mop_vedernikoff', 'ni_mop_clickclack', 'USAGE') AS usage,
+       has_table_privilege('ni_mop_vedernikoff', 'ni_mop_iceberg', 'SELECT') AS sel;
+----
+usage	sel
+t	t
+
+
+connection c_ved user=ni_mop_vedernikoff password=ni_mop_vedernikoff_pw
+query
+SELECT count(*) FROM ni_mop_iceberg;
+----
+count
+0
+
+
+# ---- Flip back to non-inheriting with WITH INHERIT FALSE ----
+
+statement ok
+GRANT ni_mop_clickclack TO ni_mop_vedernikoff WITH INHERIT FALSE;
+
+
+query
+SELECT pg_has_role('ni_mop_vedernikoff', 'ni_mop_clickclack', 'USAGE') AS usage,
+       has_table_privilege('ni_mop_vedernikoff', 'ni_mop_iceberg', 'SELECT') AS sel;
+----
+usage	sel
+f	f
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP TABLE IF EXISTS ni_mop_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS ni_mop_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS ni_mop_clickclack;

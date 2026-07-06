@@ -1,0 +1,156 @@
+# How REVOKE and successive GRANTs interact with the grant option, plus a
+# real-DML cross-connection check showing the grant option is orthogonal to
+# whether the privilege itself is usable. All assertions are byte-identical on
+# PostgreSQL and serenedb.
+#
+# Lore: vedernikoff curates the mop_deadinside under postgres' ownership.
+
+statement ok
+DROP TABLE IF EXISTS go_mop_deadinside;
+
+
+statement ok
+DROP ROLE IF EXISTS go_rev_vedernikoff;
+
+
+statement ok
+CREATE TABLE go_mop_deadinside (id int, payload text);
+
+
+statement ok
+INSERT INTO go_mop_deadinside VALUES (1, 'clickclack'), (2, 'iceberg');
+
+
+statement ok
+CREATE ROLE go_rev_vedernikoff LOGIN PASSWORD 'go_rev_vedernikoff_pw';
+
+
+# ---- Grant SELECT WITH GRANT OPTION: both the privilege and its option held.
+statement ok
+GRANT SELECT ON go_mop_deadinside TO go_rev_vedernikoff WITH GRANT OPTION;
+
+
+query
+SELECT has_table_privilege('go_rev_vedernikoff','go_mop_deadinside','SELECT')                   AS s,
+       has_table_privilege('go_rev_vedernikoff','go_mop_deadinside','SELECT WITH GRANT OPTION') AS sg;
+----
+s	sg
+t	t
+
+
+# ---- Holding the grant option does not change DML reach: the role can read,
+#      because it holds SELECT. (Real query path, separate connection.) ----
+connection c_ved user=go_rev_vedernikoff password=go_rev_vedernikoff_pw
+query
+SELECT id, payload FROM go_mop_deadinside ORDER BY id;
+----
+id	payload
+1	clickclack
+2	iceberg
+
+
+# ---- Re-grant the same privilege plainly: the existing option is NOT removed.
+statement ok
+GRANT SELECT ON go_mop_deadinside TO go_rev_vedernikoff;
+
+
+query
+SELECT has_table_privilege('go_rev_vedernikoff','go_mop_deadinside','SELECT WITH GRANT OPTION') AS sg;
+----
+sg
+t
+
+
+# ---- The only way to drop just the option is REVOKE then re-GRANT plainly.
+#      After a full REVOKE the privilege and option both vanish. ----
+statement ok
+REVOKE SELECT ON go_mop_deadinside FROM go_rev_vedernikoff;
+
+
+query
+SELECT has_table_privilege('go_rev_vedernikoff','go_mop_deadinside','SELECT')                   AS s,
+       has_table_privilege('go_rev_vedernikoff','go_mop_deadinside','SELECT WITH GRANT OPTION') AS sg;
+----
+s	sg
+f	f
+
+
+# ---- With SELECT fully revoked, the real read is denied. serenedb appends a
+#      DETAIL line PG does not, so the expected block ends with an ignore
+#      marker that matches both engines. ----
+connection c_ved user=go_rev_vedernikoff password=go_rev_vedernikoff_pw
+statement error
+SELECT id FROM go_mop_deadinside;
+----
+db error: ERROR: permission denied for table go_mop_deadinside<slt:ignore>
+
+
+# ---- Re-GRANT plainly: privilege returns WITHOUT the option. ----
+statement ok
+GRANT SELECT ON go_mop_deadinside TO go_rev_vedernikoff;
+
+
+query
+SELECT has_table_privilege('go_rev_vedernikoff','go_mop_deadinside','SELECT')                   AS s,
+       has_table_privilege('go_rev_vedernikoff','go_mop_deadinside','SELECT WITH GRANT OPTION') AS sg;
+----
+s	sg
+t	f
+
+
+# read works again, grant option absent.
+connection c_ved user=go_rev_vedernikoff password=go_rev_vedernikoff_pw
+query
+SELECT count(*) FROM go_mop_deadinside;
+----
+count
+2
+
+
+# ---- Multiple privileges, REVOKE one with option leaves the other intact. ----
+statement ok
+GRANT INSERT, UPDATE ON go_mop_deadinside TO go_rev_vedernikoff WITH GRANT OPTION;
+
+
+query
+SELECT has_table_privilege('go_rev_vedernikoff','go_mop_deadinside','INSERT WITH GRANT OPTION') AS ig,
+       has_table_privilege('go_rev_vedernikoff','go_mop_deadinside','UPDATE WITH GRANT OPTION') AS ug;
+----
+ig	ug
+t	t
+
+
+statement ok
+REVOKE UPDATE ON go_mop_deadinside FROM go_rev_vedernikoff;
+
+
+query
+SELECT has_table_privilege('go_rev_vedernikoff','go_mop_deadinside','INSERT WITH GRANT OPTION') AS ig,
+       has_table_privilege('go_rev_vedernikoff','go_mop_deadinside','UPDATE')                   AS u,
+       has_table_privilege('go_rev_vedernikoff','go_mop_deadinside','UPDATE WITH GRANT OPTION') AS ug;
+----
+ig	u	ug
+t	f	f
+
+
+# ---- REVOKE ALL clears every privilege and option. ----
+statement ok
+REVOKE ALL PRIVILEGES ON go_mop_deadinside FROM go_rev_vedernikoff;
+
+
+query
+SELECT has_table_privilege('go_rev_vedernikoff','go_mop_deadinside','SELECT')                   AS s,
+       has_table_privilege('go_rev_vedernikoff','go_mop_deadinside','SELECT WITH GRANT OPTION') AS sg,
+       has_table_privilege('go_rev_vedernikoff','go_mop_deadinside','INSERT WITH GRANT OPTION') AS ig;
+----
+s	sg	ig
+f	f	f
+
+
+# ---- Cleanup (table first to clear dependencies). ----
+statement ok
+DROP TABLE go_mop_deadinside;
+
+
+statement ok
+DROP ROLE go_rev_vedernikoff;

@@ -1,0 +1,133 @@
+# Cross-catalog EDGE CASES around grant dependencies:
+#   1. A grantee that holds a table privilege is referenced from pg_class.relacl;
+#      DROP ROLE is refused while that reference exists ("cannot be dropped
+#      because some objects depend on it"). The ERROR line is identical on both
+#      engines; the DETAIL differs (PG names the table; serenedb reports a
+#      count) -> trailing <slt:ignore>. After REVOKE the relacl element is gone
+#      and the drop succeeds.
+#   2. Self-membership is rejected ("role X is a member of role X"), error text
+#      byte-identical on both engines (no DETAIL).
+#
+# Vedernikoff lore: the iceberg table; vedernikoff/babsky the roles.
+# Idempotent + self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS xcat_dg_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS xcat_dg_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS xcat_dg_babsky;
+
+
+statement ok
+CREATE TABLE xcat_dg_iceberg (id int);
+
+
+statement ok
+CREATE ROLE xcat_dg_vedernikoff;
+
+
+statement ok
+CREATE ROLE xcat_dg_babsky;
+
+
+# A role with no grants drops cleanly (baseline -- no dependency).
+statement ok
+DROP ROLE xcat_dg_babsky;
+
+
+# Grant a privilege: the grantee now has a relacl element referencing it.
+statement ok
+GRANT SELECT ON xcat_dg_iceberg TO xcat_dg_vedernikoff;
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_dg_iceberg'
+) g WHERE e LIKE 'xcat_dg_vedernikoff=%';
+----
+e
+xcat_dg_vedernikoff=r/postgres
+
+
+# DROP ROLE is refused while the relacl element exists. ERROR line matches on
+# both engines; DETAIL diverges (PG: "privileges for table ..."; serenedb:
+# "N object(s) ...") -> <slt:ignore>.
+statement error
+DROP ROLE xcat_dg_vedernikoff;
+----
+db error: ERROR: role "xcat_dg_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# The relacl element is still present after the failed drop (the role survives).
+query
+SELECT count(*) AS still_there FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_dg_iceberg'
+) g WHERE e LIKE 'xcat_dg_vedernikoff=%';
+----
+still_there
+1
+
+
+# Revoke removes the relacl element, clearing the dependency.
+statement ok
+REVOKE SELECT ON xcat_dg_iceberg FROM xcat_dg_vedernikoff;
+
+
+query
+SELECT count(*) AS after_revoke FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_dg_iceberg'
+) g WHERE e LIKE 'xcat_dg_vedernikoff=%';
+----
+after_revoke
+0
+
+
+# Now the drop succeeds and the role disappears from pg_roles.
+statement ok
+DROP ROLE xcat_dg_vedernikoff;
+
+
+query
+SELECT count(*) AS role_left FROM pg_roles WHERE rolname = 'xcat_dg_vedernikoff';
+----
+role_left
+0
+
+
+# ----------------------------------------------------------------------
+# Self-membership is rejected. The error text is byte-identical on both engines
+# (no DETAIL line), so it is asserted in full without an ignore marker.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE ROLE xcat_dg_babsky;
+
+
+statement error
+GRANT xcat_dg_babsky TO xcat_dg_babsky;
+----
+db error: ERROR: role "xcat_dg_babsky" is a member of role "xcat_dg_babsky"
+
+
+# The rejected self-grant left no edge in pg_auth_members.
+query
+SELECT count(*) AS self_edges FROM pg_auth_members am
+JOIN pg_roles gr ON gr.oid = am.roleid
+JOIN pg_roles mr ON mr.oid = am.member
+WHERE gr.rolname = 'xcat_dg_babsky' AND mr.rolname = 'xcat_dg_babsky';
+----
+self_edges
+0
+
+
+statement ok
+DROP TABLE xcat_dg_iceberg;
+
+
+statement ok
+DROP ROLE xcat_dg_babsky;

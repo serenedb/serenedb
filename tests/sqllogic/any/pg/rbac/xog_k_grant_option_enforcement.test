@@ -1,0 +1,143 @@
+# Cross-product file K: enforcement of WITH GRANT OPTION on a real connection.
+# A grantee that holds SELECT WITH GRANT OPTION can re-grant SELECT to a third
+# role -- and the new ACL row records the re-granter (not the owner) as grantor.
+# A grantee that holds SELECT WITHOUT the option cannot pass it on: the GRANT is
+# a no-op (a warning, no privilege moved) -- the target gains nothing from it.
+#
+# Lore: xog_k_mop is the superuser-owned table. xog_k_go holds the grant option;
+# xog_k_no holds plain SELECT; xog_k_t1 / xog_k_t2 are re-grant targets.
+
+statement ok
+DROP TABLE IF EXISTS xog_k_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_k_go;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_k_no;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_k_t1;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_k_t2;
+
+
+statement ok
+CREATE TABLE xog_k_mop (id int);
+
+
+statement ok
+CREATE ROLE xog_k_go LOGIN PASSWORD 'xog_k_go_pw';
+
+
+statement ok
+CREATE ROLE xog_k_no LOGIN PASSWORD 'xog_k_no_pw';
+
+
+statement ok
+CREATE ROLE xog_k_t1 LOGIN;
+
+
+statement ok
+CREATE ROLE xog_k_t2 LOGIN;
+
+
+statement ok
+GRANT SELECT ON xog_k_mop TO xog_k_go WITH GRANT OPTION;
+
+
+statement ok
+GRANT SELECT ON xog_k_mop TO xog_k_no;
+
+
+# Sanity: go can re-grant, no cannot (the option oracle).
+query
+SELECT has_table_privilege('xog_k_go','xog_k_mop','SELECT WITH GRANT OPTION') AS go_can,
+       has_table_privilege('xog_k_no','xog_k_mop','SELECT WITH GRANT OPTION') AS no_can;
+----
+go_can	no_can
+t	f
+
+
+# Neither target has SELECT yet.
+query
+SELECT has_table_privilege('xog_k_t1','xog_k_mop','SELECT') AS t1,
+       has_table_privilege('xog_k_t2','xog_k_mop','SELECT') AS t2;
+----
+t1	t2
+f	f
+
+
+# ---- The grant-option holder re-grants SELECT to t1, on its own connection. ----
+connection c_go user=xog_k_go password=xog_k_go_pw
+statement ok
+GRANT SELECT ON xog_k_mop TO xog_k_t1;
+
+
+# t1 now holds SELECT, and the ACL row records xog_k_go (the re-granter) as the
+# grantor -- not the table owner.
+query
+SELECT has_table_privilege('xog_k_t1','xog_k_mop','SELECT') AS t1_sel;
+----
+t1_sel
+t
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_k_mop'
+) g WHERE e LIKE 'xog_k_t1=%';
+----
+e
+xog_k_t1=r/xog_k_go
+
+
+# ---- The plain-SELECT holder tries to re-grant to t2: this is a no-op (a
+# warning, no privilege passed). The statement itself returns success, but t2
+# gains nothing and no ACL row appears for it. ----
+connection c_no user=xog_k_no password=xog_k_no_pw
+statement ok
+GRANT SELECT ON xog_k_mop TO xog_k_t2;
+
+
+# t2 still has no SELECT -- the re-grant moved nothing.
+query
+SELECT has_table_privilege('xog_k_t2','xog_k_mop','SELECT') AS t2_sel;
+----
+t2_sel
+f
+
+
+# And no ACL row was created for t2.
+query
+SELECT count(*) AS t2_rows FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_k_mop'
+) g WHERE e LIKE 'xog_k_t2=%';
+----
+t2_rows
+0
+
+
+statement ok
+DROP TABLE xog_k_mop;
+
+
+statement ok
+DROP ROLE xog_k_go;
+
+
+statement ok
+DROP ROLE xog_k_no;
+
+
+statement ok
+DROP ROLE xog_k_t1;
+
+
+statement ok
+DROP ROLE xog_k_t2;

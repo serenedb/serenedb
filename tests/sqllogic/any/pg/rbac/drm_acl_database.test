@@ -1,0 +1,206 @@
+# DROP ROLE must refuse while a role is the grantee of a DATABASE-level
+# privilege, for every database privilege (CONNECT / TEMP=TEMPORARY / CREATE),
+# exactly like PostgreSQL -- the datacl entry is a hard dependency. drm_acl_*
+# already cover relation/sequence/function/type/schema ACL grantees and CONNECT
+# on a database; this file covers the full database privilege set, partial
+# revoke, the REVOKE ALL sweep, and the WITH GRANT OPTION pin.
+#
+# Database OWNER dependency is not exercised: CREATE DATABASE ... OWNER is not
+# supported by serenedb.
+#
+# Lore: vedernikoff is the grantee.
+
+
+# ---- Idempotent setup: tear down every fixture first. ----
+
+statement ok
+DROP ROLE IF EXISTS dadb_vedernikoff;
+
+
+statement ok
+CREATE ROLE dadb_vedernikoff;
+
+
+# =====================================================================
+# Case 1: TEMP grantee is pinned; REVOKE clears it.
+# =====================================================================
+
+statement ok
+GRANT TEMP ON DATABASE postgres TO dadb_vedernikoff;
+
+
+statement error
+DROP ROLE dadb_vedernikoff;
+----
+db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE TEMP ON DATABASE postgres FROM dadb_vedernikoff;
+
+
+statement ok
+DROP ROLE dadb_vedernikoff;
+
+
+# =====================================================================
+# Case 2: TEMPORARY is the equivalent spelling and pins identically.
+# =====================================================================
+
+statement ok
+CREATE ROLE dadb_vedernikoff;
+
+
+statement ok
+GRANT TEMPORARY ON DATABASE postgres TO dadb_vedernikoff;
+
+
+statement error
+DROP ROLE dadb_vedernikoff;
+----
+db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE TEMPORARY ON DATABASE postgres FROM dadb_vedernikoff;
+
+
+statement ok
+DROP ROLE dadb_vedernikoff;
+
+
+# =====================================================================
+# Case 3: CREATE on a database pins the grantee; REVOKE clears it.
+# =====================================================================
+
+statement ok
+CREATE ROLE dadb_vedernikoff;
+
+
+statement ok
+GRANT CREATE ON DATABASE postgres TO dadb_vedernikoff;
+
+
+statement error
+DROP ROLE dadb_vedernikoff;
+----
+db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE CREATE ON DATABASE postgres FROM dadb_vedernikoff;
+
+
+statement ok
+DROP ROLE dadb_vedernikoff;
+
+
+# =====================================================================
+# Case 4: multiple database privileges; the pin survives every partial
+# revoke and lifts only when the LAST privilege is revoked.
+# =====================================================================
+
+statement ok
+CREATE ROLE dadb_vedernikoff;
+
+
+statement ok
+GRANT CONNECT, TEMP, CREATE ON DATABASE postgres TO dadb_vedernikoff;
+
+
+statement error
+DROP ROLE dadb_vedernikoff;
+----
+db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE CONNECT ON DATABASE postgres FROM dadb_vedernikoff;
+
+
+statement error
+DROP ROLE dadb_vedernikoff;
+----
+db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE TEMP ON DATABASE postgres FROM dadb_vedernikoff;
+
+
+statement error
+DROP ROLE dadb_vedernikoff;
+----
+db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE CREATE ON DATABASE postgres FROM dadb_vedernikoff;
+
+
+statement ok
+DROP ROLE dadb_vedernikoff;
+
+
+# =====================================================================
+# Case 5: REVOKE ALL ON DATABASE sweeps every privilege at once and
+# frees the role.
+# =====================================================================
+
+statement ok
+CREATE ROLE dadb_vedernikoff;
+
+
+statement ok
+GRANT CONNECT, TEMP, CREATE ON DATABASE postgres TO dadb_vedernikoff;
+
+
+statement error
+DROP ROLE dadb_vedernikoff;
+----
+db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE ALL ON DATABASE postgres FROM dadb_vedernikoff;
+
+
+statement ok
+DROP ROLE dadb_vedernikoff;
+
+
+# =====================================================================
+# Case 6: WITH GRANT OPTION still pins; revoking only the grant option
+# leaves the base privilege (still pinned); revoking the base clears it.
+# =====================================================================
+
+statement ok
+CREATE ROLE dadb_vedernikoff;
+
+
+statement ok
+GRANT CONNECT ON DATABASE postgres TO dadb_vedernikoff WITH GRANT OPTION;
+
+
+statement error
+DROP ROLE dadb_vedernikoff;
+----
+db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE GRANT OPTION FOR CONNECT ON DATABASE postgres FROM dadb_vedernikoff;
+
+
+statement error
+DROP ROLE dadb_vedernikoff;
+----
+db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+REVOKE CONNECT ON DATABASE postgres FROM dadb_vedernikoff;
+
+
+statement ok
+DROP ROLE dadb_vedernikoff;

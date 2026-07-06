@@ -25,6 +25,7 @@
 #include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "catalog/catalog.h"
+#include "catalog/secondary_index.h"
 #include "catalog/table.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/system_catalog.h"
@@ -55,7 +56,7 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
-  auto catalog = _config.EnsureCatalogSnapshot();
+  auto catalog = _config.CatalogSnapshot();
 
   std::vector<PgIndex> values;
   std::vector<std::vector<int16_t>> indkey_storage;
@@ -84,13 +85,16 @@ catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
             pos < table.Columns().size() ? static_cast<int16_t>(pos + 1) : 0);
         }
       }
+      bool is_unique_index =
+        index.GetType() == catalog::ObjectType::SecondaryIndex &&
+        basics::downCast<catalog::SecondaryIndex>(index).IsUnique();
       indkey_storage.push_back(std::move(indkey));
       values.push_back({
         .indexrelid = index.GetId().id(),
         .indrelid = index.GetRelationId().id(),
         .indnatts = natts,
         .indnkeyatts = natts,
-        .indisunique = false,
+        .indisunique = is_unique_index,
         .indnullsnotdistinct = false,
         .indisprimary = false,
         .indisexclusion = false,
@@ -124,7 +128,7 @@ catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
       auto natts = static_cast<int16_t>(indkey.size());
       indkey_storage.push_back(std::move(indkey));
       values.push_back({
-        .indexrelid = PkIndexOid(table->GetId().id()),
+        .indexrelid = table->PKIndexId().id(),
         .indrelid = table->GetId().id(),
         .indnatts = natts,
         .indnkeyatts = natts,
@@ -142,12 +146,48 @@ catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
         .indkey = indkey_storage.back(),
       });
     }
+
+    // Synthetic indexes for UNIQUE constraints (PG: each UNIQUE has a backing
+    // index). indexrelid matches pg_constraint.conindid and pg_class.oid.
+    for (const auto& table :
+         catalog->GetTables(GetDatabaseId(), schema->GetName())) {
+      const auto& uniques = table->UniqueConstraints();
+      for (size_t uq_idx = 0; uq_idx < uniques.size(); ++uq_idx) {
+        std::vector<int16_t> indkey;
+        indkey.reserve(uniques[uq_idx].columns.size());
+        for (auto col_id : uniques[uq_idx].columns) {
+          const auto pos = table->ColumnPosById(col_id);
+          indkey.push_back(
+            pos < table->Columns().size() ? static_cast<int16_t>(pos + 1) : 0);
+        }
+        auto natts = static_cast<int16_t>(indkey.size());
+        indkey_storage.push_back(std::move(indkey));
+        values.push_back({
+          .indexrelid = uniques[uq_idx].index_id.id(),
+          .indrelid = table->GetId().id(),
+          .indnatts = natts,
+          .indnkeyatts = natts,
+          .indisunique = true,
+          .indnullsnotdistinct = false,
+          .indisprimary = false,
+          .indisexclusion = false,
+          .indimmediate = true,
+          .indisclustered = false,
+          .indisvalid = true,
+          .indcheckxmin = false,
+          .indisready = true,
+          .indislive = true,
+          .indisreplident = false,
+          .indkey = indkey_storage.back(),
+        });
+      }
+    }
   }
 
   auto result = CreateColumns<PgIndex>(values.size());
 
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row);
+    WriteData(result, values[row], kNullMask, row, *_config.CatalogSnapshot());
   }
 
   return {std::move(result), values.size()};

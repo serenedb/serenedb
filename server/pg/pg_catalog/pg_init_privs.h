@@ -39,7 +39,7 @@ struct PgInitPrivs {
   Oid classoid;
   int32_t objsubid;
   Privtype privtype;
-  Array<Aclitem> initprivs;
+  AclColumn initprivs;
 };
 // NOLINTEND
 

@@ -20,8 +20,6 @@
 
 #include "connector/optimizer/iresearch_plan.h"
 
-#include <absl/container/flat_hash_set.h>
-
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/optimizer/optimizer_extension.hpp>
@@ -41,6 +39,7 @@
 #include <iresearch/search/proxy_filter.hpp>
 
 #include "basics/containers/flat_hash_map.h"
+#include "basics/containers/flat_hash_set.h"
 #include "catalog/inverted_index.h"
 #include "catalog/scorer_options.h"
 #include "connector/duckdb_client_state.h"
@@ -60,7 +59,7 @@ namespace {
 bool TryFoldExpression(duckdb::ClientContext& context, duckdb::Expression& expr,
                        duckdb::Value& out) {
   if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONSTANT) {
-    out = expr.Cast<duckdb::BoundConstantExpression>().value;
+    out = expr.Cast<duckdb::BoundConstantExpression>().GetValue();
     return !out.IsNull();
   }
   if (!expr.IsFoldable()) {
@@ -142,7 +141,8 @@ irs::field_id ResolveAnnTargetFieldId(
   if (col_arg.GetExpressionClass() ==
         duckdb::ExpressionClass::BOUND_COLUMN_REF ||
       col_arg.GetExpressionClass() == duckdb::ExpressionClass::BOUND_REF) {
-    if (const auto id = bind_data.ColumnIdByName(col_arg.GetName());
+    if (const auto id =
+          bind_data.ColumnIdByName(col_arg.GetName().GetIdentifierName());
         id != catalog::Column::kInvalidId) {
       return id;
     }
@@ -230,7 +230,7 @@ duckdb::ColumnBinding ResolveBindingThroughProjections(
         duckdb::ExpressionType::BOUND_COLUMN_REF) {
       break;
     }
-    binding = forwarded.Cast<duckdb::BoundColumnRefExpression>().binding;
+    binding = forwarded.Cast<duckdb::BoundColumnRefExpression>().Binding();
   }
   return binding;
 }
@@ -252,14 +252,14 @@ duckdb::ColumnBinding ExposeGetColumnAt(duckdb::LogicalOperator& root,
       continue;
     }
     auto& ref = e.Cast<duckdb::BoundColumnRefExpression>();
-    if (ref.binding.table_index == target_get.table_index &&
-        ref.binding.column_index.GetIndex() == get_col_idx) {
+    if (ref.Binding().table_index == target_get.table_index &&
+        ref.Binding().column_index.GetIndex() == get_col_idx) {
       return {proj->table_index, duckdb::ProjectionIndex{i}};
     }
   }
   proj->expressions.push_back(
     duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-      std::string{col_name}, col_type,
+      duckdb::Identifier{col_name}, col_type,
       duckdb::ColumnBinding{target_get.table_index,
                             duckdb::ProjectionIndex{get_col_idx}}));
   if (!proj->types.empty()) {
@@ -311,13 +311,13 @@ duckdb::unique_ptr<duckdb::Expression> MakeScoreRefExpression(
     ExposeGetColumnAt(root, anchor_ti, *found.get, idx,
                       catalog::Column::kScoreName, duckdb::LogicalType::FLOAT);
   return duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-    std::string{catalog::Column::kScoreName}, duckdb::LogicalType::FLOAT,
+    duckdb::Identifier{catalog::Column::kScoreName}, duckdb::LogicalType::FLOAT,
     binding);
 }
 
 bool IsScorerFunctionName(std::string_view name) {
   using S = catalog::ScorerOptions;
-  static const absl::flat_hash_set<std::string_view> kScorerNames{
+  static const containers::FlatHashSet<std::string_view> kScorerNames{
     S::Bm25::Owner::type_name(),           S::Tfidf::Owner::type_name(),
     S::LmJm::Owner::type_name(),           S::LmDirichlet::Owner::type_name(),
     S::IndriDirichlet::Owner::type_name(), S::Dfi::Owner::type_name(),
@@ -332,7 +332,7 @@ bool BindingResolvesToScoreColumn(const duckdb::BoundColumnRefExpression& ref,
   if (ref.GetAlias().empty()) {
     return false;
   }
-  const auto binding = ResolveBindingThroughProjections(root, ref.binding);
+  const auto binding = ResolveBindingThroughProjections(root, ref.Binding());
   auto found = FindIResearchScan(root, binding.table_index);
   if (!found) {
     return false;
@@ -364,12 +364,14 @@ bool TrySetScorer(std::optional<catalog::ScorerOptions>& scorer,
 
 duckdb::unique_ptr<duckdb::Expression> PushdownScorerCall(
   duckdb::BoundFunctionExpression& func, duckdb::LogicalOperator& root) {
-  if (func.children.empty() || func.children[0]->GetExpressionClass() !=
-                                 duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+  if (func.GetChildren().empty() ||
+      func.GetChildren()[0]->GetExpressionClass() !=
+        duckdb::ExpressionClass::BOUND_COLUMN_REF) {
     return nullptr;
   }
-  auto& anchor = func.children[0]->Cast<duckdb::BoundColumnRefExpression>();
-  auto found = FindIResearchScan(root, anchor.binding.table_index);
+  auto& anchor =
+    func.GetChildren()[0]->Cast<duckdb::BoundColumnRefExpression>();
+  auto found = FindIResearchScan(root, anchor.Binding().table_index);
   if (!found) {
     return nullptr;
   }
@@ -377,10 +379,11 @@ duckdb::unique_ptr<duckdb::Expression> PushdownScorerCall(
   if (ss.vector_scorer) {
     return nullptr;
   }
-  if (!TrySetScorer(ss.text_scorer, func, func.function.GetName())) {
+  if (!TrySetScorer(ss.text_scorer, func,
+                    func.Function().GetName().GetIdentifierName())) {
     return nullptr;
   }
-  auto ref = MakeScoreRefExpression(root, *found, anchor.binding.table_index);
+  auto ref = MakeScoreRefExpression(root, *found, anchor.Binding().table_index);
   if (!func.GetAlias().empty()) {
     ref->SetAlias(func.GetAlias());
   }
@@ -393,16 +396,16 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   const auto [col_arg, value_arg] =
     [&] -> std::pair<duckdb::Expression*, duckdb::Expression*> {
     if (info.is_norm) {
-      if (func.children.empty() || func.children[0]->IsFoldable()) {
+      if (func.GetChildren().empty() || func.GetChildren()[0]->IsFoldable()) {
         return {nullptr, nullptr};
       }
-      return {func.children[0].get(), nullptr};
+      return {func.GetChildren()[0].get(), nullptr};
     }
-    if (func.children.size() != 2) {
+    if (func.GetChildren().size() != 2) {
       return {nullptr, nullptr};
     }
-    auto& lhs = func.children[0];
-    auto& rhs = func.children[1];
+    auto& lhs = func.GetChildren()[0];
+    auto& rhs = func.GetChildren()[1];
     if (!lhs->IsFoldable() && rhs->IsFoldable()) {
       return {lhs.get(), rhs.get()};
     }
@@ -477,32 +480,34 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
 
 duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
   duckdb::BoundFunctionExpression& func, duckdb::LogicalOperator& root) {
-  if (func.children.size() != 1 && func.children.size() != 2) {
+  if (func.GetChildren().size() != 1 && func.GetChildren().size() != 2) {
     return nullptr;
   }
-  if (func.children[0]->GetExpressionClass() !=
+  if (func.GetChildren()[0]->GetExpressionClass() !=
       duckdb::ExpressionClass::BOUND_COLUMN_REF) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("ts_offsets() first argument must be a column reference"));
   }
   const auto& col_ref =
-    func.children[0]->Cast<duckdb::BoundColumnRefExpression>();
-  const auto resolved = ResolveBindingThroughProjections(root, col_ref.binding);
+    func.GetChildren()[0]->Cast<duckdb::BoundColumnRefExpression>();
+  const auto resolved =
+    ResolveBindingThroughProjections(root, col_ref.Binding());
 
   const auto limit = [&] -> size_t {
     constexpr size_t kDefaultOffsetsLimit = 1 << 12;
-    if (func.children.size() != 2) {
+    if (func.GetChildren().size() != 2) {
       return kDefaultOffsetsLimit;
     }
-    auto& arg1 = *func.children[1];
+    auto& arg1 = *func.GetChildren()[1];
     if (arg1.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CONSTANT) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG("ts_offsets() second argument must be an integer literal"));
     }
-    const auto raw =
-      arg1.Cast<duckdb::BoundConstantExpression>().value.GetValue<int32_t>();
+    const auto raw = arg1.Cast<duckdb::BoundConstantExpression>()
+                       .GetValue()
+                       .GetValue<int32_t>();
     if (raw < 0) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -516,7 +521,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
   if (!found) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("ts_offsets(", col_ref.GetAlias(),
+      ERR_MSG("ts_offsets(", col_ref.GetAlias().GetIdentifierName(),
               ") requires an inverted index scan in the same sub-query"));
   }
   auto& search_scan = *found->scan;
@@ -524,9 +529,10 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
   const auto col_name = [&] -> std::string_view {
     if (const auto& cids = found->get->GetColumnIds();
         resolved.column_index.GetIndex() < cids.size()) {
-      return found->get->GetColumnName(cids[resolved.column_index.GetIndex()]);
+      return found->get->GetColumnName(cids[resolved.column_index.GetIndex()])
+        .GetIdentifierName();
     }
-    return col_ref.GetAlias();
+    return col_ref.GetAlias().GetIdentifierName();
   };
 
   const auto target_col_id =
@@ -555,14 +561,14 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
     bind->limit = limit;
     search_scan.offsets.push_back(
       {.column_id = target_col_id, .limit = limit, .bind = bind.get()});
-    func.bind_info = std::move(bind);
-    func.function.SetFunctionCallback(connector::OffsetsScalarFn);
-    auto body_expr = std::move(func.children[0]);
-    func.children.clear();
-    func.children.emplace_back(
+    func.BindInfoMutable() = std::move(bind);
+    func.FunctionMutable().SetFunctionCallback(connector::OffsetsScalarFn);
+    auto body_expr = std::move(func.GetChildrenMutable()[0]);
+    func.GetChildrenMutable().clear();
+    func.GetChildrenMutable().emplace_back(
       duckdb::make_uniq<duckdb::BoundConstantExpression>(
         duckdb::Value{std::string{}}));
-    func.children.emplace_back(std::move(body_expr));
+    func.GetChildrenMutable().emplace_back(std::move(body_expr));
     return nullptr;
   }
 
@@ -589,10 +595,10 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
       {.column_id = target_col_id, .limit = limit, .get_col_idx = get_col_idx});
   }
   const auto binding =
-    ExposeGetColumnAt(root, col_ref.binding.table_index, *found->get,
+    ExposeGetColumnAt(root, col_ref.Binding().table_index, *found->get,
                       get_col_idx, offsets_col_name, col_type);
   auto out = duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-    offsets_col_name, col_type, binding);
+    duckdb::Identifier{offsets_col_name}, col_type, binding);
   out->SetAlias(func.GetAlias());
   return out;
 }
@@ -605,15 +611,17 @@ duckdb::unique_ptr<duckdb::Expression> RewriteCallInExpr(
   }
   if (expr->GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
     auto& func = expr->Cast<duckdb::BoundFunctionExpression>();
-    const auto& name = func.function.GetName();
+    const auto& name = func.Function().GetName().GetIdentifierName();
     if (IsScorerFunctionName(name)) {
       if (auto repl = PushdownScorerCall(func, root)) {
         return repl;
       }
       // Native scans cannot materialize the tableoid argument, so the
       // runtime stub would never be reached; raise its error here.
-      throw duckdb::InvalidInputException(
-        "%s() requires an inverted index scan in the same sub-query", name);
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG(name,
+                              "() requires an inverted index scan in the same "
+                              "sub-query"));
     } else if (name == connector::kOffsets) {
       if (auto repl = PushdownOffsetsCall(func, root)) {
         return repl;
@@ -705,13 +713,13 @@ bool TryClaimIResearchConjunct(
 std::optional<duckdb::ColumnBinding> CastFreeColumnRefBinding(
   const duckdb::Expression* e) {
   while (e && e->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
-    e = e->Cast<duckdb::BoundCastExpression>().child.get();
+    e = &e->Cast<duckdb::BoundCastExpression>().Child();
   }
   if (!e ||
       e->GetExpressionClass() != duckdb::ExpressionClass::BOUND_COLUMN_REF) {
     return std::nullopt;
   }
-  return e->Cast<duckdb::BoundColumnRefExpression>().binding;
+  return e->Cast<duckdb::BoundColumnRefExpression>().Binding();
 }
 
 bool TryClaimAnnRange(
@@ -808,7 +816,7 @@ bool TryClaimSearchFilter(
   connector::ColumnGetter getter =
     [&](const duckdb::BoundColumnRefExpression& ref)
     -> std::optional<connector::SearchColumnInfo> {
-    const auto col_id = ResolveColumnId(ref.binding, bind_data, get);
+    const auto col_id = ResolveColumnId(ref.Binding(), bind_data, get);
     if (col_id == catalog::Column::kInvalidId) {
       return std::nullopt;
     }
@@ -909,7 +917,7 @@ void IResearchPushdownComplexFilter(
     return;
   }
   auto index = bind_data.inverted_index;
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  auto snapshot = conn_ctx.CatalogSnapshot();
   TryClaimSearchFilter(filters, get, bind_data, *index, snapshot, context);
 }
 

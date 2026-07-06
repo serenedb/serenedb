@@ -303,7 +303,7 @@ INSERT INTO t1 VALUES (1, 5);
 statement error
 INSERT INTO t1 VALUES (2, -1);
 ----
-db error: ERROR: CHECK constraint failed on table <slt:ignore>.public.t1 with expression CHECK(((0 <= percentage) AND (percentage <= 100)))
+db error: ERROR: CHECK constraint failed on table "<slt:ignore>.public.t1" with expression CHECK(((0 <= percentage) AND (percentage <= 100)))
 
 
 # DOCS_TEST: example_019
@@ -313,7 +313,7 @@ db error: ERROR: CHECK constraint failed on table <slt:ignore>.public.t1 with ex
 statement error
 INSERT INTO t1 VALUES (3, 101);
 ----
-db error: ERROR: CHECK constraint failed on table <slt:ignore>.public.t1 with expression CHECK(((0 <= percentage) AND (percentage <= 100)))
+db error: ERROR: CHECK constraint failed on table "<slt:ignore>.public.t1" with expression CHECK(((0 <= percentage) AND (percentage <= 100)))
 
 
 # DOCS_TEST: example_020
@@ -332,7 +332,7 @@ INSERT INTO t2 VALUES (1, 5, 10);
 statement error
 INSERT INTO t2 VALUES (2, 5, 3);
 ----
-db error: ERROR: CHECK constraint failed on table <slt:ignore>.public.t2 with expression CHECK((x < y))
+db error: ERROR: CHECK constraint failed on table "<slt:ignore>.public.t2" with expression CHECK((x < y))
 
 
 # DOCS_TEST: example_021
@@ -353,7 +353,7 @@ INSERT INTO t3 VALUES (1, 5, 10);
 statement error
 INSERT INTO t3 VALUES (2, 5, 3);
 ----
-db error: ERROR: CHECK constraint failed on table <slt:ignore>.public.t3 with expression CHECK((x < y))
+db error: ERROR: CHECK constraint failed on table "<slt:ignore>.public.t3" with expression CHECK((x < y))
 
 
 # DOCS_TEST: example_022

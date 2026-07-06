@@ -621,7 +621,7 @@ INSERT INTO people VALUES
 
 # DOCS_TEST_BODY
 
-query ??
+query
 SELECT * FROM people;
 ----
 id	name

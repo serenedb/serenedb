@@ -22,15 +22,16 @@
 
 namespace sdb::signals {
 
-// Block every signal except the failure-class set (SEGV/BUS/ILL/FPE/ABRT)
-// on the calling thread. Called by InitThread() so worker threads never
-// receive SIGTERM/SIGINT/SIGQUIT/SIGHUP/SIGPIPE -- they always reach the
-// main thread, where signal_handling::Install() converts them into a clean
-// shutdown via the eventfd.
+// Block every signal except the failure-class set (SEGV/BUS/ILL/FPE/ABRT) on
+// the calling thread, so shutdown signals are only delivered to the main
+// thread.
 void MaskAllSignalsServer();
 
-// Reverse of MaskAllSignalsServer for the thread that wants to receive
-// signals (the main thread, just before installing the shutdown handlers).
 void UnmaskAllSignals();
+
+// Routes SIGTERM/SIGINT/SIGQUIT into lifecycle::BeginShutdown(). Must run
+// after CrashHandler::installCrashHandler: absl's failure handler claims
+// SIGTERM and would dump a crash stack on a plain `docker stop`.
+void InstallShutdownHandlers();
 
 }  // namespace sdb::signals

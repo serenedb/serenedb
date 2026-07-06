@@ -1,0 +1,76 @@
+# UPDATE ... RETURNING on a non-PK column must stay on the in-place update path
+# and preserve rowid. Regression for #881: RETURNING projected every column into
+# the UPDATE set, which tripped the "update touches an index column" heuristic and
+# forced the delete+insert path, bumping rowid.
+
+statement ok
+CREATE TABLE rr(a INTEGER PRIMARY KEY, b INTEGER);
+
+statement count 1
+INSERT INTO rr VALUES (1, 1);
+
+query
+SELECT a, b, rowid FROM rr;
+----
+a	b	rowid
+1	1	0
+
+# Baseline: UPDATE without RETURNING is in-place, rowid unchanged.
+statement count 1
+UPDATE rr SET b = 2 WHERE a = 1;
+
+query
+SELECT a, b, rowid FROM rr;
+----
+a	b	rowid
+1	2	0
+
+# UPDATE with RETURNING on a non-PK column must also stay in-place: rowid unchanged.
+query
+UPDATE rr SET b = 4 WHERE a = 1 RETURNING a, b;
+----
+a	b
+1	4
+
+query
+SELECT a, b, rowid FROM rr;
+----
+a	b	rowid
+1	4	0
+
+statement ok
+DROP TABLE rr;
+
+
+# Same regression via a LIST column: RETURNING a LIST column projected it into the
+# UPDATE set, and LIST columns don't support in-place update, so the update was
+# forced onto the delete+insert path even though only a regular column changed.
+
+statement ok
+CREATE TABLE rl(a INTEGER PRIMARY KEY, b INTEGER, l INTEGER[]);
+
+statement count 1
+INSERT INTO rl VALUES (1, 10, ARRAY[1, 2, 3]);
+
+query
+SELECT a, b, l, rowid FROM rl;
+----
+a	b	l	rowid
+1	10	{1,2,3}	0
+
+# Updating the regular column while RETURNING the LIST column stays in-place: rowid
+# unchanged, and the (unmodified) LIST value is returned correctly.
+query
+UPDATE rl SET b = 20 WHERE a = 1 RETURNING a, b, l;
+----
+a	b	l
+1	20	{1,2,3}
+
+query
+SELECT a, b, l, rowid FROM rl;
+----
+a	b	l	rowid
+1	20	{1,2,3}	0
+
+statement ok
+DROP TABLE rl;

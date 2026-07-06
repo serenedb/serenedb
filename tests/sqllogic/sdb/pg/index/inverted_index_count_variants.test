@@ -37,7 +37,7 @@ VACUUM (REFRESH_TABLE) ct;
 # Constant / star args count every row; column args count non-null values
 # of that column; literal NULL never counts.
 
-query IIIIIIII
+query
 SELECT count(*), count(88), count(1), count(2),
        count(x), count(y), count(NULL), count('ss')
 FROM ct_idx;
@@ -48,7 +48,7 @@ count	count	count	count	count	count	count	count
 
 # Same shape applied to the base table (rocksdb path) -- sanity check that
 # the count semantics match between the two scan paths.
-query IIIIIIII
+query
 SELECT count(*), count(88), count(1), count(2),
        count(x), count(y), count(NULL), count('ss')
 FROM ct;
@@ -64,24 +64,15 @@ query
 EXPLAIN SELECT count(*) FROM ct_idx;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│    UNGROUPED_AGGREGATE    │
-│    ────────────────────   │
-│        Aggregates:        │
-│        count_star()       │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│       Index: ct_idx       │
-│                           │
-│          Output:          │
-│       row-count only      │
-│                           │
-│          ~5 rows          │
-└───────────────────────────┘
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: ct_idx            │
+│ Output: row-count only   │
+│ ~5 rows                  │
+╰──────────────────────────╯
 
 
 # EXPLAIN: count(<constant>) is equivalent to count(*) -- DuckDB rewrites
@@ -91,24 +82,15 @@ query
 EXPLAIN SELECT count(42) FROM ct_idx;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│    UNGROUPED_AGGREGATE    │
-│    ────────────────────   │
-│        Aggregates:        │
-│        count_star()       │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│       Index: ct_idx       │
-│                           │
-│          Output:          │
-│       row-count only      │
-│                           │
-│          ~5 rows          │
-└───────────────────────────┘
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: ct_idx            │
+│ Output: row-count only   │
+│ ~5 rows                  │
+╰──────────────────────────╯
 
 
 # EXPLAIN: count(<column>) must materialise the column to skip nulls --
@@ -118,29 +100,20 @@ query
 EXPLAIN SELECT count(x) FROM ct_idx;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│    UNGROUPED_AGGREGATE    │
-│    ────────────────────   │
-│   Aggregates: count(#0)   │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             x             │
-│                           │
-│          ~5 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│       Index: ct_idx       │
-│       Lookup: table       │
-│       Projections: x      │
-│                           │
-│          ~5 rows          │
-└───────────────────────────┘
+╭─ UNGROUPED_AGGREGATE ─╮
+│ Aggregates: count(#0) │
+│ ~1 row                │
+╰───────────┬───────────╯
+╭─ PROJECTION ──────────╮
+│ Projections: x        │
+│ ~5 rows               │
+╰───────────┬───────────╯
+╭─ IRESEARCH_SCAN ──────╮
+│ Index: ct_idx         │
+│ Lookup: table         │
+│ Projections: x        │
+│ ~5 rows               │
+╰───────────────────────╯
 
 
 # EXPLAIN: count(NULL) keeps the null-skipping count(#0) over a projection
@@ -151,27 +124,16 @@ query
 EXPLAIN SELECT count(NULL) FROM ct_idx;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│    UNGROUPED_AGGREGATE    │
-│    ────────────────────   │
-│   Aggregates: count(#0)   │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│            NULL           │
-│                           │
-│          ~5 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│       Index: ct_idx       │
-│                           │
-│          Output:          │
-│       row-count only      │
-│                           │
-│          ~5 rows          │
-└───────────────────────────┘
+╭─ UNGROUPED_AGGREGATE ──╮
+│ Aggregates: count(#0)  │
+│ ~1 row                 │
+╰────────────┬───────────╯
+╭─ PROJECTION ───────────╮
+│ Projections: NULL      │
+│ ~5 rows                │
+╰────────────┬───────────╯
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: ct_idx          │
+│ Output: row-count only │
+│ ~5 rows                │
+╰────────────────────────╯

@@ -322,26 +322,17 @@ query
 EXPLAIN SELECT id FROM mix_idx WHERE a || b = 'foobar';
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│       Index: mix_idx      │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││ (a || b)(string) =││  │
-│  ││       foobar      ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│      Projections: id      │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: mix_idx              │
+│ Lookup: table               │
+│ Filter:                     │
+│ ╭─ Term ──────────────────╮ │
+│ │ Field: (a || b)(string) │ │
+│ │ Value: foobar           │ │
+│ ╰─────────────────────────╯ │
+│ Projections: id             │
+│ ~1 row                      │
+╰─────────────────────────────╯
 
 query
 SELECT id FROM mix_idx WHERE a || b = 'helloworld';
@@ -359,29 +350,20 @@ query
 EXPLAIN SELECT id FROM mix_idx WHERE a = 'foo' AND a || b = 'foobaz';
 ----
 QUERY PLAN
-┌─────────────────────────────────────────────┐
-│                IRESEARCH_SCAN               │
-│    ──────────────────────────────────────   │
-│                Index: mix_idx               │
-│                Lookup: table                │
-│                                             │
-│                   Filter:                   │
-│ ┌──────────────────────────────────────────┐│
-│ │┌───────────────────┐                     ││
-│ ││        AND        ├──────────┐          ││
-│ │└─────────┬─────────┘          │          ││
-│ │┌─────────┴─────────┐┌─────────┴─────────┐││
-│ ││        Term       ││        Term       │││
-│ ││    ────────────   ││    ────────────   │││
-│ ││  a(string) = foo  ││ (a || b)(string) =│││
-│ ││                   ││       foobaz      │││
-│ │└───────────────────┘└───────────────────┘││
-│ └──────────────────────────────────────────┘│
-│                                             │
-│               Projections: id               │
-│                                             │
-│                    ~1 row                   │
-└─────────────────────────────────────────────┘
+╭─ IRESEARCH_SCAN ──────────────────────────────────╮
+│ Index: mix_idx                                    │
+│ Lookup: table                                     │
+│ Filter:                                           │
+│ ╭─ And ────────────╮                              │
+│ ╰─────────┬────────╯                              │
+│           ├────────────────────────╮              │
+│ ╭─ Term ──┴────────╮  ╭─ Term ─────┴────────────╮ │
+│ │ Field: a(string) │  │ Field: (a || b)(string) │ │
+│ │ Value: foo       │  │ Value: foobaz           │ │
+│ ╰──────────────────╯  ╰─────────────────────────╯ │
+│ Projections: id                                   │
+│ ~1 row                                            │
+╰───────────────────────────────────────────────────╯
 
 
 # --- DML re-indexes the expression -----------------------------------------
@@ -763,25 +745,25 @@ CREATE TABLE bad_types(id INTEGER PRIMARY KEY, a INTEGER, s VARCHAR, k VARCHAR, 
 statement error
 CREATE INDEX bad_struct ON bad_types USING inverted(id, ({'x': a, 'y': s}));
 ----
-db error: ERROR: Failed to create index: Column 'main.struct_pack(x := a, y := s)' has unsupported type STRUCT(x INTEGER, y VARCHAR) and can not be indexed
+db error: ERROR: Failed to create index: Column 'struct_pack(x := a, y := s)' has unsupported type STRUCT(x INTEGER, y VARCHAR) and can not be indexed
 
 
 statement error
 CREATE INDEX bad_map ON bad_types USING inverted(id, (map([k], [v])));
 ----
-db error: ERROR: Failed to create index: Column '"map"(main.list_value(k), main.list_value(v))' has unsupported type MAP(VARCHAR, VARCHAR) and can not be indexed
+db error: ERROR: Failed to create index: Column '"map"(list_value(k), list_value(v))' has unsupported type MAP(VARCHAR, VARCHAR) and can not be indexed
 
 
 statement error
 CREATE INDEX bad_list_struct ON bad_types USING inverted(id, ([{'x': a}]));
 ----
-db error: ERROR: Failed to create index: Column 'main.list_value(main.struct_pack(x := a))' has unsupported type STRUCT(x INTEGER)[] and can not be indexed
+db error: ERROR: Failed to create index: Column 'list_value(struct_pack(x := a))' has unsupported type STRUCT(x INTEGER)[] and can not be indexed
 
 
 statement error
 CREATE INDEX bad_list_map ON bad_types USING inverted(id, ([map([k], [v])]));
 ----
-db error: ERROR: Failed to create index: Column 'main.list_value("map"(main.list_value(k), main.list_value(v)))' has unsupported type MAP(VARCHAR, VARCHAR)[] and can not be indexed
+db error: ERROR: Failed to create index: Column 'list_value("map"(list_value(k), list_value(v)))' has unsupported type MAP(VARCHAR, VARCHAR)[] and can not be indexed
 
 
 statement ok
@@ -830,7 +812,7 @@ db error: ERROR: Failed to create index: Column 'union_value(num := a)' has unsu
 statement error
 CREATE INDEX bad_list_list ON bad_scalars USING inverted(id, ([[a]]));
 ----
-db error: ERROR: Failed to create index: Column 'main.list_value(main.list_value(a))' has unsupported type INTEGER[][] and can not be indexed
+db error: ERROR: Failed to create index: Column 'list_value(list_value(a))' has unsupported type INTEGER[][] and can not be indexed
 
 
 # --- @@ on indexed expressions (forces filter pushdown) -------------------
@@ -997,76 +979,49 @@ query
 EXPLAIN SELECT id FROM tx_n_idx WHERE a + b = 30;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│      Index: tx_n_idx      │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││ (a + b)(numeric) =││  │
-│  ││  \\x0\\x80\\x0\\x0\\x1e││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│      Projections: id      │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: tx_n_idx             │
+│ Lookup: table               │
+│ Filter:                     │
+│ ╭─ Term ──────────────────╮ │
+│ │ Field: (a + b)(numeric) │ │
+│ │ Value: 30               │ │
+│ ╰─────────────────────────╯ │
+│ Projections: id             │
+│ ~1 row                      │
+╰─────────────────────────────╯
 
 query
 EXPLAIN SELECT id FROM tx_v_idx WHERE (s1 || s2) @@ 'foobar'::tsquery;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│      Index: tx_v_idx      │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││ (s1 || s2)(string)││  │
-│  ││      = foobar     ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│      Projections: id      │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ──────────────╮
+│ Index: tx_v_idx               │
+│ Lookup: table                 │
+│ Filter:                       │
+│ ╭─ Term ────────────────────╮ │
+│ │ Field: (s1 || s2)(string) │ │
+│ │ Value: foobar             │ │
+│ ╰───────────────────────────╯ │
+│ Projections: id               │
+│ ~1 row                        │
+╰───────────────────────────────╯
 
 query
 EXPLAIN SELECT id FROM tx_b_idx WHERE (a > b) = true;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│      Index: tx_b_idx      │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││  (a > b)(bool) =  ││  │
-│  ││        \\xff       ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│      Projections: id      │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: tx_b_idx          │
+│ Lookup: table            │
+│ Filter:                  │
+│ ╭─ Term ───────────────╮ │
+│ │ Field: (a > b)(bool) │ │
+│ │ Value: true          │ │
+│ ╰──────────────────────╯ │
+│ Projections: id          │
+│ ~1 row                   │
+╰──────────────────────────╯
 
 
 # Strange cases: outer CAST inside the indexed expression. `(a + b)::json`
@@ -1389,30 +1344,20 @@ query
 EXPLAIN SELECT id FROM hnsw_e_idx ORDER BY array_value(x, y, z) <-> [1,2,3]::FLOAT[3] LIMIT 2;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           TOP_N           │
-│    ────────────────────   │
-│           Top: 2          │
-│      Order By: #1 ASC     │
-│                           │
-│          ~2 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│      hnsw_e_idx (ANN)     │
-│                           │
-│       Lookup: table       │
-│           Top: 2          │
-│          Dims: 3          │
-│                           │
-│        Projections:       │
-│             id            │
-│  sdb_inverted_index_score │
-│                           │
-│          ~4 rows          │
-└───────────────────────────┘
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 2                                 │
+│ Order By: #1 ASC                       │
+│ ~2 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: hnsw_e_idx (ANN)                │
+│ Lookup: table                          │
+│ Top: 2                                 │
+│ Dims: 3                                │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~4 rows                                │
+╰────────────────────────────────────────╯
 
 
 # Wrong dimensionality of the query vector should disqualify the ANN scan

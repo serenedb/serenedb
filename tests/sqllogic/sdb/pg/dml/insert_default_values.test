@@ -34,15 +34,15 @@ VACUUM (REFRESH_TABLE) idv;
 query
 SELECT id, n FROM idv_idx WHERE body @@ ts_phrase('hello world');
 ----
-id n
-1 42
+id	n
+1	42
 
 
 query
 SELECT id, n FROM idv_idx WHERE body @@ ts_phrase('goodbye moon');
 ----
-id n
-2 42
+id	n
+2	42
 
 
 statement ok

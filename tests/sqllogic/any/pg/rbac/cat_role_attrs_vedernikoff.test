@@ -1,0 +1,99 @@
+# CREATE ROLE defaults and ALTER ROLE ... SET <guc> populate the matching
+# pg_authid / pg_roles / pg_db_role_setting catalog columns exactly like
+# PostgreSQL (verified on PG18). A plain role carries rolconnlimit = -1 and a
+# NULL rolvaliduntil on both engines, and the per-role GUC catalogs surface and
+# clear SET/RESET identically.
+#
+# Lore: vedernikoff the role. Self-cleaning; role name is file-unique.
+
+statement ok
+DROP ROLE IF EXISTS cat_attr_vedernikoff;
+
+
+# A plain role carries the PG defaults: rolconnlimit = -1, rolvaliduntil NULL.
+statement ok
+CREATE ROLE cat_attr_vedernikoff LOGIN;
+
+
+query
+SELECT rolconnlimit, rolvaliduntil IS NULL AS validuntil_null
+FROM pg_authid WHERE rolname = 'cat_attr_vedernikoff';
+----
+rolconnlimit	validuntil_null
+-1	t
+
+
+# ALTER ROLE ... SET <guc> persists a per-role GUC setting; pg_roles.rolconfig
+# surfaces it and pg_db_role_setting carries one row (setdatabase = 0).
+statement ok
+ALTER ROLE cat_attr_vedernikoff SET search_path TO 'clickclack';
+
+
+query
+SELECT rolconfig FROM pg_roles WHERE rolname = 'cat_attr_vedernikoff';
+----
+rolconfig
+{search_path=clickclack}
+
+
+query
+SELECT setdatabase, e
+FROM pg_db_role_setting s,
+     LATERAL unnest(s.setconfig) AS e
+WHERE setrole = (SELECT oid FROM pg_authid WHERE rolname = 'cat_attr_vedernikoff');
+----
+setdatabase	e
+0	search_path=clickclack
+
+
+# A second SET accumulates a distinct GUC; re-SET of the same GUC replaces it.
+statement ok
+ALTER ROLE cat_attr_vedernikoff SET statement_timeout = 5000;
+
+
+query
+SELECT e
+FROM pg_roles r, LATERAL unnest(r.rolconfig) AS e
+WHERE rolname = 'cat_attr_vedernikoff'
+ORDER BY e;
+----
+e
+search_path=clickclack
+statement_timeout=5000
+
+
+# RESET <guc> drops that one setting; the other survives.
+statement ok
+ALTER ROLE cat_attr_vedernikoff RESET statement_timeout;
+
+
+query
+SELECT rolconfig FROM pg_roles WHERE rolname = 'cat_attr_vedernikoff';
+----
+rolconfig
+{search_path=clickclack}
+
+
+# RESET ALL clears every per-role GUC; rolconfig becomes NULL and the
+# pg_db_role_setting row disappears.
+statement ok
+ALTER ROLE cat_attr_vedernikoff RESET ALL;
+
+
+query
+SELECT rolconfig IS NULL AS config_null FROM pg_roles WHERE rolname = 'cat_attr_vedernikoff';
+----
+config_null
+t
+
+
+query
+SELECT count(*) AS n FROM pg_db_role_setting
+WHERE setrole = (SELECT oid FROM pg_authid WHERE rolname = 'cat_attr_vedernikoff');
+----
+n
+0
+
+
+statement ok
+DROP ROLE cat_attr_vedernikoff;

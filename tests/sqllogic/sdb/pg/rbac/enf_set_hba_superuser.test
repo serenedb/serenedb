@@ -1,0 +1,49 @@
+# serenedb-only: the `hba` ruleset is server-global authentication config, so a
+# non-superuser may not SET or RESET it -- both are refused with 42501. The gate
+# fires before the ruleset is touched, so a denied statement mutates nothing.
+# PostgreSQL has no SQL to change host-based auth at all, so this is
+# serenedb-specific.
+#
+# Only the denial path is asserted here: this suite runs against a single shared
+# server, and a successful SET/RESET would flip the live ruleset globally (the
+# safety rules trust loopback, disabling password enforcement for later files).
+# The superuser-can-set path is covered by recovery/hba_persist.test.
+#
+# `hba` is a GLOBAL-scope GUC; the extended protocol wraps each statement in a
+# transaction, so a global SET there fails with "cannot be set inside a
+# transaction" before the superuser gate is reached. The gate is therefore
+# asserted under the simple protocol only (skipif pg-wire-extended); a denied
+# SET never mutates the live ruleset, so global state stays clean either way.
+#
+# Lore: vedernikoff the intern tries to rewrite the door policy.
+
+statement ok
+DROP ROLE IF EXISTS esh_vedernikoff;
+
+
+statement ok
+CREATE ROLE esh_vedernikoff LOGIN PASSWORD 'ved_pw';
+
+
+# A non-superuser cannot SET the ruleset ...
+connection c_ved user=esh_vedernikoff password=ved_pw
+skipif pg-wire-extended
+statement error
+SET hba = 'host all all 0.0.0.0/0 scram-sha-256';
+----
+db error: ERROR: permission denied to set parameter "hba"<slt:ignore>
+
+
+# ... nor RESET it.
+connection c_ved user=esh_vedernikoff password=ved_pw
+skipif pg-wire-extended
+statement error
+RESET hba;
+----
+db error: ERROR: permission denied to set parameter "hba"<slt:ignore>
+
+
+# cleanup
+connection default
+statement ok
+DROP ROLE esh_vedernikoff;

@@ -48,30 +48,20 @@ query
 EXPLAIN SELECT id FROM vecs_hnsw ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 10;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           TOP_N           │
-│    ────────────────────   │
-│          Top: 10          │
-│      Order By: #1 ASC     │
-│                           │
-│          ~10 rows         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│      vecs_hnsw (ANN)      │
-│                           │
-│       Lookup: table       │
-│          Top: 10          │
-│          Dims: 8          │
-│                           │
-│        Projections:       │
-│             id            │
-│  sdb_inverted_index_score │
-│                           │
-│        ~50,000 rows       │
-└───────────────────────────┘
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 10                                │
+│ Order By: #1 ASC                       │
+│ ~10 rows                               │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: vecs_hnsw (ANN)                 │
+│ Lookup: table                          │
+│ Top: 10                                │
+│ Dims: 8                                │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~50,000 rows                           │
+╰────────────────────────────────────────╯
 
 
 statement ok
@@ -91,36 +81,23 @@ query
 EXPLAIN SELECT id FROM vecs_hnsw WHERE id > 25000 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 10;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           TOP_N           │
-│    ────────────────────   │
-│          Top: 10          │
-│      Order By: #1 ASC     │
-│                           │
-│          ~10 rows         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│        (id > 25000)       │
-│                           │
-│        ~10,000 rows       │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│      vecs_hnsw (ANN)      │
-│                           │
-│       Lookup: table       │
-│          Dims: 8          │
-│                           │
-│        Projections:       │
-│             id            │
-│  sdb_inverted_index_score │
-│                           │
-│        ~50,000 rows       │
-└───────────────────────────┘
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 10                                │
+│ Order By: #1 ASC                       │
+│ ~10 rows                               │
+╰────────────────────┬───────────────────╯
+╭─ FILTER ───────────┴───────────────────╮
+│ Expression: id > 25000                 │
+│ ~10,000 rows                           │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: vecs_hnsw (ANN)                 │
+│ Lookup: table                          │
+│ Dims: 8                                │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~50,000 rows                           │
+╰────────────────────────────────────────╯
 
 
 # Since filter demands larger efSearch

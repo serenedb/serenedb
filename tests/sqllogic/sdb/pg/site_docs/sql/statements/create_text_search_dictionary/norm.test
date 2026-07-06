@@ -10,7 +10,7 @@ CREATE TEXT SEARCH DICTIONARY norm_dict (
     accent = false
 );
 
-query ?
+query
 SELECT ts_lexize('norm_dict', 'CAFÉ');
 ----
 ts_lexize
@@ -28,7 +28,7 @@ CREATE TEXT SEARCH DICTIONARY norm_upper (
     accent = true
 );
 
-query ?
+query
 SELECT ts_lexize('norm_upper', 'café');
 ----
 ts_lexize

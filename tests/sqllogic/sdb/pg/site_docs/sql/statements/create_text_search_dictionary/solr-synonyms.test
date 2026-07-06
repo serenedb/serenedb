@@ -14,7 +14,7 @@ laptop => notebook'
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT ts_lexize('solr_syn', 'car');
 ----
 ts_lexize
@@ -24,7 +24,7 @@ ts_lexize
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT ts_lexize('solr_syn', 'automobile');
 ----
 ts_lexize
@@ -34,7 +34,7 @@ ts_lexize
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT ts_lexize('solr_syn', 'laptop');
 ----
 ts_lexize
@@ -44,7 +44,7 @@ ts_lexize
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT ts_lexize('solr_syn', 'keyboard');
 ----
 ts_lexize

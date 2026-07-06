@@ -1,0 +1,194 @@
+# Grant accumulation and the with_hierarchy column across all seven privileges
+# in information_schema.table_privileges. A plain grant followed by the same
+# privilege WITH GRANT OPTION collapses to a single row with is_grantable YES
+# (PG merges, it does not duplicate). The with_hierarchy column is YES for
+# SELECT and NO for every other privilege -- a clean 7-row oracle. Every value
+# is byte-identical on PostgreSQL 19beta1 and serenedb. Grants are always from
+# the owner (postgres), so the grantor column is stable and we never rely on a
+# non-owner's grant authority. Owner rows are excluded by grantee filter.
+#
+# Vedernikoff lore: babsky and gul accumulate privileges on a mop table.
+
+statement ok
+DROP TABLE IF EXISTS isp_mop_pile;
+
+
+statement ok
+DROP ROLE IF EXISTS isp_babsky2;
+
+
+statement ok
+DROP ROLE IF EXISTS isp_gul;
+
+
+statement ok
+CREATE TABLE isp_mop_pile (id int, note text);
+
+
+statement ok
+CREATE ROLE isp_babsky2;
+
+
+statement ok
+CREATE ROLE isp_gul;
+
+
+# ============================================================================
+# Plain SELECT then SELECT WITH GRANT OPTION collapses to ONE row whose
+# is_grantable is YES -- the option is merged in, not appended as a duplicate.
+# ============================================================================
+
+statement ok
+GRANT SELECT ON isp_mop_pile TO isp_babsky2;
+
+
+query
+SELECT privilege_type, is_grantable
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_mop_pile' AND grantee = 'isp_babsky2'
+ORDER BY privilege_type;
+----
+privilege_type	is_grantable
+SELECT	NO
+
+
+statement ok
+GRANT SELECT ON isp_mop_pile TO isp_babsky2 WITH GRANT OPTION;
+
+
+# Still one SELECT row, now grantable.
+query
+SELECT privilege_type, is_grantable, count(*) AS n
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_mop_pile' AND grantee = 'isp_babsky2'
+GROUP BY privilege_type, is_grantable
+ORDER BY privilege_type;
+----
+privilege_type	is_grantable	n
+SELECT	YES	1
+
+
+# A plain REVOKE of that privilege removes the row entirely (no rows left).
+statement ok
+REVOKE SELECT ON isp_mop_pile FROM isp_babsky2;
+
+
+query
+SELECT count(*) AS rows_left
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_mop_pile' AND grantee = 'isp_babsky2';
+----
+rows_left
+0
+
+
+# ============================================================================
+# with_hierarchy oracle: GRANT ALL, then read every privilege's with_hierarchy
+# flag. Exactly SELECT is YES; the other six are NO.
+# ============================================================================
+
+statement ok
+GRANT ALL ON isp_mop_pile TO isp_gul;
+
+
+query
+SELECT privilege_type, with_hierarchy
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_mop_pile' AND grantee = 'isp_gul'
+ORDER BY privilege_type;
+----
+privilege_type	with_hierarchy
+DELETE	NO
+INSERT	NO
+REFERENCES	NO
+SELECT	YES
+TRIGGER	NO
+TRUNCATE	NO
+UPDATE	NO
+
+
+# Count of with_hierarchy = YES rows is exactly one (SELECT).
+query
+SELECT count(*) AS hierarchy_yes
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_mop_pile' AND grantee = 'isp_gul'
+  AND with_hierarchy = 'YES';
+----
+hierarchy_yes
+1
+
+
+# ============================================================================
+# GRANT ALL WITH GRANT OPTION makes every is_grantable YES while with_hierarchy
+# stays tied to SELECT only -- the two columns are independent.
+# ============================================================================
+
+statement ok
+GRANT ALL ON isp_mop_pile TO isp_babsky2 WITH GRANT OPTION;
+
+
+query
+SELECT privilege_type, is_grantable, with_hierarchy
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_mop_pile' AND grantee = 'isp_babsky2'
+ORDER BY privilege_type;
+----
+privilege_type	is_grantable	with_hierarchy
+DELETE	YES	NO
+INSERT	YES	NO
+REFERENCES	YES	NO
+SELECT	YES	YES
+TRIGGER	YES	NO
+TRUNCATE	YES	NO
+UPDATE	YES	NO
+
+
+# Every is_grantable is YES (seven of them) for this grantee.
+query
+SELECT count(*) AS grantable_rows
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_mop_pile' AND grantee = 'isp_babsky2'
+  AND is_grantable = 'YES';
+----
+grantable_rows
+7
+
+
+# ============================================================================
+# Partial REVOKE leaves the surviving privileges with their grant-option
+# intact. Revoking SELECT and TRUNCATE drops exactly those two rows; the other
+# five keep is_grantable YES.
+# ============================================================================
+
+statement ok
+REVOKE SELECT, TRUNCATE ON isp_mop_pile FROM isp_babsky2;
+
+
+query
+SELECT privilege_type, is_grantable
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_mop_pile' AND grantee = 'isp_babsky2'
+ORDER BY privilege_type;
+----
+privilege_type	is_grantable
+DELETE	YES
+INSERT	YES
+REFERENCES	YES
+TRIGGER	YES
+UPDATE	YES
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE isp_mop_pile;
+
+
+statement ok
+DROP ROLE isp_babsky2;
+
+
+statement ok
+DROP ROLE isp_gul;

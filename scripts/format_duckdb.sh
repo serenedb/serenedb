@@ -27,7 +27,7 @@ set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 THIRD_PARTY="$REPO_ROOT/third_party"
-SUBMODULES=(duckdb duckdb_avro duckdb_httpfs duckdb_iceberg)
+SUBMODULES=(duckdb duckdb_avro duckdb_inet duckdb_httpfs duckdb_iceberg duckdb_postgres database-connector)
 # Track duckdb's own CI (CheckIssueForCodeFormatting.yml uses Python 3.12).
 IMAGE="python:3.12-slim"
 
@@ -95,7 +95,12 @@ IGNORED_DIRS_RE='(/_generated/|^_generated/|tools/rpkg/src/duckdb/|tools/rpkg/in
 # Team-local exclusions: files whose branch-side edits don't round-trip cleanly
 # through clang-format-11 and that we don't want auto-reformatted on every run.
 # Format with full-path-prefix matching, anchored at each submodule's root.
-LOCAL_IGNORED_PATHS_RE='^(src/catalog/default/default_types\.cpp)$'
+#   - default_types.cpp: branch-side edits don't round-trip
+#   - config.cpp: the hand-aligned DUCKDB_SETTING macro table (clang-format-11
+#     would flatten it)
+#   - keyword_map.cpp: emitted by scripts/parser/inline_grammar.py at grammar
+#     regen but carries no auto-generated marker
+LOCAL_IGNORED_PATHS_RE='^(src/catalog/default/default_types\.cpp|src/main/config\.cpp|src/parser/peg/keyword_map\.cpp)$'
 
 # --- collect candidates per submodule, into one consolidated list ----------
 # Output paths in $FILES_TO_FORMAT are relative to $THIRD_PARTY (e.g. duckdb/src/foo.cpp)
@@ -162,9 +167,20 @@ fi
 echo "total scope: $TOTAL file(s)"
 
 # --- inner script that runs inside the container ---------------------------
-CHECK_FLAG=""
-[[ "$CHECK_ONLY" -eq 1 ]] && CHECK_FLAG="--dry-run --Werror"
+# duckdb's format.py post-processes clang-format's output: it rewrites
+# 'ARGS &&...args' back to 'ARGS &&... args' in .cpp/.hpp (clang-format 11
+# disagrees with the tree's historical parameter-pack spacing), and its check
+# mode ignores '...' lines altogether. Without the same fixup every run churns
+# hundreds of untouched upstream lines. Check mode therefore compares against
+# the post-processed output instead of using clang-format's --dry-run.
+PACK_FIXUP='s/ARGS &&\.\.\.args/ARGS \&\&... args/g'
 
+# Both modes render each file's formatted (and pack-fixed) output to a temp
+# file and compare bytes: check mode reports differing files, write mode
+# overwrites ONLY differing files. Never touching identical files keeps their
+# mtime intact, so a formatting run over common headers doesn't trigger a
+# rebuild of everything that includes them. The per-file work runs under
+# xargs -P (batches amortize the shell spawn; clang-format dominates anyway).
 cat >"$INNER_SCRIPT" <<INNER
 #!/bin/sh
 set -e
@@ -172,7 +188,35 @@ pip install --quiet --disable-pip-version-check --root-user-action=ignore --no-w
 export PATH="/tmp/.local/bin:\$PATH"
 cd /work
 echo "clang-format: \$(clang-format --version)"
-xargs -a /tmp/files.txt -n 50 -P 4 clang-format -i --style=file --sort-includes=0 $CHECK_FLAG
+cat >/tmp/one.sh <<'ONE'
+#!/bin/sh
+tmp="/tmp/formatted.\$\$"
+for f in "\$@"; do
+	case "\$f" in
+	*.cpp | *.hpp)
+		clang-format --style=file --sort-includes=0 "\$f" | sed '$PACK_FIXUP' >"\$tmp"
+		;;
+	*)
+		clang-format --style=file --sort-includes=0 "\$f" >"\$tmp"
+		;;
+	esac
+	if ! cmp -s "\$tmp" "\$f"; then
+		if [ -n "\$FMT_CHECK" ]; then
+			echo "needs formatting: \$f"
+			touch /tmp/fmt_failed
+		else
+			cat "\$tmp" >"\$f"
+		fi
+	fi
+done
+rm -f "\$tmp"
+ONE
+rm -f /tmp/fmt_failed
+FMT_CHECK=""
+[ "$CHECK_ONLY" -eq 1 ] && FMT_CHECK=1
+export FMT_CHECK
+xargs -a /tmp/files.txt -n 24 -P "\$(nproc)" sh /tmp/one.sh
+[ ! -e /tmp/fmt_failed ]
 INNER
 
 # --- run --------------------------------------------------------------------

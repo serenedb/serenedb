@@ -1,0 +1,354 @@
+# GRANT idempotency and accumulation.
+#
+# Granting the same privilege twice changes nothing (idempotent); granting
+# overlapping privilege sets accumulates their UNION; GRANT ALL after a partial
+# grant fills in the remaining bits. Every assertion goes through the
+# byte-identical has_table_privilege oracle, so PostgreSQL and serenedb agree
+# on every row.
+#
+# Objects are prefixed idem_ under the vedernikoff/clickclack lore. The file is
+# idempotent (DROP ... IF EXISTS up front) and self-cleaning at the end.
+
+statement ok
+DROP TABLE IF EXISTS idem_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS idem_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS idem_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS idem_pudge;
+
+
+statement ok
+DROP ROLE IF EXISTS idem_androed;
+
+
+statement ok
+DROP ROLE IF EXISTS idem_abramov;
+
+
+statement ok
+CREATE TABLE idem_clickclack (id int, mop text);
+
+
+# ============================================================================
+# Idempotency: granting the SAME privilege twice leaves exactly one bit set.
+# The repeated grant is a no-op -- the effective set after the second GRANT is
+# identical to the set after the first.
+# ============================================================================
+
+statement ok
+CREATE ROLE idem_kostya;
+
+
+statement ok
+GRANT SELECT ON idem_clickclack TO idem_kostya;
+
+
+query
+SELECT has_table_privilege('idem_kostya','idem_clickclack','SELECT') AS sel,
+       has_table_privilege('idem_kostya','idem_clickclack','INSERT') AS ins,
+       has_table_privilege('idem_kostya','idem_clickclack','UPDATE') AS upd;
+----
+sel	ins	upd
+t	f	f
+
+
+# Second identical GRANT: still exactly SELECT, nothing else turned on.
+statement ok
+GRANT SELECT ON idem_clickclack TO idem_kostya;
+
+
+query
+SELECT has_table_privilege('idem_kostya','idem_clickclack','SELECT') AS sel,
+       has_table_privilege('idem_kostya','idem_clickclack','INSERT') AS ins,
+       has_table_privilege('idem_kostya','idem_clickclack','UPDATE') AS upd;
+----
+sel	ins	upd
+t	f	f
+
+
+# A THIRD identical GRANT remains a no-op.
+statement ok
+GRANT SELECT ON idem_clickclack TO idem_kostya;
+
+
+query
+SELECT has_table_privilege('idem_kostya','idem_clickclack','SELECT') AS sel,
+       has_table_privilege('idem_kostya','idem_clickclack','INSERT') AS ins,
+       has_table_privilege('idem_kostya','idem_clickclack','UPDATE') AS upd;
+----
+sel	ins	upd
+t	f	f
+
+
+# A single REVOKE removes the privilege regardless of how many times it was
+# granted -- the grant did not "stack" into a counter that needs draining.
+statement ok
+REVOKE SELECT ON idem_clickclack FROM idem_kostya;
+
+
+query
+SELECT has_table_privilege('idem_kostya','idem_clickclack','SELECT') AS sel;
+----
+sel
+f
+
+
+# ============================================================================
+# Accumulation: overlapping grant LISTS union together. The overlap (SELECT)
+# is not duplicated or doubled; the new bit (INSERT, then UPDATE) is added.
+# ============================================================================
+
+statement ok
+CREATE ROLE idem_babsky;
+
+
+statement ok
+GRANT SELECT, INSERT ON idem_clickclack TO idem_babsky;
+
+
+query
+SELECT has_table_privilege('idem_babsky','idem_clickclack','SELECT') AS sel,
+       has_table_privilege('idem_babsky','idem_clickclack','INSERT') AS ins,
+       has_table_privilege('idem_babsky','idem_clickclack','UPDATE') AS upd,
+       has_table_privilege('idem_babsky','idem_clickclack','DELETE') AS del;
+----
+sel	ins	upd	del
+t	t	f	f
+
+
+# Overlapping list {SELECT, UPDATE}: SELECT already held (idempotent part),
+# UPDATE is new (accumulated). Result is the union {SELECT, INSERT, UPDATE}.
+statement ok
+GRANT SELECT, UPDATE ON idem_clickclack TO idem_babsky;
+
+
+query
+SELECT has_table_privilege('idem_babsky','idem_clickclack','SELECT') AS sel,
+       has_table_privilege('idem_babsky','idem_clickclack','INSERT') AS ins,
+       has_table_privilege('idem_babsky','idem_clickclack','UPDATE') AS upd,
+       has_table_privilege('idem_babsky','idem_clickclack','DELETE') AS del;
+----
+sel	ins	upd	del
+t	t	t	f
+
+
+# A fully-overlapping list {INSERT, UPDATE} adds nothing -- both already held.
+statement ok
+GRANT INSERT, UPDATE ON idem_clickclack TO idem_babsky;
+
+
+query
+SELECT has_table_privilege('idem_babsky','idem_clickclack','SELECT') AS sel,
+       has_table_privilege('idem_babsky','idem_clickclack','INSERT') AS ins,
+       has_table_privilege('idem_babsky','idem_clickclack','UPDATE') AS upd,
+       has_table_privilege('idem_babsky','idem_clickclack','DELETE') AS del;
+----
+sel	ins	upd	del
+t	t	t	f
+
+
+# Revoking just the overlap-victim SELECT leaves INSERT and UPDATE -- proving
+# the union is stored as a set of bits, not as a multiset of grant events.
+statement ok
+REVOKE SELECT ON idem_clickclack FROM idem_babsky;
+
+
+query
+SELECT has_table_privilege('idem_babsky','idem_clickclack','SELECT') AS sel,
+       has_table_privilege('idem_babsky','idem_clickclack','INSERT') AS ins,
+       has_table_privilege('idem_babsky','idem_clickclack','UPDATE') AS upd;
+----
+sel	ins	upd
+f	t	t
+
+
+# ============================================================================
+# GRANT ALL after a partial grant: ALL is the union with the full privilege
+# set, so every one of the seven bits ends up t. Re-issuing GRANT ALL is itself
+# idempotent.
+# ============================================================================
+
+statement ok
+CREATE ROLE idem_pudge;
+
+
+statement ok
+GRANT SELECT, INSERT ON idem_clickclack TO idem_pudge;
+
+
+query
+SELECT has_table_privilege('idem_pudge','idem_clickclack','SELECT')     AS sel,
+       has_table_privilege('idem_pudge','idem_clickclack','INSERT')     AS ins,
+       has_table_privilege('idem_pudge','idem_clickclack','UPDATE')     AS upd,
+       has_table_privilege('idem_pudge','idem_clickclack','DELETE')     AS del,
+       has_table_privilege('idem_pudge','idem_clickclack','TRUNCATE')   AS trunc,
+       has_table_privilege('idem_pudge','idem_clickclack','REFERENCES') AS refs,
+       has_table_privilege('idem_pudge','idem_clickclack','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	f	f	f	f	f
+
+
+# GRANT ALL fills in every remaining bit; the two already-held bits stay t.
+statement ok
+GRANT ALL ON idem_clickclack TO idem_pudge;
+
+
+query
+SELECT has_table_privilege('idem_pudge','idem_clickclack','SELECT')     AS sel,
+       has_table_privilege('idem_pudge','idem_clickclack','INSERT')     AS ins,
+       has_table_privilege('idem_pudge','idem_clickclack','UPDATE')     AS upd,
+       has_table_privilege('idem_pudge','idem_clickclack','DELETE')     AS del,
+       has_table_privilege('idem_pudge','idem_clickclack','TRUNCATE')   AS trunc,
+       has_table_privilege('idem_pudge','idem_clickclack','REFERENCES') AS refs,
+       has_table_privilege('idem_pudge','idem_clickclack','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	t	t	t	t
+
+
+# Re-issuing GRANT ALL is idempotent -- still all seven t.
+statement ok
+GRANT ALL PRIVILEGES ON idem_clickclack TO idem_pudge;
+
+
+query
+SELECT has_table_privilege('idem_pudge','idem_clickclack','SELECT')     AS sel,
+       has_table_privilege('idem_pudge','idem_clickclack','INSERT')     AS ins,
+       has_table_privilege('idem_pudge','idem_clickclack','UPDATE')     AS upd,
+       has_table_privilege('idem_pudge','idem_clickclack','DELETE')     AS del,
+       has_table_privilege('idem_pudge','idem_clickclack','TRUNCATE')   AS trunc,
+       has_table_privilege('idem_pudge','idem_clickclack','REFERENCES') AS refs,
+       has_table_privilege('idem_pudge','idem_clickclack','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	t	t	t	t
+
+
+# A redundant single-privilege GRANT after GRANT ALL is still a no-op.
+statement ok
+GRANT SELECT ON idem_clickclack TO idem_pudge;
+
+
+query
+SELECT has_table_privilege('idem_pudge','idem_clickclack','SELECT')   AS sel,
+       has_table_privilege('idem_pudge','idem_clickclack','TRIGGER')  AS trig;
+----
+sel	trig
+t	t
+
+
+# ============================================================================
+# Accumulation order does not matter: granting ALL first then a single
+# privilege ends in the same all-t state as the reverse order above.
+# ============================================================================
+
+statement ok
+CREATE ROLE idem_androed;
+
+
+statement ok
+GRANT ALL ON idem_clickclack TO idem_androed;
+
+
+statement ok
+GRANT SELECT, INSERT ON idem_clickclack TO idem_androed;
+
+
+query
+SELECT has_table_privilege('idem_androed','idem_clickclack','SELECT')     AS sel,
+       has_table_privilege('idem_androed','idem_clickclack','INSERT')     AS ins,
+       has_table_privilege('idem_androed','idem_clickclack','UPDATE')     AS upd,
+       has_table_privilege('idem_androed','idem_clickclack','DELETE')     AS del,
+       has_table_privilege('idem_androed','idem_clickclack','TRUNCATE')   AS trunc,
+       has_table_privilege('idem_androed','idem_clickclack','REFERENCES') AS refs,
+       has_table_privilege('idem_androed','idem_clickclack','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	t	t	t	t
+
+
+# ============================================================================
+# Piecewise accumulation reaching the full set bit-by-bit equals GRANT ALL.
+# Seven separate single grants build up to all-t.
+# ============================================================================
+
+statement ok
+CREATE ROLE idem_abramov;
+
+
+statement ok
+GRANT SELECT ON idem_clickclack TO idem_abramov;
+
+
+statement ok
+GRANT INSERT ON idem_clickclack TO idem_abramov;
+
+
+statement ok
+GRANT UPDATE ON idem_clickclack TO idem_abramov;
+
+
+statement ok
+GRANT DELETE ON idem_clickclack TO idem_abramov;
+
+
+statement ok
+GRANT TRUNCATE ON idem_clickclack TO idem_abramov;
+
+
+statement ok
+GRANT REFERENCES ON idem_clickclack TO idem_abramov;
+
+
+statement ok
+GRANT TRIGGER ON idem_clickclack TO idem_abramov;
+
+
+query
+SELECT has_table_privilege('idem_abramov','idem_clickclack','SELECT')     AS sel,
+       has_table_privilege('idem_abramov','idem_clickclack','INSERT')     AS ins,
+       has_table_privilege('idem_abramov','idem_clickclack','UPDATE')     AS upd,
+       has_table_privilege('idem_abramov','idem_clickclack','DELETE')     AS del,
+       has_table_privilege('idem_abramov','idem_clickclack','TRUNCATE')   AS trunc,
+       has_table_privilege('idem_abramov','idem_clickclack','REFERENCES') AS refs,
+       has_table_privilege('idem_abramov','idem_clickclack','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	t	t	t	t
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE idem_clickclack;
+
+
+statement ok
+DROP ROLE idem_kostya;
+
+
+statement ok
+DROP ROLE idem_babsky;
+
+
+statement ok
+DROP ROLE idem_pudge;
+
+
+statement ok
+DROP ROLE idem_androed;
+
+
+statement ok
+DROP ROLE idem_abramov;

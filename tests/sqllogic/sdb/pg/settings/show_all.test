@@ -10,7 +10,7 @@ __delta_only_variant_encoding_enabled	off	Enables the Parquet reader to identify
 access_mode	automatic	Access mode of the database (AUTOMATIC, READ_ONLY or READ_WRITE)
 allocator_background_threads	off	Whether to enable the allocator background thread.
 allocator_bulk_deallocation_flush_threshold	512.0 MiB	If a bulk deallocation larger than this occurs, flush outstanding allocations.
-allocator_flush_threshold	128.0 MiB	Peak allocation threshold at which to flush the allocator after completing a task.
+allocator_flush_threshold	134217728B	Peak allocation threshold at which to flush the allocator after completing a task.
 allow_asterisks_in_http_paths	off	Allow '*' character in URLs users can query
 allow_community_extensions	on	Allow to load community built extensions
 allow_extensions_metadata_mismatch	off	Allow to load extensions with not compatible metadata
@@ -27,6 +27,7 @@ arrow_lossless_conversion	off	Whenever a DuckDB type does not have a clear nativ
 arrow_output_list_view	off	Whether export to Arrow format should use ListView as the physical layout for LIST columns
 arrow_output_version	1.0	Whether strings should be produced by DuckDB in Utf8View format instead of Utf8
 asof_loop_join_threshold	64	The maximum number of rows we need on the left side of an ASOF join to use a nested loop join
+async_threads	<slt:ignore>	The number of total async threads used by the system for tasks like I/O.
 auto_checkpoint_skip_wal_threshold	100000	The estimated WAL write size at which point we will skip writing to the WAL and only checkpoint. Skipping writing to the WAL means concurrent commits are blocked while the checkpoint is happening.
 auto_fallback_to_full_download	on	Allows automatically falling back to full file downloads when possible.
 autoinstall_extension_repository	(empty)	Overrides the custom endpoint for extension installation on autoloading
@@ -36,6 +37,7 @@ binary_as_string	off	In Parquet files, interpret binary data as a string.
 block_allocator_memory	0 bytes	Physical memory that the block allocator is allowed to use (this memory is never freed and cannot be reduced).
 bytea_output	hex	Sets the output format for bytea.
 ca_cert_file	(empty)	Path to a custom certificate file for self-signed certificates.
+cache_local_files	off	Whether the external file cache also caches local files (remote files are always cached)
 catalog_error_max_schemas	100	The maximum number of schemas the system will scan for "did you mean..." style errors in the catalog
 checkpoint_on_detach	DEFAULT	Override checkpoint behavior when detaching a database. ENABLED always checkpoints, DISABLED never checkpoints, DEFAULT defers to the global checkpoint_on_shutdown setting.
 checkpoint_threshold	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint (e.g. 1GB)
@@ -54,13 +56,19 @@ debug_checkpoint_abort	NONE	DEBUG SETTING: trigger an abort while checkpointing 
 debug_checkpoint_sleep_ms	0	DEBUG SETTING: time to sleep before a checkpoint
 debug_disable_optimizer	off	DEBUG SETTING: disable optimizer for most queries
 debug_eviction_queue_sleep_micro_seconds	0	DEBUG SETTING: time for the eviction queue to sleep before acquiring shared ownership of block memory
+debug_force_commit_failure	off	DEBUG SETTING: force transaction commit to fail after the undo buffer has been committed, used for testing commit error recovery
+debug_force_commit_revert_failure	off	DEBUG SETTING: force RevertCommit to fail while recovering from a commit failure, used for testing
 debug_force_external	off	DEBUG SETTING: force out-of-core computation for operators that support it, used for testing
 debug_force_fetch_row	off	DEBUG SETTING: force per-row fetching during scans, used for testing
 debug_force_no_cross_product	off	DEBUG SETTING: Force disable cross product generation when hyper graph isn't connected, used for testing
+debug_local_file_system_delay_ms	0	DEBUG SETTING: time to sleep before local file system open/read/write operations
+debug_order_verification	none	DEBUG SETTING: verify ORDER BY results by rewriting the ordering (NONE, CREATE_SORT_KEY or VARIANT)
 debug_physical_table_scan_execution_strategy	DEFAULT	DEBUG SETTING: force use of given strategy for executing physical table scans
 debug_skip_checkpoint_on_commit	off	DEBUG SETTING: skip checkpointing on commit
+debug_transformer_trampoline_style	off	Use the experimental trampoline-style parser transformer
 debug_verification_mode	NONE	DEBUG SETTING: toggle the verification mode.
 debug_verification_projection	off	DEBUG SETTING: add internal verification projections to stress optimizers
+debug_verify_aggregate_state_export	off	DEBUG SETTING: enable verification of aggregate state export
 debug_verify_blocks	off	DEBUG SETTING: verify block metadata during checkpointing
 debug_verify_column_bindings	off	DEBUG SETTING: run extra internal verification of column bindings
 debug_verify_serializer	off	DEBUG SETTING: verify logical plan serializer
@@ -70,19 +78,22 @@ debug_verify_vector	NONE	DEBUG SETTING: enable vector verification
 debug_window_mode	WINDOW	DEBUG SETTING: switch window mode to use
 default_block_size	262144	The default block size for new duckdb database files (new as-in, they do not yet exist).
 default_collation	(empty)	The collation setting used when none is specified
+default_io_mode	BUFFERED_IO	The default IO_MODE for newly attached database files when no explicit IO_MODE is given (BUFFERED_IO or MMAP)
 default_null_order	NULLS_LAST	NULL ordering used when none is specified (NULLS_FIRST or NULLS_LAST)
 default_order	ASCENDING	The order type used when none is specified (ASC or DESC)
 default_secret_storage	local_file	Allows switching the default storage for secrets
 default_transaction_invalidation_policy	ALL_ERRORS_INVALIDATE_TRANSACTION	When to invalidate transactions when errors occur (SYNTACTIC_ERRORS_DO_NOT_INVALIDATE, i.e. parser and binder exceptions do not invalidate, or ALL_ERRORS_INVALIDATE_TRANSACTION)
 default_transaction_isolation	repeatable read	Sets the transaction isolation level of each new transaction.
 default_transaction_read_only	off	Sets the default read-only status of new transactions.
+delim_join_as_cte	on	Rewrite delim joins to materialized CTEs during dependent join flattening
 deprecated_using_key_syntax	DEFAULT	Configures the use of the deprecated union syntax for USING KEY CTEs.
+dialect_compatibility_mode	NONE	Enable SQL dialect compatibility for a certain engine (e.g. `SET dialect_compatibility_mode='spark'`)
 disable_database_invalidation	on	Disables invalidating the database instance when encountering a fatal error. Should be used with great care, as DuckDB cannot guarantee correct behavior after a fatal error.
 disable_parquet_prefetching	off	Disable the prefetching mechanism in Parquet
 disable_timestamptz_casts	off	Disable casting from timestamp to timestamptz 
 disabled_compression_methods	(empty)	Disable a specific set of compression methods (comma separated)
 disabled_filesystems	(empty)	Disable specific file systems preventing access (e.g. LocalFileSystem)
-disabled_log_types	<slt:ignore>	Sets the list of disabled loggers
+disabled_log_types	(empty)	Sets the list of disabled loggers
 disabled_optimizers	(empty)	DEBUG SETTING: disable a specific set of optimizers (comma separated)
 duckdb_api	cpp	DuckDB API surface
 dynamic_or_filter_threshold	50	The maximum amount of OR filters we generate dynamically from a hash join
@@ -93,20 +104,21 @@ enable_external_file_cache	on	Allow the database to cache external files (e.g., 
 enable_fsst_vectors	off	Allow scans on FSST compressed segments to emit compressed vectors to utilize late decompression
 enable_geoparquet_conversion	on	Attempt to decode/encode geometry data in/as GeoParquet files if the spatial extension is present.
 enable_global_s3_configuration	on	Automatically fetch AWS credentials from environment variables.
-enable_http_logging	on	(deprecated) Enables HTTP logging
 enable_http_metadata_cache	off	Whether or not the global http metadata is used to cache HTTP metadata
-enable_logging	<slt:ignore>	Enables the logger
+enable_logging	1	Enables the logger
 enable_macro_dependencies	off	Enable created MACROs to create dependencies on the referenced objects (such as tables)
 enable_object_cache	off	[PLACEHOLDER] Legacy setting - does nothing
+enable_optimizer	on	Whether or not query optimization is enabled
 enable_profiling	NULL	Enables profiling, and sets the output format (JSON, QUERY_TREE, QUERY_TREE_OPTIMIZER)
-enable_progress_bar	off	Enables the progress bar, printing progress to the terminal for long queries
-enable_progress_bar_print	on	Controls the printing of the progress bar, when 'enable_progress_bar' is true
+enable_progress_bar	on	Enables the progress bar, printing progress to the terminal for long queries
+enable_progress_bar_print	off	Controls the printing of the progress bar, when 'enable_progress_bar' is true
 enable_server_cert_verification	off	Enable server side certificate verification.
 enable_view_dependencies	off	Enable created VIEWs to create dependencies on the referenced objects (such as tables)
 enabled_log_types	(empty)	Sets the list of enabled loggers
 errors_as_json	off	Output error messages as structured JSON instead of as a raw string
 experimental_metadata_reuse	on	EXPERIMENTAL: Re-use row group and table metadata when checkpointing.
 explain_output	PHYSICAL_ONLY	Output of EXPLAIN statements (ALL, OPTIMIZED_ONLY, PHYSICAL_ONLY)
+explain_output_format	PG	Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line)
 extension_directories	[]	Set the directories to store extensions in
 extension_directory	(empty)	Set the directory to store extensions in
 external_file_cache_local_block_size	16384	Block size in bytes for the external file cache when reading local (non-remote) files.
@@ -120,12 +132,13 @@ force_compression	auto	DEBUG SETTING: forces a specific compression method to be
 force_download	off	Forces upfront download of file
 force_download_threshold	0	Forces upfront download of files smaller than the given size in bytes
 force_mbedtls_unsafe	off	Enable mbedtls for encryption (WARNING: unsafe to use)
+force_update_to_del_and_insert	off	DEBUG SETTING: forces all updates to use the delete + insert code path instead of in-place updates
 force_variant_shredding	INVALID	Forces the VARIANT shredding that happens at checkpoint to use the provided schema for the shredding.
 geometry_minimum_shredding_size	30000	Minimum size of a rowgroup to enable GEOMETRY shredding, or set to -1 to disable entirely. Defaults to 1/4th of a rowgroup
+hba	(empty)	Host-based authentication ruleset (pg_hba.conf syntax) as a single string: one rule per line, first match wins, applied to connections opened after the SET. An un-removable local + loopback trust rule is force-prepended so a bad ruleset cannot lock you out; an empty value restores the default (unix trust + SCRAM for TCP). Server-global.
 hf_max_per_page	0	Debug option to limit number of items returned in list requests
 home_directory	(empty)	Sets the home directory used by the system
 http_keep_alive	on	Keep alive connections. Setting this to false can help when running into connection failures
-http_logging_output	(empty)	(deprecated) The file to which HTTP logging output should be saved, or empty to print to the terminal
 http_proxy	(empty)	HTTP proxy host (defaults to the HTTP_PROXY environment variable when unset)
 http_proxy_password	(empty)	Password for HTTP proxy
 http_proxy_username	(empty)	Username for HTTP proxy
@@ -135,6 +148,7 @@ http_retry_wait_ms	100	Time between retries
 http_timeout	30	HTTP timeout read/write/connection/retry (in seconds)
 httpfs_client_implementation	default	Select which is the HTTPUtil implementation to be used
 httpfs_connection_caching	off	Enable connection caching for HTTP requests
+iceberg_logging_post_body_truncate_limit	10000	Maximum number of characters of a REST catalog POST body to include in Iceberg log messages. Bodies longer than this are truncated with a trailing '... (truncated)' marker. Set to 0 to omit the body.
 iceberg_test_force_token_expiry	off	DEBUG SETTING: force OAuth2 token expiry for testing automatic refresh
 iceberg_use_metadata_log	on	Whether or not to make use of the (optional) 'metadata-log' of a table to ensure atomicity guarantees hold, at the cost of making another GET for json metadata in rare circumstances
 iceberg_via_aws_sdk_for_catalog_interactions	off	Use legacy code to interact with AWS-based catalogs, via AWS's SDK
@@ -152,6 +166,7 @@ integer_division	off	Whether or not the / operator defaults to integer division,
 is_superuser	on	Shows whether the current session's user is a superuser.
 lambda_syntax	ENABLE_SINGLE_ARROW	Configures the use of the deprecated single arrow operator (->) for lambda functions.
 late_materialization_max_rows	50	The maximum amount of rows in the LIMIT/SAMPLE for which we trigger late materialization
+legacy_disable_null_type	off	When enabled, prevent the NULL type from leaving the binder (< v2.0 default behavior)
 legacy_metrics_format	off	When enabled, profiling output uses the legacy flat format instead of the current grouped format
 lock_configuration	off	Whether or not configurations can be altered
 log_query_path	(empty)	Specifies the path to which queries should be logged (default: NULL, queries are not logged)
@@ -175,6 +190,7 @@ order_by_non_integer_literal	off	Allow ordering by non-integer literals - orderi
 ordered_aggregate_threshold	262144	The number of rows to accumulate before sorting, used for tuning
 parallelize_sequential_sources	on	Whether to automatically parallelize sequential sources
 parquet_metadata_cache	off	Cache Parquet metadata - useful when reading the same files multiple times
+parquet_prefetch_column_gap	NULL	Byte gap under which Parquet prefetch I/O ranges are coalesced (NULL lets the cost model adapt it)
 partitioned_write_flush_threshold	524288	The threshold in number of rows after which we flush a thread state when writing using PARTITION_BY
 partitioned_write_max_open_files	100	The maximum amount of files the system can keep open before flushing to disk when writing using PARTITION_BY
 password	(empty)	The password to use. Ignored for legacy compatibility.
@@ -187,6 +203,7 @@ pg_experimental_filter_pushdown	on	Whether or not to use filter pushdown
 pg_idle_in_transaction_timeout_millis	NULL	Postgres idle in transaction timeout in milliseconds to set on scan connections
 pg_null_byte_replacement	NULL	When writing NULL bytes to Postgres, replace them with the given character
 pg_oauth_token	NULL	OAuth bearer token for PostgreSQL OAUTHBEARER authentication. Takes priority over the PGOAUTHTOKEN environment variable
+pg_order_pushdown	on	Push ORDER BY and LIMIT clauses to Postgres (default: true)
 pg_pages_per_task	1000	The amount of pages per task
 pg_pool_acquire_mode	force	How to acquire connections from the pool: 'force' (always connect, ignore pool limit), 'wait' (block until available), 'try' (fail immediately if unavailable) (default: force)
 pg_pool_enable_reaper_thread	on	Whether to enable the connection pool reaper thread, that periodically scans the pool to check the 'max_lifetime_millis' and 'idle_timeout_millis' and closes the connection which exceed the specified values. Either 'max_lifetime_millis' or 'idle_timeout_millis' must be set to a non-zero value for this option to be effective. This option only applies to newly attached Postgres databases, to configure a database that is already attached use "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', enable_reaper_thread=TRUE)"
@@ -204,52 +221,28 @@ pin_threads	auto	Whether to pin threads to cores (Linux only, default AUTO: on w
 pivot_filter_threshold	20	The threshold to switch from using filtered aggregates to LIST with a dedicated pivot operator
 pivot_limit	100000	The maximum number of pivot columns in a pivot statement
 prefer_range_joins	off	Force use of range joins with mixed predicates
-prefetch_all_parquet_files	off	Use the prefetching mechanism for all types of parquet files
+prefetch_all_parquet_files	off	(deprecated) Parquet files are now always prefetched, this setting has no effect
 preserve_identifier_case	off	Whether or not to preserve the identifier case, instead of always lowercasing all non-quoted identifiers
 preserve_insertion_order	on	Whether or not to preserve insertion order. If set to false the system is allowed to re-order any results that do not contain ORDER BY clauses.
 produce_arrow_string_view	off	Whether Arrow strings should be produced by DuckDB in Utf8View format instead of Utf8
 profile_output	(empty)	The file to which profile output should be saved, or empty to print to the terminal
 profiling_coverage	SELECT	The profiling coverage (SELECT or ALL)
-profiling_mode	NULL	The profiling mode (STANDARD or DETAILED)
+profiling_mode	NULL	DEPRECATED: Sets the profiling mode
 profiling_output	(empty)	The file to which profile output should be saved, or empty to print to the terminal
-progress_bar_time	2000	Sets the time (in milliseconds) how long a query needs to take before we start printing a progress bar
-refresh_interval	1000	Background refresh interval (ms) for newly created inverted indexes. Per-index WITH (refresh_interval = ...) overrides. 0 disables the refresh task. Default: 1000.
-role	postgres	Sets the current role.
-row_group_size	122880	Default column row-group size for INCLUDEd in newly created inverted indexes. Per-column (row_group_size = ...) and per-index WITH (row_group_size = ...) override. Reads from existing indexes are unaffected. Default: 122'880.
-s3_access_key_id	NULL	S3 Access Key ID
-s3_allow_recursive_globbing	on	Whether globs on S3-like storage are optimized with recursive strategy (alterative is listing)
-s3_endpoint	NULL	S3 Endpoint
-s3_kms_key_id	NULL	S3 KMS Key ID
-s3_region	NULL	S3 Region
-s3_requester_pays	off	S3 use requester pays mode
-s3_secret_access_key	NULL	S3 Access Key
-s3_session_token	NULL	S3 Session Token
-s3_uploader_max_filesize	800GB	S3 Uploader max filesize (between 50GB and 5TB)
-s3_uploader_max_parts_per_file	10000	S3 Uploader max parts per file (between 1 and 10000)
-s3_uploader_thread_limit	50	S3 Uploader global thread limit
-s3_url_compatibility_mode	off	Disable Globs and Query Parameters on S3 URLs
-s3_url_style	vhost	S3 URL style
-s3_use_ssl	on	S3 use SSL
-s3_version_id_pinning	off	Pin S3 reads to a specific object version for consistency
-scalar_subquery_error_on_multiple_rows	on	When a scalar subquery returns multiple rows - return a random row instead of returning an error.
-scheduler_process_partial	off	Partially process tasks before rescheduling - allows for more scheduler fairness between separate queries
-schema	public	Sets the default search schema. Equivalent to setting search_path to a single value.
-scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
-sdb_disable_top_k_optimization	off	When true, the optimizer skips pulling `ORDER BY <scorer>(...) DESC LIMIT k` into the inverted-index scan, so WAND (Block-Max top-K) pruning never engages. Default: false (optimization on).
-sdb_ef_search	0	Per-session override for the HNSW search-time neighbourhood size (efSearch). 0 (default) uses Top-K value instead.
-sdb_scored_terms_limit	1024	The maximum number of terms to consider for scoring in multi-term filters. Higher values give more accurate IDF-style scoring at the cost of memory and per-query work. 0 disables scored-term collection entirely.
-sdb_strict_ddl	off	When enabled, DDL inside a transaction block fails instead of committing immediately (DDL is not transactional).
-search_path	<slt:ignore>	Sets <slt:ignore>
+profiling_renderer_settings	{}	A map of settings passed to the renderer of the profiler output (e.g. {'max_extra_lines': 100}) - settings not recognized by the active renderer are ignored
+progress_bar_time	<slt:ignore>	Sets <slt:ignore>
 secret_directory	<slt:ignore>	Set the directory to which persistent secrets are stored
 server_encoding	UTF8	Shows the server (database) character set encoding.
 server_version	18.3	Shows the server version.
 server_version_num	180003	Shows the server version as an integer.
 session_authorization	postgres	Sets the current session's user name.
 standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
+standard_vector_size	2048	The compiled-in STANDARD_VECTOR_SIZE (read-only)
 statement_timeout	0	Aborts any statement that takes more than the specified number of milliseconds. Accepted for compatibility but not currently enforced.
 storage_block_prefetch	REMOTE_ONLY	In which scenarios to use storage block prefetching
 storage_compatibility_version	latest	Serialize on checkpoint with compatibility for a given duckdb version
 streaming_buffer_size	976.5 KiB	The maximum memory to buffer between fetching from a streaming result (e.g. 1GB)
+table_function_identifier_conversion	DISABLE_IMPLICIT_STRING	Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments.
 temp_directory	.tmp	Set the directory to which to write temp files
 temp_file_encryption	off	Encrypt all temporary files if database is encrypted
 threads	<slt:ignore>	The number of total threads used by the system.
@@ -260,7 +253,7 @@ unsafe_enable_version_guessing	off	Enable globbing the filesystem (if possible) 
 unsafe_iceberg_ignore_sort_order	off	Allow INSERT/UPDATE on iceberg tables that declare a sort order, without applying that sort order to the written data. The Iceberg spec permits this (writers are not required to honour a declared sort order, and readers do not assume files are sorted), but skipping the sort may reduce later file-pruning effectiveness and compression.
 user	<slt:ignore>	The username to use. Ignored for legacy compatibility.
 username	<slt:ignore>	The username to use. Ignored for legacy compatibility.
-vacuum_rebuild_indexes	0	(Experimental) Allow vacuum to compact row groups on tables with bound ART indexes, rebuilding the indexes afterward. Tables with a row count exceeding this threshold are skipped. 0 = disabled.
+vacuum_rebuild_indexes	0	(Experimental) Allow vacuum to compact row groups on tables with bound ART indexes, rebuilding the indexes afterward. Tables with a row count exceeding this threshold are skipped. 0 = disabled. Can also be set per-database via the 'vacuum_rebuild_indexes' ATTACH option, which overrides this default.
 validate_external_file_cache	VALIDATE_ALL	Cache validation mode: VALIDATE_ALL (default, validate all cache entries), VALIDATE_REMOTE (validate only remote cache entries), or NO_VALIDATION (disable cache validation).
 variant_minimum_shredding_size	30000	Minimum size of a rowgroup to enable VARIANT shredding, or set to -1 to disable entirely. Defaults to 1/4th of a rowgroup
 wal_autocheckpoint	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint (e.g. 1GB)
@@ -290,7 +283,7 @@ __delta_only_variant_encoding_enabled	off	Enables the Parquet reader to identify
 access_mode	automatic	Access mode of the database (AUTOMATIC, READ_ONLY or READ_WRITE)
 allocator_background_threads	off	Whether to enable the allocator background thread.
 allocator_bulk_deallocation_flush_threshold	512.0 MiB	If a bulk deallocation larger than this occurs, flush outstanding allocations.
-allocator_flush_threshold	128.0 MiB	Peak allocation threshold at which to flush the allocator after completing a task.
+allocator_flush_threshold	134217728B	Peak allocation threshold at which to flush the allocator after completing a task.
 allow_asterisks_in_http_paths	off	Allow '*' character in URLs users can query
 allow_community_extensions	on	Allow to load community built extensions
 allow_extensions_metadata_mismatch	off	Allow to load extensions with not compatible metadata
@@ -307,6 +300,7 @@ arrow_lossless_conversion	off	Whenever a DuckDB type does not have a clear nativ
 arrow_output_list_view	off	Whether export to Arrow format should use ListView as the physical layout for LIST columns
 arrow_output_version	1.0	Whether strings should be produced by DuckDB in Utf8View format instead of Utf8
 asof_loop_join_threshold	64	The maximum number of rows we need on the left side of an ASOF join to use a nested loop join
+async_threads	<slt:ignore>	The number of total async threads used by the system for tasks like I/O.
 auto_checkpoint_skip_wal_threshold	100000	The estimated WAL write size at which point we will skip writing to the WAL and only checkpoint. Skipping writing to the WAL means concurrent commits are blocked while the checkpoint is happening.
 auto_fallback_to_full_download	on	Allows automatically falling back to full file downloads when possible.
 autoinstall_extension_repository	(empty)	Overrides the custom endpoint for extension installation on autoloading
@@ -316,6 +310,7 @@ binary_as_string	off	In Parquet files, interpret binary data as a string.
 block_allocator_memory	0 bytes	Physical memory that the block allocator is allowed to use (this memory is never freed and cannot be reduced).
 bytea_output	hex	Sets the output format for bytea.
 ca_cert_file	(empty)	Path to a custom certificate file for self-signed certificates.
+cache_local_files	off	Whether the external file cache also caches local files (remote files are always cached)
 catalog_error_max_schemas	100	The maximum number of schemas the system will scan for "did you mean..." style errors in the catalog
 checkpoint_on_detach	DEFAULT	Override checkpoint behavior when detaching a database. ENABLED always checkpoints, DISABLED never checkpoints, DEFAULT defers to the global checkpoint_on_shutdown setting.
 checkpoint_threshold	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint (e.g. 1GB)
@@ -334,13 +329,19 @@ debug_checkpoint_abort	NONE	DEBUG SETTING: trigger an abort while checkpointing 
 debug_checkpoint_sleep_ms	0	DEBUG SETTING: time to sleep before a checkpoint
 debug_disable_optimizer	off	DEBUG SETTING: disable optimizer for most queries
 debug_eviction_queue_sleep_micro_seconds	0	DEBUG SETTING: time for the eviction queue to sleep before acquiring shared ownership of block memory
+debug_force_commit_failure	off	DEBUG SETTING: force transaction commit to fail after the undo buffer has been committed, used for testing commit error recovery
+debug_force_commit_revert_failure	off	DEBUG SETTING: force RevertCommit to fail while recovering from a commit failure, used for testing
 debug_force_external	off	DEBUG SETTING: force out-of-core computation for operators that support it, used for testing
 debug_force_fetch_row	off	DEBUG SETTING: force per-row fetching during scans, used for testing
 debug_force_no_cross_product	off	DEBUG SETTING: Force disable cross product generation when hyper graph isn't connected, used for testing
+debug_local_file_system_delay_ms	0	DEBUG SETTING: time to sleep before local file system open/read/write operations
+debug_order_verification	none	DEBUG SETTING: verify ORDER BY results by rewriting the ordering (NONE, CREATE_SORT_KEY or VARIANT)
 debug_physical_table_scan_execution_strategy	DEFAULT	DEBUG SETTING: force use of given strategy for executing physical table scans
 debug_skip_checkpoint_on_commit	off	DEBUG SETTING: skip checkpointing on commit
+debug_transformer_trampoline_style	off	Use the experimental trampoline-style parser transformer
 debug_verification_mode	NONE	DEBUG SETTING: toggle the verification mode.
 debug_verification_projection	off	DEBUG SETTING: add internal verification projections to stress optimizers
+debug_verify_aggregate_state_export	off	DEBUG SETTING: enable verification of aggregate state export
 debug_verify_blocks	off	DEBUG SETTING: verify block metadata during checkpointing
 debug_verify_column_bindings	off	DEBUG SETTING: run extra internal verification of column bindings
 debug_verify_serializer	off	DEBUG SETTING: verify logical plan serializer
@@ -350,19 +351,22 @@ debug_verify_vector	NONE	DEBUG SETTING: enable vector verification
 debug_window_mode	WINDOW	DEBUG SETTING: switch window mode to use
 default_block_size	262144	The default block size for new duckdb database files (new as-in, they do not yet exist).
 default_collation	(empty)	The collation setting used when none is specified
+default_io_mode	BUFFERED_IO	The default IO_MODE for newly attached database files when no explicit IO_MODE is given (BUFFERED_IO or MMAP)
 default_null_order	NULLS_LAST	NULL ordering used when none is specified (NULLS_FIRST or NULLS_LAST)
 default_order	ASCENDING	The order type used when none is specified (ASC or DESC)
 default_secret_storage	local_file	Allows switching the default storage for secrets
 default_transaction_invalidation_policy	ALL_ERRORS_INVALIDATE_TRANSACTION	When to invalidate transactions when errors occur (SYNTACTIC_ERRORS_DO_NOT_INVALIDATE, i.e. parser and binder exceptions do not invalidate, or ALL_ERRORS_INVALIDATE_TRANSACTION)
 default_transaction_isolation	read committed	Sets the transaction isolation level of each new transaction.
 default_transaction_read_only	off	Sets the default read-only status of new transactions.
+delim_join_as_cte	on	Rewrite delim joins to materialized CTEs during dependent join flattening
 deprecated_using_key_syntax	DEFAULT	Configures the use of the deprecated union syntax for USING KEY CTEs.
+dialect_compatibility_mode	NONE	Enable SQL dialect compatibility for a certain engine (e.g. `SET dialect_compatibility_mode='spark'`)
 disable_database_invalidation	on	Disables invalidating the database instance when encountering a fatal error. Should be used with great care, as DuckDB cannot guarantee correct behavior after a fatal error.
 disable_parquet_prefetching	off	Disable the prefetching mechanism in Parquet
 disable_timestamptz_casts	off	Disable casting from timestamp to timestamptz 
 disabled_compression_methods	(empty)	Disable a specific set of compression methods (comma separated)
 disabled_filesystems	(empty)	Disable specific file systems preventing access (e.g. LocalFileSystem)
-disabled_log_types	<slt:ignore>	Sets the list of disabled loggers
+disabled_log_types	(empty)	Sets the list of disabled loggers
 disabled_optimizers	(empty)	DEBUG SETTING: disable a specific set of optimizers (comma separated)
 duckdb_api	cpp	DuckDB API surface
 dynamic_or_filter_threshold	50	The maximum amount of OR filters we generate dynamically from a hash join
@@ -373,20 +377,21 @@ enable_external_file_cache	on	Allow the database to cache external files (e.g., 
 enable_fsst_vectors	off	Allow scans on FSST compressed segments to emit compressed vectors to utilize late decompression
 enable_geoparquet_conversion	on	Attempt to decode/encode geometry data in/as GeoParquet files if the spatial extension is present.
 enable_global_s3_configuration	on	Automatically fetch AWS credentials from environment variables.
-enable_http_logging	on	(deprecated) Enables HTTP logging
 enable_http_metadata_cache	off	Whether or not the global http metadata is used to cache HTTP metadata
-enable_logging	<slt:ignore>	Enables the logger
+enable_logging	1	Enables the logger
 enable_macro_dependencies	off	Enable created MACROs to create dependencies on the referenced objects (such as tables)
 enable_object_cache	off	[PLACEHOLDER] Legacy setting - does nothing
+enable_optimizer	on	Whether or not query optimization is enabled
 enable_profiling	NULL	Enables profiling, and sets the output format (JSON, QUERY_TREE, QUERY_TREE_OPTIMIZER)
-enable_progress_bar	off	Enables the progress bar, printing progress to the terminal for long queries
-enable_progress_bar_print	on	Controls the printing of the progress bar, when 'enable_progress_bar' is true
+enable_progress_bar	on	Enables the progress bar, printing progress to the terminal for long queries
+enable_progress_bar_print	off	Controls the printing of the progress bar, when 'enable_progress_bar' is true
 enable_server_cert_verification	off	Enable server side certificate verification.
 enable_view_dependencies	off	Enable created VIEWs to create dependencies on the referenced objects (such as tables)
 enabled_log_types	(empty)	Sets the list of enabled loggers
 errors_as_json	off	Output error messages as structured JSON instead of as a raw string
 experimental_metadata_reuse	on	EXPERIMENTAL: Re-use row group and table metadata when checkpointing.
 explain_output	PHYSICAL_ONLY	Output of EXPLAIN statements (ALL, OPTIMIZED_ONLY, PHYSICAL_ONLY)
+explain_output_format	PG	Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line)
 extension_directories	[]	Set the directories to store extensions in
 extension_directory	(empty)	Set the directory to store extensions in
 external_file_cache_local_block_size	16384	Block size in bytes for the external file cache when reading local (non-remote) files.
@@ -400,12 +405,13 @@ force_compression	auto	DEBUG SETTING: forces a specific compression method to be
 force_download	off	Forces upfront download of file
 force_download_threshold	0	Forces upfront download of files smaller than the given size in bytes
 force_mbedtls_unsafe	off	Enable mbedtls for encryption (WARNING: unsafe to use)
+force_update_to_del_and_insert	off	DEBUG SETTING: forces all updates to use the delete + insert code path instead of in-place updates
 force_variant_shredding	INVALID	Forces the VARIANT shredding that happens at checkpoint to use the provided schema for the shredding.
 geometry_minimum_shredding_size	30000	Minimum size of a rowgroup to enable GEOMETRY shredding, or set to -1 to disable entirely. Defaults to 1/4th of a rowgroup
+hba	(empty)	Host-based authentication ruleset (pg_hba.conf syntax) as a single string: one rule per line, first match wins, applied to connections opened after the SET. An un-removable local + loopback trust rule is force-prepended so a bad ruleset cannot lock you out; an empty value restores the default (unix trust + SCRAM for TCP). Server-global.
 hf_max_per_page	0	Debug option to limit number of items returned in list requests
 home_directory	(empty)	Sets the home directory used by the system
 http_keep_alive	on	Keep alive connections. Setting this to false can help when running into connection failures
-http_logging_output	(empty)	(deprecated) The file to which HTTP logging output should be saved, or empty to print to the terminal
 http_proxy	(empty)	HTTP proxy host (defaults to the HTTP_PROXY environment variable when unset)
 http_proxy_password	(empty)	Password for HTTP proxy
 http_proxy_username	(empty)	Username for HTTP proxy
@@ -415,6 +421,7 @@ http_retry_wait_ms	100	Time between retries
 http_timeout	30	HTTP timeout read/write/connection/retry (in seconds)
 httpfs_client_implementation	default	Select which is the HTTPUtil implementation to be used
 httpfs_connection_caching	off	Enable connection caching for HTTP requests
+iceberg_logging_post_body_truncate_limit	10000	Maximum number of characters of a REST catalog POST body to include in Iceberg log messages. Bodies longer than this are truncated with a trailing '... (truncated)' marker. Set to 0 to omit the body.
 iceberg_test_force_token_expiry	off	DEBUG SETTING: force OAuth2 token expiry for testing automatic refresh
 iceberg_use_metadata_log	on	Whether or not to make use of the (optional) 'metadata-log' of a table to ensure atomicity guarantees hold, at the cost of making another GET for json metadata in rare circumstances
 iceberg_via_aws_sdk_for_catalog_interactions	off	Use legacy code to interact with AWS-based catalogs, via AWS's SDK
@@ -432,6 +439,7 @@ integer_division	off	Whether or not the / operator defaults to integer division,
 is_superuser	on	Shows whether the current session's user is a superuser.
 lambda_syntax	ENABLE_SINGLE_ARROW	Configures the use of the deprecated single arrow operator (->) for lambda functions.
 late_materialization_max_rows	50	The maximum amount of rows in the LIMIT/SAMPLE for which we trigger late materialization
+legacy_disable_null_type	off	When enabled, prevent the NULL type from leaving the binder (< v2.0 default behavior)
 legacy_metrics_format	off	When enabled, profiling output uses the legacy flat format instead of the current grouped format
 lock_configuration	off	Whether or not configurations can be altered
 log_query_path	(empty)	Specifies the path to which queries should be logged (default: NULL, queries are not logged)
@@ -455,6 +463,7 @@ order_by_non_integer_literal	off	Allow ordering by non-integer literals - orderi
 ordered_aggregate_threshold	262144	The number of rows to accumulate before sorting, used for tuning
 parallelize_sequential_sources	on	Whether to automatically parallelize sequential sources
 parquet_metadata_cache	off	Cache Parquet metadata - useful when reading the same files multiple times
+parquet_prefetch_column_gap	NULL	Byte gap under which Parquet prefetch I/O ranges are coalesced (NULL lets the cost model adapt it)
 partitioned_write_flush_threshold	524288	The threshold in number of rows after which we flush a thread state when writing using PARTITION_BY
 partitioned_write_max_open_files	100	The maximum amount of files the system can keep open before flushing to disk when writing using PARTITION_BY
 password	(empty)	The password to use. Ignored for legacy compatibility.
@@ -467,6 +476,7 @@ pg_experimental_filter_pushdown	on	Whether or not to use filter pushdown
 pg_idle_in_transaction_timeout_millis	NULL	Postgres idle in transaction timeout in milliseconds to set on scan connections
 pg_null_byte_replacement	NULL	When writing NULL bytes to Postgres, replace them with the given character
 pg_oauth_token	NULL	OAuth bearer token for PostgreSQL OAUTHBEARER authentication. Takes priority over the PGOAUTHTOKEN environment variable
+pg_order_pushdown	on	Push ORDER BY and LIMIT clauses to Postgres (default: true)
 pg_pages_per_task	1000	The amount of pages per task
 pg_pool_acquire_mode	force	How to acquire connections from the pool: 'force' (always connect, ignore pool limit), 'wait' (block until available), 'try' (fail immediately if unavailable) (default: force)
 pg_pool_enable_reaper_thread	on	Whether to enable the connection pool reaper thread, that periodically scans the pool to check the 'max_lifetime_millis' and 'idle_timeout_millis' and closes the connection which exceed the specified values. Either 'max_lifetime_millis' or 'idle_timeout_millis' must be set to a non-zero value for this option to be effective. This option only applies to newly attached Postgres databases, to configure a database that is already attached use "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', enable_reaper_thread=TRUE)"
@@ -484,17 +494,19 @@ pin_threads	auto	Whether to pin threads to cores (Linux only, default AUTO: on w
 pivot_filter_threshold	20	The threshold to switch from using filtered aggregates to LIST with a dedicated pivot operator
 pivot_limit	100000	The maximum number of pivot columns in a pivot statement
 prefer_range_joins	off	Force use of range joins with mixed predicates
-prefetch_all_parquet_files	off	Use the prefetching mechanism for all types of parquet files
+prefetch_all_parquet_files	off	(deprecated) Parquet files are now always prefetched, this setting has no effect
 preserve_identifier_case	off	Whether or not to preserve the identifier case, instead of always lowercasing all non-quoted identifiers
 preserve_insertion_order	on	Whether or not to preserve insertion order. If set to false the system is allowed to re-order any results that do not contain ORDER BY clauses.
 produce_arrow_string_view	off	Whether Arrow strings should be produced by DuckDB in Utf8View format instead of Utf8
 profile_output	(empty)	The file to which profile output should be saved, or empty to print to the terminal
 profiling_coverage	SELECT	The profiling coverage (SELECT or ALL)
-profiling_mode	NULL	The profiling mode (STANDARD or DETAILED)
+profiling_mode	NULL	DEPRECATED: Sets the profiling mode
 profiling_output	(empty)	The file to which profile output should be saved, or empty to print to the terminal
+profiling_renderer_settings	{}	A map of settings passed to the renderer of the profiler output (e.g. {'max_extra_lines': 100}) - settings not recognized by the active renderer are ignored
 progress_bar_time	2000	Sets the time (in milliseconds) how long a query needs to take before we start printing a progress bar
 refresh_interval	1000	Background refresh interval (ms) for newly created inverted indexes. Per-index WITH (refresh_interval = ...) overrides. 0 disables the refresh task. Default: 1000.
-role	postgres	Sets the current role.
+regex_match_operator_semantics	partial	Configures whether regex match operators use partial or full string matching
+role	none	Sets the current role.
 row_group_size	122880	Default column row-group size for INCLUDEd in newly created inverted indexes. Per-column (row_group_size = ...) and per-index WITH (row_group_size = ...) override. Reads from existing indexes are unaffected. Default: 122'880.
 s3_access_key_id	NULL	S3 Access Key ID
 s3_allow_recursive_globbing	on	Whether globs on S3-like storage are optimized with recursive strategy (alterative is listing)
@@ -526,10 +538,12 @@ server_version	18.3	Shows the server version.
 server_version_num	180003	Shows the server version as an integer.
 session_authorization	postgres	Sets the current session's user name.
 standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
+standard_vector_size	2048	The compiled-in STANDARD_VECTOR_SIZE (read-only)
 statement_timeout	0	Aborts any statement that takes more than the specified number of milliseconds. Accepted for compatibility but not currently enforced.
 storage_block_prefetch	REMOTE_ONLY	In which scenarios to use storage block prefetching
 storage_compatibility_version	latest	Serialize on checkpoint with compatibility for a given duckdb version
 streaming_buffer_size	976.5 KiB	The maximum memory to buffer between fetching from a streaming result (e.g. 1GB)
+table_function_identifier_conversion	DISABLE_IMPLICIT_STRING	Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments.
 temp_directory	.tmp	Set the directory to which to write temp files
 temp_file_encryption	off	Encrypt all temporary files if database is encrypted
 threads	<slt:ignore>	The number of total threads used by the system.
@@ -540,7 +554,7 @@ unsafe_enable_version_guessing	off	Enable globbing the filesystem (if possible) 
 unsafe_iceberg_ignore_sort_order	off	Allow INSERT/UPDATE on iceberg tables that declare a sort order, without applying that sort order to the written data. The Iceberg spec permits this (writers are not required to honour a declared sort order, and readers do not assume files are sorted), but skipping the sort may reduce later file-pruning effectiveness and compression.
 user	<slt:ignore>	The username to use. Ignored for legacy compatibility.
 username	<slt:ignore>	The username to use. Ignored for legacy compatibility.
-vacuum_rebuild_indexes	0	(Experimental) Allow vacuum to compact row groups on tables with bound ART indexes, rebuilding the indexes afterward. Tables with a row count exceeding this threshold are skipped. 0 = disabled.
+vacuum_rebuild_indexes	0	(Experimental) Allow vacuum to compact row groups on tables with bound ART indexes, rebuilding the indexes afterward. Tables with a row count exceeding this threshold are skipped. 0 = disabled. Can also be set per-database via the 'vacuum_rebuild_indexes' ATTACH option, which overrides this default.
 validate_external_file_cache	VALIDATE_ALL	Cache validation mode: VALIDATE_ALL (default, validate all cache entries), VALIDATE_REMOTE (validate only remote cache entries), or NO_VALIDATION (disable cache validation).
 variant_minimum_shredding_size	30000	Minimum size of a rowgroup to enable VARIANT shredding, or set to -1 to disable entirely. Defaults to 1/4th of a rowgroup
 wal_autocheckpoint	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint (e.g. 1GB)

@@ -167,12 +167,6 @@ pid	io_id	io_generation	state	operation	off	length	target	handle_data_len	raw_re
 
 
 query
-SELECT * FROM pg_stat_get_progress_info('ANALYZE') LIMIT 0
-----
-pid	datid	relid	param1	param2	param3	param4	param5	param6	param7	param8	param9	param10	param11	param12	param13	param14	param15	param16	param17	param18	param19	param20
-
-
-query
 SELECT * FROM pg_stat_get_activity(NULL::integer) LIMIT 0
 ----
 datid	pid	usesysid	application_name	state	query	wait_event_type	wait_event	xact_start	query_start	backend_start	state_change	client_addr	client_hostname	client_port	backend_xid	backend_xmin	backend_type	ssl	sslversion	sslcipher	sslbits	ssl_client_dn	ssl_client_serial	ssl_issuer_dn	gss_auth	gss_princ	gss_enc	gss_delegation	leader_pid	query_id

@@ -39,38 +39,22 @@ EXPLAIN SELECT pk, geo FROM wal_geo_src_idx
 WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             pk            │
-│            geo            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│      wal_geo_src_idx      │
-│                           │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││    GEO_DISTANCE   ││  │
-│  ││    ────────────   ││  │
-│  ││  geo(string) *,   ││  │
-│  ││       <1000       ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│        Projections:       │
-│          geo (i)          │
-│           pk (l)          │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ PROJECTION ───────────╮
+│ Projections: pk, geo   │
+│ ~1 row                 │
+╰────────────┬───────────╯
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: wal_geo_src_idx │
+│ Lookup: table          │
+│ Filter:                │
+│ ╭─ Geo Distance ─────╮ │
+│ │ Field: geo(string) │ │
+│ │ Range: *, <1000    │ │
+│ ╰────────────────────╯ │
+│ Projections: geo (i),  │
+│              pk (l)    │
+│ ~1 row                 │
+╰────────────────────────╯
 
 # Pre-crash row: geo distance query works against on-disk segment.
 query

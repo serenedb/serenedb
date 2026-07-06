@@ -43,6 +43,14 @@ if [[ "$log_lines" -eq 0 ]]; then
 	test_rc=1
 fi
 
+# HBA network tests: standalone service (launches its own released serened
+# in-container), so it goes through `run`, not the client/server `up`.
+if [[ $test_rc -eq 0 ]]; then
+	echo "=== HBA network tests ==="
+	docker compose -p "$PREFIX" -f "$COMPOSE_FILE" run --rm network-tests \
+		2>&1 | tee "${WORKSPACE}/out/logs/docker-rta-network.log" || test_rc=$?
+fi
+
 # Optional drivers RTA. Gated on RTA_DRIVERS for the same reason as
 # the .deb / tarball paths.
 if [[ $test_rc -eq 0 && "${RTA_DRIVERS:-false}" == "true" ]]; then

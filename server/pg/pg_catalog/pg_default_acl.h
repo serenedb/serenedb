@@ -42,8 +42,11 @@ struct PgDefaultAcl {
   Oid defaclrole;
   Oid defaclnamespace;
   Defaclobjtype defaclobjtype;
-  Array<Aclitem> defaclacl;
+  AclColumn defaclacl;
 };
 // NOLINTEND
+
+template<>
+catalog::MaterializedData SystemTableSnapshot<PgDefaultAcl>::GetTableData();
 
 }  // namespace sdb::pg

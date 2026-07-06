@@ -17,7 +17,7 @@ s(100000002,2,''automobile'',n,1,0).'
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT ts_lexize('wordnet_syn', 'fast');
 ----
 ts_lexize
@@ -27,7 +27,7 @@ ts_lexize
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT ts_lexize('wordnet_syn', 'quick');
 ----
 ts_lexize
@@ -37,7 +37,7 @@ ts_lexize
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT ts_lexize('wordnet_syn', 'keyboard');
 ----
 ts_lexize

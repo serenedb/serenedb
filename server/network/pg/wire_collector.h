@@ -84,6 +84,13 @@ class WireSinkContext {
   // The session's cpu resumer; woken (RequestRun) on chain ready / sink
   // registration.
   CpuResumer* task = nullptr;
+  // Simple protocol only: the hook writes RowDescription itself, post-bind
+  // but before any task can emit DataRows (the session no longer has a
+  // pre-bound PreparedStatement to describe from).
+  bool announce_rowdesc = false;
+  // Set by the hook when it takes this context; the session gates the wire
+  // drain on it (a non-QUERY_RESULT statement leaves the context unused).
+  bool engaged = false;
   // Output formats for this portal (empty = all text) and the settings
   // template the lstates clone (buffer/types_cache filled per lstate).
   std::vector<sdb::pg::VarFormat> formats;
@@ -102,7 +109,7 @@ class WireSinkContext {
   // row offset within the chunk DuckDB re-delivers after a mid-chunk suspend.
   bool paged = false;
   std::atomic<uint64_t> row_budget{0};
-  idx_t page_offset = 0;
+  duckdb::idx_t page_offset = 0;
 
   // --- filled by the collector ---
   Mode mode = Mode::Direct;
@@ -122,6 +129,8 @@ class WireSinkContext {
   // already cancelled, so dropping them without firing is safe.
   void Reset() {
     context.reset();
+    announce_rowdesc = false;
+    engaged = false;
     proto = sdb::pg::SerializationContext{};
     row_encoding = RowEncoding::DataRow;
     mode = Mode::Direct;

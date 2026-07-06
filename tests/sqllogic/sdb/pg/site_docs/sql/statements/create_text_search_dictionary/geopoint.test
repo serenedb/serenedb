@@ -13,7 +13,7 @@ CREATE TEXT SEARCH DICTIONARY geopoint_dict (
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT ts_lexize(
     'geopoint_dict',
     '{"lat":52.52,"lng":13.405}'

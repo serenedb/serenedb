@@ -16,7 +16,7 @@ COPY (SELECT * FROM (VALUES
 query
 SELECT * FROM '${__TEST_DIR__}/data_import_and_export_csv_overview_example_001_1_flights_csv.csv';
 ----
-flightdate	uniquecarrier	origincityname	destcityname
+FlightDate	UniqueCarrier	OriginCityName	DestCityName
 2024-01-01	AA	New York, NY	Los Angeles, CA
 2024-01-02	UA	San Francisco, CA	Seattle, WA
 
@@ -54,7 +54,7 @@ FROM read_csv('${__TEST_DIR__}/data_import_and_export_csv_overview_example_002_1
         'DestCityName': 'VARCHAR'
     });
 ----
-flightdate	uniquecarrier	origincityname	destcityname
+FlightDate	UniqueCarrier	OriginCityName	DestCityName
 2024-01-01	AA	New York, NY	Los Angeles, CA
 2024-01-02	UA	San Francisco, CA	Seattle, WA
 
@@ -173,7 +173,7 @@ COPY (SELECT * FROM (VALUES
 query
 SELECT * FROM read_csv('${__TEST_DIR__}/data_import_and_export_csv_overview_example_007_1_flights_csv.csv');
 ----
-flightdate	uniquecarrier	origincityname	destcityname
+FlightDate	UniqueCarrier	OriginCityName	DestCityName
 2024-01-01	AA	New York, NY	Los Angeles, CA
 2024-01-02	UA	San Francisco, CA	Seattle, WA
 
@@ -207,10 +207,10 @@ query
 DESCRIBE TABLE ontime;
 ----
 column_name	column_type	null	key	default	extra
-flightdate	DATE	YES	NULL	NULL	NULL
-uniquecarrier	VARCHAR	YES	NULL	NULL	NULL
-origincityname	VARCHAR	YES	NULL	NULL	NULL
-destcityname	VARCHAR	YES	NULL	NULL	NULL
+FlightDate	DATE	YES	NULL	NULL	NULL
+UniqueCarrier	VARCHAR	YES	NULL	NULL	NULL
+OriginCityName	VARCHAR	YES	NULL	NULL	NULL
+DestCityName	VARCHAR	YES	NULL	NULL	NULL
 
 # DOCS_TEST: example_009
 
@@ -228,7 +228,7 @@ COPY (SELECT * FROM (VALUES
 query
 SELECT * FROM read_csv('${__TEST_DIR__}/data_import_and_export_csv_overview_example_009_1_flights_csv.csv', sample_size = 20_000);
 ----
-flightdate	uniquecarrier	origincityname	destcityname
+FlightDate	UniqueCarrier	OriginCityName	DestCityName
 2024-01-01	AA	New York, NY	Los Angeles, CA
 2024-01-02	UA	San Francisco, CA	Seattle, WA
 
@@ -248,7 +248,7 @@ COPY (SELECT * FROM (VALUES
 query
 SELECT * FROM read_csv('${__TEST_DIR__}/data_import_and_export_csv_overview_example_010_1_flights_csv.csv', header = true);
 ----
-flightdate	uniquecarrier	origincityname	destcityname
+FlightDate	UniqueCarrier	OriginCityName	DestCityName
 2024-01-01	AA	New York, NY	Los Angeles, CA
 2024-01-02	UA	San Francisco, CA	Seattle, WA
 

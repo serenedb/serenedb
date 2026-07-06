@@ -468,6 +468,67 @@ DocIterator::ptr KnnVectorQuery::Execute(const ExecutionContext& ctx,
   return it ? DocIterator::ptr{std::move(it)} : DocIterator::empty();
 }
 
+bool KnnVectorQuery::CollectTopK(ScoreCollector& collector,
+                                 const ExecutionContext& /*ctx*/,
+                                 const StatsBuffer& /*stats*/) const {
+  if (_state.quant == VectorQuantization::None || _inner) {
+    return false;
+  }
+  if (_state.cookies.empty()) {
+    return true;  // nothing probed; a valid (empty) collection
+  }
+  SDB_ASSERT(_state.reader);
+  SDB_ASSERT(_state.vector_column);
+  SDB_ASSERT(_state.pay_starts.size() == _state.cookies.size());
+  SDB_ASSERT(_state.cluster_counts.size() == _state.cookies.size());
+  SDB_ASSERT(_state.codebook);
+
+  const auto& codebook = _state.codebook;
+  const bool has_centroids =
+    _state.cluster_centroids.size() == _state.cookies.size() * _state.d;
+  std::unique_ptr<IndexInput> pay_root;
+
+  constexpr size_t kBatch = 256;
+  std::array<doc_id_t, kBatch> docs;
+  std::array<score_t, kBatch> scores;
+
+  for (size_t c = 0; c < _state.cookies.size(); ++c) {
+    const PostingCookie cookie{.cookie = _state.cookies[c].get(),
+                               .field = _state.reader->meta()};
+    auto postings = _state.reader->Iterator(IndexFeatures::None, cookie);
+    if (!postings) {
+      continue;
+    }
+    if (!pay_root) {
+      pay_root = _state.reader->ReopenPayload();
+    }
+    auto vr =
+      pay_root ? MakeQuantizerReader(codebook, pay_root->Dup()) : nullptr;
+    if (!vr) {
+      return false;
+    }
+    const float* centroid =
+      has_centroids ? _state.cluster_centroids.data() + c * _state.d : nullptr;
+    vr->StartCluster(_state.pay_starts[c], _state.cluster_counts[c], centroid);
+
+    QVectorIterator qv{std::move(postings), std::move(vr), _boost,
+                       _state.cluster_counts[c]};
+    size_t n = 0;
+    for (auto doc = qv.advance(); !doc_limits::eof(doc); doc = qv.advance()) {
+      docs[n] = doc;
+      scores[n] = qv.Distance() * _boost;
+      if (++n == kBatch) {
+        collector.AddDocs(docs.data(), n, scores.data());
+        n = 0;
+      }
+    }
+    if (n != 0) {
+      collector.AddDocs(docs.data(), n, scores.data());
+    }
+  }
+  return true;
+}
+
 DocIterator::ptr RangeVectorQuery::Execute(const ExecutionContext& ctx,
                                            const StatsBuffer& stats) const {
   if (_state.cookies.empty()) {

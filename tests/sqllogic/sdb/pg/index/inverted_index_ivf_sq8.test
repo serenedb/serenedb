@@ -64,6 +64,43 @@ count
 6
 
 # ===========================================================================
+# 1b. L2 + SQ8, single cluster, LIMIT covers the whole cluster: the exact
+#     rerank pass (rerank_pool = rerank_factor * k) pulls in every doc as one
+#     contiguous run, exercising IvfVectorReader::ReadDocRun's multi-row
+#     batched Scan (not just the single-doc path).
+# ===========================================================================
+
+statement ok
+CREATE TABLE sq8_rerank_run (pk INTEGER PRIMARY KEY, emb FLOAT[3])
+
+statement ok
+CREATE INDEX sq8_rerank_run_idx ON sq8_rerank_run
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8', nlist = 1))
+
+statement count 6
+INSERT INTO sq8_rerank_run VALUES
+  (1, [10, 0, 0]::FLOAT[3]),
+  (2, [20, 0, 0]::FLOAT[3]),
+  (3, [30, 0, 0]::FLOAT[3]),
+  (4, [40, 0, 0]::FLOAT[3]),
+  (5, [50, 0, 0]::FLOAT[3]),
+  (6, [60, 0, 0]::FLOAT[3])
+
+statement ok
+VACUUM (REFRESH_TABLE) sq8_rerank_run
+
+query
+SELECT pk FROM sq8_rerank_run_idx ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 6;
+----
+pk
+1
+2
+3
+4
+5
+6
+
+# ===========================================================================
 # 2. L2 + SQ8, multiple clusters (nlist=3): kNN merges across per-cluster
 #    QVectorIterators (disjunction). nprobe is exhaustive.
 # ===========================================================================
@@ -360,3 +397,131 @@ statement error
 CREATE INDEX sq8_bad_l1 ON sq8_bad USING inverted(pk, emb ivf (metric = 'l1', quant = 'sq8'));
 ----
 db error: ERROR: Failed to create index: Column 'emb': ivf quantization supports only metric 'l2' or 'ip'
+
+
+# ===========================================================================
+# 8. Multiple clusters (nlist=4) combined with live tombstones: INSERT /
+#    DELETE / UPDATE / multi-segment / COMPACT against a multi-cluster
+#    index. Every existing DML section above uses nlist=1 (single cluster,
+#    no cross-cluster merge); every existing nlist>1 section above has no
+#    deletions. This is the one combination that wasn't covered by either:
+#    the kNN disjunction across per-cluster QVectorIterators has to keep
+#    producing correct results while some segments carry a docs_mask
+#    (tombstones), which routes the merged iterator through a different
+#    consumer (MaskDocIterator) than the plain no-mask case.
+# ===========================================================================
+
+statement ok
+CREATE TABLE sq8_mc_dml (pk INTEGER PRIMARY KEY, emb FLOAT[3], label VARCHAR)
+
+statement ok
+CREATE INDEX sq8_mc_dml_idx ON sq8_mc_dml
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8', nlist = 4))
+  INCLUDE (label)
+
+statement count 8
+INSERT INTO sq8_mc_dml VALUES
+  (1, [100, 0, 0]::FLOAT[3], 'a'),
+  (2, [102, 0, 0]::FLOAT[3], 'b'),
+  (3, [0, 90, 0]::FLOAT[3], 'c'),
+  (4, [0, 95, 0]::FLOAT[3], 'd'),
+  (5, [0, 0, 80]::FLOAT[3], 'e'),
+  (6, [0, 0, 85]::FLOAT[3], 'f'),
+  (7, [-70, 0, 0]::FLOAT[3], 'g'),
+  (8, [-75, 0, 0]::FLOAT[3], 'h')
+
+statement ok
+VACUUM (REFRESH_TABLE) sq8_mc_dml
+
+# baseline kNN across all 4 clusters
+query
+SELECT pk FROM sq8_mc_dml_idx ORDER BY emb <-> [100, 0, 0]::FLOAT[3] LIMIT 2;
+----
+pk
+1
+2
+
+# DELETE: deleted row must drop out after refresh; disjunction merge across
+# the remaining clusters (now via MaskDocIterator) still correct.
+statement ok
+DELETE FROM sq8_mc_dml WHERE pk = 1
+
+statement ok
+VACUUM (REFRESH_TABLE) sq8_mc_dml
+
+query
+SELECT pk FROM sq8_mc_dml_idx ORDER BY emb <-> [100, 0, 0]::FLOAT[3] LIMIT 2;
+----
+pk
+2
+5
+
+query
+SELECT count(*) FROM sq8_mc_dml_idx;
+----
+count
+7
+
+# UPDATE indexed vector: pk=7 moves cluster, from [-70,0,0] to [0,0,-90].
+statement ok
+UPDATE sq8_mc_dml SET emb = [0, 0, -90]::FLOAT[3] WHERE pk = 7
+
+statement ok
+VACUUM (REFRESH_TABLE) sq8_mc_dml
+
+query
+SELECT pk FROM sq8_mc_dml_idx ORDER BY emb <-> [0, 0, -89]::FLOAT[3] LIMIT 1;
+----
+pk
+7
+
+query
+SELECT pk FROM sq8_mc_dml_idx ORDER BY emb <-> [-71, 0, 0]::FLOAT[3] LIMIT 1;
+----
+pk
+8
+
+# multi-segment: a second refreshed batch creates a new segment; kNN merges
+# across per-cluster disjunctions from both segments.
+statement count 2
+INSERT INTO sq8_mc_dml VALUES
+  (9, [200, 0, 0]::FLOAT[3], 'i'),
+  (10, [0, 200, 0]::FLOAT[3], 'j')
+
+statement ok
+VACUUM (REFRESH_TABLE) sq8_mc_dml
+
+query
+SELECT pk FROM sq8_mc_dml_idx ORDER BY emb <-> [199, 0, 0]::FLOAT[3] LIMIT 1;
+----
+pk
+9
+
+# COMPACT after deletes across segments/clusters: physical removal, results
+# stable (back to the plain no-mask disjunction path after compaction).
+statement ok
+DELETE FROM sq8_mc_dml WHERE pk IN (2, 9)
+
+statement ok
+VACUUM (COMPACT_TABLE) sq8_mc_dml
+
+query
+SELECT pk FROM sq8_mc_dml_idx ORDER BY emb <-> [100, 0, 0]::FLOAT[3] LIMIT 1;
+----
+pk
+5
+
+query
+SELECT count(*) FROM sq8_mc_dml_idx;
+----
+count
+7
+
+# hybrid: WHERE filter combined with kNN on the multi-cluster index.
+query
+SELECT pk, label FROM sq8_mc_dml_idx
+  WHERE label IN ('c', 'd', 'e', 'f') ORDER BY emb <-> [0, 0, 89]::FLOAT[3] LIMIT 2;
+----
+pk	label
+6	f
+5	e

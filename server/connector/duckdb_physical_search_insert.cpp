@@ -209,10 +209,9 @@ void RemoveCtasTombstoneIfNeeded(SearchInsertGlobalState& state) {
   // until the next boot. The table must exist post-reveal, and CTAS tables are
   // always Search-engine (asserted in CreateCtasTable), so GetData() is bound.
   auto snapshot = catalog.GetCatalogSnapshot();
-  auto table = snapshot->GetTable(catalog::NoAccessCheck(),
-                                  state.ctas_database_id,
-                                  state.ctas_schema_name,
-                                  state.ctas_table_name);
+  auto table =
+    snapshot->GetTable(catalog::NoAccessCheck(), state.ctas_database_id,
+                       state.ctas_schema_name, state.ctas_table_name);
   SDB_ASSERT(table);
   table->GetData()->StartTasks();
 }

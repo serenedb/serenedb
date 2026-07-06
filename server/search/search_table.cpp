@@ -50,8 +50,8 @@ std::filesystem::path SearchTable::GetPath(ObjectId db_id, ObjectId schema_id,
   SDB_ASSERT(db_id.isSet());
   SDB_ASSERT(schema_id.isSet());
   SDB_ASSERT(table_id.isSet());
-  // Same engine_search/<db>/<schema>/<table> layout as an inverted index minus
-  // the trailing index level -- reuse its path generator with the index unset.
+  // Same on-disk layout as an inverted index minus the trailing index level --
+  // reuse its path generator with the index unset.
   // TODO(Dronplane): unify as generic SearchStorage with all common stuff
   return InvertedIndexStorage::GetPath(db_id, schema_id, table_id,
                                        /*index_id=*/ObjectId{});
@@ -180,10 +180,9 @@ void SearchTable::OpenWriter() {
   _wal = &GetSearchEngine().GetDbWal(_db_id);
 
   if (_is_new) {
-    // A brand-new shard has no WAL records, so it is trivially caught up to the
-    // database WAL's current tick. Seed its committed tick there (not 0) so an
-    // unused table doesn't pin the shared WAL's GC floor; the initial
-    // RefreshCommit below persists it via the meta payload for reopen.
+    // A brand-new shard has no WAL records, so seed its committed tick at the
+    // database WAL's current tick (not 0) -- otherwise an unused table would
+    // pin the shared WAL's GC floor.
     _last_committed_tick = _wal->CurrentTick();
   }
   _wal->RegisterShard(GetTableId(), _last_committed_tick);
@@ -200,11 +199,8 @@ void SearchTable::StartTasks() {
              GetTableId().id());
 #endif
   // Launch this table's refresh + compaction loops on the shared background
-  // scheduler -- the same RefreshLoop / CompactionCoordinator that drive
-  // inverted indexes, templated on the storage type. A zero refresh/compaction
-  // interval makes the respective loop idle-poll until an ALTER enables it.
-  // Called only after recovery finalize (StartSearchTableMaintenance) or
-  // CREATE/CTAS finalize, so a background commit's WAL GC never races replay.
+  // scheduler. Called only after recovery or CREATE/CTAS finalize, so a
+  // background commit's WAL GC never races replay.
   GetSearchEngine().StartTasks(shared_from_this());
 }
 
@@ -224,12 +220,10 @@ ResultWithTime SearchTable::RefreshUnsafe(
       }
     }
     if (lock.owns_lock()) {
-      // Snapshot the WAL tick before publishing. RegisterFlush ties every
-      // in-flight DML batch to the writer's flush context, so a RefreshCommit
-      // that reports no changes proves this shard has nothing un-published up
-      // to that tick (a pending batch would have blocked RefreshCommit). Any
-      // batch that commits after this snapshot lands at a strictly higher tick,
-      // so advancing to `tick_before` never over-claims.
+      // Snapshot the WAL tick before publishing: a RefreshCommit that reports
+      // no changes proves this shard has nothing un-published up to that tick,
+      // and any later batch lands at a higher tick, so advancing to it never
+      // over-claims.
       const auto tick_before = _wal->CurrentTick();
       if (_writer->RefreshCommit()) {
         _wal->OnShardCommit(GetTableId(), _last_committed_tick);
@@ -261,10 +255,8 @@ ResultWithTime SearchTable::CompactUnsafe(
               GetTableId().id()};
   } else {
     try {
-      // Lock-free: iresearch serializes Compact against refresh/DML internally,
-      // so a long merge never blocks the refresh chain. field_options is the
-      // merged segment's per-field encoding config -- generic (nullptr) for a
-      // search table for now.
+      // iresearch serializes Compact against refresh/DML internally, so a long
+      // merge never blocks the refresh chain.
       const auto res =
         _writer->Compact(policy, field_options, nullptr, progress);
       if (!res) {

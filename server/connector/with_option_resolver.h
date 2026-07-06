@@ -31,10 +31,8 @@
 namespace sdb::connector {
 
 // Resolve a UINTEGER option: the explicit WITH value when present, else the
-// DB-level config-variable default / SET value (`name` must be a registered
-// setting). Shared by the search-table and inverted-index CREATE paths so both
-// resolve the maintenance intervals identically. Pass a null `with_value` when
-// the caller has no WITH clause (e.g. the ES-compat function).
+// registered DB-level default. Shared by the search-table and inverted-index
+// CREATE paths so both resolve the maintenance intervals identically.
 inline uint32_t ResolveUintWithOption(duckdb::ClientContext& context,
                                       std::string_view name,
                                       const duckdb::Value* with_value) {

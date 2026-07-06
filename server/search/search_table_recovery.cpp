@@ -193,11 +193,9 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
       ++recovered_shards;
     }
 
-    // Every shard has now published all of its own records; records at higher
-    // ticks belong to other shards. Advance every shard -- including ones with
-    // no replayed records -- to the recovered max tick so an idle shard doesn't
-    // pin this database WAL's GC floor after recovery. Safe: recovery is
-    // single-threaded, so nothing commits concurrently.
+    // Advance every shard -- including ones with no replayed records -- to the
+    // recovered max tick, so an idle shard doesn't pin this database WAL's GC
+    // floor after recovery. Safe because recovery is single-threaded.
     const uint64_t db_max_tick = wal.CurrentTick();
     for (const auto& entry : shards) {
       wal.OnShardCommit(entry.first, db_max_tick);

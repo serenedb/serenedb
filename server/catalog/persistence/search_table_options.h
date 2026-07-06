@@ -24,11 +24,9 @@
 
 namespace sdb::catalog::persistence {
 
-// Persisted per-table options for a Search-engine table -- the table-engine
-// analog of InvertedIndexOptions. Resolved at CREATE from the WITH options /
-// config-variable defaults, stored in TableData, and read back at boot. Grouped
-// so future search-table options add here (plus the WITH/config-var resolution)
-// without widening every layer. 0 = disabled (matches the inverted semantics).
+// Persisted per-table options for a Search-engine table -- the analog of
+// InvertedIndexOptions, resolved at CREATE from WITH options / config-variable
+// defaults. 0 = disabled (matches the inverted semantics).
 struct SearchTableOptions {
   uint32_t refresh_interval_ms = 0;
   uint32_t compaction_interval_ms = 0;

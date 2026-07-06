@@ -204,10 +204,9 @@ void RemoveCtasTombstoneIfNeeded(SearchInsertGlobalState& state) {
   state.ctas_finalized = true;
 
   // The CTAS table is now visible; start its background maintenance. CTAS skips
-  // SchemaEntry::CreateTable (which does this for plain CREATE), so without
-  // this a CTAS search table would have no background commit/consolidation/GC
-  // until the next boot. The table must exist post-reveal, and CTAS tables are
-  // always Search-engine (asserted in CreateCtasTable), so GetData() is bound.
+  // SchemaEntry::CreateTable (which does this for a plain CREATE), so otherwise
+  // a CTAS search table would get no background maintenance until the next
+  // boot.
   auto snapshot = catalog.GetCatalogSnapshot();
   auto table =
     snapshot->GetTable(catalog::NoAccessCheck(), state.ctas_database_id,

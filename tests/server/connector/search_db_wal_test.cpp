@@ -603,12 +603,9 @@ TEST_F(SearchDbWalTest, IdleShardPinsLogUntilDeregister) {
 }
 
 TEST_F(SearchDbWalTest, IdleShardAdvancedToCurrentTickUnpinsGc) {
-  // The fix for the idle-shard GC stall: rather than relying on DROP
-  // (DeregisterShard), an idle shard -- which has no records of its own and is
-  // therefore caught up -- advances its committed tick to the WAL's current
-  // tick. That is what SearchTable's background refresh (RefreshUnsafe) and
-  // recovery finalize now do, lifting the shared WAL's GC floor while the shard
-  // stays registered.
+  // The fix for the idle-shard GC stall: an idle shard (no records of its own,
+  // so already caught up) advances its committed tick to the WAL's current
+  // tick, lifting the shared WAL's GC floor without having to be dropped.
   SearchDbWal wal(Fs(), _dir, /*seal_threshold=*/1);
   for (int i = 1; i <= 3; ++i) {
     auto c = MakeIntCdc(Alloc(), {i});

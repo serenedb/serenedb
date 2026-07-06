@@ -90,9 +90,7 @@ class Table final : public Object {
   const auto& ForeignKeys() const noexcept { return _foreign_keys; }
 
   // Background-maintenance options (Search-engine tables only; default/empty
-  // elsewhere). Resolved from WITH / config-var defaults at CREATE, persisted,
-  // read back at boot. SetSearchOptions is used once on the freshly built
-  // table.
+  // elsewhere), resolved from WITH / config-var defaults at CREATE.
   const SearchTableOptions& SearchOptions() const noexcept {
     return _search_options;
   }

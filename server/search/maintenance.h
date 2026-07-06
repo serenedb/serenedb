@@ -25,12 +25,9 @@
 
 #include "basics/result.h"
 
-// Background-maintenance vocabulary shared by every maintained iresearch store
-// (InvertedIndexStorage, SearchTable) and the templated RefreshLoop /
-// CompactionCoordinator (search/task.h) that drive them. A store satisfies the
-// loops by exposing GetTasksSettings() + Refresh/Compact/CleanupUnsafe +
-// CompactionGeneration/NudgeCompaction + StalePressure/Clear/BumpStalePressure.
-// (The background compaction policy is owned by the coordinator, not settings.)
+// Background-maintenance vocabulary shared by the maintained iresearch stores
+// (InvertedIndexStorage, SearchTable) and the loops in search/task.h that drive
+// them.
 namespace sdb::search {
 
 // Maintenance cadence, read by the background loops. The writebuffer_*/version

@@ -96,15 +96,9 @@ const irs::CompactionPolicy& TierPolicySmall() {
   return kPolicy;
 }
 
-// Per-storage source of the merge's irs::IndexFieldOptions, pinned for the
-// merge's lifetime. This is the ONLY part of the background loops that differs
-// by storage type:
-//   * InvertedIndexStorage -- the catalog::InvertedIndex (which is-a
-//     IndexFieldOptions); a target found already dropped (alive=false) is
-//     skipped, the drop task gates on the storage release.
-//   * SearchTable -- generic options for now (a plain columnstore + PK term has
-//     no per-field encoding config; the catalog Table becomes the source once
-//     indexed-column support lands).
+// Per-storage source of the merge's field options, pinned for the merge's
+// lifetime -- the only part of the background loops that differs by storage
+// type (see the PinCompactionOptions overloads below).
 struct CompactionOptions {
   bool alive = false;
   // Pins the catalog object that owns `field_options` for the whole merge.

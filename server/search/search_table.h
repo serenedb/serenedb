@@ -43,14 +43,12 @@ namespace sdb::search {
 
 // Per-table iresearch columnstore store for a TableEngine::Search table -- the
 // Search-engine sibling of InvertedIndexStorage. Attached to the
-// catalog::Table via GetData()/SetData(); the directory layout is derived from
-// (db_id, table_id), see GetPath.
+// catalog::Table via GetData()/SetData().
 class SearchTable : public std::enable_shared_from_this<SearchTable> {
  public:
-  // `is_new` opens a fresh index (and publishes an empty commit); otherwise the
-  // durable index is reopened and its committed tick restored. The maintenance
-  // intervals are resolved (WITH else config-var default) + persisted by the
-  // catalog and passed in here (mirrors InvertedIndexStorage).
+  // `is_new` opens a fresh index; otherwise the durable one is reopened.
+  // `options` carries the maintenance intervals resolved and persisted by the
+  // catalog (mirrors InvertedIndexStorage).
   SearchTable(ObjectId db_id, ObjectId schema_id, ObjectId table_id,
               bool is_new, const catalog::SearchTableOptions& options);
   ~SearchTable();
@@ -58,9 +56,9 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   SearchTable(const SearchTable&) = delete;
   SearchTable& operator=(const SearchTable&) = delete;
 
-  // Opens (or reopens, when !is_new) this table's on-disk iresearch store and
-  // binds the database WAL; the returned handle is attached to the catalog
-  // Table via Table::SetData. Mirror of InvertedIndexStorage::Create.
+  // Opens this table's on-disk store and binds the database WAL; the handle is
+  // attached to the catalog Table via SetData. Mirror of
+  // InvertedIndexStorage::Create.
   static std::shared_ptr<SearchTable> Create(
     ObjectId db_id, ObjectId schema_id, ObjectId table_id, bool is_new,
     const catalog::SearchTableOptions& options);
@@ -80,11 +78,9 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   static std::filesystem::path GetWalPath(ObjectId db_id);
   static std::filesystem::path GetChunkDir(ObjectId db_id, ObjectId table_id);
 
-  // Drop on-disk artifacts. The iresearch index dir nests under the schema
-  // (engine_search/<db>/<schema>/<table>), so a schema/database drop wipes it
-  // wholesale -- only a standalone table drop calls DropIndexDir. The WAL chunk
-  // dir + shard registration live under the per-database WAL, which no ancestor
-  // drop reaches, so DropWalShard is always per-table.
+  // Drop on-disk artifacts. The index dir nests under the schema, so a
+  // schema/database drop already wipes it; the WAL shard lives under the
+  // per-database WAL and always needs its own per-table drop.
   static Result DropIndexDir(ObjectId db_id, ObjectId schema_id,
                              ObjectId table_id);
   static Result DropWalShard(ObjectId db_id, ObjectId table_id);
@@ -133,24 +129,20 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   }
 
   // --- Background maintenance ---
-  // Same interface InvertedIndexStorage exposes, so the templated RefreshLoop /
-  // CompactionCoordinator (search/task.h) drive a search table too: the store
-  // provides the "how" (these ops + the cadence/nudge/stale-pressure state),
-  // the loops provide the "when".
+  // Mirrors the interface InvertedIndexStorage exposes, so the shared refresh /
+  // compaction loops (search/task.h) drive a search table too.
   ObjectId GetId() const noexcept { return _table_id; }
   auto& GetTasksSettings() { return _maint_settings; }
 
-  // Wake the compaction coordinator after a refresh produced new segments; the
-  // coordinator polls this generation during its backoff wait.
+  // Wake the compaction loop after a refresh produced new segments.
   void NudgeCompaction() noexcept {
     _compaction_gen.fetch_add(1, std::memory_order_release);
   }
   uint64_t CompactionGeneration() const noexcept {
     return _compaction_gen.load(std::memory_order_acquire);
   }
-  // Demand-driven cleanup: a non-empty compaction leaves unreferenced files and
-  // raises stale pressure; the refresh loop runs cleanup once it crosses a
-  // threshold (or on its periodic step), then clears it.
+  // Compaction leaves unreferenced files behind; raising stale pressure signals
+  // the refresh loop to run cleanup.
   void BumpStalePressure() noexcept {
     _stale_pressure.fetch_add(1, std::memory_order_relaxed);
   }
@@ -165,13 +157,9 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   // once, after the table is open and recovery (if any) finalized.
   void StartTasks();
 
-  // The maintenance ops the loops invoke. RefreshUnsafe takes _refresh_mutex
-  // (try-lock; wait=true blocks) and publishes pending inserts; Compact/Cleanup
-  // are lock-free (iresearch serializes them internally) so a long merge never
-  // blocks the refresh chain. `field_options` is the merge's per-field encoding
-  // config -- generic (nullptr) for now, since a search table is a plain
-  // columnstore + PK term; the catalog Table becomes the source once
-  // indexed-column support lands. Each returns timing for the loop's logging.
+  // The maintenance ops the loops invoke: RefreshUnsafe publishes pending
+  // inserts, CompactUnsafe merges segments, CleanupUnsafe reclaims unreferenced
+  // files.
   ResultWithTime RefreshUnsafe(bool wait,
                                const irs::ProgressReportCallback& progress,
                                RefreshResult& code);
@@ -200,21 +188,15 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   SearchDbWal* _wal = nullptr;
   uint64_t _last_committed_tick = 0;
 
-  // Background maintenance (new model -- mirrors InvertedIndexStorage).
-  // _refresh_mutex serializes refresh-vs-refresh (Compact/Cleanup are
-  // lock-free; iresearch serializes them internally). A zero refresh/compaction
-  // interval disables that chain. The cadence lives in _maint_settings; the
-  // loops poll _compaction_gen (refresh nudges) and _stale_pressure
-  // (compaction-driven cleanup demand).
+  // Background maintenance state (mirrors InvertedIndexStorage). A zero
+  // refresh/compaction interval disables the loops.
   TasksSettings _maint_settings;
   absl::Mutex _refresh_mutex;
   std::atomic<uint64_t> _compaction_gen{0};
   std::atomic<uint32_t> _stale_pressure{0};
 #ifdef SDB_DEV
-  // Dev-only double-start tripwire: StartTasks pushes one refresh + one
-  // compaction loop into the engine, so a second call would create competing
-  // loops. Not a release concern -- each instance is started exactly once
-  // (recovery's StartSearchTableMaintenance pass, or CREATE/CTAS finalize).
+  // Dev-only tripwire: asserts StartTasks runs at most once, so a bug can't
+  // spawn competing maintenance loops.
   std::atomic<bool> _tasks_started{false};
 #endif
 };

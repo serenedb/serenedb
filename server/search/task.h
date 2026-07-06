@@ -29,19 +29,13 @@ namespace sdb::search {
 class InvertedIndexStorage;
 class SearchTable;
 
-// One coroutine per maintenance target drives background refresh (+ cleanup
-// tail); another coordinates parallel compaction. Each holds a weak_ptr so a
-// dropped target ends the loop (no shared-ptr cycle keeps it alive) and resets
-// it while idle so a concurrent DROP isn't blocked. The returned Future is
-// collected by SearchEngine so stop() can join every loop.
+// One coroutine per maintenance target drives background refresh (+ cleanup);
+// another coordinates compaction. Each holds a weak_ptr so a dropped target
+// ends the loop, and the returned Future lets SearchEngine::stop() join it.
 //
 // Templated on the storage type so the same loops drive both an inverted index
-// (InvertedIndexStorage) and a search table (SearchTable): both expose the same
-// maintenance interface (GetId / GetTasksSettings / RefreshUnsafe /
-// CleanupUnsafe / CompactUnsafe / CompactionGeneration / NudgeCompaction /
-// StalePressure&co). The only per-storage difference -- where the merge's
-// irs::IndexFieldOptions come from -- is isolated to a PinCompactionOptions
-// overload in the .cpp. Instantiated only for the two types below.
+// and a search table (both expose the maintenance interface in maintenance.h).
+// Instantiated only for the two types below.
 template<class Storage>
 yaclib::Future<> RefreshLoop(std::weak_ptr<Storage> weak);
 template<class Storage>

@@ -90,6 +90,8 @@ class DocIteratorWrapper : public irs::DocIterator {
     });
   }
 
+  IRS_DOC_ITERATOR_DEFAULTS
+
  private:
   irs::DocIterator::ptr _it;
   std::vector<irs::doc_id_t> _docs;

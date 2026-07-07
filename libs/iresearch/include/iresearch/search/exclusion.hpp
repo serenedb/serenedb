@@ -36,6 +36,8 @@ class ExclusionIterator : public DocIterator {
     return _incl.GetMutable(type);
   }
 
+  IRS_DOC_ITERATOR_DEFAULTS
+
   doc_id_t advance() final {
     const auto incl = _incl.advance();
     return converge(incl);
@@ -86,20 +88,6 @@ class ExclusionIterator : public DocIterator {
   }
 
   void FetchScoreArgs(uint16_t index) final { _incl.FetchScoreArgs(index); }
-
-  uint32_t count() final { return CountImpl(*this); }
-
-  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
-               ScoreCollector& collector) final {
-    CollectImpl(*this, scorer, fetcher, collector);
-  }
-
-  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
-                                      uint64_t* mask,
-                                      FillBlockScoreContext score,
-                                      FillBlockMatchContext match) final {
-    return FillBlockImpl(*this, min, max, mask, score, match);
-  }
 
  private:
   doc_id_t converge(doc_id_t incl) {

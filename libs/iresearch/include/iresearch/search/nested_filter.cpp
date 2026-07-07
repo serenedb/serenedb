@@ -90,6 +90,8 @@ class ChildToParentJoin : public DocIterator, private Matcher {
     return irs::GetMutable(_attrs, id);
   }
 
+  IRS_DOC_ITERATOR_DEFAULTS
+
   doc_id_t advance() final {
     const auto parent = _parent->advance();
     return _doc = SeekInternal(parent);
@@ -115,14 +117,7 @@ class ChildToParentJoin : public DocIterator, private Matcher {
     return _doc = SeekInternal(parent);
   }
 
-  uint32_t count() final { return CountImpl(*this); }
-
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final;
-
-  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
-               ScoreCollector& collector) final {
-    CollectImpl(*this, scorer, fetcher, collector);
-  }
 
   void FetchScoreArgs(uint16_t index) final {
     if constexpr (Matcher::kHasScore) {
@@ -151,7 +146,8 @@ class ChildToParentJoin : public DocIterator, private Matcher {
       parent = _parent->seek(first_child);
 
       if (doc_limits::eof(parent) ||
-          (parent == first_child && !_parent->next())) {  // Skip parent docs
+          (parent == first_child &&
+           doc_limits::eof(_parent->advance()))) {  // Skip parent docs
         return doc_limits::eof();
       }
     }

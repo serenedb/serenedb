@@ -137,10 +137,6 @@ struct VectorScorerOptions {
 struct SearchScan : ScanSource {
   SearchScan() : ScanSource(ScanSourceKind::Search) {}
 
-  // The prepared `Query` is built in SearchFullScanInitGlobal so prepare
-  // happens exactly once per execution, with the scorer if requested.
-  // This struct only carries the unprepared filter; the reader lives on
-  // `snapshot` and callers reach it via `snapshot->reader`.
   std::shared_ptr<irs::Filter> stored_filter;
   search::InvertedIndexSnapshotPtr snapshot;
 
@@ -159,8 +155,6 @@ struct SearchScan : ScanSource {
   std::vector<OffsetsRequest> offsets;
 
   bool EmitOffsets() const { return !offsets.empty(); }
-
-  bool count_only = false;
 
   void AppendSummary(
     const SereneDBScanBindData& bind,
@@ -187,12 +181,10 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table_entry;
   ScanEntryKind entry_kind = ScanEntryKind::BaseTable;
 
-  // Null for base-table and secondary-index scans.
   std::shared_ptr<const catalog::InvertedIndex> inverted_index;
 
   std::unique_ptr<ScanSource> scan_source = std::make_unique<FullTableScan>();
 
-  // EXPLAIN "Lookup:" label. Empty for non-index scans.
   std::string lookup_label;
 
   Kind GetKind() const noexcept { return _kind; }
@@ -217,10 +209,8 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
 
   virtual std::string_view RelationName() const = 0;
 
-  // Returns kInvalidColumnId when the name is not on the relation.
   virtual catalog::Column::Id ColumnIdByName(std::string_view name) const = 0;
 
-  // Returns an empty view when the id is not on the relation.
   virtual std::string_view ColumnNameById(catalog::Column::Id col_id) const = 0;
 
   virtual duckdb::LogicalType ColumnTypeById(
@@ -273,8 +263,6 @@ struct ViewScanBindData final : public SereneDBScanBindData {
   void IterateColumns(const ColumnVisitor& cb) const final;
 };
 
-// Public bind callback shared by every SereneDB scan -- IsSereneDBScan
-// checks for it.
 duckdb::unique_ptr<duckdb::FunctionData> SereneDBScanBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
@@ -284,129 +272,11 @@ inline bool IsSereneDBScan(const duckdb::LogicalGet& get) {
   return get.bind_data && get.function.bind == &SereneDBScanBind;
 }
 
-// Full-table scan for search-backed (TableEngine::Search) tables. Selected by
-// SereneDBTableEntry::GetScanFunction; iresearch columnstore -> DuckDB
-// DataChunk via ColumnstoreMaterializer::Scan.
 duckdb::TableFunction CreateSearchTableScanFunction();
 
 duckdb::TableFunction CreateIResearchScanFunction();
 
-// True when the scan projects no real columns (e.g. COUNT(*)), so the operator
-// can answer from the live row count instead of materialising columns.
 bool IsCountOnlyScan(const SereneDBScanBindData& bind_data,
                      const duckdb::TableFunctionInitInput& input);
-
-inline auto MakeFieldNameResolver(const SereneDBScanBindData& bind_data,
-                                  const catalog::InvertedIndex& index) {
-  return [&bind_data, &index](catalog::Column::Id col_id) -> std::string {
-    const auto fid = static_cast<irs::field_id>(col_id);
-    auto base = std::string{bind_data.ColumnNameById(col_id)};
-    const auto column_type = bind_data.ColumnTypeById(col_id);
-    const bool found_type = column_type.id() != duckdb::LogicalTypeId::INVALID;
-    const auto lookup = index.LookupField(fid);
-    auto entry_base = [&](irs::field_id entry_fid) {
-      std::string s;
-      const auto* expr = index.ExpressionByFieldId(entry_fid);
-      if (expr && !expr->pretty_printed.empty()) {
-        s = expr->pretty_printed;
-      } else {
-        s = bind_data.ColumnNameById(catalog::Column::Id{entry_fid});
-      }
-      if (s.empty()) {
-        s = absl::StrCat("col", entry_fid);
-      }
-      return s;
-    };
-    if (lookup.entry_field_id == catalog::term_dict::kPKFieldId) {
-      const auto name =
-        bind_data.ColumnNameById(catalog::Column::kGeneratedPKId);
-      return std::string{name.empty() ? std::string_view{"sdb_generated_pk"}
-                                      : name} +
-             "(pk)";
-    }
-    if (lookup.entry) {
-      const auto& entry = *lookup.entry;
-      if (fid == lookup.entry_field_id) {
-        const auto* expr = index.ExpressionByFieldId(fid);
-        if (base.empty() && expr && !expr->pretty_printed.empty()) {
-          base = expr->pretty_printed;
-        }
-        if (base.empty()) {
-          base = absl::StrCat("col", fid);
-        }
-        if (expr) {
-          catalog::InvertedIndex::AppendKindSuffix(base, expr->return_type);
-        } else if (found_type) {
-          catalog::InvertedIndex::AppendKindSuffix(base, column_type);
-        } else if (entry.text_dictionary.isSet()) {
-          base += "(string)";
-        }
-        return base;
-      }
-      if (fid == entry.null_field_id) {
-        return entry_base(lookup.entry_field_id) + "(null)";
-      }
-      if (fid == entry.bool_field_id) {
-        return entry_base(lookup.entry_field_id) + "(bool)";
-      }
-      if (fid == entry.numeric_field_id) {
-        return entry_base(lookup.entry_field_id) + "(numeric)";
-      }
-      if (fid == entry.synthetic_column) {
-        return entry_base(lookup.entry_field_id) + "(synthetic)";
-      }
-    }
-    if (base.empty()) {
-      base = absl::StrCat("col", fid);
-    }
-    if (found_type) {
-      catalog::InvertedIndex::AppendKindSuffix(base, column_type);
-    }
-    return base;
-  };
-}
-
-inline auto MakeFieldKindResolver(const SereneDBScanBindData& bind_data,
-                                  const catalog::InvertedIndex& index) {
-  return [&bind_data,
-          &index](catalog::Column::Id col_id) -> catalog::term_dict::Kind {
-    using catalog::term_dict::Kind;
-    const auto fid = static_cast<irs::field_id>(col_id);
-    const auto lookup = index.LookupField(fid);
-    if (lookup.entry_field_id == catalog::term_dict::kPKFieldId) {
-      return Kind::NumericI64;
-    }
-    if (lookup.entry) {
-      const auto& entry = *lookup.entry;
-      if (fid == lookup.entry_field_id) {
-        const auto* expr = index.ExpressionByFieldId(fid);
-        if (expr) {
-          return catalog::term_dict::Classify(expr->return_type.id());
-        }
-        const auto column_type = bind_data.ColumnTypeById(col_id);
-        if (column_type.id() != duckdb::LogicalTypeId::INVALID) {
-          return catalog::term_dict::Classify(column_type.id());
-        }
-        return Kind::String;
-      }
-      if (fid == entry.null_field_id) {
-        return Kind::Null;
-      }
-      if (fid == entry.bool_field_id) {
-        return Kind::Bool;
-      }
-      if (fid == entry.numeric_field_id) {
-        // shared across all numeric widths; the term's marker byte picks the
-        // concrete decode
-        return Kind::NumericF64;
-      }
-    }
-    const auto column_type = bind_data.ColumnTypeById(col_id);
-    if (column_type.id() != duckdb::LogicalTypeId::INVALID) {
-      return catalog::term_dict::Classify(column_type.id());
-    }
-    return Kind::Unsupported;
-  };
-}
 
 }  // namespace sdb::connector

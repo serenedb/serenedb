@@ -20,8 +20,6 @@
 
 #include "connector/duckdb_search_ann_scan.h"
 
-#include <absl/algorithm/container.h>
-
 #include <algorithm>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
@@ -65,6 +63,20 @@ void AttachTextFilter(Lstate& lstate, const SearchAnnScanGlobalState& gstate) {
                              *lstate.text_filter_collector);
 }
 
+irs::ScoreDoc MakeScoreDoc(int64_t id, float dis,
+                           const VectorScorerOptions& vs) {
+  auto [seg, doc] = irs::UnpackSegmentWithDoc(id);
+  return {.score = vs.TransformDistance(dis), .doc = doc, .segment_idx = seg};
+}
+
+template<typename PQ>
+typename PQ::container_type& HeapContainer(PQ& pq) noexcept {
+  struct Access : PQ {
+    using PQ::c;
+  };
+  return static_cast<Access&>(pq).c;
+}
+
 template<typename Buf>
 void BuildSortedHits(const Buf& buf, size_t count,
                      const VectorScorerOptions& vs,
@@ -76,36 +88,9 @@ void BuildSortedHits(const Buf& buf, size_t count,
     if (id == -1) {
       continue;
     }
-    auto [seg, doc] = irs::UnpackSegmentWithDoc(id);
-    out.push_back({.score = vs.TransformDistance(buf.dis[i]),
-                   .doc = doc,
-                   .segment_idx = seg});
+    out.push_back(MakeScoreDoc(id, buf.dis[i], vs));
   }
-  // Forward-only ScanCursor invariant requires (segment, doc) order.
-  absl::c_sort(out, [](const irs::ScoreDoc& l, const irs::ScoreDoc& r) {
-    return std::pair{l.segment_idx, l.doc} < std::pair{r.segment_idx, r.doc};
-  });
-}
-
-template<typename Lstate, typename Gstate>
-bool EmitHitsChunk(duckdb::ClientContext& ctx, Gstate& g, Lstate& lstate,
-                   duckdb::DataChunk& output) {
-  const size_t remaining = lstate.hits.size() - lstate.current_idx;
-  if (remaining == 0) {
-    return false;
-  }
-  const auto take = std::min<duckdb::idx_t>(remaining, STANDARD_VECTOR_SIZE);
-  SDB_IF_FAILURE("SearchLookupFault") {
-    if (g.has_external_projections) {
-      SDB_THROW(ERROR_DEBUG);
-    }
-  }
-  const ScoreDocsView view{{lstate.hits.data() + lstate.current_idx, take}};
-  const auto emitted = MaterializeChunk(ctx, g, lstate, view, output, 0);
-  const auto visible = FinalizeBatch(ctx, g, lstate, output, emitted);
-  lstate.current_idx += take;
-  output.SetChildCardinality(visible);
-  return emitted > 0;
+  SortScoreDocsBySegDoc(out);
 }
 
 }  // namespace
@@ -113,7 +98,8 @@ bool EmitHitsChunk(duckdb::ClientContext& ctx, Gstate& g, Lstate& lstate,
 void SearchAnnTopKLocalState::OnSegment(duckdb::ClientContext& ctx,
                                         const irs::SubReader& seg,
                                         uint32_t seg_idx,
-                                        SearchAnnScanGlobalState& g) {
+                                        CommonScanGlobalState& g_) {
+  auto& g = g_.Cast<SearchAnnScanGlobalState>();
   const auto& vs = *g.scan->vector_scorer;
   const auto* col_reader = seg.GetColReader();
   SDB_ASSERT(col_reader);
@@ -162,29 +148,24 @@ void SearchAnnTopKLocalState::OnSegment(duckdb::ClientContext& ctx,
 void SearchAnnTopKLocalState::PrepEmitBuffer(duckdb::ClientContext& /*ctx*/,
                                              SearchAnnScanGlobalState& g) {
   const auto& vs = *g.scan->vector_scorer;
+  auto heap = std::move(HeapContainer(top_hits));
   hits.clear();
-  hits.reserve(top_hits.size());
-  while (!top_hits.empty()) {
-    auto [d, id] = top_hits.top();
-    top_hits.pop();
-    auto [seg, doc] = irs::UnpackSegmentWithDoc(id);
-    hits.push_back(
-      {.score = vs.TransformDistance(d), .doc = doc, .segment_idx = seg});
+  hits.reserve(heap.size());
+  for (const auto& [d, id] : heap) {
+    hits.push_back(MakeScoreDoc(id, d, vs));
   }
-  // Forward-only ScanCursor invariant requires (segment, doc) order.
-  absl::c_sort(hits, [](const irs::ScoreDoc& l, const irs::ScoreDoc& r) {
-    return std::pair{l.segment_idx, l.doc} < std::pair{r.segment_idx, r.doc};
-  });
+  SortScoreDocsBySegDoc(hits);
   prepped = true;
 }
 
 bool SearchAnnTopKLocalState::OnSegmentsExhausted(duckdb::ClientContext& ctx,
-                                                  SearchAnnScanGlobalState& g,
+                                                  CommonScanGlobalState& g_,
                                                   duckdb::DataChunk& output) {
+  auto& g = g_.Cast<SearchAnnScanGlobalState>();
   if (!prepped) {
     PrepEmitBuffer(ctx, g);
   }
-  return EmitHitsChunk(ctx, g, *this, output);
+  return EmitBufferedScoreDocs(ctx, g, *this, hits, current_idx, output);
 }
 
 void SearchAnnRangeLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
@@ -215,28 +196,6 @@ void SearchAnnRangeLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
 
   SDB_ASSERT(range_buffer.ids.size() == range_buffer.dis.size());
   BuildSortedHits(range_buffer, range_buffer.ids.size(), vs, hits);
-}
-
-duckdb::idx_t SearchAnnRangeLocalState::EmitChunk(duckdb::ClientContext& ctx,
-                                                  SearchAnnScanGlobalState& g,
-                                                  duckdb::DataChunk& output,
-                                                  duckdb::idx_t output_start) {
-  const size_t remaining = hits.size() - current_idx;
-  if (remaining == 0) {
-    return 0;
-  }
-  const auto budget = STANDARD_VECTOR_SIZE - output_start;
-  const auto take = std::min<duckdb::idx_t>(remaining, budget);
-  SDB_IF_FAILURE("SearchLookupFault") {
-    if (g.has_external_projections) {
-      SDB_THROW(ERROR_DEBUG);
-    }
-  }
-  const ScoreDocsView view{{hits.data() + current_idx, take}};
-  const auto emitted =
-    MaterializeChunk(ctx, g, *this, view, output, output_start);
-  current_idx += take;
-  return emitted;
 }
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(
@@ -290,7 +249,19 @@ void SearchAnnScanFunction(duckdb::ClientContext& context,
     RunCollectThenEmitScan(context, g, l, output);
   } else {
     auto& l = data.local_state->Cast<SearchAnnRangeLocalState>();
-    RunStreamingScan(context, g, l, output);
+    for (;;) {
+      if (EmitBufferedScoreDocs(context, g, l, l.hits, l.current_idx, output)) {
+        return;
+      }
+      const auto seg_idx =
+        g.next_segment.fetch_add(1, std::memory_order_relaxed);
+      if (seg_idx >= g.total_segments) {
+        break;
+      }
+      SDB_ASSERT((*g.reader)[seg_idx].live_docs_count() != 0);
+      l.StartSegment(context, (*g.reader)[seg_idx], seg_idx, g);
+    }
+    output.SetChildCardinality(0);
   }
 }
 

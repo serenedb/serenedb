@@ -38,15 +38,16 @@
 #include <string>
 #include <vector>
 
+#include "basics/containers/flat_hash_set.h"
 #include "basics/containers/node_hash_map.h"
 #include "catalog/inverted_index.h"
 #include "catalog/search_analyzer_impl.h"
 #include "connector/duckdb_primary_key.h"
+#include "connector/duckdb_sink_writer_base.h"
 #include "connector/index_expression.hpp"
 #include "primary_key.hpp"
 #include "search/inverted_index_storage.h"
 #include "search_remove_filter.hpp"
-#include "sink_writer_base.hpp"
 
 namespace duckdb {
 
@@ -105,33 +106,47 @@ inline EntryInfoProvider NoEntryInfoProvider() {
   };
 }
 
-// Entry-info for the search-table model: every column is a plain stored
-// columnstore column (no term dict / HNSW / JSON), only the PK is indexed as a
-// term. Until CREATE INDEX on search tables lands and supplies a real provider.
 inline EntryInfoProvider AllStoredEntryInfoProvider() {
   static const catalog::InvertedIndexEntryInfo kStored = [] {
     catalog::InvertedIndexEntryInfo e;
-    e.store_values = true;  // IsStored() == true, IsTermDict() == false
+    e.store_values = true;
     return e;
   }();
   return [](irs::field_id) { return &kStored; };
 }
 
-class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
+struct PkPolicy {
+  bool index_term = true;
+  catalog::PkColumnKind column = catalog::PkColumnKind::I64;
+};
+
+inline duckdb::LogicalType PkColumnType(catalog::PkColumnKind kind) {
+  switch (kind) {
+    case catalog::PkColumnKind::I64:
+      return duckdb::LogicalType::BIGINT;
+    case catalog::PkColumnKind::I64I64:
+      static const auto kType =
+        duckdb::LogicalType::STRUCT({{"hi", duckdb::LogicalType::BIGINT},
+                                     {"lo", duckdb::LogicalType::BIGINT}});
+      return kType;
+    case catalog::PkColumnKind::None:
+    case catalog::PkColumnKind::Unable:
+      return duckdb::LogicalType::SQLNULL;
+  }
+}
+
+class SearchSinkInsertBaseImpl {
  public:
   SearchSinkInsertBaseImpl(irs::IndexWriter::Transaction& trx,
                            TokenizerProvider&& tokenizer_provider,
                            EntryInfoProvider&& entry_info_provider,
-                           std::span<const catalog::Column::Id> columns,
                            std::vector<IndexedExpression>&& indexed_exprs = {},
-                           bool store_pk_blob = true);
+                           PkPolicy pk_policy = {});
 
-  void InitImpl(size_t batch_size);
+  void InitImpl(size_t batch_size, const PkChunk& pk = {});
 
   void SwitchFieldImpl(irs::field_id field_id, const duckdb::LogicalType& type,
-                       const duckdb::Vector& vec,
-                       std::span<const std::string_view> row_keys,
-                       duckdb::idx_t count);
+                       const duckdb::Vector& vec, duckdb::idx_t count);
 
   void FinishImpl();
 
@@ -141,12 +156,11 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
 
   void AbortImpl() {
     _column_writers.clear();
-    // We don't own the transaction so Abort should be called outside.
+    _per_row_blob_writers.clear();
+    _pk_column_writer = nullptr;
     _document.reset();
   }
 
-  // Per-chunk key scratch, reused across WriteChunkToSearchSink calls (the
-  // insert/replay hot path) so every chunk doesn't reallocate these.
   struct KeyScratch {
     std::vector<duckdb::UnifiedVectorFormat> pk_formats;
     std::vector<std::string> row_keys;
@@ -193,12 +207,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
     catalog::Tokenizer::TokenizerWrapper string_analyzer;
     irs::field_id id{irs::field_limits::invalid()};
     irs::IndexFeatures index_features;
-    // For paths that don't receive a StoreAttr from an analyzer
-    // (HNSW vector columns, PK). Ignored when store_attr points elsewhere.
     irs::StoreAttr own_store;
-    // Source of stored bytes for Write(). Either points at the analyzer's
-    // StoreAttr (string columns with store-capable analyzer), or at own_store,
-    // or is nullptr (column does not store values).
     const irs::StoreAttr* store_attr = nullptr;
   };
 
@@ -207,37 +216,30 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
                                const duckdb::UnifiedVectorFormat& fmt,
                                duckdb::idx_t idx);
 
-  void EmitField(Field* field_to_insert, std::string_view full_row_key);
+  void EmitField(Field* field_to_insert);
 
   template<duckdb::LogicalTypeId Kind>
-  void WriteScalarBatch(std::span<const std::string_view> row_keys,
-                        duckdb::idx_t count, irs::field_id tokenizer_column);
+  void WriteScalarBatch(duckdb::idx_t count, irs::field_id tokenizer_column);
 
   template<duckdb::LogicalTypeId ChildKind>
-  void WriteListBatch(std::span<const std::string_view> row_keys,
-                      duckdb::idx_t count, duckdb::idx_t array_size);
+  void WriteListBatch(duckdb::idx_t count, duckdb::idx_t array_size);
 
-  bool DispatchScalarBatch(duckdb::LogicalTypeId kind,
-                           std::span<const std::string_view> row_keys,
-                           duckdb::idx_t count, irs::field_id tokenizer_column);
+  bool DispatchScalarBatch(duckdb::LogicalTypeId kind, duckdb::idx_t count,
+                           irs::field_id tokenizer_column);
 
-  bool DispatchListBatch(duckdb::LogicalTypeId child_kind,
-                         std::span<const std::string_view> row_keys,
-                         duckdb::idx_t count, duckdb::idx_t array_size);
+  bool DispatchListBatch(duckdb::LogicalTypeId child_kind, duckdb::idx_t count,
+                         duckdb::idx_t array_size);
 
-  void WriteJsonBatch(const duckdb::Vector& vec,
-                      std::span<const std::string_view> row_keys,
-                      duckdb::idx_t count);
-
-  void EmitPkOnlyBatch(std::span<const std::string_view> row_keys,
-                       duckdb::idx_t count);
+  void WriteJsonBatch(const duckdb::Vector& vec, duckdb::idx_t count);
 
   void InsertNullValue();
 
+  irs::ColumnWriter* EnsurePerRowColumnWriter(irs::field_id field_id,
+                                              const duckdb::LogicalType& type);
   irs::ColumnWriter* EnsurePerRowBlobWriter(irs::field_id field_id);
-  void MaybeEmitPk(std::string_view pk_term);
-  void AppendPkBlob(std::string_view row_key);
-  void AppendPerRowBlob(irs::field_id field_id, irs::bytes_view bytes);
+  void AppendPkColumn(const duckdb::Vector& pk, duckdb::idx_t count);
+  void EmitPkTerms(std::span<const std::string_view> keys);
+  void AppendBlobTo(irs::ColumnWriter& writer, irs::bytes_view bytes);
 
   void AppendToColumn(irs::field_id field_id, const duckdb::LogicalType& type,
                       const duckdb::Vector& vec, duckdb::idx_t count);
@@ -267,13 +269,8 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
 
   containers::FlatHashMap<irs::field_id, irs::ColumnWriter*>
     _per_row_blob_writers;
-  irs::ColumnWriter* _pk_blob_writer = nullptr;
-  // Latch so the PK is emitted once per document (cleared after the first
-  // column's batch), independent of whether a PK blob column exists.
-  bool _emit_pk = false;
-  // false for search tables (PK indexed as a term only); true for inverted
-  // indexes (PK blob maps a hit back to the row).
-  bool _store_pk_blob = true;
+  irs::ColumnWriter* _pk_column_writer = nullptr;
+  PkPolicy _pk_policy;
 
   JsonExpressionFields _json_fields;
   simdjson::ondemand::parser _json_parser;
@@ -300,8 +297,6 @@ class SearchSinkDeleteBaseImpl {
   std::shared_ptr<SearchRemoveFilterBase> _remove_filter;
 };
 
-// SearchSinkInsertBaseImpl stores a reference to the transaction, so the
-// transaction object must exist before it is constructed.
 class SearchSinkBackfillTrxHolder {
  protected:
   SearchSinkBackfillTrxHolder(irs::IndexWriter::Transaction trx)
@@ -309,22 +304,75 @@ class SearchSinkBackfillTrxHolder {
   irs::IndexWriter::Transaction _trx_storage;
 };
 
-// A search-table iresearch insert sink: the inverted-index insert base in
-// search-table mode (all columns stored, PK as a term only, no PK blob). Shared
-// by the INSERT operator and WAL recovery.
+class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
+                                           public SearchSinkInsertBaseImpl {
+ public:
+  DuckDBSearchSinkInsertWriter(
+    irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
+    std::span<const catalog::Column::Id> indexed_columns,
+    EntryInfoProvider&& entry_info_provider = NoEntryInfoProvider(),
+    std::vector<IndexedExpression>&& indexed_exprs = {},
+    PkPolicy pk_policy = {})
+    : SearchSinkInsertBaseImpl{trx, std::move(tokenizer_provider),
+                               std::move(entry_info_provider),
+                               std::move(indexed_exprs), pk_policy},
+      _indexed{indexed_columns.begin(), indexed_columns.end()} {}
+
+  void Init(duckdb::idx_t batch_size, const PkChunk& pk) final {
+    InitImpl(batch_size, pk);
+  }
+
+  bool SwitchColumn(const ColumnDescriptor& col, const duckdb::Vector& vec,
+                    duckdb::idx_t count) final {
+    if (_indexed.contains(col.id)) {
+      SwitchFieldImpl(static_cast<irs::field_id>(col.id), col.type, vec, count);
+    }
+    return false;
+  }
+
+  bool SwitchExpression(const ExpressionDescriptor& expr_desc,
+                        const duckdb::Vector& vec, duckdb::idx_t count) final {
+    SwitchFieldImpl(expr_desc.field_id, expr_desc.type, vec, count);
+    return false;
+  }
+
+  std::span<const IndexedExpression> IndexedExpressions() const final {
+    return IndexedExpressionImpl();
+  }
+
+  void Finish() final { FinishImpl(); }
+  void Abort() final { AbortImpl(); }
+
+ private:
+  containers::FlatHashSet<catalog::Column::Id> _indexed;
+};
+
+class DuckDBSearchSinkDeleteWriter final : public DuckDBSinkIndexWriter,
+                                           public SearchSinkDeleteBaseImpl {
+ public:
+  explicit DuckDBSearchSinkDeleteWriter(irs::IndexWriter::Transaction& trx)
+    : SearchSinkDeleteBaseImpl{trx} {}
+
+  void Init(duckdb::idx_t batch_size, const PkChunk& /*pk*/) final {
+    InitImpl(batch_size);
+  }
+
+  void DeleteRow(std::string_view encoded_pk) final {
+    DeleteRowImpl(encoded_pk);
+  }
+
+  void Finish() final { FinishImpl(); }
+  void Abort() final { AbortImpl(); }
+};
+
 inline std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
-  irs::IndexWriter::Transaction& trx,
-  std::span<const catalog::Column::Id> columns) {
+  irs::IndexWriter::Transaction& trx) {
   return std::make_unique<SearchSinkInsertBaseImpl>(
-    trx, TokenizerProvider{}, AllStoredEntryInfoProvider(), columns,
-    std::vector<IndexedExpression>{}, /*store_pk_blob=*/false);
+    trx, TokenizerProvider{}, AllStoredEntryInfoProvider(),
+    std::vector<IndexedExpression>{},
+    PkPolicy{.index_term = true, .column = catalog::PkColumnKind::None});
 }
 
-// Write one materialised DataChunk into `sink` -- the shared core of both the
-// search-table INSERT Sink and WAL recovery replay, so a recovered row's
-// PK/encoding is byte-identical to the written one. `pk_base` is the
-// generated-PK base for this chunk (0/ignored for explicit-PK, where the key is
-// built from `pk_columns`).
 void WriteChunkToSearchSink(
   SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
   std::span<const catalog::Column::Id> column_ids,

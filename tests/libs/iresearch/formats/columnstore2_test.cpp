@@ -340,7 +340,10 @@ TEST_P(Columnstore2TestCase, sparse_mask_column) {
   const auto* col = reader->Column(0);
   ASSERT_NE(col, nullptr);
   EXPECT_EQ(col->RowCount(), static_cast<uint64_t>(kMax));
-  EXPECT_TRUE(col->HasValidity());
+  // A nullable column tracks its nulls in a validity stream OR, when the data
+  // codec self-carries them (dict_fsst absorb, mirror DuckDB), in the data
+  // itself -- so HasValidity may be false while NullsInData is true.
+  EXPECT_TRUE(col->HasValidity() || col->NullsInData());
 
   // Helper: doc is "present" if it lies on the even-from-min lattice and
   // is not the trailing PadNullsTo row at kMax (which is always null).
@@ -818,7 +821,10 @@ TEST_P(Columnstore2TestCase, SparseColumn) {
   const auto* col = reader->Column(0);
   ASSERT_NE(col, nullptr);
   EXPECT_EQ(col->RowCount(), static_cast<uint64_t>(kMax));
-  EXPECT_TRUE(col->HasValidity());
+  // A nullable column tracks its nulls in a validity stream OR, when the data
+  // codec self-carries them (dict_fsst absorb, mirror DuckDB), in the data
+  // itself -- so HasValidity may be false while NullsInData is true.
+  EXPECT_TRUE(col->HasValidity() || col->NullsInData());
 
   auto is_present = [](irs::doc_id_t doc) {
     return doc < kMax && (doc % 2) == (irs::doc_limits::min() % 2);

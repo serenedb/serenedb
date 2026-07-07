@@ -252,14 +252,14 @@ run_sql "create_text_search_dict (${PERF_DICT_TEMPLATE})" "${BUILD_THREADS}" "${
 
 # Every column (including Title itself) goes into INCLUDE so the .cs storage
 # and the create_index timing are directly comparable to native_db.hits_native
-# (which always materializes every column). Pull the list from DuckDB's
-# duckdb_columns() table function -- information_schema.columns is empty for
-# read_parquet-backed views in serened today. quote each name so quoted
-# CamelCase identifiers match the case-insensitive column resolver.
+# (which always materializes every column). Derive the list from `DESCRIBE`:
+# both information_schema.columns and duckdb_columns() are empty for a
+# read_parquet-backed view in serened today, but DESCRIBE enumerates them.
+# quote each name so quoted CamelCase identifiers match the case-insensitive
+# column resolver.
 INCLUDE_LIST=$(psql "${PSQL_CONN}" -At -v ON_ERROR_STOP=1 -X -c "
-SELECT string_agg('\"' || column_name || '\"', ', ' ORDER BY column_index)
-FROM duckdb_columns()
-WHERE table_name = 'hits_view';
+SELECT string_agg('\"' || column_name || '\"', ', ')
+FROM (DESCRIBE hits_view);
 ")
 if [[ -z "${INCLUDE_LIST}" ]]; then
 	echo "failed to derive INCLUDE column list from hits_view" >&2

@@ -98,7 +98,7 @@ class FreqThresholdDocIterator : public irs::DocIterator {
   }
 
   irs::doc_id_t advance() final {
-    while (_impl->next()) {
+    while (!irs::doc_limits::eof(_impl->advance())) {
       if (!_freq || !Less()) {
         break;
       }
@@ -118,13 +118,15 @@ class FreqThresholdDocIterator : public irs::DocIterator {
     }
 
     if (_freq && Less()) {
-      next();
+      advance();
     }
 
     return _doc = _impl->value();
   }
 
   void FetchScoreArgs(uint16_t index) final { _impl->FetchScoreArgs(index); }
+
+  IRS_DOC_ITERATOR_DEFAULTS
 
  private:
   bool Less() {
@@ -217,7 +219,7 @@ SkipList SkipList::Make(irs::DocIterator& it, irs::doc_id_t skip_0,
   auto* freq = irs::get<irs::FreqBlockAttr>(it);
 
   if (freq) {
-    for (irs::doc_id_t i = 1; it.next(); ++i) {
+    for (irs::doc_id_t i = 1; !irs::doc_limits::eof(it.advance()); ++i) {
       it.FetchScoreArgs(0);
       add(i, it.value(), freq->value[0]);
     }
@@ -460,7 +462,7 @@ void Format15TestCase::AssertBackwardsNext(irs::PostingsReader& reader,
     AssertWanderator(actual, features, threshold);
 
     auto actual_next = [&] {
-      while (actual->next()) {
+      while (!irs::doc_limits::eof(actual->advance())) {
         actual->FetchScoreArgs(0);
         irs::score_t actual_score{};
         score_function.Score(&actual_score, 1);
@@ -483,7 +485,7 @@ void Format15TestCase::AssertBackwardsNext(irs::PostingsReader& reader,
         if (!is_less(actual_score, threshold)) {
           return doc;
         }
-        doc = actual->next();
+        doc = !irs::doc_limits::eof(actual->advance());
       } while (!irs::doc_limits::eof(doc));
       return doc;
     };
@@ -494,7 +496,7 @@ void Format15TestCase::AssertBackwardsNext(irs::PostingsReader& reader,
     ASSERT_EQ(doc->first, expected.seek(doc->first));
     AssertFrequencyAndPositions(expected, *actual);
 
-    while (expected.next()) {
+    while (!irs::doc_limits::eof(expected.advance())) {
       ASSERT_TRUE(actual_next());
       AssertFrequencyAndPositions(expected, *actual);
     }
@@ -532,7 +534,7 @@ void Format15TestCase::AssertDocsRandom(irs::PostingsReader& reader,
   AssertWanderator(actual, features, threshold);
 
   auto actual_next = [&] {
-    while (actual->next()) {
+    while (!irs::doc_limits::eof(actual->advance())) {
       actual->FetchScoreArgs(0);
       irs::score_t actual_score{};
       score_function.Score(&actual_score, 1);
@@ -555,7 +557,7 @@ void Format15TestCase::AssertDocsRandom(irs::PostingsReader& reader,
       if (!is_less(actual_score, threshold)) {
         return doc;
       }
-      doc = actual->next();
+      doc = !irs::doc_limits::eof(actual->advance());
     } while (!irs::doc_limits::eof(doc));
     return doc;
   };
@@ -615,7 +617,7 @@ void Format15TestCase::AssertDocsSeq(irs::PostingsReader& reader,
 
   size_t total_next_calls = 0;
   auto actual_next = [&] {
-    while (actual->next()) {
+    while (!irs::doc_limits::eof(actual->advance())) {
       ++total_next_calls;
       actual->FetchScoreArgs(0);
       irs::score_t actual_score{};
@@ -639,7 +641,7 @@ void Format15TestCase::AssertDocsSeq(irs::PostingsReader& reader,
       if (!is_less(actual_score, threshold)) {
         return doc;
       }
-      doc = actual->next();
+      doc = !irs::doc_limits::eof(actual->advance());
     } while (!irs::doc_limits::eof(doc));
     return doc;
   };
@@ -654,7 +656,7 @@ void Format15TestCase::AssertDocsSeq(irs::PostingsReader& reader,
 
   ASSERT_FALSE(irs::doc_limits::valid(actual->value()));
 
-  while (expected.next()) {
+  while (!irs::doc_limits::eof(expected.advance())) {
     const auto expected_doc_id = expected.value();
     ASSERT_TRUE(actual_next());
 
@@ -725,7 +727,7 @@ void Format15TestCase::AssertCornerCases(irs::PostingsReader& reader,
     auto it =
       GetWanderator(reader, scorer, field_features, features, meta, 0, strict);
     ASSERT_FALSE(irs::doc_limits::valid(it->value()));
-    ASSERT_TRUE(it->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it->advance()));
     ASSERT_EQ(docs.front().first, it->value());
     ASSERT_TRUE(irs::doc_limits::eof(it->seek(docs.back().first + 42)));
   }
@@ -736,7 +738,7 @@ void Format15TestCase::AssertCornerCases(irs::PostingsReader& reader,
       GetWanderator(reader, scorer, field_features, features, meta, 0, strict);
     ASSERT_FALSE(irs::doc_limits::valid(it->value()));
     ASSERT_FALSE(irs::doc_limits::valid(it->seek(irs::doc_limits::invalid())));
-    ASSERT_TRUE(it->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it->advance()));
     ASSERT_EQ(docs.front().first, it->value());
   }
 
@@ -746,7 +748,7 @@ void Format15TestCase::AssertCornerCases(irs::PostingsReader& reader,
       GetWanderator(reader, scorer, field_features, features, meta, 0, strict);
     ASSERT_FALSE(irs::doc_limits::valid(it->value()));
     ASSERT_TRUE(irs::doc_limits::eof(it->seek(irs::doc_limits::eof())));
-    ASSERT_FALSE(it->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it->value()));
   }
 }

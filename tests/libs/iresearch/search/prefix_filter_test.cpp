@@ -481,7 +481,7 @@ TEST_P(PrefixFilterTestCase, by_prefix_no_collector) {
     Docs docs;
     for (size_t i = 0, n = prepared.size(); i < n; ++i) {
       auto it = prepared.Execute(i);
-      while (it->next()) {
+      while (!irs::doc_limits::eof(it->advance())) {
         docs.push_back(it->value());
       }
     }

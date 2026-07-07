@@ -23,6 +23,7 @@
 #include <cstdio>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/vector/struct_vector.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 
@@ -44,14 +45,12 @@ using StreamPool = irs::UnboundedObjectPool<search::AnalyzerImpl::Builder>;
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
   EntryInfoProvider&& entry_info_provider,
-  std::span<const catalog::Column::Id> columns,
-  std::vector<IndexedExpression>&& indexed_exprs, bool store_pk_blob)
-  : ColumnSinkWriterImplBase{columns},
-    _tokenizer_provider{std::move(tokenizer_provider)},
+  std::vector<IndexedExpression>&& indexed_exprs, PkPolicy pk_policy)
+  : _tokenizer_provider{std::move(tokenizer_provider)},
     _entry_info_provider{std::move(entry_info_provider)},
     _indexed_expressions{std::move(indexed_exprs)},
     _trx{trx},
-    _store_pk_blob{store_pk_blob} {
+    _pk_policy{pk_policy} {
   _pk_field.PrepareForVerbatimStringValue();
   _pk_field.id = catalog::term_dict::kPKFieldId;
 }
@@ -116,23 +115,21 @@ void SearchSinkInsertBaseImpl::SetFieldValueFromVector(
   }
 }
 
-void SearchSinkInsertBaseImpl::MaybeEmitPk(std::string_view pk_term) {
-  if (!_emit_pk) {
-    return;
-  }
-  _pk_field.SetStringValue(pk_term);
-  if (!_document->Insert(&_pk_field)) {
-    SDB_THROW(ERROR_INTERNAL,
-              "Failed to insert PK field into IResearch document");
-  }
-  if (_pk_blob_writer) {
-    AppendPkBlob(pk_term);
+void SearchSinkInsertBaseImpl::EmitPkTerms(
+  std::span<const std::string_view> keys) {
+  SDB_ASSERT(_document);
+  _document->NextFieldBatch();
+  for (const auto key : keys) {
+    _pk_field.SetStringValue(key);
+    if (!_document->Insert(&_pk_field)) {
+      SDB_THROW(ERROR_INTERNAL,
+                "Failed to insert PK field into IResearch document");
+    }
+    _document->NextDocument();
   }
 }
 
-void SearchSinkInsertBaseImpl::EmitField(Field* field_to_insert,
-                                         std::string_view full_row_key) {
-  MaybeEmitPk(full_row_key);
+void SearchSinkInsertBaseImpl::EmitField(Field* field_to_insert) {
   if (!_document->Insert(field_to_insert)) {
     SDB_THROW(ERROR_INTERNAL, "Failed to insert field into IResearch document");
   }
@@ -140,56 +137,46 @@ void SearchSinkInsertBaseImpl::EmitField(Field* field_to_insert,
 
 template<duckdb::LogicalTypeId Kind>
 void SearchSinkInsertBaseImpl::WriteScalarBatch(
-  std::span<const std::string_view> row_keys, duckdb::idx_t count,
-  irs::field_id tokenizer_column) {
+  duckdb::idx_t count, irs::field_id tokenizer_column) {
   auto& fmt = _vec_fmt.unified;
 
   SDB_ASSERT(_document);
+  auto* store_writer = irs::field_limits::valid(tokenizer_column)
+                         ? EnsurePerRowBlobWriter(tokenizer_column)
+                         : nullptr;
   _document->NextFieldBatch();
 
   for (duckdb::idx_t i = 0; i < count; ++i) {
-    if (i < row_keys.size() && row_keys[i].empty()) {
-      continue;  // upstream conflict-resolved row
-    }
-    const auto full_row_key =
-      i < row_keys.size() ? row_keys[i] : std::string_view{};
-
     if constexpr (Kind == duckdb::LogicalTypeId::SQLNULL) {
       _null_field.SetNullValue();
-      EmitField(&_null_field, full_row_key);
+      EmitField(&_null_field);
     } else {
       const auto sel_idx = fmt.sel->get_index(i);
       if (!fmt.validity.RowIsValid(sel_idx)) {
         _null_field.SetNullValue();
-        EmitField(&_null_field, full_row_key);
+        EmitField(&_null_field);
       } else {
         SetFieldValueFromVector<Kind>(_field, fmt, sel_idx);
-        EmitField(&_field, full_row_key);
-        if (irs::field_limits::valid(tokenizer_column)) {
+        EmitField(&_field);
+        if (store_writer) {
           SDB_ASSERT(_field.store_attr);
-          AppendPerRowBlob(tokenizer_column, _field.store_attr->value);
+          AppendBlobTo(*store_writer, _field.store_attr->value);
         }
       }
     }
     _document->NextDocument();
   }
-  _emit_pk = false;
 }
 
 template<duckdb::LogicalTypeId ChildKind>
-void SearchSinkInsertBaseImpl::WriteListBatch(
-  std::span<const std::string_view> row_keys, duckdb::idx_t count,
-  duckdb::idx_t array_size) {
+void SearchSinkInsertBaseImpl::WriteListBatch(duckdb::idx_t count,
+                                              duckdb::idx_t array_size) {
   SDB_ASSERT(_document);
   _document->NextFieldBatch();
 
   const auto& parent_fmt = _vec_fmt.unified;
   const auto& child_fmt = _vec_fmt.children[0].unified;
   for (duckdb::idx_t i = 0; i < count; ++i) {
-    if (i < row_keys.size() && row_keys[i].empty()) {
-      continue;
-    }
-
     const auto parent_idx = parent_fmt.sel->get_index(i);
     if (!parent_fmt.validity.RowIsValid(parent_idx)) {
       InsertNullValue();
@@ -222,109 +209,86 @@ void SearchSinkInsertBaseImpl::WriteListBatch(
       }
     }
 
-    const auto full_row_key =
-      i < row_keys.size() ? row_keys[i] : std::string_view{};
-    MaybeEmitPk(full_row_key);
     _document->NextDocument();
   }
-  _emit_pk = false;
-}
-
-void SearchSinkInsertBaseImpl::EmitPkOnlyBatch(
-  std::span<const std::string_view> row_keys, duckdb::idx_t count) {
-  if (!_emit_pk) {
-    return;
-  }
-  SDB_ASSERT(_document);
-  _document->NextFieldBatch();
-  for (duckdb::idx_t i = 0; i < count; ++i) {
-    if (i < row_keys.size() && row_keys[i].empty()) {
-      continue;
-    }
-    const auto full_row_key =
-      i < row_keys.size() ? row_keys[i] : std::string_view{};
-    MaybeEmitPk(full_row_key);
-    _document->NextDocument();
-  }
-  _emit_pk = false;
 }
 
 bool SearchSinkInsertBaseImpl::DispatchScalarBatch(
-  duckdb::LogicalTypeId kind, std::span<const std::string_view> row_keys,
-  duckdb::idx_t count, irs::field_id tokenizer_column) {
+  duckdb::LogicalTypeId kind, duckdb::idx_t count,
+  irs::field_id tokenizer_column) {
   using enum duckdb::LogicalTypeId;
   switch (kind) {
     case SQLNULL:
-      WriteScalarBatch<SQLNULL>(row_keys, count, tokenizer_column);
+      WriteScalarBatch<SQLNULL>(count, tokenizer_column);
       return true;
     case VARCHAR:
-      WriteScalarBatch<VARCHAR>(row_keys, count, tokenizer_column);
+      WriteScalarBatch<VARCHAR>(count, tokenizer_column);
       return true;
     case BLOB:
-      WriteScalarBatch<BLOB>(row_keys, count, tokenizer_column);
+      WriteScalarBatch<BLOB>(count, tokenizer_column);
       return true;
     case GEOMETRY:
-      WriteScalarBatch<GEOMETRY>(row_keys, count, tokenizer_column);
+      WriteScalarBatch<GEOMETRY>(count, tokenizer_column);
       return true;
     case BOOLEAN:
-      WriteScalarBatch<BOOLEAN>(row_keys, count, tokenizer_column);
+      WriteScalarBatch<BOOLEAN>(count, tokenizer_column);
       return true;
     case TINYINT:
-      WriteScalarBatch<TINYINT>(row_keys, count, tokenizer_column);
+      WriteScalarBatch<TINYINT>(count, tokenizer_column);
       return true;
     case SMALLINT:
-      WriteScalarBatch<SMALLINT>(row_keys, count, tokenizer_column);
+      WriteScalarBatch<SMALLINT>(count, tokenizer_column);
       return true;
     case INTEGER:
-      WriteScalarBatch<INTEGER>(row_keys, count, tokenizer_column);
+      WriteScalarBatch<INTEGER>(count, tokenizer_column);
       return true;
     case BIGINT:
-      WriteScalarBatch<BIGINT>(row_keys, count, tokenizer_column);
+      WriteScalarBatch<BIGINT>(count, tokenizer_column);
       return true;
     case UTINYINT:
-      WriteScalarBatch<UTINYINT>(row_keys, count, tokenizer_column);
+      WriteScalarBatch<UTINYINT>(count, tokenizer_column);
       return true;
     case USMALLINT:
-      WriteScalarBatch<USMALLINT>(row_keys, count, tokenizer_column);
+      WriteScalarBatch<USMALLINT>(count, tokenizer_column);
       return true;
     case UINTEGER:
-      WriteScalarBatch<UINTEGER>(row_keys, count, tokenizer_column);
+      WriteScalarBatch<UINTEGER>(count, tokenizer_column);
       return true;
     case FLOAT:
-      WriteScalarBatch<FLOAT>(row_keys, count, tokenizer_column);
+      WriteScalarBatch<FLOAT>(count, tokenizer_column);
       return true;
     case DOUBLE:
-      WriteScalarBatch<DOUBLE>(row_keys, count, tokenizer_column);
+      WriteScalarBatch<DOUBLE>(count, tokenizer_column);
       return true;
     case DATE:
-      WriteScalarBatch<DATE>(row_keys, count, tokenizer_column);
+      WriteScalarBatch<DATE>(count, tokenizer_column);
       return true;
     case TIME:
-      WriteScalarBatch<TIME>(row_keys, count, tokenizer_column);
+      WriteScalarBatch<TIME>(count, tokenizer_column);
       return true;
     case TIME_TZ:
-      WriteScalarBatch<TIME_TZ>(row_keys, count, tokenizer_column);
+      WriteScalarBatch<TIME_TZ>(count, tokenizer_column);
       return true;
     case TIME_NS:
-      WriteScalarBatch<TIME_NS>(row_keys, count, tokenizer_column);
+      WriteScalarBatch<TIME_NS>(count, tokenizer_column);
       return true;
     case TIMESTAMP:
-      WriteScalarBatch<TIMESTAMP>(row_keys, count, tokenizer_column);
+      WriteScalarBatch<TIMESTAMP>(count, tokenizer_column);
       return true;
     case TIMESTAMP_TZ:
-      WriteScalarBatch<TIMESTAMP_TZ>(row_keys, count, tokenizer_column);
+      WriteScalarBatch<TIMESTAMP_TZ>(count, tokenizer_column);
       return true;
     case TIMESTAMP_SEC:
-      WriteScalarBatch<TIMESTAMP_SEC>(row_keys, count, tokenizer_column);
+      WriteScalarBatch<TIMESTAMP_SEC>(count, tokenizer_column);
       return true;
     case TIMESTAMP_MS:
-      WriteScalarBatch<TIMESTAMP_MS>(row_keys, count, tokenizer_column);
+      WriteScalarBatch<TIMESTAMP_MS>(count, tokenizer_column);
       return true;
     case TIMESTAMP_NS:
-      WriteScalarBatch<TIMESTAMP_NS>(row_keys, count, tokenizer_column);
+      WriteScalarBatch<TIMESTAMP_NS>(count, tokenizer_column);
       return true;
     case TIMESTAMP_TZ_NS:
-      WriteScalarBatch<TIMESTAMP_TZ_NS>(row_keys, count, tokenizer_column);
+      WriteScalarBatch<TIMESTAMP_TZ_NS>(count, tokenizer_column);
       return true;
     default:
       return false;
@@ -332,84 +296,83 @@ bool SearchSinkInsertBaseImpl::DispatchScalarBatch(
 }
 
 bool SearchSinkInsertBaseImpl::DispatchListBatch(
-  duckdb::LogicalTypeId child_kind, std::span<const std::string_view> row_keys,
-  duckdb::idx_t count, duckdb::idx_t array_size) {
+  duckdb::LogicalTypeId child_kind, duckdb::idx_t count,
+  duckdb::idx_t array_size) {
   using enum duckdb::LogicalTypeId;
   switch (child_kind) {
     case VARCHAR:
-      WriteListBatch<VARCHAR>(row_keys, count, array_size);
+      WriteListBatch<VARCHAR>(count, array_size);
       return true;
     case BLOB:
-      WriteListBatch<BLOB>(row_keys, count, array_size);
+      WriteListBatch<BLOB>(count, array_size);
       return true;
     case BOOLEAN:
-      WriteListBatch<BOOLEAN>(row_keys, count, array_size);
+      WriteListBatch<BOOLEAN>(count, array_size);
       return true;
     case TINYINT:
-      WriteListBatch<TINYINT>(row_keys, count, array_size);
+      WriteListBatch<TINYINT>(count, array_size);
       return true;
     case SMALLINT:
-      WriteListBatch<SMALLINT>(row_keys, count, array_size);
+      WriteListBatch<SMALLINT>(count, array_size);
       return true;
     case INTEGER:
-      WriteListBatch<INTEGER>(row_keys, count, array_size);
+      WriteListBatch<INTEGER>(count, array_size);
       return true;
     case DATE:
-      WriteListBatch<DATE>(row_keys, count, array_size);
+      WriteListBatch<DATE>(count, array_size);
       return true;
     case BIGINT:
-      WriteListBatch<BIGINT>(row_keys, count, array_size);
+      WriteListBatch<BIGINT>(count, array_size);
       return true;
     case UTINYINT:
-      WriteListBatch<UTINYINT>(row_keys, count, array_size);
+      WriteListBatch<UTINYINT>(count, array_size);
       return true;
     case USMALLINT:
-      WriteListBatch<USMALLINT>(row_keys, count, array_size);
+      WriteListBatch<USMALLINT>(count, array_size);
       return true;
     case UINTEGER:
-      WriteListBatch<UINTEGER>(row_keys, count, array_size);
+      WriteListBatch<UINTEGER>(count, array_size);
       return true;
     case TIME:
-      WriteListBatch<TIME>(row_keys, count, array_size);
+      WriteListBatch<TIME>(count, array_size);
       return true;
     case TIME_TZ:
-      WriteListBatch<TIME_TZ>(row_keys, count, array_size);
+      WriteListBatch<TIME_TZ>(count, array_size);
       return true;
     case TIME_NS:
-      WriteListBatch<TIME_NS>(row_keys, count, array_size);
+      WriteListBatch<TIME_NS>(count, array_size);
       return true;
     case TIMESTAMP:
-      WriteListBatch<TIMESTAMP>(row_keys, count, array_size);
+      WriteListBatch<TIMESTAMP>(count, array_size);
       return true;
     case TIMESTAMP_TZ:
-      WriteListBatch<TIMESTAMP_TZ>(row_keys, count, array_size);
+      WriteListBatch<TIMESTAMP_TZ>(count, array_size);
       return true;
     case TIMESTAMP_SEC:
-      WriteListBatch<TIMESTAMP_SEC>(row_keys, count, array_size);
+      WriteListBatch<TIMESTAMP_SEC>(count, array_size);
       return true;
     case TIMESTAMP_MS:
-      WriteListBatch<TIMESTAMP_MS>(row_keys, count, array_size);
+      WriteListBatch<TIMESTAMP_MS>(count, array_size);
       return true;
     case TIMESTAMP_NS:
-      WriteListBatch<TIMESTAMP_NS>(row_keys, count, array_size);
+      WriteListBatch<TIMESTAMP_NS>(count, array_size);
       return true;
     case TIMESTAMP_TZ_NS:
-      WriteListBatch<TIMESTAMP_TZ_NS>(row_keys, count, array_size);
+      WriteListBatch<TIMESTAMP_TZ_NS>(count, array_size);
       return true;
     case FLOAT:
-      WriteListBatch<FLOAT>(row_keys, count, array_size);
+      WriteListBatch<FLOAT>(count, array_size);
       return true;
     case DOUBLE:
-      WriteListBatch<DOUBLE>(row_keys, count, array_size);
+      WriteListBatch<DOUBLE>(count, array_size);
       return true;
     default:
       return false;
   }
 }
 
-void SearchSinkInsertBaseImpl::WriteJsonBatch(
-  const duckdb::Vector& vec, std::span<const std::string_view> row_keys,
-  duckdb::idx_t count) {
+void SearchSinkInsertBaseImpl::WriteJsonBatch(const duckdb::Vector& vec,
+                                              duckdb::idx_t count) {
   SDB_ASSERT(_document);
   _document->NextFieldBatch();
 
@@ -418,12 +381,10 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(
 
   auto& jpf = _json_fields;
   const bool has_store = irs::field_limits::valid(jpf.tokenizer_column);
+  auto* store_writer =
+    has_store ? EnsurePerRowBlobWriter(jpf.tokenizer_column) : nullptr;
 
   for (duckdb::idx_t i = 0; i < count; ++i) {
-    if (i < row_keys.size() && row_keys[i].empty()) {
-      continue;
-    }
-
     const auto sel_idx = fmt.sel->get_index(i);
     const bool is_null = !fmt.validity.RowIsValid(sel_idx);
     bool wrote_string_blob = false;
@@ -458,9 +419,9 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(
               if (s.error() == simdjson::SUCCESS) {
                 jpf.string_field.SetStringValue(s.value_unsafe());
                 insert_field(jpf.string_field);
-                if (has_store && jpf.string_field.store_attr) {
-                  AppendPerRowBlob(jpf.tokenizer_column,
-                                   jpf.string_field.store_attr->value);
+                if (store_writer && jpf.string_field.store_attr) {
+                  AppendBlobTo(*store_writer,
+                               jpf.string_field.store_attr->value);
                   wrote_string_blob = true;
                 }
               }
@@ -496,22 +457,18 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(
         }
       }
     }
-    if (has_store && !wrote_string_blob) {
-      AppendPerRowBlob(jpf.tokenizer_column, irs::bytes_view{});
+    if (store_writer && !wrote_string_blob) {
+      AppendBlobTo(*store_writer, irs::bytes_view{});
     }
 
-    const auto full_row_key =
-      i < row_keys.size() ? row_keys[i] : std::string_view{};
-    MaybeEmitPk(full_row_key);
     _document->NextDocument();
   }
-  _emit_pk = false;
 }
 
-void SearchSinkInsertBaseImpl::SwitchFieldImpl(
-  irs::field_id field_id, const duckdb::LogicalType& type,
-  const duckdb::Vector& vec, std::span<const std::string_view> row_keys,
-  duckdb::idx_t count) {
+void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
+                                               const duckdb::LogicalType& type,
+                                               const duckdb::Vector& vec,
+                                               duckdb::idx_t count) {
   SDB_ASSERT(irs::field_limits::valid(field_id));
   const auto* entry = _entry_info_provider(field_id);
   auto resolve_tokenizer = [this, field_id] {
@@ -523,7 +480,6 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(
 
   if (is_stored && !is_term_dict) {
     AppendToColumn(field_id, type, vec, count);
-    EmitPkOnlyBatch(row_keys, count);
     return;
   }
   if (type.IsJSONType() && entry && entry->HasJsonLeafFields()) {
@@ -534,7 +490,7 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(
     if (is_stored) {
       AppendToColumn(field_id, type, vec, count);
     }
-    WriteJsonBatch(vec, row_keys, count);
+    WriteJsonBatch(vec, count);
     return;
   }
 
@@ -581,7 +537,7 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(
     if (is_stored) {
       AppendToColumn(field_id, type, vec, count);
     }
-    DispatchListBatch(child_kind, row_keys, count, array_size);
+    DispatchListBatch(child_kind, count, array_size);
     return;
   }
 
@@ -614,26 +570,28 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(
   if (is_stored) {
     AppendToColumn(field_id, type, vec, count);
   }
-  DispatchScalarBatch(kind, row_keys, count, tokenizer_column);
+  DispatchScalarBatch(kind, count, tokenizer_column);
 }
 
-void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size) {
+void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size, const PkChunk& pk) {
   SDB_ASSERT(batch_size > 0);
   if (_document) {
     _document.reset();
   }
   _document.emplace(_trx.Insert(false, batch_size));
-  if (_store_pk_blob) {
-    // Inverted index: open the PK blob column and emit the PK iff the
-    // columnstore is available (preserves the historical gate -- no columnstore
-    // meant no PK emitted).
-    _pk_blob_writer = EnsurePerRowBlobWriter(catalog::term_dict::kPKFieldId);
-    _emit_pk = (_pk_blob_writer != nullptr);
-  } else {
-    // Search table: PK term only, no blob column. The columnstore is always
-    // present (the shard has a DB handle), so always emit the term.
-    _pk_blob_writer = nullptr;
-    _emit_pk = true;
+  _pk_column_writer = nullptr;
+  if (_pk_policy.column == catalog::PkColumnKind::I64 ||
+      _pk_policy.column == catalog::PkColumnKind::I64I64) {
+    _pk_column_writer = EnsurePerRowColumnWriter(
+      catalog::term_dict::kPKFieldId, PkColumnType(_pk_policy.column));
+  }
+  if (_pk_column_writer && pk.column) {
+    SDB_ASSERT(pk.column->GetType() == PkColumnType(_pk_policy.column));
+    AppendPkColumn(*pk.column, batch_size);
+  }
+  if (_pk_policy.index_term && !pk.keys.empty()) {
+    SDB_ASSERT(pk.keys.size() == batch_size);
+    EmitPkTerms(pk.keys);
   }
 }
 
@@ -667,8 +625,7 @@ void SearchSinkInsertBaseImpl::JsonExpressionFields::InitForExpression(
 void SearchSinkInsertBaseImpl::FinishImpl() {
   _column_writers.clear();
   _per_row_blob_writers.clear();
-  _pk_blob_writer = nullptr;
-  _emit_pk = false;
+  _pk_column_writer = nullptr;
   _document.reset();
 }
 
@@ -692,39 +649,38 @@ void SearchSinkInsertBaseImpl::AppendToColumn(irs::field_id field_id,
   it->second->Append(start_row, vec, count);
 }
 
-irs::ColumnWriter* SearchSinkInsertBaseImpl::EnsurePerRowBlobWriter(
-  irs::field_id field_id) {
+irs::ColumnWriter* SearchSinkInsertBaseImpl::EnsurePerRowColumnWriter(
+  irs::field_id field_id, const duckdb::LogicalType& type) {
   auto* col_writer = _document ? _document->GetColWriter() : nullptr;
   if (!col_writer) {
     return nullptr;
   }
   auto [it, inserted] = _per_row_blob_writers.try_emplace(field_id, nullptr);
   if (!it->second) {
-    it->second = &col_writer->OpenColumn(field_id, duckdb::LogicalType::BLOB);
+    it->second = &col_writer->OpenColumn(field_id, type);
   }
   return it->second;
 }
 
-void SearchSinkInsertBaseImpl::AppendPkBlob(std::string_view row_key) {
-  SDB_ASSERT(_pk_blob_writer);
-  const uint64_t row = _document->DocId() - irs::doc_limits::min();
-  _pk_blob_writer->PushInStaging(row, [row_key](duckdb::Vector& staging,
-                                                duckdb::idx_t slot) {
-    auto* slots = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(staging);
-    slots[slot] = duckdb::StringVector::AddStringOrBlob(staging, row_key.data(),
-                                                        row_key.size());
-  });
+irs::ColumnWriter* SearchSinkInsertBaseImpl::EnsurePerRowBlobWriter(
+  irs::field_id field_id) {
+  return EnsurePerRowColumnWriter(field_id, duckdb::LogicalType::BLOB);
 }
 
-void SearchSinkInsertBaseImpl::AppendPerRowBlob(irs::field_id field_id,
-                                                irs::bytes_view bytes) {
-  auto* writer = EnsurePerRowBlobWriter(field_id);
-  if (!writer) {
-    return;
-  }
+void SearchSinkInsertBaseImpl::AppendPkColumn(const duckdb::Vector& pk,
+                                              duckdb::idx_t count) {
+  SDB_ASSERT(_pk_column_writer);
+  SDB_ASSERT(_document);
+  _document->NextFieldBatch();
+  const uint64_t start_row = _document->DocId() - irs::doc_limits::min();
+  _pk_column_writer->Append(start_row, pk, count);
+}
+
+void SearchSinkInsertBaseImpl::AppendBlobTo(irs::ColumnWriter& writer,
+                                            irs::bytes_view bytes) {
   const uint64_t row = _document->DocId() - irs::doc_limits::min();
-  writer->PushInStaging(row, [bytes](duckdb::Vector& staging,
-                                     duckdb::idx_t slot) {
+  writer.PushInStaging(row, [bytes](duckdb::Vector& staging,
+                                    duckdb::idx_t slot) {
     auto* slots = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(staging);
     slots[slot] = duckdb::StringVector::AddStringOrBlob(
       staging, reinterpret_cast<const char*>(bytes.data()), bytes.size());
@@ -838,10 +794,6 @@ void WriteChunkToSearchSink(
   bool uses_generated_pk, uint64_t pk_base) {
   const auto num_rows = chunk.size();
 
-  // Build the bare PK terms up front; the sink emits each as the document's PK
-  // field on the first column. Generated-PK mints pk_base + row; explicit-PK
-  // encodes the key from the PK columns. The scratch lives on the sink so it is
-  // reused across chunks instead of reallocated.
   auto& scratch = sink.GetKeyScratch();
   auto& pk_formats = scratch.pk_formats;
   auto& row_keys = scratch.row_keys;
@@ -861,19 +813,11 @@ void WriteChunkToSearchSink(
     key_views.emplace_back(key);
   }
 
-  // Init's batch_size must be the exact row count -- iresearch pre-allocates
-  // that many DocContext slots. Each column routes through the stored path
-  // (AppendToColumn + EmitPkOnlyBatch); the column type comes from the chunk.
-  sink.InitImpl(num_rows);
+  sink.InitImpl(num_rows, PkChunk{.keys = key_views});
   for (size_t col = 0; col < column_ids.size(); ++col) {
     sink.SwitchFieldImpl(static_cast<irs::field_id>(column_ids[col]),
-                         chunk.data[col].GetType(), chunk.data[col], key_views,
-                         num_rows);
+                         chunk.data[col].GetType(), chunk.data[col], num_rows);
   }
-  // Generated-PK tables: store the synthetic PK as a scannable BIGINT column
-  // under kGeneratedPKId so the table scan can materialise the rowid. (The PK
-  // term used for delete matching was already emitted on the first column;
-  // explicit-PK rows carry their key in real columns and need none of this.)
   if (uses_generated_pk) {
     duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, num_rows);
     auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(gen_pk);
@@ -882,7 +826,7 @@ void WriteChunkToSearchSink(
     }
     sink.SwitchFieldImpl(
       static_cast<irs::field_id>(catalog::Column::kGeneratedPKId.id()),
-      duckdb::LogicalType::BIGINT, gen_pk, key_views, num_rows);
+      duckdb::LogicalType::BIGINT, gen_pk, num_rows);
   }
   sink.FinishImpl();
 }

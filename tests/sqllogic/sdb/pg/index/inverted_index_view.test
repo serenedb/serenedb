@@ -31,7 +31,7 @@ statement ok
 CREATE VIEW pq_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/view_idx.parquet');
 
 # CREATE INDEX on a view over read_parquet auto-detects file_row_number as
-# PK (fast-path); no WITH (pk = ...) needed.
+# PK (fast-path);
 statement ok
 CREATE INDEX pq_idx ON pq_v USING inverted(id, body view_idx_en);
 
@@ -79,7 +79,7 @@ CREATE VIEW union_v AS
   UNION ALL SELECT 3, 'pudge plays again';
 
 statement ok
-CREATE INDEX union_idx ON union_v USING inverted(id, body view_idx_en) WITH (pk = 'id');
+CREATE INDEX union_idx ON union_v USING inverted(id, body view_idx_en);
 
 query
 SELECT count(*) FROM union_idx WHERE body @@ ts_phrase('pudge');

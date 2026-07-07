@@ -25,7 +25,9 @@ add_library(
     duckdb_search_full_scan.cpp
     duckdb_search_table_scan.cpp
     duckdb_search_ann_scan.cpp
-    columnstore_materializer.cpp
+    column_extract.cpp
+    full_scanner.cpp
+    hit_batcher.cpp
     index_source_factory.cpp
     index_source_view.cpp
     inverted_store_index.cpp
@@ -41,7 +43,6 @@ add_library(
     duckdb_rbac_function.cpp
     duckdb_physical_create_index.cpp
     duckdb_index_utils.cpp
-    duckdb_search_sink_writer.cpp
     duckdb_vacuum_function.cpp
     duckdb_physical_search_truncate.cpp
     duckdb_physical_search_delete.cpp

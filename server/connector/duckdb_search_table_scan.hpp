@@ -27,23 +27,15 @@
 #include <memory>
 #include <vector>
 
-#include "connector/columnstore_materializer.h"
 #include "connector/duckdb_scan_base.hpp"
+#include "connector/hit_batcher.h"
 
 namespace sdb::connector {
 
 struct SearchTableScanGlobalState : public CommonScanGlobalState {
   std::shared_ptr<irs::DirectoryReader> reader;
-
-  // Live-docs iterator over the current segment (skips deleted/masked docs via
-  // SubReader::mask); null until the segment is opened. The segment cursor is
-  // the base's next_segment, so scan progress reports claimed segments.
   irs::DocIterator::ptr live_docs;
-  std::unique_ptr<ColumnstoreMaterializer> materializer;
-  // Scratch: the current batch's live columnstore row ids (doc_id - min).
-  std::vector<uint64_t> row_ids;
-
-  // COUNT(*)-style scan: emit `count_remaining` empty rows, no materialisation.
+  std::unique_ptr<HitBatcher> hit_batcher;
   bool count_only = false;
   uint64_t count_remaining = 0;
 };

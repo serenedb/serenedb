@@ -22,37 +22,51 @@
 
 #include <duckdb.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <iresearch/types.hpp>
+#include <iresearch/utils/type_limits.hpp>
 #include <span>
 #include <string_view>
 
+#include "basics/exceptions.h"
+#include "catalog/table_options.h"
 #include "connector/index_expression.hpp"
-#include "connector/sink_writer_base.hpp"
 
 namespace sdb::connector {
 
-// DuckDB-native version of SinkIndexWriter.
-// Same interface pattern, but uses DuckDB types instead of Velox.
+struct ColumnDescriptor {
+  catalog::Column::Id id;
+  duckdb::LogicalType type;
+};
+
+struct PkChunk {
+  std::span<const std::string_view> keys;
+  const duckdb::Vector* column = nullptr;
+};
+
+struct ExpressionDescriptor {
+  duckdb::LogicalType type;
+  irs::field_id field_id = irs::field_limits::invalid();
+};
+
+// Index sink used by CREATE INDEX and store-index maintenance sessions:
+// one virtual dispatch per column batch / per deleted row.
 class DuckDBSinkIndexWriter {
  public:
   DuckDBSinkIndexWriter() = default;
   virtual ~DuckDBSinkIndexWriter() = default;
 
-  virtual void Init(duckdb::idx_t batch_size, const duckdb::DataChunk& input) {}
+  virtual void Init(duckdb::idx_t batch_size, const PkChunk& pk) {}
 
   virtual void Finish() = 0;
   virtual void Abort() = 0;
 
   virtual bool SwitchColumn(const ColumnDescriptor& col,
-                            const duckdb::Vector& vec,
-                            std::span<const std::string_view> row_keys,
-                            duckdb::idx_t count) {
-    SDB_ASSERT(false, "SwitchColumn call not implemented");
-    return false;
+                            const duckdb::Vector& vec, duckdb::idx_t count) {
+    SDB_THROW(ERROR_INTERNAL, "SwitchColumn call not implemented");
   }
 
   virtual bool SwitchExpression(const ExpressionDescriptor& expr_desc,
                                 const duckdb::Vector& /*vec*/,
-                                std::span<const std::string_view> /*row_keys*/,
                                 duckdb::idx_t /*count*/) {
     return false;
   }
@@ -61,10 +75,8 @@ class DuckDBSinkIndexWriter {
     return {};
   }
 
-  // deletes row denoted by row_key. It is up to concrete writer to perform all
-  // necessary deletes.
   virtual void DeleteRow(std::string_view row_key) {
-    SDB_ASSERT(false, "DeleteRow call not implemented");
+    SDB_THROW(ERROR_INTERNAL, "DeleteRow call not implemented");
   }
 };
 

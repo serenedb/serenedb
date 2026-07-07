@@ -41,7 +41,6 @@
 #include "basics/file_utils_ext.hpp"
 #include "basics/log.h"
 #include "basics/misc.hpp"
-#include "basics/thread_utils.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/utils/snowball_stemmer.hpp"
 #include "iresearch/utils/utf8_utils.hpp"

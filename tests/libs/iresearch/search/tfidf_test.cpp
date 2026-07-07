@@ -173,7 +173,7 @@ void TfidfTestCase::TestQueryNorms() {
       .fetcher = &fetcher,
     });
 
-    while (docs->next()) {
+    while (!irs::doc_limits::eof(docs->advance())) {
       fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
@@ -226,7 +226,7 @@ void TfidfTestCase::TestQueryNorms() {
     });
 
     std::vector<float_t> scores;
-    while (docs->next()) {
+    while (!irs::doc_limits::eof(docs->advance())) {
       fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
@@ -397,7 +397,7 @@ TEST_P(TfidfTestCase, test_phrase) {
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
 
-    while (docs->next()) {
+    while (!irs::doc_limits::eof(docs->advance())) {
       fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
@@ -464,7 +464,7 @@ TEST_P(TfidfTestCase, test_phrase) {
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
 
-    while (docs->next()) {
+    while (!irs::doc_limits::eof(docs->advance())) {
       fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
@@ -542,7 +542,7 @@ TEST_P(TfidfTestCase, test_query) {
       .fetcher = &fetcher,
     });
 
-    while (docs->next()) {
+    while (!irs::doc_limits::eof(docs->advance())) {
       fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       in.reset(values.Get(docs->value()));
@@ -653,7 +653,8 @@ TEST_P(TfidfTestCase, test_query) {
         .fetcher = &fetcher,
       });
 
-      for (irs::score_t score_value{}; docs->next();) {
+      for (irs::score_t score_value{};
+           !irs::doc_limits::eof(docs->advance());) {
         fetcher.Fetch(docs->value());
         docs->FetchScoreArgs(0);
         in.reset(values.Get(docs->value()));
@@ -776,7 +777,7 @@ TEST_P(TfidfTestCase, test_query) {
         .fetcher = &fetcher,
       });
 
-      while (docs->next()) {
+      while (!irs::doc_limits::eof(docs->advance())) {
         fetcher.Fetch(docs->value());
         docs->FetchScoreArgs(0);
         in.reset(values.Get(docs->value()));
@@ -891,7 +892,7 @@ TEST_P(TfidfTestCase, test_query) {
         .fetcher = &fetcher,
       });
 
-      while (docs->next()) {
+      while (!irs::doc_limits::eof(docs->advance())) {
         fetcher.Fetch(docs->value());
         docs->FetchScoreArgs(0);
         in.reset(values.Get(docs->value()));
@@ -943,7 +944,7 @@ TEST_P(TfidfTestCase, test_query) {
       .fetcher = &fetcher,
     });
 
-    for (irs::score_t score_value{}; docs->next();) {
+    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->advance());) {
       fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       in.reset(values.Get(docs->value()));
@@ -993,7 +994,7 @@ TEST_P(TfidfTestCase, test_query) {
       .fetcher = &fetcher,
     });
 
-    for (irs::score_t score_value{}; docs->next();) {
+    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->advance());) {
       fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       in.reset(values.Get(docs->value()));
@@ -1041,7 +1042,7 @@ TEST_P(TfidfTestCase, test_query) {
       .fetcher = &fetcher,
     });
 
-    for (irs::score_t score_value{}; docs->next();) {
+    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->advance());) {
       fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       in.reset(values.Get(docs->value()));
@@ -1089,7 +1090,7 @@ TEST_P(TfidfTestCase, test_query) {
       .fetcher = &fetcher,
     });
 
-    for (irs::score_t score_value{}; docs->next();) {
+    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->advance());) {
       fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       in.reset(values.Get(docs->value()));
@@ -1139,7 +1140,7 @@ TEST_P(TfidfTestCase, test_query) {
       .fetcher = &fetcher,
     });
 
-    for (irs::score_t score_value{}; docs->next();) {
+    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->advance());) {
       fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       in.reset(values.Get(docs->value()));
@@ -1179,7 +1180,7 @@ TEST_P(TfidfTestCase, test_query) {
     });
 
     irs::doc_id_t doc = irs::doc_limits::min();
-    while (docs->next()) {
+    while (!irs::doc_limits::eof(docs->advance())) {
       fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       ASSERT_EQ(doc, docs->value());
@@ -1213,7 +1214,7 @@ TEST_P(TfidfTestCase, test_query) {
     });
 
     irs::doc_id_t doc = irs::doc_limits::min();
-    while (docs->next()) {
+    while (!irs::doc_limits::eof(docs->advance())) {
       fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       ASSERT_EQ(doc, docs->value());
@@ -1248,7 +1249,7 @@ TEST_P(TfidfTestCase, test_query) {
     ASSERT_TRUE(score.IsDefault());
 
     irs::doc_id_t doc = irs::doc_limits::min();
-    while (docs->next()) {
+    while (!irs::doc_limits::eof(docs->advance())) {
       fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       ASSERT_EQ(doc, docs->value());
@@ -1284,7 +1285,7 @@ TEST_P(TfidfTestCase, test_query) {
     ASSERT_TRUE(score.IsDefault());
 
     irs::doc_id_t doc = irs::doc_limits::min();
-    while (docs->next()) {
+    while (!irs::doc_limits::eof(docs->advance())) {
       fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       ASSERT_EQ(doc, docs->value());
@@ -1378,7 +1379,7 @@ TEST_P(TfidfTestCase, test_order) {
       .fetcher = &fetcher,
     });
 
-    for (irs::score_t score_value{}; docs->next();) {
+    for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->advance());) {
       fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       in.reset(values.Get(docs->value()));

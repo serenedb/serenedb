@@ -80,6 +80,8 @@ struct ChildIterator : irs::DocIterator {
 
   void FetchScoreArgs(uint16_t index) final { _it->FetchScoreArgs(index); }
 
+  IRS_DOC_ITERATOR_DEFAULTS
+
  private:
   irs::DocIterator::ptr _it;
   std::set<irs::doc_id_t> _parents;
@@ -109,6 +111,8 @@ class PrevDocWrapper : public irs::DocIterator {
   }
 
   void FetchScoreArgs(uint16_t index) final { _it->FetchScoreArgs(index); }
+
+  IRS_DOC_ITERATOR_DEFAULTS
 
  private:
   DocIterator::ptr _it;
@@ -202,6 +206,8 @@ class ParentDocIterator : public irs::DocIterator {
   }
 
   void FetchScoreArgs(uint16_t /*index*/) final {}
+
+  IRS_DOC_ITERATOR_DEFAULTS
 
  private:
   std::vector<irs::doc_id_t> _parents;

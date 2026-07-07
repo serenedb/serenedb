@@ -168,7 +168,8 @@ void Transaction::PreCommit() noexcept {
 
 void Transaction::PreRollback() noexcept { RollbackVariables(); }
 
-void Transaction::CommitSearch() noexcept {
+void Transaction::CommitSearch(
+  std::optional<search::WalCursor> cursor) noexcept {
   if (_search_transactions.empty()) {
     return;
   }
@@ -198,31 +199,18 @@ void Transaction::CommitSearch() noexcept {
 
   std::move(rollback).Cancel();
 
-  // This commit's exact store-WAL end offset, with the checkpoint iteration as
-  // the generation. We run after the store WAL is durable (inside the engine
-  // commit, before the in-commit checkpoint), so GetWALSize() is this
-  // transaction's WAL end offset and is constant throughout CommitSearch; read
-  // it once. Commits serialize, so ticks and offsets arrive in the same order.
-  search::WalCursor cursor;
-  bool has_cursor = false;
-  if (auto store =
-        duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance())
-          .GetDatabase(duckdb::Identifier{catalog::kStoreDatabaseName})) {
-    auto& sm = store->GetStorageManager();
-    cursor = search::WalCursor{sm.GetBlockManager().GetCheckpointIteration(),
-                               sm.GetWALSize()};
-    has_cursor = true;
-  }
-
   for (auto& [index_id, entry] : _search_transactions) {
     // Record this commit's WAL cursor into the index's own table BEFORE its
     // segment becomes flushable (Commit below emplaces it into the flush
     // context). A concurrent refresh can only flush this batch after Commit, by
     // which point the offset is already in the table, so the refresh's
     // CursorAtOrBelow(flushed_tick) can never under-claim and re-stream an
-    // already-durable insert after a crash.
-    if (entry.storage && has_cursor) {
-      entry.storage->RecordFlushCursor(last_tick, cursor);
+    // already-durable insert after a crash. The cursor is this commit's exact
+    // WAL position, captured under the WAL lock by the engine: commits overlap,
+    // so reading the WAL size here would include later transactions' bytes and
+    // over-claim (skipping their re-stream after a crash).
+    if (entry.storage && cursor) {
+      entry.storage->RecordFlushCursor(last_tick, *cursor);
     }
     if (entry.transaction->Commit(last_tick)) {
       continue;
@@ -252,8 +240,8 @@ Result Transaction::Commit() {
 
   // Inverted-index trxs: normally already settled inside the engine commit
   // (TransactionPreCheckpoint); this is the fallback for transactions that did
-  // not commit the store database.
-  CommitSearch();
+  // not commit the store database, so there is no store-WAL cursor to record.
+  CommitSearch(std::nullopt);
 
   // Search-table (TableEngine::Search) commit point (WAL_DESIGN.md §9): the §9
   // crash boundaries + the single multi-shard WAL fsync that is the atomic

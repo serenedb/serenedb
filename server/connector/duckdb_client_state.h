@@ -99,7 +99,9 @@ class SereneDBClientState final : public duckdb::ClientContextState {
                             duckdb::ClientContext& context) final;
 
   void TransactionPreCheckpoint(duckdb::AttachedDatabase& db,
-                                duckdb::ClientContext& context) final;
+                                duckdb::ClientContext& context,
+                                duckdb::idx_t wal_generation,
+                                duckdb::idx_t wal_end_offset) final;
 
   void TransactionPreRollback(
     duckdb::MetaTransaction& transaction, duckdb::ClientContext& context,

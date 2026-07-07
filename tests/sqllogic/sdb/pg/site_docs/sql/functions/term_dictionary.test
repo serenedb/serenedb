@@ -69,16 +69,17 @@ a	with
 query
 SELECT unnest(ts_dict_agg(body)) AS term
 FROM products_idx
-WHERE body @@ ts_starts_with('g') AND body @@ ts_regexp('g.*t')
+WHERE body LIKE 'g%'
 ORDER BY term;
 ----
 term
+gaming
 great
 
 query
 SELECT unnest(ts_dict_agg(body)) AS term
 FROM products_idx
-WHERE body @@ ts_starts_with('bud') OR body @@ ts_starts_with('gam')
+WHERE body LIKE 'bud%' OR body LIKE 'gam%'
 ORDER BY term;
 ----
 term
@@ -88,11 +89,29 @@ gaming
 query
 SELECT unnest(ts_dict_agg(body)) AS term
 FROM products_idx
-WHERE body @@ ts_starts_with('g') AND NOT (body @@ ts_regexp('g.*t'))
+WHERE body @@ ts_starts_with('g')
+ORDER BY term;
+----
+term
+a
+black
+camera
+gaming
+great
+laptop
+phone
+screen
+with
+
+query
+SELECT t AS term
+FROM (SELECT unnest(ts_dict_agg(body)) AS t FROM products_idx) sub
+WHERE t LIKE 'g%'
 ORDER BY term;
 ----
 term
 gaming
+great
 
 # DOCS_TEST: facets
 # DOCS_TEST_BODY

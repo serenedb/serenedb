@@ -28,7 +28,7 @@
 namespace irs {
 
 NormColumnReader::NormColumnReader(field_id id,
-                                   std::vector<NormRowGroupPointer> pointers,
+                                   std::vector<NormRowGroupMeta> pointers,
                                    IndexInput& in)
   : _id{id}, _pointers{std::move(pointers)} {
   _row_offsets.reserve(_pointers.size() + 1);

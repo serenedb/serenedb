@@ -706,7 +706,7 @@ CREATE VIEW union_glob AS
 
 statement ok
 CREATE INDEX union_glob_idx ON union_glob
-  USING inverted(id, who view_s3_en, what view_s3_en) WITH (pk = 'id');
+  USING inverted(id, who view_s3_en, what view_s3_en);
 
 
 query

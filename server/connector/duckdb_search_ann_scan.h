@@ -45,7 +45,6 @@ struct SearchAnnScanGlobalState : public CommonScanGlobalState {
 
   int ef_search = 0;
 
-  // Top-K mode only: cross-thread threshold for ANN pruning.
   std::atomic<float> global_kth_dis{std::numeric_limits<float>::max()};
 
   duckdb::idx_t MaxThreads() const final {
@@ -71,10 +70,9 @@ struct SearchAnnTopKLocalState : public SegDocBufferedScanLocalState {
       top_k_cap{k} {}
 
   void OnSegment(duckdb::ClientContext& ctx, const irs::SubReader& seg,
-                 uint32_t seg_idx, SearchAnnScanGlobalState& g);
-  bool OnSegmentsExhausted(duckdb::ClientContext& ctx,
-                           SearchAnnScanGlobalState& g,
-                           duckdb::DataChunk& output);
+                 uint32_t seg_idx, CommonScanGlobalState& g) override;
+  bool OnSegmentsExhausted(duckdb::ClientContext& ctx, CommonScanGlobalState& g,
+                           duckdb::DataChunk& output) override;
 
  private:
   bool prepped = false;
@@ -89,10 +87,6 @@ struct SearchAnnRangeLocalState : public SegDocBufferedScanLocalState {
 
   void StartSegment(duckdb::ClientContext& ctx, const irs::SubReader& seg,
                     uint32_t seg_idx, SearchAnnScanGlobalState& g);
-  duckdb::idx_t EmitChunk(duckdb::ClientContext& ctx,
-                          SearchAnnScanGlobalState& g,
-                          duckdb::DataChunk& output,
-                          duckdb::idx_t output_start);
 };
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(

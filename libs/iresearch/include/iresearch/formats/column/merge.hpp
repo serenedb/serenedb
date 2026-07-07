@@ -21,6 +21,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <span>
 
 #include "iresearch/index/column_info.hpp"
@@ -40,7 +41,8 @@ struct MergeSource {
   uint64_t alive_count;
 };
 
-void MergeInto(std::span<const MergeSource> sources, ColWriter& output,
-               const IndexFieldOptions* field_options);
+bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
+               const IndexFieldOptions* field_options,
+               const std::function<bool()>& progress = {});
 
 }  // namespace irs

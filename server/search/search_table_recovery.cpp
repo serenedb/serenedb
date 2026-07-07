@@ -126,8 +126,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
       }
 
       if (!ctx.insert_sink) {
-        ctx.insert_sink =
-          connector::MakeSearchTableInsertSink(ctx.trx, info.column_ids);
+        ctx.insert_sink = connector::MakeSearchTableInsertSink(ctx.trx);
         ctx.delete_sink =
           std::make_unique<connector::SearchSinkDeleteBaseImpl>(ctx.trx);
       }

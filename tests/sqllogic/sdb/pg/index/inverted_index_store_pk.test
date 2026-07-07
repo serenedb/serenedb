@@ -1,0 +1,149 @@
+control substitution on
+
+hash-threshold 100
+
+# PK storage modes for inverted indexes: fast-path views store the PK as a
+# typed columnstore column (BIGINT / STRUCT(hi, lo)) with no PK terms;
+# store_pk = 'none' stores no PK at all; tables keep the PK term + a BIGINT
+# rowid column.
+
+statement count 3
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body
+      UNION ALL SELECT 2, 'anchin reads manga'
+      UNION ALL SELECT 3, 'pudge plays again')
+TO '${__TEST_DIR__}/store_pk.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY store_pk_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE VIEW spk_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/store_pk.parquet');
+
+statement ok
+CREATE INDEX spk_idx ON spk_v USING inverted(id, body store_pk_en);
+
+# Fast-path view: PK stored as a typed BIGINT column (no PK terms).
+# Materialising real source columns decodes it back to file_row_number.
+query
+SELECT id, body FROM spk_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge goes mid
+3	pudge plays again
+
+statement ok
+CREATE INDEX spk_np ON spk_v USING inverted(body store_pk_en, id included()) WITH (store_pk = false);
+
+query
+SELECT count(*) FROM spk_np WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+# INCLUDE'd columns come straight from the columnstore -- no PK needed.
+query
+SELECT id FROM spk_np WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id
+1
+3
+
+# Non-INCLUDE'd columns need the PK to map hits back -- rejected up front.
+statement error
+SELECT body FROM spk_np WHERE body @@ ts_phrase('pudge');
+----
+db error: ERROR: inverted index "spk_np" was created WITH (store_pk = 'none'), so it does not store row PKs and hits cannot be mapped back to source rows; select only INCLUDE'd columns, counts or scores through this index
+
+
+# Views without fast-path row addressing (e.g. GROUP BY) store no PK either.
+statement ok
+CREATE VIEW spk_gv AS SELECT body, count(*) AS c FROM read_parquet('${__TEST_DIR__}/store_pk.parquet') GROUP BY body;
+
+statement ok
+CREATE INDEX spk_gvi ON spk_gv USING inverted(c included());
+
+query
+SELECT sum(c) FROM spk_gvi;
+----
+sum
+3
+
+statement error
+SELECT body FROM spk_gvi;
+----
+db error: ERROR: materialising real columns from this view-backed inverted index is not yet supported -- view body must be a simple `SELECT * FROM <reader>(literal_args)` over a recognised fast-path source (read_parquet/csv/json/...)
+
+
+# Glob fast-path: two-part (file_index, row) PK stored as STRUCT(hi, lo).
+statement count 2
+COPY (SELECT 10 AS id, 'pudge goes mid' AS body
+      UNION ALL SELECT 11, 'anchin reads manga')
+TO '${__TEST_DIR__}/store_pk_g1.parquet' (FORMAT PARQUET);
+
+statement count 2
+COPY (SELECT 20 AS id, 'pudge plays again' AS body
+      UNION ALL SELECT 21, 'techies plants mines')
+TO '${__TEST_DIR__}/store_pk_g2.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW spk_glob_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/store_pk_g*.parquet');
+
+statement ok
+CREATE INDEX spk_glob_idx ON spk_glob_v USING inverted(id, body store_pk_en);
+
+query
+SELECT id, body FROM spk_glob_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+10	pudge goes mid
+20	pudge plays again
+
+# Explicit two-part encoding on the glob view.
+statement ok
+CREATE INDEX spk_glob_ii ON spk_glob_v USING inverted(body store_pk_en, id included()) WITH (store_pk = 'i64i64');
+
+query
+SELECT id, body FROM spk_glob_ii WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+10	pudge goes mid
+20	pudge plays again
+
+statement error
+CREATE INDEX spk_glob_bad ON spk_glob_v USING inverted(body store_pk_en) WITH (store_pk = 'i64');
+----
+db error: ERROR: store_pk = 'i64' requires a single-part row key; this index's key is (file_index, row)
+
+
+statement error
+CREATE INDEX spk_glob_bad2 ON spk_glob_v USING inverted(body store_pk_en) WITH (store_pk = 'i256');
+----
+db error: ERROR: store_pk must be one of none/auto/i64/i64i64 (or true/false), got 'i256'
+
+
+# Tables may skip the PK entirely; INSERT still works, but DELETE/UPDATE
+# cannot maintain such an index.
+statement ok
+CREATE TABLE spk_t (id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+INSERT INTO spk_t VALUES (1, 'pudge goes mid');
+
+statement ok
+CREATE INDEX spk_t_np ON spk_t USING inverted(body store_pk_en) WITH (store_pk = 'none');
+
+statement ok
+INSERT INTO spk_t VALUES (2, 'anchin reads manga');
+
+statement error
+DELETE FROM spk_t WHERE id = 1;
+----
+db error: ERROR: Invalid Error: inverted index "spk_t_np" was created WITH (store_pk = 'none') and does not index row PKs: DELETE/UPDATE cannot maintain it; drop the index first or recreate it without store_pk = 'none'

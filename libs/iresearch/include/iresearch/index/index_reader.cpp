@@ -22,6 +22,7 @@
 
 #include "index_reader.hpp"
 
+#include "basics/misc.hpp"
 #include "basics/resource_manager.hpp"
 #include "iresearch/formats/hnsw/hnsw_reader.hpp"
 
@@ -59,6 +60,7 @@ void SubReader::Search(field_id field, HNSWSearchInfo info,
     info.top_k,
   };
   auto& cache = hnsw_reader->PrepareCache(buffer.cache, read_ctx);
+  Finally unbind_cache = [&] noexcept { cache.Unbind(); };
   HNSWSearchContext context{
     info, segment_id, buffer.vt, handler, cache, docs_mask(),
   };
@@ -75,6 +77,7 @@ void SubReader::RangeSearch(field_id field, HNSWRangeSearchInfo info,
   faiss::RangeSearchResult seg_result{1};
   HNSWRangeResultHandler handler{&seg_result, info.radius};
   auto& cache = hnsw_reader->PrepareCache(buffer.cache, read_ctx);
+  Finally unbind_cache = [&] noexcept { cache.Unbind(); };
   HNSWRangeSearchContext context{
     info, segment_id, buffer.vt, handler, cache, docs_mask(),
   };

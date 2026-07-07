@@ -279,11 +279,6 @@ struct DocIterator : AttributeProvider {
 
   virtual doc_id_t advance() = 0;
 
-  // deprecated: use advance() instead
-  IRS_FORCE_INLINE bool next(this auto& self) {
-    return !doc_limits::eof(self.advance());
-  }
-
   // Position iterator at a specified target and returns current value
   // (for more information see class description)
   virtual doc_id_t seek(doc_id_t target) = 0;
@@ -294,9 +289,7 @@ struct DocIterator : AttributeProvider {
   virtual doc_id_t LazySeek(doc_id_t target) { return seek(target); }
 
   virtual void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
-                       ScoreCollector& collector) {
-    CollectImpl(*this, scorer, fetcher, collector);
-  }
+                       ScoreCollector& collector) = 0;
 
   virtual void FetchScoreArgs(uint16_t index) {}
 
@@ -304,7 +297,22 @@ struct DocIterator : AttributeProvider {
     return {};
   }
 
-  virtual uint32_t count() { return CountImpl(*this); }
+  virtual uint32_t count() = 0;
+
+  // Emit ascending matched doc-ids in [value(), max) into `out`, return the
+  // count. Bitset-free counterpart of FillBlock for unscored scans.
+  // Preconditions: value() < max and value() is positioned (as for FillBlock);
+  //   `out` has room for max - value() ids.
+  // Postcondition: value() == first doc >= max (or eof()), as for FillBlock.
+  virtual uint32_t EmitDocs(doc_id_t* out, doc_id_t max) = 0;
+
+  // Scored counterpart of EmitDocs: also emit each match's score into `scores`
+  // (parallel to `out`) via the block-scoring path (mirrors Collect), no
+  // bitset. Emits [min, max): value() may sit before the window (a
+  // block-positioned sub-iterator), so docs < min are skipped, not emitted.
+  virtual uint32_t EmitScoredDocs(doc_id_t* out, score_t* scores, doc_id_t max,
+                                  const ScoreFunction& scorer,
+                                  ColumnArgsFetcher* fetcher, doc_id_t min) = 0;
 
   // Fill a bitmap window [min, max) with documents from this iterator.
   // Preconditions:
@@ -322,9 +330,7 @@ struct DocIterator : AttributeProvider {
   virtual std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
                                               uint64_t* mask,
                                               FillBlockScoreContext score,
-                                              FillBlockMatchContext match) {
-    return FillBlockImpl(*this, min, max, mask, score, match);
-  }
+                                              FillBlockMatchContext match) = 0;
 
   virtual uint32_t GetFreq() const {
     SDB_ASSERT(false);
@@ -334,16 +340,54 @@ struct DocIterator : AttributeProvider {
  protected:
   mutable doc_id_t _doc = doc_limits::invalid();
 
-  IRS_FORCE_INLINE static uint32_t CountImpl(auto& self) {
+  template<typename S>
+  IRS_FORCE_INLINE static uint32_t CountImpl(S& self) {
     uint32_t count = 0;
-    while (self.next()) {
+    while (!doc_limits::eof(self.S::advance())) {
       ++count;
     }
     return count;
   }
 
-  IRS_FORCE_INLINE static void CollectImpl(auto& self,
-                                           const ScoreFunction& scorer,
+  // `self.S::advance()` is a qualified (non-virtual) call, so when `self` is
+  // the concrete iterator (from a derived override) advance() inlines instead
+  // of dispatching -- the whole point of the *Impl(*this) devirtualisation.
+  template<typename S>
+  IRS_FORCE_INLINE static uint32_t EmitDocsImpl(S& self, doc_id_t* out,
+                                                doc_id_t max) {
+    uint32_t n = 0;
+    for (auto doc = self.value(); doc < max; doc = self.S::advance()) {
+      out[n++] = doc;
+    }
+    return n;
+  }
+
+  template<typename S>
+  IRS_FORCE_INLINE static uint32_t EmitScoredDocsImpl(
+    S& self, doc_id_t* out, score_t* scores, doc_id_t max,
+    const ScoreFunction& scorer, ColumnArgsFetcher* fetcher, doc_id_t min) {
+    uint32_t n = 0;
+    auto doc = self.value();
+    while (doc < min) {  // value() may be behind the window; skip up to min
+      doc = self.S::advance();
+    }
+    while (doc < max) {
+      const uint32_t start = n;
+      for (; n - start != kScoreBlock && doc < max; ++n) {
+        out[n] = doc;
+        self.S::FetchScoreArgs(n - start);
+        doc = self.S::advance();
+      }
+      if (fetcher != nullptr) {
+        fetcher->Fetch(std::span<const doc_id_t>{out + start, n - start});
+      }
+      scorer.Score(scores + start, n - start);
+    }
+    return n;
+  }
+
+  template<typename S>
+  IRS_FORCE_INLINE static void CollectImpl(S& self, const ScoreFunction& scorer,
                                            ColumnArgsFetcher& fetcher,
                                            ScoreCollector& c) {
     ABSL_CACHELINE_ALIGNED std::array<score_t, kScoreBlock> scores;
@@ -351,7 +395,7 @@ struct DocIterator : AttributeProvider {
     ResolveScoreCollector(c, [&](auto& collector) IRS_FORCE_INLINE {
       while (true) {
         for (size_t i = 0; i != kScoreBlock; ++i) {
-          const auto doc = self.advance();
+          const auto doc = self.S::advance();
           if (doc_limits::eof(doc)) [[unlikely]] {
             if (i != 0) {
               fetcher.Fetch(std::span<const doc_id_t>{docs.data(), i});
@@ -363,7 +407,7 @@ struct DocIterator : AttributeProvider {
             return;
           }
           docs[i] = doc;
-          self.FetchScoreArgs(i);
+          self.S::FetchScoreArgs(i);
         }
         fetcher.Fetch(docs);
         scorer.ScoreBlock(scores.data());
@@ -372,8 +416,9 @@ struct DocIterator : AttributeProvider {
     });
   }
 
+  template<typename S>
   IRS_FORCE_INLINE static std::pair<doc_id_t, bool> FillBlockImpl(
-    auto& self, doc_id_t min, doc_id_t max, uint64_t* mask,
+    S& self, doc_id_t min, doc_id_t max, uint64_t* mask,
     FillBlockScoreContext score, FillBlockMatchContext match) {
     if (!score.score || score.score->IsDefault()) {
       score.merge_type = ScoreMergeType::Noop;
@@ -388,9 +433,9 @@ struct DocIterator : AttributeProvider {
   }
 
  private:
-  template<ScoreMergeType MergeType, bool TrackMatch>
+  template<ScoreMergeType MergeType, bool TrackMatch, typename S>
   static std::pair<doc_id_t, bool> FillBlockImpl(
-    auto& self, const doc_id_t min, const doc_id_t max,
+    S& self, const doc_id_t min, const doc_id_t max,
     uint64_t* IRS_RESTRICT mask, [[maybe_unused]] FillBlockScoreContext score,
     [[maybe_unused]] FillBlockMatchContext match) {
     SDB_ASSERT(min < max);
@@ -420,7 +465,7 @@ struct DocIterator : AttributeProvider {
 
     bool empty = true;
     auto doc = self.value();
-    for (; doc < max; doc = self.advance()) {
+    for (; doc < max; doc = self.S::advance()) {
       SDB_ASSERT(doc >= min);
       const auto offset = doc - min;
 
@@ -438,7 +483,7 @@ struct DocIterator : AttributeProvider {
 
       if constexpr (MergeType != ScoreMergeType::Noop) {
         score_hits[score_index] = doc;
-        self.FetchScoreArgs(score_index);
+        self.S::FetchScoreArgs(score_index);
         ++score_index;
 
         if (score_index == kScoreBlock) {
@@ -456,6 +501,78 @@ struct DocIterator : AttributeProvider {
     return {doc, empty};
   }
 };
+
+#define IRS_DOC_ITERATOR_DEFAULTS                                              \
+  uint32_t count() final { return irs::DocIterator::CountImpl(*this); }        \
+                                                                               \
+  void Collect(const irs::ScoreFunction& scorer,                               \
+               irs::ColumnArgsFetcher& fetcher,                                \
+               irs::ScoreCollector& collector) final {                         \
+    irs::DocIterator::CollectImpl(*this, scorer, fetcher, collector);          \
+  }                                                                            \
+                                                                               \
+  uint32_t EmitDocs(irs::doc_id_t* out, irs::doc_id_t max) final {             \
+    return irs::DocIterator::EmitDocsImpl(*this, out, max);                    \
+  }                                                                            \
+                                                                               \
+  uint32_t EmitScoredDocs(irs::doc_id_t* out, irs::score_t* scores,            \
+                          irs::doc_id_t max, const irs::ScoreFunction& scorer, \
+                          irs::ColumnArgsFetcher* fetcher, irs::doc_id_t min)  \
+    final {                                                                    \
+    return irs::DocIterator::EmitScoredDocsImpl(*this, out, scores, max,       \
+                                                scorer, fetcher, min);         \
+  }                                                                            \
+                                                                               \
+  std::pair<irs::doc_id_t, bool> FillBlock(                                    \
+    irs::doc_id_t min, irs::doc_id_t max, uint64_t* mask,                      \
+    irs::FillBlockScoreContext score, irs::FillBlockMatchContext match)        \
+    final {                                                                    \
+    return irs::DocIterator::FillBlockImpl(*this, min, max, mask, score,       \
+                                           match);                             \
+  }
+
+// EmitDocs/EmitScoredDocs only, for subclasses that already define bespoke
+// count/Collect/FillBlock.
+#define IRS_DOC_ITERATOR_EMIT_DEFAULTS                                         \
+  uint32_t EmitDocs(irs::doc_id_t* out, irs::doc_id_t max) final {             \
+    return irs::DocIterator::EmitDocsImpl(*this, out, max);                    \
+  }                                                                            \
+  uint32_t EmitScoredDocs(irs::doc_id_t* out, irs::score_t* scores,            \
+                          irs::doc_id_t max, const irs::ScoreFunction& scorer, \
+                          irs::ColumnArgsFetcher* fetcher, irs::doc_id_t min)  \
+    final {                                                                    \
+    return irs::DocIterator::EmitScoredDocsImpl(*this, out, scores, max,       \
+                                                scorer, fetcher, min);         \
+  }
+
+// Everything except count(), for subclasses with a bespoke count() but default
+// Collect/FillBlock/EmitDocs/EmitScoredDocs.
+#define IRS_DOC_ITERATOR_DEFAULTS_NO_COUNT                                     \
+  void Collect(const irs::ScoreFunction& scorer,                               \
+               irs::ColumnArgsFetcher& fetcher,                                \
+               irs::ScoreCollector& collector) final {                         \
+    irs::DocIterator::CollectImpl(*this, scorer, fetcher, collector);          \
+  }                                                                            \
+                                                                               \
+  uint32_t EmitDocs(irs::doc_id_t* out, irs::doc_id_t max) final {             \
+    return irs::DocIterator::EmitDocsImpl(*this, out, max);                    \
+  }                                                                            \
+                                                                               \
+  uint32_t EmitScoredDocs(irs::doc_id_t* out, irs::score_t* scores,            \
+                          irs::doc_id_t max, const irs::ScoreFunction& scorer, \
+                          irs::ColumnArgsFetcher* fetcher, irs::doc_id_t min)  \
+    final {                                                                    \
+    return irs::DocIterator::EmitScoredDocsImpl(*this, out, scores, max,       \
+                                                scorer, fetcher, min);         \
+  }                                                                            \
+                                                                               \
+  std::pair<irs::doc_id_t, bool> FillBlock(                                    \
+    irs::doc_id_t min, irs::doc_id_t max, uint64_t* mask,                      \
+    irs::FillBlockScoreContext score, irs::FillBlockMatchContext match)        \
+    final {                                                                    \
+    return irs::DocIterator::FillBlockImpl(*this, min, max, mask, score,       \
+                                           match);                             \
+  }
 
 // Same as `DocIterator` but also support `reset()` operation
 struct ResettableDocIterator : DocIterator {
@@ -520,8 +637,15 @@ struct SeekTermIterator : TermIterator {
 // of the iterator. Returns `false` if iterator exhausted, `true` otherwise.
 template<typename Iterator, typename T, typename Less = std::less<T>>
 bool seek(Iterator& it, const T& target, Less less = Less()) {
+  const auto step = [&] {
+    if constexpr (requires { it.next(); }) {
+      return it.next();
+    } else {
+      return !doc_limits::eof(it.advance());
+    }
+  };
   bool next = true;
-  while (less(it.value(), target) && static_cast<bool>(next = it.next())) {
+  while (less(it.value(), target) && (next = step())) {
   }
   return next;
 }

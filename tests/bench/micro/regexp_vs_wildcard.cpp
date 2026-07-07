@@ -489,7 +489,7 @@ void BenchExecuteOnly(benchmark::State& state, const irs::DirectoryReader& rdr,
         continue;
       }
       auto docs = p->Execute({}, stats);
-      while (docs->next()) {
+      while (!irs::doc_limits::eof(docs->advance())) {
         ++per_iter;
       }
     }

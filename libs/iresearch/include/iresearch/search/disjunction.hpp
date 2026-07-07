@@ -76,6 +76,35 @@ class UnaryDisjunction : public CompoundDocIterator<Adapter> {
     visitor(ctx, _it);
   }
 
+  uint32_t count() final { return DocIterator::CountImpl(*this); }
+
+  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final {
+    DocIterator::CollectImpl(*this, scorer, fetcher, collector);
+  }
+
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                      uint64_t* mask,
+                                      FillBlockScoreContext score,
+                                      FillBlockMatchContext match) final {
+    return DocIterator::FillBlockImpl(*this, min, max, mask, score, match);
+  }
+
+  uint32_t EmitScoredDocs(doc_id_t* out, score_t* scores, doc_id_t max,
+                          const ScoreFunction& scorer,
+                          ColumnArgsFetcher* fetcher, doc_id_t min) final {
+    return DocIterator::EmitScoredDocsImpl(*this, out, scores, max, scorer,
+                                           fetcher, min);
+  }
+
+  // Single-iterator passthrough: emit straight from the wrapped iterator's
+  // (possibly specialized) EmitDocs instead of a per-doc virtual advance loop.
+  uint32_t EmitDocs(doc_id_t* out, doc_id_t max) final {
+    const auto n = _it.EmitDocs(out, max);
+    this->_doc = _it.value();
+    return n;
+  }
+
  private:
   Adapter _it;
 };
@@ -157,6 +186,8 @@ class BasicDisjunction : public CompoundDocIterator<Adapter> {
       visitor(ctx, _itrs[1]);
     }
   }
+
+  IRS_DOC_ITERATOR_DEFAULTS_NO_COUNT
 
  private:
   struct ResolveOverloadTag {};
@@ -299,6 +330,8 @@ class SmallDisjunction : public CompoundDocIterator<Adapter> {
       }
     }
   }
+
+  IRS_DOC_ITERATOR_DEFAULTS
 
  private:
   struct ResolveOverloadTag {};
@@ -452,6 +485,8 @@ class Disjunction : public CompoundDocIterator<Adapter> {
         });
     }
   }
+
+  IRS_DOC_ITERATOR_DEFAULTS
 
  private:
   struct ResolveOverloadTag {};
@@ -744,6 +779,8 @@ class MinMatchDisjunction : public DocIterator {
     // TODO: optimize
     return seek(target);
   }
+
+  IRS_DOC_ITERATOR_DEFAULTS
 
   // Calculates total count of matched iterators. This value could be
   // greater than required min_match. All matched iterators points

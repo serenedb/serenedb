@@ -21,45 +21,43 @@
 #pragma once
 
 #include <cstring>
+#include <duckdb/common/vector/struct_vector.hpp>
 #include <string_view>
 #include <type_traits>
 
 #include "basics/assert.h"
+#include "basics/exceptions.h"
 #include "connector/index_source.h"
 #include "connector/primary_key.hpp"
 #include "connector/search_pk_lookup.h"
 
 namespace sdb::connector {
 
-inline std::pair<int64_t, int64_t> DecodeI64I64(std::string_view pk_bytes) {
-  SDB_ASSERT(pk_bytes.size() >= 2 * sizeof(int64_t));
-  auto fi = primary_key::ReadSigned<int64_t>(
-    std::string_view{pk_bytes.data(), sizeof(int64_t)});
-  auto rn = primary_key::ReadSigned<int64_t>(
-    std::string_view{pk_bytes.data() + sizeof(int64_t), sizeof(int64_t)});
-  return {fi, rn};
-}
-
-template<typename T>
-inline void AppendPrimaryKey(T& pk, std::string_view pk_bytes) {
-  if constexpr (std::is_same_v<T, PrimaryKeysBytes>) {
-    pk.Append(pk_bytes);
-  } else if constexpr (std::is_same_v<T, PrimaryKeyI64>) {
-    pk.Append(primary_key::ReadSigned<int64_t>(pk_bytes));
-  } else {
-    static_assert(std::is_same_v<T, PrimaryKeyI64I64>);
-    auto [fi, rn] = DecodeI64I64(pk_bytes);
-    pk.Append(fi, rn);
+inline void AppendPrimaryKeysFromVector(PrimaryKeyBatch& pk,
+                                        const duckdb::Vector& vec,
+                                        size_t count) {
+  const auto type_id = vec.GetType().id();
+  if (pk.kind == PrimaryKeyBatch::Kind::I64 &&
+      type_id == duckdb::LogicalTypeId::BIGINT) {
+    const auto* data = duckdb::FlatVector::GetData<int64_t>(vec);
+    for (size_t k = 0; k < count; ++k) {
+      pk.Append(data[k]);
+    }
+    return;
   }
-}
-
-template<typename T>
-inline size_t PrimaryKeysSize(const T& pk) {
-  if constexpr (std::is_same_v<T, PrimaryKeysBytes>) {
-    return pk.views.size();
-  } else {
-    return pk.rows.size();
+  if (pk.kind == PrimaryKeyBatch::Kind::I64I64 &&
+      type_id == duckdb::LogicalTypeId::STRUCT) {
+    const auto& entries = duckdb::StructVector::GetEntries(vec);
+    SDB_ASSERT(entries.size() == 2);
+    const auto* hi = duckdb::FlatVector::GetData<int64_t>(entries[0]);
+    const auto* lo = duckdb::FlatVector::GetData<int64_t>(entries[1]);
+    for (size_t k = 0; k < count; ++k) {
+      pk.Append(hi[k], lo[k]);
+    }
+    return;
   }
+  SDB_THROW(ERROR_INTERNAL, "stored PK column type ", vec.GetType().ToString(),
+            " does not match the index source's expected key shape");
 }
 
 }  // namespace sdb::connector

@@ -35,7 +35,6 @@
 #include "basics/async_utils.hpp"
 #include "basics/noncopyable.hpp"
 #include "basics/object_pool.hpp"
-#include "basics/thread_utils.hpp"
 #include "basics/wait_group.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/column_info.hpp"

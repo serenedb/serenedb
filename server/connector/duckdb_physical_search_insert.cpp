@@ -75,7 +75,6 @@ struct SearchInsertGlobalState : duckdb::GlobalSinkState {
 
   std::vector<search::SearchDbWal::PendingChunk> bulk_chunks;
 
-  // CTAS bookkeeping.
   bool ctas_mode = false;
   bool ctas_finalized = false;
   ObjectId ctas_database_id;
@@ -149,8 +148,6 @@ std::shared_ptr<catalog::Table> CreateCtasTable(
   const bool if_not_exists =
     create_info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
   catalog::CreateTableOperationOptions op_options;
-  // A valid pre-allocated id puts CreateTable in CTAS mode: tombstoned and with
-  // no backing store table (a Search table never has one).
   op_options.table_id = catalog::NextId();
 
   auto r = catalog_impl.CreateTable(catalog::NoAccessCheck(), database_id,
@@ -169,8 +166,6 @@ std::shared_ptr<catalog::Table> CreateCtasTable(
     SDB_THROW(std::move(r));
   }
 
-  // Fetch the new (tombstoned) table from a fresh global snapshot -- the
-  // connection's snapshot predates the create.
   auto snapshot = catalog_impl.GetCatalogSnapshot();
   auto catalog_table = snapshot->GetTable(
     catalog::NoAccessCheck(), database_id, schema.name.GetIdentifierName(),
@@ -187,9 +182,6 @@ std::shared_ptr<catalog::Table> CreateCtasTable(
   return catalog_table;
 }
 
-// Removes the CTAS tombstone so the populated table becomes visible. No-op
-// for plain INSERT/COPY. Runs on every Finalize success path (including
-// the zero-row CTAS case -- an empty SELECT still creates an empty table).
 void RemoveCtasTombstoneIfNeeded(SearchInsertGlobalState& state) {
   if (!state.ctas_mode) {
     return;
@@ -245,7 +237,7 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   if (_ctas_info) {
     table = CreateCtasTable(context, *state, *_ctas_info, *_ctas_schema);
     if (!table) {
-      return nullptr;  // IF NOT EXISTS hit an existing relation.
+      return nullptr;
     }
     auto& catalog_impl = catalog::GetCatalog();
     snapshot = catalog_impl.GetCatalogSnapshot();
@@ -299,8 +291,7 @@ SereneDBSearchInsert::GetLocalSinkState(
   if (lstate->bulk) {
     lstate->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
       gstate->search_table->GetTransaction());
-    lstate->sink =
-      MakeSearchTableInsertSink(*lstate->search_trx, gstate->column_ids);
+    lstate->sink = MakeSearchTableInsertSink(*lstate->search_trx);
   }
   return lstate;
 }
@@ -320,7 +311,7 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
     auto& trx = gstate.sdb_txn->SearchTxn().EnsureSerialSearchTransaction(
       gstate.search_table,
       [&] { return gstate.search_table->GetTransaction(); });
-    lstate->sink = MakeSearchTableInsertSink(trx, gstate.column_ids);
+    lstate->sink = MakeSearchTableInsertSink(trx);
   }
 
   const bool uses_generated_pk = gstate.generated_pk_seq != nullptr;
@@ -351,11 +342,10 @@ duckdb::SinkCombineResultType SereneDBSearchInsert::Combine(
   auto& gstate = input.global_state.Cast<SearchInsertGlobalState>();
   auto* lstate = basics::downCast<SearchInsertLocalState>(&input.local_state);
   if (lstate->no_op) {
-    return duckdb::SinkCombineResultType::FINISHED;  // CTAS IF-NOT-EXISTS no-op
+    return duckdb::SinkCombineResultType::FINISHED;
   }
   lstate->sink.reset();
 
-  // No rows: nothing to hand off. Discard a bulk thread's empty owned trx;
   if (lstate->insert_count == 0) {
     lstate->search_trx.reset();
     return duckdb::SinkCombineResultType::FINISHED;
@@ -384,7 +374,6 @@ duckdb::SinkFinalizeType SereneDBSearchInsert::Finalize(
   duckdb::OperatorSinkFinalizeInput& input) const {
   auto& gstate = input.global_state.Cast<SearchInsertGlobalState>();
   if (gstate.insert_count == 0) {
-    // Empty SELECT into CTAS still materialises an (empty) table.
     RemoveCtasTombstoneIfNeeded(gstate);
     return duckdb::SinkFinalizeType::READY;
   }

@@ -179,6 +179,8 @@ class BasicDocIterator : public irs::DocIterator {
     return _doc;
   }
 
+  IRS_DOC_ITERATOR_DEFAULTS
+
  private:
   std::map<irs::TypeInfo::type_id, irs::Attribute*> _attrs;
   irs::CostAttr _est;
@@ -334,7 +336,7 @@ TEST(boolean_query_boost, hierarchy) {
     /* the first hit should be scored as 2*value^3 +2*value^3+value^2 since it
      * exists in all results */
     {
-      ASSERT_TRUE(docs->next());
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
       docs->FetchScoreArgs(0);
       const auto doc_boost = scr.Score();
       ASSERT_EQ(4 * value * value * value + value * value, doc_boost);
@@ -343,13 +345,13 @@ TEST(boolean_query_boost, hierarchy) {
     /* the second hit should be scored as 2*value^3+value^2 since it
      * exists in all results */
     {
-      ASSERT_TRUE(docs->next());
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
       docs->FetchScoreArgs(0);
       const auto doc_boost = scr.Score();
       ASSERT_EQ(4 * value * value * value + value * value, doc_boost);
     }
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
   }
 
   // hierarchy of boosted subqueries (multiple Or's)
@@ -416,7 +418,7 @@ TEST(boolean_query_boost, hierarchy) {
     /* the first hit should be scored as 2*value^3+value^2+3*value^2+value
      * since it exists in all results */
     {
-      ASSERT_TRUE(docs->next());
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
       docs->FetchScoreArgs(0);
       const auto doc_boost = scr.Score();
       ASSERT_EQ(2 * value * value * value + 4 * value * value + value,
@@ -426,7 +428,7 @@ TEST(boolean_query_boost, hierarchy) {
     /* the second hit should be scored as value^3+value^2+2*value^2 since it
      * exists in all results */
     {
-      ASSERT_TRUE(docs->next());
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
       docs->FetchScoreArgs(0);
       const auto doc_boost = scr.Score();
       ASSERT_EQ(value * value * value + 3 * value * value + value, doc_boost);
@@ -435,13 +437,13 @@ TEST(boolean_query_boost, hierarchy) {
     /* the third hit should be scored as value^3+value^2 since it
      * exists in all results */
     {
-      ASSERT_TRUE(docs->next());
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
       docs->FetchScoreArgs(0);
       const auto doc_boost = scr.Score();
       ASSERT_EQ(value * value * value + value * value + value, doc_boost);
     }
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
   }
 
   // hierarchy of boosted subqueries (multiple And's)
@@ -506,7 +508,7 @@ TEST(boolean_query_boost, hierarchy) {
 
     // the first hit should be scored as value^3+2*value^2+3*value^2+value
     {
-      ASSERT_TRUE(docs->next());
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
       docs->FetchScoreArgs(0);
       const auto doc_boost = scr.Score();
       ASSERT_EQ(value * value * value + 5 * value * value + value, doc_boost);
@@ -514,7 +516,7 @@ TEST(boolean_query_boost, hierarchy) {
 
     // the second hit should be scored as value
     {
-      ASSERT_TRUE(docs->next());
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
       docs->FetchScoreArgs(0);
       const auto doc_boost = scr.Score();
       ASSERT_EQ(value, doc_boost);
@@ -522,13 +524,13 @@ TEST(boolean_query_boost, hierarchy) {
 
     // the third hit should be scored as value
     {
-      ASSERT_TRUE(docs->next());
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
       docs->FetchScoreArgs(0);
       const auto doc_boost = scr.Score();
       ASSERT_EQ(value, doc_boost);
     }
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
   }
 }
 
@@ -556,11 +558,11 @@ TEST(boolean_query_boost, and_filter) {
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     const auto doc_boost = scr.Score();
     ASSERT_EQ(value, doc_boost);
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
   }
 
   // boosted root & single boosted subquery (root boost folds into the child)
@@ -587,11 +589,11 @@ TEST(boolean_query_boost, and_filter) {
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     const auto doc_boost = scr.Score();
     ASSERT_EQ(value * value, doc_boost);
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
   }
 
   // boosted root & several boosted subqueries
@@ -624,12 +626,12 @@ TEST(boolean_query_boost, and_filter) {
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     const auto doc_boost = scr.Score();
     ASSERT_EQ(2 * value * value, doc_boost);
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
   }
 
   // boosted root & several boosted subqueries
@@ -668,12 +670,12 @@ TEST(boolean_query_boost, and_filter) {
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     const auto doc_boost = scr.Score();
     ASSERT_EQ(3 * value * value + value, doc_boost);
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
   }
 
   // unboosted root & several boosted subqueries
@@ -712,12 +714,12 @@ TEST(boolean_query_boost, and_filter) {
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     const auto doc_boost = scr.Score();
     ASSERT_EQ(3 * value, doc_boost);
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
   }
 
   // unboosted root & several unboosted subqueries
@@ -754,12 +756,12 @@ TEST(boolean_query_boost, and_filter) {
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     const auto doc_boost = scr.Score();
     ASSERT_EQ(irs::score_t(0), doc_boost);
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
   }
 }
 
@@ -786,11 +788,11 @@ TEST(boolean_query_boost, or_filter) {
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     const auto doc_boost = scr.Score();
     ASSERT_EQ(value, doc_boost);
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
   }
 
   // boosted root & single boosted subquery (root boost folds into the child)
@@ -817,11 +819,11 @@ TEST(boolean_query_boost, or_filter) {
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     const auto doc_boost = scr.Score();
     ASSERT_EQ(value * value, doc_boost);
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
   }
 
   // boosted single query & several subqueries
@@ -855,7 +857,7 @@ TEST(boolean_query_boost, or_filter) {
     // the first hit should be scored as value*value + value*value since it
     // exists in both results
     {
-      ASSERT_TRUE(docs->next());
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
       docs->FetchScoreArgs(0);
       const auto doc_boost = scr.Score();
       ASSERT_EQ(2 * value * value, doc_boost);
@@ -864,13 +866,13 @@ TEST(boolean_query_boost, or_filter) {
     // the second hit should be scored as value*value since it
     // exists in second result only
     {
-      ASSERT_TRUE(docs->next());
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
       docs->FetchScoreArgs(0);
       const auto doc_boost = scr.Score();
       ASSERT_EQ(value * value, doc_boost);
     }
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
   }
 
   // boosted root & several boosted subqueries
@@ -913,7 +915,7 @@ TEST(boolean_query_boost, or_filter) {
 
     // first hit
     {
-      ASSERT_TRUE(docs->next());
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
       docs->FetchScoreArgs(0);
       const auto doc_boost = scr.Score();
       ASSERT_EQ(3 * value * value + value, doc_boost);
@@ -921,13 +923,13 @@ TEST(boolean_query_boost, or_filter) {
 
     // second hit
     {
-      ASSERT_TRUE(docs->next());
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
       docs->FetchScoreArgs(0);
       const auto doc_boost = scr.Score();
       ASSERT_EQ(2 * value * value + value, doc_boost);
     }
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
   }
 
   // unboosted root & several boosted subqueries
@@ -970,7 +972,7 @@ TEST(boolean_query_boost, or_filter) {
 
     // first hit
     {
-      ASSERT_TRUE(docs->next());
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
       docs->FetchScoreArgs(0);
       const auto doc_boost = scr.Score();
       ASSERT_EQ(3 * value, doc_boost);
@@ -978,13 +980,13 @@ TEST(boolean_query_boost, or_filter) {
 
     // second hit
     {
-      ASSERT_TRUE(docs->next());
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
       docs->FetchScoreArgs(0);
       const auto doc_boost = scr.Score();
       ASSERT_EQ(2 * value, doc_boost);
     }
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
   }
 
   // unboosted root & several unboosted subqueries
@@ -1024,7 +1026,7 @@ TEST(boolean_query_boost, or_filter) {
 
     // first hit
     {
-      ASSERT_TRUE(docs->next());
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
       docs->FetchScoreArgs(0);
       const auto doc_boost = scr.Score();
       ASSERT_EQ(irs::score_t(0), doc_boost);
@@ -1032,13 +1034,13 @@ TEST(boolean_query_boost, or_filter) {
 
     // second hit
     {
-      ASSERT_TRUE(docs->next());
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
       docs->FetchScoreArgs(0);
       const auto doc_boost = scr.Score();
       ASSERT_EQ(irs::score_t(0), doc_boost);
     }
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
   }
 }
 
@@ -1071,6 +1073,8 @@ struct Unestimated : public irs::FilterWithBoost {
       // prevent iterator to filter out
       return irs::doc_limits::invalid();
     }
+
+    IRS_DOC_ITERATOR_DEFAULTS
   };
 
   struct Prepared : public irs::QueryBuilder {
@@ -1117,6 +1121,8 @@ struct Estimated : public irs::FilterWithBoost {
       }
       return nullptr;
     }
+
+    IRS_DOC_ITERATOR_DEFAULTS
 
     irs::CostAttr cost;
   };
@@ -1452,11 +1458,11 @@ TEST(basic_disjunction, next) {
 
       ASSERT_EQ(first.size() + last.size(), irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -1473,10 +1479,10 @@ TEST(basic_disjunction, next) {
       EXPECT_EQ(compute_count(first, last), first.size());
       ASSERT_EQ(first.size() + last.size(), irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -1493,10 +1499,10 @@ TEST(basic_disjunction, next) {
       EXPECT_EQ(compute_count(first, last), last.size());
       ASSERT_EQ(first.size() + last.size(), irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(last, result);
@@ -1512,10 +1518,10 @@ TEST(basic_disjunction, next) {
       EXPECT_EQ(compute_count(first, last), first.size());
       ASSERT_EQ(first.size() + last.size(), irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(first, result);
@@ -1531,10 +1537,10 @@ TEST(basic_disjunction, next) {
       EXPECT_EQ(compute_count(first, last), first.size());
       ASSERT_EQ(first.size() + last.size(), irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(first, result);
@@ -1551,10 +1557,10 @@ TEST(basic_disjunction, next) {
       EXPECT_EQ(compute_count(first, last), expected.size());
       ASSERT_EQ(first.size() + last.size(), irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -1686,16 +1692,16 @@ TEST(basic_disjunction_test, seek_next) {
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_EQ(5, it.seek(5));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     ASSERT_EQ(11, it.seek(10));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 }
@@ -1730,19 +1736,19 @@ TEST(basic_disjunction_test, scored_seek_next) {
     ASSERT_EQ(first.size() + last.size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     ASSERT_EQ(5, it.seek(5));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     ASSERT_EQ(11, it.seek(10));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -1780,7 +1786,7 @@ TEST(basic_disjunction_test, scored_seek_next) {
     ASSERT_EQ(1, irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -1788,24 +1794,24 @@ TEST(basic_disjunction_test, scored_seek_next) {
     ASSERT_EQ(5, it.seek(5));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1 + 2
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 2
     ASSERT_EQ(6, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1
     ASSERT_EQ(11, it.seek(10));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -1843,7 +1849,7 @@ TEST(basic_disjunction_test, scored_seek_next) {
     ASSERT_EQ(1, irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -1851,24 +1857,24 @@ TEST(basic_disjunction_test, scored_seek_next) {
     ASSERT_EQ(5, it.seek(5));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // std::max(1, 2)
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // std::max(2)
     ASSERT_EQ(6, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // std::max(1)
     ASSERT_EQ(11, it.seek(10));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // std::max(1)
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // std::max(1)
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -1906,7 +1912,7 @@ TEST(basic_disjunction_test, scored_seek_next) {
     ASSERT_EQ(first.size() + last.size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     irs::score_t tmp;
     tmp = score.Score();
     ASSERT_EQ(1, it.value());
@@ -1915,24 +1921,24 @@ TEST(basic_disjunction_test, scored_seek_next) {
     ASSERT_EQ(5, it.seek(5));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(6, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(11, it.seek(10));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     tmp = score.Score();
     ASSERT_EQ(45, it.value());
     ASSERT_EQ(0, tmp);
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -1970,7 +1976,7 @@ TEST(basic_disjunction_test, scored_seek_next) {
     ASSERT_EQ(first.size() + last.size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -1978,24 +1984,24 @@ TEST(basic_disjunction_test, scored_seek_next) {
     ASSERT_EQ(5, it.seek(5));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(6, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(11, it.seek(10));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -2033,7 +2039,7 @@ TEST(basic_disjunction_test, scored_seek_next) {
     ASSERT_EQ(first.size() + last.size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -2041,24 +2047,24 @@ TEST(basic_disjunction_test, scored_seek_next) {
     ASSERT_EQ(5, it.seek(5));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(11, it.seek(10));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -2096,7 +2102,7 @@ TEST(basic_disjunction_test, scored_seek_next) {
     ASSERT_EQ(first.size() + last.size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -2104,24 +2110,24 @@ TEST(basic_disjunction_test, scored_seek_next) {
     ASSERT_EQ(5, it.seek(5));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(11, it.seek(10));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -2159,7 +2165,7 @@ TEST(basic_disjunction_test, scored_seek_next) {
     ASSERT_EQ(first.size() + last.size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -2167,24 +2173,24 @@ TEST(basic_disjunction_test, scored_seek_next) {
     ASSERT_EQ(5, it.seek(5));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(11, it.seek(10));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -2222,7 +2228,7 @@ TEST(basic_disjunction_test, scored_seek_next) {
     ASSERT_EQ(first.size() + last.size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -2230,24 +2236,24 @@ TEST(basic_disjunction_test, scored_seek_next) {
     ASSERT_EQ(5, it.seek(5));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(11, it.seek(10));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 }
@@ -2265,7 +2271,7 @@ TEST(small_disjunction_test, next) {
     Disjunction it(Disjunction::Adapters{}, irs::doc_limits::eof());
     ASSERT_EQ(0, irs::CostAttr::extract(it));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 
@@ -2281,10 +2287,10 @@ TEST(small_disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -2301,10 +2307,10 @@ TEST(small_disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -2322,10 +2328,10 @@ TEST(small_disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs[0], result);
@@ -2341,10 +2347,10 @@ TEST(small_disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs[0], result);
@@ -2361,10 +2367,10 @@ TEST(small_disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_TRUE(!irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -2383,10 +2389,10 @@ TEST(small_disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -2410,10 +2416,10 @@ TEST(small_disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -2431,10 +2437,10 @@ TEST(small_disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -2453,10 +2459,10 @@ TEST(small_disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs.front(), result);
@@ -2475,10 +2481,10 @@ TEST(small_disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs[0], result);
@@ -2496,10 +2502,10 @@ TEST(small_disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -2625,10 +2631,10 @@ TEST(small_disjunction_test, seek) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -2652,10 +2658,10 @@ TEST(small_disjunction_test, seek) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -2673,10 +2679,10 @@ TEST(small_disjunction_test, seek) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -2695,10 +2701,10 @@ TEST(small_disjunction_test, seek) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs.front(), result);
@@ -2717,10 +2723,10 @@ TEST(small_disjunction_test, seek) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs[0], result);
@@ -2738,10 +2744,10 @@ TEST(small_disjunction_test, seek) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -2767,16 +2773,16 @@ TEST(small_disjunction_test, seek_next) {
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_EQ(5, it.seek(5));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     ASSERT_EQ(29, it.seek(27));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 }
@@ -2809,16 +2815,16 @@ TEST(small_disjunction_test, scored_seek_next) {
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_EQ(5, it.seek(5));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     ASSERT_EQ(29, it.seek(27));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -2854,7 +2860,7 @@ TEST(small_disjunction_test, scored_seek_next) {
     ASSERT_EQ(1, irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -2862,24 +2868,24 @@ TEST(small_disjunction_test, scored_seek_next) {
     ASSERT_EQ(5, it.seek(5));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+2+4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 2+4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1
     ASSERT_EQ(29, it.seek(27));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 2
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -2915,7 +2921,7 @@ TEST(small_disjunction_test, scored_seek_next) {
     ASSERT_EQ(1, irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -2923,24 +2929,24 @@ TEST(small_disjunction_test, scored_seek_next) {
     ASSERT_EQ(5, it.seek(5));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // std::max(1, 2, 4)
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // std::max(2, 4)
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // std::max(1)
     ASSERT_EQ(29, it.seek(27));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // std::max(2)
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // std::max(1)
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -2976,7 +2982,7 @@ TEST(small_disjunction_test, scored_seek_next) {
     ASSERT_EQ(1, irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     it.FetchScoreArgs(0);
@@ -2986,12 +2992,12 @@ TEST(small_disjunction_test, scored_seek_next) {
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     it.FetchScoreArgs(0);
     tmp = score.Score();
@@ -3000,14 +3006,14 @@ TEST(small_disjunction_test, scored_seek_next) {
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  //
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -3043,7 +3049,7 @@ TEST(small_disjunction_test, scored_seek_next) {
     ASSERT_EQ(1, irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -3051,24 +3057,24 @@ TEST(small_disjunction_test, scored_seek_next) {
     ASSERT_EQ(5, it.seek(5));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // std::max(1, 4)
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // std::max(4)
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // std::max(1)
     ASSERT_EQ(29, it.seek(27));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // default value
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // std::max(1)
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -3105,7 +3111,7 @@ TEST(small_disjunction_test, scored_seek_next) {
     ASSERT_EQ(1, irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     it.FetchScoreArgs(0);
@@ -3115,12 +3121,12 @@ TEST(small_disjunction_test, scored_seek_next) {
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     it.FetchScoreArgs(0);
     tmp = score.Score();
@@ -3129,14 +3135,14 @@ TEST(small_disjunction_test, scored_seek_next) {
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  //
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -3172,7 +3178,7 @@ TEST(small_disjunction_test, scored_seek_next) {
     ASSERT_EQ(1, irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -3180,24 +3186,24 @@ TEST(small_disjunction_test, scored_seek_next) {
     ASSERT_EQ(5, it.seek(5));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(29, it.seek(27));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 }
@@ -3307,13 +3313,13 @@ TEST(block_disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      while (it.next()) {
+      while (!irs::doc_limits::eof(it.advance())) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -3338,13 +3344,13 @@ TEST(block_disjunction_test, next) {
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -3370,13 +3376,13 @@ TEST(block_disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -3401,13 +3407,13 @@ TEST(block_disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -3433,13 +3439,13 @@ TEST(block_disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -3466,13 +3472,13 @@ TEST(block_disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -3500,13 +3506,13 @@ TEST(block_disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -3529,13 +3535,13 @@ TEST(block_disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs[0], result);
@@ -3556,13 +3562,13 @@ TEST(block_disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs[0], result);
@@ -3584,13 +3590,13 @@ TEST(block_disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_TRUE(!irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -3602,7 +3608,7 @@ TEST(block_disjunction_test, next) {
     ASSERT_EQ(0, irs::CostAttr::extract(it));
     ASSERT_EQ(0, it.MatchCount());
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(0, it.MatchCount());
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
@@ -3624,13 +3630,13 @@ TEST(block_disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -3658,13 +3664,13 @@ TEST(block_disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -3686,13 +3692,13 @@ TEST(block_disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -3716,13 +3722,13 @@ TEST(block_disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs.front(), result);
@@ -3746,13 +3752,13 @@ TEST(block_disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs[0], result);
@@ -3775,13 +3781,13 @@ TEST(block_disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -3799,13 +3805,13 @@ TEST(block_disjunction_test, next) {
     Disjunction it{std::move(itrs), irs::doc_limits::eof()};
     ASSERT_EQ(0, irs::CostAttr::extract(it));
     ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-    for (; it.next();) {
+    for (; !irs::doc_limits::eof(it.advance());) {
       result.push_back(it.value());
       ASSERT_EQ(1, it.MatchCount());
     }
     ASSERT_EQ(0, it.MatchCount());
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     ASSERT_EQ(expected, result);
   }
@@ -3857,13 +3863,13 @@ TEST(block_disjunction_test, next_scored) {
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(1, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      while (it.next()) {
+      while (!irs::doc_limits::eof(it.advance())) {
         result.emplace_back(it.value(), 0);
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -3914,7 +3920,7 @@ TEST(block_disjunction_test, next_scored) {
 
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(1, irs::CostAttr::extract(it));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         it.FetchScoreArgs(0);
         irs::score_t score_value{};
         score_value = score.Score();
@@ -3923,7 +3929,7 @@ TEST(block_disjunction_test, next_scored) {
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -3976,7 +3982,7 @@ TEST(block_disjunction_test, next_scored) {
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         it.FetchScoreArgs(0);
         irs::score_t score_value{};
         score_value = score.Score();
@@ -3985,7 +3991,7 @@ TEST(block_disjunction_test, next_scored) {
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -4037,14 +4043,14 @@ TEST(block_disjunction_test, next_scored) {
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         it.FetchScoreArgs(0);
         result.emplace_back(it.value(), 0);
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -4095,7 +4101,7 @@ TEST(block_disjunction_test, next_scored) {
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         it.FetchScoreArgs(0);
         irs::score_t score_value{};
         score_value = score.Score();
@@ -4104,7 +4110,7 @@ TEST(block_disjunction_test, next_scored) {
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -4168,7 +4174,7 @@ TEST(block_disjunction_test, next_scored) {
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         it.FetchScoreArgs(0);
         irs::score_t score_value{};
         score_value = score.Score();
@@ -4177,7 +4183,7 @@ TEST(block_disjunction_test, next_scored) {
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -4241,7 +4247,7 @@ TEST(block_disjunction_test, next_scored) {
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         it.FetchScoreArgs(0);
         irs::score_t score_value{};
         score_value = score.Score();
@@ -4250,7 +4256,7 @@ TEST(block_disjunction_test, next_scored) {
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -4302,7 +4308,7 @@ TEST(block_disjunction_test, next_scored) {
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         it.FetchScoreArgs(0);
         irs::score_t score_value{};
         score_value = score.Score();
@@ -4311,7 +4317,7 @@ TEST(block_disjunction_test, next_scored) {
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -4357,7 +4363,7 @@ TEST(block_disjunction_test, next_scored) {
 
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         it.FetchScoreArgs(0);
         result.push_back(it.value());
         irs::score_t score_value{};
@@ -4367,7 +4373,7 @@ TEST(block_disjunction_test, next_scored) {
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs.front(), result);
@@ -4411,7 +4417,7 @@ TEST(block_disjunction_test, next_scored) {
 
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         it.FetchScoreArgs(0);
         result.push_back(it.value());
         irs::score_t score_value{};
@@ -4421,7 +4427,7 @@ TEST(block_disjunction_test, next_scored) {
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs.front(), result);
@@ -4464,7 +4470,7 @@ TEST(block_disjunction_test, next_scored) {
 
       ASSERT_EQ(0, irs::CostAttr::extract(it));
       ASSERT_TRUE(!irs::doc_limits::valid(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
@@ -4489,7 +4495,7 @@ TEST(block_disjunction_test, next_scored) {
     ASSERT_EQ(0, irs::CostAttr::extract(it));
     ASSERT_EQ(0, it.MatchCount());
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(0, it.MatchCount());
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
@@ -4536,7 +4542,7 @@ TEST(block_disjunction_test, next_scored) {
 
       ASSERT_EQ(3, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         it.FetchScoreArgs(0);
         irs::score_t score_value{};
         score_value = score.Score();
@@ -4545,7 +4551,7 @@ TEST(block_disjunction_test, next_scored) {
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -4596,7 +4602,7 @@ TEST(block_disjunction_test, next_scored) {
 
       ASSERT_EQ(3, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         it.FetchScoreArgs(0);
         irs::score_t score_value{};
         score_value = score.Score();
@@ -4605,7 +4611,7 @@ TEST(block_disjunction_test, next_scored) {
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -4652,7 +4658,7 @@ TEST(block_disjunction_test, next_scored) {
 
       ASSERT_EQ(3, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         it.FetchScoreArgs(0);
         irs::score_t score_value{};
         score_value = score.Score();
@@ -4661,7 +4667,7 @@ TEST(block_disjunction_test, next_scored) {
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -4707,7 +4713,7 @@ TEST(block_disjunction_test, next_scored) {
 
       ASSERT_EQ(3, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         it.FetchScoreArgs(0);
         result.push_back(it.value());
         irs::score_t score_value{};
@@ -4717,7 +4723,7 @@ TEST(block_disjunction_test, next_scored) {
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs.front(), result);
@@ -4761,9 +4767,9 @@ TEST(block_disjunction_test, next_scored) {
 
     ASSERT_EQ(3, irs::CostAttr::extract(it));
     ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 }
@@ -4812,14 +4818,14 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(1, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      while (it.next()) {
+      while (!irs::doc_limits::eof(it.advance())) {
         it.FetchScoreArgs(0);
         result.emplace_back(it.value(), 0);
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -4869,7 +4875,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(1, irs::CostAttr::extract(it));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         it.FetchScoreArgs(0);
         irs::score_t score_value{};
         score_value = score.Score();
@@ -4878,7 +4884,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -4929,7 +4935,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         it.FetchScoreArgs(0);
         irs::score_t score_value{};
         score_value = score.Score();
@@ -4938,7 +4944,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -4988,14 +4994,14 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         it.FetchScoreArgs(0);
         result.emplace_back(it.value(), 0);
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -5047,7 +5053,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         it.FetchScoreArgs(0);
         irs::score_t score_value{};
         score_value = score.Score();
@@ -5056,7 +5062,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -5121,7 +5127,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         it.FetchScoreArgs(0);
         irs::score_t score_value{};
         score_value = score.Score();
@@ -5130,7 +5136,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -5195,7 +5201,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         it.FetchScoreArgs(0);
         irs::score_t score_value{};
         score_value = score.Score();
@@ -5204,7 +5210,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -5257,7 +5263,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         it.FetchScoreArgs(0);
         irs::score_t score_value{};
         score_value = score.Score();
@@ -5266,7 +5272,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -5311,7 +5317,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         it.FetchScoreArgs(0);
         result.push_back(it.value());
         irs::score_t score_value{};
@@ -5321,7 +5327,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs.front(), result);
@@ -5364,7 +5370,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         it.FetchScoreArgs(0);
         result.push_back(it.value());
         irs::score_t score_value{};
@@ -5374,7 +5380,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs.front(), result);
@@ -5418,7 +5424,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
       ASSERT_EQ(0, irs::CostAttr::extract(it));
       ASSERT_TRUE(!irs::doc_limits::valid(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
@@ -5455,7 +5461,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
     ASSERT_EQ(0, irs::CostAttr::extract(it));
     ASSERT_EQ(0, it.MatchCount());
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(0, it.MatchCount());
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
@@ -5502,7 +5508,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
       ASSERT_EQ(3, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         it.FetchScoreArgs(0);
         irs::score_t score_value{};
         score_value = score.Score();
@@ -5511,7 +5517,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -5562,7 +5568,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
       ASSERT_EQ(3, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         it.FetchScoreArgs(0);
         irs::score_t score_value{};
         score_value = score.Score();
@@ -5571,7 +5577,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -5618,7 +5624,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
       ASSERT_EQ(3, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         it.FetchScoreArgs(0);
         irs::score_t score_value{};
         score_value = score.Score();
@@ -5627,7 +5633,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -5673,7 +5679,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
       ASSERT_EQ(3, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         it.FetchScoreArgs(0);
         result.push_back(it.value());
         irs::score_t score_value{};
@@ -5683,7 +5689,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs.front(), result);
@@ -5727,9 +5733,9 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
     ASSERT_EQ(3, irs::CostAttr::extract(it));
     ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 }
@@ -5757,13 +5763,13 @@ TEST(block_disjunction_test, min_match_next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      while (it.next()) {
+      while (!irs::doc_limits::eof(it.advance())) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -5783,7 +5789,7 @@ TEST(block_disjunction_test, min_match_next) {
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
   }
@@ -5801,13 +5807,13 @@ TEST(block_disjunction_test, min_match_next) {
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -5828,13 +5834,13 @@ TEST(block_disjunction_test, min_match_next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -5856,13 +5862,13 @@ TEST(block_disjunction_test, min_match_next) {
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       auto match_count = match_counts.begin();
-      for (; it.next(); ++match_count) {
+      for (; !irs::doc_limits::eof(it.advance()); ++match_count) {
         result.push_back(it.value());
         ASSERT_EQ(*match_count, it.MatchCount());
       }
       ASSERT_EQ(match_count, match_counts.end());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -5885,14 +5891,14 @@ TEST(block_disjunction_test, min_match_next) {
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       auto match_count = match_counts.begin();
-      for (; it.next(); ++match_count) {
+      for (; !irs::doc_limits::eof(it.advance()); ++match_count) {
         result.push_back(it.value());
         ASSERT_EQ(*match_count, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_EQ(match_count, match_counts.end());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -5915,14 +5921,14 @@ TEST(block_disjunction_test, min_match_next) {
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       auto match_count = match_counts.begin();
-      for (; it.next(); ++match_count) {
+      for (; !irs::doc_limits::eof(it.advance()); ++match_count) {
         result.push_back(it.value());
         ASSERT_EQ(*match_count, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_EQ(match_count, match_counts.end());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -5947,14 +5953,14 @@ TEST(block_disjunction_test, min_match_next) {
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       auto match_count = match_counts.begin();
-      for (; it.next(); ++match_count) {
+      for (; !irs::doc_limits::eof(it.advance()); ++match_count) {
         result.push_back(it.value());
         ASSERT_EQ(*match_count, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_EQ(match_count, match_counts.end());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -5973,10 +5979,10 @@ TEST(block_disjunction_test, min_match_next) {
     ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
               irs::CostAttr::extract(it));
     ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(0, it.MatchCount());
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 
@@ -5999,14 +6005,14 @@ TEST(block_disjunction_test, min_match_next) {
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       auto match_count = match_counts.begin();
-      for (; it.next(); ++match_count) {
+      for (; !irs::doc_limits::eof(it.advance()); ++match_count) {
         result.push_back(it.value());
         ASSERT_EQ(*match_count, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_EQ(match_count, match_counts.end());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -6031,14 +6037,14 @@ TEST(block_disjunction_test, min_match_next) {
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       auto match_count = match_counts.begin();
-      for (; it.next(); ++match_count) {
+      for (; !irs::doc_limits::eof(it.advance()); ++match_count) {
         result.push_back(it.value());
         ASSERT_EQ(*match_count, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_EQ(match_count, match_counts.end());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -6065,14 +6071,14 @@ TEST(block_disjunction_test, min_match_next) {
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       auto match_count = match_counts.begin();
-      for (; it.next(); ++match_count) {
+      for (; !irs::doc_limits::eof(it.advance()); ++match_count) {
         result.push_back(it.value());
         ASSERT_EQ(*match_count, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_EQ(match_count, match_counts.end());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -6097,14 +6103,14 @@ TEST(block_disjunction_test, min_match_next) {
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       auto match_count = match_counts.begin();
-      for (; it.next(); ++match_count) {
+      for (; !irs::doc_limits::eof(it.advance()); ++match_count) {
         result.push_back(it.value());
         ASSERT_EQ(*match_count, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_EQ(match_count, match_counts.end());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -6122,13 +6128,13 @@ TEST(block_disjunction_test, min_match_next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(2, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs[0], result);
@@ -6144,13 +6150,13 @@ TEST(block_disjunction_test, min_match_next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs[0], result);
@@ -6167,13 +6173,13 @@ TEST(block_disjunction_test, min_match_next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(3, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs[0], result);
@@ -6188,7 +6194,7 @@ TEST(block_disjunction_test, min_match_next) {
               irs::CostAttr::extract(it));
     ASSERT_EQ(0, it.MatchCount());
     ASSERT_TRUE(!irs::doc_limits::valid(it.value()));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(0, it.MatchCount());
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
@@ -6198,7 +6204,7 @@ TEST(block_disjunction_test, min_match_next) {
     Disjunction it(Disjunction::Adapters{}, irs::doc_limits::eof());
     ASSERT_EQ(0, irs::CostAttr::extract(it));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 
@@ -6216,13 +6222,13 @@ TEST(block_disjunction_test, min_match_next) {
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       auto match_count = match_counts.begin();
-      for (; it.next(); ++match_count) {
+      for (; !irs::doc_limits::eof(it.advance()); ++match_count) {
         result.push_back(it.value());
         ASSERT_EQ(*match_count, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
@@ -6250,13 +6256,13 @@ TEST(block_disjunction_test, min_match_next) {
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       auto match_count = match_counts.begin();
-      for (; it.next(); ++match_count) {
+      for (; !irs::doc_limits::eof(it.advance()); ++match_count) {
         result.push_back(it.value());
         ASSERT_EQ(*match_count, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
@@ -6275,13 +6281,13 @@ TEST(block_disjunction_test, min_match_next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
@@ -6301,13 +6307,13 @@ TEST(block_disjunction_test, min_match_next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
@@ -6327,13 +6333,13 @@ TEST(block_disjunction_test, min_match_next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(3, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
@@ -6350,7 +6356,7 @@ TEST(block_disjunction_test, min_match_next) {
               irs::CostAttr::extract(it));
     ASSERT_EQ(0, it.MatchCount());
     ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(0, it.MatchCount());
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
@@ -6379,13 +6385,13 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      while (it.next()) {
+      while (!irs::doc_limits::eof(it.advance())) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -6405,7 +6411,7 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
   }
@@ -6423,13 +6429,13 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -6450,13 +6456,13 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -6478,13 +6484,13 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       auto match_count = match_counts.begin();
-      for (; it.next(); ++match_count) {
+      for (; !irs::doc_limits::eof(it.advance()); ++match_count) {
         result.push_back(it.value());
         ASSERT_EQ(*match_count, it.MatchCount());
       }
       ASSERT_EQ(match_count, match_counts.end());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -6507,14 +6513,14 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       auto match_count = match_counts.begin();
-      for (; it.next(); ++match_count) {
+      for (; !irs::doc_limits::eof(it.advance()); ++match_count) {
         result.push_back(it.value());
         ASSERT_EQ(*match_count, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_EQ(match_count, match_counts.end());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -6537,14 +6543,14 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       auto match_count = match_counts.begin();
-      for (; it.next(); ++match_count) {
+      for (; !irs::doc_limits::eof(it.advance()); ++match_count) {
         result.push_back(it.value());
         ASSERT_EQ(*match_count, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_EQ(match_count, match_counts.end());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -6569,14 +6575,14 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       auto match_count = match_counts.begin();
-      for (; it.next(); ++match_count) {
+      for (; !irs::doc_limits::eof(it.advance()); ++match_count) {
         result.push_back(it.value());
         ASSERT_EQ(*match_count, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_EQ(match_count, match_counts.end());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -6595,10 +6601,10 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
     ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
               irs::CostAttr::extract(it));
     ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(0, it.MatchCount());
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 
@@ -6621,14 +6627,14 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       auto match_count = match_counts.begin();
-      for (; it.next(); ++match_count) {
+      for (; !irs::doc_limits::eof(it.advance()); ++match_count) {
         result.push_back(it.value());
         ASSERT_EQ(*match_count, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_EQ(match_count, match_counts.end());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -6653,14 +6659,14 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       auto match_count = match_counts.begin();
-      for (; it.next(); ++match_count) {
+      for (; !irs::doc_limits::eof(it.advance()); ++match_count) {
         result.push_back(it.value());
         ASSERT_EQ(*match_count, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_EQ(match_count, match_counts.end());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -6687,14 +6693,14 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       auto match_count = match_counts.begin();
-      for (; it.next(); ++match_count) {
+      for (; !irs::doc_limits::eof(it.advance()); ++match_count) {
         result.push_back(it.value());
         ASSERT_EQ(*match_count, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_EQ(match_count, match_counts.end());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -6719,14 +6725,14 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       auto match_count = match_counts.begin();
-      for (; it.next(); ++match_count) {
+      for (; !irs::doc_limits::eof(it.advance()); ++match_count) {
         result.push_back(it.value());
         ASSERT_EQ(*match_count, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_EQ(match_count, match_counts.end());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -6744,13 +6750,13 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(2, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs[0], result);
@@ -6766,13 +6772,13 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs[0], result);
@@ -6789,13 +6795,13 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(3, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs[0], result);
@@ -6810,7 +6816,7 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
               irs::CostAttr::extract(it));
     ASSERT_EQ(0, it.MatchCount());
     ASSERT_TRUE(!irs::doc_limits::valid(it.value()));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(0, it.MatchCount());
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
@@ -6820,7 +6826,7 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
     Disjunction it(Disjunction::Adapters{}, irs::doc_limits::eof());
     ASSERT_EQ(0, irs::CostAttr::extract(it));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 
@@ -6838,13 +6844,13 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       auto match_count = match_counts.begin();
-      for (; it.next(); ++match_count) {
+      for (; !irs::doc_limits::eof(it.advance()); ++match_count) {
         result.push_back(it.value());
         ASSERT_EQ(*match_count, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
@@ -6872,13 +6878,13 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       auto match_count = match_counts.begin();
-      for (; it.next(); ++match_count) {
+      for (; !irs::doc_limits::eof(it.advance()); ++match_count) {
         result.push_back(it.value());
         ASSERT_EQ(*match_count, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
@@ -6897,13 +6903,13 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
@@ -6923,13 +6929,13 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
@@ -6949,13 +6955,13 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         ASSERT_EQ(3, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_EQ(0, it.MatchCount());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
@@ -6972,7 +6978,7 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
               irs::CostAttr::extract(it));
     ASSERT_EQ(0, it.MatchCount());
     ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(0, it.MatchCount());
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
@@ -7351,7 +7357,7 @@ TEST(block_disjunction_test, seek_no_readahead) {
     ASSERT_EQ(irs::doc_limits::eof(), it.seek(1));
     ASSERT_EQ(0, it.MatchCount());
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     ASSERT_EQ(expected, result);
   }
@@ -10757,16 +10763,16 @@ TEST(block_disjunction_test, seek_next_no_readahead) {
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_EQ(5, it.seek(5));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     ASSERT_EQ(29, it.seek(27));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -10784,12 +10790,12 @@ TEST(block_disjunction_test, seek_next_no_readahead) {
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_EQ(45, it.seek(45));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(256, it.value());
     ASSERT_EQ(1145, it.seek(1144));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 }
@@ -10816,20 +10822,20 @@ TEST(block_disjunction_test, next_seek_no_readahead) {
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
 
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     ASSERT_EQ(5, it.seek(4));
     ASSERT_EQ(5, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(67, it.seek(64));
     ASSERT_EQ(67, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(80, it.value());
     ASSERT_EQ(84, it.seek(83));
     ASSERT_EQ(84, it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 }
@@ -10855,16 +10861,16 @@ TEST(block_disjunction_test, seek_next_no_readahead_two_blocks) {
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_EQ(5, it.seek(5));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     ASSERT_EQ(29, it.seek(27));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -10882,12 +10888,12 @@ TEST(block_disjunction_test, seek_next_no_readahead_two_blocks) {
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_EQ(45, it.seek(45));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(170, it.value());
     ASSERT_EQ(1145, it.seek(1144));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 }
@@ -10934,16 +10940,16 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_EQ(5, it.seek(5));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     ASSERT_EQ(29, it.seek(27));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -10987,7 +10993,7 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     ASSERT_EQ(1, irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp = 0;
     it.FetchScoreArgs(0);
@@ -10997,12 +11003,12 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(7, tmp);  // 1+2+4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(6, tmp);  // 2+4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     it.FetchScoreArgs(0);
     tmp = score.Score();
@@ -11011,14 +11017,14 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(2, tmp);  // 2
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(1, tmp);  // 1
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -11062,7 +11068,7 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     ASSERT_EQ(1, irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     it.FetchScoreArgs(0);
@@ -11072,12 +11078,12 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(2,4)
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     it.FetchScoreArgs(0);
     tmp = score.Score();
@@ -11086,14 +11092,14 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(2, tmp);  // std::max(2)
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(1, tmp);  // std::max(1)
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -11137,7 +11143,7 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     ASSERT_EQ(1, irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     it.FetchScoreArgs(0);
@@ -11147,12 +11153,12 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(5, tmp);  // 1+4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(4, tmp);  // 4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     it.FetchScoreArgs(0);
     tmp = score.Score();
@@ -11161,14 +11167,14 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  //
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(1, tmp);  // 1
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -11212,7 +11218,7 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     ASSERT_EQ(1, irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     it.FetchScoreArgs(0);
@@ -11222,12 +11228,12 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,4)
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(4)
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     it.FetchScoreArgs(0);
     tmp = score.Score();
@@ -11236,14 +11242,14 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  //
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(1, tmp);  // std::max(1)
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -11286,19 +11292,19 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     ASSERT_EQ(1, irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     ASSERT_EQ(5, it.seek(5));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     ASSERT_EQ(29, it.seek(27));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -11342,19 +11348,19 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     ASSERT_EQ(1, irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     ASSERT_EQ(5, it.seek(5));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     ASSERT_EQ(29, it.seek(27));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 }
@@ -11391,13 +11397,13 @@ TEST(disjunction_test, next) {
         *pval = *pval + 1;
         return true;
       };
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
         it.visit(&heap, visitor);
       }
       ASSERT_GT(heap, 0);  // some iterators should be visited
       heap = 0;
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       it.visit(&heap, visitor);
       ASSERT_EQ(0, heap);  // nothing to visit
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
@@ -11416,10 +11422,10 @@ TEST(disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
@@ -11437,10 +11443,10 @@ TEST(disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs[0], result);
@@ -11456,10 +11462,10 @@ TEST(disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs[0], result);
@@ -11476,10 +11482,10 @@ TEST(disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_TRUE(!irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -11490,7 +11496,7 @@ TEST(disjunction_test, next) {
     Disjunction it(Disjunction::Adapters{}, irs::doc_limits::eof());
     ASSERT_EQ(0, irs::CostAttr::extract(it));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 
@@ -11512,10 +11518,10 @@ TEST(disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -11544,10 +11550,10 @@ TEST(disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -11565,10 +11571,10 @@ TEST(disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -11587,10 +11593,10 @@ TEST(disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs.front(), result);
@@ -11614,10 +11620,10 @@ TEST(disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs[0], result);
@@ -11635,10 +11641,10 @@ TEST(disjunction_test, next) {
       ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
                 irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -11907,16 +11913,16 @@ TEST(disjunction_test, seek_next) {
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_EQ(5, it.seek(5));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     ASSERT_EQ(29, it.seek(27));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 }
@@ -11957,16 +11963,16 @@ TEST(disjunction_test, scored_seek_next) {
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_EQ(5, it.seek(5));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     ASSERT_EQ(29, it.seek(27));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -12004,7 +12010,7 @@ TEST(disjunction_test, scored_seek_next) {
     ASSERT_EQ(1, irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -12012,24 +12018,24 @@ TEST(disjunction_test, scored_seek_next) {
     ASSERT_EQ(5, it.seek(5));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+2+4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 2+4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1
     ASSERT_EQ(29, it.seek(27));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 2
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -12067,7 +12073,7 @@ TEST(disjunction_test, scored_seek_next) {
     ASSERT_EQ(1, irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -12075,24 +12081,24 @@ TEST(disjunction_test, scored_seek_next) {
     ASSERT_EQ(5, it.seek(5));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // std::max(1,2,4)
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // std::max(2,4)
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // std::max(1)
     ASSERT_EQ(29, it.seek(27));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // std::max(2)
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // std::max(1)
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -12130,7 +12136,7 @@ TEST(disjunction_test, scored_seek_next) {
     ASSERT_EQ(1, irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     it.FetchScoreArgs(0);
@@ -12140,12 +12146,12 @@ TEST(disjunction_test, scored_seek_next) {
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     it.FetchScoreArgs(0);
     tmp = score.Score();
@@ -12154,14 +12160,14 @@ TEST(disjunction_test, scored_seek_next) {
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  //
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -12199,7 +12205,7 @@ TEST(disjunction_test, scored_seek_next) {
     ASSERT_EQ(1, irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -12207,24 +12213,24 @@ TEST(disjunction_test, scored_seek_next) {
     ASSERT_EQ(5, it.seek(5));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // std::max(1,4)
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // std::max(4)
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // std::max(1)
     ASSERT_EQ(29, it.seek(27));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  //
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // std::max(1)
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -12262,7 +12268,7 @@ TEST(disjunction_test, scored_seek_next) {
     ASSERT_EQ(1, irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     it.FetchScoreArgs(0);
@@ -12272,12 +12278,12 @@ TEST(disjunction_test, scored_seek_next) {
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     it.FetchScoreArgs(0);
     tmp = score.Score();
@@ -12286,14 +12292,14 @@ TEST(disjunction_test, scored_seek_next) {
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  //
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -12331,7 +12337,7 @@ TEST(disjunction_test, scored_seek_next) {
     ASSERT_EQ(1, irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -12339,24 +12345,24 @@ TEST(disjunction_test, scored_seek_next) {
     ASSERT_EQ(5, it.seek(5));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(7, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(29, it.seek(27));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(45, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 }
@@ -12378,10 +12384,10 @@ TEST(min_match_disjunction_test, next) {
         Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                        min_match_count, irs::doc_limits::eof());
         ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-        for (; it.next();) {
+        for (; !irs::doc_limits::eof(it.advance());) {
           result.push_back(it.value());
         }
-        ASSERT_FALSE(it.next());
+        ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
         ASSERT_TRUE(irs::doc_limits::eof(it.value()));
       }
       ASSERT_EQ(docs.front(), result);
@@ -12394,10 +12400,10 @@ TEST(min_match_disjunction_test, next) {
         Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                        min_match_count, irs::doc_limits::eof());
         ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-        for (; it.next();) {
+        for (; !irs::doc_limits::eof(it.advance());) {
           result.push_back(it.value());
         }
-        ASSERT_FALSE(it.next());
+        ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
         ASSERT_TRUE(irs::doc_limits::eof(it.value()));
       }
       ASSERT_EQ(docs.front(), result);
@@ -12411,10 +12417,10 @@ TEST(min_match_disjunction_test, next) {
         Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                        min_match_count, irs::doc_limits::eof());
         ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-        for (; it.next();) {
+        for (; !irs::doc_limits::eof(it.advance());) {
           result.push_back(it.value());
         }
-        ASSERT_FALSE(it.next());
+        ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
         ASSERT_TRUE(irs::doc_limits::eof(it.value()));
       }
       ASSERT_EQ(docs.front(), result);
@@ -12428,10 +12434,10 @@ TEST(min_match_disjunction_test, next) {
         Disjunction it{detail::ExecuteAll<irs::CostAdapter>(docs),
                        min_match_count, irs::doc_limits::eof()};
         ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-        for (; it.next();) {
+        for (; !irs::doc_limits::eof(it.advance());) {
           result.push_back(it.value());
         }
-        ASSERT_FALSE(it.next());
+        ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
         ASSERT_TRUE(irs::doc_limits::eof(it.value()));
       }
       ASSERT_EQ(docs.front(), result);
@@ -12446,10 +12452,10 @@ TEST(min_match_disjunction_test, next) {
                        min_match_count, irs::doc_limits::eof()};
 
         ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-        for (; it.next();) {
+        for (; !irs::doc_limits::eof(it.advance());) {
           result.push_back(it.value());
         }
-        ASSERT_FALSE(it.next());
+        ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
         ASSERT_TRUE(irs::doc_limits::eof(it.value()));
       }
       ASSERT_EQ(docs.front(), result);
@@ -12473,10 +12479,10 @@ TEST(min_match_disjunction_test, next) {
         Disjunction it{detail::ExecuteAll<irs::CostAdapter>(docs),
                        min_match_count, irs::doc_limits::eof()};
         ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-        for (; it.next();) {
+        for (; !irs::doc_limits::eof(it.advance());) {
           result.push_back(it.value());
         }
-        ASSERT_FALSE(it.next());
+        ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
         ASSERT_TRUE(irs::doc_limits::eof(it.value()));
       }
       ASSERT_EQ(expected, result);
@@ -12490,10 +12496,10 @@ TEST(min_match_disjunction_test, next) {
         Disjunction it{detail::ExecuteAll<irs::CostAdapter>(docs),
                        min_match_count, irs::doc_limits::eof()};
         ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-        for (; it.next();) {
+        for (; !irs::doc_limits::eof(it.advance());) {
           result.push_back(it.value());
         }
-        ASSERT_FALSE(it.next());
+        ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
         ASSERT_TRUE(irs::doc_limits::eof(it.value()));
       }
       ASSERT_EQ(expected, result);
@@ -12507,10 +12513,10 @@ TEST(min_match_disjunction_test, next) {
         Disjunction it{detail::ExecuteAll<irs::CostAdapter>(docs),
                        min_match_count, irs::doc_limits::eof()};
         ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-        for (; it.next();) {
+        for (; !irs::doc_limits::eof(it.advance());) {
           result.push_back(it.value());
         }
-        ASSERT_FALSE(it.next());
+        ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
         ASSERT_TRUE(irs::doc_limits::eof(it.value()));
       }
       ASSERT_EQ(expected, result);
@@ -12524,10 +12530,10 @@ TEST(min_match_disjunction_test, next) {
         Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                        min_match_count, irs::doc_limits::eof());
         ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-        for (; it.next();) {
+        for (; !irs::doc_limits::eof(it.advance());) {
           result.push_back(it.value());
         }
-        ASSERT_FALSE(it.next());
+        ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
         ASSERT_TRUE(irs::doc_limits::eof(it.value()));
       }
       ASSERT_EQ(expected, result);
@@ -12542,10 +12548,10 @@ TEST(min_match_disjunction_test, next) {
         Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                        min_match_count, irs::doc_limits::eof());
         ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-        for (; it.next();) {
+        for (; !irs::doc_limits::eof(it.advance());) {
           result.push_back(it.value());
         }
-        ASSERT_FALSE(it.next());
+        ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
         ASSERT_TRUE(irs::doc_limits::eof(it.value()));
       }
       ASSERT_EQ(expected, result);
@@ -12560,10 +12566,10 @@ TEST(min_match_disjunction_test, next) {
         Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                        min_match_count, irs::doc_limits::eof());
         ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-        for (; it.next();) {
+        for (; !irs::doc_limits::eof(it.advance());) {
           result.push_back(it.value());
         }
-        ASSERT_FALSE(it.next());
+        ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
         ASSERT_TRUE(irs::doc_limits::eof(it.value()));
       }
       ASSERT_EQ(expected, result);
@@ -12578,10 +12584,10 @@ TEST(min_match_disjunction_test, next) {
         Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                        min_match_count, irs::doc_limits::eof());
         ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-        for (; it.next();) {
+        for (; !irs::doc_limits::eof(it.advance());) {
           result.push_back(it.value());
         }
-        ASSERT_FALSE(it.next());
+        ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
         ASSERT_TRUE(irs::doc_limits::eof(it.value()));
       }
       ASSERT_EQ(expected, result);
@@ -12606,10 +12612,10 @@ TEST(min_match_disjunction_test, next) {
         Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                        min_match_count, irs::doc_limits::eof());
         ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-        for (; it.next();) {
+        for (; !irs::doc_limits::eof(it.advance());) {
           result.push_back(it.value());
         }
-        ASSERT_FALSE(it.next());
+        ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
         ASSERT_TRUE(irs::doc_limits::eof(it.value()));
       }
       ASSERT_EQ(expected, result);
@@ -12624,10 +12630,10 @@ TEST(min_match_disjunction_test, next) {
         Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                        min_match_count, irs::doc_limits::eof());
         ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-        for (; it.next();) {
+        for (; !irs::doc_limits::eof(it.advance());) {
           result.push_back(it.value());
         }
-        ASSERT_FALSE(it.next());
+        ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
         ASSERT_TRUE(irs::doc_limits::eof(it.value()));
       }
       ASSERT_EQ(expected, result);
@@ -12641,10 +12647,10 @@ TEST(min_match_disjunction_test, next) {
         Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                        min_match_count, irs::doc_limits::eof());
         ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-        for (; it.next();) {
+        for (; !irs::doc_limits::eof(it.advance());) {
           result.push_back(it.value());
         }
-        ASSERT_FALSE(it.next());
+        ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
         ASSERT_TRUE(irs::doc_limits::eof(it.value()));
       }
       ASSERT_EQ(expected, result);
@@ -12658,10 +12664,10 @@ TEST(min_match_disjunction_test, next) {
         Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                        min_match_count, irs::doc_limits::eof());
         ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-        for (; it.next();) {
+        for (; !irs::doc_limits::eof(it.advance());) {
           result.push_back(it.value());
         }
-        ASSERT_FALSE(it.next());
+        ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
         ASSERT_TRUE(irs::doc_limits::eof(it.value()));
       }
       ASSERT_EQ(expected, result);
@@ -12676,10 +12682,10 @@ TEST(min_match_disjunction_test, next) {
         Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                        min_match_count, irs::doc_limits::eof());
         ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-        for (; it.next();) {
+        for (; !irs::doc_limits::eof(it.advance());) {
           result.push_back(it.value());
         }
-        ASSERT_FALSE(it.next());
+        ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
         ASSERT_TRUE(irs::doc_limits::eof(it.value()));
       }
       ASSERT_EQ(expected, result);
@@ -12694,10 +12700,10 @@ TEST(min_match_disjunction_test, next) {
         Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                        min_match_count, irs::doc_limits::eof());
         ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-        for (; it.next();) {
+        for (; !irs::doc_limits::eof(it.advance());) {
           result.push_back(it.value());
         }
-        ASSERT_FALSE(it.next());
+        ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
         ASSERT_TRUE(irs::doc_limits::eof(it.value()));
       }
       ASSERT_EQ(expected, result);
@@ -12712,10 +12718,10 @@ TEST(min_match_disjunction_test, next) {
         Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                        min_match_count, irs::doc_limits::eof());
         ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-        for (; it.next();) {
+        for (; !irs::doc_limits::eof(it.advance());) {
           result.push_back(it.value());
         }
-        ASSERT_FALSE(it.next());
+        ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
         ASSERT_TRUE(irs::doc_limits::eof(it.value()));
       }
       ASSERT_EQ(expected, result);
@@ -12739,10 +12745,10 @@ TEST(min_match_disjunction_test, next) {
         Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                        min_match_count, irs::doc_limits::eof());
         ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-        for (; it.next();) {
+        for (; !irs::doc_limits::eof(it.advance());) {
           result.push_back(it.value());
         }
-        ASSERT_FALSE(it.next());
+        ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
         ASSERT_TRUE(irs::doc_limits::eof(it.value()));
       }
       ASSERT_EQ(docs.front(), result);
@@ -12756,10 +12762,10 @@ TEST(min_match_disjunction_test, next) {
         Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                        min_match_count, irs::doc_limits::eof());
         ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-        for (; it.next();) {
+        for (; !irs::doc_limits::eof(it.advance());) {
           result.push_back(it.value());
         }
-        ASSERT_FALSE(it.next());
+        ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
         ASSERT_TRUE(irs::doc_limits::eof(it.value()));
       }
       ASSERT_EQ(docs.front(), result);
@@ -12772,10 +12778,10 @@ TEST(min_match_disjunction_test, next) {
         Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                        min_match_count, irs::doc_limits::eof());
         ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-        for (; it.next();) {
+        for (; !irs::doc_limits::eof(it.advance());) {
           result.push_back(it.value());
         }
-        ASSERT_FALSE(it.next());
+        ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
         ASSERT_TRUE(irs::doc_limits::eof(it.value()));
       }
       ASSERT_EQ(docs.front(), result);
@@ -12788,10 +12794,10 @@ TEST(min_match_disjunction_test, next) {
         Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                        min_match_count, irs::doc_limits::eof());
         ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-        for (; it.next();) {
+        for (; !irs::doc_limits::eof(it.advance());) {
           result.push_back(it.value());
         }
-        ASSERT_FALSE(it.next());
+        ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
         ASSERT_TRUE(irs::doc_limits::eof(it.value()));
       }
       ASSERT_EQ(docs.front(), result);
@@ -12805,10 +12811,10 @@ TEST(min_match_disjunction_test, next) {
         Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                        min_match_count, irs::doc_limits::eof());
         ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-        for (; it.next();) {
+        for (; !irs::doc_limits::eof(it.advance());) {
           result.push_back(it.value());
         }
-        ASSERT_FALSE(it.next());
+        ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
         ASSERT_TRUE(irs::doc_limits::eof(it.value()));
       }
       ASSERT_EQ(docs.front(), result);
@@ -12822,10 +12828,10 @@ TEST(min_match_disjunction_test, next) {
         Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                        min_match_count, irs::doc_limits::eof());
         ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-        for (; it.next();) {
+        for (; !irs::doc_limits::eof(it.advance());) {
           result.push_back(it.value());
         }
-        ASSERT_FALSE(it.next());
+        ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
         ASSERT_TRUE(irs::doc_limits::eof(it.value()));
       }
       ASSERT_EQ(docs.front(), result);
@@ -12839,10 +12845,10 @@ TEST(min_match_disjunction_test, next) {
         Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                        min_match_count, irs::doc_limits::eof());
         ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-        for (; it.next();) {
+        for (; !irs::doc_limits::eof(it.advance());) {
           result.push_back(it.value());
         }
-        ASSERT_FALSE(it.next());
+        ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
         ASSERT_TRUE(irs::doc_limits::eof(it.value()));
       }
       ASSERT_EQ(docs.front(), result);
@@ -12862,10 +12868,10 @@ TEST(min_match_disjunction_test, next) {
           Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs), 0U,
                          irs::doc_limits::eof());
           ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-          for (; it.next();) {
+          for (; !irs::doc_limits::eof(it.advance());) {
             result.push_back(it.value());
           }
-          ASSERT_FALSE(it.next());
+          ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
           ASSERT_TRUE(irs::doc_limits::eof(it.value()));
         }
         ASSERT_EQ(docs.front(), result);
@@ -12877,10 +12883,10 @@ TEST(min_match_disjunction_test, next) {
           Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs), 1U,
                          irs::doc_limits::eof());
           ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-          for (; it.next();) {
+          for (; !irs::doc_limits::eof(it.advance());) {
             result.push_back(it.value());
           }
-          ASSERT_FALSE(it.next());
+          ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
           ASSERT_TRUE(irs::doc_limits::eof(it.value()));
         }
         ASSERT_EQ(docs.front(), result);
@@ -12893,10 +12899,10 @@ TEST(min_match_disjunction_test, next) {
                          std::numeric_limits<size_t>::max(),
                          irs::doc_limits::eof());
           ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-          for (; it.next();) {
+          for (; !irs::doc_limits::eof(it.advance());) {
             result.push_back(it.value());
           }
-          ASSERT_FALSE(it.next());
+          ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
           ASSERT_TRUE(irs::doc_limits::eof(it.value()));
         }
         ASSERT_EQ(docs.front(), result);
@@ -13306,14 +13312,14 @@ TEST(min_match_disjunction_test, seek_next) {
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
 
     ASSERT_EQ(5, it.seek(5));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(9, it.value());
     ASSERT_EQ(29, it.seek(27));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 }
@@ -13331,13 +13337,13 @@ TEST(min_match_disjunction_test, match_count) {
     // cost
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
 
-    ASSERT_TRUE(it.next());  // |1,1,1,1
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));  // |1,1,1,1
     ASSERT_EQ(1, it.value());
-    ASSERT_TRUE(it.next());  // 3,3,3|2
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));  // 3,3,3|2
     ASSERT_EQ(2, it.value());
     ASSERT_EQ(4, it.seek(4));       // 3,3,3|4
     ASSERT_EQ(3, it.MatchCount());  // 3,3,3|4
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
   }
 }
 
@@ -13378,14 +13384,14 @@ TEST(min_match_disjunction_test, scored_seek_next) {
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_EQ(5, it.seek(5));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(9, it.value());
     ASSERT_EQ(29, it.seek(27));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -13424,7 +13430,7 @@ TEST(min_match_disjunction_test, scored_seek_next) {
               irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -13432,20 +13438,20 @@ TEST(min_match_disjunction_test, scored_seek_next) {
     ASSERT_EQ(5, it.seek(5));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+2+4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 2+4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(9, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+4
     ASSERT_EQ(29, it.seek(27));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 2+4
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -13484,7 +13490,7 @@ TEST(min_match_disjunction_test, scored_seek_next) {
               irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -13492,20 +13498,20 @@ TEST(min_match_disjunction_test, scored_seek_next) {
     ASSERT_EQ(5, it.seek(5));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // std::max(1,2,4)
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // std::max(2,4)
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(9, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // std::max(1,4)
     ASSERT_EQ(29, it.seek(27));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // std::max(2,4)
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -13544,7 +13550,7 @@ TEST(min_match_disjunction_test, scored_seek_next) {
               irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -13552,20 +13558,20 @@ TEST(min_match_disjunction_test, scored_seek_next) {
     ASSERT_EQ(5, it.seek(5));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+2+4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 2+4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(9, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+4
     ASSERT_EQ(29, it.seek(27));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 2+4
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -13604,7 +13610,7 @@ TEST(min_match_disjunction_test, scored_seek_next) {
               irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -13612,20 +13618,20 @@ TEST(min_match_disjunction_test, scored_seek_next) {
     ASSERT_EQ(5, it.seek(5));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(9, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(29, it.seek(27));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -13664,7 +13670,7 @@ TEST(min_match_disjunction_test, scored_seek_next) {
               irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -13672,20 +13678,20 @@ TEST(min_match_disjunction_test, scored_seek_next) {
     ASSERT_EQ(5, it.seek(5));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+2+4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 2+4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(9, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+4
     ASSERT_EQ(29, it.seek(27));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 2+4
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -13723,7 +13729,7 @@ TEST(min_match_disjunction_test, scored_seek_next) {
               irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -13731,20 +13737,20 @@ TEST(min_match_disjunction_test, scored_seek_next) {
     ASSERT_EQ(5, it.seek(5));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(6, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(9, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(29, it.seek(27));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 }
@@ -13777,10 +13783,10 @@ TEST(conjunction_test, next) {
       ASSERT_EQ(std::min_element(docs.begin(), docs.end(), shortest)->size(),
                 irs::CostAttr::extract(it));
       ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -13803,10 +13809,10 @@ TEST(conjunction_test, next) {
       ASSERT_EQ(std::min_element(docs.begin(), docs.end(), shortest)->size(),
                 irs::CostAttr::extract(it));
       ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -13830,10 +13836,10 @@ TEST(conjunction_test, next) {
       ASSERT_EQ(std::min_element(docs.begin(), docs.end(), shortest)->size(),
                 irs::CostAttr::extract(it));
       ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -13857,10 +13863,10 @@ TEST(conjunction_test, next) {
       ASSERT_EQ(std::min_element(docs.begin(), docs.end(), shortest)->size(),
                 irs::CostAttr::extract(it));
       ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -13883,10 +13889,10 @@ TEST(conjunction_test, next) {
       ASSERT_EQ(std::min_element(docs.begin(), docs.end(), shortest)->size(),
                 irs::CostAttr::extract(it));
       ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs.front(), result);
@@ -13906,10 +13912,10 @@ TEST(conjunction_test, next) {
       ASSERT_EQ(std::min_element(docs.begin(), docs.end(), shortest)->size(),
                 irs::CostAttr::extract(it));
       ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(docs.front(), result);
@@ -13933,10 +13939,10 @@ TEST(conjunction_test, next) {
       ASSERT_EQ(std::min_element(docs.begin(), docs.end(), shortest)->size(),
                 irs::CostAttr::extract(it));
       ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -13956,10 +13962,10 @@ TEST(conjunction_test, next) {
       ASSERT_EQ(std::min_element(docs.begin(), docs.end(), shortest)->size(),
                 irs::CostAttr::extract(it));
       ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -14142,14 +14148,14 @@ TEST(conjunction_test, seek_next) {
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_EQ(4, it.seek(3));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(5, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(8, it.value());
     ASSERT_EQ(14, it.seek(14));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 }
@@ -14186,7 +14192,7 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_EQ(docs[2].size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     it.FetchScoreArgs(0);
@@ -14196,12 +14202,12 @@ TEST(conjunction_test, scored_seek_next) {
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(7, tmp);  // 1+2+4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(5, it.value());
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(7, tmp);  // 1+2+4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(8, it.value());
     it.FetchScoreArgs(0);
     tmp = score.Score();
@@ -14210,9 +14216,9 @@ TEST(conjunction_test, scored_seek_next) {
     it.FetchScoreArgs(0);
     tmp = score.Score();
     ASSERT_EQ(7, tmp);  // 1+2+4
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -14248,14 +14254,14 @@ TEST(conjunction_test, scored_seek_next) {
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_EQ(4, it.seek(3));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(5, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(8, it.value());
     ASSERT_EQ(14, it.seek(14));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -14292,7 +14298,7 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_EQ(docs[2].size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -14300,20 +14306,20 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_EQ(4, it.seek(3));
     tmp = score.Score();
     ASSERT_EQ(12, tmp);  // 1+2+4+5
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(5, it.value());
     tmp = score.Score();
     ASSERT_EQ(12, tmp);  // 1+2+4+5
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(8, it.value());
     tmp = score.Score();
     ASSERT_EQ(12, tmp);  // 1+2+4+5
     ASSERT_EQ(14, it.seek(14));
     tmp = score.Score();
     ASSERT_EQ(12, tmp);  // 1+2+4+5
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -14348,7 +14354,7 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_EQ(docs[2].size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -14356,20 +14362,20 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_EQ(4, it.seek(3));
     tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(5, it.value());
     tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(8, it.value());
     tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
     ASSERT_EQ(14, it.seek(14));
     tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -14404,7 +14410,7 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_EQ(docs[2].size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -14412,20 +14418,20 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_EQ(4, it.seek(3));
     tmp = score.Score();
     ASSERT_EQ(7, tmp);  // 1+2+4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(5, it.value());
     tmp = score.Score();
     ASSERT_EQ(7, tmp);  // 1+2+4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(8, it.value());
     tmp = score.Score();
     ASSERT_EQ(7, tmp);  // 1+2+4
     ASSERT_EQ(14, it.seek(14));
     tmp = score.Score();
     ASSERT_EQ(7, tmp);  // 1+2+4
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -14460,7 +14466,7 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_EQ(docs[2].size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -14468,20 +14474,20 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_EQ(4, it.seek(3));
     tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(5, it.value());
     tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(8, it.value());
     tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
     ASSERT_EQ(14, it.seek(14));
     tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -14516,7 +14522,7 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_EQ(docs[2].size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -14524,20 +14530,20 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_EQ(4, it.seek(3));
     tmp = score.Score();
     ASSERT_EQ(1, tmp);  // 1
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(5, it.value());
     tmp = score.Score();
     ASSERT_EQ(1, tmp);  // 1
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(8, it.value());
     tmp = score.Score();
     ASSERT_EQ(1, tmp);  // 1
     ASSERT_EQ(14, it.seek(14));
     tmp = score.Score();
     ASSERT_EQ(1, tmp);  // 1
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -14572,7 +14578,7 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_EQ(docs[2].size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -14580,20 +14586,20 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_EQ(4, it.seek(3));
     tmp = score.Score();
     ASSERT_EQ(1, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(5, it.value());
     tmp = score.Score();
     ASSERT_EQ(1, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(8, it.value());
     tmp = score.Score();
     ASSERT_EQ(1, tmp);
     ASSERT_EQ(14, it.seek(14));
     tmp = score.Score();
     ASSERT_EQ(1, tmp);
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -14628,7 +14634,7 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_EQ(docs[1].size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -14636,20 +14642,20 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_EQ(4, it.seek(3));
     tmp = score.Score();
     ASSERT_EQ(5, tmp);  // 1+2+4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(5, it.value());
     tmp = score.Score();
     ASSERT_EQ(5, tmp);  // 1+2+4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(8, it.value());
     tmp = score.Score();
     ASSERT_EQ(5, tmp);  // 1+2+4
     ASSERT_EQ(14, it.seek(14));
     tmp = score.Score();
     ASSERT_EQ(5, tmp);  // 1+2+4
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -14684,7 +14690,7 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_EQ(docs[1].size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -14692,20 +14698,20 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_EQ(4, it.seek(3));
     tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(5, it.value());
     tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(8, it.value());
     tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
     ASSERT_EQ(14, it.seek(14));
     tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -14739,7 +14745,7 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_EQ(docs[2].size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -14747,20 +14753,20 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_EQ(4, it.seek(3));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+2+4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(5, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+2+4
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(8, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+2+4
     ASSERT_EQ(14, it.seek(14));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+2+4
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 
@@ -14794,7 +14800,7 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_EQ(docs[2].size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
     tmp = score.Score();
@@ -14802,20 +14808,20 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_EQ(4, it.seek(3));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(5, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(8, it.value());
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(14, it.seek(14));
     tmp = score.Score();
     ASSERT_EQ(0, tmp);
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 }
@@ -14836,10 +14842,10 @@ TEST(exclusion_test, next) {
       // cost
       ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -14855,10 +14861,10 @@ TEST(exclusion_test, next) {
                                 MakeScoreAdapter(excluded));
       ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(included, result);
@@ -14873,10 +14879,10 @@ TEST(exclusion_test, next) {
       irs::ExclusionIterator it(MakeScoreAdapter(included),
                                 MakeScoreAdapter(excluded));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(included, result);
@@ -14892,10 +14898,10 @@ TEST(exclusion_test, next) {
       irs::ExclusionIterator it(MakeScoreAdapter(included),
                                 MakeScoreAdapter(excluded));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -14911,10 +14917,10 @@ TEST(exclusion_test, next) {
                                 MakeScoreAdapter(excluded));
       ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(included, result);
@@ -14931,10 +14937,10 @@ TEST(exclusion_test, next) {
                                 MakeScoreAdapter(excluded));
       ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-      for (; it.next();) {
+      for (; !irs::doc_limits::eof(it.advance());) {
         result.push_back(it.value());
       }
-      ASSERT_FALSE(it.next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
     ASSERT_EQ(expected, result);
@@ -15083,23 +15089,23 @@ TEST_P(BooleanFilterTestCase, or_sequential_multiple_segments) {
     tests::PreparedFilter prep{root, rdr};
     {
       auto docs = prep.Execute(0);
-      ASSERT_TRUE(docs->next());
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
       ASSERT_EQ(2, docs->value());
-      ASSERT_FALSE(docs->next());
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     }
 
     {
       auto docs = prep.Execute(1);
-      ASSERT_TRUE(docs->next());
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
       ASSERT_EQ(2, docs->value());
-      ASSERT_FALSE(docs->next());
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     }
 
     {
       auto docs = prep.Execute(2);
-      ASSERT_TRUE(docs->next());
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
       ASSERT_EQ(2, docs->value());
-      ASSERT_FALSE(docs->next());
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     }
   }
 }
@@ -15458,7 +15464,7 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
 
     size_t docs_count = 0;
 
-    while (filter_itr->next()) {
+    while (!irs::doc_limits::eof(filter_itr->advance())) {
       cur_doc = filter_itr->value();
       filter_itr->FetchScoreArgs(0);
       irs::score_t score_value{};
@@ -15543,7 +15549,7 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
 
     size_t docs_count = 0;
 
-    while (filter_itr->next()) {
+    while (!irs::doc_limits::eof(filter_itr->advance())) {
       cur_doc = filter_itr->value();
       filter_itr->FetchScoreArgs(0);
       irs::score_t score_value{};
@@ -16154,7 +16160,7 @@ TEST_P(BooleanFilterTestCase, mixed_ordered) {
       });
 
       std::vector<irs::bstring> scores;
-      while (docs->next()) {
+      while (!irs::doc_limits::eof(docs->advance())) {
         EXPECT_EQ(*expected_doc, docs->value());
         ++expected_doc;
 
@@ -16427,13 +16433,13 @@ TEST(And_test, not_boosted) {
   });
   ASSERT_FALSE(scr.IsDefault());
 
-  ASSERT_TRUE(docs->next());
+  ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
   docs->FetchScoreArgs(0);
   const auto doc_boost = scr.Score();
   ASSERT_EQ(5., doc_boost);  // FIXME: should be 9 if we will boost negation
   ASSERT_EQ(1, docs->value());
 
-  ASSERT_FALSE(docs->next());
+  ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
 }
 
 TEST(Or_test, ctor) {
@@ -16624,12 +16630,12 @@ TEST(Or_test, boosted_not) {
   });
   ASSERT_FALSE(scr.IsDefault());
 
-  ASSERT_TRUE(docs->next());
+  ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
   docs->FetchScoreArgs(0);
   const auto doc_boost = scr.Score();
   ASSERT_EQ(5., doc_boost);  // FIXME: should be 9 if we will boost negation
   ASSERT_EQ(1, docs->value());
-  ASSERT_FALSE(docs->next());
+  ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
 }
 
 TEST_P(BooleanFilterTestCase, and_or_no_collector) {
@@ -16647,7 +16653,7 @@ TEST_P(BooleanFilterTestCase, and_or_no_collector) {
     Docs docs;
     for (size_t i = 0, n = prepared.size(); i < n; ++i) {
       auto it = prepared.Execute(i);
-      while (it->next()) {
+      while (!irs::doc_limits::eof(it->advance())) {
         docs.push_back(it->value());
       }
     }

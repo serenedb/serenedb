@@ -242,6 +242,8 @@ class DocIteratorImpl : public DocIterator {
     return irs::GetMutable(_attrs, type);
   }
 
+  IRS_DOC_ITERATOR_DEFAULTS
+
   doc_id_t advance() final {
     if (_freq_in.eof()) {
       if (!_posting) {
@@ -361,6 +363,8 @@ class SortingDocIteratorImpl : public DocIterator {
     return irs::GetMutable(_attrs, type);
   }
 
+  IRS_DOC_ITERATOR_DEFAULTS
+
   doc_id_t advance() final {
     while (_it != _docs.end()) {
       if (doc_limits::eof(_it->doc)) {
@@ -413,7 +417,7 @@ class SortingDocIteratorImpl : public DocIterator {
 
     _docs.resize(docmap.size() - 1);  // -1 for first element
 
-    while (it.next()) {
+    while (!doc_limits::eof(it.advance())) {
       SDB_ASSERT(it.value() - doc_limits::min() < docmap.size());
       const auto new_doc = docmap[it.value()];
 
@@ -435,7 +439,7 @@ class SortingDocIteratorImpl : public DocIterator {
     SDB_ASSERT(!irs::UseDenseSort(it.Cost(),
                                   docmap.size() - 1));  // -1 for first element
 
-    while (it.next()) {
+    while (!doc_limits::eof(it.advance())) {
       SDB_ASSERT(it.value() - doc_limits::min() < docmap.size());
       const auto new_doc = docmap[it.value()];
 
@@ -453,7 +457,7 @@ class SortingDocIteratorImpl : public DocIterator {
   }
 
   void ResetAlreadySorted(DocIteratorImpl& it, const FreqAttr& freq) {
-    while (it.next()) {
+    while (!doc_limits::eof(it.advance())) {
       _docs.emplace_back(it.value(), freq.value, it.Cookie());
     }
   }

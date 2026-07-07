@@ -22,7 +22,6 @@
 
 #include <absl/container/node_hash_map.h>
 #include <faiss/impl/AuxIndexStructures.h>
-#include <faiss/impl/DistanceComputer.h>
 #include <faiss/impl/HNSW.h>
 #include <faiss/impl/ResultHandler.h>
 #include <faiss/impl/io.h>
@@ -57,7 +56,9 @@ class ReadContext;
 
 inline constexpr uint64_t kChunkSizeFloats = 4 * STANDARD_VECTOR_SIZE;
 inline constexpr size_t kChunkCacheSlots = 64;
-inline constexpr size_t kRgCacheSlots = 8;
+inline constexpr size_t kBlockCacheSlots = 8;
+
+inline constexpr size_t kMaxPinDepth = 2;
 
 struct ChunkSlot : public sdb::containers::s3fifo::Node {
   uint64_t chunk_id = std::numeric_limits<uint64_t>::max();
@@ -65,41 +66,86 @@ struct ChunkSlot : public sdb::containers::s3fifo::Node {
   const float* base = nullptr;
   uint8_t pinned = 0;
 
-  explicit ChunkSlot(duckdb::idx_t size) {
-    data.emplace(duckdb::LogicalType::FLOAT, size,
-                 duckdb::VectorDataInitialization::ZERO_INITIALIZE);
-    base = duckdb::FlatVector::GetData<float>(*data);
-  }
-
+  ChunkSlot() = default;
   ChunkSlot(const ChunkSlot&) = delete;
   ChunkSlot& operator=(const ChunkSlot&) = delete;
   ChunkSlot(ChunkSlot&&) = delete;
   ChunkSlot& operator=(ChunkSlot&&) = delete;
 
+  void Allocate(duckdb::idx_t size) {
+    data.emplace(duckdb::LogicalType::FLOAT, size);
+    base = duckdb::FlatVector::GetData<float>(*data);
+  }
+
   bool Evictable() noexcept { return pinned == 0; }
 };
 
-struct RgSlot : public sdb::containers::s3fifo::Node {
-  size_t rg = std::numeric_limits<size_t>::max();
-  ColumnReader::ScanCursor cursor;
+class ScanCursor {
+ public:
+  ScanCursor() noexcept = default;
+  explicit ScanCursor(std::unique_ptr<duckdb::ColumnSegment> block)
+    : _block{std::move(block)} {
+    _block->InitializeScan(_state);
+  }
 
-  RgSlot() = default;
-  RgSlot(const RgSlot&) = delete;
-  RgSlot& operator=(const RgSlot&) = delete;
-  RgSlot(RgSlot&&) = delete;
-  RgSlot& operator=(RgSlot&&) = delete;
+  ScanCursor(const ScanCursor&) = delete;
+  ScanCursor& operator=(const ScanCursor&) = delete;
+  ScanCursor(ScanCursor&&) noexcept = default;
+  ScanCursor& operator=(ScanCursor&&) noexcept = default;
+
+  void Reset() noexcept {
+    _state = duckdb::ColumnScanState{nullptr};
+    _block->InitializeScan(_state);
+    _cursor = 0;
+  }
+
+  void SeekTo(uint64_t target) noexcept {
+    SDB_ASSERT(target >= _cursor);
+    if (target > _cursor) {
+      _state.offset_in_column = target;
+      _block->Skip(_state);
+      _cursor = target;
+    }
+  }
+
+  void Scan(duckdb::idx_t count, duckdb::Vector& out_vec,
+            duckdb::idx_t out_offset) {
+    _block->Scan(_state, count, out_vec, out_offset,
+                 duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
+    _state.offset_in_column += count;
+    _state.internal_index += count;
+    _cursor += count;
+  }
+
+  uint64_t Position() const noexcept { return _cursor; }
+
+ private:
+  std::unique_ptr<duckdb::ColumnSegment> _block;
+  duckdb::ColumnScanState _state{nullptr};
+  uint64_t _cursor = 0;
+};
+
+struct BlockSlot : public sdb::containers::s3fifo::Node {
+  size_t block = std::numeric_limits<size_t>::max();
+  ScanCursor cursor;
+
+  BlockSlot() = default;
+  BlockSlot(const BlockSlot&) = delete;
+  BlockSlot& operator=(const BlockSlot&) = delete;
+  BlockSlot(BlockSlot&&) = delete;
+  BlockSlot& operator=(BlockSlot&&) = delete;
 };
 
 class ChunkedVectorCache {
  public:
   using ChunkMap = sdb::containers::NodeHashMap<uint64_t, ChunkSlot>;
-  using RgMap = sdb::containers::NodeHashMap<size_t, RgSlot>;
+  using BlockMap = sdb::containers::NodeHashMap<size_t, BlockSlot>;
 
   ChunkedVectorCache()
     : _slots{{.capacity = kChunkCacheSlots,
               .small_size = std::max<size_t>(kChunkCacheSlots / 10, 1)}},
-      _rgs{{.capacity = kRgCacheSlots,
-            .small_size = std::max<size_t>(kRgCacheSlots / 4, 1)}} {}
+      _blocks{{.capacity = kBlockCacheSlots,
+               .small_size = std::max<size_t>(kBlockCacheSlots / 4, 1)}} {}
 
   ChunkedVectorCache(const ChunkedVectorCache&) = delete;
   ChunkedVectorCache& operator=(const ChunkedVectorCache&) = delete;
@@ -108,23 +154,32 @@ class ChunkedVectorCache {
 
   ~ChunkedVectorCache() noexcept {
     _slots.Clear();
-    _rgs.Clear();
+    _blocks.Clear();
+  }
+
+  void Unbind() noexcept {
+    SDB_ASSERT(_pin_depth == 0);
+    _slots.Clear();
+    _blocks.Clear();
+    _chunk_index.clear();
+    _block_index.clear();
+    _locate_hint = {};
+    _child = nullptr;
+    _ctx = nullptr;
   }
 
   void Rebind(const ColumnReader& child, uint64_t array_size,
               ReadContext& ctx) {
-    SDB_ASSERT(_pin_depth == 0);
-    _slots.Clear();
-    _rgs.Clear();
-    _chunk_index.clear();
-    _rg_index.clear();
-    _locate_hint = {};
+    Unbind();
     _child = &child;
     _ctx = &ctx;
     _d = array_size;
     _chunk_rows =
       std::max<uint64_t>(kChunkSizeFloats / std::max<uint64_t>(_d, 1), 1);
+    _total_rows = _child->RowCount() / _d;
   }
+
+  uint64_t ChunkRows() const noexcept { return _chunk_rows; }
 
   const float* Get(uint64_t row) { return SliceOf(*FindOrLoad(row), row); }
 
@@ -144,20 +199,19 @@ class ChunkedVectorCache {
     --slot->pinned;
   }
 
-  RgSlot& GetRgSlot(size_t rg) {
-    auto [it, inserted] = _rg_index.try_emplace(rg);
+  BlockSlot& GetBlockSlot(size_t block) {
+    auto [it, inserted] = _block_index.try_emplace(block);
     auto& slot = it->second;
     if (!inserted && !slot.Detached()) {
       slot.Hit();
       return slot;
     }
-    slot.rg = rg;
-    slot.cursor = ColumnReader::ScanCursor{_child->OpenSegment(rg, *_ctx)};
-    _rgs.Insert(slot, [](RgSlot& evicted) noexcept {
-      evicted.cursor = ColumnReader::ScanCursor{};
-    });
-    if (_rg_index.size() > 4 * kRgCacheSlots) {
-      Gc(_rg_index, _rgs);
+    slot.block = block;
+    slot.cursor = ScanCursor{_child->OpenSegment(block, *_ctx)};
+    _blocks.Insert(
+      slot, [](BlockSlot& evicted) noexcept { evicted.cursor = ScanCursor{}; });
+    if (_block_index.size() > 4 * kBlockCacheSlots) {
+      Gc(_block_index, _blocks);
     }
     return slot;
   }
@@ -165,8 +219,7 @@ class ChunkedVectorCache {
  private:
   ChunkSlot* FindOrLoad(uint64_t row) {
     const uint64_t chunk_id = row / _chunk_rows;
-    auto [it, inserted] = _chunk_index.try_emplace(
-      chunk_id, static_cast<duckdb::idx_t>(_chunk_rows * _d));
+    auto [it, inserted] = _chunk_index.try_emplace(chunk_id);
     auto& slot = it->second;
     if (!inserted && !slot.Detached()) {
       slot.Hit();
@@ -175,10 +228,7 @@ class ChunkedVectorCache {
     slot.chunk_id = chunk_id;
     slot.pinned = 0;
     if (!slot.data) {
-      slot.data.emplace(duckdb::LogicalType::FLOAT,
-                        static_cast<duckdb::idx_t>(_chunk_rows * _d),
-                        duckdb::VectorDataInitialization::ZERO_INITIALIZE);
-      slot.base = duckdb::FlatVector::GetData<float>(*slot.data);
+      slot.Allocate(static_cast<duckdb::idx_t>(_chunk_rows * _d));
     }
     Load(slot, chunk_id);
     _slots.Insert(slot, [](ChunkSlot& evicted) noexcept {
@@ -197,10 +247,9 @@ class ChunkedVectorCache {
   }
 
   void Load(ChunkSlot& slot, uint64_t chunk_id) {
-    const uint64_t total_rows = _child->RowCount() / _d;
     const uint64_t start_row = chunk_id * _chunk_rows;
     const uint64_t take =
-      std::min<uint64_t>(_chunk_rows, total_rows - start_row);
+      std::min<uint64_t>(_chunk_rows, _total_rows - start_row);
     const uint64_t start_elem = start_row * _d;
     const uint64_t take_elems = take * _d;
 
@@ -208,17 +257,17 @@ class ChunkedVectorCache {
     while (produced < take_elems) {
       const uint64_t pos = start_elem + produced;
       _locate_hint = _child->Locate(pos, _locate_hint);
-      const uint64_t in_rg = pos - _locate_hint.begin;
+      const uint64_t in_block = pos - _locate_hint.begin;
       const uint64_t to_take =
         std::min<uint64_t>(take_elems - produced, _locate_hint.end - pos);
 
-      auto& rgs = GetRgSlot(_locate_hint.rg);
-      if (in_rg < rgs.cursor.Position()) {
-        rgs.cursor.Reset();
+      auto& blocks = GetBlockSlot(_locate_hint.block);
+      if (in_block < blocks.cursor.Position()) {
+        blocks.cursor.Reset();
       }
-      rgs.cursor.SeekTo(in_rg);
-      rgs.cursor.Scan(to_take, *slot.data,
-                      static_cast<duckdb::idx_t>(produced));
+      blocks.cursor.SeekTo(in_block);
+      blocks.cursor.Scan(to_take, *slot.data,
+                         static_cast<duckdb::idx_t>(produced));
       produced += to_take;
     }
   }
@@ -234,16 +283,17 @@ class ChunkedVectorCache {
   const ColumnReader* _child = nullptr;
   uint64_t _d = 0;
   uint64_t _chunk_rows = 0;
+  uint64_t _total_rows = 0;
 
-  std::array<ChunkSlot*, 2> _pin_stack{};
+  std::array<ChunkSlot*, kMaxPinDepth> _pin_stack{};
   size_t _pin_depth = 0;
 
   ChunkMap _chunk_index;
   sdb::containers::s3fifo::Cache<ChunkSlot> _slots;
 
-  RgMap _rg_index;
-  sdb::containers::s3fifo::Cache<RgSlot> _rgs;
-  RgWindow _locate_hint;
+  BlockMap _block_index;
+  sdb::containers::s3fifo::Cache<BlockSlot> _blocks;
+  BlockWindow _locate_hint;
 };
 
 void ReadHNSW(IndexInput& in, faiss::HNSW& hnsw);
@@ -264,8 +314,14 @@ class HNSWSegmentResultHandler : public HNSWResultHandler::SingleResultHandler {
                                     const DocumentMask* docs_mask = nullptr)
     : HNSWResultHandler::SingleResultHandler{handler},
       _segment_id{segment_id},
-      _docs_mask{docs_mask} {
-    threshold = global_threshold;
+      _docs_mask{docs_mask},
+      _global_threshold{global_threshold} {}
+
+  void begin(size_t i, bool heapify = true) {
+    HNSWResultHandler::SingleResultHandler::begin(i, heapify);
+    if (faiss::HNSW::C::cmp(threshold, _global_threshold)) {
+      threshold = _global_threshold;
+    }
   }
 
   bool add_result(float dis, int64_t idx) final {
@@ -279,6 +335,7 @@ class HNSWSegmentResultHandler : public HNSWResultHandler::SingleResultHandler {
  private:
   uint32_t _segment_id;
   const DocumentMask* _docs_mask;
+  float _global_threshold;
 };
 
 class HNSWRangeSegmentResultHandler
@@ -302,58 +359,6 @@ class HNSWRangeSegmentResultHandler
  private:
   uint32_t _segment_id;
   const DocumentMask* _docs_mask;
-};
-
-class ColumnDistanceBase : public faiss::DistanceComputer {
- public:
-  explicit ColumnDistanceBase(HNSWMetric metric, int32_t dim);
-
-  void set_query(const float* x) final {
-    SDB_ASSERT(x != nullptr);
-    _q = x;
-  }
-
- protected:
-  const float* LoadData(faiss::idx_t id, ResettableDocIterator::ptr& it);
-
-  const float* _q = nullptr;
-  float (*const _dist)(const byte_type*, const byte_type*, uint16_t) = nullptr;
-  int32_t _dim;
-};
-
-class ColumnSearchDistance : public ColumnDistanceBase {
- public:
-  explicit ColumnSearchDistance(ResettableDocIterator::ptr&& it, HNSWInfo info);
-
-  float operator()(faiss::idx_t id) final;
-
-  float symmetric_dis(faiss::idx_t i, faiss::idx_t j) final {
-    SDB_THROW(sdb::ERROR_INTERNAL,
-              "symmetric distance is not supported in search distance");
-  }
-
- private:
-  ResettableDocIterator::ptr _it;
-};
-
-class ColumnIndexDistance final : public ColumnDistanceBase {
- public:
-  explicit ColumnIndexDistance(ResettableDocIterator::ptr&& lit,
-                               ResettableDocIterator::ptr&& rit, HNSWInfo info);
-
-  float operator()(faiss::idx_t id) final;
-
-  float symmetric_dis(faiss::idx_t i, faiss::idx_t j) final;
-
-  void Update(
-    absl::AnyInvocable<void(ResettableDocIterator::ptr&)>& update_iterator) {
-    update_iterator(_lit);
-    update_iterator(_rit);
-  }
-
- private:
-  ResettableDocIterator::ptr _lit;
-  ResettableDocIterator::ptr _rit;
 };
 
 struct HNSWSearchBaseBuffer {
@@ -390,7 +395,7 @@ struct HNSWSearchInfo {
 };
 
 struct HNSWSearchContext {
-  HNSWSearchInfo info;
+  const HNSWSearchInfo& info;
   uint32_t segment_id;
   faiss::VisitedTable& vt;
   HNSWResultHandler& handler;
@@ -410,7 +415,7 @@ struct HNSWRangeSearchBuffer : HNSWSearchBaseBuffer {
 };
 
 struct HNSWRangeSearchContext {
-  HNSWRangeSearchInfo info;
+  const HNSWRangeSearchInfo& info;
   uint32_t segment_id;
   faiss::VisitedTable& vt;
   HNSWRangeResultHandler& handler;

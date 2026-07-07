@@ -106,6 +106,11 @@ struct [[clang::trivial_abi]] ScoreAdapter {
     return _it->FillBlock(min, max, mask, score, match);
   }
 
+  IRS_FORCE_INLINE uint32_t EmitDocs(doc_id_t* out, doc_id_t max) {
+    SDB_ASSERT(_it);
+    return _it->EmitDocs(out, max);
+  }
+
  private:
   DocIterator::ptr _it;
 };
@@ -287,6 +292,25 @@ class Conjunction : public ConjunctionBase<Adapter> {
     return this->_doc = target;
   }
 
+  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final {
+    DocIterator::CollectImpl(*this, scorer, fetcher, collector);
+  }
+
+  uint32_t EmitScoredDocs(doc_id_t* out, score_t* scores, doc_id_t max,
+                          const ScoreFunction& scorer,
+                          ColumnArgsFetcher* fetcher, doc_id_t min) final {
+    return DocIterator::EmitScoredDocsImpl(*this, out, scores, max, scorer,
+                                           fetcher, min);
+  }
+
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                      uint64_t* mask,
+                                      FillBlockScoreContext score,
+                                      FillBlockMatchContext match) final {
+    return DocIterator::FillBlockImpl(*this, min, max, mask, score, match);
+  }
+
   uint32_t count() final {
     constexpr uint64_t kDensityThresholdInverse = 32;
     const auto lead_cost = CostAttr::extract(this->_itrs[0], CostAttr::kMax);
@@ -295,6 +319,21 @@ class Conjunction : public ConjunctionBase<Adapter> {
       return DocIterator::CountImpl(*this);
     } else {
       return CountDense();
+    }
+  }
+
+  // Unscored block-intersect emit: shares the windowed lead-FillBlock +
+  // AND-tail machinery with CountDense. The scored path
+  // (Collect/EmitScoredDocs) can't -- block intersection advances children past
+  // the window, so it can't position each iterator per doc for FetchScoreArgs.
+  uint32_t EmitDocs(doc_id_t* out, doc_id_t max) final {
+    constexpr uint64_t kDensityThresholdInverse = 32;
+    const auto lead_cost = CostAttr::extract(this->_itrs[0], CostAttr::kMax);
+
+    if (lead_cost < _docs_count / kDensityThresholdInverse) {
+      return DocIterator::EmitDocsImpl(*this, out, max);
+    } else {
+      return EmitDense(out, max);
     }
   }
 
@@ -351,18 +390,68 @@ class Conjunction : public ConjunctionBase<Adapter> {
     }
   }
 
-  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
-               ScoreCollector& collector) final {
-    DocIterator::CollectImpl(*this, scorer, fetcher, collector);
+  // Emits conjunction matches in [value(), max) as doc-ids, then leaves the
+  // iterator positioned at the first match >= max (or eof). Mirrors CountDense
+  // but extracts set bits instead of popcounting and is bounded by `max`.
+  uint32_t EmitDense(doc_id_t* out, doc_id_t max) {
+    SDB_ASSERT(this->_itrs.size() > 1);
+
+    const auto lead = this->_itrs.begin();
+    const auto tail_end = this->_itrs.end();
+
+    ABSL_CACHELINE_ALIGNED uint64_t mask[kNumBlocks];
+    ABSL_CACHELINE_ALIGNED uint64_t tail_mask[kNumBlocks];
+    uint32_t n = 0;
+    doc_id_t base = this->_doc;  // current match, emitted first
+
+    while (base < max) {
+    align:
+      base = ConvergeRange(base);
+      if (doc_limits::eof(base) || base >= max) {
+        break;
+      }
+
+      const doc_id_t win = std::min(base + kWindow, max);
+
+      std::memset(mask, 0, sizeof(mask));
+      const auto [lead_next, _] = lead->FillBlock(base, win, mask, {}, {});
+
+      for (auto tail = lead + 1; tail != tail_end; ++tail) {
+        std::memset(tail_mask, 0, sizeof(tail_mask));
+
+        const auto [tail_next, _] =
+          tail->FillBlock(base, win, tail_mask, {}, {});
+
+        uint64_t any_set = 0;
+        for (size_t i = 0; i < kNumBlocks; ++i) {
+          mask[i] &= tail_mask[i];
+          any_set |= mask[i];
+        }
+
+        if (any_set == 0) {
+          base = lead->seek(tail_next);
+          goto align;
+        }
+      }
+
+      for (size_t i = 0; i < kNumBlocks; ++i) {
+        uint64_t word = mask[i];
+        const doc_id_t block_base =
+          base + static_cast<doc_id_t>(i) * BitsRequired<uint64_t>();
+        while (word != 0) {
+          out[n++] = block_base + static_cast<doc_id_t>(std::countr_zero(word));
+          word &= word - 1;
+        }
+      }
+
+      base = lead_next;
+    }
+
+    converge(base);  // position at first match >= max (or eof); sets _doc
+    return n;
   }
 
-  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
-                                      uint64_t* mask,
-                                      FillBlockScoreContext score,
-                                      FillBlockMatchContext match) final {
-    // TODO(gnusi): optimize
-    return DocIterator::FillBlockImpl(*this, min, max, mask, score, match);
-  }
+  // TODO(gnusi): optimize FillBlock
 
  private:
   static constexpr size_t kNumBlocks = 16;

@@ -109,7 +109,7 @@ void FilterTestCaseBase::GetQueryResult(const PreparedFilter& prepared,
 
     result_costs.emplace_back(irs::CostAttr::extract(*sequential_docs));
 
-    while (sequential_docs->next()) {
+    while (!irs::doc_limits::eof(sequential_docs->advance())) {
       auto stateless_random_docs = prepared.Execute(i);
       ASSERT_NE(nullptr, stateless_random_docs);
       ASSERT_EQ(sequential_docs->value(),
@@ -127,8 +127,8 @@ void FilterTestCaseBase::GetQueryResult(const PreparedFilter& prepared,
 
       result.push_back(sequential_docs->value());
     }
-    ASSERT_FALSE(sequential_docs->next());
-    ASSERT_FALSE(random_docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(sequential_docs->advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(random_docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(sequential_docs->value()));
 
     // seek to eof
@@ -162,7 +162,7 @@ void FilterTestCaseBase::GetQueryResult(const PreparedFilter& prepared,
 
     result_costs.emplace_back(irs::CostAttr::extract(*sequential_docs));
 
-    while (sequential_docs->next()) {
+    while (!irs::doc_limits::eof(sequential_docs->advance())) {
       auto stateless_random_docs = prepared.Execute(i);
       auto stateless_random_score = stateless_random_docs->PrepareScore({
         .scorer = scorer,
@@ -197,8 +197,8 @@ void FilterTestCaseBase::GetQueryResult(const PreparedFilter& prepared,
       result.emplace_back(sequential_docs->value(),
                           std::vector<irs::score_t>{score_value});
     }
-    ASSERT_FALSE(sequential_docs->next());
-    ASSERT_FALSE(random_docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(sequential_docs->advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(random_docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(sequential_docs->value()));
 
     // seek to eof
@@ -247,10 +247,11 @@ void FilterTestCaseBase::CheckQuery(const irs::Filter& filter,
         if constexpr (std::is_same_v<A, Seek>) {
           ASSERT_EQ(expected, it.seek(action.target));
         } else if constexpr (std::is_same_v<A, Next>) {
-          ASSERT_EQ(!irs::doc_limits::eof(expected), it.next());
+          ASSERT_EQ(!irs::doc_limits::eof(expected),
+                    !irs::doc_limits::eof(it.advance()));
         } else if constexpr (std::is_same_v<A, Skip>) {
           for (auto count = action.count; count; --count) {
-            it.next();
+            it.advance();
           }
         }
       },
@@ -354,13 +355,13 @@ void FilterTestCaseBase::MakeResult(const irs::Filter& filter,
 
     irs::score_t score_value{};
 
-    while (docs->next()) {
+    while (!irs::doc_limits::eof(docs->advance())) {
       docs->FetchScoreArgs(0);
       fetcher.Fetch(docs->value());
       score.Score(&score_value, 1);
       scored_result.emplace(score_value, docs->value());
     }
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ++i;
   }
 

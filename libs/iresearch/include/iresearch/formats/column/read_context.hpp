@@ -20,14 +20,14 @@
 
 #pragma once
 
-#include <duckdb/storage/block_manager.hpp>
+#include <duckdb/common/memory_mapped_file.hpp>
+#include <vector>
 
+#include "iresearch/formats/column/internal/block_manager.hpp"
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/types.hpp"
 
 namespace duckdb {
 
-class BlockAllocator;
 class DatabaseInstance;
 
 }  // namespace duckdb
@@ -35,7 +35,7 @@ namespace irs {
 
 class ColReader;
 
-class ReadContext final : public duckdb::BlockManager {
+class ReadContext final : public BlockManager {
  public:
   explicit ReadContext(duckdb::DatabaseInstance& db) noexcept;
   explicit ReadContext(const ColReader& reader);
@@ -49,43 +49,40 @@ class ReadContext final : public duckdb::BlockManager {
 
   void Reset(const ColReader& reader);
 
-  duckdb::DatabaseInstance& Database() noexcept { return *_db; }
   IndexInput& In() noexcept { return *_in; }
+  const IndexInput& In() const noexcept { return *_in; }
+  bool HasIn() const noexcept { return _in != nullptr; }
 
-  // duckdb::BlockManager interface -- read side
-  bool InMemory() final { return false; }
+  duckdb::shared_ptr<duckdb::BlockHandle> RegisterColBlock(uint64_t offset,
+                                                           uint64_t size);
+
+  duckdb::unique_ptr<duckdb::Block> CreateBlock(
+    duckdb::block_id_t block_id, duckdb::FileBuffer* source_buffer) final;
+
   void Read(duckdb::QueryContext context, duckdb::Block& block) final;
   void ReadBlocks(duckdb::QueryContext context, duckdb::FileBuffer& buffer,
                   duckdb::block_id_t start_block,
                   duckdb::idx_t block_count) final;
-  duckdb::unique_ptr<duckdb::Block> ConvertBlock(
-    duckdb::block_id_t block_id, duckdb::FileBuffer& source_buffer) final;
-  duckdb::unique_ptr<duckdb::Block> CreateBlock(
-    duckdb::block_id_t block_id, duckdb::FileBuffer* source_buffer) final;
+  void UnregisterBlock(duckdb::block_id_t id) final;
 
-  // duckdb::BlockManager interface -- write side (unused for reads)
   duckdb::block_id_t GetFreeBlockId() final;
   duckdb::block_id_t PeekFreeBlockId() final;
-  duckdb::block_id_t GetFreeBlockIdForCheckpoint() final;
   void Write(duckdb::FileBuffer& block, duckdb::block_id_t block_id) final;
   void Write(duckdb::QueryContext context, duckdb::FileBuffer& block,
              duckdb::block_id_t block_id) final;
   bool IsRootBlock(duckdb::MetaBlockPointer root) final;
-  void MarkBlockAsCheckpointed(duckdb::block_id_t block_id) final;
-  void MarkBlockAsUsed(duckdb::block_id_t block_id) final;
-  void MarkBlockAsModified(duckdb::block_id_t block_id) final;
-  void IncreaseBlockReferenceCount(duckdb::block_id_t block_id) final;
   duckdb::idx_t GetMetaBlock() final;
   void WriteHeader(duckdb::QueryContext context,
                    duckdb::DatabaseHeader header) final;
   duckdb::idx_t TotalBlocks() final;
-  duckdb::idx_t FreeBlocks() final;
-  void FileSync() final;
 
  private:
-  duckdb::DatabaseInstance* _db;
-  duckdb::BlockAllocator* _allocator;
+  void ResetMapping();
+
   IndexInput::ptr _in;
+  duckdb::unique_ptr<duckdb::MemoryMappedFile> _mapping;
+  std::vector<std::pair<uint64_t, uint64_t>> _ranges;
+  size_t _live_handles = 0;
 };
 
 }  // namespace irs

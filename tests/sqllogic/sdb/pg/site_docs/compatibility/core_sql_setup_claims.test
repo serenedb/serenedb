@@ -95,7 +95,7 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY sc_ts_en (template='text', locale='en_US.UTF-8', case='none', stemming=false, accent=false, frequency=true, position=true);
 
 statement ok
-CREATE INDEX sc_ts_idx ON sc_ts_t USING inverted(id, body sc_ts_en) WITH (pk='id');
+CREATE INDEX sc_ts_idx ON sc_ts_t USING inverted(id, body sc_ts_en);
 
 # op_tsearch: @@
 statement ok

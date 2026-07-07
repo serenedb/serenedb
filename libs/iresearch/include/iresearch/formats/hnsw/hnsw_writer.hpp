@@ -31,7 +31,6 @@
 namespace irs {
 
 class DataOutput;
-class ColumnReader;
 class ReadContext;
 
 void WriteHNSW(DataOutput& out, const faiss::HNSW& hnsw);

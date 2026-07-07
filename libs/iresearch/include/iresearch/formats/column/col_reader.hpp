@@ -20,33 +20,34 @@
 
 #pragma once
 
+#include <absl/strings/str_cat.h>
 #include <faiss/impl/HNSW.h>
 
-#include <duckdb/common/types.hpp>
+#include <cstdint>
+#include <duckdb/common/serializer/serialization_traits.hpp>
 #include <memory>
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "basics/containers/flat_hash_map.h"
+#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_input.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/types.hpp"
 
 namespace duckdb {
 
 class DatabaseInstance;
-class BinaryDeserializer;
 
 }  // namespace duckdb
 namespace irs {
 
-class Directory;
-struct SegmentMeta;
-struct HNSWInfo;
-
 class ColumnReader;
 class NormColumnReader;
+struct HNSWInfo;
 
 using PreloadedHnswGraphs =
   sdb::containers::FlatHashMap<field_id, std::shared_ptr<const faiss::HNSW>>;
@@ -57,13 +58,17 @@ struct BuiltHnsw {
   std::shared_ptr<const faiss::HNSW> graph;
 };
 
-// One file per segment.
-inline constexpr std::string_view kColFormatExt = "col";
+inline constexpr std::string_view kFormatName = "iresearch_col";
+inline constexpr int32_t kFormatVersion = 0;
+inline constexpr std::string_view kFormatExt = "col";
 
-inline constexpr std::string_view kColFormatName = "iresearch_col";
-inline constexpr int32_t kColFormatVersion = 0;
+inline constexpr duckdb::field_id_t kFooterSlotColumns = 100;
+inline constexpr duckdb::field_id_t kFooterSlotNormColumns = 101;
 
-// Opens `<segment>.col` and exposes per-column access.
+inline std::string FileName(std::string_view segment_name) {
+  return absl::StrCat(segment_name, ".", kFormatExt);
+}
+
 class ColReader final {
  public:
   ColReader(const Directory& dir, std::string_view segment_name,
@@ -73,28 +78,28 @@ class ColReader final {
   ColReader(const ColReader&) = delete;
   ColReader& operator=(const ColReader&) = delete;
 
-  bool HasColumn(field_id id) const noexcept;
-  // nullptr if absent.
+  bool HasColumn(field_id id) const noexcept { return _by_id.contains(id); }
   const ColumnReader* Column(field_id id) const noexcept;
-  std::span<const std::unique_ptr<ColumnReader>> Columns() const noexcept;
+  std::span<const std::unique_ptr<ColumnReader>> Columns() const noexcept {
+    return _columns;
+  }
 
-  // Norm and typed maps are independent; a field_id may appear in both.
   bool HasNormColumn(field_id id) const noexcept;
   const NormColumnReader* NormColumn(field_id id) const noexcept;
+  ReadContext& Ctx() noexcept { return _ctx; }
 
-  IndexInput::ptr ReopenIn() const;
-  duckdb::DatabaseInstance& Database() const noexcept;
+  IndexInput::ptr ReopenIn() const {
+    return _ctx.HasIn() ? _ctx.In().Reopen() : nullptr;
+  }
+  duckdb::DatabaseInstance& Database() const noexcept { return *_db; }
 
  private:
-  struct Impl;
-  std::unique_ptr<Impl> _impl;
-
-  // ColReader::ColReader splits its footer-parse work across these two;
-  // each iterates one of the kFooterSlot* lists and populates the
-  // matching `_impl->*_readers` / `*_by_id` pair.
-  void BuildColumnReaders(duckdb::BinaryDeserializer& deserializer,
-                          duckdb::DatabaseInstance& db);
-  void BuildNormReaders(duckdb::BinaryDeserializer& deserializer);
+  duckdb::DatabaseInstance* _db;
+  ReadContext _ctx;
+  std::vector<std::unique_ptr<ColumnReader>> _columns;
+  sdb::containers::FlatHashMap<field_id, ColumnReader*> _by_id;
+  std::vector<std::unique_ptr<NormColumnReader>> _norm_readers;
+  sdb::containers::FlatHashMap<field_id, const NormColumnReader*> _norm_by_id;
 };
 
 }  // namespace irs

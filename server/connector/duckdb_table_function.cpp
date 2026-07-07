@@ -25,6 +25,7 @@
 
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/types/variant.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
@@ -32,6 +33,9 @@
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
+#include <duckdb/storage/statistics/numeric_stats.hpp>
+#include <duckdb/storage/statistics/struct_stats.hpp>
+#include <duckdb/storage/statistics/variant_stats.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 
@@ -111,7 +115,6 @@ duckdb::unique_ptr<duckdb::NodeStatistics> TableScanBindData::Cardinality(
   if (scan_source && scan_source->Kind() == ScanSourceKind::Search) {
     return InvertedIndexCardinality(*this);
   }
-  // No row-count statistics are tracked; let the optimizer use its defaults.
   return nullptr;
 }
 
@@ -225,8 +228,6 @@ void ViewScanBindData::IterateColumns(const ColumnVisitor& cb) const {
   }
 }
 
-// ---------------------------------------------------------------------------
-
 static duckdb::BindInfo SereneDBGetBindInfo(
   const duckdb::optional_ptr<duckdb::FunctionData> bind_data) {
   auto& data =
@@ -308,6 +309,121 @@ static std::string ColumnNameFor(const SereneDBScanBindData& bind,
   return absl::StrCat("col", col_id);
 }
 
+namespace {
+
+auto MakeFieldNameResolver(const SereneDBScanBindData& bind_data,
+                           const catalog::InvertedIndex& index) {
+  return [&bind_data, &index](catalog::Column::Id col_id) -> std::string {
+    const auto fid = static_cast<irs::field_id>(col_id);
+    auto base = std::string{bind_data.ColumnNameById(col_id)};
+    const auto column_type = bind_data.ColumnTypeById(col_id);
+    const bool found_type = column_type.id() != duckdb::LogicalTypeId::INVALID;
+    const auto lookup = index.LookupField(fid);
+    auto entry_base = [&](irs::field_id entry_fid) {
+      std::string s;
+      const auto* expr = index.ExpressionByFieldId(entry_fid);
+      if (expr && !expr->pretty_printed.empty()) {
+        s = expr->pretty_printed;
+      } else {
+        s = bind_data.ColumnNameById(catalog::Column::Id{entry_fid});
+      }
+      if (s.empty()) {
+        s = absl::StrCat("col", entry_fid);
+      }
+      return s;
+    };
+    if (lookup.entry_field_id == catalog::term_dict::kPKFieldId) {
+      const auto name =
+        bind_data.ColumnNameById(catalog::Column::kGeneratedPKId);
+      return std::string{name.empty() ? std::string_view{"sdb_generated_pk"}
+                                      : name} +
+             "(pk)";
+    }
+    if (lookup.entry) {
+      const auto& entry = *lookup.entry;
+      if (fid == lookup.entry_field_id) {
+        const auto* expr = index.ExpressionByFieldId(fid);
+        if (base.empty() && expr && !expr->pretty_printed.empty()) {
+          base = expr->pretty_printed;
+        }
+        if (base.empty()) {
+          base = absl::StrCat("col", fid);
+        }
+        if (expr) {
+          catalog::InvertedIndex::AppendKindSuffix(base, expr->return_type);
+        } else if (found_type) {
+          catalog::InvertedIndex::AppendKindSuffix(base, column_type);
+        } else if (entry.text_dictionary.isSet()) {
+          base += "(string)";
+        }
+        return base;
+      }
+      if (fid == entry.null_field_id) {
+        return entry_base(lookup.entry_field_id) + "(null)";
+      }
+      if (fid == entry.bool_field_id) {
+        return entry_base(lookup.entry_field_id) + "(bool)";
+      }
+      if (fid == entry.numeric_field_id) {
+        return entry_base(lookup.entry_field_id) + "(numeric)";
+      }
+      if (fid == entry.synthetic_column) {
+        return entry_base(lookup.entry_field_id) + "(synthetic)";
+      }
+    }
+    if (base.empty()) {
+      base = absl::StrCat("col", fid);
+    }
+    if (found_type) {
+      catalog::InvertedIndex::AppendKindSuffix(base, column_type);
+    }
+    return base;
+  };
+}
+
+auto MakeFieldKindResolver(const SereneDBScanBindData& bind_data,
+                           const catalog::InvertedIndex& index) {
+  return [&bind_data,
+          &index](catalog::Column::Id col_id) -> catalog::term_dict::Kind {
+    using catalog::term_dict::Kind;
+    const auto fid = static_cast<irs::field_id>(col_id);
+    const auto lookup = index.LookupField(fid);
+    if (lookup.entry_field_id == catalog::term_dict::kPKFieldId) {
+      return Kind::NumericI64;
+    }
+    if (lookup.entry) {
+      const auto& entry = *lookup.entry;
+      if (fid == lookup.entry_field_id) {
+        const auto* expr = index.ExpressionByFieldId(fid);
+        if (expr) {
+          return catalog::term_dict::Classify(expr->return_type.id());
+        }
+        const auto column_type = bind_data.ColumnTypeById(col_id);
+        if (column_type.id() != duckdb::LogicalTypeId::INVALID) {
+          return catalog::term_dict::Classify(column_type.id());
+        }
+        return Kind::String;
+      }
+      if (fid == entry.null_field_id) {
+        return Kind::Null;
+      }
+      if (fid == entry.bool_field_id) {
+        return Kind::Bool;
+      }
+      if (fid == entry.numeric_field_id) {
+        return Kind::NumericF64;
+      }
+    }
+    const auto column_type = bind_data.ColumnTypeById(col_id);
+    if (column_type.id() != duckdb::LogicalTypeId::INVALID) {
+      return catalog::term_dict::Classify(column_type.id());
+    }
+    return Kind::Unsupported;
+  };
+}
+
+}  // namespace
+
 void SearchScan::AppendSummary(
   const SereneDBScanBindData& bind,
   duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>& out) const {
@@ -316,10 +432,6 @@ void SearchScan::AppendSummary(
                            *stored_filter,
                            MakeFieldNameResolver(bind, *bind.inverted_index),
                            MakeFieldKindResolver(bind, *bind.inverted_index))));
-  }
-  if (count_only) {
-    out.insert("Output", "row-count only");
-    return;
   }
   if (text_scorer) {
     out.insert("Score", text_scorer->ToString());
@@ -553,7 +665,6 @@ SereneDBScanToValue(duckdb::TableFunctionToStringInput& input) {
   return result;
 }
 
-// Segment-level scan progress: claimed segments over the snapshot's total.
 static double CommonScanProgress(
   duckdb::ClientContext&, const duckdb::FunctionData*,
   const duckdb::GlobalTableFunctionState* gstate_p) {
@@ -644,8 +755,7 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
   if (!bind.IsInvertedIndexEntry() || !bind.inverted_index) {
     return nullptr;
   }
-  if (!input.column_index.HasPrimaryIndex() ||
-      input.column_index.HasChildren()) {
+  if (!input.column_index.HasPrimaryIndex()) {
     return nullptr;
   }
   const auto column_index = input.column_index.GetPrimaryIndex();
@@ -668,8 +778,66 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
   if (stats == nullptr) {
     return nullptr;
   }
-  SDB_ASSERT(stats->GetType() == bind.column_types[column_index]);
-  return stats->ToUnique();
+  if (!input.column_index.HasChildren()) {
+    SDB_ASSERT(stats->GetType() == bind.column_types[column_index]);
+    return stats->ToUnique();
+  }
+  const duckdb::BaseStatistics* leaf = stats;
+  const duckdb::ColumnIndex* node = &input.column_index;
+  if (bind.column_types[column_index].id() == duckdb::LogicalTypeId::VARIANT) {
+    if (!duckdb::VariantStats::IsShredded(*stats)) {
+      return nullptr;
+    }
+    leaf = &duckdb::VariantStats::GetShreddedStats(*stats);
+    while (node->HasChildren()) {
+      node = &node->GetChildIndex(0);
+      if (node->HasPrimaryIndex()) {
+        return nullptr;
+      }
+      const duckdb::VariantPathComponent comp{node->GetFieldName()};
+      const auto child =
+        duckdb::VariantShreddedStats::FindChildStats(*leaf, comp);
+      if (!child) {
+        return nullptr;
+      }
+      leaf = child.get();
+    }
+  } else {
+    while (node->HasChildren()) {
+      node = &node->GetChildIndex(0);
+      if (!node->HasPrimaryIndex() ||
+          leaf->GetType().id() != duckdb::LogicalTypeId::STRUCT) {
+        return nullptr;
+      }
+      const auto field = node->GetPrimaryIndex();
+      if (field >= duckdb::StructType::GetChildCount(leaf->GetType())) {
+        return nullptr;
+      }
+      leaf = &duckdb::StructStats::GetChildStats(*leaf, field);
+    }
+  }
+  if (leaf->GetType().IsNested() || !input.column_index.HasType()) {
+    return nullptr;
+  }
+  const auto& want = input.column_index.GetScanType();
+  if (leaf->GetType() == want) {
+    return leaf->ToUnique();
+  }
+  if (leaf->GetType().IsNumeric() && want.IsNumeric() &&
+      duckdb::NumericStats::HasMinMax(*leaf)) {
+    duckdb::Value cmin;
+    duckdb::Value cmax;
+    if (duckdb::NumericStats::Min(*leaf).DefaultTryCastAs(want, cmin,
+                                                          nullptr) &&
+        duckdb::NumericStats::Max(*leaf).DefaultTryCastAs(want, cmax,
+                                                          nullptr)) {
+      auto casted = duckdb::NumericStats::CreateEmpty(want);
+      duckdb::NumericStats::SetMin(casted, cmin);
+      duckdb::NumericStats::SetMax(casted, cmax);
+      return casted.ToUnique();
+    }
+  }
+  return nullptr;
 }
 
 bool IsAnnScan(const SereneDBScanBindData& bind_data) {
@@ -678,12 +846,7 @@ bool IsAnnScan(const SereneDBScanBindData& bind_data) {
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
-  auto& bind_data = const_cast<SereneDBScanBindData&>(
-    input.bind_data->Cast<SereneDBScanBindData>());
-
-  bind_data.scan_source->Cast<SearchScan>().count_only =
-    IsCountOnlyScan(bind_data, input);
-
+  auto& bind_data = input.bind_data->Cast<SereneDBScanBindData>();
   switch (bind_data.scan_source->Kind()) {
     case ScanSourceKind::Search:
       return IsAnnScan(bind_data) ? SearchAnnScanInitGlobal(context, input)
@@ -726,9 +889,6 @@ void IResearchScanFunction(duckdb::ClientContext& context,
 bool IsCountOnlyScan(const SereneDBScanBindData& bind_data,
                      const duckdb::TableFunctionInitInput& input) {
   return absl::c_none_of(input.column_ids, [&](auto col_id) {
-    // A column-less scan (COUNT(*)) projects a single placeholder: older DuckDB
-    // used COLUMN_IDENTIFIER_EMPTY, newer DuckDB uses COLUMN_IDENTIFIER_ROW_ID.
-    // Neither materialises a real column, so both keep the scan count-only.
     if (col_id == duckdb::COLUMN_IDENTIFIER_EMPTY ||
         col_id == duckdb::COLUMN_IDENTIFIER_ROW_ID) {
       return false;

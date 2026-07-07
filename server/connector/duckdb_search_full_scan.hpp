@@ -22,6 +22,7 @@
 
 #include <absl/synchronization/notification.h>
 
+#include <array>
 #include <cstdint>
 #include <duckdb.hpp>
 #include <iresearch/index/index_reader.hpp>
@@ -52,10 +53,22 @@ struct SearchFullScanGlobalState : public CommonScanGlobalState {
     if (count_only && queries.empty()) {
       return 1;
     }
+    if (!scan_units.empty()) {
+      return std::max<duckdb::idx_t>(1, scan_units.size());
+    }
     return std::max<duckdb::idx_t>(1, total_segments);
   }
 
   const irs::Filter* filter = nullptr;
+
+  struct ScanUnit {
+    uint32_t seg;
+    uint64_t begin;
+    uint64_t count;
+    bool bulk;
+  };
+  std::vector<ScanUnit> scan_units;
+  std::atomic_uint32_t next_unit{0};
   std::vector<irs::PrepareCollector::ptr> collectors;
   std::vector<irs::QueryBuilder::ptr> queries;
   std::optional<irs::StatsBuffer> stats;
@@ -65,19 +78,20 @@ struct SearchFullScanGlobalState : public CommonScanGlobalState {
   std::atomic_uint32_t prepare_count = 0;
   std::atomic_uint32_t collector_slots = 0;
 
-  // Scorer state. `scorer_obj` is non-null iff the plan attached BM25 /
-  // TFIDF / DFI / LM-* via the projection or ORDER BY rewrite.
   std::unique_ptr<irs::Scorer> scorer_obj;
   const SearchScan* scan = nullptr;
 
   bool count_only = false;
+
+  bool BulkChunkEligible() const {
+    return has_real_column && !scan_score && !has_external_projections &&
+           scan->IsMatchAll() && !scan->EmitOffsets();
+  }
 };
 
 struct SearchFullScanTopKLocalState : public SegDocBufferedScanLocalState {
   std::vector<irs::ScoreDoc> hit_buf;
   std::span<irs::ScoreDoc> hit_slice;
-  // min() (not lowest()): SetScoreThreshold asserts new <= old, and WAND
-  // seeds the iterator-local threshold at min().
   irs::score_t local_threshold = std::numeric_limits<irs::score_t>::min();
   irs::ColumnArgsFetcher score_fetcher;
   std::optional<irs::NthPartitionScoreCollector> collector;
@@ -87,16 +101,16 @@ struct SearchFullScanTopKLocalState : public SegDocBufferedScanLocalState {
   uint32_t offsets_prepped_seg = std::numeric_limits<uint32_t>::max();
 
   void OnSegment(duckdb::ClientContext& ctx, const irs::SubReader& seg,
-                 uint32_t seg_idx, SearchFullScanGlobalState& g);
-  void OnSegmentPrepare(duckdb::ClientContext& ctx, const irs::SubReader& seg,
-                        uint32_t seg_idx, SearchFullScanGlobalState& g);
-  bool OnSegmentsExhausted(duckdb::ClientContext& ctx,
-                           SearchFullScanGlobalState& g,
-                           duckdb::DataChunk& output);
+                 uint32_t seg_idx, CommonScanGlobalState& g) override;
+  bool OnSegmentsExhausted(duckdb::ClientContext& ctx, CommonScanGlobalState& g,
+                           duckdb::DataChunk& output) override;
+  void EmitRowOffsets(CommonScanGlobalState& g, const HitsChunk& view,
+                      duckdb::DataChunk& output) override;
 
  private:
-  bool prepped = false;
-  void PrepEmitBuffer(duckdb::ClientContext& ctx, SearchFullScanGlobalState& g);
+  bool _prepared = false;
+  void PrepareEmitBuffer(duckdb::ClientContext& ctx,
+                         SearchFullScanGlobalState& g);
 };
 
 struct SearchFullScanScanLocalState : public SegDocBufferedScanLocalState {
@@ -107,8 +121,7 @@ struct SearchFullScanScanLocalState : public SegDocBufferedScanLocalState {
   irs::DocIterator::ptr streaming_doc;
   irs::ScoreFunction streaming_score_function;
   irs::ColumnArgsFetcher score_fetcher;
-  std::vector<irs::doc_id_t> chunk_hits;
-  std::vector<float> chunk_scores;
+  std::array<float, STANDARD_VECTOR_SIZE> score_window;
 
   std::vector<FieldEntry> offsets_entries;
   std::vector<highlight::HitRange> offsets_doc_scratch;
@@ -116,15 +129,17 @@ struct SearchFullScanScanLocalState : public SegDocBufferedScanLocalState {
 
   void StartSegment(duckdb::ClientContext& ctx, const irs::SubReader& seg,
                     uint32_t seg_idx, SearchFullScanGlobalState& g);
-  void OnSegmentPrepare(duckdb::ClientContext& ctx, const irs::SubReader& seg,
-                        uint32_t seg_idx, SearchFullScanGlobalState& g);
+  void StartUnit(duckdb::ClientContext& ctx,
+                 const SearchFullScanGlobalState::ScanUnit& unit,
+                 SearchFullScanGlobalState& g);
   duckdb::idx_t EmitChunk(duckdb::ClientContext& ctx,
                           SearchFullScanGlobalState& g,
-                          duckdb::DataChunk& output,
-                          duckdb::idx_t output_start);
+                          duckdb::DataChunk& output);
+  void EmitRowOffsets(CommonScanGlobalState& g, const HitsChunk& view,
+                      duckdb::DataChunk& output) override;
 
  private:
-  void AdvanceChunk(SearchFullScanGlobalState& g, duckdb::idx_t budget);
+  void PushHits(SearchFullScanGlobalState& g);
 };
 
 struct SearchFullScanCountLocalState : public CommonScanLocalState {
@@ -132,11 +147,14 @@ struct SearchFullScanCountLocalState : public CommonScanLocalState {
   uint64_t local_emitted = 0;
 
   void OnSegment(duckdb::ClientContext& ctx, const irs::SubReader& seg,
-                 uint32_t seg_idx, SearchFullScanGlobalState& g);
-  bool OnSegmentsExhausted(duckdb::ClientContext& ctx,
-                           SearchFullScanGlobalState& g,
-                           duckdb::DataChunk& output);
+                 uint32_t seg_idx, CommonScanGlobalState& g) override;
+  bool OnSegmentsExhausted(duckdb::ClientContext& ctx, CommonScanGlobalState& g,
+                           duckdb::DataChunk& output) override;
 };
+
+void RunStreamingScan(duckdb::ClientContext& ctx, SearchFullScanGlobalState& g,
+                      SearchFullScanScanLocalState& l,
+                      duckdb::DataChunk& output);
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input);

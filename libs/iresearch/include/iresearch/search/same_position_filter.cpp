@@ -87,19 +87,7 @@ class SamePositionIterator : public DocIterator {
     return doc + 1;
   }
 
-  uint32_t count() final { return CountImpl(*this); }
-
-  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
-               ScoreCollector& collector) final {
-    CollectImpl(*this, scorer, fetcher, collector);
-  }
-
-  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
-                                      uint64_t* mask,
-                                      FillBlockScoreContext score,
-                                      FillBlockMatchContext match) final {
-    return FillBlockImpl(*this, min, max, mask, score, match);
-  }
+  IRS_DOC_ITERATOR_DEFAULTS
 
  private:
   bool FindSamePosition() {

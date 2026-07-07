@@ -83,7 +83,7 @@ std::vector<irs::doc_id_t> ExpectedDocs(const irs::SubReader& segment,
 
 std::vector<irs::doc_id_t> DrainIterator(irs::DocIterator& it) {
   std::vector<irs::doc_id_t> docs;
-  while (it.next()) {
+  while (!irs::doc_limits::eof(it.advance())) {
     docs.push_back(it.value());
   }
   return docs;
@@ -190,7 +190,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
         auto filter_it = prepared.Execute(0);
         ASSERT_EQ(0, irs::CostAttr::extract(*filter_it));
         ASSERT_EQ(irs::doc_limits::eof(), filter_it->value());
-        ASSERT_FALSE(filter_it->next());
+        ASSERT_FALSE(!irs::doc_limits::eof(filter_it->advance()));
       }
       EXPECT_EQ(counter.current, 0);
       EXPECT_GT(counter.max, 0);
@@ -281,7 +281,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       auto filter_itr = prepared_filter.Execute(0);
       ASSERT_LE(expected_docs.size(), irs::CostAttr::extract(*filter_itr));
 
-      while (filter_itr->next()) {
+      while (!irs::doc_limits::eof(filter_itr->advance())) {
         cur_doc = filter_itr->value();
         irs::score_t score_value{};
         // Score is default (no score provider for column existence).

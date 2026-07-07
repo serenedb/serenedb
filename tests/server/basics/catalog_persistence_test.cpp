@@ -211,6 +211,32 @@ TEST(CatalogPersistence, entry_config_serialized) {
     });
 }
 
+TEST(CatalogPersistence, entry_config_serialized_ivf) {
+  CheckFixture(
+    "entry_config_serialized_ivf.bin",
+    EntryConfigSerialized{
+      .text_dictionary = ObjectId{5},
+      .store_values = true,
+      .compression = duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
+      .features = search::Features{},
+      .ivf_config =
+        IVFColumnConfig{
+          .d = 128,
+          .metric = irs::VectorMetric::InnerProduct,
+          .quant = irs::VectorQuantization::SQ8,
+          .nlist = 0,
+          .train_sample = 4096,
+          .cluster_iters = 25,
+          .pq_m = 0,
+          .rabitq_bits = 0,
+          .nlist_factor = 2.5f,
+        },
+      .synthetic_column = irs::field_limits::invalid(),
+      .row_group_size = 100,
+      .norm_row_group_size = 50,
+    });
+}
+
 TEST(CatalogPersistence, inverted_index) {
   // One column key (field_id == column id 1) and one expression key (allocated
   // field_id 7). `entries` is kept to a single element so the unordered map

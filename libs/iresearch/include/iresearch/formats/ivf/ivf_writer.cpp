@@ -58,7 +58,7 @@ constexpr uint32_t kDefaultClusterIters = 25;
 constexpr uint32_t kClusterRedo = 1;
 constexpr uint64_t kSampleSegmentOversample = 4;
 constexpr uint64_t kBruteForceMaxRows = 1'000;
-constexpr uint64_t kFlatMaxRows = 256'000;
+constexpr uint64_t kFlatMaxRows = 0;  // disabled
 
 // Streams the flat vector column in row-aligned chunks (no full matrix in RAM),
 // invoking `sink(first_row, n_rows, data)` where `data` points at `n_rows * d`
@@ -149,12 +149,14 @@ std::vector<bool> ReadValidity(const ColumnReader& vector_column, uint64_t rows,
 }
 
 uint32_t ResolveNlist(const IvfInfo& info, uint64_t valid_count) {
+  const double factor =
+    info.nlist_factor > 0.0f ? info.nlist_factor : kNlistSqrtMultiplier;
   uint32_t nlist =
     info.nlist != 0
       ? info.nlist
       : static_cast<uint32_t>(std::max<int64_t>(
-          1, std::llround(kNlistSqrtMultiplier *
-                          std::sqrt(static_cast<double>(valid_count)))));
+          1,
+          std::llround(factor * std::sqrt(static_cast<double>(valid_count)))));
   return static_cast<uint32_t>(
     std::min<uint64_t>(nlist, std::max<uint64_t>(valid_count, 1)));
 }
@@ -164,10 +166,10 @@ uint32_t ResolveNlist(const IvfInfo& info, uint64_t valid_count) {
 CentroidShape IvfBuilder::ResolveCentroidShape(uint64_t valid_count,
                                                const IvfInfo& info) {
   const uint32_t total_target = ResolveNlist(info, valid_count);
-  if (valid_count < kBruteForceMaxRows || total_target >= valid_count) {
+  if (valid_count < kBruteForceMaxRows) {
     return {CentroidShapeKind::BruteForce, 1, 1, 1};
   }
-  if (valid_count < kFlatMaxRows || total_target * 4 >= valid_count) {
+  if (valid_count < kFlatMaxRows) {
     return {CentroidShapeKind::Flat, total_target, 1, total_target};
   }
   const uint32_t n_l1 = static_cast<uint32_t>(std::clamp<uint64_t>(

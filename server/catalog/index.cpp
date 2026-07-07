@@ -62,6 +62,7 @@ constexpr std::string_view kCosineMetric = "cosine";
 constexpr std::string_view kIPMetric = "ip";
 
 constexpr std::string_view kNlistField = "nlist";
+constexpr std::string_view kNlistFactorField = "nlist_factor";
 constexpr std::string_view kTrainSampleField = "train_sample";
 constexpr std::string_view kClusterItersField = "cluster_iters";
 constexpr std::string_view kQuantField = "quant";
@@ -116,6 +117,14 @@ ResultOr<bool> GetIndexBoolOption(std::string_view index_kind,
                               duckdb::LogicalTypeId::BOOLEAN, "a boolean");
 }
 
+ResultOr<double> GetIndexDoubleOption(std::string_view index_kind,
+                                      std::string_view column_name,
+                                      std::string_view key,
+                                      const duckdb::Value& v) {
+  return GetIndexOption<double>(index_kind, column_name, key, v,
+                                duckdb::LogicalTypeId::DOUBLE, "a number");
+}
+
 constexpr std::array<std::string_view, 2> kKnownOpclassTypes{
   kIncludedKind,
   kIVFKind,
@@ -158,6 +167,27 @@ ResultOr<uint32_t> ParsePositiveUintOption(std::string_view kind,
     return std::unexpected<Result>(std::move(n).error());
   }
   if (*n == 0) {
+    return std::unexpected<Result>{std::in_place,
+                                   ERROR_BAD_PARAMETER,
+                                   "Column '",
+                                   column_name,
+                                   "': ivf option '",
+                                   key,
+                                   "' must be positive, got ",
+                                   *n};
+  }
+  return *n;
+}
+
+ResultOr<double> ParsePositiveDoubleOption(std::string_view kind,
+                                           std::string_view column_name,
+                                           std::string_view key,
+                                           const duckdb::Value& v) {
+  auto n = GetIndexDoubleOption(kind, column_name, key, v);
+  if (!n) {
+    return std::unexpected<Result>(std::move(n).error());
+  }
+  if (*n <= 0.0) {
     return std::unexpected<Result>{std::in_place,
                                    ERROR_BAD_PARAMETER,
                                    "Column '",
@@ -463,6 +493,8 @@ std::string DescribeIVFOptions() {
   return absl::StrCat(
     "metric (string: ", metrics, ", REQUIRED), ",
     "nlist (int >= 1, default auto ~sqrt(rows)), ",
+    "nlist_factor (number > 0, nlist = round(nlist_factor * sqrt(rows)), default "
+    "2.0), ",
     "train_sample (int >= 1, default auto), ",
     "cluster_iters (int >= 1, k-means iterations, default auto), ",
     "quant (string: ", quants, ", default ", kNoneQuant, "; ",
@@ -566,6 +598,13 @@ Result ApplyIVFOptions(
         return std::move(parsed).error();
       }
       cfg.nlist = *parsed;
+    } else if (key == kNlistFactorField) {
+      auto parsed =
+        ParsePositiveDoubleOption(kIVFKind, column_name, key, raw_val);
+      if (!parsed) {
+        return std::move(parsed).error();
+      }
+      cfg.nlist_factor = static_cast<float>(*parsed);
     } else if (key == kTrainSampleField) {
       auto parsed =
         ParsePositiveUintOption(kIVFKind, column_name, key, raw_val);
@@ -631,6 +670,11 @@ Result ApplyIVFOptions(
             kL1Metric,           ", ",
             kCosineMetric,       ", ",
             kIPMetric,           "). Example: ivf (metric = 'l2')"};
+  }
+  if (cfg.nlist != 0 && cfg.nlist_factor != 0) {
+    return {ERROR_BAD_PARAMETER, "Column '",       column_name,
+            "': ivf options '", kNlistField,       "' and '",
+            kNlistFactorField,  "' are mutually exclusive"};
   }
   if (cfg.quant != irs::VectorQuantization::None &&
       cfg.metric != irs::VectorMetric::L2Sqr &&

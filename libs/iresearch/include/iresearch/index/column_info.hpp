@@ -70,6 +70,8 @@ struct IvfInfo {
 
   uint32_t nlist = 0;
 
+  float nlist_factor = 0;
+
   uint32_t train_sample = 0;
 
   uint32_t cluster_iters = 0;

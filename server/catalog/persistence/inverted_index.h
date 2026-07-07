@@ -47,6 +47,7 @@ struct IVFColumnConfig {
   uint32_t cluster_iters = 0;
   uint32_t pq_m = 0;
   uint32_t rabitq_bits = 0;
+  float nlist_factor = 0;
 };
 
 // Persisted per-field iresearch config, keyed by field_id in InvertedIndexData.

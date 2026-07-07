@@ -80,11 +80,13 @@ void SortProbedAscending(std::vector<uint32_t>& out_ids,
 }  // namespace
 
 void TwoLayerCentroids::WriteFooter(IndexOutput& out, VectorMetric metric,
-                                    uint32_t d, uint32_t n_l1,
+                                    CentroidShapeKind shape_kind, uint32_t d,
+                                    uint32_t n_l1,
                                     std::span<const float> l1_centroids,
                                     std::span<const uint64_t> body_offsets,
                                     std::span<const byte_type> quant_stats) {
   out.WriteByte(static_cast<byte_type>(metric));
+  out.WriteByte(static_cast<byte_type>(shape_kind));
   out.WriteU32(d);
   out.WriteU32(n_l1);
   if (!l1_centroids.empty()) {
@@ -104,6 +106,7 @@ TwoLayerCentroids TwoLayerCentroids::Deserialize(IndexInput& in,
                                                  uint64_t byte_size) {
   TwoLayerCentroids out;
   out._metric = static_cast<VectorMetric>(in.ReadByte());
+  out._shape_kind = static_cast<CentroidShapeKind>(in.ReadByte());
   out._d = static_cast<uint32_t>(in.ReadI32());
   out._n_l1 = static_cast<uint32_t>(in.ReadI32());
 

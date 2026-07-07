@@ -42,6 +42,8 @@ struct L2BodyView {
   uint32_t n_l2 = 0;
 };
 
+enum class CentroidShapeKind : uint8_t { BruteForce, Flat, TwoLayer };
+
 class TwoLayerCentroids {
  public:
   TwoLayerCentroids() = default;
@@ -74,13 +76,15 @@ class TwoLayerCentroids {
   uint32_t Dimension() const noexcept { return _d; }
   uint32_t L1Count() const noexcept { return _n_l1; }
   VectorMetric Metric() const noexcept { return _metric; }
+  CentroidShapeKind ShapeKind() const noexcept { return _shape_kind; }
   bool Empty() const noexcept { return _n_l1 == 0; }
 
   std::span<const byte_type> QuantStats() const noexcept {
     return {_quant_stats.data(), _quant_stats.size()};
   }
 
-  static void WriteFooter(IndexOutput& out, VectorMetric metric, uint32_t d,
+  static void WriteFooter(IndexOutput& out, VectorMetric metric,
+                          CentroidShapeKind shape_kind, uint32_t d,
                           uint32_t n_l1, std::span<const float> l1_centroids,
                           std::span<const uint64_t> body_offsets,
                           std::span<const byte_type> quant_stats);
@@ -94,13 +98,14 @@ class TwoLayerCentroids {
 
  private:
   static constexpr uint64_t kHeaderSize =
-    sizeof(uint8_t) + 2 * sizeof(uint32_t);
+    2 * sizeof(uint8_t) + 2 * sizeof(uint32_t);
 
   const float* L1Centroid(uint32_t i) const noexcept {
     return _l1_centroids.data() + static_cast<size_t>(i) * _d;
   }
 
   VectorMetric _metric = VectorMetric::L2Sqr;
+  CentroidShapeKind _shape_kind = CentroidShapeKind::TwoLayer;
   uint32_t _d = 0;
   uint32_t _n_l1 = 0;
   std::vector<float> _l1_centroids;

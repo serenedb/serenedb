@@ -30,6 +30,7 @@
 
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/formats.hpp"
+#include "iresearch/formats/ivf/centroids.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/iterators.hpp"
@@ -56,12 +57,22 @@ struct BuiltIvf {
 
 class QuantizerWriter;
 
+struct CentroidShape {
+  CentroidShapeKind kind;
+  uint32_t total_target;
+  uint32_t n_l1;
+  uint32_t n_l2_target;
+};
+
 class IvfBuilder {
  public:
   explicit IvfBuilder(IvfInfo info) : _info{std::move(info)} {}
 
   BuiltIvf Build(const ColumnReader& vector_column, ReadContext& ctx,
                  IdxWriter& idx, QuantizerWriter* qw) const;
+
+  static CentroidShape ResolveCentroidShape(uint64_t valid_count,
+                                            const IvfInfo& info);
 
  private:
   IvfInfo _info;

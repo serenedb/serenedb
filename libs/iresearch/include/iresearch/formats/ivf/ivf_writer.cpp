@@ -57,6 +57,8 @@ constexpr uint64_t kTrainPointsPerCentroid = 64;
 constexpr uint32_t kDefaultClusterIters = 25;
 constexpr uint32_t kClusterRedo = 1;
 constexpr uint64_t kSampleSegmentOversample = 4;
+constexpr uint64_t kBruteForceMaxRows = 1'000;
+constexpr uint64_t kFlatMaxRows = 256'000;
 
 // Streams the flat vector column in row-aligned chunks (no full matrix in RAM),
 // invoking `sink(first_row, n_rows, data)` where `data` points at `n_rows * d`
@@ -150,6 +152,24 @@ uint32_t ResolveNlist(const IvfInfo& info, uint64_t valid_count) {
 
 }  // namespace
 
+CentroidShape IvfBuilder::ResolveCentroidShape(uint64_t valid_count,
+                                               const IvfInfo& info) {
+  if (valid_count < kBruteForceMaxRows) {
+    return {CentroidShapeKind::BruteForce, 1, 1, 1};
+  }
+  const uint32_t total_target = ResolveNlist(info, valid_count);
+  if (valid_count < kFlatMaxRows) {
+    return {CentroidShapeKind::Flat, total_target, 1, total_target};
+  }
+  const uint32_t n_l1 = static_cast<uint32_t>(std::clamp<uint64_t>(
+    static_cast<uint64_t>(
+      std::llround(std::ceil(std::sqrt(static_cast<double>(total_target))))),
+    1, valid_count));
+  const uint32_t n_l2_target = static_cast<uint32_t>(std::max<uint64_t>(
+    1, (static_cast<uint64_t>(total_target) + n_l1 - 1) / n_l1));
+  return {CentroidShapeKind::TwoLayer, total_target, n_l1, n_l2_target};
+}
+
 BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
                            IdxWriter& idx, QuantizerWriter* qw) const {
   const auto* child = vector_column.Child();
@@ -172,13 +192,10 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
     return out;
   }
 
-  const uint32_t total_target = ResolveNlist(_info, valid_count);
-  const uint32_t n_l1 = static_cast<uint32_t>(std::clamp<uint64_t>(
-    static_cast<uint64_t>(
-      std::llround(std::ceil(std::sqrt(static_cast<double>(total_target))))),
-    1, valid_count));
-  const uint32_t n_l2_target = static_cast<uint32_t>(std::max<uint64_t>(
-    1, (static_cast<uint64_t>(total_target) + n_l1 - 1) / n_l1));
+  const auto shape = ResolveCentroidShape(valid_count, _info);
+  const uint32_t total_target = shape.total_target;
+  const uint32_t n_l1 = shape.n_l1;
+  const uint32_t n_l2_target = shape.n_l2_target;
   uint64_t n_train = ResolveTrainSample(_info, valid_count, total_target);
   if (_info.quant.kind == VectorQuantization::PQ) {
     n_train = std::min<uint64_t>(valid_count, std::max<uint64_t>(n_train, 256));
@@ -265,8 +282,26 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
   }
 
   const uint32_t base_seed = kClusterSeed;
-  const std::vector<float> l1_centroids = TrainCentroids(
-    m, sample.data(), n_train, n_l1, d, base_seed, cluster_iters, kClusterRedo);
+  std::vector<float> l1_centroids;
+  if (n_l1 == 1) {
+    l1_centroids.assign(d, 0.f);
+    for (uint64_t i = 0; i < n_train; ++i) {
+      const float* v = sample.data() + static_cast<size_t>(i) * d;
+      for (uint32_t j = 0; j < d; ++j) {
+        l1_centroids[j] += v[j];
+      }
+    }
+    const float inv = 1.f / static_cast<float>(n_train);
+    for (uint32_t j = 0; j < d; ++j) {
+      l1_centroids[j] *= inv;
+    }
+    if (VectorMetricIsAngular(m)) {
+      NormalizeRows(l1_centroids.data(), 1, d);
+    }
+  } else {
+    l1_centroids = TrainCentroids(m, sample.data(), n_train, n_l1, d, base_seed,
+                                  cluster_iters, kClusterRedo);
+  }
 
   std::vector<uint32_t> doc_cell;
   doc_cell.reserve(valid_count);
@@ -483,9 +518,10 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
   }
 
   out.resident_offset = bout.Position();
-  TwoLayerCentroids::WriteFooter(
-    bout, _info.metric, d, n_l1, std::span<const float>{l1_centroids},
-    std::span<const uint64_t>{body_offsets}, stats);
+  TwoLayerCentroids::WriteFooter(bout, _info.metric, shape.kind, d, n_l1,
+                                 std::span<const float>{l1_centroids},
+                                 std::span<const uint64_t>{body_offsets},
+                                 stats);
   out.resident_size = bout.Position() - out.resident_offset;
   SDB_ASSERT(out.resident_size ==
              TwoLayerCentroids::FooterSize(d, n_l1, stats.size()));

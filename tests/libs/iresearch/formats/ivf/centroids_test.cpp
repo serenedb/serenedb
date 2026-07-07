@@ -44,9 +44,10 @@ struct Serialized {
   uint64_t resident_size = 0;
 };
 
-Serialized WriteEntry(IndexOutput& out, VectorMetric metric, uint32_t d,
-                      const std::vector<float>& l1_centroids,
-                      const std::vector<L2BodySpec>& bodies) {
+Serialized WriteEntry(
+  IndexOutput& out, VectorMetric metric, uint32_t d,
+  const std::vector<float>& l1_centroids, const std::vector<L2BodySpec>& bodies,
+  CentroidShapeKind shape_kind = CentroidShapeKind::TwoLayer) {
   const auto n_l1 = static_cast<uint32_t>(bodies.size());
   std::vector<uint64_t> body_offsets;
   body_offsets.reserve(n_l1);
@@ -65,7 +66,7 @@ Serialized WriteEntry(IndexOutput& out, VectorMetric metric, uint32_t d,
   Serialized s;
   s.resident_offset = out.Position();
   TwoLayerCentroids::WriteFooter(
-    out, metric, d, n_l1, std::span<const float>{l1_centroids},
+    out, metric, shape_kind, d, n_l1, std::span<const float>{l1_centroids},
     std::span<const uint64_t>{body_offsets}, std::span<const byte_type>{});
   s.resident_size = out.Position() - s.resident_offset;
   return s;
@@ -103,6 +104,7 @@ TEST(two_layer_centroids_test, roundtrip_and_search) {
   EXPECT_EQ(centroids.Dimension(), d);
   EXPECT_EQ(centroids.L1Count(), 2u);
   EXPECT_EQ(centroids.Metric(), VectorMetric::L2Sqr);
+  EXPECT_EQ(centroids.ShapeKind(), CentroidShapeKind::TwoLayer);
   EXPECT_FALSE(centroids.Empty());
 
   // Layer-1 selection.
@@ -187,6 +189,133 @@ TEST(two_layer_centroids_test, search_global_picks_global_topk) {
 
   centroids.SearchGlobal(q, in, /*n1=*/2, /*nprobe=*/0, ids, nullptr);
   EXPECT_TRUE(ids.empty());
+}
+
+TEST(two_layer_centroids_test, brute_force_shape_roundtrip_and_search) {
+  SimpleMemoryAccounter memory;
+  MemoryFile file{memory};
+
+  constexpr uint32_t d = 2;
+  const std::vector<float> l1{5.f, 5.f};
+  const std::vector<L2BodySpec> bodies{
+    L2BodySpec{.centroids = {5.f, 5.f}, .fine_ids = {0}},
+  };
+
+  Serialized s;
+  {
+    MemoryIndexOutput out{file};
+    s = WriteEntry(out, VectorMetric::L2Sqr, d, l1, bodies,
+                   CentroidShapeKind::BruteForce);
+    out.Flush();
+  }
+  ASSERT_EQ(s.resident_size,
+            TwoLayerCentroids::FooterSize(d, 1, /*stats_len=*/0));
+
+  MemoryIndexInput in{file};
+  in.Seek(s.resident_offset);
+  auto centroids = TwoLayerCentroids::Deserialize(in, s.resident_size);
+
+  EXPECT_EQ(centroids.Dimension(), d);
+  EXPECT_EQ(centroids.L1Count(), 1u);
+  EXPECT_EQ(centroids.Metric(), VectorMetric::L2Sqr);
+  EXPECT_EQ(centroids.ShapeKind(), CentroidShapeKind::BruteForce);
+  EXPECT_FALSE(centroids.Empty());
+
+  // A single L1 cell: SearchL1 always returns it, regardless of how many
+  // candidates are requested.
+  {
+    const std::vector<float> q{5.1f, 5.1f};
+    std::vector<uint32_t> l1_ids;
+    centroids.SearchL1(q, /*n1=*/5, l1_ids);
+    ASSERT_EQ(l1_ids.size(), 1u);
+    EXPECT_EQ(l1_ids[0], 0u);
+  }
+
+  L2BodyView body;
+  centroids.ReadL2Body(in, /*l1_id=*/0, body);
+  ASSERT_EQ(body.n_l2, 1u);
+  ASSERT_EQ(body.fine_ids.size(), 1u);
+  EXPECT_EQ(body.fine_ids[0], 0u);
+
+  const std::vector<float> q{5.1f, 5.1f};
+  std::vector<uint32_t> ids;
+  centroids.SearchGlobal(q, in, /*n1=*/1, /*nprobe=*/1, ids, nullptr);
+  ASSERT_EQ(ids.size(), 1u);
+  EXPECT_EQ(ids[0], 0u);
+}
+
+TEST(two_layer_centroids_test, flat_shape_roundtrip_and_search) {
+  SimpleMemoryAccounter memory;
+  MemoryFile file{memory};
+
+  constexpr uint32_t d = 2;
+  const std::vector<float> l1{0.f, 0.f};
+  const std::vector<L2BodySpec> bodies{
+    L2BodySpec{.centroids = {0.f, 0.f, 10.f, 10.f, 20.f, 20.f, -10.f, -10.f},
+               .fine_ids = {0, 1, 2, 3}},
+  };
+
+  Serialized s;
+  {
+    MemoryIndexOutput out{file};
+    s = WriteEntry(out, VectorMetric::L2Sqr, d, l1, bodies,
+                   CentroidShapeKind::Flat);
+    out.Flush();
+  }
+  ASSERT_EQ(s.resident_size,
+            TwoLayerCentroids::FooterSize(d, 1, /*stats_len=*/0));
+
+  MemoryIndexInput in{file};
+  in.Seek(s.resident_offset);
+  auto centroids = TwoLayerCentroids::Deserialize(in, s.resident_size);
+
+  EXPECT_EQ(centroids.Dimension(), d);
+  EXPECT_EQ(centroids.L1Count(), 1u);
+  EXPECT_EQ(centroids.Metric(), VectorMetric::L2Sqr);
+  EXPECT_EQ(centroids.ShapeKind(), CentroidShapeKind::Flat);
+  EXPECT_FALSE(centroids.Empty());
+
+  // A single L1 cell holding every fine cluster: SearchL1 always returns
+  // that one cell, no matter how many candidates are requested.
+  {
+    std::vector<uint32_t> l1_ids;
+    centroids.SearchL1(std::vector<float>{9.f, 9.f}, /*n1=*/10, l1_ids);
+    ASSERT_EQ(l1_ids.size(), 1u);
+    EXPECT_EQ(l1_ids[0], 0u);
+  }
+
+  L2BodyView body;
+  centroids.ReadL2Body(in, /*l1_id=*/0, body);
+  ASSERT_EQ(body.n_l2, 4u);
+  ASSERT_EQ(body.fine_ids.size(), 4u);
+  for (uint32_t i = 0; i < 4; ++i) {
+    EXPECT_EQ(body.fine_ids[i], i);
+  }
+
+  // Flat IVF: nprobe picks the exact top-k fine clusters across the whole
+  // (single) L1 cell -- q=(9,9) is nearest to c1=(10,10), then c0=(0,0),
+  // then c2=(20,20), then c3=(-10,-10).
+  const std::vector<float> q{9.f, 9.f};
+  std::vector<uint32_t> ids;
+  std::vector<float> cens;
+
+  centroids.SearchGlobal(q, in, /*n1=*/1, /*nprobe=*/1, ids, &cens);
+  ASSERT_EQ(ids.size(), 1u);
+  EXPECT_EQ(ids[0], 1u);
+  ASSERT_EQ(cens.size(), d);
+  EXPECT_EQ(cens, (std::vector<float>{10.f, 10.f}));
+
+  // Results are sorted ascending by fine id, not by distance.
+  centroids.SearchGlobal(q, in, /*n1=*/1, /*nprobe=*/2, ids, nullptr);
+  ASSERT_EQ(ids.size(), 2u);
+  EXPECT_EQ(ids[0], 0u);
+  EXPECT_EQ(ids[1], 1u);
+
+  centroids.SearchGlobal(q, in, /*n1=*/1, /*nprobe=*/4, ids, nullptr);
+  ASSERT_EQ(ids.size(), 4u);
+  for (uint32_t i = 0; i < 4; ++i) {
+    EXPECT_EQ(ids[i], i);
+  }
 }
 
 TEST(two_layer_centroids_test, inner_product_nearest_is_largest) {

@@ -1,0 +1,87 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY kw (template = 'keyword');
+
+statement ok
+CREATE TABLE searches (id INTEGER PRIMARY KEY, query VARCHAR NOT NULL);
+
+statement ok
+INSERT INTO searches VALUES
+(1,  'running shoes'),
+(2,  'running shoes'),
+(3,  'running shoes'),
+(4,  'running jacket'),
+(5,  'running jacket'),
+(6,  'running watch'),
+(7,  'rain jacket'),
+(8,  'rain jacket'),
+(9,  'road bike'),
+(10, 'road running'),
+(11, 'hiking boots'),
+(12, 'hiking boots');
+
+statement ok
+CREATE INDEX searches_idx ON searches USING inverted (query kw);
+
+statement ok
+VACUUM (REFRESH_TABLE) searches;
+
+# DOCS_TEST_BODY
+
+query
+SELECT unnest(ts_dict_agg(query)) AS suggestion
+FROM searches_idx
+WHERE query LIKE 'run%'
+ORDER BY suggestion;
+----
+suggestion
+running jacket
+running shoes
+running watch
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT unnest(ts_dict_agg(query))   AS suggestion,
+       unnest(ts_dict_count(query)) AS searches
+FROM searches_idx
+WHERE query LIKE 'run%'
+ORDER BY searches DESC, suggestion;
+----
+suggestion	searches
+running shoes	3
+running jacket	2
+running watch	1
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT unnest(ts_dict_agg(query))   AS suggestion,
+       unnest(ts_dict_count(query)) AS searches
+FROM searches_idx
+WHERE query LIKE 'r%'
+ORDER BY searches DESC, suggestion
+LIMIT 2;
+----
+suggestion	searches
+running shoes	3
+rain jacket	2
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT unnest(ts_dict_agg(query)) AS suggestion
+FROM searches_idx
+WHERE query @@ ts_starts_with('road')
+ORDER BY suggestion;
+----
+suggestion
+road bike
+road running

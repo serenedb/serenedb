@@ -1,0 +1,72 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tx (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE posts (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+INSERT INTO posts VALUES
+(1, 'search search search relevance ranking'),
+(2, 'search ranking ranking'),
+(3, 'search relevance'),
+(4, 'ranking');
+
+statement ok
+CREATE INDEX posts_idx ON posts USING inverted (id, body tx);
+
+statement ok
+VACUUM (REFRESH_TABLE) posts;
+
+# DOCS_TEST_BODY
+
+query
+SELECT unnest(ts_dict_agg(body))  AS term,
+       unnest(ts_dict_freq(body)) AS mentions
+FROM posts_idx
+ORDER BY mentions DESC, term;
+----
+term	mentions
+search	5
+ranking	4
+relevance	2
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT unnest(ts_dict_agg(body))   AS term,
+       unnest(ts_dict_count(body))  AS docs,
+       unnest(ts_dict_freq(body))   AS mentions
+FROM posts_idx
+ORDER BY mentions DESC, term;
+----
+term	docs	mentions
+search	3	5
+ranking	3	4
+relevance	2	2
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT unnest(ts_dict_agg(body))  AS term,
+       unnest(ts_dict_freq(body)) AS mentions
+FROM posts_idx
+ORDER BY mentions DESC, term
+LIMIT 2;
+----
+term	mentions
+search	5
+ranking	4

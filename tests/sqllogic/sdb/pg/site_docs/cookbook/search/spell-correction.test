@@ -1,0 +1,70 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY kw (template = 'keyword');
+
+statement ok
+CREATE TABLE query_log (id INTEGER PRIMARY KEY, term VARCHAR NOT NULL);
+
+statement ok
+INSERT INTO query_log VALUES
+(1, 'jacket'), (2, 'jacket'), (3, 'jacket'), (4, 'jacket'), (5, 'jacket'),
+(6, 'running'), (7, 'running'), (8, 'running'), (9, 'running'),
+(10, 'running'), (11, 'running'), (12, 'running'), (13, 'running'),
+(14, 'basket'),
+(15, 'racket'),
+(16, 'boot'), (17, 'boot'), (18, 'boot'), (19, 'boot'), (20, 'boot'), (21, 'boot'),
+(22, 'boat'), (23, 'boat'),
+(24, 'boots'), (25, 'boots'), (26, 'boots'),
+(27, 'watch'), (28, 'watch'), (29, 'watch'), (30, 'watch');
+
+statement ok
+CREATE INDEX query_log_idx ON query_log USING inverted (term kw);
+
+statement ok
+VACUUM (REFRESH_TABLE) query_log;
+
+# DOCS_TEST_BODY
+
+query
+SELECT unnest(ts_dict_agg(term))   AS suggestion,
+       unnest(ts_dict_score(term)) AS similarity
+FROM query_log_idx
+WHERE term @@ ts_levenshtein('jaket', 2)
+ORDER BY similarity DESC, suggestion;
+----
+suggestion	similarity
+jacket	0.8
+basket	0.6
+racket	0.6
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT unnest(ts_dict_agg(term)) AS correction
+FROM query_log_idx
+WHERE term @@ ts_levenshtein('jaket', 2)
+ORDER BY unnest(ts_dict_score(term)) DESC, unnest(ts_dict_count(term)) DESC
+LIMIT 1;
+----
+correction
+jacket
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT unnest(ts_dict_agg(term))   AS suggestion,
+       unnest(ts_dict_score(term)) AS similarity,
+       unnest(ts_dict_count(term)) AS searches
+FROM query_log_idx
+WHERE term @@ ts_levenshtein('bost', 2)
+ORDER BY similarity DESC, searches DESC, suggestion;
+----
+suggestion	similarity	searches
+boot	0.75	6
+boat	0.75	2
+boots	0.5	3

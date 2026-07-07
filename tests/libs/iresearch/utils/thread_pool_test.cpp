@@ -152,7 +152,7 @@ TEST(thread_pool_test, test_run_3tasks_parallel_mt) {
 
 TEST(thread_pool_test, test_run_1task_excpetion_1task_mt) {
   // test schedule 1 task exception + 1 task
-  irs::async_utils::ThreadPool<> pool(1, IR_NATIVE_STRING("foo"));
+  irs::async_utils::ThreadPool<> pool(1);
   std::condition_variable cond;
   NotifyingCounter count(cond, 2);
   std::mutex mutex;

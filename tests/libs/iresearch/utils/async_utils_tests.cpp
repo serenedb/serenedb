@@ -300,7 +300,7 @@ void RunTestThreadPoolRunMt() {
 
   // test schedule 1 task exception + 1 task
   {
-    irs::async_utils::ThreadPool<UseDelay> pool(1, IR_NATIVE_STRING("foo"));
+    irs::async_utils::ThreadPool<UseDelay> pool(1);
     std::condition_variable cond;
     NotifyingCounter count(cond, 2);
     std::mutex mutex;

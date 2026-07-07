@@ -163,11 +163,11 @@ uint32_t ResolveNlist(const IvfInfo& info, uint64_t valid_count) {
 
 CentroidShape IvfBuilder::ResolveCentroidShape(uint64_t valid_count,
                                                const IvfInfo& info) {
-  if (valid_count < kBruteForceMaxRows) {
+  const uint32_t total_target = ResolveNlist(info, valid_count);
+  if (valid_count < kBruteForceMaxRows || total_target >= valid_count) {
     return {CentroidShapeKind::BruteForce, 1, 1, 1};
   }
-  const uint32_t total_target = ResolveNlist(info, valid_count);
-  if (valid_count < kFlatMaxRows) {
+  if (valid_count < kFlatMaxRows || total_target * 4 >= valid_count) {
     return {CentroidShapeKind::Flat, total_target, 1, total_target};
   }
   const uint32_t n_l1 = static_cast<uint32_t>(std::clamp<uint64_t>(

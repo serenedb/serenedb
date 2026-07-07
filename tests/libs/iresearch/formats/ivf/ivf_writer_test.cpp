@@ -19,7 +19,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/formats/ivf/ivf_writer.hpp"
-
 #include "tests_shared.hpp"
 
 using namespace irs;
@@ -34,7 +33,8 @@ TEST(ivf_writer_test, resolve_centroid_shape_brute_force_below_threshold) {
   }
 }
 
-TEST(ivf_writer_test, resolve_centroid_shape_brute_force_ignores_nlist_override) {
+TEST(ivf_writer_test,
+     resolve_centroid_shape_brute_force_ignores_nlist_override) {
   const auto shape =
     IvfBuilder::ResolveCentroidShape(500, IvfInfo{.nlist = 50});
   EXPECT_EQ(shape.kind, CentroidShapeKind::BruteForce);

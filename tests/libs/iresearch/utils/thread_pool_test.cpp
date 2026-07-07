@@ -907,22 +907,3 @@ TEST(thread_pool_test, test_stop_signle_threads_mt) {
   pool.stop();
   ASSERT_EQ(0, pool.threads());
 }
-
-#if (defined(__linux__) || defined(__APPLE__) || \
-     (defined(_WIN32) && (_WIN32_WINNT >= _WIN32_WINNT_WIN10)))
-TEST(thread_pool_test, test_check_name_mt) {
-  // test stop with a single thread will stop threads
-  const THREAD_NAME_T expected_name = IR_NATIVE_STRING("foo");
-  std::basic_string<std::remove_pointer_t<THREAD_NAME_T>> actual_name;
-  irs::async_utils::ThreadPool<> pool(1, IR_NATIVE_STRING("foo"));
-
-  ASSERT_TRUE(pool.run([expected_name, &actual_name]() -> void {
-    EXPECT_TRUE(irs::SetThreadName(expected_name));
-    EXPECT_TRUE(irs::GetThreadName(actual_name));
-  }));  // start a single thread
-  ASSERT_EQ(1, pool.threads());
-  pool.stop();
-  ASSERT_EQ(0, pool.threads());
-  ASSERT_EQ(expected_name, actual_name);
-}
-#endif

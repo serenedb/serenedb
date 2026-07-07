@@ -30,7 +30,6 @@ add_library(
     basics/files.cpp
     basics/lockfile.cpp
     basics/signals.cpp
-    basics/thread_utils.cpp
     basics/async_utils.cpp
     basics/dtoa.cpp
     basics/bit_packing.cpp

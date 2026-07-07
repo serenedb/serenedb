@@ -357,11 +357,17 @@ void ColumnWriter::SealList(const duckdb::LogicalType& type,
     const auto& parent_validity = duckdb::FlatVector::Validity(c.data);
     auto& child = duckdb::ListVector::GetChildMutable(c.data);
     // A sliced parent view shares the original child with absolute list
-    // offsets, so this chunk's elements start at row 0's child offset, not 0.
-    const uint64_t child_base = c.count != 0 ? entries[0].offset : 0;
+    // offsets, so this chunk's elements start at the first valid row's child
+    // offset (a null row's list_entry is undefined), not 0.
+    uint64_t child_base = 0;
+    bool have_child_base = false;
     uint64_t chunk_elems = 0;
     for (duckdb::idx_t i = 0; i < c.count; ++i) {
       if (parent_validity.RowIsValid(i)) {
+        if (!have_child_base) {
+          child_base = entries[i].offset;
+          have_child_base = true;
+        }
         running += entries[i].length;
         chunk_elems += entries[i].length;
       }

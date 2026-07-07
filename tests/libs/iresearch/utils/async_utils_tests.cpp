@@ -26,7 +26,6 @@
 #include <mutex>
 
 #include "basics/async_utils.hpp"
-#include "basics/thread_utils.hpp"
 #include "tests_shared.hpp"
 
 using namespace std::chrono_literals;
@@ -683,26 +682,6 @@ TEST_F(AsyncUtilsTests, test_queue_thread_pool_delay_mt) {
     ASSERT_EQ(std::cv_status::no_timeout, cond.wait_for(lock, 100s));
     ASSERT_EQ(0, counter);
   }
-}
-
-TEST(thread_utils_test, get_set_name) {
-  const THREAD_NAME_T expected_name = IR_NATIVE_STRING("foo");
-#if (defined(__linux__) || defined(__APPLE__) || \
-     (defined(_WIN32) && (_WIN32_WINNT >= _WIN32_WINNT_WIN10)))
-  std::basic_string<std::remove_pointer_t<THREAD_NAME_T>> actual_name;
-
-  std::thread thread([expected_name, &actual_name]() mutable {
-    EXPECT_TRUE(irs::SetThreadName(expected_name));
-    EXPECT_TRUE(irs::GetThreadName(actual_name));
-  });
-
-  thread.join();
-  ASSERT_EQ(expected_name, actual_name);
-#else
-  std::thread thread([expected_name, &actual_name]() mutable {
-    EXPECT_FALSE(irs::SetThreadName(expected_name));
-  });
-#endif
 }
 
 }  // namespace tests

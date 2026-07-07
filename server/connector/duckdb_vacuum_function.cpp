@@ -424,9 +424,7 @@ void DispatchInverted(duckdb::ClientContext& context,
       }
       if (progress) {
         pg::ProgressMetrics::Add(progress->items_processed, 1);
-        SDB_IF_FAILURE("pause_vacuum_mid_walk") {
-          sdb::WaitWhileFailurePointDebugging("pause_vacuum_mid_walk");
-        }
+        SDB_WAIT_ON_FAILURE("pause_vacuum_mid_walk");
       }
     } else if (const auto& search = step.sync_table->GetData()) {
       if (action == Action::Refresh) {
@@ -553,9 +551,7 @@ void DispatchRecomputeStats(duckdb::ClientContext& context,
     }
     if (progress) {
       pg::ProgressMetrics::Add(progress->items_processed, 1);
-      SDB_IF_FAILURE("pause_recompute_stats_mid_walk") {
-        sdb::WaitWhileFailurePointDebugging("pause_recompute_stats_mid_walk");
-      }
+      SDB_WAIT_ON_FAILURE("pause_recompute_stats_mid_walk");
     }
   }
 }

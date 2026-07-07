@@ -209,14 +209,16 @@ duckdb::SinkResultType SereneDBPhysicalCTAS::Sink(
   duckdb::OperatorSinkInput insert_input{
     *gstate.insert_gstate, input.local_state, input.interrupt_state};
   const auto result = _insert.Sink(context, chunk, insert_input);
+
+#ifdef SDB_FAULT_INJECTION
   // Tuple/byte counting happens in the nested insert's sink via the
   // sink_progress_callback; pause after it so the counters of the ingested
   // chunk are visible while parked.
   if (gstate.progress) {
-    SDB_IF_FAILURE("pause_ctas_mid_ingest") {
-      sdb::WaitWhileFailurePointDebugging("pause_ctas_mid_ingest");
-    }
+    SDB_WAIT_ON_FAILURE("pause_ctas_mid_ingest");
   }
+#endif
+
   return result;
 }
 

@@ -429,12 +429,12 @@ bool PgWireSession<Kind>::SetupConnection() {
         metrics.command.load(std::memory_order_relaxed));
       SDB_IF_FAILURE("pause_sst_sink_mid_copy") {
         if (command == sdb::pg::ProgressCommand::CopyFrom) {
-          sdb::WaitWhileFailurePointDebugging("pause_sst_sink_mid_copy");
+          SDB_WAIT_ON_FAILURE("pause_sst_sink_mid_copy");
         }
       }
       SDB_IF_FAILURE("pause_copy_to_mid_stream") {
         if (command == sdb::pg::ProgressCommand::CopyTo) {
-          sdb::WaitWhileFailurePointDebugging("pause_copy_to_mid_stream");
+          SDB_WAIT_ON_FAILURE("pause_copy_to_mid_stream");
         }
       }
     };

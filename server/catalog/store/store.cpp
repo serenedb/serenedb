@@ -1032,7 +1032,7 @@ Result CatalogStore::ExecuteCreateStoreTableImpl(const StoreTableDef& def,
     duckdb::MetaTransaction::Get(context).ModifyDatabase(
       catalog.GetAttached(),
       duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY);
-    sdb::WaitWhileFailurePointDebugging("pause_store_create_table");
+    SDB_WAIT_ON_FAILURE("pause_store_create_table");
     catalog.CreateTable(context, std::move(info));
     return {};
   });

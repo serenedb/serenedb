@@ -21,7 +21,6 @@ add_library(
     basics/result.cpp
     basics/result_error.cpp
     basics/string_utils.cpp
-    basics/thread_id.cpp
     basics/static_strings.cpp
     basics/lifecycle.cpp
     basics/application-exit.cpp

@@ -1,0 +1,57 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ven (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE items (id INTEGER PRIMARY KEY, name VARCHAR, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX items_idx ON items
+    USING inverted (id, name ven, emb hnsw (metric = 'l2'));
+
+statement ok
+INSERT INTO items VALUES
+(1, 'trail running shoe', [1.0, 0.0, 0.0]::FLOAT[3]),
+(2, 'road running shoe',  [0.9, 0.1, 0.0]::FLOAT[3]),
+(3, 'leather dress shoe', [0.0, 1.0, 0.0]::FLOAT[3]),
+(4, 'wireless earbuds',   [0.0, 0.0, 1.0]::FLOAT[3]),
+(5, 'marathon racer',     [0.95, 0.05, 0.0]::FLOAT[3]);
+
+statement ok
+VACUUM (REFRESH_TABLE) items;
+
+# DOCS_TEST_BODY
+
+query
+SELECT b.id, b.name, round((a.emb <-> b.emb)::numeric, 3) AS distance
+FROM items a JOIN items b ON b.id <> a.id
+WHERE a.id = 1
+ORDER BY distance, b.id
+LIMIT 3;
+----
+id	name	distance
+5	marathon racer	0.071
+2	road running shoe	0.141
+3	leather dress shoe	1.414
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT b.id, b.name
+FROM items a JOIN items b ON b.id <> a.id
+WHERE a.id = 1 AND (a.emb <-> b.emb) < 0.2
+ORDER BY b.id;
+----
+id	name
+2	road running shoe
+5	marathon racer

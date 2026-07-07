@@ -118,9 +118,6 @@ id	payload
 # DOCS_TEST: example_004
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY kw (template = 'keyword');
-
-statement ok
 CREATE TABLE events (
     id INTEGER PRIMARY KEY,
     doc JSON
@@ -135,7 +132,7 @@ INSERT INTO events VALUES
 
 statement ok
 CREATE INDEX events_idx ON events
-    USING inverted (id, (doc ->> 'host') kw);
+    USING inverted (id, (doc ->> 'host'));
 
 query
 SELECT id, doc ->> 'host' AS host FROM events_idx WHERE doc ->> 'host' @@ 'web-02' ORDER BY id;

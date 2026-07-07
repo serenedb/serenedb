@@ -1,9 +1,6 @@
 # DOCS_TEST: example_001
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY kw (template = 'keyword');
-
-statement ok
 CREATE TABLE notes (
     id INTEGER PRIMARY KEY,
     s VARCHAR
@@ -16,7 +13,7 @@ INSERT INTO notes VALUES (1, 'HELLO'), (2, 'World');
 
 statement ok
 CREATE INDEX notes_idx ON notes
-    USING inverted (id, (lower(s)) kw);
+    USING inverted (id, (lower(s)));
 
 query
 SELECT id, s FROM notes_idx WHERE lower(s) @@ 'hello' ORDER BY id;
@@ -67,7 +64,7 @@ INSERT INTO articles_tags VALUES
 
 statement ok
 CREATE INDEX articles_tags_idx ON articles_tags
-    USING inverted (id, tags kw);
+    USING inverted (id, tags);
 
 query
 SELECT id, tags FROM articles_tags_idx WHERE tags @@ 'blue' ORDER BY id;

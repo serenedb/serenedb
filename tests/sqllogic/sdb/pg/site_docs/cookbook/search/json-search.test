@@ -1,0 +1,83 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY jtext (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false
+);
+
+statement ok
+CREATE TABLE products (id INTEGER PRIMARY KEY, doc VARIANT);
+
+statement ok
+INSERT INTO products VALUES
+(1, '{"name":"Wireless Laptop Stand","attrs":{"brand":"Acme"},"tags":["sale","new"],"price":40}'::JSON::VARIANT),
+(2, '{"name":"Optical Mouse","attrs":{"brand":"Globex"},"tags":["new"],"price":25}'::JSON::VARIANT),
+(3, '{"name":"Laptop Sleeve","attrs":{"brand":"Acme"},"tags":["clearance","sale"],"price":60}'::JSON::VARIANT);
+
+statement ok
+CREATE INDEX products_idx ON products
+    USING inverted (id, (doc['name']::VARCHAR) jtext, (doc['attrs']['brand']::VARCHAR), (doc['tags']::VARCHAR[]), (doc['price']::INTEGER));
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, doc['name']::VARCHAR AS name FROM products_idx WHERE (doc['name']::VARCHAR) @@ 'laptop' ORDER BY id;
+----
+id	name
+1	Wireless Laptop Stand
+3	Laptop Sleeve
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, doc['name']::VARCHAR AS name FROM products_idx WHERE (doc['attrs']['brand']::VARCHAR) @@ 'Globex' ORDER BY id;
+----
+id	name
+2	Optical Mouse
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT id FROM products_idx WHERE (doc['tags']::VARCHAR[]) @@ 'sale' ORDER BY id;
+----
+id
+1
+3
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT id FROM products_idx WHERE (doc['tags']::VARCHAR[]) @@ ts_all(['sale', 'new']) ORDER BY id;
+----
+id
+1
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, doc['price']::INTEGER AS price FROM products_idx WHERE (doc['price']::INTEGER) @@ ts_ge(40) ORDER BY id;
+----
+id	price
+1	40
+3	60
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, doc['name']::VARCHAR AS name, doc['price']::INTEGER AS price FROM products_idx WHERE (doc['name']::VARCHAR) @@ 'laptop' AND (doc['price']::INTEGER) @@ ts_ge(50) ORDER BY id;
+----
+id	name	price
+3	Laptop Sleeve	60

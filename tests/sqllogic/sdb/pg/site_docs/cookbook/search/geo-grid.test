@@ -1,0 +1,92 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geo_s2 (template = 'geojson', coding = 's2point');
+
+statement ok
+CREATE TABLE shops (id INTEGER PRIMARY KEY, name VARCHAR, geo GEOMETRY('OGC:CRS84'));
+
+statement ok
+CREATE INDEX shops_idx ON shops USING inverted (id, name, geo geo_s2);
+
+statement ok
+INSERT INTO shops VALUES
+(1, 'Blue Bottle', 'POINT(-122.34 37.76)'::GEOMETRY('OGC:CRS84')),
+(2, 'Ritual',      'POINT(-122.37 37.72)'::GEOMETRY('OGC:CRS84')),
+(3, 'Sightglass',  'POINT(-122.35 37.78)'::GEOMETRY('OGC:CRS84')),
+(4, 'Four Barrel', 'POINT(-122.32 37.74)'::GEOMETRY('OGC:CRS84')),
+(5, 'Philz',       'POINT(-122.38 37.85)'::GEOMETRY('OGC:CRS84')),
+(6, 'Peets',       'POINT(-122.33 37.88)'::GEOMETRY('OGC:CRS84')),
+(7, 'Verve',       'POINT(-122.28 37.73)'::GEOMETRY('OGC:CRS84'));
+
+statement ok
+VACUUM (REFRESH_TABLE) shops;
+
+# DOCS_TEST_BODY
+
+query
+WITH pts AS (
+  SELECT
+    split_part(trim(split_part(ST_AsText(geo), '(', 2), ')'), ' ', 1)::DOUBLE AS lon,
+    split_part(trim(split_part(ST_AsText(geo), '(', 2), ')'), ' ', 2)::DOUBLE AS lat
+  FROM shops
+)
+SELECT
+  CAST(floor(lon * 10) / 10 AS DECIMAL(6,1)) AS cell_lon,
+  CAST(floor(lat * 10) / 10 AS DECIMAL(6,1)) AS cell_lat,
+  count(*) AS shops
+FROM pts
+GROUP BY cell_lon, cell_lat
+ORDER BY shops DESC, cell_lon, cell_lat;
+----
+cell_lon	cell_lat	shops
+-122.4	37.7	4
+-122.4	37.8	2
+-122.3	37.7	1
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+WITH pts AS (
+  SELECT
+    split_part(trim(split_part(ST_AsText(geo), '(', 2), ')'), ' ', 1)::DOUBLE AS lon,
+    split_part(trim(split_part(ST_AsText(geo), '(', 2), ')'), ' ', 2)::DOUBLE AS lat
+  FROM shops
+)
+SELECT
+  CAST(floor(lon * 10) / 10 AS DECIMAL(6,1)) AS cell_lon,
+  CAST(floor(lat * 10) / 10 AS DECIMAL(6,1)) AS cell_lat,
+  count(*) AS shops
+FROM pts
+GROUP BY cell_lon, cell_lat
+HAVING count(*) >= 2
+ORDER BY shops DESC, cell_lon, cell_lat;
+----
+cell_lon	cell_lat	shops
+-122.4	37.7	4
+-122.4	37.8	2
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+WITH pts AS (
+  SELECT id, name, ST_AsText(geo) AS location,
+    split_part(trim(split_part(ST_AsText(geo), '(', 2), ')'), ' ', 1)::DOUBLE AS lon,
+    split_part(trim(split_part(ST_AsText(geo), '(', 2), ')'), ' ', 2)::DOUBLE AS lat
+  FROM shops
+)
+SELECT id, name, location
+FROM pts
+WHERE CAST(floor(lon * 10) / 10 AS DECIMAL(6,1)) = -122.4
+  AND CAST(floor(lat * 10) / 10 AS DECIMAL(6,1)) = 37.7
+ORDER BY id;
+----
+id	name	location
+1	Blue Bottle	POINT (-122.34 37.76)
+2	Ritual	POINT (-122.37 37.72)
+3	Sightglass	POINT (-122.35 37.78)
+4	Four Barrel	POINT (-122.32 37.74)

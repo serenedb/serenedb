@@ -1,0 +1,77 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY d1 (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX docs_idx ON docs USING inverted (id, body d1);
+
+statement ok
+INSERT INTO docs VALUES
+(1, 'search'),
+(2, 'search search'),
+(3, 'search tips'),
+(4, 'search engine guide'),
+(5, 'advanced search techniques for search'),
+(6, 'a quick note about search over data'),
+(7, 'search search search');
+
+statement ok
+VACUUM (REFRESH_TABLE) docs;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, body FROM docs_idx WHERE body @@ 'search' ORDER BY BM25(docs_idx.tableoid) DESC, id LIMIT 3;
+----
+id	body
+7	search search search
+2	search search
+5	advanced search techniques for search
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, body FROM docs_idx WHERE body @@ 'search' ORDER BY BM25(docs_idx.tableoid) DESC, id LIMIT 3 OFFSET 3;
+----
+id	body
+1	search
+3	search tips
+4	search engine guide
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, body FROM docs_idx WHERE body @@ 'search' ORDER BY id DESC LIMIT 3;
+----
+id	body
+7	search search search
+6	a quick note about search over data
+5	advanced search techniques for search
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, body FROM docs_idx WHERE body @@ 'search' AND id < 5 ORDER BY id DESC LIMIT 3;
+----
+id	body
+4	search engine guide
+3	search tips
+2	search search

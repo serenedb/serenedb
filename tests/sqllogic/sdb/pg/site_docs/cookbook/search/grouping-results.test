@@ -1,0 +1,78 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tx (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE products (
+    id INTEGER PRIMARY KEY,
+    category VARCHAR NOT NULL,
+    title VARCHAR
+);
+
+statement ok
+INSERT INTO products VALUES
+(1, 'footwear',    'Trail running shoe for serious running'),
+(2, 'footwear',    'Road running shoe'),
+(3, 'footwear',    'Waterproof hiking boot'),
+(4, 'apparel',     'Lightweight running jacket for running'),
+(5, 'apparel',     'Rain running jacket'),
+(6, 'electronics', 'GPS running watch with running metrics'),
+(7, 'electronics', 'Wireless running earbuds'),
+(8, 'electronics', 'Fitness tracker');
+
+statement ok
+CREATE INDEX products_idx ON products
+    USING inverted (id, category, title tx);
+
+statement ok
+VACUUM (REFRESH_TABLE) products;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, category, title
+FROM (
+    SELECT id, category, title,
+           ROW_NUMBER() OVER (PARTITION BY category ORDER BY BM25(products_idx.tableoid) DESC, id) AS rn
+    FROM products_idx
+    WHERE title @@ 'running'
+) s
+WHERE rn = 1
+ORDER BY category;
+----
+id	category	title
+4	apparel	Lightweight running jacket for running
+6	electronics	GPS running watch with running metrics
+1	footwear	Trail running shoe for serious running
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT category, id, title, rn
+FROM (
+    SELECT id, category, title,
+           ROW_NUMBER() OVER (PARTITION BY category ORDER BY BM25(products_idx.tableoid) DESC, id) AS rn
+    FROM products_idx
+    WHERE title @@ 'running'
+) s
+WHERE rn <= 2
+ORDER BY category, rn;
+----
+category	id	title	rn
+apparel	4	Lightweight running jacket for running	1
+apparel	5	Rain running jacket	2
+electronics	6	GPS running watch with running metrics	1
+electronics	7	Wireless running earbuds	2
+footwear	1	Trail running shoe for serious running	1
+footwear	2	Road running shoe	2

@@ -1,9 +1,6 @@
 # DOCS_TEST: example_001
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY kw (template = 'keyword');
-
-statement ok
 CREATE TABLE searches (id INTEGER PRIMARY KEY, query VARCHAR NOT NULL);
 
 statement ok
@@ -22,7 +19,7 @@ INSERT INTO searches VALUES
 (12, 'hiking boots');
 
 statement ok
-CREATE INDEX searches_idx ON searches USING inverted (query kw);
+CREATE INDEX searches_idx ON searches USING inverted (query);
 
 statement ok
 VACUUM (REFRESH_TABLE) searches;

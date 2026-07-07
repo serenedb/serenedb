@@ -1,0 +1,74 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE docs (id INTEGER PRIMARY KEY, body VARCHAR, category VARCHAR);
+
+statement ok
+INSERT INTO docs VALUES
+(1, 'quick brown fox',        'animal'),
+(2, 'lazy dog sleeps',        'animal'),
+(3, 'quick red fox',          'animal'),
+(4, 'distributed sql engine', 'tech'),
+(5, 'quick sql query',        'tech');
+
+statement ok
+CREATE VIEW v_docs AS SELECT id, body, category FROM docs;
+
+statement ok
+CREATE INDEX v_docs_idx ON v_docs USING inverted (id, body en, category);
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, body
+FROM v_docs_idx
+WHERE body @@ 'quick'
+ORDER BY BM25(v_docs_idx.tableoid) DESC, id;
+----
+id	body
+1	quick brown fox
+3	quick red fox
+5	quick sql query
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT category, count(*) AS n
+FROM v_docs_idx
+WHERE body @@ 'quick'
+GROUP BY category
+ORDER BY category;
+----
+category	n
+animal	2
+tech	1
+
+# DOCS_TEST: example_003
+
+statement ok
+CREATE VIEW recent_hits AS SELECT id, body, category FROM v_docs_idx WHERE body @@ 'quick';
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, body
+FROM recent_hits
+WHERE category = 'animal'
+ORDER BY id;
+----
+id	body
+1	quick brown fox
+3	quick red fox

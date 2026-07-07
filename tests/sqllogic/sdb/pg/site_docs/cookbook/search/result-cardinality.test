@@ -1,0 +1,61 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tx (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE products (
+    id INTEGER PRIMARY KEY,
+    brand VARCHAR NOT NULL,
+    title VARCHAR
+);
+
+statement ok
+INSERT INTO products VALUES
+(1,  'acme',     'Trail running shoe'),
+(2,  'globex',   'Road running shoe'),
+(3,  'acme',     'Running jacket'),
+(4,  'initech',  'Running watch'),
+(5,  'umbrella', 'Trail running vest'),
+(6,  'globex',   'Waterproof running cap'),
+(7,  'acme',     'Hiking boot'),
+(8,  'initech',  'Wireless earbuds'),
+(9,  'umbrella', 'Rain jacket'),
+(10, 'wonka',    'Running belt');
+
+statement ok
+CREATE INDEX products_idx ON products USING inverted (id, brand, title tx);
+
+statement ok
+VACUUM (REFRESH_TABLE) products;
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) AS hits, count(DISTINCT brand) AS brands
+FROM products_idx
+WHERE title @@ 'running';
+----
+hits	brands
+7	5
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(DISTINCT brand) AS exact_brands,
+       approx_count_distinct(brand) AS approx_brands
+FROM products_idx
+WHERE title @@ 'running';
+----
+exact_brands	approx_brands
+5	5

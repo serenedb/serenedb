@@ -3,9 +3,6 @@
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY kw(template = 'keyword');
-
-statement ok
 CREATE TEXT SEARCH DICTIONARY tx (
     template = 'text',
     locale = 'en_US.UTF-8',
@@ -21,7 +18,7 @@ CREATE TABLE products(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL,
                       promo VARCHAR, body VARCHAR);
 
 statement ok
-CREATE INDEX products_idx ON products USING inverted (cat kw, promo kw, body tx)
+CREATE INDEX products_idx ON products USING inverted (cat, promo, body tx)
     WITH (refresh_interval = 0, compaction_interval = 0);
 
 statement ok

@@ -1,0 +1,65 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY d2 (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE articles (id INTEGER PRIMARY KEY, title VARCHAR, body VARCHAR, age_days INTEGER, popularity DOUBLE);
+
+statement ok
+CREATE INDEX articles_idx ON articles USING inverted (id, title d2, body d2);
+
+statement ok
+INSERT INTO articles VALUES
+(1, 'kubernetes networking guide', 'a practical kubernetes guide covering kubernetes networking and kubernetes cluster internals', 90, 220.0),
+(2, 'kubernetes storage guide', 'a practical kubernetes guide covering kubernetes storage and volume internals', 1, 180.0),
+(3, 'platform notes', 'we run kubernetes in production and the whole team leans on kubernetes every day', 20, 5.0),
+(4, 'yearly retro', 'a few scattered notes on kubernetes and several other tools we tried last year', 200, 400.0);
+
+statement ok
+VACUUM (REFRESH_TABLE) articles;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title FROM articles_idx WHERE title @@ 'kubernetes' OR body @@ 'kubernetes' ORDER BY BM25(articles_idx.tableoid) DESC, id;
+----
+id	title
+1	kubernetes networking guide
+2	kubernetes storage guide
+3	platform notes
+4	yearly retro
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title, age_days FROM articles_idx WHERE title @@ 'kubernetes' OR body @@ 'kubernetes' ORDER BY BM25(articles_idx.tableoid) * (1.0 / (1 + age_days)) DESC, id;
+----
+id	title	age_days
+2	kubernetes storage guide	1
+1	kubernetes networking guide	90
+3	platform notes	20
+4	yearly retro	200
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title FROM articles_idx WHERE title @@ 'kubernetes' OR body @@ 'kubernetes' ORDER BY BM25(articles_idx.tableoid) * (popularity / (popularity + 10)) DESC, id;
+----
+id	title
+1	kubernetes networking guide
+2	kubernetes storage guide
+4	yearly retro
+3	platform notes

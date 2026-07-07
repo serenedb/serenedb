@@ -1,0 +1,161 @@
+# How column-level privileges interact with VIEWs and their base table. A base
+# table t(a,b,c); a VIEW v AS SELECT a,b FROM t, both owned by the same role.
+# This asserts only the behavior that is BYTE-IDENTICAL on PostgreSQL and
+# SereneDB: reading the base table is enforced per referenced relation and
+# per column (pg_attribute.attacl), and a grant on the VIEW does not leak onto
+# the base table -- a role holding only a view grant is still refused on t.
+#
+# SCOPED OUT -- SereneDB diverges from PostgreSQL on view privilege semantics
+# (probed against real PG 18 and SereneDB on 2026-06-19):
+#   1. Owner-rights vs invoker-rights. In PG a view runs with the view OWNER's
+#      rights, so a role with SELECT on the view (and none on the base table)
+#      reads the view fine. SereneDB enforces the base table for the CALLER:
+#      the same read is refused ("permission denied for table vcr_iceberg").
+#   2. No-grant view read wording. PG reports "permission denied for view
+#      vcr_clickclack"; SereneDB reports "permission denied for table
+#      vcr_iceberg" (it resolves through to the base relation).
+#   3. Column GRANT on a VIEW. PG accepts GRANT SELECT (a) ON <view>; SereneDB
+#      rejects it ("relation \"vcr_clickclack\" does not exist"). Only the
+#      table-level GRANT ... ON <view> is accepted.
+# Those three cases are therefore NOT asserted here. The "view grant does not
+# leak the base table" property is still asserted, via the byte-identical
+# direction: a table-level view grant does not let the holder read t directly.
+#
+# Lore: vedernikoff/babsky read; mop has nothing. iceberg is the base table,
+# clickclack the view.
+
+statement ok
+DROP VIEW IF EXISTS vcr_clickclack;
+
+
+statement ok
+DROP TABLE IF EXISTS vcr_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS vcr_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS vcr_babsky;
+
+
+statement ok
+CREATE TABLE vcr_iceberg (a int, b int, c int);
+
+
+statement ok
+INSERT INTO vcr_iceberg VALUES (1, 2, 3), (4, 5, 6);
+
+
+statement ok
+CREATE VIEW vcr_clickclack AS SELECT a, b FROM vcr_iceberg;
+
+
+statement ok
+CREATE ROLE vcr_vedernikoff LOGIN PASSWORD 'vcr_vedernikoff_pw';
+
+
+statement ok
+CREATE ROLE vcr_babsky LOGIN PASSWORD 'vcr_babsky_pw';
+
+
+# === Base table is enforced per referenced relation ===
+
+# No grant of any kind -> reading the base table directly is refused, naming the
+# table. Byte-identical on PG and SereneDB.
+connection c_ved user=vcr_vedernikoff password=vcr_vedernikoff_pw
+statement error
+SELECT a FROM vcr_iceberg;
+----
+db error: ERROR: permission denied for table vcr_iceberg<slt:ignore>
+
+
+# === Column grant on the base table is per-column ===
+
+statement ok
+GRANT SELECT (a) ON vcr_iceberg TO vcr_vedernikoff;
+
+
+# The granted column reads fine.
+connection c_ved2 user=vcr_vedernikoff password=vcr_vedernikoff_pw
+query
+SELECT a FROM vcr_iceberg ORDER BY a;
+----
+a
+1
+4
+
+
+# An ungranted column (c) is refused -- column grant does not cover it.
+connection c_ved3 user=vcr_vedernikoff password=vcr_vedernikoff_pw
+statement error
+SELECT c FROM vcr_iceberg;
+----
+db error: ERROR: permission denied for table vcr_iceberg<slt:ignore>
+
+
+# SELECT * touches the ungranted column c -> refused.
+connection c_ved4 user=vcr_vedernikoff password=vcr_vedernikoff_pw
+statement error
+SELECT * FROM vcr_iceberg;
+----
+db error: ERROR: permission denied for table vcr_iceberg<slt:ignore>
+
+
+# A WHERE predicate on an ungranted column is refused.
+connection c_ved5 user=vcr_vedernikoff password=vcr_vedernikoff_pw
+statement error
+SELECT a FROM vcr_iceberg WHERE c = 3;
+----
+db error: ERROR: permission denied for table vcr_iceberg<slt:ignore>
+
+
+# count(*) reads no specific column; SELECT on one granted column suffices.
+connection c_ved6 user=vcr_vedernikoff password=vcr_vedernikoff_pw
+query
+SELECT count(*) AS n FROM vcr_iceberg;
+----
+n
+2
+
+
+# === A grant on the VIEW does not leak the base table ===
+
+# babsky gets a table-level grant on the view, nothing on the base table.
+statement ok
+GRANT SELECT ON vcr_clickclack TO vcr_babsky;
+
+
+# Reading the base table directly is still refused: the view grant did not leak
+# onto vcr_iceberg. Byte-identical on PG and SereneDB.
+connection c_bab user=vcr_babsky password=vcr_babsky_pw
+statement error
+SELECT a FROM vcr_iceberg;
+----
+db error: ERROR: permission denied for table vcr_iceberg<slt:ignore>
+
+
+# The column grant on the base table did not leak onto babsky either: babsky
+# never received SELECT (a) ON vcr_iceberg, so the base table stays refused.
+connection c_bab2 user=vcr_babsky password=vcr_babsky_pw
+statement error
+SELECT a, b FROM vcr_iceberg;
+----
+db error: ERROR: permission denied for table vcr_iceberg<slt:ignore>
+
+
+statement ok
+DROP VIEW vcr_clickclack;
+
+
+statement ok
+DROP TABLE vcr_iceberg;
+
+
+statement ok
+DROP ROLE vcr_vedernikoff;
+
+
+statement ok
+DROP ROLE vcr_babsky;

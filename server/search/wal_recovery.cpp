@@ -20,7 +20,6 @@
 
 #include "search/wal_recovery.h"
 
-#include <absl/container/flat_hash_set.h>
 #include <absl/time/time.h>
 
 #include <chrono>
@@ -37,6 +36,7 @@
 #include <vector>
 
 #include "basics/assert.h"
+#include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
 #include "basics/duckdb_engine.h"
 #include "basics/errors.h"
@@ -92,7 +92,7 @@ void InitInvertedIndexes() {
     std::string table_name;
   };
   std::vector<TableCoord> tables_to_bind;
-  absl::flat_hash_set<ObjectId> seen_tables;
+  containers::FlatHashSet<ObjectId> seen_tables;
   std::vector<std::shared_ptr<InvertedIndexStorage>> recovering_storages;
   std::vector<std::shared_ptr<InvertedIndexStorage>> static_storages;
 

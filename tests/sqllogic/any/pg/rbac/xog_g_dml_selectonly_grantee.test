@@ -1,0 +1,118 @@
+# Cross-product file G: real DML on an authenticated connection for a grantee
+# that holds ONLY SELECT. The query path mirrors the oracle exactly: SELECT
+# succeeds, while INSERT / UPDATE / DELETE each fail with the canonical
+# permission-denied error. Then we add INSERT and watch the insert path open up
+# while UPDATE/DELETE stay closed -- privileges are enforced per command.
+#
+# Lore: xog_g_clickclack is the superuser-owned table; xog_g_vedernikoff is the
+# SELECT-only login role exercised over a real connection.
+
+statement ok
+DROP TABLE IF EXISTS xog_g_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_g_vedernikoff;
+
+
+statement ok
+CREATE TABLE xog_g_clickclack (id int, payload text);
+
+
+statement ok
+INSERT INTO xog_g_clickclack VALUES (1, 'iceberg'), (2, 'mop');
+
+
+statement ok
+CREATE ROLE xog_g_vedernikoff LOGIN PASSWORD 'xog_g_vedernikoff_pw';
+
+
+statement ok
+GRANT SELECT ON xog_g_clickclack TO xog_g_vedernikoff;
+
+
+# Oracle: only SELECT.
+query
+SELECT has_table_privilege('xog_g_vedernikoff','xog_g_clickclack','SELECT') AS sel,
+       has_table_privilege('xog_g_vedernikoff','xog_g_clickclack','INSERT') AS ins,
+       has_table_privilege('xog_g_vedernikoff','xog_g_clickclack','UPDATE') AS upd,
+       has_table_privilege('xog_g_vedernikoff','xog_g_clickclack','DELETE') AS del;
+----
+sel	ins	upd	del
+t	f	f	f
+
+
+# Real query path: SELECT works.
+connection c_v user=xog_g_vedernikoff password=xog_g_vedernikoff_pw
+query
+SELECT count(*) AS n FROM xog_g_clickclack;
+----
+n
+2
+
+
+# INSERT is denied for real.
+connection c_v user=xog_g_vedernikoff password=xog_g_vedernikoff_pw
+statement error
+INSERT INTO xog_g_clickclack VALUES (3, 'nope');
+----
+db error: ERROR: permission denied for table xog_g_clickclack<slt:ignore>
+
+
+# UPDATE is denied for real.
+connection c_v user=xog_g_vedernikoff password=xog_g_vedernikoff_pw
+statement error
+UPDATE xog_g_clickclack SET payload = 'nope' WHERE id = 1;
+----
+db error: ERROR: permission denied for table xog_g_clickclack<slt:ignore>
+
+
+# DELETE is denied for real.
+connection c_v user=xog_g_vedernikoff password=xog_g_vedernikoff_pw
+statement error
+DELETE FROM xog_g_clickclack WHERE id = 1;
+----
+db error: ERROR: permission denied for table xog_g_clickclack<slt:ignore>
+
+
+# ---- Add INSERT: the insert path opens, but UPDATE/DELETE stay closed. ----
+statement ok
+GRANT INSERT ON xog_g_clickclack TO xog_g_vedernikoff;
+
+
+connection c_v user=xog_g_vedernikoff password=xog_g_vedernikoff_pw
+statement ok
+INSERT INTO xog_g_clickclack VALUES (3, 'babsky');
+
+
+# The newly inserted row is visible to the same grantee on SELECT.
+connection c_v user=xog_g_vedernikoff password=xog_g_vedernikoff_pw
+query
+SELECT count(*) AS n FROM xog_g_clickclack;
+----
+n
+3
+
+
+# UPDATE still denied -- INSERT did not confer it.
+connection c_v user=xog_g_vedernikoff password=xog_g_vedernikoff_pw
+statement error
+UPDATE xog_g_clickclack SET payload = 'nope' WHERE id = 2;
+----
+db error: ERROR: permission denied for table xog_g_clickclack<slt:ignore>
+
+
+# DELETE still denied.
+connection c_v user=xog_g_vedernikoff password=xog_g_vedernikoff_pw
+statement error
+DELETE FROM xog_g_clickclack WHERE id = 2;
+----
+db error: ERROR: permission denied for table xog_g_clickclack<slt:ignore>
+
+
+statement ok
+DROP TABLE xog_g_clickclack;
+
+
+statement ok
+DROP ROLE xog_g_vedernikoff;

@@ -31,7 +31,7 @@
 namespace sdb::catalog {
 
 Sequence::Sequence(ObjectId schema_id, ObjectId id, SequenceOptions opts)
-  : Object{schema_id, id, opts.name, ObjectType::Sequence},
+  : Object{opts.perm, schema_id, id, opts.name, ObjectType::Sequence},
     _options{std::move(opts)} {
   auto seed = _options.Seed();
   _cnt.store(seed, std::memory_order_release);
@@ -40,7 +40,9 @@ Sequence::Sequence(ObjectId schema_id, ObjectId id, SequenceOptions opts)
 }
 
 void Sequence::Serialize(duckdb::Serializer& sink) const {
-  basics::WriteTuple(sink, _options);
+  auto opts = _options;
+  opts.perm = GetPermissions();
+  basics::WriteTuple(sink, opts);
 }
 
 std::shared_ptr<Sequence> Sequence::Deserialize(duckdb::Deserializer& src,
@@ -56,7 +58,9 @@ std::shared_ptr<Sequence> Sequence::Deserialize(duckdb::Deserializer& src,
 }
 
 std::shared_ptr<Object> Sequence::Clone() const {
-  return std::make_shared<Sequence>(GetParentId(), GetId(), _options);
+  auto opts = _options;
+  opts.perm = GetPermissions();
+  return std::make_shared<Sequence>(GetParentId(), GetId(), std::move(opts));
 }
 
 uint64_t Sequence::LoadFromDb() const {

@@ -71,17 +71,18 @@ void StreamRowBatches(const ColumnReader& child, uint64_t rows, uint32_t d,
     static_cast<duckdb::idx_t>(std::max<uint64_t>(1, STANDARD_VECTOR_SIZE / d));
   duckdb::Vector batch{duckdb::LogicalType::FLOAT,
                        static_cast<duckdb::idx_t>(rows_per_batch) * d};
-  ColumnReader::RangeScan scan{child, ctx};
+  auto scan = child.InitScan(ctx);
   for (uint64_t first = 0; first < rows; first += rows_per_batch) {
     const auto n = static_cast<duckdb::idx_t>(
       std::min<uint64_t>(rows_per_batch, rows - first));
-    scan.Scan(first * d, n * d, batch, /*out_offset=*/0);
+    child.ScanCount(scan, batch, static_cast<duckdb::idx_t>(n) * d,
+                    /*result_offset=*/0);
     sink(first, n, duckdb::FlatVector::GetData<float>(batch));
   }
 }
 
 // Streams only the given (start_row, n_rows) ranges, which must be ascending
-// and disjoint. Reuses one RangeScan so cross-range jumps stay forward-only;
+// and disjoint. Reuses one scan cursor so cross-range jumps stay forward-only;
 // the sink still gets the absolute first row so callers can map back to
 // validity / doc id.
 template<typename Sink>
@@ -92,15 +93,21 @@ void StreamSelectedRanges(const ColumnReader& child,
     static_cast<duckdb::idx_t>(std::max<uint64_t>(1, STANDARD_VECTOR_SIZE / d));
   duckdb::Vector batch{duckdb::LogicalType::FLOAT,
                        static_cast<duckdb::idx_t>(rows_per_batch) * d};
-  ColumnReader::RangeScan scan{child, ctx};
+  auto scan = child.InitScan(ctx);
+  uint64_t pos = 0;
   for (const auto& [start, n_rows] : ranges) {
     for (uint64_t off = 0; off < n_rows; off += rows_per_batch) {
       const auto n = static_cast<duckdb::idx_t>(
         std::min<uint64_t>(rows_per_batch, n_rows - off));
-      const uint64_t first = start + off;
-      scan.Scan(first * d, static_cast<uint64_t>(n) * d, batch,
-                /*out_offset=*/0);
-      sink(first, n, duckdb::FlatVector::GetData<float>(batch));
+      const uint64_t elem = (start + off) * d;
+      if (elem > pos) {
+        child.Skip(scan, static_cast<duckdb::idx_t>(elem - pos));
+        pos = elem;
+      }
+      child.ScanCount(scan, batch, static_cast<duckdb::idx_t>(n) * d,
+                      /*result_offset=*/0);
+      pos += static_cast<uint64_t>(n) * d;
+      sink(start + off, n, duckdb::FlatVector::GetData<float>(batch));
     }
   }
 }
@@ -121,16 +128,18 @@ uint64_t ResolveTrainSample(const IvfInfo& info, uint64_t valid_count,
 std::vector<bool> ReadValidity(const ColumnReader& vector_column, uint64_t rows,
                                ReadContext& ctx) {
   std::vector<bool> valid(rows, true);
-  if (!vector_column.HasValidity()) {
+  const ColumnReader* validity = vector_column.Validity();
+  if (!validity) {
     return valid;
   }
-  duckdb::Vector vbatch{vector_column.Type(), /*capacity=*/0};
+  duckdb::Vector vbatch{duckdb::LogicalType{duckdb::LogicalTypeId::VALIDITY},
+                        duckdb::idx_t{0}};
   vbatch.BufferMutable().GetValidityMask().Initialize(STANDARD_VECTOR_SIZE);
-  ColumnReader::RangeScan vscan{vector_column, ctx, /*validity_side=*/true};
+  auto vscan = validity->InitScan(ctx);
   for (uint64_t start = 0; start < rows; start += STANDARD_VECTOR_SIZE) {
     const auto take =
       std::min<duckdb::idx_t>(STANDARD_VECTOR_SIZE, rows - start);
-    vscan.Scan(start, take, vbatch, /*out_offset=*/0);
+    validity->Scan(vscan, vbatch, take);
     const auto& mask = vbatch.Buffer().GetValidityMask();
     for (uint64_t k = 0; k < take; ++k) {
       valid[start + k] = mask.RowIsValid(k);
@@ -249,11 +258,12 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
       std::vector<std::pair<uint64_t, uint64_t>> ranges;
       uint64_t valid_selected = 0;
       for (size_t i = 0; i < n_seg && valid_selected < target; ++i) {
-        const auto w = child->DataRgWindow(order[i]);
+        const uint64_t w_begin = child->DataBlockFirstRow(order[i]);
+        const uint64_t w_end = child->DataBlockFirstRow(order[i] + 1);
         // Rows fully contained in this segment; a straddling boundary row would
         // force decoding an unselected neighbor, so drop it (<=1 per boundary).
-        const uint64_t r_lo = (static_cast<uint64_t>(w.begin) + d - 1) / d;
-        const uint64_t r_hi = static_cast<uint64_t>(w.end) / d;
+        const uint64_t r_lo = (w_begin + d - 1) / d;
+        const uint64_t r_hi = w_end / d;
         if (r_lo >= r_hi) {
           continue;
         }
@@ -607,6 +617,8 @@ class IvfTermIterator final : public TermIterator {
                                                              : nullptr;
     }
 
+    IRS_DOC_ITERATOR_DEFAULTS
+
    private:
     std::span<const doc_id_t> _docs;
     size_t _pos = 0;
@@ -678,7 +690,9 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
   }
   _qw->BeginCluster(n);
   constexpr size_t kBatch = STANDARD_VECTOR_SIZE;
-  ColumnReader::RangeScan scan{*_vectors->Child(), *_ctx};
+  const ColumnReader& child = *_vectors->Child();
+  auto scan = child.InitScan(*_ctx);
+  uint64_t pos = 0;
   duckdb::Vector batch{duckdb::LogicalType::FLOAT,
                        static_cast<duckdb::idx_t>(std::min(n, kBatch) * _d)};
   const float* vecs = duckdb::FlatVector::GetData<float>(batch);
@@ -687,7 +701,18 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
   while (k < n) {
     const size_t run = std::min(ConsecutiveRunLength(docs, k), kBatch - filled);
     const uint64_t r = static_cast<uint64_t>(docs[k]) - doc_limits::min();
-    scan.Scan(r * _d, run * _d, batch, static_cast<duckdb::idx_t>(filled) * _d);
+    const uint64_t elem = r * _d;
+    if (elem < pos) {
+      scan = child.InitScan(*_ctx);
+      pos = 0;
+    }
+    if (elem > pos) {
+      child.Skip(scan, static_cast<duckdb::idx_t>(elem - pos));
+      pos = elem;
+    }
+    child.ScanCount(scan, batch, static_cast<duckdb::idx_t>(run) * _d,
+                    static_cast<duckdb::idx_t>(filled) * _d);
+    pos += static_cast<uint64_t>(run) * _d;
     filled += run;
     k += run;
     if (filled == kBatch) {
@@ -703,16 +728,16 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
 
 void IvfTermReader::Finish(IndexOutput& /*out*/) { SDB_ASSERT(_qw); }
 
-void IvfWriter::BuildColumn(std::unique_ptr<ColumnReader> col, ReadContext& ctx,
+void IvfWriter::BuildColumn(const ColumnReader& col, ReadContext& ctx,
                             IdxWriter& idx, const IvfInfo& info) {
-  const auto d = static_cast<uint32_t>(col->ArraySize());
+  const auto d = static_cast<uint32_t>(col.ArraySize());
   const uint32_t pq_niter =
     info.cluster_iters != 0 ? info.cluster_iters : kDefaultClusterIters;
   auto qw = MakeQuantizerWriter(info.quant.kind, d, info.metric,
                                 info.quant.pq_m, pq_niter, info.quant.nb_bits);
 
   IvfBuilder builder{info};
-  BuiltIvf built = builder.Build(*col, ctx, idx, qw.get());
+  BuiltIvf built = builder.Build(col, ctx, idx, qw.get());
   if (built.empty) {
     return;
   }
@@ -723,19 +748,18 @@ void IvfWriter::BuildColumn(std::unique_ptr<ColumnReader> col, ReadContext& ctx,
                             .cluster_offsets = std::move(built.cluster_offsets),
                             .fine_centroids = std::move(built.fine_centroids),
                             .qw = std::move(qw),
-                            .vector_column = std::move(col),
                             .d = d});
 }
 
 std::span<const BasicTermReader* const> IvfWriter::ClusterReaders(
-  ReadContext& ctx) {
+  ReadContext& ctx, const ColReader& col_reader) {
   if (_reader_ptrs.empty() && !_results.empty()) {
     _readers.reserve(_results.size());
     _reader_ptrs.reserve(_results.size());
     for (auto& r : _results) {
       _readers.push_back(std::make_unique<IvfTermReader>(
         r.postings_id, r.cluster_docs, r.cluster_offsets, r.qw.get(),
-        r.vector_column.get(), &ctx, r.d, r.fine_centroids));
+        col_reader.Column(r.postings_id), &ctx, r.d, r.fine_centroids));
       _reader_ptrs.push_back(_readers.back().get());
     }
   }

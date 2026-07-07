@@ -124,12 +124,16 @@ class IvfWriter {
 
   ~IvfWriter();
 
-  void BuildColumn(std::unique_ptr<ColumnReader> col, ReadContext& ctx,
-                   IdxWriter& idx, const IvfInfo& info);
+  void BuildColumn(const ColumnReader& col, ReadContext& ctx, IdxWriter& idx,
+                   const IvfInfo& info);
 
   bool Empty() const noexcept { return _results.empty(); }
 
-  std::span<const BasicTermReader* const> ClusterReaders(ReadContext& ctx);
+  // The vector columns re-scanned by the cluster readers are looked up in
+  // `col_reader` (via each cluster's postings_id, which is the vector column's
+  // own field_id); `ctx` supplies the IO for those scans.
+  std::span<const BasicTermReader* const> ClusterReaders(
+    ReadContext& ctx, const ColReader& col_reader);
 
  private:
   struct Result {
@@ -138,7 +142,6 @@ class IvfWriter {
     std::vector<uint64_t> cluster_offsets;
     std::vector<float> fine_centroids;
     std::unique_ptr<QuantizerWriter> qw;
-    std::unique_ptr<ColumnReader> vector_column;
     uint32_t d = 0;
   };
 
@@ -153,7 +156,7 @@ inline std::span<const BasicTermReader* const> PrepareIvfClusterReaders(
     return {};
   }
   ctx.emplace(*col_reader);
-  return writer->ClusterReaders(ctx.value());
+  return writer->ClusterReaders(ctx.value(), *col_reader);
 }
 
 }  // namespace irs

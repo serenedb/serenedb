@@ -1,0 +1,259 @@
+# pg_group and pg_auth_members: the membership side of the role catalog.
+#
+# pg_group lists group roles by name and carries their members as an oid array
+# (grolist); pg_auth_members carries one row per membership edge keyed by oid.
+# Because oids differ between PostgreSQL 19beta1 and serenedb, every member is
+# recovered by joining back to pg_roles BY NAME -- never by raw oid. The option
+# columns (admin/inherit/set) and all counts are byte-identical on both engines.
+#
+# Objects prefixed catm_ under the Vedernikoff lore. Idempotent + self-cleaning.
+
+statement ok
+DROP ROLE IF EXISTS catm_myasnig_team;
+
+
+statement ok
+DROP ROLE IF EXISTS catm_zhidky;
+
+
+statement ok
+DROP ROLE IF EXISTS catm_negaimorit;
+
+
+statement ok
+DROP ROLE IF EXISTS catm_shlepach;
+
+
+# A group role and three login members.
+statement ok
+CREATE ROLE catm_myasnig_team;
+
+
+statement ok
+CREATE ROLE catm_zhidky LOGIN;
+
+
+statement ok
+CREATE ROLE catm_negaimorit LOGIN;
+
+
+statement ok
+CREATE ROLE catm_shlepach LOGIN;
+
+
+# ----------------------------------------------------------------------
+# pg_group lists the group by name. Before any GRANT it has zero members --
+# the grolist array unnests to nothing.
+# ----------------------------------------------------------------------
+
+query
+SELECT groname FROM pg_group WHERE groname = 'catm_myasnig_team';
+----
+groname
+catm_myasnig_team
+
+
+query
+SELECT count(*) FROM pg_group g, unnest(g.grolist) u WHERE g.groname = 'catm_myasnig_team';
+----
+count
+0
+
+
+# ----------------------------------------------------------------------
+# Grant two of the three into the group. pg_group.grolist resolves to exactly
+# those two member names through pg_roles, sorted.
+# ----------------------------------------------------------------------
+
+statement ok
+GRANT catm_myasnig_team TO catm_zhidky;
+
+
+statement ok
+GRANT catm_myasnig_team TO catm_negaimorit;
+
+
+query
+SELECT r.rolname AS member
+FROM pg_group g, unnest(g.grolist) u(memid)
+JOIN pg_roles r ON r.oid = u.memid
+WHERE g.groname = 'catm_myasnig_team'
+ORDER BY r.rolname;
+----
+member
+catm_negaimorit
+catm_zhidky
+
+
+query
+SELECT count(*) AS members
+FROM pg_group g, unnest(g.grolist) u(memid)
+JOIN pg_roles r ON r.oid = u.memid
+WHERE g.groname = 'catm_myasnig_team';
+----
+members
+2
+
+
+# ----------------------------------------------------------------------
+# pg_auth_members: one row per edge. Joining roleid and member back to pg_roles
+# by oid (the join is internal; the asserted output is names) recovers the pair.
+# ----------------------------------------------------------------------
+
+query
+SELECT count(*) FROM pg_auth_members am
+JOIN pg_roles gr ON gr.oid = am.roleid
+WHERE gr.rolname = 'catm_myasnig_team';
+----
+count
+2
+
+
+query
+SELECT gr.rolname AS role, mr.rolname AS member
+FROM pg_auth_members am
+JOIN pg_roles gr ON gr.oid = am.roleid
+JOIN pg_roles mr ON mr.oid = am.member
+WHERE gr.rolname = 'catm_myasnig_team'
+ORDER BY mr.rolname;
+----
+role	member
+catm_myasnig_team	catm_negaimorit
+catm_myasnig_team	catm_zhidky
+
+
+# The third role was never granted: zero edges into the group for it.
+query
+SELECT count(*) FROM pg_auth_members am
+JOIN pg_roles gr ON gr.oid = am.roleid
+JOIN pg_roles mr ON mr.oid = am.member
+WHERE gr.rolname = 'catm_myasnig_team' AND mr.rolname = 'catm_shlepach';
+----
+count
+0
+
+
+# ----------------------------------------------------------------------
+# The option flags carried on every edge are the GRANT-role-TO-role defaults:
+# admin f, inherit t, set t. Verified per member, identical on both engines.
+# ----------------------------------------------------------------------
+
+query
+SELECT am.admin_option, am.inherit_option, am.set_option
+FROM pg_auth_members am
+JOIN pg_roles gr ON gr.oid = am.roleid
+JOIN pg_roles mr ON mr.oid = am.member
+WHERE gr.rolname = 'catm_myasnig_team' AND mr.rolname = 'catm_zhidky';
+----
+admin_option	inherit_option	set_option
+f	t	t
+
+
+# Every edge into the group has admin_option = f (no member is an admin).
+query
+SELECT count(*) FROM pg_auth_members am
+JOIN pg_roles gr ON gr.oid = am.roleid
+WHERE gr.rolname = 'catm_myasnig_team' AND am.admin_option;
+----
+count
+0
+
+
+# pg_has_role reads the same edges: a granted member has MEMBER/USAGE/SET,
+# the ungranted role has none.
+query
+SELECT pg_has_role('catm_zhidky', 'catm_myasnig_team', 'MEMBER') AS member,
+       pg_has_role('catm_zhidky', 'catm_myasnig_team', 'USAGE') AS usage,
+       pg_has_role('catm_zhidky', 'catm_myasnig_team', 'SET') AS setrole;
+----
+member	usage	setrole
+t	t	t
+
+
+query
+SELECT pg_has_role('catm_shlepach', 'catm_myasnig_team', 'MEMBER') AS member;
+----
+member
+f
+
+
+# ----------------------------------------------------------------------
+# REVOKE prunes one edge. After revoking zhidky the group keeps one member
+# (negaimorit); pg_group, pg_auth_members and pg_has_role all agree.
+# ----------------------------------------------------------------------
+
+statement ok
+REVOKE catm_myasnig_team FROM catm_zhidky;
+
+
+query
+SELECT r.rolname AS member
+FROM pg_group g, unnest(g.grolist) u(memid)
+JOIN pg_roles r ON r.oid = u.memid
+WHERE g.groname = 'catm_myasnig_team'
+ORDER BY r.rolname;
+----
+member
+catm_negaimorit
+
+
+query
+SELECT count(*) FROM pg_auth_members am
+JOIN pg_roles gr ON gr.oid = am.roleid
+WHERE gr.rolname = 'catm_myasnig_team';
+----
+count
+1
+
+
+query
+SELECT pg_has_role('catm_zhidky', 'catm_myasnig_team', 'MEMBER') AS zhidky,
+       pg_has_role('catm_negaimorit', 'catm_myasnig_team', 'MEMBER') AS negaimorit;
+----
+zhidky	negaimorit
+f	t
+
+
+# ----------------------------------------------------------------------
+# Revoking the last member empties the group: zero edges, but the group role
+# itself survives in pg_roles and pg_group.
+# ----------------------------------------------------------------------
+
+statement ok
+REVOKE catm_myasnig_team FROM catm_negaimorit;
+
+
+query
+SELECT count(*) FROM pg_auth_members am
+JOIN pg_roles gr ON gr.oid = am.roleid
+WHERE gr.rolname = 'catm_myasnig_team';
+----
+count
+0
+
+
+query
+SELECT groname FROM pg_group WHERE groname = 'catm_myasnig_team';
+----
+groname
+catm_myasnig_team
+
+
+# ----------------------------------------------------------------------
+# Cleanup.
+# ----------------------------------------------------------------------
+
+statement ok
+DROP ROLE catm_zhidky;
+
+
+statement ok
+DROP ROLE catm_negaimorit;
+
+
+statement ok
+DROP ROLE catm_shlepach;
+
+
+statement ok
+DROP ROLE catm_myasnig_team;

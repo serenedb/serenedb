@@ -1,0 +1,127 @@
+# ALTER ... OWNER TO requires the NEW owner to hold CREATE on the object's
+# containing schema (PostgreSQL rule, PG15+). A non-superuser owner that can SET
+# ROLE to a group may transfer its objects to that group only once the group has
+# CREATE on the schema. PostgreSQL and serenedb agree.
+#
+# Lore: vedernikoff owns the objects and can SET ROLE to the mop group; mop is
+# granted CREATE on public so it can receive the table, view and sequence.
+
+statement ok
+DROP TABLE IF EXISTS xao_otp_clickclack;
+
+
+statement ok
+DROP VIEW IF EXISTS xao_otp_iceberg;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS xao_otp_seq;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_otp_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_otp_mop;
+
+
+statement ok
+CREATE ROLE xao_otp_vedernikoff LOGIN;
+
+
+statement ok
+CREATE ROLE xao_otp_mop;
+
+
+statement ok
+GRANT xao_otp_mop TO xao_otp_vedernikoff;
+
+
+statement ok
+CREATE TABLE xao_otp_clickclack (id int);
+
+
+statement ok
+CREATE VIEW xao_otp_iceberg AS SELECT 1 AS x;
+
+
+statement ok
+CREATE SEQUENCE xao_otp_seq;
+
+
+statement ok
+ALTER TABLE xao_otp_clickclack OWNER TO xao_otp_vedernikoff;
+
+
+statement ok
+ALTER VIEW xao_otp_iceberg OWNER TO xao_otp_vedernikoff;
+
+
+statement ok
+ALTER SEQUENCE xao_otp_seq OWNER TO xao_otp_vedernikoff;
+
+
+# Without CREATE on public, the new owner mop cannot receive the table.
+connection cdenied user=xao_otp_vedernikoff
+statement error
+ALTER TABLE xao_otp_clickclack OWNER TO xao_otp_mop;
+----
+db error: ERROR: permission denied for schema public<slt:ignore>
+
+
+# Superuser grants mop CREATE on the schema.
+connection default
+statement ok
+GRANT CREATE ON SCHEMA public TO xao_otp_mop;
+
+
+# Now the transfers succeed.
+connection ctab user=xao_otp_vedernikoff
+statement ok
+ALTER TABLE xao_otp_clickclack OWNER TO xao_otp_mop;
+
+
+connection cview user=xao_otp_vedernikoff
+statement ok
+ALTER VIEW xao_otp_iceberg OWNER TO xao_otp_mop;
+
+
+connection cseq user=xao_otp_vedernikoff
+statement ok
+ALTER SEQUENCE xao_otp_seq OWNER TO xao_otp_mop;
+
+
+connection default
+query
+SELECT relname, pg_get_userbyid(relowner) AS owner FROM pg_class
+WHERE relname IN ('xao_otp_clickclack','xao_otp_iceberg','xao_otp_seq') ORDER BY relname;
+----
+relname	owner
+xao_otp_clickclack	xao_otp_mop
+xao_otp_iceberg	xao_otp_mop
+xao_otp_seq	xao_otp_mop
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM xao_otp_mop;
+
+
+statement ok
+DROP TABLE xao_otp_clickclack;
+
+
+statement ok
+DROP VIEW xao_otp_iceberg;
+
+
+statement ok
+DROP SEQUENCE xao_otp_seq;
+
+
+statement ok
+DROP ROLE xao_otp_vedernikoff;
+
+
+statement ok
+DROP ROLE xao_otp_mop;

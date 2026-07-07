@@ -1,0 +1,186 @@
+# pg_has_role: multi-hop transitivity along a membership CHAIN, identical on
+# real PostgreSQL and serenedb.
+#
+# Chain (-> reads "is a member of"), four hops deep:
+#   phr_vitalik -> phr_shlepach -> phr_kryakva -> phr_iceberg -> phr_mop
+# The bottom role vitalik transitively reaches every ancestor up to mop;
+# each role reaches everything above it but nothing below it.
+#
+# Prefixed phr_, vitalik/shlepach/kryakva/iceberg/mop lore, idempotent and
+# self-cleaning.
+
+statement ok
+DROP ROLE IF EXISTS phr_vitalik;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_shlepach;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_kryakva;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_mop;
+
+
+statement ok
+CREATE ROLE phr_vitalik;
+
+
+statement ok
+CREATE ROLE phr_shlepach;
+
+
+statement ok
+CREATE ROLE phr_kryakva;
+
+
+statement ok
+CREATE ROLE phr_iceberg;
+
+
+statement ok
+CREATE ROLE phr_mop;
+
+
+# Build the chain bottom-up.
+statement ok
+GRANT phr_shlepach TO phr_vitalik;
+
+
+statement ok
+GRANT phr_kryakva TO phr_shlepach;
+
+
+statement ok
+GRANT phr_iceberg TO phr_kryakva;
+
+
+statement ok
+GRANT phr_mop TO phr_iceberg;
+
+
+# ============================================================================
+# vitalik (chain bottom) transitively reaches every ancestor: 1, 2, 3, 4 hops.
+# ============================================================================
+
+query
+SELECT pg_has_role('phr_vitalik', 'phr_shlepach', 'USAGE') AS hop1,
+       pg_has_role('phr_vitalik', 'phr_kryakva',  'USAGE') AS hop2,
+       pg_has_role('phr_vitalik', 'phr_iceberg',  'USAGE') AS hop3,
+       pg_has_role('phr_vitalik', 'phr_mop',      'USAGE') AS hop4;
+----
+hop1	hop2	hop3	hop4
+t	t	t	t
+
+
+# MEMBER and SET agree with USAGE across all hops on a default-INHERIT chain.
+query
+SELECT pg_has_role('phr_vitalik', 'phr_mop', 'MEMBER') AS member4,
+       pg_has_role('phr_vitalik', 'phr_mop', 'SET')    AS set4,
+       pg_has_role('phr_vitalik', 'phr_mop', 'USAGE, MEMBER, SET') AS list4;
+----
+member4	set4	list4
+t	t	t
+
+
+# The deepest reach also holds through the oid form.
+query
+SELECT pg_has_role((SELECT oid FROM pg_roles WHERE rolname='phr_vitalik'),
+                   (SELECT oid FROM pg_roles WHERE rolname='phr_mop'),
+                   'USAGE') AS hop4_by_oid;
+----
+hop4_by_oid
+t
+
+
+# ============================================================================
+# Reachability is monotone up the chain: a middle role reaches its ancestors
+# but not its descendants.
+# ============================================================================
+
+# kryakva (middle) reaches iceberg and mop above it...
+query
+SELECT pg_has_role('phr_kryakva', 'phr_iceberg', 'USAGE') AS up1,
+       pg_has_role('phr_kryakva', 'phr_mop',     'USAGE') AS up2;
+----
+up1	up2
+t	t
+
+
+# ...but NOT shlepach or vitalik below it.
+query
+SELECT pg_has_role('phr_kryakva', 'phr_shlepach', 'USAGE') AS down1,
+       pg_has_role('phr_kryakva', 'phr_vitalik',  'USAGE') AS down2;
+----
+down1	down2
+f	f
+
+
+# The chain top reaches nothing (it has no group above it).
+query
+SELECT pg_has_role('phr_mop', 'phr_iceberg', 'USAGE') AS top_down1,
+       pg_has_role('phr_mop', 'phr_vitalik', 'USAGE') AS top_down2;
+----
+top_down1	top_down2
+f	f
+
+
+# ============================================================================
+# Cutting a middle edge severs transitive reach above the cut.
+# Remove kryakva -> iceberg: now vitalik/shlepach/kryakva can no longer reach
+# iceberg or mop, but the lower edges (vitalik->shlepach->kryakva) survive.
+# ============================================================================
+
+statement ok
+REVOKE phr_iceberg FROM phr_kryakva;
+
+
+query
+SELECT pg_has_role('phr_vitalik', 'phr_kryakva', 'USAGE') AS still_kryakva,
+       pg_has_role('phr_vitalik', 'phr_iceberg', 'USAGE') AS lost_iceberg,
+       pg_has_role('phr_vitalik', 'phr_mop',     'USAGE') AS lost_mop;
+----
+still_kryakva	lost_iceberg	lost_mop
+t	f	f
+
+
+# Reconnecting the edge restores the full transitive reach.
+statement ok
+GRANT phr_iceberg TO phr_kryakva;
+
+
+query
+SELECT pg_has_role('phr_vitalik', 'phr_iceberg', 'USAGE') AS iceberg,
+       pg_has_role('phr_vitalik', 'phr_mop',     'USAGE') AS mop;
+----
+iceberg	mop
+t	t
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP ROLE IF EXISTS phr_vitalik;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_shlepach;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_kryakva;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_mop;

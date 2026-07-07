@@ -29,6 +29,7 @@ namespace sdb::pg {
 struct PgStatisticExtData {
   static constexpr uint64_t kId = 152;
   static constexpr std::string_view kName = "pg_statistic_ext_data";
+  static constexpr bool kSuperuserOnly = true;
 
   using PgStatistic = Empty;
 

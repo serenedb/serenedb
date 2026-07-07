@@ -1,0 +1,189 @@
+# Cross-catalog: how the grant matrix renders in pg_class.relacl.
+#
+# relacl is an aclitem[]. Each explicit grant materializes one element in the
+# canonical "grantee=privs/grantor" text form; the grant-option flag is a
+# trailing '*' on the affected letter; a PUBLIC grant has an EMPTY grantee
+# ("=privs/grantor"). The owner's implicit privileges are NOT stored. We never
+# assert the owner row (PG19 carries a MAINTAIN 'm' letter serenedb does not
+# synthesize); every assertion filters relacl to the grantee names created
+# here, unnests, and ORDER BYs the elements so the row order is deterministic.
+# The text form is byte-identical on PostgreSQL 19beta1 and serenedb.
+#
+# Vedernikoff lore: the clickclack table, grantees from the usual cast.
+# Idempotent + self-cleaning; roles are cluster-global so we prefix + drop.
+
+statement ok
+DROP TABLE IF EXISTS xcat_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xcat_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS xcat_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS xcat_mop;
+
+
+statement ok
+CREATE TABLE xcat_clickclack (id int, payload text);
+
+
+statement ok
+CREATE ROLE xcat_vedernikoff;
+
+
+statement ok
+CREATE ROLE xcat_iceberg;
+
+
+statement ok
+CREATE ROLE xcat_mop;
+
+
+# At default privileges relacl is NULL: there are no grantee elements at all.
+query
+SELECT relacl IS NULL AS acl_is_null FROM pg_class WHERE relname = 'xcat_clickclack';
+----
+acl_is_null
+t
+
+
+# Single SELECT grant: grantee row "name=r/postgres" (r = SELECT, postgres the
+# grantor). No '*' because no grant option was given.
+statement ok
+GRANT SELECT ON xcat_clickclack TO xcat_vedernikoff;
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_clickclack'
+) g WHERE e LIKE 'xcat_vedernikoff=%';
+----
+e
+xcat_vedernikoff=r/postgres
+
+
+# Grant WITH GRANT OPTION: the affected letter carries a trailing '*'.
+statement ok
+GRANT INSERT ON xcat_clickclack TO xcat_iceberg WITH GRANT OPTION;
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_clickclack'
+) g WHERE e LIKE 'xcat_iceberg=%';
+----
+e
+xcat_iceberg=a*/postgres
+
+
+# PUBLIC grant: empty grantee, "=privs/grantor".
+statement ok
+GRANT SELECT ON xcat_clickclack TO PUBLIC;
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_clickclack'
+) g WHERE e LIKE '=%';
+----
+e
+=r/postgres
+
+
+# Multiple privileges in one grant accumulate in canonical letter order on a
+# single grantee element (a = INSERT, r = SELECT, w = UPDATE -> "arw"), not in
+# grant order.
+statement ok
+GRANT UPDATE, SELECT, INSERT ON xcat_clickclack TO xcat_mop;
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_clickclack'
+) g WHERE e LIKE 'xcat_mop=%';
+----
+e
+xcat_mop=arw/postgres
+
+
+# All three grantee elements together, ordered by element text. The owner row
+# (if materialized) is excluded by the LIKE filters. Order is pinned by ORDER
+# BY so the array's storage order does not leak into the comparison.
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_clickclack'
+) g
+WHERE e LIKE 'xcat_%=%' OR e LIKE '=%'
+ORDER BY e;
+----
+e
+=r/postgres
+xcat_iceberg=a*/postgres
+xcat_mop=arw/postgres
+xcat_vedernikoff=r/postgres
+
+
+# Adding a privilege to an existing grantee mutates that element in place: the
+# grant option from the first INSERT grant is preserved on 'a', the new SELECT
+# letter has no star.
+statement ok
+GRANT SELECT ON xcat_clickclack TO xcat_iceberg;
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_clickclack'
+) g WHERE e LIKE 'xcat_iceberg=%';
+----
+e
+xcat_iceberg=a*r/postgres
+
+
+# Revoking the only privilege of a grantee removes the whole element (an empty
+# "name=/postgres" is not stored).
+statement ok
+REVOKE SELECT ON xcat_clickclack FROM xcat_vedernikoff;
+
+
+query
+SELECT count(*) AS rows_left FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_clickclack'
+) g WHERE e LIKE 'xcat_vedernikoff=%';
+----
+rows_left
+0
+
+
+# Revoking PUBLIC removes the empty-grantee element.
+statement ok
+REVOKE SELECT ON xcat_clickclack FROM PUBLIC;
+
+
+query
+SELECT count(*) AS public_rows FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_clickclack'
+) g WHERE e LIKE '=%';
+----
+public_rows
+0
+
+
+statement ok
+DROP TABLE xcat_clickclack;
+
+
+statement ok
+DROP ROLE xcat_vedernikoff;
+
+
+statement ok
+DROP ROLE xcat_iceberg;
+
+
+statement ok
+DROP ROLE xcat_mop;

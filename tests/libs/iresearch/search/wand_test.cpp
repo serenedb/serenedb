@@ -167,7 +167,7 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
       EXPECT_TRUE(std::is_heap(std::begin(sorted), std::end(sorted)));
     }
     irs::score_t score_value = 0;
-    while (docs->next()) {
+    while (!irs::doc_limits::eof(docs->advance())) {
       auto doc = docs->value();
       fetcher.Fetch(doc);
       docs->FetchScoreArgs(0);

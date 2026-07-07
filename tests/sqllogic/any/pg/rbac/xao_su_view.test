@@ -1,0 +1,98 @@
+# Superuser-driven ALTER VIEW ... OWNER TO across the new-owner cross-product:
+# plain role, group, CURRENT_USER, nonexistent role. Byte-identical on
+# PostgreSQL and serenedb. Owner read back through pg_class.relowner.
+#
+# Lore: the iceberg view is handed to vedernikoff, then the babsky group.
+
+statement ok
+DROP VIEW IF EXISTS xao_suv_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_suv_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_suv_babsky;
+
+
+statement ok
+CREATE ROLE xao_suv_vedernikoff;
+
+
+statement ok
+CREATE ROLE xao_suv_babsky;
+
+
+statement ok
+CREATE VIEW xao_suv_iceberg AS SELECT 1 AS x;
+
+
+# Transferred 0 times: owned by the bootstrap superuser.
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='xao_suv_iceberg';
+----
+owner
+postgres
+
+
+# (1) superuser -> plain role
+statement ok
+ALTER VIEW xao_suv_iceberg OWNER TO xao_suv_vedernikoff;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='xao_suv_iceberg';
+----
+owner
+xao_suv_vedernikoff
+
+
+# (2) superuser -> a group (transferred once already)
+statement ok
+ALTER VIEW xao_suv_iceberg OWNER TO xao_suv_babsky;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='xao_suv_iceberg';
+----
+owner
+xao_suv_babsky
+
+
+# (3) superuser -> CURRENT_USER (transferred twice already)
+statement ok
+ALTER VIEW xao_suv_iceberg OWNER TO CURRENT_USER;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='xao_suv_iceberg';
+----
+owner
+postgres
+
+
+# (4) superuser -> nonexistent role
+statement error
+ALTER VIEW xao_suv_iceberg OWNER TO xao_suv_ghost;
+----
+db error: ERROR: role "xao_suv_ghost" does not exist<slt:ignore>
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='xao_suv_iceberg';
+----
+owner
+postgres
+
+
+statement ok
+DROP VIEW xao_suv_iceberg;
+
+
+statement ok
+DROP ROLE xao_suv_vedernikoff;
+
+
+statement ok
+DROP ROLE xao_suv_babsky;

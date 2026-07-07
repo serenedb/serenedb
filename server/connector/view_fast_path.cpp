@@ -41,7 +41,6 @@
 #include <duckdb/parser/statement/select_statement.hpp>
 #include <duckdb/parser/tableref/basetableref.hpp>
 #include <duckdb/parser/tableref/table_function_ref.hpp>
-#include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/tableref/bound_at_clause.hpp>
 
 #include "catalog/store/store.h"
@@ -175,8 +174,9 @@ duckdb::TableFunction LookupSingleStringReader(duckdb::ClientContext& context,
   auto entry = schema.GetEntry(tx, duckdb::CatalogType::TABLE_FUNCTION_ENTRY,
                                duckdb::Identifier{name});
   if (!entry) {
-    throw duckdb::CatalogException(
-      "fast-path source function \"%s\" not registered", name);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INTERNAL_ERROR),
+      ERR_MSG("fast-path source function \"", name, "\" not registered"));
   }
   auto& tf_entry = entry->Cast<duckdb::TableFunctionCatalogEntry>();
   for (duckdb::idx_t i = 0; i < tf_entry.functions.Size(); ++i) {
@@ -186,8 +186,9 @@ duckdb::TableFunction LookupSingleStringReader(duckdb::ClientContext& context,
       return candidate;
     }
   }
-  throw duckdb::CatalogException(
-    "fast-path source function \"%s\" has no (VARCHAR) overload", name);
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                  ERR_MSG("fast-path source function \"", name,
+                          "\" has no (VARCHAR) overload"));
 }
 
 }  // namespace

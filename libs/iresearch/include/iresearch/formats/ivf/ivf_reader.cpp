@@ -77,14 +77,36 @@ bool VectorMetricIsAngular(VectorMetric metric) noexcept {
 IvfVectorReader::IvfVectorReader(const ColumnReader& vector_column,
                                  ReadContext& ctx)
   : _d{static_cast<uint32_t>(vector_column.ArraySize())},
-    _scan{*vector_column.Child(), ctx},
+    _child{vector_column.Child()},
+    _ctx{&ctx},
+    _scan{vector_column.Child()->InitScan(ctx)},
     _buf{duckdb::LogicalType::FLOAT, static_cast<duckdb::idx_t>(_d)} {
   SDB_ASSERT(vector_column.Child());
 }
 
+void IvfVectorReader::ReadInto(uint64_t start, uint64_t count) {
+  if (start < _pos) {
+    _scan = _child->InitScan(*_ctx);
+    _pos = 0;
+  }
+  if (start > _pos) {
+    _child->Skip(_scan, static_cast<duckdb::idx_t>(start - _pos));
+    _pos = start;
+  }
+  uint64_t done = 0;
+  while (done < count) {
+    const auto n =
+      _child->ScanCount(_scan, _buf, static_cast<duckdb::idx_t>(count - done),
+                        static_cast<duckdb::idx_t>(done));
+    SDB_ASSERT(n > 0);
+    done += n;
+    _pos += n;
+  }
+}
+
 const float* IvfVectorReader::ReadDoc(doc_id_t doc) {
   const uint64_t row = static_cast<uint64_t>(doc) - doc_limits::min();
-  _scan.Scan(row * _d, _d, _buf, 0);
+  ReadInto(row * _d, _d);
   return duckdb::FlatVector::GetData<float>(_buf);
 }
 
@@ -93,7 +115,7 @@ const float* IvfVectorReader::ReadDocBatch(doc_id_t first, size_t count) {
   const uint64_t row0 = static_cast<uint64_t>(first) - doc_limits::min();
   const size_t total = count * _d;
   _buf.Reserve(total);
-  _scan.Scan(row0 * _d, total, _buf, 0);
+  ReadInto(row0 * _d, total);
   return duckdb::FlatVector::GetData<float>(_buf);
 }
 

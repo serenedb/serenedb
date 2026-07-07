@@ -47,6 +47,8 @@
 #include "connector/functions/ts_offsets.h"
 #include "connector/functions/vector.h"
 #include "pg/connection_context.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 
 namespace sdb::connector {
@@ -67,26 +69,29 @@ duckdb::LogicalType MakeBoostedTSQueryType() {
 void SearchStubFn(duckdb::DataChunk& /*args*/,
                   duckdb::ExpressionState& /*state*/,
                   duckdb::Vector& /*result*/) {
-  throw duckdb::InvalidInputException(
-    "Inverted index function called outside inverted index context. "
-    "Use in WHERE clause on a table with an inverted index.");
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+    ERR_MSG("Inverted index function called outside inverted index context. "
+            "Use in WHERE clause on a table with an inverted index."));
 }
 
 void TSQueryStubFn(duckdb::DataChunk& /*args*/,
                    duckdb::ExpressionState& /*state*/,
                    duckdb::Vector& /*result*/) {
-  throw duckdb::InvalidInputException(
-    "TSQUERY expression evaluated outside an `@@` match against an "
-    "inverted-indexed column.");
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+    ERR_MSG("TSQUERY expression evaluated outside an `@@` match against an "
+            "inverted-indexed column."));
 }
 
 void ScorerStubFn(duckdb::DataChunk& /*args*/, duckdb::ExpressionState& state,
                   duckdb::Vector& /*result*/) {
   const auto& fn_name =
     state.expr.Cast<duckdb::BoundFunctionExpression>().Function().GetName();
-  throw duckdb::InvalidInputException(
-    "%s() requires an inverted index scan in the same sub-query",
-    fn_name.GetIdentifierName());
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  ERR_MSG(fn_name.GetIdentifierName(),
+                          "() requires an inverted index scan in the same "
+                          "sub-query"));
 }
 
 void RegisterTSQueryTypes(duckdb::ExtensionLoader& loader) {
@@ -104,14 +109,15 @@ void RegisterTSQueryTypes(duckdb::ExtensionLoader& loader) {
     +[](duckdb::BindLogicalTypeInput& input) -> duckdb::LogicalType {
       const auto& modifiers = input.modifiers;
       if (modifiers.size() != 1) {
-        throw duckdb::BinderException(
-          "tokenize(<analyzer-name>) requires exactly one VARCHAR "
-          "argument");
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("tokenize(<analyzer-name>) requires exactly "
+                                "one VARCHAR argument"));
       }
       const auto& v = modifiers[0].GetValue();
       if (!v.IsNull() && v.type().id() != duckdb::LogicalTypeId::VARCHAR) {
-        throw duckdb::BinderException(
-          "tokenize() argument must be a VARCHAR analyzer name or NULL");
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("tokenize() argument must be a VARCHAR "
+                                "analyzer name or NULL"));
       }
       // NULL is sugar for 'keyword' -- both mean "no tokenisation,
       // treat the bytes as a single raw term". Normalize to a literal
@@ -149,17 +155,20 @@ void RegisterTSQueryTypes(duckdb::ExtensionLoader& loader) {
     +[](duckdb::BindLogicalTypeInput& input) -> duckdb::LogicalType {
       const auto& modifiers = input.modifiers;
       if (modifiers.size() != 1) {
-        throw duckdb::BinderException(
-          "boost(<factor>) requires exactly one numeric argument");
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("boost(<factor>) requires exactly one numeric argument"));
       }
       auto factor =
         modifiers[0].GetValue().DefaultCastAs(duckdb::LogicalType::DOUBLE);
       if (factor.IsNull()) {
-        throw duckdb::BinderException("boost() factor must be non-null");
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("boost() factor must be non-null"));
       }
       if (factor.GetValue<double>() < 0.0) {
-        throw duckdb::BinderException("boost() factor must be >= 0, got %f",
-                                      factor.GetValue<double>());
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("boost() factor must be >= 0, got ",
+                                factor.GetValue<double>()));
       }
       auto type = MakeBoostedTSQueryType();
       auto info = duckdb::make_uniq<duckdb::ExtensionTypeInfo>();
@@ -255,8 +264,9 @@ void RegisterTSQueryBoolCasts(duckdb::ExtensionLoader& loader) {
     return duckdb::BoundCastInfo(+[](duckdb::Vector&, duckdb::Vector&,
                                      duckdb::idx_t,
                                      duckdb::CastParameters&) -> bool {
-      throw duckdb::InvalidInputException(
-        "BOOLEAN -> TSQUERY: only meaningful inside TSQUERY context");
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("BOOLEAN -> TSQUERY: only meaningful inside TSQUERY context"));
     });
   };
   loader.RegisterCastFunction(duckdb::LogicalType::BOOLEAN, MakeTSQueryType(),
@@ -278,10 +288,11 @@ void RegisterTSQueryBoolCasts(duckdb::ExtensionLoader& loader) {
     return duckdb::BoundCastInfo(+[](duckdb::Vector&, duckdb::Vector&,
                                      duckdb::idx_t,
                                      duckdb::CastParameters&) -> bool {
-      throw duckdb::InvalidInputException(
-        "::boost(K) used on a predicate the inverted index could not "
-        "claim -- boost is only meaningful inside an inverted-index "
-        "match. Move the boost into an `@@` match or remove it.");
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("::boost(K) used on a predicate the inverted index could not "
+                "claim -- boost is only meaningful inside an inverted-index "
+                "match. Move the boost into an `@@` match or remove it."));
     });
   };
   // Cost 50 mirrors VARCHAR -> BOOSTED_TSQUERY (above): keeps plain
@@ -1040,7 +1051,8 @@ std::shared_ptr<catalog::Tokenizer> ResolveCatalogTokenizer(
   if (!snapshot) {
     return nullptr;
   }
-  return snapshot->GetTokenizer(db_id, qualified.schema, qualified.relation);
+  return snapshot->GetTokenizer(catalog::NoAccessCheck(), db_id,
+                                qualified.schema, qualified.relation);
 }
 
 void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {

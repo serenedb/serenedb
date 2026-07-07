@@ -31,6 +31,11 @@ cd "$SCRIPT_DIR"
 export RETRY_ATTEMPTS="${RETRY_ATTEMPTS:-10}"
 export BACKOFF_DURATION="${BACKOFF_DURATION:-500ms}"
 
+# Per-worker listen-port ranges: [BASE + id*PER, BASE + (id+1)*PER). With the
+# defaults, 256 workers stay below the ephemeral range (32768+).
+: "${RECOVERY_PORT_BASE:=16000}"
+: "${RECOVERY_PORTS_PER_WORKER:=64}"
+
 # --- Parse arguments ---
 
 RUNNER_ARGS=()
@@ -282,6 +287,7 @@ run_worker() {
 	local failures_file="$SERENED_LOG_DIR/failures-w${worker_id}.txt"
 	: >"$failures_file"
 
+	local port_seq=0
 	local test_idx=0
 	local test_file
 	while test_file=$(pop_test); do
@@ -300,13 +306,19 @@ run_worker() {
 			run_port=$port
 		else
 			# One serened per test: fresh datadir, fresh port, fresh process.
-			# Ask the kernel for a free port; fixed port schemes collide with
-			# other developers' docker containers, IDE servers, etc. The
-			# kernel-assigned port can still be taken by another worker before
-			# serened binds it, so retry on a fresh port if that happens.
+			# Ports come from a per-worker range below the ephemeral range
+			# (net.ipv4.ip_local_port_range starts at 32768). Kernel-assigned
+			# ports are ephemeral, so during a recovery test's crash-restart
+			# gap the port could be handed to another process as an outbound
+			# source port (or re-picked by another worker), leaving the
+			# restarted serened unable to bind for minutes with the test's
+			# database served by nobody. Disjoint ranges make that impossible
+			# within a run; anything squatting a port locally (IDE servers,
+			# other containers) is skipped by the in-use retry below.
 			local started=false start_attempt
 			for ((start_attempt = 0; start_attempt < 10; start_attempt++)); do
-				test_port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
+				test_port=$((RECOVERY_PORT_BASE + worker_id * RECOVERY_PORTS_PER_WORKER + port_seq))
+				port_seq=$(((port_seq + 1) % RECOVERY_PORTS_PER_WORKER))
 				start_fresh_serened "$worker_id" "$test_port" "$serened_log" pid datadir
 				local rc=$?
 				if [[ $rc -eq 0 ]]; then

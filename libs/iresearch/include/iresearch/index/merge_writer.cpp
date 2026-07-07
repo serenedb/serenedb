@@ -119,6 +119,8 @@ class CompoundDocIterator : public DocIterator {
 
   doc_id_t advance() final;
 
+  IRS_DOC_ITERATOR_DEFAULTS
+
   doc_id_t seek(doc_id_t /*target*/) final {
     SDB_ASSERT(false);
     return _doc = doc_limits::eof();
@@ -476,7 +478,8 @@ doc_id_t ComputeDocIds(DocIdMapT& doc_id_map, const SubReader& reader,
       reader.docs_count() + doc_limits::min());
     return doc_limits::invalid();
   }
-  for (auto docs_itr = reader.docs_iterator(); docs_itr->next(); ++next_id) {
+  for (auto docs_itr = reader.docs_iterator();
+       !doc_limits::eof(docs_itr->advance()); ++next_id) {
     auto src_doc_id = docs_itr->value();
     SDB_ASSERT(src_doc_id >= doc_limits::min());
     SDB_ASSERT(src_doc_id < reader.docs_count() + doc_limits::min());
@@ -763,9 +766,9 @@ bool MergeWriter::Flush(SegmentMeta& segment,
     return false;
   }
 
-  if (!sources.empty()) {
-    // TODO(mbkkt) Use progress_callback?
-    MergeInto(sources, *col_writer, _field_options);
+  if (!sources.empty() &&
+      !MergeInto(sources, *col_writer, _field_options, progress_callback)) {
+    return false;
   }
 
   if (!progress_callback()) {

@@ -1,0 +1,87 @@
+# ALTER OWNER TO across object types (table, view, sequence, schema), driven by
+# the superuser so the result is byte-identical on PostgreSQL and serenedb.
+# Owner is read back through pg_class.relowner / pg_namespace.nspowner.
+#
+# Lore: the clickclack relations get handed to mop and vedernikoff.
+
+statement ok
+DROP SCHEMA IF EXISTS oao_s CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS oao_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS oao_vedernikoff;
+
+
+statement ok
+CREATE ROLE oao_mop;
+
+
+statement ok
+CREATE ROLE oao_vedernikoff;
+
+
+statement ok
+CREATE SCHEMA oao_s;
+
+
+statement ok
+CREATE TABLE oao_s.clickclack (id int);
+
+
+statement ok
+CREATE VIEW oao_s.iceberg AS SELECT 1 AS x;
+
+
+statement ok
+CREATE SEQUENCE oao_s.mop_seq;
+
+
+# Everything starts owned by the bootstrap superuser.
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class
+WHERE relname IN ('clickclack','iceberg','mop_seq') ORDER BY relname;
+----
+owner
+postgres
+postgres
+postgres
+
+
+# Transfer each to a different role.
+statement ok
+ALTER TABLE oao_s.clickclack OWNER TO oao_mop;
+
+
+statement ok
+ALTER VIEW oao_s.iceberg OWNER TO oao_vedernikoff;
+
+
+statement ok
+ALTER SEQUENCE oao_s.mop_seq OWNER TO oao_mop;
+
+
+query
+SELECT relname, pg_get_userbyid(relowner) AS owner FROM pg_class
+WHERE relname IN ('clickclack','iceberg','mop_seq') ORDER BY relname;
+----
+relname	owner
+clickclack	oao_mop
+iceberg	oao_vedernikoff
+mop_seq	oao_mop
+
+
+# Cleanup (schema CASCADE drops the contained objects).
+statement ok
+DROP SCHEMA oao_s CASCADE;
+
+
+statement ok
+DROP ROLE oao_mop;
+
+
+statement ok
+DROP ROLE oao_vedernikoff;

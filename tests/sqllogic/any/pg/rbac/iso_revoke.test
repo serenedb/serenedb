@@ -1,0 +1,217 @@
+# Multi-table revoke isolation: a role holds GRANT ALL on several tables; a
+# REVOKE that targets ONE table (or one privilege on one table) must leave every
+# sibling table's ACL completely untouched. The has_table_privilege matrix is
+# byte-identical on real PostgreSQL and serenedb, so each step asserts the full
+# per-table privilege vector before and after each revoke.
+#
+# Three tables: iso_pudge, iso_androed, iso_abramov. One role iso_makak.
+# All names prefixed iso_; file is idempotent and self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS iso_pudge;
+
+
+statement ok
+DROP TABLE IF EXISTS iso_androed;
+
+
+statement ok
+DROP TABLE IF EXISTS iso_abramov;
+
+
+statement ok
+DROP ROLE IF EXISTS iso_makak;
+
+
+statement ok
+CREATE TABLE iso_pudge (id int, mop text);
+
+
+statement ok
+CREATE TABLE iso_androed (id int, mop text);
+
+
+statement ok
+CREATE TABLE iso_abramov (id int, mop text);
+
+
+statement ok
+CREATE ROLE iso_makak;
+
+
+# ============================================================================
+# GRANT ALL on all three tables: every bit is t everywhere.
+# Column order per table: SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER
+# ============================================================================
+
+statement ok
+GRANT ALL ON iso_pudge TO iso_makak;
+
+
+statement ok
+GRANT ALL ON iso_androed TO iso_makak;
+
+
+statement ok
+GRANT ALL ON iso_abramov TO iso_makak;
+
+
+query
+SELECT has_table_privilege('iso_makak','iso_pudge','SELECT')     AS pu_s,
+       has_table_privilege('iso_makak','iso_pudge','TRUNCATE')   AS pu_t,
+       has_table_privilege('iso_makak','iso_androed','SELECT')   AS an_s,
+       has_table_privilege('iso_makak','iso_androed','TRUNCATE') AS an_t,
+       has_table_privilege('iso_makak','iso_abramov','SELECT')   AS ab_s,
+       has_table_privilege('iso_makak','iso_abramov','TRUNCATE') AS ab_t;
+----
+pu_s	pu_t	an_s	an_t	ab_s	ab_t
+t	t	t	t	t	t
+
+
+# ============================================================================
+# REVOKE UPDATE on iso_pudge ONLY: pudge loses UPDATE, keeps the other six;
+# androed and abramov are entirely unaffected (still full ALL).
+# ============================================================================
+
+statement ok
+REVOKE UPDATE ON iso_pudge FROM iso_makak;
+
+
+# iso_pudge full vector: UPDATE now f, six others t.
+query
+SELECT has_table_privilege('iso_makak','iso_pudge','SELECT')     AS sel,
+       has_table_privilege('iso_makak','iso_pudge','INSERT')     AS ins,
+       has_table_privilege('iso_makak','iso_pudge','UPDATE')     AS upd,
+       has_table_privilege('iso_makak','iso_pudge','DELETE')     AS del,
+       has_table_privilege('iso_makak','iso_pudge','TRUNCATE')   AS trunc,
+       has_table_privilege('iso_makak','iso_pudge','REFERENCES') AS refs,
+       has_table_privilege('iso_makak','iso_pudge','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	f	t	t	t	t
+
+
+# iso_androed untouched: UPDATE still t (the revoke did not bleed sideways).
+query
+SELECT has_table_privilege('iso_makak','iso_androed','SELECT')     AS sel,
+       has_table_privilege('iso_makak','iso_androed','INSERT')     AS ins,
+       has_table_privilege('iso_makak','iso_androed','UPDATE')     AS upd,
+       has_table_privilege('iso_makak','iso_androed','DELETE')     AS del,
+       has_table_privilege('iso_makak','iso_androed','TRUNCATE')   AS trunc,
+       has_table_privilege('iso_makak','iso_androed','REFERENCES') AS refs,
+       has_table_privilege('iso_makak','iso_androed','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	t	t	t	t
+
+
+# iso_abramov untouched.
+query
+SELECT has_table_privilege('iso_makak','iso_abramov','SELECT')     AS sel,
+       has_table_privilege('iso_makak','iso_abramov','UPDATE')     AS upd,
+       has_table_privilege('iso_makak','iso_abramov','TRIGGER')    AS trig;
+----
+sel	upd	trig
+t	t	t
+
+
+# ============================================================================
+# REVOKE ALL on iso_androed: that table drops to all-f; pudge keeps its
+# partial set (six bits), abramov keeps full ALL.
+# ============================================================================
+
+statement ok
+REVOKE ALL ON iso_androed FROM iso_makak;
+
+
+# iso_androed: every bit f.
+query
+SELECT has_table_privilege('iso_makak','iso_androed','SELECT')     AS sel,
+       has_table_privilege('iso_makak','iso_androed','INSERT')     AS ins,
+       has_table_privilege('iso_makak','iso_androed','UPDATE')     AS upd,
+       has_table_privilege('iso_makak','iso_androed','DELETE')     AS del,
+       has_table_privilege('iso_makak','iso_androed','TRUNCATE')   AS trunc,
+       has_table_privilege('iso_makak','iso_androed','REFERENCES') AS refs,
+       has_table_privilege('iso_makak','iso_androed','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	f	f	f	f	f	f
+
+
+# iso_pudge unchanged by the androed revoke: still missing only UPDATE.
+query
+SELECT has_table_privilege('iso_makak','iso_pudge','SELECT')   AS sel,
+       has_table_privilege('iso_makak','iso_pudge','UPDATE')   AS upd,
+       has_table_privilege('iso_makak','iso_pudge','DELETE')   AS del;
+----
+sel	upd	del
+t	f	t
+
+
+# iso_abramov still full ALL: the REVOKE ALL on a sibling did not reach it.
+query
+SELECT has_table_privilege('iso_makak','iso_abramov','SELECT')     AS sel,
+       has_table_privilege('iso_makak','iso_abramov','INSERT')     AS ins,
+       has_table_privilege('iso_makak','iso_abramov','UPDATE')     AS upd,
+       has_table_privilege('iso_makak','iso_abramov','DELETE')     AS del,
+       has_table_privilege('iso_makak','iso_abramov','TRUNCATE')   AS trunc,
+       has_table_privilege('iso_makak','iso_abramov','REFERENCES') AS refs,
+       has_table_privilege('iso_makak','iso_abramov','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	t	t	t	t
+
+
+# ============================================================================
+# Revoking a multi-privilege list on iso_abramov drops exactly those bits and
+# nowhere else; pudge and androed are still where the previous steps left them.
+# ============================================================================
+
+statement ok
+REVOKE INSERT, DELETE, TRIGGER ON iso_abramov FROM iso_makak;
+
+
+query
+SELECT has_table_privilege('iso_makak','iso_abramov','SELECT')     AS sel,
+       has_table_privilege('iso_makak','iso_abramov','INSERT')     AS ins,
+       has_table_privilege('iso_makak','iso_abramov','UPDATE')     AS upd,
+       has_table_privilege('iso_makak','iso_abramov','DELETE')     AS del,
+       has_table_privilege('iso_makak','iso_abramov','TRUNCATE')   AS trunc,
+       has_table_privilege('iso_makak','iso_abramov','REFERENCES') AS refs,
+       has_table_privilege('iso_makak','iso_abramov','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	f	t	f	t	t	f
+
+
+# Final cross-table snapshot: pudge (no UPDATE), androed (empty), abramov
+# (no INSERT/DELETE/TRIGGER). One block, all three tables, no leakage.
+query
+SELECT has_table_privilege('iso_makak','iso_pudge','UPDATE')     AS pu_upd,
+       has_table_privilege('iso_makak','iso_pudge','SELECT')     AS pu_sel,
+       has_table_privilege('iso_makak','iso_androed','SELECT')   AS an_sel,
+       has_table_privilege('iso_makak','iso_abramov','INSERT')   AS ab_ins,
+       has_table_privilege('iso_makak','iso_abramov','SELECT')   AS ab_sel;
+----
+pu_upd	pu_sel	an_sel	ab_ins	ab_sel
+f	t	f	f	t
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE iso_pudge;
+
+
+statement ok
+DROP TABLE iso_androed;
+
+
+statement ok
+DROP TABLE iso_abramov;
+
+
+statement ok
+DROP ROLE iso_makak;

@@ -1,0 +1,126 @@
+# Type USAGE is enforced like PostgreSQL for user-defined types. USAGE is
+# granted to PUBLIC by default, so has_type_privilege reads t for a fresh type
+# and any role may declare a column of it. After REVOKE USAGE FROM PUBLIC the
+# oracle flips to f and a non-owner CREATE TABLE with a column of that type is
+# denied with "permission denied for type ...". Built-in (pg_catalog) types
+# never require USAGE. Identical on both engines.
+#
+# Lore: clickclack owns the mop_money composite; vedernikoff is the intern who
+# may only use the type once USAGE is granted back.
+
+statement ok
+DROP TABLE IF EXISTS enf_tu_t1;
+
+
+statement ok
+DROP TABLE IF EXISTS enf_tu_t2;
+
+
+statement ok
+DROP TABLE IF EXISTS enf_tu_prim;
+
+
+statement ok
+DROP TYPE IF EXISTS enf_tu_mop_money;
+
+
+statement ok
+DROP ROLE IF EXISTS enf_tu_vedernikoff;
+
+
+statement ok
+CREATE TYPE enf_tu_mop_money AS (amount int, ccy text);
+
+
+statement ok
+CREATE ROLE enf_tu_vedernikoff LOGIN PASSWORD 'enf_tu_vedernikoff_pw';
+
+
+statement ok
+GRANT USAGE, CREATE ON SCHEMA public TO enf_tu_vedernikoff;
+
+
+# Fresh type: USAGE is held via the PUBLIC default, so the oracle reads t.
+query
+SELECT has_type_privilege('enf_tu_vedernikoff','enf_tu_mop_money','USAGE') AS can_use;
+----
+can_use
+t
+
+
+# The unprivileged role can declare a column of the type (PUBLIC default USAGE).
+connection c_tu user=enf_tu_vedernikoff password=enf_tu_vedernikoff_pw
+statement ok
+CREATE TABLE enf_tu_t1 (m enf_tu_mop_money);
+
+
+# Revoke USAGE from PUBLIC.
+connection default
+statement ok
+REVOKE USAGE ON TYPE enf_tu_mop_money FROM PUBLIC;
+
+
+# The oracle now reads f for the unprivileged role.
+query
+SELECT has_type_privilege('enf_tu_vedernikoff','enf_tu_mop_money','USAGE') AS can_use;
+----
+can_use
+f
+
+
+# A non-owner CREATE TABLE with a column of the type is now denied.
+connection c_tu2 user=enf_tu_vedernikoff password=enf_tu_vedernikoff_pw
+statement error
+CREATE TABLE enf_tu_t2 (m enf_tu_mop_money);
+----
+db error: ERROR: permission denied for type enf_tu_mop_money<slt:ignore>
+
+
+# Built-in (pg_catalog) types never require USAGE: primitive columns still work.
+statement ok
+CREATE TABLE enf_tu_prim (x int, y text);
+
+
+# Owner grants USAGE back; the unprivileged role can use the type again.
+connection default
+statement ok
+GRANT USAGE ON TYPE enf_tu_mop_money TO enf_tu_vedernikoff;
+
+
+connection c_tu3 user=enf_tu_vedernikoff password=enf_tu_vedernikoff_pw
+statement ok
+CREATE TABLE enf_tu_t2 (m enf_tu_mop_money);
+
+
+# ---- cleanup ----
+# The role owns the tables it created and holds schema/type grants; PG blocks
+# DROP ROLE until those dependencies are gone, so drop the tables and revoke the
+# grants first.
+
+connection default
+statement ok
+DROP TABLE enf_tu_t1;
+
+
+statement ok
+DROP TABLE enf_tu_t2;
+
+
+statement ok
+DROP TABLE enf_tu_prim;
+
+
+statement ok
+REVOKE USAGE ON TYPE enf_tu_mop_money FROM enf_tu_vedernikoff;
+
+
+statement ok
+REVOKE USAGE, CREATE ON SCHEMA public FROM enf_tu_vedernikoff;
+
+
+statement ok
+DROP TYPE enf_tu_mop_money;
+
+
+statement ok
+DROP ROLE enf_tu_vedernikoff;

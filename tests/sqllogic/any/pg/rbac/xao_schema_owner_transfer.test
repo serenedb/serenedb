@@ -1,0 +1,70 @@
+# ALTER SCHEMA ... OWNER TO transfers schema ownership; nspowner becomes the new
+# role and the schema's contained objects stay reachable. A table inside the
+# schema can also have its own owner transferred independently. PostgreSQL and
+# serenedb agree.
+#
+# Lore: the vedernikoff schema holds the clickclack table; ownership passes to
+# mop.
+
+statement ok
+DROP SCHEMA IF EXISTS xao_sou_vedernikoff CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_sou_mop;
+
+
+statement ok
+CREATE ROLE xao_sou_mop;
+
+
+statement ok
+CREATE SCHEMA xao_sou_vedernikoff;
+
+
+statement ok
+CREATE TABLE xao_sou_vedernikoff.clickclack (id int);
+
+
+# The schema's owner is transferred to mop.
+statement ok
+ALTER SCHEMA xao_sou_vedernikoff OWNER TO xao_sou_mop;
+
+
+query
+SELECT pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname='xao_sou_vedernikoff';
+----
+owner
+xao_sou_mop
+
+
+# The contained table is still reachable after the schema-owner transfer.
+statement ok
+INSERT INTO xao_sou_vedernikoff.clickclack VALUES (1);
+
+
+query
+SELECT count(*) AS rows FROM xao_sou_vedernikoff.clickclack;
+----
+rows
+1
+
+
+# A table inside the schema can have its owner transferred independently.
+statement ok
+ALTER TABLE xao_sou_vedernikoff.clickclack OWNER TO xao_sou_mop;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='clickclack';
+----
+owner
+xao_sou_mop
+
+
+statement ok
+DROP SCHEMA xao_sou_vedernikoff CASCADE;
+
+
+statement ok
+DROP ROLE xao_sou_mop;

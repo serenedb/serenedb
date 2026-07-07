@@ -1,0 +1,188 @@
+# serenedb-only: SET ROLE / SET SESSION AUTHORIZATION actually switch the
+# session's effective role -- identity (current_user/current_role vs session_user),
+# the is_superuser flag, AND enforcement (a SET ROLE to an unprivileged role is
+# refused access). Cannot run on the shared trust PG container (it holds
+# concurrent password sessions per role).
+#
+# The sqllogictest runner keys a connection by its FULL directive (name + user +
+# password); a record with no `connection` line uses the shared default
+# connection. So the superuser block below runs entirely on the default
+# connection (no directive) to keep the SET ROLE in effect across statements,
+# and the password-role blocks repeat the identical full directive on each
+# record that must share that session.
+#
+# Lore: vedernikoff the overseer drops into the intern role and loses his reach;
+# the intern cannot climb into roles he is not a member of.
+
+statement ok
+DROP ROLE IF EXISTS sr_grp;
+
+
+statement ok
+DROP ROLE IF EXISTS sr_member;
+
+
+statement ok
+DROP ROLE IF EXISTS sr_outsider;
+
+
+statement ok
+DROP TABLE IF EXISTS sr_secret;
+
+
+statement ok
+DROP TABLE IF EXISTS sr_shared;
+
+
+statement ok
+CREATE ROLE sr_grp;
+
+
+statement ok
+CREATE ROLE sr_member LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE ROLE sr_outsider LOGIN PASSWORD 'pw';
+
+
+statement ok
+GRANT sr_grp TO sr_member;
+
+
+statement ok
+CREATE TABLE sr_secret (x int);
+
+
+statement ok
+INSERT INTO sr_secret VALUES (7);
+
+
+statement ok
+CREATE TABLE sr_shared (x int);
+
+
+statement ok
+INSERT INTO sr_shared VALUES (9);
+
+
+statement ok
+GRANT SELECT ON sr_shared TO sr_grp;
+
+
+# === superuser block, all on the default connection (postgres) ===
+# SET ROLE: identity + is_superuser follow it.
+statement ok
+SET ROLE sr_grp;
+
+
+query
+SELECT current_user, current_role, session_user, current_setting('is_superuser');
+----
+current_user	current_role	session_user	current_setting
+sr_grp	sr_grp	postgres	off
+
+
+# Enforcement follows the switch: the superuser-owned table is now denied.
+statement error
+SELECT * FROM sr_secret;
+----
+db error: ERROR: permission denied for table sr_secret<slt:ignore>
+
+
+# A table granted to sr_grp stays readable under the switched role.
+query
+SELECT x FROM sr_shared;
+----
+x
+9
+
+
+# RESET ROLE restores the superuser and SHOW role is 'none'.
+statement ok
+RESET ROLE;
+
+
+query
+SELECT current_user, current_setting('is_superuser'), (SELECT count(*) FROM sr_secret) AS n;
+----
+current_user	current_setting	n
+postgres	on	1
+
+
+query
+SHOW role;
+----
+role
+none
+
+
+statement error
+SET ROLE no_such_role;
+----
+db error: ERROR: role "no_such_role" does not exist<slt:ignore>
+
+
+# === a member may SET ROLE to the group it belongs to (held c_mem session) ===
+connection c_mem user=sr_member password=pw
+statement ok
+SET ROLE sr_grp;
+
+
+connection c_mem user=sr_member password=pw
+query
+SELECT current_user;
+----
+current_user
+sr_grp
+
+
+# === a non-member SET ROLE is refused ===
+connection c_out user=sr_outsider password=pw
+statement error
+SET ROLE sr_grp;
+----
+db error: ERROR: permission denied to set role "sr_grp"<slt:ignore>
+
+
+# === a non-superuser may not SET SESSION AUTHORIZATION to another role ===
+connection c_out user=sr_outsider password=pw
+statement error
+SET SESSION AUTHORIZATION sr_member;
+----
+db error: ERROR: permission denied to set session authorization "sr_member"<slt:ignore>
+
+
+# === superuser SET SESSION AUTHORIZATION switches current_user and session_user ===
+connection c_sess user=postgres
+statement ok
+SET SESSION AUTHORIZATION sr_member;
+
+
+connection c_sess user=postgres
+query
+SELECT current_user, session_user;
+----
+current_user	session_user
+sr_member	sr_member
+
+
+# Cleanup (default connection = postgres superuser).
+statement ok
+DROP TABLE sr_secret;
+
+
+statement ok
+DROP TABLE sr_shared;
+
+
+statement ok
+DROP ROLE sr_member;
+
+
+statement ok
+DROP ROLE sr_outsider;
+
+
+statement ok
+DROP ROLE sr_grp;

@@ -68,8 +68,13 @@ class IvfVectorReader {
   const float* ReadDocBatch(doc_id_t first, size_t count);
 
  private:
+  void ReadInto(uint64_t start, uint64_t count);
+
   uint32_t _d;
-  ColumnReader::RangeScan _scan;
+  const ColumnReader* _child;
+  ReadContext* _ctx;
+  ColumnReader::ScanState _scan;
+  uint64_t _pos = 0;
   duckdb::Vector _buf;
 };
 

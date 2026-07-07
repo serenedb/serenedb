@@ -430,49 +430,49 @@ db error: ERROR: VACUUM (REFRESH_SCHEMA|COMPACT_SCHEMA) expects [<database>.]<sc
 statement error
 VACUUM (REFRESH_INDEX) nope_idx;
 ----
-db error: ERROR: inverted index 'nope_idx' not found.
+db error: ERROR: relation "nope_idx" does not exist<slt:ignore>
 
 
 statement error
 VACUUM (COMPACT_INDEX) nope_idx;
 ----
-db error: ERROR: inverted index 'nope_idx' not found.
+db error: ERROR: relation "nope_idx" does not exist<slt:ignore>
 
 
 statement error
 VACUUM (REFRESH_TABLE) nope_table;
 ----
-db error: ERROR: relation 'nope_table' not found.
+db error: ERROR: relation "nope_table" does not exist<slt:ignore>
 
 
 statement error
 VACUUM (COMPACT_TABLE) nope_table;
 ----
-db error: ERROR: relation 'nope_table' not found.
+db error: ERROR: relation "nope_table" does not exist<slt:ignore>
 
 
 statement error
 VACUUM (REFRESH_SCHEMA) nope_schema;
 ----
-db error: ERROR: schema 'nope_schema' does not exist.
+db error: ERROR: schema "nope_schema" does not exist<slt:ignore>
 
 
 statement error
 VACUUM (COMPACT_SCHEMA) nope_schema;
 ----
-db error: ERROR: schema 'nope_schema' does not exist.
+db error: ERROR: schema "nope_schema" does not exist<slt:ignore>
 
 
 statement error
 VACUUM (REFRESH_DATABASE) nope_db;
 ----
-db error: ERROR: database 'nope_db' does not exist.
+db error: ERROR: database "nope_db" does not exist<slt:ignore>
 
 
 statement error
 VACUUM (COMPACT_DATABASE) nope_db;
 ----
-db error: ERROR: database 'nope_db' does not exist.
+db error: ERROR: database "nope_db" does not exist<slt:ignore>
 
 
 # Two extension options in one VACUUM -- parser-level rejection.

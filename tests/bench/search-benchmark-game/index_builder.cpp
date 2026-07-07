@@ -109,8 +109,6 @@ void IndexBuilder::IndexFromStream(std::istream& input,
 
   // stream reader thread
   thread_pool.run([&batch_provider, &input, batch_size = _opts.batch_size] {
-    irs::SetThreadName(IR_NATIVE_STRING("reader"));
-
     absl::MutexLock lock{&batch_provider.mutex};
 
     for (;;) {
@@ -138,8 +136,6 @@ void IndexBuilder::IndexFromStream(std::istream& input,
   // commiter thread
   if (_opts.refresh_interval_ms) {
     thread_pool.run([&compaction_cv, &compaction_mutex, &batch_provider, this] {
-      irs::SetThreadName(IR_NATIVE_STRING("committer"));
-
       while (!batch_provider.done.load()) {
         {
           std::cout << "[COMMIT]" << std::endl;
@@ -164,8 +160,6 @@ void IndexBuilder::IndexFromStream(std::istream& input,
 
   for (size_t i = _opts.compaction_threads; i; --i) {
     thread_pool.run([&] {
-      irs::SetThreadName(IR_NATIVE_STRING("compactr"));
-
       while (!batch_provider.done.load()) {
         {
           absl::MutexLock lock{&compaction_mutex};
@@ -189,8 +183,6 @@ void IndexBuilder::IndexFromStream(std::istream& input,
   // indexer threads
   for (size_t i = _opts.indexer_threads; i; --i) {
     thread_pool.run([&, factory] {
-      irs::SetThreadName(IR_NATIVE_STRING("indexer"));
-
       SDB_ASSERT(factory, "BatchHandlerFactory must not be null");
       auto handler = factory();
       std::vector<std::string> buf;

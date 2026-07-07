@@ -147,7 +147,7 @@ void CrashHandler::installCrashHandler() {
   // allocator lock held -- e.g. inside tsan's own mutex bookkeeping -- that
   // re-enters the lock and the process wedges instead of dying. So leave fatal
   // signals to the sanitizer; SIGTERM/SIGINT/SIGQUIT are still claimed later by
-  // signal_handling::Install for graceful shutdown.
+  // signals::InstallShutdownHandlers for graceful shutdown.
 #else
   // absl::InitializeSymbolizer(argv[0]) is invoked from main() before we get
   // here, so the symbolizer is already up.

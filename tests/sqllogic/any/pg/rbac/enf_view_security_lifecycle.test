@@ -1,0 +1,359 @@
+# VIEW security LIFECYCLE: how definer/invoker enforcement moves as a view is
+# redefined and as ownership lands on a non-superuser.
+#
+# Covered:
+#  1. CREATE OR REPLACE VIEW that flips security_invoker false<->true<->false
+#     moves enforcement between the view OWNER and the CALLER on the same name.
+#  2. An explicit WITH (security_invoker=false) behaves exactly like the
+#     definer-rights default.
+#  3. A view owned by a NON-superuser (so its effective user is NOT postgres):
+#     a third role granted the view reads through it against THAT owner.
+#  4. A definer view whose OWNER lacks the base -> the base-check is attributed
+#     to the owner, so the read is DENIED.
+#  5/6. A role with no grant on the view relation is denied AT THE VIEW.
+#
+# Ground truth: PostgreSQL 18.3 definer/invoker rights, RULE R. Every base-table
+# OR view reference is checked against an effective user decided ONLY by the view
+# that DIRECTLY encloses it: directly inside a DEFINER view -> that view's OWNER;
+# directly inside an INVOKER view -> the SESSION CALLER; not enclosed -> caller.
+# Only the innermost enclosing view matters; outer views do not affect a
+# reference. SELECT is enforced on the view RELATION itself under the same rule.
+#
+# Lore: mop owns the clickclack base + views; vedernikoff (reader_b) is granted
+# only the views; babsky (bystander_c) is granted nothing; iceberg is the base
+# mop was never granted, used to probe the definer owner-attribution.
+
+statement ok
+DROP VIEW IF EXISTS evl_flip;
+
+
+statement ok
+DROP VIEW IF EXISTS evl_explicit_def;
+
+
+statement ok
+DROP VIEW IF EXISTS evl_owner_view;
+
+
+statement ok
+DROP VIEW IF EXISTS evl_owner_deny_view;
+
+
+statement ok
+DROP TABLE IF EXISTS evl_clickclack;
+
+
+statement ok
+DROP TABLE IF EXISTS evl_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS evl_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS evl_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS evl_babsky;
+
+
+statement ok
+CREATE ROLE evl_mop LOGIN PASSWORD 'evl_mop_pw';
+
+
+statement ok
+CREATE ROLE evl_vedernikoff LOGIN PASSWORD 'evl_vedernikoff_pw';
+
+
+statement ok
+CREATE ROLE evl_babsky LOGIN PASSWORD 'evl_babsky_pw';
+
+
+# clickclack is the base mop WILL own; iceberg is a base mop will NEVER own.
+statement ok
+CREATE TABLE evl_clickclack (id int, av int, secret int);
+
+
+statement ok
+INSERT INTO evl_clickclack VALUES (1, 10, 100), (2, 20, 200);
+
+
+statement ok
+CREATE TABLE evl_iceberg (id int, payload text);
+
+
+statement ok
+INSERT INTO evl_iceberg VALUES (1, 'cold'), (2, 'colder');
+
+
+# === Part 1: CREATE OR REPLACE flips security_invoker, moving enforcement. ===
+# Create as definer (default). reader_b (vedernikoff) granted the view only.
+statement ok
+CREATE VIEW evl_flip AS SELECT id, av FROM evl_clickclack;
+
+
+statement ok
+GRANT SELECT ON evl_flip TO evl_vedernikoff;
+
+
+# Definer phase: base checked vs the view owner (postgres, who owns the base) ->
+# ALLOWED even though vedernikoff has no grant on evl_clickclack.
+connection c_def1 user=evl_vedernikoff password=evl_vedernikoff_pw
+query
+SELECT id, av FROM evl_flip ORDER BY id;
+----
+id	av
+1	10
+2	20
+
+
+# Flip to invoker via CREATE OR REPLACE on the SAME name. Now the base is
+# checked vs the CALLER (vedernikoff), who has no grant on evl_clickclack ->
+# DENIED. (The grant on the view survives the replace.)
+statement ok
+CREATE OR REPLACE VIEW evl_flip WITH (security_invoker=true) AS SELECT id, av FROM evl_clickclack;
+
+
+connection c_inv user=evl_vedernikoff password=evl_vedernikoff_pw
+statement error
+SELECT id, av FROM evl_flip;
+----
+db error: ERROR: permission denied for table evl_clickclack<slt:ignore>
+
+
+# Flip back to definer (explicit security_invoker=false) -> ALLOWED again,
+# proving the flip is reversible and false == the default.
+statement ok
+CREATE OR REPLACE VIEW evl_flip WITH (security_invoker=false) AS SELECT id, av FROM evl_clickclack;
+
+
+connection c_def2 user=evl_vedernikoff password=evl_vedernikoff_pw
+query
+SELECT id, av FROM evl_flip ORDER BY id;
+----
+id	av
+1	10
+2	20
+
+
+# === Part 2: explicit security_invoker=false == default definer. ===
+statement ok
+CREATE VIEW evl_explicit_def WITH (security_invoker=false) AS SELECT id, av FROM evl_clickclack;
+
+
+statement ok
+GRANT SELECT ON evl_explicit_def TO evl_vedernikoff;
+
+
+connection c_xdef user=evl_vedernikoff password=evl_vedernikoff_pw
+query
+SELECT id, av FROM evl_explicit_def ORDER BY id;
+----
+id	av
+1	10
+2	20
+
+
+# === Part 3: non-superuser view owner. ===
+# Hand clickclack and a definer view over it to mop (a non-superuser). Then a
+# third role reading through the view is checked against MOP, not postgres.
+statement ok
+CREATE VIEW evl_owner_view AS SELECT id, av FROM evl_clickclack;
+
+
+statement ok
+ALTER TABLE evl_clickclack OWNER TO evl_mop;
+
+
+statement ok
+ALTER VIEW evl_owner_view OWNER TO evl_mop;
+
+
+# The view is now owned by the non-superuser mop.
+query
+SELECT EXISTS(
+  SELECT 1 FROM pg_class c JOIN pg_authid a ON a.oid = c.relowner
+  WHERE c.relname = 'evl_owner_view' AND a.rolname = 'evl_mop'
+) AS owned_by_mop;
+----
+owned_by_mop
+t
+
+
+# mop owns the base, so mop (as owner) grants the view to vedernikoff over its
+# own connection.
+connection c_mop_grant user=evl_mop password=evl_mop_pw
+statement ok
+GRANT SELECT ON evl_owner_view TO evl_vedernikoff;
+
+
+# vedernikoff reads through the definer view -> ALLOWED, checked against mop
+# (who owns evl_clickclack), NOT against postgres or vedernikoff.
+connection c_via_mop user=evl_vedernikoff password=evl_vedernikoff_pw
+query
+SELECT id, av FROM evl_owner_view ORDER BY id;
+----
+id	av
+1	10
+2	20
+
+
+# === Part 4: definer view whose owner LACKS the base. ===
+# evl_iceberg is owned by postgres; mop was never granted it. A definer view
+# owned by mop over evl_iceberg checks the base against mop -> mop lacks it ->
+# DENIED, for mop AND for vedernikoff (the definer base-check is attributed to
+# the ALTER-installed owner, not the original creator). We first pin mop's real
+# lack of the base.
+statement ok
+CREATE VIEW evl_owner_deny_view AS SELECT id, payload FROM evl_iceberg;
+
+
+statement ok
+ALTER VIEW evl_owner_deny_view OWNER TO evl_mop;
+
+
+statement ok
+GRANT SELECT ON evl_owner_deny_view TO evl_vedernikoff;
+
+
+# Oracle: mop genuinely holds no SELECT on the base evl_iceberg, so every read
+# through the definer view denies at the base.
+query
+SELECT has_table_privilege('evl_mop', 'evl_iceberg', 'SELECT') AS mop_base;
+----
+mop_base
+f
+
+
+# mop reads through its own definer view; the base is checked against mop, who
+# lacks evl_iceberg -> DENIED.
+connection c_mop_deny user=evl_mop password=evl_mop_pw
+statement error
+SELECT id, payload FROM evl_owner_deny_view ORDER BY id;
+----
+db error: ERROR: permission denied for table evl_iceberg<slt:ignore>
+
+
+# vedernikoff, granted only the view, hits the same owner-attributed base-check.
+connection c_ved_deny user=evl_vedernikoff password=evl_vedernikoff_pw
+statement error
+SELECT id, payload FROM evl_owner_deny_view ORDER BY id;
+----
+db error: ERROR: permission denied for table evl_iceberg<slt:ignore>
+
+
+# === Part 5: a role granted NOTHING is denied AT THE VIEW relation. ===
+# babsky (bystander_c) holds no grant on any view. The view relation itself
+# requires SELECT under the same rule: a top-level view is checked against the
+# caller (babsky), who lacks it -> permission denied for view <name>, for both
+# the non-super-owned and the postgres-owned definer view.
+connection c_bys1 user=evl_babsky password=evl_babsky_pw
+statement error
+SELECT id, av FROM evl_owner_view ORDER BY id;
+----
+db error: ERROR: permission denied for view evl_owner_view<slt:ignore>
+
+
+connection c_bys2 user=evl_babsky password=evl_babsky_pw
+statement error
+SELECT id, av FROM evl_flip ORDER BY id;
+----
+db error: ERROR: permission denied for view evl_flip<slt:ignore>
+
+
+# === Part 6: invoker view, caller has BASE but NOT the view. ===
+# Distinguishes the view-relation check from the base-check. vedernikoff is
+# granted SELECT on the base evl_clickclack but NOT on evl_inv. An invoker view
+# checks the base against the caller -> satisfied. The view relation itself is
+# still checked (top-level -> against the caller), and vedernikoff lacks it ->
+# DENIED at the view. This proves the Part 1 invoker DENY was a base-check while
+# this one is a view-relation check.
+# Created by superuser (mop lacks CREATE on schema public); for an invoker view
+# the base is checked vs the CALLER, so the view owner is immaterial here.
+statement ok
+CREATE VIEW evl_inv WITH (security_invoker=true) AS SELECT id, av FROM evl_clickclack;
+
+
+# mop owns the base, so mop grants its base to vedernikoff.
+connection c_mop_grant user=evl_mop password=evl_mop_pw
+statement ok
+GRANT SELECT ON evl_clickclack TO evl_vedernikoff;
+
+
+# Oracle: vedernikoff now holds the base (it was just granted). The view
+# evl_inv was never granted to anyone -- its relacl carries no vedernikoff
+# entry. (has_table_privilege on a view name is unsupported here, so the view
+# side is probed via the catalog instead of the base side.)
+connection c_oracle user=postgres password=postgres
+query
+SELECT has_table_privilege('evl_vedernikoff', 'evl_clickclack', 'SELECT') AS base;
+----
+base
+t
+
+
+connection c_oracle user=postgres password=postgres
+query
+SELECT EXISTS(
+  SELECT 1 FROM pg_class
+  WHERE relname = 'evl_inv'
+    AND array_to_string(relacl, ',') LIKE '%evl_vedernikoff%'
+) AS view_granted;
+----
+view_granted
+f
+
+
+# Has the base, lacks the view relation -> denied at the view.
+connection c_inv_nogrant user=evl_vedernikoff password=evl_vedernikoff_pw
+statement error
+SELECT id, av FROM evl_inv ORDER BY id;
+----
+db error: ERROR: permission denied for view evl_inv<slt:ignore>
+
+
+statement ok
+DROP VIEW evl_inv;
+
+
+# Cleanup. mop owns clickclack + two views; drop those on mop's connection, the
+# rest as superuser.
+connection c_mop_drop user=evl_mop password=evl_mop_pw
+statement ok
+DROP VIEW evl_owner_deny_view;
+
+
+connection c_mop_drop user=evl_mop password=evl_mop_pw
+statement ok
+DROP VIEW evl_owner_view;
+
+
+statement ok
+DROP VIEW evl_explicit_def;
+
+
+statement ok
+DROP VIEW evl_flip;
+
+
+statement ok
+DROP TABLE evl_iceberg;
+
+
+connection c_mop_drop user=evl_mop password=evl_mop_pw
+statement ok
+DROP TABLE evl_clickclack;
+
+
+statement ok
+DROP ROLE evl_mop;
+
+
+statement ok
+DROP ROLE evl_vedernikoff;
+
+
+statement ok
+DROP ROLE evl_babsky;

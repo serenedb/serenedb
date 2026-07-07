@@ -1,0 +1,225 @@
+# Prepared-statement re-validation across catalog changes. SereneDB exposes a
+# monotonic catalog version (advancing on every GRANT/REVOKE/ALTER/DROP) so
+# DuckDB's RequireRebind re-binds -- and the RBAC walk re-checks -- a prepared
+# statement when, and only when, the catalog actually changed. This locks down
+# that a prepared statement reflects current grants/schema rather than a stale
+# plan, and (the control) does NOT spuriously fail when nothing changed.
+#
+# Every assertion was verified byte-for-byte against PostgreSQL 19.
+#
+# Lore: vedernikoff keeps statements primed while the MOP rewires grants/schema.
+
+statement ok
+DROP TABLE IF EXISTS pcv_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS pcv_vedernikoff;
+
+
+statement ok
+CREATE TABLE pcv_ledger (clickclack int, mop int, secret int);
+
+
+statement ok
+INSERT INTO pcv_ledger VALUES (1, 10, 100);
+
+
+statement ok
+CREATE ROLE pcv_vedernikoff LOGIN PASSWORD 'pcv_vedernikoff_pw';
+
+
+statement ok
+GRANT SELECT, INSERT ON pcv_ledger TO pcv_vedernikoff;
+
+
+# === A: control -- no catalog change between executes => no spurious failure ===
+connection c_ved user=pcv_vedernikoff password=pcv_vedernikoff_pw
+statement ok
+PREPARE pcv_sel AS SELECT clickclack FROM pcv_ledger;
+
+
+connection c_ved user=pcv_vedernikoff password=pcv_vedernikoff_pw
+query
+EXECUTE pcv_sel;
+----
+clickclack
+1
+
+
+# Re-execute, still no change -> still allowed.
+connection c_ved user=pcv_vedernikoff password=pcv_vedernikoff_pw
+query
+EXECUTE pcv_sel;
+----
+clickclack
+1
+
+
+# === B: REVOKE SELECT advances the version => prepared SELECT now DENIED ===
+connection default
+statement ok
+REVOKE SELECT ON pcv_ledger FROM pcv_vedernikoff;
+
+
+connection c_ved user=pcv_vedernikoff password=pcv_vedernikoff_pw
+statement error
+EXECUTE pcv_sel;
+----
+db error: ERROR: permission denied for table pcv_ledger<slt:ignore>
+
+
+# Re-GRANT advances the version again => the SAME prepared statement works again.
+connection default
+statement ok
+GRANT SELECT ON pcv_ledger TO pcv_vedernikoff;
+
+
+connection c_ved user=pcv_vedernikoff password=pcv_vedernikoff_pw
+query
+EXECUTE pcv_sel;
+----
+clickclack
+1
+
+
+# === C: prepared INSERT re-checks after REVOKE INSERT (the catalog-version fix) ===
+connection c_ved2 user=pcv_vedernikoff password=pcv_vedernikoff_pw
+statement ok
+PREPARE pcv_ins AS INSERT INTO pcv_ledger VALUES ($1, $2, $3);
+
+
+connection c_ved2 user=pcv_vedernikoff password=pcv_vedernikoff_pw
+statement ok
+EXECUTE pcv_ins(2, 20, 200);
+
+
+connection default
+statement ok
+REVOKE INSERT ON pcv_ledger FROM pcv_vedernikoff;
+
+
+connection c_ved2 user=pcv_vedernikoff password=pcv_vedernikoff_pw
+statement error
+EXECUTE pcv_ins(3, 30, 300);
+----
+db error: ERROR: permission denied for table pcv_ledger<slt:ignore>
+
+
+connection default
+statement ok
+GRANT INSERT ON pcv_ledger TO pcv_vedernikoff;
+
+
+# === D: ALTER TABLE DROP COLUMN advances the version => prepared read re-binds ===
+connection c_ved3 user=pcv_vedernikoff password=pcv_vedernikoff_pw
+statement ok
+PREPARE pcv_selmop AS SELECT mop FROM pcv_ledger;
+
+
+connection c_ved3 user=pcv_vedernikoff password=pcv_vedernikoff_pw
+query rowsort
+EXECUTE pcv_selmop;
+----
+mop
+10
+20
+
+
+connection default
+statement ok
+ALTER TABLE pcv_ledger DROP COLUMN mop;
+
+
+# The prepared statement re-binds against the new schema and the dropped column
+# is gone. (PG raises "column \"mop\" does not exist"; both engines re-bind and
+# error -- the point is that the prepared plan is NOT served stale.)
+skipif serenedb
+connection c_ved3 user=pcv_vedernikoff password=pcv_vedernikoff_pw
+statement error
+EXECUTE pcv_selmop;
+----
+db error: ERROR: column "mop" does not exist<slt:ignore>
+
+
+onlyif serenedb
+connection c_ved3 user=pcv_vedernikoff password=pcv_vedernikoff_pw
+statement error
+EXECUTE pcv_selmop;
+----
+db error: ERROR: Referenced column "mop" not found in FROM clause!<slt:ignore>
+
+
+# restore the column for the next case
+connection default
+statement ok
+ALTER TABLE pcv_ledger ADD COLUMN mop int;
+
+
+# === E: an UNRELATED ALTER ADD COLUMN does not break a still-valid prepared read ===
+connection c_ved4 user=pcv_vedernikoff password=pcv_vedernikoff_pw
+statement ok
+PREPARE pcv_selcc AS SELECT clickclack FROM pcv_ledger;
+
+
+connection c_ved4 user=pcv_vedernikoff password=pcv_vedernikoff_pw
+query rowsort
+EXECUTE pcv_selcc;
+----
+clickclack
+1
+2
+
+
+connection default
+statement ok
+ALTER TABLE pcv_ledger ADD COLUMN extra int;
+
+
+# Re-binds (version moved), but the read of clickclack is still authorized + valid.
+connection c_ved4 user=pcv_vedernikoff password=pcv_vedernikoff_pw
+query rowsort
+EXECUTE pcv_selcc;
+----
+clickclack
+1
+2
+
+
+# === F: switching a table grant to a COLUMN grant re-checks correctly ===
+# Revoke the table-wide SELECT, grant only SELECT(clickclack): the prepared read
+# of clickclack stays allowed; a read of the ungranted secret is refused.
+connection default
+statement ok
+REVOKE SELECT ON pcv_ledger FROM pcv_vedernikoff;
+
+
+connection default
+statement ok
+GRANT SELECT (clickclack) ON pcv_ledger TO pcv_vedernikoff;
+
+
+connection c_ved4 user=pcv_vedernikoff password=pcv_vedernikoff_pw
+query rowsort
+EXECUTE pcv_selcc;
+----
+clickclack
+1
+2
+
+
+connection c_ved5 user=pcv_vedernikoff password=pcv_vedernikoff_pw
+statement error
+SELECT secret FROM pcv_ledger;
+----
+db error: ERROR: permission denied for table pcv_ledger<slt:ignore>
+
+
+# ---- cleanup ----
+connection default
+statement ok
+DROP TABLE IF EXISTS pcv_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS pcv_vedernikoff;

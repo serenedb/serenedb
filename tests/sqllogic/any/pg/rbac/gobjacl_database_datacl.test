@@ -1,0 +1,72 @@
+# GRANT/REVOKE ... ON DATABASE drives pg_database.datacl. Because pg_database is
+# a shared catalog, the grant is visible immediately from any session, including
+# one connected to a DIFFERENT database than the grant target -- so this grants
+# ON DATABASE on a second database while connected to `postgres`, exercising the
+# cross-database path. CONNECT+TEMPORARY render as the "Tc" privilege letters.
+# PostgreSQL and serenedb agree.
+#
+# Vedernikoff lore: grantees from the usual cast. Idempotent + self-cleaning.
+
+statement ok
+DROP DATABASE IF EXISTS gobjacl_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS gobjacl_db_vedernikoff;
+
+
+statement ok
+CREATE DATABASE gobjacl_clickclack;
+
+
+statement ok
+CREATE ROLE gobjacl_db_vedernikoff;
+
+
+# Connected to `postgres`, grant on the OTHER database (cross-db path).
+statement ok
+GRANT CONNECT, TEMPORARY ON DATABASE gobjacl_clickclack TO gobjacl_db_vedernikoff;
+
+
+# The grant is visible immediately in this session: CONNECT+TEMPORARY -> "Tc";
+# the grantor is the granting role (postgres), not the database.
+query
+SELECT e FROM pg_database d, LATERAL unnest(d.datacl::text[]) AS e
+WHERE d.datname = 'gobjacl_clickclack' AND e LIKE 'gobjacl_db_vedernikoff=%';
+----
+e
+gobjacl_db_vedernikoff=Tc/postgres
+
+
+# The grant must NOT leak onto the connected database's own datacl.
+query
+SELECT count(*) AS rows
+FROM pg_database d, LATERAL unnest(d.datacl::text[]) AS e
+WHERE d.datname = 'postgres' AND e LIKE 'gobjacl_db_vedernikoff=%';
+----
+rows
+0
+
+
+# REVOKE is likewise visible immediately: the grantee element disappears.
+statement ok
+REVOKE CONNECT, TEMPORARY ON DATABASE gobjacl_clickclack FROM gobjacl_db_vedernikoff;
+
+
+query
+SELECT count(*) AS rows
+FROM pg_database d, LATERAL unnest(d.datacl::text[]) AS e
+WHERE d.datname = 'gobjacl_clickclack' AND e LIKE 'gobjacl_db_vedernikoff=%';
+----
+rows
+0
+
+
+# ---- cleanup ----
+
+statement ok
+DROP ROLE gobjacl_db_vedernikoff;
+
+
+statement ok
+DROP DATABASE gobjacl_clickclack;

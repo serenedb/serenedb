@@ -72,8 +72,9 @@ class Tokenizer : public Object {
   void Serialize(duckdb::Serializer& sink) const final;
   std::shared_ptr<Object> Clone() const final;
 
-  Tokenizer(ObjectId schema_id, ObjectId id, std::string_view name,
-            search::Features features, uint32_t norm_row_group_size,
+  Tokenizer(Permissions perm, ObjectId schema_id, ObjectId id,
+            std::string_view name, search::Features features,
+            uint32_t norm_row_group_size,
             irs::analysis::TokenizerConfig config);
 
   const search::Features& GetFeatures() const noexcept { return _features; }

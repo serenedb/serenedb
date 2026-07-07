@@ -33,8 +33,10 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
+#include "pg/errcodes.h"
 #include "pg/pg_types.h"
 #include "pg/serialize.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {
@@ -58,18 +60,21 @@ duckdb::string_t PgByteaIn(std::string_view input, duckdb::Vector& result_vec) {
       }
       const auto h1 = absl::kHexValueStrict[static_cast<unsigned char>(c)];
       if (h1 == -1) {
-        throw duckdb::InvalidInputException("invalid hexadecimal digit: \"%c\"",
-                                            c);
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+          ERR_MSG("invalid hexadecimal digit: \"", std::string(1, c), "\""));
       }
       if (i + 1 >= payload.size()) {
-        throw duckdb::InvalidInputException(
-          "invalid hexadecimal data: odd number of digits");
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+          ERR_MSG("invalid hexadecimal data: odd number of digits"));
       }
       const auto h2 =
         absl::kHexValueStrict[static_cast<unsigned char>(payload[i + 1])];
       if (h2 == -1) {
-        throw duckdb::InvalidInputException("invalid hexadecimal digit: \"%c\"",
-                                            payload[i + 1]);
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                        ERR_MSG("invalid hexadecimal digit: \"",
+                                std::string(1, payload[i + 1]), "\""));
       }
       *out++ = static_cast<char>((h1 << 4) + h2);
       i += 2;
@@ -92,8 +97,8 @@ duckdb::string_t PgByteaIn(std::string_view input, duckdb::Vector& result_vec) {
       continue;
     }
     if (i + 1 >= input.size()) {
-      throw duckdb::InvalidInputException(
-        "invalid input syntax for type bytea");
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                      ERR_MSG("invalid input syntax for type bytea"));
     }
     if (input[i + 1] == '\\') {
       *out++ = '\\';
@@ -101,15 +106,15 @@ duckdb::string_t PgByteaIn(std::string_view input, duckdb::Vector& result_vec) {
       continue;
     }
     if (i + 3 >= input.size()) {
-      throw duckdb::InvalidInputException(
-        "invalid input syntax for type bytea");
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                      ERR_MSG("invalid input syntax for type bytea"));
     }
     const char* octal = input.data() + i + 1;
     unsigned value = 0;
     const auto res = fast_float::from_chars(octal, octal + 3, value, 8);
     if (res.ec != std::errc() || res.ptr != octal + 3 || value > 0xFFU) {
-      throw duckdb::InvalidInputException(
-        "invalid input syntax for type bytea");
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                      ERR_MSG("invalid input syntax for type bytea"));
     }
     *out++ = static_cast<char>(value);
     i += 4;
@@ -226,7 +231,8 @@ bool PgVarcharToRegnamespaceCast(duckdb::Vector& source, duckdb::Vector& result,
     source, result, count, [&](std::string_view name) -> int64_t {
       auto oid = pg::RegnamespaceIn(conn_ctx, name);
       if (oid == pg::kInvalidOid) {
-        throw duckdb::CatalogException("namespace \"%s\" does not exist", name);
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
+                        ERR_MSG("namespace \"", name, "\" does not exist"));
       }
       return oid;
     });
@@ -249,7 +255,8 @@ bool PgVarcharToRegclassCast(duckdb::Vector& source, duckdb::Vector& result,
     source, result, count, [&](std::string_view name) -> int64_t {
       auto oid = pg::RegclassIn(conn_ctx, name);
       if (oid == pg::kInvalidOid) {
-        throw duckdb::CatalogException("relation \"%s\" does not exist", name);
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                        ERR_MSG("relation \"", name, "\" does not exist"));
       }
       return oid;
     });
@@ -269,7 +276,8 @@ bool PgVarcharToRegtypeCast(duckdb::Vector& source, duckdb::Vector& result,
     source, result, count, [](std::string_view name) -> int64_t {
       auto oid = pg::RegtypeIn(name);
       if (oid == pg::kInvalidOid) {
-        throw duckdb::CatalogException("type \"%s\" does not exist", name);
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                        ERR_MSG("type \"", name, "\" does not exist"));
       }
       return oid;
     });

@@ -1,0 +1,163 @@
+# pg_has_role: the four "structural" laws, identical on PostgreSQL and serenedb.
+#
+#   1. SELF        -- a role is always a member of itself (every keyword t).
+#   2. SUPERUSER   -- a superuser implicitly holds EVERY role.
+#   3. NON-MEMBER  -- a role outside the graph is in nothing (every keyword f).
+#   4. REVERSED    -- membership is directional: member->group is t but
+#                     group->member is f.
+#
+# Graph (-> reads "is a member of"):
+#   phr_kostya -> phr_deadinside
+#   phr_pudge                      (superuser, member of no group explicitly)
+#   phr_salam                      (bystander, member of nothing)
+#
+# Prefixed phr_, kostya/deadinside/pudge/salam lore, idempotent, self-cleaning.
+
+statement ok
+DROP ROLE IF EXISTS phr_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_deadinside;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_pudge;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_salam;
+
+
+statement ok
+CREATE ROLE phr_kostya;
+
+
+statement ok
+CREATE ROLE phr_deadinside;
+
+
+statement ok
+CREATE ROLE phr_pudge SUPERUSER;
+
+
+statement ok
+CREATE ROLE phr_salam;
+
+
+statement ok
+GRANT phr_deadinside TO phr_kostya;
+
+
+# ============================================================================
+# LAW 1 -- SELF: every role is a member of itself under all three keywords,
+# whether the role is a plain role, a group, a superuser, or a bystander.
+# ============================================================================
+
+query
+SELECT pg_has_role('phr_kostya',     'phr_kostya',     'USAGE')  AS kostya,
+       pg_has_role('phr_deadinside', 'phr_deadinside', 'MEMBER') AS deadinside,
+       pg_has_role('phr_pudge',      'phr_pudge',      'SET')    AS pudge,
+       pg_has_role('phr_salam',      'phr_salam',      'USAGE, MEMBER, SET') AS salam;
+----
+kostya	deadinside	pudge	salam
+t	t	t	t
+
+
+# Self holds via the oid form too.
+query
+SELECT pg_has_role((SELECT oid FROM pg_roles WHERE rolname='phr_kostya'),
+                   (SELECT oid FROM pg_roles WHERE rolname='phr_kostya'),
+                   'USAGE') AS self_by_oid;
+----
+self_by_oid
+t
+
+
+# ============================================================================
+# LAW 2 -- SUPERUSER holds EVERY role, including roles it was never granted.
+# pudge is a superuser and was granted nothing; it still holds kostya,
+# deadinside, and salam under every keyword.
+# ============================================================================
+
+query
+SELECT pg_has_role('phr_pudge', 'phr_kostya',     'USAGE')  AS holds_kostya,
+       pg_has_role('phr_pudge', 'phr_deadinside', 'MEMBER') AS holds_deadinside,
+       pg_has_role('phr_pudge', 'phr_salam',      'SET')    AS holds_salam;
+----
+holds_kostya	holds_deadinside	holds_salam
+t	t	t
+
+
+# The superuser even holds the built-in bootstrap superuser role postgres.
+query
+SELECT pg_has_role('phr_pudge', 'postgres', 'MEMBER') AS holds_postgres;
+----
+holds_postgres
+t
+
+
+# ============================================================================
+# LAW 3 -- NON-MEMBER: salam belongs to no group, so it holds no other role
+# (only itself, covered by Law 1). Every keyword against every other role is f.
+# ============================================================================
+
+query
+SELECT pg_has_role('phr_salam', 'phr_kostya',     'USAGE')  AS in_kostya,
+       pg_has_role('phr_salam', 'phr_deadinside', 'MEMBER') AS in_deadinside,
+       pg_has_role('phr_salam', 'phr_pudge',      'SET')    AS in_pudge;
+----
+in_kostya	in_deadinside	in_pudge
+f	f	f
+
+
+# And no one reaches salam either (salam is nobody's group).
+query
+SELECT pg_has_role('phr_kostya',     'phr_salam', 'USAGE')  AS kostya_to_salam,
+       pg_has_role('phr_deadinside', 'phr_salam', 'MEMBER') AS deadinside_to_salam;
+----
+kostya_to_salam	deadinside_to_salam
+f	f
+
+
+# ============================================================================
+# LAW 4 -- REVERSED: membership is directional. kostya is a member of
+# deadinside (t), but deadinside is NOT a member of kostya (f).
+# ============================================================================
+
+query
+SELECT pg_has_role('phr_kostya',     'phr_deadinside', 'USAGE') AS forward,
+       pg_has_role('phr_deadinside', 'phr_kostya',     'USAGE') AS reversed;
+----
+forward	reversed
+t	f
+
+
+# Reversed is f under every keyword and every argument form.
+query
+SELECT pg_has_role('phr_deadinside', 'phr_kostya', 'MEMBER') AS rev_member,
+       pg_has_role('phr_deadinside', 'phr_kostya', 'SET')    AS rev_set,
+       pg_has_role((SELECT oid FROM pg_roles WHERE rolname='phr_deadinside'),
+                   (SELECT oid FROM pg_roles WHERE rolname='phr_kostya'),
+                   'USAGE') AS rev_oid;
+----
+rev_member	rev_set	rev_oid
+f	f	f
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP ROLE IF EXISTS phr_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_deadinside;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_pudge;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_salam;

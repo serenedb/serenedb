@@ -20,6 +20,7 @@
 
 #include <absl/base/internal/endian.h>
 
+#include <array>
 #include <duckdb.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/main/config.hpp>
@@ -28,6 +29,7 @@
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
+#include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/bytes_utils.hpp>
@@ -35,7 +37,6 @@
 #include "basics/duckdb_engine.h"
 #include "catalog/table_options.h"
 #include "connector/common.h"
-#include "connector/duckdb_search_sink_writer.h"
 #include "connector/search_remove_filter.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "gtest/gtest.h"
@@ -130,8 +131,8 @@ class DuckDBSearchSinkWriterTest : public ::testing::Test {
  public:
   static catalog::ColumnTokenizer AnalyzerProvider(irs::field_id) {
     static catalog::Tokenizer gStringTokenizer(
-      ObjectId{0}, ObjectId{12345}, "test_string_verbartim", {},
-      DEFAULT_ROW_GROUP_SIZE,
+      catalog::Permissions{}, ObjectId{0}, ObjectId{12345},
+      "test_string_verbartim", {}, DEFAULT_ROW_GROUP_SIZE,
       irs::analysis::TokenizerConfig{.config =
                                        irs::StringTokenizer::Options{}});
     auto tokenizer = gStringTokenizer.GetTokenizer();
@@ -160,10 +161,6 @@ class DuckDBSearchSinkWriterTest : public ::testing::Test {
   irs::Format::ptr _codec;
   irs::MemoryDirectory _dir;
   irs::IndexWriter::ptr _data_writer;
-  // DuckDBSearchSink{Insert,Delete}Writer::Init takes a const DataChunk& but
-  // the current implementations ignore it; a default-constructed chunk is
-  // sufficient.
-  duckdb::DataChunk _dummy_chunk;
 };
 
 TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
@@ -188,94 +185,93 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
   const std::vector<int64_t> bigint_values{9, 10, 11, 12};
 
   // First batch: rows 0 and 1
-  sink.Init(2, _dummy_chunk);
+  const std::vector<std::string_view> rk1{pk[0], pk[1]};
+  auto pk_vec1 =
+    MakeNumericVector<int64_t>(duckdb::LogicalType::BIGINT, {1, 2});
+  sink.Init(2, PkChunk{.keys = rk1, .column = &pk_vec1});
   {
     auto vec = MakeNumericVector<int32_t>(duckdb::LogicalType::INTEGER,
                                           {int_values[0], int_values[1]});
-    std::vector<std::string_view> rk{pk[0], pk[1]};
     sink.SwitchColumn(ColumnDescriptor{col_id[0], duckdb::LogicalType::INTEGER},
-                      vec, rk, 2);
+                      vec, 2);
   }
   {
     auto vec = MakeVarcharVector({string_values[0], string_values[1]});
-    std::vector<std::string_view> rk{pk[0], pk[1]};
     sink.SwitchColumn(ColumnDescriptor{col_id[1], duckdb::LogicalType::VARCHAR},
-                      vec, rk, 2);
+                      vec, 2);
   }
   {
     auto vec = MakeNumericVector<bool>(duckdb::LogicalType::BOOLEAN,
                                        {bool_values[0], bool_values[1]});
-    std::vector<std::string_view> rk{pk[0], pk[1]};
     sink.SwitchColumn(ColumnDescriptor{col_id[2], duckdb::LogicalType::BOOLEAN},
-                      vec, rk, 2);
+                      vec, 2);
   }
   {
     auto vec = MakeNumericVector<float>(duckdb::LogicalType::FLOAT,
                                         {float_values[0], float_values[1]});
-    std::vector<std::string_view> rk{pk[0], pk[1]};
     sink.SwitchColumn(ColumnDescriptor{col_id[3], duckdb::LogicalType::FLOAT},
-                      vec, rk, 2);
+                      vec, 2);
   }
   {
     auto vec = MakeNumericVector<int64_t>(duckdb::LogicalType::BIGINT,
                                           {bigint_values[0], bigint_values[1]});
-    std::vector<std::string_view> rk{pk[0], pk[1]};
     sink.SwitchColumn(ColumnDescriptor{col_id[4], duckdb::LogicalType::BIGINT},
-                      vec, rk, 2);
+                      vec, 2);
   }
   sink.Finish();
 
   // Second batch: rows 2 and 3 - reusing the same sink (tests document reset)
-  sink.Init(2, _dummy_chunk);
+  const std::vector<std::string_view> rk2{pk[2], pk[3]};
+  auto pk_vec2 =
+    MakeNumericVector<int64_t>(duckdb::LogicalType::BIGINT, {3, 4});
+  sink.Init(2, PkChunk{.keys = rk2, .column = &pk_vec2});
   {
     auto vec = MakeNumericVector<int32_t>(duckdb::LogicalType::INTEGER,
                                           {int_values[2], int_values[3]});
-    std::vector<std::string_view> rk{pk[2], pk[3]};
     sink.SwitchColumn(ColumnDescriptor{col_id[0], duckdb::LogicalType::INTEGER},
-                      vec, rk, 2);
+                      vec, 2);
   }
   {
     auto vec = MakeVarcharVector({string_values[2], string_values[3]});
-    std::vector<std::string_view> rk{pk[2], pk[3]};
     sink.SwitchColumn(ColumnDescriptor{col_id[1], duckdb::LogicalType::VARCHAR},
-                      vec, rk, 2);
+                      vec, 2);
   }
   {
     auto vec = MakeNumericVector<bool>(duckdb::LogicalType::BOOLEAN,
                                        {bool_values[2], bool_values[3]});
-    std::vector<std::string_view> rk{pk[2], pk[3]};
     sink.SwitchColumn(ColumnDescriptor{col_id[2], duckdb::LogicalType::BOOLEAN},
-                      vec, rk, 2);
+                      vec, 2);
   }
   {
     auto vec = MakeNumericVector<float>(duckdb::LogicalType::FLOAT,
                                         {float_values[2], float_values[3]});
-    std::vector<std::string_view> rk{pk[2], pk[3]};
     sink.SwitchColumn(ColumnDescriptor{col_id[3], duckdb::LogicalType::FLOAT},
-                      vec, rk, 2);
+                      vec, 2);
   }
   {
     auto vec = MakeNumericVector<int64_t>(duckdb::LogicalType::BIGINT,
                                           {bigint_values[2], bigint_values[3]});
-    std::vector<std::string_view> rk{pk[2], pk[3]};
     sink.SwitchColumn(ColumnDescriptor{col_id[4], duckdb::LogicalType::BIGINT},
-                      vec, rk, 2);
+                      vec, 2);
   }
   sink.Finish();
   ASSERT_TRUE(trx.Commit());
   _data_writer->RefreshCommit();
 
-  auto validate_row = [](const irs::SubReader& segment, std::string_view pk,
+  auto validate_row = [](const irs::SubReader& segment, int64_t pk,
                          int32_t col1, std::string_view col2, bool col3,
                          float col4, int64_t col5) {
     const auto* cs_reader = segment.GetColReader();
     ASSERT_NE(nullptr, cs_reader);
     const auto* pk_column = cs_reader->Column(kPKFieldId);
     ASSERT_NE(nullptr, pk_column);
-    irs::ColumnReader::BlobPointReader pk_cursor{*cs_reader, *pk_column};
-    auto read_pk_at = [&](irs::doc_id_t doc_id) -> std::string_view {
-      const auto bytes = pk_cursor.FetchDoc(doc_id);
-      return {reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+    irs::ReadContext pk_ctx{*cs_reader};
+    auto read_pk_at = [&](irs::doc_id_t doc_id) -> int64_t {
+      auto pk_state = pk_column->InitScan(pk_ctx);
+      duckdb::Vector out(duckdb::LogicalType::BIGINT, 1);
+      const std::array<uint64_t, 1> rows{doc_id - irs::doc_limits::min()};
+      irs::column_internal::GatherRows(*pk_column, pk_state, rows, out, 0);
+      return duckdb::FlatVector::GetData<int64_t>(out)[0];
     };
     auto int32_terms = segment.field(catalog::Column::Id{1});
     ASSERT_NE(nullptr, int32_terms);
@@ -323,10 +319,10 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
     ASSERT_TRUE(bool_term_itr->seek(bool_token->value));
     auto bool_postings =
       segment.mask(bool_term_itr->postings(irs::IndexFeatures::None));
-    ASSERT_TRUE(int32_postings->next());
-    ASSERT_TRUE(varchar_postings->next());
-    ASSERT_TRUE(real_postings->next());
-    ASSERT_TRUE(big_postings->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(int32_postings->advance()));
+    ASSERT_TRUE(!irs::doc_limits::eof(varchar_postings->advance()));
+    ASSERT_TRUE(!irs::doc_limits::eof(real_postings->advance()));
+    ASSERT_TRUE(!irs::doc_limits::eof(big_postings->advance()));
     ASSERT_EQ(big_postings->value(), varchar_postings->value());
     ASSERT_EQ(real_postings->value(), varchar_postings->value());
     ASSERT_EQ(int32_postings->value(), varchar_postings->value());
@@ -335,10 +331,10 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
     ASSERT_TRUE(bool_postings->seek(int32_postings->value()));
     ASSERT_EQ(int32_postings->value(), bool_postings->value());
     ASSERT_EQ(pk, read_pk_at(varchar_postings->value()));
-    ASSERT_FALSE(varchar_postings->next());
-    ASSERT_FALSE(int32_postings->next());
-    ASSERT_FALSE(real_postings->next());
-    ASSERT_FALSE(big_postings->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(varchar_postings->advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(int32_postings->advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(real_postings->advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(big_postings->advance()));
   };
   {
     auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
@@ -346,14 +342,14 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
     ASSERT_EQ(4, reader.docs_count());
     ASSERT_EQ(4, reader.live_docs_count());
 
-    validate_row(reader[0], "pk1", int_values[0], string_values[0],
-                 bool_values[0], float_values[0], bigint_values[0]);
-    validate_row(reader[0], "pk2", int_values[1], string_values[1],
-                 bool_values[1], float_values[1], bigint_values[1]);
-    validate_row(reader[0], "pk3", int_values[2], string_values[2],
-                 bool_values[2], float_values[2], bigint_values[2]);
-    validate_row(reader[0], "pk4", int_values[3], string_values[3],
-                 bool_values[3], float_values[3], bigint_values[3]);
+    validate_row(reader[0], 1, int_values[0], string_values[0], bool_values[0],
+                 float_values[0], bigint_values[0]);
+    validate_row(reader[0], 2, int_values[1], string_values[1], bool_values[1],
+                 float_values[1], bigint_values[1]);
+    validate_row(reader[0], 3, int_values[2], string_values[2], bool_values[2],
+                 float_values[2], bigint_values[2]);
+    validate_row(reader[0], 4, int_values[3], string_values[3], bool_values[3],
+                 float_values[3], bigint_values[3]);
   }
 
   // Delete rows
@@ -363,7 +359,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
     // in local block to make sure remove filters ownership is properly
     // transferred
     DuckDBSearchSinkDeleteWriter delete_sink{delete_trx};
-    delete_sink.Init(2, _dummy_chunk);
+    delete_sink.Init(2, {});
     delete_sink.DeleteRow("pk2");
     delete_sink.DeleteRow("pk4");
     delete_sink.Finish();
@@ -377,10 +373,10 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
     ASSERT_EQ(4, reader.docs_count());
     ASSERT_EQ(2, reader.live_docs_count());
 
-    validate_row(reader[0], "pk1", int_values[0], string_values[0],
-                 bool_values[0], float_values[0], bigint_values[0]);
-    validate_row(reader[0], "pk3", int_values[2], string_values[2],
-                 bool_values[2], float_values[2], bigint_values[2]);
+    validate_row(reader[0], 1, int_values[0], string_values[0], bool_values[0],
+                 float_values[0], bigint_values[0]);
+    validate_row(reader[0], 3, int_values[2], string_values[2], bool_values[2],
+                 float_values[2], bigint_values[2]);
   }
 }
 
@@ -420,8 +416,10 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
 
   DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider, col_id,
                                     std::move(entry_provider)};
-  sink.Init(4, _dummy_chunk);
-  std::vector<std::string_view> rk{pk[0], pk[1], pk[2], pk[3]};
+  const std::vector<std::string_view> rk{pk[0], pk[1], pk[2], pk[3]};
+  auto pk_vec =
+    MakeNumericVector<int64_t>(duckdb::LogicalType::BIGINT, {1, 2, 3, 4});
+  sink.Init(4, PkChunk{.keys = rk, .column = &pk_vec});
 
   {
     // Row pattern: foo, NULL, bar, NULL.
@@ -429,13 +427,13 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
       {string_data[0], std::string_view{}, string_data[1], std::string_view{}},
       {true, false, true, false});
     sink.SwitchColumn(ColumnDescriptor{col_id[0], duckdb::LogicalType::VARCHAR},
-                      vec, rk, 4);
+                      vec, 4);
   }
   {
     // SQLNULL column: all 4 rows null.
     auto vec = MakeSqlNullVector(4);
     sink.SwitchColumn(ColumnDescriptor{col_id[1], duckdb::LogicalType::SQLNULL},
-                      vec, rk, 4);
+                      vec, 4);
   }
   sink.Finish();
   ASSERT_TRUE(trx.Commit());
@@ -450,12 +448,15 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
   ASSERT_NE(nullptr, cs_reader);
   const auto* pk_column = cs_reader->Column(kPKFieldId);
   ASSERT_NE(nullptr, pk_column);
-  irs::ColumnReader::BlobPointReader pk_cursor{*cs_reader, *pk_column};
-  auto read_pk_at = [&](irs::doc_id_t doc_id) -> std::string_view {
-    const auto bytes = pk_cursor.FetchDoc(doc_id);
-    return {reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+  irs::ReadContext pk_ctx{*cs_reader};
+  auto read_pk_at = [&](irs::doc_id_t doc_id) -> int64_t {
+    auto pk_state = pk_column->InitScan(pk_ctx);
+    duckdb::Vector out(duckdb::LogicalType::BIGINT, 1);
+    const std::array<uint64_t, 1> rows{doc_id - irs::doc_limits::min()};
+    irs::column_internal::GatherRows(*pk_column, pk_state, rows, out, 0);
+    return duckdb::FlatVector::GetData<int64_t>(out)[0];
   };
-  auto find_doc_for_pk = [&](std::string_view target) -> irs::doc_id_t {
+  auto find_doc_for_pk = [&](int64_t target) -> irs::doc_id_t {
     const uint64_t rows = pk_column->RowCount();
     for (uint64_t row = 0; row < rows; ++row) {
       const auto doc = static_cast<irs::doc_id_t>(row + irs::doc_limits::min());
@@ -489,8 +490,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
     ASSERT_TRUE(varchar_nulls_itr->next());
     auto varchar_postings =
       varchar_terms_itr->postings(irs::IndexFeatures::None);
-    ASSERT_TRUE(varchar_postings->next());
-    ASSERT_EQ("pk1", read_pk_at(varchar_postings->value()));
+    ASSERT_TRUE(!irs::doc_limits::eof(varchar_postings->advance()));
+    ASSERT_EQ(1, read_pk_at(varchar_postings->value()));
     auto varchar_nulls_postings =
       varchar_nulls_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(varchar_nulls_postings->seek(varchar_postings->value()));
@@ -502,12 +503,12 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
       unknown_terms_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(unknown_postings->seek(varchar_postings->value()));
     ASSERT_EQ(varchar_postings->value(), unknown_postings->value());
-    ASSERT_FALSE(varchar_postings->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(varchar_postings->advance()));
   }
   // Row 2  NULL, NULL
   {
     // Find expected PK so we know document id for this row
-    irs::doc_id_t row_doc_id = find_doc_for_pk("pk2");
+    irs::doc_id_t row_doc_id = find_doc_for_pk(2);
     ASSERT_TRUE(irs::doc_limits::valid(row_doc_id));
     // We have some nulls so term should be present
     auto varchar_nulls_itr = varchar_nulls->iterator(irs::SeekMode::NORMAL);
@@ -534,8 +535,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
     ASSERT_TRUE(varchar_nulls_itr->next());
     auto varchar_postings =
       varchar_terms_itr->postings(irs::IndexFeatures::None);
-    ASSERT_TRUE(varchar_postings->next());
-    ASSERT_EQ("pk3", read_pk_at(varchar_postings->value()));
+    ASSERT_TRUE(!irs::doc_limits::eof(varchar_postings->advance()));
+    ASSERT_EQ(3, read_pk_at(varchar_postings->value()));
     auto varchar_nulls_postings =
       varchar_nulls_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(varchar_nulls_postings->seek(varchar_postings->value()));
@@ -547,12 +548,12 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
       unknown_terms_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(unknown_postings->seek(varchar_postings->value()));
     ASSERT_EQ(varchar_postings->value(), unknown_postings->value());
-    ASSERT_FALSE(varchar_postings->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(varchar_postings->advance()));
   }
   // Row 4 NULL, NULL
   {
     // Find expected PK so we know document id for this row
-    irs::doc_id_t row_doc_id = find_doc_for_pk("pk4");
+    irs::doc_id_t row_doc_id = find_doc_for_pk(4);
     ASSERT_TRUE(irs::doc_limits::valid(row_doc_id));
     // We have some nulls so term should be present
     auto varchar_nulls_itr = varchar_nulls->iterator(irs::SeekMode::NORMAL);
@@ -577,15 +578,16 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertStringPrefix) {
   auto trx = _data_writer->GetBatch();
   const catalog::Column::Id col_id{1};
   DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider, {col_id}};
-  sink.Init(1, _dummy_chunk);
 
   const std::vector<std::string_view> pk{{"pk1", 3}};
-  std::vector<std::string_view> rk{pk[0]};
+  const std::vector<std::string_view> rk{pk[0]};
+  auto pk_vec = MakeNumericVector<int64_t>(duckdb::LogicalType::BIGINT, {1});
+  sink.Init(1, PkChunk{.keys = rk, .column = &pk_vec});
 
   // Literal 4-byte term: \x0 'f' 'o' 'o'.
   auto vec = MakeVarcharVector({std::string_view{"\x0foo", 4}});
   sink.SwitchColumn(ColumnDescriptor{col_id, duckdb::LogicalType::VARCHAR}, vec,
-                    rk, 1);
+                    1);
   sink.Finish();
   ASSERT_TRUE(trx.Commit());
   _data_writer->RefreshCommit();
@@ -598,10 +600,13 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertStringPrefix) {
   ASSERT_NE(nullptr, cs_reader);
   const auto* pk_column = cs_reader->Column(kPKFieldId);
   ASSERT_NE(nullptr, pk_column);
-  irs::ColumnReader::BlobPointReader pk_cursor{*cs_reader, *pk_column};
-  auto read_pk_at = [&](irs::doc_id_t doc_id) -> std::string_view {
-    const auto bytes = pk_cursor.FetchDoc(doc_id);
-    return {reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+  irs::ReadContext pk_ctx{*cs_reader};
+  auto read_pk_at = [&](irs::doc_id_t doc_id) -> int64_t {
+    auto pk_state = pk_column->InitScan(pk_ctx);
+    duckdb::Vector out(duckdb::LogicalType::BIGINT, 1);
+    const std::array<uint64_t, 1> rows{doc_id - irs::doc_limits::min()};
+    irs::column_internal::GatherRows(*pk_column, pk_state, rows, out, 0);
+    return duckdb::FlatVector::GetData<int64_t>(out)[0];
   };
 
   auto varchar_terms = segment.field(catalog::Column::Id{1});
@@ -612,55 +617,61 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertStringPrefix) {
     irs::ViewCast<irs::byte_type>(std::string_view{"\x0foo", 4})));
 
   auto varchar_postings = varchar_terms_itr->postings(irs::IndexFeatures::None);
-  ASSERT_TRUE(varchar_postings->next());
-  ASSERT_EQ("pk1", read_pk_at(varchar_postings->value()));
+  ASSERT_TRUE(!irs::doc_limits::eof(varchar_postings->advance()));
+  ASSERT_EQ(1, read_pk_at(varchar_postings->value()));
 }
 
 // Helper for the multi-commit "insert / delete / insert" exercise tests
 // below: each phase opens a transaction, writes a single (pk, value) row to
-// column 1, finishes, commits.
+// column 1, finishes, commits. The BIGINT stored-pk id is derived from the
+// trailing integer of the "pkN" key string.
 namespace {
 
+int64_t PkIdOf(std::string_view pk) {
+  return std::stoll(std::string(pk.substr(2)));
+}
+
 void InsertOneVarcharRow(irs::IndexWriter& writer, std::string_view pk,
-                         std::string_view value,
-                         duckdb::DataChunk& dummy_chunk) {
+                         std::string_view value) {
   auto trx = writer.GetBatch();
   DuckDBSearchSinkInsertWriter sink{
     trx, DuckDBSearchSinkWriterTest::AnalyzerProvider,
     std::array<catalog::Column::Id, 1>{catalog::Column::Id{1}}};
-  sink.Init(1, dummy_chunk);
+  const std::vector<std::string_view> rk{pk};
+  auto pk_vec =
+    MakeNumericVector<int64_t>(duckdb::LogicalType::BIGINT, {PkIdOf(pk)});
+  sink.Init(1, PkChunk{.keys = rk, .column = &pk_vec});
   auto vec = MakeVarcharVector({value});
-  std::vector<std::string_view> rk{pk};
   sink.SwitchColumn(
     ColumnDescriptor{catalog::Column::Id{1}, duckdb::LogicalType::VARCHAR}, vec,
-    rk, 1);
+    1);
   sink.Finish();
   ASSERT_TRUE(trx.Commit());
 }
 
 void InsertTwoVarcharRows(irs::IndexWriter& writer, std::string_view pk_a,
                           std::string_view value_a, std::string_view pk_b,
-                          std::string_view value_b,
-                          duckdb::DataChunk& dummy_chunk) {
+                          std::string_view value_b) {
   auto trx = writer.GetBatch();
   DuckDBSearchSinkInsertWriter sink{
     trx, DuckDBSearchSinkWriterTest::AnalyzerProvider,
     std::array<catalog::Column::Id, 1>{catalog::Column::Id{1}}};
-  sink.Init(2, dummy_chunk);
+  const std::vector<std::string_view> rk{pk_a, pk_b};
+  auto pk_vec = MakeNumericVector<int64_t>(duckdb::LogicalType::BIGINT,
+                                           {PkIdOf(pk_a), PkIdOf(pk_b)});
+  sink.Init(2, PkChunk{.keys = rk, .column = &pk_vec});
   auto vec = MakeVarcharVector({value_a, value_b});
-  std::vector<std::string_view> rk{pk_a, pk_b};
   sink.SwitchColumn(
     ColumnDescriptor{catalog::Column::Id{1}, duckdb::LogicalType::VARCHAR}, vec,
-    rk, 2);
+    2);
   sink.Finish();
   ASSERT_TRUE(trx.Commit());
 }
 
-void DeleteOnePk(irs::IndexWriter& writer, std::string_view pk,
-                 duckdb::DataChunk& dummy_chunk) {
+void DeleteOnePk(irs::IndexWriter& writer, std::string_view pk) {
   auto delete_trx = writer.GetBatch();
   DuckDBSearchSinkDeleteWriter delete_sink{delete_trx};
-  delete_sink.Init(1, dummy_chunk);
+  delete_sink.Init(1, {});
   delete_sink.DeleteRow(pk);
   delete_sink.Finish();
   ASSERT_TRUE(delete_trx.Commit());
@@ -672,16 +683,15 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertWithExisting) {
   constexpr std::string_view kPk = {"pk1", 3};
   constexpr std::string_view kPk2 = {"pk2", 3};
 
-  InsertTwoVarcharRows(*_data_writer, kPk, "value1", kPk2, "value9",
-                       _dummy_chunk);
+  InsertTwoVarcharRows(*_data_writer, kPk, "value1", kPk2, "value9");
   _data_writer->RefreshCommit();  // "existing" segment.
 
-  DeleteOnePk(*_data_writer, "pk1", _dummy_chunk);
-  InsertOneVarcharRow(*_data_writer, kPk, "value2", _dummy_chunk);
+  DeleteOnePk(*_data_writer, "pk1");
+  InsertOneVarcharRow(*_data_writer, kPk, "value2");
   // Intentionally do not commit data writer between these steps to force
   // several same PKs in one writer commit.
-  DeleteOnePk(*_data_writer, "pk1", _dummy_chunk);
-  InsertOneVarcharRow(*_data_writer, kPk, "value3", _dummy_chunk);
+  DeleteOnePk(*_data_writer, "pk1");
+  InsertOneVarcharRow(*_data_writer, kPk, "value3");
   _data_writer->RefreshCommit();
 
   auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
@@ -694,10 +704,13 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertWithExisting) {
     ASSERT_NE(nullptr, cs_reader);
     const auto* pk_column = cs_reader->Column(kPKFieldId);
     ASSERT_NE(nullptr, pk_column);
-    irs::ColumnReader::BlobPointReader pk_cursor{*cs_reader, *pk_column};
-    auto read_pk_at = [&](irs::doc_id_t doc_id) -> std::string_view {
-      const auto bytes = pk_cursor.FetchDoc(doc_id);
-      return {reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+    irs::ReadContext pk_ctx{*cs_reader};
+    auto read_pk_at = [&](irs::doc_id_t doc_id) -> int64_t {
+      auto pk_state = pk_column->InitScan(pk_ctx);
+      duckdb::Vector out(duckdb::LogicalType::BIGINT, 1);
+      const std::array<uint64_t, 1> rows{doc_id - irs::doc_limits::min()};
+      irs::column_internal::GatherRows(*pk_column, pk_state, rows, out, 0);
+      return duckdb::FlatVector::GetData<int64_t>(out)[0];
     };
     auto varchar_terms = segment.field(catalog::Column::Id{1});
     ASSERT_NE(nullptr, varchar_terms);
@@ -705,9 +718,9 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertWithExisting) {
     ASSERT_TRUE(
       itr->seek(irs::ViewCast<irs::byte_type>(std::string_view{"value3", 6})));
     auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
-    ASSERT_TRUE(postings->next());
-    ASSERT_EQ("pk1", read_pk_at(postings->value()));
-    ASSERT_FALSE(postings->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(postings->advance()));
+    ASSERT_EQ(1, read_pk_at(postings->value()));
+    ASSERT_FALSE(!irs::doc_limits::eof(postings->advance()));
   }
   // check deleted
   {
@@ -719,7 +732,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertWithExisting) {
     ASSERT_TRUE(
       itr->seek(irs::ViewCast<irs::byte_type>(std::string_view{"value2", 6})));
     auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
-    ASSERT_FALSE(postings->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(postings->advance()));
   }
   {
     auto& segment = reader[0];
@@ -730,20 +743,20 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertWithExisting) {
     ASSERT_TRUE(
       itr->seek(irs::ViewCast<irs::byte_type>(std::string_view{"value1", 6})));
     auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
-    ASSERT_FALSE(postings->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(postings->advance()));
   }
 }
 
 TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePending) {
   constexpr std::string_view kPk = {"pk1", 3};
 
-  InsertOneVarcharRow(*_data_writer, kPk, "value1", _dummy_chunk);
+  InsertOneVarcharRow(*_data_writer, kPk, "value1");
   // Intentionally do not commit data writer to force several same PKs in one
   // writer commit.
-  DeleteOnePk(*_data_writer, "pk1", _dummy_chunk);
-  InsertOneVarcharRow(*_data_writer, kPk, "value2", _dummy_chunk);
-  DeleteOnePk(*_data_writer, "pk1", _dummy_chunk);
-  InsertOneVarcharRow(*_data_writer, kPk, "value3", _dummy_chunk);
+  DeleteOnePk(*_data_writer, "pk1");
+  InsertOneVarcharRow(*_data_writer, kPk, "value2");
+  DeleteOnePk(*_data_writer, "pk1");
+  InsertOneVarcharRow(*_data_writer, kPk, "value3");
   _data_writer->RefreshCommit();
 
   auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
@@ -756,10 +769,13 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePending) {
     ASSERT_NE(nullptr, cs_reader);
     const auto* pk_column = cs_reader->Column(kPKFieldId);
     ASSERT_NE(nullptr, pk_column);
-    irs::ColumnReader::BlobPointReader pk_cursor{*cs_reader, *pk_column};
-    auto read_pk_at = [&](irs::doc_id_t doc_id) -> std::string_view {
-      const auto bytes = pk_cursor.FetchDoc(doc_id);
-      return {reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+    irs::ReadContext pk_ctx{*cs_reader};
+    auto read_pk_at = [&](irs::doc_id_t doc_id) -> int64_t {
+      auto pk_state = pk_column->InitScan(pk_ctx);
+      duckdb::Vector out(duckdb::LogicalType::BIGINT, 1);
+      const std::array<uint64_t, 1> rows{doc_id - irs::doc_limits::min()};
+      irs::column_internal::GatherRows(*pk_column, pk_state, rows, out, 0);
+      return duckdb::FlatVector::GetData<int64_t>(out)[0];
     };
     auto varchar_terms = segment.field(catalog::Column::Id{1});
     ASSERT_NE(nullptr, varchar_terms);
@@ -767,9 +783,9 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePending) {
     ASSERT_TRUE(
       itr->seek(irs::ViewCast<irs::byte_type>(std::string_view{"value3", 6})));
     auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
-    ASSERT_TRUE(postings->next());
-    ASSERT_EQ("pk1", read_pk_at(postings->value()));
-    ASSERT_FALSE(postings->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(postings->advance()));
+    ASSERT_EQ(1, read_pk_at(postings->value()));
+    ASSERT_FALSE(!irs::doc_limits::eof(postings->advance()));
   }
   // check deleted
   {
@@ -781,14 +797,14 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePending) {
       ASSERT_TRUE(itr->seek(
         irs::ViewCast<irs::byte_type>(std::string_view{"value2", 6})));
       auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
-      ASSERT_FALSE(postings->next());
+      ASSERT_FALSE(!irs::doc_limits::eof(postings->advance()));
     }
     {
       auto itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(itr->seek(
         irs::ViewCast<irs::byte_type>(std::string_view{"value1", 6})));
       auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
-      ASSERT_FALSE(postings->next());
+      ASSERT_FALSE(!irs::doc_limits::eof(postings->advance()));
     }
   }
 }
@@ -808,13 +824,11 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
     constexpr std::string_view kPk2 = {"pk2", 3};
     constexpr std::string_view kPk3 = {"pk3", 3};
 
-    InsertTwoVarcharRows(*limited_data_writer, kPk, "value1", kPk3, "value8",
-                         _dummy_chunk);
-    DeleteOnePk(*limited_data_writer, "pk1", _dummy_chunk);
-    InsertTwoVarcharRows(*limited_data_writer, kPk, "value2", kPk2, "value22",
-                         _dummy_chunk);
-    DeleteOnePk(*limited_data_writer, "pk1", _dummy_chunk);
-    InsertOneVarcharRow(*limited_data_writer, kPk, "value3", _dummy_chunk);
+    InsertTwoVarcharRows(*limited_data_writer, kPk, "value1", kPk3, "value8");
+    DeleteOnePk(*limited_data_writer, "pk1");
+    InsertTwoVarcharRows(*limited_data_writer, kPk, "value2", kPk2, "value22");
+    DeleteOnePk(*limited_data_writer, "pk1");
+    InsertOneVarcharRow(*limited_data_writer, kPk, "value3");
     limited_data_writer->RefreshCommit();
 
     auto reader = irs::DirectoryReader(dir, _codec, {.db = &TestDb()});
@@ -828,10 +842,13 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
       ASSERT_NE(nullptr, cs_reader);
       const auto* pk_column = cs_reader->Column(kPKFieldId);
       ASSERT_NE(nullptr, pk_column);
-      irs::ColumnReader::BlobPointReader pk_cursor{*cs_reader, *pk_column};
-      auto read_pk_at = [&](irs::doc_id_t doc_id) -> std::string_view {
-        const auto bytes = pk_cursor.FetchDoc(doc_id);
-        return {reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+      irs::ReadContext pk_ctx{*cs_reader};
+      auto read_pk_at = [&](irs::doc_id_t doc_id) -> int64_t {
+        auto pk_state = pk_column->InitScan(pk_ctx);
+        duckdb::Vector out(duckdb::LogicalType::BIGINT, 1);
+        const std::array<uint64_t, 1> rows{doc_id - irs::doc_limits::min()};
+        irs::column_internal::GatherRows(*pk_column, pk_state, rows, out, 0);
+        return duckdb::FlatVector::GetData<int64_t>(out)[0];
       };
       auto varchar_terms = segment.field(catalog::Column::Id{1});
       ASSERT_NE(nullptr, varchar_terms);
@@ -839,9 +856,9 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
       ASSERT_TRUE(itr->seek(
         irs::ViewCast<irs::byte_type>(std::string_view{"value3", 6})));
       auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
-      ASSERT_TRUE(postings->next());
-      ASSERT_EQ("pk1", read_pk_at(postings->value()));
-      ASSERT_FALSE(postings->next());
+      ASSERT_TRUE(!irs::doc_limits::eof(postings->advance()));
+      ASSERT_EQ(1, read_pk_at(postings->value()));
+      ASSERT_FALSE(!irs::doc_limits::eof(postings->advance()));
     }
     // check deleted
     {
@@ -853,7 +870,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
         ASSERT_TRUE(itr->seek(
           irs::ViewCast<irs::byte_type>(std::string_view{"value1", 6})));
         auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
-        ASSERT_FALSE(postings->next());
+        ASSERT_FALSE(!irs::doc_limits::eof(postings->advance()));
       }
     }
     {
@@ -865,7 +882,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
         ASSERT_TRUE(itr->seek(
           irs::ViewCast<irs::byte_type>(std::string_view{"value2", 6})));
         auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
-        ASSERT_FALSE(postings->next());
+        ASSERT_FALSE(!irs::doc_limits::eof(postings->advance()));
       }
     }
   }
@@ -875,14 +892,13 @@ TEST_F(DuckDBSearchSinkWriterTest, DeleteNotMissedWithExisting) {
   constexpr std::string_view kPk = {"pk1", 3};
   constexpr std::string_view kPk2 = {"pk2", 3};
 
-  InsertTwoVarcharRows(*_data_writer, kPk, "value1", kPk2, "value9",
-                       _dummy_chunk);
+  InsertTwoVarcharRows(*_data_writer, kPk, "value1", kPk2, "value9");
   _data_writer->RefreshCommit();
 
   // this delete should not fire at value2 during new segment processing
   // and successfully delete value1.
-  DeleteOnePk(*_data_writer, "pk1", _dummy_chunk);
-  InsertOneVarcharRow(*_data_writer, kPk, "value2", _dummy_chunk);
+  DeleteOnePk(*_data_writer, "pk1");
+  InsertOneVarcharRow(*_data_writer, kPk, "value2");
   _data_writer->RefreshCommit();
 
   auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
@@ -895,10 +911,13 @@ TEST_F(DuckDBSearchSinkWriterTest, DeleteNotMissedWithExisting) {
     ASSERT_NE(nullptr, cs_reader);
     const auto* pk_column = cs_reader->Column(kPKFieldId);
     ASSERT_NE(nullptr, pk_column);
-    irs::ColumnReader::BlobPointReader pk_cursor{*cs_reader, *pk_column};
-    auto read_pk_at = [&](irs::doc_id_t doc_id) -> std::string_view {
-      const auto bytes = pk_cursor.FetchDoc(doc_id);
-      return {reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+    irs::ReadContext pk_ctx{*cs_reader};
+    auto read_pk_at = [&](irs::doc_id_t doc_id) -> int64_t {
+      auto pk_state = pk_column->InitScan(pk_ctx);
+      duckdb::Vector out(duckdb::LogicalType::BIGINT, 1);
+      const std::array<uint64_t, 1> rows{doc_id - irs::doc_limits::min()};
+      irs::column_internal::GatherRows(*pk_column, pk_state, rows, out, 0);
+      return duckdb::FlatVector::GetData<int64_t>(out)[0];
     };
     auto varchar_terms = segment.field(catalog::Column::Id{1});
     ASSERT_NE(nullptr, varchar_terms);
@@ -906,9 +925,9 @@ TEST_F(DuckDBSearchSinkWriterTest, DeleteNotMissedWithExisting) {
     ASSERT_TRUE(
       itr->seek(irs::ViewCast<irs::byte_type>(std::string_view{"value2", 6})));
     auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
-    ASSERT_TRUE(postings->next());
-    ASSERT_EQ("pk1", read_pk_at(postings->value()));
-    ASSERT_FALSE(postings->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(postings->advance()));
+    ASSERT_EQ(1, read_pk_at(postings->value()));
+    ASSERT_FALSE(!irs::doc_limits::eof(postings->advance()));
   }
   // check deleted
   {
@@ -920,7 +939,7 @@ TEST_F(DuckDBSearchSinkWriterTest, DeleteNotMissedWithExisting) {
     ASSERT_TRUE(
       itr->seek(irs::ViewCast<irs::byte_type>(std::string_view{"value1", 6})));
     auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
-    ASSERT_FALSE(postings->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(postings->advance()));
   }
 }
 

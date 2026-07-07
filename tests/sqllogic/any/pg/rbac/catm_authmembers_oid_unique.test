@@ -1,0 +1,97 @@
+# pg_auth_members.oid must be UNIQUE across membership edges (PG enforces a
+# unique PK on it). A naive member^roleid XOR collides for distinct pairs, so
+# this asserts distinctness over a graph with several edges. PG-identical
+# (oids are always distinct there); the assertion joins by name, not raw oid.
+
+statement ok
+DROP ROLE IF EXISTS amo_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS amo_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS amo_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS amo_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS amo_pudge;
+
+
+statement ok
+CREATE ROLE amo_vedernikoff;
+
+
+statement ok
+CREATE ROLE amo_clickclack;
+
+
+statement ok
+CREATE ROLE amo_kostya;
+
+
+statement ok
+CREATE ROLE amo_babsky;
+
+
+statement ok
+CREATE ROLE amo_pudge;
+
+
+# A fan-out plus a chain: several distinct membership edges.
+statement ok
+GRANT amo_vedernikoff TO amo_clickclack;
+
+
+statement ok
+GRANT amo_vedernikoff TO amo_kostya;
+
+
+statement ok
+GRANT amo_vedernikoff TO amo_babsky;
+
+
+statement ok
+GRANT amo_clickclack TO amo_pudge;
+
+
+statement ok
+GRANT amo_kostya TO amo_pudge;
+
+
+# Every edge among our roles has a distinct oid.
+query
+SELECT (count(*) = count(DISTINCT am.oid)) AS all_distinct, count(*) AS edges
+FROM pg_auth_members am
+JOIN pg_roles m ON m.oid = am.member
+WHERE m.rolname LIKE 'amo\_%';
+----
+all_distinct	edges
+t	5
+
+
+# ---- cleanup ----
+
+statement ok
+DROP ROLE amo_pudge;
+
+
+statement ok
+DROP ROLE amo_clickclack;
+
+
+statement ok
+DROP ROLE amo_kostya;
+
+
+statement ok
+DROP ROLE amo_babsky;
+
+
+statement ok
+DROP ROLE amo_vedernikoff;

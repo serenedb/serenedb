@@ -34,6 +34,7 @@
 #include <iresearch/utils/vector.hpp>
 #include <vector>
 
+#include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
@@ -194,13 +195,13 @@ static void ArrayDistanceExecutor(duckdb::DataChunk& args,
   auto left = ArrayInput<Elem>::Make(args.data[0], batch_size);
   auto right = ArrayInput<Elem>::Make(args.data[1], batch_size);
   if (left.array_size == 0) {
-    throw duckdb::InvalidInputException(
-      "Distance operators require non-empty arrays");
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("Distance operators require non-empty arrays"));
   }
   if (left.array_size != right.array_size) {
-    throw duckdb::InvalidInputException(
-      "Array dimensions must be equal: left has %llu, right has %llu",
-      left.array_size, right.array_size);
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("Array dimensions must be equal: left has ",
+                            left.array_size, ", right has ", right.array_size));
   }
 
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
@@ -225,8 +226,8 @@ static void ArrayNormExecutor(duckdb::DataChunk& args,
   duckdb::idx_t batch_size = args.size();
   auto in = ArrayInput<Elem>::Make(args.data[0], batch_size);
   if (in.array_size == 0) {
-    throw duckdb::InvalidInputException(
-      "Norm operators require non-empty arrays");
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("Norm operators require non-empty arrays"));
   }
 
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
@@ -250,8 +251,8 @@ static void ArrayNormalizeExecutor(duckdb::DataChunk& args,
   duckdb::idx_t batch_size = args.size();
   auto in = ArrayInput<Elem>::Make(args.data[0], batch_size);
   if (in.array_size == 0) {
-    throw duckdb::InvalidInputException(
-      "Normalize operators require non-empty arrays");
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("Normalize operators require non-empty arrays"));
   }
 
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
@@ -280,8 +281,9 @@ static void ValidateArrayArgs(duckdb::BindScalarFunctionInput& input) {
   auto& args = input.GetArguments();
   for (auto& a : args) {
     if (a->GetReturnType().id() != duckdb::LogicalTypeId::ARRAY) {
-      throw duckdb::InvalidInputException("%s requires ARRAY arguments",
-                                          bound.GetName());
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+                      ERR_MSG(bound.GetName().GetIdentifierName(),
+                              " requires ARRAY arguments"));
     }
   }
 }

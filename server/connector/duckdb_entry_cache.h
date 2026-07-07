@@ -21,9 +21,11 @@
 #pragma once
 
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
+#include <memory>
 
 #include "basics/containers/node_hash_map.h"
 #include "catalog/fwd.h"
+#include "catalog/object.h"
 #include "connector/duckdb_schema_entry.h"
 
 namespace sdb::connector {
@@ -44,12 +46,18 @@ class DuckDBEntryCache {
     const std::function<void(duckdb::SchemaCatalogEntry&)>& callback,
     const catalog::Snapshot& snapshot);
 
-  // Called by SereneDBSchemaEntry::LookupEntry
-  duckdb::optional_ptr<duckdb::CatalogEntry> EnsureEntry(
-    duckdb::CatalogType type, duckdb::Catalog& catalog,
-    duckdb::SchemaCatalogEntry& schema, ObjectId db_id,
-    std::string_view schema_name, std::string_view name,
-    const catalog::Snapshot& snapshot);
+  // A resolved entry plus the ACL-bearing object behind it (null for builtins),
+  // so callers can enforce per-role privileges without a second lookup.
+  struct EntryLookup {
+    duckdb::optional_ptr<duckdb::CatalogEntry> entry;
+    std::shared_ptr<const catalog::Object> object;
+  };
+
+  // Called by SereneDBSchemaEntry::LookupEntry.
+  EntryLookup EnsureEntry(duckdb::CatalogType type, duckdb::Catalog& catalog,
+                          duckdb::SchemaCatalogEntry& schema, ObjectId db_id,
+                          std::string_view schema_name, std::string_view name,
+                          const catalog::Snapshot& snapshot);
 
   // Called by SereneDBSchemaEntry::Scan
   void ScanEntries(duckdb::CatalogType type, duckdb::Catalog& catalog,
@@ -59,11 +67,26 @@ class DuckDBEntryCache {
                    const catalog::Snapshot& snapshot);
 
  private:
-  duckdb::unique_ptr<duckdb::CatalogEntry> BuildEntry(
+  // A built DuckDB entry plus the ACL-bearing object it wraps (null for
+  // builtins); the object is role-independent, so caching it is safe.
+  struct CachedEntry {
+    duckdb::unique_ptr<duckdb::CatalogEntry> entry;
+    std::shared_ptr<const catalog::Object> object;
+  };
+
+  CachedEntry BuildEntry(duckdb::CatalogType type, duckdb::Catalog& catalog,
+                         duckdb::SchemaCatalogEntry& schema, ObjectId db_id,
+                         std::string_view schema_name, std::string_view name,
+                         const catalog::Snapshot& snapshot);
+
+  // Builds the DuckDB entry and, when it wraps one of our catalog objects,
+  // sets `object` to the ACL-bearing object behind it.
+  duckdb::unique_ptr<duckdb::CatalogEntry> BuildEntryObject(
     duckdb::CatalogType type, duckdb::Catalog& catalog,
     duckdb::SchemaCatalogEntry& schema, ObjectId db_id,
     std::string_view schema_name, std::string_view name,
-    const catalog::Snapshot& snapshot);
+    const catalog::Snapshot& snapshot,
+    std::shared_ptr<const catalog::Object>& object);
 
   duckdb::unique_ptr<duckdb::CatalogEntry> BuildTableEntry(
     duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
@@ -106,9 +129,7 @@ class DuckDBEntryCache {
     // TABLE_MACRO_ENTRY). Callers must inspect `entry.type` rather than
     // assuming a match; see ExpressionBinder::BindFunction's switch in
     // duckdb/src/planner/binder/expression/bind_function_expression.cpp.
-    using EntryMap =
-      containers::FlatHashMap<std::string,
-                              duckdb::unique_ptr<duckdb::CatalogEntry>>;
+    using EntryMap = containers::FlatHashMap<std::string, CachedEntry>;
     EntryMap tables;     // TABLE_ENTRY, VIEW_ENTRY
     EntryMap indexes;    // INDEX_ENTRY
     EntryMap sequences;  // SEQUENCE_ENTRY

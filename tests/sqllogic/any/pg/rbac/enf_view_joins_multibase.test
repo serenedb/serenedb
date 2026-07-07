@@ -1,0 +1,246 @@
+# VIEW security over MULTIPLE base tables: JOIN, UNION, correlated subquery.
+#
+# A non-materialized view runs with its OWNER's privileges by default (definer
+# rights); WITH (security_invoker=true) switches each base reference to the
+# CALLER. When a view body touches several base tables, EACH base reference is
+# checked independently under whichever rights the enclosing view carries.
+#
+#   - definer view JOINing several bases the OWNER owns -> ALLOWED, even though
+#     the reader has nothing on any base.
+#   - invoker view JOINing bases where the CALLER holds SOME but not all ->
+#     DENIED, and the permission-denied error names the un-granted base.
+#   - definer view UNION-ing two bases -> ALLOWED.
+#   - definer view whose body has a correlated subquery against another base ->
+#     ALLOWED (the subquery base is still checked vs the owner).
+#
+# Verified on PostgreSQL 17/19.
+#
+# Lore: vedernikoff reads the clickclack views over the iceberg/mop/glacier
+# bases the owner stacked; he was granted the views only.
+
+statement ok
+DROP VIEW IF EXISTS evj_def_join;
+
+
+statement ok
+DROP VIEW IF EXISTS evj_inv_join;
+
+
+statement ok
+DROP VIEW IF EXISTS evj_def_union;
+
+
+statement ok
+DROP VIEW IF EXISTS evj_def_corr;
+
+
+statement ok
+DROP TABLE IF EXISTS evj_iceberg;
+
+
+statement ok
+DROP TABLE IF EXISTS evj_mop;
+
+
+statement ok
+DROP TABLE IF EXISTS evj_glacier;
+
+
+statement ok
+DROP ROLE IF EXISTS evj_vedernikoff;
+
+
+statement ok
+CREATE TABLE evj_iceberg (id int, av int);
+
+
+statement ok
+CREATE TABLE evj_mop (id int, sweep int);
+
+
+statement ok
+CREATE TABLE evj_glacier (id int, drift int);
+
+
+statement ok
+INSERT INTO evj_iceberg VALUES (1, 10), (2, 20), (3, 30);
+
+
+statement ok
+INSERT INTO evj_mop VALUES (1, 100), (2, 200), (3, 300);
+
+
+statement ok
+INSERT INTO evj_glacier VALUES (1, 1000), (2, 2000), (3, 3000);
+
+
+# Definer view over a 3-table JOIN. Owner owns all three bases.
+statement ok
+CREATE VIEW evj_def_join AS
+  SELECT i.id, i.av, m.sweep, g.drift
+  FROM evj_iceberg i
+  JOIN evj_mop m ON m.id = i.id
+  JOIN evj_glacier g ON g.id = i.id;
+
+
+# Invoker view over a 2-table JOIN; each base is checked against the caller.
+statement ok
+CREATE VIEW evj_inv_join WITH (security_invoker=true) AS
+  SELECT i.id, i.av, m.sweep
+  FROM evj_iceberg i
+  JOIN evj_mop m ON m.id = i.id;
+
+
+# Definer view UNION-ing two bases into a tagged stream.
+statement ok
+CREATE VIEW evj_def_union AS
+  SELECT id, av AS val, 'iceberg' AS src FROM evj_iceberg
+  UNION ALL
+  SELECT id, sweep AS val, 'mop' AS src FROM evj_mop;
+
+
+# Definer view with a correlated subquery against another base.
+statement ok
+CREATE VIEW evj_def_corr AS
+  SELECT i.id, i.av,
+         (SELECT m.sweep FROM evj_mop m WHERE m.id = i.id) AS sweep
+  FROM evj_iceberg i;
+
+
+statement ok
+CREATE ROLE evj_vedernikoff LOGIN PASSWORD 'evj_vedernikoff_pw';
+
+
+# Grant SELECT on the views only -- nothing on iceberg/mop/glacier yet.
+statement ok
+GRANT SELECT ON evj_def_join TO evj_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON evj_inv_join TO evj_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON evj_def_union TO evj_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON evj_def_corr TO evj_vedernikoff;
+
+
+# === Definer view over 3-table JOIN: ALLOWED (owner owns all bases) ===
+connection c_join user=evj_vedernikoff password=evj_vedernikoff_pw
+query
+SELECT id, av, sweep, drift FROM evj_def_join ORDER BY id;
+----
+id	av	sweep	drift
+1	10	100	1000
+2	20	200	2000
+3	30	300	3000
+
+
+# === Definer view UNION over two bases: ALLOWED ===
+connection c_union user=evj_vedernikoff password=evj_vedernikoff_pw
+query
+SELECT src, val FROM evj_def_union ORDER BY src, val;
+----
+src	val
+iceberg	10
+iceberg	20
+iceberg	30
+mop	100
+mop	200
+mop	300
+
+
+# === Definer view with correlated subquery against another base: ALLOWED ===
+connection c_corr user=evj_vedernikoff password=evj_vedernikoff_pw
+query
+SELECT id, av, sweep FROM evj_def_corr ORDER BY id;
+----
+id	av	sweep
+1	10	100
+2	20	200
+3	30	300
+
+
+# === Invoker view over a JOIN: caller has NEITHER base -> DENIED ===
+# With no base grants at all the read is refused. BOTH join inputs are equally
+# un-granted, so which base the planner names first is non-deterministic (it
+# varies run to run); we therefore assert only that the read is permission-
+# denied and wildcard the table name. The targeted SOME-but-not-all case below
+# pins the specific un-granted base deterministically.
+connection c_inv0 user=evj_vedernikoff password=evj_vedernikoff_pw
+statement error
+SELECT id, av, sweep FROM evj_inv_join;
+----
+db error: ERROR: permission denied for table <slt:ignore>
+
+
+# Now grant the caller SELECT on ONE of the two invoker bases (iceberg), but
+# NOT the other (mop). The invoker view must still be DENIED, and the error
+# must name the un-granted base mop.
+statement ok
+GRANT SELECT ON evj_iceberg TO evj_vedernikoff;
+
+
+connection c_inv1 user=evj_vedernikoff password=evj_vedernikoff_pw
+statement error
+SELECT id, av, sweep FROM evj_inv_join;
+----
+db error: ERROR: permission denied for table evj_mop<slt:ignore>
+
+
+# Granting the second base too closes the gap -> ALLOWED.
+statement ok
+GRANT SELECT ON evj_mop TO evj_vedernikoff;
+
+
+connection c_inv2 user=evj_vedernikoff password=evj_vedernikoff_pw
+query
+SELECT id, av, sweep FROM evj_inv_join ORDER BY id;
+----
+id	av	sweep
+1	10	100
+2	20	200
+3	30	300
+
+
+# === Control: the partial base grants do NOT leak the un-granted glacier ===
+connection c_base user=evj_vedernikoff password=evj_vedernikoff_pw
+statement error
+SELECT id, drift FROM evj_glacier;
+----
+db error: ERROR: permission denied for table evj_glacier<slt:ignore>
+
+
+statement ok
+DROP VIEW evj_def_join;
+
+
+statement ok
+DROP VIEW evj_inv_join;
+
+
+statement ok
+DROP VIEW evj_def_union;
+
+
+statement ok
+DROP VIEW evj_def_corr;
+
+
+statement ok
+DROP TABLE evj_iceberg;
+
+
+statement ok
+DROP TABLE evj_mop;
+
+
+statement ok
+DROP TABLE evj_glacier;
+
+
+statement ok
+DROP ROLE evj_vedernikoff;

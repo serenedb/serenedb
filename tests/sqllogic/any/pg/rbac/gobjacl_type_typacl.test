@@ -1,0 +1,90 @@
+# Object-ACL surface: GRANT/REVOKE USAGE ON TYPE drives pg_type.typacl and the
+# has_type_privilege oracle, identical on PostgreSQL 19beta1 and serenedb. USAGE
+# is the only type privilege; a fresh type grants USAGE to PUBLIC by default
+# (acldefault for OBJECT_TYPE -> world=USAGE, owner=all), so any role reads t
+# until USAGE is revoked from PUBLIC. typacl is an aclitem[]; each grant is one
+# "grantee=privs/grantor" element (=U/owner for PUBLIC, role=U/owner otherwise).
+#
+# Vedernikoff lore: the clickclack enum; vedernikoff the grantee.
+# Idempotent + self-cleaning.
+
+statement ok
+DROP TYPE IF EXISTS gobjacl_clickclack CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS gobjacl_type_vedernikoff;
+
+
+statement ok
+CREATE ROLE gobjacl_type_vedernikoff;
+
+
+statement ok
+CREATE TYPE gobjacl_clickclack AS ENUM ('tick', 'clack');
+
+
+# Default: USAGE is granted to PUBLIC, so an arbitrary role already holds it.
+query
+SELECT has_type_privilege('gobjacl_type_vedernikoff', 'gobjacl_clickclack', 'USAGE') AS ok;
+----
+ok
+t
+
+
+# Revoke the PUBLIC default; the role now lacks USAGE.
+statement ok
+REVOKE USAGE ON TYPE gobjacl_clickclack FROM PUBLIC;
+
+
+query
+SELECT has_type_privilege('gobjacl_type_vedernikoff', 'gobjacl_clickclack', 'USAGE') AS ok;
+----
+ok
+f
+
+
+# An explicit grant restores it and materializes a typacl entry.
+statement ok
+GRANT USAGE ON TYPE gobjacl_clickclack TO gobjacl_type_vedernikoff;
+
+
+query
+SELECT has_type_privilege('gobjacl_type_vedernikoff', 'gobjacl_clickclack', 'USAGE') AS ok;
+----
+ok
+t
+
+
+# The grantee's typacl element is "vedernikoff=U/owner".
+query
+SELECT EXISTS (
+  SELECT 1 FROM pg_type t, unnest(t.typacl) AS e
+  WHERE t.typname = 'gobjacl_clickclack'
+    AND e::text LIKE 'gobjacl_type_vedernikoff=U/%') AS has_grant;
+----
+has_grant
+t
+
+
+# The owner always holds USAGE.
+query
+SELECT has_type_privilege('postgres', 'gobjacl_clickclack', 'USAGE') AS ok;
+----
+ok
+t
+
+
+# GRANT on a nonexistent type errors like PG.
+statement error
+GRANT USAGE ON TYPE gobjacl_nope TO gobjacl_type_vedernikoff;
+----
+db error: ERROR: type "gobjacl_nope" does not exist<slt:ignore>
+
+
+statement ok
+DROP TYPE gobjacl_clickclack CASCADE;
+
+
+statement ok
+DROP ROLE gobjacl_type_vedernikoff;

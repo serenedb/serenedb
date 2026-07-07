@@ -1,0 +1,156 @@
+# Ownership versus the table ACL (relacl). The owner's privileges are NOT stored
+# in relacl -- they are implicit. relacl only accumulates explicit grants to
+# other grantees. We assert GRANTEE rows only (the owner row carries a PG19
+# MAINTAIN 'm' bit serenedb does not synthesize, so it is never asserted here);
+# real per-grant semantics are confirmed via has_table_privilege and via real
+# DML on a second connection.
+#
+# clickclack: the mop_babsky is owned by postgres; vedernikoff is a login role
+# that only gets what the owner explicitly grants.
+
+statement ok
+DROP ROLE IF EXISTS own_acl_vedernikoff;
+
+
+statement ok
+DROP TABLE IF EXISTS own_mop_babsky;
+
+
+statement ok
+CREATE TABLE own_mop_babsky (id int, secret text);
+
+
+statement ok
+INSERT INTO own_mop_babsky VALUES (1, 'clickclack'), (2, 'iceberg');
+
+
+statement ok
+CREATE ROLE own_acl_vedernikoff LOGIN;
+
+
+# Before any explicit grant, relacl holds at most the owner row -- there is no
+# grantee row for vedernikoff. (We never assert the owner row's exact text.)
+query
+SELECT count(*) AS grantee_rows FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'own_mop_babsky'
+) g WHERE e LIKE 'own_acl_vedernikoff=%';
+----
+grantee_rows
+0
+
+
+# Owner grants SELECT, INSERT: the grantee row materializes with exactly those
+# privilege letters (r = SELECT, a = INSERT) and the owner as grantor.
+statement ok
+GRANT SELECT, INSERT ON own_mop_babsky TO own_acl_vedernikoff;
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'own_mop_babsky'
+) g WHERE e LIKE 'own_acl_vedernikoff=%';
+----
+e
+own_acl_vedernikoff=ar/postgres
+
+
+# The same facts via the privilege oracle.
+query
+SELECT
+  has_table_privilege('own_acl_vedernikoff', 'own_mop_babsky', 'SELECT') AS sel,
+  has_table_privilege('own_acl_vedernikoff', 'own_mop_babsky', 'INSERT') AS ins,
+  has_table_privilege('own_acl_vedernikoff', 'own_mop_babsky', 'DELETE') AS del;
+----
+sel	ins	del
+t	t	f
+
+
+# Owner adds DELETE: the grantee row accumulates (a = INSERT, r = SELECT,
+# d = DELETE; relacl letter order is canonical, not grant order).
+statement ok
+GRANT DELETE ON own_mop_babsky TO own_acl_vedernikoff;
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'own_mop_babsky'
+) g WHERE e LIKE 'own_acl_vedernikoff=%';
+----
+e
+own_acl_vedernikoff=ard/postgres
+
+
+# The owner can read and write its own table with no entry in relacl at all --
+# ownership bypasses the ACL on the real query path (default connection is the
+# postgres superuser/owner).
+statement ok
+SELECT id, secret FROM own_mop_babsky ORDER BY id;
+
+
+statement ok
+INSERT INTO own_mop_babsky VALUES (3, 'vedernikoff');
+
+
+# The grantee can do exactly what relacl says on the real query path: SELECT and
+# INSERT and DELETE are allowed, UPDATE is denied (never granted). The deny
+# block ends with a trailing ignore marker because serenedb appends a DETAIL
+# line PG does not.
+connection c_v user=own_acl_vedernikoff
+query
+SELECT count(*) AS n FROM own_mop_babsky;
+----
+n
+3
+
+
+connection c_v user=own_acl_vedernikoff
+statement ok
+INSERT INTO own_mop_babsky VALUES (4, 'mop');
+
+
+connection c_v user=own_acl_vedernikoff
+statement error
+UPDATE own_mop_babsky SET secret = 'deadinside' WHERE id = 1;
+----
+db error: ERROR: permission denied for table own_mop_babsky<slt:ignore>
+
+
+# Owner revokes every grantee privilege: the grantee row disappears from relacl
+# entirely (an empty grantee entry is not stored).
+statement ok
+REVOKE ALL PRIVILEGES ON own_mop_babsky FROM own_acl_vedernikoff;
+
+
+query
+SELECT count(*) AS grantee_rows FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'own_mop_babsky'
+) g WHERE e LIKE 'own_acl_vedernikoff=%';
+----
+grantee_rows
+0
+
+
+# After the revoke the grantee can no longer read on the real query path, but
+# the owner still holds everything -- ownership was never in the ACL.
+connection c_v user=own_acl_vedernikoff
+statement error
+SELECT id FROM own_mop_babsky;
+----
+db error: ERROR: permission denied for table own_mop_babsky<slt:ignore>
+
+
+query
+SELECT
+  has_table_privilege('postgres', 'own_mop_babsky', 'SELECT') AS owner_sel,
+  has_table_privilege('postgres', 'own_mop_babsky', 'UPDATE') AS owner_upd;
+----
+owner_sel	owner_upd
+t	t
+
+
+statement ok
+DROP TABLE own_mop_babsky;
+
+
+statement ok
+DROP ROLE own_acl_vedernikoff;

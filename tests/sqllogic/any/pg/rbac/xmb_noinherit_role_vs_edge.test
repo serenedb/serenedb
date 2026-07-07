@@ -1,0 +1,151 @@
+# Cross-membership: the role's own INHERIT/NOINHERIT attribute vs the per-edge
+# WITH INHERIT override. The default edge follows the member's rolinherit; an
+# explicit WITH INHERIT on the edge overrides the attribute either way.
+#
+# Two members of the same group:
+#   xmb_nre_vedernikoff  CREATE ROLE ... NOINHERIT  (does not auto-inherit)
+#   xmb_nre_clickclack   CREATE ROLE ... INHERIT    (auto-inherits)
+# group xmb_nre_iceberg holds SELECT on the table.
+#
+# Byte-identical on real PostgreSQL and serenedb.
+
+statement ok
+DROP ROLE IF EXISTS xmb_nre_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_nre_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_nre_iceberg;
+
+
+statement ok
+DROP TABLE IF EXISTS xmb_nre_mop;
+
+
+statement ok
+CREATE TABLE xmb_nre_mop (id int);
+
+
+statement ok
+CREATE ROLE xmb_nre_iceberg;
+
+
+statement ok
+GRANT SELECT ON xmb_nre_mop TO xmb_nre_iceberg;
+
+
+statement ok
+CREATE ROLE xmb_nre_vedernikoff LOGIN NOINHERIT PASSWORD 'xmb_nre_vedernikoff_pw';
+
+
+statement ok
+CREATE ROLE xmb_nre_clickclack LOGIN INHERIT PASSWORD 'xmb_nre_clickclack_pw';
+
+
+# ---- Default edge for both: rolinherit decides ----
+
+statement ok
+GRANT xmb_nre_iceberg TO xmb_nre_vedernikoff;
+
+
+statement ok
+GRANT xmb_nre_iceberg TO xmb_nre_clickclack;
+
+
+# Both are MEMBERs; only the INHERIT role wields the privilege by default.
+query
+SELECT pg_has_role('xmb_nre_vedernikoff', 'xmb_nre_iceberg', 'MEMBER') AS ved_member,
+       pg_has_role('xmb_nre_clickclack', 'xmb_nre_iceberg', 'MEMBER') AS click_member,
+       pg_has_role('xmb_nre_vedernikoff', 'xmb_nre_iceberg', 'USAGE') AS ved_usage,
+       pg_has_role('xmb_nre_clickclack', 'xmb_nre_iceberg', 'USAGE') AS click_usage;
+----
+ved_member	click_member	ved_usage	click_usage
+t	t	f	t
+
+
+query
+SELECT has_table_privilege('xmb_nre_vedernikoff', 'xmb_nre_mop', 'SELECT') AS ved_sel,
+       has_table_privilege('xmb_nre_clickclack', 'xmb_nre_mop', 'SELECT') AS click_sel;
+----
+ved_sel	click_sel
+f	t
+
+
+# Real query path: NOINHERIT member denied, INHERIT member allowed.
+connection c_ved user=xmb_nre_vedernikoff password=xmb_nre_vedernikoff_pw
+statement error
+SELECT * FROM xmb_nre_mop;
+----
+db error: ERROR: permission denied for table xmb_nre_mop<slt:ignore>
+
+
+connection c_click user=xmb_nre_clickclack password=xmb_nre_clickclack_pw
+query
+SELECT count(*) FROM xmb_nre_mop;
+----
+count
+0
+
+
+# ---- WITH INHERIT TRUE overrides a NOINHERIT role attribute ----
+
+statement ok
+GRANT xmb_nre_iceberg TO xmb_nre_vedernikoff WITH INHERIT TRUE;
+
+
+query
+SELECT pg_has_role('xmb_nre_vedernikoff', 'xmb_nre_iceberg', 'USAGE') AS ved_usage,
+       has_table_privilege('xmb_nre_vedernikoff', 'xmb_nre_mop', 'SELECT') AS ved_sel;
+----
+ved_usage	ved_sel
+t	t
+
+
+connection c_ved2 user=xmb_nre_vedernikoff password=xmb_nre_vedernikoff_pw
+query
+SELECT count(*) FROM xmb_nre_mop;
+----
+count
+0
+
+
+# ---- WITH INHERIT FALSE overrides an INHERIT role attribute ----
+
+statement ok
+GRANT xmb_nre_iceberg TO xmb_nre_clickclack WITH INHERIT FALSE;
+
+
+query
+SELECT pg_has_role('xmb_nre_clickclack', 'xmb_nre_iceberg', 'USAGE') AS click_usage,
+       has_table_privilege('xmb_nre_clickclack', 'xmb_nre_mop', 'SELECT') AS click_sel;
+----
+click_usage	click_sel
+f	f
+
+
+connection c_click2 user=xmb_nre_clickclack password=xmb_nre_clickclack_pw
+statement error
+SELECT * FROM xmb_nre_mop;
+----
+db error: ERROR: permission denied for table xmb_nre_mop<slt:ignore>
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP TABLE IF EXISTS xmb_nre_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_nre_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_nre_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_nre_iceberg;

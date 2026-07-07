@@ -24,6 +24,8 @@
 #include <limits>
 #include <string>
 
+#include "catalog/object.h"
+
 namespace sdb::catalog::persistence {
 
 struct SequenceOptions {
@@ -35,6 +37,7 @@ struct SequenceOptions {
   uint64_t cache = 1;
   uint64_t owner_table_id = 0;
   bool cycle = false;
+  Permissions perm;
 
   uint64_t Seed() const noexcept { return start_value - increment; }
 };

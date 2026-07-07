@@ -1,0 +1,48 @@
+# DROP SCHEMA requires ownership (or superuser), like PostgreSQL: a non-owner
+# role must not drop a schema it does not own. (Regression guard, same
+# escalation class as table/view DROP.) The schema is owned by the bootstrap
+# superuser, so the unprivileged role is refused; the owner drops it fine.
+
+statement ok
+DROP SCHEMA IF EXISTS dss_clickclack CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS dss_vedernikoff;
+
+
+statement ok
+CREATE SCHEMA dss_clickclack;
+
+
+statement ok
+CREATE ROLE dss_vedernikoff LOGIN;
+
+
+# Non-owner DROP SCHEMA is refused (PG: "must be owner of schema ...").
+connection c_ved user=dss_vedernikoff
+statement error
+DROP SCHEMA dss_clickclack;
+----
+db error: ERROR: must be owner of schema dss_clickclack<slt:ignore>
+
+
+# The schema still exists after the refused drop.
+connection default
+query
+SELECT count(*) AS n FROM information_schema.schemata WHERE schema_name = 'dss_clickclack';
+----
+n
+1
+
+
+# The owner (superuser) drops it fine.
+connection default
+statement ok
+DROP SCHEMA dss_clickclack;
+
+
+# ---- cleanup ----
+
+statement ok
+DROP ROLE dss_vedernikoff;

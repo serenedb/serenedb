@@ -146,52 +146,52 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "K", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "T", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "V", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -215,82 +215,82 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "D", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "H", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "K", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "T", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "U", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "V", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "W", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "Y", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -315,82 +315,82 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "D", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "H", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "K", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "T", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "U", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "V", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "W", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "Y", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -415,52 +415,52 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "K", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "T", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "V", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -485,52 +485,52 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "K", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "T", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "V", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -555,52 +555,52 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "K", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "T", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "V", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -625,52 +625,52 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "K", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "T", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "V", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -695,52 +695,52 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "K", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "T", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "V", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -765,52 +765,52 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "K", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "T", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "V", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -835,52 +835,52 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "K", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "T", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "V", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -904,52 +904,52 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "K", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "T", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "V", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -974,62 +974,62 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "B", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "D", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "K", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "T", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "V", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -1056,17 +1056,17 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X0", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X4", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -1093,7 +1093,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -1120,7 +1120,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -1147,7 +1147,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -1174,37 +1174,37 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X0", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X1", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X2", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X3", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X4", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X5", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -1231,32 +1231,32 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X1", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X2", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X3", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X4", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X5", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -1283,27 +1283,27 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X0", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X1", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X3", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X4", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -1330,22 +1330,22 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X1", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X3", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X4", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -1372,12 +1372,12 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "K", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -1405,22 +1405,22 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "K", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -1449,22 +1449,22 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "K", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -1493,22 +1493,22 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "K", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -1538,12 +1538,12 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "K", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -1574,17 +1574,17 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X0", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X1", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -1612,52 +1612,52 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "K", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "T", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "V", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -1686,82 +1686,82 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "D", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "H", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "K", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "T", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "U", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "V", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "W", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "Y", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -1791,82 +1791,82 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "D", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "H", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "K", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "T", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "U", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "V", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "W", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "Y", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -1896,52 +1896,52 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "K", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "T", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "V", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -1971,52 +1971,52 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "K", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "T", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "V", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -2048,27 +2048,27 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X0", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X1", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X3", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X4", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 }
@@ -2109,22 +2109,22 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -2153,27 +2153,27 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -2203,27 +2203,27 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -2251,22 +2251,22 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -2296,22 +2296,22 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -2339,22 +2339,22 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -2386,12 +2386,12 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X4", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -2417,27 +2417,27 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "T", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -2467,27 +2467,27 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "T", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -2515,22 +2515,22 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -2560,22 +2560,22 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -2607,12 +2607,12 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X4", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -2640,27 +2640,27 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "U", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -2690,27 +2690,27 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "U", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -2738,22 +2738,22 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -2784,22 +2784,22 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -2831,12 +2831,12 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X4", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -2862,37 +2862,37 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "T", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "V", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -2923,37 +2923,37 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "T", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "V", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -2982,27 +2982,27 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -3033,27 +3033,27 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -3086,12 +3086,12 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X4", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -3119,37 +3119,37 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "U", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "W", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -3180,37 +3180,37 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "U", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "W", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -3239,27 +3239,27 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -3294,12 +3294,12 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X4", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -3328,22 +3328,22 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -3370,37 +3370,37 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "T", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "U", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -3429,37 +3429,37 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "T", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "U", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -3488,37 +3488,37 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "T", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "U", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -3551,12 +3551,12 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X4", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -3582,57 +3582,57 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "T", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "U", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "V", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "W", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "Y", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -3703,7 +3703,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -3713,7 +3713,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -3723,7 +3723,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -3733,7 +3733,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -3743,7 +3743,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -3753,7 +3753,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -3763,7 +3763,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -3773,7 +3773,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -3783,7 +3783,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -3793,7 +3793,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -3803,7 +3803,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -3834,22 +3834,22 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -3880,37 +3880,37 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "S", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "T", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "V", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -3946,12 +3946,12 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "X4", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -4013,7 +4013,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
     it = docs.get();
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -4023,7 +4023,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -4033,7 +4033,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -4043,7 +4043,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -4081,17 +4081,17 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -4116,19 +4116,19 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -4154,17 +4154,17 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -4190,17 +4190,17 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -4225,17 +4225,17 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -4261,17 +4261,17 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -4296,17 +4296,17 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -4333,17 +4333,17 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -4372,17 +4372,17 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -4416,7 +4416,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_FLOAT_EQ((0.5f + 0.75f) / 2, boost->value[0]);
@@ -4429,7 +4429,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_FLOAT_EQ(boost->value[0],
                     irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(2, freq->value[0]);
     ASSERT_FLOAT_EQ((0.5f + 0.75f) / 2, boost->value[0]);
@@ -4442,7 +4442,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_FLOAT_EQ(boost->value[0],
                     irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -4473,7 +4473,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -4483,7 +4483,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(2, freq->value[0]);
     ASSERT_EQ(
@@ -4493,7 +4493,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -4531,7 +4531,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_FLOAT_EQ((1.f + 0.75f) / 2, boost->value[0]);
@@ -4544,7 +4544,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(boost->value[0],
               irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(2, freq->value[0]);
     ASSERT_FLOAT_EQ(((1.f + 0.25f) / 2 + (1.f + 0.5f) / 2) / 2,
@@ -4558,7 +4558,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(boost->value[0],
               irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(4, freq->value[0]);
     ASSERT_FLOAT_EQ((1.f + 0.25f) / 2, boost->value[0]);
@@ -4571,7 +4571,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(boost->value[0],
               irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(3, freq->value[0]);
     ASSERT_FLOAT_EQ((1.f + 0.25f) / 2, boost->value[0]);
@@ -4584,7 +4584,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(boost->value[0],
               irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(2, freq->value[0]);
     ASSERT_FLOAT_EQ((1.f + 0.25f) / 2, boost->value[0]);
@@ -4597,7 +4597,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(boost->value[0],
               irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -4626,7 +4626,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -4636,7 +4636,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -4646,7 +4646,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -4656,7 +4656,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -4666,7 +4666,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -4676,7 +4676,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -4686,7 +4686,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -4696,7 +4696,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(4, freq->value[0]);
     ASSERT_EQ(
@@ -4706,7 +4706,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -4716,7 +4716,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -4726,7 +4726,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -4736,7 +4736,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -4766,7 +4766,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(0.5f, boost->value[0]);
@@ -4779,7 +4779,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(boost->value[0],
               irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -4791,7 +4791,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(boost->value[0],
               irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(irs::kNoBoost, boost->value[0]);
@@ -4804,7 +4804,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(boost->value[0],
               irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(0.5f, boost->value[0]);
@@ -4817,7 +4817,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(boost->value[0],
               irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(0.5f, boost->value[0]);
@@ -4830,7 +4830,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(boost->value[0],
               irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(0.5f, boost->value[0]);
@@ -4843,7 +4843,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(boost->value[0],
               irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -4855,7 +4855,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(boost->value[0],
               irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(4, freq->value[0]);
     ASSERT_EQ(0.5f, boost->value[0]);
@@ -4868,7 +4868,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(boost->value[0],
               irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(0.5f, boost->value[0]);
@@ -4881,7 +4881,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(boost->value[0],
               irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(0.5f, boost->value[0]);
@@ -4894,7 +4894,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(boost->value[0],
               irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(0.5f, boost->value[0]);
@@ -4907,7 +4907,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(boost->value[0],
               irs::get<irs::BoostBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -4943,7 +4943,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -4953,7 +4953,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -4981,17 +4981,17 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -5018,12 +5018,12 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -5050,12 +5050,12 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -5082,17 +5082,17 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -5120,17 +5120,17 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -5157,17 +5157,17 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -5195,17 +5195,17 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -5232,17 +5232,17 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -5271,17 +5271,17 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -5310,17 +5310,17 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -5338,7 +5338,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -5355,7 +5355,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -5373,7 +5373,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -5391,7 +5391,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -5415,12 +5415,12 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "C", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -5456,12 +5456,12 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "H", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -5503,12 +5503,12 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "H", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -5560,7 +5560,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
       .segment = &*sub,
     });
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     irs::score_t score_value{};
     score.Score(&score_value, 1);
@@ -5573,7 +5573,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -5626,7 +5626,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
       .segment = &*sub,
     });
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     irs::score_t score_value{};
     score.Score(&score_value, 1);
@@ -5639,7 +5639,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -5664,7 +5664,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "N", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     // Check repeatable seek to the same document given frequency of the phrase
@@ -5673,7 +5673,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(v, docs->seek(docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -5710,7 +5710,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(2, freq->value[0]);
     ASSERT_EQ(
@@ -5720,7 +5720,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -5744,12 +5744,12 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ("PHW0", irs::tests::ReadStoredStr<std::string_view>(
                         values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -5772,12 +5772,12 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ("PHW1", irs::tests::ReadStoredStr<std::string_view>(
                         values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -5800,12 +5800,12 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ("PHW2", irs::tests::ReadStoredStr<std::string_view>(
                         values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -5830,12 +5830,12 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ("PHW3", irs::tests::ReadStoredStr<std::string_view>(
                         values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -5860,12 +5860,12 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ("PHW4", irs::tests::ReadStoredStr<std::string_view>(
                         values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -5890,12 +5890,12 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ("PHW5", irs::tests::ReadStoredStr<std::string_view>(
                         values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 }
@@ -5932,32 +5932,32 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "B", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "C", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "F", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "H", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -5984,27 +5984,27 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "E", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "F", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "H", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -6026,7 +6026,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     auto docs = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
   }
 
   // mix interval and single
@@ -6055,12 +6055,12 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "H", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -6118,7 +6118,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -6127,13 +6127,13 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     docs_seek->FetchScoreArgs(0);
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
-    ASSERT_TRUE(disj_docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(disj_docs->advance()));
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(2, freq->value[0]);
     ASSERT_EQ(
@@ -6142,13 +6142,13 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     docs_seek->FetchScoreArgs(0);
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
-    ASSERT_TRUE(disj_docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(disj_docs->advance()));
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(2, freq->value[0]);
     ASSERT_EQ(
@@ -6157,13 +6157,13 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     docs_seek->FetchScoreArgs(0);
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
-    ASSERT_TRUE(disj_docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(disj_docs->advance()));
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(1, freq->value[0]);
     ASSERT_EQ(
@@ -6172,13 +6172,13 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     docs_seek->FetchScoreArgs(0);
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
-    ASSERT_TRUE(disj_docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(disj_docs->advance()));
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     docs->FetchScoreArgs(0);
     ASSERT_EQ(4, freq->value[0]);
     ASSERT_EQ(
@@ -6187,16 +6187,16 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     docs_seek->FetchScoreArgs(0);
     ASSERT_EQ(freq->value[0],
               irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
-    ASSERT_TRUE(disj_docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(disj_docs->advance()));
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq->value[0]);
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
-    ASSERT_FALSE(disj_docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(disj_docs->advance()));
   }
 
   // mix interval and single
@@ -6227,12 +6227,12 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "I", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
   }
@@ -6256,37 +6256,37 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     auto docs_seek = prepared.Execute(0);
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "A", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "B", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "E", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "F", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "H", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
@@ -6352,58 +6352,58 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     });
     irs::score_t score_val;
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "E", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
     docs_seek->FetchScoreArgs(0);
     ASSERT_EQ(1, freq_seek->value[0]);
-    ASSERT_TRUE(disj_docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(disj_docs->advance()));
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "F", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
     docs_seek->FetchScoreArgs(0);
     ASSERT_EQ(6, freq_seek->value[0]);
-    ASSERT_TRUE(disj_docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(disj_docs->advance()));
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
     docs_seek->FetchScoreArgs(0);
     ASSERT_EQ(11, freq_seek->value[0]);
-    ASSERT_TRUE(disj_docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(disj_docs->advance()));
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "H", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
     docs_seek->FetchScoreArgs(0);
     ASSERT_EQ(2, freq_seek->value[0]);
-    ASSERT_TRUE(disj_docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(disj_docs->advance()));
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value[0]);
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
-    ASSERT_FALSE(disj_docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(disj_docs->advance()));
   }
 
   // variadic interval ordered
@@ -6463,58 +6463,58 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     });
     irs::score_t score_val;
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "E", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
     docs_seek->FetchScoreArgs(0);
     ASSERT_EQ(1, freq_seek->value[0]);
-    ASSERT_TRUE(disj_docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(disj_docs->advance()));
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "F", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
     docs_seek->FetchScoreArgs(0);
     ASSERT_EQ(3, freq_seek->value[0]);
-    ASSERT_TRUE(disj_docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(disj_docs->advance()));
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "G", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
     docs_seek->FetchScoreArgs(0);
     ASSERT_EQ(5, freq_seek->value[0]);
-    ASSERT_TRUE(disj_docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(disj_docs->advance()));
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value[0]);
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "H", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
     docs_seek->FetchScoreArgs(0);
     ASSERT_EQ(3, freq_seek->value[0]);
-    ASSERT_TRUE(disj_docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(disj_docs->advance()));
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value[0]);
 
-    ASSERT_FALSE(docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
     ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
-    ASSERT_FALSE(disj_docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(disj_docs->advance()));
   }
 
   // fixed interval ordered last only repeated
@@ -6574,20 +6574,20 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     });
     irs::score_t score_val;
 
-    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
     ASSERT_EQ(
       "K", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
     ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
     docs_seek->FetchScoreArgs(0);
     ASSERT_EQ(3, freq_seek->value[0]);
-    ASSERT_TRUE(disj_docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(disj_docs->advance()));
     ASSERT_EQ(docs->value(), disj_docs->value());
     disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value[0]);
 
-    ASSERT_FALSE(docs->next());
-    ASSERT_FALSE(disj_docs->next());
+    ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(disj_docs->advance()));
   }
 }
 
@@ -7065,7 +7065,7 @@ TEST_P(PhraseFilterTestCase, regexp_part_syntax) {
     tests::PreparedFilter prepared{*Lower(std::move(q)), rdr};
     for (size_t i = 0, end = prepared.size(); i < end; ++i) {
       auto docs = prepared.Execute(i);
-      while (docs->next()) {
+      while (!irs::doc_limits::eof(docs->advance())) {
         out.push_back(docs->value());
       }
     }
@@ -7160,7 +7160,7 @@ TEST_P(PhraseFilterTestCase, sequential_negation_regression) {
     tests::PreparedFilter prepared{filter, rdr};
     for (size_t i = 0, end = prepared.size(); i < end; ++i) {
       auto docs = prepared.Execute(i);
-      while (docs->next()) {
+      while (!irs::doc_limits::eof(docs->advance())) {
         out.push_back(docs->value());
       }
     }

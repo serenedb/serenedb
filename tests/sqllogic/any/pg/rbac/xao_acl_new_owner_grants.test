@@ -1,0 +1,105 @@
+# After ALTER TABLE ... OWNER TO, the *new* owner inherits the authority to
+# GRANT on the table (owners may always grant their own object's privileges) and
+# may pass the grant onward WITH GRANT OPTION. Driven over real connections; the
+# observable effect (has_table_privilege of the grantee) is byte-identical on
+# PostgreSQL and serenedb.
+#
+# Lore: clickclack is the table. Ownership moves to mop, who then grants to
+# babsky; babsky in turn (holding the option) grants onward to vedernikoff.
+
+statement ok
+DROP TABLE IF EXISTS xao_nog_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_nog_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_nog_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_nog_vedernikoff;
+
+
+statement ok
+CREATE ROLE xao_nog_mop LOGIN;
+
+
+statement ok
+CREATE ROLE xao_nog_babsky LOGIN;
+
+
+statement ok
+CREATE ROLE xao_nog_vedernikoff;
+
+
+statement ok
+CREATE TABLE xao_nog_clickclack (id int);
+
+
+# Superuser transfers the table to mop (transferred once).
+statement ok
+ALTER TABLE xao_nog_clickclack OWNER TO xao_nog_mop;
+
+
+# The new owner mop may GRANT SELECT WITH GRANT OPTION to babsky.
+connection cmop user=xao_nog_mop
+statement ok
+GRANT SELECT ON xao_nog_clickclack TO xao_nog_babsky WITH GRANT OPTION;
+
+
+# Effect: babsky now holds SELECT (never SELECT-able via PUBLIC for this table).
+query
+SELECT has_table_privilege('xao_nog_babsky','xao_nog_clickclack','SELECT') AS sel;
+----
+sel
+t
+
+
+# babsky holds the grant option, so it can pass SELECT onward to vedernikoff.
+connection cbabsky user=xao_nog_babsky
+statement ok
+GRANT SELECT ON xao_nog_clickclack TO xao_nog_vedernikoff;
+
+
+query
+SELECT has_table_privilege('xao_nog_vedernikoff','xao_nog_clickclack','SELECT') AS sel;
+----
+sel
+t
+
+
+# Transfer again, mop -> babsky (transferred twice). The new owner babsky may
+# now GRANT INSERT, a privilege it never held explicitly before.
+statement ok
+ALTER TABLE xao_nog_clickclack OWNER TO xao_nog_babsky;
+
+
+connection cbabsky2 user=xao_nog_babsky
+statement ok
+GRANT INSERT ON xao_nog_clickclack TO xao_nog_vedernikoff;
+
+
+query
+SELECT has_table_privilege('xao_nog_vedernikoff','xao_nog_clickclack','INSERT') AS ins;
+----
+ins
+t
+
+
+statement ok
+DROP TABLE xao_nog_clickclack;
+
+
+statement ok
+DROP ROLE xao_nog_mop;
+
+
+statement ok
+DROP ROLE xao_nog_babsky;
+
+
+statement ok
+DROP ROLE xao_nog_vedernikoff;

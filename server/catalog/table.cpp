@@ -29,8 +29,10 @@
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/operator_expression.hpp>
 #include <memory>
+#include <ranges>
 #include <utility>
 
+#include "auth/acl.h"
 #include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "basics/serializer.h"
@@ -45,14 +47,16 @@ using persistence::TableData;
 
 }  // namespace
 
-Table::Table(ObjectId schema_id, ObjectId id, std::string_view name,
-             std::vector<Column> columns, std::vector<Column::Id> pk_columns,
+Table::Table(Permissions perm, ObjectId schema_id, ObjectId id,
+             std::string_view name, std::vector<Column> columns,
+             std::vector<Column::Id> pk_columns,
              std::vector<CheckConstraint> check_constraints,
              ObjectId generated_pk_seq_id, TableEngine engine,
              std::vector<TableUnique> unique_constraints,
              std::vector<TableForeignKey> foreign_keys, std::string pk_name,
              ObjectId pk_constraint_id, ObjectId pk_index_id)
-  : Object{schema_id, id, std::string{name}, ObjectType::Table},
+  : Object{std::move(perm), schema_id, id, std::string{name},
+           ObjectType::Table},
     _columns{std::move(columns)},
     _pk_columns{std::move(pk_columns)},
     _pk_name{std::move(pk_name)},
@@ -97,11 +101,11 @@ std::shared_ptr<Table> Table::Deserialize(duckdb::Deserializer& src,
   TableData data;
   basics::ReadTuple(src, data);
   auto table = std::make_shared<Table>(
-    ctx.schema_id, ctx.id, data.name, std::move(data.columns),
-    std::move(data.pk_columns), std::move(data.check_constraints),
-    data.generated_pk_seq_id, data.engine, std::move(data.unique_constraints),
-    std::move(data.foreign_keys), std::move(data.pk_name),
-    data.pk_constraint_id, data.pk_index_id);
+    std::move(data.perm), ctx.schema_id, ctx.id, data.name,
+    std::move(data.columns), std::move(data.pk_columns),
+    std::move(data.check_constraints), data.generated_pk_seq_id, data.engine,
+    std::move(data.unique_constraints), std::move(data.foreign_keys),
+    std::move(data.pk_name), data.pk_constraint_id, data.pk_index_id);
   table->_comment = std::move(data.comment);
   return table;
 }
@@ -117,6 +121,7 @@ void Table::Serialize(duckdb::Serializer& sink) const {
     .engine = _engine,
     .unique_constraints = _unique_constraints,
     .foreign_keys = _foreign_keys,
+    .perm = GetPermissions(),
     .comment = _comment,
     .pk_constraint_id = _pk_constraint_id,
     .pk_index_id = _pk_index_id,
@@ -391,13 +396,31 @@ Result Table::AddUniqueConstraint(std::shared_ptr<Table>& result,
 
 std::shared_ptr<Object> Table::Clone() const {
   auto cloned = std::make_shared<Table>(
-    GetParentId(), GetId(), GetName(), _columns, _pk_columns,
+    GetPermissions(), GetParentId(), GetId(), GetName(), _columns, _pk_columns,
     _check_constraints, _generated_pk_seq_id, _engine, _unique_constraints,
     _foreign_keys, _pk_name, _pk_constraint_id, _pk_index_id);
   cloned->SetTombstoned(Tombstoned());
   cloned->SetData(_data);
   cloned->_comment = _comment;
   return cloned;
+}
+
+Result Table::ChangeColumnAcl(std::shared_ptr<Table>& result,
+                              std::string_view column_name,
+                              absl::FunctionRef<void(Acl&)> mutate) const {
+  auto it = absl::c_find_if(
+    _columns, [&](const Column& c) { return c.GetName() == column_name; });
+  if (it == _columns.end()) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
+  auto new_table = basics::downCast<Table>(Clone());
+  auto& column = new_table->_columns[std::distance(_columns.begin(), it)];
+  auto acl = column.GetPermissions().acl;
+  mutate(acl);
+  column.SetPermissions(Permissions{ObjectId{}, std::move(acl)});
+  result = std::move(new_table);
+  return {};
 }
 
 std::shared_ptr<Table> Table::DropColumnDefault(Column::Id column_id) const {

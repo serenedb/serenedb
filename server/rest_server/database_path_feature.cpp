@@ -39,6 +39,11 @@ ABSL_FLAG(std::string, server_directory, "serenedb-data",
           "Path to the database directory. A positional argument, if given, "
           "takes precedence.");
 
+ABSL_FLAG(std::string, hba_config, "",
+          "Path to the host-based authentication config file. Empty (the "
+          "default) uses <datadir>/pg_hba.conf; a relative path is resolved "
+          "against the data directory.");
+
 using namespace sdb::basics;
 
 namespace sdb {
@@ -58,6 +63,16 @@ DatabasePathFeature::DatabasePathFeature()
   std::error_code ec;
   if (auto abs = std::filesystem::absolute(_directory, ec); !ec) {
     _directory = abs.string();
+  }
+
+  // Resolve the HBA config path against the (now absolute) data directory.
+  if (const std::string hba = absl::GetFlag(FLAGS_hba_config); hba.empty()) {
+    _hba_config_file =
+      basics::file_utils::BuildFilename(_directory, "pg_hba.conf");
+  } else if (std::filesystem::path{hba}.is_absolute()) {
+    _hba_config_file = hba;
+  } else {
+    _hba_config_file = basics::file_utils::BuildFilename(_directory, hba);
   }
 
   if (!basics::file_utils::IsDirectory(_directory)) {

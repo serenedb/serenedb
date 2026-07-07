@@ -21,8 +21,11 @@
 #pragma once
 
 #include <atomic>
+#include <memory>
+#include <string_view>
 
 #include "basics/message_buffer.h"
+#include "catalog/fwd.h"
 #include "catalog/identifiers/object_id.h"
 #include "pg/copy_messages_queue.h"
 #include "pg/sql_error.h"
@@ -31,8 +34,25 @@
 namespace sdb::pg {
 
 class CopyInBridge;
-}
 
+// Outcome of the connect-time login gate. On success `role` is the resolved
+// login role (and `error` is default -- errcode 0); on failure `role` is null
+// and `error` carries the FATAL-worthy SqlErrorData. Returned (not thrown) so
+// the pg-wire path can write a fatal frame and the http path can rethrow, each
+// as it needs; test `role` (null == failed).
+struct LoginCheck {
+  std::shared_ptr<catalog::Role> role;
+  pg::SqlErrorData error;
+};
+
+// The connect-time login gate shared by the pg-wire and http sessions:
+// role exists -> may log in -> holds CONNECT on the target database
+// (superuser bypasses, as in PG's InitPostgres).
+LoginCheck RequireLoginRole(const catalog::Snapshot& snapshot,
+                            std::string_view user,
+                            const catalog::Database& database);
+
+}  // namespace sdb::pg
 namespace sdb::network::pg {
 
 class CancelRegistry;
@@ -43,7 +63,8 @@ namespace sdb {
 class ConnectionContext final : public query::Transaction {
  public:
   ConnectionContext(duckdb::ClientContext& duckdb_ctx, std::string_view user,
-                    std::string_view dbname, ObjectId database_id,
+                    ObjectId role_id, std::string_view dbname,
+                    ObjectId database_id,
                     std::shared_ptr<catalog::Database> database,
                     message::Buffer* send_buffer,
                     pg::CopyMessagesQueue* copy_queue, int32_t backend_pid,
@@ -51,22 +72,37 @@ class ConnectionContext final : public query::Transaction {
 
   ~ConnectionContext() final { SDB_ASSERT(!HasNotices()); }
 
-  // The connection's identity, formerly supplied by the ExecContext base.
   const std::string& user() const { return _user; }
   const std::string& GetDatabase() const { return _database_name; }
   ObjectId GetDatabaseId() const { return _database_id; }
-  // The connection's backend PID: pg_backend_pid() and the pid half of
-  // BackendKeyData both report this (the high 32 bits of the random cancel
-  // key).
   int32_t GetBackendPid() const { return _backend_pid; }
 
-  // The server-shared cancel registry, so pg_cancel_backend()/
-  // pg_terminate_backend() can reach another connection's cancel token by pid.
   auto* GetCancelRegistry() const { return _cancel_registry; }
 
   std::string GetCurrentSchema() const;
   std::string GetCurrentSchemaFromSnapshot(
     std::shared_ptr<const catalog::Snapshot> snapshot) const;
+
+  ObjectId GetRoleId() const { return _effective_role_id; }
+  ObjectId GetLoginRoleId() const { return _login_role_id; }
+  ObjectId GetSessionRoleId() const { return _session_role_id; }
+
+  std::string EffectiveUserName() const;
+  std::string SessionUserName() const;
+
+  // SET ROLE r switches the effective (current) role; SET SESSION AUTHORIZATION
+  // moves the session role (and resets the effective role to it); the resets
+  // restore the login role. Whether SHOW role reports 'none' vs a name is
+  // carried by the `role` GUC's own value, not tracked here.
+  void SetEffectiveRole(ObjectId role) { _effective_role_id = role; }
+  void SetSessionRole(ObjectId role) {
+    _session_role_id = role;
+    _effective_role_id = role;
+  }
+  void ResetIdentity() {
+    _session_role_id = _login_role_id;
+    _effective_role_id = _login_role_id;
+  }
 
   const auto& GetDatabasePtr() const { return _database; }
 
@@ -74,15 +110,9 @@ class ConnectionContext final : public query::Transaction {
 
   auto* GetCopyQueue() const { return _copy_queue; }
 
-  // COPY FROM STDIN bridge for the new coroutine server (the old server uses
-  // _copy_queue instead). Set per COPY statement, cleared after.
   auto* GetCopyInBridge() const { return _copy_in_bridge; }
   void SetCopyInBridge(pg::CopyInBridge* bridge) { _copy_in_bridge = bridge; }
 
-  // Per-statement side channel for table functions that must hand serialized
-  // response payload to the protocol handler beyond the statement's result
-  // (es_bulk appends ES bulk-items JSON here while emitting rows; INSERT has
-  // no RETURNING on serenedb tables). Set before the statement, cleared after.
   auto* GetResponseSink() const { return _response_sink; }
   void SetResponseSink(std::string* sink) { _response_sink = sink; }
 
@@ -102,8 +132,6 @@ class ConnectionContext final : public query::Transaction {
     return _notices.load(std::memory_order_relaxed) != nullptr;
   }
 
-  // Single consumer: detaches the stack, reverses the links in place (FIFO),
-  // and feeds each notice to `fn` -- no intermediate storage.
   template<typename Fn>
   void ConsumeNotices(Fn&& fn) {
     auto* node = _notices.exchange(nullptr, std::memory_order_acquire);
@@ -132,6 +160,9 @@ class ConnectionContext final : public query::Transaction {
   std::shared_ptr<catalog::Database> _database;
   message::Buffer* const _send_buffer;
   pg::CopyMessagesQueue* const _copy_queue;
+  const ObjectId _login_role_id;
+  ObjectId _session_role_id;
+  ObjectId _effective_role_id;
   pg::CopyInBridge* _copy_in_bridge = nullptr;
   std::string* _response_sink = nullptr;
   std::atomic<NoticeNode*> _notices{nullptr};

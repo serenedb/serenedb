@@ -1,0 +1,106 @@
+# has_column_privilege NEGATIVE direction: a column privilege must be FALSE
+# when the role lacks the underlying table privilege. serenedb has no
+# column-level grants, so column priv == table priv -- but it must still
+# return f when ungranted (the old stub always returned true). PG-identical.
+# Column existence is required: a non-existent column raises, like PG.
+
+statement ok
+DROP TABLE IF EXISTS cpn_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS cpn_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS cpn_clickclack;
+
+
+statement ok
+CREATE TABLE cpn_kostya (id int, payload text, headcount int);
+
+
+statement ok
+CREATE ROLE cpn_vedernikoff LOGIN;
+
+
+statement ok
+CREATE ROLE cpn_clickclack LOGIN;
+
+
+# No grants at all: every column privilege is FALSE on every column.
+query
+SELECT has_column_privilege('cpn_vedernikoff', 'cpn_kostya', 'id', 'SELECT') AS a,
+       has_column_privilege('cpn_vedernikoff', 'cpn_kostya', 'payload', 'SELECT') AS b,
+       has_column_privilege('cpn_vedernikoff', 'cpn_kostya', 'headcount', 'INSERT') AS c;
+----
+a	b	c
+f	f	f
+
+
+# Grant table SELECT: column SELECT becomes true, but INSERT/UPDATE stay false.
+statement ok
+GRANT SELECT ON cpn_kostya TO cpn_vedernikoff;
+
+
+query
+SELECT has_column_privilege('cpn_vedernikoff', 'cpn_kostya', 'id', 'SELECT') AS sel,
+       has_column_privilege('cpn_vedernikoff', 'cpn_kostya', 'id', 'INSERT') AS ins,
+       has_column_privilege('cpn_vedernikoff', 'cpn_kostya', 'payload', 'UPDATE') AS upd;
+----
+sel	ins	upd
+t	f	f
+
+
+# A different, never-granted role still sees false everywhere.
+query
+SELECT has_column_privilege('cpn_clickclack', 'cpn_kostya', 'id', 'SELECT') AS a,
+       has_column_privilege('cpn_clickclack', 'cpn_kostya', 'payload', 'INSERT') AS b;
+----
+a	b
+f	f
+
+
+# REVOKE drops it back to false.
+statement ok
+REVOKE SELECT ON cpn_kostya FROM cpn_vedernikoff;
+
+
+query
+SELECT has_column_privilege('cpn_vedernikoff', 'cpn_kostya', 'id', 'SELECT') AS sel;
+----
+sel
+f
+
+
+# Current-user 3-arg form (table, column, priv): the owning superuser holds
+# every column privilege.
+query
+SELECT has_column_privilege('cpn_kostya', 'id', 'SELECT') AS sel,
+       has_column_privilege('cpn_kostya', 'payload', 'INSERT') AS ins,
+       has_column_privilege('cpn_kostya', 'headcount', 'UPDATE') AS upd;
+----
+sel	ins	upd
+t	t	t
+
+
+# A non-existent column raises (identical message on both engines is not
+# guaranteed, so match the error head with a trailing ignore marker).
+statement error
+SELECT has_column_privilege('cpn_vedernikoff', 'cpn_kostya', 'nosuchcol', 'SELECT');
+----
+db error: ERROR: column "nosuchcol"<slt:ignore>
+
+
+# ---- cleanup ----
+
+statement ok
+DROP TABLE cpn_kostya;
+
+
+statement ok
+DROP ROLE cpn_vedernikoff;
+
+
+statement ok
+DROP ROLE cpn_clickclack;

@@ -219,7 +219,7 @@ std::vector<std::string> RunFilter(const irs::DirectoryReader& reader,
       continue;
     }
     auto it = query->Execute({}, stats);
-    while (it->next()) {
+    while (!irs::doc_limits::eof(it->advance())) {
       const auto doc = it->value();
       const auto idx = doc - irs::doc_limits::min();
       if (idx < names.size()) {

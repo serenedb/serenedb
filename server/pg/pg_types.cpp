@@ -21,7 +21,6 @@
 #include "pg/pg_types.h"
 
 #include <absl/base/internal/endian.h>
-#include <absl/container/flat_hash_map.h>
 #include <absl/strings/escaping.h>
 #include <absl/strings/numbers.h>
 #include <absl/time/civil_time.h>
@@ -30,6 +29,7 @@
 #include <duckdb/common/types/time.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 
+#include "basics/containers/flat_hash_map.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
 #include "catalog/user_type.h"
@@ -419,7 +419,7 @@ std::string RegtypeOut(uint64_t oid) {
 static const containers::FlatHashMap<std::string_view, PgTypeOID>
   kTypeNameToOid = [] {
     struct Builder {
-      absl::flat_hash_map<std::string_view, PgTypeOID> map;
+      containers::FlatHashMap<std::string_view, PgTypeOID> map;
       Builder& Case(std::string_view name, PgTypeOID oid) {
         map.emplace(name, oid);
         return *this;
@@ -581,8 +581,9 @@ uint64_t RegclassIn(const ConnectionContext& ctx, std::string_view name) {
   auto snapshot = ctx.CatalogSnapshot();
   auto current_schema = ctx.GetCurrentSchema();
   auto object_name = ParseObjectName(name, current_schema);
-  auto relation = snapshot->GetRelation(ctx.GetDatabaseId(), object_name.schema,
-                                        object_name.relation);
+  auto relation =
+    snapshot->GetRelation(catalog::NoAccessCheck(), ctx.GetDatabaseId(),
+                          object_name.schema, object_name.relation);
   if (relation) {
     return relation->GetId();
   }

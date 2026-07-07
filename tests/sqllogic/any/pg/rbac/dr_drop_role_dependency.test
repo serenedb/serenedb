@@ -1,0 +1,71 @@
+# DROP ROLE must refuse while objects depend on the role (privileges granted to
+# it), exactly like PostgreSQL -- otherwise the role's id lingers in table ACLs
+# as an un-revokable ghost grant. Dropping becomes possible once the dependency
+# is removed (REVOKE or DROP TABLE).
+
+statement ok
+DROP TABLE IF EXISTS dr_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS dr_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS dr_clickclack;
+
+
+statement ok
+CREATE TABLE dr_kostya (id int);
+
+
+statement ok
+CREATE ROLE dr_vedernikoff;
+
+
+statement ok
+CREATE ROLE dr_clickclack;
+
+
+# A role with no dependencies drops cleanly.
+statement ok
+DROP ROLE dr_clickclack;
+
+
+# Grant a privilege to the role -> it now has a dependency.
+statement ok
+GRANT SELECT ON dr_kostya TO dr_vedernikoff;
+
+
+# DROP ROLE is refused while the grant exists (PG: 2BP01, "cannot be dropped
+# because some objects depend on it"). DETAIL differs across engines -> ignore.
+statement error
+DROP ROLE dr_vedernikoff;
+----
+db error: ERROR: role "dr_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Remove the dependency by revoking; now the drop succeeds.
+statement ok
+REVOKE SELECT ON dr_kostya FROM dr_vedernikoff;
+
+
+statement ok
+DROP ROLE dr_vedernikoff;
+
+
+# Re-create, grant again, then drop the TABLE first -> dependency gone -> drop ok.
+statement ok
+CREATE ROLE dr_vedernikoff;
+
+
+statement ok
+GRANT INSERT ON dr_kostya TO dr_vedernikoff;
+
+
+statement ok
+DROP TABLE dr_kostya;
+
+
+statement ok
+DROP ROLE dr_vedernikoff;

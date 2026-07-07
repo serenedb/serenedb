@@ -73,6 +73,21 @@ class AllIterator : public DocIterator {
     return count;
   }
 
+  uint32_t EmitDocs(doc_id_t* out, doc_id_t max) final {
+    return EmitDocsImpl(*this, out, max);
+  }
+  uint32_t EmitScoredDocs(doc_id_t* out, score_t* scores, doc_id_t max,
+                          const ScoreFunction& scorer,
+                          ColumnArgsFetcher* fetcher, doc_id_t min) final {
+    return EmitScoredDocsImpl(*this, out, scores, max, scorer, fetcher, min);
+  }
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                      uint64_t* mask,
+                                      FillBlockScoreContext score,
+                                      FillBlockMatchContext match) final {
+    return FillBlockImpl(*this, min, max, mask, score, match);
+  }
+
  private:
   const doc_id_t _max_doc;
 };
@@ -108,11 +123,23 @@ class MaskDocIterator : public DocIterator {
 
   doc_id_t LazySeek(doc_id_t target) final { return seek(target); }
 
-  uint32_t count() final { return CountImpl(*this); }
-
-  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
-               ScoreCollector& collector) final {
-    CollectImpl(*this, scorer, fetcher, collector);
+  uint32_t EmitDocs(doc_id_t* out, doc_id_t max) final {
+    // Delegate to the child (inherits its specialisation, e.g. posting bulk),
+    // then compact out the sparse deleted ids in place.
+    const auto raw = _it->EmitDocs(out, max);
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < raw; ++i) {
+      if (!_mask.contains(out[i])) {
+        out[n++] = out[i];
+      }
+    }
+    // Keep value() on a live doc >= max, matching advance()'s contract.
+    auto doc = _it->value();
+    while (!doc_limits::eof(doc) && _mask.contains(doc)) {
+      doc = _it->advance();
+    }
+    _doc = doc;
+    return n;
   }
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
@@ -120,6 +147,23 @@ class MaskDocIterator : public DocIterator {
   }
 
   void FetchScoreArgs(uint16_t index) final { _it->FetchScoreArgs(index); }
+
+  uint32_t count() final { return CountImpl(*this); }
+  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final {
+    CollectImpl(*this, scorer, fetcher, collector);
+  }
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                      uint64_t* mask,
+                                      FillBlockScoreContext score,
+                                      FillBlockMatchContext match) final {
+    return FillBlockImpl(*this, min, max, mask, score, match);
+  }
+  uint32_t EmitScoredDocs(doc_id_t* out, score_t* scores, doc_id_t max,
+                          const ScoreFunction& scorer,
+                          ColumnArgsFetcher* fetcher, doc_id_t min) final {
+    return EmitScoredDocsImpl(*this, out, scores, max, scorer, fetcher, min);
+  }
 
  private:
   const DocumentMask& _mask;
@@ -160,12 +204,7 @@ class MaskedDocIterator : public DocIterator {
 
   doc_id_t LazySeek(doc_id_t target) noexcept final { return seek(target); }
 
-  uint32_t count() noexcept final { return CountImpl(*this); }
-
-  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
-               ScoreCollector& collector) final {
-    CollectImpl(*this, scorer, fetcher, collector);
-  }
+  IRS_DOC_ITERATOR_DEFAULTS
 
  private:
   const DocumentMask& _docs_mask;

@@ -1,0 +1,190 @@
+# SQL-standard privilege view row shapes: information_schema.table_privileges.
+#
+# After GRANT, this view exposes one row per (grantor, grantee, privilege)
+# tuple. We assert the six load-bearing columns -- grantor, grantee,
+# table_name, privilege_type, is_grantable, with_hierarchy -- and they are
+# byte-identical on PostgreSQL 19beta1 and serenedb. Every assertion filters
+# grantee to the roles created here so the owner (postgres) row is never
+# compared (its relacl MAINTAIN bit diverges, though it does not surface in
+# this view). ORDER BY privilege_type makes the row order deterministic.
+#
+# Vedernikoff lore: clickclack tables, the usual cast as grantees.
+# Idempotent: drop up front, drop at the end.
+
+statement ok
+DROP TABLE IF EXISTS isp_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS isp_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS isp_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS isp_pudge;
+
+
+statement ok
+DROP ROLE IF EXISTS isp_androed;
+
+
+statement ok
+CREATE TABLE isp_clickclack (id int, mop text);
+
+
+statement ok
+CREATE ROLE isp_kostya;
+
+
+statement ok
+CREATE ROLE isp_babsky;
+
+
+statement ok
+CREATE ROLE isp_pudge;
+
+
+statement ok
+CREATE ROLE isp_androed;
+
+
+# ============================================================================
+# Single-privilege grant: exactly one row, is_grantable NO. with_hierarchy is
+# YES for SELECT (the SQL standard ties hierarchy to SELECT) and NO otherwise.
+# ============================================================================
+
+statement ok
+GRANT SELECT ON isp_clickclack TO isp_kostya;
+
+
+query
+SELECT grantor, grantee, table_name, privilege_type, is_grantable, with_hierarchy
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_clickclack' AND grantee = 'isp_kostya'
+ORDER BY privilege_type;
+----
+grantor	grantee	table_name	privilege_type	is_grantable	with_hierarchy
+postgres	isp_kostya	isp_clickclack	SELECT	NO	YES
+
+
+# A single INSERT grant: one row, with_hierarchy NO (only SELECT carries it).
+statement ok
+GRANT INSERT ON isp_clickclack TO isp_babsky;
+
+
+query
+SELECT grantor, grantee, table_name, privilege_type, is_grantable, with_hierarchy
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_clickclack' AND grantee = 'isp_babsky'
+ORDER BY privilege_type;
+----
+grantor	grantee	table_name	privilege_type	is_grantable	with_hierarchy
+postgres	isp_babsky	isp_clickclack	INSERT	NO	NO
+
+
+# ============================================================================
+# Multi-privilege grant in one statement: one row per privilege, all sharing
+# the same grantor and grantee, sorted by privilege_type. with_hierarchy
+# tracks the privilege (YES for SELECT, NO for the rest).
+# ============================================================================
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE ON isp_clickclack TO isp_pudge;
+
+
+query
+SELECT grantor, grantee, privilege_type, is_grantable, with_hierarchy
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_clickclack' AND grantee = 'isp_pudge'
+ORDER BY privilege_type;
+----
+grantor	grantee	privilege_type	is_grantable	with_hierarchy
+postgres	isp_pudge	DELETE	NO	NO
+postgres	isp_pudge	INSERT	NO	NO
+postgres	isp_pudge	SELECT	NO	YES
+postgres	isp_pudge	UPDATE	NO	NO
+
+
+# ============================================================================
+# GRANT ALL: all seven privileges appear, is_grantable NO on each,
+# with_hierarchy YES only on SELECT.
+# ============================================================================
+
+statement ok
+GRANT ALL ON isp_clickclack TO isp_androed;
+
+
+query
+SELECT grantee, privilege_type, is_grantable, with_hierarchy
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_clickclack' AND grantee = 'isp_androed'
+ORDER BY privilege_type;
+----
+grantee	privilege_type	is_grantable	with_hierarchy
+isp_androed	DELETE	NO	NO
+isp_androed	INSERT	NO	NO
+isp_androed	REFERENCES	NO	NO
+isp_androed	SELECT	NO	YES
+isp_androed	TRIGGER	NO	NO
+isp_androed	TRUNCATE	NO	NO
+isp_androed	UPDATE	NO	NO
+
+
+# ============================================================================
+# REVOKE removes rows. After revoking UPDATE from pudge the row disappears;
+# the remaining three privileges still have rows.
+# ============================================================================
+
+statement ok
+REVOKE UPDATE ON isp_clickclack FROM isp_pudge;
+
+
+query
+SELECT privilege_type FROM information_schema.table_privileges
+WHERE table_name = 'isp_clickclack' AND grantee = 'isp_pudge'
+ORDER BY privilege_type;
+----
+privilege_type
+DELETE
+INSERT
+SELECT
+
+
+# REVOKE ALL clears every row for that grantee.
+statement ok
+REVOKE ALL ON isp_clickclack FROM isp_androed;
+
+
+query
+SELECT count(*) AS rows_left FROM information_schema.table_privileges
+WHERE table_name = 'isp_clickclack' AND grantee = 'isp_androed';
+----
+rows_left
+0
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE isp_clickclack;
+
+
+statement ok
+DROP ROLE isp_kostya;
+
+
+statement ok
+DROP ROLE isp_babsky;
+
+
+statement ok
+DROP ROLE isp_pudge;
+
+
+statement ok
+DROP ROLE isp_androed;

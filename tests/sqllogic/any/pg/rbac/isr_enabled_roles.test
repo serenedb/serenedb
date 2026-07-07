@@ -1,0 +1,240 @@
+# information_schema.enabled_roles: the roles enabled in the CURRENT session --
+# the querying role itself plus the full TRANSITIVE closure of the groups it
+# inherits. Unlike applicable_roles (which lists direct edges), enabled_roles
+# lists NODES: every role reachable by following membership upward, collapsed to
+# one row per role name regardless of how many paths reach it.
+#
+# To observe a session whose enabled set is interesting we connect on a second
+# connection AS a login role (connection c_* user=...), exactly as the
+# enforcement siblings do. The default postgres session, being superuser, has
+# every role enabled, so the meaningful assertions are made from the member's
+# own session.
+#
+# Dual-checked byte-identical on PostgreSQL 19beta1 and serenedb. Roles prefixed
+# isr_ under the vedernikoff lore; idempotent and self-cleaning.
+
+statement ok
+DROP ROLE IF EXISTS isr_en_pudge;
+
+
+statement ok
+DROP ROLE IF EXISTS isr_en_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS isr_en_deadinside;
+
+
+statement ok
+DROP ROLE IF EXISTS isr_en_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS isr_en_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS isr_en_solo;
+
+
+# ----------------------------------------------------------------------
+# A login member at the bottom of a three-hop chain:
+#   isr_en_pudge -> isr_en_kostya -> isr_en_deadinside -> isr_en_iceberg
+# pudge logs in and observes its own enabled_roles: itself plus every ancestor.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE ROLE isr_en_pudge LOGIN;
+
+
+statement ok
+CREATE ROLE isr_en_kostya;
+
+
+statement ok
+CREATE ROLE isr_en_deadinside;
+
+
+statement ok
+CREATE ROLE isr_en_iceberg;
+
+
+# Before any membership, pudge's session has only pudge enabled.
+connection c_pudge user=isr_en_pudge
+query
+SELECT role_name FROM information_schema.enabled_roles
+WHERE role_name LIKE 'isr_en_%' ORDER BY role_name;
+----
+role_name
+isr_en_pudge
+
+
+statement ok
+GRANT isr_en_kostya TO isr_en_pudge;
+
+
+statement ok
+GRANT isr_en_deadinside TO isr_en_kostya;
+
+
+statement ok
+GRANT isr_en_iceberg TO isr_en_deadinside;
+
+
+# Now pudge's session has the entire upward closure enabled: itself + 3 ancestors.
+# A fresh connection picks up the membership changes made on the control session.
+connection c_pudge2 user=isr_en_pudge
+query
+SELECT role_name FROM information_schema.enabled_roles
+WHERE role_name LIKE 'isr_en_%' ORDER BY role_name;
+----
+role_name
+isr_en_deadinside
+isr_en_iceberg
+isr_en_kostya
+isr_en_pudge
+
+
+# The closure is exactly four roles (count is robust to filtering noise).
+connection c_pudge2 user=isr_en_pudge
+query
+SELECT count(*) AS n FROM information_schema.enabled_roles
+WHERE role_name LIKE 'isr_en_%';
+----
+n
+4
+
+
+# enabled_roles is node-collapsed: even though the leaf iceberg is reached by a
+# single path here, it shows up exactly once.
+connection c_pudge2 user=isr_en_pudge
+query
+SELECT count(*) AS leaf FROM information_schema.enabled_roles
+WHERE role_name = 'isr_en_iceberg';
+----
+leaf
+1
+
+
+# ----------------------------------------------------------------------
+# Diamond: two distinct paths reach the same ancestor; it is still ONE row.
+# Add a second parent chain off pudge: pudge -> mop -> iceberg, so iceberg is
+# now reachable both via kostya->deadinside and via mop.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE ROLE isr_en_mop;
+
+
+statement ok
+GRANT isr_en_mop TO isr_en_pudge;
+
+
+statement ok
+GRANT isr_en_iceberg TO isr_en_mop;
+
+
+# iceberg is reachable by two paths now, yet appears exactly once.
+connection c_pudge3 user=isr_en_pudge
+query
+SELECT count(*) AS iceberg_rows FROM information_schema.enabled_roles
+WHERE role_name = 'isr_en_iceberg';
+----
+iceberg_rows
+1
+
+
+# The enabled set grew by exactly one node (mop); the closure is now five roles.
+connection c_pudge3 user=isr_en_pudge
+query
+SELECT role_name FROM information_schema.enabled_roles
+WHERE role_name LIKE 'isr_en_%' ORDER BY role_name;
+----
+role_name
+isr_en_deadinside
+isr_en_iceberg
+isr_en_kostya
+isr_en_mop
+isr_en_pudge
+
+
+# ----------------------------------------------------------------------
+# Cutting a middle edge prunes the unreachable branch from the closure. Revoke
+# deadinside from kostya: iceberg is still reachable via mop, but deadinside is
+# now only reachable from kostya... which is still enabled, so deadinside stays.
+# To actually drop a node, sever the path that uniquely carries it: revoke mop
+# from pudge -- mop is then unreachable and leaves the enabled set, while
+# iceberg survives through the kostya->deadinside->iceberg path.
+# ----------------------------------------------------------------------
+
+statement ok
+REVOKE isr_en_mop FROM isr_en_pudge;
+
+
+# mop is gone; iceberg remains (still reached via deadinside). Back to four.
+connection c_pudge4 user=isr_en_pudge
+query
+SELECT role_name FROM information_schema.enabled_roles
+WHERE role_name LIKE 'isr_en_%' ORDER BY role_name;
+----
+role_name
+isr_en_deadinside
+isr_en_iceberg
+isr_en_kostya
+isr_en_pudge
+
+
+# ----------------------------------------------------------------------
+# A login role that is a member of nothing: its session enables only itself.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE ROLE isr_en_solo LOGIN;
+
+
+connection c_solo user=isr_en_solo
+query
+SELECT role_name FROM information_schema.enabled_roles
+WHERE role_name LIKE 'isr_en_%' ORDER BY role_name;
+----
+role_name
+isr_en_solo
+
+
+# A foreign session never sees an unrelated chain. solo cannot see pudge's
+# ancestors (kostya/deadinside/iceberg) in its own enabled_roles.
+connection c_solo user=isr_en_solo
+query
+SELECT count(*) AS foreign_nodes FROM information_schema.enabled_roles
+WHERE role_name IN ('isr_en_pudge', 'isr_en_kostya', 'isr_en_deadinside', 'isr_en_iceberg');
+----
+foreign_nodes
+0
+
+
+# ----------------------------------------------------------------------
+# Cleanup. The control (postgres) connection owns the DROPs.
+# ----------------------------------------------------------------------
+
+statement ok
+DROP ROLE isr_en_pudge;
+
+
+statement ok
+DROP ROLE isr_en_kostya;
+
+
+statement ok
+DROP ROLE isr_en_deadinside;
+
+
+statement ok
+DROP ROLE isr_en_iceberg;
+
+
+statement ok
+DROP ROLE isr_en_mop;
+
+
+statement ok
+DROP ROLE isr_en_solo;

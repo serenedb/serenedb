@@ -23,12 +23,11 @@
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 
-#include <atomic>
 #include <expected>
-#include <functional>
 #include <memory>
 #include <vector>
 
+#include "auth/role_closure.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/containers/node_hash_map.h"
@@ -44,6 +43,7 @@
 #include "catalog/object.h"
 #include "catalog/object_dependency.h"
 #include "catalog/resolution_table.h"
+#include "catalog/role.h"
 #include "catalog/schema.h"
 #include "catalog/sequence.h"
 #include "catalog/store/store.h"
@@ -99,10 +99,29 @@ constexpr ObjectType GetObjectType() noexcept {
     return ObjectType::Tokenizer;
   } else if constexpr (std::is_same_v<T, Sequence>) {
     return ObjectType::Sequence;
+  } else if constexpr (std::is_same_v<T, Role>) {
+    return ObjectType::Role;
   } else {
     static_assert(false);
   }
 }
+
+struct AccessContext {
+  ObjectId role;
+  AclMode need = AclMode::NoRights;
+};
+
+AccessContext RequireAccess(duckdb::ClientContext& context, AclMode need);
+
+inline AccessContext RequireAccess(ObjectId role, AclMode need) {
+  return {role, need};
+}
+
+AccessContext ActingAs(duckdb::ClientContext& context);
+
+inline AccessContext ActingAs(ObjectId role) { return {role}; }
+
+inline AccessContext NoAccessCheck() { return {id::kRootUser}; }
 
 using PendingDrops =
   containers::FlatHashMap<ObjectId, std::vector<std::weak_ptr<DropTask>>>;
@@ -116,6 +135,16 @@ struct Snapshot {
   uint64_t Version() const noexcept { return _version; }
 
   connector::DuckDBEntryCache& GetDuckDBEntryCache() const;
+
+  const auth::RoleClosure& ClosureFor(ObjectId role) const;
+
+  void RebuildRoleClosures();
+
+  void RequireAccess(ObjectId role, const Object& object, AclMode need) const;
+
+  std::size_t RoleDependentCount(ObjectId role) const;
+
+  std::vector<std::shared_ptr<Role>> GetRoles() const;
   std::vector<std::shared_ptr<Database>> GetDatabases() const;
   std::vector<std::shared_ptr<Schema>> GetSchemas(ObjectId database) const;
   std::vector<std::shared_ptr<Object>> GetRelations(
@@ -147,24 +176,33 @@ struct Snapshot {
   void VisitIndexes(ObjectId database, std::string_view schema,
                     absl::FunctionRef<void(const Index&)> visitor) const;
 
+  std::shared_ptr<Role> GetRole(std::string_view name) const;
   std::shared_ptr<Database> GetDatabase(std::string_view database) const;
   std::shared_ptr<Database> GetDatabase(ObjectId database) const;
   std::shared_ptr<Schema> GetSchema(ObjectId database,
                                     std::string_view schema) const;
-  std::shared_ptr<Object> GetRelation(ObjectId database,
+
+  std::shared_ptr<Object> GetRelation(const AccessContext& ax,
+                                      ObjectId database,
                                       std::string_view schema,
                                       std::string_view name) const;
-  std::shared_ptr<PgSqlFunction> GetFunction(ObjectId database,
+  std::shared_ptr<PgSqlFunction> GetFunction(const AccessContext& ax,
+                                             ObjectId database,
                                              std::string_view schema,
                                              std::string_view name) const;
-  std::shared_ptr<Tokenizer> GetTokenizer(ObjectId database,
+  std::shared_ptr<Tokenizer> GetTokenizer(const AccessContext& ax,
+                                          ObjectId database,
                                           std::string_view schema,
                                           std::string_view name) const;
-  std::shared_ptr<PgSqlType> GetType(ObjectId database, std::string_view schema,
+  std::shared_ptr<PgSqlType> GetType(const AccessContext& ax, ObjectId database,
+                                     std::string_view schema,
                                      std::string_view name) const;
-  std::shared_ptr<Table> GetTable(ObjectId database_id, std::string_view schema,
+  std::shared_ptr<Table> GetTable(const AccessContext& ax, ObjectId database_id,
+                                  std::string_view schema,
                                   std::string_view name) const;
-  std::shared_ptr<Sequence> GetSequence(ObjectId database, ObjectId schema_id,
+  std::shared_ptr<Table> GetTable(const AccessContext& ax, ObjectId id) const;
+  std::shared_ptr<Sequence> GetSequence(const AccessContext& ax,
+                                        ObjectId database, ObjectId schema_id,
                                         std::string_view name) const;
 
   bool HasIndexes(ObjectId relation_id) const;
@@ -215,6 +253,10 @@ struct Snapshot {
 
   enum class EdgeAction : uint8_t { Add, Delete };
 
+  template<typename T>
+  std::shared_ptr<T> EnforceRead(const AccessContext& ax,
+                                 std::shared_ptr<T> obj) const;
+
   void EndLoad() noexcept;
 
   std::shared_ptr<DatabaseDrop> CreateDatabaseDrop(
@@ -259,6 +301,7 @@ struct Snapshot {
                                   EdgeAction action);
   void ModifyInvertedIndexDependencies(const InvertedIndex& index,
                                        ObjectId index_id, EdgeAction action);
+  void ModifyRoleDependencies(const Object& obj, EdgeAction action);
 
   template<typename T>
   Result RegisterObject(std::shared_ptr<T> object, ObjectId parent_id,
@@ -345,8 +388,12 @@ struct Snapshot {
   ObjectDependencies _deps;
   ObjectSetById<Object> _objects;
   mutable connector::DuckDBEntryCache _duckdb_cache;
-  uint64_t _version = 0;
+  auth::RoleClosureMap _role_closures;
   bool _in_load = true;
+  uint64_t _version = 0;
+
+ public:
+  void StampVersion(uint64_t version) noexcept;
 };
 
 using IndexFactory =
@@ -356,6 +403,7 @@ class Catalog final {
  public:
   explicit Catalog();
 
+  Result RegisterRole(std::shared_ptr<Role> role);
   Result RegisterDatabase(std::shared_ptr<Database> database);
   Result RegisterSchema(ObjectId database_id, std::shared_ptr<Schema> schema);
   Result RegisterView(ObjectId schema_id, std::shared_ptr<PgSqlView> view);
@@ -372,77 +420,113 @@ class Catalog final {
   Result RegisterIndex(ObjectId database_id, ObjectId schema_id,
                        std::shared_ptr<Index> index);
 
-  Result CreateDatabase(std::shared_ptr<Database> database);
-  Result CreateView(ObjectId database_id, std::string_view schema,
-                    std::shared_ptr<PgSqlView> view, bool replace);
-  Result CreateSequence(ObjectId database_id, std::string_view schema,
+  Result CreateDatabase(const AccessContext& ax,
+                        std::shared_ptr<Database> database);
+  Result CreateRole(const AccessContext& ax, std::shared_ptr<Role> role);
+  Result CreateView(const AccessContext& ax, ObjectId database_id,
+                    std::string_view schema, std::shared_ptr<PgSqlView> view,
+                    bool replace);
+  Result CreateSequence(const AccessContext& ax, ObjectId database_id,
+                        std::string_view schema,
                         std::shared_ptr<Sequence> sequence, bool if_not_exists);
-  Result CreateSchema(ObjectId database_id, std::shared_ptr<Schema> schema);
-  Result CreateFunction(ObjectId database_id, std::string_view schema,
+  Result CreateSchema(const AccessContext& ax, ObjectId database_id,
+                      std::shared_ptr<Schema> schema);
+  Result CreateFunction(const AccessContext& ax, ObjectId database_id,
+                        std::string_view schema,
                         std::shared_ptr<PgSqlFunction> function, bool replace);
-  Result CreateTable(ObjectId database_id, std::string_view schema,
-                     CreateTableOptions table,
+  Result CreateTable(const AccessContext& ax, ObjectId database_id,
+                     std::string_view schema, CreateTableOptions table,
                      CreateTableOperationOptions operation_options);
-  Result CreateSecondaryIndex(ObjectId database_id, std::string_view schema,
+  Result CreateSecondaryIndex(const AccessContext& ax, ObjectId database_id,
+                              std::string_view schema,
                               std::string_view relation, std::string name,
                               std::vector<CreateIndexColumn>&& columns,
                               bool unique,
                               CreateIndexOperationOptions operation_options);
-  Result CreateInvertedIndex(duckdb::ClientContext& context,
+  Result CreateInvertedIndex(const AccessContext& ax,
+                             duckdb::ClientContext& context,
                              ObjectId database_id, std::string_view schema,
                              std::string_view relation, std::string name,
                              std::vector<CreateIndexColumn>&& columns,
                              InvertedIndexOptions options,
                              CreateIndexOperationOptions operation_options);
-  Result CreateTokenizer(ObjectId database_id, std::string_view schema,
+  Result CreateTokenizer(const AccessContext& ax, ObjectId database_id,
+                         std::string_view schema,
                          std::shared_ptr<Tokenizer> dict);
-  Result CreateType(ObjectId database_id, std::string_view schema,
-                    std::shared_ptr<PgSqlType> type);
+  Result CreateType(const AccessContext& ax, ObjectId database_id,
+                    std::string_view schema, std::shared_ptr<PgSqlType> type);
 
-  Result RenameView(ObjectId database_id, std::string_view schema,
-                    std::string_view name, std::string_view new_name);
-  Result RenameTable(ObjectId database_id, std::string_view schema,
-                     std::string_view name, std::string_view new_name);
-  Result RenameIndex(ObjectId database_id, std::string_view schema,
-                     std::string_view name, std::string_view new_name);
-  Result RenameRelation(ObjectId database_id, std::string_view schema,
-                        std::string_view name, std::string_view new_name);
-  Result RenameFunction(ObjectId database_id, std::string_view schema,
-                        std::string_view name, std::string_view new_name);
+  Result RenameView(const AccessContext& ax, ObjectId database_id,
+                    std::string_view schema, std::string_view name,
+                    std::string_view new_name);
+  Result RenameRelation(const AccessContext& ax, ObjectId database_id,
+                        std::string_view schema, std::string_view name,
+                        std::string_view new_name);
+  Result RenameFunction(const AccessContext& ax, ObjectId database_id,
+                        std::string_view schema, std::string_view name,
+                        std::string_view new_name);
 
+  using AclMutator =
+    absl::FunctionRef<void(const Snapshot&, ObjectId owner, catalog::Acl&)>;
   Result ChangeView(ObjectId database_id, std::string_view schema,
                     std::string_view name, ChangeCallback<PgSqlView> callback);
-  Result ChangeTable(ObjectId database_id, std::string_view schema,
-                     std::string_view name, ChangeCallback<Table> callback);
+  Result ChangeTable(const AccessContext& ax, ObjectId database_id,
+                     std::string_view schema, std::string_view name,
+                     ChangeCallback<Table> callback);
+  Result ChangeRole(const AccessContext& ax, std::string_view name,
+                    std::string_view verb, bool allow_self,
+                    ChangeCallback<Role> callback);
+  Result ChangeDefaultAcl(const AccessContext& ax, std::string_view role_name,
+                          ObjectId schema, char objtype, ObjectType type,
+                          absl::FunctionRef<void(Acl&)> mutate);
+  Result ChangeMembership(const AccessContext& ax, ObjectId role,
+                          std::string_view role_name, ObjectId member,
+                          std::string_view member_name, const Membership& edge,
+                          bool revoke, bool admin_option_only);
+  Result ChangeOwner(const AccessContext& ax, ObjectId database_id,
+                     std::string_view schema, std::string_view name,
+                     ObjectType type, ObjectId new_owner,
+                     std::string_view new_owner_name);
+  Result ChangeAcl(ObjectId database_id, std::string_view schema,
+                   std::string_view name, ObjectType type, AclMutator mutate);
+  Result ChangeColumnAcl(ObjectId database_id, std::string_view schema,
+                         std::string_view table_name, std::string_view column,
+                         AclMutator mutate);
+  Result ChangeColumnType(const AccessContext& ax, ObjectId database_id,
+                          std::string_view schema, std::string_view table,
+                          std::string_view column, duckdb::LogicalType new_type,
+                          std::string using_sql);
 
-  Result DropDatabase(std::string_view name,
+  Result DropDatabase(const AccessContext& ax, std::string_view name,
                       duckdb::shared_ptr<void> keep_alive);
-  Result DropSchema(std::string_view database, std::string_view name,
-                    bool cascade);
-  Result DropView(std::string_view database, std::string_view schema,
-                  std::string_view name, bool cascade);
-  Result DropSequence(std::string_view database, std::string_view schema,
-                      std::string_view name, bool if_exists, bool cascade);
-  Result DropType(std::string_view database, std::string_view schema,
-                  std::string_view name, bool cascade);
-  Result DropFunction(std::string_view database, std::string_view schema,
-                      std::string_view name, bool cascade);
+  Result DropRole(const AccessContext& ax, std::string_view role);
+  Result DropSchema(const AccessContext& ax, std::string_view database,
+                    std::string_view name, bool cascade);
+  Result DropView(const AccessContext& ax, std::string_view database,
+                  std::string_view schema, std::string_view name, bool cascade);
+  Result DropSequence(const AccessContext& ax, std::string_view database,
+                      std::string_view schema, std::string_view name,
+                      bool if_exists, bool cascade);
+  Result DropType(const AccessContext& ax, std::string_view database,
+                  std::string_view schema, std::string_view name, bool cascade);
+  Result DropFunction(const AccessContext& ax, std::string_view database,
+                      std::string_view schema, std::string_view name,
+                      bool cascade);
   Result DropTokenizer(std::string_view database, std::string_view schema,
                        std::string_view name, bool cascade);
-  Result DropTable(std::string_view database, std::string_view schema,
-                   std::string_view name, bool cascade);
-  Result DropIndex(std::string_view database, std::string_view schema,
-                   std::string_view name, bool cascade);
+  Result DropTable(const AccessContext& ax, std::string_view database,
+                   std::string_view schema, std::string_view name,
+                   bool cascade);
+  Result DropIndex(const AccessContext& ax, std::string_view database,
+                   std::string_view schema, std::string_view name,
+                   bool cascade);
   // Drop an index by its stable ObjectId rather than by name. Used by the
   // CREATE INDEX failure path, where a concurrent rename could otherwise make a
   // by-name lookup resolve to (and drop) the wrong index.
   Result DropIndexById(ObjectId database_id, ObjectId index_id, bool cascade);
-  Result DropTableColumn(ObjectId database_id, std::string_view schema,
-                         std::string_view table, std::string_view column,
-                         bool if_exists);
-  Result ChangeColumnType(ObjectId database_id, std::string_view schema,
-                          std::string_view table, std::string_view column,
-                          duckdb::LogicalType new_type, std::string using_sql);
+  Result DropTableColumn(const AccessContext& ax, ObjectId database_id,
+                         std::string_view schema, std::string_view table,
+                         std::string_view column, bool if_exists);
 
   Result RemoveTombstone(ObjectId database_id, std::string_view schema,
                          std::string_view name);
@@ -452,6 +536,11 @@ class Catalog final {
   std::shared_ptr<const Snapshot> GetCatalogSnapshot() const noexcept;
 
  private:
+  Result ChangeRoleImpl(
+    ObjectId actor_id, std::string_view name,
+    absl::FunctionRef<void(const Snapshot&, const Role&)> check,
+    ChangeCallback<Role> callback);
+
   Result CreateIndexImpl(std::string_view schema, std::shared_ptr<Index> index,
                          CreateIndexOperationOptions operation_options);
 
@@ -460,8 +549,9 @@ class Catalog final {
                              bool cascade);
 
   template<typename T>
-  Result RenameObjectImpl(ObjectId database_id, std::string_view schema,
-                          std::string_view name, std::string_view new_name);
+  Result RenameObjectImpl(const AccessContext& ax, ObjectId database_id,
+                          std::string_view schema, std::string_view name,
+                          std::string_view new_name);
 
   template<typename T>
   Result RenameObjectImpl(ObjectId schema_id, std::string_view database_name,
@@ -485,5 +575,8 @@ void ShutdownCatalog();
 ResultOr<std::shared_ptr<Database>> GetDatabase(ObjectId database_id);
 ResultOr<std::shared_ptr<Database>> GetDatabase(std::string_view name);
 Catalog& GetCatalog();
+// Null before InitCatalog and after ShutdownCatalog, for callers that can run
+// during startup-failure or shutdown teardown.
+Catalog* TryGetCatalog();
 
 }  // namespace sdb::catalog

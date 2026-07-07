@@ -30,22 +30,20 @@
 #include <thread>
 
 #include "basics/empty.hpp"
-#include "basics/thread_utils.hpp"
 
 namespace irs::async_utils {
 
 template<bool UseDelay = true>
 class ThreadPool {
  public:
-  using Char = std::remove_pointer_t<THREAD_NAME_T>;
   using Clock = std::chrono::steady_clock;
   using Func = absl::AnyInvocable<void()>;
 
   ThreadPool() = default;
-  explicit ThreadPool(size_t threads, std::basic_string_view<Char> name = {});
+  explicit ThreadPool(size_t threads);
   ~ThreadPool() { stop(true); }
 
-  void start(size_t threads, std::basic_string_view<Char> name = {});
+  void start(size_t threads);
   bool run(Func&& fn, absl::Duration delay = {});
   void stop(bool skip_pending = false) noexcept;  // always a blocking call
   size_t tasks_active() const {

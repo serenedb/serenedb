@@ -123,6 +123,11 @@ class Config {
     return _snapshot;
   }
 
+  std::shared_ptr<const catalog::Snapshot> GetCatalogSnapshot() const {
+    SDB_ASSERT(_snapshot);
+    return _snapshot;
+  }
+
   // Returns the current value of a setting, or std::nullopt if not found.
   std::optional<std::string> Get(std::string_view key) const;
 

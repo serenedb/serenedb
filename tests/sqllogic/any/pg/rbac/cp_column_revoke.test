@@ -1,0 +1,192 @@
+# Column-level REVOKE (PG column GRANT): REVOKE SELECT (a) ON t removes only the
+# named column's privilege, leaving sibling column grants intact. Revoking a
+# column that was never granted is a no-op (no error). A table-level GRANT covers
+# every column regardless of which columns also carry their own column grant, so
+# a grantee with table SELECT reads even columns it lacks a column grant on.
+# Mirrors PostgreSQL's pg_attribute.attacl semantics.
+#
+# Lore: vedernikoff holds column-scoped reads; clickclack/babsky/mop columns.
+
+statement ok
+DROP TABLE IF EXISTS crv_iceberg;
+
+
+statement ok
+DROP TABLE IF EXISTS crv_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS crv_vedernikoff;
+
+
+statement ok
+CREATE TABLE crv_iceberg (clickclack int, babsky int, mop int);
+
+
+statement ok
+INSERT INTO crv_iceberg VALUES (1, 2, 3);
+
+
+statement ok
+CREATE ROLE crv_vedernikoff LOGIN PASSWORD 'crv_vedernikoff_pw';
+
+
+statement ok
+GRANT SELECT (clickclack, babsky) ON crv_iceberg TO crv_vedernikoff;
+
+
+# Both granted columns carry the read ACL.
+query
+SELECT a.attname, COALESCE(a.attacl::text, '(none)') AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'crv_iceberg' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack	<slt:ignore>crv_vedernikoff=r/postgres<slt:ignore>
+babsky	<slt:ignore>crv_vedernikoff=r/postgres<slt:ignore>
+mop	(none)
+
+
+# Revoke only clickclack: its ACL clears, babsky is untouched.
+statement ok
+REVOKE SELECT (clickclack) ON crv_iceberg FROM crv_vedernikoff;
+
+
+query
+SELECT a.attname, COALESCE(a.attacl::text, '(none)') AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'crv_iceberg' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack	(none)
+babsky	<slt:ignore>crv_vedernikoff=r/postgres<slt:ignore>
+mop	(none)
+
+
+# Revoking a column that was never granted (mop) is a no-op, not an error.
+statement ok
+REVOKE SELECT (mop) ON crv_iceberg FROM crv_vedernikoff;
+
+
+# The no-op revoke left every ACL exactly as it was.
+query
+SELECT a.attname, COALESCE(a.attacl::text, '(none)') AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'crv_iceberg' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack	(none)
+babsky	<slt:ignore>crv_vedernikoff=r/postgres<slt:ignore>
+mop	(none)
+
+
+# The still-granted column reads fine.
+connection c_ved user=crv_vedernikoff password=crv_vedernikoff_pw
+query
+SELECT babsky FROM crv_iceberg ORDER BY babsky;
+----
+babsky
+2
+
+
+# The revoked column is now refused.
+connection c_ved2 user=crv_vedernikoff password=crv_vedernikoff_pw
+statement error
+SELECT clickclack FROM crv_iceberg;
+----
+db error: ERROR: permission denied for table crv_iceberg<slt:ignore>
+
+
+# === Table-level grant covers every column ===
+
+statement ok
+CREATE TABLE crv_clickclack (clickclack int, babsky int, mop int);
+
+
+statement ok
+INSERT INTO crv_clickclack VALUES (10, 20, 30);
+
+
+# A column grant on clickclack plus a table-level SELECT grant.
+statement ok
+GRANT SELECT (clickclack) ON crv_clickclack TO crv_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON crv_clickclack TO crv_vedernikoff;
+
+
+# clickclack keeps its own column ACL; the table grant lands in relacl.
+query
+SELECT a.attname, COALESCE(a.attacl::text, '(none)') AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'crv_clickclack' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack	<slt:ignore>crv_vedernikoff=r/postgres<slt:ignore>
+babsky	(none)
+mop	(none)
+
+
+# The table-level grant covers the columns with no column grant of their own.
+connection c_ved3 user=crv_vedernikoff password=crv_vedernikoff_pw
+query
+SELECT mop FROM crv_clickclack ORDER BY mop;
+----
+mop
+30
+
+
+# SELECT * is fine: the table grant satisfies every column.
+connection c_ved4 user=crv_vedernikoff password=crv_vedernikoff_pw
+query
+SELECT clickclack, babsky, mop FROM crv_clickclack ORDER BY clickclack;
+----
+clickclack	babsky	mop
+10	20	30
+
+
+# === Table-level REVOKE cascades to column grants ===
+# PG: REVOKE SELECT ON t strips the SELECT privilege from EVERY column-level
+# grant of that grantee too -- a column entry cannot outlive its table-level
+# counterpart. After the table REVOKE, clickclack's own column ACL is gone.
+connection default
+statement ok
+REVOKE SELECT ON crv_clickclack FROM crv_vedernikoff;
+
+
+query
+SELECT a.attname, COALESCE(a.attacl::text, '(none)') AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'crv_clickclack' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack	(none)
+babsky	(none)
+mop	(none)
+
+
+# With both table and column grants gone, every read is refused.
+connection c_ved5 user=crv_vedernikoff password=crv_vedernikoff_pw
+statement error
+SELECT clickclack FROM crv_clickclack;
+----
+db error: ERROR: permission denied for table crv_clickclack<slt:ignore>
+
+
+connection default
+statement ok
+DROP TABLE crv_iceberg;
+
+
+statement ok
+DROP TABLE crv_clickclack;
+
+
+statement ok
+DROP ROLE crv_vedernikoff;

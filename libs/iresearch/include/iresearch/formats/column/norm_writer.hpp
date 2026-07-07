@@ -27,11 +27,18 @@
 #include "basics/containers/monotonic_buffer.hpp"
 #include "iresearch/types.hpp"
 
+namespace duckdb {
+
+class Serializer;
+class Deserializer;
+
+}  // namespace duckdb
 namespace irs {
 
 class IndexOutput;
+class NormColumnWriter;
 
-struct NormRowGroupPointer {
+struct NormRowGroupMeta {
   uint8_t byte_size = 0;
   uint32_t row_count = 0;
   uint32_t max = 0;
@@ -39,6 +46,11 @@ struct NormRowGroupPointer {
   uint64_t non_zero_count = 0;
   uint64_t file_offset = 0;
 };
+
+void SerializeNormColumn(duckdb::Serializer& s, const NormColumnWriter& nw);
+std::vector<NormRowGroupMeta> DeserializeNormMetas(duckdb::Deserializer& d,
+                                                   field_id id,
+                                                   uint64_t footer_offset);
 
 class NormColumnWriter final {
  public:
@@ -81,7 +93,7 @@ class NormColumnWriter final {
   uint32_t _rg_max = 0;
   uint64_t _rg_sum = 0;
   uint64_t _rg_non_zero = 0;
-  std::vector<NormRowGroupPointer> _pointers;
+  std::vector<NormRowGroupMeta> _pointers;
 };
 
 }  // namespace irs

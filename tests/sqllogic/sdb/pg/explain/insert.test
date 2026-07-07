@@ -24,8 +24,6 @@ EXPLAIN INSERT INTO t VALUES ('text', 42);
 QUERY PLAN
 ╭─ INSERT ───────────╮
 ╰──────────┬─────────╯
-╭─ SDB_PROGRESS ─────╮
-╰──────────┬─────────╯
 ╭─ COLUMN_DATA_SCAN ─╮
 │ ~1 row             │
 ╰────────────────────╯

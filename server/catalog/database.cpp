@@ -27,23 +27,23 @@
 
 namespace sdb::catalog {
 
-Database::Database(ObjectId id, DatabaseOptions opts)
-  : Object{{}, id, opts.name, ObjectType::Database} {}
+Database::Database(Permissions perm, ObjectId id, std::string_view name)
+  : Object{std::move(perm), {}, id, name, ObjectType::Database} {}
 
 std::shared_ptr<Database> Database::Deserialize(duckdb::Deserializer& src,
                                                 ReadContext ctx) {
-  DatabaseOptions opts;
-  basics::ReadTuple(src, opts);
-  return std::make_shared<Database>(ctx.id, std::move(opts));
+  DatabaseOptions data;
+  basics::ReadTuple(src, data);
+  return std::make_shared<Database>(std::move(data.perm), ctx.id, data.name);
 }
 
 void Database::Serialize(duckdb::Serializer& sink) const {
-  basics::WriteTuple(sink, DatabaseOptions{std::string{GetName()}});
+  basics::WriteTuple(sink,
+                     DatabaseOptions{std::string{GetName()}, GetPermissions()});
 }
 
 std::shared_ptr<Object> Database::Clone() const {
-  return std::make_shared<Database>(GetId(),
-                                    DatabaseOptions{std::string{GetName()}});
+  return std::make_shared<Database>(*this);
 }
 
 }  // namespace sdb::catalog

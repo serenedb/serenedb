@@ -1,0 +1,102 @@
+# GRANT ... WITH GRANT OPTION: the grantee's privileges are recorded with the
+# grant option, which surfaces as '*' in the synthesized aclitem text and as
+# is_grantable=true in aclexplode. Single superuser session.
+#
+# NOTE: is_grantable is asserted via aclexplode (which reads the '*' bit
+# directly). information_schema.table_privileges.is_grantable also works now
+# that pg_has_role is real (it ORs pg_has_role(grantee, owner, 'USAGE') with
+# the grant-option bit, like PG).
+
+statement ok
+DROP TABLE IF EXISTS go_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS go_vedernikoff;
+
+
+statement ok
+CREATE TABLE go_ledger (id int, payload text);
+
+
+statement ok
+CREATE ROLE go_vedernikoff;
+
+
+# Plain grant: no grant option -> no '*', aclexplode is_grantable = f.
+statement ok
+GRANT SELECT ON go_ledger TO go_vedernikoff;
+
+
+query
+SELECT privilege_type, is_grantable
+FROM pg_class c, aclexplode(c.relacl)
+WHERE c.relname = 'go_ledger'
+  AND pg_get_userbyid(grantee) = 'go_vedernikoff'
+ORDER BY privilege_type;
+----
+privilege_type	is_grantable
+SELECT	f
+
+
+# Re-grant the same privilege WITH GRANT OPTION: the option is added.
+statement ok
+GRANT SELECT, INSERT ON go_ledger TO go_vedernikoff WITH GRANT OPTION;
+
+
+# relacl renders '*' on the granted privileges of the grantee entry.
+query
+SELECT unnest(relacl::text[]) AS e FROM pg_class
+WHERE relname = 'go_ledger' ORDER BY e;
+----
+e
+go_vedernikoff=a*r*/postgres
+postgres=arwdDxtm/postgres
+
+
+# aclexplode reports is_grantable = true for both privileges.
+query
+SELECT pg_get_userbyid(grantee) AS grantee_name, privilege_type, is_grantable
+FROM pg_class c, aclexplode(c.relacl)
+WHERE c.relname = 'go_ledger'
+  AND pg_get_userbyid(grantee) = 'go_vedernikoff'
+ORDER BY privilege_type;
+----
+grantee_name	privilege_type	is_grantable
+go_vedernikoff	INSERT	t
+go_vedernikoff	SELECT	t
+
+
+# The privilege itself is held (grant option does not change the answer).
+query
+SELECT
+  has_table_privilege('go_vedernikoff', 'go_ledger', 'SELECT'),
+  has_table_privilege('go_vedernikoff', 'go_ledger', 'INSERT');
+----
+has_table_privilege	has_table_privilege
+t	t
+
+
+# REVOKE INSERT drops that privilege (and its grant option); SELECT (with its
+# option) survives.
+statement ok
+REVOKE INSERT ON go_ledger FROM go_vedernikoff;
+
+
+query
+SELECT privilege_type, is_grantable
+FROM pg_class c, aclexplode(c.relacl)
+WHERE c.relname = 'go_ledger'
+  AND pg_get_userbyid(grantee) = 'go_vedernikoff'
+ORDER BY privilege_type;
+----
+privilege_type	is_grantable
+SELECT	t
+
+
+statement ok
+DROP TABLE go_ledger;
+
+
+statement ok
+DROP ROLE go_vedernikoff;

@@ -4,6 +4,7 @@ target_sources(
         column_expr.cpp
         database.cpp
         drop_task.cpp
+        role.cpp
         schema.cpp
         databases.cpp
         catalog.cpp

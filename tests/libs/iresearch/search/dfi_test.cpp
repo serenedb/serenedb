@@ -157,7 +157,7 @@ TEST_P(DFIIndexTest, scores_nonnegative_and_only_fire_above_expected) {
   });
 
   std::map<irs::doc_id_t, irs::score_t> seen;
-  while (docs->next()) {
+  while (!irs::doc_limits::eof(docs->advance())) {
     fetcher.Fetch(docs->value());
     docs->FetchScoreArgs(0);
     irs::score_t s{};

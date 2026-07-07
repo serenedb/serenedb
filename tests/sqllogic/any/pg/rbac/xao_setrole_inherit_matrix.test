@@ -1,0 +1,121 @@
+# The "must be able to SET ROLE" check is about the SET option specifically, not
+# mere membership: an owner that only INHERITs the target role (granted WITH SET
+# FALSE, INHERIT TRUE) still cannot transfer ownership to it. This holds for a
+# table, a view and a sequence alike. Every case is an error, so the result is
+# byte-identical on PostgreSQL and serenedb.
+#
+# Lore: vedernikoff owns all three objects and is an INHERIT-only member of the
+# mop group (so it reads mop's privileges but cannot SET ROLE mop). Each
+# OWNER TO mop must fail.
+
+statement ok
+DROP TABLE IF EXISTS xao_sim_clickclack;
+
+
+statement ok
+DROP VIEW IF EXISTS xao_sim_iceberg;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS xao_sim_seq;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_sim_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_sim_mop;
+
+
+statement ok
+CREATE ROLE xao_sim_vedernikoff LOGIN PASSWORD 'xao_sim_vedernikoff_pw';
+
+
+statement ok
+CREATE ROLE xao_sim_mop;
+
+
+# INHERIT but NOT SET: vedernikoff inherits mop's privileges but cannot SET ROLE.
+statement ok
+GRANT xao_sim_mop TO xao_sim_vedernikoff WITH SET FALSE, INHERIT TRUE;
+
+
+statement ok
+CREATE TABLE xao_sim_clickclack (id int);
+
+
+statement ok
+CREATE VIEW xao_sim_iceberg AS SELECT 1 AS x;
+
+
+statement ok
+CREATE SEQUENCE xao_sim_seq;
+
+
+# Superuser hands all three to vedernikoff.
+statement ok
+ALTER TABLE xao_sim_clickclack OWNER TO xao_sim_vedernikoff;
+
+
+statement ok
+ALTER VIEW xao_sim_iceberg OWNER TO xao_sim_vedernikoff;
+
+
+statement ok
+ALTER SEQUENCE xao_sim_seq OWNER TO xao_sim_vedernikoff;
+
+
+# (table) INHERIT-only owner cannot transfer to mop
+connection ctab user=xao_sim_vedernikoff password=xao_sim_vedernikoff_pw
+statement error
+ALTER TABLE xao_sim_clickclack OWNER TO xao_sim_mop;
+----
+db error: ERROR: must be able to SET ROLE "xao_sim_mop"<slt:ignore>
+
+
+# (view) same
+connection cview user=xao_sim_vedernikoff password=xao_sim_vedernikoff_pw
+statement error
+ALTER VIEW xao_sim_iceberg OWNER TO xao_sim_mop;
+----
+db error: ERROR: must be able to SET ROLE "xao_sim_mop"<slt:ignore>
+
+
+# (sequence) same
+connection cseq user=xao_sim_vedernikoff password=xao_sim_vedernikoff_pw
+statement error
+ALTER SEQUENCE xao_sim_seq OWNER TO xao_sim_mop;
+----
+db error: ERROR: must be able to SET ROLE "xao_sim_mop"<slt:ignore>
+
+
+# All three are still owned by vedernikoff after the failed transfers.
+query
+SELECT relname, pg_get_userbyid(relowner) AS owner FROM pg_class
+WHERE relname IN ('xao_sim_clickclack','xao_sim_iceberg','xao_sim_seq') ORDER BY relname;
+----
+relname	owner
+xao_sim_clickclack	xao_sim_vedernikoff
+xao_sim_iceberg	xao_sim_vedernikoff
+xao_sim_seq	xao_sim_vedernikoff
+
+
+statement ok
+DROP TABLE xao_sim_clickclack;
+
+
+statement ok
+DROP VIEW xao_sim_iceberg;
+
+
+statement ok
+DROP SEQUENCE xao_sim_seq;
+
+
+statement ok
+DROP ROLE xao_sim_vedernikoff;
+
+
+statement ok
+DROP ROLE xao_sim_mop;

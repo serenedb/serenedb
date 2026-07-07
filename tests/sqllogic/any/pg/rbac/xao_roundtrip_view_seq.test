@@ -1,0 +1,150 @@
+# Ownership round-trips for a view and a sequence side by side: each goes
+# postgres -> A -> B -> back to A, owner asserted at every hop. The two objects
+# travel different routes in the same transaction stream to prove the transfers
+# are independent. Superuser-driven, byte-identical on PostgreSQL and serenedb.
+#
+# Lore: the iceberg view rides vedernikoff<->mop; the mop_seq sequence rides
+# clickclack<->babsky.
+
+statement ok
+DROP VIEW IF EXISTS xao_rvs_iceberg;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS xao_rvs_mop_seq;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_rvs_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_rvs_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_rvs_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_rvs_babsky;
+
+
+statement ok
+CREATE ROLE xao_rvs_vedernikoff;
+
+
+statement ok
+CREATE ROLE xao_rvs_mop;
+
+
+statement ok
+CREATE ROLE xao_rvs_clickclack;
+
+
+statement ok
+CREATE ROLE xao_rvs_babsky;
+
+
+statement ok
+CREATE VIEW xao_rvs_iceberg AS SELECT 1 AS x;
+
+
+statement ok
+CREATE SEQUENCE xao_rvs_mop_seq;
+
+
+# 0 transfers: both owned by postgres.
+query
+SELECT relname, pg_get_userbyid(relowner) AS owner FROM pg_class
+WHERE relname IN ('xao_rvs_iceberg','xao_rvs_mop_seq') ORDER BY relname;
+----
+relname	owner
+xao_rvs_iceberg	postgres
+xao_rvs_mop_seq	postgres
+
+
+# hop 1: view -> vedernikoff, seq -> clickclack
+statement ok
+ALTER VIEW xao_rvs_iceberg OWNER TO xao_rvs_vedernikoff;
+
+
+statement ok
+ALTER SEQUENCE xao_rvs_mop_seq OWNER TO xao_rvs_clickclack;
+
+
+query
+SELECT relname, pg_get_userbyid(relowner) AS owner FROM pg_class
+WHERE relname IN ('xao_rvs_iceberg','xao_rvs_mop_seq') ORDER BY relname;
+----
+relname	owner
+xao_rvs_iceberg	xao_rvs_vedernikoff
+xao_rvs_mop_seq	xao_rvs_clickclack
+
+
+# hop 2: view -> mop, seq -> babsky
+statement ok
+ALTER VIEW xao_rvs_iceberg OWNER TO xao_rvs_mop;
+
+
+statement ok
+ALTER SEQUENCE xao_rvs_mop_seq OWNER TO xao_rvs_babsky;
+
+
+query
+SELECT relname, pg_get_userbyid(relowner) AS owner FROM pg_class
+WHERE relname IN ('xao_rvs_iceberg','xao_rvs_mop_seq') ORDER BY relname;
+----
+relname	owner
+xao_rvs_iceberg	xao_rvs_mop
+xao_rvs_mop_seq	xao_rvs_babsky
+
+
+# hop 3: each back to its A -- round-trips close.
+statement ok
+ALTER VIEW xao_rvs_iceberg OWNER TO xao_rvs_vedernikoff;
+
+
+statement ok
+ALTER SEQUENCE xao_rvs_mop_seq OWNER TO xao_rvs_clickclack;
+
+
+query
+SELECT relname, pg_get_userbyid(relowner) AS owner FROM pg_class
+WHERE relname IN ('xao_rvs_iceberg','xao_rvs_mop_seq') ORDER BY relname;
+----
+relname	owner
+xao_rvs_iceberg	xao_rvs_vedernikoff
+xao_rvs_mop_seq	xao_rvs_clickclack
+
+
+# The current owner holds the sequence's implicit USAGE privilege.
+query
+SELECT has_sequence_privilege('xao_rvs_clickclack','xao_rvs_mop_seq','USAGE') AS final_owner;
+----
+final_owner
+t
+
+
+statement ok
+DROP VIEW xao_rvs_iceberg;
+
+
+statement ok
+DROP SEQUENCE xao_rvs_mop_seq;
+
+
+statement ok
+DROP ROLE xao_rvs_vedernikoff;
+
+
+statement ok
+DROP ROLE xao_rvs_mop;
+
+
+statement ok
+DROP ROLE xao_rvs_clickclack;
+
+
+statement ok
+DROP ROLE xao_rvs_babsky;

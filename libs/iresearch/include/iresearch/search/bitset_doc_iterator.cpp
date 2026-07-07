@@ -155,8 +155,44 @@ void BitsetDocIterator::Collect(const ScoreFunction& scorer,
 std::pair<doc_id_t, bool> BitsetDocIterator::FillBlock(
   doc_id_t min, doc_id_t max, uint64_t* mask, FillBlockScoreContext score,
   FillBlockMatchContext match) {
-  // TODO(mbkkt) optimize
-  return FillBlockImpl(*this, min, max, mask, score, match);
+  if (score.score != nullptr || match.matches != nullptr) {
+    return FillBlockImpl(*this, min, max, mask, score, match);
+  }
+  static_assert(sizeof(word_t) == sizeof(uint64_t));
+  constexpr doc_id_t kBits = BitsRequired<word_t>();
+  SDB_ASSERT(min < max && min <= _doc);
+  if (_doc >= max) {
+    return {_doc, false};
+  }
+  mask[(_doc - min) / kBits] |= word_t{1} << ((_doc - min) % kBits);
+  for (doc_id_t d = _doc + 1; d < max;) {
+    const doc_id_t wi = d / kBits;
+    if (_begin + wi >= _end && !refill(&_begin, &_end)) {
+      break;
+    }
+    if (_begin + wi >= _end) {
+      continue;
+    }
+    word_t w = _begin[wi] & (~word_t{0} << (d % kBits));
+    const doc_id_t wdoc = wi * kBits;
+    if (wdoc + kBits > max) {
+      w &= ~word_t{0} >> (wdoc + kBits - max);
+    }
+    if (w != 0) {
+      if (wdoc >= min) {
+        const doc_id_t o = wdoc - min;
+        const doc_id_t sh = o % kBits;
+        mask[o / kBits] |= w << sh;
+        if (sh != 0) {
+          mask[o / kBits + 1] |= w >> (kBits - sh);
+        }
+      } else {
+        mask[0] |= w >> (min - wdoc);
+      }
+    }
+    d = wdoc + kBits;
+  }
+  return {seek(max), false};
 }
 
 }  // namespace irs

@@ -33,7 +33,7 @@ struct PgNamespace {
   Oid oid;
   Name nspname;
   Oid nspowner;
-  Array<Aclitem> nspacl;
+  AclColumn nspacl;
 };
 // NOLINTEND
 

@@ -1,0 +1,136 @@
+# Cross-catalog EDGE CASE: a table at default privileges. A freshly created
+# table has relacl = NULL -- the "default ACL" -- meaning no explicit grant has
+# ever been recorded. The owner still holds every privilege implicitly (it is
+# never stored in relacl), and has_table_privilege confirms it. The information
+# _schema views still expose the owner's implicit privileges (PG synthesizes
+# the owner rows from the NULL acl). The FIRST explicit grant flips relacl from
+# NULL to a non-NULL array; revoking the last grant does NOT flip it back to
+# NULL (PG keeps a non-NULL array once it has materialized owner rows). All of
+# this is byte-identical on PostgreSQL 19beta1 and serenedb.
+#
+# Vedernikoff lore: the mop table, vedernikoff the grantee. Idempotent + clean.
+
+statement ok
+DROP TABLE IF EXISTS xcat_def_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xcat_def_vedernikoff;
+
+
+statement ok
+CREATE TABLE xcat_def_mop (id int, note text);
+
+
+statement ok
+CREATE ROLE xcat_def_vedernikoff;
+
+
+# At default privileges relacl is NULL (no element has been recorded).
+query
+SELECT relacl IS NULL AS acl_is_null FROM pg_class WHERE relname = 'xcat_def_mop';
+----
+acl_is_null
+t
+
+
+# Even with a NULL relacl the owner has every table privilege -- ownership
+# bypasses the (empty) ACL. has_table_privilege confirms each.
+query
+SELECT has_table_privilege('postgres', 'xcat_def_mop', 'SELECT') AS sel,
+       has_table_privilege('postgres', 'xcat_def_mop', 'INSERT') AS ins,
+       has_table_privilege('postgres', 'xcat_def_mop', 'UPDATE') AS upd,
+       has_table_privilege('postgres', 'xcat_def_mop', 'DELETE') AS del;
+----
+sel	ins	upd	del
+t	t	t	t
+
+
+# A non-owner role with no grant has NO privileges while relacl is NULL.
+query
+SELECT has_table_privilege('xcat_def_vedernikoff', 'xcat_def_mop', 'SELECT') AS sel,
+       has_table_privilege('xcat_def_vedernikoff', 'xcat_def_mop', 'INSERT') AS ins;
+----
+sel	ins
+f	f
+
+
+# The owner's implicit privileges still surface in table_privileges even at
+# default (NULL) relacl: PG synthesizes the owner rows. We assert the owner's
+# SELECT row exists with is_grantable YES (owner can re-grant).
+query
+SELECT privilege_type, is_grantable
+FROM information_schema.table_privileges
+WHERE table_name = 'xcat_def_mop' AND grantee = 'postgres' AND privilege_type = 'SELECT';
+----
+privilege_type	is_grantable
+SELECT	YES
+
+
+# The FIRST explicit grant flips relacl from NULL to a populated array, and the
+# grantee's element appears.
+statement ok
+GRANT SELECT ON xcat_def_mop TO xcat_def_vedernikoff;
+
+
+query
+SELECT relacl IS NULL AS acl_is_null FROM pg_class WHERE relname = 'xcat_def_mop';
+----
+acl_is_null
+f
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_def_mop'
+) g WHERE e LIKE 'xcat_def_vedernikoff=%';
+----
+e
+xcat_def_vedernikoff=r/postgres
+
+
+query
+SELECT has_table_privilege('xcat_def_vedernikoff', 'xcat_def_mop', 'SELECT') AS sel;
+----
+sel
+t
+
+
+# Revoking the only grantee privilege removes the grantee element, but relacl
+# does NOT return to NULL -- once materialized it stays a non-NULL array holding
+# the owner rows.
+statement ok
+REVOKE SELECT ON xcat_def_mop FROM xcat_def_vedernikoff;
+
+
+query
+SELECT relacl IS NULL AS acl_is_null FROM pg_class WHERE relname = 'xcat_def_mop';
+----
+acl_is_null
+f
+
+
+query
+SELECT count(*) AS grantee_rows FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_def_mop'
+) g WHERE e LIKE 'xcat_def_vedernikoff=%';
+----
+grantee_rows
+0
+
+
+# The grantee has lost the privilege again; the owner still has everything.
+query
+SELECT has_table_privilege('xcat_def_vedernikoff', 'xcat_def_mop', 'SELECT') AS grantee_sel,
+       has_table_privilege('postgres', 'xcat_def_mop', 'SELECT') AS owner_sel;
+----
+grantee_sel	owner_sel
+f	t
+
+
+statement ok
+DROP TABLE xcat_def_mop;
+
+
+statement ok
+DROP ROLE xcat_def_vedernikoff;

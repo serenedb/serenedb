@@ -100,6 +100,8 @@ class WildcardIterator : public DocIterator {
     return _approx->GetMutable(type);
   }
 
+  IRS_DOC_ITERATOR_DEFAULTS
+
   doc_id_t advance() final {
     while (!doc_limits::eof(_approx->advance())) {
       if (Check(_approx->value())) {

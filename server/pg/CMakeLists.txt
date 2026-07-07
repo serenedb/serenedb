@@ -6,12 +6,16 @@ target_sources(
         pg_catalog/pg_am.cpp
         pg_catalog/pg_attribute.cpp
         pg_catalog/pg_authid.cpp
+        pg_catalog/pg_auth_members.cpp
         pg_catalog/pg_class.cpp
         pg_catalog/pg_constraint.cpp
         pg_catalog/pg_database.cpp
+        pg_catalog/pg_db_role_setting.cpp
+        pg_catalog/pg_default_acl.cpp
         pg_catalog/pg_description.cpp
         pg_catalog/pg_enum.cpp
         pg_catalog/pg_extension.cpp
+        pg_catalog/pg_hba_file_rules.cpp
         pg_catalog/pg_index.cpp
         pg_catalog/pg_language.cpp
         pg_catalog/pg_namespace.cpp
@@ -19,7 +23,7 @@ target_sources(
         pg_catalog/pg_proc.cpp
         pg_catalog/pg_tablespace.cpp
         pg_catalog/pg_ts_dict.cpp
-        pg_catalog/pg_stat_progress.cpp
+        pg_catalog/sdb_progress.cpp
         pg_catalog/pg_type.cpp
         information_schema/sql_implementation_info.cpp
         information_schema/sql_parts.cpp
@@ -30,7 +34,7 @@ target_sources(
         serialize.cpp
         deserialize.cpp
         system_catalog.cpp
-        progress_tracker.cpp
+        progress_registry.cpp
         sql_utils.cpp
         option_help.cpp
         tokenizer_options.cpp

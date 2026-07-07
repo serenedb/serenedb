@@ -162,6 +162,8 @@ class RawVectorIterator : public VectorDistanceIterator {
     return _doc = doc;
   }
 
+  IRS_DOC_ITERATOR_DEFAULTS
+
  private:
   RawVectorReader _reader;
 };
@@ -227,6 +229,8 @@ class QVectorIterator : public VectorDistanceIterator {
     FillDistancesBlock();
     _pos = 0;
   }
+
+  IRS_DOC_ITERATOR_DEFAULTS
 
  private:
   void FillDistancesBlock() {
@@ -298,6 +302,8 @@ class VectorRangeIterator : public DocIterator {
     return _inner->GetMutable(type);
   }
 
+  IRS_DOC_ITERATOR_DEFAULTS
+
  private:
   bool Inside(score_t dist) const noexcept {
     bool res = false;
@@ -333,6 +339,8 @@ class FilterIterator : public DocIterator {
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return _it->GetMutable(type);
   }
+
+  IRS_DOC_ITERATOR_DEFAULTS
 
  private:
   DocIterator::ptr _it;

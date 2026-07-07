@@ -100,7 +100,7 @@ void ValidateTerms(
     ASSERT_NE(expected_terms.end(), itr);
 
     for (auto docs_itr = segment.mask(term_itr->postings(index_features));
-         docs_itr->next();) {
+         !irs::doc_limits::eof(docs_itr->advance());) {
       ASSERT_EQ(1, itr->second.erase(docs_itr->value()));
 
       if (frequency) {
@@ -2170,7 +2170,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
       // doc4's columns are still on disk; the live-docs mask hides it.
       // Use docs_iterator() to confirm only one local doc id is live.
       std::vector<irs::doc_id_t> live;
-      for (auto it = segment.docs_iterator(); it->next();) {
+      for (auto it = segment.docs_iterator();
+           !irs::doc_limits::eof(it->advance());) {
         live.push_back(it->value());
       }
       ASSERT_EQ(1u, live.size());

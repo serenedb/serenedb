@@ -208,7 +208,7 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
       irs::BySamePosition q;
       tests::PreparedFilter prepared{q, index};
       auto docs = prepared.Execute(0);
-      ASSERT_FALSE(docs->next());
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     }
 
     // { a: 100 } - equal to 'by_term'
@@ -229,11 +229,11 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
       auto expected_docs = prepared.Execute(0);
 
       ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
-      while (expected_docs->next()) {
-        ASSERT_TRUE(docs->next());
+      while (!irs::doc_limits::eof(expected_docs->advance())) {
+        ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
         ASSERT_EQ(expected_docs->value(), docs->value());
       }
-      ASSERT_FALSE(docs->next());
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
       ASSERT_EQ(irs::doc_limits::eof(), docs->value());
     }
 
@@ -250,7 +250,7 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
       tests::PreparedFilter prepared{q, index};
       auto docs = prepared.Execute(0);
       ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
-      ASSERT_TRUE(docs->next());
+      ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
       ASSERT_EQ(1, docs->value());
     }
 
@@ -272,13 +272,13 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
 
         auto docs = prepared.Execute(0);
         ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
-        ASSERT_TRUE(docs->next());
+        ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
         in.reset(values.Get(docs->value()));
         ASSERT_EQ(6, irs::ReadZV64(in));
-        ASSERT_TRUE(docs->next());
+        ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
         in.reset(values.Get(docs->value()));
         ASSERT_EQ(27, irs::ReadZV64(in));
-        ASSERT_FALSE(docs->next());
+        ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
         ASSERT_EQ(irs::doc_limits::eof(), docs->value());
       }
 
@@ -299,7 +299,7 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
                   docs->seek(8));  // seek backwards
         ASSERT_EQ((irs::doc_limits::min)() + 27,
                   docs->seek(27));  // seek to same position
-        ASSERT_FALSE(docs->next());
+        ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
         ASSERT_EQ(irs::doc_limits::eof(), docs->value());
       }
     }
@@ -322,13 +322,13 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
 
         auto docs = prepared.Execute(0);
         ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
-        ASSERT_TRUE(docs->next());
+        ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
         in.reset(values.Get(docs->value()));
         ASSERT_EQ(14, irs::ReadZV64(in));
-        ASSERT_TRUE(docs->next());
+        ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
         in.reset(values.Get(docs->value()));
         ASSERT_EQ(91, irs::ReadZV64(in));
-        ASSERT_FALSE(docs->next());
+        ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
         ASSERT_EQ(irs::doc_limits::eof(), docs->value());
       }
 
@@ -345,7 +345,7 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
                   docs->seek(8));  // seek backwards
         ASSERT_EQ((irs::doc_limits::min)() + 91,
                   docs->seek(27));  // seek to same position
-        ASSERT_FALSE(docs->next());
+        ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
         ASSERT_EQ(irs::doc_limits::eof(), docs->value());
       }
     }
@@ -366,46 +366,46 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
 
         auto docs = prepared.Execute(0);
         ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
-        ASSERT_TRUE(docs->next());
+        ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
         in.reset(values.Get(docs->value()));
         ASSERT_EQ(1, irs::ReadZV64(in));
-        ASSERT_TRUE(docs->next());
+        ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
         in.reset(values.Get(docs->value()));
         ASSERT_EQ(6, irs::ReadZV64(in));
-        ASSERT_TRUE(docs->next());
+        ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
         in.reset(values.Get(docs->value()));
         ASSERT_EQ(11, irs::ReadZV64(in));
-        ASSERT_TRUE(docs->next());
+        ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
         in.reset(values.Get(docs->value()));
         ASSERT_EQ(17, irs::ReadZV64(in));
-        ASSERT_TRUE(docs->next());
+        ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
         in.reset(values.Get(docs->value()));
         ASSERT_EQ(18, irs::ReadZV64(in));
-        ASSERT_TRUE(docs->next());
+        ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
         in.reset(values.Get(docs->value()));
         ASSERT_EQ(23, irs::ReadZV64(in));
-        ASSERT_TRUE(docs->next());
+        ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
         in.reset(values.Get(docs->value()));
         ASSERT_EQ(24, irs::ReadZV64(in));
-        ASSERT_TRUE(docs->next());
+        ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
         in.reset(values.Get(docs->value()));
         ASSERT_EQ(28, irs::ReadZV64(in));
-        ASSERT_TRUE(docs->next());
+        ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
         in.reset(values.Get(docs->value()));
         ASSERT_EQ(38, irs::ReadZV64(in));
-        ASSERT_TRUE(docs->next());
+        ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
         in.reset(values.Get(docs->value()));
         ASSERT_EQ(51, irs::ReadZV64(in));
-        ASSERT_TRUE(docs->next());
+        ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
         in.reset(values.Get(docs->value()));
         ASSERT_EQ(66, irs::ReadZV64(in));
-        ASSERT_TRUE(docs->next());
+        ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
         in.reset(values.Get(docs->value()));
         ASSERT_EQ(79, irs::ReadZV64(in));
-        ASSERT_TRUE(docs->next());
+        ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
         in.reset(values.Get(docs->value()));
         ASSERT_EQ(89, irs::ReadZV64(in));
-        ASSERT_FALSE(docs->next());
+        ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
         ASSERT_EQ(irs::doc_limits::eof(), docs->value());
       }
 
@@ -415,29 +415,29 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
 
         auto docs = prepared.Execute(0);
         ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
-        ASSERT_TRUE(docs->next());
+        ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
         in.reset(values.Get(docs->value()));
         ASSERT_EQ(1, irs::ReadZV64(in));
         ASSERT_EQ((irs::doc_limits::min)() + 28,
                   docs->seek((irs::doc_limits::min)() + 28));
         in.reset(values.Get(docs->value()));
         ASSERT_EQ(28, irs::ReadZV64(in));
-        ASSERT_TRUE(docs->next());
+        ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
         in.reset(values.Get(docs->value()));
         ASSERT_EQ(38, irs::ReadZV64(in));
         ASSERT_EQ((irs::doc_limits::min)() + 51, docs->seek(45));
         in.reset(values.Get(docs->value()));
         ASSERT_EQ(51, irs::ReadZV64(in));
-        ASSERT_TRUE(docs->next());
+        ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
         in.reset(values.Get(docs->value()));
         ASSERT_EQ(66, irs::ReadZV64(in));
-        ASSERT_TRUE(docs->next());
+        ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
         in.reset(values.Get(docs->value()));
         ASSERT_EQ(79, irs::ReadZV64(in));
-        ASSERT_TRUE(docs->next());
+        ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
         in.reset(values.Get(docs->value()));
         ASSERT_EQ(89, irs::ReadZV64(in));
-        ASSERT_FALSE(docs->next());
+        ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
         ASSERT_EQ(irs::doc_limits::eof(), docs->value());
       }
 
@@ -446,7 +446,7 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         auto docs = prepared.Execute(0);
         ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
         ASSERT_EQ(irs::doc_limits::eof(), docs->seek(irs::doc_limits::eof()));
-        ASSERT_FALSE(docs->next());
+        ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
         ASSERT_EQ(irs::doc_limits::eof(), docs->value());
       }
     }

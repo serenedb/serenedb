@@ -882,8 +882,8 @@ class CreateTSDictionaryOptions : public OptionsParser {
     std::string from =
       OptionsParser::EraseOptionOrDefault<tokenizer_options::kFrom>(prefix);
     auto name = ParseObjectName(from, _current_schema);
-    auto tokenizer =
-      _snapshot->GetTokenizer(_db_id, name.schema, name.relation);
+    auto tokenizer = _snapshot->GetTokenizer(catalog::NoAccessCheck(), _db_id,
+                                             name.schema, name.relation);
     if (!tokenizer) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
@@ -952,17 +952,21 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
                     ERR_MSG("Unsupported index features are specified"));
   }
 
-  auto tokenizer =
-    std::make_shared<catalog::Tokenizer>(ObjectId{}, ObjectId{}, name, features,
-                                         norm_row_group_size, std::move(cfg));
+  auto tokenizer = std::make_shared<catalog::Tokenizer>(
+    conn_ctx.GetRoleId(), ObjectId{}, ObjectId{}, name, features,
+    norm_row_group_size, std::move(cfg));
 
   auto& catalog = catalog::GetCatalog();
-  auto r = catalog.CreateTokenizer(db_id, schema, std::move(tokenizer));
+  auto r = catalog.CreateTokenizer(catalog::AccessContext{conn_ctx.GetRoleId()},
+                                   db_id, schema, std::move(tokenizer));
 
-  if (!r.ok() && !if_not_exists) {
+  if (r.is(ERROR_SERVER_DUPLICATE_NAME) && !if_not_exists) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
       ERR_MSG("text search dictionary \"", name, "\" already exists"));
+  }
+  if (!r.ok() && !r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+    SDB_THROW(std::move(r));
   }
 }
 

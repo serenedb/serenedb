@@ -20,30 +20,27 @@
 
 #pragma once
 
-#include <duckdb/common/enums/compression_type.hpp>
-#include <duckdb/common/types.hpp>
+#include <cstdint>
+#include <duckdb/common/types/vector.hpp>
 #include <memory>
-#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "basics/assert.h"
+#include "basics/containers/flat_hash_map.h"
 #include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/column_writer.hpp"
+#include "iresearch/formats/column/internal/write_context.hpp"
+#include "iresearch/formats/column/norm_column_reader.hpp"
+#include "iresearch/formats/column/norm_writer.hpp"
+#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
-#include "iresearch/types.hpp"
+#include "iresearch/store/data_output.hpp"
+#include "iresearch/store/directory.hpp"
 
-namespace duckdb {
-
-class DatabaseInstance;
-
-}  // namespace duckdb
 namespace irs {
 
-class Directory;
-
-class ColumnReader;
-class ColumnWriter;
-class NormColumnWriter;
 class IvfWriter;
 class IdxWriter;
 
@@ -56,16 +53,15 @@ class ColWriter final {
   ColWriter(const ColWriter&) = delete;
   ColWriter& operator=(const ColWriter&) = delete;
 
-  // Install the (non-owning) options on open, re-pointed to an equal view on
-  // resume; the owning writer outlives the ColWriter.
   void SetFieldOptions(const IndexFieldOptions* field_options) noexcept;
 
   ColumnWriter& OpenColumn(field_id id, duckdb::LogicalType type);
 
   ColumnWriter& OpenColumn(field_id id, duckdb::LogicalType type,
                            bool skip_validity, uint32_t row_group_size,
-                           duckdb::CompressionType compression,
-                           bool hyperloglog);
+                           duckdb::CompressionType compression =
+                             duckdb::CompressionType::COMPRESSION_AUTO,
+                           bool hyperloglog = false);
 
   void NoteIvfColumn() noexcept;
 
@@ -74,21 +70,41 @@ class ColWriter final {
   NormColumnWriter& OpenNormColumn(field_id id, uint32_t row_group_size);
 
   std::span<const std::unique_ptr<NormColumnWriter>> NormWriters()
-    const noexcept;
+    const noexcept {
+    return _norm_writers;
+  }
 
   std::unique_ptr<IvfWriter> TakeIvf() noexcept;
 
   void Commit(uint64_t target_row, IdxWriter* idx = nullptr);
+
   void Rollback() noexcept;
 
- private:
-  std::unique_ptr<ColumnReader> ReopenColumn(field_id id) const;
+  WriteContext& WriteCtx() const noexcept { return *_write_ctx; }
+  IndexOutput& Out() const noexcept { return *_out; }
 
+ private:
   void EnsureOut();
   bool Empty() const noexcept;
+  ColumnWriter& OpenColumnInternal(field_id id, duckdb::LogicalType type,
+                                   bool skip_validity, uint32_t row_group_size,
+                                   duckdb::CompressionType forced,
+                                   bool hyperloglog);
 
-  struct Impl;
-  std::unique_ptr<Impl> _impl;
+  Directory* _dir;
+  std::string _segment_name;
+  std::string _filename;
+  duckdb::DatabaseInstance* _db;
+  const IndexFieldOptions* _field_options = nullptr;
+  IndexOutput::ptr _out;
+  std::unique_ptr<WriteContext> _write_ctx;
+  std::vector<std::unique_ptr<ColumnWriter>> _columns;
+  sdb::containers::FlatHashMap<field_id, ColumnWriter*> _by_id;
+  std::vector<std::unique_ptr<NormColumnWriter>> _norm_writers;
+  sdb::containers::FlatHashMap<field_id, NormColumnWriter*> _norm_by_id;
+  std::unique_ptr<IvfWriter> _ivf;
+  bool _has_ivf_column = false;
+  bool _committed = false;
 };
 
 }  // namespace irs

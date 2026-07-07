@@ -1,0 +1,211 @@
+# Multi-level membership chains and the full pg_has_role matrix. Everything is
+# asserted with has_table_privilege / pg_has_role, which are byte-identical on
+# real PostgreSQL and serenedb.
+#
+# Chain built (-> reads "is a member of"):
+#   ved_clickclack -> ved_kostya -> ved_deadinside -> ved_iceberg
+# ved_iceberg (the leaf group) is granted SELECT on ved_makak; the grant
+# flows up the whole chain to ved_clickclack.
+
+statement ok
+DROP ROLE IF EXISTS mb_ved_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS mb_ved_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS mb_ved_deadinside;
+
+
+statement ok
+DROP ROLE IF EXISTS mb_ved_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS mb_ved_salam;
+
+
+statement ok
+DROP TABLE IF EXISTS mb_ved_makak;
+
+
+statement ok
+CREATE TABLE mb_ved_makak (id int);
+
+
+statement ok
+CREATE ROLE mb_ved_clickclack LOGIN;
+
+
+statement ok
+CREATE ROLE mb_ved_kostya;
+
+
+statement ok
+CREATE ROLE mb_ved_deadinside;
+
+
+statement ok
+CREATE ROLE mb_ved_iceberg;
+
+
+statement ok
+CREATE ROLE mb_ved_salam;
+
+
+# ---- Build the 3-hop chain a -> b -> c -> d ----
+
+statement ok
+GRANT mb_ved_kostya TO mb_ved_clickclack;
+
+
+statement ok
+GRANT mb_ved_deadinside TO mb_ved_kostya;
+
+
+statement ok
+GRANT mb_ved_iceberg TO mb_ved_deadinside;
+
+
+# ---- Grant a privilege to the leaf group; it flows up the whole chain ----
+
+statement ok
+GRANT SELECT ON mb_ved_makak TO mb_ved_iceberg;
+
+
+# Every role at or above the grant inherits SELECT; none has INSERT.
+query
+SELECT has_table_privilege('mb_ved_clickclack', 'mb_ved_makak', 'SELECT') AS a,
+       has_table_privilege('mb_ved_kostya', 'mb_ved_makak', 'SELECT') AS b,
+       has_table_privilege('mb_ved_deadinside', 'mb_ved_makak', 'SELECT') AS c,
+       has_table_privilege('mb_ved_iceberg', 'mb_ved_makak', 'SELECT') AS d;
+----
+a	b	c	d
+t	t	t	t
+
+
+query
+SELECT has_table_privilege('mb_ved_clickclack', 'mb_ved_makak', 'INSERT') AS a,
+       has_table_privilege('mb_ved_iceberg', 'mb_ved_makak', 'INSERT') AS d;
+----
+a	d
+f	f
+
+
+# ---- pg_has_role: multi-hop reachability up the chain ----
+# clickclack reaches every ancestor; the leaf reaches none of its descendants.
+
+query
+SELECT pg_has_role('mb_ved_clickclack', 'mb_ved_kostya', 'USAGE') AS one_hop,
+       pg_has_role('mb_ved_clickclack', 'mb_ved_deadinside', 'USAGE') AS two_hop,
+       pg_has_role('mb_ved_clickclack', 'mb_ved_iceberg', 'USAGE') AS three_hop;
+----
+one_hop	two_hop	three_hop
+t	t	t
+
+
+# ---- pg_has_role MATRIX ----
+# self -> self is always t.
+query
+SELECT pg_has_role('mb_ved_clickclack', 'mb_ved_clickclack', 'USAGE') AS self;
+----
+self
+t
+
+
+# member -> group is t, group -> member is f (membership is not symmetric).
+query
+SELECT pg_has_role('mb_ved_clickclack', 'mb_ved_iceberg', 'USAGE') AS member_to_group,
+       pg_has_role('mb_ved_iceberg', 'mb_ved_clickclack', 'USAGE') AS group_to_member;
+----
+member_to_group	group_to_member
+t	f
+
+
+# A role (salam) not in the chain at all sees nothing, and is seen by no one.
+query
+SELECT pg_has_role('mb_ved_salam', 'mb_ved_iceberg', 'USAGE') AS salam_in,
+       pg_has_role('mb_ved_clickclack', 'mb_ved_salam', 'USAGE') AS reaches_salam;
+----
+salam_in	reaches_salam
+f	f
+
+
+# The MEMBER variant agrees with USAGE for inheriting roles across the chain.
+query
+SELECT pg_has_role('mb_ved_clickclack', 'mb_ved_iceberg', 'MEMBER') AS multi_hop_member,
+       pg_has_role('mb_ved_iceberg', 'mb_ved_clickclack', 'MEMBER') AS reversed;
+----
+multi_hop_member	reversed
+t	f
+
+
+# ---- Breaking a middle edge severs everything above the break ----
+# Remove kostya -> deadinside. Now clickclack and kostya lose the inherited
+# SELECT (the path to iceberg is cut), but deadinside and iceberg keep it.
+
+statement ok
+REVOKE mb_ved_deadinside FROM mb_ved_kostya;
+
+
+query
+SELECT has_table_privilege('mb_ved_clickclack', 'mb_ved_makak', 'SELECT') AS a,
+       has_table_privilege('mb_ved_kostya', 'mb_ved_makak', 'SELECT') AS b,
+       has_table_privilege('mb_ved_deadinside', 'mb_ved_makak', 'SELECT') AS c,
+       has_table_privilege('mb_ved_iceberg', 'mb_ved_makak', 'SELECT') AS d;
+----
+a	b	c	d
+f	f	t	t
+
+
+# Reachability reflects the cut: clickclack no longer reaches deadinside/iceberg,
+# but still reaches its immediate group kostya.
+query
+SELECT pg_has_role('mb_ved_clickclack', 'mb_ved_kostya', 'USAGE') AS to_kostya,
+       pg_has_role('mb_ved_clickclack', 'mb_ved_deadinside', 'USAGE') AS to_deadinside,
+       pg_has_role('mb_ved_clickclack', 'mb_ved_iceberg', 'USAGE') AS to_iceberg;
+----
+to_kostya	to_deadinside	to_iceberg
+t	f	f
+
+
+# ---- Reconnecting the edge restores the full chain ----
+
+statement ok
+GRANT mb_ved_deadinside TO mb_ved_kostya;
+
+
+query
+SELECT has_table_privilege('mb_ved_clickclack', 'mb_ved_makak', 'SELECT') AS a,
+       pg_has_role('mb_ved_clickclack', 'mb_ved_iceberg', 'USAGE') AS reaches_leaf;
+----
+a	reaches_leaf
+t	t
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP TABLE IF EXISTS mb_ved_makak;
+
+
+statement ok
+DROP ROLE IF EXISTS mb_ved_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS mb_ved_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS mb_ved_deadinside;
+
+
+statement ok
+DROP ROLE IF EXISTS mb_ved_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS mb_ved_salam;

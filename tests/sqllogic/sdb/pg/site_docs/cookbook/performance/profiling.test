@@ -14,7 +14,6 @@ EXPLAIN (FORMAT html) SELECT 42 AS x;
 #|     format := 'json',
 #|     save_location := '/path/to/output.json',
 #|     coverage := 'select',
-#|     mode := 'standard',
 #|     metrics := ['QUERY_NAME', 'LATENCY', 'OPERATOR_TIMING']
 #| );
 
@@ -25,7 +24,6 @@ CALL enable_profiling(
     format := 'json',
     save_location := '${__TEST_DIR__}/contribution_profiling_example_002_output.json',
     coverage := 'select',
-    mode := 'standard',
     metrics := ['QUERY_NAME', 'LATENCY', 'OPERATOR_TIMING']
 );
 ----

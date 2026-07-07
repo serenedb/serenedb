@@ -1,0 +1,210 @@
+# Multi-table privilege isolation: ONE role holds a DIFFERENT privilege on each
+# of five tables, and the has_table_privilege matrix proves the grant on table X
+# is visible ONLY on table X -- it never leaks onto a sibling table. The oracle
+# columns are byte-identical on real PostgreSQL and serenedb.
+#
+# Layout: five tables (iso_clickclack .. iso_iceberg), one role iso_vedernikoff.
+# Each table receives exactly one privilege:
+#   iso_clickclack  -> SELECT
+#   iso_kostya      -> INSERT
+#   iso_deadinside  -> UPDATE
+#   iso_babsky      -> DELETE
+#   iso_iceberg     -> TRUNCATE
+# The matrix is therefore the identity: privilege P is t on its own table and f
+# everywhere else. All names are prefixed iso_; the file is idempotent and
+# self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS iso_clickclack;
+
+
+statement ok
+DROP TABLE IF EXISTS iso_kostya;
+
+
+statement ok
+DROP TABLE IF EXISTS iso_deadinside;
+
+
+statement ok
+DROP TABLE IF EXISTS iso_babsky;
+
+
+statement ok
+DROP TABLE IF EXISTS iso_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS iso_vedernikoff;
+
+
+statement ok
+CREATE TABLE iso_clickclack (id int, mop text);
+
+
+statement ok
+CREATE TABLE iso_kostya (id int, mop text);
+
+
+statement ok
+CREATE TABLE iso_deadinside (id int, mop text);
+
+
+statement ok
+CREATE TABLE iso_babsky (id int, mop text);
+
+
+statement ok
+CREATE TABLE iso_iceberg (id int, mop text);
+
+
+statement ok
+CREATE ROLE iso_vedernikoff;
+
+
+# ============================================================================
+# Baseline: a fresh role holds nothing on any of the five tables.
+# Column order per table: SELECT INSERT UPDATE DELETE TRUNCATE.
+# ============================================================================
+
+query
+SELECT has_table_privilege('iso_vedernikoff','iso_clickclack','SELECT')   AS cc_s,
+       has_table_privilege('iso_vedernikoff','iso_kostya','SELECT')       AS ko_s,
+       has_table_privilege('iso_vedernikoff','iso_deadinside','SELECT')   AS di_s,
+       has_table_privilege('iso_vedernikoff','iso_babsky','SELECT')       AS ba_s,
+       has_table_privilege('iso_vedernikoff','iso_iceberg','SELECT')      AS ib_s;
+----
+cc_s	ko_s	di_s	ba_s	ib_s
+f	f	f	f	f
+
+
+# ============================================================================
+# One distinct privilege per table. After all five grants the matrix is the
+# identity diagonal.
+# ============================================================================
+
+statement ok
+GRANT SELECT ON iso_clickclack TO iso_vedernikoff;
+
+
+statement ok
+GRANT INSERT ON iso_kostya TO iso_vedernikoff;
+
+
+statement ok
+GRANT UPDATE ON iso_deadinside TO iso_vedernikoff;
+
+
+statement ok
+GRANT DELETE ON iso_babsky TO iso_vedernikoff;
+
+
+statement ok
+GRANT TRUNCATE ON iso_iceberg TO iso_vedernikoff;
+
+
+# ---- Row iso_clickclack: only SELECT is t ----
+query
+SELECT has_table_privilege('iso_vedernikoff','iso_clickclack','SELECT')   AS sel,
+       has_table_privilege('iso_vedernikoff','iso_clickclack','INSERT')   AS ins,
+       has_table_privilege('iso_vedernikoff','iso_clickclack','UPDATE')   AS upd,
+       has_table_privilege('iso_vedernikoff','iso_clickclack','DELETE')   AS del,
+       has_table_privilege('iso_vedernikoff','iso_clickclack','TRUNCATE') AS trunc;
+----
+sel	ins	upd	del	trunc
+t	f	f	f	f
+
+
+# ---- Row iso_kostya: only INSERT is t ----
+query
+SELECT has_table_privilege('iso_vedernikoff','iso_kostya','SELECT')   AS sel,
+       has_table_privilege('iso_vedernikoff','iso_kostya','INSERT')   AS ins,
+       has_table_privilege('iso_vedernikoff','iso_kostya','UPDATE')   AS upd,
+       has_table_privilege('iso_vedernikoff','iso_kostya','DELETE')   AS del,
+       has_table_privilege('iso_vedernikoff','iso_kostya','TRUNCATE') AS trunc;
+----
+sel	ins	upd	del	trunc
+f	t	f	f	f
+
+
+# ---- Row iso_deadinside: only UPDATE is t ----
+query
+SELECT has_table_privilege('iso_vedernikoff','iso_deadinside','SELECT')   AS sel,
+       has_table_privilege('iso_vedernikoff','iso_deadinside','INSERT')   AS ins,
+       has_table_privilege('iso_vedernikoff','iso_deadinside','UPDATE')   AS upd,
+       has_table_privilege('iso_vedernikoff','iso_deadinside','DELETE')   AS del,
+       has_table_privilege('iso_vedernikoff','iso_deadinside','TRUNCATE') AS trunc;
+----
+sel	ins	upd	del	trunc
+f	f	t	f	f
+
+
+# ---- Row iso_babsky: only DELETE is t ----
+query
+SELECT has_table_privilege('iso_vedernikoff','iso_babsky','SELECT')   AS sel,
+       has_table_privilege('iso_vedernikoff','iso_babsky','INSERT')   AS ins,
+       has_table_privilege('iso_vedernikoff','iso_babsky','UPDATE')   AS upd,
+       has_table_privilege('iso_vedernikoff','iso_babsky','DELETE')   AS del,
+       has_table_privilege('iso_vedernikoff','iso_babsky','TRUNCATE') AS trunc;
+----
+sel	ins	upd	del	trunc
+f	f	f	t	f
+
+
+# ---- Row iso_iceberg: only TRUNCATE is t ----
+query
+SELECT has_table_privilege('iso_vedernikoff','iso_iceberg','SELECT')   AS sel,
+       has_table_privilege('iso_vedernikoff','iso_iceberg','INSERT')   AS ins,
+       has_table_privilege('iso_vedernikoff','iso_iceberg','UPDATE')   AS upd,
+       has_table_privilege('iso_vedernikoff','iso_iceberg','DELETE')   AS del,
+       has_table_privilege('iso_vedernikoff','iso_iceberg','TRUNCATE') AS trunc;
+----
+sel	ins	upd	del	trunc
+f	f	f	f	t
+
+
+# ============================================================================
+# Cross-table no-leak: the privilege each table got must be f on every OTHER
+# table. This single block reads the off-diagonal of the matrix: SELECT only
+# on clickclack, INSERT only on kostya, etc. Every cell below is f.
+# ============================================================================
+
+query
+SELECT has_table_privilege('iso_vedernikoff','iso_kostya','SELECT')       AS s_on_ko,
+       has_table_privilege('iso_vedernikoff','iso_deadinside','SELECT')   AS s_on_di,
+       has_table_privilege('iso_vedernikoff','iso_clickclack','INSERT')   AS i_on_cc,
+       has_table_privilege('iso_vedernikoff','iso_iceberg','INSERT')      AS i_on_ib,
+       has_table_privilege('iso_vedernikoff','iso_babsky','UPDATE')       AS u_on_ba,
+       has_table_privilege('iso_vedernikoff','iso_clickclack','DELETE')   AS d_on_cc,
+       has_table_privilege('iso_vedernikoff','iso_kostya','TRUNCATE')     AS t_on_ko;
+----
+s_on_ko	s_on_di	i_on_cc	i_on_ib	u_on_ba	d_on_cc	t_on_ko
+f	f	f	f	f	f	f
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE iso_clickclack;
+
+
+statement ok
+DROP TABLE iso_kostya;
+
+
+statement ok
+DROP TABLE iso_deadinside;
+
+
+statement ok
+DROP TABLE iso_babsky;
+
+
+statement ok
+DROP TABLE iso_iceberg;
+
+
+statement ok
+DROP ROLE iso_vedernikoff;

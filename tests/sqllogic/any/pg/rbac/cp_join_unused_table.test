@@ -1,0 +1,87 @@
+# Strict-camp SELECT enforcement across a JOIN where the second relation is
+# REFERENCED in the FROM/ON clause but none of its columns appear in the
+# projection. PostgreSQL charges table-level SELECT on every relation in the
+# range table the rewriter produces -- the join key cju_mop.id is a column
+# reference, so cju_mop is checked even though the outer SELECT only projects a
+# column of cju_iceberg. The read refuses with "permission denied for table
+# cju_mop". Verified byte-identical on PostgreSQL 17/19 and SereneDB 2026-06-21.
+#
+# This is the C4 case from the pruned-column matrix: pa LEFT JOIN pb with no pb
+# column projected -> DENIED on pb. (Contrast div_unused_cte_denied / the
+# zero-column-read divergence, where a relation that contributes NO column
+# reference at all escapes the per-column hook.)
+#
+# Role cju_vedernikoff is granted SELECT (id, av) ON cju_iceberg only -- there is
+# no grant of any kind on cju_mop.
+#
+# Lore: vedernikoff reads the iceberg table; mop is the one he was never granted.
+
+statement ok
+DROP TABLE IF EXISTS cju_iceberg;
+
+
+statement ok
+DROP TABLE IF EXISTS cju_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS cju_vedernikoff;
+
+
+statement ok
+CREATE TABLE cju_iceberg (id int, av int, secret int);
+
+
+statement ok
+CREATE TABLE cju_mop (id int, weight int);
+
+
+statement ok
+INSERT INTO cju_iceberg VALUES (1, 10, 100), (2, 20, 200);
+
+
+statement ok
+INSERT INTO cju_mop VALUES (1, 5), (2, 6);
+
+
+statement ok
+CREATE ROLE cju_vedernikoff LOGIN PASSWORD 'cju_vedernikoff_pw';
+
+
+# SELECT on (id, av) of cju_iceberg only; NOTHING on cju_mop.
+statement ok
+GRANT SELECT (id, av) ON cju_iceberg TO cju_vedernikoff;
+
+
+# === C4: LEFT JOIN brings cju_mop into the range table via the ON key ===
+# Only cju_iceberg.av is projected; cju_mop contributes only its join key, but
+# that is a column reference on an ungranted relation -> refused on cju_mop.
+connection c_ved user=cju_vedernikoff password=cju_vedernikoff_pw
+statement error
+SELECT cju_iceberg.av FROM cju_iceberg LEFT JOIN cju_mop ON cju_iceberg.id = cju_mop.id;
+----
+db error: ERROR: permission denied for table cju_mop<slt:ignore>
+
+
+# Control: drop cju_mop from the query entirely and the same projection of the
+# granted table succeeds -- it is specifically the cju_mop reference that is
+# refused above, not the av projection.
+connection c_ved2 user=cju_vedernikoff password=cju_vedernikoff_pw
+query
+SELECT cju_iceberg.av FROM cju_iceberg ORDER BY av;
+----
+av
+10
+20
+
+
+statement ok
+DROP TABLE cju_iceberg;
+
+
+statement ok
+DROP TABLE cju_mop;
+
+
+statement ok
+DROP ROLE cju_vedernikoff;

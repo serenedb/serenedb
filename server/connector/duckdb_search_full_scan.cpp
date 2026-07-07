@@ -358,7 +358,7 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
   } else if (gstate.parallel_topk) {
     auto& l = data.local_state->Cast<SearchFullScanTopKLocalState>();
     if (!l.prepared) {
-      if (gstate.total_segments != 0) {
+      if (gstate.total_segments != 0 && !gstate.vector_scorer) {
         PreparePhase(context, gstate, l);
       }
       l.prepared = true;
@@ -367,7 +367,8 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
   } else {
     auto& l = data.local_state->Cast<SearchFullScanScanLocalState>();
     if (!l.prepared) {
-      if (gstate.scorer_obj && gstate.total_segments != 0) {
+      if (gstate.scorer_obj && gstate.total_segments != 0 &&
+          !gstate.vector_scorer) {
         PreparePhase(context, gstate, l);
       }
       l.prepared = true;

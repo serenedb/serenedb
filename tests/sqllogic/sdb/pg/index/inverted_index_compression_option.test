@@ -1,7 +1,8 @@
-# Force-compression option on INCLUDE and IVF columns. The user-supplied
+# Force-compression option on INCLUDE columns. The user-supplied
 # `compression` option bypasses the analyze tournament and pins the column
 # to one specific DuckDB codec; an unsupported codec for the column's
-# physical type must throw at flush time.
+# physical type must throw at flush time. The IVF opclass no longer accepts
+# `compression` (or `row_group_size`) -- vectors always use the auto codec.
 
 hash-threshold 100
 
@@ -191,30 +192,15 @@ statement error
 CREATE INDEX compr_mismatch_num ON compr_bad_num USING inverted(txt compr_english)
   INCLUDE (pk, n included (compression = 'fsst'));
 
-# --- 9. IVF column accepts compression option --------------------------
-# IVF vectors used to be force-uncompressed; now the same compression
-# knob applies. UNCOMPRESSED is a safe choice for FLOAT[].
+# --- 9. IVF rejects the compression option -----------------------------
+# `compression` is no longer an IVF opclass option; vectors always use the
+# auto codec. It stays valid on the `included` opclass (cases above).
 statement ok
 CREATE TABLE ivf_comp (id INT PRIMARY KEY, emb FLOAT[3]);
 
-statement ok
+statement error unknown ivf option 'compression'
 CREATE INDEX ivf_comp_unc ON ivf_comp
   USING inverted(emb ivf (metric = 'l2', compression = 'uncompressed'));
-
-statement ok
-INSERT INTO ivf_comp VALUES
-  (1, [1.0, 0.0, 0.0]::FLOAT[3]),
-  (2, [0.0, 1.0, 0.0]::FLOAT[3]),
-  (3, [0.0, 0.0, 1.0]::FLOAT[3]);
-
-statement ok
-VACUUM (REFRESH_TABLE) ivf_comp;
-
-query
-SELECT id FROM ivf_comp_unc ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
-----
-id
-1
 
 # --- 10. IVF vector column visible to materialization ------------------
 # After auto-promoting ivf columns to store_values=true, the materializer
@@ -240,16 +226,12 @@ id	emb
 1	{1,2,3}
 2	{4,5,6}
 
-# --- 11. IVF with unknown compression name rejected at parse time ------
+# --- 11. IVF rejects the row_group_size option -------------------------
+# Like `compression`, `row_group_size` was dropped from the IVF opclass; it
+# stays valid on the `included` opclass.
 statement ok
 CREATE TABLE ivf_bad (id INT PRIMARY KEY, emb FLOAT[3]);
 
-statement error
+statement error unknown ivf option 'row_group_size'
 CREATE INDEX ivf_bad_idx ON ivf_bad
-  USING inverted(emb ivf (metric = 'l2', compression = 'no_such'));
-
-# --- 12. IVF codec/type mismatch rejected synchronously ----------------
-# FSST is VARCHAR-only; ARRAY(FLOAT,N) leaf is FLOAT, not VARCHAR.
-statement error
-CREATE INDEX ivf_mismatch ON ivf_bad
-  USING inverted(emb ivf (metric = 'l2', compression = 'fsst'));
+  USING inverted(emb ivf (metric = 'l2', row_group_size = 8));

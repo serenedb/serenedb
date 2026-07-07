@@ -795,7 +795,7 @@ CREATE TABLE t_err (id INT, emb FLOAT[3], emb_int INT[3]);
 statement error
 CREATE INDEX bad_opt ON t_err USING inverted(emb ivf (metric = 'l2', ef_search = 50));
 ----
-db error: ERROR: Failed to create index: Column 'emb': unknown ivf option 'ef_search'. Accepted options: metric (string: l2|l1|cosine|ip, REQUIRED), nlist (int >= 1, default auto ~sqrt(rows)), nlist_factor (number > 0, nlist = round(nlist_factor * sqrt(rows)), default 2.0), train_sample (int >= 1, default auto), cluster_iters (int >= 1, k-means iterations, default auto), quant (string: sq8|sq4|pq|rabitq|none, default none; sq8|sq4|pq|rabitq need l2|ip), pq_m (int >= 1, divides dimension, quant='pq' only, default auto ~d/2), rabitq_bits (int 1-9, quant='rabitq' only, default 1), compression (string, default 'auto'), row_group_size (int >= 1)
+db error: ERROR: Failed to create index: Column 'emb': unknown ivf option 'ef_search'. Accepted options: metric (string: l2|l1|cosine|ip, REQUIRED), nlist (int >= 1, default auto ~sqrt(rows)), quant (string: sq8|sq4|pq|rabitq|none, default none; sq8|sq4|pq|rabitq need l2|ip), pq_m (int >= 1, divides dimension, quant='pq' only, default auto ~d/2), rabitq_bits (int 1-9, quant='rabitq' only, default 1)
 
 
 statement error

@@ -26,6 +26,7 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/all_iterator.hpp"
+#include "iresearch/search/automaton_filter.hpp"
 #include "iresearch/search/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/boolean_query.hpp"
@@ -33,13 +34,18 @@
 #include "iresearch/search/conjunction.hpp"
 #include "iresearch/search/exclusion.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
+#include "iresearch/search/levenshtein_filter.hpp"
 #include "iresearch/search/make_disjunction.hpp"
+#include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/range_filter.hpp"
+#include "iresearch/search/regexp_filter.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/term_query.hpp"
 #include "iresearch/search/tfidf.hpp"
+#include "iresearch/search/wildcard_filter.hpp"
+#include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 #include "tests_shared.hpp"
 
@@ -16561,6 +16567,392 @@ TEST(Or_test, optimize_all_unscored) {
   prep.Execute(0);
   ASSERT_EQ(
     0, detail::Boosted::gExecuteCount);  // specific filters should be opt out
+}
+
+namespace {
+
+irs::bytes_view B(std::string_view value) {
+  return irs::ViewCast<irs::byte_type>(value);
+}
+
+const irs::AutomatonFilter* FusedOf(const irs::Filter::ptr& filter) {
+  return dynamic_cast<const irs::AutomatonFilter*>(filter.get());
+}
+
+bool FusedAccepts(const irs::AutomatonFilter& fused, std::string_view term) {
+  return bool(irs::Accept(fused.options().compiled->acceptor, B(term)));
+}
+
+}  // namespace
+
+TEST(OrAcceptorFusion_test, fuses_mixed_acceptors) {
+  auto root = std::make_unique<irs::Or>();
+  Append<irs::ByTerm>(*root, kFieldTestField, "kiwi");
+  Append<irs::ByPrefix>(*root, kFieldTestField, "ax");
+  Append<irs::ByWildcard>(*root, kFieldTestField, "b_n%");
+  auto& re = root->add<irs::ByRegexp>();
+  *re.mutable_field_id() = kFieldTestField;
+  re.mutable_options()->pattern = irs::bstring{B("a.*e")};
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  const auto* fused = FusedOf(filter);
+  ASSERT_NE(nullptr, fused);
+  EXPECT_EQ(kFieldTestField, fused->field_id());
+  EXPECT_TRUE(FusedAccepts(*fused, "kiwi"));
+  EXPECT_TRUE(FusedAccepts(*fused, "axle"));
+  EXPECT_TRUE(FusedAccepts(*fused, "banana"));
+  EXPECT_TRUE(FusedAccepts(*fused, "apple"));
+  EXPECT_FALSE(FusedAccepts(*fused, "kiwis"));
+  EXPECT_FALSE(FusedAccepts(*fused, "cherry"));
+}
+
+TEST(OrAcceptorFusion_test, keeps_contiguous_only_by_default) {
+  auto root = std::make_unique<irs::Or>();
+  Append<irs::ByTerm>(*root, kFieldTestField, "kiwi");
+  Append<irs::ByPrefix>(*root, kFieldTestField, "ax");
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  EXPECT_EQ(irs::Type<irs::Or>::id(), filter->type());
+}
+
+TEST(OrAcceptorFusion_test, quotes_term_metacharacters) {
+  auto root = std::make_unique<irs::Or>();
+  Append<irs::ByTerm>(*root, kFieldTestField, "a.e");
+  Append<irs::ByPrefix>(*root, kFieldTestField, "b(");
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.fuse_seekable_acceptors = true});
+
+  const auto* fused = FusedOf(filter);
+  ASSERT_NE(nullptr, fused);
+  EXPECT_TRUE(FusedAccepts(*fused, "a.e"));
+  EXPECT_FALSE(FusedAccepts(*fused, "axe"));
+  EXPECT_TRUE(FusedAccepts(*fused, "b(x"));
+  EXPECT_FALSE(FusedAccepts(*fused, "bx"));
+}
+
+TEST(OrAcceptorFusion_test, pure_terms_become_by_terms) {
+  auto root = std::make_unique<irs::Or>();
+  Append<irs::ByTerm>(*root, kFieldTestField, "apple");
+  Append<irs::ByTerm>(*root, kFieldTestField, "banana");
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  EXPECT_EQ(irs::Type<irs::ByTerms>::id(), filter->type());
+}
+
+TEST(OrAcceptorFusion_test, keeps_min_match_or) {
+  auto root = std::make_unique<irs::Or>();
+  Append<irs::ByTerm>(*root, kFieldTestField, "kiwi");
+  Append<irs::ByPrefix>(*root, kFieldTestField, "ax");
+  Append<irs::ByPrefix>(*root, kFieldTestField, "ban");
+  root->min_match_count(2);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  EXPECT_EQ(irs::Type<irs::Or>::id(), filter->type());
+}
+
+TEST(OrAcceptorFusion_test, keeps_mixed_fields) {
+  auto root = std::make_unique<irs::Or>();
+  Append<irs::ByTerm>(*root, kFieldTestField, "kiwi");
+  Append<irs::ByPrefix>(*root, kFieldName, "ax");
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  EXPECT_EQ(irs::Type<irs::Or>::id(), filter->type());
+}
+
+TEST(OrAcceptorFusion_test, keeps_range_children) {
+  auto root = std::make_unique<irs::Or>();
+  Append<irs::ByPrefix>(*root, kFieldTestField, "ax");
+  auto& range = root->add<irs::ByRange>();
+  *range.mutable_field_id() = kFieldTestField;
+  range.mutable_options()->range.min = irs::bstring{B("b")};
+  range.mutable_options()->range.min_type = irs::BoundType::Inclusive;
+  range.mutable_options()->range.max = irs::bstring{B("d")};
+  range.mutable_options()->range.max_type = irs::BoundType::Exclusive;
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  EXPECT_EQ(irs::Type<irs::Or>::id(), filter->type());
+}
+
+TEST(OrAcceptorFusion_test, scored_requires_uniform_boosts) {
+  {
+    auto root = std::make_unique<irs::Or>();
+    Append<irs::ByTerm>(*root, kFieldTestField, "kiwi").boost(2.f);
+    Append<irs::ByPrefix>(*root, kFieldTestField, "ax").boost(3.f);
+
+    irs::Filter::ptr filter = std::move(root);
+    irs::Optimize(filter, {.scored = true, .fuse_seekable_acceptors = true});
+
+    EXPECT_EQ(irs::Type<irs::Or>::id(), filter->type());
+  }
+  {
+    auto root = std::make_unique<irs::Or>();
+    Append<irs::ByPrefix>(*root, kFieldTestField, "ax").boost(2.f);
+    Append<irs::ByPrefix>(*root, kFieldTestField, "ban").boost(2.f);
+    root->boost(3.f);
+
+    irs::Filter::ptr filter = std::move(root);
+    irs::Optimize(filter, {.scored = true, .fuse_seekable_acceptors = true});
+
+    const auto* fused = FusedOf(filter);
+    ASSERT_NE(nullptr, fused);
+    EXPECT_EQ(6.f, fused->Boost());
+    EXPECT_EQ(2048, fused->options().scored_terms_limit);
+  }
+}
+
+TEST(OrAcceptorFusion_test, flattens_nested_or_on_search_path) {
+  auto root = std::make_unique<irs::Or>();
+  {
+    auto& inner = root->add<irs::Or>();
+    Append<irs::ByPrefix>(inner, kFieldTestField, "ax");
+    Append<irs::ByPrefix>(inner, kFieldTestField, "ban");
+  }
+  Append<irs::ByWildcard>(*root, kFieldTestField, "%le");
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  const auto* fused = FusedOf(filter);
+  ASSERT_NE(nullptr, fused);
+  EXPECT_TRUE(FusedAccepts(*fused, "axle"));
+  EXPECT_TRUE(FusedAccepts(*fused, "banana"));
+  EXPECT_TRUE(FusedAccepts(*fused, "apple"));
+  EXPECT_FALSE(FusedAccepts(*fused, "kiwi"));
+}
+
+TEST(OrAcceptorFusion_test, fuses_nested_fused_or) {
+  auto root = std::make_unique<irs::Or>();
+  {
+    auto& inner = root->add<irs::Or>();
+    Append<irs::ByPrefix>(inner, kFieldTestField, "ax");
+    Append<irs::ByPrefix>(inner, kFieldTestField, "ban");
+  }
+  Append<irs::ByWildcard>(*root, kFieldTestField, "%le");
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.fuse_seekable_acceptors = true});
+
+  const auto* fused = FusedOf(filter);
+  ASSERT_NE(nullptr, fused);
+  EXPECT_TRUE(FusedAccepts(*fused, "axle"));
+  EXPECT_TRUE(FusedAccepts(*fused, "banana"));
+  EXPECT_TRUE(FusedAccepts(*fused, "apple"));
+  EXPECT_FALSE(FusedAccepts(*fused, "kiwi"));
+}
+
+TEST(OrAcceptorFusion_test, keeps_unfusable_nested_or) {
+  auto root = std::make_unique<irs::Or>();
+  {
+    auto& inner = root->add<irs::Or>();
+    inner.min_match_count(2);
+    Append<irs::ByPrefix>(inner, kFieldTestField, "ax");
+    Append<irs::ByPrefix>(inner, kFieldTestField, "ban");
+  }
+  Append<irs::ByWildcard>(*root, kFieldTestField, "%le");
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.fuse_seekable_acceptors = true});
+
+  EXPECT_EQ(irs::Type<irs::Or>::id(), filter->type());
+}
+
+TEST(OrAcceptorFusion_test, translates_wildcard_escapes) {
+  auto root = std::make_unique<irs::Or>();
+  Append<irs::ByWildcard>(*root, kFieldTestField, "a_c%");
+  Append<irs::ByWildcard>(*root, kFieldTestField, "x\\%y");
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  const auto* fused = FusedOf(filter);
+  ASSERT_NE(nullptr, fused);
+  EXPECT_TRUE(FusedAccepts(*fused, "abc"));
+  EXPECT_TRUE(FusedAccepts(*fused, "abcdef"));
+  EXPECT_FALSE(FusedAccepts(*fused, "ac"));
+  EXPECT_TRUE(FusedAccepts(*fused, "x%y"));
+  EXPECT_FALSE(FusedAccepts(*fused, "xzy"));
+}
+
+TEST(OrAcceptorFusion_test, keeps_non_perl_regexp) {
+  auto root = std::make_unique<irs::Or>();
+  Append<irs::ByPrefix>(*root, kFieldTestField, "ax");
+  auto& re = root->add<irs::ByRegexp>();
+  *re.mutable_field_id() = kFieldTestField;
+  re.mutable_options()->pattern = irs::bstring{B("a.*e")};
+  re.mutable_options()->syntax = irs::RegexpSyntax::PosixEre;
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.fuse_seekable_acceptors = true});
+
+  EXPECT_EQ(irs::Type<irs::Or>::id(), filter->type());
+}
+
+TEST(AndAcceptorFusion_test, fuses_same_field_acceptors) {
+  auto root = std::make_unique<irs::And>();
+  Append<irs::ByPrefix>(*root, kFieldTestField, "ax");
+  Append<irs::ByWildcard>(*root, kFieldTestField, "%le");
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.fuse_acceptor_intersections = true});
+
+  const auto* fused = FusedOf(filter);
+  ASSERT_NE(nullptr, fused);
+  EXPECT_EQ(kFieldTestField, fused->field_id());
+  EXPECT_EQ(irs::bstring{B("ax%&%le")}, fused->options().pattern);
+  EXPECT_TRUE(FusedAccepts(*fused, "axle"));
+  EXPECT_TRUE(FusedAccepts(*fused, "axolotle"));
+  EXPECT_FALSE(FusedAccepts(*fused, "apple"));
+  EXPECT_FALSE(FusedAccepts(*fused, "axis"));
+}
+
+TEST(AndAcceptorFusion_test, noop_without_flag) {
+  auto root = std::make_unique<irs::And>();
+  Append<irs::ByPrefix>(*root, kFieldTestField, "ax");
+  Append<irs::ByWildcard>(*root, kFieldTestField, "%le");
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  EXPECT_EQ(irs::Type<irs::And>::id(), filter->type());
+}
+
+TEST(AndAcceptorFusion_test, noop_when_scored) {
+  auto root = std::make_unique<irs::And>();
+  Append<irs::ByPrefix>(*root, kFieldTestField, "ax");
+  Append<irs::ByWildcard>(*root, kFieldTestField, "%le");
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.scored = true, .fuse_acceptor_intersections = true});
+
+  EXPECT_EQ(irs::Type<irs::And>::id(), filter->type());
+}
+
+TEST(AndAcceptorFusion_test, renders_range_pattern) {
+  auto root = std::make_unique<irs::And>();
+  Append<irs::ByPrefix>(*root, kFieldTestField, "b");
+  auto& range = root->add<irs::ByRange>();
+  *range.mutable_field_id() = kFieldTestField;
+  range.mutable_options()->range.min = irs::bstring{B("b")};
+  range.mutable_options()->range.min_type = irs::BoundType::Inclusive;
+  range.mutable_options()->range.max = irs::bstring{B("d")};
+  range.mutable_options()->range.max_type = irs::BoundType::Exclusive;
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.fuse_acceptor_intersections = true});
+
+  const auto* fused = FusedOf(filter);
+  ASSERT_NE(nullptr, fused);
+  EXPECT_EQ(irs::bstring{B("b%&[b..d)")}, fused->options().pattern);
+  EXPECT_TRUE(FusedAccepts(*fused, "bar"));
+  EXPECT_FALSE(FusedAccepts(*fused, "dog"));
+  EXPECT_FALSE(FusedAccepts(*fused, "ax"));
+}
+
+TEST(AndAcceptorFusion_test, levenshtein_driver_bails) {
+  auto root = std::make_unique<irs::And>();
+  Append<irs::ByEditDistance>(*root, kFieldTestField, "apple")
+    .mutable_options()
+    ->max_distance = 1;
+  Append<irs::ByWildcard>(*root, kFieldTestField, "%le");
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.fuse_acceptor_intersections = true});
+
+  EXPECT_EQ(irs::Type<irs::And>::id(), filter->type());
+}
+
+TEST(AndAcceptorFusion_test, levenshtein_predicate_fuses) {
+  auto root = std::make_unique<irs::And>();
+  auto& range = root->add<irs::ByRange>();
+  *range.mutable_field_id() = kFieldTestField;
+  range.mutable_options()->range.min = irs::bstring{B("a")};
+  range.mutable_options()->range.min_type = irs::BoundType::Inclusive;
+  range.mutable_options()->range.max = irs::bstring{B("b")};
+  range.mutable_options()->range.max_type = irs::BoundType::Exclusive;
+  Append<irs::ByEditDistance>(*root, kFieldTestField, "apple")
+    .mutable_options()
+    ->max_distance = 1;
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.fuse_acceptor_intersections = true});
+
+  const auto* fused = FusedOf(filter);
+  ASSERT_NE(nullptr, fused);
+  EXPECT_EQ(irs::bstring{B("[a..b)&apple~")}, fused->options().pattern);
+  EXPECT_TRUE(FusedAccepts(*fused, "apple"));
+  EXPECT_TRUE(FusedAccepts(*fused, "aplle"));
+  EXPECT_FALSE(FusedAccepts(*fused, "banana"));
+  EXPECT_FALSE(FusedAccepts(*fused, "axxxx"));
+}
+
+TEST(AndAcceptorFusion_test, by_terms_driver_bails) {
+  auto root = std::make_unique<irs::And>();
+  {
+    auto& inner = root->add<irs::Or>();
+    Append<irs::ByTerm>(inner, kFieldTestField, "apple");
+    Append<irs::ByTerm>(inner, kFieldTestField, "banana");
+  }
+  Append<irs::ByPrefix>(*root, kFieldTestField, "ap");
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.fuse_acceptor_intersections = true});
+
+  ASSERT_EQ(irs::Type<irs::And>::id(), filter->type());
+  const auto& node = sdb::basics::downCast<irs::And>(*filter);
+  ASSERT_EQ(2, node.size());
+  EXPECT_EQ(irs::Type<irs::ByTerms>::id(), node[0].type());
+}
+
+TEST(AndAcceptorFusion_test, keeps_other_field_children) {
+  auto root = std::make_unique<irs::And>();
+  Append<irs::ByPrefix>(*root, kFieldTestField, "ax");
+  Append<irs::ByWildcard>(*root, kFieldTestField, "%le");
+  Append<irs::ByPrefix>(*root, kFieldName, "b");
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.fuse_acceptor_intersections = true});
+
+  ASSERT_EQ(irs::Type<irs::And>::id(), filter->type());
+  const auto& node = sdb::basics::downCast<irs::And>(*filter);
+  ASSERT_EQ(2, node.size());
+}
+
+TEST(AndAcceptorFusion_test, fuses_or_product) {
+  auto root = std::make_unique<irs::And>();
+  {
+    auto& inner = root->add<irs::Or>();
+    Append<irs::ByPrefix>(inner, kFieldTestField, "ax");
+    Append<irs::ByWildcard>(inner, kFieldTestField, "%le");
+  }
+  auto& range = root->add<irs::ByRange>();
+  *range.mutable_field_id() = kFieldTestField;
+  range.mutable_options()->range.min = irs::bstring{B("a")};
+  range.mutable_options()->range.min_type = irs::BoundType::Inclusive;
+  range.mutable_options()->range.max = irs::bstring{B("b")};
+  range.mutable_options()->range.max_type = irs::BoundType::Exclusive;
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.fuse_acceptor_intersections = true});
+
+  const auto* fused = FusedOf(filter);
+  ASSERT_NE(nullptr, fused);
+  EXPECT_TRUE(FusedAccepts(*fused, "axle"));
+  EXPECT_TRUE(FusedAccepts(*fused, "ale"));
+  EXPECT_FALSE(FusedAccepts(*fused, "ble"));
+  EXPECT_FALSE(FusedAccepts(*fused, "amp"));
 }
 
 TEST(Or_test, optimize_all_scored) {

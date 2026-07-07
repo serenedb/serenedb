@@ -1,0 +1,62 @@
+hash-threshold 100
+
+# Numeric columns index as granular-encoded terms, not text: the explicit
+# ts_dict_* aggregates reject them, the implicit rewrites simply do not fire
+# (VARCHAR-gated) and stay correct on the document scan, and a numeric
+# predicate cannot constrain a text enumeration (cross-field).
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY num_kw(template = 'keyword')
+
+statement ok
+CREATE TABLE numt(id INTEGER PRIMARY KEY, n INTEGER, cat VARCHAR NOT NULL)
+
+statement ok
+CREATE INDEX numt_idx ON numt USING inverted(n, cat num_kw)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO numt VALUES (1, 10, 'red'), (2, 20, 'blue'), (3, 30, 'red')
+
+statement ok
+VACUUM (REFRESH_TABLE) numt;
+
+statement error
+SELECT ts_dict_agg(n) FROM numt_idx
+----
+db error: ERROR: ts_dict_agg(): column has no text term dictionary
+HINT: ts_dict_agg requires a text-tokenized or keyword VARCHAR column
+
+
+statement error
+SELECT ts_dict_min(n) FROM numt_idx
+----
+db error: ERROR: ts_dict_min(): column has no text term dictionary
+HINT: ts_dict_agg requires a text-tokenized or keyword VARCHAR column
+
+
+query I
+SELECT min(n) AS mn FROM numt_idx
+----
+mn
+10
+
+query II
+SELECT n, count(*) AS c FROM numt_idx GROUP BY n ORDER BY n
+----
+n	c
+10	1
+20	1
+30	1
+
+query I
+SELECT count(*) AS c FROM numt_idx WHERE n > 15
+----
+c
+2
+
+query T
+SELECT list_sort(ts_dict_agg(cat)) FROM numt_idx WHERE n > 15
+----
+list_sort
+{blue,red}

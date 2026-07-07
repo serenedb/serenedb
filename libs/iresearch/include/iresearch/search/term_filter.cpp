@@ -22,6 +22,8 @@
 
 #include "term_filter.hpp"
 
+#include <tuple>
+
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/filter_visitor.hpp"
@@ -30,29 +32,28 @@
 namespace irs {
 namespace {
 
-SeekTermIterator::ptr GetTermsIterator(const TermReader& field,
-                                       const bytes_view term) {
-  auto terms = field.iterator(SeekMode::RandomOnly);
-  if (!terms) [[unlikely]] {
-    return nullptr;
-  }
-  if (!terms->seek(term)) {
-    return nullptr;
-  }
-  terms->read();
-  return terms;
-}
+class ByTermIterator : public WrappedTermIterator {
+ public:
+  ByTermIterator(const TermReader& reader, bytes_view term)
+    : WrappedTermIterator{reader.iterator(SeekMode::RandomOnly)},
+      _found{_impl->seek(term)} {}
+
+  bool next() final { return std::exchange(_found, false); }
+
+ private:
+  bool _found;
+};
 
 }  // namespace
 
 void ByTerm::Visit(const SubReader& segment, const TermReader& field,
-                   const bytes_view term, FilterVisitor& visitor) {
-  auto terms = GetTermsIterator(field, term);
-  if (!terms) {
+                   const ByTermOptions& options, FilterVisitor& visitor) {
+  auto terms = field.iterator(SeekMode::RandomOnly);
+  if (!terms || !terms->seek(options.term)) {
     return;
   }
   visitor.Prepare(segment, field, *terms);
-  visitor.Visit(kNoBoost);
+  std::ignore = visitor.Visit(kNoBoost);
 }
 
 QueryBuilder::ptr ByTerm::PrepareSegment(const SubReader& segment,
@@ -66,7 +67,10 @@ QueryBuilder::ptr ByTerm::PrepareSegment(const SubReader& segment,
     return memory::make_tracked<TermQuery>(
       ctx.memory, segment, TermState{nullptr, nullptr}, ctx.boost);
   }
-  auto terms = GetTermsIterator(*reader, term);
+  auto terms = reader->iterator(SeekMode::RandomOnly);
+  if (terms && !terms->seek(term)) {
+    terms = nullptr;
+  }
   if (ctx.collector) {
     auto& collector = sdb::basics::downCast<ByTermsCollector>(*ctx.collector);
     SDB_ASSERT(collector.Terms().size() == 1);
@@ -82,6 +86,14 @@ QueryBuilder::ptr ByTerm::PrepareSegment(const SubReader& segment,
 
 PrepareCollector::ptr ByTerm::MakeCollector(const Scorer* scorer) const {
   return std::make_unique<ByTermsCollector>(scorer, 1);
+}
+
+TermPredicate::ptr ByTerm::CompileTermPredicate() const {
+  return MakeTermPredicate(TermAcceptor{options().term});
+}
+
+TermIterator::ptr ByTerm::CompileTermIterator(const TermReader& reader) const {
+  return memory::make_managed<ByTermIterator>(reader, options().term);
 }
 
 }  // namespace irs

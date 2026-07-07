@@ -23,13 +23,30 @@
 #pragma once
 
 #include "basics/shared.hpp"
+#include "iresearch/index/iterators.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
 
 struct SubReader;
 struct TermReader;
-struct SeekTermIterator;
+
+template<typename Terms, typename Visitor>
+void VisitTerms(Terms& terms, Visitor& visitor) {
+  do {
+    if constexpr (requires(Visitor& v, Terms& t) { v.SetIndex(t.Index()); }) {
+      visitor.SetIndex(terms.Index());
+    }
+    auto boost = kNoBoost;
+    if constexpr (requires(Terms& t) { t.Boost(); }) {
+      boost = terms.Boost();
+    }
+    if (!visitor.Visit(boost)) {
+      return;
+    }
+  } while (terms.next());
+}
 
 //////////////////////////////////////////////////////////////////////////////
 /// @class filter_visitor
@@ -42,12 +59,13 @@ struct FilterVisitor {
   /// @brief makes preparations for a visitor
   //////////////////////////////////////////////////////////////////////////////
   virtual void Prepare(const SubReader& segment, const TermReader& field,
-                       const SeekTermIterator& terms) = 0;
+                       SeekTermIterator& terms) = 0;
 
   //////////////////////////////////////////////////////////////////////////////
   /// @brief applies actions to a current term iterator
+  /// @returns true to continue visiting, false to stop visiting
   //////////////////////////////////////////////////////////////////////////////
-  virtual void Visit(score_t boost) = 0;
+  virtual bool Visit(score_t boost) = 0;
 };
 
 }  // namespace irs

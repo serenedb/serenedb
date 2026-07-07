@@ -288,8 +288,8 @@ QueryBuilder::ptr ByWildcardNgram::PrepareSegment(
       if (token.back() == 0xFF) {
         token = kEmptyStringView<byte_type>;
       }
-      return wrap(ByPrefix::PrepareSegment(segment, sub_ctx, field_id(), token,
-                                           kDefaultScoredTermsLimit));
+      return wrap(
+        ByPrefix::PrepareSegment(segment, sub_ctx, field_id(), token));
     }
     case WildcardNgramKind::kPhrase:
       return wrap(MakePhraseFilter(field_id(), opts.parts.front())

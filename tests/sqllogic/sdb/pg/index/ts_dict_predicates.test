@@ -1,0 +1,511 @@
+hash-threshold 100
+
+# Several term acceptors on the enumerated field compose: the most selective
+# claimable acceptor drives the enumeration (ByTerm > ByTerms > ByPrefix /
+# ByRange > automatons) and every other claimable acceptor becomes a term
+# predicate checked per emitted term inside the scan, so @@ ts_* matchers can
+# be combined. Scalar shapes keep post-filtering above the scan. The score
+# column reflects the DRIVING acceptor only. Background maintenance disabled;
+# visibility driven by VACUUM (REFRESH_TABLE).
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tp_kw(template = 'keyword')
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tp_tx(template = 'text', locale = 'en_US.UTF-8',
+    case = 'lower', stemming = false, accent = false, frequency = true,
+    position = true)
+
+statement ok
+CREATE TABLE tp(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, body VARCHAR)
+
+statement ok
+CREATE INDEX tp_idx ON tp USING inverted(cat tp_kw, body tp_tx)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO tp VALUES
+  (1, 'apple',   'aple axle apple'),
+  (2, 'apricot', 'apex date'),
+  (3, 'banana',  'banana'),
+  (4, 'avocado', 'amaze arise')
+
+statement ok
+VACUUM (REFRESH_TABLE) tp;
+
+# Two @@ matchers: the prefix drives, the regexp filters terms in the scan.
+query T
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM tp_idx WHERE body @@ ts_starts_with('a') AND body @@ ts_regexp('a.*e')
+ORDER BY term
+----
+term
+amaze
+aple
+apple
+arise
+axle
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term
+FROM tp_idx WHERE body @@ ts_starts_with('a') AND body @@ ts_regexp('a.*e')
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────────────────────────────╮
+│ Groups: #0                                       │
+│ ~0 rows                                          │
+╰─────────────────────────┬────────────────────────╯
+╭─ PROJECTION ────────────┴────────────────────────╮
+│ Projections: #0                                  │
+│ ~1 row                                           │
+╰─────────────────────────┬────────────────────────╯
+╭─ IRESEARCH_SCAN ────────┴────────────────────────╮
+│ Index: tp_idx                                    │
+│ Filter:                                          │
+│ ╭─ And ───────────────╮                          │
+│ ╰──────────┬──────────╯                          │
+│            ├────────────────────────╮            │
+│ ╭─ Starts With ───────╮  ╭─ Automaton ─────────╮ │
+│ │ Field: body(string) │  │ Field: body(string) │ │
+│ │ Prefix: a           │  │ Pattern: a.*e       │ │
+│ │ Limit: 1024         │  ╰─────────────────────╯ │
+│ ╰─────────────────────╯                          │
+│ TsDict: body                                     │
+│ Projections:                                     │
+│ sdb_inverted_index_term$body                     │
+│ ~1 row                                           │
+╰──────────────────────────────────────────────────╯
+
+query T
+SELECT unnest(ts_dict_agg(cat)) AS term
+FROM tp_idx WHERE cat LIKE 'a%' AND cat BETWEEN 'ap' AND 'az' ORDER BY term
+----
+term
+apple
+apricot
+avocado
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(cat)) AS term
+FROM tp_idx WHERE cat LIKE 'a%' AND cat BETWEEN 'ap' AND 'az'
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────────────────────╮
+│ Groups: #0                               │
+│ ~0 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections: #0                          │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: tp_idx                            │
+│ Filter:                                  │
+│ ╭─ Automaton ──────────╮                 │
+│ │ Field: cat(string)   │                 │
+│ │ Pattern: a%&[ap..az] │                 │
+│ ╰──────────────────────╯                 │
+│ TsDict: cat                              │
+│ Projections: sdb_inverted_index_term$cat │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM tp_idx WHERE cat LIKE 'a%' AND cat IN ('apple', 'banana', 'avocado')
+ORDER BY term
+----
+term	docs
+apple	1
+avocado	1
+
+# Driver + term predicate + scalar post-filter in one WHERE.
+query T
+SELECT unnest(ts_dict_agg(cat)) AS term
+FROM tp_idx
+WHERE cat LIKE 'a%' AND cat BETWEEN 'ap' AND 'az' AND length(cat) = 7
+ORDER BY term
+----
+term
+apricot
+avocado
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(cat)) AS term
+FROM tp_idx
+WHERE cat LIKE 'a%' AND cat BETWEEN 'ap' AND 'az' AND length(cat) = 7
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────────────────────╮
+│ Groups: #0                               │
+│ ~0 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections: #0                          │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ FILTER ────────────┴────────────────────╮
+│ Expression:                              │
+│ length(sdb_inverted_index_term$cat) = 7  │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: tp_idx                            │
+│ Filter:                                  │
+│ ╭─ Automaton ──────────╮                 │
+│ │ Field: cat(string)   │                 │
+│ │ Pattern: a%&[ap..az] │                 │
+│ ╰──────────────────────╯                 │
+│ TsDict: cat                              │
+│ Projections: sdb_inverted_index_term$cat │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+# The prefix outranks the levenshtein matcher, so it drives and the score
+# column stays at the driver's constant 1 (not the fuzzy similarity).
+query TR
+SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_score(body)) AS score
+FROM tp_idx
+WHERE body @@ ts_starts_with('ap') AND body @@ ts_levenshtein('aple', 1)
+ORDER BY term
+----
+term	score
+aple	1
+apple	1
+axle	1
+
+# Two automaton-ranked matchers: the first conjunct drives, so the fuzzy
+# similarity IS the score and the regexp filters.
+query TR
+SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_score(body)) AS score
+FROM tp_idx
+WHERE body @@ ts_levenshtein('aple', 1) AND body @@ ts_regexp('a.*e')
+ORDER BY term
+----
+term	score
+aple	1
+apple	1
+axle	1
+
+# The min-only stop composes with predicates: first live term passing them.
+query T
+SELECT ts_dict_min(cat) AS mn
+FROM tp_idx WHERE cat LIKE 'a%' AND cat > 'apple'
+----
+mn
+apricot
+
+# Disjoint acceptors fuse into an automaton that accepts nothing: the scan
+# enumerates no terms and the result is empty, not an error.
+query T
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM tp_idx WHERE body @@ ts_starts_with('b') AND body @@ ts_regexp('a.*')
+ORDER BY term
+----
+term
+
+# Boolean combinations of acceptors on the enumerated field compile into a
+# single term predicate: the tree is checked per term inside the scan. With a
+# claimable AND-sibling that sibling drives; a pure disjunction enumerates the
+# full dictionary under the predicate.
+query T
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM tp_idx
+WHERE body @@ ts_starts_with('a')
+  AND (body @@ ts_regexp('.*x.*') OR body @@ ts_levenshtein('aple', 1))
+ORDER BY term
+----
+term
+apex
+aple
+apple
+axle
+date
+
+query T
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM tp_idx
+WHERE body @@ ts_starts_with('ax') OR body @@ ts_starts_with('ban')
+ORDER BY term
+----
+term
+aple
+apple
+axle
+banana
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term
+FROM tp_idx
+WHERE body @@ ts_starts_with('ax') OR body @@ ts_starts_with('ban')
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ─────────────────╮
+│ Groups: #0                      │
+│ ~0 rows                         │
+╰────────────────┬────────────────╯
+╭─ PROJECTION ───┴────────────────╮
+│ Projections: #0                 │
+│ ~1 row                          │
+╰────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ────────────────╮
+│ Index: tp_idx                   │
+│ Filter:                         │
+│ ╭─ Automaton ─────────────────╮ │
+│ │ Field: body(string)         │ │
+│ │ Pattern: (?:ax.*)|(?:ban.*) │ │
+│ ╰─────────────────────────────╯ │
+│ TsDict: body                    │
+│ Projections:                    │
+│ sdb_inverted_index_term$body    │
+│ ~1 row                          │
+╰─────────────────────────────────╯
+
+# Negation claims into the tree: SQL NOT and the TSQUERY !! prefix both
+# lower to an exclusion checked per term.
+query T
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM tp_idx
+WHERE body @@ ts_starts_with('a') AND NOT (body @@ ts_regexp('.*e'))
+ORDER BY term
+----
+term
+
+query T
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM tp_idx
+WHERE body @@ ts_starts_with('a') AND body @@ (!! ts_regexp('.*e'))
+ORDER BY term
+----
+term
+
+query T
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM tp_idx
+WHERE NOT (body @@ ts_starts_with('a'))
+ORDER BY term
+----
+term
+banana
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term
+FROM tp_idx
+WHERE body @@ ts_starts_with('a') AND NOT (body @@ ts_regexp('.*e'))
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────────────────────────────╮
+│ Groups: #0                                       │
+│ ~0 rows                                          │
+╰─────────────────────────┬────────────────────────╯
+╭─ PROJECTION ────────────┴────────────────────────╮
+│ Projections: #0                                  │
+│ ~1 row                                           │
+╰─────────────────────────┬────────────────────────╯
+╭─ IRESEARCH_SCAN ────────┴────────────────────────╮
+│ Index: tp_idx                                    │
+│ Filter:                                          │
+│ ╭─ Exclusion ─────────╮                          │
+│ ╰──────────┬──────────╯                          │
+│            ├────────────────────────╮            │
+│ ╭─ Starts With ───────╮  ╭─ Automaton ─────────╮ │
+│ │ Field: body(string) │  │ Field: body(string) │ │
+│ │ Prefix: a           │  │ Pattern: .*e        │ │
+│ │ Limit: 1024         │  ╰─────────────────────╯ │
+│ ╰─────────────────────╯                          │
+│ TsDict: body                                     │
+│ Projections:                                     │
+│ sdb_inverted_index_term$body                     │
+│ ~1 row                                           │
+╰──────────────────────────────────────────────────╯
+
+
+query T
+SELECT unnest(ts_dict_agg(cat)) AS term
+FROM tp_idx
+WHERE cat IN ('apple', 'banana') OR cat = 'avocado'
+ORDER BY term
+----
+term
+apple
+avocado
+banana
+
+# The clean-segment max seek must not fire under predicates: the dictionary
+# max 'banana' is rejected and the greatest ACCEPTED term wins.
+query T
+SELECT ts_dict_max(cat) AS mx
+FROM tp_idx WHERE cat LIKE 'ap%' OR cat = 'apple'
+----
+mx
+apricot
+
+query T
+SELECT ts_dict_min(cat) AS mn
+FROM tp_idx WHERE cat LIKE 'av%' OR cat = 'banana'
+----
+mn
+avocado
+
+query T
+SELECT unnest(ts_dict_agg(cat)) AS term
+FROM tp_idx WHERE cat = 'apple' OR body @@ ts_starts_with('a')
+ORDER BY term
+----
+term
+apple
+apricot
+avocado
+
+# Term-level filtering pushes down from the outer/HAVING position: the
+# filter over the emitted terms claims into the dictionary enumeration.
+query T
+SELECT t AS term FROM (SELECT unnest(ts_dict_agg(body)) AS t FROM tp_idx) sub
+WHERE t LIKE 'ap%' ORDER BY t
+----
+term
+apex
+aple
+apple
+
+query T
+SELECT t AS term
+FROM (SELECT unnest(ts_dict_agg(body)) AS t FROM tp_idx) sub
+GROUP BY t HAVING t LIKE 'ap%' ORDER BY t
+----
+term
+apex
+aple
+apple
+
+# The pushed term filter claims into the enumeration: the scan carries the
+# prefix acceptor, no FILTER node remains above.
+query T
+EXPLAIN SELECT t AS term
+FROM (SELECT unnest(ts_dict_agg(body)) AS t FROM tp_idx) sub
+WHERE t LIKE 'ap%'
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ────────────────╮
+│ Groups: #0                     │
+│ ~0 rows                        │
+╰────────────────┬───────────────╯
+╭─ PROJECTION ───┴───────────────╮
+│ Projections: #0                │
+│ ~1 row                         │
+╰────────────────┬───────────────╯
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: tp_idx                  │
+│ Filter:                        │
+│ ╭─ Starts With ───────╮        │
+│ │ Field: body(string) │        │
+│ │ Prefix: ap          │        │
+│ │ Limit: 1024         │        │
+│ ╰─────────────────────╯        │
+│ TsDict: body                   │
+│ Projections:                   │
+│ sdb_inverted_index_term$body   │
+│ ~1 row                         │
+╰────────────────────────────────╯
+
+# Term condition + document WHERE: the term filter drives the enumeration,
+# counts come from the doc-restricted set (docs with a d-token).
+query T
+SELECT t AS term
+FROM (SELECT unnest(ts_dict_agg(body)) AS t FROM tp_idx
+      WHERE body @@ ts_starts_with('d')) sub
+WHERE t LIKE 'ap%' ORDER BY t
+----
+term
+apex
+
+# Same-field OR of mixed acceptor shapes fuses into ONE automaton driver
+# (wildcard forces scattered acceptance; term and prefix ride along).
+query T
+SELECT unnest(ts_dict_agg(cat)) AS term FROM tp_idx
+WHERE cat LIKE 'ap%' OR cat = 'banana' OR cat LIKE '%cado'
+ORDER BY term
+----
+term
+apple
+apricot
+avocado
+banana
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(cat)) AS term FROM tp_idx
+WHERE cat LIKE 'ap%' OR cat = 'banana' OR cat LIKE '%cado'
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ─────────────────────────────╮
+│ Groups: #0                                  │
+│ ~0 rows                                     │
+╰──────────────────────┬──────────────────────╯
+╭─ PROJECTION ─────────┴──────────────────────╮
+│ Projections: #0                             │
+│ ~1 row                                      │
+╰──────────────────────┬──────────────────────╯
+╭─ IRESEARCH_SCAN ─────┴──────────────────────╮
+│ Index: tp_idx                               │
+│ Filter:                                     │
+│ ╭─ Automaton ─────────────────────────────╮ │
+│ │ Field: cat(string)                      │ │
+│ │ Pattern: (?:ap.*)|(?:banana)|(?:.*cado) │ │
+│ ╰─────────────────────────────────────────╯ │
+│ TsDict: cat                                 │
+│ Projections: sdb_inverted_index_term$cat    │
+│ ~1 row                                      │
+╰─────────────────────────────────────────────╯
+
+# Nested OR parenthesization converges to the same fused automaton.
+query T
+SELECT unnest(ts_dict_agg(cat)) AS term FROM tp_idx
+WHERE (cat LIKE 'ap%' OR cat = 'banana') OR cat LIKE '%cado'
+ORDER BY term
+----
+term
+apple
+apricot
+avocado
+banana
+
+# A range disjunct is not regex-renderable: the OR stays a disjunction and
+# still enumerates correctly.
+query T
+SELECT unnest(ts_dict_agg(cat)) AS term FROM tp_idx
+WHERE cat BETWEEN 'apple' AND 'az' OR cat = 'kiwi'
+ORDER BY term
+----
+term
+apple
+apricot
+avocado
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(cat)) AS term FROM tp_idx
+WHERE cat BETWEEN 'apple' AND 'az' OR cat = 'kiwi'
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────────────────────────────╮
+│ Groups: #0                                       │
+│ ~0 rows                                          │
+╰─────────────────────────┬────────────────────────╯
+╭─ PROJECTION ────────────┴────────────────────────╮
+│ Projections: #0                                  │
+│ ~1 row                                           │
+╰─────────────────────────┬────────────────────────╯
+╭─ IRESEARCH_SCAN ────────┴────────────────────────╮
+│ Index: tp_idx                                    │
+│ Filter:                                          │
+│ ╭─ Or ─────────────────╮                         │
+│ ╰───────────┬──────────╯                         │
+│             ├────────────────────────╮           │
+│ ╭─ Range ───┴──────────╮  ╭─ Term ───┴─────────╮ │
+│ │ Field: cat(string)   │  │ Field: cat(string) │ │
+│ │ Range: >=apple, <=az │  │ Value: kiwi        │ │
+│ │ Boost: 2             │  ╰────────────────────╯ │
+│ ╰──────────────────────╯                         │
+│ TsDict: cat                                      │
+│ Projections: sdb_inverted_index_term$cat         │
+│ ~1 row                                           │
+╰──────────────────────────────────────────────────╯

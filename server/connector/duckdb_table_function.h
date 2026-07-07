@@ -27,11 +27,13 @@
 #include <functional>
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/scorer.hpp>
+#include <iresearch/utils/string.hpp>
 #include <memory>
 #include <optional>
 #include <string_view>
 
 #include "basics/assert.h"
+#include "basics/bit_utils.hpp"
 #include "basics/down_cast.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/inverted_index.h"
@@ -134,6 +136,15 @@ struct VectorScorerOptions {
   }
 };
 
+enum class TsDictTermUses : uint8_t {
+  kNone = 0,
+  kFull = 1,
+  kMin = 2,
+  kMax = 4,
+};
+
+ENABLE_BITMASK_ENUM(TsDictTermUses);
+
 struct SearchScan : ScanSource {
   SearchScan() : ScanSource(ScanSourceKind::Search) {}
 
@@ -155,6 +166,36 @@ struct SearchScan : ScanSource {
   std::vector<OffsetsRequest> offsets;
 
   bool EmitOffsets() const { return !offsets.empty(); }
+
+  struct TsDictRequest {
+    irs::field_id field_id = irs::field_limits::invalid();
+    // Valid only for a bare nullable facet: the scan appends a NULL-term row
+    // per segment counting the column's null-marker field.
+    irs::field_id null_field_id = irs::field_limits::invalid();
+    std::shared_ptr<irs::Filter> having_filter;
+    duckdb::idx_t term_col_idx = duckdb::DConstants::INVALID_INDEX;
+    duckdb::idx_t term_raw_col_idx = duckdb::DConstants::INVALID_INDEX;
+    duckdb::idx_t count_col_idx = duckdb::DConstants::INVALID_INDEX;
+    duckdb::idx_t freq_col_idx = duckdb::DConstants::INVALID_INDEX;
+    duckdb::idx_t score_col_idx = duckdb::DConstants::INVALID_INDEX;
+    TsDictTermUses term_uses = TsDictTermUses::kNone;
+  };
+  // One entry per enumerated field; multiple ts_dict aggregations over
+  // different fields in one query each get their own request.
+  std::vector<TsDictRequest> ts_dicts;
+
+  bool TsDictMode() const { return !ts_dicts.empty(); }
+
+  TsDictRequest& TsDictFor(irs::field_id field_id) {
+    const auto it =
+      std::ranges::find(ts_dicts, field_id, &TsDictRequest::field_id);
+    if (it != ts_dicts.end()) {
+      return *it;
+    }
+    return ts_dicts.emplace_back(TsDictRequest{.field_id = field_id});
+  }
+
+  bool count_only = false;
 
   void AppendSummary(
     const SereneDBScanBindData& bind,

@@ -7,7 +7,7 @@ CREATE TABLE articles (id INTEGER PRIMARY KEY, title VARCHAR, emb FLOAT[3]);
 
 statement ok
 CREATE INDEX articles_idx ON articles
-    USING inverted (id, title, emb hnsw (metric = 'l2'));
+    USING inverted (id, title, emb ivf (metric = 'l2'));
 
 statement ok
 INSERT INTO articles VALUES

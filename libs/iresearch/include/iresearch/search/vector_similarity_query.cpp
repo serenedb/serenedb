@@ -170,9 +170,6 @@ class RawVectorIterator : public VectorDistanceIterator {
   RawVectorReader _reader;
 };
 
-// IVF cluster postings are docs-only (no freq/pos/offs) under the single active
-// postings format (FormatBlock128), so a single-cookie cluster iterator is
-// always this concrete type -- downcast to it to read RemainingDocs().
 using QVectorPosting =
   PostingIteratorBase<IteratorTraitsImpl<FormatTraits128, false, false, false>>;
 
@@ -249,20 +246,14 @@ class QVectorIterator : public VectorDistanceIterator {
   }
 
   void FillDocsBlock() {
-    _len = 0;
-    for (; _len < kPostingBlock; ++_len) {
-      const auto doc = _src->advance();
-      if (doc_limits::eof(doc)) {
-        break;
-      }
-      _docs[_len] = doc;
-    }
+    _docs = _posting->NextLeafBlock();
+    _len = static_cast<uint16_t>(_docs.size());
   }
 
   std::unique_ptr<QuantizerReader> _qr;
   QVectorPosting* _posting = nullptr;
   CostAttr::Type _total;
-  std::array<doc_id_t, kPostingBlock> _docs;
+  std::span<const doc_id_t> _docs;
   std::array<score_t, kPostingBlock> _dist;
   uint32_t _base = 0;
   uint16_t _len = 0;

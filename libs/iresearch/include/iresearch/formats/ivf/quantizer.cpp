@@ -409,11 +409,6 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
                     want);
         _valid = true;
         if (_metric == VectorMetric::InnerProduct) {
-          // IpTable() (unlike the L2 residual table) depends only on the
-          // query, not the probed cluster's centroid, so its uint8
-          // quantization + SIMD packing is done once here per query
-          // instead of once per StartCluster() call (i.e. once per
-          // nprobe'd cluster).
           const size_t ksub = _pq.ksub;
           const size_t nsq = FastScanNsq(_pq.M);
           std::vector<float> ip_table(static_cast<size_t>(_pq.M) * ksub);
@@ -481,9 +476,6 @@ class ProductQuantizerReader final : public QuantizerReader {
     float ip_offset = 0.f;
     const bool is_l2 = _cb->Metric() == VectorMetric::L2Sqr;
     if (is_l2) {
-      // ||q - (c + r)||^2 = ||(q - c) - r||^2: ADC table for the residual
-      // query. Unlike IP, this depends on the probed cluster's centroid,
-      // so it (and its quantized/packed form) must be rebuilt per cluster.
       _qr.resize(query.size());
       for (size_t j = 0; j < query.size(); ++j) {
         _qr[j] = query[j] - centroid[j];

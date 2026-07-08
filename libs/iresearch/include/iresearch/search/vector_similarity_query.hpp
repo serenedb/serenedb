@@ -31,14 +31,6 @@
 
 namespace irs {
 
-// Prepared kNN query (ByVectorSimilarity). Per segment it holds the cookies of
-// the `nprobe` cluster lists nearest to `query` plus the rerank vector column.
-// execute() scores each candidate by exact (or SQ8-quantized) distance to the
-// query and leaves truncation to the outer top-K collector. When SQ8 codes are
-// available and there is no inner filter, the clusters are scored as contiguous
-// quantized blocks and merged with a disjunction; otherwise the cluster union
-// is reranked from the raw vectors. An optional `inner` predicate is
-// intersected with the candidates (hybrid search).
 class KnnVectorQuery : public QueryBuilder {
  public:
   KnnVectorQuery(const SubReader& segment, VectorState&& state,

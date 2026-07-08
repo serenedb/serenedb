@@ -2275,12 +2275,21 @@ void ClaimTsDictFilter(
           case duckdb::ExpressionType::COMPARE_IN:
           case duckdb::ExpressionType::COMPARE_NOT_IN:
             return true;
-          default:
-            return expr.GetExpressionClass() ==
-                     duckdb::ExpressionClass::BOUND_FUNCTION &&
-                   expr.Cast<duckdb::BoundFunctionExpression>()
-                       .Function()
-                       .GetName() == "~~";
+          default: {
+            if (expr.GetExpressionClass() !=
+                duckdb::ExpressionClass::BOUND_FUNCTION) {
+              return false;
+            }
+            // LIKE (`~~`) and the prefix rewrite duckdb lowers `col LIKE 'a%'`
+            // to (`prefix`/`starts_with`/`^@`) match terms over the enumerated
+            // field, so they claim term-level like the comparisons above --
+            // otherwise the lowered sugar shape would be treated as a
+            // document-level predicate and never reach the index.
+            const auto& name =
+              expr.Cast<duckdb::BoundFunctionExpression>().Function().GetName();
+            return name == "~~" || name == "prefix" || name == "starts_with" ||
+                   name == "^@";
+          }
         }
       };
       const auto is_term_level = [&](const duckdb::Expression& expr) {

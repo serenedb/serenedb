@@ -48,16 +48,21 @@ class ColReader;
 class ColumnReader;
 class ReadContext;
 class IvfTermIterator;
-class IdxWriter;
 
 struct BuiltIvf {
   bool empty = true;
   uint32_t d = 0;
-  uint64_t resident_offset = 0;
-  uint64_t resident_size = 0;
   std::vector<doc_id_t> cluster_docs;
   std::vector<uint64_t> cluster_offsets;
   std::vector<float> fine_centroids;
+
+  std::vector<float> l1_centroids;
+  std::vector<uint32_t> cell_fine_base;
+  std::vector<uint32_t> cell_n_l2;
+  std::vector<float> radii;
+  uint32_t n_l1 = 0;
+  CentroidShapeKind shape_kind = CentroidShapeKind::TwoLayer;
+  bstring stats;
 };
 
 class QuantizerWriter;
@@ -73,8 +78,8 @@ class IvfBuilder {
  public:
   explicit IvfBuilder(IvfInfo info) : _info{std::move(info)} {}
 
-  BuiltIvf Build(const ColumnReader& vector_column, ReadContext& ctx,
-                 IdxWriter& idx, QuantizerWriter* qw) const;
+  BuiltIvf Compute(const ColumnReader& vector_column, ReadContext& ctx,
+                   QuantizerWriter* qw) const;
 
   static CentroidShape ResolveCentroidShape(uint64_t valid_count,
                                             const IvfInfo& info);
@@ -82,6 +87,9 @@ class IvfBuilder {
  private:
   IvfInfo _info;
 };
+
+void WriteIvfCentroidBody(IndexOutput& out, VectorMetric metric,
+                          const BuiltIvf& built);
 
 class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
  public:
@@ -121,7 +129,6 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
   bytes_view _min;
   bytes_view _max;
   mutable std::unique_ptr<IvfTermIterator> _it;
-  std::unique_ptr<duckdb::Vector> _payload_batch;
 };
 
 class IvfWriter {
@@ -130,25 +137,24 @@ class IvfWriter {
 
   ~IvfWriter();
 
-  void Build(const ColumnReader& col, ReadContext& ctx, IdxWriter& idx);
+  void Compute(const ColumnReader& col, ReadContext& ctx);
+
+  field_id ColumnId() const noexcept { return _info.centroids_id; }
+  VectorMetric Metric() const noexcept { return _info.metric; }
+  std::shared_ptr<const BuiltIvf> Built() const noexcept {
+    return _built ? _result.built : nullptr;
+  }
 
   bool Empty() const noexcept { return !_built; }
 
-  // The vector column re-scanned by the cluster reader is looked up in
-  // `col_reader` (via the cluster's postings_id, which is the vector column's
-  // own field_id); `ctx` supplies the IO for those scans. Returns nullptr when
-  // nothing was built.
   const BasicTermReader* ClusterReader(ReadContext& ctx,
                                        const ColReader& col_reader);
 
  private:
   struct Result {
     field_id postings_id;
-    std::vector<doc_id_t> cluster_docs;
-    std::vector<uint64_t> cluster_offsets;
-    std::vector<float> fine_centroids;
     std::unique_ptr<QuantizerWriter> qw;
-    uint32_t d = 0;
+    std::shared_ptr<const BuiltIvf> built;
   };
 
   IvfInfo _info;

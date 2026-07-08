@@ -42,7 +42,6 @@
 namespace irs {
 
 class IvfWriter;
-class IdxWriter;
 
 class ColWriter final {
  public:
@@ -76,7 +75,7 @@ class ColWriter final {
 
   std::vector<std::unique_ptr<IvfWriter>> TakeIvfWriters() noexcept;
 
-  void Commit(uint64_t target_row, IdxWriter* idx = nullptr);
+  void Commit(uint64_t target_row);
 
   void Rollback() noexcept;
 

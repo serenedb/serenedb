@@ -32,6 +32,7 @@
 #include "basics/math_utils.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
+#include "iresearch/formats/ivf/ivf_writer.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/directory.hpp"
@@ -48,6 +49,8 @@ constexpr duckdb::field_id_t kFooterSlotIvf = 101;
 
 struct IvfCentroidEntry {
   field_id column_id;
+  VectorMetric metric;
+  std::shared_ptr<const BuiltIvf> built;
   uint64_t offset = 0;
   uint64_t byte_size = 0;
 };
@@ -114,10 +117,10 @@ IndexOutput& IdxWriter::BlocksOut() {
   return *_impl->out;
 }
 
-void IdxWriter::AddCentroidsEntry(field_id id, uint64_t offset,
-                                  uint64_t byte_size) {
+void IdxWriter::AddIvf(field_id id, VectorMetric metric,
+                       std::shared_ptr<const BuiltIvf> built) {
   _impl->ivf_entries.push_back(IvfCentroidEntry{
-    .column_id = id, .offset = offset, .byte_size = byte_size});
+    .column_id = id, .metric = metric, .built = std::move(built)});
 }
 
 void IdxWriter::AddTermDictEntry(field_id id, TermDictMeta meta) {
@@ -135,6 +138,12 @@ void IdxWriter::Commit() {
   }
 
   EnsureOut();
+
+  for (auto& e : _impl->ivf_entries) {
+    e.offset = _impl->out->Position();
+    WriteIvfCentroidBody(*_impl->out, e.metric, *e.built);
+    e.byte_size = _impl->out->Position() - e.offset;
+  }
 
   const uint64_t footer_offset = _impl->out->Position();
 

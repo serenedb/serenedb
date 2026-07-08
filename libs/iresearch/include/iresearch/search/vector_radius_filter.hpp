@@ -30,12 +30,6 @@ namespace irs {
 
 class ByRadius;
 
-// Range options. The filter's field id is the original ARRAY(FLOAT) vector
-// column; `postings_id` is the companion IVF posting field. `radius` is
-// expressed in the metric's own kernel space (squared L2 for
-// VectorMetric::L2Sqr)
-// -- the connector converts the user predicate at plan time. Every cluster is
-// probed (no nprobe), and the iterator emits exactly the docs within radius.
 struct ByRadiusOptions {
   using FilterType = ByRadius;
 

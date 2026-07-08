@@ -50,6 +50,19 @@ class PostingIteratorBase : public DocIterator {
     return _left_in_leaf + _left_in_list;
   }
 
+  std::span<const doc_id_t> NextLeafBlock() {
+    static_assert(!IteratorTraits::Frequency());
+    if (_left_in_leaf == 0) [[unlikely]] {
+      if (_left_in_list == 0) [[unlikely]] {
+        return {};
+      }
+      ReadLeaf(_doc);
+    }
+    const auto left = std::exchange(_left_in_leaf, 0);
+    _doc = *(std::end(_docs) - 1);
+    return {std::end(_docs) - left, left};
+  }
+
   IRS_NO_INLINE Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
   }

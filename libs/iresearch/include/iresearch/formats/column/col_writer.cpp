@@ -198,7 +198,7 @@ std::vector<std::unique_ptr<IvfWriter>> ColWriter::TakeIvfWriters() noexcept {
 
 void ColWriter::Rollback() noexcept { _out.reset(); }
 
-void ColWriter::Commit(uint64_t target_row, IdxWriter* idx) {
+void ColWriter::Commit(uint64_t target_row) {
   if (_committed) {
     return;
   }
@@ -240,9 +240,6 @@ void ColWriter::Commit(uint64_t target_row, IdxWriter* idx) {
   _out->WriteU64(footer_offset);
   format_utils::WriteFooter(*_out);
   if (!_ivf_writers.empty()) {
-    SDB_ASSERT(idx,
-               "ColWriter::Commit requires an IdxWriter when an IVF column "
-               "is present");
     _out->Flush();
     ColReader reader{*_dir, _segment_name, *_db};
     for (auto& entry : _ivf_writers) {
@@ -250,7 +247,7 @@ void ColWriter::Commit(uint64_t target_row, IdxWriter* idx) {
       if (!col) {
         continue;
       }
-      entry->writer->Build(*col, reader.Ctx(), *idx);
+      entry->writer->Compute(*col, reader.Ctx());
     }
   }
   _out.reset();

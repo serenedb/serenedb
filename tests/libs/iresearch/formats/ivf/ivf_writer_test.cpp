@@ -24,7 +24,7 @@
 using namespace irs;
 
 TEST(ivf_writer_test, resolve_centroid_shape_brute_force_below_threshold) {
-  for (const uint64_t valid_count : {500u, 999u}) {
+  for (const uint64_t valid_count : {1u, 63u}) {
     const auto shape = IvfBuilder::ResolveCentroidShape(valid_count, IvfInfo{});
     EXPECT_EQ(shape.kind, CentroidShapeKind::BruteForce);
     EXPECT_EQ(shape.total_target, 1u);
@@ -35,61 +35,11 @@ TEST(ivf_writer_test, resolve_centroid_shape_brute_force_below_threshold) {
 
 TEST(ivf_writer_test,
      resolve_centroid_shape_brute_force_ignores_nlist_override) {
-  const auto shape =
-    IvfBuilder::ResolveCentroidShape(500, IvfInfo{.nlist = 50});
+  const auto shape = IvfBuilder::ResolveCentroidShape(32, IvfInfo{.nlist = 50});
   EXPECT_EQ(shape.kind, CentroidShapeKind::BruteForce);
   EXPECT_EQ(shape.total_target, 1u);
   EXPECT_EQ(shape.n_l1, 1u);
   EXPECT_EQ(shape.n_l2_target, 1u);
-}
-
-TEST(ivf_writer_test, resolve_centroid_shape_flat_at_lower_boundary) {
-  const auto shape = IvfBuilder::ResolveCentroidShape(1000, IvfInfo{});
-  EXPECT_EQ(shape.kind, CentroidShapeKind::Flat);
-  EXPECT_EQ(shape.n_l1, 1u);
-  EXPECT_EQ(shape.n_l2_target, shape.total_target);
-  EXPECT_GT(shape.n_l2_target, 1u);
-}
-
-TEST(ivf_writer_test, resolve_centroid_shape_flat_mid_range) {
-  const auto shape = IvfBuilder::ResolveCentroidShape(5000, IvfInfo{});
-  EXPECT_EQ(shape.kind, CentroidShapeKind::Flat);
-  EXPECT_EQ(shape.n_l1, 1u);
-  EXPECT_EQ(shape.n_l2_target, shape.total_target);
-  EXPECT_GT(shape.n_l2_target, 1u);
-}
-
-TEST(ivf_writer_test, resolve_centroid_shape_flat_honors_explicit_nlist) {
-  const auto shape =
-    IvfBuilder::ResolveCentroidShape(5000, IvfInfo{.nlist = 77});
-  EXPECT_EQ(shape.kind, CentroidShapeKind::Flat);
-  EXPECT_EQ(shape.n_l1, 1u);
-  EXPECT_EQ(shape.total_target, 77u);
-  EXPECT_EQ(shape.n_l2_target, 77u);
-}
-
-TEST(ivf_writer_test, resolve_centroid_shape_default_factor_is_two) {
-  const auto shape = IvfBuilder::ResolveCentroidShape(10000, IvfInfo{});
-  EXPECT_EQ(shape.kind, CentroidShapeKind::Flat);
-  EXPECT_EQ(shape.total_target, 200u);
-}
-
-TEST(ivf_writer_test, resolve_centroid_shape_flat_honors_nlist_factor) {
-  const auto shape =
-    IvfBuilder::ResolveCentroidShape(10000, IvfInfo{.nlist_factor = 4.0f});
-  EXPECT_EQ(shape.kind, CentroidShapeKind::Flat);
-  EXPECT_EQ(shape.n_l1, 1u);
-  EXPECT_EQ(shape.total_target, 400u);
-  EXPECT_EQ(shape.n_l2_target, 400u);
-}
-
-TEST(ivf_writer_test, resolve_centroid_shape_flat_just_below_row_group) {
-  const auto shape =
-    IvfBuilder::ResolveCentroidShape(DEFAULT_ROW_GROUP_SIZE - 1, IvfInfo{});
-  EXPECT_EQ(shape.kind, CentroidShapeKind::Flat);
-  EXPECT_EQ(shape.n_l1, 1u);
-  EXPECT_EQ(shape.n_l2_target, shape.total_target);
-  EXPECT_GT(shape.n_l2_target, 1u);
 }
 
 TEST(ivf_writer_test, resolve_centroid_shape_two_layer_at_row_group) {

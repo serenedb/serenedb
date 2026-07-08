@@ -57,7 +57,7 @@ constexpr uint64_t kTrainPointsPerCentroid = 64;
 constexpr uint32_t kDefaultClusterIters = 25;
 constexpr uint32_t kClusterRedo = 1;
 constexpr uint64_t kSampleSegmentOversample = 4;
-constexpr uint64_t kBruteForceMaxRows = 1'000;
+constexpr uint64_t kBruteForceMaxRows = 64;
 constexpr uint64_t kFlatMaxRows = 0;  // disabled
 
 // Streams the flat vector column in row-aligned chunks (no full matrix in RAM),

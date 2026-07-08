@@ -25,7 +25,7 @@
 #include "base/kaldi-error.h"
 #include "iresearch/utils/automaton.hpp"
 
-#include <absl/container/node_hash_map.h>
+#include <absl/container/flat_hash_map.h>
 #include <algorithm>
 #include <vector>
 
@@ -66,7 +66,7 @@ class StringRepository {
     }
   };
 
-  typedef absl::node_hash_map<Key, StringId, VectorKey, VectorEqual> MapType;
+  typedef absl::flat_hash_map<Key, StringId, VectorKey, VectorEqual> MapType;
 
   StringId IdOfEmpty() { return no_symbol; }
 
@@ -391,7 +391,7 @@ class DeterminizerStar {
   };
 
   // Define the hash type we use to store subsets.
-  typedef absl::node_hash_map<Key, OutputStateId, SubsetKey, SubsetEqual>
+  typedef absl::flat_hash_map<Key, OutputStateId, SubsetKey, SubsetEqual>
     SubsetHash;
 
   class EpsilonClosure {
@@ -528,7 +528,7 @@ class DeterminizerStar {
   // clarity.  Has side effects on output_arcs_, and (via SubsetToStateId), Q_
   // and hash_.
   void ProcessTransition(OutputStateId state, Label ilabel,
-                         std::vector<Element>* subset);
+                         const std::vector<Element>& subset);
 
   // ProcessTransitions handles transitions out of this subset of states.
   // Ignores epsilon transitions (epsilon closure already handled that).
@@ -586,15 +586,19 @@ class DeterminizerStar {
                   const auto& rhs_e = rhs.Get();
                   if (lhs_max) {
                     // same max elements just sorted by state
-                    SDB_ASSERT((&lhs != &rhs) == (lhs_e.state != rhs_e.state));
-                    return lhs_e.state < rhs_e.state;
+                    if (lhs_e.state != rhs_e.state) {
+                      return lhs_e.state < rhs_e.state;
+                    }
+                    return lhs_e.string < rhs_e.string;
                   }
                   // same min elements sorted opposite to their max elements
                   if (lhs.max != rhs.max) {
                     return lhs.max > rhs.max;
                   }
-                  SDB_ASSERT((&lhs != &rhs) == (lhs_e.state != rhs_e.state));
-                  return lhs_e.state > rhs_e.state;
+                  if (lhs_e.state != rhs_e.state) {
+                    return lhs_e.state > rhs_e.state;
+                  }
+                  return lhs_e.string > rhs_e.string;
                 });
     }
 
@@ -611,7 +615,7 @@ class DeterminizerStar {
           label.max = bound - 1;
           assert(!closed_subset_.empty());
           assert(label.min <= label.max);
-          ProcessTransition(state, label.ilabel, &closed_subset_);
+          ProcessTransition(state, label.ilabel, closed_subset_);
         }
 
         closed_subset_.emplace_back(std::move(e.Get()));
@@ -621,12 +625,21 @@ class DeterminizerStar {
           label.max = bound;
           assert(!closed_subset_.empty());
           assert(label.min <= label.max);
-          ProcessTransition(state, label.ilabel, &closed_subset_);
+          ProcessTransition(state, label.ilabel, closed_subset_);
           label.min = bound + 1;
         }
 
+        // Intervals from independent branches may partially overlap, so the
+        // ended element is not necessarily the most recently opened one:
+        // remove it by identity instead of assuming LIFO nesting.
         assert(!closed_subset_.empty());
-        closed_subset_.pop_back();
+        const auto& ended = e.Get();
+        auto it = closed_subset_.end() - 1;
+        while (it != closed_subset_.begin() && *it != ended) {
+          --it;
+        }
+        assert(!(*it != ended));
+        closed_subset_.erase(it);
         if (closed_subset_.empty()) {
           label.ilabel = fst::kNoLabel;
         }
@@ -692,6 +705,7 @@ class DeterminizerStar {
   std::deque<std::pair<std::vector<Element>*, OutputStateId>>
     Q_;                                 // queue of subsets to be processed.
   std::vector<Element> closed_subset_;  // subset after epsilon closure.
+  std::vector<Element> segment_subset_;  // scratch for per-segment emission.
   std::vector<RangeElement> all_elems_;
   std::vector<Label> seq_;
 
@@ -1012,13 +1026,14 @@ void DeterminizerStar<F>::Output(MutableFst<Arc>* ofst, bool destroy) {
   // output.
   ofst->AddStates(num_states);
   ofst->SetStart(0);
+  std::vector<Label> seq;
   for (OutputStateId this_state = 0; this_state < num_states; this_state++) {
     std::vector<TempArc>& this_vec(output_arcs_[this_state]);
+    ofst->ReserveArcs(this_state, this_vec.size());
 
     auto iter = this_vec.begin(), end = this_vec.end();
     for (; iter != end; ++iter) {
       const TempArc& temp_arc(*iter);
-      std::vector<Label> seq;
       repository_.SeqOfId(temp_arc.ostring, &seq);
       if (temp_arc.nextstate == kNoStateId) {  // Really a final weight.
         // Make a sequence of states going to a final state, with the strings as
@@ -1078,36 +1093,23 @@ void DeterminizerStar<F>::Output(MutableFst<Arc>* ofst, bool destroy) {
 
 template<class F>
 void DeterminizerStar<F>::ProcessTransition(OutputStateId state, Label ilabel,
-                                            std::vector<Element>* subset) {
+                                            const std::vector<Element>& subset) {
   // At input, "subset" may contain duplicates for a given dest state (but in
-  // sorted order).  This function removes duplicates from "subset", normalizes
-  // it, and adds a transition to the dest. state (possibly affecting Q_ and
-  // hash_, if state did not exist).
+  // sorted order).  This function merges them into "segment_subset_",
+  // normalizes it, and adds a transition to the dest. state (possibly
+  // affecting Q_ and hash_, if state did not exist).
 
-  {  // This block makes the subset have one unique Element per state, adding
-     // the weights.
-    auto cur_in = subset->begin(), cur_out = cur_in, end = subset->end();
-    size_t num_out = 0;
-    // Merge elements with same state-id
-    while (cur_in != end) {  // while we have more elements to process.
-      // At this point, cur_out points to location of next place we want to put
-      // an element, cur_in points to location of next element we want to
-      // process.
-      if (cur_in != cur_out)
-        *cur_out = *cur_in;
-      cur_in++;
-      while (cur_in != end &&
-             cur_in->state == cur_out->state) {  // merge elements.
-        if (cur_in->string != cur_out->string) {
-          KALDI_ERR << "FST was not functional -> not determinizable";
-        }
-        cur_out->weight = Plus(cur_out->weight, cur_in->weight);
-        cur_in++;
+  segment_subset_.clear();
+  for (const auto& elem : subset) {
+    if (!segment_subset_.empty() && segment_subset_.back().state == elem.state) {
+      Element& merged = segment_subset_.back();
+      if (merged.string != elem.string) {
+        KALDI_ERR << "FST was not functional -> not determinizable";
       }
-      cur_out++;
-      num_out++;
+      merged.weight = Plus(merged.weight, elem.weight);
+    } else {
+      segment_subset_.push_back(elem);
     }
-    subset->resize(num_out);
   }
 
   StringId common_str;
@@ -1117,7 +1119,7 @@ void DeterminizerStar<F>::ProcessTransition(OutputStateId state, Label ilabel,
     // and removes them from the elements.
     std::vector<Label> seq;
 
-    auto begin = subset->begin(), end = subset->end();
+    auto begin = segment_subset_.begin(), end = segment_subset_.end();
     decltype(begin) iter;
     {  // This block computes "seq", which is the common prefix, and
        // "common_str",
@@ -1161,7 +1163,7 @@ void DeterminizerStar<F>::ProcessTransition(OutputStateId state, Label ilabel,
   TempArc temp_arc;
   temp_arc.ilabel = ilabel;
   temp_arc.nextstate =
-    SubsetToStateId(*subset);  // may or may not really add the subset.
+    SubsetToStateId(segment_subset_);  // may or may not really add the subset.
   temp_arc.ostring = common_str;
   temp_arc.weight = tot_weight;
   output_arcs_[state].push_back(temp_arc);  // record the arc.

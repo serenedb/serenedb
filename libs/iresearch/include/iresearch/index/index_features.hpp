@@ -40,10 +40,14 @@ enum class IndexFeatures : uint8_t {
   // Offsets, depends on positions
   Offs = 1U << 2,
 
+  // Fixed-width per-document payload (e.g. IVF quantized vector codes), written
+  // to the ".pay" stream. Independent of Freq/Pos/Offs.
+  Pay = 1U << 3,
+
   // Field norms
   Norm = 1U << 4,
 
-  Max = Freq | Pos | Offs | Norm,
+  Max = Freq | Pos | Offs | Pay | Norm,
 };
 static_assert(IndexFeatures::Max < IndexFeatures{0x80U},
               "adjust features storage format");

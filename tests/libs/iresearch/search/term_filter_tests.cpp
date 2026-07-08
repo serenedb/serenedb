@@ -92,7 +92,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       tests::PreparedFilter prepared{q, rdr, nullptr, counter};
       auto docs0 = prepared.Execute(0);
       auto docs1 = prepared.Execute(0);
-      ASSERT_TRUE(docs0->next());
+      ASSERT_TRUE(!irs::doc_limits::eof(docs0->advance()));
       ASSERT_EQ(docs0->value(), docs1->seek(docs0->value()));
     }
     EXPECT_EQ(counter.current, 0);
@@ -143,14 +143,14 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       // first hit
       {
-        ASSERT_TRUE(docs->next());
+        ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
         docs->FetchScoreArgs(0);
         irs::score_t score_value{};
         score.Score(&score_value, 1);
         ASSERT_EQ(irs::score_t(0), score_value);
       }
 
-      ASSERT_FALSE(docs->next());
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     }
     EXPECT_EQ(counter.current, 0);
     EXPECT_GT(counter.max, 0);
@@ -170,14 +170,14 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       // first hit
       {
-        ASSERT_TRUE(docs->next());
+        ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
         docs->FetchScoreArgs(0);
         irs::score_t score_value{};
         score.Score(&score_value, 1);
         ASSERT_EQ(irs::score_t(value), score_value);
       }
 
-      ASSERT_FALSE(docs->next());
+      ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
     }
     EXPECT_EQ(counter.current, 0);
     EXPECT_GT(counter.max, 0);
@@ -279,7 +279,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0, n = rdr.size(); i < n; ++i) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
       }
@@ -305,7 +305,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0, n = rdr.size(); i < n; ++i) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
       }
@@ -332,7 +332,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0, n = rdr.size(); i < n; ++i) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
       }
@@ -359,7 +359,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0, n = rdr.size(); i < n; ++i) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
       }
@@ -386,7 +386,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0, n = rdr.size(); i < n; ++i) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
       }
@@ -413,7 +413,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0, n = rdr.size(); i < n; ++i) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
       }
@@ -440,7 +440,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0, n = rdr.size(); i < n; ++i) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
       }
@@ -467,7 +467,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0, n = rdr.size(); i < n; ++i) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
       }
@@ -521,7 +521,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
         .segment = &*(rdr.begin()),
       });
 
-      while (docs->next()) {
+      while (!irs::doc_limits::eof(docs->advance())) {
         docs->FetchScoreArgs(0);
         irs::score_t score_value{};
         score.Score(&score_value, 1);
@@ -624,7 +624,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       Docs docs;
       for (size_t i = 0, n = prepared.size(); i < n; ++i) {
         auto it = prepared.Execute(i);
-        while (it->next()) {
+        while (!irs::doc_limits::eof(it->advance())) {
           docs.push_back(it->value());
         }
       }
@@ -676,7 +676,9 @@ TEST_P(TermFilterTestCase, visit) {
   // get term dictionary for field
   const auto* reader = segment.field(field);
   ASSERT_NE(nullptr, reader);
-  irs::ByTerm::Visit(segment, *reader, term, visitor);
+  irs::ByTermOptions options;
+  options.term = irs::bstring{term};
+  irs::ByTerm::Visit(segment, *reader, options, visitor);
   ASSERT_EQ(1, visitor.prepare_calls_counter());
   ASSERT_EQ(1, visitor.visit_calls_counter());
   ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{

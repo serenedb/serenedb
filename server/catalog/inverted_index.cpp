@@ -20,8 +20,6 @@
 
 #include "catalog/inverted_index.h"
 
-#include <faiss/MetricType.h>
-
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
@@ -74,7 +72,7 @@ EntryConfigSerialized PackConfig(const InvertedIndexEntryInfo& entry) {
     .hyperloglog = entry.hyperloglog,
     .compression = entry.compression,
     .features = entry.features,
-    .hnsw_config = entry.hnsw_config,
+    .ivf_config = entry.ivf_config,
     .synthetic_column = entry.synthetic_column,
     .row_group_size = entry.row_group_size,
     .norm_row_group_size = entry.norm_row_group_size,
@@ -115,7 +113,7 @@ std::shared_ptr<InvertedIndex> UnpackEntries(InvertedIndexData data,
                                 .indexed_term_dict = cfg.indexed_term_dict,
                                 .hyperloglog = cfg.hyperloglog,
                                 .compression = cfg.compression,
-                                .hnsw_config = std::move(cfg.hnsw_config),
+                                .ivf_config = std::move(cfg.ivf_config),
                                 .row_group_size = cfg.row_group_size,
                                 .null_field_id = cfg.null_field_id,
                                 .bool_field_id = cfg.bool_field_id,
@@ -317,7 +315,7 @@ Result Validate(std::string_view label, const duckdb::LogicalType& type) {
 }
 
 }  // namespace included
-namespace hnsw {
+namespace ivf {
 
 uint32_t Dimension(const duckdb::LogicalType& type) noexcept {
   if (type.id() != duckdb::LogicalTypeId::ARRAY) {
@@ -333,13 +331,13 @@ uint32_t Dimension(const duckdb::LogicalType& type) noexcept {
 Result Validate(std::string_view label, const duckdb::LogicalType& type) {
   if (Dimension(type) == 0) {
     return {ERROR_BAD_PARAMETER, "Column '", label,
-            "' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not ",
+            "' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not ",
             type.ToString()};
   }
   return {};
 }
 
-}  // namespace hnsw
+}  // namespace ivf
 
 InvertedIndex::FieldLookup InvertedIndex::LookupField(
   irs::field_id id) const noexcept {
@@ -389,6 +387,23 @@ ColumnTokenizer InvertedIndex::GetTokenizer(
   return *std::move(tokenizer);
 }
 
+bool InvertedIndex::IsKeywordField(const Snapshot& snapshot,
+                                   irs::field_id field_id) const noexcept {
+  const auto* info = FindColumnInfo(static_cast<Column::Id>(field_id));
+  if (info == nullptr || !info->IsTermDict()) {
+    return false;
+  }
+  if (!info->HasTextDictionary()) {
+    return info->indexed_term_dict;
+  }
+  auto dict = snapshot.GetObject<Tokenizer>(info->text_dictionary);
+  if (!dict) {
+    return false;
+  }
+  return std::holds_alternative<irs::StringTokenizer::Options>(
+    dict->Config().config);
+}
+
 irs::field_id InvertedIndex::FindFieldIdBySerialized(
   std::string_view serialized_expr) const noexcept {
   auto it = _expr_to_field.find(serialized_expr);
@@ -398,19 +413,23 @@ irs::field_id InvertedIndex::FindFieldIdBySerialized(
   return it->second;
 }
 
-std::optional<irs::HNSWInfo> InvertedIndex::GetHNSWInfo(
+std::optional<irs::IvfInfo> InvertedIndex::GetIvfInfo(
   irs::field_id field_id) const {
   const auto* entry = FindEntry(field_id);
-  if (!entry || !entry->hnsw_config) {
+  if (!entry || !entry->ivf_config) {
     return std::nullopt;
   }
-  const auto& cfg = *entry->hnsw_config;
-  return irs::HNSWInfo{
-    .max_doc = 0,
+  const auto& cfg = *entry->ivf_config;
+  return irs::IvfInfo{
+    .centroids_id = field_id,
+    .postings_id = field_id,
     .d = cfg.d,
-    .m = cfg.m,
     .metric = cfg.metric,
-    .ef_construction = cfg.ef_construction,
+    .quant = {.kind = cfg.quant, .pq_m = cfg.pq_m, .nb_bits = cfg.rabitq_bits},
+    .nlist = cfg.nlist,
+    .nlist_factor = cfg.nlist_factor,
+    .train_sample = cfg.train_sample,
+    .cluster_iters = cfg.cluster_iters,
   };
 }
 
@@ -419,7 +438,7 @@ irs::ColumnOptions InvertedIndex::GetColumnOptions(irs::field_id id) const {
     return {
       .row_group_size = entry->row_group_size,
       .compression = entry->compression,
-      .hnsw_info = GetHNSWInfo(id),
+      .ivf_info = GetIvfInfo(id),
       .hyperloglog = entry->hyperloglog,
     };
   }

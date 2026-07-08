@@ -88,6 +88,8 @@ class SearchRemoveFilter final : public SearchRemoveFilterBase {
   }
 
   irs::doc_id_t advance() final;
+
+  IRS_DOC_ITERATOR_DEFAULTS
 };
 
 }  // namespace sdb::connector

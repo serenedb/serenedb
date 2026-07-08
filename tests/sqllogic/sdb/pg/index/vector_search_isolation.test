@@ -3,7 +3,7 @@ CREATE TABLE v (id INT, emb FLOAT[3]);
 
 
 statement ok
-CREATE INDEX v_idx ON v USING inverted(emb hnsw (metric = 'l2'));
+CREATE INDEX v_idx ON v USING inverted(emb ivf (metric = 'l2'));
 
 
 statement ok

@@ -162,6 +162,8 @@ class FormatTestCase : public IndexTestBase {
       return it == _attrs.end() ? nullptr : it->second;
     }
 
+    IRS_DOC_ITERATOR_DEFAULTS
+
    private:
     std::map<irs::TypeInfo::type_id, irs::Attribute*> _attrs;
     docs_t::iterator _next;

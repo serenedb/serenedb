@@ -75,8 +75,8 @@ void ViewIndexSourceBase::InitProjection(
   _tf_target.Initialize(context, _scratch_types);
 }
 
-void ViewIndexSourceBase::SortRows(const PrimaryKeyI64& pk, duckdb::idx_t start,
-                                   duckdb::idx_t count) {
+void ViewIndexSourceBase::SortRows(const PrimaryKeyBatch& pk,
+                                   duckdb::idx_t start, duckdb::idx_t count) {
   _sort_perm.resize(count);
   std::iota(_sort_perm.begin(), _sort_perm.end(), duckdb::idx_t{0});
   std::sort(_sort_perm.begin(), _sort_perm.end(),
@@ -91,7 +91,7 @@ void ViewIndexSourceBase::SortRows(const PrimaryKeyI64& pk, duckdb::idx_t start,
   }
 }
 
-void ViewIndexSourceBase::SortFilesRows(const PrimaryKeyI64I64& pk,
+void ViewIndexSourceBase::SortFilesRows(const PrimaryKeyBatch& pk,
                                         duckdb::idx_t start,
                                         duckdb::idx_t count) {
   _sort_perm.resize(count);

@@ -66,7 +66,7 @@ class DoclistTestIterator : public DocIterator, private util::Noncopyable {
   }
 
   doc_id_t seek(doc_id_t target) final {
-    while (_doc < target && next()) {
+    while (_doc < target && !doc_limits::eof(advance())) {
     }
     return _doc;
   }
@@ -76,6 +76,8 @@ class DoclistTestIterator : public DocIterator, private util::Noncopyable {
     _resetted = true;
     _doc = doc_limits::invalid();
   }
+
+  IRS_DOC_ITERATOR_DEFAULTS
 
  private:
   std::vector<doc_id_t>::const_iterator _begin;
@@ -192,11 +194,12 @@ class ProxyFilterTestCase : public ::testing::TestWithParam<size_t> {
       EXPECT_TRUE(costs);
       EXPECT_EQ(costs->estimate(), expected.size());
       auto expected_doc = expected.begin();
-      while (docs->next() && expected_doc != expected.end()) {
+      while (!irs::doc_limits::eof(docs->advance()) &&
+             expected_doc != expected.end()) {
         EXPECT_EQ(docs->value(), *expected_doc);
         ++expected_doc;
       }
-      EXPECT_FALSE(docs->next());
+      EXPECT_FALSE(!irs::doc_limits::eof(docs->advance()));
       EXPECT_EQ(expected_doc, expected.end());
     }
     // Real filter should be exectued just once

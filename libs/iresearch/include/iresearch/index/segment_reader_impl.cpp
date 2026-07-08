@@ -29,7 +29,6 @@
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/norm_column_reader.hpp"
-#include "iresearch/formats/hnsw/hnsw_reader.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/index/index_meta.hpp"
@@ -74,6 +73,21 @@ class AllIterator : public DocIterator {
     return count;
   }
 
+  uint32_t EmitDocs(doc_id_t* out, doc_id_t max) final {
+    return EmitDocsImpl(*this, out, max);
+  }
+  uint32_t EmitScoredDocs(doc_id_t* out, score_t* scores, doc_id_t max,
+                          const ScoreFunction& scorer,
+                          ColumnArgsFetcher* fetcher, doc_id_t min) final {
+    return EmitScoredDocsImpl(*this, out, scores, max, scorer, fetcher, min);
+  }
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                      uint64_t* mask,
+                                      FillBlockScoreContext score,
+                                      FillBlockMatchContext match) final {
+    return FillBlockImpl(*this, min, max, mask, score, match);
+  }
+
  private:
   const doc_id_t _max_doc;
 };
@@ -109,11 +123,23 @@ class MaskDocIterator : public DocIterator {
 
   doc_id_t LazySeek(doc_id_t target) final { return seek(target); }
 
-  uint32_t count() final { return CountImpl(*this); }
-
-  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
-               ScoreCollector& collector) final {
-    CollectImpl(*this, scorer, fetcher, collector);
+  uint32_t EmitDocs(doc_id_t* out, doc_id_t max) final {
+    // Delegate to the child (inherits its specialisation, e.g. posting bulk),
+    // then compact out the sparse deleted ids in place.
+    const auto raw = _it->EmitDocs(out, max);
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < raw; ++i) {
+      if (!_mask.contains(out[i])) {
+        out[n++] = out[i];
+      }
+    }
+    // Keep value() on a live doc >= max, matching advance()'s contract.
+    auto doc = _it->value();
+    while (!doc_limits::eof(doc) && _mask.contains(doc)) {
+      doc = _it->advance();
+    }
+    _doc = doc;
+    return n;
   }
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
@@ -121,6 +147,23 @@ class MaskDocIterator : public DocIterator {
   }
 
   void FetchScoreArgs(uint16_t index) final { _it->FetchScoreArgs(index); }
+
+  uint32_t count() final { return CountImpl(*this); }
+  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final {
+    CollectImpl(*this, scorer, fetcher, collector);
+  }
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                      uint64_t* mask,
+                                      FillBlockScoreContext score,
+                                      FillBlockMatchContext match) final {
+    return FillBlockImpl(*this, min, max, mask, score, match);
+  }
+  uint32_t EmitScoredDocs(doc_id_t* out, score_t* scores, doc_id_t max,
+                          const ScoreFunction& scorer,
+                          ColumnArgsFetcher* fetcher, doc_id_t min) final {
+    return EmitScoredDocsImpl(*this, out, scores, max, scorer, fetcher, min);
+  }
 
  private:
   const DocumentMask& _mask;
@@ -161,12 +204,7 @@ class MaskedDocIterator : public DocIterator {
 
   doc_id_t LazySeek(doc_id_t target) noexcept final { return seek(target); }
 
-  uint32_t count() noexcept final { return CountImpl(*this); }
-
-  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
-               ScoreCollector& collector) final {
-    CollectImpl(*this, scorer, fetcher, collector);
-  }
+  IRS_DOC_ITERATOR_DEFAULTS
 
  private:
   const DocumentMask& _docs_mask;
@@ -253,12 +291,18 @@ const ColumnReader* SegmentReaderImpl::Column(field_id field) const {
   return _data->col_reader->Column(field);
 }
 
-const HnswReader* SegmentReaderImpl::HNSW(field_id field) const {
-  if (!_data) {
+const TwoLayerCentroids* SegmentReaderImpl::Ivf(field_id field) const {
+  if (!_data || !_data->idx_reader) {
     return nullptr;
   }
-  auto it = _data->hnsw_by_id.find(field);
-  return it == _data->hnsw_by_id.end() ? nullptr : it->second;
+  return _data->idx_reader->Ivf(field);
+}
+
+IndexInput::ptr SegmentReaderImpl::ReopenIvf() const {
+  if (!_data || !_data->idx_reader) {
+    return nullptr;
+  }
+  return _data->idx_reader->ReopenIn();
 }
 
 DocIterator::ptr SegmentReaderImpl::docs_iterator() const {
@@ -286,26 +330,7 @@ void SegmentReaderImpl::ColumnData::Open(const Directory& dir,
                                          const IndexReaderOptions& options) {
   SDB_ASSERT(options.db);
   col_reader = std::make_unique<ColReader>(dir, meta.name, *options.db);
-  idx_reader = std::make_unique<IdxReader>(dir, meta.name, options.hnsw_graphs);
-
-  const auto entries = idx_reader->HNSWEntries();
-  hnsw_readers.reserve(entries.size());
-  hnsw_by_id.reserve(entries.size());
-  for (const auto& [id, entry] : entries) {
-    const auto* column_reader = col_reader->Column(id);
-    if (!column_reader) {
-      continue;
-    }
-    HNSWInfo info = entry.info;
-    const auto& col_type = column_reader->Type();
-    if (col_type.id() == duckdb::LogicalTypeId::ARRAY) {
-      info.d = static_cast<int>(duckdb::ArrayType::GetSize(col_type));
-    }
-    auto hnsw_reader =
-      std::make_unique<HnswReader>(id, entry.graph, info, *column_reader);
-    hnsw_by_id.emplace(id, hnsw_reader.get());
-    hnsw_readers.push_back(std::move(hnsw_reader));
-  }
+  idx_reader = std::make_unique<IdxReader>(dir, meta.name);
 }
 
 }  // namespace irs

@@ -92,7 +92,7 @@ statement ok
 CREATE INDEX upd_idx ON upd_t
   USING inverted(
     body null_writer_en,
-    emb  hnsw (metric = 'cosine', m = 16, ef_construction = 32)
+    emb  ivf (metric = 'cosine')
   );
 
 

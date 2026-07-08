@@ -21,6 +21,7 @@
 #pragma once
 
 #include "basics/empty.hpp"
+#include "basics/exceptions.h"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/posting/iterator_pos.hpp"
@@ -45,6 +46,23 @@ class PostingIteratorBase : public DocIterator {
     }
   }
 
+  uint32_t RemainingDocs() const noexcept {
+    return _left_in_leaf + _left_in_list;
+  }
+
+  std::span<const doc_id_t> NextLeafBlock() {
+    static_assert(!IteratorTraits::Frequency());
+    if (_left_in_leaf == 0) [[unlikely]] {
+      if (_left_in_list == 0) [[unlikely]] {
+        return {};
+      }
+      ReadLeaf(_doc);
+    }
+    const auto left = std::exchange(_left_in_leaf, 0);
+    _doc = *(std::end(_docs) - 1);
+    return {std::end(_docs) - left, left};
+  }
+
   IRS_NO_INLINE Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
   }
@@ -60,6 +78,42 @@ class PostingIteratorBase : public DocIterator {
     const auto left_in_leaf = std::exchange(_left_in_leaf, 0);
     const auto left_in_list = std::exchange(_left_in_list, 0);
     return left_in_leaf + left_in_list;
+  }
+
+  uint32_t EmitDocs(doc_id_t* out, doc_id_t max) final {
+    if constexpr (IteratorTraits::Position()) {
+      // Position postings decode per-doc state in advance(); no bulk shortcut.
+      return DocIterator::EmitDocsImpl(*this, out, max);
+    } else {
+      // advance() inlined with the hot state hoisted into locals so it stays
+      // in registers across the loop; write back once at the end.
+      uint32_t n = 0;
+      auto doc = _doc;
+      auto left_in_leaf = _left_in_leaf;
+      while (doc < max) {
+        out[n++] = doc;
+        if (left_in_leaf == 0) [[unlikely]] {
+          if (_left_in_list == 0) {
+            doc = doc_limits::eof();
+            break;
+          }
+          ReadLeaf(doc);
+          left_in_leaf = _left_in_leaf;
+        }
+        doc = *(std::end(_docs) - left_in_leaf);
+        --left_in_leaf;
+      }
+      _doc = doc;
+      _left_in_leaf = left_in_leaf;
+      return n;
+    }
+  }
+
+  uint32_t EmitScoredDocs(doc_id_t* out, score_t* scores, doc_id_t max,
+                          const ScoreFunction& scorer,
+                          ColumnArgsFetcher* fetcher, doc_id_t min) final {
+    return DocIterator::EmitScoredDocsImpl(*this, out, scores, max, scorer,
+                                           fetcher, min);
   }
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {

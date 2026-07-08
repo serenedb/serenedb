@@ -181,8 +181,9 @@ void SereneDBClientState::TransactionPreCommit(
   tls_committing_ctx = _connection_ctx.get();
 }
 
-void SereneDBClientState::TransactionPreCheckpoint(duckdb::AttachedDatabase& db,
-                                                   duckdb::ClientContext&) {
+void SereneDBClientState::TransactionPreCheckpoint(
+  duckdb::AttachedDatabase& db, duckdb::ClientContext&,
+  duckdb::idx_t wal_generation, duckdb::idx_t wal_end_offset) {
   // Commit the search-index leg synchronously with the store table changes:
   // this fires after the store database's changes are durable but before the
   // in-commit checkpoint, so the checkpoint's force-refresh never waits on an
@@ -191,7 +192,16 @@ void SereneDBClientState::TransactionPreCheckpoint(duckdb::AttachedDatabase& db,
   if (db.GetName().GetIdentifierName() != catalog::kStoreDatabaseName) {
     return;
   }
-  _connection_ctx->CommitSearch();
+  // This commit's exact WAL position, captured under the WAL lock by the
+  // engine: with overlapping commits, reading the WAL size here would include
+  // later transactions' bytes and over-claim the recovery cursor (skipping
+  // their re-stream after a crash). A commit whose changes are carried by its
+  // in-commit checkpoint (wal_end_offset == 0) recovers from the start of the
+  // post-checkpoint WAL generation.
+  const auto cursor = wal_end_offset > 0
+                        ? search::WalCursor{wal_generation, wal_end_offset}
+                        : search::WalCursor{wal_generation + 1, 0};
+  _connection_ctx->CommitSearch(cursor);
 }
 
 void SereneDBClientState::TransactionPreRollback(

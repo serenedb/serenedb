@@ -1,0 +1,169 @@
+hash-threshold 100
+
+# IVF on an ARRAY<FLOAT, N> column where some rows are NULL.
+# Three regressions covered:
+#  1. IVF build must skip rows whose ARRAY parent is NULL (the cs child
+#     stores zero-filled slots for them) -- otherwise they show up in
+#     `ORDER BY emb <-> X LIMIT k` whenever k >= the non-NULL count or
+#     the query is near the origin.
+#  2. DELETE flags rows in docs_mask; the cluster postings still hold
+#     their doc ids, so the segment mask must drop them or the next ANN
+#     search returns a deleted doc and the downstream PK fetch fails
+#     with "Missing row for PK in RocksDB".
+#  3. VACUUM (COMPACT_TABLE) <table> rebuilds the IVF index over the
+#     merged vector column; the NULL skip must hold there too.
+
+statement ok
+CREATE TABLE vec_n (
+  pk INTEGER PRIMARY KEY,
+  emb FLOAT[3],
+  label VARCHAR
+)
+
+
+statement ok
+CREATE INDEX vec_n_idx ON vec_n USING inverted(pk, emb ivf (metric = 'l2'))
+  INCLUDE (label)
+
+
+statement ok
+INSERT INTO vec_n VALUES (1, [1, 0, 0]::FLOAT[3], 'unit-x')
+
+
+statement ok
+INSERT INTO vec_n VALUES (2, NULL, 'missing-a')
+
+
+statement ok
+INSERT INTO vec_n VALUES (3, [0, 1, 0]::FLOAT[3], 'unit-y')
+
+
+statement ok
+INSERT INTO vec_n VALUES (4, NULL, 'missing-b')
+
+
+statement ok
+INSERT INTO vec_n VALUES (5, [0, 0, 1]::FLOAT[3], 'unit-z')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) vec_n
+
+
+# ---- Full scan returns every row, NULL emb materialises as NULL ----
+query
+SELECT pk, label FROM vec_n_idx ORDER BY pk;
+----
+pk	label
+1	unit-x
+2	missing-a
+3	unit-y
+4	missing-b
+5	unit-z
+
+
+query
+SELECT pk, label FROM vec_n_idx WHERE emb IS NULL ORDER BY pk;
+----
+pk	label
+2	missing-a
+4	missing-b
+
+
+query
+SELECT pk, label FROM vec_n_idx WHERE emb IS NOT NULL ORDER BY pk;
+----
+pk	label
+1	unit-x
+3	unit-y
+5	unit-z
+
+
+# ---- IVF search: NULL rows never appear in top-K ----
+# LIMIT < non-NULL count -- always worked, kept as a baseline.
+query
+SELECT pk, label FROM vec_n_idx
+  ORDER BY emb <-> [1.0, 0, 0]::FLOAT[3] LIMIT 1;
+----
+pk	label
+1	unit-x
+
+
+# LIMIT == non-NULL count -- used to return a NULL row in the tail.
+query
+SELECT pk, label FROM vec_n_idx
+  ORDER BY emb <-> [1.0, 0, 0]::FLOAT[3] LIMIT 3;
+----
+pk	label
+1	unit-x
+3	unit-y
+5	unit-z
+
+
+# LIMIT > non-NULL count -- faiss returns 3 results (the non-NULL
+# vectors); the engine doesn't pad with NULL rows.
+query
+SELECT pk, label FROM vec_n_idx
+  ORDER BY emb <-> [1.0, 0, 0]::FLOAT[3] LIMIT 5;
+----
+pk	label
+1	unit-x
+3	unit-y
+5	unit-z
+
+
+# ---- DELETE filters out via docs_mask, no dangling IVF node ----
+statement ok
+DELETE FROM vec_n WHERE pk = 3
+
+
+statement ok
+VACUUM (REFRESH_TABLE) vec_n
+
+
+# pk=3 was the closest match to [0, 0.9, 0.1]; with the docs_mask
+# filter the search now returns pk=5, then pk=1. Pre-fix this query
+# raised "Missing row for PK in RocksDB".
+query
+SELECT pk, label FROM vec_n_idx
+  ORDER BY emb <-> [0, 0.9, 0.1]::FLOAT[3] LIMIT 2;
+----
+pk	label
+5	unit-z
+1	unit-x
+
+
+# ---- Compaction rebuilds IVF; NULL skip applies to merge too ----
+statement ok
+VACUUM (COMPACT_TABLE) vec_n;
+
+
+# Pre-fix this returned pk=4, pk=2 (the two NULL rows) because the
+# rebuilt IVF indexed them as zero-vectors.
+query
+SELECT pk, label FROM vec_n_idx
+  ORDER BY emb <-> [0, 0.9, 0.1]::FLOAT[3] LIMIT 2;
+----
+pk	label
+5	unit-z
+1	unit-x
+
+
+# Full scan after merge still sees every live row (NULL-emb rows
+# survive the merge because cs writes them with validity = NULL).
+query
+SELECT pk, label FROM vec_n_idx ORDER BY pk;
+----
+pk	label
+1	unit-x
+2	missing-a
+4	missing-b
+5	unit-z
+
+
+query
+SELECT pk, label FROM vec_n_idx WHERE emb IS NULL ORDER BY pk;
+----
+pk	label
+2	missing-a
+4	missing-b

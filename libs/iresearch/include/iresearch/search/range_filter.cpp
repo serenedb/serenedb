@@ -25,12 +25,18 @@
 #include "basics/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/filter_visitor.hpp"
 #include "iresearch/search/limited_sample_selector.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/term_filter.hpp"
+#include "iresearch/search/term_iterator.hpp"
+#include "iresearch/utils/automaton_utils.hpp"
 
 namespace irs {
+
+namespace {}  // namespace
+
 namespace {
 
 enum class RangeKind { Term, Empty, Range };
@@ -46,81 +52,37 @@ RangeKind Classify(const ByRangeOptions::range_type& rng) noexcept {
   return RangeKind::Range;
 }
 
-template<typename Visitor, typename Comparer>
-void CollectTerms(const SubReader& segment, const TermReader& field,
-                  SeekTermIterator& terms, Visitor& visitor, Comparer cmp) {
-  auto* term = irs::get<TermAttr>(terms);
+class ByRangeIterator : public WrappedTermIterator {
+ public:
+  ByRangeIterator(const TermReader& reader,
+                  const ByRangeFilterOptions::range_type& range)
+    : WrappedTermIterator{reader.iterator(SeekMode::NORMAL)}, _range{&range} {}
 
-  if (!term) [[unlikely]] {
-    return;
-  }
-
-  if (!cmp(term->value)) {
-    return;
-  }
-
-  // read attributes
-  terms.read();
-  visitor.Prepare(segment, field, terms);
-
-  do {
-    visitor.Visit(kNoBoost);
-
-    if (!terms.next()) {
-      break;
+  bool next() final {
+    bool res = false;
+    if (_started) {
+      res = _impl->next();
+    } else {
+      _started = true;
+      switch (_range->min_type) {
+        case BoundType::Unbounded:
+          res = _impl->next();
+          break;
+        case BoundType::Inclusive:
+          res = seek_min<true>(*_impl, _range->min);
+          break;
+        case BoundType::Exclusive:
+          res = seek_min<false>(*_impl, _range->min);
+          break;
+      }
     }
-
-    terms.read();
-  } while (cmp(term->value));
-}
-
-template<typename Visitor>
-void VisitImpl(const SubReader& segment, const TermReader& reader,
-               const ByRangeOptions::range_type& rng, Visitor& visitor) {
-  auto terms = reader.iterator(SeekMode::NORMAL);
-
-  if (!terms) [[unlikely]] {
-    return;
+    return res && RangeMaxAcceptor{_range}(_impl->value());
   }
 
-  auto res = false;
-
-  // seek to min
-  switch (rng.min_type) {
-    case BoundType::Unbounded:
-      res = terms->next();
-      break;
-    case BoundType::Inclusive:
-      res = seek_min<true>(*terms, rng.min);
-      break;
-    case BoundType::Exclusive:
-      res = seek_min<false>(*terms, rng.min);
-      break;
-  }
-
-  if (!res) {
-    // reached the end, nothing to collect
-    return;
-  }
-
-  // now we are on the target or the next term
-  const bytes_view max = rng.max;
-
-  switch (rng.max_type) {
-    case BoundType::Unbounded:
-      CollectTerms(segment, reader, *terms, visitor,
-                   [](bytes_view) { return true; });
-      break;
-    case BoundType::Inclusive:
-      CollectTerms(segment, reader, *terms, visitor,
-                   [max](bytes_view term) { return term <= max; });
-      break;
-    case BoundType::Exclusive:
-      CollectTerms(segment, reader, *terms, visitor,
-                   [max](bytes_view term) { return term < max; });
-      break;
-  }
-}
+ private:
+  const ByRangeFilterOptions::range_type* _range;
+  bool _started{false};
+};
 
 }  // namespace
 
@@ -168,7 +130,11 @@ QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
   }
   SampledMultiTermVisitor mtv{collector ? &collector->Limited() : nullptr,
                               query->State()};
-  VisitImpl(segment, *reader, rng, mtv);
+  ByRangeIterator terms{*reader, rng};
+  if (terms.next()) {
+    mtv.Prepare(segment, *reader, terms.GetImpl());
+    VisitTerms(terms, mtv);
+  }
   return query;
 }
 
@@ -181,9 +147,22 @@ PrepareCollector::ptr ByRange::MakeCollector(const Scorer* scorer) const {
 }
 
 void ByRange::visit(const SubReader& segment, const TermReader& reader,
-                    const options_type::range_type& rng,
-                    FilterVisitor& visitor) {
-  VisitImpl(segment, reader, rng, visitor);
+                    const ByRangeOptions& options, FilterVisitor& visitor) {
+  ByRangeIterator terms{reader, options.range};
+  if (!terms.next()) {
+    return;
+  }
+  visitor.Prepare(segment, reader, terms.GetImpl());
+  VisitTerms(terms, visitor);
+}
+
+TermPredicate::ptr ByRange::CompileTermPredicate() const {
+  const auto& range = options().range;
+  return MakeTermPredicate(RangeAcceptor{{&range}, {&range}});
+}
+
+TermIterator::ptr ByRange::CompileTermIterator(const TermReader& reader) const {
+  return memory::make_managed<ByRangeIterator>(reader, options().range);
 }
 
 }  // namespace irs

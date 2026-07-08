@@ -138,7 +138,7 @@ class TopTermsSelector : private util::Noncopyable {
   // `state` state containing this scored term
   // `terms` segment term-iterator positioned at the current term
   void Prepare(const SubReader& segment, const TermReader& field,
-               const SeekTermIterator& terms) noexcept {
+               SeekTermIterator& terms) noexcept {
     _state.segment = &segment;
     _state.field = &field;
     _state.terms = &terms;
@@ -160,16 +160,18 @@ class TopTermsSelector : private util::Noncopyable {
   }
 
   // Collect current term
-  void Visit(const key_type& key) {
+  bool Visit(const key_type& key) {
+    _state.terms->read();
     const auto term = *_state.term;
 
     if (_heap.Full() && !_comparer(_heap.Min(), key, term)) {
-      return;
+      return true;
     }
 
     state_type state{term, key};
     state.emplace(_state);
     _heap.Push(std::move(state));
+    return true;
   }
 
   // FIXME rename
@@ -185,7 +187,7 @@ class TopTermsSelector : private util::Noncopyable {
   struct SelectorState {
     const SubReader* segment{};
     const TermReader* field{};
-    const SeekTermIterator* terms{};
+    SeekTermIterator* terms{};
     const bytes_view* term{};
     const uint32_t* docs_count{};
   };

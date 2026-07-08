@@ -64,8 +64,11 @@ class Transaction : public Config {
   // called inside the engine commit, after store durability but before the
   // in-commit checkpoint, so the checkpoint's force-refresh never waits on an
   // un-committed in-flight batch. Idempotent -- a no-op once the staged
-  // transactions have been committed (or when there were none).
-  void CommitSearch() noexcept;
+  // transactions have been committed (or when there were none). The cursor is
+  // this commit's exact store-WAL position (captured under the WAL lock by the
+  // engine); std::nullopt on the fallback path where the transaction did not
+  // commit the store database, in which case no recovery cursor is recorded.
+  void CommitSearch(std::optional<search::WalCursor> cursor) noexcept;
 
   Result Commit();
 

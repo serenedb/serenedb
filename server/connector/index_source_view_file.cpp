@@ -72,13 +72,15 @@ ViewFileSingleFileIndexSource::ViewFileSingleFileIndexSource(
   _lookup_gstate = _lookup_func.init_global(context, init);
 }
 
-duckdb::idx_t ViewFileSingleFileIndexSource::Materialize(
-  duckdb::ClientContext& context, PrimaryKeyBatch& batch, duckdb::idx_t start,
-  duckdb::idx_t count, duckdb::DataChunk& output) {
+void ViewFileSingleFileIndexSource::Materialize(duckdb::ClientContext& context,
+                                                PrimaryKeyBatch& batch,
+                                                duckdb::idx_t start,
+                                                duckdb::idx_t count,
+                                                duckdb::DataChunk& output) {
   if (count == 0) {
-    return count;
+    return;
   }
-  auto& pk = std::get<PrimaryKeyI64>(batch);
+  auto& pk = batch;
   SDB_ASSERT(start + count <= pk.rows.size());
 
   SortRows(pk, start, count);
@@ -93,7 +95,6 @@ duckdb::idx_t ViewFileSingleFileIndexSource::Materialize(
   _lookup_func.function(context, in, _tf_target);
 
   RunCastPass(output, count);
-  return count;
 }
 
 ViewFileGlobIndexSource::ViewFileGlobIndexSource(
@@ -104,21 +105,22 @@ ViewFileGlobIndexSource::ViewFileGlobIndexSource(
   : ViewFileIndexSourceBase(context, std::move(fast_path), projected_columns,
                             projected_types, bind_column_ids) {}
 
-duckdb::idx_t ViewFileGlobIndexSource::Materialize(
-  duckdb::ClientContext& context, PrimaryKeyBatch& batch, duckdb::idx_t start,
-  duckdb::idx_t count, duckdb::DataChunk& output) {
+void ViewFileGlobIndexSource::Materialize(duckdb::ClientContext& context,
+                                          PrimaryKeyBatch& batch,
+                                          duckdb::idx_t start,
+                                          duckdb::idx_t count,
+                                          duckdb::DataChunk& output) {
   if (count == 0) {
-    return count;
+    return;
   }
-  auto& pk = std::get<PrimaryKeyI64I64>(batch);
+  auto& pk = batch;
   SDB_ASSERT(start + count <= pk.rows.size());
 
   SortFilesRows(pk, start, count);
 
   auto& multi_bd = _bind_data->Cast<duckdb::MultiFileBindData>();
   SDB_ASSERT(multi_bd.file_list);
-  // Force iceberg's lazy manifest expansion (no-op for eager globs).
-  (void)multi_bd.file_list->GetTotalFileCount();
+  std::ignore = multi_bd.file_list->GetTotalFileCount();
   auto files = multi_bd.file_list->GetAllFiles();
   if (_file_cache.size() < files.size()) {
     _file_cache.resize(files.size());
@@ -166,7 +168,6 @@ duckdb::idx_t ViewFileGlobIndexSource::Materialize(
   }
 
   RunCastPass(output, count);
-  return count;
 }
 
 }  // namespace sdb::connector

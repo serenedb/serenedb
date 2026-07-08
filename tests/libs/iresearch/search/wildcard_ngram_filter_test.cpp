@@ -233,7 +233,7 @@ TEST(WildcardNgramFilterTest, query) {
     std::vector<irs::doc_id_t> result;
     for (size_t i = 0, n = prepared.size(); i < n; ++i) {
       auto docs = prepared.Execute(i);
-      while (docs->next()) {
+      while (!irs::doc_limits::eof(docs->advance())) {
         result.push_back(docs->value());
       }
     }

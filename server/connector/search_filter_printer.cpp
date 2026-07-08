@@ -42,6 +42,8 @@
 #include <iresearch/search/search_range.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
+#include <iresearch/search/vector_radius_filter.hpp>
+#include <iresearch/search/vector_similarity_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/search/wildcard_ngram_filter.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
@@ -230,6 +232,20 @@ std::string_view GeoShapeTypeName(sdb::geo::ShapeContainer::Type type) {
   return "?";
 }
 
+std::string_view VectorMetricName(VectorMetric metric) {
+  switch (metric) {
+    case VectorMetric::L2Sqr:
+      return "l2";
+    case VectorMetric::InnerProduct:
+      return "ip";
+    case VectorMetric::Cosine:
+      return "cosine";
+    case VectorMetric::L1:
+      return "l1";
+  }
+  return "?";
+}
+
 struct FilterPrinter {
   const FieldNameResolver& name_of;
   const FieldKindResolver& kind_of;
@@ -300,6 +316,15 @@ struct FilterPrinter {
                       range.max);
     }
     return s;
+  }
+
+  ExplainNode BuildVectorNodeCommon(std::string title, field_id fid,
+                                    VectorMetric metric, size_t dims) const {
+    ExplainNode node{std::move(title)};
+    node.attributes["Field"] = FieldName(fid);
+    node.attributes["Metric"] = std::string{VectorMetricName(metric)};
+    node.attributes["Dims"] = absl::StrCat(dims);
+    return node;
   }
 
   ExplainNode Build(const Filter& filter) const {
@@ -496,6 +521,28 @@ struct FilterPrinter {
       ExplainNode node{"Geo Distance"};
       node.attributes["Field"] = FieldName(f.field_id());
       node.attributes["Range"] = GeoDistanceRange(f);
+      return node;
+    }
+    if (type == Type<ByVectorSimilarity>::id()) {
+      const auto& f = downCast<const ByVectorSimilarity>(filter);
+      const auto& o = f.options();
+      ExplainNode node = BuildVectorNodeCommon("Vector KNN", f.field_id(),
+                                               o.metric, o.query.size());
+      if (o.inner) {
+        node.children.push_back(Build(*o.inner));
+      }
+      return node;
+    }
+    if (type == Type<ByRadius>::id()) {
+      const auto& f = downCast<const ByRadius>(filter);
+      const auto& o = f.options();
+      ExplainNode node = BuildVectorNodeCommon("Vector Range", f.field_id(),
+                                               o.metric, o.query.size());
+      node.attributes["Radius"] =
+        absl::StrCat(o.inclusive ? "<= " : "< ", o.radius);
+      if (o.inner) {
+        node.children.push_back(Build(*o.inner));
+      }
       return node;
     }
     if (type == Type<ProxyFilter>::id()) {

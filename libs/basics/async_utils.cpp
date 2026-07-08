@@ -33,25 +33,17 @@ using namespace std::chrono_literals;
 namespace irs::async_utils {
 
 template<bool UseDelay>
-ThreadPool<UseDelay>::ThreadPool(size_t threads,
-                                 std::basic_string_view<Char> name) {
-  start(threads, name);
+ThreadPool<UseDelay>::ThreadPool(size_t threads) {
+  start(threads);
 }
 
 template<bool UseDelay>
-void ThreadPool<UseDelay>::start(size_t threads,
-                                 std::basic_string_view<Char> name) {
+void ThreadPool<UseDelay>::start(size_t threads) {
   absl::MutexLock lock{&_m};
   SDB_ASSERT(_threads.empty());
   _threads.reserve(threads);
   for (size_t i = 0; i != threads; ++i) {
-    _threads.emplace_back([this, name] {
-      if (!name.empty()) {
-        SDB_ASSERT(std::char_traits<Char>::length(name.data()) == name.size());
-        SetThreadName(name.data());
-      }
-      Work();
-    });
+    _threads.emplace_back([this] { Work(); });
   }
 }
 

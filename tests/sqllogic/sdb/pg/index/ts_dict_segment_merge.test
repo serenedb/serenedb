@@ -1,0 +1,108 @@
+hash-threshold 100
+
+# Cross-segment merge is performed by an optimizer-injected GROUP BY over the
+# per-segment rows the term-dict scan emits (a term in N segments -> N rows).
+# These cases pin the merge semantics: counts/frequencies sum across segments,
+# every referenced field is grouped by its own term (so a metric-only request
+# still yields one value per term, not one global sum), and distinct fields stay
+# separated. Term order out of the hash GROUP BY is unspecified, so every result
+# is pinned with ORDER BY / list_sort.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY smd(template = 'text', locale = 'en_US.UTF-8',
+    case = 'none', stemming = false, accent = false, frequency = true,
+    position = true)
+
+statement ok
+CREATE TABLE mt(id INTEGER PRIMARY KEY, body VARCHAR, tag VARCHAR)
+
+statement ok
+CREATE INDEX mt_idx ON mt USING inverted(body smd, tag smd)
+
+# Segment 1: body = 8x alpha + 2x beta ; tag = x
+statement ok
+INSERT INTO mt SELECT i, CASE WHEN i <= 8 THEN 'alpha' ELSE 'beta' END, 'x'
+FROM generate_series(1, 10) g(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) mt;
+
+# Segment 2: body = 3x alpha + 7x gamma ; tag = y
+statement ok
+INSERT INTO mt SELECT 10 + i, CASE WHEN i <= 3 THEN 'alpha' ELSE 'gamma' END, 'y'
+FROM generate_series(1, 10) g(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) mt;
+
+# Segment 3: body = 5x beta ; tag = x
+statement ok
+INSERT INTO mt SELECT 20 + i, 'beta', 'x' FROM generate_series(1, 5) g(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) mt;
+
+# docs/freq summed across the three segments:
+#   alpha = 8 + 3      = 11
+#   beta  = 2 + 5      = 7
+#   gamma = 7          = 7
+query TII
+SELECT unnest(ts_dict_agg(body)) AS term,
+       unnest(ts_dict_count(body)) AS docs,
+       unnest(ts_dict_freq(body)) AS freq
+FROM mt_idx
+ORDER BY term
+----
+term	docs	freq
+alpha	11	11
+beta	7	7
+gamma	7	7
+
+# Metric-only request (no term selected) still groups per term: three counts,
+# not one global sum of 25.
+query T
+SELECT list_sort(ts_dict_count(body)) AS docs FROM mt_idx
+----
+docs
+{7,7,11}
+
+# Distinct fields stay separated by their own term even when only one field's
+# term and the other field's metric are selected: tag counts are per tag-term
+# (x = 10 + 5 = 15, y = 10), never a single merged 25.
+query TT
+SELECT list_sort(ts_dict_agg(body)) AS body_terms,
+       list_sort(ts_dict_count(tag)) AS tag_docs
+FROM mt_idx
+----
+body_terms	tag_docs
+{alpha,beta,gamma}	{10,15}
+
+# Full multi-field: each field's terms and per-term counts, aligned and sorted.
+query TT
+SELECT list(t ORDER BY t) AS terms, list(c ORDER BY t) AS docs
+FROM (SELECT unnest(ts_dict_agg(body)) AS t, unnest(ts_dict_count(body)) AS c FROM mt_idx) s
+----
+terms	docs
+{alpha,beta,gamma}	{11,7,7}
+
+# Scalar min/max over the merged term set.
+query TT
+SELECT ts_dict_min(body) AS lo, ts_dict_max(body) AS hi FROM mt_idx
+----
+lo	hi
+alpha	gamma
+
+# A WHERE acceptor narrows enumeration but the surviving term's count is still
+# summed across every segment it appears in: beta = 2 (seg 1) + 5 (seg 3) = 7.
+query TI
+SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS docs
+FROM mt_idx WHERE body = 'beta' ORDER BY term
+----
+term	docs
+beta	7
+
+statement ok
+DROP TABLE mt
+
+statement ok
+DROP TEXT SEARCH DICTIONARY smd

@@ -211,7 +211,7 @@ void RemoveFromExistingSegment(DocumentMask& deleted_docs,
   }
 
   const auto* docs_mask = reader.docs_mask();
-  while (itr->next()) {
+  while (!doc_limits::eof(itr->advance())) {
     const auto doc_id = itr->value();
 
     // if the indexed doc_id was already masked then it should be skipped
@@ -245,7 +245,7 @@ bool RemoveFromImportedSegment(DocumentMask& deleted_docs,
   }
 
   bool modified = false;
-  while (itr->next()) {
+  while (!doc_limits::eof(itr->advance())) {
     const auto doc_id = itr->value();
 
     // if the indexed doc_id was already masked then it should be skipped
@@ -288,7 +288,7 @@ void FlushedSegmentContext::Remove(IndexWriter::QueryContext& query) {
   }
 
   auto* flushed_docs = segment.flushed_docs.data() + flushed.GetDocsBegin();
-  while (itr->next()) {
+  while (!doc_limits::eof(itr->advance())) {
     const auto new_doc = itr->value();
     const auto old_doc = New2Old(new_doc);
 
@@ -427,8 +427,8 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
       // passed to the merge_writer
 
       // no more docs in merged reader
-      if (!merged_itr->next()) {
-        if (current_itr->next()) {
+      if (doc_limits::eof(merged_itr->advance())) {
+        if (!doc_limits::eof(current_itr->advance())) {
           SDB_WARN(IRESEARCH, "Failed to map removals for compacted segment '",
                    old_meta.name, "' version '", old_meta.version,
                    "' from current segment '", new_meta.name, "' version '",
@@ -443,11 +443,11 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
       }
 
       // mask all remaining doc_ids
-      if (!current_itr->next()) {
+      if (doc_limits::eof(current_itr->advance())) {
         do {
           SDB_ASSERT(!merge_ctx.remap.IsMasked(merged_itr->value()));
           docs_mask.insert(merge_ctx.remap.Remap(merged_itr->value()));
-        } while (merged_itr->next());
+        } while (!doc_limits::eof(merged_itr->advance()));
 
         continue;  // continue wih next mapping
       }
@@ -459,7 +459,7 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
           SDB_ASSERT(!merge_ctx.remap.IsMasked(merged_itr->value()));
           docs_mask.insert(merge_ctx.remap.Remap(merged_itr->value()));
 
-          if (!merged_itr->next()) {
+          if (doc_limits::eof(merged_itr->advance())) {
             SDB_WARN(
               IRESEARCH, "Failed to map removals for compacted segment '",
               old_meta.name, "' version '", old_meta.version,
@@ -483,8 +483,8 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
         }
 
         // no more docs in merged reader
-        if (!merged_itr->next()) {
-          if (current_itr->next()) {
+        if (doc_limits::eof(merged_itr->advance())) {
+          if (!doc_limits::eof(current_itr->advance())) {
             SDB_WARN(
               IRESEARCH, "Failed to map removals for compacted segment '",
               old_meta.name, "' version '", old_meta.version,
@@ -499,11 +499,11 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
         }
 
         // mask all remaining doc_ids
-        if (!current_itr->next()) {
+        if (doc_limits::eof(current_itr->advance())) {
           do {
             SDB_ASSERT(!merge_ctx.remap.IsMasked(merged_itr->value()));
             docs_mask.insert(merge_ctx.remap.Remap(merged_itr->value()));
-          } while (merged_itr->next());
+          } while (!doc_limits::eof(merged_itr->advance()));
 
           break;  // continue wih next mapping
         }
@@ -959,8 +959,7 @@ void IndexWriter::SegmentContext::Flush() {
   SDB_ASSERT(writer_meta.meta.docs_count == docs_context.size());
 
   flushed.emplace_back(std::move(writer_meta), std::move(old2new),
-                       std::move(docs_mask), flushed_docs.size(),
-                       writer->TakeBuiltHnswGraphs());
+                       std::move(docs_mask), flushed_docs.size());
   try {
     flushed_docs.insert(flushed_docs.end(), docs_context.begin(),
                         docs_context.end());
@@ -1410,7 +1409,6 @@ CompactionResult IndexWriter::Compact(
   }
 
   auto opts = committed_reader->Options();
-  opts.hnsw_graphs = merger.TakeBuiltHnswGraphs();
   auto pending_reader =
     SegmentReaderImpl::Open(_dir, compaction_segment.meta, opts);
   SDB_ASSERT(pending_reader);
@@ -1570,7 +1568,6 @@ bool IndexWriter::Import(const IndexReader& reader,
 
   index_utils::FlushIndexSegment(dir, segment);
 
-  options.hnsw_graphs = merger.TakeBuiltHnswGraphs();
   auto imported_reader = SegmentReaderImpl::Open(_dir, segment.meta, options);
   SDB_ASSERT(imported_reader);
 
@@ -2057,7 +2054,6 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
             // reuse existing reader with initial meta and docs_mask
             return it->second->UpdateMeta(dir, flushed.meta);
           } else {
-            reader_options.hnsw_graphs = std::move(flushed.hnsw_graphs);
             return SegmentReaderImpl::Open(dir, flushed.meta, reader_options);
           }
         }();

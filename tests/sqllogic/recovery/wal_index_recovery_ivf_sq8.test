@@ -1,0 +1,91 @@
+control substitution on
+
+# WAL recovery for SQ8-quantized IVF vector columns.
+#
+# Same flow as wal_index_recovery_ivf, but the index uses quant='sq8': the
+# vectors live in the cs for exact rerank, with per-cluster 8-bit codes in the
+# postings .pay. On a crash before the iresearch commit the post-crash vectors
+# exist only in the RocksDB WAL slice; recovery must re-feed the cs writer so
+# the next commit produces a segment whose .cs has the vectors AND the
+# auto-rebuilt SQ8 codes -- otherwise ANN over the recovered rows is wrong.
+#
+# Pre-crash row goes through a normal commit so the on-disk .cs is the
+# reference. Post-crash rows land in the WAL only -- we freeze
+# SearchRefreshTask::commitUnsafe before INSERTing them so the iresearch trx
+# never gets to flush.
+
+statement ok
+CREATE TABLE wal_sq8_t(pk INTEGER PRIMARY KEY, emb FLOAT[3]);
+
+statement ok
+INSERT INTO wal_sq8_t VALUES (1, [1.0, 0.0, 0.0]::FLOAT[3]);
+
+statement ok
+CREATE INDEX wal_sq8_idx ON wal_sq8_t
+  USING inverted(emb ivf (metric = 'l2', quant = 'sq8'));
+
+statement ok
+VACUUM (REFRESH_TABLE) wal_sq8_t;
+
+# Pre-crash row reads from the on-disk .cs + SQ8 codes.
+query
+SELECT pk FROM wal_sq8_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
+----
+pk
+1
+
+# Freeze iresearch commits BEFORE the second batch lands. The next two
+# rows reach RocksDB (and its WAL) but the iresearch trx is never
+# committed -- their vectors only exist as WAL bytes when we crash.
+statement ok
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
+
+statement ok
+INSERT INTO wal_sq8_t VALUES (2, [0.0, 1.0, 0.0]::FLOAT[3]),
+                              (3, [0.0, 0.0, 1.0]::FLOAT[3]);
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+# --- server restarts here ---
+
+connection wal_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (REFRESH_TABLE) wal_sq8_t;
+
+# Pre-crash row still queryable.
+connection wal_after
+query
+SELECT pk FROM wal_sq8_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
+----
+pk
+1
+
+# Post-crash vectors must have round-tripped through recovery and been
+# re-quantized -- ANN nearest neighbour to the second vector returns pk=2,
+# third returns pk=3.
+connection wal_after
+query
+SELECT pk FROM wal_sq8_idx ORDER BY emb <-> [0.0, 1.0, 0.0]::FLOAT[3] LIMIT 1;
+----
+pk
+2
+
+connection wal_after
+query
+SELECT pk FROM wal_sq8_idx ORDER BY emb <-> [0.0, 0.0, 1.0]::FLOAT[3] LIMIT 1;
+----
+pk
+3
+
+# All three rows visible.
+connection wal_after
+query
+SELECT COUNT(*) AS n FROM wal_sq8_idx;
+----
+n
+3

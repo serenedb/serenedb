@@ -86,7 +86,7 @@ embedded	skipped
 #| WHERE name IS NOT NULL;
 #|
 #| CREATE INDEX catalog_idx ON catalog
-#|     USING inverted (id, name, embedding hnsw (metric = 'cosine'));
+#|     USING inverted (id, name, embedding ivf (metric = 'cosine'));
 
 # DOCS_TEST_BODY
 
@@ -101,4 +101,4 @@ WHERE name IS NOT NULL;
 
 statement ok
 CREATE INDEX catalog_idx ON catalog
-    USING inverted (id, name, embedding hnsw (metric = 'cosine'));
+    USING inverted (id, name, embedding ivf (metric = 'cosine'));

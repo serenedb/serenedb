@@ -36,6 +36,20 @@ IRS_FORCE_INLINE score_t CommonReadWandData(const ScoreFunction& func,
 template<typename FormatTraits>
 using WandTraits = IteratorTraitsImpl<FormatTraits, true, false, false>;
 
+// Container-shaped view over a caller-owned buffer, so the container-templated
+// CollectRange can write straight into a fixed span; `count` tracks the size.
+template<typename T>
+struct RawSpanSink {
+  T* base;
+  size_t count = 0;
+  T* data() noexcept { return base; }
+  size_t size() const noexcept { return count; }
+  static constexpr size_t capacity() noexcept {
+    return static_cast<size_t>(-1);
+  }
+  void resize(size_t n) noexcept { count = n; }
+};
+
 template<typename FormatTraits, bool Root, bool Pos, bool Offs,
          typename InputType>
 class SingleWandIterator : public DocIterator {
@@ -117,6 +131,19 @@ class SingleWandIterator : public DocIterator {
     const auto left_in_leaf = std::exchange(_left_in_leaf, 0);
     const auto left_in_list = std::exchange(_left_in_list, 0);
     return left_in_leaf + left_in_list;
+  }
+
+  uint32_t EmitScoredDocs(doc_id_t* out, score_t* scores, doc_id_t max,
+                          const ScoreFunction& scorer,
+                          ColumnArgsFetcher* fetcher, doc_id_t min) final {
+    RawSpanSink<doc_id_t> docs{out};
+    RawSpanSink<score_t> scs{scores};
+    CollectRange(docs, scs, scorer, fetcher, min, max);
+    return static_cast<uint32_t>(docs.count);
+  }
+
+  uint32_t EmitDocs(doc_id_t* out, doc_id_t max) final {
+    return EmitDocsImpl(*this, out, max);
   }
 
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,

@@ -22,44 +22,38 @@
 
 #include <cstdint>
 #include <duckdb/common/types.hpp>
+#include <duckdb/common/types/hyperloglog.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/types/vector_cache.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
-#include <duckdb/storage/data_pointer.hpp>
+#include <span>
+#include <vector>
 
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/internal/write_context.hpp"
+#include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"
 
-namespace duckdb {
-
-class DataChunk;
-class HyperLogLog;
-
-}  // namespace duckdb
 namespace irs {
 
-class WriteContext;
-struct FooterColumnEntry;
+class ColWriter;
 
-struct Chunk {
+struct WriteChunk {
   duckdb::Vector data;
-
-  Chunk(duckdb::Vector data, size_t count) : data{std::move(data)} {
-    SetCount(count);
-  }
-
-  size_t Count() const { return data.size(); }
-  void SetCount(size_t count) { duckdb::FlatVector::SetSize(data, count); }
+  duckdb::idx_t count;
 };
 
 class ColumnWriter final {
  public:
-  ColumnWriter(field_id id, duckdb::LogicalType type, uint32_t row_group_size,
-               WriteContext& write_ctx, FooterColumnEntry& entry,
-               bool skip_validity, bool hyperloglog);
+  ColumnWriter(ColWriter& owner, field_id id, duckdb::LogicalType type,
+               bool skip_validity, uint32_t row_group_size,
+               duckdb::CompressionType forced, bool hyperloglog);
 
   ColumnWriter(const ColumnWriter&) = delete;
   ColumnWriter& operator=(const ColumnWriter&) = delete;
+
+  void Append(const duckdb::Vector& vec, duckdb::idx_t count);
 
   void Append(uint64_t start_row, const duckdb::Vector& vec,
               duckdb::idx_t count);
@@ -71,58 +65,92 @@ class ColumnWriter final {
   void PushInStaging(uint64_t row, Fill&& fill) {
     PadNullsTo(row);
     auto& back = OpenChunk();
-    const auto n = back.Count();
-    fill(back.data, n);
-    back.SetCount(n + 1);
-    ++_data_ctx.filled;
-    MaybeFlushRowGroup();
+    fill(back.data, back.count);
+    ++back.count;
+    duckdb::FlatVector::SetSize(back.data, back.count);
+    ++_staged_rows;
+    if (_staged_rows == _row_group_size) {
+      SealRowGroup();
+    }
   }
-
-  field_id Id() const noexcept { return _id; }
-  const duckdb::LogicalType& Type() const noexcept { return _type; }
-  uint32_t RowGroupSize() const noexcept { return _row_group_size; }
-  bool SkipValidity() const noexcept { return _skip_validity; }
-  bool HasHyperLogLog() const noexcept;
-  duckdb::CompressionType Compression() const noexcept {
-    return _forced_compression;
-  }
-
-  void SetCompression(duckdb::CompressionType compression) noexcept {
-    _forced_compression = compression;
-  }
-
-  void Finalize();
-
-  void SetHyperLogLog(duckdb::shared_ptr<duckdb::HyperLogLog> hll);
 
   void PadNullsTo(uint64_t target_row);
 
-  struct DataContext {
-    static constexpr size_t kInitialSize = 256;
+  void SetHyperLogLog(duckdb::shared_ptr<duckdb::HyperLogLog> hll);
 
-    std::vector<Chunk> chunks;
-    std::vector<duckdb::VectorCache> chunk_caches;
-    size_t used_chunks = 0;
-    size_t filled = 0;
-    size_t first_rg_doc_id = 0;
-    size_t next_capacity = kInitialSize;
-  };
+  field_id Id() const noexcept { return _id; }
+  const duckdb::LogicalType& Type() const noexcept { return _type; }
+  const ColumnMeta& Meta() const noexcept { return _meta; }
 
  private:
-  Chunk& OpenChunk();
-  void MaybeFlushRowGroup();
-  void FlushChunks(uint64_t count);
+  friend class ColWriter;
 
+  void AppendDense(const duckdb::Vector& vec, duckdb::idx_t count);
+  void PadNestedNulls(uint64_t count);
+  WriteChunk& OpenChunk();
+
+  void SealRowGroup();
+
+  duckdb::optional_ptr<const duckdb::CompressionFunction> PickCodec(
+    const duckdb::LogicalType& codec_type, std::span<WriteChunk> chunks,
+    duckdb::CompressionType forced,
+    duckdb::unique_ptr<duckdb::AnalyzeState>& out_state);
+
+  void Compress(const duckdb::CompressionFunction& picked,
+                duckdb::unique_ptr<duckdb::AnalyzeState> state,
+                const duckdb::LogicalType& codec_type,
+                std::span<WriteChunk> chunks,
+                std::vector<ColumnBlockMeta>& sink);
+
+  void SealValidity(std::span<WriteChunk> chunks, uint64_t row_count,
+                    std::vector<ColumnBlockMeta>& sink);
+
+  void SealNestedValidity(std::span<WriteChunk> chunks, uint64_t row_count,
+                          bool skip_validity, size_t child_count,
+                          ColumnMeta& meta);
+
+  void SealStruct(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
+                  uint64_t row_count, bool skip_validity,
+                  duckdb::CompressionType forced, ColumnMeta& meta);
+
+  void SealArray(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
+                 uint64_t row_count, bool skip_validity,
+                 duckdb::CompressionType forced, ColumnMeta& meta);
+
+  void SealList(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
+                uint64_t row_count, bool skip_validity,
+                duckdb::CompressionType forced, ColumnMeta& meta);
+
+  void SealVariant(const duckdb::LogicalType& type,
+                   std::span<WriteChunk> chunks, uint64_t row_count,
+                   bool skip_validity, duckdb::CompressionType forced,
+                   ColumnMeta& meta);
+
+  void SealColumn(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
+                  uint64_t row_count, bool skip_validity,
+                  duckdb::CompressionType forced, ColumnMeta& meta);
+
+  WriteContext& WriteCtx() const noexcept;
+  IndexOutput& Out() const noexcept;
+
+  ColWriter* _owner;
   field_id _id;
   duckdb::LogicalType _type;
-  uint32_t _row_group_size;
-  WriteContext* _write_ctx;
-  FooterColumnEntry* _entry;
-  DataContext _data_ctx;
   bool _skip_validity = false;
-  bool _hyperloglog = false;
-  duckdb::CompressionType _forced_compression =
-    duckdb::CompressionType::COMPRESSION_AUTO;
+  uint32_t _row_group_size = 0;
+  duckdb::CompressionType _forced = duckdb::CompressionType::COMPRESSION_AUTO;
+  std::vector<WriteChunk> _staged;
+  std::vector<duckdb::VectorCache> _staged_caches;
+  bool _is_nested = false;
+  std::unique_ptr<duckdb::Vector> _null_pad;
+  duckdb::idx_t _staged_chunks = 0;
+  uint64_t _staged_rows = 0;
+  uint64_t _row_start = 0;
+  bool _hll_auto = false;
+  duckdb::Vector _hll_hashes{duckdb::LogicalType::HASH, nullptr};
+  int64_t _variant_min_shred_size = -1;
+  duckdb::LogicalType _force_variant_shredding;
+  ColumnMeta _meta;
 };
 
 }  // namespace irs

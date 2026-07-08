@@ -345,6 +345,8 @@ class DocIteratorImpl : public irs::DocIterator {
     return _doc;
   }
 
+  IRS_DOC_ITERATOR_DEFAULTS
+
  private:
   class PosIterator final : public irs::PosAttr {
    public:
@@ -530,11 +532,11 @@ void AssertDocs(size_t segment_index, size_t field_index, size_t term_index,
   ASSERT_TRUE(!irs::doc_limits::valid(seek_docs->value()));
 
   size_t doc_index = 0;
-  while (expected_docs->next()) {
+  while (!irs::doc_limits::eof(expected_docs->advance())) {
     SCOPED_TRACE(absl::StrCat("doc_index=", doc_index++));
     const auto expected_doc = expected_docs->value();
 
-    ASSERT_TRUE(seq_docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(seq_docs->advance()));
     ASSERT_EQ(expected_doc, seq_docs->value());
 
     ASSERT_EQ(expected_doc, seek_docs->seek(expected_doc));
@@ -611,9 +613,9 @@ void AssertDocs(size_t segment_index, size_t field_index, size_t term_index,
   }
 
   ASSERT_TRUE(irs::doc_limits::eof(expected_docs->value()));
-  ASSERT_FALSE(seq_docs->next());
+  ASSERT_FALSE(!irs::doc_limits::eof(seq_docs->advance()));
   ASSERT_TRUE(irs::doc_limits::eof(seq_docs->value()));
-  ASSERT_FALSE(seek_docs->next());
+  ASSERT_FALSE(!irs::doc_limits::eof(seek_docs->advance()));
   ASSERT_TRUE(irs::doc_limits::eof(seek_docs->value()));
 }
 

@@ -3,19 +3,23 @@ control substitution on
 # Foreign Data Wrapper DDL over the postgres_scanner (postgres_fdw): CREATE
 # SERVER + CREATE USER MAPPING, the postgres counterpart of
 # sdb/clickhouse/create_server_chscan.test_slow. This is the only test of the
-# postgres branch of catalog::BuildForeignServerAttachSql -- it exercises the
+# postgres branch of catalog::PrepareForeignServerAttach -- it exercises the
 # fdw-name map (postgres_fdw -> storage "postgres") AND the `database` -> `dbname`
-# option rename: the server below declares `database 'postgres'`, and
-# CreateForeignServer attaches eagerly (RunAttach) to validate connectivity
-# BEFORE persisting. libpq only accepts `dbname=`, never `database=`, so a green
-# CREATE SERVER proves the rename happened. Unlike ClickHouse (whose default user
-# needs no auth, so a no-user CREATE SERVER attaches), postgres requires a real
-# role even for this initial probe, so `user` is in the server OPTIONS. Needs a
-# postgres backend at ${PGHOST}:${PGPORT}; the _pgscan suffix tells run.sh to
-# bring one up.
+# option canonicalisation in the attach secret: the server below declares
+# `database 'postgres'`, and CreateForeignServer attaches eagerly (RunAttach) to
+# validate connectivity BEFORE persisting. The postgres secret overlay only reads
+# `dbname`, never `database`, so a green CREATE SERVER proves the rename
+# happened. Unlike ClickHouse (whose default user needs no auth, so a no-user
+# CREATE SERVER attaches), postgres requires a real role even for this initial
+# probe, so `user` is in the server OPTIONS. Needs a postgres backend at
+# ${PGHOST}:${PGPORT}; the _pgscan suffix tells run.sh to bring one up.
 #
-# Unique server + schema names (${__DATABASE__}): tests run in parallel against
-# one serened and the ATTACH alias is instance-global, so a shared name collides.
+# Unique server names (${__DATABASE__}): tests run in parallel against one
+# serened and the ATTACH alias is instance-global, so a shared name collides.
+# The REMOTE schema is a literal (csrvpg_ved, unique to this file): the runner
+# derives ${__DATABASE__} from the sdb/pg/... path, so a derived remote schema
+# name would start with "pg_", which postgres reserves (same pattern as
+# iipgscan_docs in inverted_index_pgscan).
 
 statement ok
 CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER postgres_fdw
@@ -40,18 +44,18 @@ n
 # Seed the vedernikoff table on the remote postgres THROUGH the named server
 # (postgres_scanner supports writes), then read it back through the same server.
 statement ok
-CREATE SCHEMA srv_${__DATABASE__}.${__DATABASE__}_ved;
+CREATE SCHEMA srv_${__DATABASE__}.csrvpg_ved;
 
 
 statement ok
-CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}_ved.vedernikoff (
+CREATE TABLE srv_${__DATABASE__}.csrvpg_ved.vedernikoff (
   id  INTEGER PRIMARY KEY,
   val TEXT
 );
 
 
 statement count 6
-INSERT INTO srv_${__DATABASE__}.${__DATABASE__}_ved.vedernikoff VALUES
+INSERT INTO srv_${__DATABASE__}.csrvpg_ved.vedernikoff VALUES
   (1, 'clickclack babsky'),
   (2, 'deadinside kostya'),
   (3, 'vedernikoff pudge'),
@@ -62,7 +66,7 @@ INSERT INTO srv_${__DATABASE__}.${__DATABASE__}_ved.vedernikoff VALUES
 
 # Full scan through the server, ordered for determinism.
 query
-SELECT id, val FROM srv_${__DATABASE__}.${__DATABASE__}_ved.vedernikoff ORDER BY id;
+SELECT id, val FROM srv_${__DATABASE__}.csrvpg_ved.vedernikoff ORDER BY id;
 ----
 id	val
 1	clickclack babsky
@@ -75,7 +79,7 @@ id	val
 
 # Equality pushdown through the server.
 query
-SELECT id FROM srv_${__DATABASE__}.${__DATABASE__}_ved.vedernikoff
+SELECT id FROM srv_${__DATABASE__}.csrvpg_ved.vedernikoff
 WHERE val = 'vedernikoff pudge';
 ----
 id
@@ -84,7 +88,7 @@ id
 
 # IN pushdown through the server.
 query
-SELECT val FROM srv_${__DATABASE__}.${__DATABASE__}_ved.vedernikoff
+SELECT val FROM srv_${__DATABASE__}.csrvpg_ved.vedernikoff
 WHERE id IN (5, 6)
 ORDER BY id;
 ----
@@ -137,11 +141,11 @@ CREATE SERVER IF NOT EXISTS srv_${__DATABASE__} FOREIGN DATA WRAPPER postgres_fd
 
 # Clean up the remote objects through the server before detaching.
 statement ok
-DROP TABLE srv_${__DATABASE__}.${__DATABASE__}_ved.vedernikoff;
+DROP TABLE srv_${__DATABASE__}.csrvpg_ved.vedernikoff;
 
 
 statement ok
-DROP SCHEMA srv_${__DATABASE__}.${__DATABASE__}_ved;
+DROP SCHEMA srv_${__DATABASE__}.csrvpg_ved;
 
 
 # DROP SERVER CASCADE drops its USER MAPPINGs and detaches (RESTRICT would be
@@ -187,7 +191,7 @@ n
 
 # Querying the dropped server errors (it was detached) -- a secondary check.
 statement error
-SELECT id FROM srv_${__DATABASE__}.${__DATABASE__}_ved.vedernikoff LIMIT 1;
+SELECT id FROM srv_${__DATABASE__}.csrvpg_ved.vedernikoff LIMIT 1;
 
 
 # The DROP cascaded the mapping with no orphan left behind: re-creating the

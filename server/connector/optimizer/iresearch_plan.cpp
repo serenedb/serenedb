@@ -509,7 +509,14 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
       .metric = info.metric,
       .score_emit = info.score_emit,
       .natural_order = info.order,
+      .centroids_id = ann_info->centroids_id,
+      .postings_id = ann_info->postings_id,
+      .quant = ann_info->quant.kind,
+      .nprobe = ReadNprobe(context),
     };
+    ss.score_order = irs::VectorMetricNearestIsLargest(info.metric)
+                       ? duckdb::OrderType::DESCENDING
+                       : duckdb::OrderType::ASCENDING;
   } else {
     const auto& vs = *ss.vector_scorer;
     if (vs.field_id != call_field_id || vs.metric != info.metric ||

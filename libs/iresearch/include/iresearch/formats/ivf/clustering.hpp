@@ -20,27 +20,26 @@
 
 #pragma once
 
-#include <faiss/impl/IDSelector.h>
+#include <cstddef>
+#include <cstdint>
+#include <vector>
 
-#include <iresearch/index/iterators.hpp>
-#include <iresearch/search/filter.hpp>
+#include "iresearch/index/column_info.hpp"
 
-namespace sdb::connector {
+namespace irs {
 
-// Non-iresearch WHERE conjuncts remain as LogicalFilter above the scan; only
-// iresearch-claimable conjuncts are evaluated here per ANN candidate.
-class TextScanFilter final : public faiss::IDSelector {
- public:
-  TextScanFilter(const irs::Filter& filter, irs::PrepareCollector& collector);
+void NormalizeRows(float* data, size_t n, uint32_t d);
 
-  void Reset(const irs::SubReader& segment);
-  bool is_member(faiss::idx_t id) const final;
+std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
+                                  size_t n, uint32_t k, uint32_t d,
+                                  uint32_t seed, uint32_t niter = 25,
+                                  uint32_t nredo = 1);
 
- private:
-  const irs::Filter& _filter;
-  irs::PrepareCollector& _collector;
-  mutable irs::QueryBuilder::ptr _query;
-  mutable irs::DocIterator::ptr _it;
-};
+uint32_t NearestCentroid(VectorMetric metric, const float* v,
+                         const float* centroids, uint32_t k, uint32_t d);
 
-}  // namespace sdb::connector
+void AssignNearest(VectorMetric metric, const float* data, size_t n,
+                   const float* centroids, uint32_t k, uint32_t d,
+                   std::vector<uint32_t>& out);
+
+}  // namespace irs

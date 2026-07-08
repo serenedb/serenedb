@@ -21,7 +21,6 @@
 #pragma once
 
 #include <absl/strings/str_cat.h>
-#include <faiss/impl/HNSW.h>
 
 #include <cstdint>
 #include <duckdb/common/serializer/serialization_traits.hpp>
@@ -47,16 +46,6 @@ namespace irs {
 
 class ColumnReader;
 class NormColumnReader;
-struct HNSWInfo;
-
-using PreloadedHnswGraphs =
-  sdb::containers::FlatHashMap<field_id, std::shared_ptr<const faiss::HNSW>>;
-
-struct BuiltHnsw {
-  field_id column_id;
-  HNSWInfo info;
-  std::shared_ptr<const faiss::HNSW> graph;
-};
 
 inline constexpr std::string_view kFormatName = "iresearch_col";
 inline constexpr int32_t kFormatVersion = 0;

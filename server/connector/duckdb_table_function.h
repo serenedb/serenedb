@@ -109,32 +109,37 @@ enum class ScoreEmit : uint8_t {
 struct VectorScorerOptions {
   irs::field_id field_id;
   std::vector<float> query_vector;
-  irs::HNSWMetric metric;
+  irs::VectorMetric metric;
   ScoreEmit score_emit;
   duckdb::OrderType natural_order;
+  irs::field_id centroids_id = irs::field_limits::invalid();
+  irs::field_id postings_id = irs::field_limits::invalid();
+  irs::VectorQuantization quant = irs::VectorQuantization::None;
+  uint32_t nprobe = 1;
   float radius = std::numeric_limits<float>::max();
+  bool radius_inclusive = false;
 
   float EffectiveRadius() const {
     if (radius == std::numeric_limits<float>::max()) {
       return radius;
     }
-    return score_emit == ScoreEmit::Sqrt ? radius * radius : radius;
-  }
-
-  float TransformDistance(float stored) const {
     switch (score_emit) {
       case ScoreEmit::Identity:
-        return stored;
+        return radius;
       case ScoreEmit::Sqrt:
-        return std::sqrt(stored);
+        return radius * radius;
       case ScoreEmit::OneMinus:
-        return 1.0f - stored;
+        return 1.0f - radius;
       case ScoreEmit::Negate:
-        return -stored;
+        return -radius;
     }
     SDB_UNREACHABLE();
   }
 };
+
+irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
+                                  std::shared_ptr<const irs::Filter> inner,
+                                  float radius);
 
 enum class TsDictTermUses : uint8_t {
   kNone = 0,
@@ -156,6 +161,7 @@ struct SearchScan : ScanSource {
   std::optional<catalog::ScorerOptions> text_scorer;
   std::optional<VectorScorerOptions> vector_scorer;
   std::optional<size_t> score_top_k;
+  std::optional<duckdb::OrderType> score_order;
 
   struct OffsetsRequest {
     catalog::Column::Id column_id;
@@ -312,6 +318,10 @@ duckdb::unique_ptr<duckdb::FunctionData> SereneDBScanBind(
 inline bool IsSereneDBScan(const duckdb::LogicalGet& get) {
   return get.bind_data && get.function.bind == &SereneDBScanBind;
 }
+
+uint32_t ReadBoundedIntSetting(duckdb::ClientContext& context,
+                               std::string_view name, int32_t min_inclusive,
+                               uint32_t default_value);
 
 duckdb::TableFunction CreateSearchTableScanFunction();
 

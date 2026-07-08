@@ -14,8 +14,8 @@ hash-threshold 100
 #     materialisation comes from the cs (no rocksdb lookup needed for
 #     that column).
 #
-# The HNSW dual-purpose case lives in inverted_index_ann_include.test
-# (the `hnsw` opclass implicitly sets `store_values=true`).
+# The IVF dual-purpose case lives in inverted_index_ann_include.test
+# (the `ivf` opclass implicitly sets `store_values=true`).
 
 statement ok
 CREATE TABLE m (

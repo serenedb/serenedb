@@ -32,6 +32,7 @@
 #include "basics/assert.h"
 #include "basics/bit_utils.hpp"
 #include "basics/containers/monotonic_buffer.hpp"
+#include "basics/exceptions.h"
 #include "basics/log.h"
 #include "basics/memory.hpp"
 #include "basics/noncopyable.hpp"
@@ -760,6 +761,7 @@ void FieldWriter::Impl::write(const BasicTermReader& reader) {
   const auto props = reader.properties();
   const auto index_features = props.index_features;
   BeginField(props);
+  _pw->SetTermPayloadWriter(reader.PayloadWriter());
 
   uint64_t term_count = 0;
   uint64_t sum_dfreq = 0;
@@ -2653,6 +2655,11 @@ class FieldReader::Impl {
 
       return _owner->_pr->Iterator(meta().index_features, features, cookies,
                                    field_options, min_match, type);
+    }
+
+    std::unique_ptr<IndexInput> ReopenPayload() const final {
+      SDB_ASSERT(_owner && _owner->_pr);
+      return _owner->_pr->ReopenPayload();
     }
 
    private:

@@ -1,0 +1,215 @@
+hash-threshold 100
+
+# SQ4-quantized IVF vector index: 4-bit per-dimension scalar codes (faiss
+# QT_4bit, code_size = ceil(d/2)). Like SQ8 but lossier, so determinism comes
+# from well-separated vectors plus an exhaustive nprobe; assertions check row
+# identity/order only, never the distance score. The quantizer stats are a
+# single global [vmin, vdiff] stored once in the .idx (not per cluster).
+# quant='sq4' supports only metric l2 and ip.
+
+statement ok
+SET sdb_nprobe = 1000
+
+# ===========================================================================
+# 1. L2 + SQ4, single cluster: batched ComputeBlock over >4 docs.
+# ===========================================================================
+
+statement ok
+CREATE TABLE sq4_l2 (pk INTEGER PRIMARY KEY, emb FLOAT[3], label VARCHAR)
+
+statement ok
+CREATE INDEX sq4_l2_idx ON sq4_l2
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq4', nlist = 1))
+  INCLUDE (label)
+
+statement count 6
+INSERT INTO sq4_l2 VALUES
+  (1, [10, 0, 0]::FLOAT[3], 'x'),
+  (2, [0, 10, 0]::FLOAT[3], 'y'),
+  (3, [0, 0, 10]::FLOAT[3], 'z'),
+  (4, [10, 10, 0]::FLOAT[3], 'xy'),
+  (5, [10, 10, 10]::FLOAT[3], 'xyz'),
+  (6, [20, 0, 0]::FLOAT[3], 'x2')
+
+statement ok
+VACUUM (REFRESH_TABLE) sq4_l2
+
+query
+SELECT pk, label FROM sq4_l2_idx
+  ORDER BY emb <-> [11, 0, 0]::FLOAT[3] LIMIT 3;
+----
+pk	label
+1	x
+6	x2
+4	xy
+
+query
+SELECT count(*) FROM sq4_l2_idx;
+----
+count
+6
+
+# ===========================================================================
+# 2. L2 + SQ4, multiple clusters: kNN merges across per-cluster iterators.
+# ===========================================================================
+
+statement ok
+CREATE TABLE sq4_mc (pk INTEGER PRIMARY KEY, emb FLOAT[3])
+
+statement ok
+CREATE INDEX sq4_mc_idx ON sq4_mc
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq4', nlist = 3))
+
+statement count 6
+INSERT INTO sq4_mc VALUES
+  (1, [100, 0, 0]::FLOAT[3]),
+  (2, [101, 0, 0]::FLOAT[3]),
+  (3, [0, 100, 0]::FLOAT[3]),
+  (4, [0, 101, 0]::FLOAT[3]),
+  (5, [0, 0, 100]::FLOAT[3]),
+  (6, [0, 0, 101]::FLOAT[3])
+
+statement ok
+VACUUM (REFRESH_TABLE) sq4_mc
+
+query
+SELECT pk FROM sq4_mc_idx ORDER BY emb <-> [100, 0, 0]::FLOAT[3] LIMIT 2;
+----
+pk
+1
+2
+
+query
+SELECT pk FROM sq4_mc_idx ORDER BY emb <-> [0, 0, 100]::FLOAT[3] LIMIT 2;
+----
+pk
+5
+6
+
+# ===========================================================================
+# 3. DML correctness on an SQ4 index.
+# ===========================================================================
+
+statement ok
+CREATE TABLE sq4_dml (pk INTEGER PRIMARY KEY, emb FLOAT[3])
+
+statement ok
+CREATE INDEX sq4_dml_idx ON sq4_dml
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq4', nlist = 1))
+
+statement count 4
+INSERT INTO sq4_dml VALUES
+  (1, [10, 0, 0]::FLOAT[3]),
+  (2, [0, 10, 0]::FLOAT[3]),
+  (3, [0, 0, 15]::FLOAT[3]),
+  (4, [20, 0, 0]::FLOAT[3])
+
+statement ok
+VACUUM (REFRESH_TABLE) sq4_dml
+
+statement ok
+DELETE FROM sq4_dml WHERE pk = 1
+
+statement ok
+UPDATE sq4_dml SET emb = [0, 0, 100]::FLOAT[3] WHERE pk = 4
+
+statement ok
+VACUUM (REFRESH_TABLE) sq4_dml
+
+query
+SELECT pk FROM sq4_dml_idx ORDER BY emb <-> [0, 0, 99]::FLOAT[3] LIMIT 1;
+----
+pk
+4
+
+query
+SELECT count(*) FROM sq4_dml_idx;
+----
+count
+3
+
+# ===========================================================================
+# 4. InnerProduct + SQ4.
+# ===========================================================================
+
+statement ok
+CREATE TABLE sq4_ip (pk INTEGER PRIMARY KEY, emb FLOAT[3])
+
+statement ok
+CREATE INDEX sq4_ip_idx ON sq4_ip
+  USING inverted(pk, emb ivf (metric = 'ip', quant = 'sq4', nlist = 1))
+
+statement count 4
+INSERT INTO sq4_ip VALUES
+  (1, [1, 0, 0]::FLOAT[3]),
+  (2, [0, 1, 0]::FLOAT[3]),
+  (3, [2, 0, 0]::FLOAT[3]),
+  (4, [3, 0, 0]::FLOAT[3])
+
+statement ok
+VACUUM (REFRESH_TABLE) sq4_ip
+
+query
+SELECT pk FROM sq4_ip_idx ORDER BY emb <#> [1, 0, 0]::FLOAT[3] LIMIT 3;
+----
+pk
+4
+3
+1
+
+# ===========================================================================
+# 5. Hybrid filter + range query route through the exact raw reranker.
+# ===========================================================================
+
+statement ok
+CREATE TABLE sq4_hyb (pk INTEGER PRIMARY KEY, emb FLOAT[3], cat INTEGER)
+
+statement ok
+CREATE INDEX sq4_hyb_idx ON sq4_hyb
+  USING inverted(pk, cat, emb ivf (metric = 'l2', quant = 'sq4', nlist = 1))
+
+statement count 4
+INSERT INTO sq4_hyb VALUES
+  (1, [10, 0, 0]::FLOAT[3], 1),
+  (2, [0, 10, 0]::FLOAT[3], 2),
+  (3, [0, 0, 10]::FLOAT[3], 1),
+  (4, [20, 0, 0]::FLOAT[3], 2)
+
+statement ok
+VACUUM (REFRESH_TABLE) sq4_hyb
+
+query
+SELECT pk FROM sq4_hyb_idx
+  WHERE cat = 1 ORDER BY emb <-> [11, 0, 0]::FLOAT[3] LIMIT 2;
+----
+pk
+1
+3
+
+query
+SELECT pk FROM sq4_hyb_idx
+  WHERE emb <-> [11, 0, 0]::FLOAT[3] < 3 ORDER BY pk;
+----
+pk
+1
+
+statement ok
+RESET sdb_nprobe
+
+# ===========================================================================
+# 6. Guard: sq4 requires metric l2 or ip.
+# ===========================================================================
+
+statement ok
+CREATE TABLE sq4_bad (pk INTEGER PRIMARY KEY, emb FLOAT[3])
+
+statement error
+CREATE INDEX sq4_bad_cos ON sq4_bad USING inverted(pk, emb ivf (metric = 'cosine', quant = 'sq4'));
+----
+db error: ERROR: Failed to create index: Column 'emb': ivf quantization supports only metric 'l2' or 'ip'
+
+
+statement error
+CREATE INDEX sq4_bad_l1 ON sq4_bad USING inverted(pk, emb ivf (metric = 'l1', quant = 'sq4'));
+----
+db error: ERROR: Failed to create index: Column 'emb': ivf quantization supports only metric 'l2' or 'ip'

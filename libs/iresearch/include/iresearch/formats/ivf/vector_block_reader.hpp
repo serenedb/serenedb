@@ -18,28 +18,41 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/duckdb_ann_filter.h"
+#pragma once
 
-#include <iresearch/formats/hnsw/hnsw_reader.hpp>
+#include <cstddef>
+#include <cstdint>
+#include <vector>
 
 #include "basics/assert.h"
+#include "iresearch/store/data_input.hpp"
+#include "iresearch/types.hpp"
 
-namespace sdb::connector {
+namespace irs {
 
-TextScanFilter::TextScanFilter(const irs::Filter& filter,
-                               irs::PrepareCollector& collector)
-  : _filter{filter}, _collector{collector} {}
+class VectorBlockReader {
+ public:
+  VectorBlockReader(IndexInput& in, uint32_t record_size)
+    : _in{in}, _record_size{record_size} {}
 
-void TextScanFilter::Reset(const irs::SubReader& segment) {
-  _query = _filter.PrepareSegment(segment, {.collector = &_collector});
-  SDB_ASSERT(_query);
-  _it = _query->Execute({}, irs::StatsBuffer::Empty());
-  SDB_ASSERT(_it);
-}
+  void Reset(uint64_t base_offset) { _base = base_offset; }
 
-bool TextScanFilter::is_member(faiss::idx_t id) const {
-  auto [_, doc_id] = irs::UnpackSegmentWithDoc(id);
-  return _it->seek(doc_id) == doc_id;
-}
+  const byte_type* Read(size_t index, size_t count) {
+    const uint64_t offset = _base + static_cast<uint64_t>(index) * _record_size;
+    const size_t bytes = count * size_t{_record_size};
+    if (const byte_type* p = _in.ReadStable(offset, bytes)) {
+      return p;
+    }
+    _buf.resize(bytes);
+    _in.ReadData(offset, _buf.data(), bytes);
+    return _buf.data();
+  }
 
-}  // namespace sdb::connector
+ private:
+  IndexInput& _in;
+  std::vector<byte_type> _buf;
+  uint64_t _base = 0;
+  uint32_t _record_size;
+};
+
+}  // namespace irs

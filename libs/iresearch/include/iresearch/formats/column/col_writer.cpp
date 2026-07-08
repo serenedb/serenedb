@@ -34,7 +34,8 @@
 #include "basics/serialization.h"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
-#include "iresearch/formats/hnsw/hnsw_writer.hpp"
+#include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/formats/ivf/ivf_writer.hpp"
 
 namespace irs {
 
@@ -83,7 +84,7 @@ void ColWriter::EnsureOut() {
 }
 
 bool ColWriter::Empty() const noexcept {
-  return _columns.empty() && _norm_writers.empty() && _hnsw_writers.empty();
+  return _columns.empty() && _norm_writers.empty() && _ivf_writers.empty();
 }
 
 void ColWriter::SetFieldOptions(
@@ -126,8 +127,8 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
   auto& cw =
     OpenColumnInternal(id, std::move(type), opts.skip_validity,
                        opts.row_group_size, opts.compression, opts.hyperloglog);
-  if (opts.hnsw_info) {
-    AttachHnsw(id, *opts.hnsw_info);
+  if (opts.ivf_info) {
+    AttachIVF(id, *opts.ivf_info);
   }
   return cw;
 }
@@ -164,40 +165,33 @@ NormColumnWriter& ColWriter::OpenNormColumn(field_id id,
   return *ptr;
 }
 
-HnswWriter& ColWriter::AttachHnsw(field_id column_id, HNSWInfo info) {
-  if (auto it = _hnsw_by_id.find(column_id); it != _hnsw_by_id.end()) {
+IvfWriter& ColWriter::AttachIVF(field_id column_id, IvfInfo info) {
+  if (auto it = _ivf_by_id.find(column_id); it != _ivf_by_id.end()) {
     auto& existing = *it->second;
-    SDB_ASSERT(existing.info.d == info.d &&
-                 existing.info.metric == info.metric &&
-                 existing.info.m == info.m &&
-                 existing.info.ef_construction == info.ef_construction,
-               "ColWriter::AttachHnsw: re-attach with mismatched "
-               "HNSWInfo on column ",
+    SDB_ASSERT(existing.info == info,
+               "ColWriter::AttachIVF: re-attach with mismatched IvfInfo on "
+               "column ",
                column_id);
     return *existing.writer;
   }
-  SDB_ASSERT(_by_id.contains(column_id), "ColWriter::AttachHnsw: column ",
+  SDB_ASSERT(_by_id.contains(column_id), "ColWriter::AttachIVF: column ",
              column_id, " must be opened first");
-  auto entry = std::make_unique<HnswEntry>();
+  auto entry = std::make_unique<IvfEntry>();
   entry->column_id = column_id;
-  entry->info = info;
-  entry->writer = std::make_unique<HnswWriter>(info);
-  auto& back = *_hnsw_writers.emplace_back(std::move(entry));
-  _hnsw_by_id.emplace(column_id, &back);
+  entry->writer = std::make_unique<IvfWriter>(info);
+  entry->info = std::move(info);
+  auto& back = *_ivf_writers.emplace_back(std::move(entry));
+  _ivf_by_id.emplace(column_id, &back);
   return *back.writer;
 }
 
-std::vector<BuiltHnsw> ColWriter::TakeBuiltHnsw() {
-  std::vector<BuiltHnsw> out;
-  out.reserve(_hnsw_writers.size());
-  for (auto& entry : _hnsw_writers) {
-    auto graph = entry->writer->Graph();
-    if (!graph) {
-      continue;
+std::vector<std::unique_ptr<IvfWriter>> ColWriter::TakeIvfWriters() noexcept {
+  std::vector<std::unique_ptr<IvfWriter>> out;
+  out.reserve(_ivf_writers.size());
+  for (auto& entry : _ivf_writers) {
+    if (entry->writer) {
+      out.push_back(std::move(entry->writer));
     }
-    out.push_back(BuiltHnsw{.column_id = entry->column_id,
-                            .info = entry->info,
-                            .graph = std::move(graph)});
   }
   return out;
 }
@@ -245,15 +239,15 @@ void ColWriter::Commit(uint64_t target_row) {
   serializer.End();
   _out->WriteU64(footer_offset);
   format_utils::WriteFooter(*_out);
-  if (!_hnsw_writers.empty()) {
+  if (!_ivf_writers.empty()) {
     _out->Flush();
     ColReader reader{*_dir, _segment_name, *_db};
-    for (auto& entry : _hnsw_writers) {
+    for (auto& entry : _ivf_writers) {
       const auto* col = reader.Column(entry->column_id);
-      SDB_ENSURE(col, sdb::ERROR_INTERNAL,
-                 "col writer: HNSW references missing column id ",
-                 entry->column_id);
-      entry->writer->Build(*col, reader.Ctx());
+      if (!col) {
+        continue;
+      }
+      entry->writer->Compute(*col, reader.Ctx());
     }
   }
   _out.reset();

@@ -40,6 +40,7 @@
 
 #include "catalog/table_options.h"
 #include "connector/column_extract.h"
+#include "connector/duckdb_table_function.h"
 #include "connector/full_scanner.h"
 #include "connector/hit_batcher.h"
 #include "connector/index_source.h"
@@ -75,6 +76,7 @@ struct CommonScanGlobalState : public duckdb::GlobalTableFunctionState {
 
   bool scan_score = false;
   duckdb::idx_t score_output_idx = 0;
+  const VectorScorerOptions* vector_scorer = nullptr;
 
   bool finished = false;
 

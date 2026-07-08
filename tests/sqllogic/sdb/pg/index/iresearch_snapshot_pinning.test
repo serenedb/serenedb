@@ -7,7 +7,7 @@ INSERT INTO t VALUES (1, [1.0, 0.0, 0.0, 0.0]::FLOAT[4]);
 
 
 statement ok
-CREATE INDEX t_hnsw ON t USING inverted(v hnsw (metric = 'l2'));
+CREATE INDEX t_ivf ON t USING inverted(v ivf (metric = 'l2'));
 
 
 statement ok
@@ -27,7 +27,7 @@ BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
 
 connection reader
 query
-SELECT id FROM t_hnsw ORDER BY v <-> [1.0, 0.0, 0.0, 0.0]::FLOAT[4] LIMIT 1;
+SELECT id FROM t_ivf ORDER BY v <-> [1.0, 0.0, 0.0, 0.0]::FLOAT[4] LIMIT 1;
 ----
 id
 1
@@ -40,7 +40,7 @@ DROP TABLE t;
 
 connection reader
 query
-SELECT id FROM t_hnsw ORDER BY v <-> [1.0, 0.0, 0.0, 0.0]::FLOAT[4] LIMIT 1;
+SELECT id FROM t_ivf ORDER BY v <-> [1.0, 0.0, 0.0, 0.0]::FLOAT[4] LIMIT 1;
 ----
 id
 1

@@ -31,8 +31,10 @@
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
+#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/formats/ivf/ivf_writer.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -133,11 +135,12 @@ void SegmentWriter::finish() {
   }
 }
 
-void SegmentWriter::FlushFields(FlushState& state) {
+void SegmentWriter::FlushFields(FlushState& state,
+                                std::span<const BasicTermReader* const> extra) {
   SDB_ASSERT(_field_writer);
 
   try {
-    _fields.flush(*_field_writer, state);
+    _fields.flush(*_field_writer, state, extra);
   } catch (...) {
     _field_writer.reset();
     throw;
@@ -158,15 +161,14 @@ void SegmentWriter::FlushFields(FlushState& state) {
 
   IdxWriter idx{_dir, _seg_name, _db};
 
+  std::vector<std::unique_ptr<IvfWriter>> ivf_writers;
   if (_col_writer) {
     _col_writer->Commit(buffered_docs());
-    auto built = _col_writer->TakeBuiltHnsw();
+    ivf_writers = _col_writer->TakeIvfWriters();
     _col_writer.reset();
-    if (!built.empty()) {
-      _built_hnsw_graphs.reserve(built.size());
-      for (auto& b : built) {
-        _built_hnsw_graphs.emplace(b.column_id, b.graph);
-        idx.AddHNSW(b.column_id, b.info, std::move(b.graph));
+    for (const auto& w : ivf_writers) {
+      if (auto built = w->Built()) {
+        idx.AddIvf(w->ColumnId(), w->Metric(), std::move(built));
       }
     }
   }
@@ -177,7 +179,10 @@ void SegmentWriter::FlushFields(FlushState& state) {
 
   if (state.doc_count != 0) {
     _field_writer->SetIdxWriter(idx);
-    FlushFields(state);
+    std::optional<ReadContext> ivf_ctx;
+    const auto cluster_readers =
+      PrepareIvfClusterReaders(ivf_writers, _col_reader.get(), ivf_ctx);
+    FlushFields(state, cluster_readers);
   }
 
   _col_reader.reset();
@@ -226,7 +231,6 @@ void SegmentWriter::ResetState() noexcept {
     _col_writer->Rollback();
     _col_writer.reset();
   }
-  _built_hnsw_graphs.clear();
 }
 
 void SegmentWriter::reset() noexcept {

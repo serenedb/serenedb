@@ -78,6 +78,12 @@ class QueryBuilder : public memory::Managed {
   virtual DocIterator::ptr Execute(const ExecutionContext& ctx,
                                    const StatsBuffer& stats) const = 0;
 
+  virtual bool CollectTopK(ScoreCollector& /*collector*/,
+                           const ExecutionContext& /*ctx*/,
+                           const StatsBuffer& /*stats*/) const {
+    return false;
+  }
+
   virtual void Visit(PreparedStateVisitor&, score_t boost) const = 0;
 
   virtual score_t Boost() const noexcept = 0;

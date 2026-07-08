@@ -41,7 +41,7 @@
 
 namespace irs {
 
-class HnswWriter;
+class IvfWriter;
 
 class ColWriter final {
  public:
@@ -62,6 +62,8 @@ class ColWriter final {
                              duckdb::CompressionType::COMPRESSION_AUTO,
                            bool hyperloglog = false);
 
+  IvfWriter& AttachIVF(field_id column_id, IvfInfo info);
+
   NormColumnWriter* OpenNormColumn(field_id id);
 
   NormColumnWriter& OpenNormColumn(field_id id, uint32_t row_group_size);
@@ -71,11 +73,9 @@ class ColWriter final {
     return _norm_writers;
   }
 
-  HnswWriter& AttachHnsw(field_id column_id, HNSWInfo info);
+  std::vector<std::unique_ptr<IvfWriter>> TakeIvfWriters() noexcept;
 
-  std::vector<BuiltHnsw> TakeBuiltHnsw();
-
-  void Commit(uint64_t target_row = 0);
+  void Commit(uint64_t target_row);
 
   void Rollback() noexcept;
 
@@ -83,10 +83,10 @@ class ColWriter final {
   IndexOutput& Out() const noexcept { return *_out; }
 
  private:
-  struct HnswEntry {
+  struct IvfEntry {
     field_id column_id;
-    HNSWInfo info;
-    std::unique_ptr<HnswWriter> writer;
+    IvfInfo info;
+    std::unique_ptr<IvfWriter> writer;
   };
 
   void EnsureOut();
@@ -107,8 +107,8 @@ class ColWriter final {
   sdb::containers::FlatHashMap<field_id, ColumnWriter*> _by_id;
   std::vector<std::unique_ptr<NormColumnWriter>> _norm_writers;
   sdb::containers::FlatHashMap<field_id, NormColumnWriter*> _norm_by_id;
-  std::vector<std::unique_ptr<HnswEntry>> _hnsw_writers;
-  sdb::containers::FlatHashMap<field_id, HnswEntry*> _hnsw_by_id;
+  std::vector<std::unique_ptr<IvfEntry>> _ivf_writers;
+  sdb::containers::FlatHashMap<field_id, IvfEntry*> _ivf_by_id;
   bool _committed = false;
 };
 

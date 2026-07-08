@@ -38,13 +38,14 @@
 #include <duckdb/storage/statistics/variant_stats.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
+#include <iresearch/search/vector_radius_filter.hpp>
+#include <iresearch/search/vector_similarity_filter.hpp>
 
 #include "catalog/catalog.h"
 #include "catalog/inverted_index.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_scan_entry.h"
 #include "connector/duckdb_scan_base.hpp"
-#include "connector/duckdb_search_ann_scan.h"
 #include "connector/duckdb_search_full_scan.hpp"
 #include "connector/duckdb_search_table_scan.hpp"
 #include "connector/duckdb_table_entry.h"
@@ -57,6 +58,20 @@
 #include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
+
+uint32_t ReadBoundedIntSetting(duckdb::ClientContext& context,
+                               std::string_view name, int32_t min_inclusive,
+                               uint32_t default_value) {
+  duckdb::Value v;
+  if (context.TryGetCurrentSetting(std::string{name}, v) && !v.IsNull()) {
+    const auto n = v.GetValue<int32_t>();
+    if (n >= min_inclusive) {
+      return static_cast<uint32_t>(n);
+    }
+  }
+  return default_value;
+}
+
 namespace {
 
 void CopyCommon(const SereneDBScanBindData& src, SereneDBScanBindData& dst) {
@@ -316,7 +331,9 @@ std::unique_ptr<ScanSource> SearchScan::Clone() const {
   return std::make_unique<SearchScan>(*this);
 }
 
-bool SearchScan::IsMatchAll() const noexcept { return !stored_filter; }
+bool SearchScan::IsMatchAll() const noexcept {
+  return !stored_filter && !vector_scorer;
+}
 
 bool WandEnabled(const catalog::InvertedIndex* index,
                  const std::optional<catalog::ScorerOptions>& scorer) {
@@ -334,6 +351,35 @@ static std::string ColumnNameFor(const SereneDBScanBindData& bind,
     return std::string{name};
   }
   return absl::StrCat("col", col_id);
+}
+
+irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
+                                  std::shared_ptr<const irs::Filter> inner,
+                                  float radius) {
+  if (vs.radius != std::numeric_limits<float>::max()) {
+    auto f = std::make_unique<irs::ByRadius>();
+    *f->mutable_field_id() = vs.field_id;
+    auto* o = f->mutable_options();
+    o->query = vs.query_vector;
+    o->centroids_id = vs.centroids_id;
+    o->postings_id = vs.postings_id;
+    o->metric = vs.metric;
+    o->radius = radius;
+    o->inclusive = vs.radius_inclusive;
+    o->inner = std::move(inner);
+    return f;
+  }
+  auto f = std::make_unique<irs::ByVectorSimilarity>();
+  *f->mutable_field_id() = vs.field_id;
+  auto* o = f->mutable_options();
+  o->query = vs.query_vector;
+  o->centroids_id = vs.centroids_id;
+  o->postings_id = vs.postings_id;
+  o->metric = vs.metric;
+  o->quant = vs.quant;
+  o->nprobe = vs.nprobe;
+  o->inner = std::move(inner);
+  return f;
 }
 
 namespace {
@@ -454,11 +500,18 @@ auto MakeFieldKindResolver(const SereneDBScanBindData& bind_data,
 void SearchScan::AppendSummary(
   const SereneDBScanBindData& bind,
   duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>& out) const {
-  if (!vector_scorer && stored_filter && bind.inverted_index) {
-    out.insert("Filter", duckdb::ExplainValue(irs::ToExplainNode(
-                           *stored_filter,
-                           MakeFieldNameResolver(bind, *bind.inverted_index),
-                           MakeFieldKindResolver(bind, *bind.inverted_index))));
+  if (bind.inverted_index) {
+    const auto name_of = MakeFieldNameResolver(bind, *bind.inverted_index);
+    const auto kind_of = MakeFieldKindResolver(bind, *bind.inverted_index);
+    if (vector_scorer) {
+      const auto display =
+        MakeVectorFilter(*vector_scorer, stored_filter, vector_scorer->radius);
+      out.insert("Filter", duckdb::ExplainValue(
+                             irs::ToExplainNode(*display, name_of, kind_of)));
+    } else if (stored_filter) {
+      out.insert("Filter", duckdb::ExplainValue(irs::ToExplainNode(
+                             *stored_filter, name_of, kind_of)));
+    }
   }
   if (bind.inverted_index) {
     for (const auto& req : ts_dicts) {
@@ -492,19 +545,6 @@ void SearchScan::AppendSummary(
       absl::StrAppend(&topk_val, ", optimized");
     }
     out.insert("Top", std::move(topk_val));
-  }
-  if (vector_scorer) {
-    if (vector_scorer->radius != std::numeric_limits<float>::max()) {
-      out.insert("Radius", absl::StrCat(vector_scorer->radius));
-    }
-    out.insert("Dims", absl::StrCat(vector_scorer->query_vector.size()));
-    if (stored_filter && bind.inverted_index) {
-      out.insert(
-        "TextFilter",
-        duckdb::ExplainValue(irs::ToExplainNode(
-          *stored_filter, MakeFieldNameResolver(bind, *bind.inverted_index),
-          MakeFieldKindResolver(bind, *bind.inverted_index))));
-    }
   }
   if (EmitOffsets()) {
     auto cols =
@@ -667,29 +707,14 @@ SereneDBScanToValue(duckdb::TableFunctionToStringInput& input) {
     return result;
   }
   auto& bind = input.bind_data->Cast<SereneDBScanBindData>();
-  const auto search_tag = [&]() -> const char* {
-    if (!bind.scan_source) {
-      return "";
-    }
-    if (bind.scan_source->Kind() == ScanSourceKind::Search &&
-        bind.scan_source->Cast<SearchScan>().vector_scorer) {
-      const auto& ss = bind.scan_source->Cast<SearchScan>();
-      if (!ss.score_top_k &&
-          ss.vector_scorer->radius != std::numeric_limits<float>::max()) {
-        return " (ANN range)";
-      }
-      return " (ANN)";
-    }
-    return "";
-  }();
   if (bind.table_entry) {
     const char* kind =
       bind.entry_kind == ScanEntryKind::BaseTable ? "Table" : "Index";
-    result.insert(kind, absl::StrCat(bind.table_entry->name.GetIdentifierName(),
-                                     search_tag));
+    result.insert(kind,
+                  std::string{bind.table_entry->name.GetIdentifierName()});
   } else {
     const char* kind = bind.IsViewBacked() ? "View" : "Table";
-    result.insert(kind, absl::StrCat(bind.RelationName(), search_tag));
+    result.insert(kind, std::string{bind.RelationName()});
   }
   const auto entries = BuildProjectionEntries(bind, input);
   bool has_index = false;
@@ -903,48 +928,27 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
   return nullptr;
 }
 
-bool IsAnnScan(const SereneDBScanBindData& bind_data) {
-  return !!bind_data.scan_source->Cast<SearchScan>().vector_scorer;
-}
-
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
   auto& bind_data = input.bind_data->Cast<SereneDBScanBindData>();
-  switch (bind_data.scan_source->Kind()) {
-    case ScanSourceKind::Search:
-      return IsAnnScan(bind_data) ? SearchAnnScanInitGlobal(context, input)
-                                  : SearchFullScanInitGlobal(context, input);
-    case ScanSourceKind::FullTable:
-      SDB_UNREACHABLE();
-  }
+  SDB_ASSERT(bind_data.scan_source->Kind() == ScanSourceKind::Search);
+  return SearchFullScanInitGlobal(context, input);
 }
 
 duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
   duckdb::ExecutionContext& context, duckdb::TableFunctionInitInput& input,
   duckdb::GlobalTableFunctionState* global_state) {
   auto& bind_data = input.bind_data->Cast<SereneDBScanBindData>();
-  switch (bind_data.scan_source->Kind()) {
-    case ScanSourceKind::Search:
-      return IsAnnScan(bind_data)
-               ? SearchAnnScanInitLocal(context, input, global_state)
-               : SearchFullScanInitLocal(context, input, global_state);
-    case ScanSourceKind::FullTable:
-      SDB_UNREACHABLE();
-  }
+  SDB_ASSERT(bind_data.scan_source->Kind() == ScanSourceKind::Search);
+  return SearchFullScanInitLocal(context, input, global_state);
 }
 
 void IResearchScanFunction(duckdb::ClientContext& context,
                            duckdb::TableFunctionInput& data,
                            duckdb::DataChunk& output) {
   auto& bind_data = data.bind_data->Cast<SereneDBScanBindData>();
-  switch (bind_data.scan_source->Kind()) {
-    case ScanSourceKind::Search:
-      return IsAnnScan(bind_data)
-               ? SearchAnnScanFunction(context, data, output)
-               : SearchFullScanFunction(context, data, output);
-    case ScanSourceKind::FullTable:
-      SDB_UNREACHABLE();
-  }
+  SDB_ASSERT(bind_data.scan_source->Kind() == ScanSourceKind::Search);
+  return SearchFullScanFunction(context, data, output);
 }
 
 }  // namespace

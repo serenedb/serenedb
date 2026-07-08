@@ -37,7 +37,6 @@
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/column_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
-#include "iresearch/formats/hnsw/hnsw_reader.hpp"
 
 namespace irs {
 namespace {
@@ -139,9 +138,8 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
     auto& cw =
       output.OpenColumn(field_id_v, first_col->Type(), opts.skip_validity,
                         opts.row_group_size, opts.compression, false);
-
-    if (opts.hnsw_info) {
-      output.AttachHnsw(field_id_v, *opts.hnsw_info);
+    if (opts.ivf_info) {
+      output.AttachIVF(field_id_v, *opts.ivf_info);
     }
 
     if (opts.hyperloglog) {

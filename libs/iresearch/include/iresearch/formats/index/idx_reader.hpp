@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <faiss/impl/HNSW.h>
-
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -29,8 +27,7 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/formats/column/col_reader.hpp"  // PreloadedHnswGraphs
-#include "iresearch/index/column_info.hpp"          // HNSWInfo
+#include "iresearch/index/column_info.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/store/data_input.hpp"  // IndexInput
 #include "iresearch/types.hpp"
@@ -40,6 +37,8 @@
 namespace irs {
 
 class Directory;
+class TwoLayerCentroids;
+struct IResourceManager;
 
 struct TermDictMeta {
   IndexFeatures features{IndexFeatures::None};
@@ -54,31 +53,23 @@ struct TermDictMeta {
 
 inline constexpr std::string_view kIdxFormatExt = "idx";
 inline constexpr std::string_view kIdxFormatName = "iresearch_index";
-inline constexpr int32_t kIdxFormatVersion = 0;
+inline constexpr int32_t kIdxFormatVersion = 1;
 
 enum class IdxSlotKind : uint8_t {
   TermDict = 0,
-  HNSW = 1,
-};
-
-struct HNSWEntry {
-  std::shared_ptr<const faiss::HNSW> graph;
-  HNSWInfo info;
+  Ivf = 1,
 };
 
 class IdxReader final {
  public:
-  IdxReader(const Directory& dir, std::string_view segment_name,
-            const PreloadedHnswGraphs& preloaded = {});
+  IdxReader(const Directory& dir, std::string_view segment_name);
   ~IdxReader();
 
   IdxReader(const IdxReader&) = delete;
   IdxReader& operator=(const IdxReader&) = delete;
 
-  bool HasHNSW(field_id id) const noexcept;
-  const HNSWEntry* HNSW(field_id id) const noexcept;
-
-  std::span<const std::pair<field_id, HNSWEntry>> HNSWEntries() const noexcept;
+  bool HasIvf(field_id id) const noexcept;
+  const TwoLayerCentroids* Ivf(field_id id) const noexcept;
 
   const TermDictMeta* TermDict(field_id id) const noexcept;
 

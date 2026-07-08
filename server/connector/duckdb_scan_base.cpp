@@ -23,6 +23,8 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
+#include <cmath>
+#include <cstring>
 #include <duckdb.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
@@ -275,7 +277,31 @@ void AccountAndWriteVirtualColumns(CommonScanGlobalState& gstate,
   SDB_ASSERT(scores.size() == num_rows);
   auto* score_data = duckdb::FlatVector::GetDataMutable<float>(
     output.data[gstate.score_output_idx]);
-  std::memcpy(score_data, scores.data(), num_rows * sizeof(float));
+  if (gstate.vector_scorer) {
+    // TODO(codeworse): benchmark not-optimized distances, and maybe remove this
+    switch (gstate.vector_scorer->score_emit) {
+      case ScoreEmit::Identity:
+        std::memcpy(score_data, scores.data(), num_rows * sizeof(float));
+        break;
+      case ScoreEmit::Sqrt:
+        for (duckdb::idx_t i = 0; i < num_rows; ++i) {
+          score_data[i] = std::sqrt(scores[i]);
+        }
+        break;
+      case ScoreEmit::OneMinus:
+        for (duckdb::idx_t i = 0; i < num_rows; ++i) {
+          score_data[i] = 1.0f - scores[i];
+        }
+        break;
+      case ScoreEmit::Negate:
+        for (duckdb::idx_t i = 0; i < num_rows; ++i) {
+          score_data[i] = -scores[i];
+        }
+        break;
+    }
+  } else {
+    std::memcpy(score_data, scores.data(), num_rows * sizeof(float));
+  }
 }
 
 duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx,

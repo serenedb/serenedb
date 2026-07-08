@@ -1,12 +1,13 @@
 control substitution on
 
-# WAL recovery for HNSW columns.
+# WAL recovery for IVF vector columns.
 #
-# HNSW vectors live exclusively in the new cs (ARRAY<FLOAT,N> typed
-# column + per-segment HNSW graph in footer slot 102). On a crash before
-# the iresearch commit, the vectors only exist in the RocksDB WAL slice;
-# WAL recovery must re-feed the cs writer so the next commit produces a
-# segment whose .cs has the vectors AND the auto-rebuilt graph.
+# IVF vectors live in the cs (ARRAY<FLOAT,N> typed column) for exact
+# rerank, with per-segment centroids in the .idx footer and cluster
+# postings in the term dictionary. On a crash before the iresearch
+# commit, the vectors only exist in the RocksDB WAL slice; WAL recovery
+# must re-feed the cs writer so the next commit produces a segment whose
+# .cs has the vectors AND the auto-rebuilt IVF index.
 #
 # Pre-crash row goes through a normal commit so the on-disk .cs is the
 # reference. Post-crash rows land in the WAL only -- we freeze
@@ -14,21 +15,21 @@ control substitution on
 # trx never gets to flush.
 
 statement ok
-CREATE TABLE wal_hnsw_t(pk INTEGER PRIMARY KEY, emb FLOAT[3]);
+CREATE TABLE wal_ivf_t(pk INTEGER PRIMARY KEY, emb FLOAT[3]);
 
 statement ok
-INSERT INTO wal_hnsw_t VALUES (1, [1.0, 0.0, 0.0]::FLOAT[3]);
+INSERT INTO wal_ivf_t VALUES (1, [1.0, 0.0, 0.0]::FLOAT[3]);
 
 statement ok
-CREATE INDEX wal_hnsw_idx ON wal_hnsw_t
-  USING inverted(emb hnsw (metric = 'l2'));
+CREATE INDEX wal_ivf_idx ON wal_ivf_t
+  USING inverted(emb ivf (metric = 'l2'));
 
 statement ok
-VACUUM (REFRESH_TABLE) wal_hnsw_t;
+VACUUM (REFRESH_TABLE) wal_ivf_t;
 
-# Plan check: ANN top-K served by the HNSW graph in the inverted index.
+# Plan check: ANN top-K served by the IVF index in the inverted index.
 query
-EXPLAIN SELECT pk FROM wal_hnsw_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
+EXPLAIN SELECT pk FROM wal_ivf_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
 ----
 QUERY PLAN
 ╭─ TOP_N ────────────────────────────────╮
@@ -37,10 +38,15 @@ QUERY PLAN
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: wal_hnsw_idx (ANN)              │
+│ Index: wal_ivf_idx                     │
 │ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Vector KNN ─╮                       │
+│ │ Field: emb   │                       │
+│ │ Metric: l2   │                       │
+│ │ Dims: 3      │                       │
+│ ╰──────────────╯                       │
 │ Top: 1                                 │
-│ Dims: 3                                │
 │ Projections: pk,                       │
 │              sdb_inverted_index_score  │
 │ ~1 row                                 │
@@ -48,7 +54,7 @@ QUERY PLAN
 
 # Pre-crash row reads from the on-disk .cs + graph.
 query
-SELECT pk FROM wal_hnsw_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
+SELECT pk FROM wal_ivf_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
 ----
 pk
 1
@@ -60,7 +66,7 @@ statement ok
 SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
-INSERT INTO wal_hnsw_t VALUES (2, [0.0, 1.0, 0.0]::FLOAT[3]),
+INSERT INTO wal_ivf_t VALUES (2, [0.0, 1.0, 0.0]::FLOAT[3]),
                               (3, [0.0, 0.0, 1.0]::FLOAT[3]);
 
 statement ok
@@ -74,12 +80,12 @@ SELECT 1;
 
 connection wal_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) wal_hnsw_t;
+VACUUM (REFRESH_TABLE) wal_ivf_t;
 
 # Pre-crash row still queryable.
 connection wal_after
 query
-SELECT pk FROM wal_hnsw_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
+SELECT pk FROM wal_ivf_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
 ----
 pk
 1
@@ -88,14 +94,14 @@ pk
 # nearest neighbour to the second vector returns pk=2, third returns pk=3.
 connection wal_after
 query
-SELECT pk FROM wal_hnsw_idx ORDER BY emb <-> [0.0, 1.0, 0.0]::FLOAT[3] LIMIT 1;
+SELECT pk FROM wal_ivf_idx ORDER BY emb <-> [0.0, 1.0, 0.0]::FLOAT[3] LIMIT 1;
 ----
 pk
 2
 
 connection wal_after
 query
-SELECT pk FROM wal_hnsw_idx ORDER BY emb <-> [0.0, 0.0, 1.0]::FLOAT[3] LIMIT 1;
+SELECT pk FROM wal_ivf_idx ORDER BY emb <-> [0.0, 0.0, 1.0]::FLOAT[3] LIMIT 1;
 ----
 pk
 3
@@ -103,7 +109,7 @@ pk
 # All three rows visible.
 connection wal_after
 query
-SELECT COUNT(*) AS n FROM wal_hnsw_idx;
+SELECT COUNT(*) AS n FROM wal_ivf_idx;
 ----
 n
 3

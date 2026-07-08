@@ -20,15 +20,14 @@
 
 #pragma once
 
-#include <faiss/impl/HNSW.h>
-
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "iresearch/formats/index/idx_reader.hpp"  // TermDictMeta, kIdxFormat*
-#include "iresearch/index/column_info.hpp"         // HNSWInfo
+#include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
 
 namespace duckdb {
@@ -40,6 +39,7 @@ namespace irs {
 
 class Directory;
 class IndexOutput;
+struct BuiltIvf;
 
 class IdxWriter final {
  public:
@@ -52,8 +52,8 @@ class IdxWriter final {
 
   IndexOutput& BlocksOut();
 
-  void AddHNSW(field_id id, const HNSWInfo& info,
-               std::shared_ptr<const faiss::HNSW> graph);
+  void AddIvf(field_id id, VectorMetric metric,
+              std::shared_ptr<const BuiltIvf> built);
 
   void AddTermDictEntry(field_id id, TermDictMeta meta);
 

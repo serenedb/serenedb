@@ -177,6 +177,7 @@ struct DotProductImpl {
   static_assert(std::is_unsigned_v<In> || std::is_signed_v<Out>);
 
   static Out Compute(const byte_type* l, const byte_type* r, uint16_t d) {
+#pragma clang fp reassociate(on) contract(fast)
     Out s{};
     for (uint16_t i = 0; i != d; ++i) {
       Out li = static_cast<Out>(reinterpret_cast<const In*>(l)[i]);
@@ -193,6 +194,7 @@ struct CosineDistanceImpl {
   static_assert(std::is_floating_point_v<Out>);
 
   static auto Compute(const byte_type* l, const byte_type* r, uint16_t d) {
+#pragma clang fp reassociate(on) contract(fast)
     Sum ll{};
     Sum lr{};
     Sum rr{};
@@ -249,6 +251,7 @@ struct L1Space {
   static_assert(std::is_signed_v<Abs>);
 
   static Out Norm(const byte_type* v, uint16_t d) {
+#pragma clang fp reassociate(on) contract(fast)
     Out s{};
     for (uint16_t i = 0; i != d; ++i) {
       auto vi = reinterpret_cast<const In*>(v)[i];
@@ -261,6 +264,7 @@ struct L1Space {
   }
 
   static Out Dist(const byte_type* l, const byte_type* r, uint16_t d) {
+#pragma clang fp reassociate(on) contract(fast)
     Out s{};
     for (uint16_t i = 0; i != d; ++i) {
       auto li = static_cast<Abs>(reinterpret_cast<const In*>(l)[i]);
@@ -290,6 +294,7 @@ struct L1Space {
 template<typename In, typename Sqr, typename Out>
 struct L2Space {
   static Out Norm(const byte_type* v, uint16_t d) {
+#pragma clang fp reassociate(on) contract(fast)
     Out s{};
     for (uint16_t i = 0; i != d; ++i) {
       auto vi = static_cast<Sqr>(reinterpret_cast<const In*>(v)[i]);
@@ -300,6 +305,7 @@ struct L2Space {
   }
 
   static Out Dist(const byte_type* l, const byte_type* r, uint16_t d) {
+#pragma clang fp reassociate(on) contract(fast)
     Out s{};
     for (uint16_t i = 0; i != d; ++i) {
       auto li = static_cast<Sqr>(reinterpret_cast<const In*>(l)[i]);

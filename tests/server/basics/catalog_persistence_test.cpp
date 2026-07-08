@@ -204,7 +204,33 @@ TEST(CatalogPersistence, entry_config_serialized) {
       .store_values = true,
       .compression = duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
       .features = search::Features{},
-      .hnsw_config = std::nullopt,
+      .ivf_config = std::nullopt,
+      .synthetic_column = irs::field_limits::invalid(),
+      .row_group_size = 100,
+      .norm_row_group_size = 50,
+    });
+}
+
+TEST(CatalogPersistence, entry_config_serialized_ivf) {
+  CheckFixture(
+    "entry_config_serialized_ivf.bin",
+    EntryConfigSerialized{
+      .text_dictionary = ObjectId{5},
+      .store_values = true,
+      .compression = duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
+      .features = search::Features{},
+      .ivf_config =
+        IVFColumnConfig{
+          .d = 128,
+          .metric = irs::VectorMetric::InnerProduct,
+          .quant = irs::VectorQuantization::SQ8,
+          .nlist = 0,
+          .train_sample = 4096,
+          .cluster_iters = 25,
+          .pq_m = 0,
+          .rabitq_bits = 0,
+          .nlist_factor = 2.5f,
+        },
       .synthetic_column = irs::field_limits::invalid(),
       .row_group_size = 100,
       .norm_row_group_size = 50,
@@ -323,15 +349,6 @@ TEST(CatalogPersistence, expression_data) {
                  .return_type = duckdb::LogicalType::BIGINT,
                  .pretty_printed = "x",
                });
-}
-
-TEST(CatalogPersistence, hnsw_column_config) {
-  CheckFixture("hnsw_column_config.bin", HNSWColumnConfig{
-                                           .d = 128,
-                                           .m = 16,
-                                           .ef_construction = 200,
-                                           .metric = irs::HNSWMetric::L2Sqr,
-                                         });
 }
 
 TEST(CatalogPersistence, scorer_options) {

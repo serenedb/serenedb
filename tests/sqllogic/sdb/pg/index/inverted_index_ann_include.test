@@ -1,6 +1,6 @@
 hash-threshold 100
 
-# End-to-end: INCLUDE'd columns alongside an HNSW ANN search.
+# End-to-end: INCLUDE'd columns alongside an IVF ANN search.
 # Verifies the ANN result rows pull their INCLUDE'd column values
 # from the columnstore overlay rather than falling back to RocksDB,
 # and that ORDER BY emb <-> ... LIMIT k still returns the right
@@ -17,7 +17,7 @@ CREATE TABLE vec_t (
 
 
 statement ok
-CREATE INDEX vec_t_idx ON vec_t USING inverted(pk, emb hnsw (metric = 'l2'))
+CREATE INDEX vec_t_idx ON vec_t USING inverted(pk, emb ivf (metric = 'l2'))
   INCLUDE (label, tag)
 
 
@@ -56,9 +56,14 @@ QUERY PLAN
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: vec_t_idx (ANN)                 │
+│ Index: vec_t_idx                       │
+│ Filter:                                │
+│ ╭─ Vector KNN ─╮                       │
+│ │ Field: emb   │                       │
+│ │ Metric: l2   │                       │
+│ │ Dims: 3      │                       │
+│ ╰──────────────╯                       │
 │ Top: 1                                 │
-│ Dims: 3                                │
 │ Projections: label, tag,               │
 │              sdb_inverted_index_score  │
 │ ~4 rows                                │
@@ -86,10 +91,15 @@ QUERY PLAN
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: vec_t_idx (ANN)                 │
+│ Index: vec_t_idx                       │
 │ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Vector KNN ─╮                       │
+│ │ Field: emb   │                       │
+│ │ Metric: l2   │                       │
+│ │ Dims: 3      │                       │
+│ ╰──────────────╯                       │
 │ Top: 1                                 │
-│ Dims: 3                                │
 │ Projections: pk (l), label (i),        │
 │              body (l),                 │
 │              sdb_inverted_index_score  │

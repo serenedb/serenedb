@@ -1,0 +1,242 @@
+control substitution on
+
+# ============================================================================
+# Multiple vector (IVF) columns in a single inverted index.
+#
+# One index declares two distinct FLOAT[] columns, each with its own `ivf`
+# opclass, metric and dimensionality. They share one segment / ColWriter, so
+# this exercises the per-column IvfWriter loop (one Result per vector column),
+# the per-field_id centroid registry, the multi-reader field flush, and the
+# merge path -- none of which existed before this branch.
+# ============================================================================
+
+statement ok
+CREATE TABLE mv(pk INTEGER PRIMARY KEY, a FLOAT[3], b FLOAT[4]);
+
+# a -> L2 (dims 3), b -> cosine (dims 4), both under the SAME index.
+statement ok
+CREATE INDEX mv_ivf ON mv
+    USING inverted(pk, a ivf (metric = 'l2'), b ivf (metric = 'cosine'));
+
+# A second index over the same two columns, each quantized with a different
+# metric (a: l2/sq8, b: ip/sq8). Created up front so REFRESH builds it together
+# with mv_ivf over the same rows.
+statement ok
+CREATE INDEX mv_ivf_q ON mv
+    USING inverted(pk, a ivf (metric = 'l2', quant = 'sq8'),
+                       b ivf (metric = 'ip', quant = 'sq8'));
+
+statement ok
+INSERT INTO mv VALUES
+    (1, [100,0,0]::FLOAT[3],   [10,0,0,0]::FLOAT[4]),
+    (2, [0,100,0]::FLOAT[3],   [8,6,0,0]::FLOAT[4]),
+    (3, [0,0,100]::FLOAT[3],   [6,8,0,0]::FLOAT[4]),
+    (4, [100,100,0]::FLOAT[3], [0,0,10,0]::FLOAT[4]);
+
+statement ok
+VACUUM (REFRESH_TABLE) mv;
+
+# Exhaustive scan so the tiny-table kNN is exact (nprobe >= nlist).
+statement ok
+SET sdb_nprobe = 256;
+
+# --- both columns reach the ANN scan with the right per-column metric/dims ----
+
+query
+EXPLAIN SELECT pk FROM mv_ivf
+  ORDER BY a <-> [90,0,0]::FLOAT[3] LIMIT 2;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 2                                 │
+│ Order By: #1 ASC                       │
+│ ~2 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: mv_ivf                          │
+│ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Vector KNN ─╮                       │
+│ │ Field: a     │                       │
+│ │ Metric: l2   │                       │
+│ │ Dims: 3      │                       │
+│ ╰──────────────╯                       │
+│ Top: 2                                 │
+│ Projections: pk,                       │
+│              sdb_inverted_index_score  │
+│ ~4 rows                                │
+╰────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT pk FROM mv_ivf
+  ORDER BY b <=> [1,0,0,0]::FLOAT[4] LIMIT 2;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 2                                 │
+│ Order By: #1 ASC                       │
+│ ~2 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: mv_ivf                          │
+│ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Vector KNN ───╮                     │
+│ │ Field: b       │                     │
+│ │ Metric: cosine │                     │
+│ │ Dims: 4        │                     │
+│ ╰────────────────╯                     │
+│ Top: 2                                 │
+│ Projections: pk,                       │
+│              sdb_inverted_index_score  │
+│ ~4 rows                                │
+╰────────────────────────────────────────╯
+
+# --- kNN on each column, by index name and via base-table rewrite ------------
+
+query
+SELECT pk FROM mv_ivf ORDER BY a <-> [90,0,0]::FLOAT[3] LIMIT 2;
+----
+pk
+1
+4
+
+query
+SELECT pk FROM mv ORDER BY a <-> [90,0,0]::FLOAT[3] LIMIT 2;
+----
+pk
+1
+4
+
+query
+SELECT pk FROM mv_ivf ORDER BY b <=> [1,0,0,0]::FLOAT[4] LIMIT 2;
+----
+pk
+1
+2
+
+query
+SELECT pk FROM mv ORDER BY b <=> [1,0,0,0]::FLOAT[4] LIMIT 2;
+----
+pk
+1
+2
+
+# --- exact-match top-1 on each column ----------------------------------------
+
+query
+SELECT pk FROM mv_ivf ORDER BY a <-> [0,0,100]::FLOAT[3] LIMIT 1;
+----
+pk
+3
+
+query
+SELECT pk FROM mv_ivf ORDER BY b <=> [6,8,0,0]::FLOAT[4] LIMIT 1;
+----
+pk
+3
+
+# --- range (radius) filter on each column ------------------------------------
+
+query
+SELECT pk FROM mv_ivf
+WHERE a <-> [100,0,0]::FLOAT[3] < 0.5
+ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM mv_ivf
+WHERE b <=> [1,0,0,0]::FLOAT[4] < 0.1
+ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT count(*) FROM mv_ivf;
+----
+count
+4
+
+# --- second (quantized) index over the same two columns ----------------------
+
+query
+SELECT pk FROM mv_ivf_q ORDER BY a <-> [0,0,100]::FLOAT[3] LIMIT 1;
+----
+pk
+3
+
+query
+SELECT pk FROM mv_ivf_q ORDER BY b <#> [10,0,0,0]::FLOAT[4] LIMIT 1;
+----
+pk
+1
+
+query
+SELECT count(*) FROM mv_ivf_q;
+----
+count
+4
+
+# --- merge: a second flushed batch + compaction, then re-query ---------------
+
+statement ok
+INSERT INTO mv VALUES
+    (5, [10,10,10]::FLOAT[3], [1,1,1,1]::FLOAT[4]),
+    (6, [20,20,20]::FLOAT[3], [2,2,1,0]::FLOAT[4]),
+    (7, [5,5,5]::FLOAT[3],    [0,1,0,0]::FLOAT[4]),
+    (8, [30,30,30]::FLOAT[3], [9,1,0,0]::FLOAT[4]);
+
+statement ok
+VACUUM (REFRESH_TABLE) mv;
+
+statement ok
+VACUUM (COMPACT_TABLE) mv;
+
+# newly merged rows are searchable on column a ...
+query
+SELECT pk FROM mv_ivf ORDER BY a <-> [5,5,5]::FLOAT[3] LIMIT 1;
+----
+pk
+7
+
+# ... existing rows still resolve per column after the merge
+query
+SELECT pk FROM mv_ivf ORDER BY a <-> [0,0,100]::FLOAT[3] LIMIT 1;
+----
+pk
+3
+
+query
+SELECT pk FROM mv_ivf ORDER BY b <=> [6,8,0,0]::FLOAT[4] LIMIT 1;
+----
+pk
+3
+
+query
+SELECT count(*) FROM mv_ivf;
+----
+count
+8
+
+query
+SELECT pk FROM mv_ivf_q ORDER BY b <#> [10,0,0,0]::FLOAT[4] LIMIT 1;
+----
+pk
+1
+
+query
+SELECT count(*) FROM mv_ivf_q;
+----
+count
+8
+
+statement ok
+RESET sdb_nprobe;
+
+# --- teardown ---------------------------------------------------------------
+
+statement ok
+DROP TABLE mv;

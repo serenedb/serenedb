@@ -124,7 +124,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripMultiColumnMultiRowGroup) {
       cwB.Append(vb, take);
       pos += take;
     }
-    w.Commit();
+    w.Commit(0);
   }
 
   irs::ColReader r{dir, "seg", Db()};
@@ -179,7 +179,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripVarcharOverflow) {
       cwS.Append(v, take);
       pos += take;
     }
-    w.Commit();
+    w.Commit(0);
   }
 
   irs::ColReader r{dir, "seg", Db()};
@@ -250,7 +250,7 @@ TEST_F(ColumnReaderTest, DictFsstValidityAbsorbed) {
       cwS.Append(v, take);
       pos += take;
     }
-    w.Commit();
+    w.Commit(0);
   }
 
   irs::ColReader r{dir, "seg", Db()};
@@ -308,7 +308,7 @@ TEST_F(ColumnReaderTest, AllNullColumnMergedStatsHasNoNullFalse) {
       cwA.Append(v, take);
       pos += take;
     }
-    w.Commit();
+    w.Commit(0);
   }
 
   irs::ColReader r{dir, "seg", Db()};
@@ -353,7 +353,7 @@ TEST_F(ColumnReaderTest, DictFsstReusedBatchAcrossChunks) {
       cw.Append(v, take);
       pos += take;
     }
-    w.Commit();
+    w.Commit(0);
   }
   irs::ColReader r{dir, "seg", Db()};
   const auto* cs = r.Column(kS);
@@ -419,7 +419,7 @@ TEST_F(ColumnReaderTest, GatherSparseAndDenseAcrossRowGroups) {
       cwA.Append(v, take);
       pos += take;
     }
-    w.Commit();
+    w.Commit(0);
   }
 
   irs::ColReader r{dir, "seg", Db()};
@@ -496,7 +496,7 @@ TEST_F(ColumnReaderTest, PointFetchRow) {
       cwS.Append(vs, take);
       pos += take;
     }
-    w.Commit();
+    w.Commit(0);
   }
 
   irs::ColReader r{dir, "seg", Db()};
@@ -590,7 +590,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripStruct) {
       cwT.Append(v, take);
       pos += take;
     }
-    w.Commit();
+    w.Commit(0);
   }
 
   irs::ColReader r{dir, "seg", Db()};
@@ -684,7 +684,7 @@ TEST_F(ColumnReaderTest, GatherStructAcrossRowGroups) {
       cwT.Append(v, take);
       pos += take;
     }
-    w.Commit();
+    w.Commit(0);
   }
 
   irs::ColReader r{dir, "seg", Db()};
@@ -763,7 +763,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripArray) {
       cwArr.Append(v, take);
       pos += take;
     }
-    w.Commit();
+    w.Commit(0);
   }
 
   irs::ColReader r{dir, "seg", Db()};
@@ -844,7 +844,7 @@ TEST_F(ColumnReaderTest, GatherArrayAcrossRowGroups) {
       cwArr.Append(v, take);
       pos += take;
     }
-    w.Commit();
+    w.Commit(0);
   }
 
   irs::ColReader r{dir, "seg", Db()};
@@ -919,7 +919,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripList) {
       cwL.Append(v, take);
       pos += take;
     }
-    w.Commit();
+    w.Commit(0);
   }
 
   irs::ColReader r{dir, "seg", Db()};
@@ -998,7 +998,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripNestedList) {
       cwL.Append(v, take);
       pos += take;
     }
-    w.Commit();
+    w.Commit(0);
   }
 
   irs::ColReader r{dir, "seg", Db()};
@@ -1063,7 +1063,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripNestedArray) {
       cwL.Append(v, take);
       pos += take;
     }
-    w.Commit();
+    w.Commit(0);
   }
 
   irs::ColReader r{dir, "seg", Db()};
@@ -1141,7 +1141,7 @@ TEST_F(ColumnReaderTest, ListGatherSparse) {
       cwL.Append(v, take);
       pos += take;
     }
-    w.Commit();
+    w.Commit(0);
   }
 
   irs::ColReader r{dir, "lseg", Db()};
@@ -1198,7 +1198,7 @@ void WriteVariantViaSql(duckdb::DatabaseInstance& db, irs::Directory& dir,
       expected.emplace_back(chunk->GetValue(0, k));
     }
   }
-  w.Commit();
+  w.Commit(0);
 }
 
 void SetShreddingSize(duckdb::DatabaseInstance& db, int64_t value) {
@@ -1355,7 +1355,7 @@ TEST_F(ColumnReaderTest, HyperLogLogDistinctCount) {
       cwA.Append(v, take);
       pos += take;
     }
-    w.Commit();
+    w.Commit(0);
   }
 
   irs::ColReader r{dir, "seg", Db()};
@@ -1444,7 +1444,7 @@ TEST_F(ColumnReaderTest, BlobPointReaderFetch) {
       cwB.Append(v, take);
       pos += take;
     }
-    w.Commit();
+    w.Commit(0);
   }
 
   irs::ColReader r{dir, "seg", Db()};
@@ -1774,7 +1774,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripStructAllNullRowGroup) {
       cwT.Append(v, take);
       pos += take;
     }
-    w.Commit();
+    w.Commit(0);
   }
 
   irs::ColReader r{dir, "seg", Db()};
@@ -2035,7 +2035,7 @@ TEST_F(ColumnReaderTest, DictFsstShortRepeatedStrings) {
       cwS.Append(v, take);
       pos += take;
     }
-    w.Commit();
+    w.Commit(0);
   }
 
   irs::ColReader r{dir, "seg", Db()};

@@ -1,6 +1,6 @@
 hash-threshold 100
 
-# End-to-end: INCLUDE'd columns alongside an HNSW range search.
+# End-to-end: INCLUDE'd columns alongside an IVF range search.
 # WHERE l2_distance(emb, q) < radius triggers IRESEARCH_RANGE_SCAN;
 # verifies projected INCLUDE'd columns route through the
 # columnstore overlay (per-segment perm + materialize), while
@@ -17,7 +17,7 @@ CREATE TABLE vec_r (
 
 
 statement ok
-CREATE INDEX vec_r_idx ON vec_r USING inverted(pk, emb hnsw (metric = 'l2'))
+CREATE INDEX vec_r_idx ON vec_r USING inverted(pk, emb ivf (metric = 'l2'))
   INCLUDE (label, tag)
 
 
@@ -49,13 +49,19 @@ EXPLAIN SELECT label, tag FROM vec_r_idx
   WHERE l2_distance(emb, [1, 0, 0]::FLOAT[3]) < 1.0;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────╮
-│ Index: vec_r_idx (ANN range) │
-│ Radius: 1                    │
-│ Dims: 3                      │
-│ Projections: label, tag      │
-│ ~4 rows                      │
-╰──────────────────────────────╯
+╭─ IRESEARCH_SCAN ────╮
+│ Index: vec_r_idx    │
+│ Filter:             │
+│ ╭─ Vector Range ─╮  │
+│ │ Field: emb     │  │
+│ │ Metric: l2     │  │
+│ │ Dims: 3        │  │
+│ │ Radius: < 1    │  │
+│ ╰────────────────╯  │
+│ Projections: label, │
+│              tag    │
+│ ~4 rows             │
+╰─────────────────────╯
 
 
 query
@@ -74,16 +80,21 @@ EXPLAIN SELECT pk, label, body FROM vec_r_idx
   WHERE l2_distance(emb, [10, 10, 10]::FLOAT[3]) < 1.0;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────╮
-│ Index: vec_r_idx (ANN range) │
-│ Lookup: table                │
-│ Radius: 1                    │
-│ Dims: 3                      │
-│ Projections: pk (l),         │
-│              label (i),      │
-│              body (l)        │
-│ ~4 rows                      │
-╰──────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────╮
+│ Index: vec_r_idx        │
+│ Lookup: table           │
+│ Filter:                 │
+│ ╭─ Vector Range ─╮      │
+│ │ Field: emb     │      │
+│ │ Metric: l2     │      │
+│ │ Dims: 3        │      │
+│ │ Radius: < 1    │      │
+│ ╰────────────────╯      │
+│ Projections: pk (l),    │
+│              label (i), │
+│              body (l)   │
+│ ~4 rows                 │
+╰─────────────────────────╯
 
 
 query

@@ -1,22 +1,17 @@
 hash-threshold 100
 
-# HNSW on an ARRAY<FLOAT, N> column where some rows are NULL.
+# IVF on an ARRAY<FLOAT, N> column where some rows are NULL.
 # Three regressions covered:
-#  1. HNSWWriter::Build used to index every row, including NULL-emb
-#     rows (the cs child stores zero-filled slots for them) -- they
-#     showed up in `ORDER BY emb <-> X LIMIT k` whenever k >= the
-#     non-NULL count or the query was near the origin.
-#  2. DELETE flagged rows in docs_mask but the HNSW graph kept their
-#     node ids; the next HNSW search returned a deleted doc and the
-#     downstream PK fetch failed with "Missing row for PK in RocksDB".
-#  3. VACUUM (COMPACT_TABLE) <table> rebuilds HNSW
-#     over the merged vector column; without the NULL skip, ANN
-#     search on the merged segment also returned NULL rows.
-#
-# The fixes:
-#   * HNSWWriter::Build skips rows whose ARRAY parent is NULL.
-#   * HNSWSegmentResultHandler::add_result drops idx values that
-#     hit `docs_mask`.
+#  1. IVF build must skip rows whose ARRAY parent is NULL (the cs child
+#     stores zero-filled slots for them) -- otherwise they show up in
+#     `ORDER BY emb <-> X LIMIT k` whenever k >= the non-NULL count or
+#     the query is near the origin.
+#  2. DELETE flags rows in docs_mask; the cluster postings still hold
+#     their doc ids, so the segment mask must drop them or the next ANN
+#     search returns a deleted doc and the downstream PK fetch fails
+#     with "Missing row for PK in RocksDB".
+#  3. VACUUM (COMPACT_TABLE) <table> rebuilds the IVF index over the
+#     merged vector column; the NULL skip must hold there too.
 
 statement ok
 CREATE TABLE vec_n (
@@ -27,7 +22,7 @@ CREATE TABLE vec_n (
 
 
 statement ok
-CREATE INDEX vec_n_idx ON vec_n USING inverted(pk, emb hnsw (metric = 'l2'))
+CREATE INDEX vec_n_idx ON vec_n USING inverted(pk, emb ivf (metric = 'l2'))
   INCLUDE (label)
 
 
@@ -84,7 +79,7 @@ pk	label
 5	unit-z
 
 
-# ---- HNSW search: NULL rows never appear in top-K ----
+# ---- IVF search: NULL rows never appear in top-K ----
 # LIMIT < non-NULL count -- always worked, kept as a baseline.
 query
 SELECT pk, label FROM vec_n_idx
@@ -117,7 +112,7 @@ pk	label
 5	unit-z
 
 
-# ---- DELETE filters out via docs_mask, no dangling HNSW node ----
+# ---- DELETE filters out via docs_mask, no dangling IVF node ----
 statement ok
 DELETE FROM vec_n WHERE pk = 3
 
@@ -138,13 +133,13 @@ pk	label
 1	unit-x
 
 
-# ---- Compaction rebuilds HNSW; NULL skip applies to merge too ----
+# ---- Compaction rebuilds IVF; NULL skip applies to merge too ----
 statement ok
 VACUUM (COMPACT_TABLE) vec_n;
 
 
 # Pre-fix this returned pk=4, pk=2 (the two NULL rows) because the
-# rebuilt HNSW indexed them as zero-vectors.
+# rebuilt IVF indexed them as zero-vectors.
 query
 SELECT pk, label FROM vec_n_idx
   ORDER BY emb <-> [0, 0.9, 0.1]::FLOAT[3] LIMIT 2;

@@ -8,6 +8,7 @@
 #include "clickhouse_filter_pushdown.hpp"
 #include "clickhouse_secrets.hpp"
 #include "clickhouse_storage.hpp"
+#include "storage/clickhouse_connection_pool.hpp"
 #include "storage/clickhouse_optimizer.hpp"
 
 using namespace duckdb;
@@ -36,6 +37,9 @@ static void LoadInternal(ExtensionLoader &loader) {
 	ClickHouseClearCacheFunction clear_cache_func;
 	loader.RegisterFunction(clear_cache_func);
 
+	ClickHouseConfigurePoolFunction configure_pool_func;
+	loader.RegisterFunction(configure_pool_func);
+
 	loader.RegisterSecretType(ClickHouseSecrets::CreateType());
 
 	CreateSecretFunction secret_fn = {"clickhouse", "config", ClickHouseSecrets::CreateFunction};
@@ -49,8 +53,50 @@ static void LoadInternal(ExtensionLoader &loader) {
 	                          LogicalType::BOOLEAN, Value::BOOLEAN(false), SetClickHouseDebugQueryPrint);
 
 	config.AddExtensionOption("ch_connection_cache",
-	                          "Whether to reuse (pool) ClickHouse connections across statements",
+	                          "Whether to reuse (pool) ClickHouse connections across statements; setting this to "
+	                          "false bypasses the connection pool entirely (dynamic kill switch)",
 	                          LogicalType::BOOLEAN, Value::BOOLEAN(true), SetClickHouseConnectionCache);
+
+	// The pg_pool_* analogs, read when a catalog's pool is created at ATTACH; a live
+	// pool is reconfigured via clickhouse_configure_pool(catalog_name := ..., ...).
+	dbconnector::pool::ConnectionPoolConfig default_pool_config;
+	config.AddExtensionOption(
+	    "ch_pool_acquire_mode",
+	    "How to acquire connections from the pool: 'force' (always connect, ignore pool limit), "
+	    "'wait' (block until available), 'try' (fail immediately if unavailable) (default: force)",
+	    LogicalType::VARCHAR, Value(dbconnector::pool::AcquireModeHelpers::ToString(default_pool_config.acquire_mode)),
+	    ClickHouseConnectionPool::ValidatePoolAcquireMode, SetScope::GLOBAL);
+	config.AddExtensionOption("ch_pool_max_connections",
+	                          "Maximum number of connections that are allowed to be cached in a connection pool for "
+	                          "each attached ClickHouse database",
+	                          LogicalType::UBIGINT, Value::UBIGINT(default_pool_config.max_connections), nullptr,
+	                          SetScope::GLOBAL);
+	config.AddExtensionOption("ch_pool_wait_timeout_millis",
+	                          "Maximum number of milliseconds to wait when acquiring a connection from a pool where "
+	                          "all available connections are already taken",
+	                          LogicalType::UBIGINT, Value::UBIGINT(default_pool_config.wait_timeout_millis), nullptr,
+	                          SetScope::GLOBAL);
+	config.AddExtensionOption("ch_pool_enable_thread_local_cache",
+	                          "Whether to enable the connection caching in thread-local cache. Such connections are "
+	                          "pinned to their threads and are not made available to other threads, while still "
+	                          "taking a place in the pool",
+	                          LogicalType::BOOLEAN, Value::BOOLEAN(default_pool_config.tl_cache_enabled), nullptr,
+	                          SetScope::GLOBAL);
+	config.AddExtensionOption("ch_pool_max_lifetime_millis",
+	                          "Maximum number of milliseconds a connection can be kept open; checked on lease/return "
+	                          "and, with the reaper thread enabled, in the background",
+	                          LogicalType::UBIGINT, Value::UBIGINT(default_pool_config.max_lifetime_millis), nullptr,
+	                          SetScope::GLOBAL);
+	config.AddExtensionOption("ch_pool_idle_timeout_millis",
+	                          "Maximum number of milliseconds a connection can sit idle in the pool; checked on lease "
+	                          "and, with the reaper thread enabled, in the background",
+	                          LogicalType::UBIGINT, Value::UBIGINT(default_pool_config.idle_timeout_millis), nullptr,
+	                          SetScope::GLOBAL);
+	config.AddExtensionOption("ch_pool_enable_reaper_thread",
+	                          "Whether to run the pool reaper thread that periodically closes connections exceeding "
+	                          "'ch_pool_max_lifetime_millis' or 'ch_pool_idle_timeout_millis'",
+	                          LogicalType::BOOLEAN, Value::BOOLEAN(default_pool_config.start_reaper_thread), nullptr,
+	                          SetScope::GLOBAL);
 
 	// Session-scoped (no static callback): read from ClientContext at describe time so it
 	// is isolated per connection, not shared process-wide (which would change column types

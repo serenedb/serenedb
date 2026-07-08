@@ -1,6 +1,8 @@
 add_library(
   clickhouse_ext_storage OBJECT
   clickhouse_catalog.cpp
+  clickhouse_configure_pool.cpp
+  clickhouse_connection_pool.cpp
   clickhouse_schema_entry.cpp
   clickhouse_table_entry.cpp
   clickhouse_insert.cpp

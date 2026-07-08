@@ -20,6 +20,7 @@
 #include "clickhouse_filter_pushdown.hpp"
 #include "clickhouse_scanner.hpp"
 #include "storage/clickhouse_catalog.hpp"
+#include "storage/clickhouse_connection_pool.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 
 namespace duckdb {
@@ -53,19 +54,17 @@ bool ClickHouseBindData::Equals(const FunctionData &other_p) const {
 struct ClickHouseGlobalState : public GlobalTableFunctionState {
 	ClickHouseGlobalState() = default;
 	~ClickHouseGlobalState() override {
-		// Return the connection to the catalog pool only when the stream was fully
-		// drained (done): an early abort (e.g. LIMIT) or a mid-scan error leaves
-		// unread blocks on the wire, so those connections are dropped, never pooled.
-		// Ad-hoc scans (clickhouse_scan/clickhouse_query) have no owning catalog and
-		// always drop.
-		if (owner_catalog && done && connection.IsOpen()) {
-			owner_catalog->ReturnConnection(std::move(connection));
+		// The RAII PooledConnection returns to its pool only when the stream was
+		// fully drained (done): an early abort (e.g. LIMIT) or a mid-scan error
+		// leaves unread blocks on the wire, so those connections are invalidated
+		// (dropped), never pooled. Ad-hoc scans hold a detached (pool-less)
+		// connection that simply closes either way.
+		if (!done) {
+			connection.Invalidate();
 		}
 	}
 
-	ClickHouseConnection connection;
-	//! The catalog whose pool this scan's connection was leased from (null for ad-hoc scans).
-	optional_ptr<ClickHouseCatalog> owner_catalog;
+	ClickHousePoolConnection connection;
 	std::optional<clickhouse::Block> current_block;
 	idx_t block_offset = 0;
 	bool done = false;
@@ -253,17 +252,20 @@ static unique_ptr<GlobalTableFunctionState> ClickHouseInitGlobalStateInternal(Cl
 
 	try {
 		// A catalog-backed scan leases from that catalog's connection pool (its params
-		// match bind_data.params); ad-hoc clickhouse_scan/clickhouse_query open direct.
+		// match bind_data.params); ad-hoc clickhouse_scan/clickhouse_query open a
+		// detached (pool-less) connection that closes on release.
 		if (bind_data.table_entry) {
 			auto &catalog = bind_data.table_entry->catalog.Cast<ClickHouseCatalog>();
-			result->owner_catalog = &catalog;
-			result->connection = catalog.OpenConnection();
+			result->connection = catalog.GetConnectionPool().GetConnection();
 		} else {
-			result->connection = ClickHouseConnection::Open(bind_data.params);
+			result->connection = ClickHousePoolConnection(
+			    nullptr, make_uniq<ClickHouseConnection>(ClickHouseConnection::Open(bind_data.params)),
+			    std::chrono::steady_clock::now());
 		}
 		ClickHouseConnection::LogQuery(sql);
-		result->connection.GetClient().BeginSelect(sql);
+		result->connection->GetClient().BeginSelect(sql);
 	} catch (const clickhouse::Error &e) {
+		result->connection.Invalidate();
 		ClickHouseConnection::ThrowError("starting scan", sql, e);
 	}
 	result->remote_sql = std::move(sql);
@@ -289,7 +291,7 @@ static void ClickHouseScan(ClientContext &context, TableFunctionInput &data, Dat
 				return;
 			}
 			if (!gstate.current_block || gstate.block_offset >= gstate.current_block->GetRowCount()) {
-				auto block = gstate.connection.GetClient().NextBlock();
+				auto block = gstate.connection->GetClient().NextBlock();
 				if (!block) {
 					gstate.done = true;
 					output.SetChildCardinality(0);

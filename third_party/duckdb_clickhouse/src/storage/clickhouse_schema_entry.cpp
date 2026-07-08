@@ -45,14 +45,14 @@ ClickHouseCatalog &ClickHouseSchemaEntry::GetClickHouseCatalog() {
 }
 
 static void RunClickHouseDDL(ClickHouseCatalog &ch_catalog, const string &sql) {
-	auto conn = ch_catalog.OpenConnection();
+	auto conn = ch_catalog.GetConnectionPool().GetConnection();
 	try {
 		ClickHouseConnection::LogQuery(sql);
-		conn.GetClient().Execute(sql);
+		conn->GetClient().Execute(sql);
 	} catch (const clickhouse::Error &e) {
+		conn.Invalidate();
 		ClickHouseConnection::ThrowError("running DDL", sql, e);
 	}
-	ch_catalog.ReturnConnection(std::move(conn));
 }
 
 // Render a *constant* column DEFAULT into ClickHouse DDL. Non-constant defaults
@@ -377,8 +377,8 @@ ClickHouseTableEntry &ClickHouseSchemaEntry::LoadTableEntry(const string &table_
 		string sql = "SELECT name, type, is_in_primary_key, default_kind, default_expression FROM system.columns WHERE database = " +
 		             ClickHouseStringLiteral(database) + " AND table = " + ClickHouseStringLiteral(table_name) +
 		             " ORDER BY position";
-		auto conn = clickhouse_catalog.OpenConnection();
-		auto &client = conn.GetClient();
+		auto conn = clickhouse_catalog.GetConnectionPool().GetConnection();
+		auto &client = conn->GetClient();
 		ClickHouseConnection::LogQuery(sql);
 		try {
 			client.Select(sql, [&](const clickhouse::Block &block) {
@@ -436,9 +436,9 @@ ClickHouseTableEntry &ClickHouseSchemaEntry::LoadTableEntry(const string &table_
 				}
 			});
 		} catch (const clickhouse::Error &e) {
+			conn.Invalidate();
 			ClickHouseConnection::ThrowError("reading table columns", sql, e);
 		}
-		clickhouse_catalog.ReturnConnection(std::move(conn));
 	}
 	// system.columns returned no rows: the table does not exist (or was dropped
 	// concurrently), or is otherwise unreadable. Do not construct + cache a
@@ -493,8 +493,8 @@ void ClickHouseSchemaEntry::Scan(ClientContext &context, CatalogType type,
 	vector<string> table_names;
 	{
 		string sql = "SELECT name FROM system.tables WHERE database = " + ClickHouseStringLiteral(database);
-		auto conn = clickhouse_catalog.OpenConnection();
-		auto &client = conn.GetClient();
+		auto conn = clickhouse_catalog.GetConnectionPool().GetConnection();
+		auto &client = conn->GetClient();
 		ClickHouseConnection::LogQuery(sql);
 		try {
 			client.Select(sql, [&](const clickhouse::Block &block) {
@@ -507,9 +507,9 @@ void ClickHouseSchemaEntry::Scan(ClientContext &context, CatalogType type,
 				}
 			});
 		} catch (const clickhouse::Error &e) {
+			conn.Invalidate();
 			ClickHouseConnection::ThrowError("listing tables", sql, e);
 		}
-		clickhouse_catalog.ReturnConnection(std::move(conn));
 	}
 
 	for (auto &table_name : table_names) {

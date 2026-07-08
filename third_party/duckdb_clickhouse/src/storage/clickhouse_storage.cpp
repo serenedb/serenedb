@@ -231,7 +231,7 @@ static unique_ptr<Catalog> ClickHouseAttach(optional_ptr<StorageExtensionInfo> s
 		throw IOException("Failed to connect to ClickHouse at %s:%d: %s", params.host, (int)params.port, e.what());
 	}
 
-	return make_uniq<ClickHouseCatalog>(db, BuildConnectionString(params), attach_options.access_mode);
+	return make_uniq<ClickHouseCatalog>(db, BuildConnectionString(params), attach_options.access_mode, context);
 }
 
 static unique_ptr<TransactionManager>

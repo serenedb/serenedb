@@ -11,6 +11,7 @@
 #include "duckdb/transaction/transaction.hpp"
 #include "duckdb/common/mutex.hpp"
 #include "clickhouse_connection.hpp"
+#include "storage/clickhouse_connection_pool.hpp"
 
 namespace duckdb {
 class ClickHouseCatalog;
@@ -32,7 +33,7 @@ public:
 
 private:
 	ClickHouseCatalog &clickhouse_catalog;
-	ClickHouseConnection connection;
+	ClickHousePoolConnection connection;
 };
 
 } // namespace duckdb

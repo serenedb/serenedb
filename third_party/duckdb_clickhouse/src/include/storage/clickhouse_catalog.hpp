@@ -16,6 +16,7 @@
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/enums/access_mode.hpp"
 #include "clickhouse_connection.hpp"
+#include "storage/clickhouse_connection_pool.hpp"
 
 namespace duckdb {
 class ClickHouseCatalog;
@@ -23,7 +24,8 @@ class ClickHouseSchemaEntry;
 
 class ClickHouseCatalog : public Catalog {
 public:
-	explicit ClickHouseCatalog(AttachedDatabase &db_p, const string &connection_string, AccessMode access_mode);
+	explicit ClickHouseCatalog(AttachedDatabase &db_p, const string &connection_string, AccessMode access_mode,
+	                           ClientContext &context);
 	~ClickHouseCatalog();
 
 	ClickHouseConnectionParams params;
@@ -63,14 +65,17 @@ public:
 	bool InMemory() override;
 	string GetDBPath() override;
 
-	//! Lease a connection: reuse an idle pooled one (same params) if available and the
-	//! connection cache is enabled, otherwise open a fresh connection.
-	ClickHouseConnection OpenConnection();
-	//! Return a connection to the idle pool for reuse. Pass ONLY a connection left in a
-	//! clean state -- a fully-drained scan or a committed statement. A connection that
-	//! errored or was abandoned mid-stream must be dropped (let it destruct), never
-	//! returned here, or it would poison the next lease.
-	void ReturnConnection(ClickHouseConnection connection);
+	//! The shared dbconnector connection pool (the PostgresConnectionPool analog).
+	//! Lease with GetConnectionPool().GetConnection(); the RAII PooledConnection
+	//! returns to the pool on destruction. A connection that errored or was
+	//! abandoned mid-stream must be Invalidate()d by its holder before release,
+	//! or it would poison the next lease (Ping() at lease time is the backstop).
+	ClickHouseConnectionPool &GetConnectionPool() {
+		return *connection_pool;
+	}
+	shared_ptr<ClickHouseConnectionPool> GetConnectionPoolPtr() {
+		return connection_pool;
+	}
 	const ClickHouseConnectionParams &GetConnectionParams() const {
 		return params;
 	}
@@ -102,12 +107,7 @@ private:
 	// schema (and its table/retired_tables entries) never dangles.
 	vector<unique_ptr<ClickHouseSchemaEntry>> retired_schemas;
 
-	// Idle connections kept for reuse across transactions/scans (all share this
-	// catalog's params). Guarded by connection_pool_lock; capped at
-	// MAX_POOLED_CONNECTIONS (excess returns are dropped).
-	static constexpr idx_t MAX_POOLED_CONNECTIONS = 8;
-	std::mutex connection_pool_lock;
-	vector<ClickHouseConnection> idle_connections;
+	shared_ptr<ClickHouseConnectionPool> connection_pool;
 };
 
 } // namespace duckdb

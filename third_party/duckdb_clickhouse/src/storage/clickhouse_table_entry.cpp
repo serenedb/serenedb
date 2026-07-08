@@ -90,14 +90,15 @@ TableFunction ClickHouseTableEntry::GetScanFunction(ClientContext &context, uniq
 	std::lock_guard<std::mutex> row_count_guard(row_count_lock);
 	if (!row_count_fetched) {
 		row_count_fetched = true;
+		auto &ch_catalog = catalog.Cast<ClickHouseCatalog>();
+		ClickHousePoolConnection conn;
 		try {
-			auto &ch_catalog = catalog.Cast<ClickHouseCatalog>();
-			auto conn = ch_catalog.OpenConnection();
+			conn = ch_catalog.GetConnectionPool().GetConnection();
 			string sql = "SELECT ifNull(total_rows, 0) AS n, total_rows IS NOT NULL AS known "
 			             "FROM system.tables WHERE database = " + ClickHouseStringLiteral(database) +
 			             " AND name = " + ClickHouseStringLiteral(table);
 			ClickHouseConnection::LogQuery(sql);
-			conn.GetClient().Select(sql, [&](const clickhouse::Block &block) {
+			conn->GetClient().Select(sql, [&](const clickhouse::Block &block) {
 				if (block.GetColumnCount() < 2 || block.GetRowCount() == 0) {
 					return;
 				}
@@ -108,9 +109,10 @@ TableFunction ClickHouseTableEntry::GetScanFunction(ClientContext &context, uniq
 					cached_row_count_known = true;
 				}
 			});
-			ch_catalog.ReturnConnection(std::move(conn));
 		} catch (...) {
 			// A stats failure must never break the scan -- fall back to no estimate.
+			// The connection may be mid-stream: drop it rather than pool it.
+			conn.Invalidate();
 		}
 	}
 	bd->has_cardinality = cached_row_count_known;

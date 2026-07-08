@@ -73,15 +73,20 @@ SELECT count(*) AS n FROM (SELECT id FROM chexp.chtest.vedernikoff LIMIT 2 OFFSE
 n
 2
 
-# OFFSET with no LIMIT keyword: folded, no LIMIT operator remains.
+# OFFSET with no LIMIT keyword: NOT folded (the shared rule only pushes an
+# OFFSET together with a LIMIT, like the postgres connector); a
+# STREAMING_LIMIT stays above the scan and slices locally.
 query
 EXPLAIN SELECT id FROM chexp.chtest.vedernikoff OFFSET 2;
 ----
 QUERY PLAN
+╭─ STREAMING_LIMIT ──────────────────╮
+│ Offset: 2                          │
+│ ~0 rows                            │
+╰──────────────────┬─────────────────╯
 ╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
 │ Function: CLICKHOUSE_SCAN_PUSHDOWN │
 │ Table: chtest.vedernikoff          │
-│ Pushed Limit: OFFSET 2             │
 │ Projections: id                    │
 │ ~6 rows                            │
 ╰────────────────────────────────────╯
@@ -195,22 +200,18 @@ n
 
 ####################  LIMIT / OFFSET pushdown -- NEGATIVE (operator retained above the scan)  ####################
 
-# ORDER BY + LIMIT: pushdown refused (ORDER BY is not a projection). The LIMIT
-# collapses into a TOP_N operator that REMAINS above the scan.
+# ORDER BY + LIMIT: folded by the shared OrderByAndLimitOptimizer -- the TOP_N
+# node is removed and the scan carries Pushed Order + Pushed Limit.
 query
 EXPLAIN SELECT id FROM chexp.chtest.vedernikoff ORDER BY id LIMIT 3;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 3                                 │
-│ Order By: vedernikoff.id ASC           │
-│ ~3 rows                                │
-╰────────────────────┬───────────────────╯
 ╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────────╮
 │ Function: CLICKHOUSE_SCAN_PUSHDOWN     │
 │ Table: chtest.vedernikoff              │
 │ Pushed Order:                          │
-│ ORDER BY `id` ASC NULLS LAST LIMIT 3   │
+│ ORDER BY `id` IS NULL, `id` ASC        │
+│ Pushed Limit: LIMIT 3                  │
 │ Projections: id                        │
 │ Filters: optional: Dynamic Filter (id) │
 │ ~6 rows                                │

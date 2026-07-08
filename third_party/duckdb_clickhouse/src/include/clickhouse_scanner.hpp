@@ -12,13 +12,15 @@
 
 #include "duckdb/optimizer/optimizer_extension.hpp"
 
+#include "dbconnector/bind_data.hpp"
+
 #include "clickhouse_connection.hpp"
 
 #include <string>
 
 namespace duckdb {
 
-struct ClickHouseBindData : public FunctionData {
+struct ClickHouseBindData : public dbconnector::BindData {
 	ClickHouseConnectionParams params;
 	std::string database;
 	std::string table;
@@ -37,12 +39,15 @@ struct ClickHouseBindData : public FunctionData {
 	//! DuckDB's (Enum/IPv4/IPv6/JSON), which the VARCHAR-mapped DuckDB type hides.
 	//! May be empty (older bind paths); callers must bounds-check.
 	vector<std::string> clickhouse_types;
-	//! Remote LIMIT/OFFSET clause pushed down by ClickHouseOptimizer (empty = none).
-	std::string limit;
-	//! Remote "ORDER BY ... LIMIT n+offset" row reducer annotated by ClickHouseOptimizer
-	//! under a TOP_N that is KEPT in the plan: the local re-sort makes any remote
-	//! ordering discrepancy harmless while the transfer shrinks to limit+offset rows.
-	std::string order_by;
+	//! Remote ORDER BY / LIMIT clauses folded in by the shared dbconnector
+	//! OrderByAndLimitOptimizer (the folded plan node is removed; ClickHouse-unsafe
+	//! order keys and limit-over-local-refilter cases are vetoed via the Config
+	//! hooks in ClickHouseOptimizer::Optimize, so a fold only happens when the
+	//! remote result is exactly DuckDB's).
+	dbconnector::optimizer::OrderByAndLimitBindData order_by_and_limit;
+	//! Required by the dbconnector::BindData contract; the aggregate optimizer is
+	//! not registered for ClickHouse (postgres does not register it either).
+	dbconnector::optimizer::AggregateBindData aggregate;
 	//! Column to emit (cast to Int64) for COLUMN_IDENTIFIER_ROW_ID, enabling UPDATE/DELETE.
 	//! Empty when the table has no integer primary key usable as a row identifier.
 	std::string rowid_column;
@@ -54,6 +59,13 @@ struct ClickHouseBindData : public FunctionData {
 	//! View / Distributed engine reports NULL total_rows) -- then no estimate is given.
 	bool has_cardinality = false;
 	idx_t approx_row_count = 0;
+
+	dbconnector::optimizer::OrderByAndLimitBindData &GetOrderByAndLimitBindData() override {
+		return order_by_and_limit;
+	}
+	dbconnector::optimizer::AggregateBindData &GetAggregateBindData() override {
+		return aggregate;
+	}
 
 	unique_ptr<FunctionData> Copy() const override;
 	bool Equals(const FunctionData &other) const override;
@@ -93,9 +105,14 @@ public:
 //! True for the connector's own scan table functions.
 bool IsClickHouseScan(const std::string &name);
 
-//! Optimizer extension: pushes a constant LIMIT/OFFSET into the remote scan SQL
-//! (mirrors PostgresOptimizer, minus the ctid/parallelism handling ClickHouse
-//! does not need).
+//! Optimizer extension: runs the shared dbconnector OrderByAndLimitOptimizer
+//! over the ClickHouse scans (mirrors PostgresOptimizer, minus the
+//! ctid/parallelism handling ClickHouse does not need), with ClickHouse-specific
+//! safety vetoes: order keys whose remote ordering diverges from DuckDB's
+//! (ClickHouseOrderingUnsafe, toString()-stringified columns) refuse the fold,
+//! and LIMIT-carrying folds refuse when the scan carries required table filters
+//! (their remote rendering may be inexact and re-applied locally AFTER the
+//! remote LIMIT already cut the stream).
 struct ClickHouseOptimizer {
 	static void Optimize(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan);
 };

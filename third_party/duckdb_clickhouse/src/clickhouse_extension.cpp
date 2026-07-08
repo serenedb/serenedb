@@ -58,7 +58,12 @@ static void LoadInternal(ExtensionLoader &loader) {
 	                          "Read ClickHouse String/FixedString columns as BLOB instead of VARCHAR",
 	                          LogicalType::BOOLEAN, Value::BOOLEAN(false));
 
-	// Push constant LIMIT/OFFSET into the remote scan SQL.
+	// Read by the shared OrderByAndLimitOptimizer config (the pg_order_pushdown analog).
+	config.AddExtensionOption("ch_order_pushdown",
+	                          "Push ORDER BY and LIMIT clauses to ClickHouse (default: true)",
+	                          LogicalType::BOOLEAN, Value::BOOLEAN(true));
+
+	// Shared dbconnector ORDER BY / LIMIT / TOP_N pushdown (with CH safety vetoes).
 	OptimizerExtension clickhouse_optimizer;
 	clickhouse_optimizer.optimize_function = ClickHouseOptimizer::Optimize;
 	OptimizerExtension::Register(config, std::move(clickhouse_optimizer));

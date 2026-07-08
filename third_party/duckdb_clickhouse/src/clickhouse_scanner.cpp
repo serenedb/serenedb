@@ -13,6 +13,8 @@
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/optimizer/optimizer_extension.hpp"
 
+#include "dbconnector/optimizer/order_by_and_limit_optimizer.hpp"
+
 #include <algorithm>
 
 #include <clickhouse/client.h>
@@ -42,8 +44,8 @@ unique_ptr<FunctionData> ClickHouseBindData::Copy() const {
 	result->types = types;
 	result->stringified = stringified;
 	result->clickhouse_types = clickhouse_types;
-	result->limit = limit;
-	result->order_by = order_by;
+	result->order_by_and_limit = order_by_and_limit;
+	result->aggregate = aggregate;
 	result->rowid_column = rowid_column;
 	result->table_entry = table_entry;
 	result->has_cardinality = has_cardinality;
@@ -216,10 +218,10 @@ static std::string BuildScanSQL(const ClickHouseBindData &bind_data, const vecto
 			query += " WHERE " + filter_string;
 		}
 	}
-	// A TOP_N row reducer and/or LIMIT/OFFSET the optimizer proved safe to push
-	// (see ClickHouseOptimizer); at most one of the two is ever set.
-	query += bind_data.order_by;
-	query += bind_data.limit;
+	// ORDER BY / LIMIT clauses the optimizer proved safe to push (see
+	// ClickHouseOptimizer; the folded plan node was removed).
+	query += bind_data.order_by_and_limit.order_by_clause;
+	query += bind_data.order_by_and_limit.limit_clause;
 	return query;
 }
 
@@ -356,165 +358,46 @@ bool IsClickHouseScan(const std::string &name) {
 	return name == "clickhouse_scan" || name == "clickhouse_scan_pushdown";
 }
 
-// Push a constant LIMIT/OFFSET directly above a clickhouse scan into the remote
-// SQL. Correctness gates: (1) only walk through projections -- an intervening
-// ORDER BY or FILTER is NOT a projection, so those plans are left alone (a
-// remote LIMIT must never precede a local sort/filter); (2) the scan must carry
-// no pushed table_filters, since a remote LIMIT applied before a filter that is
-// only partially translatable would drop the wrong rows.
-static void OptimizeLimitPushdown(unique_ptr<LogicalOperator> &op) {
-	if (op->type == LogicalOperatorType::LOGICAL_LIMIT) {
-		auto &limit = op->Cast<LogicalLimit>();
-		reference<LogicalOperator> child = *op->children[0];
-		while (child.get().type == LogicalOperatorType::LOGICAL_PROJECTION) {
-			child = *child.get().children[0];
-		}
-		if (child.get().type == LogicalOperatorType::LOGICAL_GET) {
-			auto &get = child.get().Cast<LogicalGet>();
-			bool const_limit = limit.limit_val.Type() == LimitNodeType::CONSTANT_VALUE ||
-			                   limit.limit_val.Type() == LimitNodeType::UNSET;
-			bool const_offset = limit.offset_val.Type() == LimitNodeType::CONSTANT_VALUE ||
-			                    limit.offset_val.Type() == LimitNodeType::UNSET;
-			if (IsClickHouseScan(get.function.name.GetIdentifierName()) && const_limit && const_offset &&
-			    !get.table_filters.HasFilters()) {
-				auto &bind_data = get.bind_data->Cast<ClickHouseBindData>();
-				string clause;
-				if (limit.limit_val.Type() != LimitNodeType::UNSET) {
-					clause += " LIMIT " + to_string(limit.limit_val.GetConstantValue());
-				}
-				if (limit.offset_val.Type() != LimitNodeType::UNSET) {
-					clause += " OFFSET " + to_string(limit.offset_val.GetConstantValue());
-				}
-				if (!clause.empty() && bind_data.limit.empty()) {
-					bind_data.limit = clause;
-					op = std::move(op->children[0]);
-					return;
-				}
-			}
-		}
-	}
-	for (auto &child : op->children) {
-		OptimizeLimitPushdown(child);
-	}
-}
-
-// Annotate a ClickHouse scan under a TOP_N with a remote "ORDER BY ... LIMIT n+offset"
-// row reducer. The TOP_N node itself is KEPT -- the local re-sort makes any remote
-// ordering discrepancy (collation, tie order) harmless; the remote clause only shrinks
-// the transfer from the whole table to limit+offset rows. Gates: every order key must
-// resolve (through pure column-reference projections) to a plain, non-stringified scan
-// column with explicit ASC/DESC and NULLS placement, the scan must carry no REQUIRED
-// table filters (optional/advisory ones never change the row set, so they are fine),
-// and nothing may already be folded into the scan.
-static void OptimizeTopNPushdown(unique_ptr<LogicalOperator> &op) {
-	if (op->type == LogicalOperatorType::LOGICAL_TOP_N) {
-		auto &topn = op->Cast<LogicalTopN>();
-		vector<reference<LogicalProjection>> projections;
-		reference<LogicalOperator> child = *op->children[0];
-		while (child.get().type == LogicalOperatorType::LOGICAL_PROJECTION) {
-			projections.push_back(child.get().Cast<LogicalProjection>());
-			child = *child.get().children[0];
-		}
-		if (child.get().type == LogicalOperatorType::LOGICAL_GET) {
-			auto &get = child.get().Cast<LogicalGet>();
-			if (IsClickHouseScan(get.function.name.GetIdentifierName()) && get.bind_data) {
-				auto &bind_data = get.bind_data->Cast<ClickHouseBindData>();
-				bool only_optional_filters = true;
-				for (auto &entry : get.table_filters) {
-					if (!ExpressionFilter::IsOptionalFilter(entry.Filter())) {
-						only_optional_filters = false;
-						break;
-					}
-				}
-				bool foldable = bind_data.order_by.empty() && bind_data.limit.empty() && only_optional_filters &&
-				                topn.limit <= NumericLimits<idx_t>::Maximum() - topn.offset;
-				string clause;
-				for (auto &order : topn.orders) {
-					if (!foldable) {
-						break;
-					}
-					if ((order.type != OrderType::ASCENDING && order.type != OrderType::DESCENDING) ||
-					    (order.null_order != OrderByNullType::NULLS_FIRST &&
-					     order.null_order != OrderByNullType::NULLS_LAST)) {
-						foldable = false;
-						break;
-					}
-					if (order.expression->GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
-						foldable = false;
-						break;
-					}
-					auto binding = order.expression->Cast<BoundColumnRefExpression>().Binding();
-					for (auto &proj_ref : projections) {
-						auto &proj = proj_ref.get();
-						if (binding.table_index != proj.table_index ||
-						    binding.column_index.GetIndex() >= proj.expressions.size()) {
-							foldable = false;
-							break;
-						}
-						auto &proj_expr = *proj.expressions[binding.column_index.GetIndex()];
-						if (proj_expr.GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
-							foldable = false;
-							break;
-						}
-						binding = proj_expr.Cast<BoundColumnRefExpression>().Binding();
-					}
-					if (!foldable || binding.table_index != get.table_index) {
-						foldable = false;
-						break;
-					}
-					auto &column_ids = get.GetColumnIds();
-					if (binding.column_index.GetIndex() >= column_ids.size()) {
-						foldable = false;
-						break;
-					}
-					auto column_id = column_ids[binding.column_index.GetIndex()].GetPrimaryIndex();
-					if (column_id >= bind_data.names.size()) {
-						// Virtual column (rowid) or out of range.
-						foldable = false;
-						break;
-					}
-					if (column_id < bind_data.stringified.size() && bind_data.stringified[column_id]) {
-						// toString() text order differs from the native value order.
-						foldable = false;
-						break;
-					}
-					// An order key whose native ClickHouse order differs from DuckDB's
-					// (float NaN placement, UUID/Enum/IP) must not fold: the remote LIMIT
-					// would ship a different top-k than DuckDB, and the kept local sort
-					// cannot recover rows that never crossed the wire.
-					{
-						LogicalType key_type = column_id < bind_data.types.size()
-						                           ? bind_data.types[column_id]
-						                           : LogicalType(LogicalTypeId::INVALID);
-						std::string key_ch_type = column_id < bind_data.clickhouse_types.size()
-						                              ? bind_data.clickhouse_types[column_id]
-						                              : std::string();
-						if (ClickHouseOrderingUnsafe(key_type, key_ch_type)) {
-							foldable = false;
-							break;
-						}
-					}
-					if (!clause.empty()) {
-						clause += ", ";
-					}
-					clause += ClickHouseQuoteIdentifier(bind_data.names[column_id]);
-					clause += order.type == OrderType::DESCENDING ? " DESC" : " ASC";
-					clause += order.null_order == OrderByNullType::NULLS_FIRST ? " NULLS FIRST" : " NULLS LAST";
-				}
-				if (foldable && !clause.empty()) {
-					bind_data.order_by = " ORDER BY " + clause + " LIMIT " + to_string(topn.limit + topn.offset);
-				}
-			}
-		}
-	}
-	for (auto &child : op->children) {
-		OptimizeTopNPushdown(child);
-	}
-}
-
+// Run the shared dbconnector ORDER BY / LIMIT / TOP_N pushdown over the
+// ClickHouse scans (the postgres connector runs the same rule). The shared rule
+// folds the clause into the scan's remote SQL and REMOVES the local plan node,
+// so it only fires when the remote result is exactly DuckDB's; two
+// ClickHouse-specific vetoes enforce that:
+//  - order_key_unsafe: an order key whose native ClickHouse ordering differs
+//    from DuckDB's (float NaN placement, UUID/Enum/IP -- ClickHouseOrderingUnsafe)
+//    or that is surfaced via toString() (text order != value order) refuses the
+//    fold; the sort stays local.
+//  - limit_unsafe: a scan carrying REQUIRED table filters refuses LIMIT-bearing
+//    folds -- their remote rendering may be inexact and re-applied locally, and
+//    a remote LIMIT would cut the stream BEFORE that re-check. Optional
+//    (advisory) filters never change the row set, so they do not block.
 void ClickHouseOptimizer::Optimize(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan) {
-	OptimizeLimitPushdown(plan);
-	OptimizeTopNPushdown(plan);
+	// Both the catalog scan (clickhouse_scan_pushdown) and the ad-hoc
+	// clickhouse_scan share the bind data, so run the rule for each name.
+	for (const char *scan_name : {"clickhouse_scan_pushdown", "clickhouse_scan"}) {
+		auto config = dbconnector::optimizer::OrderByAndLimitOptimizer::CreateConfig(
+		    input.context, "ch_order_pushdown", '`', dbconnector::query::QuoteEscapeStyle::BACKSLASH, scan_name);
+		config.order_key_unsafe = [](const LogicalGet &get, column_t column_id) {
+			auto &bind_data = get.bind_data->Cast<ClickHouseBindData>();
+			if (column_id < bind_data.stringified.size() && bind_data.stringified[column_id]) {
+				return true;
+			}
+			LogicalType key_type = column_id < bind_data.types.size() ? bind_data.types[column_id]
+			                                                          : LogicalType(LogicalTypeId::INVALID);
+			std::string key_ch_type =
+			    column_id < bind_data.clickhouse_types.size() ? bind_data.clickhouse_types[column_id] : std::string();
+			return ClickHouseOrderingUnsafe(key_type, key_ch_type);
+		};
+		config.limit_unsafe = [](const LogicalGet &get) {
+			for (auto &entry : get.table_filters) {
+				if (!ExpressionFilter::IsOptionalFilter(entry.Filter())) {
+					return true;
+				}
+			}
+			return false;
+		};
+		dbconnector::optimizer::OrderByAndLimitOptimizer::Optimize(config, input, plan);
+	}
 }
 
 // Report the remote table's approximate row count (captured at bind from
@@ -546,11 +429,11 @@ static InsertionOrderPreservingMap<string> ClickHouseScanToString(TableFunctionT
 		auto pos = s.find_first_not_of(' ');
 		return pos == std::string::npos ? s : s.substr(pos);
 	};
-	if (!bind_data.order_by.empty()) {
-		result["Pushed Order"] = trim_leading(bind_data.order_by);
+	if (!bind_data.order_by_and_limit.order_by_clause.empty()) {
+		result["Pushed Order"] = trim_leading(bind_data.order_by_and_limit.order_by_clause);
 	}
-	if (!bind_data.limit.empty()) {
-		result["Pushed Limit"] = trim_leading(bind_data.limit);
+	if (!bind_data.order_by_and_limit.limit_clause.empty()) {
+		result["Pushed Limit"] = trim_leading(bind_data.order_by_and_limit.limit_clause);
 	}
 	return result;
 }

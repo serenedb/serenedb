@@ -9,8 +9,8 @@ control substitution on
 #            as `Pushed Limit:`.
 #   REFUSED  (an ORDER BY or a pushed WHERE sits between the LIMIT and the scan):
 #            a TOP_N or STREAMING_LIMIT operator is left above the scan. The
-#            filter-free TOP_N shape still gets a remote `Pushed Order:` row
-#            reducer (see topn_pushdown_chscan) -- the node itself remains.
+#            filter-free TOP_N shape is folded entirely (see
+#            topn_pushdown_chscan) -- node removed, order+limit pushed.
 #
 # Fixture chtest.vedernikoff has 6 rows.
 
@@ -100,22 +100,18 @@ n
 
 ####################  REFUSED -- a limit operator remains above the scan  ####################
 
-# ORDER BY + LIMIT: pushdown refused (ORDER BY is not a projection) -> TOP_N
+# ORDER BY + LIMIT: folded by the shared optimizer -> no TOP_N
 # remains, and the result is the three smallest ids.
 query
 EXPLAIN SELECT id FROM chl.chtest.vedernikoff ORDER BY id LIMIT 3;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 3                                 │
-│ Order By: vedernikoff.id ASC           │
-│ ~3 rows                                │
-╰────────────────────┬───────────────────╯
 ╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────────╮
 │ Function: CLICKHOUSE_SCAN_PUSHDOWN     │
 │ Table: chtest.vedernikoff              │
 │ Pushed Order:                          │
-│ ORDER BY `id` ASC NULLS LAST LIMIT 3   │
+│ ORDER BY `id` IS NULL, `id` ASC        │
+│ Pushed Limit: LIMIT 3                  │
 │ Projections: id                        │
 │ Filters: optional: Dynamic Filter (id) │
 │ ~6 rows                                │

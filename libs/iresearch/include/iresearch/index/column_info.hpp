@@ -57,6 +57,8 @@ struct IvfInfo {
     VectorQuantization kind = VectorQuantization::None;
     uint32_t pq_m = 0;
     uint32_t nb_bits = 0;
+
+    friend bool operator==(const Quantizer&, const Quantizer&) = default;
   };
 
   field_id centroids_id = field_limits::invalid();
@@ -75,6 +77,8 @@ struct IvfInfo {
   uint32_t train_sample = 0;
 
   uint32_t cluster_iters = 0;
+
+  friend bool operator==(const IvfInfo&, const IvfInfo&) = default;
 };
 
 struct ColumnOptions {

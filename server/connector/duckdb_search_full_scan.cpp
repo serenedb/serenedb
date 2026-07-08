@@ -38,10 +38,10 @@
 #include <iresearch/search/range_filter.hpp>
 #include <iresearch/search/score_function.hpp>
 #include <iresearch/search/scorer.hpp>
-#include <iresearch/search/vector_similarity_query.hpp>
-#include <iresearch/search/vector_similarity_scorer.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
+#include <iresearch/search/vector_similarity_query.hpp>
+#include <iresearch/search/vector_similarity_scorer.hpp>
 #include <iresearch/utils/automaton_utils.hpp>
 #include <iresearch/utils/string.hpp>
 #include <ranges>

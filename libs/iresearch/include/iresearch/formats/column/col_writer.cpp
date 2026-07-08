@@ -84,7 +84,7 @@ void ColWriter::EnsureOut() {
 }
 
 bool ColWriter::Empty() const noexcept {
-  return _columns.empty() && _norm_writers.empty();
+  return _columns.empty() && _norm_writers.empty() && _ivf_writers.empty();
 }
 
 void ColWriter::SetFieldOptions(
@@ -128,7 +128,7 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
     OpenColumnInternal(id, std::move(type), opts.skip_validity,
                        opts.row_group_size, opts.compression, opts.hyperloglog);
   if (opts.ivf_info) {
-    _has_ivf_column = true;
+    AttachIVF(id, *opts.ivf_info);
   }
   return cw;
 }
@@ -165,10 +165,35 @@ NormColumnWriter& ColWriter::OpenNormColumn(field_id id,
   return *ptr;
 }
 
-void ColWriter::NoteIvfColumn() noexcept { _has_ivf_column = true; }
+IvfWriter& ColWriter::AttachIVF(field_id column_id, IvfInfo info) {
+  if (auto it = _ivf_by_id.find(column_id); it != _ivf_by_id.end()) {
+    auto& existing = *it->second;
+    SDB_ASSERT(existing.info == info,
+               "ColWriter::AttachIVF: re-attach with mismatched IvfInfo on "
+               "column ",
+               column_id);
+    return *existing.writer;
+  }
+  SDB_ASSERT(_by_id.contains(column_id), "ColWriter::AttachIVF: column ",
+             column_id, " must be opened first");
+  auto entry = std::make_unique<IvfEntry>();
+  entry->column_id = column_id;
+  entry->writer = std::make_unique<IvfWriter>(info);
+  entry->info = std::move(info);
+  auto& back = *_ivf_writers.emplace_back(std::move(entry));
+  _ivf_by_id.emplace(column_id, &back);
+  return *back.writer;
+}
 
-std::unique_ptr<IvfWriter> ColWriter::TakeIvf() noexcept {
-  return std::move(_ivf);
+std::vector<std::unique_ptr<IvfWriter>> ColWriter::TakeIvfWriters() noexcept {
+  std::vector<std::unique_ptr<IvfWriter>> out;
+  out.reserve(_ivf_writers.size());
+  for (auto& entry : _ivf_writers) {
+    if (entry->writer) {
+      out.push_back(std::move(entry->writer));
+    }
+  }
+  return out;
 }
 
 void ColWriter::Rollback() noexcept { _out.reset(); }
@@ -214,25 +239,18 @@ void ColWriter::Commit(uint64_t target_row, IdxWriter* idx) {
   serializer.End();
   _out->WriteU64(footer_offset);
   format_utils::WriteFooter(*_out);
-  if (_has_ivf_column) {
+  if (!_ivf_writers.empty()) {
     SDB_ASSERT(idx,
                "ColWriter::Commit requires an IdxWriter when an IVF column "
                "is present");
-    SDB_ASSERT(_field_options,
-               "ColWriter::Commit: IVF column requires field options");
     _out->Flush();
     ColReader reader{*_dir, _segment_name, *_db};
-    _ivf = std::make_unique<IvfWriter>();
-    for (const auto& cw : _columns) {
-      const auto opts = _field_options->GetColumnOptions(cw->Id());
-      if (!opts.ivf_info) {
-        continue;
-      }
-      const auto* col = reader.Column(cw->Id());
+    for (auto& entry : _ivf_writers) {
+      const auto* col = reader.Column(entry->column_id);
       if (!col) {
         continue;
       }
-      _ivf->BuildColumn(*col, reader.Ctx(), *idx, *opts.ivf_info);
+      entry->writer->Build(*col, reader.Ctx(), *idx);
     }
   }
   _out.reset();

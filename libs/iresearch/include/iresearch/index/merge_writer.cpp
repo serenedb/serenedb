@@ -780,14 +780,14 @@ bool MergeWriter::Flush(SegmentMeta& segment,
   IdxWriter idx{track_dir, segment.name, _db};
 
   col_writer->Commit(segment.docs_count, &idx);
-  auto ivf_writer = col_writer->TakeIvf();
+  auto ivf_writers = col_writer->TakeIvfWriters();
   if (segment.docs_count != 0) {
     col_reader = std::make_unique<ColReader>(track_dir, segment.name, _db);
     norm_provider.reader = col_reader.get();
   }
   std::optional<ReadContext> ivf_ctx;
   const auto cluster_readers =
-    PrepareIvfClusterReaders(ivf_writer.get(), col_reader.get(), ivf_ctx);
+    PrepareIvfClusterReaders(ivf_writers, col_reader.get(), ivf_ctx);
   for (const auto* reader : cluster_readers) {
     index_features |= reader->properties().index_features;
   }

@@ -63,7 +63,7 @@ class ColWriter final {
                              duckdb::CompressionType::COMPRESSION_AUTO,
                            bool hyperloglog = false);
 
-  void NoteIvfColumn() noexcept;
+  IvfWriter& AttachIVF(field_id column_id, IvfInfo info);
 
   NormColumnWriter* OpenNormColumn(field_id id);
 
@@ -74,7 +74,7 @@ class ColWriter final {
     return _norm_writers;
   }
 
-  std::unique_ptr<IvfWriter> TakeIvf() noexcept;
+  std::vector<std::unique_ptr<IvfWriter>> TakeIvfWriters() noexcept;
 
   void Commit(uint64_t target_row, IdxWriter* idx = nullptr);
 
@@ -84,6 +84,12 @@ class ColWriter final {
   IndexOutput& Out() const noexcept { return *_out; }
 
  private:
+  struct IvfEntry {
+    field_id column_id;
+    IvfInfo info;
+    std::unique_ptr<IvfWriter> writer;
+  };
+
   void EnsureOut();
   bool Empty() const noexcept;
   ColumnWriter& OpenColumnInternal(field_id id, duckdb::LogicalType type,
@@ -102,8 +108,8 @@ class ColWriter final {
   sdb::containers::FlatHashMap<field_id, ColumnWriter*> _by_id;
   std::vector<std::unique_ptr<NormColumnWriter>> _norm_writers;
   sdb::containers::FlatHashMap<field_id, NormColumnWriter*> _norm_by_id;
-  std::unique_ptr<IvfWriter> _ivf;
-  bool _has_ivf_column = false;
+  std::vector<std::unique_ptr<IvfEntry>> _ivf_writers;
+  sdb::containers::FlatHashMap<field_id, IvfEntry*> _ivf_by_id;
   bool _committed = false;
 };
 

@@ -730,45 +730,46 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
 
 void IvfTermReader::Finish(IndexOutput& /*out*/) { SDB_ASSERT(_qw); }
 
-void IvfWriter::BuildColumn(const ColumnReader& col, ReadContext& ctx,
-                            IdxWriter& idx, const IvfInfo& info) {
+void IvfWriter::Build(const ColumnReader& col, ReadContext& ctx,
+                      IdxWriter& idx) {
   const auto d = static_cast<uint32_t>(col.ArraySize());
   const uint32_t pq_niter =
-    info.cluster_iters != 0 ? info.cluster_iters : kDefaultClusterIters;
-  auto qw = MakeQuantizerWriter(info.quant.kind, d, info.metric,
-                                info.quant.pq_m, pq_niter, info.quant.nb_bits);
+    _info.cluster_iters != 0 ? _info.cluster_iters : kDefaultClusterIters;
+  auto qw =
+    MakeQuantizerWriter(_info.quant.kind, d, _info.metric, _info.quant.pq_m,
+                        pq_niter, _info.quant.nb_bits);
 
-  IvfBuilder builder{info};
+  IvfBuilder builder{_info};
   BuiltIvf built = builder.Build(col, ctx, idx, qw.get());
   if (built.empty) {
     return;
   }
-  idx.AddCentroidsEntry(info.centroids_id, built.resident_offset,
+  idx.AddCentroidsEntry(_info.centroids_id, built.resident_offset,
                         built.resident_size);
-  _results.push_back(Result{.postings_id = info.postings_id,
-                            .cluster_docs = std::move(built.cluster_docs),
-                            .cluster_offsets = std::move(built.cluster_offsets),
-                            .fine_centroids = std::move(built.fine_centroids),
-                            .qw = std::move(qw),
-                            .d = d});
+  _result = Result{.postings_id = _info.postings_id,
+                   .cluster_docs = std::move(built.cluster_docs),
+                   .cluster_offsets = std::move(built.cluster_offsets),
+                   .fine_centroids = std::move(built.fine_centroids),
+                   .qw = std::move(qw),
+                   .d = d};
+  _built = true;
 }
 
-std::span<const BasicTermReader* const> IvfWriter::ClusterReaders(
-  ReadContext& ctx, const ColReader& col_reader) {
-  if (_reader_ptrs.empty() && !_results.empty()) {
-    _readers.reserve(_results.size());
-    _reader_ptrs.reserve(_results.size());
-    for (auto& r : _results) {
-      _readers.push_back(std::make_unique<IvfTermReader>(
-        r.postings_id, r.cluster_docs, r.cluster_offsets, r.qw.get(),
-        col_reader.Column(r.postings_id), &ctx, r.d, r.fine_centroids));
-      _reader_ptrs.push_back(_readers.back().get());
-    }
+const BasicTermReader* IvfWriter::ClusterReader(ReadContext& ctx,
+                                                const ColReader& col_reader) {
+  if (!_built) {
+    return nullptr;
   }
-  return _reader_ptrs;
+  if (!_reader) {
+    _reader = std::make_unique<IvfTermReader>(
+      _result.postings_id, _result.cluster_docs, _result.cluster_offsets,
+      _result.qw.get(), col_reader.Column(_result.postings_id), &ctx, _result.d,
+      _result.fine_centroids);
+  }
+  return _reader.get();
 }
 
-IvfWriter::IvfWriter() noexcept = default;
+IvfWriter::IvfWriter(IvfInfo info) : _info{std::move(info)} {}
 
 IvfWriter::~IvfWriter() = default;
 

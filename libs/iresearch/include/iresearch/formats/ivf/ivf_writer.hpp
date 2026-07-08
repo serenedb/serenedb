@@ -120,20 +120,20 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
 
 class IvfWriter {
  public:
-  IvfWriter() noexcept;
+  explicit IvfWriter(IvfInfo info);
 
   ~IvfWriter();
 
-  void BuildColumn(const ColumnReader& col, ReadContext& ctx, IdxWriter& idx,
-                   const IvfInfo& info);
+  void Build(const ColumnReader& col, ReadContext& ctx, IdxWriter& idx);
 
-  bool Empty() const noexcept { return _results.empty(); }
+  bool Empty() const noexcept { return !_built; }
 
-  // The vector columns re-scanned by the cluster readers are looked up in
-  // `col_reader` (via each cluster's postings_id, which is the vector column's
-  // own field_id); `ctx` supplies the IO for those scans.
-  std::span<const BasicTermReader* const> ClusterReaders(
-    ReadContext& ctx, const ColReader& col_reader);
+  // The vector column re-scanned by the cluster reader is looked up in
+  // `col_reader` (via the cluster's postings_id, which is the vector column's
+  // own field_id); `ctx` supplies the IO for those scans. Returns nullptr when
+  // nothing was built.
+  const BasicTermReader* ClusterReader(ReadContext& ctx,
+                                       const ColReader& col_reader);
 
  private:
   struct Result {
@@ -145,18 +145,30 @@ class IvfWriter {
     uint32_t d = 0;
   };
 
-  std::vector<Result> _results;
-  std::vector<std::unique_ptr<IvfTermReader>> _readers;
-  std::vector<const BasicTermReader*> _reader_ptrs;
+  IvfInfo _info;
+  Result _result;
+  bool _built = false;
+  std::unique_ptr<IvfTermReader> _reader;
 };
 
-inline std::span<const BasicTermReader* const> PrepareIvfClusterReaders(
-  IvfWriter* writer, ColReader* col_reader, std::optional<ReadContext>& ctx) {
-  if (writer == nullptr || col_reader == nullptr) {
-    return {};
+inline std::vector<const BasicTermReader*> PrepareIvfClusterReaders(
+  std::span<const std::unique_ptr<IvfWriter>> writers, ColReader* col_reader,
+  std::optional<ReadContext>& ctx) {
+  std::vector<const BasicTermReader*> out;
+  if (col_reader == nullptr || writers.empty()) {
+    return out;
   }
   ctx.emplace(*col_reader);
-  return writer->ClusterReaders(ctx.value(), *col_reader);
+  out.reserve(writers.size());
+  for (const auto& w : writers) {
+    if (!w) {
+      continue;
+    }
+    if (const auto* r = w->ClusterReader(ctx.value(), *col_reader)) {
+      out.push_back(r);
+    }
+  }
+  return out;
 }
 
 }  // namespace irs

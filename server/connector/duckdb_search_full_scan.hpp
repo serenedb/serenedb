@@ -36,8 +36,8 @@
 #include <iresearch/utils/string.hpp>
 #include <memory>
 #include <optional>
-#include <variant>
 #include <span>
+#include <variant>
 #include <vector>
 
 #include "connector/duckdb_scan_base.hpp"

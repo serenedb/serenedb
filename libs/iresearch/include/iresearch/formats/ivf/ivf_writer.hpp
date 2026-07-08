@@ -88,8 +88,13 @@ class IvfBuilder {
   IvfInfo _info;
 };
 
-void WriteIvfCentroidBody(IndexOutput& out, VectorMetric metric,
-                          const BuiltIvf& built);
+struct IvfResidentSpan {
+  uint64_t offset;
+  uint64_t byte_size;
+};
+
+IvfResidentSpan WriteIvfCentroidBody(IndexOutput& out, VectorMetric metric,
+                                     const BuiltIvf& built);
 
 class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
  public:

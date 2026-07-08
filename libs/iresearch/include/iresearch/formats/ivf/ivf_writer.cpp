@@ -502,8 +502,8 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
   return out;
 }
 
-void WriteIvfCentroidBody(IndexOutput& out, VectorMetric metric,
-                          const BuiltIvf& built) {
+IvfResidentSpan WriteIvfCentroidBody(IndexOutput& out, VectorMetric metric,
+                                     const BuiltIvf& built) {
   const uint32_t d = built.d;
   const uint32_t n_l1 = built.n_l1;
   std::vector<uint64_t> body_offsets;
@@ -529,13 +529,15 @@ void WriteIvfCentroidBody(IndexOutput& out, VectorMetric metric,
                   static_cast<size_t>(n_l2) * sizeof(float));
   }
 
-  const uint64_t resident_start = out.Position();
+  const uint64_t resident_offset = out.Position();
   TwoLayerCentroids::WriteFooter(out, metric, built.shape_kind, d, n_l1,
                                  std::span<const float>{built.l1_centroids},
                                  std::span<const uint64_t>{body_offsets},
                                  std::span<const byte_type>{built.stats});
-  SDB_ASSERT(out.Position() - resident_start ==
+  const uint64_t resident_size = out.Position() - resident_offset;
+  SDB_ASSERT(resident_size ==
              TwoLayerCentroids::FooterSize(d, n_l1, built.stats.size()));
+  return {.offset = resident_offset, .byte_size = resident_size};
 }
 
 class IvfTermIterator final : public TermIterator {

@@ -140,9 +140,9 @@ void IdxWriter::Commit() {
   EnsureOut();
 
   for (auto& e : _impl->ivf_entries) {
-    e.offset = _impl->out->Position();
-    WriteIvfCentroidBody(*_impl->out, e.metric, *e.built);
-    e.byte_size = _impl->out->Position() - e.offset;
+    const auto span = WriteIvfCentroidBody(*_impl->out, e.metric, *e.built);
+    e.offset = span.offset;
+    e.byte_size = span.byte_size;
   }
 
   const uint64_t footer_offset = _impl->out->Position();

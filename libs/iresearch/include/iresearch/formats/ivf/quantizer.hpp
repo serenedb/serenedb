@@ -62,8 +62,7 @@ class QuantizerReader {
   virtual ~QuantizerReader() = default;
   virtual void StartCluster(uint64_t pay_start, size_t num_docs,
                             const float* centroid) = 0;
-  virtual void ComputeBlock(size_t offset, size_t length, score_t boost,
-                            score_t* out) = 0;
+  virtual void ComputeBlock(size_t offset, size_t length, score_t* out) = 0;
 };
 
 class QuantizerCodebook

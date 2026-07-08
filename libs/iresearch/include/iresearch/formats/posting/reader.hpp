@@ -559,7 +559,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
   return IteratorImpl(
     field_features, required_features,
     [&]<typename IteratorTraits, typename FieldTraits> -> DocIterator::ptr {
-      using Adapter = PostingAdapter<PostingIterator<IteratorTraits>>;
+      using Adapter = PostingAdapter<PostingIteratorBase<IteratorTraits>>;
       std::vector<Adapter> adapters;
       adapters.reserve(iterators.size());
       for (auto& it : iterators) {

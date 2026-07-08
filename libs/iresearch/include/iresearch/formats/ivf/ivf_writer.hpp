@@ -37,6 +37,11 @@
 #include "iresearch/types.hpp"
 #include "iresearch/utils/string.hpp"
 
+namespace duckdb {
+
+class Vector;
+}
+
 namespace irs {
 
 class ColReader;
@@ -116,6 +121,7 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
   bytes_view _min;
   bytes_view _max;
   mutable std::unique_ptr<IvfTermIterator> _it;
+  std::unique_ptr<duckdb::Vector> _payload_batch;
 };
 
 class IvfWriter {

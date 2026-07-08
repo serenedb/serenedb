@@ -112,13 +112,8 @@ QueryBuilder::ptr ByRadius::PrepareSegment(const SubReader& segment,
   }
 
   QueryBuilder::ptr inner;
-  if (opts.inner) {
-    auto inner_ctx = ctx;
-    inner_ctx.collector = nullptr;
-    inner = opts.inner->PrepareSegment(segment, inner_ctx);
-    if (!inner) {
-      return QueryBuilder::Empty();
-    }
+  if (!PrepareInnerFilter(opts.inner, segment, ctx, inner)) {
+    return QueryBuilder::Empty();
   }
 
   return memory::make_tracked<RangeVectorQuery>(

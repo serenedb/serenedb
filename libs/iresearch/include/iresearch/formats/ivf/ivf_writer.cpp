@@ -379,6 +379,7 @@ BuiltIvf IvfBuilder::Build(const ColumnReader& vector_column, ReadContext& ctx,
   if (pq) {
     residual_sample.reserve(static_cast<size_t>(n_train) * d);
   }
+  out.fine_centroids.reserve(static_cast<size_t>(total_target) * d);
 
   for (uint32_t c = 0; c < n_l1; ++c) {
     const float* l1c = l1_centroids.data() + static_cast<size_t>(c) * d;
@@ -695,8 +696,11 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
   const ColumnReader& child = *_vectors->Child();
   auto scan = child.InitScan(*_ctx);
   uint64_t pos = 0;
-  duckdb::Vector batch{duckdb::LogicalType::FLOAT,
-                       static_cast<duckdb::idx_t>(std::min(n, kBatch) * _d)};
+  if (!_payload_batch) {
+    _payload_batch = std::make_unique<duckdb::Vector>(
+      duckdb::LogicalType::FLOAT, static_cast<duckdb::idx_t>(kBatch) * _d);
+  }
+  duckdb::Vector& batch = *_payload_batch;
   const float* vecs = duckdb::FlatVector::GetData<float>(batch);
   size_t filled = 0;
   size_t k = 0;

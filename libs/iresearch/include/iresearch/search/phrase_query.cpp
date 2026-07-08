@@ -62,7 +62,7 @@ DocIterator::ptr FixedPhraseQuery::Execute(const ExecutionContext& ctx,
   // get index features required for query & order
   const IndexFeatures features = GetFeatures(scorer) | kRequiredFeatures;
 
-  using Adapter = PostingAdapter<PostingIterator<FixedTermTraits<false>>>;
+  using Adapter = PostingAdapter<PostingIteratorBase<FixedTermTraits<false>>>;
 
   std::vector<Adapter> itrs;
   itrs.reserve(phrase_state->terms.size());
@@ -120,7 +120,7 @@ DocIterator::ptr FixedPhraseQuery::ExecuteWithOffsets(
   }
 
   return ResolveBool(has_intervals, [&]<bool HasIntervals> -> DocIterator::ptr {
-    using Adapter = PostingAdapter<PostingIterator<FixedTermTraits<true>>>;
+    using Adapter = PostingAdapter<PostingIteratorBase<FixedTermTraits<true>>>;
     using FixedPhraseIterator = PhraseIterator<
       Conjunction<Adapter>,
       PhrasePosition<FixedPhraseFrequency<true, false, HasIntervals>>>;

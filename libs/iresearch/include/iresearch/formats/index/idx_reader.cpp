@@ -22,12 +22,14 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <algorithm>
 #include <cstring>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/types.hpp>
 #include <utility>
 #include <vector>
 
+#include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
@@ -46,7 +48,6 @@ namespace {
 
 constexpr duckdb::field_id_t kFooterSlotTermDict = 100;
 constexpr duckdb::field_id_t kFooterSlotIvf = 101;
-constexpr duckdb::field_id_t kFooterSlotTermsBodyStart = 102;
 
 IndexInput::ptr OpenAndCheckHeader(const Directory& dir,
                                    std::string_view filename) {
@@ -146,6 +147,7 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
         _impl->term_dict_by_id.emplace(id, idx);
       });
     });
+  uint64_t terms_start = _impl->body_start;
   deserializer.ReadList(
     kFooterSlotIvf, "ivf",
     [&](duckdb::Deserializer::List& list, duckdb::idx_t /*i*/) {
@@ -153,6 +155,15 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
         const auto id = obj.ReadProperty<uint64_t>(0, "id");
         const auto offset = obj.ReadProperty<uint64_t>(1, "offset");
         const auto byte_size = obj.ReadProperty<uint64_t>(2, "byte_size");
+
+        SDB_ASSERT(
+          offset >= _impl->body_start && offset + byte_size <= body_len,
+          "idx: IVF centroid blob [", offset, ", ", offset + byte_size,
+          ") for field ", id, " lies outside the body [", _impl->body_start,
+          ", ", body_len,
+          "); a footer-tracked blob placed ahead of the terms body "
+          "would break the derived terms-body start");
+        terms_start = std::max(terms_start, offset + byte_size);
 
         auto body = _impl->in->Dup();
         body->Seek(offset);
@@ -163,8 +174,7 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
         _impl->ivf_by_id.emplace(id, idx);
       });
     });
-  _impl->body_start = deserializer.ReadPropertyWithExplicitDefault<uint64_t>(
-    kFooterSlotTermsBodyStart, "terms_start", _impl->body_start);
+  _impl->body_start = terms_start;
   deserializer.End();
 }
 

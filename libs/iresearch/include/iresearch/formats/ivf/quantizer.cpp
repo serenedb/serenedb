@@ -246,8 +246,7 @@ class ScalarQuantizerReader final : public QuantizerReader {
     _codes_reader.Reset(pay_start);
   }
 
-  void ComputeBlock(size_t offset, size_t count, score_t /*boost*/,
-                    score_t* out) final {
+  void ComputeBlock(size_t offset, size_t count, score_t* out) final {
     SDB_ASSERT(_dc);
     SDB_ASSERT(offset + count <= _n);
     const byte_type* block = _codes_reader.Read(offset, count);
@@ -531,8 +530,7 @@ class ProductQuantizerReader final : public QuantizerReader {
     }
   }
 
-  void ComputeBlock(size_t offset, size_t count, score_t /*boost*/,
-                    score_t* out) final {
+  void ComputeBlock(size_t offset, size_t count, score_t* out) final {
     SDB_ASSERT(offset + count <= _n);
     std::memcpy(out, _scores.data() + offset, count * sizeof(score_t));
   }
@@ -681,8 +679,7 @@ class RaBitQuantizerReader final : public QuantizerReader {
     _codes_reader.Reset(pay_start);
   }
 
-  void ComputeBlock(size_t offset, size_t count, score_t /*boost*/,
-                    score_t* out) final {
+  void ComputeBlock(size_t offset, size_t count, score_t* out) final {
     SDB_ASSERT(_dc);
     SDB_ASSERT(offset + count <= _n);
     const byte_type* block = _codes_reader.Read(offset, count);

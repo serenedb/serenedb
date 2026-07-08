@@ -21,9 +21,11 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <span>
 
 #include "iresearch/formats/ivf/ivf_reader.hpp"
+#include "iresearch/search/filter.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
@@ -37,6 +39,19 @@ bool SeekClusterTerm(TermIterator& terms, uint32_t cluster_id,
   }
   terms.read();
   return true;
+}
+
+inline bool PrepareInnerFilter(const std::shared_ptr<const Filter>& inner,
+                               const SubReader& segment,
+                               const PrepareContext& ctx,
+                               QueryBuilder::ptr& out) {
+  if (!inner) {
+    return true;
+  }
+  auto inner_ctx = ctx;
+  inner_ctx.collector = nullptr;
+  out = inner->PrepareSegment(segment, inner_ctx);
+  return out != nullptr;
 }
 
 }  // namespace irs

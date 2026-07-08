@@ -34,6 +34,8 @@
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
+#include "iresearch/formats/posting/common.hpp"
+#include "iresearch/formats/posting/format_block_128.hpp"
 #include "iresearch/formats/posting/iterator_doc.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -168,6 +170,12 @@ class RawVectorIterator : public VectorDistanceIterator {
   RawVectorReader _reader;
 };
 
+// IVF cluster postings are docs-only (no freq/pos/offs) under the single active
+// postings format (FormatBlock128), so a single-cookie cluster iterator is
+// always this concrete type -- downcast to it to read RemainingDocs().
+using QVectorPosting =
+  PostingIteratorBase<IteratorTraitsImpl<FormatTraits128, false, false, false>>;
+
 class QVectorIterator : public VectorDistanceIterator {
  public:
   QVectorIterator(DocIterator::ptr&& src, std::unique_ptr<QuantizerReader> qr,
@@ -176,7 +184,7 @@ class QVectorIterator : public VectorDistanceIterator {
       _qr{std::move(qr)},
       _total{estimation} {
     SDB_ASSERT(_qr);
-    _posting = sdb::basics::downCast<PostingIteratorBase>(_src.get());
+    _posting = sdb::basics::downCast<QVectorPosting>(_src.get());
   }
 
   doc_id_t advance() final {
@@ -208,7 +216,7 @@ class QVectorIterator : public VectorDistanceIterator {
     const uint32_t remaining = _posting->RemainingDocs();
     SDB_ASSERT(remaining < _total);
     _base = static_cast<uint32_t>(_total - 1 - remaining);
-    _qr->ComputeBlock(_base, 1, kNoBoost, &_cur_dist);
+    _qr->ComputeBlock(_base, 1, &_cur_dist);
     ++_base;
     return _doc = doc;
   }
@@ -236,7 +244,7 @@ class QVectorIterator : public VectorDistanceIterator {
   void FillDistancesBlock() {
     SDB_ASSERT(_len > 0);
     SDB_ASSERT(_len <= _dist.size());
-    _qr->ComputeBlock(_base, _len, kNoBoost, _dist.data());
+    _qr->ComputeBlock(_base, _len, _dist.data());
     _base += _len;
   }
 
@@ -252,7 +260,7 @@ class QVectorIterator : public VectorDistanceIterator {
   }
 
   std::unique_ptr<QuantizerReader> _qr;
-  PostingIteratorBase* _posting = nullptr;
+  QVectorPosting* _posting = nullptr;
   CostAttr::Type _total;
   std::array<doc_id_t, kPostingBlock> _docs;
   std::array<score_t, kPostingBlock> _dist;
@@ -538,6 +546,7 @@ bool KnnVectorQuery::CollectTopK(ScoreCollector& collector,
   const bool has_centroids =
     _state.cluster_centroids.size() == _state.cookies.size() * _state.d;
   std::unique_ptr<IndexInput> pay_root;
+  std::vector<score_t> boosted;
 
   for (size_t c = 0; c < _state.cookies.size(); ++c) {
     auto ci = MakeClusterIterator(_state, c, has_centroids, pay_root);
@@ -553,15 +562,16 @@ bool KnnVectorQuery::CollectTopK(ScoreCollector& collector,
     while (true) {
       qv.AdvanceBlock();
       auto docs = qv.GetDocsBlock();
-      auto dist =
-        std::views::transform(qv.GetDistBlock(),
-                              [&](const auto dist) { return dist * _boost; }) |
-        std::ranges::to<std::vector>();
       if (docs.empty()) {
         break;
       }
+      auto dist = qv.GetDistBlock();
       SDB_ASSERT(docs.size() == dist.size());
-      collector.AddDocs(docs.data(), docs.size(), dist.data());
+      boosted.resize(dist.size());
+      for (size_t i = 0; i < dist.size(); ++i) {
+        boosted[i] = dist[i] * _boost;
+      }
+      collector.AddDocs(docs.data(), docs.size(), boosted.data());
     }
   }
   return true;

@@ -135,20 +135,6 @@ struct VectorScorerOptions {
     }
     SDB_UNREACHABLE();
   }
-
-  float TransformDistance(float stored) const {
-    switch (score_emit) {
-      case ScoreEmit::Identity:
-        return stored;
-      case ScoreEmit::Sqrt:
-        return std::sqrt(stored);
-      case ScoreEmit::OneMinus:
-        return 1.0f - stored;
-      case ScoreEmit::Negate:
-        return -stored;
-    }
-    SDB_UNREACHABLE();
-  }
 };
 
 irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,

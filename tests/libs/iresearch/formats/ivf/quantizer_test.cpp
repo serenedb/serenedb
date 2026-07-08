@@ -80,7 +80,7 @@ std::array<score_t, 3> PqRoundtrip(uint32_t d, uint32_t pq_m,
   reader->StartCluster(pay_start, 3, centroid.data());
 
   std::array<score_t, 3> scores{};
-  reader->ComputeBlock(0, 3, /*boost=*/1.f, scores.data());
+  reader->ComputeBlock(0, 3, scores.data());
   return scores;
 }
 
@@ -132,7 +132,7 @@ TEST_P(rabitq_quantizer_test, roundtrip_ranking_across_dims) {
   reader->StartCluster(pay_start, n, centroid.data());
 
   std::array<score_t, n> scores{};
-  reader->ComputeBlock(0, n, /*boost=*/1.f, scores.data());
+  reader->ComputeBlock(0, n, scores.data());
 
   EXPECT_LT(scores[0], scores[1]);
   EXPECT_LT(scores[1], scores[2]);
@@ -182,7 +182,7 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_l2) {
   reader->StartCluster(pay_start, n, centroid.data());
 
   std::array<score_t, n> scores{};
-  reader->ComputeBlock(0, n, /*boost=*/1.f, scores.data());
+  reader->ComputeBlock(0, n, scores.data());
 
   // L2: lower score means closer. Exact order is p0 < p1 < p2.
   EXPECT_LT(scores[0], scores[1]);
@@ -249,7 +249,7 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_inner_product) {
   reader->StartCluster(pay_start, n, centroid.data());
 
   std::array<score_t, n> scores{};
-  reader->ComputeBlock(0, n, /*boost=*/1.f, scores.data());
+  reader->ComputeBlock(0, n, scores.data());
 
   // IP: higher raw value means a larger inner product with the query.
   // Exact order by <query, p_i> is p0 (6) > p1 (0) > p2 (-6).
@@ -370,7 +370,7 @@ TEST(pq_quantizer_test, cluster_spans_multiple_fastscan_blocks_with_odd_m) {
   reader->StartCluster(pay_start, n, centroid.data());
 
   std::vector<score_t> scores(n);
-  reader->ComputeBlock(0, n, /*boost=*/1.f, scores.data());
+  reader->ComputeBlock(0, n, scores.data());
 
   score_t max_near = -std::numeric_limits<score_t>::infinity();
   score_t min_far = std::numeric_limits<score_t>::infinity();

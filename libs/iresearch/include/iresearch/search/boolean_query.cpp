@@ -149,10 +149,10 @@ DocIterator::ptr ExclusionQuery::Execute(const ExecutionContext& old,
   ScoreAdapters excl_itrs;
   excl_itrs.reserve(_excludes.size());
 
-  using TermWithFreq =
-    PostingIterator<IteratorTraitsImpl<FormatTraits128, true, false, false>>;
-  using TermWithoutFreq =
-    PostingIterator<IteratorTraitsImpl<FormatTraits128, false, false, false>>;
+  using TermWithFreq = PostingIteratorBase<
+    IteratorTraitsImpl<FormatTraits128, true, false, false>>;
+  using TermWithoutFreq = PostingIteratorBase<
+    IteratorTraitsImpl<FormatTraits128, false, false, false>>;
 
   bool excl_has_term_with_freq = false;
   bool excl_has_term_without_freq = false;
@@ -310,8 +310,8 @@ DocIterator::ptr BoostQuery::Execute(const ExecutionContext& old,
     return req;
   }
 
-  using TermWithFreq =
-    PostingIterator<IteratorTraitsImpl<FormatTraits128, true, false, false>>;
+  using TermWithFreq = PostingIteratorBase<
+    IteratorTraitsImpl<FormatTraits128, true, false, false>>;
   using TermAdapter = PostingAdapter<TermWithFreq>;
 
   ScoreAdapters opt_itrs;

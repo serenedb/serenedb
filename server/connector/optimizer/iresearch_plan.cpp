@@ -1929,6 +1929,7 @@ bool TryClaimAnnRange(
       continue;
     }
     const auto cmp_type = cmp.GetExpressionType();
+    scan.vector_scorer->radius = radius;
     scan.vector_scorer->radius_inclusive =
       cmp_type == duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO ||
       cmp_type == duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO;

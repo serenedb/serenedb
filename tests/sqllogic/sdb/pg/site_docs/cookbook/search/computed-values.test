@@ -1,4 +1,6 @@
-# DOCS_TEST: example_001
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE products (id INTEGER PRIMARY KEY, name VARCHAR, price INTEGER, price_with_tax INTEGER GENERATED ALWAYS AS (price * 110 / 100) STORED);
@@ -11,6 +13,8 @@ INSERT INTO products (id, name, price) VALUES (1, 'Widget', 100), (2, 'WIDGET', 
 
 statement ok
 VACUUM (REFRESH_TABLE) products;
+
+# DOCS_TEST: example_001
 
 # DOCS_TEST_BODY
 

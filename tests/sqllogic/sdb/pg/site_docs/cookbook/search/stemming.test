@@ -1,4 +1,6 @@
-# DOCS_TEST: example_001
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY body_dict (template = 'text', locale = 'en_US.UTF-8', case = 'lower', stemming = true, stopwords = '"the","a","an","is","are","for"', frequency = true, position = true);
@@ -17,6 +19,8 @@ INSERT INTO articles VALUES
 
 statement ok
 VACUUM (REFRESH_TABLE) articles;
+
+# DOCS_TEST: example_001
 
 # DOCS_TEST_BODY
 

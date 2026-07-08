@@ -1,4 +1,6 @@
-# DOCS_TEST: example_001
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY jtext (
@@ -20,6 +22,8 @@ INSERT INTO products VALUES
 statement ok
 CREATE INDEX products_idx ON products
     USING inverted (id, (doc['name']::VARCHAR) jtext, (doc['attrs']['brand']::VARCHAR), (doc['tags']::VARCHAR[]), (doc['price']::INTEGER));
+
+# DOCS_TEST: example_001
 
 # DOCS_TEST_BODY
 

@@ -1,4 +1,6 @@
-# DOCS_TEST: example_001
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY tx (
@@ -34,6 +36,8 @@ INSERT INTO alerts VALUES
 (3, 'laptops',       'laptop'),
 (4, 'wireless',      'wireless'),
 (5, 'cameras',       'camera');
+
+# DOCS_TEST: example_001
 
 # DOCS_TEST_BODY
 

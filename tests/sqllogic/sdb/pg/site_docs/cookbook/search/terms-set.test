@@ -1,4 +1,6 @@
-# DOCS_TEST: example_001
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE candidates (
@@ -22,6 +24,8 @@ CREATE INDEX candidates_idx ON candidates
 
 statement ok
 VACUUM (REFRESH_TABLE) candidates;
+
+# DOCS_TEST: example_001
 
 # DOCS_TEST_BODY
 

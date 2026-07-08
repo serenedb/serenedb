@@ -1,4 +1,6 @@
-# DOCS_TEST: example_001
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY d2 (
@@ -26,6 +28,8 @@ INSERT INTO articles VALUES
 
 statement ok
 VACUUM (REFRESH_TABLE) articles;
+
+# DOCS_TEST: example_001
 
 # DOCS_TEST_BODY
 

@@ -1,4 +1,6 @@
-# DOCS_TEST: example_001
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE searches (id INTEGER PRIMARY KEY, query VARCHAR NOT NULL);
@@ -23,6 +25,8 @@ CREATE INDEX searches_idx ON searches USING inverted (query);
 
 statement ok
 VACUUM (REFRESH_TABLE) searches;
+
+# DOCS_TEST: example_001
 
 # DOCS_TEST_BODY
 

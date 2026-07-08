@@ -1,57 +1,57 @@
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE articles (id INTEGER PRIMARY KEY, title VARCHAR, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX articles_idx ON articles
+    USING inverted (id, title, emb hnsw (metric = 'l2'));
+
+statement ok
+INSERT INTO articles VALUES
+(1, 'Reset your password',               [1.0, 0.0, 0.0]::FLOAT[3]),
+(2, 'How to reset your password',        [1.0, 0.0, 0.0]::FLOAT[3]),
+(3, 'Recover a locked account',          [0.9, 0.1, 0.0]::FLOAT[3]),
+(4, 'Set up two-factor authentication',  [0.8, 0.2, 0.0]::FLOAT[3]),
+(5, 'Change your payment method',        [0.0, 1.0, 0.0]::FLOAT[3]),
+(6, 'Update your billing address',       [0.1, 0.9, 0.0]::FLOAT[3]),
+(7, 'Fix a dropped connection',          [0.0, 0.0, 1.0]::FLOAT[3]),
+(8, 'How do I change my payment method', [0.0, 1.0, 0.0]::FLOAT[3]);
+
+statement ok
+VACUUM (REFRESH_TABLE) articles;
+
 # DOCS_TEST: example_001
-
-statement ok
-CREATE TEXT SEARCH DICTIONARY ven (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    frequency = true,
-    position = true
-);
-
-statement ok
-CREATE TABLE items (id INTEGER PRIMARY KEY, name VARCHAR, emb FLOAT[3]);
-
-statement ok
-CREATE INDEX items_idx ON items
-    USING inverted (id, name ven, emb hnsw (metric = 'l2'));
-
-statement ok
-INSERT INTO items VALUES
-(1, 'trail running shoe', [1.0, 0.0, 0.0]::FLOAT[3]),
-(2, 'road running shoe',  [0.9, 0.1, 0.0]::FLOAT[3]),
-(3, 'leather dress shoe', [0.0, 1.0, 0.0]::FLOAT[3]),
-(4, 'wireless earbuds',   [0.0, 0.0, 1.0]::FLOAT[3]),
-(5, 'marathon racer',     [0.95, 0.05, 0.0]::FLOAT[3]);
-
-statement ok
-VACUUM (REFRESH_TABLE) items;
 
 # DOCS_TEST_BODY
 
 query
-SELECT b.id, b.name, round((a.emb <-> b.emb)::numeric, 3) AS distance
-FROM items a JOIN items b ON b.id <> a.id
-WHERE a.id = 1
-ORDER BY distance, b.id
+SELECT id, title,
+       round((emb <-> (SELECT emb FROM articles WHERE id = 1))::numeric, 3) AS distance
+FROM articles_idx
+WHERE id <> 1
+ORDER BY distance, id
 LIMIT 3;
 ----
-id	name	distance
-5	marathon racer	0.071
-2	road running shoe	0.141
-3	leather dress shoe	1.414
+id	title	distance
+2	How to reset your password	0.000
+3	Recover a locked account	0.141
+4	Set up two-factor authentication	0.283
 
 # DOCS_TEST: example_002
 
 # DOCS_TEST_BODY
 
 query
-SELECT b.id, b.name
-FROM items a JOIN items b ON b.id <> a.id
-WHERE a.id = 1 AND (a.emb <-> b.emb) < 0.2
-ORDER BY b.id;
+SELECT a.id AS id_a, a.title AS title_a,
+       b.id AS id_b, b.title AS title_b,
+       round((a.emb <-> b.emb)::numeric, 3) AS distance
+FROM articles a JOIN articles b ON a.id < b.id
+WHERE (a.emb <-> b.emb) < 0.05
+ORDER BY distance, a.id, b.id;
 ----
-id	name
-2	road running shoe
-5	marathon racer
+id_a	title_a	id_b	title_b	distance
+1	Reset your password	2	How to reset your password	0.000
+5	Change your payment method	8	How do I change my payment method	0.000

@@ -1,4 +1,6 @@
-# DOCS_TEST: example_001
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY tx (
@@ -8,7 +10,8 @@ CREATE TEXT SEARCH DICTIONARY tx (
     stemming = false,
     accent = false,
     frequency = true,
-    position = true
+    position = true,
+    stopwords = '"the","a","an","and","at","to","of","in","for","more","than"'
 );
 
 statement ok
@@ -16,16 +19,18 @@ CREATE TABLE posts (id INTEGER PRIMARY KEY, body VARCHAR);
 
 statement ok
 INSERT INTO posts VALUES
-(1, 'search search search relevance ranking'),
-(2, 'search ranking ranking'),
-(3, 'search relevance'),
-(4, 'ranking');
+(1, 'Espresso starts at the grind. Grind finer to slow the shot, grind coarser to speed the shot.'),
+(2, 'Dial the grind, pull the shot, read the crema. A tight grind pulls a rich shot.'),
+(3, 'Fresh beans need a fresh grind. Grind the beans and pull a clean shot.'),
+(4, 'The grinder matters more than the machine. Dose, grind, tamp, pull: the grind rules the shot.');
 
 statement ok
 CREATE INDEX posts_idx ON posts USING inverted (id, body tx);
 
 statement ok
 VACUUM (REFRESH_TABLE) posts;
+
+# DOCS_TEST: example_001
 
 # DOCS_TEST_BODY
 
@@ -36,9 +41,31 @@ FROM posts_idx
 ORDER BY mentions DESC, term;
 ----
 term	mentions
-search	5
-ranking	4
-relevance	2
+grind	9
+shot	6
+pull	3
+beans	2
+fresh	2
+clean	1
+coarser	1
+crema	1
+dial	1
+dose	1
+espresso	1
+finer	1
+grinder	1
+machine	1
+matters	1
+need	1
+pulls	1
+read	1
+rich	1
+rules	1
+slow	1
+speed	1
+starts	1
+tamp	1
+tight	1
 
 # DOCS_TEST: example_002
 
@@ -52,9 +79,31 @@ FROM posts_idx
 ORDER BY mentions DESC, term;
 ----
 term	docs	mentions
-search	3	5
-ranking	3	4
-relevance	2	2
+grind	4	9
+shot	4	6
+pull	3	3
+beans	1	2
+fresh	1	2
+clean	1	1
+coarser	1	1
+crema	1	1
+dial	1	1
+dose	1	1
+espresso	1	1
+finer	1	1
+grinder	1	1
+machine	1	1
+matters	1	1
+need	1	1
+pulls	1	1
+read	1	1
+rich	1	1
+rules	1	1
+slow	1	1
+speed	1	1
+starts	1	1
+tamp	1	1
+tight	1	1
 
 # DOCS_TEST: example_003
 
@@ -68,5 +117,5 @@ ORDER BY mentions DESC, term
 LIMIT 2;
 ----
 term	mentions
-search	5
-ranking	4
+grind	9
+shot	6

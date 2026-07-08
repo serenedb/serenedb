@@ -1,4 +1,6 @@
-# DOCS_TEST: example_001
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY tx (
@@ -35,6 +37,8 @@ CREATE INDEX articles_idx ON articles USING inverted (id, category, body tx);
 
 statement ok
 VACUUM (REFRESH_TABLE) articles;
+
+# DOCS_TEST: example_001
 
 # DOCS_TEST_BODY
 
@@ -126,6 +130,41 @@ fg AS (
   SELECT unnest(ts_dict_agg(body))   AS term,
          unnest(ts_dict_count(body)) AS fg_docs
   FROM articles_idx
+  WHERE category @@ 'science'
+),
+totals AS (
+  SELECT (SELECT count(*) FROM articles_idx WHERE category @@ 'science') AS fg_total,
+         (SELECT count(*) FROM articles_idx)                             AS bg_total
+)
+SELECT fg.term,
+       fg.fg_docs,
+       bg.bg_docs,
+       round(fg.fg_docs - bg.bg_docs * t.fg_total::DOUBLE / t.bg_total, 2) AS lift
+FROM fg
+JOIN bg USING (term)
+CROSS JOIN totals t
+WHERE fg.fg_docs >= 2
+ORDER BY lift DESC, fg.term
+LIMIT 5;
+----
+term	fg_docs	bg_docs	lift
+quantum	3	3	2
+data	3	9	0
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+WITH bg AS (
+  SELECT unnest(ts_dict_agg(body))   AS term,
+         unnest(ts_dict_count(body)) AS bg_docs
+  FROM articles_idx
+),
+fg AS (
+  SELECT unnest(ts_dict_agg(body))   AS term,
+         unnest(ts_dict_count(body)) AS fg_docs
+  FROM articles_idx
   WHERE category @@ 'business'
 ),
 totals AS (
@@ -139,12 +178,10 @@ SELECT fg.term,
 FROM fg
 JOIN bg USING (term)
 CROSS JOIN totals t
+WHERE fg.fg_docs >= 2
 ORDER BY lift DESC, fg.term
 LIMIT 5;
 ----
 term	fg_docs	bg_docs	lift
 market	2	2	1.33
-earnings	1	1	0.67
-growth	1	1	0.67
-quarterly	1	1	0.67
-report	1	1	0.67
+data	3	9	0

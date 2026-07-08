@@ -1,4 +1,6 @@
-# DOCS_TEST: example_001
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE query_log (id INTEGER PRIMARY KEY, term VARCHAR NOT NULL);
@@ -20,6 +22,8 @@ CREATE INDEX query_log_idx ON query_log USING inverted (term);
 
 statement ok
 VACUUM (REFRESH_TABLE) query_log;
+
+# DOCS_TEST: example_001
 
 # DOCS_TEST_BODY
 

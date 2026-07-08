@@ -1,4 +1,6 @@
-# DOCS_TEST: example_001
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY tx (
@@ -37,10 +39,12 @@ CREATE INDEX products_idx ON products USING inverted (id, brand, title tx);
 statement ok
 VACUUM (REFRESH_TABLE) products;
 
+# DOCS_TEST: example_001
+
 # DOCS_TEST_BODY
 
 query
-SELECT count(*) AS hits, count(DISTINCT brand) AS brands
+SELECT count(*) AS hits, approx_count_distinct(brand) AS brands
 FROM products_idx
 WHERE title @@ 'running';
 ----

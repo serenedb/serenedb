@@ -1,4 +1,6 @@
-# DOCS_TEST: example_001
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY syn (
@@ -29,6 +31,8 @@ INSERT INTO catalog VALUES
 
 statement ok
 VACUUM (REFRESH_TABLE) catalog;
+
+# DOCS_TEST: example_001
 
 # DOCS_TEST_BODY
 

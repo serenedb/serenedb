@@ -1,4 +1,6 @@
-# DOCS_TEST: example_001
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY en (
@@ -27,6 +29,8 @@ CREATE VIEW v_docs AS SELECT id, body, category FROM docs;
 
 statement ok
 CREATE INDEX v_docs_idx ON v_docs USING inverted (id, body en, category);
+
+# DOCS_TEST: example_001
 
 # DOCS_TEST_BODY
 

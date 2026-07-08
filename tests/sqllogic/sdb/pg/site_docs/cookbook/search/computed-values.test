@@ -1,0 +1,102 @@
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE products (id INTEGER PRIMARY KEY, name VARCHAR, price INTEGER, price_with_tax INTEGER GENERATED ALWAYS AS (price * 110 / 100) STORED);
+
+statement ok
+CREATE INDEX products_idx ON products USING inverted (id, (lower(name)), price_with_tax);
+
+statement ok
+INSERT INTO products (id, name, price) VALUES (1, 'Widget', 100), (2, 'WIDGET', 200), (3, 'Gadget', 50);
+
+statement ok
+VACUUM (REFRESH_TABLE) products;
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, name FROM products_idx WHERE lower(name) @@ 'widget' ORDER BY id;
+----
+id	name
+1	Widget
+2	WIDGET
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, name, price_with_tax FROM products_idx WHERE price_with_tax @@ ts_le(120) ORDER BY id;
+----
+id	name	price_with_tax
+1	Widget	110
+3	Gadget	55
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, name, price_with_tax FROM products_idx WHERE price_with_tax @@ ts_ge(200) ORDER BY id;
+----
+id	name	price_with_tax
+2	WIDGET	220
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, name FROM products_idx WHERE lower(name) @@ 'widget' AND price_with_tax @@ ts_le(120) ORDER BY id;
+----
+id	name
+1	Widget
+
+# DOCS_TEST: example_005
+
+statement ok
+CREATE TABLE people (id INTEGER PRIMARY KEY, first VARCHAR, last VARCHAR);
+
+statement ok
+CREATE INDEX people_idx ON people USING inverted (id, (first || ' ' || last));
+
+statement ok
+INSERT INTO people VALUES (1, 'Jane', 'Doe'), (2, 'John', 'Roe'), (3, 'Jane', 'Roe');
+
+statement ok
+VACUUM (REFRESH_TABLE) people;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id FROM people_idx WHERE (first || ' ' || last) @@ 'Jane Doe' ORDER BY id;
+----
+id
+1
+
+# DOCS_TEST: example_006
+
+statement ok
+CREATE TABLE orders (id INTEGER PRIMARY KEY, amount INTEGER);
+
+statement ok
+CREATE INDEX orders_idx ON orders USING inverted (id, (CASE WHEN amount >= 100 THEN 'big' ELSE 'small' END));
+
+statement ok
+INSERT INTO orders VALUES (1, 150), (2, 50), (3, 200), (4, 90);
+
+statement ok
+VACUUM (REFRESH_TABLE) orders;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, amount FROM orders_idx WHERE (CASE WHEN amount >= 100 THEN 'big' ELSE 'small' END) = 'big' ORDER BY id;
+----
+id	amount
+1	150
+3	200

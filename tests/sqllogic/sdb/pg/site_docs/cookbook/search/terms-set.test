@@ -1,0 +1,72 @@
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE candidates (
+    id INTEGER PRIMARY KEY,
+    name VARCHAR NOT NULL,
+    skills VARCHAR[] NOT NULL
+);
+
+statement ok
+INSERT INTO candidates VALUES
+(1, 'Alice', ['java', 'sql', 'rust']),
+(2, 'Bob',   ['java', 'sql', 'python']),
+(3, 'Carol', ['java', 'rust', 'go']),
+(4, 'Dave',  ['sql', 'python', 'go']),
+(5, 'Erin',  ['java', 'sql', 'rust', 'go']),
+(6, 'Frank', ['python', 'go']);
+
+statement ok
+CREATE INDEX candidates_idx ON candidates
+    USING inverted (id, name, skills);
+
+statement ok
+VACUUM (REFRESH_TABLE) candidates;
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, name, skills
+FROM candidates_idx
+WHERE skills @@ ts_any(['java', 'sql', 'rust'], 3)
+ORDER BY id;
+----
+id	name	skills
+1	Alice	{java,sql,rust}
+5	Erin	{java,sql,rust,go}
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, name, skills
+FROM candidates_idx
+WHERE skills @@ ts_any(['java', 'sql', 'rust'], 2)
+ORDER BY id;
+----
+id	name	skills
+1	Alice	{java,sql,rust}
+2	Bob	{java,sql,python}
+3	Carol	{java,rust,go}
+5	Erin	{java,sql,rust,go}
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, name, skills
+FROM candidates_idx
+WHERE has_any_tokens(skills, ['java', 'sql', 'rust'], 2)
+ORDER BY id;
+----
+id	name	skills
+1	Alice	{java,sql,rust}
+2	Bob	{java,sql,python}
+3	Carol	{java,rust,go}
+5	Erin	{java,sql,rust,go}

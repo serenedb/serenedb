@@ -1,0 +1,89 @@
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY d2 (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE pages (id INTEGER PRIMARY KEY, title VARCHAR, body VARCHAR);
+
+statement ok
+CREATE INDEX pages_idx ON pages USING inverted (id, title d2, body d2);
+
+statement ok
+INSERT INTO pages VALUES
+(1, 'shipping policy', 'our returns and shipping policy explains how a refund works for any order you place'),
+(2, 'refund and returns', 'read this before you request anything at all from support today please');
+
+statement ok
+VACUUM (REFRESH_TABLE) pages;
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title FROM pages_idx WHERE title @@ 'refund' OR body @@ 'refund' ORDER BY BM25(pages_idx.tableoid) DESC, id;
+----
+id	title
+1	shipping policy
+2	refund and returns
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title FROM pages_idx WHERE title @@ ('refund'::tsquery ^ 5.0) OR body @@ 'refund' ORDER BY BM25(pages_idx.tableoid) DESC, id;
+----
+id	title
+2	refund and returns
+1	shipping policy
+
+# DOCS_TEST: example_003
+
+statement ok
+CREATE TABLE bd (id INTEGER PRIMARY KEY, title VARCHAR, body VARCHAR, popularity DOUBLE);
+
+statement ok
+CREATE INDEX bd_idx ON bd USING inverted (id, title d2, body d2);
+
+statement ok
+INSERT INTO bd VALUES
+(1, 'Fox', 'a quiet report with little else to say here', 0.10),
+(2, 'Morning walk', 'a fox and then another fox ran across the path', 0.90),
+(3, 'Field notes', 'a fox appeared once near the fence', 0.50);
+
+statement ok
+VACUUM (REFRESH_TABLE) bd;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title FROM bd_idx WHERE title @@ 'fox' OR body @@ 'fox' ORDER BY BM25(bd_idx.tableoid) DESC, id;
+----
+id	title
+1	Fox
+2	Morning walk
+3	Field notes
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title FROM bd_idx WHERE title @@ 'fox' OR body @@ 'fox' ORDER BY BM25(bd_idx.tableoid) * popularity DESC, id;
+----
+id	title
+2	Morning walk
+3	Field notes
+1	Fox

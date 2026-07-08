@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "iresearch/index/iterators.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -50,20 +51,31 @@ struct ByPrefixOptions : ByPrefixFilterOptions {
   }
 };
 
+struct PrefixAcceptor {
+  bytes_view prefix;
+
+  bool operator()(bytes_view term) const noexcept {
+    return term.starts_with(prefix);
+  }
+};
+
 class ByPrefix : public FilterWithField<ByPrefixOptions> {
  public:
   static void visit(const SubReader& segment, const TermReader& reader,
-                    bytes_view prefix, FilterVisitor& visitor);
+                    const ByPrefixOptions& options, FilterVisitor& visitor);
 
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
   static QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx,
                                           const irs::field_id field,
-                                          const bytes_view prefix,
-                                          size_t scored_terms_limit);
+                                          const bytes_view term);
 
   PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
+
+  TermPredicate::ptr CompileTermPredicate() const final;
+
+  TermIterator::ptr CompileTermIterator(const TermReader& reader) const final;
 };
 
 }  // namespace irs

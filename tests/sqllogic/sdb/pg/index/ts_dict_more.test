@@ -1,0 +1,181 @@
+hash-threshold 100
+
+# ----------------------------------------------------------------------------
+# Analyzer variations: a stemming dictionary collapses inflected forms, so the
+# term dictionary holds stems rather than surface words.
+# ----------------------------------------------------------------------------
+statement ok
+CREATE TEXT SEARCH DICTIONARY td_stem(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = true,
+    accent = false,
+    frequency = true
+)
+
+
+statement ok
+CREATE TABLE ds(id INTEGER PRIMARY KEY, body VARCHAR)
+
+
+statement ok
+CREATE INDEX ds_idx ON ds USING inverted(body td_stem)
+
+
+statement ok
+INSERT INTO ds VALUES (1, 'running runs runner'), (2, 'jumping jumps')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ds;
+
+
+query TI
+SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS docs
+FROM ds_idx ORDER BY term
+----
+term	docs
+jump	1
+run	1
+runner	1
+
+
+statement ok
+DROP TABLE ds
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY td_stem
+
+
+# ----------------------------------------------------------------------------
+# Score is constant 1.0 without a fuzzy constraint; lists stay aligned.
+# Single-segment vs multi-segment counts agree.
+# ----------------------------------------------------------------------------
+statement ok
+CREATE TEXT SEARCH DICTIONARY td2(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+)
+
+
+statement ok
+CREATE TABLE dm(id INTEGER PRIMARY KEY, body VARCHAR)
+
+
+statement ok
+CREATE INDEX dm_idx ON dm USING inverted(body td2)
+
+
+statement ok
+INSERT INTO dm VALUES (1, 'alpha beta'), (2, 'alpha gamma'), (3, 'beta gamma')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dm;
+
+
+query TR
+SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_score(body)) AS score
+FROM dm_idx ORDER BY term
+----
+term	score
+alpha	1
+beta	1
+gamma	1
+
+
+# Capture single-segment counts.
+query TI
+SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS docs
+FROM dm_idx ORDER BY term
+----
+term	docs
+alpha	2
+beta	2
+gamma	2
+
+
+# Split into a second segment; the same terms now span two segments and the
+# merged counts must match the single-segment totals plus the new rows.
+statement ok
+INSERT INTO dm VALUES (4, 'alpha alpha'), (5, 'delta')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dm;
+
+
+query TII
+SELECT unnest(ts_dict_agg(body)) AS term,
+       unnest(ts_dict_count(body)) AS docs,
+       unnest(ts_dict_freq(body)) AS freq
+FROM dm_idx ORDER BY term
+----
+term	docs	freq
+alpha	3	4
+beta	2	2
+delta	1	1
+gamma	2	2
+
+
+# ----------------------------------------------------------------------------
+# Scalars under a pushed prefix constraint operate on the constrained terms.
+# ----------------------------------------------------------------------------
+query T
+SELECT ts_dict_max(body) AS hi
+FROM dm_idx WHERE body LIKE 'a%'
+----
+hi
+alpha
+
+
+# ----------------------------------------------------------------------------
+# Post-filters over the term: regexp, IN-list, and OR combinations bind the
+# field reference to the term value.
+# ----------------------------------------------------------------------------
+query T
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM dm_idx WHERE regexp_matches(body, 'a$') ORDER BY term
+----
+term
+alpha
+beta
+delta
+gamma
+
+
+query T
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM dm_idx WHERE body IN ('alpha', 'delta', 'zzz') ORDER BY term
+----
+term
+alpha
+delta
+
+
+# A same-field boolean combination applies as a post-filter over the emitted
+# terms.
+query T
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM dm_idx WHERE body = 'beta' OR length(body) = 5 ORDER BY term
+----
+term
+alpha
+beta
+delta
+gamma
+
+
+statement ok
+DROP TABLE dm
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY td2

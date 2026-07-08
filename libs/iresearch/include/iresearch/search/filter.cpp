@@ -23,6 +23,7 @@
 #include "filter.hpp"
 
 #include "basics/singleton.hpp"
+#include "iresearch/index/index_reader.hpp"
 
 namespace irs {
 namespace {
@@ -55,6 +56,17 @@ PrepareCollector::ptr Filter::MakeCollector(const Scorer* /*scorer*/) const {
 }
 
 Filter::ptr Filter::empty() { return std::make_unique<Empty>(); }
+
+TermIterator::ptr Filter::CompileTermIterator(const TermReader& reader) const {
+  auto predicate = CompileTermPredicate();
+  if (!predicate) {
+    return nullptr;
+  }
+  auto it = reader.iterator(SeekMode::NORMAL);
+  SDB_ASSERT(it);
+  return memory::make_managed<FilteredTermIterator>(std::move(it),
+                                                    std::move(predicate));
+}
 
 QueryBuilder::ptr Empty::PrepareSegment(const SubReader&,
                                         const PrepareContext&) const {

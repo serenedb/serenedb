@@ -848,7 +848,8 @@ TEST_P(FormatTestCase, fields_read_write) {
         ASSERT_TRUE(term->seek(*expected_sorted_term));
         ASSERT_EQ(*expected_sorted_term, term->value());
         ASSERT_NO_THROW(term->read());
-        ASSERT_THROW(term->next(), irs::NotSupported);
+        ASSERT_FALSE(term->next());
+        ASSERT_EQ(*expected_sorted_term, term->value());
         ASSERT_THROW(term->seek_ge(*expected_sorted_term), irs::NotSupported);
         auto cookie = term->cookie();
         ASSERT_NE(nullptr, cookie);

@@ -947,7 +947,7 @@ TEST_P(ByEditDistanceTestCase, visit) {
     const auto& filter = sdb::basics::downCast<irs::ByTerm>(*lowered);
 
     tests::EmptyFilterVisitor visitor;
-    irs::ByTerm::Visit(segment, *reader, filter.options().term, visitor);
+    irs::ByTerm::Visit(segment, *reader, filter.options(), visitor);
     ASSERT_EQ(1, visitor.prepare_calls_counter());
     ASSERT_EQ(1, visitor.visit_calls_counter());
     ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{

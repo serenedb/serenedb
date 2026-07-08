@@ -387,6 +387,23 @@ ColumnTokenizer InvertedIndex::GetTokenizer(
   return *std::move(tokenizer);
 }
 
+bool InvertedIndex::IsKeywordField(const Snapshot& snapshot,
+                                   irs::field_id field_id) const noexcept {
+  const auto* info = FindColumnInfo(static_cast<Column::Id>(field_id));
+  if (info == nullptr || !info->IsTermDict()) {
+    return false;
+  }
+  if (!info->HasTextDictionary()) {
+    return info->indexed_term_dict;
+  }
+  auto dict = snapshot.GetObject<Tokenizer>(info->text_dictionary);
+  if (!dict) {
+    return false;
+  }
+  return std::holds_alternative<irs::StringTokenizer::Options>(
+    dict->Config().config);
+}
+
 irs::field_id InvertedIndex::FindFieldIdBySerialized(
   std::string_view serialized_expr) const noexcept {
   auto it = _expr_to_field.find(serialized_expr);

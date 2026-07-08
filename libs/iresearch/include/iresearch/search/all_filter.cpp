@@ -23,6 +23,8 @@
 #include "all_filter.hpp"
 
 #include "all_iterator.hpp"
+#include "iresearch/search/automaton_filter.hpp"
+#include "iresearch/utils/automaton_utils.hpp"
 
 namespace irs {
 
@@ -57,6 +59,12 @@ QueryBuilder::ptr All::PrepareSegment(const SubReader& segment,
 
 PrepareCollector::ptr All::MakeCollector(const Scorer* scorer) const {
   return std::make_unique<AllCollector>(scorer);
+}
+
+TermIterator::ptr All::CompileTermIterator(const TermReader& reader) const {
+  auto it = reader.iterator(SeekMode::NORMAL);
+  SDB_ASSERT(it);
+  return it;
 }
 
 }  // namespace irs

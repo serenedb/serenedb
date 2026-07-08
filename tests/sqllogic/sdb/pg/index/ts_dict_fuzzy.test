@@ -1,0 +1,149 @@
+hash-threshold 100
+
+# WHERE filters DOCUMENTS: a ts_* predicate selects matching docs and the
+# aggregate returns ALL their tokens. Term-level completion is expressed as
+# an outer filter over the emitted terms instead (it pushes down to the
+# term enumeration), including @@ ts_* matchers: fuzzy completion carries
+# its per-term similarity score there. The doc-level fuzzy WHERE has no
+# per-term score.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tf(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+)
+
+
+statement ok
+CREATE TABLE tfd(id INTEGER PRIMARY KEY, body VARCHAR)
+
+
+statement ok
+CREATE INDEX tfd_idx ON tfd USING inverted(body tf)
+
+
+statement ok
+INSERT INTO tfd VALUES
+  (1, 'apple apricot avocado'),
+  (2, 'apple banana'),
+  (3, 'aple grape')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) tfd;
+
+
+# Document-level WHERE: every doc contains an ap* token, so all tokens of
+# all docs appear.
+query T
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM tfd_idx WHERE body @@ ts_starts_with('ap') ORDER BY term
+----
+term
+aple
+apple
+apricot
+avocado
+banana
+grape
+
+# Fuzzy completion = term-level: the @@ matcher over the emitted terms
+# drives the enumeration and scores each term by edit-distance similarity.
+query TT
+SELECT t AS term, s AS score
+FROM (SELECT unnest(ts_dict_agg(body)) AS t, unnest(ts_dict_score(body)) AS s
+      FROM tfd_idx) sub
+WHERE t @@ ts_levenshtein('apple', 1) ORDER BY t
+----
+term	score
+aple	0.75
+apple	1
+
+# Prefix completion = term-level: outer filter over the emitted terms,
+# pushed down into the dictionary enumeration.
+query T
+SELECT t AS term FROM (SELECT unnest(ts_dict_agg(body)) AS t FROM tfd_idx) sub
+WHERE t LIKE 'ap%' ORDER BY t
+----
+term
+aple
+apple
+apricot
+
+
+# Fuzzy "did you mean" via ts_levenshtein: matched terms carry an edit-distance
+# score (exact match scores highest).
+query TR
+SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_score(body)) AS score
+FROM tfd_idx WHERE body @@ ts_levenshtein('apple', 1) ORDER BY term
+----
+term	score
+aple	1
+apple	1
+apricot	1
+avocado	1
+banana	1
+grape	1
+
+
+# Regular-expression term matching via ts_regexp.
+query T
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM tfd_idx WHERE body @@ ts_regexp('a[a-z]*e') ORDER BY term
+----
+term
+aple
+apple
+apricot
+avocado
+banana
+grape
+
+
+# The levenshtein_matches sugar predicate is claimed the same way.
+query T
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM tfd_idx WHERE levenshtein_matches(body, 'banana', 1) ORDER BY term
+----
+term
+apple
+banana
+
+
+# Counts/scores still merge across segments: add a second segment containing a
+# near-duplicate of 'apple' and re-run the fuzzy query.
+statement ok
+INSERT INTO tfd VALUES (4, 'apple appl')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) tfd;
+
+
+query TIR
+SELECT unnest(ts_dict_agg(body)) AS term,
+       unnest(ts_dict_count(body)) AS docs,
+       unnest(ts_dict_score(body)) AS score
+FROM tfd_idx WHERE body @@ ts_levenshtein('apple', 1) ORDER BY term
+----
+term	docs	score
+aple	1	1
+appl	1	1
+apple	3	1
+apricot	1	1
+avocado	1	1
+banana	1	1
+grape	1	1
+
+
+statement ok
+DROP TABLE tfd
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY tf

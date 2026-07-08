@@ -1,0 +1,584 @@
+hash-threshold 100
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wd_kw(template = 'keyword')
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wd_tx(template = 'text', locale = 'en_US.UTF-8',
+    case = 'lower', stemming = false, accent = false, frequency = true,
+    position = true)
+
+statement ok
+CREATE TABLE wdk(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, tag VARCHAR)
+
+statement ok
+CREATE INDEX wdk_idx ON wdk USING inverted(cat wd_kw, tag wd_kw)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO wdk VALUES
+  (1, 'apple', 'x'),
+  (2, 'fig', 'x'),
+  (3, 'grape', 'x'),
+  (4, 'grape', 'x'),
+  (5, 'grape', 'x'),
+  (6, 'kiwi', 'x'),
+  (7, 'lime', 'x'),
+  (8, 'peach', 'x'),
+  (9, 'pear', 'x'),
+  (10, 'pine', 'x'),
+  (11, 'plum', 'x'),
+  (12, 'quail', 'x'),
+  (13, 'quince', 'x')
+
+statement ok
+VACUUM (REFRESH_TABLE) wdk;
+
+statement ok
+DELETE FROM wdk WHERE id IN (2, 5, 6, 8, 11, 12, 13)
+
+statement ok
+VACUUM (REFRESH_TABLE) wdk;
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM wdk_idx ORDER BY term
+----
+term	docs
+apple	1
+grape	2
+lime	1
+pear	1
+pine	1
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM wdk_idx WHERE cat = 'lime' ORDER BY term
+----
+term	docs
+lime	1
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(cat)) AS term
+FROM wdk_idx WHERE cat = 'lime'
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────────────────────╮
+│ Groups: #0                               │
+│ ~0 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections: #0                          │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: wdk_idx                           │
+│ Filter:                                  │
+│ ╭─ Term ─────────────╮                   │
+│ │ Field: cat(string) │                   │
+│ │ Value: lime        │                   │
+│ ╰────────────────────╯                   │
+│ TsDict: cat                              │
+│ Projections: sdb_inverted_index_term$cat │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM wdk_idx WHERE cat = 'grape' ORDER BY term
+----
+term	docs
+grape	2
+
+query I
+SELECT count(*) AS n FROM wdk WHERE cat = 'grape'
+----
+n
+2
+
+query I
+SELECT count(*) AS n
+FROM (SELECT unnest(ts_dict_agg(cat)) AS t FROM wdk_idx WHERE cat = 'fig') x
+----
+n
+0
+
+query I
+SELECT count(*) AS n
+FROM (SELECT unnest(ts_dict_agg(cat)) AS t FROM wdk_idx WHERE cat = 'zebra') x
+----
+n
+0
+
+query I
+SELECT count(*) AS n FROM wdk_idx WHERE cat = 'fig'
+----
+n
+0
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM wdk_idx WHERE cat IN ('fig', 'lime', 'zebra') ORDER BY term
+----
+term	docs
+lime	1
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(cat)) AS term
+FROM wdk_idx WHERE cat IN ('fig', 'lime', 'zebra')
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────────────────────╮
+│ Groups: #0                               │
+│ ~0 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections: #0                          │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: wdk_idx                           │
+│ Filter:                                  │
+│ ╭─ Terms ────────────────────────╮       │
+│ │ Field: cat(string)             │       │
+│ │ Values: 'fig', 'lime', 'zebra' │       │
+│ │ Min Match: 1                   │       │
+│ ╰────────────────────────────────╯       │
+│ TsDict: cat                              │
+│ Projections: sdb_inverted_index_term$cat │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query T
+SELECT list_sort(array_agg(DISTINCT cat)) AS cats
+FROM wdk WHERE cat IN ('fig', 'lime', 'zebra')
+----
+cats
+{lime}
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM wdk_idx WHERE cat LIKE 'p%' ORDER BY term
+----
+term	docs
+pear	1
+pine	1
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(cat)) AS term
+FROM wdk_idx WHERE cat LIKE 'p%'
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────────────────────╮
+│ Groups: #0                               │
+│ ~0 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections: #0                          │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: wdk_idx                           │
+│ Filter:                                  │
+│ ╭─ Starts With ──────╮                   │
+│ │ Field: cat(string) │                   │
+│ │ Prefix: p          │                   │
+│ │ Limit: 1024        │                   │
+│ ╰────────────────────╯                   │
+│ TsDict: cat                              │
+│ Projections: sdb_inverted_index_term$cat │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query I
+SELECT count(*) AS n
+FROM (SELECT unnest(ts_dict_agg(cat)) AS t FROM wdk_idx WHERE cat LIKE 'q%') x
+----
+n
+0
+
+query T
+SELECT list_sort(array_agg(DISTINCT cat)) AS cats FROM wdk WHERE cat LIKE 'p%'
+----
+cats
+{pear,pine}
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM wdk_idx WHERE cat BETWEEN 'a' AND 'm' ORDER BY term
+----
+term	docs
+apple	1
+grape	2
+lime	1
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(cat)) AS term
+FROM wdk_idx WHERE cat BETWEEN 'a' AND 'm'
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────────────────────╮
+│ Groups: #0                               │
+│ ~0 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections: #0                          │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: wdk_idx                           │
+│ Filter:                                  │
+│ ╭─ Range ────────────╮                   │
+│ │ Field: cat(string) │                   │
+│ │ Range: >=a, <=m    │                   │
+│ │ Boost: 2           │                   │
+│ ╰────────────────────╯                   │
+│ TsDict: cat                              │
+│ Projections: sdb_inverted_index_term$cat │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM wdk_idx WHERE cat BETWEEN 'fig' AND 'kiwi' ORDER BY term
+----
+term	docs
+grape	2
+
+query T
+SELECT unnest(ts_dict_agg(cat)) AS term
+FROM wdk_idx WHERE cat > 'pear' ORDER BY term
+----
+term
+pine
+
+query I
+SELECT count(DISTINCT cat) AS n FROM wdk WHERE cat BETWEEN 'a' AND 'm'
+----
+n
+3
+
+query T
+SELECT unnest(ts_dict_agg(cat)) AS term
+FROM wdk_idx WHERE length(cat) = 4 ORDER BY term
+----
+term
+lime
+pear
+pine
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(cat)) AS term
+FROM wdk_idx WHERE length(cat) = 4
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────────────────────╮
+│ Groups: #0                               │
+│ ~0 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections: #0                          │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ FILTER ────────────┴────────────────────╮
+│ Expression:                              │
+│ length(sdb_inverted_index_term$cat) = 4  │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: wdk_idx                           │
+│ TsDict: cat                              │
+│ Projections: sdb_inverted_index_term$cat │
+│ ~6 rows                                  │
+╰──────────────────────────────────────────╯
+
+statement ok
+DELETE FROM wdk WHERE id IN (3, 4)
+
+statement ok
+VACUUM (REFRESH_TABLE) wdk;
+
+query I
+SELECT count(*) AS n
+FROM (SELECT unnest(ts_dict_agg(cat)) AS t FROM wdk_idx WHERE cat = 'grape') x
+----
+n
+0
+
+query I
+SELECT count(*) AS n FROM wdk_idx WHERE cat = 'grape'
+----
+n
+0
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM wdk_idx WHERE cat BETWEEN 'a' AND 'm' ORDER BY term
+----
+term	docs
+apple	1
+lime	1
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM wdk_idx WHERE cat IN ('grape', 'lime') ORDER BY term
+----
+term	docs
+lime	1
+
+query TI
+SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
+FROM wdk_idx WHERE cat = 'lime' OR cat = 'grape' ORDER BY term
+----
+term	docs
+lime	1
+
+query T
+SELECT unnest(ts_dict_agg(cat)) AS term
+FROM wdk_idx WHERE cat LIKE 'p%' AND cat <> 'pear' ORDER BY term
+----
+term
+pine
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(cat)) AS term
+FROM wdk_idx WHERE cat LIKE 'p%' AND cat <> 'pear'
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ────────────────────────────────╮
+│ Groups: #0                                     │
+│ ~0 rows                                        │
+╰────────────────────────┬───────────────────────╯
+╭─ PROJECTION ───────────┴───────────────────────╮
+│ Projections: #0                                │
+│ ~1 row                                         │
+╰────────────────────────┬───────────────────────╯
+╭─ IRESEARCH_SCAN ───────┴───────────────────────╮
+│ Index: wdk_idx                                 │
+│ Filter:                                        │
+│ ╭─ Exclusion ────────╮                         │
+│ ╰──────────┬─────────╯                         │
+│            ├───────────────────────╮           │
+│ ╭─ Starts With ──────╮  ╭─ Term ───┴─────────╮ │
+│ │ Field: cat(string) │  │ Field: cat(string) │ │
+│ │ Prefix: p          │  │ Value: pear        │ │
+│ │ Limit: 1024        │  ╰────────────────────╯ │
+│ ╰────────────────────╯                         │
+│ TsDict: cat                                    │
+│ Projections: sdb_inverted_index_term$cat       │
+│ ~1 row                                         │
+╰────────────────────────────────────────────────╯
+
+query T
+SELECT unnest(ts_dict_agg(cat)) AS term
+FROM wdk_idx WHERE cat = 'lime' OR length(cat) = 4 ORDER BY term
+----
+term
+lime
+pear
+pine
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(cat)) AS term
+FROM wdk_idx WHERE cat = 'lime' OR length(cat) = 4
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ─────────────────────────────────────────────────────────────────────╮
+│ Groups: #0                                                                          │
+│ ~0 rows                                                                             │
+╰──────────────────────────────────────────┬──────────────────────────────────────────╯
+╭─ PROJECTION ─────────────────────────────┴──────────────────────────────────────────╮
+│ Projections: #0                                                                     │
+│ ~1 row                                                                              │
+╰──────────────────────────────────────────┬──────────────────────────────────────────╯
+╭─ FILTER ─────────────────────────────────┴──────────────────────────────────────────╮
+│ Expression:                                                                         │
+│ (sdb_inverted_index_term$cat = 'lime') OR (length(sdb_inverted_index_term$cat) = 4) │
+│ ~1 row                                                                              │
+╰──────────────────────────────────────────┬──────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────┴──────────────────────────────────────────╮
+│ Index: wdk_idx                                                                      │
+│ TsDict: cat                                                                         │
+│ Projections: sdb_inverted_index_term$cat                                            │
+│ ~4 rows                                                                             │
+╰─────────────────────────────────────────────────────────────────────────────────────╯
+
+query T
+SELECT unnest(ts_dict_agg(cat)) AS term
+FROM wdk_idx WHERE cat >= 'lime' AND cat < 'pine' ORDER BY term
+----
+term
+lime
+pear
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(cat)) AS term
+FROM wdk_idx WHERE cat >= 'lime' AND cat < 'pine'
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────────────────────╮
+│ Groups: #0                               │
+│ ~0 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections: #0                          │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: wdk_idx                           │
+│ Filter:                                  │
+│ ╭─ Range ──────────────╮                 │
+│ │ Field: cat(string)   │                 │
+│ │ Range: >=lime, <pine │                 │
+│ │ Boost: 2             │                 │
+│ ╰──────────────────────╯                 │
+│ TsDict: cat                              │
+│ Projections: sdb_inverted_index_term$cat │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+
+# Cross-field WHERE = doc restriction; deletes stay masked out of the bitset.
+query T
+SELECT list_sort(ts_dict_agg(cat)) FROM wdk_idx WHERE tag = 'x'
+----
+list_sort
+{apple,lime,pear,pine}
+
+
+# Multi-field WHERE routes the LIKE to cat; tag enumerates fully. Dead p*
+# terms (peach, plum) stay masked out.
+query TT
+SELECT list_sort(ts_dict_agg(cat)) AS c, list_sort(ts_dict_agg(tag)) AS t FROM wdk_idx WHERE cat LIKE 'p%'
+----
+c	t
+{pear,pine}	{x}
+
+
+statement ok
+CREATE TABLE wdt(id INTEGER PRIMARY KEY, body VARCHAR)
+
+statement ok
+CREATE INDEX wdt_idx ON wdt USING inverted(body wd_tx)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO wdt VALUES
+  (1, 'apple banana'),
+  (2, 'Aple cherry'),
+  (3, 'appl banana'),
+  (4, 'axle date')
+
+statement ok
+VACUUM (REFRESH_TABLE) wdt;
+
+statement ok
+DELETE FROM wdt WHERE id IN (3, 4)
+
+statement ok
+VACUUM (REFRESH_TABLE) wdt;
+
+query TII
+SELECT unnest(ts_dict_agg(body)) AS term,
+       unnest(ts_dict_count(body)) AS docs,
+       unnest(ts_dict_freq(body)) AS freq
+FROM wdt_idx ORDER BY term
+----
+term	docs	freq
+aple	1	1
+apple	1	1
+banana	1	2
+cherry	1	1
+
+query TIR
+SELECT unnest(ts_dict_agg(body)) AS term,
+       unnest(ts_dict_count(body)) AS docs,
+       unnest(ts_dict_score(body)) AS score
+FROM wdt_idx WHERE body @@ ts_levenshtein('apple', 1) ORDER BY term
+----
+term	docs	score
+aple	1	1
+apple	1	1
+banana	1	1
+cherry	1	1
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term
+FROM wdt_idx WHERE body @@ ts_levenshtein('apple', 1)
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ────────────────╮
+│ Groups: #0                     │
+│ ~0 rows                        │
+╰────────────────┬───────────────╯
+╭─ PROJECTION ───┴───────────────╮
+│ Projections: #0                │
+│ ~1 row                         │
+╰────────────────┬───────────────╯
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: wdt_idx                 │
+│ Filter:                        │
+│ ╭─ Levenshtein ───────╮        │
+│ │ Field: body(string) │        │
+│ │ Target: apple       │        │
+│ │ Max Terms: 1024     │        │
+│ ╰─────────────────────╯        │
+│ TsDict: body                   │
+│ Projections:                   │
+│ sdb_inverted_index_term$body   │
+│ ~1 row                         │
+╰────────────────────────────────╯
+
+query T
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM wdt_idx WHERE body @@ ts_starts_with('ap') ORDER BY term
+----
+term
+aple
+apple
+banana
+cherry
+
+query T
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM wdt_idx WHERE body @@ ts_regexp('a[a-z]*e') ORDER BY term
+----
+term
+aple
+apple
+banana
+cherry
+
+query I
+SELECT count(*) AS n FROM wdt_idx WHERE body @@ ts_starts_with('ap')
+----
+n
+2
+
+query T
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM wdt_idx WHERE length(body) = 4 ORDER BY term
+----
+term
+aple
+
+query T
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM wdt_idx WHERE body <> 'apple' ORDER BY term
+----
+term
+aple
+banana
+cherry
+
+statement ok
+DROP TABLE wdt
+
+statement ok
+DROP TABLE wdk
+
+statement ok
+DROP TEXT SEARCH DICTIONARY wd_tx
+
+statement ok
+DROP TEXT SEARCH DICTIONARY wd_kw

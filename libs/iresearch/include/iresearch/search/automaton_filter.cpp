@@ -21,6 +21,7 @@
 #include "automaton_filter.hpp"
 
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/filter_visitor.hpp"
 #include "iresearch/search/limited_sample_selector.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
@@ -65,6 +66,46 @@ PrepareCollector::ptr AutomatonFilter::MakeCollector(
   const Scorer* scorer) const {
   return std::make_unique<LimitedTermsCollector>(scorer,
                                                  options().scored_terms_limit);
+}
+
+namespace {
+
+class AutomatonTermPredicate final : public TermPredicate {
+ public:
+  explicit AutomatonTermPredicate(
+    std::shared_ptr<const CompiledAcceptor> compiled) noexcept
+    : _compiled{std::move(compiled)} {}
+
+  bool Accepts(bytes_view term) const final {
+    return bool(Accept(_compiled->acceptor, term));
+  }
+
+ private:
+  std::shared_ptr<const CompiledAcceptor> _compiled;
+};
+
+}  // namespace
+
+TermPredicate::ptr MakeAutomatonTermPredicate(
+  std::shared_ptr<const CompiledAcceptor> compiled) {
+  if (!compiled) {
+    return nullptr;
+  }
+  return std::make_unique<AutomatonTermPredicate>(std::move(compiled));
+}
+
+TermPredicate::ptr AutomatonFilter::CompileTermPredicate() const {
+  return MakeAutomatonTermPredicate(options().compiled);
+}
+
+TermIterator::ptr AutomatonFilter::CompileTermIterator(
+  const TermReader& reader) const {
+  if (!options().compiled) {
+    return nullptr;
+  }
+  auto it = reader.iterator(options().compiled->matcher);
+  SDB_ASSERT(it);
+  return it;
 }
 
 }  // namespace irs

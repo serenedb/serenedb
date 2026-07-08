@@ -1,0 +1,431 @@
+hash-threshold 100
+
+# ----------------------------------------------------------------------------
+# array_agg(DISTINCT col) over a keyword-analyzed inverted-index column is
+# served from the term dictionary: a keyword analyzer emits the whole value as
+# a single term, so the distinct values equal the field's terms. The optimizer
+# rewrites it to a term-dict enumeration (EXPLAIN shows `TsDict`). It only
+# fires for a NOT NULL column, since list()/array_agg keeps a NULL element for
+# missing values while the term dictionary has none.
+# ----------------------------------------------------------------------------
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY kw_dict(template = 'keyword')
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tx_dict(template = 'text',
+    locale = 'en_US.UTF-8', case = 'lower', stemming = false, accent = false,
+    frequency = true, position = true)
+
+statement ok
+CREATE TABLE aa(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL,
+                body VARCHAR NOT NULL, opt VARCHAR, plain VARCHAR NOT NULL)
+
+statement ok
+CREATE INDEX aa_idx ON aa USING inverted(cat kw_dict, body tx_dict,
+                                         opt kw_dict, plain)
+
+statement ok
+INSERT INTO aa VALUES
+  (1, 'red',   'hello world', 'x',  'p1'),
+  (2, 'green', 'foo bar',     'y',  'p2'),
+  (3, 'red',   'baz qux',     'x',  'p1'),
+  (4, 'blue',  'hello again', NULL, 'p3')
+
+statement ok
+VACUUM (REFRESH_TABLE) aa;
+
+statement ok
+INSERT INTO aa VALUES
+  (5, 'green', 'red green',   NULL, 'p2'),
+  (6, 'amber', 'foo world',   'z',  'p4'),
+  (7, 'red',   'qux baz',     'x',  'p1')
+
+statement ok
+VACUUM (REFRESH_TABLE) aa;
+
+# --- keyword column with an explicit keyword dictionary: rewritten.
+query
+EXPLAIN SELECT array_agg(DISTINCT cat) FROM aa_idx
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────────────────────╮
+│ Aggregates:                              │
+│ list(#0) FILTER (WHERE #1) Filter: #1    │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections:                             │
+│ sdb_inverted_index_term$cat,             │
+│ sdb_inverted_index_term$cat IS NOT NULL  │
+│ ~3 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ HASH_GROUP_BY ─────┴────────────────────╮
+│ Groups: #0                               │
+│ ~3 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections: #0                          │
+│ ~7 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: aa_idx                            │
+│ TsDict: cat                              │
+│ Projections: sdb_inverted_index_term$cat │
+│ ~7 rows                                  │
+╰──────────────────────────────────────────╯
+
+query
+SELECT list_sort(array_agg(DISTINCT cat)) FROM aa_idx
+----
+list_sort
+{amber,blue,green,red}
+
+# Equivalent against the base table (distinct values, byte order).
+query
+SELECT array_agg(DISTINCT cat ORDER BY cat) FROM aa
+----
+array_agg
+{amber,blue,green,red}
+
+# --- keyword column with no dictionary (defaults to keyword): rewritten.
+query
+EXPLAIN SELECT array_agg(DISTINCT plain) FROM aa_idx
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ──────────────────────╮
+│ Aggregates:                                │
+│ list(#0) FILTER (WHERE #1) Filter: #1      │
+│ ~1 row                                     │
+╰──────────────────────┬─────────────────────╯
+╭─ PROJECTION ─────────┴─────────────────────╮
+│ Projections:                               │
+│ sdb_inverted_index_term$plain,             │
+│ sdb_inverted_index_term$plain IS NOT NULL  │
+│ ~3 rows                                    │
+╰──────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ──────┴─────────────────────╮
+│ Groups: #0                                 │
+│ ~3 rows                                    │
+╰──────────────────────┬─────────────────────╯
+╭─ PROJECTION ─────────┴─────────────────────╮
+│ Projections: #0                            │
+│ ~7 rows                                    │
+╰──────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
+│ Index: aa_idx                              │
+│ TsDict: plain                              │
+│ Projections:                               │
+│ sdb_inverted_index_term$plain              │
+│ ~7 rows                                    │
+╰────────────────────────────────────────────╯
+
+query
+SELECT list_sort(array_agg(DISTINCT plain)) FROM aa_idx
+----
+list_sort
+{p1,p2,p3,p4}
+
+query
+SELECT array_agg(DISTINCT plain ORDER BY plain) FROM aa
+----
+array_agg
+{p1,p2,p3,p4}
+
+# --- text-tokenized column: NOT rewritten (terms != distinct values).
+query
+EXPLAIN SELECT array_agg(DISTINCT body) FROM aa_idx
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ──────────────╮
+│ Aggregates: array_agg(DISTINCT #0) │
+│ ~1 row                             │
+╰──────────────────┬─────────────────╯
+╭─ PROJECTION ─────┴─────────────────╮
+│ Projections: body                  │
+│ ~7 rows                            │
+╰──────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ─┴─────────────────╮
+│ Index: aa_idx                      │
+│ Lookup: table                      │
+│ Projections: body                  │
+│ ~7 rows                            │
+╰────────────────────────────────────╯
+
+# --- nullable keyword column: NOT rewritten (NULL element must be kept).
+query
+EXPLAIN SELECT array_agg(DISTINCT opt) FROM aa_idx
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ──────────────╮
+│ Aggregates: array_agg(DISTINCT #0) │
+│ ~1 row                             │
+╰──────────────────┬─────────────────╯
+╭─ PROJECTION ─────┴─────────────────╮
+│ Projections: opt                   │
+│ ~7 rows                            │
+╰──────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ─┴─────────────────╮
+│ Index: aa_idx                      │
+│ Lookup: table                      │
+│ Projections: opt                   │
+│ ~7 rows                            │
+╰────────────────────────────────────╯
+
+query
+SELECT array_agg(DISTINCT opt ORDER BY opt) FROM aa_idx
+----
+array_agg
+{x,y,z,NULL}
+
+query
+SELECT array_agg(DISTINCT opt ORDER BY opt) FROM aa
+----
+array_agg
+{x,y,z,NULL}
+
+# --- non-distinct array_agg: NOT rewritten (duplicates differ from terms).
+query
+EXPLAIN SELECT array_agg(cat ORDER BY cat) FROM aa_idx
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ─────╮
+│ Aggregates: array_agg(#0) │
+│ ~1 row                    │
+╰─────────────┬─────────────╯
+╭─ PROJECTION ┴─────────────╮
+│ Projections: cat          │
+│ ~7 rows                   │
+╰─────────────┬─────────────╯
+╭─ IRESEARCH_SCAN ──────────╮
+│ Index: aa_idx             │
+│ Lookup: table             │
+│ Projections: cat          │
+│ ~7 rows                   │
+╰───────────────────────────╯
+
+# --- mixed with another aggregate: NOT rewritten (count needs doc rows).
+query
+EXPLAIN SELECT array_agg(DISTINCT cat), count(*) FROM aa_idx
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ───────────────╮
+│ Aggregates: array_agg(DISTINCT #0), │
+│             count_star()            │
+│ ~1 row                              │
+╰──────────────────┬──────────────────╯
+╭─ PROJECTION ─────┴──────────────────╮
+│ Projections: cat                    │
+│ ~7 rows                             │
+╰──────────────────┬──────────────────╯
+╭─ IRESEARCH_SCAN ─┴──────────────────╮
+│ Index: aa_idx                       │
+│ Lookup: table                       │
+│ Projections: cat                    │
+│ ~7 rows                             │
+╰─────────────────────────────────────╯
+
+# --- GROUP BY: NOT rewritten (term-dict scan cannot group).
+query
+EXPLAIN SELECT array_agg(DISTINCT cat) FROM aa_idx GROUP BY id
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────╮
+│ Projections: array_agg(DISTINCT cat) │
+│ ~4 rows                              │
+╰───────────────────┬──────────────────╯
+╭─ HASH_GROUP_BY ───┴──────────────────╮
+│ Groups: #0                           │
+│ Aggregates: array_agg(DISTINCT #1)   │
+│ ~4 rows                              │
+╰───────────────────┬──────────────────╯
+╭─ PROJECTION ──────┴──────────────────╮
+│ Projections: id, cat                 │
+│ ~7 rows                              │
+╰───────────────────┬──────────────────╯
+╭─ IRESEARCH_SCAN ──┴──────────────────╮
+│ Index: aa_idx                        │
+│ Lookup: table                        │
+│ Projections: id, cat                 │
+│ ~7 rows                              │
+╰──────────────────────────────────────╯
+
+# --- WHERE term constraint on the keyword field: rewritten + constrained.
+query
+EXPLAIN SELECT array_agg(DISTINCT cat) FROM aa_idx WHERE cat LIKE 'r%'
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────────────────────╮
+│ Aggregates:                              │
+│ list(#0) FILTER (WHERE #1) Filter: #1    │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections:                             │
+│ sdb_inverted_index_term$cat,             │
+│ sdb_inverted_index_term$cat IS NOT NULL  │
+│ ~0 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ HASH_GROUP_BY ─────┴────────────────────╮
+│ Groups: #0                               │
+│ ~0 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections: #0                          │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: aa_idx                            │
+│ Filter:                                  │
+│ ╭─ Starts With ──────╮                   │
+│ │ Field: cat(string) │                   │
+│ │ Prefix: r          │                   │
+│ │ Limit: 1024        │                   │
+│ ╰────────────────────╯                   │
+│ TsDict: cat                              │
+│ Projections: sdb_inverted_index_term$cat │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query
+SELECT list_sort(array_agg(DISTINCT cat)) FROM aa_idx WHERE cat LIKE 'r%'
+----
+list_sort
+{red}
+
+query
+SELECT list_sort(array_agg(DISTINCT cat)) FROM aa_idx WHERE cat BETWEEN 'a' AND 'g'
+----
+list_sort
+{amber,blue}
+
+# --- multiple keyword fields in one query: rewritten as multi-field term-dict.
+query
+EXPLAIN SELECT array_agg(DISTINCT cat) AS c, array_agg(DISTINCT plain) AS p
+        FROM aa_idx
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ──────────────────────╮
+│ Aggregates:                                │
+│ list(#0) FILTER (WHERE #1) Filter: #1,     │
+│ list(#2) FILTER (WHERE #3) Filter: #3      │
+│ ~1 row                                     │
+╰──────────────────────┬─────────────────────╯
+╭─ PROJECTION ─────────┴─────────────────────╮
+│ Projections:                               │
+│ sdb_inverted_index_term$cat,               │
+│ sdb_inverted_index_term$cat IS NOT NULL,   │
+│ sdb_inverted_index_term$plain,             │
+│ sdb_inverted_index_term$plain IS NOT NULL  │
+│ ~7 rows                                    │
+╰──────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ──────┴─────────────────────╮
+│ Groups: #0, #1                             │
+│ ~7 rows                                    │
+╰──────────────────────┬─────────────────────╯
+╭─ PROJECTION ─────────┴─────────────────────╮
+│ Projections: #0, #1                        │
+│ ~14 rows                                   │
+╰──────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
+│ Index: aa_idx                              │
+│ TsDict: cat, plain                         │
+│ Projections:                               │
+│ sdb_inverted_index_term$cat,               │
+│ sdb_inverted_index_term$plain              │
+│ ~14 rows                                   │
+╰────────────────────────────────────────────╯
+
+query
+SELECT list_sort(array_agg(DISTINCT cat)) AS c, list_sort(array_agg(DISTINCT plain)) AS p FROM aa_idx
+----
+c	p
+{amber,blue,green,red}	{p1,p2,p3,p4}
+
+query
+SELECT array_agg(DISTINCT cat ORDER BY cat) AS c,
+       array_agg(DISTINCT plain ORDER BY plain) AS p FROM aa
+----
+c	p
+{amber,blue,green,red}	{p1,p2,p3,p4}
+
+# --- ts_dict_agg() and array_agg(DISTINCT) over the same field agree.
+query
+SELECT list_sort(array_agg(DISTINCT cat)) = list_sort(ts_dict_agg(cat)) FROM aa_idx
+----
+?column?
+t
+
+# --- unnest(array_agg(DISTINCT col)) collapses the same as
+# unnest(ts_dict_agg(col)): the Unnest( Aggregate[list(col)] ) round-trip is
+# elided into a direct projection of the term-dict scan rows.
+query
+EXPLAIN SELECT unnest(array_agg(DISTINCT cat)) AS t FROM aa_idx ORDER BY t
+----
+QUERY PLAN
+╭─ ORDER_BY ───────────────────────────────╮
+│ Order By: aa_idx.cat)) ASC               │
+│ ~3 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ HASH_GROUP_BY ─────┴────────────────────╮
+│ Groups: #0                               │
+│ ~3 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections: #0                          │
+│ ~7 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: aa_idx                            │
+│ TsDict: cat                              │
+│ Projections: sdb_inverted_index_term$cat │
+│ ~7 rows                                  │
+╰──────────────────────────────────────────╯
+
+query
+SELECT unnest(array_agg(DISTINCT cat)) AS t FROM aa_idx ORDER BY t
+----
+t
+amber
+blue
+green
+red
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(cat)) AS t FROM aa_idx ORDER BY t
+----
+QUERY PLAN
+╭─ ORDER_BY ───────────────────────────────╮
+│ Order By: aa_idx.cat)) ASC               │
+│ ~3 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ HASH_GROUP_BY ─────┴────────────────────╮
+│ Groups: #0                               │
+│ ~3 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections: #0                          │
+│ ~7 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: aa_idx                            │
+│ TsDict: cat                              │
+│ Projections: sdb_inverted_index_term$cat │
+│ ~7 rows                                  │
+╰──────────────────────────────────────────╯
+
+query
+SELECT unnest(array_agg(DISTINCT cat)) AS t FROM aa_idx WHERE cat LIKE 'r%'
+        ORDER BY t
+----
+t
+red
+
+statement ok
+DROP TABLE aa
+
+statement ok
+DROP TEXT SEARCH DICTIONARY kw_dict
+
+statement ok
+DROP TEXT SEARCH DICTIONARY tx_dict

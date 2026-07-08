@@ -1,0 +1,173 @@
+hash-threshold 100
+
+# Doc-restricted term enumeration (facets / significant-terms): a WHERE on
+# any indexed field filters DOCUMENTS; terms are counted against the matched
+# doc set per segment (postings intersection, delete-aware).
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY dr(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+)
+
+
+statement ok
+CREATE TABLE dr_docs(id INTEGER PRIMARY KEY, body VARCHAR, category VARCHAR)
+
+
+statement ok
+CREATE INDEX dr_idx ON dr_docs USING inverted(body dr, category dr)
+
+
+statement ok
+INSERT INTO dr_docs VALUES
+  (1, 'apple banana', 'news'),
+  (2, 'apple cherry', 'news'),
+  (3, 'apple date',   'blog'),
+  (4, 'banana fig',   'news')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dr_docs;
+
+
+# A second segment: the global term enumeration still merges counts across
+# segments (this is the supported, postings-free behavior).
+statement ok
+INSERT INTO dr_docs VALUES (5, 'apple apple grape', 'news'), (6, 'kiwi', 'blog')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dr_docs;
+
+
+query TI
+SELECT unnest(ts_dict_agg(body)) AS term,
+       unnest(ts_dict_count(body)) AS docs
+FROM dr_idx ORDER BY term
+----
+term	docs
+apple	4
+banana	2
+cherry	1
+date	1
+fig	1
+grape	1
+kiwi	1
+
+
+# A WHERE on another field restricts the document set: body terms are
+# enumerated over news docs only, counting postings against the doc bitset.
+query T
+SELECT list_sort(ts_dict_agg(body)) FROM dr_idx
+WHERE category @@ ts_starts_with('news')
+----
+list_sort
+{apple,banana,cherry,fig,grape}
+
+# Two doc-level conjuncts compose at the document level: docs with an
+# a-token AND news category.
+query T
+SELECT list_sort(ts_dict_agg(body)) FROM dr_idx
+WHERE body @@ ts_starts_with('a') AND category @@ ts_starts_with('news')
+----
+list_sort
+{apple,banana,cherry,grape}
+
+
+# The document WHERE ships as the scan's document filter; no plan-level
+# FILTER node survives.
+query T
+EXPLAIN SELECT list_sort(ts_dict_agg(body)) FROM dr_idx
+WHERE category @@ ts_starts_with('news')
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections:                              │
+│ list_sort(ts_dict_agg(body))              │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ─────────────────────╮
+│ Aggregates:                               │
+│ list(#0) FILTER (WHERE #1) Filter: #1     │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ PROJECTION ────────┴─────────────────────╮
+│ Projections:                              │
+│ sdb_inverted_index_term$body,             │
+│ sdb_inverted_index_term$body IS NOT NULL  │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ PROJECTION ────────┴─────────────────────╮
+│ Projections: #0                           │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: dr_idx                             │
+│ Filter:                                   │
+│ ╭─ Starts With ───────────╮               │
+│ │ Field: category(string) │               │
+│ │ Prefix: news            │               │
+│ │ Limit: 1024             │               │
+│ ╰─────────────────────────╯               │
+│ TsDict: body                              │
+│ Projections:                              │
+│ sdb_inverted_index_term$body              │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+# Document-level negation: NOT over a tokenized-field or cross-field @@
+# lowers into the document filter (exclusion), same-field and cross-field.
+query T
+SELECT list_sort(ts_dict_agg(body)) FROM dr_idx
+WHERE NOT (body @@ ts_starts_with('apple'))
+----
+list_sort
+{banana,fig,kiwi}
+
+query T
+SELECT list_sort(ts_dict_agg(body)) FROM dr_idx
+WHERE NOT (category @@ ts_starts_with('news'))
+----
+list_sort
+{apple,date,kiwi}
+
+query T
+SELECT list_sort(ts_dict_agg(body)) FROM dr_idx
+WHERE body @@ ts_starts_with('banana') AND NOT (category @@ ts_starts_with('blog'))
+----
+list_sort
+{apple,banana,fig}
+
+# Implicit min/max keyword rewrites follow the same where/having rules:
+# document WHERE restricts which terms have matching docs.
+query TT
+SELECT min(category) AS mn, max(category) AS mx FROM dr_idx
+WHERE body @@ ts_starts_with('ban')
+----
+mn	mx
+news	news
+
+query TT
+SELECT t AS term, NULL FROM (SELECT unnest(ts_dict_agg(body)) AS t FROM dr_idx
+WHERE category @@ ts_starts_with('blog')) sub
+GROUP BY t HAVING t LIKE 'a%' ORDER BY t
+----
+term	?column?
+apple	NULL
+
+statement ok
+DROP TABLE dr_docs
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY dr

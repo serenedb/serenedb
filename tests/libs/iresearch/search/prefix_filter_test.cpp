@@ -351,7 +351,9 @@ TEST_P(PrefixFilterTestCase, visit) {
   // get term dictionary for field
   const auto* reader = segment.field(field);
   ASSERT_NE(nullptr, reader);
-  irs::ByPrefix::visit(segment, *reader, term, visitor);
+  irs::ByPrefixOptions options;
+  options.term = irs::bstring{term};
+  irs::ByPrefix::visit(segment, *reader, options, visitor);
   ASSERT_EQ(1, visitor.prepare_calls_counter());
   ASSERT_EQ(6, visitor.visit_calls_counter());
   ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{

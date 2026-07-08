@@ -24,6 +24,7 @@
 #include "iresearch/search/automaton_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
+#include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
 
 namespace irs {
@@ -76,6 +77,16 @@ Filter::ptr CreateByRegexp(irs::field_id id, bytes_view pattern,
   filter->mutable_options()->scored_terms_limit = scored_terms_limit;
   filter->boost(boost);
   return filter;
+}
+
+TermPredicate::ptr ByRegexp::CompileTermPredicate() const {
+  auto acceptor =
+    FromRegexp(options().pattern, kDefaultMaxDfaStates, options().syntax);
+  if (!Validate(acceptor)) {
+    return nullptr;
+  }
+  return MakeAutomatonTermPredicate(
+    std::make_shared<const CompiledAcceptor>(std::move(acceptor)));
 }
 
 }  // namespace irs

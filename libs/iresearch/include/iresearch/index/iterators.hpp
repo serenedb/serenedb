@@ -613,9 +613,6 @@ struct ResettableDocIterator : DocIterator {
   virtual void reset() = 0;
 };
 
-struct TermReader;
-
-// An iterator providing sequential access to term dictionary
 struct TermIterator : Iterator<bytes_view, AttributeProvider> {
   using ptr = memory::managed_ptr<TermIterator>;
 

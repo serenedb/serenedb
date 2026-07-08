@@ -35,6 +35,8 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/term_iterator.hpp"
+#include "iresearch/search/term_predicate.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 
 namespace irs {
@@ -111,6 +113,10 @@ class Filter {
   virtual TypeInfo::type_id type() const noexcept = 0;
 
   virtual std::span<Filter::ptr> GetChildren() { return {}; }
+
+  virtual TermPredicate::ptr CompileTermPredicate() const { return nullptr; }
+
+  virtual TermIterator::ptr CompileTermIterator(const TermReader& reader) const;
 
   // kludge for optimization in And::prepare
   virtual score_t BoostImpl() const noexcept { return kNoBoost; }
@@ -189,6 +195,11 @@ class FilterWithField : public FilterWithOptions<Options> {
 
 // Filter which returns no documents
 class Empty final : public FilterWithType<Empty> {
+ public:
+  TermPredicate::ptr CompileTermPredicate() const final {
+    return MakeTermPredicate(AcceptNoTerms{});
+  }
+
  public:
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;

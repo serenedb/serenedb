@@ -78,6 +78,7 @@ class BooleanWeight {
     return strm;
   }
   constexpr size_t Impl() const noexcept { return static_cast<size_t>(_v); }
+  constexpr size_t Hash() const noexcept { return Impl(); }
   constexpr ReverseWeight Reverse() const noexcept { return *this; }
   constexpr PayloadType Payload() const noexcept { return _p; }
   constexpr operator bool() const noexcept { return _v == kTrue; }

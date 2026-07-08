@@ -117,7 +117,15 @@ TableFunction ClickHouseTableEntry::GetScanFunction(ClientContext &context, uniq
 	bd->approx_row_count = cached_row_count;
 
 	bind_data = std::move(bd);
-	return ClickHouseScanFunctionFilterPushdown();
+	auto function = ClickHouseScanFunctionFilterPushdown();
+	// The pg_experimental_filter_pushdown analog: flipping the setting off keeps
+	// every filter in the local plan (nothing lands in table_filters), the escape
+	// hatch when a pushed rendering misbehaves.
+	Value filter_pushdown;
+	if (context.TryGetCurrentSetting("ch_experimental_filter_pushdown", filter_pushdown)) {
+		function.filter_pushdown = BooleanValue::Get(filter_pushdown);
+	}
+	return function;
 }
 
 TableStorageInfo ClickHouseTableEntry::GetStorageInfo(ClientContext &context) {

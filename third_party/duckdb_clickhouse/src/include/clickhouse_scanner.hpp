@@ -10,8 +10,6 @@
 
 #include "duckdb.hpp"
 
-#include "duckdb/optimizer/optimizer_extension.hpp"
-
 #include "dbconnector/bind_data.hpp"
 
 #include "clickhouse_connection.hpp"
@@ -104,17 +102,5 @@ public:
 
 //! True for the connector's own scan table functions.
 bool IsClickHouseScan(const std::string &name);
-
-//! Optimizer extension: runs the shared dbconnector OrderByAndLimitOptimizer
-//! over the ClickHouse scans (mirrors PostgresOptimizer, minus the
-//! ctid/parallelism handling ClickHouse does not need), with ClickHouse-specific
-//! safety vetoes: order keys whose remote ordering diverges from DuckDB's
-//! (ClickHouseOrderingUnsafe, toString()-stringified columns) refuse the fold,
-//! and LIMIT-carrying folds refuse when the scan carries required table filters
-//! (their remote rendering may be inexact and re-applied locally AFTER the
-//! remote LIMIT already cut the stream).
-struct ClickHouseOptimizer {
-	static void Optimize(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan);
-};
 
 } // namespace duckdb

@@ -694,5 +694,73 @@ gadget
 widget
 
 
+####################  Escape-hatch settings (the pg_* analogs)  ####################
+
+# ch_experimental_filter_pushdown = false: the scan function is handed out with
+# filter pushdown disabled, so the WHERE stays a local FILTER node (no Filters:
+# in the scan box) and the result is still correct.
+statement ok
+SET ch_experimental_filter_pushdown = false;
+
+query
+EXPLAIN SELECT id FROM chexp.chtest.widgets WHERE id >= 4;
+----
+QUERY PLAN
+╭─ FILTER ───────────────────────────╮
+│ Expression: id >= 4                │
+│ ~1 row                             │
+╰──────────────────┬─────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.widgets              │
+│ Projections: id                    │
+│ ~5 rows                            │
+╰────────────────────────────────────╯
+
+query
+SELECT id FROM chexp.chtest.widgets WHERE id >= 4 ORDER BY id;
+----
+id
+4
+5
+
+statement ok
+SET ch_experimental_filter_pushdown = true;
+
+# ch_order_pushdown = false: the shared OrderByAndLimitOptimizer is disabled, so
+# the TOP_N node stays local (no Pushed Order / Pushed Limit in the scan box)
+# and the result is still correct.
+statement ok
+SET ch_order_pushdown = false;
+
+query
+EXPLAIN SELECT id FROM chexp.chtest.vedernikoff ORDER BY id LIMIT 3;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 3                                 │
+│ Order By: vedernikoff.id ASC           │
+│ ~3 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN     │
+│ Table: chtest.vedernikoff              │
+│ Projections: id                        │
+│ Filters: optional: Dynamic Filter (id) │
+│ ~6 rows                                │
+╰────────────────────────────────────────╯
+
+query
+SELECT id FROM chexp.chtest.vedernikoff ORDER BY id LIMIT 3;
+----
+id
+1
+2
+3
+
+statement ok
+SET ch_order_pushdown = true;
+
+
 statement ok
 DETACH chexp;

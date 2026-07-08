@@ -8,6 +8,7 @@
 #include "clickhouse_filter_pushdown.hpp"
 #include "clickhouse_secrets.hpp"
 #include "clickhouse_storage.hpp"
+#include "storage/clickhouse_optimizer.hpp"
 
 using namespace duckdb;
 
@@ -62,6 +63,11 @@ static void LoadInternal(ExtensionLoader &loader) {
 	config.AddExtensionOption("ch_order_pushdown",
 	                          "Push ORDER BY and LIMIT clauses to ClickHouse (default: true)",
 	                          LogicalType::BOOLEAN, Value::BOOLEAN(true));
+
+	// Read at GetScanFunction time (the pg_experimental_filter_pushdown analog).
+	config.AddExtensionOption("ch_experimental_filter_pushdown",
+	                          "Whether or not to use filter pushdown", LogicalType::BOOLEAN,
+	                          Value::BOOLEAN(true));
 
 	// Shared dbconnector ORDER BY / LIMIT / TOP_N pushdown (with CH safety vetoes).
 	OptimizerExtension clickhouse_optimizer;

@@ -490,7 +490,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   if (!irs::field_limits::valid(call_field_id)) {
     return nullptr;
   }
-  auto ann_info = index->GetIvfInfo(call_field_id);
+  auto ann_info = index->GetHNSWInfo(call_field_id);
   if (!ann_info || ann_info->metric != info.metric) {
     return nullptr;
   }
@@ -509,14 +509,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
       .metric = info.metric,
       .score_emit = info.score_emit,
       .natural_order = info.order,
-      .centroids_id = ann_info->centroids_id,
-      .postings_id = ann_info->postings_id,
-      .quant = ann_info->quant.kind,
-      .nprobe = ReadNprobe(context),
     };
-    ss.score_order = irs::VectorMetricNearestIsLargest(info.metric)
-                       ? duckdb::OrderType::DESCENDING
-                       : duckdb::OrderType::ASCENDING;
   } else {
     const auto& vs = *ss.vector_scorer;
     if (vs.field_id != call_field_id || vs.metric != info.metric ||
@@ -1798,6 +1791,41 @@ void RewriteCallInExpr(duckdb::unique_ptr<duckdb::Expression>& expr,
     });
 }
 
+void ReuseExistingScoreColumn(duckdb::Expression& order_expr,
+                              duckdb::LogicalOperator& root) {
+  if (order_expr.GetExpressionType() !=
+      duckdb::ExpressionType::BOUND_COLUMN_REF) {
+    return;
+  }
+  auto& ref = order_expr.Cast<duckdb::BoundColumnRefExpression>();
+  auto* proj = FindProjectionByTableIndex(root, ref.Binding().table_index);
+  if (!proj) {
+    return;
+  }
+  const auto idx = ref.Binding().column_index.GetIndex();
+  if (idx >= proj->expressions.size() ||
+      proj->expressions[idx]->GetExpressionType() !=
+        duckdb::ExpressionType::BOUND_COLUMN_REF) {
+    return;
+  }
+  const auto binding =
+    proj->expressions[idx]->Cast<duckdb::BoundColumnRefExpression>().Binding();
+  auto sc = ResolveIResearchScanColumn(root, binding);
+  if (!sc ||
+      ResolveColumnId(sc->binding, *sc->found.bind_data, *sc->found.get) !=
+        catalog::Column::kInvertedIndexScoreId) {
+    return;
+  }
+  for (duckdb::idx_t j = 0; j < idx; ++j) {
+    auto& e = *proj->expressions[j];
+    if (e.GetExpressionType() == duckdb::ExpressionType::BOUND_COLUMN_REF &&
+        e.Cast<duckdb::BoundColumnRefExpression>().Binding() == binding) {
+      ref.BindingMutable().column_index = duckdb::ProjectionIndex{j};
+      return;
+    }
+  }
+}
+
 void RewriteIResearchExpressions(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::LogicalOperator>& root,
@@ -1827,11 +1855,13 @@ void RewriteIResearchExpressions(
     case duckdb::LogicalOperatorType::LOGICAL_ORDER_BY:
       for (auto& o : plan->Cast<duckdb::LogicalOrder>().orders) {
         RewriteCallInExpr(o.expression, *root, context);
+        ReuseExistingScoreColumn(*o.expression, *root);
       }
       break;
     case duckdb::LogicalOperatorType::LOGICAL_TOP_N:
       for (auto& o : plan->Cast<duckdb::LogicalTopN>().orders) {
         RewriteCallInExpr(o.expression, *root, context);
+        ReuseExistingScoreColumn(*o.expression, *root);
       }
       break;
     case duckdb::LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY:

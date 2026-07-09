@@ -28,7 +28,7 @@
 #include <vector>
 
 #include "connector/duckdb_scan_base.hpp"
-#include "connector/hit_batcher.h"
+#include "iresearch/index/hit_batcher.hpp"
 
 namespace sdb::connector {
 

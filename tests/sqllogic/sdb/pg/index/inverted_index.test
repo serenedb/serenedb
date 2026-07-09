@@ -248,7 +248,7 @@ QUERY PLAN
 ╰──────────────┬──────────────╯
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: vedernikoff_idx      │
-│ Filter:                     │
+│ Index Filter:               │
 │ ╭─ Terms ─────────────────╮ │
 │ │ Field: b(string)        │ │
 │ │ Values: 'game', 'pudge' │ │
@@ -606,7 +606,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: score_parquet_idx               │
 │ Lookup: parquet                        │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Term ───────────╮                   │
 │ │ Field: b(string) │                   │
 │ │ Value: fox       │                   │
@@ -901,7 +901,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: dense_csv_idx                     │
 │ Lookup: csv                              │
-│ Filter:                                  │
+│ Index Filter:                            │
 │ ╭─ Phrase ─────────────────────────────╮ │
 │ │ Field: b(string)                     │ │
 │ │ Parts:                               │ │

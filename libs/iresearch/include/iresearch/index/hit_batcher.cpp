@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/hit_batcher.h"
+#include "iresearch/index/hit_batcher.hpp"
 
 #include <bit>
 #include <duckdb/common/vector/list_vector.hpp>
@@ -26,7 +26,6 @@
 #include <limits>
 
 #include "basics/assert.h"
-#include "catalog/table_options.h"
 #include "iresearch/formats/column/col_reader.hpp"
 
 namespace sdb::connector {
@@ -38,9 +37,9 @@ constexpr duckdb::idx_t kMinDenseBatch = 64;
 }  // namespace
 
 HitBatcher::HitBatcher(std::span<const ColumnstoreProjection> projections,
-                       bool fetch_pk, bool track_scores)
+                       irs::field_id pk_field_id, bool track_scores)
   : _projections{projections},
-    _fetch_pk{fetch_pk},
+    _pk_field_id{pk_field_id},
     _track_scores{track_scores} {
   _sel.Initialize(STANDARD_VECTOR_SIZE);
 }
@@ -80,9 +79,8 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
     }
   };
 
-  if (_fetch_pk) {
-    const auto* pk = col_reader->Column(
-      static_cast<irs::field_id>(catalog::Column::kGeneratedPKId));
+  if (_pk_field_id != irs::field_limits::invalid()) {
+    const auto* pk = col_reader->Column(_pk_field_id);
     SDB_ASSERT(pk != nullptr);
     auto& c = _columns.emplace_back();
     c.is_pk = true;

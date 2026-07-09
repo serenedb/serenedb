@@ -28,6 +28,7 @@
 #include <iresearch/utils/type_limits.hpp>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <span>
 
 #include "basics/assert.h"

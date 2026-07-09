@@ -36,10 +36,10 @@
 
 #include "basics/assert.h"
 #include "basics/exceptions.h"
+#include "basics/primary_key.hpp"  // for AppendSigned, ReadSigned
 #include "basics/string_utils.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_table_entry.h"
-#include "connector/primary_key.hpp"  // for AppendSigned, ReadSigned
 
 namespace sdb::connector::duckdb_primary_key {
 

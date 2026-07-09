@@ -30,7 +30,7 @@ QUERY PLAN
 │ Table: t_choice       │
 │ Type: Sequential Scan │
 │ Projections: id, val  │
-│ Filters: id = 2       │
+│ Column Filter: id = 2 │
 │ ~1 row                │
 ╰───────────────────────╯
 
@@ -84,7 +84,7 @@ QUERY PLAN
 │ Table: t_choice       │
 │ Type: Sequential Scan │
 │ Projections: id, val  │
-│ Filters: id = 4       │
+│ Column Filter: id = 4 │
 │ ~1 row                │
 ╰───────────────────────╯
 
@@ -109,7 +109,7 @@ QUERY PLAN
 │ Table: t_choice                                                                                                          │
 │ Type: Sequential Scan                                                                                                    │
 │ Projections: id, val                                                                                                     │
-│ Filters:                                                                                                                 │
+│ Column Filter:                                                                                                           │
 │ optional: ((id < 8) OR (id >= 10)), optional: ((val >= 20) OR (val < 20))                                                │
 │ ~6 rows                                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
@@ -139,7 +139,8 @@ QUERY PLAN
 │ Type: Sequential Scan │
 │ Projections: a, b,    │
 │              val      │
-│ Filters: a = 3, b = 4 │
+│ Column Filter: a = 3, │
+│                b = 4  │
 │ ~1 row                │
 ╰───────────────────────╯
 
@@ -158,7 +159,7 @@ QUERY PLAN
 │ Table: t_choice_cpk          │
 │ Type: Sequential Scan        │
 │ Projections: a, b, val       │
-│ Filters: a = 3               │
+│ Column Filter: a = 3         │
 │ ~1 row                       │
 ╰──────────────────────────────╯
 
@@ -224,7 +225,8 @@ QUERY PLAN
 │ Table: t_choice_cpk                                                                                │
 │ Type: Sequential Scan                                                                              │
 │ Projections: a, b, val                                                                             │
-│ Filters: optional: ((a = 1) OR (a = 3)), optional: ((b = 2) OR (b = 4))                            │
+│ Column Filter:                                                                                     │
+│ optional: ((a = 1) OR (a = 3)), optional: ((b = 2) OR (b = 4))                                     │
 │ ~8 rows                                                                                            │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
@@ -240,23 +242,24 @@ query
 EXPLAIN SELECT * FROM t_choice_cpk WHERE a=1 AND (b=2 OR b=4) ORDER BY a, b;
 ----
 QUERY PLAN
-╭─ ORDER_BY ───────────────────────────────╮
-│ Order By: t_choice_cpk.a ASC,            │
-│           t_choice_cpk.b ASC             │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
-╭─ FILTER ────────────┴────────────────────╮
-│ Expression: (b = 2) OR (b = 4)           │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
-╭─ SEQ_SCAN ──────────┴────────────────────╮
-│ Table: t_choice_cpk                      │
-│ Type: Sequential Scan                    │
-│ Projections: a, b, val                   │
-│ Filters: a = 1,                          │
-│          optional: ((b = 2) OR (b = 4))  │
-│ ~2 rows                                  │
-╰──────────────────────────────────────────╯
+╭─ ORDER_BY ──────────────────────╮
+│ Order By: t_choice_cpk.a ASC,   │
+│           t_choice_cpk.b ASC    │
+│ ~1 row                          │
+╰────────────────┬────────────────╯
+╭─ FILTER ───────┴────────────────╮
+│ Expression: (b = 2) OR (b = 4)  │
+│ ~1 row                          │
+╰────────────────┬────────────────╯
+╭─ SEQ_SCAN ─────┴────────────────╮
+│ Table: t_choice_cpk             │
+│ Type: Sequential Scan           │
+│ Projections: a, b, val          │
+│ Column Filter:                  │
+│ a = 1,                          │
+│ optional: ((b = 2) OR (b = 4))  │
+│ ~2 rows                         │
+╰─────────────────────────────────╯
 
 
 # Cartesian product of {a:1},{b:2} x {a:2},{b:4}:
@@ -359,7 +362,7 @@ QUERY PLAN
 │ Table: t_choice_cpk           │
 │ Type: Sequential Scan         │
 │ Projections: a, b, val        │
-│ Filters: a = 1, b = 2         │
+│ Column Filter: a = 1, b = 2   │
 │ ~2 rows                       │
 ╰───────────────────────────────╯
 
@@ -394,8 +397,8 @@ QUERY PLAN
 │ Table: t_choice_cpk                           │
 │ Type: Sequential Scan                         │
 │ Projections: a, b, val                        │
-│ Filters: optional: (a IN (1, 3)),             │
-│          optional: (b IN (2, 6))              │
+│ Column Filter: optional: (a IN (1, 3)),       │
+│                optional: (b IN (2, 6))        │
 │ ~8 rows                                       │
 ╰───────────────────────────────────────────────╯
 
@@ -450,10 +453,10 @@ QUERY PLAN
 ╭─ SEQ_SCAN ──┴────────────╮
 │ Table: t_big4pk          │
 │ Type: Sequential Scan    │
-│ Filters: a <= 10,        │
-│          b <= 10,        │
-│          c <= 10,        │
-│          d <= 10         │
+│ Column Filter: a <= 10,  │
+│                b <= 10,  │
+│                c <= 10,  │
+│                d <= 10   │
 │ ~2,928 rows              │
 ╰──────────────────────────╯
 
@@ -475,10 +478,10 @@ QUERY PLAN
 ╭─ SEQ_SCAN ──┴────────────╮
 │ Table: t_big4pk          │
 │ Type: Sequential Scan    │
-│ Filters: a <= 10,        │
-│          b <= 10,        │
-│          c <= 10,        │
-│          d <= 10         │
+│ Column Filter: a <= 10,  │
+│                b <= 10,  │
+│                c <= 10,  │
+│                d <= 10   │
 │ ~2,928 rows              │
 ╰──────────────────────────╯
 
@@ -519,9 +522,9 @@ QUERY PLAN
 ╭─ SEQ_SCAN ──┴────────────╮
 │ Table: t_not_all_pk      │
 │ Type: Sequential Scan    │
-│ Filters: a <= 10,        │
-│          b <= 10,        │
-│          c <= 10         │
+│ Column Filter: a <= 10,  │
+│                b <= 10,  │
+│                c <= 10   │
 │ ~24 rows                 │
 ╰──────────────────────────╯
 
@@ -548,7 +551,7 @@ QUERY PLAN
 │ Table: t_choice_nulls           │
 │ Type: Sequential Scan           │
 │ Projections: id, val            │
-│ Filters: id >= 2                │
+│ Column Filter: id >= 2          │
 │ ~1 row                          │
 ╰─────────────────────────────────╯
 
@@ -590,13 +593,13 @@ query
 EXPLAIN SELECT * FROM t_neq WHERE id != 4;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ────────────╮
-│ Table: t_neq          │
-│ Type: Sequential Scan │
-│ Projections: id, val  │
-│ Filters: id != 4      │
-│ ~1 row                │
-╰───────────────────────╯
+╭─ SEQ_SCAN ─────────────╮
+│ Table: t_neq           │
+│ Type: Sequential Scan  │
+│ Projections: id, val   │
+│ Column Filter: id != 4 │
+│ ~1 row                 │
+╰────────────────────────╯
 
 # NOT (id = 4)  ->  same two ranges as id != 4
 query
@@ -613,13 +616,13 @@ query
 EXPLAIN SELECT * FROM t_neq WHERE NOT (id = 4);
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ────────────╮
-│ Table: t_neq          │
-│ Type: Sequential Scan │
-│ Projections: id, val  │
-│ Filters: NOT (id = 4) │
-│ ~1 row                │
-╰───────────────────────╯
+╭─ SEQ_SCAN ──────────────────╮
+│ Table: t_neq                │
+│ Type: Sequential Scan       │
+│ Projections: id, val        │
+│ Column Filter: NOT (id = 4) │
+│ ~1 row                      │
+╰─────────────────────────────╯
 
 # NOT (id IN (2, 4))  ->  3 ranges: (-inf, 2), (2, 4), (4, +inf)  ->  3 rows
 query
@@ -635,13 +638,13 @@ query
 EXPLAIN SELECT * FROM t_neq WHERE NOT (id IN (2, 4));
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ──────────────────╮
-│ Table: t_neq                │
-│ Type: Sequential Scan       │
-│ Projections: id, val        │
-│ Filters: NOT (id IN (2, 4)) │
-│ ~1 row                      │
-╰─────────────────────────────╯
+╭─ SEQ_SCAN ────────────────────────╮
+│ Table: t_neq                      │
+│ Type: Sequential Scan             │
+│ Projections: id, val              │
+│ Column Filter: NOT (id IN (2, 4)) │
+│ ~1 row                            │
+╰───────────────────────────────────╯
 
 statement ok
 DROP TABLE t_neq;
@@ -703,21 +706,22 @@ query
 EXPLAIN SELECT * FROM t_range1 WHERE a < 2 OR a > 8 ORDER BY a;
 ----
 QUERY PLAN
-╭─ ORDER_BY ──────────────────────────────╮
-│ Order By: t_range1.a ASC                │
-│ ~1 row                                  │
-╰────────────────────┬────────────────────╯
-╭─ FILTER ───────────┴────────────────────╮
-│ Expression: (a < 2) OR (a > 8)          │
-│ ~1 row                                  │
-╰────────────────────┬────────────────────╯
-╭─ SEQ_SCAN ─────────┴────────────────────╮
-│ Table: t_range1                         │
-│ Type: Sequential Scan                   │
-│ Projections: a, val                     │
-│ Filters: optional: ((a < 2) OR (a > 8)) │
-│ ~7 rows                                 │
-╰─────────────────────────────────────────╯
+╭─ ORDER_BY ─────────────────────╮
+│ Order By: t_range1.a ASC       │
+│ ~1 row                         │
+╰────────────────┬───────────────╯
+╭─ FILTER ───────┴───────────────╮
+│ Expression: (a < 2) OR (a > 8) │
+│ ~1 row                         │
+╰────────────────┬───────────────╯
+╭─ SEQ_SCAN ─────┴───────────────╮
+│ Table: t_range1                │
+│ Type: Sequential Scan          │
+│ Projections: a, val            │
+│ Column Filter:                 │
+│ optional: ((a < 2) OR (a > 8)) │
+│ ~7 rows                        │
+╰────────────────────────────────╯
 
 # Overlapping bounds collapse to single range: a > 2 AND a >= 3 → a >= 3
 query
@@ -743,7 +747,7 @@ QUERY PLAN
 │ Table: t_range1          │
 │ Type: Sequential Scan    │
 │ Projections: a, val      │
-│ Filters: a >= 3          │
+│ Column Filter: a >= 3    │
 │ ~1 row                   │
 ╰──────────────────────────╯
 
@@ -770,7 +774,7 @@ QUERY PLAN
 │ Table: t_range1          │
 │ Type: Sequential Scan    │
 │ Projections: a, val      │
-│ Filters: a >= 5          │
+│ Column Filter: a >= 5    │
 │ ~1 row                   │
 ╰──────────────────────────╯
 
@@ -796,7 +800,7 @@ QUERY PLAN
 │ Table: t_range1          │
 │ Type: Sequential Scan    │
 │ Projections: a, val      │
-│ Filters: a < 5           │
+│ Column Filter: a < 5     │
 │ ~1 row                   │
 ╰──────────────────────────╯
 
@@ -815,17 +819,17 @@ query
 EXPLAIN SELECT * FROM t_range1 WHERE a >= 2 AND a <= 8 ORDER BY a;
 ----
 QUERY PLAN
-╭─ ORDER_BY ─────────────────────╮
-│ Order By: t_range1.a ASC       │
-│ ~1 row                         │
-╰────────────────┬───────────────╯
-╭─ SEQ_SCAN ─────┴───────────────╮
-│ Table: t_range1                │
-│ Type: Sequential Scan          │
-│ Projections: a, val            │
-│ Filters: (a >= 2) AND (a <= 8) │
-│ ~1 row                         │
-╰────────────────────────────────╯
+╭─ ORDER_BY ───────────────────────────╮
+│ Order By: t_range1.a ASC             │
+│ ~1 row                               │
+╰───────────────────┬──────────────────╯
+╭─ SEQ_SCAN ────────┴──────────────────╮
+│ Table: t_range1                      │
+│ Type: Sequential Scan                │
+│ Projections: a, val                  │
+│ Column Filter: (a >= 2) AND (a <= 8) │
+│ ~1 row                               │
+╰──────────────────────────────────────╯
 
 statement ok
 DROP TABLE t_range1;
@@ -869,7 +873,8 @@ QUERY PLAN
 │ Table: t_range          │
 │ Type: Sequential Scan   │
 │ Projections: a, b, val  │
-│ Filters: a = 1, b > 5   │
+│ Column Filter: a = 1,   │
+│                b > 5    │
 │ ~5 rows                 │
 ╰─────────────────────────╯
 
@@ -895,7 +900,8 @@ QUERY PLAN
 │ Table: t_range          │
 │ Type: Sequential Scan   │
 │ Projections: a, b, val  │
-│ Filters: a = 1, b >= 5  │
+│ Column Filter: a = 1,   │
+│                b >= 5   │
 │ ~5 rows                 │
 ╰─────────────────────────╯
 
@@ -921,7 +927,8 @@ QUERY PLAN
 │ Table: t_range          │
 │ Type: Sequential Scan   │
 │ Projections: a, b, val  │
-│ Filters: a = 2, b < 7   │
+│ Column Filter: a = 2,   │
+│                b < 7    │
 │ ~5 rows                 │
 ╰─────────────────────────╯
 
@@ -939,18 +946,18 @@ query
 EXPLAIN SELECT * FROM t_range WHERE a = 1 AND b >= 3 AND b <= 7 ORDER BY b;
 ----
 QUERY PLAN
-╭─ ORDER_BY ──────────────────────╮
-│ Order By: t_range.b ASC         │
-│ ~5 rows                         │
-╰────────────────┬────────────────╯
-╭─ SEQ_SCAN ─────┴────────────────╮
-│ Table: t_range                  │
-│ Type: Sequential Scan           │
-│ Projections: a, b, val          │
-│ Filters: a = 1,                 │
-│          (b >= 3) AND (b <= 7)  │
-│ ~5 rows                         │
-╰─────────────────────────────────╯
+╭─ ORDER_BY ────────────────────────────╮
+│ Order By: t_range.b ASC               │
+│ ~5 rows                               │
+╰───────────────────┬───────────────────╯
+╭─ SEQ_SCAN ────────┴───────────────────╮
+│ Table: t_range                        │
+│ Type: Sequential Scan                 │
+│ Projections: a, b, val                │
+│ Column Filter: a = 1,                 │
+│                (b >= 3) AND (b <= 7)  │
+│ ~5 rows                               │
+╰───────────────────────────────────────╯
 
 # Half-open exclusive on both sides: a=1 AND b > 1 AND b < 9
 query
@@ -966,18 +973,18 @@ query
 EXPLAIN SELECT * FROM t_range WHERE a = 1 AND b > 1 AND b < 9 ORDER BY b;
 ----
 QUERY PLAN
-╭─ ORDER_BY ────────────────────╮
-│ Order By: t_range.b ASC       │
-│ ~5 rows                       │
-╰───────────────┬───────────────╯
-╭─ SEQ_SCAN ────┴───────────────╮
-│ Table: t_range                │
-│ Type: Sequential Scan         │
-│ Projections: a, b, val        │
-│ Filters: a = 1,               │
-│          (b > 1) AND (b < 9)  │
-│ ~5 rows                       │
-╰───────────────────────────────╯
+╭─ ORDER_BY ──────────────────────────╮
+│ Order By: t_range.b ASC             │
+│ ~5 rows                             │
+╰──────────────────┬──────────────────╯
+╭─ SEQ_SCAN ───────┴──────────────────╮
+│ Table: t_range                      │
+│ Type: Sequential Scan               │
+│ Projections: a, b, val              │
+│ Column Filter: a = 1,               │
+│                (b > 1) AND (b < 9)  │
+│ ~5 rows                             │
+╰─────────────────────────────────────╯
 
 # --- OR of ranges ---
 
@@ -994,22 +1001,23 @@ query
 EXPLAIN SELECT * FROM t_range WHERE a = 1 AND (b < 3 OR b > 7) ORDER BY b;
 ----
 QUERY PLAN
-╭─ ORDER_BY ───────────────────────────────╮
-│ Order By: t_range.b ASC                  │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
-╭─ FILTER ────────────┴────────────────────╮
-│ Expression: (b < 3) OR (b > 7)           │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
-╭─ SEQ_SCAN ──────────┴────────────────────╮
-│ Table: t_range                           │
-│ Type: Sequential Scan                    │
-│ Projections: a, b, val                   │
-│ Filters: a = 1,                          │
-│          optional: ((b < 3) OR (b > 7))  │
-│ ~5 rows                                  │
-╰──────────────────────────────────────────╯
+╭─ ORDER_BY ──────────────────────╮
+│ Order By: t_range.b ASC         │
+│ ~1 row                          │
+╰────────────────┬────────────────╯
+╭─ FILTER ───────┴────────────────╮
+│ Expression: (b < 3) OR (b > 7)  │
+│ ~1 row                          │
+╰────────────────┬────────────────╯
+╭─ SEQ_SCAN ─────┴────────────────╮
+│ Table: t_range                  │
+│ Type: Sequential Scan           │
+│ Projections: a, b, val          │
+│ Column Filter:                  │
+│ a = 1,                          │
+│ optional: ((b < 3) OR (b > 7))  │
+│ ~5 rows                         │
+╰─────────────────────────────────╯
 
 # OR of overlapping ranges on the same equality prefix → merged into one.
 # (a=1 AND b>=3 AND b<=7) OR (a=1 AND b>=5 AND b<=9) → a=1 AND b ∈ [3,9]
@@ -1035,7 +1043,7 @@ QUERY PLAN
 │ Table: t_range                       │
 │ Type: Sequential Scan                │
 │ Projections: a, b, val               │
-│ Filters:                             │
+│ Column Filter:                       │
 │ a = 1,                               │
 │ ((b >= 3) AND (b <= 7)) OR (b >= 5)  │
 │ ~5 rows                              │
@@ -1068,7 +1076,8 @@ QUERY PLAN
 │ Table: t_range                                                                                     │
 │ Type: Sequential Scan                                                                              │
 │ Projections: a, b, val                                                                             │
-│ Filters: optional: ((a = 1) OR (a = 2)), optional: ((b > 7) OR (b > 5))                            │
+│ Column Filter:                                                                                     │
+│ optional: ((a = 1) OR (a = 2)), optional: ((b > 7) OR (b > 5))                                     │
 │ ~13 rows                                                                                           │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
@@ -1101,7 +1110,7 @@ QUERY PLAN
 │ Table: t_range           │
 │ Type: Sequential Scan    │
 │ Projections: a, b, val   │
-│ Filters: a > 1           │
+│ Column Filter: a > 1     │
 │ ~2 rows                  │
 ╰──────────────────────────╯
 
@@ -1123,21 +1132,23 @@ query
 EXPLAIN SELECT * FROM t_range WHERE a <= 1 OR a > 2 ORDER BY a, b;
 ----
 QUERY PLAN
-╭─ ORDER_BY ───────────────────────────────╮
-│ Order By: t_range.a ASC, t_range.b ASC   │
-│ ~2 rows                                  │
-╰─────────────────────┬────────────────────╯
-╭─ FILTER ────────────┴────────────────────╮
-│ Expression: (a <= 1) OR (a > 2)          │
-│ ~2 rows                                  │
-╰─────────────────────┬────────────────────╯
-╭─ SEQ_SCAN ──────────┴────────────────────╮
-│ Table: t_range                           │
-│ Type: Sequential Scan                    │
-│ Projections: a, b, val                   │
-│ Filters: optional: ((a <= 1) OR (a > 2)) │
-│ ~13 rows                                 │
-╰──────────────────────────────────────────╯
+╭─ ORDER_BY ──────────────────────╮
+│ Order By: t_range.a ASC,        │
+│           t_range.b ASC         │
+│ ~2 rows                         │
+╰────────────────┬────────────────╯
+╭─ FILTER ───────┴────────────────╮
+│ Expression: (a <= 1) OR (a > 2) │
+│ ~2 rows                         │
+╰────────────────┬────────────────╯
+╭─ SEQ_SCAN ─────┴────────────────╮
+│ Table: t_range                  │
+│ Type: Sequential Scan           │
+│ Projections: a, b, val          │
+│ Column Filter:                  │
+│ optional: ((a <= 1) OR (a > 2)) │
+│ ~13 rows                        │
+╰─────────────────────────────────╯
 
 # Filter on non-first PK column only → full scan.
 query
@@ -1168,7 +1179,7 @@ QUERY PLAN
 │ Table: t_range           │
 │ Type: Sequential Scan    │
 │ Projections: b, a, val   │
-│ Filters: b > 5           │
+│ Column Filter: b > 5     │
 │ ~2 rows                  │
 ╰──────────────────────────╯
 
@@ -1205,7 +1216,8 @@ QUERY PLAN
 │ Table: t_range                                              │
 │ Type: Sequential Scan                                       │
 │ Projections: a, b, val                                      │
-│ Filters: optional: ((b > 5) OR (b > 3))                     │
+│ Column Filter:                                              │
+│ optional: ((b > 5) OR (b > 3))                              │
 │ ~13 rows                                                    │
 ╰─────────────────────────────────────────────────────────────╯
 
@@ -1232,7 +1244,8 @@ QUERY PLAN
 │ Table: t_range           │
 │ Type: Sequential Scan    │
 │ Projections: a, b, val   │
-│ Filters: a > 1, b > 5    │
+│ Column Filter: a > 1,    │
+│                b > 5     │
 │ ~2 rows                  │
 ╰──────────────────────────╯
 
@@ -1266,14 +1279,14 @@ query
 EXPLAIN SELECT * FROM t_range WHERE a = 1 AND b >= 5 AND b <= 5;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ──────────────────────╮
-│ Table: t_range                  │
-│ Type: Sequential Scan           │
-│ Projections: a, b, val          │
-│ Filters: a = 1,                 │
-│          (b >= 5) AND (b <= 5)  │
-│ ~5 rows                         │
-╰─────────────────────────────────╯
+╭─ SEQ_SCAN ────────────────────────────╮
+│ Table: t_range                        │
+│ Type: Sequential Scan                 │
+│ Projections: a, b, val                │
+│ Column Filter: a = 1,                 │
+│                (b >= 5) AND (b <= 5)  │
+│ ~5 rows                               │
+╰───────────────────────────────────────╯
 
 # NULL value in non-PK column passes through range scan correctly.
 query
@@ -1318,7 +1331,8 @@ QUERY PLAN
 │ Type: Sequential Scan │
 │ Projections: a, b,    │
 │              val      │
-│ Filters: a = 4, b > 5 │
+│ Column Filter: a = 4, │
+│                b > 5  │
 │ ~3 rows               │
 ╰───────────────────────╯
 
@@ -1361,8 +1375,9 @@ QUERY PLAN
 │ Type: Sequential Scan    │
 │ Projections: a, b, c,    │
 │              val         │
-│ Filters: a = 1, b = 2,   │
-│          c > 3           │
+│ Column Filter: a = 1,    │
+│                b = 2,    │
+│                c > 3     │
 │ ~4 rows                  │
 ╰──────────────────────────╯
 
@@ -1390,7 +1405,8 @@ QUERY PLAN
 │ Type: Sequential Scan    │
 │ Projections: a, b, c,    │
 │              val         │
-│ Filters: a = 1, b = 2    │
+│ Column Filter: a = 1,    │
+│                b = 2     │
 │ ~4 rows                  │
 ╰──────────────────────────╯
 
@@ -1421,7 +1437,8 @@ QUERY PLAN
 │ Table: t_range3           │
 │ Type: Sequential Scan     │
 │ Projections: a, c, b, val │
-│ Filters: a = 1, c > 3     │
+│ Column Filter: a = 1,     │
+│                c > 3      │
 │ ~4 rows                   │
 ╰───────────────────────────╯
 
@@ -1448,7 +1465,7 @@ QUERY PLAN
 │ Table: t_range3           │
 │ Type: Sequential Scan     │
 │ Projections: a, b, c, val │
-│ Filters: a > 1            │
+│ Column Filter: a > 1      │
 │ ~1 row                    │
 ╰───────────────────────────╯
 
@@ -1478,7 +1495,8 @@ QUERY PLAN
 │ Table: t_range3                                                                                    │
 │ Type: Sequential Scan                                                                              │
 │ Projections: a, b, c, val                                                                          │
-│ Filters: optional: ((a = 1) OR (a = 2)), b = 2, optional: ((c > 5) OR (c < 5))                     │
+│ Column Filter:                                                                                     │
+│ optional: ((a = 1) OR (a = 2)), b = 2, optional: ((c > 5) OR (c < 5))                              │
 │ ~4 rows                                                                                            │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
@@ -1512,7 +1530,8 @@ QUERY PLAN
 │ Table: t_range3                                                                                        │
 │ Type: Sequential Scan                                                                                  │
 │ Projections: a, b, c, val                                                                              │
-│ Filters: optional: ((a <= 1) OR (a < 2)), optional: ((b <= 2) OR (b < 3))                              │
+│ Column Filter:                                                                                         │
+│ optional: ((a <= 1) OR (a < 2)), optional: ((b <= 2) OR (b < 3))                                       │
 │ ~8 rows                                                                                                │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
@@ -1541,17 +1560,17 @@ query
 EXPLAIN SELECT * FROM t_not WHERE NOT (a > 5) ORDER BY a;
 ----
 QUERY PLAN
-╭─ ORDER_BY ────────────╮
-│ Order By: t_not.a ASC │
-│ ~1 row                │
-╰───────────┬───────────╯
-╭─ SEQ_SCAN ┴───────────╮
-│ Table: t_not          │
-│ Type: Sequential Scan │
-│ Projections: a, val   │
-│ Filters: NOT (a > 5)  │
-│ ~1 row                │
-╰───────────────────────╯
+╭─ ORDER_BY ─────────────────╮
+│ Order By: t_not.a ASC      │
+│ ~1 row                     │
+╰──────────────┬─────────────╯
+╭─ SEQ_SCAN ───┴─────────────╮
+│ Table: t_not               │
+│ Type: Sequential Scan      │
+│ Projections: a, val        │
+│ Column Filter: NOT (a > 5) │
+│ ~1 row                     │
+╰────────────────────────────╯
 
 # NOT(a >= v) → a < v  (range_lookup)
 query
@@ -1566,17 +1585,17 @@ query
 EXPLAIN SELECT * FROM t_not WHERE NOT (a >= 5) ORDER BY a;
 ----
 QUERY PLAN
-╭─ ORDER_BY ────────────╮
-│ Order By: t_not.a ASC │
-│ ~1 row                │
-╰───────────┬───────────╯
-╭─ SEQ_SCAN ┴───────────╮
-│ Table: t_not          │
-│ Type: Sequential Scan │
-│ Projections: a, val   │
-│ Filters: NOT (a >= 5) │
-│ ~1 row                │
-╰───────────────────────╯
+╭─ ORDER_BY ──────────────────╮
+│ Order By: t_not.a ASC       │
+│ ~1 row                      │
+╰──────────────┬──────────────╯
+╭─ SEQ_SCAN ───┴──────────────╮
+│ Table: t_not                │
+│ Type: Sequential Scan       │
+│ Projections: a, val         │
+│ Column Filter: NOT (a >= 5) │
+│ ~1 row                      │
+╰─────────────────────────────╯
 
 # NOT(a < v) → a >= v  (range_lookup)
 query
@@ -1592,17 +1611,17 @@ query
 EXPLAIN SELECT * FROM t_not WHERE NOT (a < 5) ORDER BY a;
 ----
 QUERY PLAN
-╭─ ORDER_BY ────────────╮
-│ Order By: t_not.a ASC │
-│ ~1 row                │
-╰───────────┬───────────╯
-╭─ SEQ_SCAN ┴───────────╮
-│ Table: t_not          │
-│ Type: Sequential Scan │
-│ Projections: a, val   │
-│ Filters: NOT (a < 5)  │
-│ ~1 row                │
-╰───────────────────────╯
+╭─ ORDER_BY ─────────────────╮
+│ Order By: t_not.a ASC      │
+│ ~1 row                     │
+╰──────────────┬─────────────╯
+╭─ SEQ_SCAN ───┴─────────────╮
+│ Table: t_not               │
+│ Type: Sequential Scan      │
+│ Projections: a, val        │
+│ Column Filter: NOT (a < 5) │
+│ ~1 row                     │
+╰────────────────────────────╯
 
 # NOT(a <= v) → a > v  (range_lookup)
 query
@@ -1617,17 +1636,17 @@ query
 EXPLAIN SELECT * FROM t_not WHERE NOT (a <= 5) ORDER BY a;
 ----
 QUERY PLAN
-╭─ ORDER_BY ────────────╮
-│ Order By: t_not.a ASC │
-│ ~1 row                │
-╰───────────┬───────────╯
-╭─ SEQ_SCAN ┴───────────╮
-│ Table: t_not          │
-│ Type: Sequential Scan │
-│ Projections: a, val   │
-│ Filters: NOT (a <= 5) │
-│ ~1 row                │
-╰───────────────────────╯
+╭─ ORDER_BY ──────────────────╮
+│ Order By: t_not.a ASC       │
+│ ~1 row                      │
+╰──────────────┬──────────────╯
+╭─ SEQ_SCAN ───┴──────────────╮
+│ Table: t_not                │
+│ Type: Sequential Scan       │
+│ Projections: a, val         │
+│ Column Filter: NOT (a <= 5) │
+│ ~1 row                      │
+╰─────────────────────────────╯
 
 # NOT(NOT(a > v)) → double negation → a > v  (range_lookup)
 query
@@ -1642,17 +1661,17 @@ query
 EXPLAIN SELECT * FROM t_not WHERE NOT (NOT (a > 5)) ORDER BY a;
 ----
 QUERY PLAN
-╭─ ORDER_BY ─────────────────╮
-│ Order By: t_not.a ASC      │
-│ ~1 row                     │
-╰──────────────┬─────────────╯
-╭─ SEQ_SCAN ───┴─────────────╮
-│ Table: t_not               │
-│ Type: Sequential Scan      │
-│ Projections: a, val        │
-│ Filters: NOT (NOT (a > 5)) │
-│ ~1 row                     │
-╰────────────────────────────╯
+╭─ ORDER_BY ───────────────────────╮
+│ Order By: t_not.a ASC            │
+│ ~1 row                           │
+╰─────────────────┬────────────────╯
+╭─ SEQ_SCAN ──────┴────────────────╮
+│ Table: t_not                     │
+│ Type: Sequential Scan            │
+│ Projections: a, val              │
+│ Column Filter: NOT (NOT (a > 5)) │
+│ ~1 row                           │
+╰──────────────────────────────────╯
 
 # NOT(a > x AND a < y) → De Morgan → a <= x OR a >= y  (two ranges)
 query
@@ -1669,17 +1688,17 @@ query
 EXPLAIN SELECT * FROM t_not WHERE NOT (a > 3 AND a < 7) ORDER BY a;
 ----
 QUERY PLAN
-╭─ ORDER_BY ─────────────────────────╮
-│ Order By: t_not.a ASC              │
-│ ~1 row                             │
-╰──────────────────┬─────────────────╯
-╭─ SEQ_SCAN ───────┴─────────────────╮
-│ Table: t_not                       │
-│ Type: Sequential Scan              │
-│ Projections: a, val                │
-│ Filters: NOT ((a > 3) AND (a < 7)) │
-│ ~1 row                             │
-╰────────────────────────────────────╯
+╭─ ORDER_BY ───────────────────────────────╮
+│ Order By: t_not.a ASC                    │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ SEQ_SCAN ──────────┴────────────────────╮
+│ Table: t_not                             │
+│ Type: Sequential Scan                    │
+│ Projections: a, val                      │
+│ Column Filter: NOT ((a > 3) AND (a < 7)) │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
 
 # NOT(a > x OR a < y) → De Morgan → a <= x AND a >= y  (single range)
 query
@@ -1695,17 +1714,17 @@ query
 EXPLAIN SELECT * FROM t_not WHERE NOT (a > 7 OR a < 3) ORDER BY a;
 ----
 QUERY PLAN
-╭─ ORDER_BY ────────────────────────╮
-│ Order By: t_not.a ASC             │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_not                      │
-│ Type: Sequential Scan             │
-│ Projections: a, val               │
-│ Filters: NOT ((a > 7) OR (a < 3)) │
-│ ~1 row                            │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ──────────────────────────────╮
+│ Order By: t_not.a ASC                   │
+│ ~1 row                                  │
+╰────────────────────┬────────────────────╯
+╭─ SEQ_SCAN ─────────┴────────────────────╮
+│ Table: t_not                            │
+│ Type: Sequential Scan                   │
+│ Projections: a, val                     │
+│ Column Filter: NOT ((a > 7) OR (a < 3)) │
+│ ~1 row                                  │
+╰─────────────────────────────────────────╯
 
 # NOT(a = v) → full scan (equality negation not pushed to range)
 query
@@ -1722,17 +1741,17 @@ query
 EXPLAIN SELECT * FROM t_not WHERE NOT (a = 5) ORDER BY a;
 ----
 QUERY PLAN
-╭─ ORDER_BY ────────────╮
-│ Order By: t_not.a ASC │
-│ ~1 row                │
-╰───────────┬───────────╯
-╭─ SEQ_SCAN ┴───────────╮
-│ Table: t_not          │
-│ Type: Sequential Scan │
-│ Projections: a, val   │
-│ Filters: NOT (a = 5)  │
-│ ~1 row                │
-╰───────────────────────╯
+╭─ ORDER_BY ─────────────────╮
+│ Order By: t_not.a ASC      │
+│ ~1 row                     │
+╰──────────────┬─────────────╯
+╭─ SEQ_SCAN ───┴─────────────╮
+│ Table: t_not               │
+│ Type: Sequential Scan      │
+│ Projections: a, val        │
+│ Column Filter: NOT (a = 5) │
+│ ~1 row                     │
+╰────────────────────────────╯
 
 # NOT(a IN (...)) → full scan (IN negation not pushed to range)
 query
@@ -1748,17 +1767,17 @@ query
 EXPLAIN SELECT * FROM t_not WHERE NOT (a IN (3, 7)) ORDER BY a;
 ----
 QUERY PLAN
-╭─ ORDER_BY ─────────────────╮
-│ Order By: t_not.a ASC      │
-│ ~1 row                     │
-╰──────────────┬─────────────╯
-╭─ SEQ_SCAN ───┴─────────────╮
-│ Table: t_not               │
-│ Type: Sequential Scan      │
-│ Projections: a, val        │
-│ Filters: NOT (a IN (3, 7)) │
-│ ~1 row                     │
-╰────────────────────────────╯
+╭─ ORDER_BY ───────────────────────╮
+│ Order By: t_not.a ASC            │
+│ ~1 row                           │
+╰─────────────────┬────────────────╯
+╭─ SEQ_SCAN ──────┴────────────────╮
+│ Table: t_not                     │
+│ Type: Sequential Scan            │
+│ Projections: a, val              │
+│ Column Filter: NOT (a IN (3, 7)) │
+│ ~1 row                           │
+╰──────────────────────────────────╯
 
 statement ok
 DROP TABLE t_not;
@@ -1785,18 +1804,18 @@ query
 EXPLAIN SELECT * FROM t_not2 WHERE NOT (a > 3) ORDER BY a, b;
 ----
 QUERY PLAN
-╭─ ORDER_BY ──────────────╮
-│ Order By: t_not2.a ASC, │
-│           t_not2.b ASC  │
-│ ~1 row                  │
-╰────────────┬────────────╯
-╭─ SEQ_SCAN ─┴────────────╮
-│ Table: t_not2           │
-│ Type: Sequential Scan   │
-│ Projections: a, b, val  │
-│ Filters: NOT (a > 3)    │
-│ ~1 row                  │
-╰─────────────────────────╯
+╭─ ORDER_BY ─────────────────╮
+│ Order By: t_not2.a ASC,    │
+│           t_not2.b ASC     │
+│ ~1 row                     │
+╰──────────────┬─────────────╯
+╭─ SEQ_SCAN ───┴─────────────╮
+│ Table: t_not2              │
+│ Type: Sequential Scan      │
+│ Projections: a, b, val     │
+│ Column Filter: NOT (a > 3) │
+│ ~1 row                     │
+╰────────────────────────────╯
 
 # NOT(NOT(a = 1 AND b > 2)) → double negation → a = 1 AND b > 2  (range_lookup with prefix)
 query
@@ -1840,18 +1859,17 @@ query
 EXPLAIN SELECT * FROM t_not2 WHERE NOT (a > 4 OR a < 2) ORDER BY a, b;
 ----
 QUERY PLAN
-╭─ ORDER_BY ────────────────────────╮
-│ Order By: t_not2.a ASC,           │
-│           t_not2.b ASC            │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_not2                     │
-│ Type: Sequential Scan             │
-│ Projections: a, b, val            │
-│ Filters: NOT ((a > 4) OR (a < 2)) │
-│ ~1 row                            │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ──────────────────────────────╮
+│ Order By: t_not2.a ASC, t_not2.b ASC    │
+│ ~1 row                                  │
+╰────────────────────┬────────────────────╯
+╭─ SEQ_SCAN ─────────┴────────────────────╮
+│ Table: t_not2                           │
+│ Type: Sequential Scan                   │
+│ Projections: a, b, val                  │
+│ Column Filter: NOT ((a > 4) OR (a < 2)) │
+│ ~1 row                                  │
+╰─────────────────────────────────────────╯
 
 # NOT(a > 1 AND a < 5) → De Morgan → a <= 1 OR a >= 5  (two ranges)
 query
@@ -1868,18 +1886,17 @@ query
 EXPLAIN SELECT * FROM t_not2 WHERE NOT (a > 1 AND a < 5) ORDER BY a, b;
 ----
 QUERY PLAN
-╭─ ORDER_BY ─────────────────────────╮
-│ Order By: t_not2.a ASC,            │
-│           t_not2.b ASC             │
-│ ~1 row                             │
-╰──────────────────┬─────────────────╯
-╭─ SEQ_SCAN ───────┴─────────────────╮
-│ Table: t_not2                      │
-│ Type: Sequential Scan              │
-│ Projections: a, b, val             │
-│ Filters: NOT ((a > 1) AND (a < 5)) │
-│ ~1 row                             │
-╰────────────────────────────────────╯
+╭─ ORDER_BY ───────────────────────────────╮
+│ Order By: t_not2.a ASC, t_not2.b ASC     │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ SEQ_SCAN ──────────┴────────────────────╮
+│ Table: t_not2                            │
+│ Type: Sequential Scan                    │
+│ Projections: a, b, val                   │
+│ Column Filter: NOT ((a > 1) AND (a < 5)) │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
 
 # NOT(a = 1 AND b > 2) → De Morgan AND → a != 1 OR b <= 2 → full scan (OR loses prefix)
 query
@@ -1948,17 +1965,16 @@ query
 EXPLAIN SELECT * FROM t_complex WHERE region = 1 AND priority = 10 AND name = 'alice';
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ───────────────╮
-│ Table: t_complex         │
-│ Type: Sequential Scan    │
-│ Projections: region,     │
-│              priority,   │
-│              name, score │
-│ Filters: region = 1,     │
-│          priority = 10,  │
-│          name = 'alice'  │
-│ ~2 rows                  │
-╰──────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────╮
+│ Table: t_complex               │
+│ Type: Sequential Scan          │
+│ Projections: region, priority, │
+│              name, score       │
+│ Column Filter: region = 1,     │
+│                priority = 10,  │
+│                name = 'alice'  │
+│ ~2 rows                        │
+╰────────────────────────────────╯
 
 # Equality prefix + range on third column (name <= 'bob').
 query
@@ -1982,9 +1998,9 @@ QUERY PLAN
 │ Type: Sequential Scan          │
 │ Projections: region, priority, │
 │              name, score       │
-│ Filters: region = 1,           │
-│          priority = 10,        │
-│          name <= 'bob'         │
+│ Column Filter: region = 1,     │
+│                priority = 10,  │
+│                name <= 'bob'   │
 │ ~2 rows                        │
 ╰────────────────────────────────╯
 
@@ -2011,8 +2027,8 @@ QUERY PLAN
 │ Type: Sequential Scan             │
 │ Projections: region, priority,    │
 │              name, score          │
-│ Filters: region = 1,              │
-│          priority > 15            │
+│ Column Filter: region = 1,        │
+│                priority > 15      │
 │ ~3 rows                           │
 ╰───────────────────────────────────╯
 
@@ -2048,7 +2064,7 @@ QUERY PLAN
 │ Table: t_complex                           │
 │ Type: Sequential Scan                      │
 │ Projections: region, priority, name, score │
-│ Filters:                                   │
+│ Column Filter:                             │
 │ optional: ((region <= 1) OR (region >= 3)) │
 │ ~8 rows                                    │
 ╰────────────────────────────────────────────╯
@@ -2118,7 +2134,7 @@ QUERY PLAN
 │ Type: Sequential Scan             │
 │ Projections: region, priority,    │
 │              name, score          │
-│ Filters: NOT (region > 2)         │
+│ Column Filter: NOT (region > 2)   │
 │ ~1 row                            │
 ╰───────────────────────────────────╯
 
@@ -2134,20 +2150,20 @@ query
 EXPLAIN SELECT * FROM t_complex WHERE region = 2 AND NOT (priority > 20) ORDER BY priority, name;
 ----
 QUERY PLAN
-╭─ ORDER_BY ────────────────────────╮
-│ Order By: t_complex.priority ASC, │
-│           t_complex."name" ASC    │
-│ ~3 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_complex                  │
-│ Type: Sequential Scan             │
-│ Projections: region, priority,    │
-│              name, score          │
-│ Filters: region = 2,              │
-│          NOT (priority > 20)      │
-│ ~3 rows                           │
-╰───────────────────────────────────╯
+╭─ ORDER_BY ──────────────────────────╮
+│ Order By: t_complex.priority ASC,   │
+│           t_complex."name" ASC      │
+│ ~3 rows                             │
+╰──────────────────┬──────────────────╯
+╭─ SEQ_SCAN ───────┴──────────────────╮
+│ Table: t_complex                    │
+│ Type: Sequential Scan               │
+│ Projections: region, priority,      │
+│              name, score            │
+│ Column Filter: region = 2,          │
+│                NOT (priority > 20)  │
+│ ~3 rows                             │
+╰─────────────────────────────────────╯
 
 # Complex: (region = 1 AND priority <= 10) OR (region = 3 AND priority <= 10).
 query
@@ -2178,7 +2194,7 @@ QUERY PLAN
 │ Type: Sequential Scan                     │
 │ Projections: region, priority, name,      │
 │              score                        │
-│ Filters:                                  │
+│ Column Filter:                            │
 │ optional: ((region = 1) OR (region = 3)), │
 │ priority <= 10                            │
 │ ~1 row                                    │
@@ -2253,7 +2269,7 @@ QUERY PLAN
 │ Table: t_void         │
 │ Type: Sequential Scan │
 │ Projections: a, val   │
-│ Filters: a = 3        │
+│ Column Filter: a = 3  │
 │ ~1 row                │
 ╰───────────────────────╯
 
@@ -2310,21 +2326,22 @@ query
 EXPLAIN SELECT COUNT(*) FROM t_sweep3 WHERE a < 2 OR a > 2;
 ----
 QUERY PLAN
-╭─ UNGROUPED_AGGREGATE ───────────────────╮
-│ Aggregates: count_star()                │
-│ ~1 row                                  │
-╰────────────────────┬────────────────────╯
-╭─ FILTER ───────────┴────────────────────╮
-│ Expression: (a < 2) OR (a > 2)          │
-│ ~5 rows                                 │
-╰────────────────────┬────────────────────╯
-╭─ SEQ_SCAN ─────────┴────────────────────╮
-│ Table: t_sweep3                         │
-│ Type: Sequential Scan                   │
-│ Projections: a                          │
-│ Filters: optional: ((a < 2) OR (a > 2)) │
-│ ~27 rows                                │
-╰─────────────────────────────────────────╯
+╭─ UNGROUPED_AGGREGATE ──────────╮
+│ Aggregates: count_star()       │
+│ ~1 row                         │
+╰────────────────┬───────────────╯
+╭─ FILTER ───────┴───────────────╮
+│ Expression: (a < 2) OR (a > 2) │
+│ ~5 rows                        │
+╰────────────────┬───────────────╯
+╭─ SEQ_SCAN ─────┴───────────────╮
+│ Table: t_sweep3                │
+│ Type: Sequential Scan          │
+│ Projections: a                 │
+│ Column Filter:                 │
+│ optional: ((a < 2) OR (a > 2)) │
+│ ~27 rows                       │
+╰────────────────────────────────╯
 
 
 # ── 1-D adjacent inclusive+inclusive (full coverage) ─────────────────────────
@@ -2353,7 +2370,7 @@ QUERY PLAN
 │ Table: t_sweep3                  │
 │ Type: Sequential Scan            │
 │ Projections: a                   │
-│ Filters:                         │
+│ Column Filter:                   │
 │ optional: ((a <= 2) OR (a >= 2)) │
 │ ~27 rows                         │
 ╰──────────────────────────────────╯
@@ -2372,21 +2389,22 @@ query
 EXPLAIN SELECT COUNT(*) FROM t_sweep3 WHERE a < 2 OR a >= 2;
 ----
 QUERY PLAN
-╭─ UNGROUPED_AGGREGATE ────────────────────╮
-│ Aggregates: count_star()                 │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
-╭─ FILTER ────────────┴────────────────────╮
-│ Expression: (a < 2) OR (a >= 2)          │
-│ ~5 rows                                  │
-╰─────────────────────┬────────────────────╯
-╭─ SEQ_SCAN ──────────┴────────────────────╮
-│ Table: t_sweep3                          │
-│ Type: Sequential Scan                    │
-│ Projections: a                           │
-│ Filters: optional: ((a < 2) OR (a >= 2)) │
-│ ~27 rows                                 │
-╰──────────────────────────────────────────╯
+╭─ UNGROUPED_AGGREGATE ───────────╮
+│ Aggregates: count_star()        │
+│ ~1 row                          │
+╰────────────────┬────────────────╯
+╭─ FILTER ───────┴────────────────╮
+│ Expression: (a < 2) OR (a >= 2) │
+│ ~5 rows                         │
+╰────────────────┬────────────────╯
+╭─ SEQ_SCAN ─────┴────────────────╮
+│ Table: t_sweep3                 │
+│ Type: Sequential Scan           │
+│ Projections: a                  │
+│ Column Filter:                  │
+│ optional: ((a < 2) OR (a >= 2)) │
+│ ~27 rows                        │
+╰─────────────────────────────────╯
 
 
 # ── 1-D overlapping ranges (a<=2 covers 1,2; a>=1 covers 1,2,3 → all) ────────
@@ -2409,7 +2427,7 @@ QUERY PLAN
 │ Table: t_sweep3                  │
 │ Type: Sequential Scan            │
 │ Projections: a                   │
-│ Filters:                         │
+│ Column Filter:                   │
 │ optional: ((a <= 2) OR (a >= 1)) │
 │ ~27 rows                         │
 ╰──────────────────────────────────╯
@@ -2434,7 +2452,7 @@ QUERY PLAN
 ╭─ SEQ_SCAN ──┴────────────╮
 │ Table: t_sweep3          │
 │ Type: Sequential Scan    │
-│ Filters: a = 2           │
+│ Column Filter: a = 2     │
 │ ~9 rows                  │
 ╰──────────────────────────╯
 
@@ -2452,16 +2470,16 @@ query
 EXPLAIN SELECT COUNT(*) FROM t_sweep3 WHERE a < 1 OR (a > 1 AND a < 3) OR a > 3;
 ----
 QUERY PLAN
-╭─ UNGROUPED_AGGREGATE ────────╮
-│ Aggregates: count_star()     │
-│ ~1 row                       │
-╰───────────────┬──────────────╯
-╭─ SEQ_SCAN ────┴──────────────╮
-│ Table: t_sweep3              │
-│ Type: Sequential Scan        │
-│ Filters: (a > 1) AND (a < 3) │
-│ ~5 rows                      │
-╰──────────────────────────────╯
+╭─ UNGROUPED_AGGREGATE ──────────────╮
+│ Aggregates: count_star()           │
+│ ~1 row                             │
+╰──────────────────┬─────────────────╯
+╭─ SEQ_SCAN ───────┴─────────────────╮
+│ Table: t_sweep3                    │
+│ Type: Sequential Scan              │
+│ Column Filter: (a > 1) AND (a < 3) │
+│ ~5 rows                            │
+╰────────────────────────────────────╯
 
 
 # ── 2-D: same a, b disjoint (b<2 OR b>1 covers all b) → fuses to a=[2,2] ─────
@@ -2476,22 +2494,23 @@ query
 EXPLAIN SELECT COUNT(*) FROM t_sweep3 WHERE (a=2 AND b < 2) OR (a=2 AND b > 1);
 ----
 QUERY PLAN
-╭─ UNGROUPED_AGGREGATE ────────────────────╮
-│ Aggregates: count_star()                 │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
-╭─ FILTER ────────────┴────────────────────╮
-│ Expression: (b < 2) OR (b > 1)           │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
-╭─ SEQ_SCAN ──────────┴────────────────────╮
-│ Table: t_sweep3                          │
-│ Type: Sequential Scan                    │
-│ Projections: b                           │
-│ Filters: a = 2,                          │
-│          optional: ((b < 2) OR (b > 1))  │
-│ ~9 rows                                  │
-╰──────────────────────────────────────────╯
+╭─ UNGROUPED_AGGREGATE ───────────╮
+│ Aggregates: count_star()        │
+│ ~1 row                          │
+╰────────────────┬────────────────╯
+╭─ FILTER ───────┴────────────────╮
+│ Expression: (b < 2) OR (b > 1)  │
+│ ~1 row                          │
+╰────────────────┬────────────────╯
+╭─ SEQ_SCAN ─────┴────────────────╮
+│ Table: t_sweep3                 │
+│ Type: Sequential Scan           │
+│ Projections: b                  │
+│ Column Filter:                  │
+│ a = 2,                          │
+│ optional: ((b < 2) OR (b > 1))  │
+│ ~9 rows                         │
+╰─────────────────────────────────╯
 
 
 # ── 2-D: same a, b adjacent exclusive+inclusive → fuses to a=[1,1] ───────────
@@ -2507,22 +2526,23 @@ query
 EXPLAIN SELECT COUNT(*) FROM t_sweep3 WHERE (a=1 AND b <= 2) OR (a=1 AND b > 2);
 ----
 QUERY PLAN
-╭─ UNGROUPED_AGGREGATE ─────────────────────╮
-│ Aggregates: count_star()                  │
-│ ~1 row                                    │
-╰─────────────────────┬─────────────────────╯
-╭─ FILTER ────────────┴─────────────────────╮
-│ Expression: (b <= 2) OR (b > 2)           │
-│ ~1 row                                    │
-╰─────────────────────┬─────────────────────╯
-╭─ SEQ_SCAN ──────────┴─────────────────────╮
-│ Table: t_sweep3                           │
-│ Type: Sequential Scan                     │
-│ Projections: b                            │
-│ Filters: a = 1,                           │
-│          optional: ((b <= 2) OR (b > 2))  │
-│ ~9 rows                                   │
-╰───────────────────────────────────────────╯
+╭─ UNGROUPED_AGGREGATE ────────────╮
+│ Aggregates: count_star()         │
+│ ~1 row                           │
+╰─────────────────┬────────────────╯
+╭─ FILTER ────────┴────────────────╮
+│ Expression: (b <= 2) OR (b > 2)  │
+│ ~1 row                           │
+╰─────────────────┬────────────────╯
+╭─ SEQ_SCAN ──────┴────────────────╮
+│ Table: t_sweep3                  │
+│ Type: Sequential Scan            │
+│ Projections: b                   │
+│ Column Filter:                   │
+│ a = 1,                           │
+│ optional: ((b <= 2) OR (b > 2))  │
+│ ~9 rows                          │
+╰──────────────────────────────────╯
 
 
 # ── 2-D: different a, same b constraint → b is trailing, full scan on a ───────
@@ -2560,7 +2580,7 @@ QUERY PLAN
 │ Table: t_sweep3                                                                                            │
 │ Type: Sequential Scan                                                                                      │
 │ Projections: a, b                                                                                          │
-│ Filters:                                                                                                   │
+│ Column Filter:                                                                                             │
 │ optional: ((a <= 2) OR (a >= 2)), optional: ((b <= 2) OR (b >= 2))                                         │
 │ ~27 rows                                                                                                   │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
@@ -2597,7 +2617,8 @@ QUERY PLAN
 │ Table: t_sweep3                                                                                                                                     │
 │ Type: Sequential Scan                                                                                                                               │
 │ Projections: a, b, c, val                                                                                                                           │
-│ Filters: optional: ((a = 1) OR (a = 2)), optional: ((b = 1) OR (b = 2)), optional: ((c = 1) OR (c = 2))                                             │
+│ Column Filter:                                                                                                                                      │
+│ optional: ((a = 1) OR (a = 2)), optional: ((b = 1) OR (b = 2)), optional: ((c = 1) OR (c = 2))                                                      │
 │ ~27 rows                                                                                                                                            │
 ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
@@ -2628,8 +2649,9 @@ QUERY PLAN
 │ Table: t_sweep3           │
 │ Type: Sequential Scan     │
 │ Projections: a, b, c, val │
-│ Filters: a = 3, b = 3,    │
-│          c = 3            │
+│ Column Filter: a = 3,     │
+│                b = 3,     │
+│                c = 3      │
 │ ~9 rows                   │
 ╰───────────────────────────╯
 
@@ -2648,22 +2670,23 @@ EXPLAIN SELECT COUNT(*) FROM t_sweep3
   WHERE (a=1 AND b=1 AND c <= 2) OR (a=1 AND b=1 AND c > 2);
 ----
 QUERY PLAN
-╭─ UNGROUPED_AGGREGATE ─────────────────────╮
-│ Aggregates: count_star()                  │
-│ ~1 row                                    │
-╰─────────────────────┬─────────────────────╯
-╭─ FILTER ────────────┴─────────────────────╮
-│ Expression: (c <= 2) OR (c > 2)           │
-│ ~1 row                                    │
-╰─────────────────────┬─────────────────────╯
-╭─ SEQ_SCAN ──────────┴─────────────────────╮
-│ Table: t_sweep3                           │
-│ Type: Sequential Scan                     │
-│ Projections: c                            │
-│ Filters: a = 1, b = 1,                    │
-│          optional: ((c <= 2) OR (c > 2))  │
-│ ~9 rows                                   │
-╰───────────────────────────────────────────╯
+╭─ UNGROUPED_AGGREGATE ────────────╮
+│ Aggregates: count_star()         │
+│ ~1 row                           │
+╰─────────────────┬────────────────╯
+╭─ FILTER ────────┴────────────────╮
+│ Expression: (c <= 2) OR (c > 2)  │
+│ ~1 row                           │
+╰─────────────────┬────────────────╯
+╭─ SEQ_SCAN ──────┴────────────────╮
+│ Table: t_sweep3                  │
+│ Type: Sequential Scan            │
+│ Projections: c                   │
+│ Column Filter:                   │
+│ a = 1, b = 1,                    │
+│ optional: ((c <= 2) OR (c > 2))  │
+│ ~9 rows                          │
+╰──────────────────────────────────╯
 
 
 # ── 3-D: b adjacent then c fuses to a-level range ────────────────────────────
@@ -2686,24 +2709,26 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-╭─ ORDER_BY ────────────────────────────────╮
-│ Order By: t_sweep3.a ASC, t_sweep3.b ASC, │
-│           t_sweep3.c ASC                  │
-│ ~1 row                                    │
-╰─────────────────────┬─────────────────────╯
-╭─ FILTER ────────────┴─────────────────────╮
-│ Expression: (b <= 2) OR (b > 2)           │
-│ ~1 row                                    │
-╰─────────────────────┬─────────────────────╯
-╭─ SEQ_SCAN ──────────┴─────────────────────╮
-│ Table: t_sweep3                           │
-│ Type: Sequential Scan                     │
-│ Projections: a, b, c, val                 │
-│ Filters: a = 2,                           │
-│          optional: ((b <= 2) OR (b > 2)), │
-│          c = 1                            │
-│ ~9 rows                                   │
-╰───────────────────────────────────────────╯
+╭─ ORDER_BY ───────────────────────╮
+│ Order By: t_sweep3.a ASC,        │
+│           t_sweep3.b ASC,        │
+│           t_sweep3.c ASC         │
+│ ~1 row                           │
+╰─────────────────┬────────────────╯
+╭─ FILTER ────────┴────────────────╮
+│ Expression: (b <= 2) OR (b > 2)  │
+│ ~1 row                           │
+╰─────────────────┬────────────────╯
+╭─ SEQ_SCAN ──────┴────────────────╮
+│ Table: t_sweep3                  │
+│ Type: Sequential Scan            │
+│ Projections: a, b, c, val        │
+│ Column Filter:                   │
+│ a = 2,                           │
+│ optional: ((b <= 2) OR (b > 2)), │
+│ c = 1                            │
+│ ~9 rows                          │
+╰──────────────────────────────────╯
 
 
 # ── 3-D: all three columns overlapping → full scan ───────────────────────────
@@ -2725,7 +2750,7 @@ QUERY PLAN
 │<slt:ignore>│
 │<slt:ignore>│
 │ Projections: a, b, c              │
-│ Filters:                          │
+│ Column Filter:                    │
 │ optional: ((a <= 2) OR (a >= 1)), │
 │ optional: ((b <= 2) OR (b >= 1)), │
 │ optional: ((c <= 2) OR (c >= 1))  │
@@ -2751,23 +2776,25 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-╭─ ORDER_BY ───────────────────────────────╮
-│ Order By: t_sweep3.a ASC,                │
-│           t_sweep3.b ASC, t_sweep3.c ASC │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
-╭─ FILTER ────────────┴────────────────────╮
-│ Expression: (c < 2) OR (c > 2)           │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
-╭─ SEQ_SCAN ──────────┴────────────────────╮
-│ Table: t_sweep3                          │
-│ Type: Sequential Scan                    │
-│ Projections: a, b, c, val                │
-│ Filters: a = 1, b = 2,                   │
-│          optional: ((c < 2) OR (c > 2))  │
-│ ~9 rows                                  │
-╰──────────────────────────────────────────╯
+╭─ ORDER_BY ──────────────────────╮
+│ Order By: t_sweep3.a ASC,       │
+│           t_sweep3.b ASC,       │
+│           t_sweep3.c ASC        │
+│ ~1 row                          │
+╰────────────────┬────────────────╯
+╭─ FILTER ───────┴────────────────╮
+│ Expression: (c < 2) OR (c > 2)  │
+│ ~1 row                          │
+╰────────────────┬────────────────╯
+╭─ SEQ_SCAN ─────┴────────────────╮
+│ Table: t_sweep3                 │
+│ Type: Sequential Scan           │
+│ Projections: a, b, c, val       │
+│ Column Filter:                  │
+│ a = 1, b = 2,                   │
+│ optional: ((c < 2) OR (c > 2))  │
+│ ~9 rows                         │
+╰─────────────────────────────────╯
 
 
 # ── 3-D: three-way triple point OR deduplicated ───────────────────────────────
@@ -2804,7 +2831,8 @@ QUERY PLAN
 │ Table: t_sweep3                                                                                                                                                                          │
 │ Type: Sequential Scan                                                                                                                                                                    │
 │ Projections: a, b, c, val                                                                                                                                                                │
-│ Filters: optional: ((a = 1) OR (a = 2)), optional: ((b = 1) OR (b = 2)), optional: ((c = 1) OR (c = 2))                                                                                  │
+│ Column Filter:                                                                                                                                                                           │
+│ optional: ((a = 1) OR (a = 2)), optional: ((b = 1) OR (b = 2)), optional: ((c = 1) OR (c = 2))                                                                                           │
 │ ~27 rows                                                                                                                                                                                 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
@@ -2847,7 +2875,8 @@ QUERY PLAN
 │ Table: t_sweep3                                                                                    │
 │ Type: Sequential Scan                                                                              │
 │ Projections: a, b, c, val                                                                          │
-│ Filters: optional: ((a < 2) OR (a > 2)), optional: ((b < 2) OR (b > 2))                            │
+│ Column Filter:                                                                                     │
+│ optional: ((a < 2) OR (a > 2)), optional: ((b < 2) OR (b > 2))                                     │
 │ ~27 rows                                                                                           │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
@@ -2886,7 +2915,8 @@ QUERY PLAN
 │ Table: t_sweep3                                                                                    │
 │ Type: Sequential Scan                                                                              │
 │ Projections: a, b, c, val                                                                          │
-│ Filters: optional: ((a < 2) OR (a > 2)), optional: ((b = 1) OR (b = 3))                            │
+│ Column Filter:                                                                                     │
+│ optional: ((a < 2) OR (a > 2)), optional: ((b = 1) OR (b = 3))                                     │
 │ ~27 rows                                                                                           │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
@@ -2923,7 +2953,8 @@ QUERY PLAN
 │ Table: t_sweep3                                                                                                                                     │
 │ Type: Sequential Scan                                                                                                                               │
 │ Projections: a, b, c, val                                                                                                                           │
-│ Filters: optional: ((a = 1) OR (a = 3)), optional: ((b < 2) OR (b > 2)), optional: ((c < 3) OR (c > 1))                                             │
+│ Column Filter:                                                                                                                                      │
+│ optional: ((a = 1) OR (a = 3)), optional: ((b < 2) OR (b > 2)), optional: ((c < 3) OR (c > 1))                                                      │
 │ ~27 rows                                                                                                                                            │
 ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
@@ -2967,7 +2998,8 @@ QUERY PLAN
 │ Table: t_sweep3                                                          │
 │ Type: Sequential Scan                                                    │
 │ Projections: a, b, c, val                                                │
-│ Filters: ((a = 1) OR (a = 2)) OR (a = 3)                                 │
+│ Column Filter:                                                           │
+│ ((a = 1) OR (a = 2)) OR (a = 3)                                          │
 │ ~5 rows                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────╯
 
@@ -3004,7 +3036,8 @@ QUERY PLAN
 │ Table: t_sweep3                                                                                             │
 │ Type: Sequential Scan                                                                                       │
 │ Projections: a, b, c, val                                                                                   │
-│ Filters: ((a = 1) OR (a = 2)) OR (a = 3), ((b = 1) OR (b = 2)) OR (b = 3), ((c < 3) OR (c > 1)) OR (c = 2)  │
+│ Column Filter:                                                                                              │
+│ ((a = 1) OR (a = 2)) OR (a = 3), ((b = 1) OR (b = 2)) OR (b = 3), ((c < 3) OR (c > 1)) OR (c = 2)           │
 │ ~5 rows                                                                                                     │
 ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
@@ -3035,7 +3068,8 @@ QUERY PLAN
 │ Table: t_sweep3                                                                                    │
 │ Type: Sequential Scan                                                                              │
 │ Projections: a, b                                                                                  │
-│ Filters: optional: ((a < 3) OR (a > 1)), optional: ((b < 2) OR (b < 3))                            │
+│ Column Filter:                                                                                     │
+│ optional: ((a < 3) OR (a > 1)), optional: ((b < 2) OR (b < 3))                                     │
 │ ~27 rows                                                                                           │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
@@ -3077,9 +3111,9 @@ QUERY PLAN
 │ Table: t_sweep3                               │
 │ Type: Sequential Scan                         │
 │ Projections: a, b, c, val                     │
-│ Filters: optional: ((a = 1) OR (a = 3)),      │
-│          optional: ((b = 1) OR (b = 3)),      │
-│          c = 2                                │
+│ Column Filter:                                │
+│ optional: ((a = 1) OR (a = 3)),               │
+│ optional: ((b = 1) OR (b = 3)), c = 2         │
 │ ~9 rows                                       │
 ╰───────────────────────────────────────────────╯
 
@@ -3107,23 +3141,25 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-╭─ ORDER_BY ───────────────────────────────╮
-│ Order By: t_sweep3.a ASC,                │
-│           t_sweep3.b ASC, t_sweep3.c ASC │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
-╭─ FILTER ────────────┴────────────────────╮
-│ Expression: (c = 1) OR (c = 3)           │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
-╭─ SEQ_SCAN ──────────┴────────────────────╮
-│ Table: t_sweep3                          │
-│ Type: Sequential Scan                    │
-│ Projections: a, b, c, val                │
-│ Filters: a <= 2, b >= 2,                 │
-│          optional: ((c = 1) OR (c = 3))  │
-│ ~5 rows                                  │
-╰──────────────────────────────────────────╯
+╭─ ORDER_BY ──────────────────────╮
+│ Order By: t_sweep3.a ASC,       │
+│           t_sweep3.b ASC,       │
+│           t_sweep3.c ASC        │
+│ ~1 row                          │
+╰────────────────┬────────────────╯
+╭─ FILTER ───────┴────────────────╮
+│ Expression: (c = 1) OR (c = 3)  │
+│ ~1 row                          │
+╰────────────────┬────────────────╯
+╭─ SEQ_SCAN ─────┴────────────────╮
+│ Table: t_sweep3                 │
+│ Type: Sequential Scan           │
+│ Projections: a, b, c, val       │
+│ Column Filter:                  │
+│ a <= 2, b >= 2,                 │
+│ optional: ((c = 1) OR (c = 3))  │
+│ ~5 rows                         │
+╰─────────────────────────────────╯
 
 # OR on a (point), neq on b, range on c -> prefix=2 (a equality + b range), c beyond.
 # Scan uses {a=1,b<2},{a=1,b>2},{a=2,b<2},{a=2,b>2} with remaining filter.
@@ -3163,9 +3199,9 @@ QUERY PLAN
 │ Table: t_sweep3                               │
 │ Type: Sequential Scan                         │
 │ Projections: a, b, c, val                     │
-│ Filters: optional: ((a = 1) OR (a = 2)),      │
-│          optional: ((b < 2) OR (b > 2)),      │
-│          c >= 2                               │
+│ Column Filter:                                │
+│ optional: ((a = 1) OR (a = 2)),               │
+│ optional: ((b < 2) OR (b > 2)), c >= 2        │
 │ ~5 rows                                       │
 ╰───────────────────────────────────────────────╯
 
@@ -3197,9 +3233,9 @@ QUERY PLAN
 │ Table: t_sweep3                                                        │
 │ Type: Sequential Scan                                                  │
 │ Projections: a, b, c                                                   │
-│ Filters: optional: ((a > 1) OR (a < 2)),                               │
-│          optional: ((b > 1) OR (b < 2)),                               │
-│          optional: ((c > 1) OR (c < 2))                                │
+│ Column Filter:                                                         │
+│ optional: ((a > 1) OR (a < 2)), optional: ((b > 1) OR (b < 2)),        │
+│ optional: ((c > 1) OR (c < 2))                                         │
 │ ~27 rows                                                               │
 ╰────────────────────────────────────────────────────────────────────────╯
 
@@ -3231,13 +3267,13 @@ query
 EXPLAIN SELECT * FROM t_between WHERE id BETWEEN 2 AND 4;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ───────────────────────╮
-│ Table: t_between                 │
-│ Type: Sequential Scan            │
-│ Projections: id, val             │
-│ Filters: (id >= 2) AND (id <= 4) │
-│ ~1 row                           │
-╰──────────────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────────────╮
+│ Table: t_between                       │
+│ Type: Sequential Scan                  │
+│ Projections: id, val                   │
+│ Column Filter: (id >= 2) AND (id <= 4) │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
 
 # Degenerate BETWEEN where bounds are equal: id BETWEEN 3 AND 3  ->  point lookup
 query
@@ -3251,13 +3287,13 @@ query
 EXPLAIN SELECT * FROM t_between WHERE id BETWEEN 3 AND 3;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ───────────────────────╮
-│ Table: t_between                 │
-│ Type: Sequential Scan            │
-│ Projections: id, val             │
-│ Filters: (id >= 3) AND (id <= 3) │
-│ ~1 row                           │
-╰──────────────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────────────╮
+│ Table: t_between                       │
+│ Type: Sequential Scan                  │
+│ Projections: id, val                   │
+│ Column Filter: (id >= 3) AND (id <= 3) │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
 
 # Impossible BETWEEN (lo > hi): id BETWEEN 4 AND 2  ->  0 rows
 query
@@ -3291,14 +3327,14 @@ query
 EXPLAIN SELECT * FROM t_between_cpk WHERE a = 1 AND b BETWEEN 3 AND 6;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ──────────────────────╮
-│ Table: t_between_cpk            │
-│ Type: Sequential Scan           │
-│ Projections: a, b, val          │
-│ Filters: a = 1,                 │
-│          (b >= 3) AND (b <= 6)  │
-│ ~4 rows                         │
-╰─────────────────────────────────╯
+╭─ SEQ_SCAN ────────────────────────────╮
+│ Table: t_between_cpk                  │
+│ Type: Sequential Scan                 │
+│ Projections: a, b, val                │
+│ Column Filter: a = 1,                 │
+│                (b >= 3) AND (b <= 6)  │
+│ ~4 rows                               │
+╰───────────────────────────────────────╯
 
 statement ok
 DROP TABLE t_between_cpk;
@@ -3333,7 +3369,7 @@ QUERY PLAN
 │ Table: t_contra                      │
 │ Type: Sequential Scan                │
 │ Projections: id, val                 │
-│ Filters:                             │
+│ Column Filter:                       │
 │ (id = 4) OR ((id = 2) AND (id != 2)) │
 │ ~1 row                               │
 ╰──────────────────────────────────────╯
@@ -3367,7 +3403,7 @@ QUERY PLAN
 ╭─ SEQ_SCAN ┴───────────╮
 │ Table: t_dml_point    │
 │ Type: Sequential Scan │
-│ Filters: id = 3       │
+│ Column Filter: id = 3 │
 │ ~1 row                │
 ╰───────────────────────╯
 
@@ -3396,7 +3432,7 @@ QUERY PLAN
 ╭─ SEQ_SCAN ┴───────────╮
 │ Table: t_dml_point    │
 │ Type: Sequential Scan │
-│ Filters: id = 1       │
+│ Column Filter: id = 1 │
 │ ~1 row                │
 ╰───────────────────────╯
 
@@ -3439,18 +3475,18 @@ query
 EXPLAIN DELETE FROM t_dml_point WHERE id IN (2, 4);
 ----
 QUERY PLAN
-╭─ DELETE ──────────────────────────╮
-╰─────────────────┬─────────────────╯
-╭─ FILTER ────────┴─────────────────╮
-│ Expression: (id = 2) OR (id = 4)  │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ SEQ_SCAN ──────┴─────────────────╮
-│ Table: t_dml_point                │
-│ Type: Sequential Scan             │
-│ Filters: optional: (id IN (2, 4)) │
-│ ~5 rows                           │
-╰───────────────────────────────────╯
+╭─ DELETE ────────────────────────────────╮
+╰────────────────────┬────────────────────╯
+╭─ FILTER ───────────┴────────────────────╮
+│ Expression: (id = 2) OR (id = 4)        │
+│ ~1 row                                  │
+╰────────────────────┬────────────────────╯
+╭─ SEQ_SCAN ─────────┴────────────────────╮
+│ Table: t_dml_point                      │
+│ Type: Sequential Scan                   │
+│ Column Filter: optional: (id IN (2, 4)) │
+│ ~5 rows                                 │
+╰─────────────────────────────────────────╯
 
 
 statement count 2
@@ -3483,18 +3519,18 @@ query
 EXPLAIN UPDATE t_dml_range SET val = 0 WHERE id BETWEEN 2 AND 4;
 ----
 QUERY PLAN
-╭─ UPDATE ─────────────────────────╮
-╰─────────────────┬────────────────╯
-╭─ PROJECTION ────┴────────────────╮
-│ Projections: 0, rowid            │
-│ ~1 row                           │
-╰─────────────────┬────────────────╯
-╭─ SEQ_SCAN ──────┴────────────────╮
-│ Table: t_dml_range               │
-│ Type: Sequential Scan            │
-│ Filters: (id >= 2) AND (id <= 4) │
-│ ~1 row                           │
-╰──────────────────────────────────╯
+╭─ UPDATE ───────────────────────────────╮
+╰────────────────────┬───────────────────╯
+╭─ PROJECTION ───────┴───────────────────╮
+│ Projections: 0, rowid                  │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ SEQ_SCAN ─────────┴───────────────────╮
+│ Table: t_dml_range                     │
+│ Type: Sequential Scan                  │
+│ Column Filter: (id >= 2) AND (id <= 4) │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
 
 
 statement count 3
@@ -3521,7 +3557,7 @@ QUERY PLAN
 ╭─ SEQ_SCAN ┴───────────╮
 │ Table: t_dml_range    │
 │ Type: Sequential Scan │
-│ Filters: id > 3       │
+│ Column Filter: id > 3 │
 │ ~1 row                │
 ╰───────────────────────╯
 
@@ -3590,7 +3626,8 @@ QUERY PLAN
 ╭─ SEQ_SCAN ┴───────────╮
 │ Table: t_dml_cpk      │
 │ Type: Sequential Scan │
-│ Filters: a = 2, b = 4 │
+│ Column Filter: a = 2, │
+│                b = 4  │
 │ ~2 rows               │
 ╰───────────────────────╯
 
@@ -3612,15 +3649,15 @@ query
 EXPLAIN DELETE FROM t_dml_cpk WHERE a = 1 AND b >= 3;
 ----
 QUERY PLAN
-╭─ DELETE ──────────────╮
-╰───────────┬───────────╯
-╭─ SEQ_SCAN ┴───────────╮
-│ Table: t_dml_cpk      │
-│ Type: Sequential Scan │
-│ Filters: a = 1,       │
-│          b >= 3       │
-│ ~3 rows               │
-╰───────────────────────╯
+╭─ DELETE ───────────────╮
+╰────────────┬───────────╯
+╭─ SEQ_SCAN ─┴───────────╮
+│ Table: t_dml_cpk       │
+│ Type: Sequential Scan  │
+│ Column Filter: a = 1,  │
+│                b >= 3  │
+│ ~3 rows                │
+╰────────────────────────╯
 
 
 statement count 2
@@ -3647,7 +3684,7 @@ QUERY PLAN
 ╭─ SEQ_SCAN ┴───────────╮
 │ Table: t_dml_cpk      │
 │ Type: Sequential Scan │
-│ Filters: a = 3        │
+│ Column Filter: a = 3  │
 │ ~3 rows               │
 ╰───────────────────────╯
 
@@ -3668,15 +3705,15 @@ query
 EXPLAIN DELETE FROM t_dml_cpk WHERE a = 2 AND b BETWEEN 2 AND 4;
 ----
 QUERY PLAN
-╭─ DELETE ────────────────────────╮
-╰────────────────┬────────────────╯
-╭─ SEQ_SCAN ─────┴────────────────╮
-│ Table: t_dml_cpk                │
-│ Type: Sequential Scan           │
-│ Filters: a = 2,                 │
-│          (b >= 2) AND (b <= 4)  │
-│ ~3 rows                         │
-╰─────────────────────────────────╯
+╭─ DELETE ──────────────────────────────╮
+╰───────────────────┬───────────────────╯
+╭─ SEQ_SCAN ────────┴───────────────────╮
+│ Table: t_dml_cpk                      │
+│ Type: Sequential Scan                 │
+│ Column Filter: a = 2,                 │
+│                (b >= 2) AND (b <= 4)  │
+│ ~3 rows                               │
+╰───────────────────────────────────────╯
 
 
 statement count 2
@@ -3739,7 +3776,7 @@ QUERY PLAN
 ╭─ SEQ_SCAN ┴───────────╮
 │ Table: t_dml_ryow     │
 │ Type: Sequential Scan │
-│ Filters: id = 3       │
+│ Column Filter: id = 3 │
 │ ~1 row                │
 ╰───────────────────────╯
 
@@ -3764,7 +3801,7 @@ QUERY PLAN
 ╭─ SEQ_SCAN ┴───────────╮
 │ Table: t_dml_ryow     │
 │ Type: Sequential Scan │
-│ Filters: id = 2       │
+│ Column Filter: id = 2 │
 │ ~1 row                │
 ╰───────────────────────╯
 
@@ -3842,14 +3879,14 @@ query
 EXPLAIN DELETE FROM t_dml_corner WHERE id >= 5;
 ----
 QUERY PLAN
-╭─ DELETE ──────────────╮
-╰───────────┬───────────╯
-╭─ SEQ_SCAN ┴───────────╮
-│ Table: t_dml_corner   │
-│ Type: Sequential Scan │
-│ Filters: id >= 5      │
-│ ~1 row                │
-╰───────────────────────╯
+╭─ DELETE ───────────────╮
+╰────────────┬───────────╯
+╭─ SEQ_SCAN ─┴───────────╮
+│ Table: t_dml_corner    │
+│ Type: Sequential Scan  │
+│ Column Filter: id >= 5 │
+│ ~1 row                 │
+╰────────────────────────╯
 
 
 statement count 1
@@ -3880,7 +3917,7 @@ QUERY PLAN
 ╭─ SEQ_SCAN ┴───────────╮
 │ Table: t_dml_corner   │
 │ Type: Sequential Scan │
-│ Filters: id < 2       │
+│ Column Filter: id < 2 │
 │ ~1 row                │
 ╰───────────────────────╯
 
@@ -3903,18 +3940,18 @@ query
 EXPLAIN UPDATE t_dml_corner SET val = 0 WHERE id != 3;
 ----
 QUERY PLAN
-╭─ UPDATE ──────────────╮
-╰───────────┬───────────╯
-╭─ PROJECTION ──────────╮
-│ Projections: 0, rowid │
-│ ~1 row                │
-╰───────────┬───────────╯
-╭─ SEQ_SCAN ┴───────────╮
-│ Table: t_dml_corner   │
-│ Type: Sequential Scan │
-│ Filters: id != 3      │
-│ ~1 row                │
-╰───────────────────────╯
+╭─ UPDATE ───────────────╮
+╰────────────┬───────────╯
+╭─ PROJECTION ───────────╮
+│ Projections: 0, rowid  │
+│ ~1 row                 │
+╰────────────┬───────────╯
+╭─ SEQ_SCAN ─┴───────────╮
+│ Table: t_dml_corner    │
+│ Type: Sequential Scan  │
+│ Column Filter: id != 3 │
+│ ~1 row                 │
+╰────────────────────────╯
 
 
 statement count 3
@@ -3965,7 +4002,7 @@ QUERY PLAN
 │ Table: choices_array                                 │
 │ Type: Sequential Scan                                │
 │ Projections: a, nums, labels                         │
-│ Filters:                                             │
+│ Column Filter:                                       │
 │ optional: ((a = 1) OR (a = 3) OR (a = 4) OR (a = 5)) │
 │ ~5 rows                                              │
 ╰──────────────────────────────────────────────────────╯

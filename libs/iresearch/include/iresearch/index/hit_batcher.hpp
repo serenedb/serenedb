@@ -27,16 +27,16 @@
 #include <span>
 #include <vector>
 
-#include "connector/column_extract.h"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/index/column_extract.hpp"
 
 namespace sdb::connector {
 
 class HitBatcher {
  public:
-  HitBatcher(std::span<const ColumnstoreProjection> projections, bool fetch_pk,
-             bool track_scores);
+  HitBatcher(std::span<const ColumnstoreProjection> projections,
+             irs::field_id pk_field_id, bool track_scores);
 
   HitBatcher(const HitBatcher&) = delete;
   HitBatcher& operator=(const HitBatcher&) = delete;
@@ -111,7 +111,7 @@ class HitBatcher {
   uint64_t RgEndFor(uint64_t row) const noexcept;
 
   std::span<const ColumnstoreProjection> _projections;
-  const bool _fetch_pk;
+  const irs::field_id _pk_field_id;
   const bool _track_scores;
 
   std::unique_ptr<irs::ReadContext> _ctx;

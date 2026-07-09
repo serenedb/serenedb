@@ -22,14 +22,13 @@
 
 #include <cstring>
 #include <duckdb/common/vector/struct_vector.hpp>
+#include <iresearch/index/index_source.hpp>
 #include <string_view>
 #include <type_traits>
 
 #include "basics/assert.h"
 #include "basics/exceptions.h"
-#include "connector/index_source.h"
-#include "connector/primary_key.hpp"
-#include "connector/search_pk_lookup.h"
+#include "basics/primary_key.hpp"
 
 namespace sdb::connector {
 

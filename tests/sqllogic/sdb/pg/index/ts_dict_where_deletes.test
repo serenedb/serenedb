@@ -517,7 +517,7 @@ QUERY PLAN
 ╰────────────────┬───────────────╯
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: wdt_idx                 │
-│ Filter:                        │
+│ Index Filter:                  │
 │ ╭─ Levenshtein ───────╮        │
 │ │ Field: body(string) │        │
 │ │ Target: apple       │        │

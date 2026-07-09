@@ -22,6 +22,7 @@
 
 #include <duckdb/common/types.hpp>
 #include <duckdb/function/table_function.hpp>
+#include <duckdb/planner/table_filter_set.hpp>
 #include <span>
 
 #include "connector/index_source_view.h"
@@ -34,11 +35,16 @@ class ViewFileIndexSourceBase : public ViewIndexSourceBase {
                           ViewFastPath fast_path,
                           std::span<const duckdb::idx_t> projected_columns,
                           std::span<const duckdb::LogicalType> projected_types,
-                          std::span<const catalog::Column::Id> bind_column_ids);
+                          std::span<const catalog::Column::Id> bind_column_ids,
+                          duckdb::TableFilterSet* pushed_filters);
 
   duckdb::TableFunction _lookup_func;
   duckdb::unique_ptr<duckdb::FunctionData> _bind_data;
   duckdb::vector<duckdb::ColumnIndex> _column_indexes;
+  // Row-fetch filters pushed into the underlying reader for row-group pruning
+  // (parquet); null when none. Pruning is advisory -- pruned rows come back
+  // NULL and ScanFilter re-checks, so results are unaffected.
+  duckdb::TableFilterSet* _pushed_filters = nullptr;
 };
 
 class ViewFileSingleFileIndexSource final : public ViewFileIndexSourceBase {
@@ -47,7 +53,8 @@ class ViewFileSingleFileIndexSource final : public ViewFileIndexSourceBase {
     duckdb::ClientContext& context, ViewFastPath fast_path,
     std::span<const duckdb::idx_t> projected_columns,
     std::span<const duckdb::LogicalType> projected_types,
-    std::span<const catalog::Column::Id> bind_column_ids);
+    std::span<const catalog::Column::Id> bind_column_ids,
+    duckdb::TableFilterSet* pushed_filters = nullptr);
 
   PrimaryKeyBatch::Kind PkKind() const final {
     return PrimaryKeyBatch::Kind::I64;
@@ -66,7 +73,8 @@ class ViewFileGlobIndexSource final : public ViewFileIndexSourceBase {
                           ViewFastPath fast_path,
                           std::span<const duckdb::idx_t> projected_columns,
                           std::span<const duckdb::LogicalType> projected_types,
-                          std::span<const catalog::Column::Id> bind_column_ids);
+                          std::span<const catalog::Column::Id> bind_column_ids,
+                          duckdb::TableFilterSet* pushed_filters = nullptr);
 
   PrimaryKeyBatch::Kind PkKind() const final {
     return PrimaryKeyBatch::Kind::I64I64;

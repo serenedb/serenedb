@@ -28,7 +28,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────╮
 │ Index: fo_bool_idx                   │
 │ Lookup: table                        │
-│ Filter:                              │
+│ Index Filter:                        │
 │ ╭─ Terms ──────────────────────────╮ │
 │ │ Field: t(string)                 │ │
 │ │ Values: 'alpha', 'beta', 'gamma' │ │
@@ -46,7 +46,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────╮
 │ Index: fo_bool_idx                    │
 │ Lookup: table                         │
-│ Filter:                               │
+│ Index Filter:                         │
 │ ╭─ Terms ───────────────────────────╮ │
 │ │ Field: t(string)                  │ │
 │ │ Values:                           │ │
@@ -65,7 +65,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────╮
 │ Index: fo_bool_idx                                │
 │ Lookup: table                                     │
-│ Filter:                                           │
+│ Index Filter:                                     │
 │ ╭─ And ───────────────────╮                       │
 │ ╰────────────┬────────────╯                       │
 │              ├─────────────────────────╮          │
@@ -87,7 +87,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────╮
 │ Index: fo_bool_idx                   │
 │ Lookup: table                        │
-│ Filter:                              │
+│ Index Filter:                        │
 │ ╭─ Terms ──────────────────────────╮ │
 │ │ Field: t(string)                 │ │
 │ │ Values: 'alpha', 'beta', 'gamma' │ │
@@ -105,7 +105,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────╮
 │ Index: fo_bool_idx                                │
 │ Lookup: table                                     │
-│ Filter:                                           │
+│ Index Filter:                                     │
 │ ╭─ Or ─────────────╮                              │
 │ ╰─────────┬────────╯                              │
 │           ├────────────────────────╮              │
@@ -125,7 +125,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────╮
 │ Index: fo_bool_idx           │
 │ Lookup: table                │
-│ Filter:                      │
+│ Index Filter:                │
 │ ╭─ Terms ──────────────────╮ │
 │ │ Field: s(string)         │ │
 │ │ Values: 'alpha', 'gamma' │ │
@@ -142,7 +142,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: fo_bool_idx          │
 │ Lookup: table               │
-│ Filter:                     │
+│ Index Filter:               │
 │ ╭─ Terms ─────────────────╮ │
 │ │ Field: t(string)        │ │
 │ │ Values: 'alpha', 'beta' │ │
@@ -159,7 +159,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────╮
 │ Index: fo_bool_idx                         │
 │ Lookup: table                              │
-│ Filter:                                    │
+│ Index Filter:                              │
 │ ╭─ And ────────────╮                       │
 │ ╰─────────┬────────╯                       │
 │           ├─────────────────────╮          │
@@ -179,7 +179,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───╮
 │ Index: fo_bool_idx │
 │ Lookup: table      │
-│ Filter:            │
+│ Index Filter:      │
 │ ╭─ Empty ─╮        │
 │ ╰─────────╯        │
 │ Projections: id    │
@@ -194,7 +194,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: fo_bool_idx   │
 │ Lookup: table        │
-│ Filter:              │
+│ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
 │ │ Value: alpha     │ │
@@ -211,7 +211,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────╮
 │ Index: fo_bool_idx                         │
 │ Lookup: table                              │
-│ Filter:                                    │
+│ Index Filter:                              │
 │ ╭─ Or ─────────────╮                       │
 │ ╰─────────┬────────╯                       │
 │           ├─────────────────────╮          │
@@ -231,7 +231,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───╮
 │ Index: fo_bool_idx │
 │ Lookup: table      │
-│ Filter:            │
+│ Index Filter:      │
 │ ╭─ Empty ─╮        │
 │ ╰─────────╯        │
 │ Projections: id    │
@@ -246,7 +246,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: fo_bool_idx   │
 │ Lookup: table        │
-│ Filter:              │
+│ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
 │ │ Value: alpha     │ │
@@ -264,7 +264,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───╮
 │ Index: fo_bool_idx │
 │ Lookup: table      │
-│ Filter:            │
+│ Index Filter:      │
 │ ╭─ All ──╮         │
 │ ╰────────╯         │
 │ Projections: id    │
@@ -278,7 +278,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: fo_bool_idx          │
 │ Lookup: table               │
-│ Filter:                     │
+│ Index Filter:               │
 │ ╭─ Terms ─────────────────╮ │
 │ │ Field: t(string)        │ │
 │ │ Values: 'alpha', 'beta' │ │
@@ -295,7 +295,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────╮
 │ Index: fo_bool_idx                   │
 │ Lookup: table                        │
-│ Filter:                              │
+│ Index Filter:                        │
 │ ╭─ Terms ──────────────────────────╮ │
 │ │ Field: t(string)                 │ │
 │ │ Values: 'alpha', 'beta', 'gamma' │ │

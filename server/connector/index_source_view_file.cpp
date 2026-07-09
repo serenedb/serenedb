@@ -31,8 +31,9 @@ ViewFileIndexSourceBase::ViewFileIndexSourceBase(
   duckdb::ClientContext& context, ViewFastPath fast_path,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::Column::Id> bind_column_ids)
-  : ViewIndexSourceBase{std::move(fast_path)} {
+  std::span<const catalog::Column::Id> bind_column_ids,
+  duckdb::TableFilterSet* pushed_filters)
+  : ViewIndexSourceBase{std::move(fast_path)}, _pushed_filters{pushed_filters} {
   _bind_data = BindFastPathSource(context, _fast_path);
   _lookup_func = MakeFastPathLookupFunction(_fast_path);
 
@@ -63,12 +64,12 @@ ViewFileSingleFileIndexSource::ViewFileSingleFileIndexSource(
   duckdb::ClientContext& context, ViewFastPath fast_path,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::Column::Id> bind_column_ids)
+  std::span<const catalog::Column::Id> bind_column_ids,
+  duckdb::TableFilterSet* pushed_filters)
   : ViewFileIndexSourceBase(context, std::move(fast_path), projected_columns,
-                            projected_types, bind_column_ids) {
+                            projected_types, bind_column_ids, pushed_filters) {
   duckdb::TableFunctionInitInput init(_bind_data.get(), _column_indexes,
-                                      /*projection_ids=*/{},
-                                      /*filters=*/nullptr);
+                                      /*projection_ids=*/{}, _pushed_filters);
   _lookup_gstate = _lookup_func.init_global(context, init);
 }
 
@@ -88,6 +89,13 @@ void ViewFileSingleFileIndexSource::Materialize(duckdb::ClientContext& context,
   AliasOutput(output);
   _tf_target.SetCardinality(count);
 
+  // With pushed filters the parquet lookup may skip whole (filter-excluded)
+  // row groups, leaving those pks unwritten -- pre-null so they read NULL and
+  // the caller's ScanFilter rejects them.
+  if (_pushed_filters != nullptr) {
+    PreNullOutput(count);
+  }
+
   duckdb::TableFunctionInput in(_bind_data.get(), /*local_state=*/nullptr,
                                 _lookup_gstate.get());
   in.pk_lookups = _sorted_rows;
@@ -101,9 +109,10 @@ ViewFileGlobIndexSource::ViewFileGlobIndexSource(
   duckdb::ClientContext& context, ViewFastPath fast_path,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::Column::Id> bind_column_ids)
+  std::span<const catalog::Column::Id> bind_column_ids,
+  duckdb::TableFilterSet* pushed_filters)
   : ViewFileIndexSourceBase(context, std::move(fast_path), projected_columns,
-                            projected_types, bind_column_ids) {}
+                            projected_types, bind_column_ids, pushed_filters) {}
 
 void ViewFileGlobIndexSource::Materialize(duckdb::ClientContext& context,
                                           PrimaryKeyBatch& batch,
@@ -129,6 +138,12 @@ void ViewFileGlobIndexSource::Materialize(duckdb::ClientContext& context,
   AliasOutput(output);
   _tf_target.SetCardinality(count);
 
+  // Per-file parquet lookups may skip filter-excluded row groups; pre-null so
+  // their pks read NULL and the caller's ScanFilter rejects them.
+  if (_pushed_filters != nullptr) {
+    PreNullOutput(count);
+  }
+
   size_t i = 0;
   while (i < count) {
     size_t j = i;
@@ -149,10 +164,9 @@ void ViewFileGlobIndexSource::Materialize(duckdb::ClientContext& context,
         single_fp.catalog_ref.reset();
       }
       cached.bind_data = BindFastPathSource(context, single_fp);
-      duckdb::TableFunctionInitInput init(cached.bind_data.get(),
-                                          _column_indexes,
-                                          /*projection_ids=*/{},
-                                          /*filters=*/nullptr);
+      duckdb::TableFunctionInitInput init(
+        cached.bind_data.get(), _column_indexes,
+        /*projection_ids=*/{}, _pushed_filters);
       cached.gstate = _lookup_func.init_global(context, init);
     }
 

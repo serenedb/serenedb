@@ -206,7 +206,7 @@ QUERY PLAN
                                         ╭─ READ_PARQUET ───┴─────────────────╮
                                         │ Function: READ_PARQUET             │
                                         │ Projections: unused1               │
-                                        │ Filters:                           │
+                                        │ Column Filter:                     │
                                         │ optional: Dynamic Filter (unused1) │
                                         │ ~5 rows                            │
                                         ╰────────────────────────────────────╯

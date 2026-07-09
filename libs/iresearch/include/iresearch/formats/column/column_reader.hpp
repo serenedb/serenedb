@@ -187,6 +187,11 @@ class ColumnReader {
     return *_children[i];
   }
 
+  // Zonemap for row group `rg`, used by pushed table-filter pruning.
+  const duckdb::BaseStatistics& RowGroupStatistics(size_t rg) const noexcept {
+    SDB_ASSERT(rg < _segments.size());
+    return _segments[rg].statistics;
+  }
   bool IsValidityRgEmpty(size_t vrg) const noexcept {
     SDB_ASSERT(_validity && vrg < _validity->_segments.size());
     return _validity->_segments[vrg].codec->type ==

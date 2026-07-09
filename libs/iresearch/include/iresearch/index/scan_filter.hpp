@@ -1,0 +1,257 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <cstdint>
+#include <duckdb/common/allocator.hpp>
+#include <duckdb/common/enums/filter_propagate_result.hpp>
+#include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/types/selection_vector.hpp>
+#include <duckdb/common/types/value.hpp>
+#include <duckdb/execution/expression_executor.hpp>
+#include <duckdb/planner/expression.hpp>
+#include <duckdb/planner/table_filter_set.hpp>
+#include <duckdb/planner/table_filter_state.hpp>
+#include <iresearch/formats/column/column_reader.hpp>
+#include <iresearch/index/hit_batcher.hpp>
+#include <iresearch/index/index_source.hpp>
+#include <iresearch/types.hpp>
+#include <iresearch/utils/type_limits.hpp>
+#include <memory>
+#include <optional>
+#include <span>
+#include <vector>
+
+namespace duckdb {
+
+class ExpressionFilter;
+
+}  // namespace duckdb
+namespace irs {
+
+class DocIterator;
+struct SubReader;
+
+// Fetches store-backed columns for sorted doc batches of one segment at a
+// time: doc -> PK (columnstore PK column, forward cursor) -> row store via
+// the injected IndexSource, whose projection decides WHAT is fetched. Rows
+// deleted since the index refresh materialize as NULL (order preserved).
+class RowFetcher {
+ public:
+  void SetSource(std::unique_ptr<sdb::connector::IndexSource> source,
+                 duckdb::vector<duckdb::LogicalType> chunk_types);
+
+  void StartSegment(const ColReader& col_reader, field_id pk_field_id);
+
+  // `rows` ascending within and across calls per segment. Fills the source
+  // projection's slots of the returned chunk for [0, rows.size()).
+  duckdb::DataChunk& FetchRows(duckdb::ClientContext& ctx,
+                               std::span<const uint64_t> rows);
+
+ private:
+  std::unique_ptr<sdb::connector::IndexSource> _source;
+  sdb::connector::PrimaryKeyBatch _pk_batch;
+  // Reads the segment PK column for scattered survivor rows through the same
+  // managed gather the emit path uses; its emitted vector feeds _pk_batch.
+  std::unique_ptr<sdb::connector::HitBatcher> _pk_batcher;
+  duckdb::DataChunk _sink;
+  duckdb::DataChunk _chunk;
+};
+
+// The pushed table filters of one scan, split by how they are evaluated:
+// stored (INCLUDE) columns straight from the segment columnstore with
+// zonemap pruning, everything else by fetching the filter columns from the
+// row store. Immutable after the scan init builds it; shared by all scan
+// threads. Per-thread execution lives in ScanFilter.
+class TableFilter {
+ public:
+  // One pushed filter over an index-stored (INCLUDE) column, evaluated the
+  // way duckdb evaluates a pushed ExpressionFilter: zonemap prune via
+  // CheckStatistics, then ColumnSegment::FilterSelection over the scanned
+  // column vector (per-thread TableFilterState in ScanFilter). is_optional
+  // entries are zonemap verdicts only.
+  struct ColumnFilter {
+    field_id column_id;
+    const duckdb::ExpressionFilter* filter;
+    // duckdb's optional filter: a hint its inventing operator re-checks;
+    // may prune, must never row-reject.
+    bool is_optional = false;
+    // A dynamic filter's bound tightens mid-scan: never cache or drop its
+    // ALWAYS_TRUE verdicts.
+    bool is_dynamic = false;
+    // The filter evaluated against NULL; decides all-NULL segments and rows
+    // past the column's RowCount.
+    bool passes_null = false;
+  };
+
+  // One pushed filter over a column the index does not store, evaluated on
+  // the values RowFetcher brings back. Position in the row-fetch list is
+  // the filter's column in the fetch chunk.
+  struct RowFetchFilter {
+    duckdb::idx_t bind_index;
+    duckdb::LogicalType type;
+    const duckdb::ExpressionFilter* filter;
+    bool passes_null = false;
+  };
+
+  void AddColumn(field_id column_id, const duckdb::ExpressionFilter& filter,
+                 bool is_optional, bool is_dynamic, bool passes_null);
+  void AddRowFetch(duckdb::idx_t bind_index, const duckdb::LogicalType& type,
+                   const duckdb::ExpressionFilter& filter, bool passes_null);
+  // The columnstore PK column id, required when row-fetch filters exist.
+  void SetPkColumn(field_id pk_column) noexcept { _pk_column = pk_column; }
+  // Sort stored filters cheapest-first; call once after the last Add*. Also
+  // builds the row-fetch filter set pushed into pushdown-capable lookup
+  // sources (parquet/duckdb) so they can prune reads.
+  void Seal();
+
+  bool Empty() const noexcept { return _columns.empty() && _row_fetch.empty(); }
+  bool HasRowFetch() const noexcept { return !_row_fetch.empty(); }
+
+  // The row-fetch filters as a duckdb TableFilterSet keyed by row-fetch
+  // position (== the RowFetcher source's projection order), for reader-side
+  // pushdown. Null when there are no row-fetch filters. Pruning is advisory:
+  // excluded rows still come back and ScanFilter re-checks, so results are
+  // unchanged whether or not a source prunes.
+  duckdb::TableFilterSet* RowFetchFilterSet() const noexcept {
+    return _rf_filter_set.get();
+  }
+
+ private:
+  friend class ScanFilter;
+
+  std::vector<ColumnFilter> _columns;
+  std::vector<RowFetchFilter> _row_fetch;
+  duckdb::unique_ptr<duckdb::TableFilterSet> _rf_filter_set;
+  field_id _pk_column = field_limits::invalid();
+};
+
+// Per-thread executable filter over one scan's TableFilter. MatchesBatch
+// reads ONLY the filter columns; callers materialize survivors afterwards.
+// Row-level calls may throw (row fetch hits storage) -- the collector call
+// chain is deliberately not noexcept.
+class ScanFilter {
+ public:
+  void Init(const TableFilter& filter) noexcept { _table_filter = &filter; }
+
+  // Row-fetch source for this thread, projected to the table filter's row-fetch
+  // columns; required before the first row-fetch evaluation.
+  RowFetcher& Rows() noexcept { return _rows; }
+
+  // Segment verdict, in duckdb zonemap terms:
+  //   FILTER_ALWAYS_FALSE  no row can pass -- skip the segment
+  //   FILTER_ALWAYS_TRUE   every row passes -- scan without per-row checks
+  //   NO_PRUNING_POSSIBLE  per-row checks required
+  duckdb::FilterPropagateResult StartSegment(duckdb::ClientContext& ctx,
+                                             const SubReader& seg);
+
+  // Nothing to check for the current segment.
+  bool Empty() const noexcept {
+    return _cols.empty() && _table_filter->_row_fetch.empty();
+  }
+
+  // Streaming iterator tier: advance `it`, seeking past row groups whose
+  // zonemaps reject the filters.
+  doc_id_t NextUnpruned(DocIterator& it);
+
+  // Exact row checks; docs ascending within and across calls per segment
+  // (forward-only cursors), docs.size() <= STANDARD_VECTOR_SIZE.
+  void MatchesBatch(std::span<const doc_id_t> docs, bool* out);
+
+  // Streaming: MatchesBatch over the chunk, then aligned in-place compaction
+  // of hits (+scores when non-empty); returns the survivor count -- the
+  // caller shrinks its containers to it.
+  duckdb::idx_t FilterHits(std::span<doc_id_t> hits, std::span<float> scores);
+
+ private:
+  // Reads one stored column's values for the survivor rows so the pushed
+  // filter can be applied to them. Created once per scan thread on first use
+  // (chunk is segment-independent); only the cursors re-bind per segment.
+  // Verdict-only columns never allocate it.
+  struct RowEval {
+    RowEval(field_id column_id, const duckdb::LogicalType& type)
+      : projection{.output_slot = 0, .column_id = column_id} {
+      chunk.Initialize(duckdb::Allocator::DefaultAllocator(),
+                       duckdb::vector<duckdb::LogicalType>{type});
+      batcher = std::make_unique<sdb::connector::HitBatcher>(
+        std::span<const sdb::connector::ColumnstoreProjection>{&projection, 1},
+        field_limits::invalid(), /*track_scores=*/false);
+    }
+
+    void BindSegment(const ColReader& col_reader) {
+      batcher->BeginSegment(0, &col_reader, nullptr);
+    }
+
+    // Single-column projection the batcher reads; the batcher keeps a span
+    // into it, so it must outlive `batcher` and never move (RowEvals live
+    // behind unique_ptr in _evals).
+    sdb::connector::ColumnstoreProjection projection;
+    std::unique_ptr<sdb::connector::HitBatcher> batcher;
+    duckdb::DataChunk chunk;
+  };
+
+  struct Column {
+    const ColumnReader* reader;
+    const TableFilter::ColumnFilter* column_filter;
+    BlockWindow window;
+    // Zonemap verdict for the row-group window this column is currently
+    // positioned on. ALWAYS_TRUE lets the row-level check skip the
+    // read+eval entirely.
+    duckdb::FilterPropagateResult verdict =
+      duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE;
+    // Points into _evals; null until this segment's first row-level check
+    // binds the cursors.
+    RowEval* eval = nullptr;
+  };
+
+  duckdb::FilterPropagateResult RgWindowVerdict(Column& col, uint64_t row_pos);
+  // When `doc` sits in a row group whose zonemaps prove no row can pass,
+  // the first doc past that row group; nullopt when `doc` must be checked.
+  std::optional<doc_id_t> SkipTarget(doc_id_t doc);
+  void BindEval(Column& col);
+  // Materialize `col`'s values for the ascending `rows` via its managed
+  // per-column batcher and evaluate the pushed filter into pass[0,
+  // rows.size()).
+  void ReadAndEval(Column& col, std::span<const uint64_t> rows, bool* pass);
+  void RowFetchBatch(std::span<const doc_id_t> docs, bool* out);
+  // Per-thread duckdb filter state (a cached ExpressionExecutor over the
+  // pushed ExpressionFilter) that ColumnSegment::FilterSelection runs; lazily
+  // built and reused across segments, indexed by filter position.
+  duckdb::TableFilterState& ColumnFilterState(size_t filter_idx);
+  duckdb::TableFilterState& RowFetchFilterState(size_t filter_idx);
+
+  const TableFilter* _table_filter = nullptr;
+  std::vector<Column> _cols;
+  // Row position below which SkipTarget cannot prune (nearest window end at
+  // the last no-prune answer); reset per segment.
+  uint64_t _skip_horizon = 0;
+  // Per-filter row-eval state, reused across segments; indexed by the
+  // filter's position in the table filter.
+  std::vector<std::unique_ptr<RowEval>> _evals;
+  duckdb::ClientContext* _ctx = nullptr;
+  const ColReader* _col_reader = nullptr;
+  RowFetcher _rows;
+  duckdb::DataChunk _rf_eval_chunk;
+  std::vector<duckdb::unique_ptr<duckdb::TableFilterState>> _col_filter_states;
+  std::vector<duckdb::unique_ptr<duckdb::TableFilterState>> _rf_filter_states;
+};
+
+}  // namespace irs

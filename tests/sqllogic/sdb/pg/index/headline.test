@@ -667,7 +667,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──┴──────────────────╮
 │ Index: hl_docs_idx                   │
 │ Lookup: table                        │
-│ Filter:                              │
+│ Index Filter:                        │
 │ ╭─ Term ──────────────╮              │
 │ │ Field: body(string) │              │
 │ │ Value: fox          │              │
@@ -701,7 +701,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────┴─────────────────────────────╮
 │ Index: hl_docs_idx                                         │
 │ Lookup: table                                              │
-│ Filter:                                                    │
+│ Index Filter:                                              │
 │ ╭─ Term ──────────────╮                                    │
 │ │ Field: body(string) │                                    │
 │ │ Value: fox          │                                    │
@@ -789,7 +789,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────┴─────────────────────────╮
 │ Index: hl_multi_idx                               │
 │ Lookup: table                                     │
-│ Filter:                                           │
+│ Index Filter:                                     │
 │ ╭─ And ────────────────╮                          │
 │ ╰───────────┬──────────╯                          │
 │             ├────────────────────────╮            │

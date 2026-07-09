@@ -506,11 +506,11 @@ void SearchScan::AppendSummary(
     if (vector_scorer) {
       const auto display =
         MakeVectorFilter(*vector_scorer, stored_filter, vector_scorer->radius);
-      out.insert("Filter", duckdb::ExplainValue(
-                             irs::ToExplainNode(*display, name_of, kind_of)));
+      out.insert("Index Filter", duckdb::ExplainValue(irs::ToExplainNode(
+                                   *display, name_of, kind_of)));
     } else if (stored_filter) {
-      out.insert("Filter", duckdb::ExplainValue(irs::ToExplainNode(
-                             *stored_filter, name_of, kind_of)));
+      out.insert("Index Filter", duckdb::ExplainValue(irs::ToExplainNode(
+                                   *stored_filter, name_of, kind_of)));
     }
   }
   if (bind.inverted_index) {
@@ -947,8 +947,27 @@ void IResearchScanFunction(duckdb::ClientContext& context,
                            duckdb::TableFunctionInput& data,
                            duckdb::DataChunk& output) {
   auto& bind_data = data.bind_data->Cast<SereneDBScanBindData>();
+  auto& gstate = data.global_state->Cast<CommonScanGlobalState>();
+  // filter_prune: fill the scan's own column_ids-sized chunk (filter-only
+  // columns included, read for the filter), then reference just the projected
+  // subset into output -- a reorder that drops filter-only columns, exactly
+  // like PhysicalTableScan does with all_columns/projection_ids.
+  duckdb::DataChunk* target = &output;
+  if (!gstate.output_projection_ids.empty()) {
+    auto& lstate = data.local_state->Cast<CommonScanLocalState>();
+    if (lstate.scan_chunk.ColumnCount() == 0) {
+      duckdb::vector<duckdb::LogicalType> types(gstate.projected_types.begin(),
+                                                gstate.projected_types.end());
+      lstate.scan_chunk.Initialize(context, types);
+    }
+    lstate.scan_chunk.Reset();
+    target = &lstate.scan_chunk;
+  }
   SDB_ASSERT(bind_data.scan_source->Kind() == ScanSourceKind::Search);
-  return SearchFullScanFunction(context, data, output);
+  SearchFullScanFunction(context, data, *target);
+  if (target != &output) {
+    output.ReferenceColumns(*target, gstate.output_projection_ids);
+  }
 }
 
 }  // namespace
@@ -980,6 +999,9 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   func.set_scan_order = &IResearchSetScanOrder;
   func.supports_pushdown_extract = &IResearchSupportsPushdownExtract;
   func.statistics_extended = &IResearchScanStatistics;
+  func.filter_pushdown = true;
+  func.filter_prune = true;
+  func.filters_before_scan_limit = true;
   return func;
 }
 

@@ -440,9 +440,19 @@ void SingleWandIterator<IteratorTraits, Root, Pos, Offs, InputType>::Collect(
       std::span<const doc_id_t, N> docs{std::end(_docs) - left_in_leaf,
                                         left_in_leaf};
       const auto* scores = ScoreBlock(docs, scorer, &fetcher);
-      // TODO(mbkkt): bulk threshold check will make it faster
-      for (size_t i = 0; i < docs.size(); ++i) {
-        collector.Add(scores[i], docs[i]);
+      // WAND-selected blocks are hit-dense: without a filter the scalar
+      // per-doc push beats the batched path; with one, batching amortizes
+      // the filter's column reads.
+      bool batched = true;
+      if constexpr (requires { collector.HasFilter(); }) {
+        batched = collector.HasFilter();
+      }
+      if (batched) {
+        collector.AddDocs(docs.data(), docs.size(), scores);
+      } else {
+        for (size_t i = 0; i < docs.size(); ++i) {
+          collector.Add(scores[i], docs[i]);
+        }
       }
     };
 

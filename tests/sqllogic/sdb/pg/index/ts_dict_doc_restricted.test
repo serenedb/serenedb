@@ -113,7 +113,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: dr_idx                             │
-│ Filter:                                   │
+│ Index Filter:                             │
 │ ╭─ Starts With ───────────╮               │
 │ │ Field: category(string) │               │
 │ │ Prefix: news            │               │

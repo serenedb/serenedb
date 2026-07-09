@@ -304,10 +304,7 @@ void PostingIteratorBase<IteratorTraits>::Collect(const ScoreFunction& scorer,
       std::span<const doc_id_t, N> docs{std::end(_docs) - left_in_leaf,
                                         left_in_leaf};
       const auto* scores = ScoreBlock(docs, scorer, &fetcher);
-      // TODO(mbkkt): bulk threshold check will make it faster
-      for (size_t i = 0; i < docs.size(); ++i) {
-        collector.Add(scores[i], docs[i]);
-      }
+      collector.AddDocs(docs.data(), docs.size(), scores);
     };
 
     if (const auto left_in_leaf = std::exchange(_left_in_leaf, 0))

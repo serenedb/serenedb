@@ -1,0 +1,195 @@
+hash-threshold 100000
+
+# Join over an inverted-index scan on an INCLUDE'd (store_values) int column.
+# `cat` is INCLUDE'd so it carries `store_values=true` (a columnstore zonemap),
+# which makes the scan a join-filter-pushdown target: duckdb pushes a filter on
+# the int join key into the IRESEARCH_SCAN (probe side). Regression guard that
+# such a pushed filter (optional/dynamic or static) only narrows and never
+# corrupts the result -- the join itself enforces correctness.
+
+statement ok
+CREATE TABLE docs (id INTEGER PRIMARY KEY, cat INTEGER, body VARCHAR)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+)
+
+
+statement ok
+CREATE INDEX docs_idx ON docs USING inverted(id, body en) INCLUDE (cat)
+
+
+statement ok
+INSERT INTO docs VALUES
+  (1, 10, 'quick fox'),
+  (2, 20, 'lazy dog'),
+  (3, 10, 'fox runs'),
+  (4, 30, 'fox jumps'),
+  (5, 20, 'cat sleeps'),
+  (6, 10, 'red fox'),
+  (7, 30, 'fox climbs'),
+  (8, 40, 'dog barks'),
+  (9, 20, 'fox hides'),
+  (10, 30, 'sly fox')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) docs
+
+
+statement ok
+CREATE TABLE cats (cat INTEGER)
+
+
+statement ok
+INSERT INTO cats VALUES (10), (30)
+
+
+# The join pushes a bound on the INCLUDE'd int key into the IRESEARCH_SCAN --
+# the `Filters: (cat <= 30)` line -- i.e. the join-filter pushdown reaches the
+# inverted scan because `cat` is a store_values columnstore column.
+query
+EXPLAIN SELECT t.id FROM docs_idx t JOIN cats c ON t.cat = c.cat
+WHERE t.body @@ ts_phrase('fox');
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────╮
+│ Projections: id                   │
+│ ~2 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ PROJECTION ────┴─────────────────╮
+│ Projections: #0,                  │
+│              CAST(#1 AS INTEGER)  │
+│ ~2 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ HASH_JOIN ─────┴─────────────────╮
+│ Join Type: INNER                  │
+│ Conditions: cat = cat             │
+│ ~2 rows                           │
+╰─────────────────┬─────────────────╯
+                  ├──────────────────────────────────────╮
+╭─ PROJECTION ────┴─────────────────╮  ╭─ PROJECTION ────┴────────────────╮
+│ Projections: CAST(#0 AS TINYINT), │  │ Projections: CAST(#0 AS TINYINT) │
+│              #1                   │  │ ~2 rows                          │
+│ ~2 rows                           │  ╰─────────────────┬────────────────╯
+╰─────────────────┬─────────────────╯  ╭─ SEQ_SCAN ──────┴────────────────╮
+╭─ IRESEARCH_SCAN ┴─────────────────╮  │ Table: cats                      │
+│ Index: docs_idx                   │  │ Type: Sequential Scan            │
+│ Lookup: table                     │  │ Projections: cat                 │
+│ Index Filter:                     │  │ ~2 rows                          │
+│ ╭─ Term ──────────────╮           │  ╰──────────────────────────────────╯
+│ │ Field: body(string) │           │
+│ │ Value: fox          │           │
+│ ╰─────────────────────╯           │
+│ Column Filter: cat <= 30          │
+│ Projections: cat (i), id (l)      │
+│ ~2 rows                           │
+╰───────────────────────────────────╯
+
+
+# fox docs are 1,3,4,6,7,9,10; cat in (10,30) keeps all but id 9 (cat 20).
+query
+SELECT t.id FROM docs_idx t JOIN cats c ON t.cat = c.cat
+WHERE t.body @@ ts_phrase('fox') ORDER BY t.id;
+----
+id
+1
+3
+4
+6
+7
+10
+
+
+# Same restriction expressed as a static filter -- must match the join result.
+query
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') AND cat IN (10, 30)
+ORDER BY id;
+----
+id
+1
+3
+4
+6
+7
+10
+
+
+# A multi-predicate column filter renders as an AND box-tree, mirroring the
+# Index Filter's box rendering.
+query
+EXPLAIN SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox')
+AND cat >= 15 AND cat <= 35;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────╮
+│ Projections: id                │
+│ ~1 row                         │
+╰────────────────┬───────────────╯
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: docs_idx                │
+│ Lookup: table                  │
+│ Index Filter:                  │
+│ ╭─ Term ──────────────╮        │
+│ │ Field: body(string) │        │
+│ │ Value: fox          │        │
+│ ╰─────────────────────╯        │
+│ Column Filter:                 │
+│ (cat >= 15) AND (cat <= 35)    │
+│ Projections: cat (i), id (l)   │
+│ ~1 row                         │
+╰────────────────────────────────╯
+
+
+# Count form (catches gross over-/under-pruning).
+query
+SELECT count(*) FROM docs_idx t JOIN cats c ON t.cat = c.cat
+WHERE t.body @@ ts_phrase('fox');
+----
+count
+6
+
+
+# ---------------------------------------------------------------------------
+# Dynamic (runtime) join filter.
+#
+# When the join key is NOT a store_values column (no plan-time stats) and the
+# probe side is large enough, duckdb can't resolve a static bound, so it pushes
+# a RUNTIME min/max filter built at hash-join finalize. It would surface as a
+# `Dynamic Column Filter` only in EXPLAIN ANALYZE; we assert its narrowing
+# effect via the row count below rather than the timing-laden ANALYZE plan.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE big (id INTEGER PRIMARY KEY, cat INTEGER, body VARCHAR)
+
+
+statement ok
+INSERT INTO big SELECT i, i % 50, 'fox doc ' || i FROM generate_series(1, 50000) s(i)
+
+
+# `cat` is neither indexed nor INCLUDE'd -> not store_values -> no zonemap.
+statement ok
+CREATE INDEX big_idx ON big USING inverted(id, body en)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) big
+
+
+# Correctness under the runtime join filter: every row matches 'fox', and
+# i % 50 in {10,30} keeps 2000 of 50000.
+query
+SELECT count(*) FROM big_idx t JOIN cats c ON t.cat = c.cat
+WHERE t.body @@ ts_phrase('fox');
+----
+count
+2000

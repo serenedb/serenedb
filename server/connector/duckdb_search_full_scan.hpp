@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <duckdb.hpp>
 #include <iresearch/index/index_reader.hpp>
+#include <iresearch/index/index_source.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/filter.hpp>
@@ -42,7 +43,6 @@
 
 #include "connector/duckdb_scan_base.hpp"
 #include "connector/duckdb_table_function.h"
-#include "connector/index_source.h"
 #include "connector/offsets_collector.hpp"
 
 namespace sdb::connector {
@@ -103,9 +103,19 @@ struct SearchFullScanTopKLocalState : public SegDocBufferedScanLocalState {
   std::span<irs::ScoreDoc> hit_slice;
   irs::score_t local_threshold = std::numeric_limits<irs::score_t>::min();
   irs::ColumnArgsFetcher score_fetcher;
+  // One alternative is engaged per scan, chosen from the score order and
+  // whether the query pushed a table filter; the plain (unfiltered)
+  // collectors carry zero filter overhead, the filtered ones gate hits
+  // through the scan filter.
   using CollectorDesc = irs::NthPartitionScoreCollector<irs::Order::DESC>;
   using CollectorAsc = irs::NthPartitionScoreCollector<irs::Order::ASC>;
-  std::variant<std::monostate, CollectorDesc, CollectorAsc> collector;
+  using FCollectorDesc =
+    irs::NthPartitionFilteredScoreCollector<irs::Order::DESC>;
+  using FCollectorAsc =
+    irs::NthPartitionFilteredScoreCollector<irs::Order::ASC>;
+  std::variant<std::monostate, CollectorDesc, CollectorAsc, FCollectorDesc,
+               FCollectorAsc>
+    collector;
   std::span<const irs::ScoreDoc> top_hits;
   std::vector<FieldEntry> offsets_entries;
   std::vector<highlight::HitRange> offsets_doc_scratch;
@@ -134,6 +144,14 @@ struct SearchFullScanScanLocalState : public SegDocBufferedScanLocalState {
   irs::ColumnArgsFetcher score_fetcher;
   std::array<float, STANDARD_VECTOR_SIZE> score_window;
 
+  // Filter path only: candidates collected from streaming_doc (via the scan
+  // filter's NextUnpruned) for one chunk, then compacted in place to the
+  // rows that pass; chunk_cursor tracks how many survivors are already
+  // staged into hit_batcher across EmitChunk calls.
+  std::vector<irs::doc_id_t> chunk_hits;
+  std::vector<float> chunk_scores;
+  size_t chunk_cursor = 0;
+
   std::vector<FieldEntry> offsets_entries;
   std::vector<highlight::HitRange> offsets_doc_scratch;
   uint32_t offsets_prepped_seg = std::numeric_limits<uint32_t>::max();
@@ -151,6 +169,7 @@ struct SearchFullScanScanLocalState : public SegDocBufferedScanLocalState {
 
  private:
   void PushHits(SearchFullScanGlobalState& g);
+  void AdvanceChunk(SearchFullScanGlobalState& g, duckdb::idx_t budget);
 };
 
 struct SearchFullScanCountLocalState : public CommonScanLocalState {

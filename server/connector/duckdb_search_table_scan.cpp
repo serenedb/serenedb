@@ -69,15 +69,17 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchTableScanInitGlobal(
     const auto col_id = input.column_ids[out_slot];
     if (col_id == kColumnIdentifierGeneratedPk) {
       state->cs_projections.push_back(ColumnstoreProjection{
-        .output_slot = out_slot, .column_id = catalog::Column::kGeneratedPKId});
+        .output_slot = out_slot,
+        .column_id = catalog::Column::kGeneratedPKId.id()});
       continue;
     }
     if (col_id >= duckdb::VIRTUAL_COLUMN_START) {
       const auto table_pos = col_id - duckdb::VIRTUAL_COLUMN_START;
       const auto& columns = tbd.table->Columns();
       if (table_pos < columns.size()) {
-        state->cs_projections.push_back(ColumnstoreProjection{
-          .output_slot = out_slot, .column_id = columns[table_pos].GetId()});
+        state->cs_projections.push_back(
+          ColumnstoreProjection{.output_slot = out_slot,
+                                .column_id = columns[table_pos].GetId().id()});
         continue;
       }
     }
@@ -90,7 +92,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchTableScanInitGlobal(
     }
     const auto catalog_col_id = bind_data.column_ids[col_id];
     state->cs_projections.push_back(ColumnstoreProjection{
-      .output_slot = out_slot, .column_id = catalog_col_id});
+      .output_slot = out_slot, .column_id = catalog_col_id.id()});
   }
 
   return state;
@@ -131,7 +133,8 @@ void SearchTableScanFunction(duckdb::ClientContext& /*context*/,
       }
       if (!gstate.hit_batcher) {
         gstate.hit_batcher = std::make_unique<HitBatcher>(
-          gstate.cs_projections, /*fetch_pk=*/false, /*track_scores=*/false);
+          gstate.cs_projections, irs::field_limits::invalid(),
+          /*track_scores=*/false);
       }
       gstate.hit_batcher->BeginSegment(static_cast<uint32_t>(segment_idx),
                                        cs_reader, gstate.client_context);

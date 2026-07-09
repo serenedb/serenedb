@@ -900,7 +900,7 @@ QUERY PLAN
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Automaton ─────────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Pattern: a.+o       │                              │
@@ -936,7 +936,7 @@ QUERY PLAN
 ╰────────────────┬───────────────╯
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: agg_idx                 │
-│ Filter:                        │
+│ Index Filter:                  │
 │ ╭─ Automaton ─────────╮        │
 │ │ Field: body(string) │        │
 │ │ Pattern: a.+o       │        │
@@ -987,7 +987,7 @@ QUERY PLAN
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Automaton ─────────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Pattern: a.+o       │                              │
@@ -1039,7 +1039,7 @@ QUERY PLAN
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Levenshtein ───────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Target: apple       │                              │
@@ -1080,7 +1080,7 @@ QUERY PLAN
 ╰────────────────┬───────────────╯
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: agg_idx                 │
-│ Filter:                        │
+│ Index Filter:                  │
 │ ╭─ Levenshtein ───────╮        │
 │ │ Field: body(string) │        │
 │ │ Target: apple       │        │
@@ -1132,7 +1132,7 @@ QUERY PLAN
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Levenshtein ───────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Target: apple       │                              │

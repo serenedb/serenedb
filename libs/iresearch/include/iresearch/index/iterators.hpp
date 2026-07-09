@@ -27,6 +27,7 @@
 #include <immintrin.h>
 #endif
 
+#include <algorithm>
 #include <bit>
 
 #include "basics/assert.h"
@@ -37,6 +38,7 @@
 #include "basics/system-compiler.h"
 #include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/index/index_features.hpp"
+#include "iresearch/index/scan_filter.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
@@ -69,6 +71,8 @@ class ScoreCollector {
   enum class Tag {
     NthPartition,
     NthPartitionAsc,
+    NthPartitionFiltered,
+    NthPartitionAscFiltered,
     Generic,
   };
 
@@ -103,13 +107,23 @@ enum class Order { ASC, DESC };
 
 // TODO(mbkkt) Try to make it autovectorized,
 // otherwise try to use xsimd/neon specific intrinsics
-template<Order O>
-class NthPartitionScoreCollector final : public ScoreCollector {
+//
+// Templated on whether a pushed scan filter can be present, so a scan with no
+// table filter pays nothing for the filter machinery: the Filtered=false
+// instantiation is the plain top-k collector -- noexcept hot paths, no filter
+// branches, byte-identical to the pre-filter collector -- while Filtered=true
+// adds the batched MatchesBatch gating. The scan picks the instantiation from
+// whether the query has any pushed table filter.
+template<Order O, bool Filtered>
+class NthPartitionScoreCollectorT final : public ScoreCollector {
  public:
-  explicit NthPartitionScoreCollector(score_t& score_threshold, size_t k,
-                                      std::span<ScoreDoc> hits) noexcept
-    : ScoreCollector{O == Order::ASC ? Tag::NthPartitionAsc
-                                     : Tag::NthPartition},
+  explicit NthPartitionScoreCollectorT(score_t& score_threshold, size_t k,
+                                       std::span<ScoreDoc> hits) noexcept
+    : ScoreCollector{Filtered
+                       ? (O == Order::ASC ? Tag::NthPartitionAscFiltered
+                                          : Tag::NthPartitionFiltered)
+                       : (O == Order::ASC ? Tag::NthPartitionAsc
+                                          : Tag::NthPartition)},
       _score_threshold{&score_threshold},
       _hits_it{hits.data()},
       _hits_begin{hits.data()},
@@ -128,12 +142,33 @@ class NthPartitionScoreCollector final : public ScoreCollector {
     _score_threshold = &score_threshold;
   }
 
-  IRS_FORCE_INLINE void Add(score_t score, doc_id_t doc) noexcept final {
+  IRS_FORCE_INLINE void Add(score_t score,
+                            doc_id_t doc) noexcept(!Filtered) final {
     ++_count;
-    TryPush(score, doc);
+    if constexpr (Filtered) {
+      if (_filter != nullptr) {
+        TryPushFiltered(score, doc);
+        return;
+      }
+    }
+    TryPushNoFilter(score, doc);
   }
 
   void SetSegment(uint32_t idx) noexcept { _current_segment = idx; }
+
+  void SetFilter(ScanFilter* filter) noexcept
+    requires Filtered
+  {
+    _filter = filter;
+  }
+
+  bool HasFilter() const noexcept {
+    if constexpr (Filtered) {
+      return _filter != nullptr;
+    } else {
+      return false;
+    }
+  }
 
   IRS_FORCE_INLINE size_t AcceptedCount() const noexcept {
     return _hits_it - _hits_begin;
@@ -143,47 +178,118 @@ class NthPartitionScoreCollector final : public ScoreCollector {
 
   IRS_FORCE_INLINE void AddWindow(const score_t* scores, const uint64_t* mask,
                                   doc_id_t min, size_t num_blocks,
-                                  bool clear_score) noexcept final {
+                                  bool clear_score) noexcept(!Filtered) final {
 #ifdef __AVX2__
     auto threshold = _mm256_set1_ps(*_score_threshold);
 #endif
-    for (size_t i = 0; i < num_blocks; ++i) {
-      auto word = mask[i];
-      if (word == 0) [[likely]] {
-        continue;
-      }
-
-      _count += std::popcount(word);
-      const score_t* IRS_RESTRICT const score_base =
-        scores + i * BitsRequired<uint64_t>();
-#ifdef __AVX2__
-      word &= GetScoreMask(score_base, threshold);
-#endif
-      const doc_id_t doc_base = min + i * BitsRequired<uint64_t>();
-
-      while (word != 0) {
-        const doc_id_t bit = std::countr_zero(word);
-        word = PopBit(word);
-#ifdef __AVX2__
-        if (Push(score_base[bit], doc_base + bit)) {
-          threshold = _mm256_set1_ps(*_score_threshold);
-          word &= GetScoreMask(score_base, threshold);
+    if constexpr (Filtered) {
+      doc_id_t bdocs[kFilterBatch];
+      score_t bscores[kFilterBatch];
+      size_t bn = 0;
+      for (size_t i = 0; i < num_blocks; ++i) {
+        auto word = mask[i];
+        if (word == 0) [[likely]] {
+          continue;
         }
-#else
-        TryPush(score_base[bit], doc_base + bit);
+        _count += std::popcount(word);
+        const score_t* IRS_RESTRICT const score_base =
+          scores + i * BitsRequired<uint64_t>();
+#ifdef __AVX2__
+        word &= GetScoreMask(score_base, threshold);
 #endif
+        const doc_id_t doc_base = min + i * BitsRequired<uint64_t>();
+        if (_filter != nullptr) {
+          if (bn + BitsRequired<uint64_t>() > kFilterBatch) {
+            PushFiltered(bdocs, bscores, bn);
+            bn = 0;
+#ifdef __AVX2__
+            threshold = _mm256_set1_ps(*_score_threshold);
+#endif
+          }
+          for (uint64_t w = word; w != 0; w = PopBit(w)) {
+            const doc_id_t bit = std::countr_zero(w);
+            bdocs[bn] = doc_base + bit;
+            bscores[bn] = score_base[bit];
+            ++bn;
+          }
+        } else {
+          while (word != 0) {
+            const doc_id_t bit = std::countr_zero(word);
+            word = PopBit(word);
+#ifdef __AVX2__
+            if (PushNoFilter(score_base[bit], doc_base + bit)) {
+              threshold = _mm256_set1_ps(*_score_threshold);
+              word &= GetScoreMask(score_base, threshold);
+            }
+#else
+            TryPushNoFilter(score_base[bit], doc_base + bit);
+#endif
+          }
+        }
+        if (clear_score) {
+          std::memset(const_cast<score_t*>(score_base), 0,
+                      BitsRequired<uint64_t>() * sizeof(score_t));
+        }
       }
-
-      if (clear_score) {
-        std::memset(const_cast<score_t*>(score_base), 0,
-                    BitsRequired<uint64_t>() * sizeof(score_t));
+      PushFiltered(bdocs, bscores, bn);
+    } else {
+      for (size_t i = 0; i < num_blocks; ++i) {
+        auto word = mask[i];
+        if (word == 0) [[likely]] {
+          continue;
+        }
+        _count += std::popcount(word);
+        const score_t* IRS_RESTRICT const score_base =
+          scores + i * BitsRequired<uint64_t>();
+#ifdef __AVX2__
+        word &= GetScoreMask(score_base, threshold);
+#endif
+        const doc_id_t doc_base = min + i * BitsRequired<uint64_t>();
+        while (word != 0) {
+          const doc_id_t bit = std::countr_zero(word);
+          word = PopBit(word);
+#ifdef __AVX2__
+          if (PushNoFilter(score_base[bit], doc_base + bit)) {
+            threshold = _mm256_set1_ps(*_score_threshold);
+            word &= GetScoreMask(score_base, threshold);
+          }
+#else
+          TryPushNoFilter(score_base[bit], doc_base + bit);
+#endif
+        }
+        if (clear_score) {
+          std::memset(const_cast<score_t*>(score_base), 0,
+                      BitsRequired<uint64_t>() * sizeof(score_t));
+        }
       }
     }
   }
 
-  IRS_FORCE_INLINE void AddDocs(const doc_id_t* docs, size_t count,
-                                const score_t* scores) noexcept final {
+  IRS_FORCE_INLINE void AddDocs(
+    const doc_id_t* docs, size_t count,
+    const score_t* scores) noexcept(!Filtered) final {
     _count += count;
+
+    if constexpr (Filtered) {
+      if (_filter != nullptr) {
+        doc_id_t bdocs[kFilterBatch];
+        score_t bscores[kFilterBatch];
+        size_t bn = 0;
+        for (size_t i = 0; i < count; ++i) {
+          if (Accept(scores[i])) {
+            bdocs[bn] = docs[i];
+            bscores[bn] = scores[i];
+            if (++bn == kFilterBatch) {
+              PushFiltered(bdocs, bscores, bn);
+              bn = 0;
+            }
+          }
+        }
+        PushFiltered(bdocs, bscores, bn);
+        return;
+      }
+    }
+
     size_t i = 0;
 
 #ifdef __AVX2__
@@ -197,7 +303,7 @@ class NthPartitionScoreCollector final : public ScoreCollector {
         const int bit = std::countr_zero(pass);
         pass = PopBit(pass);
         const score_t score = scores[i + bit];
-        if (Push(score, docs[i + bit])) {
+        if (PushNoFilter(score, docs[i + bit])) {
           threshold = _mm256_set1_ps(*_score_threshold);
           cmp = _mm256_cmp_ps(scores_vec, threshold, kCmpPred);
           pass &= static_cast<unsigned>(_mm256_movemask_ps(cmp));
@@ -207,11 +313,15 @@ class NthPartitionScoreCollector final : public ScoreCollector {
 #endif
 
     for (; i < count; ++i) {
-      TryPush(scores[i], docs[i]);
+      TryPushNoFilter(scores[i], docs[i]);
     }
   }
 
  private:
+  // Candidates gathered for one filter call before pushes resume; bounds
+  // theta staleness while amortizing the per-call filter costs.
+  static constexpr size_t kFilterBatch = 256;
+
   IRS_FORCE_INLINE bool Accept(score_t score) const noexcept {
     if constexpr (O == Order::ASC) {
       return score < *_score_threshold;
@@ -220,14 +330,51 @@ class NthPartitionScoreCollector final : public ScoreCollector {
     }
   }
 
-  IRS_FORCE_INLINE void TryPush(score_t score, doc_id_t doc) noexcept {
-    if (Accept(score)) {
-      Push(score, doc);
+  // Filter a gathered batch of threshold-beating candidates and push the
+  // survivors; the threshold may move while the filter runs, so it is
+  // re-checked per doc.
+  IRS_FORCE_INLINE void PushFiltered(const doc_id_t* docs,
+                                     const score_t* scores, size_t n)
+    requires Filtered
+  {
+    SDB_ASSERT(n <= kFilterBatch);
+    if (n == 0) {
+      return;
+    }
+    bool pass[kFilterBatch];
+    _filter->MatchesBatch({docs, n}, pass);
+    for (size_t j = 0; j < n; ++j) {
+      if (pass[j] && Accept(scores[j])) {
+        PushUnchecked(scores[j], docs[j]);
+      }
     }
   }
 
-  IRS_FORCE_INLINE bool Push(score_t score, doc_id_t doc) noexcept {
+  IRS_FORCE_INLINE void TryPushFiltered(score_t score, doc_id_t doc)
+    requires Filtered
+  {
+    if (Accept(score)) {
+      SDB_ASSERT(_filter);
+      bool pass;
+      _filter->MatchesBatch({&doc, 1}, &pass);
+      if (pass) {
+        PushUnchecked(score, doc);
+      }
+    }
+  }
+
+  IRS_FORCE_INLINE void TryPushNoFilter(score_t score, doc_id_t doc) noexcept {
+    if (Accept(score)) {
+      PushUnchecked(score, doc);
+    }
+  }
+
+  IRS_FORCE_INLINE bool PushNoFilter(score_t score, doc_id_t doc) noexcept {
     SDB_ASSERT(Accept(score));
+    return PushUnchecked(score, doc);
+  }
+
+  IRS_FORCE_INLINE bool PushUnchecked(score_t score, doc_id_t doc) noexcept {
     *_hits_it = {score, doc, _current_segment};
     ++_hits_it;
     if (_hits_it != _hits_end) {
@@ -263,6 +410,10 @@ class NthPartitionScoreCollector final : public ScoreCollector {
 
   uint64_t _count = 0;
   uint32_t _current_segment = 0;
+  // Only ever set on the Filtered instantiation (SetFilter requires Filtered);
+  // referenced solely from Filtered-guarded paths, so it costs the plain
+  // collector nothing in its hot loop.
+  ScanFilter* _filter = nullptr;
   score_t* IRS_RESTRICT _score_threshold = nullptr;
   ScoreDoc* IRS_RESTRICT _hits_it;
   ScoreDoc* IRS_RESTRICT const _hits_begin;
@@ -270,16 +421,32 @@ class NthPartitionScoreCollector final : public ScoreCollector {
   ScoreDoc* IRS_RESTRICT const _hits_end;
 };
 
+// Filtered=false: plain top-k collector, zero filter overhead. Filtered=true:
+// adds MatchesBatch gating. The scan selects one at init from whether the
+// query pushed any table filter.
+template<Order O>
+using NthPartitionScoreCollector = NthPartitionScoreCollectorT<O, false>;
+template<Order O>
+using NthPartitionFilteredScoreCollector = NthPartitionScoreCollectorT<O, true>;
+
 template<typename F>
 IRS_FORCE_INLINE auto ResolveScoreCollector(ScoreCollector& collector, F&& f) {
   switch (collector.GetTag()) {
     case ScoreCollector::Tag::NthPartition:
       return std::forward<F>(f)(
-        sdb::basics::downCast<NthPartitionScoreCollector<Order::DESC>>(
+        sdb::basics::downCast<NthPartitionScoreCollectorT<Order::DESC, false>>(
           collector));
     case ScoreCollector::Tag::NthPartitionAsc:
       return std::forward<F>(f)(
-        sdb::basics::downCast<NthPartitionScoreCollector<Order::ASC>>(
+        sdb::basics::downCast<NthPartitionScoreCollectorT<Order::ASC, false>>(
+          collector));
+    case ScoreCollector::Tag::NthPartitionFiltered:
+      return std::forward<F>(f)(
+        sdb::basics::downCast<NthPartitionScoreCollectorT<Order::DESC, true>>(
+          collector));
+    case ScoreCollector::Tag::NthPartitionAscFiltered:
+      return std::forward<F>(f)(
+        sdb::basics::downCast<NthPartitionScoreCollectorT<Order::ASC, true>>(
           collector));
     case ScoreCollector::Tag::Generic:
       return std::forward<F>(f)(collector);

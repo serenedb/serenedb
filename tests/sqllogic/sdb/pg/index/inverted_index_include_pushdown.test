@@ -67,7 +67,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────╮
 │ Index: logs_idx                                                              │
 │ Lookup: table                                                                │
-│ Filter:                                                                      │
+│ Index Filter:                                                                │
 │ ╭─ And ───────────────╮                                                      │
 │ ╰──────────┬──────────╯                                                      │
 │            ├────────────────────────┬──────────────────────────╮             │
@@ -99,26 +99,23 @@ EXPLAIN SELECT id FROM logs_idx
 WHERE body @@ 'connection' AND tag = 'a';
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────╮
-│ Projections: #1         │
-│ ~1 row                  │
-╰────────────┬────────────╯
-╭─ FILTER ───┴────────────╮
-│ Expression: tag = 'a'   │
-│ ~1 row                  │
-╰────────────┬────────────╯
-╭─ IRESEARCH_SCAN ────────╮
-│ Index: logs_idx         │
-│ Lookup: table           │
-│ Filter:                 │
-│ ╭─ Term ──────────────╮ │
-│ │ Field: body(string) │ │
-│ │ Value: connection   │ │
-│ ╰─────────────────────╯ │
-│ Projections: tag (i),   │
-│              id (l)     │
-│ ~1 row                  │
-╰─────────────────────────╯
+╭─ PROJECTION ─────────────╮
+│ Projections: id          │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: logs_idx          │
+│ Lookup: table            │
+│ Index Filter:            │
+│ ╭─ Term ──────────────╮  │
+│ │ Field: body(string) │  │
+│ │ Value: connection   │  │
+│ ╰─────────────────────╯  │
+│ Column Filter: tag = 'a' │
+│ Projections: tag (i),    │
+│              id (l)      │
+│ ~1 row                   │
+╰──────────────────────────╯
 
 
 query

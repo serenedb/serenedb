@@ -23,9 +23,7 @@ add_library(
     duckdb_scan_base.cpp
     duckdb_search_full_scan.cpp
     duckdb_search_table_scan.cpp
-    column_extract.cpp
     full_scanner.cpp
-    hit_batcher.cpp
     index_source_factory.cpp
     index_source_view.cpp
     inverted_store_index.cpp

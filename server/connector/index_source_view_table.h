@@ -22,6 +22,7 @@
 
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/types.hpp>
+#include <duckdb/planner/table_filter_set.hpp>
 #include <duckdb/storage/storage_index.hpp>
 #include <span>
 
@@ -43,16 +44,17 @@ class RowIdFetchIndexSource : public ViewIndexSourceBase {
                    duckdb::DataChunk& output) final;
 
  protected:
-  explicit RowIdFetchIndexSource(ViewFastPath fast_path)
-    : ViewIndexSourceBase{std::move(fast_path)} {}
+  explicit RowIdFetchIndexSource(
+    ViewFastPath fast_path, duckdb::TableFilterSet* pushed_filters = nullptr)
+    : ViewIndexSourceBase{std::move(fast_path)},
+      _pushed_filters{pushed_filters} {}
 
   void SetTable(duckdb::TableCatalogEntry& table) { _table = &table; }
 
   // Registers a fetch column for the table's storage index, deduplicating
   // repeats, and records the output slot mapping. Returns the column type.
   duckdb::LogicalType AddFetchColumn(const duckdb::ColumnDefinition& col);
-  // Appends the rowid fetch column and sizes the fetch chunk; call after
-  // InitProjection.
+  // Sizes the fetch chunk; call after InitProjection.
   void FinishInit(duckdb::ClientContext& context);
 
  private:
@@ -60,8 +62,8 @@ class RowIdFetchIndexSource : public ViewIndexSourceBase {
   duckdb::vector<duckdb::StorageIndex> _fetch_columns;
   duckdb::vector<duckdb::LogicalType> _fetch_types;
   std::vector<duckdb::idx_t> _col_to_fetch;
-  duckdb::idx_t _rowid_fetch_idx = 0;
   duckdb::DataChunk _fetch_chunk;
+  duckdb::TableFilterSet* _pushed_filters = nullptr;
 };
 
 // Views over a table living in an attached database with native storage.
@@ -70,7 +72,8 @@ class ViewTableIndexSource final : public RowIdFetchIndexSource {
   ViewTableIndexSource(duckdb::ClientContext& context, ViewFastPath fast_path,
                        std::span<const duckdb::idx_t> projected_columns,
                        std::span<const duckdb::LogicalType> projected_types,
-                       std::span<const catalog::Column::Id> bind_column_ids);
+                       std::span<const catalog::Column::Id> bind_column_ids,
+                       duckdb::TableFilterSet* pushed_filters = nullptr);
 };
 
 // SereneDB tables: postings carry the store-table rowid; rows are fetched
@@ -82,7 +85,8 @@ class TableRowIdIndexSource final : public RowIdFetchIndexSource {
                         const catalog::Table& sdb_table,
                         std::span<const duckdb::idx_t> projected_columns,
                         std::span<const duckdb::LogicalType> projected_types,
-                        std::span<const catalog::Column::Id> bind_column_ids);
+                        std::span<const catalog::Column::Id> bind_column_ids,
+                        duckdb::TableFilterSet* pushed_filters = nullptr);
 };
 
 }  // namespace sdb::connector

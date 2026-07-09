@@ -243,19 +243,12 @@ QUERY PLAN
 │ Projections: cat      │
 │ ~1 row                │
 ╰───────────┬───────────╯
-╭─ PROJECTION ──────────╮
-│ Projections: #1       │
-│ ~1 row                │
-╰───────────┬───────────╯
-╭─ FILTER ──┴───────────╮
-│ Expression: id > 2    │
-│ ~1 row                │
-╰───────────┬───────────╯
 ╭─ IRESEARCH_SCAN ──────╮
 │ Index: mc_idx         │
 │ Lookup: table         │
 │ Projections: id, cat  │
-│ ~5 rows               │
+│ Column Filter: id > 2 │
+│ ~1 row                │
 ╰───────────────────────╯
 
 # Explicit ts_dict_* aggregates split away from sibling document-row

@@ -21,6 +21,7 @@
 #include "connector/index_source_view.h"
 
 #include <algorithm>
+#include <duckdb/common/types/vector.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <numeric>
@@ -120,6 +121,13 @@ void ViewIndexSourceBase::AliasOutput(duckdb::DataChunk& output) {
       continue;
     }
     _tf_target.data[c].Reference(output.data[_real_proj_slots[c]]);
+  }
+}
+
+void ViewIndexSourceBase::PreNullOutput(duckdb::idx_t count) {
+  for (duckdb::idx_t c = 0; c < _real_proj_slots.size(); ++c) {
+    duckdb::FlatVector::ValidityMutable(_tf_target.data[c])
+      .SetAllInvalid(count);
   }
 }
 

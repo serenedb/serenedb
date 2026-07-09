@@ -23,6 +23,7 @@
 #include <optional>
 #include <ostream>
 #include <span>
+#include <unordered_set>
 #include <utility>
 
 template<typename T1, typename T2>
@@ -72,6 +73,63 @@ irs::field_id ColumnIdFor(std::string_view name) {
 }
 
 using namespace tests;
+
+// Predicate-aware top-k executor: mirrors irs::ExecuteTopK but installs a
+// DocPredicate on the collector -- the same hook the columnstore row filter
+// uses in production -- so we can exercise WAND block-max skipping together
+// with a row filter.
+inline uint64_t ExecuteTopKFiltered(const irs::DirectoryReader& reader,
+                                    const irs::Filter& filter,
+                                    const irs::Scorer& scorer, size_t k,
+                                    irs::WandContext wand,
+                                    irs::DocPredicate* predicate,
+                                    std::span<irs::ScoreDoc> hits) {
+  auto prepared = filter.prepare({.index = reader, .scorer = &scorer});
+
+  irs::score_t score_threshold = std::numeric_limits<irs::score_t>::min();
+  irs::NthPartitionScoreCollector collector{score_threshold, k, hits};
+  if (predicate != nullptr) {
+    collector.SetPredicate(predicate);
+  }
+  irs::ColumnArgsFetcher fetcher;
+  uint32_t seg_idx = 0;
+  for (auto& segment : reader) {
+    fetcher.Clear();
+    collector.SetSegment(seg_idx++);
+
+    auto it = prepared->execute({
+      .segment = segment,
+      .scorer = &scorer,
+      .wand = wand,
+    });
+    auto score_func = it->PrepareScore({
+      .scorer = &scorer,
+      .segment = &segment,
+      .fetcher = &fetcher,
+    });
+    if (auto* threshold = irs::GetMutable<irs::ScoreThresholdAttr>(it.get())) {
+      collector.SetScoreThreshold(threshold->value);
+    }
+    it->Collect(score_func, fetcher, collector);
+    collector.SetScoreThreshold(score_threshold);
+  }
+
+  std::sort(hits.data(), hits.data() + collector.AcceptedCount(),
+            [](const irs::ScoreDoc& l, const irs::ScoreDoc& r) {
+              return l.score > r.score;
+            });
+  return collector.TotalMatches();
+}
+
+// Rejects a fixed set of doc-ids. Single-segment use only (doc-ids unique).
+struct RejectDocs final : irs::DocPredicate {
+  explicit RejectDocs(const std::unordered_set<irs::doc_id_t>& r) noexcept
+    : rejected{&r} {}
+  const std::unordered_set<irs::doc_id_t>* rejected;
+  bool operator()(irs::doc_id_t doc) noexcept final {
+    return !rejected->contains(doc);
+  }
+};
 
 void WandScoringFieldFactory(tests::Document& doc, const std::string& name,
                              const tests::JsonDocGenerator::JsonValue& data) {
@@ -307,6 +365,68 @@ TEST_P(WandScoringTestCase, Bm25WandVsBaseline) {
   ASSERT_NE(nullptr, filter);
 
   CompareWandVsNonWand(reader, *filter, scorer, 15);
+}
+
+// Anti-correlated row filter: the highest-scoring docs all FAIL the filter and
+// only lower-scoring docs pass. Block-max WAND must NOT skip the (low-scoring)
+// passing blocks just because high scorers dominate -- because the threshold is
+// the kth-best *passing* score, the rejected high scorers never lift it. Proven
+// by equality with the non-WAND baseline (which cannot skip): if WAND wrongly
+// skipped a passing block, its top-k would differ.
+TEST_P(WandScoringTestCase, FilteredAntiCorrelatedKeepsLowScorers) {
+  auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
+  auto reader = CreateLargeIndex(scorer, 10);  // single segment, ~4200 docs
+  ASSERT_EQ(1, reader.size());
+
+  auto filter = ParseQuery("topic:database");  // ~1260 matches
+  ASSERT_NE(nullptr, filter);
+
+  // 1. Identify the top scorers with a brute-force (non-WAND) pass.
+  constexpr size_t kReject = 150;  // > kBlockSize (128): rejects > a full block
+  std::vector<irs::ScoreDoc> top(irs::BlockSize(kReject));
+  const auto df =
+    irs::ExecuteTopKWithCount(reader, *filter, scorer, kReject, std::span{top});
+  ASSERT_GT(df, irs::doc_limits::kBlockSize)
+    << "term df must exceed kBlockSize so block-max skip can engage";
+  ASSERT_GE(df, kReject);
+
+  // 2. Reject those top scorers -> only strictly lower scorers can pass.
+  std::unordered_set<irs::doc_id_t> rejected;
+  for (size_t i = 0; i < kReject; ++i) {
+    rejected.insert(top[i].doc);
+  }
+  RejectDocs predicate{rejected};
+
+  // 3. Filtered top-k: WAND (block-max skip ON) vs baseline (skip OFF).
+  constexpr size_t kTopK = 10;
+  std::vector<irs::ScoreDoc> wand_hits(irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> base_hits(irs::BlockSize(kTopK));
+
+  const auto wand_count = ExecuteTopKFiltered(
+    reader, *filter, scorer, kTopK, {.wand_enabled = true, .strict = true},
+    &predicate, std::span{wand_hits});
+  const auto base_count =
+    ExecuteTopKFiltered(reader, *filter, scorer, kTopK, {.wand_enabled = false},
+                        &predicate, std::span{base_hits});
+
+  const auto wand_k = std::min<size_t>(wand_count, kTopK);
+  const auto base_k = std::min<size_t>(base_count, kTopK);
+
+  ASSERT_GT(base_k, 0u)
+    << "lower-scoring passing docs must exist below the top";
+  ASSERT_EQ(base_k, wand_k) << "WAND top-k size differs from baseline";
+
+  // 4. WAND must return exactly the baseline's filtered top-k, and none of the
+  //    rejected high scorers may leak through.
+  for (size_t i = 0; i < base_k; ++i) {
+    EXPECT_EQ(base_hits[i].doc, wand_hits[i].doc)
+      << "WAND dropped/reordered a passing doc at position " << i;
+    EXPECT_FLOAT_EQ(base_hits[i].score, wand_hits[i].score)
+      << "score mismatch at position " << i;
+    EXPECT_FALSE(rejected.contains(wand_hits[i].doc))
+      << "a rejected high scorer leaked into the filtered top-k at position "
+      << i;
+  }
 }
 
 // BM25 with small k=3, 4200 docs (~2100 matching "tech" = ~16 blocks)

@@ -221,7 +221,7 @@ QUERY PLAN
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: cart_idx                                      │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Starts With ───────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Prefix: b           │                              │
@@ -508,7 +508,7 @@ QUERY PLAN
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: cart_idx                                      │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Automaton ─────────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Pattern: a.+o       │                              │
@@ -552,7 +552,7 @@ QUERY PLAN
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: cart_idx                                      │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Levenshtein ───────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Target: apple       │                              │

@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/column_extract.h"
+#include "iresearch/index/column_extract.hpp"
 
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>

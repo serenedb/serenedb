@@ -25,10 +25,10 @@
 #include <span>
 #include <vector>
 
-#include "connector/column_extract.h"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/index/column_extract.hpp"
 
 namespace sdb::connector {
 

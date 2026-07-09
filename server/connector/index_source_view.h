@@ -25,12 +25,12 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/expression_executor.hpp>
+#include <iresearch/index/index_source.hpp>
 #include <span>
 #include <string_view>
 #include <vector>
 
 #include "catalog/table_options.h"
-#include "connector/index_source.h"
 #include "connector/view_fast_path.h"
 
 namespace sdb::connector {
@@ -55,6 +55,10 @@ class ViewIndexSourceBase : public IndexSource {
 
   void AliasOutput(duckdb::DataChunk& output);
   void RunCastPass(duckdb::DataChunk& output, duckdb::idx_t row_count);
+  // Pre-null every projected output slot so rows a pushdown-capable source
+  // skips (filter-pruned row groups) read NULL instead of stale data. Call
+  // after AliasOutput + SetCardinality, before the lookup writes.
+  void PreNullOutput(duckdb::idx_t count);
 
   ViewFastPath _fast_path;
   std::vector<duckdb::idx_t> _real_proj_slots;

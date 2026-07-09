@@ -40,12 +40,12 @@
 
 #include "basics/containers/flat_hash_set.h"
 #include "basics/containers/node_hash_map.h"
+#include "basics/primary_key.hpp"
 #include "catalog/inverted_index.h"
 #include "catalog/search_analyzer_impl.h"
 #include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_sink_writer_base.h"
 #include "connector/index_expression.hpp"
-#include "primary_key.hpp"
 #include "search/inverted_index_storage.h"
 #include "search_remove_filter.hpp"
 

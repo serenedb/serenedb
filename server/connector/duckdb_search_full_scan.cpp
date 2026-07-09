@@ -27,6 +27,7 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader_impl.hpp>
+#include <iresearch/index/index_source.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/automaton_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
@@ -53,12 +54,12 @@
 #include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
+#include "catalog/inverted_index.h"
 #include "catalog/scorer_options.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/full_scanner.h"
-#include "connector/index_source.h"
 #include "connector/offsets_collector.hpp"
 #include "connector/offsets_writer.hpp"
 #include "connector/search_pk_lookup.h"
@@ -141,6 +142,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
       std::move(state));
   }
 
+  // Count-only never coexists with pushed filters: filter columns stay
+  // projected (filter_prune off), so IsCountOnlyScan rejects such plans.
   if ((state->count_only = IsCountOnlyScan(bind_data, input)) &&
       !ss.stored_filter && !ss.vector_scorer) {
     return duckdb::unique_ptr_cast<SearchFullScanGlobalState,
@@ -168,7 +171,12 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
   }
   state->collectors.resize(state->MaxThreads());
 
-  if (ss.score_top_k && (ss.text_scorer || ss.score_order)) {
+  // Top-k enforces filters through the scan filter before candidates count
+  // toward k. Filters over virtual output slots (score) can only run on the
+  // materialized chunk, so their presence demotes to streaming, where
+  // ApplyRowFilter enforces them.
+  if (ss.score_top_k && (ss.text_scorer || ss.score_order) &&
+      !state->row_expr) {
     state->parallel_topk = true;
     if (ss.vector_scorer &&
         ss.vector_scorer->quant != irs::VectorQuantization::None) {
@@ -333,7 +341,7 @@ void BuildOffsetsEntries(Lstate& lstate, duckdb::TableFunctionInitInput& input,
       FieldEntry entry;
       entry.output_idx = out_slot;
       entry.limit = ss.offsets[ss_idx].limit;
-      entry.id = static_cast<irs::field_id>(ss.offsets[ss_idx].column_id);
+      entry.id = ss.offsets[ss_idx].column_id;
       lstate.offsets_entries.push_back(std::move(entry));
     }
     ++out_slot;
@@ -481,6 +489,7 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> SearchFullScanInitLocal(
   }
   if (gstate.count_only) {
     auto lstate = duckdb::make_uniq<SearchFullScanCountLocalState>();
+    InitLocalFilter(*lstate, gstate, context.client, bd);
     if (gstate.queries.empty()) {
       lstate->local_count = gstate.reader->live_docs_count();
       lstate->segments_exhausted = true;
@@ -490,6 +499,7 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> SearchFullScanInitLocal(
   if (gstate.parallel_topk) {
     auto lstate = duckdb::make_uniq<SearchFullScanTopKLocalState>();
     lstate->bind_data = &bd;
+    InitLocalFilter(*lstate, gstate, context.client, bd);
     auto& ss = bd.scan_source->Cast<SearchScan>();
     const size_t k = gstate.rerank_pool ? gstate.rerank_pool : *ss.score_top_k;
     lstate->hit_buf.resize(irs::BlockSize(k));
@@ -504,6 +514,7 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> SearchFullScanInitLocal(
   }
   auto lstate = duckdb::make_uniq<SearchFullScanScanLocalState>();
   lstate->bind_data = &bd;
+  InitLocalFilter(*lstate, gstate, context.client, bd);
   BuildOffsetsEntries(*lstate, input, bd);
   return lstate;
 }
@@ -580,11 +591,20 @@ void IResearchSetScanOrder(
 
 namespace {
 
-template<irs::Order O>
-void CollectSegmentTopK(SearchFullScanTopKLocalState& s,
+template<irs::Order O, bool Filtered>
+void CollectSegmentTopK([[maybe_unused]] duckdb::ClientContext& ctx,
+                        SearchFullScanTopKLocalState& s,
                         const irs::SubReader& seg, uint32_t seg_idx,
                         SearchFullScanGlobalState& g) {
-  using C = irs::NthPartitionScoreCollector<O>;
+  using C = irs::NthPartitionScoreCollectorT<O, Filtered>;
+  [[maybe_unused]] auto verdict =
+    duckdb::FilterPropagateResult::FILTER_ALWAYS_TRUE;
+  if constexpr (Filtered) {
+    verdict = s.filter.StartSegment(ctx, seg);
+    if (verdict == duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE) {
+      return;
+    }
+  }
   auto& search = s.bind_data->scan_source->Cast<SearchScan>();
   if (!std::holds_alternative<C>(s.collector)) {
     const size_t k = g.rerank_pool ? g.rerank_pool : *search.score_top_k;
@@ -593,6 +613,11 @@ void CollectSegmentTopK(SearchFullScanTopKLocalState& s,
   auto& collector = std::get<C>(s.collector);
 
   s.score_fetcher.Clear();
+  if constexpr (Filtered) {
+    collector.SetFilter(
+      verdict == duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE ? &s.filter
+                                                                    : nullptr);
+  }
   collector.SetSegment(seg_idx);
 
   const auto seen_global = g.global_kth_score.load(std::memory_order_relaxed);
@@ -610,11 +635,16 @@ void CollectSegmentTopK(SearchFullScanTopKLocalState& s,
   const irs::StatsBuffer& stats =
     g.stats ? *g.stats : irs::StatsBuffer::Empty();
 
-  if (seg.docs_mask() == nullptr &&
-      seg_query.CollectTopK(collector, {.wand = {.wand_enabled = false}},
-                            stats)) {
-    collector.SetScoreThreshold(s.local_threshold);
-  } else {
+  bool done = false;
+  if constexpr (!Filtered) {
+    if (seg.docs_mask() == nullptr &&
+        seg_query.CollectTopK(collector, {.wand = {.wand_enabled = false}},
+                              stats)) {
+      collector.SetScoreThreshold(s.local_threshold);
+      done = true;
+    }
+  }
+  if (!done) {
     const bool wand_enabled =
       WandEnabled(s.bind_data->inverted_index.get(), search.text_scorer);
     auto it = seg.mask(
@@ -647,7 +677,7 @@ void CollectSegmentTopK(SearchFullScanTopKLocalState& s,
 
 }  // namespace
 
-void SearchFullScanTopKLocalState::OnSegment(duckdb::ClientContext& /*ctx*/,
+void SearchFullScanTopKLocalState::OnSegment(duckdb::ClientContext& ctx,
                                              const irs::SubReader& seg,
                                              uint32_t seg_idx,
                                              CommonScanGlobalState& g_) {
@@ -655,10 +685,19 @@ void SearchFullScanTopKLocalState::OnSegment(duckdb::ClientContext& /*ctx*/,
   auto& search = bind_data->scan_source->Cast<SearchScan>();
   const bool ascending =
     search.score_order && *search.score_order == duckdb::OrderType::ASCENDING;
-  if (ascending) {
-    CollectSegmentTopK<irs::Order::ASC>(*this, seg, seg_idx, g);
+  const bool filtered = !g.table_filter.Empty();
+  if (filtered) {
+    if (ascending) {
+      CollectSegmentTopK<irs::Order::ASC, true>(ctx, *this, seg, seg_idx, g);
+    } else {
+      CollectSegmentTopK<irs::Order::DESC, true>(ctx, *this, seg, seg_idx, g);
+    }
   } else {
-    CollectSegmentTopK<irs::Order::DESC>(*this, seg, seg_idx, g);
+    if (ascending) {
+      CollectSegmentTopK<irs::Order::ASC, false>(ctx, *this, seg, seg_idx, g);
+    } else {
+      CollectSegmentTopK<irs::Order::DESC, false>(ctx, *this, seg, seg_idx, g);
+    }
   }
 }
 
@@ -711,21 +750,31 @@ void SearchFullScanTopKLocalState::PrepareEmitBuffer(
   top_hits = hit_slice.subspan(0, kept);
 }
 
-void SearchFullScanScanLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
+void SearchFullScanScanLocalState::StartSegment(duckdb::ClientContext& ctx,
                                                 const irs::SubReader& seg,
                                                 uint32_t seg_idx,
                                                 SearchFullScanGlobalState& g) {
   current_seg_idx = seg_idx;
-  const bool bulk =
-    g.BulkChunkEligible() && seg.live_docs_count() == seg.docs_count();
+  bulk_doc_in_seg = 0;
+  bulk_seg_doc_count = 0;
+  chunk_hits.clear();
+  chunk_scores.clear();
+  chunk_cursor = 0;
+  if (filter.StartSegment(ctx, seg) ==
+      duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE) {
+    streaming_doc.reset();
+    return;
+  }
+  // A pushed filter (column, row-fetch, or row_expr) rules out the bulk
+  // columnstore fast path: bulk emits every live row untouched.
+  const bool bulk = g.BulkChunkEligible() &&
+                    seg.live_docs_count() == seg.docs_count() &&
+                    g.table_filter.Empty() && !g.row_expr;
   if (bulk) {
-    bulk_doc_in_seg = 0;
     bulk_seg_doc_count = seg.docs_count();
     streaming_doc.reset();
     return;
   }
-  bulk_doc_in_seg = 0;
-  bulk_seg_doc_count = 0;
   const auto& seg_query = EnsureSegmentQuery(g, *this, seg, seg_idx);
   streaming_doc = seg.mask(
     seg_query.Execute({}, g.stats ? *g.stats : irs::StatsBuffer::Empty()));
@@ -745,7 +794,10 @@ void SearchFullScanScanLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
   }
   if (!hit_batcher) {
     hit_batcher = std::make_unique<HitBatcher>(
-      g.cs_projections, g.has_external_projections, g.scan_score);
+      g.cs_projections,
+      g.has_external_projections ? catalog::term_dict::kPKFieldId
+                                 : irs::field_limits::invalid(),
+      g.scan_score);
   }
   hit_batcher->BeginSegment(seg_idx, seg.GetColReader(), g.client_context);
 }
@@ -800,6 +852,69 @@ void SearchFullScanScanLocalState::PushHits(SearchFullScanGlobalState& g) {
   }
 }
 
+void SearchFullScanScanLocalState::AdvanceChunk(SearchFullScanGlobalState& g,
+                                                duckdb::idx_t budget) {
+  chunk_hits.clear();
+  chunk_scores.clear();
+  if (!streaming_doc) {
+    return;
+  }
+  chunk_hits.reserve(budget);
+
+  if (!g.scan_score) {
+    while (chunk_hits.size() < budget) {
+      const auto doc_id = filter.NextUnpruned(*streaming_doc);
+      if (irs::doc_limits::eof(doc_id)) {
+        streaming_doc.reset();
+        return;
+      }
+      chunk_hits.push_back(doc_id);
+    }
+    return;
+  }
+
+  static_assert(STANDARD_VECTOR_SIZE % irs::kScoreBlock == 0,
+                "kScoreBlock must divide STANDARD_VECTOR_SIZE");
+  chunk_scores.reserve(budget);
+
+  std::array<irs::doc_id_t, irs::kScoreBlock> block_docs;
+  irs::scores_size_t block_count = 0;
+  auto flush = [&](bool full) {
+    if (!full && block_count == 0) {
+      return;
+    }
+    score_fetcher.Fetch({block_docs.data(), block_count});
+    const size_t pos = chunk_scores.size();
+    chunk_scores.resize(pos + block_count);
+    if (full) {
+      streaming_score_function.ScoreBlock(&chunk_scores[pos]);
+    } else {
+      streaming_score_function.Score(&chunk_scores[pos], block_count);
+    }
+    block_count = 0;
+  };
+
+  while (chunk_hits.size() < budget) {
+    const auto doc_id = filter.NextUnpruned(*streaming_doc);
+    if (irs::doc_limits::eof(doc_id)) {
+      flush(false);
+      streaming_score_function = {};
+      streaming_doc.reset();
+      break;
+    }
+    streaming_doc->FetchScoreArgs(block_count);
+    block_docs[block_count++] = doc_id;
+    chunk_hits.push_back(doc_id);
+    if (block_count == irs::kScoreBlock) {
+      flush(true);
+    }
+  }
+  if (block_count != 0) {
+    flush(false);
+  }
+  SDB_ASSERT(chunk_scores.size() == chunk_hits.size());
+}
+
 duckdb::idx_t SearchFullScanScanLocalState::EmitChunk(
   duckdb::ClientContext& ctx, SearchFullScanGlobalState& g,
   duckdb::DataChunk& output) {
@@ -815,11 +930,62 @@ duckdb::idx_t SearchFullScanScanLocalState::EmitChunk(
     bulk_doc_in_seg += take;
     return take;
   }
-  if (!hit_batcher || (!streaming_doc && hit_batcher->Empty())) {
+  if (!hit_batcher || (!streaming_doc && hit_batcher->Empty() &&
+                       chunk_cursor == chunk_hits.size())) {
     return 0;
   }
-  if (!hit_batcher->Ready()) {
-    PushHits(g);
+  if (filter.Empty()) {
+    // No scan filter: stream matching docs straight into the batcher.
+    if (!hit_batcher->Ready()) {
+      PushHits(g);
+      if (!hit_batcher->Ready()) {
+        return 0;
+      }
+    }
+  } else {
+    // Filter-first: collect candidate docs, run the scan filter over just the
+    // filter columns, and stage only survivors into the batcher before it
+    // materializes them. A fully-filtered chunk loops for the next one.
+    while (!hit_batcher->Ready()) {
+      while (chunk_cursor < chunk_hits.size() && !hit_batcher->Ready()) {
+        const uint64_t row = chunk_hits[chunk_cursor] - irs::doc_limits::min();
+        const auto span = hit_batcher->OpenWindow(row);
+        if (span == 0) {
+          break;
+        }
+        auto* const head = hit_batcher->WindowHead();
+        auto* const scores = g.scan_score ? hit_batcher->ScoreHead() : nullptr;
+        const uint64_t win_end = row + span;
+        duckdb::idx_t k = 0;
+        while (chunk_cursor < chunk_hits.size() &&
+               chunk_hits[chunk_cursor] - irs::doc_limits::min() < win_end) {
+          head[k] = chunk_hits[chunk_cursor];
+          if (scores != nullptr) {
+            scores[k] = chunk_scores[chunk_cursor];
+          }
+          ++k;
+          ++chunk_cursor;
+        }
+        hit_batcher->CommitWindow(k);
+      }
+      if (hit_batcher->Ready()) {
+        break;
+      }
+      if (!streaming_doc) {
+        if (hit_batcher->Empty()) {
+          return 0;
+        }
+        hit_batcher->Finalize();
+        break;
+      }
+      AdvanceChunk(g, STANDARD_VECTOR_SIZE);
+      const auto survivors = filter.FilterHits(chunk_hits, chunk_scores);
+      chunk_hits.resize(survivors);
+      if (!chunk_scores.empty()) {
+        chunk_scores.resize(survivors);
+      }
+      chunk_cursor = 0;
+    }
     if (!hit_batcher->Ready()) {
       return 0;
     }
@@ -879,8 +1045,15 @@ void RunStreamingScan(duckdb::ClientContext& ctx, SearchFullScanGlobalState& g,
     SDB_ASSERT(added <= STANDARD_VECTOR_SIZE);
     if (added != 0) {
       FinalizeBatch(ctx, g, l, output, added);
-      output.SetChildCardinality(added);
-      return;
+      // Enforce row_expr (filters over virtual/extract slots) on the
+      // materialized chunk; a fully-rejected batch loops for the next one.
+      const auto survivors = ApplyRowFilter(ctx, g, l, output, added);
+      if (survivors != 0) {
+        output.SetChildCardinality(survivors);
+        return;
+      }
+      output.Reset();
+      continue;
     }
     if (!g.scan_units.empty()) {
       const auto ui = g.next_unit.fetch_add(1, std::memory_order_relaxed);
@@ -903,23 +1076,36 @@ void RunStreamingScan(duckdb::ClientContext& ctx, SearchFullScanGlobalState& g,
 
 void RunStreamingScan(duckdb::ClientContext& ctx, SearchFullScanGlobalState& g,
                       TsDictLocalState& l, duckdb::DataChunk& output) {
-  duckdb::idx_t collected = 0;
-  while (collected < STANDARD_VECTOR_SIZE) {
-    const auto added = l.EmitChunk(ctx, g, output, collected);
-    SDB_ASSERT(collected + added <= STANDARD_VECTOR_SIZE);
-    collected += added;
-    if (added != 0) {
-      continue;
+  for (;;) {
+    duckdb::idx_t collected = 0;
+    bool exhausted = false;
+    while (collected < STANDARD_VECTOR_SIZE) {
+      const auto added = l.EmitChunk(ctx, g, output, collected);
+      SDB_ASSERT(collected + added <= STANDARD_VECTOR_SIZE);
+      collected += added;
+      if (added != 0) {
+        continue;
+      }
+      const auto seg_idx =
+        g.next_segment.fetch_add(1, std::memory_order_relaxed);
+      if (seg_idx >= g.total_segments) {
+        exhausted = true;
+        break;
+      }
+      const auto& seg = (*g.reader)[seg_idx];
+      SDB_ASSERT(seg.live_docs_count() != 0);
+      l.StartSegment(ctx, seg, seg_idx, g);
     }
-    const auto seg_idx = g.next_segment.fetch_add(1, std::memory_order_relaxed);
-    if (seg_idx >= g.total_segments) {
-      break;
+    // Enforce row_expr (scalar predicates over the emitted term rows, e.g. a
+    // pushed `body LIKE 'a%'`) that the term enumeration did not consume as an
+    // acceptor. A chunk fully rejected by it loops for the next terms.
+    const auto survivors = ApplyRowFilter(ctx, g, l, output, collected);
+    if (survivors != 0 || exhausted) {
+      output.SetChildCardinality(survivors);
+      return;
     }
-    const auto& seg = (*g.reader)[seg_idx];
-    SDB_ASSERT(seg.live_docs_count() != 0);
-    l.StartSegment(ctx, seg, seg_idx, g);
+    output.Reset();
   }
-  output.SetChildCardinality(collected);
 }
 
 void TsDictLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,

@@ -26,8 +26,12 @@
 #include <atomic>
 #include <duckdb.hpp>
 #include <duckdb/common/types/vector_cache.hpp>
+#include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/function/table_function.hpp>
+#include <iresearch/index/index_source.hpp>
 #include <iresearch/index/iterators.hpp>
+#include <iresearch/index/pk_batch_helpers.hpp>
+#include <iresearch/index/scan_filter.hpp>
 #include <iresearch/search/filter.hpp>
 #include <iresearch/types.hpp>
 #include <limits>
@@ -39,16 +43,14 @@
 #include <vector>
 
 #include "catalog/table_options.h"
-#include "connector/column_extract.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/full_scanner.h"
-#include "connector/hit_batcher.h"
-#include "connector/index_source.h"
 #include "connector/index_source_factory.h"
 #include "connector/offsets_collector.hpp"
 #include "connector/offsets_writer.hpp"
-#include "connector/pk_batch_helpers.h"
 #include "connector/search_pk_lookup.h"
+#include "iresearch/index/column_extract.hpp"
+#include "iresearch/index/hit_batcher.hpp"
 
 namespace irs {
 
@@ -86,6 +88,23 @@ struct CommonScanGlobalState : public duckdb::GlobalTableFunctionState {
 
   std::atomic<duckdb::idx_t> produced_rows{0};
 
+  // Pushed filters the scan enforces itself (filter_pushdown = true means
+  // nothing above re-checks). Column/row-fetch filters live in the irs
+  // table filter; filters over virtual or extract output slots land in
+  // `row_expr`, enforceable only on the materialized chunk (ApplyRowFilter)
+  // -- their presence demotes the top-k scan modes to streaming.
+  irs::TableFilter table_filter;
+  duckdb::unique_ptr<duckdb::Expression> row_expr;
+  // Compact row-fetch projection derived from the table filter: what each
+  // thread's RowFetcher IndexSource materializes.
+  std::vector<duckdb::idx_t> rf_columns;
+  duckdb::vector<duckdb::LogicalType> rf_types;
+
+  // filter_prune: when set, the scanned column_ids include filter-only columns
+  // the output must not emit. These are indexes into the scanned columns that
+  // form the output (a reorder/narrow); empty = emit the scanned columns as-is.
+  duckdb::vector<duckdb::idx_t> output_projection_ids;
+
   duckdb::idx_t MaxThreads() const override { return 1; }
 };
 
@@ -93,11 +112,18 @@ struct HitsChunk;
 
 struct CommonScanLocalState : public duckdb::LocalTableFunctionState {
   bool segments_exhausted = false;
+  // Holds the scanned column_ids when output_projection_ids is set; the output
+  // then references the projected subset out of this (a reorder, not a copy).
+  duckdb::DataChunk scan_chunk;
 
   irs::PrepareCollector* prepare_collector = nullptr;
   bool prepared = false;
 
   std::vector<std::unique_ptr<FullScanner>> full_scanners;
+
+  irs::ScanFilter filter;
+  duckdb::unique_ptr<duckdb::ExpressionExecutor> row_expr_executor;
+  std::unique_ptr<duckdb::SelectionVector> row_expr_sel;
 
   virtual void OnSegment(duckdb::ClientContext&, const irs::SubReader&,
                          uint32_t, CommonScanGlobalState&) {
@@ -138,6 +164,48 @@ void InitCommonState(CommonScanGlobalState& state,
                      const SereneDBScanBindData& bind_data,
                      duckdb::TableFunctionInitInput& input);
 
+void BuildTableFilter(CommonScanGlobalState& state,
+                      duckdb::ClientContext& context,
+                      const SereneDBScanBindData& bind_data,
+                      const duckdb::TableFilterSet& filters);
+
+// Binds the table filter to the local filter and, when row-fetch filters
+// exist, injects this thread's IndexSource projected to the filter columns.
+void InitLocalFilter(CommonScanLocalState& lstate,
+                     const CommonScanGlobalState& gstate,
+                     duckdb::ClientContext& context,
+                     const SereneDBScanBindData& bind_data);
+
+// Enforce `row_expr` (filters over virtual/extract slots) on a materialized
+// chunk; slices it to survivors.
+inline duckdb::idx_t ApplyRowFilter(duckdb::ClientContext& ctx,
+                                    const CommonScanGlobalState& g,
+                                    CommonScanLocalState& l,
+                                    duckdb::DataChunk& chunk,
+                                    duckdb::idx_t count) {
+  if (!g.row_expr || count == 0) {
+    return count;
+  }
+  if (!l.row_expr_executor) {
+    l.row_expr_executor =
+      duckdb::make_uniq<duckdb::ExpressionExecutor>(ctx, *g.row_expr);
+    l.row_expr_sel =
+      std::make_unique<duckdb::SelectionVector>(STANDARD_VECTOR_SIZE);
+  }
+  chunk.SetCardinality(count);
+  const auto survivors =
+    l.row_expr_executor->SelectExpression(chunk, *l.row_expr_sel);
+  if (survivors != count) {
+    chunk.Slice(*l.row_expr_sel, survivors);
+  }
+  return survivors;
+}
+
+// Decode a pushdown-extract ColumnIndex into its dotted field-path components.
+// Struct steps carry a numeric index resolved against `root_type`; variant
+// steps carry the field name directly. `column_index` must be a pushdown
+// extract with children. Components are appended to `out` and borrow from the
+// type/index (valid for the scan's lifetime).
 void DecodeExtractPath(const duckdb::ColumnIndex& column_index,
                        const duckdb::LogicalType& root_type,
                        std::vector<std::string_view>& out);

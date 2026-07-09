@@ -103,9 +103,6 @@ duckdb::LogicalType RowIdFetchIndexSource::AddFetchColumn(
 }
 
 void RowIdFetchIndexSource::FinishInit(duckdb::ClientContext& context) {
-  _rowid_fetch_idx = _fetch_columns.size();
-  _fetch_columns.emplace_back(duckdb::COLUMN_IDENTIFIER_ROW_ID);
-  _fetch_types.push_back(duckdb::LogicalType::ROW_TYPE);
   _fetch_chunk.Initialize(context, _fetch_types);
 }
 
@@ -113,8 +110,9 @@ ViewTableIndexSource::ViewTableIndexSource(
   duckdb::ClientContext& context, ViewFastPath fast_path,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::Column::Id> bind_column_ids)
-  : RowIdFetchIndexSource{std::move(fast_path)} {
+  std::span<const catalog::Column::Id> bind_column_ids,
+  duckdb::TableFilterSet* pushed_filters)
+  : RowIdFetchIndexSource{std::move(fast_path), pushed_filters} {
   auto& table = ResolveTableEntry(context, _fast_path);
   SetTable(table);
   // Registers the attached database with the meta transaction, keeping it
@@ -149,8 +147,9 @@ TableRowIdIndexSource::TableRowIdIndexSource(
   const catalog::Table& sdb_table,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::Column::Id> bind_column_ids)
-  : RowIdFetchIndexSource{ViewFastPath{}} {
+  std::span<const catalog::Column::Id> bind_column_ids,
+  duckdb::TableFilterSet* pushed_filters)
+  : RowIdFetchIndexSource{ViewFastPath{}, pushed_filters} {
   auto& table = ResolveStoreTableEntry(context, scan_entry, sdb_table);
   SetTable(table);
   duckdb::DuckTransaction::Get(context, table.ParentCatalog());
@@ -210,41 +209,10 @@ void RowIdFetchIndexSource::Materialize(duckdb::ClientContext& context,
   auto& transaction =
     duckdb::DuckTransaction::Get(context, _table->ParentCatalog());
 
-  duckdb::idx_t done = 0;
-  duckdb::idx_t pkp = 0;
-  while (done < count) {
-    const auto fetch_count =
-      std::min<duckdb::idx_t>(STANDARD_VECTOR_SIZE, count - done);
-    duckdb::Vector row_ids(duckdb::LogicalType::ROW_TYPE, fetch_count);
-    auto* row_id_data =
-      duckdb::FlatVector::GetDataMutable<duckdb::row_t>(row_ids);
-    for (duckdb::idx_t i = 0; i < fetch_count; ++i) {
-      row_id_data[i] = static_cast<duckdb::row_t>(_sorted_rows[done + i]);
-    }
-    _fetch_chunk.Reset();
-    duckdb::ColumnFetchState fetch_state;
-    storage.Fetch(transaction, _fetch_chunk, _fetch_columns, row_ids,
-                  fetch_count, fetch_state);
-
-    const auto fetched = _fetch_chunk.size();
-    const auto* fetched_row_ids = duckdb::FlatVector::GetData<duckdb::row_t>(
-      _fetch_chunk.data[_rowid_fetch_idx]);
-    for (duckdb::idx_t k = 0; k < fetched; ++k) {
-      while (pkp < count && static_cast<duckdb::row_t>(_sorted_rows[pkp]) !=
-                              fetched_row_ids[k]) {
-        ++pkp;
-      }
-      SDB_ASSERT(pkp < count);
-      const auto caller_pos = _output_positions[pkp];
-      for (duckdb::idx_t c = 0; c < _col_to_fetch.size(); ++c) {
-        duckdb::VectorOperations::Copy(_fetch_chunk.data[_col_to_fetch[c]],
-                                       _tf_target.data[c], k + 1, k,
-                                       caller_pos);
-      }
-      ++pkp;
-    }
-    done += fetch_count;
-  }
+  storage.LookupScan(transaction, context, _fetch_columns, _pushed_filters,
+                     _sorted_rows.data(), _sorted_rows.data() + count,
+                     _output_positions.data(), _col_to_fetch.data(),
+                     _fetch_chunk, _tf_target);
 
   RunCastPass(output, count);
 }

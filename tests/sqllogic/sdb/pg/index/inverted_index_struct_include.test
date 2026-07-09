@@ -62,7 +62,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────╮
 │ Index: struct_t_idx                │
 │ Lookup: table                      │
-│ Filter:                            │
+│ Index Filter:                      │
 │ ╭─ Term ─────────────────────────╮ │
 │ │ Field: text_for_search(string) │ │
 │ │ Value: first                   │ │

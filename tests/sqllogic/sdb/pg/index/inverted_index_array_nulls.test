@@ -59,7 +59,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────╮
 │ Index: arr_n_idx                   │
 │ Lookup: table                      │
-│ Filter:                            │
+│ Index Filter:                      │
 │ ╭─ Term ─────────────────────────╮ │
 │ │ Field: text_for_search(string) │ │
 │ │ Value: second                  │ │

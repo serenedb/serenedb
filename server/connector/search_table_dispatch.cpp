@@ -28,9 +28,11 @@
 
 #include "basics/assert.h"
 #include "catalog/table.h"
+#include "connector/with_option_resolver.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
+#include "query/config_variable_names.h"
 
 namespace sdb::connector {
 namespace {
@@ -53,6 +55,25 @@ std::optional<std::string> ExtractString(std::string_view option_key,
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_SYNTAX_ERROR),
       ERR_MSG("WITH option \"", option_key, "\" expects a string literal"));
+  }
+}
+
+// Evaluates an integer-valued WITH option.
+// Throws on a non-integer literal.
+duckdb::Value ExtractUint(std::string_view option_key,
+                          const duckdb::ParsedExpression& expr) {
+  if (expr.GetExpressionType() != duckdb::ExpressionType::VALUE_CONSTANT) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_SYNTAX_ERROR),
+      ERR_MSG("WITH option \"", option_key, "\" expects an integer literal"));
+  }
+  auto& cexpr = expr.Cast<duckdb::ConstantExpression>();
+  try {
+    return cexpr.GetValue().DefaultCastAs(duckdb::LogicalType::UINTEGER);
+  } catch (...) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_SYNTAX_ERROR),
+      ERR_MSG("WITH option \"", option_key, "\" expects an integer literal"));
   }
 }
 
@@ -92,11 +113,30 @@ void RejectIfSearchTable(const catalog::Table& table,
 }
 
 void ApplyStorageKind(
-  catalog::CreateTableOptions& options,
+  duckdb::ClientContext& context, catalog::CreateTableOptions& options,
   duckdb::case_insensitive_map_t<duckdb::unique_ptr<duckdb::ParsedExpression>>&
     with_options) {
   options.engine = ReadStorageEngine(with_options);
   with_options.erase(std::string{kStorageKey});
+  if (options.engine != catalog::TableEngine::Search) {
+    // Interval WITH options are search-only; leave any other keys in place so
+    // the caller's unrecognized-parameter check still rejects them.
+    return;
+  }
+  auto resolve = [&](std::string_view key) -> uint32_t {
+    auto it = with_options.find(std::string{key});
+    if (it != with_options.end() && it->second) {
+      auto value = ExtractUint(key, *it->second);
+      with_options.erase(std::string{key});
+      return ResolveUintWithOption(context, key, &value);
+    }
+    return ResolveUintWithOption(context, key, /*with_value=*/nullptr);
+  };
+  options.search_options.refresh_interval_ms = resolve(kRefreshIntervalSetting);
+  options.search_options.compaction_interval_ms =
+    resolve(kCompactionIntervalSetting);
+  options.search_options.cleanup_interval_step =
+    resolve(kCleanupIntervalStepSetting);
 }
 
 }  // namespace sdb::connector

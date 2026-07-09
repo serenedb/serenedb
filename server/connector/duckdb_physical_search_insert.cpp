@@ -117,8 +117,8 @@ struct SearchInsertLocalState : duckdb::LocalSinkState {
 };
 
 std::shared_ptr<catalog::Table> CreateCtasTable(
-  SearchInsertGlobalState& state, duckdb::BoundCreateTableInfo& info,
-  duckdb::SchemaCatalogEntry& schema) {
+  duckdb::ClientContext& context, SearchInsertGlobalState& state,
+  duckdb::BoundCreateTableInfo& info, duckdb::SchemaCatalogEntry& schema) {
   auto& schema_entry = schema.Cast<SereneDBSchemaEntry>();
   auto database_id = schema_entry.GetDatabaseId();
   auto& create_info = info.Base();
@@ -138,7 +138,9 @@ std::shared_ptr<catalog::Table> CreateCtasTable(
     }
     options.columns.push_back(std::move(sdb_col));
   }
-  ApplyStorageKind(options, table_info.options);
+  // CTAS has no PK/UNIQUE constraints, so the Table ctor wires up a generated
+  // PK sequence.
+  ApplyStorageKind(context, options, table_info.options);
   SDB_ASSERT(options.engine == catalog::TableEngine::Search,
              "SereneDBSearchInsert CTAS mode used for non-Search engine");
 
@@ -192,6 +194,17 @@ void RemoveCtasTombstoneIfNeeded(SearchInsertGlobalState& state) {
     SDB_THROW(std::move(r));
   }
   state.ctas_finalized = true;
+
+  // The CTAS table is now visible; start its background maintenance. CTAS skips
+  // SchemaEntry::CreateTable (which does this for a plain CREATE), so otherwise
+  // a CTAS search table would get no background maintenance until the next
+  // boot.
+  auto snapshot = catalog.GetCatalogSnapshot();
+  auto table =
+    snapshot->GetTable(catalog::NoAccessCheck(), state.ctas_database_id,
+                       state.ctas_schema_name, state.ctas_table_name);
+  SDB_ASSERT(table);
+  table->GetData()->StartTasks();
 }
 
 }  // namespace
@@ -222,7 +235,7 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   std::shared_ptr<catalog::Table> table;
   std::shared_ptr<const catalog::Snapshot> snapshot;
   if (_ctas_info) {
-    table = CreateCtasTable(*state, *_ctas_info, *_ctas_schema);
+    table = CreateCtasTable(context, *state, *_ctas_info, *_ctas_schema);
     if (!table) {
       return nullptr;
     }

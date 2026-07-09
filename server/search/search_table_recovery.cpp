@@ -191,6 +191,14 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
       info.search->Commit();
       ++recovered_shards;
     }
+
+    // Advance every shard -- including ones with no replayed records -- to the
+    // recovered max tick, so an idle shard doesn't pin this database WAL's GC
+    // floor after recovery. Safe because recovery is single-threaded.
+    const uint64_t db_max_tick = wal.CurrentTick();
+    for (const auto& entry : shards) {
+      wal.OnShardCommit(entry.first, db_max_tick);
+    }
   }
 
   if (recovered_shards > 0) {
@@ -198,6 +206,22 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
       absl::FromChrono(std::chrono::steady_clock::now() - begin);
     SDB_INFO(SEARCH, "Search-table WAL recovery: completed in ",
              absl::FormatDuration(duration), ", shards=", recovered_shards);
+  }
+}
+
+void StartSearchTableMaintenance() {
+  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
+  SDB_ASSERT(snapshot);
+  for (const auto& database : snapshot->GetDatabases()) {
+    const ObjectId db_id = database->GetId();
+    for (const auto& schema : snapshot->GetSchemas(db_id)) {
+      for (const auto& table : snapshot->GetTables(db_id, schema->GetName())) {
+        if (table->GetEngine() != catalog::TableEngine::Search) {
+          continue;
+        }
+        table->GetData()->StartTasks();  // GetData asserts the store is bound
+      }
+    }
   }
 }
 

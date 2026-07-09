@@ -153,6 +153,9 @@ TEST(CatalogPersistence, table) {
                           {AclItem{.grantee = ObjectId{7},
                                    .grantor = ObjectId{42},
                                    .privs = AclMode::Select}}},
+      .search_options = {.refresh_interval_ms = 500,
+                         .compaction_interval_ms = 7000,
+                         .cleanup_interval_step = 3},
     });
 }
 

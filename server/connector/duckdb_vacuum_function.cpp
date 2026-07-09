@@ -275,9 +275,8 @@ void CollectInvertedSteps(const catalog::Snapshot& snapshot,
       steps.push_back({std::move(storage), index, nullptr});
     }
   }
-  // SearchTable has no background commit thread yet, so VACUUM is currently
-  // the only way to flush a Search table's pending iresearch trxs into a
-  // segment visible to subsequent scans.
+  // Search tables also commit/consolidate/GC in the background; VACUUM is the
+  // synchronous, on-demand path through the same maintenance ops.
   if (table->GetEngine() == catalog::TableEngine::Search) {
     steps.push_back({nullptr, nullptr, table});
   }
@@ -425,12 +424,14 @@ void DispatchInverted(duckdb::ClientContext& context,
       }
       if (progress) {
         pg::ProgressMetrics::Add(progress->items_processed, 1);
-        SDB_IF_FAILURE("pause_vacuum_mid_walk") {
-          sdb::WaitWhileFailurePointDebugging("pause_vacuum_mid_walk");
-        }
+        SDB_WAIT_ON_FAILURE("pause_vacuum_mid_walk");
       }
     } else if (const auto& search = step.sync_table->GetData()) {
-      search->Commit();
+      if (action == Action::Refresh) {
+        search->VacuumRefresh();  // commit pending inserts + reclaim files
+      } else {
+        search->VacuumCompact();  // + merge segments
+      }
     }
   }
 }
@@ -550,9 +551,7 @@ void DispatchRecomputeStats(duckdb::ClientContext& context,
     }
     if (progress) {
       pg::ProgressMetrics::Add(progress->items_processed, 1);
-      SDB_IF_FAILURE("pause_recompute_stats_mid_walk") {
-        sdb::WaitWhileFailurePointDebugging("pause_recompute_stats_mid_walk");
-      }
+      SDB_WAIT_ON_FAILURE("pause_recompute_stats_mid_walk");
     }
   }
 }

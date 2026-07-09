@@ -107,6 +107,7 @@ std::shared_ptr<Table> Table::Deserialize(duckdb::Deserializer& src,
     std::move(data.unique_constraints), std::move(data.foreign_keys),
     std::move(data.pk_name), data.pk_constraint_id, data.pk_index_id);
   table->_comment = std::move(data.comment);
+  table->_search_options = data.search_options;
   return table;
 }
 
@@ -123,6 +124,7 @@ void Table::Serialize(duckdb::Serializer& sink) const {
     .foreign_keys = _foreign_keys,
     .perm = GetPermissions(),
     .comment = _comment,
+    .search_options = _search_options,
     .pk_constraint_id = _pk_constraint_id,
     .pk_index_id = _pk_index_id,
   };
@@ -402,6 +404,7 @@ std::shared_ptr<Object> Table::Clone() const {
   cloned->SetTombstoned(Tombstoned());
   cloned->SetData(_data);
   cloned->_comment = _comment;
+  cloned->_search_options = _search_options;
   return cloned;
 }
 

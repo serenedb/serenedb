@@ -257,7 +257,8 @@ TXN_TABLE_BYTES=$((TXN_AFTER - TXN_BASELINE))
 # insert: routes through SereneDBSearchInsert (CTAS mode). The rows are drained
 # into the iresearch writer but the segments are not yet committed to disk.
 run_sql "search_insert" "${BUILD_THREADS}" "
-CREATE TABLE hits_search WITH (storage = 'search') AS
+CREATE TABLE hits_search
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0) AS
 SELECT * FROM hits_view;
 "
 

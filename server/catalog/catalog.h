@@ -265,7 +265,7 @@ struct Snapshot {
   std::shared_ptr<SchemaDrop> CreateSchemaDrop(
     PendingDrops& pending_drops, ObjectId db_id,
     const std::shared_ptr<Schema>& schema, bool is_root);
-  std::shared_ptr<TableDrop> CreateTableDrop(
+  std::shared_ptr<TableDropBase> CreateTableDrop(
     PendingDrops& pending_drops, ObjectId db_id, ObjectId schema_id,
     const std::shared_ptr<Table>& table, bool is_root);
   std::shared_ptr<IndexDrop> CreateIndexDrop(

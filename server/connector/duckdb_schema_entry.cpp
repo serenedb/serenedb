@@ -61,11 +61,14 @@
 #include "connector/duckdb_table_entry.h"
 #include "connector/pg_logical_types.h"
 #include "connector/search_table_dispatch.h"
+#include "connector/with_option_resolver.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
+#include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
+#include "search/search_table.h"
 
 namespace sdb::connector {
 namespace {
@@ -189,8 +192,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
   options.name = table_info.GetTableName().GetIdentifierName();
 
   // Consume the SereneDB-specific `storage` WITH option (selects the table
-  // engine) before validating that no unknown options remain.
-  ApplyStorageKind(options, table_info.options);
+  // engine) + any Search maintenance-interval options before validating that no
+  // unknown options remain.
+  ApplyStorageKind(transaction.GetContext(), options, table_info.options);
 
   if (!table_info.options.empty()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -527,6 +531,18 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     SDB_THROW(std::move(r));
   }
 
+  // Search tables maintain themselves in the background
+  // (commit/consolidate/GC). Kick the maintenance chains now that the table and
+  // its iresearch store exist; mirrors the inverted-index StartTasks in
+  // CreateIndex.
+  auto new_snapshot = catalog_impl.GetCatalogSnapshot();
+  if (auto sdb_table = new_snapshot->GetTable(
+        catalog::NoAccessCheck(), database_id, name.GetIdentifierName(),
+        table_info.GetTableName().GetIdentifierName());
+      sdb_table && sdb_table->GetEngine() == catalog::TableEngine::Search) {
+    sdb_table->GetData()->StartTasks();  // GetData asserts the store is bound
+  }
+
   return nullptr;
 }
 
@@ -601,20 +617,14 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
       return it != info.options.end() ? &it->second : nullptr;
     };
     auto resolve_uint = [&](std::string_view key) -> uint32_t {
-      if (auto* v = find_with(key)) {
-        return v->GetValue<uint32_t>();
-      }
-      duckdb::Value v;
-      auto r = context.TryGetCurrentSetting(std::string{key}, v);
-      SDB_ASSERT(r, "missing DB-level default for setting '", key, "'");
-      return v.GetValue<uint32_t>();
+      return ResolveUintWithOption(context, key, find_with(key));
     };
     catalog::InvertedIndexOptions options{
       .row_group_size = resolve_uint("row_group_size"),
       .norm_row_group_size = resolve_uint("norm_row_group_size"),
-      .refresh_interval_ms = resolve_uint("refresh_interval"),
-      .compaction_interval_ms = resolve_uint("compaction_interval"),
-      .cleanup_interval_step = resolve_uint("cleanup_interval_step"),
+      .refresh_interval_ms = resolve_uint(kRefreshIntervalSetting),
+      .compaction_interval_ms = resolve_uint(kCompactionIntervalSetting),
+      .cleanup_interval_step = resolve_uint(kCleanupIntervalStepSetting),
     };
     if (auto* v = find_with("optimize_top_k")) {
       auto value =

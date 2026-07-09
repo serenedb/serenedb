@@ -147,7 +147,7 @@ AsyncResult IndexDrop::Execute() {
   return yaclib::MakeFuture<Result>();
 }
 
-Result TableDrop::Finalize() {
+Result TableDropBase::Finalize() {
   SDB_IF_FAILURE("crash_before_seq_counter_wipe") { SDB_IMMEDIATE_ABORT(); }
   auto& server = GetCatalogStore();
   // Indexes and their storage.
@@ -165,23 +165,11 @@ Result TableDrop::Finalize() {
       ctx.DropDefinition(_parent_id, catalog::ObjectType::Table, _id);
       ctx.DropDefinition(_parent_id, catalog::ObjectType::Tombstone, _id);
     }
-    ctx.DropStoreTable(catalog::DroppedStoreTableName(_id));
+    FinalizeStore(ctx);
   });
 }
 
 AsyncResult TableDrop::Execute() {
-  if (_db_id.isSet()) {
-    // Search table: wait until every holder of the iresearch store has
-    // released it (mirrors IndexDrop's weak_ptr drain), then remove the
-    // directory + WAL chunks. _db_id is set only for Search tables.
-    if (!_search_data.expired()) {
-      co_return Result{ERROR_LOCKED};
-    }
-    if (auto r = search::SearchTable::DropArtifacts(_db_id, _id); !r.ok()) {
-      SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
-      co_return Result{ERROR_LOCKED};
-    }
-  }
   if (_is_root && !_indexes.empty()) {
     ObjectId db_id = _indexes.back()->GetDatabaseId();
     ObjectId schema_id = _parent_id;
@@ -192,6 +180,30 @@ AsyncResult TableDrop::Execute() {
     }
   }
   co_await RunChildrenTasks(std::span{_indexes});
+  Result r = Finalize();
+  if (!r.ok()) {
+    SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
+    co_return Result{ERROR_LOCKED};
+  }
+  co_return {};
+}
+
+AsyncResult SearchTableDrop::Execute() {
+  // The WAL chunk dir + shard registration live under the per-database WAL,
+  // which no ancestor schema/database drop reaches, so they are always removed
+  // per-table here.
+  if (auto r = search::SearchTable::DropWalShard(_db_id, _id); !r.ok()) {
+    SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
+    co_return Result{ERROR_LOCKED};
+  }
+
+  if (_is_root) {
+    if (auto r = search::SearchTable::DropIndexDir(_db_id, _parent_id, _id);
+        !r.ok()) {
+      SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
+      co_return Result{ERROR_LOCKED};
+    }
+  }
   Result r = Finalize();
   if (!r.ok()) {
     SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());

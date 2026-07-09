@@ -10,8 +10,8 @@ in .pre-commit-config.yaml):
      outside tests/sqllogic/recovery/ is an error.
 
   2. Test -> Source: every fault NAME activated in a recovery .test must be
-     defined in C++ source (SDB_IF_FAILURE / WaitWhileFailurePointDebugging
-     string literal in server/ or libs/).
+     defined in C++ source (SDB_IF_FAILURE / SDB_WAIT_ON_FAILURE /
+     WaitWhileFailurePointDebugging string literal in server/ or libs/).
 
   3. Source -> Test: every fault NAME defined in C++ source must be exercised by
      at least one test (a recovery .test, or a C++/Python test under tests/).
@@ -42,15 +42,17 @@ SET_FAULT = re.compile(
 # Just the `SET ... sdb_faults` head, for the recovery-only location check.
 SET_FAULT_HEAD = re.compile(r"SET\s+(?:(?:LOCAL|SESSION)\s+)?sdb_faults\b", re.IGNORECASE)
 
-# Source-side definitions: SDB_IF_FAILURE("NAME") / WaitWhile...("NAME").
+# Source-side definitions: SDB_IF_FAILURE("NAME") / SDB_WAIT_ON_FAILURE("NAME")
+# / WaitWhile...("NAME").
 SOURCE_DEF = re.compile(
-    r'(?:SDB_IF_FAILURE|WaitWhileFailurePointDebugging)\s*\(\s*"([^"]+)"'
+    r'(?:SDB_IF_FAILURE|SDB_WAIT_ON_FAILURE|WaitWhileFailurePointDebugging)'
+    r'\s*\(\s*"([^"]+)"'
 )
 # Names referenced by C++/python tests (string literal in any of these calls,
 # or a SET sdb_faults activation).
 TESTNET_LITERAL = re.compile(
-    r'(?:SDB_IF_FAILURE|AddFailurePointDebugging|ShouldFailDebugging|'
-    r'WaitWhileFailurePointDebugging)\s*\(\s*"([^"]+)"'
+    r'(?:SDB_IF_FAILURE|SDB_WAIT_ON_FAILURE|AddFailurePointDebugging|'
+    r'ShouldFailDebugging|WaitWhileFailurePointDebugging)\s*\(\s*"([^"]+)"'
 )
 # Python driver tests activate faults through f-strings (`SET sdb_faults =
 # '{name}'`), so the SET literal itself carries no name; the names live in
@@ -173,8 +175,8 @@ def main():
             continue  # documented pending gap, issue #847
         errors.append(
             f"{loc}: fault '{name}' is activated by a test but is not defined in "
-            "C++ source (no SDB_IF_FAILURE/WaitWhileFailurePointDebugging literal "
-            "in server/ or libs/)"
+            "C++ source (no SDB_IF_FAILURE/SDB_WAIT_ON_FAILURE/"
+            "WaitWhileFailurePointDebugging literal in server/ or libs/)"
         )
 
     # ----- check #3: source -> test -----

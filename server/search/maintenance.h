@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -20,15 +20,39 @@
 
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+
+#include "basics/result.h"
+
+// Background-maintenance vocabulary shared by the maintained iresearch stores
+// (InvertedIndexStorage, SearchTable) and the loops in search/task.h that drive
+// them.
 namespace sdb::search {
 
-// Replays each database's search WAL into its shards' iresearch writers, then
-// commits and resyncs num_rows.
-void RunSearchTableRecovery(bool skip_wal_recovery);
+// Maintenance cadence, read by the background loops. The writebuffer_*/version
+// fields are only meaningful for inverted indexes; search tables leave them
+// defaulted.
+struct TasksSettings {
+  size_t cleanup_interval_step{};
+  size_t refresh_interval_msec{};
+  size_t compaction_interval_msec{};
+  uint32_t version{};
+  size_t writebuffer_active{};
+  size_t writebuffer_idle{};
+  size_t writebuffer_size_max{};
+};
 
-// Starts background maintenance (commit/consolidation/GC) for every search
-// table. Must run AFTER RunSearchTableRecovery so no background commit
-// publishes a half-replayed index.
-void StartSearchTableMaintenance();
+enum class RefreshResult {
+  Undefined = 0,
+  NoChanges,
+  InProgress,
+  Done,
+};
+
+struct ResultWithTime {
+  Result res;
+  uint64_t time_ms;
+};
 
 }  // namespace sdb::search

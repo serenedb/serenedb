@@ -151,34 +151,54 @@ struct IndexDrop final : public DropTask {
   std::weak_ptr<search::InvertedIndexStorage> _data;
 };
 
-struct TableDrop final : public DropTask {
+struct TableDropBase : public DropTask {
+ public:
+  virtual void EmitStoreFkCleanups(CatalogStore::WriteContext&) const {}
+  virtual void EmitStoreDrops(CatalogStore::WriteContext&) const {}
+
+  Result Finalize();
+
+ protected:
+  TableDropBase(ObjectId id, std::vector<ObjectId> owned_sequences,
+                ObjectId schema_id, bool is_root)
+    : DropTask{id, schema_id, is_root},
+      _owned_sequences{std::move(owned_sequences)} {}
+
+  TableDropBase(const std::shared_ptr<Table>& table,
+                std::vector<ObjectId> owned_sequences, ObjectId schema_id,
+                bool is_root)
+    : DropTask{table, schema_id, is_root},
+      _owned_sequences{std::move(owned_sequences)} {}
+
+  virtual void FinalizeStore(CatalogStore::WriteContext&) const {}
+
+  std::vector<ObjectId> _owned_sequences;
+};
+
+struct TableDrop final : public TableDropBase {
  public:
   TableDrop(ObjectId id, std::vector<std::shared_ptr<IndexDrop>> indexes,
             std::vector<ObjectId> owned_sequences, ObjectId schema_id,
             bool is_root = false)
-    : DropTask{id, schema_id, is_root},
-      _indexes{std::move(indexes)},
-      _owned_sequences{std::move(owned_sequences)} {}
+    : TableDropBase{id, std::move(owned_sequences), schema_id, is_root},
+      _indexes{std::move(indexes)} {}
 
-  TableDrop(const std::shared_ptr<Table>& table, ObjectId db_id,
+  TableDrop(const std::shared_ptr<Table>& table,
             std::vector<std::shared_ptr<IndexDrop>> indexes,
             std::vector<ObjectId> owned_sequences, ObjectId schema_id,
             std::string store_name,
             std::vector<std::string> fk_referenced_store_names,
             bool is_root = false)
-    : DropTask{table, schema_id, is_root},
+    : TableDropBase{table, std::move(owned_sequences), schema_id, is_root},
       _store_name{std::move(store_name)},
       _fk_referenced_store_names{std::move(fk_referenced_store_names)},
-      _indexes{std::move(indexes)},
-      _owned_sequences{std::move(owned_sequences)},
-      _db_id{table->GetEngine() == TableEngine::Search ? db_id : ObjectId{}},
-      _search_data{table->GetData()} {}
+      _indexes{std::move(indexes)} {}
 
   // FK linkage entries must go before ANY table drop in the transaction:
   // a live back-reference makes duckdb refuse dropping the main-key table,
   // and the cascade emission order is arbitrary. Removing both directions
   // up front makes the drops order-independent.
-  void EmitStoreFkCleanups(CatalogStore::WriteContext& ctx) const {
+  void EmitStoreFkCleanups(CatalogStore::WriteContext& ctx) const override {
     if (_store_name.empty()) {
       return;
     }
@@ -193,7 +213,7 @@ struct TableDrop final : public DropTask {
   // unsafe for FK-involved tables: duckdb keeps back-references by name).
   // No-op when the table has no store table (Search engine) or lives under
   // the dropped name (CTAS); Finalize's drop-by-id covers the latter.
-  void EmitStoreDrops(CatalogStore::WriteContext& ctx) const {
+  void EmitStoreDrops(CatalogStore::WriteContext& ctx) const override {
     if (!_store_name.empty()) {
       ctx.DropStoreTable(_store_name);
     }
@@ -207,7 +227,6 @@ struct TableDrop final : public DropTask {
   std::string_view GetName() const noexcept final { return "table drop"; }
 
   AsyncResult Execute() final;
-  Result Finalize();
 
   bool AllowToDropDependencies() const noexcept final {
     return absl::c_all_of(_indexes, [](const auto& index) {
@@ -217,23 +236,59 @@ struct TableDrop final : public DropTask {
   }
 
  private:
+  void FinalizeStore(CatalogStore::WriteContext& ctx) const override {
+    ctx.DropStoreTable(catalog::DroppedStoreTableName(_id));
+  }
+
   std::string _store_name;
   std::vector<std::string> _fk_referenced_store_names;
   std::vector<std::shared_ptr<IndexDrop>> _indexes;
-  std::vector<ObjectId> _owned_sequences;
-  // Set (db_id + iresearch store weak) only for Search tables; see Execute.
+};
+
+struct SearchTableDrop final : public TableDropBase {
+ public:
+  SearchTableDrop(const std::shared_ptr<Table>& table, ObjectId db_id,
+                  std::vector<ObjectId> owned_sequences, ObjectId schema_id,
+                  bool is_root = false)
+    : TableDropBase{table, std::move(owned_sequences), schema_id, is_root},
+      _db_id{db_id},
+      _search_data{table->GetData()} {}
+
+  SearchTableDrop(ObjectId id, ObjectId db_id,
+                  std::vector<ObjectId> owned_sequences, ObjectId schema_id,
+                  bool is_root = false)
+    : TableDropBase{id, std::move(owned_sequences), schema_id, is_root},
+      _db_id{db_id} {}
+
+  std::string GetContext() const noexcept final {
+    return absl::Substitute("SearchTableDrop(schema $0 table $1)",
+                            _parent_id.id(), _id.id());
+  }
+
+  std::string_view GetName() const noexcept final {
+    return "search table drop";
+  }
+
+  AsyncResult Execute() final;
+
+  bool AllowToDropDependencies() const noexcept final {
+    return _search_data.expired();
+  }
+
+ private:
   ObjectId _db_id;
   std::weak_ptr<search::SearchTable> _search_data;
 };
 
 struct SchemaDrop final : public DropTask {
  public:
-  SchemaDrop(ObjectId schema_id, std::vector<std::shared_ptr<TableDrop>> tables,
-             ObjectId db_id, bool is_root = false)
+  SchemaDrop(ObjectId schema_id,
+             std::vector<std::shared_ptr<TableDropBase>> tables, ObjectId db_id,
+             bool is_root = false)
     : DropTask{schema_id, db_id, is_root}, _tables{std::move(tables)} {}
 
   SchemaDrop(const std::shared_ptr<Schema>& schema,
-             std::vector<std::shared_ptr<TableDrop>> tables, ObjectId db_id,
+             std::vector<std::shared_ptr<TableDropBase>> tables, ObjectId db_id,
              bool is_root = false)
     : DropTask{schema, db_id, is_root}, _tables{std::move(tables)} {}
 
@@ -266,7 +321,7 @@ struct SchemaDrop final : public DropTask {
   }
 
  private:
-  std::vector<std::shared_ptr<TableDrop>> _tables;
+  std::vector<std::shared_ptr<TableDropBase>> _tables;
 };
 
 struct DatabaseDrop final : public DropTask {

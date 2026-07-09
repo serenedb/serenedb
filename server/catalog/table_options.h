@@ -34,6 +34,7 @@
 #include "catalog/fwd.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"
+#include "catalog/search_table_options.h"
 #include "catalog/sequence.h"
 #include "query/utils.h"
 
@@ -201,6 +202,8 @@ struct CreateTableOptions {
   std::vector<TableUnique> unique_constraints;
   std::vector<TableForeignKey> foreign_keys;
   TableEngine engine = TableEngine::Transactional;
+  // Background-maintenance options for Search-engine tables (empty otherwise).
+  SearchTableOptions search_options;
 };
 // NOLINTEND
 

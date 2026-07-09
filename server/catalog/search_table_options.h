@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -20,15 +20,10 @@
 
 #pragma once
 
-namespace sdb::search {
+#include "catalog/persistence/search_table_options.h"
 
-// Replays each database's search WAL into its shards' iresearch writers, then
-// commits and resyncs num_rows.
-void RunSearchTableRecovery(bool skip_wal_recovery);
+namespace sdb::catalog {
 
-// Starts background maintenance (commit/consolidation/GC) for every search
-// table. Must run AFTER RunSearchTableRecovery so no background commit
-// publishes a half-replayed index.
-void StartSearchTableMaintenance();
+using persistence::SearchTableOptions;
 
-}  // namespace sdb::search
+}  // namespace sdb::catalog

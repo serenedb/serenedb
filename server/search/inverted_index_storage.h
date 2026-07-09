@@ -34,6 +34,7 @@
 
 #include "catalog/inverted_index.h"
 #include "catalog/types.h"
+#include "search/maintenance.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::query {
@@ -44,23 +45,6 @@ class Transaction;
 namespace sdb::search {
 
 class InvertedIndexStorage;
-
-struct TasksSettings {
-  size_t cleanup_interval_step{};
-  size_t refresh_interval_msec{};
-  size_t compaction_interval_msec{};
-  uint32_t version{};
-  size_t writebuffer_active{};
-  size_t writebuffer_idle{};
-  size_t writebuffer_size_max{};
-};
-
-enum class RefreshResult {
-  Undefined = 0,
-  NoChanges,
-  InProgress,
-  Done,
-};
 
 struct InvertedIndexSnapshot {
   explicit InvertedIndexSnapshot(irs::DirectoryReader&& index)
@@ -98,11 +82,6 @@ class InvertedIndexStorage final
     uint64_t avgCleanupTimeMs = 0;
     uint64_t avgConsolidationTimeMs = 0;
     // NOLINTEND
-  };
-
-  struct ResultWithTime {
-    Result res;
-    uint64_t time_ms;
   };
 
   InvertedIndexStorage(ObjectId id, const catalog::InvertedIndex& index,

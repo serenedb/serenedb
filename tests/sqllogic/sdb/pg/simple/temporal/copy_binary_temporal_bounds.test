@@ -1,0 +1,128 @@
+hash-threshold 100
+
+control substitution on
+
+statement ok
+SET TIME ZONE 'UTC';
+
+
+statement ok
+CREATE TABLE tbnd_src
+(
+  id    INTEGER PRIMARY KEY,
+  ts    TIMESTAMP,
+  tz    TIMESTAMPTZ,
+  ts_s  TIMESTAMP_S,
+  ts_ms TIMESTAMP_MS,
+  ts_ns TIMESTAMP_NS,
+  tz_ns TIMESTAMPTZ_NS,
+  d     DATE,
+  t     TIME,
+  t_tz  TIMETZ,
+  t_ns  TIME_NS
+);
+
+
+statement ok
+CREATE TABLE tbnd_dst
+(
+  id    INTEGER PRIMARY KEY,
+  ts    TIMESTAMP,
+  tz    TIMESTAMPTZ,
+  ts_s  TIMESTAMP_S,
+  ts_ms TIMESTAMP_MS,
+  ts_ns TIMESTAMP_NS,
+  tz_ns TIMESTAMPTZ_NS,
+  d     DATE,
+  t     TIME,
+  t_tz  TIMETZ,
+  t_ns  TIME_NS
+);
+
+
+statement count 3
+INSERT INTO tbnd_src VALUES
+    (1, '0001-01-01 00:00:00', '0001-01-01 00:00:00+00',
+        '0001-01-01 00:00:00', '0001-01-01 00:00:00.001',
+        '1677-09-22 00:00:00', '1677-09-22 00:00:00+00',
+        '0001-01-01', '00:00:00', '00:00:00+05:30', '00:00:00.000001'),
+    (2, '9999-12-31 23:59:59.999999', '9999-12-31 23:59:59.999999+00',
+        '9999-12-31 23:59:59', '9999-12-31 23:59:59.999',
+        '2262-04-11 23:47:16.854775', '2262-04-11 23:47:16.854775+00',
+        '9999-12-31', '23:59:59.999999', '23:59:59.999999-08:00', '23:59:59.999999'),
+    (3, '4713-01-01 (BC) 00:00:00', NULL,
+        NULL, NULL,
+        NULL, NULL,
+        '4713-01-01 (BC)', NULL, NULL, NULL);
+
+
+statement count 3
+COPY tbnd_src TO '${__TEST_DIR__}/copy_binary_tbnd.bin' (FORMAT binary);
+
+
+statement count 3
+COPY tbnd_dst FROM '${__TEST_DIR__}/copy_binary_tbnd.bin' (FORMAT binary);
+
+
+query
+SELECT
+  (SELECT count(*) FROM (SELECT * FROM tbnd_src EXCEPT SELECT * FROM tbnd_dst) a)
+  + (SELECT count(*) FROM (SELECT * FROM tbnd_dst EXCEPT SELECT * FROM tbnd_src) b)
+  AS diff;
+----
+diff
+0
+
+
+query
+SELECT year(ts) AS y_ts, year(tz) AS y_tz, year(ts_s) AS y_s, year(ts_ms) AS y_ms,
+       year(ts_ns) AS y_ns, year(tz_ns::TIMESTAMP_NS) AS y_tzns, year(d) AS y_d
+FROM tbnd_dst WHERE id = 1;
+----
+y_ts	y_tz	y_s	y_ms	y_ns	y_tzns	y_d
+1	1	1	1	1677	1677	1
+
+
+query
+SELECT year(ts) AS y_ts, year(tz) AS y_tz, year(ts_s) AS y_s, year(ts_ms) AS y_ms,
+       year(ts_ns) AS y_ns, year(tz_ns::TIMESTAMP_NS) AS y_tzns, year(d) AS y_d
+FROM tbnd_dst WHERE id = 2;
+----
+y_ts	y_tz	y_s	y_ms	y_ns	y_tzns	y_d
+9999	9999	9999	9999	2262	2262	9999
+
+
+query
+SELECT year(ts) AS y_ts, year(d) AS y_d FROM tbnd_dst WHERE id = 3;
+----
+y_ts	y_d
+-4712	-4712
+
+
+query
+SELECT hour(t) AS h_t, hour(t_ns) AS h_tns,
+       extract(hour FROM t_tz) AS h_ttz, extract(timezone FROM t_tz) AS off
+FROM tbnd_dst WHERE id = 1;
+----
+h_t	h_tns	h_ttz	off
+0	0	0	19800
+
+
+query
+SELECT hour(t) AS h_t, hour(t_ns) AS h_tns,
+       extract(hour FROM t_tz) AS h_ttz, extract(timezone FROM t_tz) AS off
+FROM tbnd_dst WHERE id = 2;
+----
+h_t	h_tns	h_ttz	off
+23	23	23	-28800
+
+
+query
+SELECT count(*) AS us_micros FROM tbnd_dst
+WHERE id = 2
+  AND ts = '9999-12-31 23:59:59.999999'::TIMESTAMP
+  AND ts_ns = '2262-04-11 23:47:16.854775'::TIMESTAMP_NS
+  AND t_ns = '23:59:59.999999'::TIME_NS;
+----
+us_micros
+1

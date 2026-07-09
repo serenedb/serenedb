@@ -219,7 +219,9 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
   auto* options = range.mutable_options();
   options->scored_terms_limit = ctx.scored_terms_limit;
   auto& rng = options->range;
-  auto cast = bound_val->DefaultCastAs(column_info.logical_type);
+  auto cast = bound_val->type() == column_info.logical_type
+                ? *bound_val
+                : bound_val->DefaultCastAs(column_info.logical_type);
   irs::NumericTokenizer stream;
   ResetNumericStream(stream, col_type, cast);
   if (is_lower) {
@@ -337,7 +339,9 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
     auto emit_bound = [&](const duckdb::Value& v,
                           irs::ByGranularRangeOptions::terms& boundary,
                           irs::BoundType& bt, bool incl) {
-      auto cast = v.DefaultCastAs(column_info.logical_type);
+      auto cast = v.type() == column_info.logical_type
+                    ? v
+                    : v.DefaultCastAs(column_info.logical_type);
       irs::NumericTokenizer stream;
       ResetNumericStream(stream, col_type, cast);
       irs::SetGranularTerm(boundary, stream);

@@ -85,9 +85,10 @@ pk
 # ============================================================================
 # Width fan-out — TINYINT (i8) and SMALLINT (i16) join the I32/I64 family but
 # share the same encoder; flush a sign-extension regression with their own
-# rows.  UTINYINT / USMALLINT / UINTEGER / HUGEINT / UUID / DECIMAL / TIME /
-# TIMESTAMP_MS / TIMESTAMP_NS / INTERVAL are catalog-accepted but rocksdb
-# refuses to serialize them today, so they're left out.
+# rows.  UTINYINT / USMALLINT / UINTEGER share the same numeric encoders and
+# get no dedicated rows; HUGEINT / UUID / DECIMAL / INTERVAL classify as
+# Unsupported and are rejected by the validator (see
+# inverted_index_matrix_validator / inverted_index_unsupported_numeric).
 # ============================================================================
 
 statement ok
@@ -210,7 +211,200 @@ pk
 2
 
 
+# ============================================================================
+# TIME / TIMETZ / TIME_NS scalar — NumericI64 raw-unit encodings (micros,
+# packed micros+offset, nanos).
+# ============================================================================
+
+statement ok
+CREATE TABLE m_time(pk INTEGER PRIMARY KEY, t TIME, ttz TIMETZ, tns TIME_NS);
+
+statement ok
+CREATE INDEX m_time_t   ON m_time USING inverted(pk, t)   INCLUDE (t);
+
+statement ok
+CREATE INDEX m_time_ttz ON m_time USING inverted(pk, ttz) INCLUDE (ttz);
+
+statement ok
+CREATE INDEX m_time_tns ON m_time USING inverted(pk, tns) INCLUDE (tns);
+
+statement ok
+INSERT INTO m_time VALUES
+    (1, TIME '06:00:00', TIMETZ '06:00:00+02', TIME_NS '06:00:00.000000001'),
+    (2, TIME '18:30:00', TIMETZ '18:30:00+02', TIME_NS '18:30:00.999999999');
+
+statement ok
+VACUUM (REFRESH_TABLE) m_time;
+
+query
+SELECT pk FROM m_time_t WHERE t @@ ts_between(TIME '12:00:00', TIME '23:00:00', true, true);
+----
+pk
+2
+
+# Cross-unit: TIME_NS bounds against the micros-encoded TIME column (the bound
+# is cast to the column's unit before tokenizing).
+query
+SELECT pk FROM m_time_t WHERE t @@ ts_between(TIME_NS '12:00:00', TIME_NS '23:00:00', true, true);
+----
+pk
+2
+
+query
+SELECT pk FROM m_time_ttz WHERE ttz @@ ts_between(TIMETZ '12:00:00+02', TIMETZ '23:00:00+02', true, true);
+----
+pk
+2
+
+query
+SELECT pk FROM m_time_tns WHERE tns @@ ts_between(TIME_NS '12:00:00', TIME_NS '23:00:00', true, true);
+----
+pk
+2
+
+# Stored (INCLUDE) values round-trip.
+query
+SELECT pk, t FROM m_time_t ORDER BY pk;
+----
+pk	t
+1	06:00:00
+2	18:30:00
+
+# The binary wire carries micros, so sub-microsecond digits truncate there.
+skipif pg-wire-extended
+query
+SELECT pk, tns FROM m_time_tns ORDER BY pk;
+----
+pk	tns
+1	06:00:00.000000001
+2	18:30:00.999999999
+
+onlyif pg-wire-extended
+query
+SELECT pk, tns FROM m_time_tns ORDER BY pk;
+----
+pk	tns
+1	06:00:00
+2	18:30:00.999999
+
+
+# ============================================================================
+# TIMESTAMP_S / TIMESTAMP_MS / TIMESTAMP_NS scalar — raw-unit int64 encodings
+# (seconds / millis / nanos). Cross-unit bounds are the critical probes: the
+# bound is cast to the column's unit before tokenizing, so a micros-typed
+# TIMESTAMP bound must land exactly on the stored unit's sub-second boundary.
+# ============================================================================
+
+statement ok
+CREATE TABLE m_scaled(pk INTEGER PRIMARY KEY, ts_s TIMESTAMP_S, ts_ms TIMESTAMP_MS, ts_ns TIMESTAMP_NS);
+
+statement ok
+CREATE INDEX m_scaled_s  ON m_scaled USING inverted(pk, ts_s)  INCLUDE (ts_s);
+
+statement ok
+CREATE INDEX m_scaled_ms ON m_scaled USING inverted(pk, ts_ms) INCLUDE (ts_ms);
+
+statement ok
+CREATE INDEX m_scaled_ns ON m_scaled USING inverted(pk, ts_ns) INCLUDE (ts_ns);
+
+statement ok
+INSERT INTO m_scaled VALUES
+    (1, TIMESTAMP_S '2024-01-01 00:00:00', TIMESTAMP_MS '2024-01-01 00:00:00.251',
+        TIMESTAMP_NS '2024-01-01 00:00:00.000000001'),
+    (2, TIMESTAMP_S '2024-06-15 12:00:00', TIMESTAMP_MS '2024-06-15 12:00:00.753',
+        TIMESTAMP_NS '2024-06-15 12:00:00.123456789');
+
+statement ok
+VACUUM (REFRESH_TABLE) m_scaled;
+
+query
+SELECT pk FROM m_scaled_s WHERE ts_s @@ ts_between(TIMESTAMP_S '2024-03-01 00:00:00', TIMESTAMP_S '2024-12-31 00:00:00', true, true);
+----
+pk
+2
+
+query
+SELECT pk FROM m_scaled_ms WHERE ts_ms @@ ts_between(TIMESTAMP_MS '2024-03-01 00:00:00', TIMESTAMP_MS '2024-12-31 00:00:00', true, true);
+----
+pk
+2
+
+query
+SELECT pk FROM m_scaled_ns WHERE ts_ns @@ ts_between(TIMESTAMP_NS '2024-03-01 00:00:00', TIMESTAMP_NS '2024-12-31 00:00:00', true, true);
+----
+pk
+2
+
+# Cross-unit: DATE bounds against the seconds-encoded column.
+query
+SELECT pk FROM m_scaled_s WHERE ts_s @@ ts_between(DATE '2024-03-01', DATE '2024-12-31', true, true);
+----
+pk
+2
+
+# Cross-unit sub-second window: micros bounds land around the stored .753 ms.
+query
+SELECT pk FROM m_scaled_ms WHERE ts_ms @@ ts_between(TIMESTAMP '2024-06-15 12:00:00.700', TIMESTAMP '2024-06-15 12:00:00.800', true, true);
+----
+pk
+2
+
+query
+SELECT pk FROM m_scaled_ms WHERE ts_ms @@ ts_between(TIMESTAMP '2024-06-15 12:00:00.754', TIMESTAMP '2024-06-15 12:00:00.800', true, true);
+----
+pk
+
+# Cross-unit sub-micro window: micros bounds bracket the stored .123456789 ns.
+query
+SELECT pk FROM m_scaled_ns WHERE ts_ns @@ ts_between(TIMESTAMP '2024-06-15 12:00:00.123456', TIMESTAMP '2024-06-15 12:00:00.123457', true, true);
+----
+pk
+2
+
+query
+SELECT pk, ts_ms FROM m_scaled_ms ORDER BY pk;
+----
+pk	ts_ms
+1	2024-01-01 00:00:00.251
+2	2024-06-15 12:00:00.753
+
+
+# ============================================================================
+# TIMESTAMPTZ_NS — ns-precision sibling of TIMESTAMPTZ. DuckDB has no
+# micros<->nanos tz casts, so bounds must be TIMESTAMPTZ_NS-typed.
+# ============================================================================
+
+statement ok
+CREATE TABLE m_tzns(pk INTEGER PRIMARY KEY, ts TIMESTAMPTZ_NS);
+
+statement ok
+CREATE INDEX m_tzns_col ON m_tzns USING inverted(pk, ts) INCLUDE (ts);
+
+statement ok
+INSERT INTO m_tzns VALUES
+    (1, TIMESTAMPTZ_NS '2024-01-01 00:00:00.000000001+00'),
+    (2, TIMESTAMPTZ_NS '2024-06-15 12:00:00.123456789+00');
+
+statement ok
+VACUUM (REFRESH_TABLE) m_tzns;
+
+query
+SELECT pk FROM m_tzns_col WHERE ts @@ ts_between(TIMESTAMPTZ_NS '2024-03-01 00:00:00+00', TIMESTAMPTZ_NS '2024-12-31 00:00:00+00', true, true);
+----
+pk
+2
+
+
 # --- teardown ---------------------------------------------------------------
+
+statement ok
+DROP TABLE m_time;
+
+statement ok
+DROP TABLE m_scaled;
+
+statement ok
+DROP TABLE m_tzns;
 
 statement ok
 DROP TABLE m_t;

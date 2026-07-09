@@ -1379,8 +1379,13 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
     info->logical_type = duckdb::ArrayType::GetChildType(info->logical_type);
   }
 
-  if (matched_unwrapped && unwrapped.override_type) {
+  if (matched_unwrapped && unwrapped.override_type &&
+      unwrapped.override_type->id() != info->logical_type.id()) {
     if (IsNumericTypeId(unwrapped.override_type->id())) {
+      if (!irs::field_limits::valid(info->numeric_field_id)) {
+        return nullptr;
+      }
+      // Numeric field id is set up -> it's json leaf
       info->logical_type = duckdb::LogicalType::DOUBLE;
     } else {
       info->logical_type = *unwrapped.override_type;
@@ -1416,7 +1421,11 @@ void ResetNumericStream(irs::NumericTokenizer& stream,
       stream.reset(value.GetValue<int32_t>());
       break;
     case catalog::term_dict::Kind::NumericI64:
-      stream.reset(value.GetValue<int64_t>());
+      if (value.type().InternalType() == duckdb::PhysicalType::INT64) {
+        stream.reset(value.GetValueUnsafe<int64_t>());
+      } else {
+        stream.reset(value.GetValue<int64_t>());
+      }
       break;
     case catalog::term_dict::Kind::NumericF32:
       stream.reset(value.GetValue<float>());

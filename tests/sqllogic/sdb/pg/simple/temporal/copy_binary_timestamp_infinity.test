@@ -1,0 +1,85 @@
+hash-threshold 100
+
+control substitution on
+
+statement ok
+CREATE TABLE tsinf_src
+(
+  id    INTEGER PRIMARY KEY,
+  ts    TIMESTAMP,
+  tz    TIMESTAMPTZ,
+  ts_s  TIMESTAMP_S,
+  ts_ms TIMESTAMP_MS,
+  ts_ns TIMESTAMP_NS,
+  tz_ns TIMESTAMPTZ_NS,
+  d     DATE
+);
+
+
+statement ok
+CREATE TABLE tsinf_dst
+(
+  id    INTEGER PRIMARY KEY,
+  ts    TIMESTAMP,
+  tz    TIMESTAMPTZ,
+  ts_s  TIMESTAMP_S,
+  ts_ms TIMESTAMP_MS,
+  ts_ns TIMESTAMP_NS,
+  tz_ns TIMESTAMPTZ_NS,
+  d     DATE
+);
+
+
+statement count 3
+INSERT INTO tsinf_src VALUES
+    (1, 'infinity', 'infinity', 'infinity', 'infinity', 'infinity', 'infinity', 'infinity'),
+    (2, '-infinity', '-infinity', '-infinity', '-infinity', '-infinity', '-infinity', '-infinity'),
+    (3, '2024-03-09 15:20:00', '2024-03-09 15:20:00+00', '2024-03-09 15:20:00',
+        '2024-03-09 15:20:00.123', '2024-03-09 15:20:00.123456', '2024-03-09 15:20:00.123456+00',
+        '2024-03-09');
+
+
+statement count 3
+COPY tsinf_src TO '${__TEST_DIR__}/copy_binary_ts_inf.bin' (FORMAT binary);
+
+
+statement count 3
+COPY tsinf_dst FROM '${__TEST_DIR__}/copy_binary_ts_inf.bin' (FORMAT binary);
+
+
+query
+SELECT
+  (SELECT count(*) FROM (SELECT * FROM tsinf_src EXCEPT SELECT * FROM tsinf_dst) a)
+  + (SELECT count(*) FROM (SELECT * FROM tsinf_dst EXCEPT SELECT * FROM tsinf_src) b)
+  AS diff;
+----
+diff
+0
+
+
+query
+SELECT count(*) AS pos FROM tsinf_dst
+WHERE ts    = 'infinity'::TIMESTAMP
+  AND tz    = 'infinity'::TIMESTAMPTZ
+  AND ts_s  = 'infinity'::TIMESTAMP_S
+  AND ts_ms = 'infinity'::TIMESTAMP_MS
+  AND ts_ns = 'infinity'::TIMESTAMP_NS
+  AND tz_ns = 'infinity'::TIMESTAMPTZ_NS
+  AND d     = 'infinity'::DATE;
+----
+pos
+1
+
+
+query
+SELECT count(*) AS neg FROM tsinf_dst
+WHERE ts    = '-infinity'::TIMESTAMP
+  AND tz    = '-infinity'::TIMESTAMPTZ
+  AND ts_s  = '-infinity'::TIMESTAMP_S
+  AND ts_ms = '-infinity'::TIMESTAMP_MS
+  AND ts_ns = '-infinity'::TIMESTAMP_NS
+  AND tz_ns = '-infinity'::TIMESTAMPTZ_NS
+  AND d     = '-infinity'::DATE;
+----
+neg
+1

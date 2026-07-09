@@ -773,11 +773,41 @@ struct TimestampSecTextCore {
   }
 };
 
+int64_t TimestampSecondsToWire(int64_t value) {
+  if (value == std::numeric_limits<int64_t>::max()) {
+    return value;
+  }
+  if (value == -std::numeric_limits<int64_t>::max()) {
+    return std::numeric_limits<int64_t>::min();
+  }
+  return (value - kGapSec) * 1'000'000;
+}
+
+int64_t TimestampMillisToWire(int64_t value) {
+  if (value == std::numeric_limits<int64_t>::max()) {
+    return value;
+  }
+  if (value == -std::numeric_limits<int64_t>::max()) {
+    return std::numeric_limits<int64_t>::min();
+  }
+  return (value - kGapMs) * 1000;
+}
+
+int64_t TimestampNanosToWire(int64_t value) {
+  if (value == std::numeric_limits<int64_t>::max()) {
+    return value;
+  }
+  if (value == -std::numeric_limits<int64_t>::max()) {
+    return std::numeric_limits<int64_t>::min();
+  }
+  return value / 1000 - kGapUs;
+}
+
 struct TimestampSecBinCore {
   using Value = duckdb::timestamp_sec_t;
   static constexpr uint32_t kMaxBytes = 8;
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value timestamp) {
-    absl::big_endian::Store64(dst, (timestamp.value - kGapSec) * 1'000'000);
+    absl::big_endian::Store64(dst, TimestampSecondsToWire(timestamp.value));
     return 8;
   }
 };
@@ -797,7 +827,7 @@ struct TimestampMsBinCore {
   using Value = duckdb::timestamp_ms_t;
   static constexpr uint32_t kMaxBytes = 8;
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value timestamp) {
-    absl::big_endian::Store64(dst, (timestamp.value - kGapMs) * 1000);
+    absl::big_endian::Store64(dst, TimestampMillisToWire(timestamp.value));
     return 8;
   }
 };
@@ -858,7 +888,7 @@ struct TimestampNsBinCore {
   using Value = duckdb::timestamp_ns_t;
   static constexpr uint32_t kMaxBytes = 8;
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value timestamp) {
-    absl::big_endian::Store64(dst, (timestamp.value - kGapNs) / 1000);
+    absl::big_endian::Store64(dst, TimestampNanosToWire(timestamp.value));
     return 8;
   }
 };
@@ -867,10 +897,13 @@ template<WrapContext InContainer>
 struct TimestampTzTextCore {
   using Value = duckdb::timestamp_tz_t;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value tz) {
-    auto str = duckdb::Timestamp::ToString(duckdb::timestamp_t{tz});
+    const auto ts = duckdb::timestamp_t{tz};
+    auto str = duckdb::Timestamp::ToString(ts);
     WithWrapIfNested<InContainer>(ctx, [&] {
       ctx.writer->Write(str);
-      ctx.writer->Write("+00");
+      if (ts.IsFinite()) {
+        ctx.writer->Write("+00");
+      }
     });
   }
 };
@@ -900,7 +933,7 @@ struct TimestampTzNsBinCore {
   using Value = duckdb::timestamp_tz_ns_t;
   static constexpr uint32_t kMaxBytes = 8;
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value tz) {
-    absl::big_endian::Store64(dst, (tz.value - kGapNs) / 1000);
+    absl::big_endian::Store64(dst, TimestampNanosToWire(tz.value));
     return 8;
   }
 };

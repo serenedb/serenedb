@@ -109,6 +109,46 @@ struct BlobBin {
   }
 };
 
+int64_t TimestampMicrosFromWire(int64_t us) {
+  if (us == std::numeric_limits<int64_t>::max()) {
+    return us;
+  }
+  if (us == std::numeric_limits<int64_t>::min()) {
+    return -std::numeric_limits<int64_t>::max();
+  }
+  return us + kGapUs;
+}
+
+int64_t TimestampSecondsFromWire(int64_t us) {
+  if (us == std::numeric_limits<int64_t>::max()) {
+    return us;
+  }
+  if (us == std::numeric_limits<int64_t>::min()) {
+    return -std::numeric_limits<int64_t>::max();
+  }
+  return us / 1'000'000 + kGapSec;
+}
+
+int64_t TimestampMillisFromWire(int64_t us) {
+  if (us == std::numeric_limits<int64_t>::max()) {
+    return us;
+  }
+  if (us == std::numeric_limits<int64_t>::min()) {
+    return -std::numeric_limits<int64_t>::max();
+  }
+  return us / 1000 + kGapMs;
+}
+
+int64_t TimestampNanosFromWire(int64_t us) {
+  if (us == std::numeric_limits<int64_t>::max()) {
+    return us;
+  }
+  if (us == std::numeric_limits<int64_t>::min()) {
+    return -std::numeric_limits<int64_t>::max();
+  }
+  return (us + kGapUs) * 1000;
+}
+
 struct TimestampBin {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
@@ -116,7 +156,7 @@ struct TimestampBin {
       return false;
     }
     const auto us = absl::big_endian::Load<int64_t>(data.data());
-    sink.Fixed(duckdb::timestamp_t{us + kGapUs});
+    sink.Fixed(duckdb::timestamp_t{TimestampMicrosFromWire(us)});
     return true;
   }
 };
@@ -128,7 +168,7 @@ struct TimestampTzBin {
       return false;
     }
     const auto us = absl::big_endian::Load<int64_t>(data.data());
-    sink.Fixed(duckdb::timestamp_tz_t{us + kGapUs});
+    sink.Fixed(duckdb::timestamp_tz_t{TimestampMicrosFromWire(us)});
     return true;
   }
 };
@@ -189,7 +229,7 @@ struct TimestampSecBin {
       return false;
     }
     const auto us = absl::big_endian::Load<int64_t>(data.data());
-    sink.Fixed(duckdb::timestamp_sec_t(us / 1'000'000 + kGapSec));
+    sink.Fixed(duckdb::timestamp_sec_t(TimestampSecondsFromWire(us)));
     return true;
   }
 };
@@ -201,7 +241,7 @@ struct TimestampMsBin {
       return false;
     }
     const auto us = absl::big_endian::Load<int64_t>(data.data());
-    sink.Fixed(duckdb::timestamp_ms_t(us / 1000 + kGapMs));
+    sink.Fixed(duckdb::timestamp_ms_t(TimestampMillisFromWire(us)));
     return true;
   }
 };
@@ -213,7 +253,19 @@ struct TimestampNsBin {
       return false;
     }
     const auto us = absl::big_endian::Load<int64_t>(data.data());
-    sink.Fixed(duckdb::timestamp_ns_t(us * 1000 + kGapNs));
+    sink.Fixed(duckdb::timestamp_ns_t(TimestampNanosFromWire(us)));
+    return true;
+  }
+};
+
+struct TimestampTzNsBin {
+  template<typename Sink>
+  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+    if (data.size() != 8) {
+      return false;
+    }
+    const auto us = absl::big_endian::Load<int64_t>(data.data());
+    sink.Fixed(duckdb::timestamp_tz_ns_t(TimestampNanosFromWire(us)));
     return true;
   }
 };
@@ -1718,6 +1770,9 @@ DeserializationFunction<Sink> GetDeserialization(
                            Sink>(binary);
     case TIMESTAMP_TZ:
       return SelectDecoder<TimestampTzBin, TimestampTzText, Sink>(binary);
+    case TIMESTAMP_TZ_NS:
+      return SelectDecoder<TimestampTzNsBin,
+                           CastText<duckdb::timestamp_tz_ns_t>, Sink>(binary);
     case INTERVAL:
       return SelectDecoder<IntervalBin, IntervalText, Sink>(binary);
     case UUID:

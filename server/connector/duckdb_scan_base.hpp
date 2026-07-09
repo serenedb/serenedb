@@ -80,6 +80,10 @@ struct CommonScanGlobalState : public duckdb::GlobalTableFunctionState {
   duckdb::idx_t score_output_idx = 0;
   const VectorScorerOptions* vector_scorer = nullptr;
 
+  // Output slot for a search-table generated PK (rowid), materialized from
+  // `.col` as a covered column; INVALID_INDEX when not projected.
+  duckdb::idx_t generated_pk_output_idx = duckdb::DConstants::INVALID_INDEX;
+
   bool finished = false;
 
   const irs::IndexReader* reader = nullptr;

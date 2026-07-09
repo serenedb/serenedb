@@ -59,6 +59,9 @@ class ViewIndexSourceBase : public IndexSource {
   // skips (filter-pruned row groups) read NULL instead of stale data. Call
   // after AliasOutput + SetCardinality, before the lookup writes.
   void PreNullOutput(duckdb::idx_t count);
+  // Reorder the doc-id-keyed output columns (every slot the lookup did not
+  // write) into sorted-pk order, matching the compact pk-order lookup emit.
+  void GatherNonLookupColumns(duckdb::DataChunk& output, duckdb::idx_t count);
 
   ViewFastPath _fast_path;
   std::vector<duckdb::idx_t> _real_proj_slots;

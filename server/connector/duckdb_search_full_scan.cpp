@@ -191,8 +191,12 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
 
   ClassifyColumnstoreProjections(*state, bind_data);
 
-  if (state->BulkChunkEligible() && !ss.text_scorer && !state->parallel_topk) {
-    uint64_t rg_rows = bind_data.inverted_index->GetOptions().row_group_size;
+  if (state->BulkChunkEligible() && !ss.text_scorer && !state->parallel_topk &&
+      state->table_filter.Empty() && !state->row_expr) {
+    // Search tables carry no inverted_index; fall back to the default unit.
+    uint64_t rg_rows = bind_data.inverted_index
+                         ? bind_data.inverted_index->GetOptions().row_group_size
+                         : 0;
     if (rg_rows == 0) {
       rg_rows = DEFAULT_ROW_GROUP_SIZE;
     }

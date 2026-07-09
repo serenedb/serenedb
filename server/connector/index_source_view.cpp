@@ -88,7 +88,10 @@ void ViewIndexSourceBase::SortRows(const PrimaryKeyBatch& pk,
   _output_positions.resize(count);
   for (duckdb::idx_t k = 0; k < count; ++k) {
     _sorted_rows[k] = pk.rows[start + _sort_perm[k]];
-    _output_positions[k] = _sort_perm[k];
+    // Compact pk-order emit (decision B): the lookup writes survivors in
+    // sorted-pk order; GatherNonLookupColumns then reorders the doc-id-keyed
+    // columns to match, so nothing scatters the (large) lookup columns back.
+    _output_positions[k] = k;
   }
 }
 
@@ -110,7 +113,8 @@ void ViewIndexSourceBase::SortFilesRows(const PrimaryKeyBatch& pk,
   for (duckdb::idx_t k = 0; k < count; ++k) {
     _sorted_files[k] = pk.files[start + _sort_perm[k]];
     _sorted_rows[k] = pk.rows[start + _sort_perm[k]];
-    _output_positions[k] = _sort_perm[k];
+    // Compact pk-order emit (decision B) -- see SortRows.
+    _output_positions[k] = k;
   }
 }
 
@@ -152,6 +156,28 @@ void ViewIndexSourceBase::RunCastPass(duckdb::DataChunk& output,
       _cast_executors[c]->ExecuteExpression(cast_input,
                                             output.data[_real_proj_slots[c]]);
     }
+  }
+}
+
+void ViewIndexSourceBase::GatherNonLookupColumns(duckdb::DataChunk& output,
+                                                 duckdb::idx_t count) {
+  if (count == 0) {
+    return;
+  }
+  std::vector<bool> is_lookup(output.ColumnCount(), false);
+  for (const auto slot : _real_proj_slots) {
+    is_lookup[slot] = true;
+  }
+  duckdb::SelectionVector sel(count);
+  for (duckdb::idx_t k = 0; k < count; ++k) {
+    sel.set_index(k, _sort_perm[k]);
+  }
+  for (duckdb::idx_t c = 0; c < output.ColumnCount(); ++c) {
+    if (is_lookup[c]) {
+      continue;
+    }
+    output.data[c].Slice(sel, count);
+    output.data[c].Flatten(count);
   }
 }
 

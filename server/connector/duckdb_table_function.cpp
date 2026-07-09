@@ -47,7 +47,6 @@
 #include "connector/duckdb_index_scan_entry.h"
 #include "connector/duckdb_scan_base.hpp"
 #include "connector/duckdb_search_full_scan.hpp"
-#include "connector/duckdb_search_table_scan.hpp"
 #include "connector/duckdb_table_entry.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/search_filter_printer.hpp"
@@ -801,15 +800,6 @@ static void SetCommonCallbacks(duckdb::TableFunction& func) {
   func.order_preservation_type = duckdb::OrderPreservationType::NO_ORDER;
   // TODO: We can init_global on schedule for some scan types, with
   // global_initialization, but why?
-}
-
-duckdb::TableFunction CreateSearchTableScanFunction() {
-  duckdb::TableFunction func{
-    "search_table_fullscan",   {}, SearchTableScanFunction, SereneDBScanBind,
-    SearchTableScanInitGlobal,
-  };
-  SetCommonCallbacks(func);
-  return func;
 }
 
 namespace {

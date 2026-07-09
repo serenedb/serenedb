@@ -215,6 +215,7 @@ void RowIdFetchIndexSource::Materialize(duckdb::ClientContext& context,
                      _fetch_chunk, _tf_target);
 
   RunCastPass(output, count);
+  GatherNonLookupColumns(output, count);
 }
 
 }  // namespace sdb::connector

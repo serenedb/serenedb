@@ -216,6 +216,9 @@ enum class ScanEntryKind : uint8_t {
   BaseTable,
   InvertedIndex,
   SecondaryIndex,
+  // A TableEngine::Search table: its iresearch store IS the table, so every
+  // column is covered in `.col` and there is no separate lookup source.
+  SearchTable,
 };
 
 constexpr catalog::Column::Id kInvalidColumnId = catalog::Column::kInvalidId;
@@ -238,6 +241,9 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   bool IsViewBacked() const noexcept { return _kind == Kind::View; }
   bool IsInvertedIndexEntry() const noexcept {
     return entry_kind == ScanEntryKind::InvertedIndex;
+  }
+  bool IsSearchTableEntry() const noexcept {
+    return entry_kind == ScanEntryKind::SearchTable;
   }
 
   template<typename T>
@@ -323,7 +329,6 @@ uint32_t ReadBoundedIntSetting(duckdb::ClientContext& context,
                                std::string_view name, int32_t min_inclusive,
                                uint32_t default_value);
 
-duckdb::TableFunction CreateSearchTableScanFunction();
 
 duckdb::TableFunction CreateIResearchScanFunction();
 

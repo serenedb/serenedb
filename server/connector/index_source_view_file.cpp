@@ -103,6 +103,7 @@ void ViewFileSingleFileIndexSource::Materialize(duckdb::ClientContext& context,
   _lookup_func.function(context, in, _tf_target);
 
   RunCastPass(output, count);
+  GatherNonLookupColumns(output, count);
 }
 
 ViewFileGlobIndexSource::ViewFileGlobIndexSource(
@@ -182,6 +183,7 @@ void ViewFileGlobIndexSource::Materialize(duckdb::ClientContext& context,
   }
 
   RunCastPass(output, count);
+  GatherNonLookupColumns(output, count);
 }
 
 }  // namespace sdb::connector

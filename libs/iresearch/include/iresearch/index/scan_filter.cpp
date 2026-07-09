@@ -31,6 +31,7 @@
 #include <functional>
 
 #include "basics/assert.h"
+#include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/index/pk_batch_helpers.hpp"

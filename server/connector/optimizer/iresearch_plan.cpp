@@ -2531,6 +2531,11 @@ void IResearchPushdownComplexFilter(
     return;
   }
   auto& ss = bind_data.scan_source->Cast<connector::SearchScan>();
+  // A search table's iresearch store IS the table: there is no index-side
+  // predicate, so leave every filter for the standard column-filter pushdown.
+  if (!bind_data.inverted_index) {
+    return;
+  }
   if (ss.TsDictMode()) {
     auto index = bind_data.inverted_index;
     auto snapshot = conn_ctx.AcquireCatalogSnapshot();

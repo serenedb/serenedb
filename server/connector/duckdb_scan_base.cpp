@@ -68,10 +68,16 @@ void InitCommonState(CommonScanGlobalState& state,
   const auto num_bind_columns = bind_data.column_ids.size();
   for (auto col_id : input.column_ids) {
     if (col_id == kColumnIdentifierGeneratedPk) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("projecting the rowid through an inverted-index scan is not "
-                "supported"));
+      if (!bind_data.IsSearchTableEntry()) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("projecting the rowid through an inverted-index scan is not "
+                  "supported"));
+      }
+      // Search table: the rowid IS the generated PK, materialized from `.col`.
+      state.generated_pk_output_idx = state.projected_columns.size();
+      state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
+      state.projected_types.push_back(duckdb::LogicalType::ROW_TYPE);
     } else if (col_id == kColumnIdentifierTableOid) {
       state.scan_tableoid = true;
       state.tableoid_output_idx = state.projected_columns.size();
@@ -215,12 +221,20 @@ void BuildTableFilter(CommonScanGlobalState& state,
       state.table_filter.AddColumn(col_id.id(), expr_filter, is_optional,
                                    is_dynamic, passes_null);
     } else if (!is_optional) {
-      const bool passes_null =
-        expr_filter.EvaluateWithConstant(context, duckdb::Value(slot_type));
-      state.table_filter.AddRowFetch(bind_index, slot_type, expr_filter,
-                                     passes_null);
-      state.rf_columns.push_back(bind_index);
-      state.rf_types.push_back(slot_type);
+      // Lookup-column filter: the emit's single Materialize pass fetches the
+      // filter and output columns together, so evaluate on the materialized
+      // chunk (row_expr) -- no separate row-fetch pass, and (since row_expr
+      // demotes top-k to streaming) no per-candidate over-fetch in a collector.
+      auto slot_ref =
+        duckdb::make_uniq<duckdb::BoundReferenceExpression>(slot_type, idx);
+      auto expr = entry.Filter().ToExpression(*slot_ref);
+      if (!state.row_expr) {
+        state.row_expr = std::move(expr);
+      } else {
+        state.row_expr = duckdb::make_uniq<duckdb::BoundConjunctionExpression>(
+          duckdb::ExpressionType::CONJUNCTION_AND, std::move(state.row_expr),
+          std::move(expr));
+      }
     }
   }
   state.table_filter.SetPkColumn(catalog::Column::kGeneratedPKId.id());
@@ -274,6 +288,42 @@ void DecodeExtractPath(const duckdb::ColumnIndex& column_index,
 
 void ClassifyColumnstoreProjections(CommonScanGlobalState& state,
                                     const SereneDBScanBindData& bind_data) {
+  if (bind_data.IsSearchTableEntry()) {
+    // Search table: every column lives in `.col`, so all projections are
+    // covered and there is no lookup source.
+    std::vector<std::string_view> path;
+    for (duckdb::idx_t proj = 0; proj < state.projected_columns.size();
+         ++proj) {
+      const auto bind_col = state.projected_columns[proj];
+      if (bind_col == duckdb::DConstants::INVALID_INDEX) {
+        continue;
+      }
+      const auto col_id = bind_data.column_ids[bind_col];
+      ColumnstoreProjection cp{.output_slot = proj, .column_id = col_id.id()};
+      if (proj < state.projected_column_indexes.size()) {
+        const auto& column_index = state.projected_column_indexes[proj];
+        if (column_index.IsPushdownExtract() && column_index.HasChildren()) {
+          path.clear();
+          DecodeExtractPath(column_index, bind_data.column_types[bind_col],
+                            path);
+          if (!path.empty()) {
+            cp.extract_path = std::move(path);
+            cp.extract_scan_type = column_index.GetScanType();
+          }
+        }
+      }
+      state.cs_projections.emplace_back(std::move(cp));
+      state.external_projected_columns[proj] =
+        duckdb::DConstants::INVALID_INDEX;
+    }
+    if (state.generated_pk_output_idx != duckdb::DConstants::INVALID_INDEX) {
+      state.cs_projections.emplace_back(ColumnstoreProjection{
+        .output_slot = state.generated_pk_output_idx,
+        .column_id = catalog::Column::kGeneratedPKId.id()});
+    }
+    state.has_external_projections = false;
+    return;
+  }
   if (!bind_data.IsInvertedIndexEntry() || !bind_data.inverted_index) {
     state.has_external_projections = state.has_real_column;
     return;

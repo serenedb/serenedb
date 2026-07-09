@@ -22,7 +22,6 @@ add_library(
     duckdb_table_function.cpp
     duckdb_scan_base.cpp
     duckdb_search_full_scan.cpp
-    duckdb_search_table_scan.cpp
     full_scanner.cpp
     index_source_factory.cpp
     index_source_view.cpp

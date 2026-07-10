@@ -80,10 +80,21 @@ void ViewIndexSourceBase::SortRows(const PrimaryKeyBatch& pk,
                                    duckdb::idx_t start, duckdb::idx_t count) {
   _sort_perm.resize(count);
   std::iota(_sort_perm.begin(), _sort_perm.end(), duckdb::idx_t{0});
-  std::sort(_sort_perm.begin(), _sort_perm.end(),
-            [&](duckdb::idx_t a, duckdb::idx_t b) {
-              return pk.rows[start + a] < pk.rows[start + b];
-            });
+  // Doc-id order already ascends in pk for contiguous-insert base tables and
+  // single-file views: an O(n) sortedness check skips the O(n log n) sort.
+  bool sorted = true;
+  for (duckdb::idx_t k = 1; k < count; ++k) {
+    if (pk.rows[start + k] < pk.rows[start + k - 1]) {
+      sorted = false;
+      break;
+    }
+  }
+  if (!sorted) {
+    std::sort(_sort_perm.begin(), _sort_perm.end(),
+              [&](duckdb::idx_t a, duckdb::idx_t b) {
+                return pk.rows[start + a] < pk.rows[start + b];
+              });
+  }
   _sorted_rows.resize(count);
   _output_positions.resize(count);
   for (duckdb::idx_t k = 0; k < count; ++k) {
@@ -100,13 +111,24 @@ void ViewIndexSourceBase::SortFilesRows(const PrimaryKeyBatch& pk,
                                         duckdb::idx_t count) {
   _sort_perm.resize(count);
   std::iota(_sort_perm.begin(), _sort_perm.end(), duckdb::idx_t{0});
-  std::sort(_sort_perm.begin(), _sort_perm.end(),
-            [&](duckdb::idx_t a, duckdb::idx_t b) {
-              if (pk.files[start + a] != pk.files[start + b]) {
-                return pk.files[start + a] < pk.files[start + b];
-              }
-              return pk.rows[start + a] < pk.rows[start + b];
-            });
+  // Skip the sort when (file, row) already ascends -- see SortRows.
+  bool sorted = true;
+  for (duckdb::idx_t k = 1; k < count; ++k) {
+    const auto pf = pk.files[start + k - 1], cf = pk.files[start + k];
+    if (cf < pf || (cf == pf && pk.rows[start + k] < pk.rows[start + k - 1])) {
+      sorted = false;
+      break;
+    }
+  }
+  if (!sorted) {
+    std::sort(_sort_perm.begin(), _sort_perm.end(),
+              [&](duckdb::idx_t a, duckdb::idx_t b) {
+                if (pk.files[start + a] != pk.files[start + b]) {
+                  return pk.files[start + a] < pk.files[start + b];
+                }
+                return pk.rows[start + a] < pk.rows[start + b];
+              });
+  }
   _sorted_files.resize(count);
   _sorted_rows.resize(count);
   _output_positions.resize(count);

@@ -93,16 +93,15 @@ struct CommonScanGlobalState : public duckdb::GlobalTableFunctionState {
   std::atomic<duckdb::idx_t> produced_rows{0};
 
   // Pushed filters the scan enforces itself (filter_pushdown = true means
-  // nothing above re-checks). Column/row-fetch filters live in the irs
-  // table filter; filters over virtual or extract output slots land in
-  // `row_expr`, enforceable only on the materialized chunk (ApplyRowFilter)
-  // -- their presence demotes the top-k scan modes to streaming.
+  // nothing above re-checks). `.col` (INCLUDE) column filters and lookup-column
+  // filters live in the irs table filter -- the former applied on the
+  // columnstore before materialize, the latter post-materialize on the emit's
+  // one Materialize output (FilterLookupColumns). Filters over virtual/extract
+  // output slots land in `row_expr`, enforceable only on the materialized
+  // chunk (ApplyRowFilter); both post-materialize kinds demote top-k to
+  // streaming.
   irs::TableFilter table_filter;
   duckdb::unique_ptr<duckdb::Expression> row_expr;
-  // Compact row-fetch projection derived from the table filter: what each
-  // thread's RowFetcher IndexSource materializes.
-  std::vector<duckdb::idx_t> rf_columns;
-  duckdb::vector<duckdb::LogicalType> rf_types;
 
   // filter_prune: when set, the scanned column_ids include filter-only columns
   // the output must not emit. These are indexes into the scanned columns that
@@ -173,12 +172,9 @@ void BuildTableFilter(CommonScanGlobalState& state,
                       const SereneDBScanBindData& bind_data,
                       const duckdb::TableFilterSet& filters);
 
-// Binds the table filter to the local filter and, when row-fetch filters
-// exist, injects this thread's IndexSource projected to the filter columns.
+// Binds the shared table filter into this thread's ScanFilter.
 void InitLocalFilter(CommonScanLocalState& lstate,
-                     const CommonScanGlobalState& gstate,
-                     duckdb::ClientContext& context,
-                     const SereneDBScanBindData& bind_data);
+                     const CommonScanGlobalState& gstate);
 
 // Enforce `row_expr` (filters over virtual/extract slots) on a materialized
 // chunk; slices it to survivors.

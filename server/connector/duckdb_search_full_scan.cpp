@@ -474,7 +474,7 @@ void BuildTsDictSlots(TsDictLocalState& lstate,
 }  // namespace
 
 duckdb::unique_ptr<duckdb::LocalTableFunctionState> SearchFullScanInitLocal(
-  duckdb::ExecutionContext& context, duckdb::TableFunctionInitInput& input,
+  duckdb::ExecutionContext& /*context*/, duckdb::TableFunctionInitInput& input,
   duckdb::GlobalTableFunctionState* state) {
   auto& gstate = state->Cast<SearchFullScanGlobalState>();
   const auto& bd = input.bind_data->Cast<SereneDBScanBindData>();
@@ -493,7 +493,7 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> SearchFullScanInitLocal(
   }
   if (gstate.count_only) {
     auto lstate = duckdb::make_uniq<SearchFullScanCountLocalState>();
-    InitLocalFilter(*lstate, gstate, context.client, bd);
+    InitLocalFilter(*lstate, gstate);
     if (gstate.queries.empty()) {
       lstate->local_count = gstate.reader->live_docs_count();
       lstate->segments_exhausted = true;
@@ -503,7 +503,7 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> SearchFullScanInitLocal(
   if (gstate.parallel_topk) {
     auto lstate = duckdb::make_uniq<SearchFullScanTopKLocalState>();
     lstate->bind_data = &bd;
-    InitLocalFilter(*lstate, gstate, context.client, bd);
+    InitLocalFilter(*lstate, gstate);
     auto& ss = bd.scan_source->Cast<SearchScan>();
     const size_t k = gstate.rerank_pool ? gstate.rerank_pool : *ss.score_top_k;
     lstate->hit_buf.resize(irs::BlockSize(k));
@@ -518,7 +518,7 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> SearchFullScanInitLocal(
   }
   auto lstate = duckdb::make_uniq<SearchFullScanScanLocalState>();
   lstate->bind_data = &bd;
-  InitLocalFilter(*lstate, gstate, context.client, bd);
+  InitLocalFilter(*lstate, gstate);
   BuildOffsetsEntries(*lstate, input, bd);
   return lstate;
 }

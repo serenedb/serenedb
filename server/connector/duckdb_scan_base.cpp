@@ -229,17 +229,11 @@ void BuildTableFilter(CommonScanGlobalState& state,
       state.table_filter.AddRowFetch(idx, slot_type, expr_filter, passes_null);
     }
   }
-  state.table_filter.SetPkColumn(catalog::Column::kGeneratedPKId.id());
   state.table_filter.Seal();
 }
 
 void InitLocalFilter(CommonScanLocalState& lstate,
-                     const CommonScanGlobalState& gstate,
-                     duckdb::ClientContext& /*context*/,
-                     const SereneDBScanBindData& /*bind_data*/) {
-  // Lookup-column filters no longer need a separate RowFetcher source: they
-  // run post-materialize on the emit's single Materialize output
-  // (FilterLookupColumns).
+                     const CommonScanGlobalState& gstate) {
   lstate.filter.Init(gstate.table_filter);
 }
 
@@ -394,12 +388,11 @@ void CommonScanGetMetrics(duckdb::TableFunctionGetMetricsInput& input) {
 }
 
 duckdb::unique_ptr<duckdb::LocalTableFunctionState> CommonScanInitLocal(
-  duckdb::ExecutionContext& context, duckdb::TableFunctionInitInput& input,
+  duckdb::ExecutionContext& /*context*/,
+  duckdb::TableFunctionInitInput& /*input*/,
   duckdb::GlobalTableFunctionState* global_state) {
   auto lstate = duckdb::make_uniq<CommonScanLocalState>();
-  InitLocalFilter(*lstate, global_state->Cast<CommonScanGlobalState>(),
-                  context.client,
-                  input.bind_data->Cast<SereneDBScanBindData>());
+  InitLocalFilter(*lstate, global_state->Cast<CommonScanGlobalState>());
   return lstate;
 }
 

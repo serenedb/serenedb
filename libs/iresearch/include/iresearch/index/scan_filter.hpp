@@ -32,7 +32,6 @@
 #include <duckdb/planner/table_filter_state.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/index/hit_batcher.hpp>
-#include <iresearch/index/index_source.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <memory>
@@ -49,32 +48,6 @@ namespace irs {
 
 class DocIterator;
 struct SubReader;
-
-// Fetches store-backed columns for sorted doc batches of one segment at a
-// time: doc -> PK (columnstore PK column, forward cursor) -> row store via
-// the injected IndexSource, whose projection decides WHAT is fetched. Rows
-// deleted since the index refresh materialize as NULL (order preserved).
-class RowFetcher {
- public:
-  void SetSource(std::unique_ptr<sdb::connector::IndexSource> source,
-                 duckdb::vector<duckdb::LogicalType> chunk_types);
-
-  void StartSegment(const ColReader& col_reader, field_id pk_field_id);
-
-  // `rows` ascending within and across calls per segment. Fills the source
-  // projection's slots of the returned chunk for [0, rows.size()).
-  duckdb::DataChunk& FetchRows(duckdb::ClientContext& ctx,
-                               std::span<const uint64_t> rows);
-
- private:
-  std::unique_ptr<sdb::connector::IndexSource> _source;
-  sdb::connector::PrimaryKeyBatch _pk_batch;
-  // Reads the segment PK column for scattered survivor rows through the same
-  // managed gather the emit path uses; its emitted vector feeds _pk_batch.
-  std::unique_ptr<sdb::connector::HitBatcher> _pk_batcher;
-  duckdb::DataChunk _sink;
-  duckdb::DataChunk _chunk;
-};
 
 // The pushed table filters of one scan, split by how they are evaluated:
 // stored (INCLUDE) columns straight from the segment columnstore with
@@ -117,32 +90,17 @@ class TableFilter {
                  bool is_optional, bool is_dynamic, bool passes_null);
   void AddRowFetch(duckdb::idx_t output_slot, const duckdb::LogicalType& type,
                    const duckdb::ExpressionFilter& filter, bool passes_null);
-  // The columnstore PK column id, required when row-fetch filters exist.
-  void SetPkColumn(field_id pk_column) noexcept { _pk_column = pk_column; }
-  // Sort stored filters cheapest-first; call once after the last Add*. Also
-  // builds the row-fetch filter set pushed into pushdown-capable lookup
-  // sources (parquet/duckdb) so they can prune reads.
+  // Sort stored filters cheapest-first; call once after the last Add*.
   void Seal();
 
   bool Empty() const noexcept { return _columns.empty() && _row_fetch.empty(); }
   bool HasRowFetch() const noexcept { return !_row_fetch.empty(); }
-
-  // The row-fetch filters as a duckdb TableFilterSet keyed by row-fetch
-  // position (== the RowFetcher source's projection order), for reader-side
-  // pushdown. Null when there are no row-fetch filters. Pruning is advisory:
-  // excluded rows still come back and ScanFilter re-checks, so results are
-  // unchanged whether or not a source prunes.
-  duckdb::TableFilterSet* RowFetchFilterSet() const noexcept {
-    return _rf_filter_set.get();
-  }
 
  private:
   friend class ScanFilter;
 
   std::vector<ColumnFilter> _columns;
   std::vector<RowFetchFilter> _row_fetch;
-  duckdb::unique_ptr<duckdb::TableFilterSet> _rf_filter_set;
-  field_id _pk_column = field_limits::invalid();
 };
 
 // Per-thread executable filter over one scan's TableFilter. MatchesBatch
@@ -152,10 +110,6 @@ class TableFilter {
 class ScanFilter {
  public:
   void Init(const TableFilter& filter) noexcept { _table_filter = &filter; }
-
-  // Row-fetch source for this thread, projected to the table filter's row-fetch
-  // columns; required before the first row-fetch evaluation.
-  RowFetcher& Rows() noexcept { return _rows; }
 
   // Segment verdict, in duckdb zonemap terms:
   //   FILTER_ALWAYS_FALSE  no row can pass -- skip the segment
@@ -254,7 +208,6 @@ class ScanFilter {
   std::vector<std::unique_ptr<RowEval>> _evals;
   duckdb::ClientContext* _ctx = nullptr;
   const ColReader* _col_reader = nullptr;
-  RowFetcher _rows;
   duckdb::DataChunk _rf_eval_chunk;
   std::vector<duckdb::unique_ptr<duckdb::TableFilterState>> _col_filter_states;
   std::vector<duckdb::unique_ptr<duckdb::TableFilterState>> _rf_filter_states;

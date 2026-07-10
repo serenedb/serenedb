@@ -34,7 +34,6 @@
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/iterators.hpp"
-#include "iresearch/index/pk_batch_helpers.hpp"
 
 namespace irs {
 namespace {
@@ -134,43 +133,6 @@ void TableFilter::Seal() {
                    [](const ColumnFilter& a, const ColumnFilter& b) {
                      return a.is_optional && !b.is_optional;
                    });
-}
-
-void RowFetcher::SetSource(std::unique_ptr<sdb::connector::IndexSource> source,
-                           duckdb::vector<duckdb::LogicalType> chunk_types) {
-  SDB_ASSERT(source);
-  _source = std::move(source);
-  _pk_batch.kind = _source->PkKind();
-  _chunk.Initialize(duckdb::Allocator::DefaultAllocator(), chunk_types);
-}
-
-void RowFetcher::StartSegment(const ColReader& col_reader,
-                              field_id pk_field_id) {
-  if (!_pk_batcher) {
-    _pk_batcher = std::make_unique<sdb::connector::HitBatcher>(
-      std::span<const sdb::connector::ColumnstoreProjection>{}, pk_field_id,
-      /*track_scores=*/false);
-  }
-  _pk_batcher->BeginSegment(0, &col_reader, nullptr);
-}
-
-duckdb::DataChunk& RowFetcher::FetchRows(duckdb::ClientContext& ctx,
-                                         std::span<const uint64_t> rows) {
-  SDB_ASSERT(_source);
-  SDB_ASSERT(_pk_batcher);
-  SDB_ASSERT(rows.size() <= STANDARD_VECTOR_SIZE);
-  _pk_batch.Reset();
-  GatherRows(*_pk_batcher, rows, [&] {
-    const auto batch = _pk_batcher->Emit(_sink);
-    SDB_ASSERT(batch.pk != nullptr);
-    batch.pk->Flatten(batch.count);
-    sdb::connector::AppendPrimaryKeysFromVector(_pk_batch, *batch.pk,
-                                                batch.count);
-  });
-  SDB_ASSERT(_pk_batch.Size() == rows.size());
-  _chunk.Reset();
-  _source->Materialize(ctx, _pk_batch, 0, rows.size(), _chunk);
-  return _chunk;
 }
 
 duckdb::FilterPropagateResult ScanFilter::StartSegment(

@@ -221,20 +221,12 @@ void BuildTableFilter(CommonScanGlobalState& state,
       state.table_filter.AddColumn(col_id.id(), expr_filter, is_optional,
                                    is_dynamic, passes_null);
     } else if (!is_optional) {
-      // Lookup-column filter: the emit's single Materialize pass fetches the
-      // filter and output columns together, so evaluate on the materialized
-      // chunk (row_expr) -- no separate row-fetch pass, and (since row_expr
-      // demotes top-k to streaming) no per-candidate over-fetch in a collector.
-      auto slot_ref =
-        duckdb::make_uniq<duckdb::BoundReferenceExpression>(slot_type, idx);
-      auto expr = entry.Filter().ToExpression(*slot_ref);
-      if (!state.row_expr) {
-        state.row_expr = std::move(expr);
-      } else {
-        state.row_expr = duckdb::make_uniq<duckdb::BoundConjunctionExpression>(
-          duckdb::ExpressionType::CONJUNCTION_AND, std::move(state.row_expr),
-          std::move(expr));
-      }
+      const bool passes_null =
+        expr_filter.EvaluateWithConstant(context, duckdb::Value(slot_type));
+      // Lookup-column filter: the emit's single Materialize pass produces this
+      // column at output slot `idx`; FilterLookupColumns runs FilterSelection
+      // there post-materialize (no separate row-fetch pass).
+      state.table_filter.AddRowFetch(idx, slot_type, expr_filter, passes_null);
     }
   }
   state.table_filter.SetPkColumn(catalog::Column::kGeneratedPKId.id());
@@ -243,19 +235,12 @@ void BuildTableFilter(CommonScanGlobalState& state,
 
 void InitLocalFilter(CommonScanLocalState& lstate,
                      const CommonScanGlobalState& gstate,
-                     duckdb::ClientContext& context,
-                     const SereneDBScanBindData& bind_data) {
+                     duckdb::ClientContext& /*context*/,
+                     const SereneDBScanBindData& /*bind_data*/) {
+  // Lookup-column filters no longer need a separate RowFetcher source: they
+  // run post-materialize on the emit's single Materialize output
+  // (FilterLookupColumns).
   lstate.filter.Init(gstate.table_filter);
-  if (gstate.table_filter.HasRowFetch()) {
-    // Push the row-fetch filters into the lookup source: pushdown-capable
-    // readers (parquet) prune reads; others ignore it. Excluded rows come
-    // back NULL and ScanFilter re-checks, so results are unchanged.
-    lstate.filter.Rows().SetSource(
-      MakeIndexSource(context, bind_data, gstate.rf_columns, gstate.rf_types,
-                      bind_data.column_ids,
-                      gstate.table_filter.RowFetchFilterSet()),
-      gstate.rf_types);
-  }
 }
 
 void DecodeExtractPath(const duckdb::ColumnIndex& column_index,

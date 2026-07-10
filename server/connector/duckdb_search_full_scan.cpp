@@ -171,12 +171,12 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
   }
   state->collectors.resize(state->MaxThreads());
 
-  // Top-k enforces filters through the scan filter before candidates count
-  // toward k. Filters over virtual output slots (score) can only run on the
-  // materialized chunk, so their presence demotes to streaming, where
-  // ApplyRowFilter enforces them.
+  // Top-k enforces .col filters in the collector before candidates count
+  // toward k. Filters that can only run post-materialize -- over virtual
+  // output slots (row_expr) or over lookup columns (HasRowFetch,
+  // FilterLookupColumns) -- demote to streaming, which applies them there.
   if (ss.score_top_k && (ss.text_scorer || ss.score_order) &&
-      !state->row_expr) {
+      !state->row_expr && !state->table_filter.HasRowFetch()) {
     state->parallel_topk = true;
     if (ss.vector_scorer &&
         ss.vector_scorer->quant != irs::VectorQuantization::None) {
@@ -1049,9 +1049,12 @@ void RunStreamingScan(duckdb::ClientContext& ctx, SearchFullScanGlobalState& g,
     SDB_ASSERT(added <= STANDARD_VECTOR_SIZE);
     if (added != 0) {
       FinalizeBatch(ctx, g, l, output, added);
+      // Lookup-column filters run here, post-materialize, on the emit's single
+      // Materialize output (FilterSelection); compacts to survivors in place.
+      const auto kept = l.filter.FilterLookupColumns(output, added);
       // Enforce row_expr (filters over virtual/extract slots) on the
       // materialized chunk; a fully-rejected batch loops for the next one.
-      const auto survivors = ApplyRowFilter(ctx, g, l, output, added);
+      const auto survivors = ApplyRowFilter(ctx, g, l, output, kept);
       if (survivors != 0) {
         output.SetChildCardinality(survivors);
         return;

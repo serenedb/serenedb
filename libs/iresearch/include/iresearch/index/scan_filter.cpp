@@ -114,12 +114,12 @@ void TableFilter::AddColumn(field_id column_id,
   _columns.push_back(std::move(column_filter));
 }
 
-void TableFilter::AddRowFetch(duckdb::idx_t bind_index,
+void TableFilter::AddRowFetch(duckdb::idx_t output_slot,
                               const duckdb::LogicalType& type,
                               const duckdb::ExpressionFilter& filter,
                               bool passes_null) {
   RowFetchFilter rf;
-  rf.bind_index = bind_index;
+  rf.output_slot = output_slot;
   rf.type = type;
   rf.filter = &filter;
   rf.passes_null = passes_null;
@@ -134,23 +134,6 @@ void TableFilter::Seal() {
                    [](const ColumnFilter& a, const ColumnFilter& b) {
                      return a.is_optional && !b.is_optional;
                    });
-  // Row-fetch filters, as a duckdb TableFilterSet keyed by row-fetch position
-  // (matching the RowFetcher source's projection order), for reader-side
-  // pushdown by pushdown-capable lookup sources. Copies detach from the pushed
-  // ExpressionFilters (which the scan's TableFilterSet owns).
-  auto rf_filter_set = duckdb::make_uniq<duckdb::TableFilterSet>();
-  bool any_pushable = false;
-  for (size_t i = 0; i < _row_fetch.size(); ++i) {
-    if (_row_fetch[i].passes_null) {
-      continue;
-    }
-    rf_filter_set->PushFilter(duckdb::ProjectionIndex(i),
-                              _row_fetch[i].filter->Copy());
-    any_pushable = true;
-  }
-  if (any_pushable) {
-    _rf_filter_set = std::move(rf_filter_set);
-  }
 }
 
 void RowFetcher::SetSource(std::unique_ptr<sdb::connector::IndexSource> source,
@@ -233,14 +216,6 @@ duckdb::FilterPropagateResult ScanFilter::StartSegment(
         break;
     }
     _cols.push_back({.reader = reader, .column_filter = &column_filter});
-  }
-  if (!_table_filter->_row_fetch.empty()) {
-    const auto* pk_col = _col_reader->Column(_table_filter->_pk_column);
-    if (!pk_col) {
-      _cols.clear();
-      return duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE;
-    }
-    _rows.StartSegment(*_col_reader, _table_filter->_pk_column);
   }
   return Empty() ? duckdb::FilterPropagateResult::FILTER_ALWAYS_TRUE
                  : duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE;
@@ -425,40 +400,43 @@ void ScanFilter::MatchesBatch(std::span<const doc_id_t> docs, bool* out) {
       out[need[j]] = pass[j];
     }
   }
-  if (!_table_filter->_row_fetch.empty()) {
-    RowFetchBatch(docs, out);
-  }
 }
 
-void ScanFilter::RowFetchBatch(std::span<const doc_id_t> docs, bool* out) {
-  const size_t n = docs.size();
-  uint64_t rowpos[STANDARD_VECTOR_SIZE];
-  size_t need[STANDARD_VECTOR_SIZE];
+duckdb::idx_t ScanFilter::FilterLookupColumns(duckdb::DataChunk& output,
+                                              duckdb::idx_t count) {
+  if (_table_filter->_row_fetch.empty() || count == 0) {
+    return count;
+  }
+  bool keep[STANDARD_VECTOR_SIZE];
+  std::fill_n(keep, count, true);
   bool pass[STANDARD_VECTOR_SIZE];
-  size_t nn = 0;
-  for (size_t i = 0; i < n; ++i) {
-    if (!out[i]) {
-      continue;
-    }
-    rowpos[nn] = docs[i] - doc_limits::min();
-    need[nn] = i;
-    ++nn;
-  }
-  if (nn == 0) {
-    return;
-  }
-  auto& fetched = _rows.FetchRows(*_ctx, std::span<const uint64_t>{rowpos, nn});
   if (_rf_eval_chunk.data.empty()) {
     _rf_eval_chunk.InitializeEmpty(duckdb::vector<duckdb::LogicalType>{
       _table_filter->_row_fetch.front().type});
   }
+  // Each lookup filter runs on the column the emit's single Materialize left
+  // at output_slot -- FilterSelection over that already-materialized vector,
+  // no separate source fetch.
   for (size_t fi = 0; fi < _table_filter->_row_fetch.size(); ++fi) {
-    _rf_eval_chunk.data[0].Reference(fetched.data[fi]);
-    SelectFilterRows(RowFetchFilterState(fi), _rf_eval_chunk, nn, pass);
-    for (size_t j = 0; j < nn; ++j) {
-      out[need[j]] = out[need[j]] && pass[j];
+    _rf_eval_chunk.data[0].Reference(
+      output.data[_table_filter->_row_fetch[fi].output_slot]);
+    SelectFilterRows(RowFetchFilterState(fi), _rf_eval_chunk, count, pass);
+    for (duckdb::idx_t i = 0; i < count; ++i) {
+      keep[i] = keep[i] && pass[i];
     }
   }
+  duckdb::SelectionVector sel(count);
+  duckdb::idx_t w = 0;
+  for (duckdb::idx_t i = 0; i < count; ++i) {
+    if (keep[i]) {
+      sel.set_index(w++, i);
+    }
+  }
+  if (w != count) {
+    output.Slice(sel, w);
+    output.SetCardinality(w);
+  }
+  return w;
 }
 
 duckdb::idx_t ScanFilter::FilterHits(std::span<doc_id_t> hits,

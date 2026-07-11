@@ -1,10 +1,12 @@
 control substitution on
 
-# ch_binary_as_blob (a session-scoped setting) reads ClickHouse String / FixedString
-# columns as BLOB (raw bytes) instead of VARCHAR, so non-UTF-8 payloads (hashes,
-# protobufs, images) survive intact rather than violating the VARCHAR UTF-8 contract.
-# Exercised via the ad-hoc clickhouse_query path (re-describes per query, so the
-# session setting applies). SET SESSION keeps it isolated to this connection.
+# ch_binary_as_blob reads ClickHouse String / FixedString columns as BLOB (raw
+# bytes) instead of VARCHAR, so non-UTF-8 payloads (hashes, protobufs, images)
+# survive intact rather than violating the VARCHAR UTF-8 contract. Covered on
+# BOTH paths: the ad-hoc clickhouse_query path (re-describes per query) and the
+# attached-catalog path (LoadTableEntry honors the setting; changing it clears
+# the catalogs' cached column types, the pg_array_as_varchar pattern).
+# SET SESSION keeps it isolated to this connection.
 
 # Default: String -> VARCHAR.
 query
@@ -32,3 +34,39 @@ SELECT typeof(s) AS t FROM clickhouse_query('host=${CHHOST} port=${CHPORT} user=
 ----
 t
 VARCHAR
+
+# ===== The attached-catalog path honors the setting too =====
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=chtest' AS chblob (TYPE clickhouse);
+
+# Default: an attached table's String column surfaces as VARCHAR.
+query
+SELECT typeof(name) AS t FROM chblob.chtest.widgets LIMIT 1;
+----
+t
+VARCHAR
+
+# Flipping the setting clears the cached column types (ClearCacheOnSetting), so
+# the next lookup re-describes the table with String -> BLOB.
+statement ok
+SET SESSION ch_binary_as_blob = true;
+
+query
+SELECT typeof(name) AS t FROM chblob.chtest.widgets LIMIT 1;
+----
+t
+BLOB
+
+# ...and back.
+statement ok
+SET SESSION ch_binary_as_blob = false;
+
+query
+SELECT typeof(name) AS t FROM chblob.chtest.widgets LIMIT 1;
+----
+t
+VARCHAR
+
+statement ok
+DETACH chblob;

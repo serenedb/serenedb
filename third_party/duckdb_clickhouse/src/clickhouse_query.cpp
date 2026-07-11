@@ -137,12 +137,7 @@ static unique_ptr<FunctionData> ClickHouseClearCacheBind(ClientContext &context,
 	return make_uniq<ClickHouseClearCacheData>();
 }
 
-static void ClickHouseClearCacheFunc(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
-	auto &data = data_p.bind_data->CastNoConst<ClickHouseClearCacheData>();
-	if (data.finished) {
-		output.SetCardinality(0);
-		return;
-	}
+void ClickHouseClearCacheFunction::ClearClickHouseCaches(ClientContext &context) {
 	auto databases = DatabaseManager::Get(context).GetDatabases(context);
 	for (auto &db_ref : databases) {
 		auto &db = *db_ref;
@@ -152,6 +147,19 @@ static void ClickHouseClearCacheFunc(ClientContext &context, TableFunctionInput 
 		}
 		catalog.Cast<ClickHouseCatalog>().ClearCache();
 	}
+}
+
+void ClickHouseClearCacheFunction::ClearCacheOnSetting(ClientContext &context, SetScope scope, Value &parameter) {
+	ClickHouseClearCacheFunction::ClearClickHouseCaches(context);
+}
+
+static void ClickHouseClearCacheFunc(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
+	auto &data = data_p.bind_data->CastNoConst<ClickHouseClearCacheData>();
+	if (data.finished) {
+		output.SetCardinality(0);
+		return;
+	}
+	ClickHouseClearCacheFunction::ClearClickHouseCaches(context);
 	output.SetValue(0, 0, Value::BOOLEAN(true));
 	output.SetCardinality(1);
 	data.finished = true;

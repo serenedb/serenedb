@@ -1,5 +1,7 @@
 #include "duckdb.hpp"
 
+#include "dbconnector/query/query_writer.hpp"
+
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/types.hpp"
 #include "duckdb/common/types/date.hpp"
@@ -541,45 +543,20 @@ void ClickHouseColumnToVector(const clickhouse::Column &col, Vector &out, idx_t 
 //===--------------------------------------------------------------------===//
 // Reverse map: DuckDB -> ClickHouse
 //===--------------------------------------------------------------------===//
+// One escaping style everywhere, via the shared dbconnector renderer: backtick
+// identifiers and single-quoted string literals, both backslash-escaped -- the
+// exact configs the shared filter pushdown and order-by optimizer already use,
+// so the SELECT list, WHERE clause and DDL render an identifier identically.
 std::string ClickHouseQuoteIdentifier(const std::string &name) {
-  std::string result = "`";
-  for (auto c : name) {
-    if (c == '\\') {
-      result += "\\\\";
-    } else if (c == '`') {
-      result += "``";
-    } else {
-      result += c;
-    }
-  }
-  result += "`";
-  return result;
+  auto config = dbconnector::query::QueryWriter::CreateConfig(
+      '`', dbconnector::query::QuoteEscapeStyle::BACKSLASH);
+  return dbconnector::query::QueryWriter::WriteQuotedAndEscaped(config, name);
 }
 
 std::string ClickHouseStringLiteral(const std::string &value) {
-  std::string result = "'";
-  for (auto c : value) {
-    if (c == '\'' || c == '\\') {
-      result += '\\';
-    }
-    result += c;
-  }
-  result += "'";
-  return result;
-}
-
-std::string ClickHouseBlobLiteral(const string_t &bytes) {
-  // Raw bytes as ClickHouse unhex('HEX'); val.ToString() would hex-escape a BLOB
-  // as TEXT and never match. Shared by filter pushdown and UPDATE.
-  static const char digits[] = "0123456789ABCDEF";
-  std::string hex;
-  hex.reserve(bytes.GetSize() * 2);
-  for (idx_t i = 0; i < bytes.GetSize(); i++) {
-    auto b = static_cast<unsigned char>(bytes.GetData()[i]);
-    hex += digits[b >> 4];
-    hex += digits[b & 0x0F];
-  }
-  return "unhex('" + hex + "')";
+  auto config = dbconnector::query::QueryWriter::CreateConfig(
+      '\'', dbconnector::query::QuoteEscapeStyle::BACKSLASH);
+  return dbconnector::query::QueryWriter::WriteQuotedAndEscaped(config, value);
 }
 
 std::string ClickHouseValueLiteral(const Value &value) {
@@ -601,17 +578,17 @@ std::string ClickHouseValueLiteral(const Value &value) {
   case LogicalTypeId::DOUBLE:
     return value.ToString();
   case LogicalTypeId::HUGEINT:
-    // ClickHouse parses a bare 128-bit integer literal as Float64 (precision loss
-    // above 2^53); force exact integer parsing.
-    return "toInt128('" + value.ToString() + "')";
   case LogicalTypeId::UHUGEINT:
-    return "toUInt128('" + value.ToString() + "')";
   case LogicalTypeId::DECIMAL:
-    // A bare decimal literal is parsed as Float64 -> wrong boundary values; render an
-    // exact Decimal carrying the value's scale.
-    return "toDecimal128('" + value.ToString() + "', " + std::to_string(DecimalType::GetScale(value.type())) + ")";
-  case LogicalTypeId::BLOB:
-    return ClickHouseBlobLiteral(value.GetValueUnsafe<string_t>());
+  case LogicalTypeId::BLOB: {
+    // The shared writer's ClickHouse dialect renders these exactly: (U)HugeInt and
+    // Decimal via toInt128/toUInt128/toDecimal128 casts (a bare wide literal parses
+    // as Float64, losing precision) and BLOB as unhex('HEX').
+    auto config = dbconnector::query::QueryWriter::CreateConfig(
+        '\'', dbconnector::query::QuoteEscapeStyle::BACKSLASH, "unhex('", ")",
+        dbconnector::query::Dialect::ClickHouse);
+    return dbconnector::query::QueryWriter::WriteConstant(config, value);
+  }
   case LogicalTypeId::DATE:
     // Typed casts, not bare quoted strings: comparisons coerce strings, but multiIf /
     // assignment contexts have no String<->Date/DateTime/UUID supertype (NO_COMMON_TYPE).

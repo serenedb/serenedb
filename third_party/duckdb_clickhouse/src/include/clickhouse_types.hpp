@@ -28,13 +28,9 @@ void ClickHouseColumnToVector(const clickhouse::Column &col, Vector &out, idx_t 
 //! backtick. Used wherever a column/table/PK name is interpolated into generated SQL.
 std::string ClickHouseQuoteIdentifier(const std::string &name);
 
-//! A fully-quoted ClickHouse string literal: wraps `value` in single quotes and
-//! backslash-escapes embedded ' and \. For value literals (filter pushdown, UPDATE).
+//! A fully-quoted ClickHouse string literal: single quotes, backslash-escaped
+//! (delegates to the shared dbconnector QueryWriter). For value literals.
 std::string ClickHouseStringLiteral(const std::string &value);
-
-//! Render BLOB bytes as a ClickHouse unhex('HEX') literal so raw binary
-//! round-trips exactly. Shared by filter pushdown and UPDATE literal rendering.
-std::string ClickHouseBlobLiteral(const string_t &bytes);
 
 //! Render a scalar DuckDB Value as an EXACT ClickHouse SQL literal: NULL -> NULL;
 //! HUGEINT/UHUGEINT/DECIMAL via to*() casts (ClickHouse parses their bare literals as

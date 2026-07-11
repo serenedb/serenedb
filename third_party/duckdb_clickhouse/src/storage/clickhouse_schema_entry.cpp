@@ -184,7 +184,7 @@ optional_ptr<CatalogEntry> ClickHouseSchemaEntry::CreateTable(CatalogTransaction
 		std::lock_guard<std::mutex> l(tables_lock);
 		RetireTableLocked(base.GetTableName().GetIdentifierName());
 	}
-	return &GetOrCreateTableEntry(base.GetTableName().GetIdentifierName());
+	return &GetOrCreateTableEntry(transaction.context, base.GetTableName().GetIdentifierName());
 }
 
 optional_ptr<CatalogEntry> ClickHouseSchemaEntry::CreateFunction(CatalogTransaction transaction,
@@ -286,7 +286,7 @@ optional_ptr<CatalogEntry> ClickHouseSchemaEntry::CreateView(CatalogTransaction 
 		std::lock_guard<std::mutex> l(tables_lock);
 		RetireTableLocked(info.GetViewName().GetIdentifierName());
 	}
-	return &GetOrCreateTableEntry(info.GetViewName().GetIdentifierName());
+	return &GetOrCreateTableEntry(transaction.context, info.GetViewName().GetIdentifierName());
 }
 
 optional_ptr<CatalogEntry> ClickHouseSchemaEntry::CreateSequence(CatalogTransaction transaction,
@@ -359,7 +359,19 @@ void ClickHouseSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &inf
 	RetireTableLocked(alter.GetQualifiedName().Name().GetIdentifierName());
 }
 
-ClickHouseTableEntry &ClickHouseSchemaEntry::LoadTableEntry(const string &table_name) {
+ClickHouseTableEntry &ClickHouseSchemaEntry::LoadTableEntry(optional_ptr<ClientContext> context,
+                                                            const string &table_name) {
+	// The pg_array_as_varchar analog: ch_binary_as_blob widens String/FixedString
+	// to BLOB for attached tables too, not just ad-hoc scans. Changing the setting
+	// clears the catalog caches (ClearCacheOnSetting), so cached entries never
+	// carry a stale mapping.
+	bool binary_as_blob = false;
+	if (context) {
+		Value binary_setting;
+		if (context->TryGetCurrentSetting("ch_binary_as_blob", binary_setting)) {
+			binary_as_blob = BooleanValue::Get(binary_setting);
+		}
+	}
 	auto &clickhouse_catalog = GetClickHouseCatalog();
 	auto &params = clickhouse_catalog.GetConnectionParams();
 
@@ -403,6 +415,9 @@ ClickHouseTableEntry &ClickHouseSchemaEntry::LoadTableEntry(const string &table_
 						// projects toString(col) so the wire carries a plain String.
 						logical_type = LogicalType::VARCHAR;
 						needs_to_string = true;
+					}
+					if (binary_as_blob && (type_str == "String" || type_str.rfind("FixedString(", 0) == 0)) {
+						logical_type = LogicalType::BLOB;
 					}
 					ColumnDefinition column(Identifier(column_name), std::move(logical_type));
 					// Since the binder materialises INSERT defaults client-side (the
@@ -463,13 +478,14 @@ ClickHouseTableEntry &ClickHouseSchemaEntry::LoadTableEntry(const string &table_
 	return result;
 }
 
-ClickHouseTableEntry &ClickHouseSchemaEntry::GetOrCreateTableEntry(const string &table_name) {
+ClickHouseTableEntry &ClickHouseSchemaEntry::GetOrCreateTableEntry(optional_ptr<ClientContext> context,
+                                                                   const string &table_name) {
 	std::lock_guard<std::mutex> l(tables_lock);
 	auto entry = tables.find(table_name);
 	if (entry != tables.end()) {
 		return *entry->second;
 	}
-	return LoadTableEntry(table_name);
+	return LoadTableEntry(context, table_name);
 }
 
 void ClickHouseSchemaEntry::RetireTableLocked(const string &table_name) {
@@ -518,7 +534,7 @@ void ClickHouseSchemaEntry::Scan(ClientContext &context, CatalogType type,
 		// let connection/protocol errors propagate rather than silently emptying the
 		// listing.
 		try {
-			auto &entry = GetOrCreateTableEntry(table_name);
+			auto &entry = GetOrCreateTableEntry(&context, table_name);
 			callback(entry);
 		} catch (const CatalogException &) {
 			continue;
@@ -566,7 +582,7 @@ optional_ptr<CatalogEntry> ClickHouseSchemaEntry::LookupEntry(CatalogTransaction
 	// and propagates. This subsumes what a separate system.tables existence probe
 	// did, avoiding a second round-trip per cache miss.
 	try {
-		return &GetOrCreateTableEntry(table_name);
+		return &GetOrCreateTableEntry(transaction.context, table_name);
 	} catch (const CatalogException &) {
 		return nullptr;
 	}

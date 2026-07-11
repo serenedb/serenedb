@@ -98,12 +98,13 @@ static void LoadInternal(ExtensionLoader &loader) {
 	                          LogicalType::BOOLEAN, Value::BOOLEAN(default_pool_config.start_reaper_thread), nullptr,
 	                          SetScope::GLOBAL);
 
-	// Session-scoped (no static callback): read from ClientContext at describe time so it
-	// is isolated per connection, not shared process-wide (which would change column types
-	// under other sessions).
+	// Read from the ClientContext at describe/catalog-load time; changing it clears
+	// the attached catalogs' cached column types (the pg_array_as_varchar pattern),
+	// so both ad-hoc scans and attached tables re-describe with the new mapping.
 	config.AddExtensionOption("ch_binary_as_blob",
 	                          "Read ClickHouse String/FixedString columns as BLOB instead of VARCHAR",
-	                          LogicalType::BOOLEAN, Value::BOOLEAN(false));
+	                          LogicalType::BOOLEAN, Value::BOOLEAN(false),
+	                          ClickHouseClearCacheFunction::ClearCacheOnSetting);
 
 	// Read by the shared OrderByAndLimitOptimizer config (the pg_order_pushdown analog).
 	config.AddExtensionOption("ch_order_pushdown",

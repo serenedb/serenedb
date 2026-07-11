@@ -98,6 +98,13 @@ public:
 class ClickHouseClearCacheFunction : public TableFunction {
 public:
 	ClickHouseClearCacheFunction();
+
+	//! Drop every attached ClickHouse catalog's cached metadata (the
+	//! PostgresClearCacheFunction analogs).
+	static void ClearClickHouseCaches(ClientContext &context);
+	//! Setting callback: type-shaping settings (ch_binary_as_blob) clear the
+	//! caches on change so cached column types never go stale.
+	static void ClearCacheOnSetting(ClientContext &context, SetScope scope, Value &parameter);
 };
 
 //! True for the connector's own scan table functions.

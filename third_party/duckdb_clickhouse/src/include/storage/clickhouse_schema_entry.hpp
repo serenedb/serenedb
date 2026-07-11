@@ -42,8 +42,10 @@ public:
 
 private:
 	ClickHouseCatalog &GetClickHouseCatalog();
-	ClickHouseTableEntry &GetOrCreateTableEntry(const string &table_name);
-	ClickHouseTableEntry &LoadTableEntry(const string &table_name);
+	//! `context` (may be null) supplies session settings that shape the surfaced
+	//! column types (ch_binary_as_blob); null falls back to the defaults.
+	ClickHouseTableEntry &GetOrCreateTableEntry(optional_ptr<ClientContext> context, const string &table_name);
+	ClickHouseTableEntry &LoadTableEntry(optional_ptr<ClientContext> context, const string &table_name);
 	//! Drop `table_name` from the live cache WITHOUT freeing the entry: an in-flight
 	//! bound statement (scan/INSERT) may still hold a raw pointer into it. Caller must
 	//! hold tables_lock. The entry is parked in `retired_tables` for the catalog's life.

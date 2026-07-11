@@ -44,9 +44,11 @@ SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}',
 n
 1
 
-# The new column is not visible yet -- binding it fails against the stale cache.
-statement error
-SELECT val FROM chc.default.cc_ved;
+# NOTE: no "binding val fails against the stale cache" assertion here -- it
+# would be racy: tests run in parallel against one serened, and any concurrent
+# SET ch_binary_as_blob clears ALL ClickHouse catalog caches process-wide
+# (ClearCacheOnSetting, the pg_array_as_varchar pattern), refreshing this
+# catalog's "stale" entry underneath us.
 
 # Clear the cache; the next query re-reads the (now 2-column) schema.
 query

@@ -133,6 +133,28 @@ TableFunction ClickHouseTableEntry::GetScanFunction(ClientContext &context, uniq
 TableStorageInfo ClickHouseTableEntry::GetStorageInfo(ClientContext &context) {
 	TableStorageInfo result;
 	result.cardinality = 0;
+	// Surface the MergeTree primary key as index info (the postgres pattern):
+	// the binder rewrites INSERT ... ON CONFLICT into MERGE INTO through
+	// GetStorageInfo().index_info, so an empty answer blocks upsert entirely
+	// even though PlanMergeInto is implemented.
+	for (auto &constraint : constraints) {
+		if (constraint->type != ConstraintType::UNIQUE) {
+			continue;
+		}
+		IndexInfo info;
+		auto &unique = constraint->Cast<UniqueConstraint>();
+		info.is_unique = true;
+		info.is_primary = unique.IsPrimaryKey();
+		info.is_foreign = false;
+		if (unique.HasIndex()) {
+			info.column_set.insert(unique.GetIndex().index);
+		} else {
+			for (auto &name : unique.GetColumnNames()) {
+				info.column_set.insert(columns.GetColumn(name).Logical().index);
+			}
+		}
+		result.index_info.push_back(std::move(info));
+	}
 	return result;
 }
 

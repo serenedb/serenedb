@@ -52,7 +52,13 @@ static void RunClickHouseDDL(ClickHouseCatalog &ch_catalog, const string &sql) {
 	} catch (const clickhouse::Error &e) {
 		conn.Invalidate();
 		ClickHouseConnection::ThrowError("running DDL", sql, e);
-	}
+	} catch (...) {
+		// Socket-level failures (std::system_error) and exceptions thrown by
+		// block callbacks are not clickhouse::Error; the connection may be
+		// mid-stream either way, so never hand it back to the pool.
+		conn.Invalidate();
+		throw;
+		}
 }
 
 // Render a *constant* column DEFAULT into ClickHouse DDL. Non-constant defaults
@@ -453,7 +459,13 @@ ClickHouseTableEntry &ClickHouseSchemaEntry::LoadTableEntry(optional_ptr<ClientC
 		} catch (const clickhouse::Error &e) {
 			conn.Invalidate();
 			ClickHouseConnection::ThrowError("reading table columns", sql, e);
-		}
+		} catch (...) {
+			// Socket-level failures (std::system_error) and exceptions thrown by
+			// block callbacks are not clickhouse::Error; the connection may be
+			// mid-stream either way, so never hand it back to the pool.
+			conn.Invalidate();
+			throw;
+			}
 	}
 	// system.columns returned no rows: the table does not exist (or was dropped
 	// concurrently), or is otherwise unreadable. Do not construct + cache a
@@ -525,7 +537,13 @@ void ClickHouseSchemaEntry::Scan(ClientContext &context, CatalogType type,
 		} catch (const clickhouse::Error &e) {
 			conn.Invalidate();
 			ClickHouseConnection::ThrowError("listing tables", sql, e);
-		}
+		} catch (...) {
+			// Socket-level failures (std::system_error) and exceptions thrown by
+			// block callbacks are not clickhouse::Error; the connection may be
+			// mid-stream either way, so never hand it back to the pool.
+			conn.Invalidate();
+			throw;
+			}
 	}
 
 	for (auto &table_name : table_names) {

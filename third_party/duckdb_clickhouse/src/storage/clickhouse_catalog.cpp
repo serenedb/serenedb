@@ -55,7 +55,13 @@ optional_ptr<CatalogEntry> ClickHouseCatalog::CreateSchema(CatalogTransaction tr
 	} catch (const clickhouse::Error &e) {
 		connection.Invalidate();
 		ClickHouseConnection::ThrowError("creating database", sql, e);
-	}
+	} catch (...) {
+		// Socket-level failures (std::system_error) and exceptions thrown by
+		// block callbacks are not clickhouse::Error; the connection may be
+		// mid-stream either way, so never hand it back to the pool.
+		connection.Invalidate();
+		throw;
+		}
 	std::lock_guard<std::mutex> l(schema_lock);
 	auto entry = schemas.find(info.GetQualifiedName().Schema().GetIdentifierName());
 	if (entry == schemas.end()) {
@@ -74,7 +80,13 @@ void ClickHouseCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 	} catch (const clickhouse::Error &e) {
 		connection.Invalidate();
 		ClickHouseConnection::ThrowError("dropping database", sql, e);
-	}
+	} catch (...) {
+		// Socket-level failures (std::system_error) and exceptions thrown by
+		// block callbacks are not clickhouse::Error; the connection may be
+		// mid-stream either way, so never hand it back to the pool.
+		connection.Invalidate();
+		throw;
+		}
 	std::lock_guard<std::mutex> l(schema_lock);
 	auto it = schemas.find(info.GetQualifiedName().Name().GetIdentifierName());
 	if (it != schemas.end()) {
@@ -124,7 +136,13 @@ void ClickHouseCatalog::ScanSchemas(ClientContext &context, std::function<void(S
 	} catch (const clickhouse::Error &e) {
 		connection.Invalidate();
 		ClickHouseConnection::ThrowError("listing databases", sql, e);
-	}
+	} catch (...) {
+		// Socket-level failures (std::system_error) and exceptions thrown by
+		// block callbacks are not clickhouse::Error; the connection may be
+		// mid-stream either way, so never hand it back to the pool.
+		connection.Invalidate();
+		throw;
+		}
 	for (auto &schema_name : schema_names) {
 		std::lock_guard<std::mutex> l(schema_lock);
 		auto entry = schemas.find(schema_name);
@@ -157,7 +175,13 @@ optional_ptr<SchemaCatalogEntry> ClickHouseCatalog::LookupSchema(CatalogTransact
 	} catch (const clickhouse::Error &e) {
 		connection.Invalidate();
 		ClickHouseConnection::ThrowError("probing database", sql, e);
-	}
+	} catch (...) {
+		// Socket-level failures (std::system_error) and exceptions thrown by
+		// block callbacks are not clickhouse::Error; the connection may be
+		// mid-stream either way, so never hand it back to the pool.
+		connection.Invalidate();
+		throw;
+		}
 	if (!found) {
 		if (if_not_found == OnEntryNotFound::RETURN_NULL) {
 			return nullptr;
@@ -196,7 +220,13 @@ DatabaseSize ClickHouseCatalog::GetDatabaseSize(ClientContext &context) {
 	} catch (const clickhouse::Error &e) {
 		connection.Invalidate();
 		ClickHouseConnection::ThrowError("reading database size", sql, e);
-	}
+	} catch (...) {
+		// Socket-level failures (std::system_error) and exceptions thrown by
+		// block callbacks are not clickhouse::Error; the connection may be
+		// mid-stream either way, so never hand it back to the pool.
+		connection.Invalidate();
+		throw;
+		}
 	return size;
 }
 

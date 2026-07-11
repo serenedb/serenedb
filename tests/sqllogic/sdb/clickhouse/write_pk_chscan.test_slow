@@ -312,5 +312,49 @@ DROP TABLE chpk.default.pk_space;
 statement ok
 DROP TABLE chpk.default.pk_backtick;
 
+# =====================================================================
+# Group E: INSERT ... ON CONFLICT (upsert). The binder rewrites it into
+# MERGE INTO through GetStorageInfo().index_info, which surfaces the
+# MergeTree PRIMARY KEY as a unique index -- without it the rewrite
+# fails with "no UNIQUE/PRIMARY KEY constraints" even though the
+# connector's MERGE INTO is implemented.
+# =====================================================================
+
+statement ok
+CREATE TABLE chpk.default.pk_upsert (id BIGINT PRIMARY KEY, v VARCHAR);
+
+statement ok
+INSERT INTO chpk.default.pk_upsert VALUES (1, 'a'), (2, 'b');
+
+# Conflict on id=2 updates in place; id=3 inserts.
+statement ok
+INSERT INTO chpk.default.pk_upsert VALUES (2, 'B'), (3, 'c')
+ON CONFLICT (id) DO UPDATE SET v = EXCLUDED.v;
+
+query
+SELECT id, v FROM chpk.default.pk_upsert ORDER BY id;
+----
+id	v
+1	a
+2	B
+3	c
+
+# DO NOTHING leaves the existing row untouched and inserts the new one.
+statement ok
+INSERT INTO chpk.default.pk_upsert VALUES (3, 'X'), (4, 'd')
+ON CONFLICT (id) DO NOTHING;
+
+query
+SELECT id, v FROM chpk.default.pk_upsert ORDER BY id;
+----
+id	v
+1	a
+2	B
+3	c
+4	d
+
+statement ok
+DROP TABLE chpk.default.pk_upsert;
+
 statement ok
 DETACH chpk;

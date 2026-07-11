@@ -23,6 +23,7 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
+#include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
@@ -106,13 +107,39 @@ void RowIdFetchIndexSource::FinishInit(duckdb::ClientContext& context) {
   _fetch_chunk.Initialize(context, _fetch_types);
 }
 
+void RowIdFetchIndexSource::BuildPushedFilters(
+  const duckdb::TableFilterSet* input_filters) {
+  if (!input_filters || !input_filters->HasFilters()) {
+    return;
+  }
+  // Each source column added by InitProjection sits at output slot
+  // _real_proj_slots[c] and fetch-column index _col_to_fetch[c]. The scan's
+  // pushed filters are keyed by output slot; re-key those hitting a fetched
+  // column to the fetch-column index the native lookup scan understands.
+  auto set = duckdb::make_uniq<duckdb::TableFilterSet>();
+  for (duckdb::idx_t c = 0; c < _real_proj_slots.size(); ++c) {
+    auto filter = input_filters->TryGetFilterByColumnIndex(
+      duckdb::ProjectionIndex(_real_proj_slots[c]));
+    if (!filter) {
+      continue;
+    }
+    const auto& expr_filter = duckdb::ExpressionFilter::GetExpressionFilter(
+      *filter, "BuildPushedFilters");
+    set->PushFilter(duckdb::ProjectionIndex(_col_to_fetch[c]),
+                    expr_filter.Copy());
+  }
+  if (set->HasFilters()) {
+    _pushed_filters = std::move(set);
+  }
+}
+
 ViewTableIndexSource::ViewTableIndexSource(
   duckdb::ClientContext& context, ViewFastPath fast_path,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
   std::span<const catalog::Column::Id> bind_column_ids,
   duckdb::TableFilterSet* pushed_filters)
-  : RowIdFetchIndexSource{std::move(fast_path), pushed_filters} {
+  : RowIdFetchIndexSource{std::move(fast_path)} {
   auto& table = ResolveTableEntry(context, _fast_path);
   SetTable(table);
   // Registers the attached database with the meta transaction, keeping it
@@ -140,6 +167,7 @@ ViewTableIndexSource::ViewTableIndexSource(
         columns.GetColumn(duckdb::LogicalIndex(table_col_idx)));
     });
   FinishInit(context);
+  BuildPushedFilters(pushed_filters);
 }
 
 TableRowIdIndexSource::TableRowIdIndexSource(
@@ -149,7 +177,7 @@ TableRowIdIndexSource::TableRowIdIndexSource(
   std::span<const duckdb::LogicalType> projected_types,
   std::span<const catalog::Column::Id> bind_column_ids,
   duckdb::TableFilterSet* pushed_filters)
-  : RowIdFetchIndexSource{ViewFastPath{}, pushed_filters} {
+  : RowIdFetchIndexSource{ViewFastPath{}} {
   auto& table = ResolveStoreTableEntry(context, scan_entry, sdb_table);
   SetTable(table);
   duckdb::DuckTransaction::Get(context, table.ParentCatalog());
@@ -180,42 +208,41 @@ TableRowIdIndexSource::TableRowIdIndexSource(
         columns.GetColumn(duckdb::LogicalIndex(it->second)));
     });
   FinishInit(context);
+  BuildPushedFilters(pushed_filters);
 }
 
-void RowIdFetchIndexSource::Materialize(duckdb::ClientContext& context,
-                                        PrimaryKeyBatch& batch,
-                                        duckdb::idx_t start,
-                                        duckdb::idx_t count,
-                                        duckdb::DataChunk& output) {
+duckdb::idx_t RowIdFetchIndexSource::Materialize(duckdb::ClientContext& context,
+                                                 PrimaryKeyBatch& batch,
+                                                 duckdb::idx_t start,
+                                                 duckdb::idx_t count,
+                                                 duckdb::DataChunk& output) {
   if (count == 0) {
-    return;
+    return 0;
   }
   auto& pk = batch;
   SDB_ASSERT(start + count <= pk.rows.size());
 
   SortRows(pk, start, count);
-
   AliasOutput(output);
-  _tf_target.SetCardinality(count);
-
-  // Rows deleted in the source since CREATE INDEX produce no fetch result --
-  // pre-null every slot so stale rowids surface as NULLs instead of garbage.
-  for (duckdb::idx_t c = 0; c < _col_to_fetch.size(); ++c) {
-    duckdb::FlatVector::ValidityMutable(_tf_target.data[c])
-      .SetAllInvalid(count);
-  }
 
   auto& storage = _table->Cast<duckdb::DuckTableEntry>().GetStorage();
   auto& transaction =
     duckdb::DuckTransaction::Get(context, _table->ParentCatalog());
 
-  storage.LookupScan(transaction, context, _fetch_columns, _pushed_filters,
-                     _sorted_rows.data(), _sorted_rows.data() + count,
-                     _output_positions.data(), _col_to_fetch.data(),
-                     _fetch_chunk, _tf_target);
+  // Single path: the scan writes survivors compactly and records each output row's requested-pk index in
+  // _survivor_idx (drives the doc-id-keyed gather). It evaluates any pushed lookup-column filters natively
+  // (FilterSelection + late materialization); with none, a pk the source no longer holds is kept as a NULL
+  // row (eventually-consistent null-on-miss), otherwise the filter drops it.
+  _survivor_idx.resize(count);
+  const auto rows = storage.LookupScan(
+    transaction, context, _fetch_columns, _pushed_filters.get(), _sorted_rows.data(),
+    _sorted_rows.data() + count, _survivor_idx.data(), _col_to_fetch.data(), _fetch_chunk, _tf_target,
+    _lookup_scan_state);
+  _tf_target.SetCardinality(rows);
 
-  RunCastPass(output, count);
-  GatherNonLookupColumns(output, count);
+  RunCastPass(output, rows);
+  GatherNonLookupColumns(output, rows, _survivor_idx.data());
+  return rows;
 }
 
 }  // namespace sdb::connector

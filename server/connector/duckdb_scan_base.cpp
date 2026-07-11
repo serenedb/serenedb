@@ -152,6 +152,7 @@ void InitCommonState(CommonScanGlobalState& state,
     state.output_projection_ids = input.projection_ids;
   }
 
+  state.pushed_filters = input.filters.get();
   if (input.filters && input.filters->HasFilters()) {
     BuildTableFilter(state, context, bind_data, *input.filters);
   }
@@ -221,12 +222,11 @@ void BuildTableFilter(CommonScanGlobalState& state,
       state.table_filter.AddColumn(col_id.id(), expr_filter, is_optional,
                                    is_dynamic, passes_null);
     } else if (!is_optional) {
-      const bool passes_null =
-        expr_filter.EvaluateWithConstant(context, duckdb::Value(slot_type));
-      // Lookup-column filter: the emit's single Materialize pass produces this
-      // column at output slot `idx`; FilterLookupColumns runs FilterSelection
-      // there post-materialize (no separate row-fetch pass).
-      state.table_filter.AddRowFetch(idx, slot_type, expr_filter, passes_null);
+      // Lookup-column filter (not in `.col`): the source's native lookup scan
+      // evaluates it -- the scan's pushed_filters are forwarded there verbatim.
+      // Flag it so top-k/bulk demote to streaming (the lookup can't run per
+      // collector candidate). Optional filters are advisory and dropped.
+      state.has_lookup_filter = true;
     }
   }
   state.table_filter.Seal();
@@ -451,9 +451,10 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx,
   if (g.has_external_projections) {
     SDB_ASSERT(l.bind_data);
     if (!l.index_source) {
-      l.index_source =
-        MakeIndexSource(ctx, *l.bind_data, g.external_projected_columns,
-                        g.projected_types, l.bind_data->column_ids);
+      l.index_source = MakeIndexSource(
+        ctx, *l.bind_data, g.external_projected_columns, g.projected_types,
+        l.bind_data->column_ids,
+        const_cast<duckdb::TableFilterSet*>(g.pushed_filters));
     }
     if (l.pk_batch.kind == PrimaryKeyBatch::Kind::None) {
       l.pk_batch.kind = l.index_source->PkKind();
@@ -476,15 +477,18 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx,
   return batch.count;
 }
 
-void FinalizeBatch(duckdb::ClientContext& ctx, CommonScanGlobalState& g,
-                   SegDocBufferedScanLocalState& l, duckdb::DataChunk& output,
-                   duckdb::idx_t collected) {
+duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx,
+                            CommonScanGlobalState& g,
+                            SegDocBufferedScanLocalState& l,
+                            duckdb::DataChunk& output, duckdb::idx_t collected) {
   if (collected == 0 || !g.has_external_projections) {
-    return;
+    return collected;
   }
   SDB_ASSERT(l.index_source);
   SDB_ASSERT(l.pk_batch.Size() == collected);
-  l.index_source->Materialize(ctx, l.pk_batch, 0, collected, output);
+  // Returns the survivor count: the lookup applies pushed lookup-column filters
+  // natively and compacts to survivors (== collected when no lookup filter).
+  return l.index_source->Materialize(ctx, l.pk_batch, 0, collected, output);
 }
 
 bool EmitBufferedScoreDocs(duckdb::ClientContext& ctx, CommonScanGlobalState& g,
@@ -539,8 +543,8 @@ bool EmitBufferedScoreDocs(duckdb::ClientContext& ctx, CommonScanGlobalState& g,
       ++current_idx;
     }
     const auto emitted = EmitReadyBatch(ctx, g, l, output);
-    FinalizeBatch(ctx, g, l, output, emitted);
-    const auto survivors = ApplyRowFilter(ctx, g, l, output, emitted);
+    const auto kept = FinalizeBatch(ctx, g, l, output, emitted);
+    const auto survivors = ApplyRowFilter(ctx, g, l, output, kept);
     if (survivors != 0) {
       output.SetChildCardinality(survivors);
       return true;

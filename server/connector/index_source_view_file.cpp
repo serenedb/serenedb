@@ -73,13 +73,11 @@ ViewFileSingleFileIndexSource::ViewFileSingleFileIndexSource(
   _lookup_gstate = _lookup_func.init_global(context, init);
 }
 
-void ViewFileSingleFileIndexSource::Materialize(duckdb::ClientContext& context,
-                                                PrimaryKeyBatch& batch,
-                                                duckdb::idx_t start,
-                                                duckdb::idx_t count,
-                                                duckdb::DataChunk& output) {
+duckdb::idx_t ViewFileSingleFileIndexSource::Materialize(
+  duckdb::ClientContext& context, PrimaryKeyBatch& batch, duckdb::idx_t start,
+  duckdb::idx_t count, duckdb::DataChunk& output) {
   if (count == 0) {
-    return;
+    return 0;
   }
   auto& pk = batch;
   SDB_ASSERT(start + count <= pk.rows.size());
@@ -87,23 +85,23 @@ void ViewFileSingleFileIndexSource::Materialize(duckdb::ClientContext& context,
   SortRows(pk, start, count);
 
   AliasOutput(output);
-  _tf_target.SetCardinality(count);
-
-  // With pushed filters the parquet lookup may skip whole (filter-excluded)
-  // row groups, leaving those pks unwritten -- pre-null so they read NULL and
-  // the caller's ScanFilter rejects them.
-  if (_pushed_filters != nullptr) {
-    PreNullOutput(count);
-  }
+  // Dense: the lookup TF applies the pushed filters natively and appends
+  // survivors from size 0, then reports the survivor count via the chunk's
+  // cardinality and the sorted-pk index of each via pk_survivors.
+  _tf_target.SetCardinality(0);
+  _survivor_idx.resize(count);
 
   duckdb::TableFunctionInput in(_bind_data.get(), /*local_state=*/nullptr,
                                 _lookup_gstate.get());
   in.pk_lookups = _sorted_rows;
   in.pk_output_positions = _output_positions;
+  in.pk_survivors = _survivor_idx;
   _lookup_func.function(context, in, _tf_target);
+  const auto rows = _tf_target.size();
 
-  RunCastPass(output, count);
-  GatherNonLookupColumns(output, count);
+  RunCastPass(output, rows);
+  GatherNonLookupColumns(output, rows, _survivor_idx.data());
+  return rows;
 }
 
 ViewFileGlobIndexSource::ViewFileGlobIndexSource(
@@ -115,13 +113,11 @@ ViewFileGlobIndexSource::ViewFileGlobIndexSource(
   : ViewFileIndexSourceBase(context, std::move(fast_path), projected_columns,
                             projected_types, bind_column_ids, pushed_filters) {}
 
-void ViewFileGlobIndexSource::Materialize(duckdb::ClientContext& context,
-                                          PrimaryKeyBatch& batch,
-                                          duckdb::idx_t start,
-                                          duckdb::idx_t count,
-                                          duckdb::DataChunk& output) {
+duckdb::idx_t ViewFileGlobIndexSource::Materialize(
+  duckdb::ClientContext& context, PrimaryKeyBatch& batch, duckdb::idx_t start,
+  duckdb::idx_t count, duckdb::DataChunk& output) {
   if (count == 0) {
-    return;
+    return 0;
   }
   auto& pk = batch;
   SDB_ASSERT(start + count <= pk.rows.size());
@@ -137,13 +133,10 @@ void ViewFileGlobIndexSource::Materialize(duckdb::ClientContext& context,
   }
 
   AliasOutput(output);
-  _tf_target.SetCardinality(count);
-
-  // Per-file parquet lookups may skip filter-excluded row groups; pre-null so
-  // their pks read NULL and the caller's ScanFilter rejects them.
-  if (_pushed_filters != nullptr) {
-    PreNullOutput(count);
-  }
+  // Dense: each per-file lookup appends its filtered survivors from the running
+  // chunk size, so the whole batch compacts to survivors across files.
+  _tf_target.SetCardinality(0);
+  _survivor_idx.resize(count);
 
   size_t i = 0;
   while (i < count) {
@@ -178,12 +171,15 @@ void ViewFileGlobIndexSource::Materialize(duckdb::ClientContext& context,
       std::span<const int64_t>{_sorted_rows.data() + i, file_count};
     in.pk_output_positions =
       std::span<const duckdb::idx_t>{_output_positions.data() + i, file_count};
+    in.pk_survivors = _survivor_idx;
     _lookup_func.function(context, in, _tf_target);
     i = j;
   }
+  const auto rows = _tf_target.size();
 
-  RunCastPass(output, count);
-  GatherNonLookupColumns(output, count);
+  RunCastPass(output, rows);
+  GatherNonLookupColumns(output, rows, _survivor_idx.data());
+  return rows;
 }
 
 }  // namespace sdb::connector

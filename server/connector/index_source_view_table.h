@@ -24,6 +24,7 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/planner/table_filter_set.hpp>
 #include <duckdb/storage/storage_index.hpp>
+#include <duckdb/storage/table/scan_state.hpp>
 #include <span>
 
 #include "connector/index_source_view.h"
@@ -39,15 +40,14 @@ class RowIdFetchIndexSource : public ViewIndexSourceBase {
   PrimaryKeyBatch::Kind PkKind() const final {
     return PrimaryKeyBatch::Kind::I64;
   }
-  void Materialize(duckdb::ClientContext& context, PrimaryKeyBatch& batch,
-                   duckdb::idx_t start, duckdb::idx_t count,
-                   duckdb::DataChunk& output) final;
+  duckdb::idx_t Materialize(duckdb::ClientContext& context,
+                            PrimaryKeyBatch& batch, duckdb::idx_t start,
+                            duckdb::idx_t count,
+                            duckdb::DataChunk& output) final;
 
  protected:
-  explicit RowIdFetchIndexSource(
-    ViewFastPath fast_path, duckdb::TableFilterSet* pushed_filters = nullptr)
-    : ViewIndexSourceBase{std::move(fast_path)},
-      _pushed_filters{pushed_filters} {}
+  explicit RowIdFetchIndexSource(ViewFastPath fast_path)
+    : ViewIndexSourceBase{std::move(fast_path)} {}
 
   void SetTable(duckdb::TableCatalogEntry& table) { _table = &table; }
 
@@ -56,6 +56,9 @@ class RowIdFetchIndexSource : public ViewIndexSourceBase {
   duckdb::LogicalType AddFetchColumn(const duckdb::ColumnDefinition& col);
   // Sizes the fetch chunk; call after InitProjection.
   void FinishInit(duckdb::ClientContext& context);
+  // Builds `_pushed_filters` (keyed by fetch-column index) from the scan's
+  // pushed filters that target fetched columns; call after InitProjection.
+  void BuildPushedFilters(const duckdb::TableFilterSet* input_filters);
 
  private:
   duckdb::TableCatalogEntry* _table = nullptr;
@@ -63,7 +66,12 @@ class RowIdFetchIndexSource : public ViewIndexSourceBase {
   duckdb::vector<duckdb::LogicalType> _fetch_types;
   std::vector<duckdb::idx_t> _col_to_fetch;
   duckdb::DataChunk _fetch_chunk;
-  duckdb::TableFilterSet* _pushed_filters = nullptr;
+  // Lookup-column filters keyed by fetch-column index (built from the scan's
+  // pushed filters); passed to the native lookup scan. Null when none apply.
+  duckdb::unique_ptr<duckdb::TableFilterSet> _pushed_filters;
+  // Persistent lookup cursor, built once and reused across Materialize batches so
+  // the scan/decode state (pinned blocks, FSST dicts) stays warm between calls.
+  duckdb::unique_ptr<duckdb::TableScanState> _lookup_scan_state;
 };
 
 // Views over a table living in an attached database with native storage.

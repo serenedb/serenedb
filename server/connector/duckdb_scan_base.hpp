@@ -93,15 +93,23 @@ struct CommonScanGlobalState : public duckdb::GlobalTableFunctionState {
   std::atomic<duckdb::idx_t> produced_rows{0};
 
   // Pushed filters the scan enforces itself (filter_pushdown = true means
-  // nothing above re-checks). `.col` (INCLUDE) column filters and lookup-column
-  // filters live in the irs table filter -- the former applied on the
-  // columnstore before materialize, the latter post-materialize on the emit's
-  // one Materialize output (FilterLookupColumns). Filters over virtual/extract
-  // output slots land in `row_expr`, enforceable only on the materialized
-  // chunk (ApplyRowFilter); both post-materialize kinds demote top-k to
-  // streaming.
+  // nothing above re-checks). Only `.col` (INCLUDE) column filters live here --
+  // applied on the columnstore before materialize. Lookup-column filters go to
+  // the source's native lookup scan (see `pushed_filters`), not here. Filters
+  // over virtual/extract output slots land in `row_expr`, enforceable only on
+  // the materialized chunk (ApplyRowFilter); a lookup or row_expr filter
+  // demotes top-k/bulk to streaming.
   irs::TableFilter table_filter;
   duckdb::unique_ptr<duckdb::Expression> row_expr;
+
+  // The scan's pushed filters (as duckdb hands them to us), forwarded verbatim
+  // to the lookup source so its native scan evaluates lookup-column filters
+  // (FilterSelection + late materialization). Lives for the query.
+  const duckdb::TableFilterSet* pushed_filters = nullptr;
+  // A pushed filter targets a lookup (source-only) column: it can only be
+  // applied during the source lookup, so it forbids the fast collector/bulk
+  // paths (which never run the lookup per candidate) -- forces streaming.
+  bool has_lookup_filter = false;
 
   // filter_prune: when set, the scanned column_ids include filter-only columns
   // the output must not emit. These are indexes into the scanned columns that
@@ -252,9 +260,10 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx,
                              SegDocBufferedScanLocalState& l,
                              duckdb::DataChunk& output);
 
-void FinalizeBatch(duckdb::ClientContext& ctx, CommonScanGlobalState& g,
-                   SegDocBufferedScanLocalState& l, duckdb::DataChunk& output,
-                   duckdb::idx_t collected);
+duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx,
+                            CommonScanGlobalState& g,
+                            SegDocBufferedScanLocalState& l,
+                            duckdb::DataChunk& output, duckdb::idx_t collected);
 
 bool EmitBufferedScoreDocs(duckdb::ClientContext& ctx, CommonScanGlobalState& g,
                            SegDocBufferedScanLocalState& l,

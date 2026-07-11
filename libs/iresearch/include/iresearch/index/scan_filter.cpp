@@ -113,18 +113,6 @@ void TableFilter::AddColumn(field_id column_id,
   _columns.push_back(std::move(column_filter));
 }
 
-void TableFilter::AddRowFetch(duckdb::idx_t output_slot,
-                              const duckdb::LogicalType& type,
-                              const duckdb::ExpressionFilter& filter,
-                              bool passes_null) {
-  RowFetchFilter rf;
-  rf.output_slot = output_slot;
-  rf.type = type;
-  rf.filter = &filter;
-  rf.passes_null = passes_null;
-  _row_fetch.push_back(std::move(rf));
-}
-
 void TableFilter::Seal() {
   // Verdict-only (optional) filters first: they prune whole segments/row
   // groups from zonemaps with no per-row read, so running them ahead of the
@@ -277,18 +265,6 @@ duckdb::TableFilterState& ScanFilter::ColumnFilterState(size_t filter_idx) {
   return *slot;
 }
 
-duckdb::TableFilterState& ScanFilter::RowFetchFilterState(size_t filter_idx) {
-  if (_rf_filter_states.size() < _table_filter->_row_fetch.size()) {
-    _rf_filter_states.resize(_table_filter->_row_fetch.size());
-  }
-  auto& slot = _rf_filter_states[filter_idx];
-  if (!slot) {
-    slot = duckdb::TableFilterState::Initialize(
-      *_ctx, *_table_filter->_row_fetch[filter_idx].filter);
-  }
-  return *slot;
-}
-
 void ScanFilter::ReadAndEval(Column& col, std::span<const uint64_t> rows,
                              bool* pass) {
   auto& eval = *col.eval;
@@ -362,43 +338,6 @@ void ScanFilter::MatchesBatch(std::span<const doc_id_t> docs, bool* out) {
       out[need[j]] = pass[j];
     }
   }
-}
-
-duckdb::idx_t ScanFilter::FilterLookupColumns(duckdb::DataChunk& output,
-                                              duckdb::idx_t count) {
-  if (_table_filter->_row_fetch.empty() || count == 0) {
-    return count;
-  }
-  bool keep[STANDARD_VECTOR_SIZE];
-  std::fill_n(keep, count, true);
-  bool pass[STANDARD_VECTOR_SIZE];
-  if (_rf_eval_chunk.data.empty()) {
-    _rf_eval_chunk.InitializeEmpty(duckdb::vector<duckdb::LogicalType>{
-      _table_filter->_row_fetch.front().type});
-  }
-  // Each lookup filter runs on the column the emit's single Materialize left
-  // at output_slot -- FilterSelection over that already-materialized vector,
-  // no separate source fetch.
-  for (size_t fi = 0; fi < _table_filter->_row_fetch.size(); ++fi) {
-    _rf_eval_chunk.data[0].Reference(
-      output.data[_table_filter->_row_fetch[fi].output_slot]);
-    SelectFilterRows(RowFetchFilterState(fi), _rf_eval_chunk, count, pass);
-    for (duckdb::idx_t i = 0; i < count; ++i) {
-      keep[i] = keep[i] && pass[i];
-    }
-  }
-  duckdb::SelectionVector sel(count);
-  duckdb::idx_t w = 0;
-  for (duckdb::idx_t i = 0; i < count; ++i) {
-    if (keep[i]) {
-      sel.set_index(w++, i);
-    }
-  }
-  if (w != count) {
-    output.Slice(sel, w);
-    output.SetCardinality(w);
-  }
-  return w;
 }
 
 duckdb::idx_t ScanFilter::FilterHits(std::span<doc_id_t> hits,

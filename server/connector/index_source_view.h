@@ -25,6 +25,7 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/expression_executor.hpp>
+#include <duckdb/planner/table_filter_set.hpp>
 #include <iresearch/index/index_source.hpp>
 #include <span>
 #include <string_view>
@@ -61,7 +62,10 @@ class ViewIndexSourceBase : public IndexSource {
   void PreNullOutput(duckdb::idx_t count);
   // Reorder the doc-id-keyed output columns (every slot the lookup did not
   // write) into sorted-pk order, matching the compact pk-order lookup emit.
-  void GatherNonLookupColumns(duckdb::DataChunk& output, duckdb::idx_t count);
+  // `survivor_idx` (from a filtered/compacted lookup) maps each output row to
+  // its sorted-pk index; null means all pks were kept (identity).
+  void GatherNonLookupColumns(duckdb::DataChunk& output, duckdb::idx_t count,
+                              const duckdb::idx_t* survivor_idx = nullptr);
 
   ViewFastPath _fast_path;
   std::vector<duckdb::idx_t> _real_proj_slots;
@@ -76,6 +80,9 @@ class ViewIndexSourceBase : public IndexSource {
   std::vector<int64_t> _sorted_rows;
   std::vector<int64_t> _sorted_files;
   std::vector<duckdb::idx_t> _output_positions;
+  // Filled by a filtered/compacted lookup: dense survivor row -> sorted-pk index
+  // (feeds GatherNonLookupColumns). Empty when the lookup kept every pk.
+  std::vector<duckdb::idx_t> _survivor_idx;
 };
 
 }  // namespace sdb::connector

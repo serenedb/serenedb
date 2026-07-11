@@ -182,7 +182,8 @@ void ViewIndexSourceBase::RunCastPass(duckdb::DataChunk& output,
 }
 
 void ViewIndexSourceBase::GatherNonLookupColumns(duckdb::DataChunk& output,
-                                                 duckdb::idx_t count) {
+                                                 duckdb::idx_t count,
+                                                 const duckdb::idx_t* survivor_idx) {
   if (count == 0) {
     return;
   }
@@ -190,9 +191,12 @@ void ViewIndexSourceBase::GatherNonLookupColumns(duckdb::DataChunk& output,
   for (const auto slot : _real_proj_slots) {
     is_lookup[slot] = true;
   }
+  // Output row k draws its doc-id-keyed value from doc `_sort_perm[p]`, where p is
+  // the sorted-pk index: the survivor's pk index when the lookup compacted
+  // (survivor_idx), else k itself (all pks kept, pk order).
   duckdb::SelectionVector sel(count);
   for (duckdb::idx_t k = 0; k < count; ++k) {
-    sel.set_index(k, _sort_perm[k]);
+    sel.set_index(k, _sort_perm[survivor_idx ? survivor_idx[k] : k]);
   }
   for (duckdb::idx_t c = 0; c < output.ColumnCount(); ++c) {
     if (is_lookup[c]) {

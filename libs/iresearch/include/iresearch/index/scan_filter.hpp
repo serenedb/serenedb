@@ -75,32 +75,20 @@ class TableFilter {
     bool passes_null = false;
   };
 
-  // One pushed filter over a column the index does not store (a lookup
-  // column). The emit's single Materialize pass produces the column at
-  // `output_slot`; the filter runs there via FilterSelection (no separate
-  // row-fetch pass).
-  struct RowFetchFilter {
-    duckdb::idx_t output_slot;
-    duckdb::LogicalType type;
-    const duckdb::ExpressionFilter* filter;
-    bool passes_null = false;
-  };
-
   void AddColumn(field_id column_id, const duckdb::ExpressionFilter& filter,
                  bool is_optional, bool is_dynamic, bool passes_null);
-  void AddRowFetch(duckdb::idx_t output_slot, const duckdb::LogicalType& type,
-                   const duckdb::ExpressionFilter& filter, bool passes_null);
   // Sort stored filters cheapest-first; call once after the last Add*.
   void Seal();
 
-  bool Empty() const noexcept { return _columns.empty() && _row_fetch.empty(); }
-  bool HasRowFetch() const noexcept { return !_row_fetch.empty(); }
+  // Lookup-column filters are not held here: they are forwarded to the source's
+  // native lookup scan (duckdb TableFilterSet). This only tracks `.col`
+  // (INCLUDE) column filters evaluated on the columnstore.
+  bool Empty() const noexcept { return _columns.empty(); }
 
  private:
   friend class ScanFilter;
 
   std::vector<ColumnFilter> _columns;
-  std::vector<RowFetchFilter> _row_fetch;
 };
 
 // Per-thread executable filter over one scan's TableFilter. MatchesBatch
@@ -118,8 +106,7 @@ class ScanFilter {
   duckdb::FilterPropagateResult StartSegment(duckdb::ClientContext& ctx,
                                              const SubReader& seg);
 
-  // No per-row `.col` check for the current segment. Lookup-column filters are
-  // applied later, post-materialize, via FilterLookupColumns.
+  // No per-row `.col` check for the current segment.
   bool Empty() const noexcept { return _cols.empty(); }
 
   // Streaming iterator tier: advance `it`, seeking past row groups whose
@@ -134,13 +121,6 @@ class ScanFilter {
   // of hits (+scores when non-empty); returns the survivor count -- the
   // caller shrinks its containers to it.
   duckdb::idx_t FilterHits(std::span<doc_id_t> hits, std::span<float> scores);
-
-  // Apply the lookup-column filters on the materialized output chunk (the
-  // columns the emit's single Materialize produced, at each filter's
-  // output_slot) via ColumnSegment::FilterSelection, then slice `output` to
-  // survivors in place. Returns the survivor count. No separate source fetch.
-  duckdb::idx_t FilterLookupColumns(duckdb::DataChunk& output,
-                                    duckdb::idx_t count);
 
  private:
   // Reads one stored column's values for the survivor rows so the pushed
@@ -196,7 +176,6 @@ class ScanFilter {
   // pushed ExpressionFilter) that ColumnSegment::FilterSelection runs; lazily
   // built and reused across segments, indexed by filter position.
   duckdb::TableFilterState& ColumnFilterState(size_t filter_idx);
-  duckdb::TableFilterState& RowFetchFilterState(size_t filter_idx);
 
   const TableFilter* _table_filter = nullptr;
   std::vector<Column> _cols;
@@ -208,9 +187,7 @@ class ScanFilter {
   std::vector<std::unique_ptr<RowEval>> _evals;
   duckdb::ClientContext* _ctx = nullptr;
   const ColReader* _col_reader = nullptr;
-  duckdb::DataChunk _rf_eval_chunk;
   std::vector<duckdb::unique_ptr<duckdb::TableFilterState>> _col_filter_states;
-  std::vector<duckdb::unique_ptr<duckdb::TableFilterState>> _rf_filter_states;
 };
 
 }  // namespace irs

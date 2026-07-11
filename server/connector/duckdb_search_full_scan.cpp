@@ -172,11 +172,11 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
   state->collectors.resize(state->MaxThreads());
 
   // Top-k enforces .col filters in the collector before candidates count
-  // toward k. Filters that can only run post-materialize -- over virtual
-  // output slots (row_expr) or over lookup columns (HasRowFetch,
-  // FilterLookupColumns) -- demote to streaming, which applies them there.
+  // toward k. Filters that can't -- over virtual output slots (row_expr) or
+  // over lookup columns (has_lookup_filter, applied only during the source
+  // lookup) -- demote to streaming, which applies them there.
   if (ss.score_top_k && (ss.text_scorer || ss.score_order) &&
-      !state->row_expr && !state->table_filter.HasRowFetch()) {
+      !state->row_expr && !state->has_lookup_filter) {
     state->parallel_topk = true;
     if (ss.vector_scorer &&
         ss.vector_scorer->quant != irs::VectorQuantization::None) {
@@ -192,7 +192,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
   ClassifyColumnstoreProjections(*state, bind_data);
 
   if (state->BulkChunkEligible() && !ss.text_scorer && !state->parallel_topk &&
-      state->table_filter.Empty() && !state->row_expr) {
+      state->table_filter.Empty() && !state->row_expr &&
+      !state->has_lookup_filter) {
     // Search tables carry no inverted_index; fall back to the default unit.
     uint64_t rg_rows = bind_data.inverted_index
                          ? bind_data.inverted_index->GetOptions().row_group_size
@@ -769,11 +770,12 @@ void SearchFullScanScanLocalState::StartSegment(duckdb::ClientContext& ctx,
     streaming_doc.reset();
     return;
   }
-  // A pushed filter (column, row-fetch, or row_expr) rules out the bulk
+  // A pushed filter (`.col`, lookup, or row_expr) rules out the bulk
   // columnstore fast path: bulk emits every live row untouched.
   const bool bulk = g.BulkChunkEligible() &&
                     seg.live_docs_count() == seg.docs_count() &&
-                    g.table_filter.Empty() && !g.row_expr;
+                    g.table_filter.Empty() && !g.row_expr &&
+                    !g.has_lookup_filter;
   if (bulk) {
     bulk_seg_doc_count = seg.docs_count();
     streaming_doc.reset();
@@ -1048,10 +1050,11 @@ void RunStreamingScan(duckdb::ClientContext& ctx, SearchFullScanGlobalState& g,
     const auto added = l.EmitChunk(ctx, g, output);
     SDB_ASSERT(added <= STANDARD_VECTOR_SIZE);
     if (added != 0) {
-      FinalizeBatch(ctx, g, l, output, added);
-      // Lookup-column filters run here, post-materialize, on the emit's single
-      // Materialize output (FilterSelection); compacts to survivors in place.
-      const auto kept = l.filter.FilterLookupColumns(output, added);
+      // The lookup fetches the source columns for the materialized pks and
+      // applies any pushed lookup-column filters natively (FilterSelection +
+      // late materialization), returning the survivor count (== added when no
+      // lookup filter applies).
+      const auto kept = FinalizeBatch(ctx, g, l, output, added);
       // Enforce row_expr (filters over virtual/extract slots) on the
       // materialized chunk; a fully-rejected batch loops for the next one.
       const auto survivors = ApplyRowFilter(ctx, g, l, output, kept);

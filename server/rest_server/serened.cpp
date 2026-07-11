@@ -101,7 +101,9 @@ int RunServer(int argc, char** argv) {
         search.RequestStop();
       }
       if (up_network) {
-        stop("network", [&] { network.stop(); });
+        // Stop taking new connections early, but keep the io pool alive: the
+        // search/background loops below still drain their timers on it.
+        stop("accept", [&] { network.StopAccepting(); });
       }
       if (up_search) {
         stop("search", [&] { search.stop(); });
@@ -114,6 +116,13 @@ int RunServer(int argc, char** argv) {
       }
       if (up_catalog) {
         stop("catalog", [&] { catalog::ShutdownCatalog(); });
+      }
+      if (up_network) {
+        // Last: every DuckDB-work submitter above is now down, so join the
+        // DuckDB workers and tear the io pool down. A session query pipeline
+        // runs on a DuckDB worker and pushes results up into the io pool, so
+        // the pool can only be freed once no worker is left to touch it.
+        stop("network", [&] { network.stop(); });
       }
     };
 

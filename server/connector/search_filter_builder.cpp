@@ -69,6 +69,7 @@
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/node_hash_map.h"
 #include "basics/string_utils.h"
+#include "basics/system-compiler.h"
 #include "comparison_op.hpp"
 #include "connector/json_extract_names.hpp"
 #include "functions/search.h"

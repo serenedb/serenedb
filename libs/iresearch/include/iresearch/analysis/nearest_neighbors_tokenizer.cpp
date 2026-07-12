@@ -59,21 +59,21 @@ Analyzer::ptr NearestNeighborsTokenizer::Make(Options opts) {
     }
   } catch (const std::exception& e) {
     THROW_SQL_ERROR(
-      ERR_MSG(absl::StrCat("nearest_neighbors: failed to load fasttext kNN "
-                           "model from: ",
-                           opts.model_location, ", error: ", e.what())));
+      ERR_MSG("nearest_neighbors: failed to load fasttext kNN "
+              "model from: ",
+              opts.model_location, ", error: ", e.what()));
   } catch (...) {
     THROW_SQL_ERROR(
-      ERR_MSG(absl::StrCat("nearest_neighbors: failed to load fasttext kNN "
-                           "model from: ",
-                           opts.model_location)));
+      ERR_MSG("nearest_neighbors: failed to load fasttext kNN "
+              "model from: ",
+              opts.model_location));
   }
 
   if (!model) {
     THROW_SQL_ERROR(
-      ERR_MSG(absl::StrCat("nearest_neighbors: failed to load fasttext kNN "
-                           "model from: ",
-                           opts.model_location)));
+      ERR_MSG("nearest_neighbors: failed to load fasttext kNN "
+              "model from: ",
+              opts.model_location));
   }
 
   return std::make_unique<NearestNeighborsTokenizer>(opts, std::move(model));

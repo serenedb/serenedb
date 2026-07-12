@@ -23,6 +23,7 @@
 #include <memory>
 
 #include "basics/shared.hpp"
+#include "basics/system-compiler.h"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
 #include "iresearch/utils/string.hpp"

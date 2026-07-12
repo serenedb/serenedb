@@ -22,7 +22,6 @@
 
 #include "absl/strings/str_cat.h"
 #include "basics/assert.h"
-#include "basics/system-compiler.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
 

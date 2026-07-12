@@ -187,22 +187,24 @@ void Server::SetupAuth() {
   // Auth resolves every connection through the catalog's per-role credentials
   // (RBAC). A role with no stored password is trusted only over loopback (see
   // the HBA loopback-gated fallback in pg_wire_session / http auth).
-    _credentials = std::make_unique<CatalogCredentialProvider>();
-    SDB_INFO(GENERAL, "network auth using per-role catalog passwords (",
-             AuthMethodName(_auth_method), ")");
-  }
+  _credentials = std::make_unique<CatalogCredentialProvider>();
+  SDB_INFO(GENERAL, "network auth using per-role catalog passwords");
+
+  // The static HTTP ApiKey / Bearer credentials have no catalog store yet, so
+  // they authenticate as the bootstrap superuser.
+  const std::string token_user{StaticStrings::kDefaultUser};
   if (!_api_key.empty()) {
     const auto colon = _api_key.find(':');
     if (colon == std::string::npos) {
       SDB_FATAL(GENERAL, "--auth_api_key must be 'id:key'");
     }
     _api_key_validator = std::make_unique<network::http::FlagApiKeyValidator>(
-      _api_key.substr(0, colon), _api_key.substr(colon + 1), _auth_user);
+      _api_key.substr(0, colon), _api_key.substr(colon + 1), token_user);
     SDB_INFO(GENERAL, "network http ApiKey auth enabled");
   }
   if (!_bearer_token.empty()) {
     _bearer_validator = std::make_unique<network::http::FlagBearerValidator>(
-      _bearer_token, _auth_user);
+      _bearer_token, token_user);
     SDB_INFO(GENERAL, "network http Bearer auth enabled");
   }
 

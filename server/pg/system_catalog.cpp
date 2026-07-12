@@ -35,6 +35,7 @@
 #include "basics/containers/flat_hash_set.h"
 #include "basics/serializer.h"
 #include "basics/static_strings.h"
+#include "basics/system-compiler.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/view.h"

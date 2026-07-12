@@ -256,8 +256,7 @@ void Validate(ondemand::object& object, ondemand::value& coordinates) {
   if (ParseType(object) != T) [[unlikely]] {
     // TODO(mbkkt) Unnecessary memcpy,
     //  this string can be constructed at compile time with compile time new
-    THROW_SQL_ERROR(
-      ERR_MSG(absl::StrCat("Require type: '", toString<T>(), "'.")));
+    THROW_SQL_ERROR(ERR_MSG("Require type: '", toString<T>(), "'."));
   }
   if (object.find_field_unordered(fields::kCoordinates).get(coordinates) !=
       simdjson::SUCCESS) [[unlikely]] {
@@ -332,8 +331,7 @@ void ParseLinesImpl(ondemand::array array, std::vector<S2Polyline>& lines,
       }
       auto& back = lines.emplace_back(vertices, S2Debug::DISABLE);
       if (S2Error error; SDB_UNLIKELY(back.FindValidationError(&error))) {
-        THROW_SQL_ERROR(
-          ERR_MSG(absl::StrCat("Invalid Polyline: ", error.message())));
+        THROW_SQL_ERROR(ERR_MSG("Invalid Polyline: ", error.message()));
       }
     } else {
       lines.emplace_back(vertices, S2Debug::DISABLE);
@@ -394,8 +392,7 @@ void ParseLoopImpl(ondemand::array loop,
     static_cast<int>(vertices.size()), std::move(points), S2Debug::DISABLE));
   if constexpr (Validation) {
     if (S2Error error; SDB_UNLIKELY(last.FindValidationError(&error))) {
-      THROW_SQL_ERROR(
-        ERR_MSG(absl::StrCat("Invalid Loop in Polygon: ", error.message())));
+      THROW_SQL_ERROR(ERR_MSG("Invalid Loop in Polygon: ", error.message()));
     }
   }
   // Note that we are using InitNested for S2Polygon below.
@@ -484,8 +481,7 @@ void ParsePolygonImpl(ondemand::array array, S2Polygon& region,
   if constexpr (Validation) {
     S2Error error;
     if (region.FindValidationError(&error)) [[unlikely]] {
-      THROW_SQL_ERROR(
-        ERR_MSG(absl::StrCat("Invalid Polygon: ", error.message())));
+      THROW_SQL_ERROR(ERR_MSG("Invalid Polygon: ", error.message()));
     }
   }
 }
@@ -579,8 +575,8 @@ void ParseMultiPolygonImpl(ondemand::value json, S2Polygon& region,
   if constexpr (Validation) {
     S2Error error;
     if (region.FindValidationError(&error)) [[unlikely]] {
-      THROW_SQL_ERROR(ERR_MSG(
-        absl::StrCat("Invalid Loop in MultiPolygon: ", error.message())));
+      THROW_SQL_ERROR(
+        ERR_MSG("Invalid Loop in MultiPolygon: ", error.message()));
     }
   }
 }
@@ -630,8 +626,7 @@ void ParseRegionImpl(ondemand::value json, ShapeContainer& region,
       }
       auto d = std::make_unique<S2Polyline>(cache, S2Debug::DISABLE);
       if (S2Error error; Validation && d->FindValidationError(&error)) {
-        THROW_SQL_ERROR(
-          ERR_MSG(absl::StrCat("Invalid Polyline: ", error.message())));
+        THROW_SQL_ERROR(ERR_MSG("Invalid Polyline: ", error.message()));
       }
       region.reset(std::move(d), ToShapeType(Type::Linestring), options);
     } break;

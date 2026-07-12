@@ -476,6 +476,11 @@ class Catalog final {
   Result CreateForeignServer(const AccessContext& ax, ObjectId database_id,
                              std::string_view schema,
                              std::shared_ptr<ForeignServer> foreign_server);
+  // Throws INSUFFICIENT_PRIVILEGE if `ax.role` may not CREATE a foreign server
+  // in `schema`. Called by the command layer BEFORE it connects the remote, so
+  // a denied CREATE SERVER never opens (and orphans) an attachment.
+  void RequireCreateForeignServer(const AccessContext& ax, ObjectId database_id,
+                                  std::string_view schema);
   Result CreateUserMapping(const AccessContext& ax, ObjectId database_id,
                            std::string_view schema,
                            std::shared_ptr<UserMapping> user_mapping);

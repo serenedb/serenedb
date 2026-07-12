@@ -28,7 +28,8 @@ CREATE ROLE fp_other LOGIN PASSWORD 'other_pw';
 
 # ===== CREATE SERVER is gated on CREATE in the public schema =====
 
-# A plain non-superuser without CREATE on public is denied.
+# A plain non-superuser without CREATE on public is denied -- with REACHABLE
+# credentials, so the denial must fire BEFORE the remote is attached.
 connection c_other user=fp_other password=other_pw
 statement error
 CREATE SERVER fp_denied FOREIGN DATA WRAPPER clickhouse_fdw
@@ -37,8 +38,17 @@ CREATE SERVER fp_denied FOREIGN DATA WRAPPER clickhouse_fdw
 db error: ERROR: permission denied for schema public<slt:ignore>
 
 
-# The superuser grants CREATE on public to fp_owner.
+# The denied CREATE left no orphaned attachment: the superuser can create the
+# same name cleanly (a leaked ATTACH would make this fail "already attached").
 connection default
+statement ok
+CREATE SERVER fp_denied FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+
+statement ok
+DROP SERVER fp_denied;
+
+# The superuser grants CREATE on public to fp_owner.
 statement ok
 GRANT CREATE ON SCHEMA public TO fp_owner;
 

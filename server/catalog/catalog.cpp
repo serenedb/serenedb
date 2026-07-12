@@ -2898,6 +2898,18 @@ Result Catalog::CreateTokenizer(const AccessContext& ax, ObjectId database_id,
     });
 }
 
+void Catalog::RequireCreateForeignServer(const AccessContext& ax,
+                                         ObjectId database_id,
+                                         std::string_view schema) {
+  absl::MutexLock lock{&_mutex};
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  if (!schema_id) {
+    return;  // missing schema -> the create will fail with its own error
+  }
+  RequireCreateOn(*_snapshot, ax.role, *schema_id);
+}
+
 Result Catalog::CreateForeignServer(
   const AccessContext& ax, ObjectId database_id, std::string_view schema,
   std::shared_ptr<ForeignServer> foreign_server) {

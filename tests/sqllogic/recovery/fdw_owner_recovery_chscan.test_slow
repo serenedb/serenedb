@@ -1,0 +1,123 @@
+control substitution on
+
+# Recovery for FOREIGN SERVER OWNERSHIP + owner-gated enforcement. The owner is
+# a brand-new persisted field (Permissions on ForeignServerData/UserMappingData),
+# so a serde or dependency-rebuild regression would silently revert to the old
+# "owned by root / no enforcement" behaviour -- a privilege escalation across
+# restart. This asserts that after a crash + restart:
+#   - pg_foreign_server.srvowner still resolves to the creating (non-superuser)
+#     role (the Permissions field deserialized correctly);
+#   - the owner-or-superuser DROP SERVER gate still enforces (non-owner denied,
+#     owner allowed);
+#   - the owner->object dependency edge was rebuilt from the deserialized owner,
+#     so DROP ROLE <owner> is still refused while the role owns the server (and
+#     its mapping), and succeeds only once both are gone.
+# The `_chscan.` suffix keeps a ClickHouse container alive across the crash.
+# NB: a multiline `----` error body ends on TWO blank lines.
+
+statement ok
+DROP ROLE IF EXISTS fo_owner;
+
+statement ok
+DROP ROLE IF EXISTS fo_other;
+
+statement ok
+CREATE ROLE fo_owner LOGIN PASSWORD 'owner_pw';
+
+statement ok
+CREATE ROLE fo_other LOGIN PASSWORD 'other_pw';
+
+statement ok
+GRANT CREATE ON SCHEMA public TO fo_owner;
+
+# fo_owner creates and owns the server + a PUBLIC mapping (owner = server owner).
+connection c_owner user=fo_owner password=owner_pw
+statement ok
+CREATE SERVER fo_srv FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+
+connection c_owner user=fo_owner password=owner_pw
+statement ok
+CREATE USER MAPPING FOR PUBLIC SERVER fo_srv OPTIONS (user 'default');
+
+# Pre-crash: owner recorded, non-owner denied, owner-role not droppable.
+connection default
+query
+SELECT r.rolname FROM pg_foreign_server s JOIN pg_roles r ON s.srvowner = r.oid
+WHERE s.srvname = 'fo_srv';
+----
+rolname
+fo_owner
+
+connection c_other user=fo_other password=other_pw
+statement error
+DROP SERVER fo_srv CASCADE;
+----
+db error: ERROR: must be owner of foreign server fo_srv<slt:ignore>
+
+
+connection default
+statement error
+DROP ROLE fo_owner;
+----
+db error: ERROR: role "fo_owner" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Crash mid-connection; run_serened_loop.sh restarts on the same datadir.
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+# Post-restart (a): the deserialized owner still resolves to fo_owner.
+connection after_crash
+query
+SELECT r.rolname FROM pg_foreign_server s JOIN pg_roles r ON s.srvowner = r.oid
+WHERE s.srvname = 'fo_srv';
+----
+rolname
+fo_owner
+
+# Post-restart (b): the owner gate still enforces -- a non-owner is denied.
+connection after_crash user=fo_other password=other_pw
+statement error
+DROP SERVER fo_srv CASCADE;
+----
+db error: ERROR: must be owner of foreign server fo_srv<slt:ignore>
+
+
+# Post-restart (c): the owner->object edge was rebuilt, so DROP ROLE is still
+# refused while fo_owner owns the server + mapping.
+connection after_crash
+statement error
+DROP ROLE fo_owner;
+----
+db error: ERROR: role "fo_owner" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# The owner (or a superuser) can still drop the server post-restart; here the
+# owner does it, proving its authority survived.
+connection after_crash user=fo_owner password=owner_pw
+statement ok
+DROP SERVER fo_srv CASCADE;
+
+# With the server (and its mapping) gone, fo_owner owns nothing -> droppable.
+connection after_crash
+statement ok
+REVOKE CREATE ON SCHEMA public FROM fo_owner;
+
+connection after_crash
+statement ok
+DROP ROLE fo_owner;
+
+connection after_crash
+statement ok
+DROP ROLE fo_other;

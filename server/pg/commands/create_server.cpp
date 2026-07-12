@@ -206,6 +206,13 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
   auto db_id = conn_ctx.GetDatabaseId();
 
   auto& catalog = catalog::GetCatalog();
+  // Authorize BEFORE connecting the remote: RunAttach below creates an
+  // instance-global DuckDB attachment, and the in-catalog gate throws (not a
+  // Result), so a denied CREATE that attached first would orphan that
+  // attachment past the cleanup branch. Checking here also avoids connecting a
+  // remote on behalf of a caller who lacks the privilege.
+  catalog.RequireCreateForeignServer(catalog::ActingAs(conn_ctx.GetRoleId()),
+                                     db_id, kSchema);
   if (catalog.GetCatalogSnapshot()->GetForeignServer(db_id, kSchema, name)) {
     if (if_not_exists) {
       return;

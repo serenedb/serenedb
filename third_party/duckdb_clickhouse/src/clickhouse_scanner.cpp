@@ -7,10 +7,12 @@
 #include "duckdb/execution/expression_executor.hpp"
 
 #include <algorithm>
+#include <atomic>
 
 #include <clickhouse/client.h>
 #include <clickhouse/block.h>
 #include <clickhouse/columns/string.h>
+#include <clickhouse/columns/numeric.h>
 #include <clickhouse/exceptions.h>
 
 #include <optional>
@@ -68,6 +70,9 @@ struct ClickHouseGlobalState : public GlobalTableFunctionState {
 	std::optional<clickhouse::Block> current_block;
 	idx_t block_offset = 0;
 	bool done = false;
+	//! Server rows decoded so far, for table_scan_progress. Atomic: the progress
+	//! callback is polled from a different thread than the one running the scan.
+	std::atomic<idx_t> rows_seen {0};
 	//! Conjunction of the table filters whose remote rendering is absent or wider than
 	//! the filter itself (see TransformFilters). The optimizer erased them from the
 	//! plan, so the scan re-applies them to every decoded chunk -- otherwise rows leak
@@ -154,6 +159,29 @@ static unique_ptr<FunctionData> ClickHouseBind(ClientContext &context, TableFunc
 		auto connection = ClickHouseConnection::Open(bind_data->params);
 		ClickHouseDiscoverColumns(connection, describe_sql, return_types, names, binary_as_blob,
 		                          bind_data->stringified, bind_data->clickhouse_types);
+		// Cardinality estimate for the optimizer, mirroring the catalog path
+		// (clickhouse_table_entry): without it an ad-hoc clickhouse_scan reports ~1
+		// row and joins plan badly. Stats-only -- a failure must never fail the bind.
+		try {
+			string count_sql =
+			    "SELECT ifNull(total_rows, 0), total_rows IS NOT NULL FROM system.tables WHERE database = " +
+			    ClickHouseStringLiteral(bind_data->database) + " AND name = " +
+			    ClickHouseStringLiteral(bind_data->table);
+			ClickHouseConnection::LogQuery(count_sql);
+			connection.GetClient().Select(count_sql, [&](const clickhouse::Block &block) {
+				if (block.GetColumnCount() < 2 || block.GetRowCount() == 0) {
+					return;
+				}
+				auto n = block[0]->As<clickhouse::ColumnUInt64>();
+				auto known = block[1]->As<clickhouse::ColumnUInt8>();
+				if (n && known && known->At(0) != 0) {
+					bind_data->approx_row_count = static_cast<idx_t>(n->At(0));
+					bind_data->has_cardinality = true;
+				}
+			});
+		} catch (...) {
+			// No estimate; leave has_cardinality false.
+		}
 	} catch (const clickhouse::Error &e) {
 		ClickHouseConnection::ThrowError("describing table", describe_sql, e);
 	}
@@ -263,7 +291,7 @@ static unique_ptr<GlobalTableFunctionState> ClickHouseInitGlobalStateInternal(Cl
 			    std::chrono::steady_clock::now());
 		}
 		ClickHouseConnection::LogQuery(sql);
-		result->connection->GetClient().BeginSelect(sql);
+		result->connection->GetClient().BeginSelect(ClickHouseConnection::MakeQuery(context, sql));
 	} catch (const clickhouse::Error &e) {
 		result->connection.Invalidate();
 		ClickHouseConnection::ThrowError("starting scan", sql, e);
@@ -297,6 +325,7 @@ static void ClickHouseScan(ClientContext &context, TableFunctionInput &data, Dat
 					output.SetChildCardinality(0);
 					return;
 				}
+				gstate.rows_seen.fetch_add(block->GetRowCount(), std::memory_order_relaxed);
 				gstate.current_block = std::move(block);
 				gstate.block_offset = 0;
 				continue;
@@ -359,6 +388,23 @@ static unique_ptr<NodeStatistics> ClickHouseScanCardinality(ClientContext &conte
 	return make_uniq<NodeStatistics>(bind_data.approx_row_count);
 }
 
+// Scan progress = rows decoded / approx_row_count (the postgres analog is
+// PostgresScanProgress over page indices). Returns -1 when the row count is
+// unknown, which DuckDB treats as "indeterminate". A pushed LIMIT/filter makes
+// the denominator an over-estimate, so progress can finish below 100 -- capped.
+static double ClickHouseScanProgress(ClientContext &context, const FunctionData *bind_data_p,
+                                     const GlobalTableFunctionState *gstate_p) {
+	auto &bind_data = bind_data_p->Cast<ClickHouseBindData>();
+	auto &gstate = gstate_p->Cast<ClickHouseGlobalState>();
+	if (!bind_data.has_cardinality || bind_data.approx_row_count == 0) {
+		return -1;
+	}
+	double progress =
+	    100.0 * static_cast<double>(gstate.rows_seen.load(std::memory_order_relaxed)) /
+	    static_cast<double>(bind_data.approx_row_count);
+	return MinValue<double>(100.0, progress);
+}
+
 // EXPLAIN rendering: name the remote table and surface the pushed-down ORDER BY /
 // LIMIT clauses. "Projections" is deliberately NOT emitted so the framework keeps
 // appending its own Projections/Filters sections after these keys.
@@ -392,6 +438,7 @@ ClickHouseScanFunction::ClickHouseScanFunction()
 	deserialize = ClickHouseScanDeserialize;
 	get_bind_info = ClickHouseGetBindInfo;
 	cardinality = ClickHouseScanCardinality;
+	table_scan_progress = ClickHouseScanProgress;
 	to_string = ClickHouseScanToString;
 	projection_pushdown = true;
 }
@@ -403,6 +450,7 @@ ClickHouseScanFunctionFilterPushdown::ClickHouseScanFunctionFilterPushdown()
 	deserialize = ClickHouseScanDeserialize;
 	get_bind_info = ClickHouseGetBindInfo;
 	cardinality = ClickHouseScanCardinality;
+	table_scan_progress = ClickHouseScanProgress;
 	to_string = ClickHouseScanToString;
 	projection_pushdown = true;
 	filter_pushdown = true;

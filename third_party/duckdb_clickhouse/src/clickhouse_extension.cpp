@@ -2,6 +2,9 @@
 #include "duckdb.hpp"
 
 #include "duckdb/main/extension/extension_loader.hpp"
+#include "duckdb/main/client_context.hpp"
+#include "duckdb/main/client_context_state.hpp"
+#include "duckdb/planner/extension_callback.hpp"
 
 #include "clickhouse_scanner.hpp"
 #include "clickhouse_scanner_extension.hpp"
@@ -12,6 +15,37 @@
 #include "storage/clickhouse_optimizer.hpp"
 
 using namespace duckdb;
+
+// Auto-recover from remote schema drift: a COLUMN_NOT_FOUND binder error against
+// a stale cached ClickHouse catalog clears the caches and retries once, so a
+// column added/dropped on the server doesn't force a manual clickhouse_clear_cache.
+// Mirrors PostgresExtensionState / PostgresExtensionCallback.
+class ClickHouseExtensionState : public ClientContextState {
+public:
+	bool CanRequestRebind() override {
+		return true;
+	}
+	RebindQueryInfo OnPlanningError(ClientContext &context, SQLStatement &statement, ErrorData &error) override {
+		if (error.Type() != ExceptionType::BINDER) {
+			return RebindQueryInfo::DO_NOT_REBIND;
+		}
+		auto &extra_info = error.ExtraInfo();
+		auto entry = extra_info.find("error_subtype");
+		if (entry == extra_info.end() || entry->second != "COLUMN_NOT_FOUND") {
+			return RebindQueryInfo::DO_NOT_REBIND;
+		}
+		ClickHouseClearCacheFunction::ClearClickHouseCaches(context);
+		return RebindQueryInfo::ATTEMPT_TO_REBIND;
+	}
+};
+
+class ClickHouseExtensionCallback : public ExtensionCallback {
+public:
+	void OnConnectionOpened(ClientContext &context) override {
+		context.registered_state->Insert("clickhouse_extension",
+		                                 make_shared_ptr<ClickHouseExtensionState>());
+	}
+};
 
 static void SetClickHouseDebugQueryPrint(ClientContext &context, SetScope scope, Value &parameter) {
 	ClickHouseConnection::DebugSetPrintQueries(BooleanValue::Get(parameter));
@@ -116,10 +150,20 @@ static void LoadInternal(ExtensionLoader &loader) {
 	                          "Whether or not to use filter pushdown", LogicalType::BOOLEAN,
 	                          Value::BOOLEAN(true));
 
+	// Per-query max execution time applied to scan + execute (the pg_statement_
+	// timeout_millis analog). NULL/0 = unbounded. Rendered as ClickHouse's
+	// SETTINGS max_execution_time (seconds) by ClickHouseConnection::MakeQuery.
+	config.AddExtensionOption("ch_statement_timeout_millis",
+	                          "Maximum milliseconds a ClickHouse scan/execute query may run (0 = unlimited)",
+	                          LogicalType::UBIGINT, Value());
+
 	// Shared dbconnector ORDER BY / LIMIT / TOP_N pushdown (with CH safety vetoes).
 	OptimizerExtension clickhouse_optimizer;
 	clickhouse_optimizer.optimize_function = ClickHouseOptimizer::Optimize;
 	OptimizerExtension::Register(config, std::move(clickhouse_optimizer));
+
+	// Rebind-on-stale-schema recovery (registers ClickHouseExtensionState per connection).
+	ExtensionCallback::Register(config, make_shared_ptr<ClickHouseExtensionCallback>());
 }
 
 void ClickhouseScannerExtension::Load(ExtensionLoader &loader) {

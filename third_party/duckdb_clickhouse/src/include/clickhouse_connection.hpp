@@ -47,6 +47,13 @@ public:
 
 	clickhouse::Client &GetClient();
 
+	//! Wrap `sql` in a clickhouse::Query carrying the session's per-query settings:
+	//! ch_statement_timeout_millis -> SETTINGS max_execution_time (ClickHouse's
+	//! bound is in fractional seconds). The postgres analog is the SET
+	//! statement_timeout applied to scan connections. Used on the scan and execute
+	//! paths (not catalog-metadata queries, matching postgres).
+	static clickhouse::Query MakeQuery(duckdb::ClientContext &context, const std::string &sql);
+
 	//! Print `sql` to stdout when ch_debug_show_queries is enabled. Called at every
 	//! query-emit site (the postgres pg_debug_show_queries analog; there is no single
 	//! choke point because callers drive clickhouse::Client directly).

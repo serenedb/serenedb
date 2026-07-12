@@ -109,7 +109,7 @@ static void ClickHouseExecuteFunc(ClientContext &context, TableFunctionInput &da
 	try {
 		auto connection = ClickHouseConnection::Open(bind_data.params);
 		ClickHouseConnection::LogQuery(bind_data.sql);
-		connection.GetClient().Execute(bind_data.sql);
+		connection.GetClient().Execute(ClickHouseConnection::MakeQuery(context, bind_data.sql));
 	} catch (const clickhouse::Error &e) {
 		ClickHouseConnection::ThrowError("executing statement", bind_data.sql, e);
 	}

@@ -186,7 +186,7 @@ QUERY PLAN
 │ Table: chtest.vedernikoff │
 │ Pushed Limit: LIMIT 3     │
 │ Projections: id           │
-│ ~1 row                    │
+│ ~6 rows                   │
 ╰───────────────────────────╯
 
 # 3 rows.

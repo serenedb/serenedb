@@ -44,6 +44,7 @@ static unique_ptr<MergeIntoOperator> ClickHousePlanMergeIntoAction(ClickHouseCat
 		update.expressions = std::move(action.expressions);
 		update.columns = std::move(action.columns);
 		update.update_is_del_and_insert = action.update_is_del_and_insert;
+		update.update_column_count = action.update_column_count;
 		result->op = catalog.PlanUpdate(context, planner, update, child_plan);
 		break;
 	}

@@ -266,6 +266,21 @@ void ClickHouseConnection::DebugSetPrintQueries(bool print) {
 	debug_clickhouse_print_queries = print;
 }
 
+clickhouse::Query ClickHouseConnection::MakeQuery(duckdb::ClientContext &context, const std::string &sql) {
+	clickhouse::Query query(sql);
+	Value timeout_val;
+	if (context.TryGetCurrentSetting("ch_statement_timeout_millis", timeout_val) && !timeout_val.IsNull()) {
+		auto ms = timeout_val.GetValue<uint64_t>();
+		if (ms > 0) {
+			// ClickHouse's max_execution_time is in (fractional) seconds; a per-query
+			// SETTINGS keeps it off the pooled connection (no sticky session GUC).
+			double seconds = static_cast<double>(ms) / 1000.0;
+			query.SetSetting("max_execution_time", clickhouse::QuerySettingsField{std::to_string(seconds), 0});
+		}
+	}
+	return query;
+}
+
 void ClickHouseConnection::LogQuery(const std::string &sql) {
 	if (debug_clickhouse_print_queries) {
 		Printer::Print(sql + "\n");

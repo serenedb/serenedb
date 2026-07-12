@@ -326,6 +326,50 @@ TEST(ShingleAnalyzerTest, empty_input) {
   EXPECT_TRUE(Emit(analyzer, "").empty());
 }
 
+TEST(ShingleAnalyzerTest, store_tokens_off_trims_blob) {
+  std::string input;
+  for (int i = 0; i < 2000; ++i) {
+    if (!input.empty()) {
+      input.push_back(' ');
+    }
+    input.append("word").append(std::to_string(i));
+  }
+  irs::analysis::ShingleAnalyzer trimmed{
+    std::make_unique<WhitespaceTokenizer>(),
+    {
+      .min_shingle_size = 2,
+      .max_shingle_size = 2,
+      .output_unigrams = true,
+      .store_tokens = false,
+    }};
+  irs::analysis::ShingleAnalyzer stored{
+    std::make_unique<WhitespaceTokenizer>(),
+    {
+      .min_shingle_size = 2,
+      .max_shingle_size = 2,
+      .output_unigrams = true,
+      .store_tokens = true,
+    }};
+  EXPECT_EQ(Emit(stored, input), Emit(trimmed, input));
+  EXPECT_LT(trimmed.TokenBlob().size(), input.size() / 2);
+  EXPECT_GT(stored.TokenBlob().size(), input.size() / 2);
+}
+
+TEST(ShingleAnalyzerTest, unigrams_if_no_shingles_ignores_fillers) {
+  irs::analysis::ShingleAnalyzer analyzer{
+    std::make_unique<StopwordTokenizer>(),
+    {
+      .min_shingle_size = 2,
+      .max_shingle_size = 2,
+      .output_unigrams = false,
+      .output_unigrams_if_no_shingles = true,
+    }};
+  const std::vector<TermInc> expected{
+    {"solo", 2},
+  };
+  EXPECT_EQ(expected, EmitWithInc(analyzer, "the solo"));
+}
+
 irs::bstring Bytes(std::string_view s) {
   return irs::bstring{irs::ViewCast<irs::byte_type>(s)};
 }

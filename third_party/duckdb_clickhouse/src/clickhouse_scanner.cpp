@@ -347,10 +347,6 @@ static unique_ptr<FunctionData> ClickHouseScanDeserialize(Deserializer &deserial
 	throw NotImplementedException("ClickHouseScanDeserialize");
 }
 
-bool IsClickHouseScan(const std::string &name) {
-	return name == "clickhouse_scan" || name == "clickhouse_scan_pushdown";
-}
-
 // Report the remote table's approximate row count (captured at bind from
 // system.tables.total_rows) so the optimizer can order joins sensibly instead of
 // assuming ~1 row. Unknown counts yield no estimate. The postgres analog is

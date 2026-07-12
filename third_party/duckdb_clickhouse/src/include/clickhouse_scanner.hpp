@@ -107,7 +107,4 @@ public:
 	static void ClearCacheOnSetting(ClientContext &context, SetScope scope, Value &parameter);
 };
 
-//! True for the connector's own scan table functions.
-bool IsClickHouseScan(const std::string &name);
-
 } // namespace duckdb

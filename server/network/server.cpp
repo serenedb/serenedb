@@ -26,9 +26,11 @@
 
 #include <algorithm>
 #include <chrono>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <memory>
 #include <utility>
 
+#include "basics/duckdb_engine.h"
 #include "basics/log.h"
 #include "basics/number_of_cores.h"
 #include "basics/static_strings.h"
@@ -405,11 +407,24 @@ void Server::StartListeners() {
   }
 }
 
-void Server::stop() {
+void Server::StopAccepting() noexcept {
   for (auto& acceptor : _acceptors) {
     acceptor->Stop();
   }
+}
+
+void Server::stop() {
+  // Join every DuckDB worker BEFORE freeing the io pool. A session's query
+  // pipeline runs on a DuckDB worker and, on completion, pushes result bytes up
+  // into this connection's io-side state (CpuResumer -> IoExecutor, the send
+  // gates). Freeing the io pool while such a worker is mid-push is a
+  // use-after-free. SetThreads cannot help: the regular pool clamps to one
+  // worker unless it is being destroyed, and the DatabaseInstance stays pinned
+  // alive by every session's Connection, so _db.reset() never joins the workers
+  // while sessions exist. Join() reaches zero workers on the live scheduler.
   if (_pool) {
+    duckdb::TaskScheduler::GetScheduler(DuckDBEngine::Instance().instance())
+      .Join();
     _pool->Stop();
     _pool.reset();
   }

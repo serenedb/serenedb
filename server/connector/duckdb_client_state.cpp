@@ -185,10 +185,16 @@ void SereneDBClientState::TransactionPreCheckpoint(
   duckdb::AttachedDatabase& db, duckdb::ClientContext&,
   duckdb::idx_t wal_generation, duckdb::idx_t wal_end_offset) {
   // Commit the search-index leg synchronously with the store table changes:
-  // this fires after the store database's changes are durable but before the
-  // in-commit checkpoint, so the checkpoint's force-refresh never waits on an
-  // un-committed in-flight batch. Only the store database carries indexed
-  // tables, so settle on its commit.
+  // the engine fires this on the committing thread, while it still holds the
+  // WAL lock, right after the commit's WAL flush marker is written -- so ticks
+  // are handed out in WAL-append order across connections and recovery cursors
+  // stay monotonic with WAL offsets, even though the group fsyncs (and thus
+  // acknowledgements) complete out of order. Settling here is memory-only
+  // (segment flushes happen in the background refresh); the refresh gates its
+  // durable cursor on the WAL becoming durable, so the index never persists a
+  // batch whose store bytes a crash could still lose. It precedes any in-commit
+  // checkpoint, whose force-refresh therefore never waits on an un-committed
+  // in-flight batch. Only the store database carries indexed tables.
   if (db.GetName().GetIdentifierName() != catalog::kStoreDatabaseName) {
     return;
   }

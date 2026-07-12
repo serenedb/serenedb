@@ -29,11 +29,10 @@
 #include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
 
 #include "basics/assert.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 
@@ -47,7 +46,7 @@ class IndexOutputOverflowWriter final : public duckdb::OverflowStringWriter {
     result_block = static_cast<duckdb::block_id_t>(_out->Position());
     result_offset = 0;
     const auto len = string.GetSize();
-    SDB_ENSURE(len <= std::numeric_limits<uint32_t>::max(), sdb::ERROR_INTERNAL,
+    SDB_ENSURE(len <= std::numeric_limits<uint32_t>::max(),
                "string too long for overflow format");
     _out->WriteU32(len);
     _out->WriteData(reinterpret_cast<const byte_type*>(string.GetData()), len);

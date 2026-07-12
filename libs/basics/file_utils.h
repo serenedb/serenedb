@@ -28,7 +28,6 @@
 #include <vector>
 
 #include "basics/common.h"
-#include "basics/errors.h"
 #include "basics/operating-system.h"
 
 namespace sdb::basics::file_utils {
@@ -63,9 +62,6 @@ inline void Spit(const std::string& filename, std::string_view content,
 }
 
 // creates a new directory
-bool CreateDirectory(const char* name, ErrorCode* error_number = nullptr);
-bool CreateDirectory(const char* name, int mask,
-                     ErrorCode* error_number = nullptr);
 
 // checks if path is a directory
 bool IsDirectory(const char* path);

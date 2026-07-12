@@ -33,7 +33,6 @@
 #include <memory>
 #include <mutex>
 
-#include "basics/errors.h"
 #include "catalog/inverted_index.h"
 #include "catalog/types.h"
 #include "search/maintenance.h"

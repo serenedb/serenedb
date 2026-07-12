@@ -42,10 +42,9 @@
 #include <utility>
 
 #include "basics/assert.h"
-#include "basics/error.h"
-#include "basics/exceptions.h"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/internal/overflow_string_io.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 namespace {
@@ -190,8 +189,7 @@ duckdb::optional_ptr<const duckdb::CompressionFunction> ColumnWriter::PickCodec(
       break;
     }
   }
-  SDB_ENSURE(best, sdb::ERROR_INTERNAL,
-             "column writer: no codec accepted the row group for ",
+  SDB_ENSURE(best, "column writer: no codec accepted the row group for ",
              codec_type.ToString());
   return best;
 }

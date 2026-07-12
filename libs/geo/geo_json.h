@@ -28,8 +28,8 @@
 #include <string_view>
 #include <vector>
 
-#include "basics/exceptions.h"
 #include "geo/coding.h"
+#include "pg/sql_exception_macro.h"
 
 class S2LatLng;
 class S2Loop;

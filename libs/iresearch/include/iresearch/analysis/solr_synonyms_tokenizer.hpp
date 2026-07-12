@@ -27,10 +27,10 @@
 #include <string_view>
 #include <vector>
 
-#include "basics/exceptions.h"
 #include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 

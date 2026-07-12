@@ -45,14 +45,13 @@
 #include "basics/assert.h"
 #include "basics/down_cast.h"
 #include "basics/duckdb_engine.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "basics/log.h"
 #include "basics/serializer.h"
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
 #include "catalog/scorer_options.h"
 #include "catalog/store/store.h"
+#include "pg/sql_exception_macro.h"
 #include "query/transaction.h"
 #include "search/tick_domain.h"
 #include "search/wal_recovery.h"
@@ -148,16 +147,16 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
   std::error_code ec;
   bool path_exists = std::filesystem::exists(path, ec);
   if (ec) {
-    SDB_THROW(ERROR_INTERNAL, "Failed to check existence of path '",
-              path.string(), "' while initializing data store '", _index_id,
-              "': ", ec.message());
+    THROW_SQL_ERROR(ERR_MSG("Failed to check existence of path '",
+                            path.string(), "' while initializing data store '",
+                            _index_id, "': ", ec.message()));
   }
   if (!path_exists) {
     std::filesystem::create_directories(path, ec);
     if (ec) {
-      SDB_THROW(ERROR_INTERNAL, "Failed to create directory '", path.string(),
-                "' while initializing data store '", _index_id,
-                "': ", ec.message());
+      THROW_SQL_ERROR(ERR_MSG("Failed to create directory '", path.string(),
+                              "' while initializing data store '", _index_id,
+                              "': ", ec.message()));
     }
   }
   auto codec = irs::formats::Get("1_5simd");
@@ -537,7 +536,7 @@ absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
               "', segments '", reader_size, "', docs count '", docs_count,
               "', live docs count '", live_docs_count,
               "', last operation tick '", _last_durable_tick, "'");
-  } catch (const basics::Exception& e) {
+  } catch (const SqlException& e) {
     return absl::InternalError(
       absl::StrCat("caught exception while refreshing Search index '",
                    GetId().id(), "': ", e.message()));

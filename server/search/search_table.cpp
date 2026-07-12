@@ -37,8 +37,8 @@
 #include <system_error>
 
 #include "basics/duckdb_engine.h"
-#include "basics/exceptions.h"
 #include "basics/log.h"
+#include "pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
 #include "search/task.h"
 #include "storage_engine/search_engine.h"
@@ -128,16 +128,17 @@ void SearchTable::OpenWriter() {
   std::error_code ec;
   bool path_exists = std::filesystem::exists(path, ec);
   if (ec) {
-    SDB_THROW(ERROR_INTERNAL, "Failed to check existence of path '",
-              path.string(), "' while initializing search table for table ",
-              GetTableId().id(), ": ", ec.message());
+    THROW_SQL_ERROR(ERR_MSG("Failed to check existence of path '",
+                            path.string(),
+                            "' while initializing search table for table ",
+                            GetTableId().id(), ": ", ec.message()));
   }
   if (!path_exists) {
     std::filesystem::create_directories(path, ec);
     if (ec) {
-      SDB_THROW(ERROR_INTERNAL, "Failed to create directory '", path.string(),
-                "' while initializing search table for table ",
-                GetTableId().id(), ": ", ec.message());
+      THROW_SQL_ERROR(ERR_MSG("Failed to create directory '", path.string(),
+                              "' while initializing search table for table ",
+                              GetTableId().id(), ": ", ec.message()));
     }
   }
 

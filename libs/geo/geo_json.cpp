@@ -240,12 +240,12 @@ void ParseImpl(ondemand::array array, std::vector<S2LatLng>& vertices) {
     ondemand::value element_value;
     if (element.get(element_value) != simdjson::SUCCESS) {
       if constexpr (Validation) {
-        SDB_THROW(ERROR_BAD_PARAMETER, "Bad coordinates");
+        THROW_SQL_ERROR(ERR_MSG("Bad coordinates"));
       }
     }
     auto ok = ParseImpl<Validation, GeoJson>(element_value, vertex);
     if (Validation && SDB_UNLIKELY(!ok)) {
-      SDB_THROW(ERROR_BAD_PARAMETER, "Bad coordinates values");
+      THROW_SQL_ERROR(ERR_MSG("Bad coordinates values"));
     }
     vertices.emplace_back(vertex);
   }
@@ -256,15 +256,15 @@ void Validate(ondemand::object& object, ondemand::value& coordinates) {
   if (ParseType(object) != T) [[unlikely]] {
     // TODO(mbkkt) Unnecessary memcpy,
     //  this string can be constructed at compile time with compile time new
-    SDB_THROW(ERROR_BAD_PARAMETER,
-              absl::StrCat("Require type: '", toString<T>(), "'."));
+    THROW_SQL_ERROR(
+      ERR_MSG(absl::StrCat("Require type: '", toString<T>(), "'.")));
   }
   if (object.find_field_unordered(fields::kCoordinates).get(coordinates) !=
       simdjson::SUCCESS) [[unlikely]] {
-    SDB_THROW(ERROR_BAD_PARAMETER, "Coordinates missing.");
+    THROW_SQL_ERROR(ERR_MSG("Coordinates missing."));
   }
   if (coordinates.type() != simdjson::ondemand::json_type::array) [[unlikely]] {
-    SDB_THROW(ERROR_BAD_PARAMETER, "Coordinates missing.");
+    THROW_SQL_ERROR(ERR_MSG("Coordinates missing."));
   }
 }
 
@@ -272,7 +272,7 @@ template<bool Validation, bool GeoJson>
 void ParsePointImpl(ondemand::value json, S2LatLng& region) {
   auto ok = ParseImpl<Validation, GeoJson>(json, region);
   if (Validation && SDB_UNLIKELY(!ok)) {
-    SDB_THROW(ERROR_BAD_PARAMETER, "Bad coordinates");
+    THROW_SQL_ERROR(ERR_MSG("Bad coordinates"));
   }
 }
 
@@ -280,8 +280,8 @@ template<bool Validation>
 void ParsePointsImpl(ondemand::array array, std::vector<S2LatLng>& vertices) {
   ParseImpl<Validation, true>(array, vertices);
   if (Validation && SDB_UNLIKELY(vertices.empty())) {
-    SDB_THROW(ERROR_BAD_PARAMETER,
-              "Invalid MultiPoint, it must contains at least one point.");
+    THROW_SQL_ERROR(
+      ERR_MSG("Invalid MultiPoint, it must contains at least one point."));
   }
 }
 
@@ -290,9 +290,9 @@ void ParseLineImpl(ondemand::array array, std::vector<S2LatLng>& vertices) {
   ParseImpl<Validation, true>(array, vertices);
   RemoveAdjacentDuplicates(vertices);
   if (Validation && SDB_UNLIKELY(vertices.size() < 2)) {
-    SDB_THROW(ERROR_BAD_PARAMETER,
-              "Invalid LineString,"
-              " adjacent vertices must not be identical or antipodal.");
+    THROW_SQL_ERROR(
+      ERR_MSG("Invalid LineString,"
+              " adjacent vertices must not be identical or antipodal."));
   }
 }
 
@@ -303,13 +303,12 @@ void ParseLinesImpl(ondemand::array array, std::vector<S2Polyline>& lines,
   size_t n = 0;
   if (array.count_elements().get(n) != simdjson::SUCCESS) {
     if constexpr (Validation) {
-      SDB_THROW(ERROR_BAD_PARAMETER, "Invalid MultiLinestring.");
+      THROW_SQL_ERROR(ERR_MSG("Invalid MultiLinestring."));
     }
   }
   if (Validation && SDB_UNLIKELY(n == 0)) {
-    SDB_THROW(
-      ERROR_BAD_PARAMETER,
-      "Invalid MultiLinestring, it must contains at least one Linestring.");
+    THROW_SQL_ERROR(ERR_MSG(
+      "Invalid MultiLinestring, it must contains at least one Linestring."));
   }
   auto multiplier =
     EncodeCount<Validation>(n, coding::Type::MultiPolyline, options, encoder);
@@ -319,7 +318,7 @@ void ParseLinesImpl(ondemand::array array, std::vector<S2Polyline>& lines,
     ondemand::array line;
     if (element.get_array().get(line) != simdjson::SUCCESS) {
       if constexpr (Validation) {
-        SDB_THROW(ERROR_BAD_PARAMETER, "Missing coordinates.");
+        THROW_SQL_ERROR(ERR_MSG("Missing coordinates."));
       }
     }
     ParseLineImpl<Validation>(line, vertices);
@@ -333,8 +332,8 @@ void ParseLinesImpl(ondemand::array array, std::vector<S2Polyline>& lines,
       }
       auto& back = lines.emplace_back(vertices, S2Debug::DISABLE);
       if (S2Error error; SDB_UNLIKELY(back.FindValidationError(&error))) {
-        SDB_THROW(ERROR_BAD_PARAMETER,
-                  absl::StrCat("Invalid Polyline: ", error.message()));
+        THROW_SQL_ERROR(
+          ERR_MSG(absl::StrCat("Invalid Polyline: ", error.message())));
       }
     } else {
       lines.emplace_back(vertices, S2Debug::DISABLE);
@@ -345,13 +344,13 @@ void ParseLinesImpl(ondemand::array array, std::vector<S2Polyline>& lines,
 template<bool Validation>
 void MakeLoopValid(std::vector<S2LatLng>& vertices) noexcept(!Validation) {
   if (Validation && SDB_UNLIKELY(vertices.size() < 4)) {
-    SDB_THROW(ERROR_BAD_PARAMETER,
-              "Invalid GeoJson Loop, must have at least 4 vertices");
+    THROW_SQL_ERROR(
+      ERR_MSG("Invalid GeoJson Loop, must have at least 4 vertices"));
   }
   // S2Loop doesn't like duplicates
   RemoveAdjacentDuplicates(vertices);
   if (Validation && SDB_UNLIKELY(vertices.front() != vertices.back())) {
-    SDB_THROW(ERROR_BAD_PARAMETER, "Loop not closed");
+    THROW_SQL_ERROR(ERR_MSG("Loop not closed"));
   }
   // S2Loop automatically add last edge
   if (vertices.size() > 1) [[likely]] {
@@ -395,8 +394,8 @@ void ParseLoopImpl(ondemand::array loop,
     static_cast<int>(vertices.size()), std::move(points), S2Debug::DISABLE));
   if constexpr (Validation) {
     if (S2Error error; SDB_UNLIKELY(last.FindValidationError(&error))) {
-      SDB_THROW(ERROR_BAD_PARAMETER,
-                absl::StrCat("Invalid Loop in Polygon: ", error.message()));
+      THROW_SQL_ERROR(
+        ERR_MSG(absl::StrCat("Invalid Loop in Polygon: ", error.message())));
     }
   }
   // Note that we are using InitNested for S2Polygon below.
@@ -428,8 +427,7 @@ void ParseLoopImpl(ondemand::array loop,
   }
   if constexpr (Validation) {
     if (first != &last && !first->Contains(last)) [[unlikely]] {
-      SDB_THROW(ERROR_BAD_PARAMETER,
-                "Subsequent loop is not a hole in a polygon.");
+      THROW_SQL_ERROR(ERR_MSG("Subsequent loop is not a hole in a polygon."));
     }
     if (encoder != nullptr) {
       SDB_ASSERT(encoder->avail() >= Varint::kMax64);
@@ -462,7 +460,7 @@ void ParsePolygonImpl(ondemand::array array, S2Polygon& region,
   size_t n = 0;
   if (array.count_elements().get(n) != simdjson::SUCCESS) {
     if constexpr (Validation) {
-      SDB_THROW(ERROR_BAD_PARAMETER, "Invalid GeoJSON Geometry Object.");
+      THROW_SQL_ERROR(ERR_MSG("Invalid GeoJSON Geometry Object."));
     }
   }
   SDB_ASSERT(n >= 1);
@@ -475,7 +473,7 @@ void ParsePolygonImpl(ondemand::array array, S2Polygon& region,
     ondemand::array loop;
     if (element.get_array().get(loop) != simdjson::SUCCESS) {
       if constexpr (Validation) {
-        SDB_THROW(ERROR_BAD_PARAMETER, "Missing coordinates.");
+        THROW_SQL_ERROR(ERR_MSG("Missing coordinates."));
       }
     }
     ParseLoopImpl<Validation>(loop, loops, vertices, first, options, encoder,
@@ -486,8 +484,8 @@ void ParsePolygonImpl(ondemand::array array, S2Polygon& region,
   if constexpr (Validation) {
     S2Error error;
     if (region.FindValidationError(&error)) [[unlikely]] {
-      SDB_THROW(ERROR_BAD_PARAMETER,
-                absl::StrCat("Invalid Polygon: ", error.message()));
+      THROW_SQL_ERROR(
+        ERR_MSG(absl::StrCat("Invalid Polygon: ", error.message())));
     }
   }
 }
@@ -499,17 +497,17 @@ void ParsePolygonImpl(ondemand::value json, ShapeContainer& region,
   ondemand::array array;
   if (json.get_array().get(array) != simdjson::SUCCESS) {
     if constexpr (Validation) {
-      SDB_THROW(ERROR_BAD_PARAMETER, "Invalid GeoJSON Geometry Object.");
+      THROW_SQL_ERROR(ERR_MSG("Invalid GeoJSON Geometry Object."));
     }
   }
   size_t n = 0;
   if (array.count_elements().get(n) != simdjson::SUCCESS) {
     if constexpr (Validation) {
-      SDB_THROW(ERROR_BAD_PARAMETER, "Invalid GeoJSON Geometry Object.");
+      THROW_SQL_ERROR(ERR_MSG("Invalid GeoJSON Geometry Object."));
     }
   }
   if (Validation && SDB_UNLIKELY(n == 0)) {
-    SDB_THROW(ERROR_BAD_PARAMETER, "Invalid GeoJSON Geometry Object.");
+    THROW_SQL_ERROR(ERR_MSG("Invalid GeoJSON Geometry Object."));
   }
   std::unique_ptr<S2Polygon> d;
   d = std::make_unique<S2Polygon>();
@@ -524,20 +522,20 @@ void ParseMultiPolygonImpl(ondemand::value json, S2Polygon& region,
   ondemand::array array;
   if (json.get_array().get(array) != simdjson::SUCCESS) {
     if constexpr (Validation) {
-      SDB_THROW(ERROR_BAD_PARAMETER,
-                "MultiPolygon should contains at least one Polygon.");
+      THROW_SQL_ERROR(
+        ERR_MSG("MultiPolygon should contains at least one Polygon."));
     }
   }
   size_t n = 0;
   if (array.count_elements().get(n) != simdjson::SUCCESS) {
     if constexpr (Validation) {
-      SDB_THROW(ERROR_BAD_PARAMETER,
-                "MultiPolygon should contains at least one Polygon.");
+      THROW_SQL_ERROR(
+        ERR_MSG("MultiPolygon should contains at least one Polygon."));
     }
   }
   if (Validation && SDB_UNLIKELY(n == 0)) {
-    SDB_THROW(ERROR_BAD_PARAMETER,
-              "MultiPolygon should contains at least one Polygon.");
+    THROW_SQL_ERROR(
+      ERR_MSG("MultiPolygon should contains at least one Polygon."));
   }
   std::vector<std::unique_ptr<S2Loop>> loops;
   loops.reserve(n);
@@ -548,20 +546,18 @@ void ParseMultiPolygonImpl(ondemand::value json, S2Polygon& region,
     ondemand::array polygon;
     if (polygon_element.get_array().get(polygon) != simdjson::SUCCESS) {
       if constexpr (Validation) {
-        SDB_THROW(ERROR_BAD_PARAMETER,
-                  "Polygon should contains at least one coordinates array.");
+        THROW_SQL_ERROR(
+          ERR_MSG("Polygon should contains at least one coordinates array."));
       }
     }
     size_t m = 0;
     if (polygon.count_elements().get(m) != simdjson::SUCCESS) {
       if constexpr (Validation) {
-        SDB_THROW(ERROR_BAD_PARAMETER,
-                  "Polygon should contains at least one Loop.");
+        THROW_SQL_ERROR(ERR_MSG("Polygon should contains at least one Loop."));
       }
     }
     if (Validation && SDB_UNLIKELY(m == 0)) {
-      SDB_THROW(ERROR_BAD_PARAMETER,
-                "Polygon should contains at least one Loop.");
+      THROW_SQL_ERROR(ERR_MSG("Polygon should contains at least one Loop."));
     }
     if (encoder != nullptr) {
       encoder->Ensure(m * Varint::kMax64);
@@ -570,7 +566,7 @@ void ParseMultiPolygonImpl(ondemand::value json, S2Polygon& region,
       ondemand::array loop;
       if (loop_element.get_array().get(loop) != simdjson::SUCCESS) {
         if constexpr (Validation) {
-          SDB_THROW(ERROR_BAD_PARAMETER, "Missing coordinates.");
+          THROW_SQL_ERROR(ERR_MSG("Missing coordinates."));
         }
       }
       ParseLoopImpl<Validation>(loop, loops, vertices, first, options, encoder,
@@ -583,9 +579,8 @@ void ParseMultiPolygonImpl(ondemand::value json, S2Polygon& region,
   if constexpr (Validation) {
     S2Error error;
     if (region.FindValidationError(&error)) [[unlikely]] {
-      SDB_THROW(
-        ERROR_BAD_PARAMETER,
-        absl::StrCat("Invalid Loop in MultiPolygon: ", error.message()));
+      THROW_SQL_ERROR(ERR_MSG(
+        absl::StrCat("Invalid Loop in MultiPolygon: ", error.message())));
     }
   }
 }
@@ -597,20 +592,20 @@ void ParseRegionImpl(ondemand::value json, ShapeContainer& region,
   ondemand::object object;
   if (json.get_object().get(object) != simdjson::SUCCESS) {
     if constexpr (Validation) {
-      SDB_THROW(ERROR_BAD_PARAMETER, "Invalid GeoJSON Geometry Object.");
+      THROW_SQL_ERROR(ERR_MSG("Invalid GeoJSON Geometry Object."));
     }
   }
   const auto t = ParseType(object);
   if constexpr (Validation) {
     if (t == Type::Unknown) [[unlikely]] {
-      SDB_THROW(ERROR_BAD_PARAMETER, "Invalid GeoJSON Geometry Object.");
+      THROW_SQL_ERROR(ERR_MSG("Invalid GeoJSON Geometry Object."));
     }
   }
   ondemand::value coordinates;
   if (object.find_field_unordered(fields::kCoordinates).get(coordinates) !=
       simdjson::SUCCESS) {
     if constexpr (Validation) {
-      SDB_THROW(ERROR_BAD_PARAMETER, "Coordinates missing.");
+      THROW_SQL_ERROR(ERR_MSG("Coordinates missing."));
     }
   }
   const bool is_s2 = coding::IsOptionsS2(options);
@@ -626,7 +621,7 @@ void ParseRegionImpl(ondemand::value json, ShapeContainer& region,
       ondemand::array array;
       if (coordinates.get_array().get(array) != simdjson::SUCCESS) {
         if constexpr (Validation) {
-          SDB_THROW(ERROR_BAD_PARAMETER, "Missing coordinates.");
+          THROW_SQL_ERROR(ERR_MSG("Missing coordinates."));
         }
       }
       ParseLineImpl<Validation>(array, cache);
@@ -635,8 +630,8 @@ void ParseRegionImpl(ondemand::value json, ShapeContainer& region,
       }
       auto d = std::make_unique<S2Polyline>(cache, S2Debug::DISABLE);
       if (S2Error error; Validation && d->FindValidationError(&error)) {
-        SDB_THROW(ERROR_BAD_PARAMETER,
-                  absl::StrCat("Invalid Polyline: ", error.message()));
+        THROW_SQL_ERROR(
+          ERR_MSG(absl::StrCat("Invalid Polyline: ", error.message())));
       }
       region.reset(std::move(d), ToShapeType(Type::Linestring), options);
     } break;
@@ -648,7 +643,7 @@ void ParseRegionImpl(ondemand::value json, ShapeContainer& region,
       ondemand::array array;
       if (coordinates.get_array().get(array) != simdjson::SUCCESS) {
         if constexpr (Validation) {
-          SDB_THROW(ERROR_BAD_PARAMETER, "Missing coordinates.");
+          THROW_SQL_ERROR(ERR_MSG("Missing coordinates."));
         }
       }
       ParsePointsImpl<Validation>(array, cache);
@@ -663,7 +658,7 @@ void ParseRegionImpl(ondemand::value json, ShapeContainer& region,
       ondemand::array array;
       if (coordinates.get_array().get(array) != simdjson::SUCCESS) {
         if constexpr (Validation) {
-          SDB_THROW(ERROR_BAD_PARAMETER, "Missing coordinates.");
+          THROW_SQL_ERROR(ERR_MSG("Missing coordinates."));
         }
       }
       std::vector<S2Polyline> lines;
@@ -680,8 +675,8 @@ void ParseRegionImpl(ondemand::value json, ShapeContainer& region,
       region.reset(std::move(d), ToShapeType(Type::MultiPolygon), options);
     } break;
     default:
-      SDB_THROW(ERROR_NOT_IMPLEMENTED,
-                "GeoJSON type GeometryCollection is not supported");
+      THROW_SQL_ERROR(
+        ERR_MSG("GeoJSON type GeometryCollection is not supported"));
   }
   if (Validation && encoder != nullptr && is_s2) {
     SDB_ASSERT(encoder->length() == 0);
@@ -733,7 +728,7 @@ Type ParseType(ondemand::object& object) noexcept {
 void ParsePoint(ondemand::value json, S2LatLng& region) {
   ondemand::object object;
   if (json.get_object().get(object) != simdjson::SUCCESS) [[unlikely]] {
-    SDB_THROW(ERROR_BAD_PARAMETER, "Invalid GeoJSON Geometry Object.");
+    THROW_SQL_ERROR(ERR_MSG("Invalid GeoJSON Geometry Object."));
   }
   ondemand::value coordinates;
   Validate<Type::Point>(object, coordinates);
@@ -754,7 +749,7 @@ void ParseRegion(ondemand::value json, ShapeContainer& region,
   } else if constexpr (kIsMaintainer) {
     try {
       ParseRegionImpl<true>(json, region, cache, options, encoder);
-    } catch (const sdb::basics::Exception& e) {
+    } catch (const sdb::SqlException& e) {
       SDB_ASSERT(false, e.message());
     }
   } else {
@@ -787,7 +782,7 @@ void ParseCoordinates(ondemand::value json, ShapeContainer& region,
   if constexpr (!Valid && kIsMaintainer) {
     try {
       parse();
-    } catch (const sdb::basics::Exception& e) {
+    } catch (const sdb::SqlException& e) {
       SDB_ASSERT(false, e.message());
     }
   } else {

@@ -71,7 +71,6 @@
 #line 42 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
 
 #include "parser.hpp"
-#include "basics/error.h"
 
 #pragma clang diagnostic ignored "-Wunused-but-set-variable"
 

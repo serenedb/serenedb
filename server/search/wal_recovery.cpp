@@ -39,7 +39,6 @@
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
 #include "basics/duckdb_engine.h"
-#include "basics/errors.h"
 #include "basics/log.h"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"

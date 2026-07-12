@@ -29,13 +29,13 @@
 #include <string>
 
 #include "basics/down_cast.h"
-#include "basics/exceptions.h"
 #include "basics/log.h"
 #include "basics/serializer.h"
 #include "geo/geo_json.h"
 #include "geo/geo_params.h"
 #include "geo/wkb.h"
 #include "iresearch/search/geo_filter.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace magic_enum {
 
@@ -235,9 +235,9 @@ bool GeoAnalyzer::reset(std::string_view value) {
 irs::analysis::Analyzer::ptr GeoPointAnalyzer::Make(Options opts) {
   opts.options.Validate("geo_point");
   if (opts.latitude.empty() != opts.longitude.empty()) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "geo_point: latitude and longitude must both be set or both "
-              "empty");
+    THROW_SQL_ERROR(
+      ERR_MSG("geo_point: latitude and longitude must both be set or both "
+              "empty"));
   }
   return std::make_unique<GeoPointAnalyzer>(opts);
 }

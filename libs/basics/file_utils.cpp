@@ -47,11 +47,9 @@
 #include <unistd.h>
 
 #include "basics/debugging.h"
-#include "basics/error.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "basics/log.h"
 #include "basics/string_utils.h"
+#include "pg/sql_exception_macro.h"
 
 using namespace sdb;
 namespace {
@@ -140,33 +138,27 @@ std::string BuildFilename(std::string_view path, std::string_view name) {
 }
 
 static void ThrowFileReadError(std::string_view filename) {
-  SetError(ERROR_SYS_ERROR);
-
   auto message =
-    absl::StrCat("read failed for file '", filename, "': ", LastError());
+    absl::StrCat("read failed for file '", filename, "': ", strerror(errno));
   SDB_TRACE(GENERAL, message);
 
-  SDB_THROW(ERROR_SYS_ERROR, std::move(message));
+  THROW_SQL_ERROR(ERR_MSG(std::move(message)));
 }
 
 static void ThrowFileWriteError(std::string_view filename) {
-  SetError(ERROR_SYS_ERROR);
-
   auto message =
-    absl::StrCat("write failed for file '", filename, "': ", LastError());
+    absl::StrCat("write failed for file '", filename, "': ", strerror(errno));
   SDB_TRACE(GENERAL, "", message);
 
-  SDB_THROW(ERROR_SYS_ERROR, message);
+  THROW_SQL_ERROR(ERR_MSG(message));
 }
 
 static void ThrowFileCreateError(std::string_view filename) {
-  SetError(ERROR_SYS_ERROR);
-
   auto message =
-    absl::StrCat("failed to create file '", filename, "': ", LastError());
+    absl::StrCat("failed to create file '", filename, "': ", strerror(errno));
   SDB_TRACE(GENERAL, "", message);
 
-  SDB_THROW(ERROR_SYS_ERROR, message);
+  THROW_SQL_ERROR(ERR_MSG(message));
 }
 
 static void FillString(int fd, std::string_view filename, size_t filesize,
@@ -250,37 +242,6 @@ void Spit(const char* filename, std::string_view s, bool sync) {
     // intentionally ignore this error -- nothing we can do about it.
     std::ignore = fsync(fd);
   }
-}
-
-bool CreateDirectory(const char* name, ErrorCode* error_number) {
-  if (error_number != nullptr) {
-    *error_number = ERROR_OK;
-  }
-
-  return CreateDirectory(name, 0777, error_number);
-}
-
-bool CreateDirectory(const char* name, int mask, ErrorCode* error_number) {
-  if (error_number != nullptr) {
-    *error_number = ERROR_OK;
-  }
-
-  auto result = SERENEDB_MKDIR(name, static_cast<mode_t>(mask));
-
-  if (result != 0) {
-    int res = errno;
-    if (res == EEXIST && IsDirectory(name)) {
-      result = 0;
-    } else {
-      auto error_code = ERROR_SYS_ERROR;
-      SetError(error_code);
-      if (error_number != nullptr) {
-        *error_number = error_code;
-      }
-    }
-  }
-
-  return result == 0;
 }
 
 bool IsDirectory(const char* path) {

@@ -55,7 +55,6 @@
 #include "basics/debugging.h"
 #include "basics/down_cast.h"
 #include "basics/duckdb_engine.h"
-#include "basics/exceptions.h"
 #include "basics/log.h"
 #include "basics/static_strings.h"
 #include "catalog/database.h"
@@ -1086,7 +1085,7 @@ void CatalogStore::CreateDefinition(ObjectId parent_id, ObjectType type,
   WriteContext ctx;
   ctx.PutDefinition(parent_id, type, id, def);
   if (auto r = ExecuteEntries(ctx._entries); !r.ok()) {
-    SDB_THROW(ERROR_INTERNAL, r.message());
+    THROW_SQL_ERROR(ERR_MSG(r.message()));
   }
 }
 
@@ -1094,7 +1093,7 @@ void CatalogStore::Write(absl::FunctionRef<void(WriteContext&)> fill) {
   WriteContext ctx;
   fill(ctx);
   if (auto r = ExecuteEntries(ctx._entries); !r.ok()) {
-    SDB_THROW(ERROR_INTERNAL, r.message());
+    THROW_SQL_ERROR(ERR_MSG(r.message()));
   }
 }
 
@@ -1103,7 +1102,7 @@ void CatalogStore::DropDefinition(ObjectId parent_id, ObjectType type,
   WriteContext ctx;
   ctx.DropDefinition(parent_id, type, id);
   if (auto r = ExecuteEntries(ctx._entries); !r.ok()) {
-    SDB_THROW(ERROR_INTERNAL, r.message());
+    THROW_SQL_ERROR(ERR_MSG(r.message()));
   }
 }
 
@@ -1111,7 +1110,7 @@ void CatalogStore::DropSequence(ObjectId sequence_id) {
   WriteContext ctx;
   ctx.DropSequence(sequence_id);
   if (auto r = ExecuteEntries(ctx._entries); !r.ok()) {
-    SDB_THROW(ERROR_INTERNAL, r.message());
+    THROW_SQL_ERROR(ERR_MSG(r.message()));
   }
 }
 
@@ -1121,7 +1120,7 @@ void CatalogStore::DropEntry(ObjectId parent_id, ObjectType type) {
     return Exec(*_delete_by_parent_type, {IdValue(parent_id), TypeValue(type)});
   });
   if (!r.ok()) {
-    SDB_THROW(ERROR_INTERNAL, r.message());
+    THROW_SQL_ERROR(ERR_MSG(r.message()));
   }
 }
 
@@ -1131,7 +1130,7 @@ void CatalogStore::DropEntry(ObjectId parent_id) {
     return Exec(*_delete_by_parent, {IdValue(parent_id)});
   });
   if (!r.ok()) {
-    SDB_THROW(ERROR_INTERNAL, r.message());
+    THROW_SQL_ERROR(ERR_MSG(r.message()));
   }
 }
 
@@ -1149,7 +1148,7 @@ void CatalogStore::VisitDefinitions(
     res = _select_definitions->Execute(params, /*allow_stream_result=*/false);
   }
   if (res->HasError()) {
-    SDB_THROW(ERROR_INTERNAL, res->GetError());
+    THROW_SQL_ERROR(ERR_MSG(res->GetError()));
   }
   while (auto chunk = res->Fetch()) {
     chunk->Flatten();
@@ -1167,7 +1166,7 @@ void CatalogStore::VisitDefinitions(
 }
 
 void CatalogStore::BootConsumeCatalog(duckdb::DataChunk& input) {
-  SDB_ENSURE(_boot_loading.load(std::memory_order_acquire), ERROR_FORBIDDEN,
+  SDB_ENSURE(_boot_loading.load(std::memory_order_acquire),
              "sdb_init_catalog is internal to server startup");
   duckdb::UnifiedVectorFormat parents;
   duckdb::UnifiedVectorFormat types;
@@ -1195,7 +1194,7 @@ void CatalogStore::BootConsumeCatalog(duckdb::DataChunk& input) {
 }
 
 void CatalogStore::BootConsumeSequences(duckdb::DataChunk& input) {
-  SDB_ENSURE(_boot_loading.load(std::memory_order_acquire), ERROR_FORBIDDEN,
+  SDB_ENSURE(_boot_loading.load(std::memory_order_acquire),
              "sdb_init_sequences is internal to server startup");
   duckdb::UnifiedVectorFormat ids;
   duckdb::UnifiedVectorFormat counters;
@@ -1236,7 +1235,7 @@ void CatalogStore::LoadBootState() {
   _boot_loading.store(false, std::memory_order_release);
   if (!status.ok()) {
     ReleaseBootState();
-    SDB_THROW(ERROR_INTERNAL, status.message());
+    THROW_SQL_ERROR(ERR_MSG(status.message()));
   }
   for (auto& [key, defs] : _boot_defs) {
     std::sort(defs.begin(), defs.end(),
@@ -1297,7 +1296,7 @@ void CatalogStore::PutSequenceValue(ObjectId sequence_id, uint64_t value) {
                 {IdValue(sequence_id), duckdb::Value::UBIGINT(value)});
   });
   if (!r.ok()) {
-    SDB_THROW(ERROR_INTERNAL, r.message());
+    THROW_SQL_ERROR(ERR_MSG(r.message()));
   }
 }
 
@@ -1310,7 +1309,7 @@ void CatalogStore::GetSequenceValue(ObjectId sequence_id, uint64_t& value) {
     res = _select_sequence->Execute(params, /*allow_stream_result=*/false);
   }
   if (res->HasError()) {
-    SDB_THROW(ERROR_INTERNAL, res->GetError());
+    THROW_SQL_ERROR(ERR_MSG(res->GetError()));
   }
   if (auto chunk = res->Fetch(); chunk && chunk->size() > 0) {
     SDB_ASSERT(chunk->size() == 1);

@@ -51,7 +51,7 @@ ColumnTokenizer BuildColumnTokenizer(
   }
   auto dict = snapshot->GetObject<Tokenizer>(text_dictionary);
   if (!dict) {
-    SDB_THROW(ERROR_INTERNAL, "Dictionary for inverted index does not exists");
+    THROW_SQL_ERROR(ERR_MSG("Dictionary for inverted index does not exists"));
   }
   return ColumnTokenizer{.analyzer = dict->GetTokenizer(),
                          .features = features.GetIndexFeatures()};
@@ -143,7 +143,7 @@ void InvertedIndex::BuildExprByFieldIdIndex() {
   _expr_by_field_id.reserve(_expression_keys.size());
   for (const auto& key : _expression_keys) {
     auto [it, ok] = _expr_by_field_id.emplace(key.field_id, &key.data);
-    SDB_ENSURE(ok, ERROR_INTERNAL,
+    SDB_ENSURE(ok,
                "field_id collision in inverted index expression bridge: id ",
                key.field_id);
   }
@@ -348,8 +348,7 @@ void InvertedIndex::BuildFieldLookupIndex() {
     if (irs::field_limits::valid(id)) {
       auto [it, ok] = _field_lookup.emplace(
         id, FieldLookup{.entry = entry, .entry_field_id = entry_field_id});
-      SDB_ENSURE(ok, ERROR_INTERNAL,
-                 "field_id collision in inverted index lookup: id ", id);
+      SDB_ENSURE(ok, "field_id collision in inverted index lookup: id ", id);
     }
   };
   for (const auto& [entry_fid, entry] : _entries) {
@@ -367,8 +366,8 @@ ColumnTokenizer InvertedIndex::GetTokenizer(
   irs::field_id field_id) const {
   const auto* entry = FindEntry(field_id);
   if (entry == nullptr) {
-    SDB_THROW(ERROR_INTERNAL, "Field id ", field_id,
-              " not found in the index definition");
+    THROW_SQL_ERROR(
+      ERR_MSG("Field id ", field_id, " not found in the index definition"));
   }
   auto tokenizer =
     BuildColumnTokenizer(snapshot, entry->text_dictionary, entry->features);
@@ -453,8 +452,7 @@ irs::ColumnOptions InvertedIndex::GetColumnOptions(irs::field_id id) const {
 irs::NormColumnOptions InvertedIndex::GetNormColumnOptions(
   irs::field_id id) const {
   const auto* entry = FindEntry(id);
-  SDB_ASSERT(entry != nullptr, ERROR_INTERNAL,
-             "GetNormColumnOptions: unknown id ", id);
+  SDB_ASSERT(entry != nullptr, "GetNormColumnOptions: unknown id ", id);
   SDB_ASSERT(irs::field_limits::valid(entry->synthetic_column),
              "GetNormColumnOptions: no catalog reservation; id ", id);
   SDB_ASSERT(entry->features.HasFeatures(irs::IndexFeatures::Norm),

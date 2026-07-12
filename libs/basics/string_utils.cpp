@@ -43,11 +43,10 @@
 
 #include "basics/assert.h"
 #include "basics/debugging.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "basics/log.h"
 #include "basics/sink.h"
 #include "basics/static_strings.h"
+#include "pg/sql_exception_macro.h"
 
 namespace {
 
@@ -246,7 +245,7 @@ void EscapeJsonStr(std::string_view str, Sink* sink,
     } else if ((c & 0xe0U) == 0xc0U) {
       // two-byte sequence
       if (p + 1 >= e) {
-        SDB_THROW(ERROR_BAD_PARAMETER, "invalid UTF-8 sequence");
+        THROW_SQL_ERROR(ERR_MSG("invalid UTF-8 sequence"));
       }
 
       if (options.escape_unicode) {
@@ -261,7 +260,7 @@ void EscapeJsonStr(std::string_view str, Sink* sink,
     } else if ((c & 0xf0U) == 0xe0U) {
       // three-byte sequence
       if (p + 2 >= e) {
-        SDB_THROW(ERROR_BAD_PARAMETER, "invalid UTF-8 sequence");
+        THROW_SQL_ERROR(ERR_MSG("invalid UTF-8 sequence"));
       }
 
       if (options.escape_unicode) {
@@ -276,7 +275,7 @@ void EscapeJsonStr(std::string_view str, Sink* sink,
     } else if ((c & 0xf8U) == 0xf0U) {
       // four-byte sequence
       if (p + 3 >= e) {
-        SDB_THROW(ERROR_BAD_PARAMETER, "invalid UTF-8 sequence");
+        THROW_SQL_ERROR(ERR_MSG("invalid UTF-8 sequence"));
       }
 
       if (options.escape_unicode) {

@@ -31,11 +31,10 @@
 
 #include "basics/application-exit.h"
 #include "basics/assert.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "basics/log.h"
 #include "geo/shape_container.h"
 #include "geo_json.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::geo {
 
@@ -173,7 +172,7 @@ bool ParseShape(simdjson::ondemand::value json, ShapeContainer& region,
   if constexpr (P != Parsing::FromIndex) {
     try {
       parse();
-    } catch (const sdb::basics::Exception&) {
+    } catch (const sdb::SqlException&) {
       return false;
     }
   } else {
@@ -374,8 +373,8 @@ void GeoOptions::Validate(std::string_view analyzer) const {
                                       const T& value) {
     static_assert(std::is_arithmetic_v<T>, "Check supports only numerics");
     if (value < min || max < value) {
-      SDB_THROW(ERROR_BAD_PARAMETER, analyzer, ": '", name,
-                "' out of bounds: [", min, "..", max, "].");
+      THROW_SQL_ERROR(ERR_MSG(analyzer, ": '", name, "' out of bounds: [", min,
+                              "..", max, "]."));
     }
   };
 
@@ -391,8 +390,8 @@ void GeoOptions::Validate(std::string_view analyzer) const {
   check_bounds("max_level", kMinLevel, kMaxLevel, max_level);
   check_bounds("level_mod", kMinLevelMod, kMaxLevelMod, level_mod);
   if (min_level > max_level) {
-    SDB_THROW(ERROR_BAD_PARAMETER, analyzer,
-              ": 'min_level' should be less than or equal to 'max_level'.");
+    THROW_SQL_ERROR(ERR_MSG(
+      analyzer, ": 'min_level' should be less than or equal to 'max_level'."));
   }
 }
 

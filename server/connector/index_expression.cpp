@@ -84,7 +84,7 @@ duckdb::unique_ptr<duckdb::Expression> FoldConstantCasts(
       duckdb::Value folded;
       SDB_ENSURE(
         duckdb::ExpressionExecutor::TryEvaluateScalar(context, *expr, folded),
-        ERROR_INTERNAL, "Failed to fold constant cast for inverted index");
+        "Failed to fold constant cast for inverted index");
       return duckdb::make_uniq<duckdb::BoundConstantExpression>(
         std::move(folded));
     }

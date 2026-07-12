@@ -36,8 +36,8 @@
 #include <optional>
 
 #include "basics/assert.h"
-#include "basics/exceptions.h"
 #include "catalog/catalog.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb {
 namespace {

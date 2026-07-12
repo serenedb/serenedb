@@ -28,8 +28,8 @@
 
 #include <string_view>
 
-#include "basics/exceptions.h"
 #include "iresearch/analysis/tokenizer.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 
@@ -53,7 +53,7 @@ NormalizingTokenizer::NormalizingTokenizer(Options options)
 
 Analyzer::ptr NormalizingTokenizer::Make(Options opts) {
   if (opts.locale.isBogus()) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "norm: invalid locale");
+    THROW_SQL_ERROR(ERR_MSG("norm: invalid locale"));
   }
   return std::make_unique<NormalizingTokenizer>(std::move(opts));
 }

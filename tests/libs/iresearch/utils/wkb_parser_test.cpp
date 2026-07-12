@@ -26,7 +26,6 @@
 #include <cstring>
 #include <string>
 
-#include "basics/errors.h"
 #include "geo/s2/multi_point_region.h"
 #include "geo/s2/multi_polyline_region.h"
 #include "geo/shape_container.h"

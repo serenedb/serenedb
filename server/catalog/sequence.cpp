@@ -24,9 +24,9 @@
 #include <duckdb/common/serializer/serializer.hpp>
 
 #include "basics/assert.h"
-#include "basics/exceptions.h"
 #include "basics/serializer.h"
 #include "catalog/store/store.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::catalog {
 

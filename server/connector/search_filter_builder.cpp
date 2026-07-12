@@ -68,8 +68,6 @@
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/node_hash_map.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "basics/string_utils.h"
 #include "comparison_op.hpp"
 #include "connector/json_extract_names.hpp"
@@ -381,7 +379,6 @@ absl::Status FromIsNull(irs::BooleanFilter& filter, const FilterContext& ctx,
     ctx.negated ? Negate<irs::ByTerm>(filter) : AddFilter<irs::ByTerm>(filter);
   term_filter.boost(ctx.boost);
   SDB_ENSURE(irs::field_limits::valid(column_info->null_field_id),
-             ERROR_INTERNAL,
              "FromIsNull: column_info has no null_field_id allocated");
   *term_filter.mutable_field_id() = column_info->null_field_id;
   term_filter.mutable_options()->term.assign(

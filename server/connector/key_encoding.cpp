@@ -27,7 +27,6 @@
 #include <duckdb/common/types/vector.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 
-#include "basics/exceptions.h"
 #include "basics/string_utils.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"

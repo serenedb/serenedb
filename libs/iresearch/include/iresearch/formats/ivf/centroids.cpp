@@ -25,11 +25,10 @@
 #include <numeric>
 #include <utility>
 
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 namespace {
@@ -126,7 +125,6 @@ TwoLayerCentroids TwoLayerCentroids::Deserialize(IndexInput& in,
 
   SDB_ENSURE(
     TwoLayerCentroids::FooterSize(out._d, out._n_l1, stats_len) == byte_size,
-    sdb::ERROR_SERVER_CORRUPTED_DATAFILE,
     "idx: two-layer centroid resident size mismatch (computed ",
     TwoLayerCentroids::FooterSize(out._d, out._n_l1, stats_len), ", expected ",
     byte_size, ")");

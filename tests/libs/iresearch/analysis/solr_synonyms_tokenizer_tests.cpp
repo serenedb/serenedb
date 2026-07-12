@@ -18,11 +18,11 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "basics/exceptions.h"
 #include "gtest/gtest.h"
 #include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/solr_synonyms_tokenizer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "pg/sql_exception_macro.h"
 
 using SolrSynonymsTokenizer = irs::analysis::SolrSynonymsTokenizer;
 
@@ -262,9 +262,8 @@ TEST(solr_synonyms_tests, parsing) {
     std::string_view data0("aaa, bbb, cc => => aaa, bbb, cc");
     try {
       SolrSynonymsTokenizer::ParseSynonymsLines(data0);
-      FAIL() << "expected sdb::basics::Exception";
-    } catch (const sdb::basics::Exception& e) {
-      EXPECT_EQ(e.code(), sdb::ERROR_BAD_PARAMETER);
+      FAIL() << "expected sdb::SqlException";
+    } catch (const sdb::SqlException& e) {
       EXPECT_EQ(e.message(),
                 "solr_synonyms: failed to parse synonyms: More than one "
                 "explicit mapping specified on the line 1");
@@ -275,9 +274,8 @@ TEST(solr_synonyms_tests, parsing) {
     std::string_view data0("aaa,");
     try {
       SolrSynonymsTokenizer::ParseSynonymsLines(data0);
-      FAIL() << "expected sdb::basics::Exception";
-    } catch (const sdb::basics::Exception& e) {
-      EXPECT_EQ(e.code(), sdb::ERROR_BAD_PARAMETER);
+      FAIL() << "expected sdb::SqlException";
+    } catch (const sdb::SqlException& e) {
       EXPECT_EQ(e.message(),
                 "solr_synonyms: failed to parse synonyms: Failed parse line 1");
     }
@@ -287,9 +285,8 @@ TEST(solr_synonyms_tests, parsing) {
     std::string_view data0("aaa=>");
     try {
       SolrSynonymsTokenizer::ParseSynonymsLines(data0);
-      FAIL() << "expected sdb::basics::Exception";
-    } catch (const sdb::basics::Exception& e) {
-      EXPECT_EQ(e.code(), sdb::ERROR_BAD_PARAMETER);
+      FAIL() << "expected sdb::SqlException";
+    } catch (const sdb::SqlException& e) {
       EXPECT_EQ(e.message(),
                 "solr_synonyms: failed to parse synonyms: Failed parse line 1");
     }
@@ -299,9 +296,8 @@ TEST(solr_synonyms_tests, parsing) {
     std::string_view data0("aaa,=>aaa");
     try {
       SolrSynonymsTokenizer::ParseSynonymsLines(data0);
-      FAIL() << "expected sdb::basics::Exception";
-    } catch (const sdb::basics::Exception& e) {
-      EXPECT_EQ(e.code(), sdb::ERROR_BAD_PARAMETER);
+      FAIL() << "expected sdb::SqlException";
+    } catch (const sdb::SqlException& e) {
       EXPECT_EQ(e.message(),
                 "solr_synonyms: failed to parse synonyms: Failed parse line 1");
     }
@@ -311,9 +307,8 @@ TEST(solr_synonyms_tests, parsing) {
     std::string_view data0("aaa,bbb=>aaa,");
     try {
       SolrSynonymsTokenizer::ParseSynonymsLines(data0);
-      FAIL() << "expected sdb::basics::Exception";
-    } catch (const sdb::basics::Exception& e) {
-      EXPECT_EQ(e.code(), sdb::ERROR_BAD_PARAMETER);
+      FAIL() << "expected sdb::SqlException";
+    } catch (const sdb::SqlException& e) {
       EXPECT_EQ(e.message(),
                 "solr_synonyms: failed to parse synonyms: Failed parse line 1");
     }
@@ -322,9 +317,8 @@ TEST(solr_synonyms_tests, parsing) {
     std::string_view data0("\n#aa\naaa,,bbb=>aaa,bbb");
     try {
       SolrSynonymsTokenizer::ParseSynonymsLines(data0);
-      FAIL() << "expected sdb::basics::Exception";
-    } catch (const sdb::basics::Exception& e) {
-      EXPECT_EQ(e.code(), sdb::ERROR_BAD_PARAMETER);
+      FAIL() << "expected sdb::SqlException";
+    } catch (const sdb::SqlException& e) {
       EXPECT_EQ(e.message(),
                 "solr_synonyms: failed to parse synonyms: Failed parse line 3");
     }
@@ -405,9 +399,8 @@ TEST(solr_synonyms_tests, make_state_owning_storage) {
 TEST(solr_synonyms_tests, make_state_invalid_input) {
   try {
     SolrSynonymsTokenizer::MakeState("foo,bar=>=>baz");
-    FAIL() << "expected sdb::basics::Exception";
-  } catch (const sdb::basics::Exception& e) {
-    EXPECT_EQ(e.code(), sdb::ERROR_BAD_PARAMETER);
+    FAIL() << "expected sdb::SqlException";
+  } catch (const sdb::SqlException& e) {
   }
 }
 

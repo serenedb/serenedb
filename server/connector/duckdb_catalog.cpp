@@ -87,6 +87,7 @@
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
+#include "pg/sql_utils.h"
 
 namespace sdb::connector {
 namespace {

@@ -32,11 +32,10 @@
 #include <utility>
 
 #include "basics/assert.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "basics/serializer.h"
 #include "catalog/persistence/tokenizer.h"
 #include "catalog/search_analyzer_impl.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::catalog {
 namespace {

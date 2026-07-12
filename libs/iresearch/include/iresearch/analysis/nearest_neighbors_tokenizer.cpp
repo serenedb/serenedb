@@ -27,9 +27,9 @@
 
 #include <string_view>
 
-#include "basics/exceptions.h"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/fasttext_utils.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 namespace {
@@ -41,12 +41,10 @@ std::atomic<NearestNeighborsTokenizer::model_provider_f> gModelProvider =
 
 Analyzer::ptr NearestNeighborsTokenizer::Make(Options opts) {
   if (opts.model_location.empty()) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "nearest_neighbors: empty model location");
+    THROW_SQL_ERROR(ERR_MSG("nearest_neighbors: empty model location"));
   }
   if (opts.top_k <= 0) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "nearest_neighbors: top_k must be positive");
+    THROW_SQL_ERROR(ERR_MSG("nearest_neighbors: top_k must be positive"));
   }
   auto provider = gModelProvider.load(std::memory_order_relaxed);
 
@@ -60,22 +58,22 @@ Analyzer::ptr NearestNeighborsTokenizer::Make(Options opts) {
       model = new_model;
     }
   } catch (const std::exception& e) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              absl::StrCat("nearest_neighbors: failed to load fasttext kNN "
+    THROW_SQL_ERROR(
+      ERR_MSG(absl::StrCat("nearest_neighbors: failed to load fasttext kNN "
                            "model from: ",
-                           opts.model_location, ", error: ", e.what()));
+                           opts.model_location, ", error: ", e.what())));
   } catch (...) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              absl::StrCat("nearest_neighbors: failed to load fasttext kNN "
+    THROW_SQL_ERROR(
+      ERR_MSG(absl::StrCat("nearest_neighbors: failed to load fasttext kNN "
                            "model from: ",
-                           opts.model_location));
+                           opts.model_location)));
   }
 
   if (!model) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              absl::StrCat("nearest_neighbors: failed to load fasttext kNN "
+    THROW_SQL_ERROR(
+      ERR_MSG(absl::StrCat("nearest_neighbors: failed to load fasttext kNN "
                            "model from: ",
-                           opts.model_location));
+                           opts.model_location)));
   }
 
   return std::make_unique<NearestNeighborsTokenizer>(opts, std::move(model));

@@ -59,9 +59,6 @@
 #include "basics/debugging.h"
 #include "basics/down_cast.h"
 #include "basics/duckdb_engine.h"
-#include "basics/error_code.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "basics/log.h"
 #include "basics/misc.hpp"
 #include "basics/static_strings.h"
@@ -1851,7 +1848,9 @@ bool Catalog::CreateDatabase(const AccessContext& ax,
     _snapshot,
     [&](auto& clone) {
       clone->RegisterObject(database, id::kInstance, false);
-      SDB_IF_FAILURE("unable_to_create") { SDB_THROW(ERROR_INTERNAL); }
+      SDB_IF_FAILURE("unable_to_create") {
+        THROW_SQL_ERROR(ERR_MSG("internal error"));
+      }
       duckdb::MemoryStream stream;
       {
         auto bytes = catalog::SerializeObject(*database, stream);
@@ -1893,7 +1892,9 @@ bool Catalog::CreateSchema(const AccessContext& ax, ObjectId database_id,
     _snapshot,
     [&](auto& clone) {
       clone->RegisterObject(schema, database_id, false);
-      SDB_IF_FAILURE("unable_to_create") { SDB_THROW(ERROR_INTERNAL); }
+      SDB_IF_FAILURE("unable_to_create") {
+        THROW_SQL_ERROR(ERR_MSG("internal error"));
+      }
       duckdb::MemoryStream stream;
       auto bytes = catalog::SerializeObject(*schema, stream);
       _engine->CreateDefinition(database_id, ObjectType::Schema,
@@ -1960,7 +1961,9 @@ void Catalog::CreateIndexImpl(std::string_view relation_schema,
         _engine->WriteTombstone(index->GetRelationId(), index->GetId());
         index->SetTombstoned(true);
       }
-      SDB_IF_FAILURE("unable_to_create") { SDB_THROW(ERROR_INTERNAL); }
+      SDB_IF_FAILURE("unable_to_create") {
+        THROW_SQL_ERROR(ERR_MSG("internal error"));
+      }
       duckdb::MemoryStream stream;
       {  // Write index definition
         auto bytes = catalog::SerializeObject(*index, stream);
@@ -2326,7 +2329,9 @@ bool Catalog::CreateView(const AccessContext& ax, ObjectId database_id,
       } else {
         clone->RegisterObject(view, *schema_id, /*replace=*/false);
       }
-      SDB_IF_FAILURE("unable_to_create") { SDB_THROW(ERROR_INTERNAL); }
+      SDB_IF_FAILURE("unable_to_create") {
+        THROW_SQL_ERROR(ERR_MSG("internal error"));
+      }
 
       duckdb::MemoryStream stream;
       auto bytes = catalog::SerializeObject(*view, stream);
@@ -2375,7 +2380,9 @@ bool Catalog::CreateSequence(const AccessContext& ax, ObjectId database_id,
     _snapshot,
     [&](auto& clone) {
       clone->RegisterObject(sequence, *schema_id, false);
-      SDB_IF_FAILURE("unable_to_create") { SDB_THROW(ERROR_INTERNAL); }
+      SDB_IF_FAILURE("unable_to_create") {
+        THROW_SQL_ERROR(ERR_MSG("internal error"));
+      }
       duckdb::MemoryStream stream;
       auto bytes = catalog::SerializeObject(*sequence, stream);
       _engine->Write([&](auto& ctx) {
@@ -2439,7 +2446,9 @@ bool Catalog::CreateFunction(const AccessContext& ax, ObjectId database_id,
       } else {
         clone->RegisterObject(function, *schema_id, /*replace=*/false);
       }
-      SDB_IF_FAILURE("unable_to_create") { SDB_THROW(ERROR_INTERNAL); }
+      SDB_IF_FAILURE("unable_to_create") {
+        THROW_SQL_ERROR(ERR_MSG("internal error"));
+      }
       duckdb::MemoryStream stream;
       auto bytes = catalog::SerializeObject(*function, stream);
       if (existed_id.isSet()) {
@@ -2677,7 +2686,9 @@ bool Catalog::CreateTable(const AccessContext& ax, ObjectId database_id,
       if (with_tombstone) {
         _engine->WriteTombstone(*schema_id, table->GetId());
       }
-      SDB_IF_FAILURE("unable_to_create") { SDB_THROW(ERROR_INTERNAL); }
+      SDB_IF_FAILURE("unable_to_create") {
+        THROW_SQL_ERROR(ERR_MSG("internal error"));
+      }
       // PutDefinition copies into the catalog store batch, so one reused stream
       // is enough: each view is consumed before the next serialize overwrites
       // it.
@@ -2751,7 +2762,9 @@ bool Catalog::CreateType(const AccessContext& ax, ObjectId database_id,
     _snapshot,
     [&](auto& clone) {
       clone->RegisterObject(type, *schema_id, false);
-      SDB_IF_FAILURE("unable_to_create") { SDB_THROW(ERROR_INTERNAL); }
+      SDB_IF_FAILURE("unable_to_create") {
+        THROW_SQL_ERROR(ERR_MSG("internal error"));
+      }
 
       duckdb::MemoryStream stream;
       auto bytes = catalog::SerializeObject(*type, stream);
@@ -2779,7 +2792,7 @@ void Catalog::RenameObjectImpl(ObjectId schema_id,
 
   auto cloned = object->Clone();
   if (!cloned) {
-    SDB_THROW(ERROR_INTERNAL, "Failed to clone object");
+    THROW_SQL_ERROR(ERR_MSG("Failed to clone object"));
   }
   auto new_object = basics::downCast<T>(std::move(cloned));
   SDB_ASSERT(new_object);
@@ -3688,8 +3701,7 @@ void Catalog::DropDatabase(const AccessContext& ax, std::string_view name,
   auto database_id =
     _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, name);
   if (!database_id) {
-    SDB_THROW(ERROR_SERVER_DATABASE_NOT_FOUND, "database \"", name,
-              "\" does not exist");
+    THROW_SQL_ERROR(ERR_MSG("database \"", name, "\" does not exist"));
   }
   RequireObjectOwner(*_snapshot, ax.role, *database_id);
 
@@ -3926,9 +3938,9 @@ void Catalog::ChangeColumnType(const AccessContext& ax, ObjectId database_id,
     for (auto idx_id : td->indexes) {
       auto idx = _snapshot->GetObject<Index>(idx_id);
       if (idx && idx->ReferencesColumn(col_id)) {
-        SDB_THROW(ERROR_BAD_PARAMETER, "cannot alter type of column \"", column,
-                  "\" because index \"", idx->GetName(),
-                  "\" depends on it; drop the index first");
+        THROW_SQL_ERROR(ERR_MSG("cannot alter type of column \"", column,
+                                "\" because index \"", idx->GetName(),
+                                "\" depends on it; drop the index first"));
       }
     }
   }
@@ -3994,20 +4006,17 @@ void Catalog::RemoveTombstone(ObjectId database_id, std::string_view schema,
   const auto schema_id =
     _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
   if (!schema_id) {
-    SDB_THROW(ERROR_SERVER_ILLEGAL_NAME, "tombstoned object \"", name,
-              "\" not found");
+    THROW_SQL_ERROR(ERR_MSG("tombstoned object \"", name, "\" not found"));
   }
   const auto object_id =
     _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
   if (!object_id) {
-    SDB_THROW(ERROR_SERVER_ILLEGAL_NAME, "tombstoned object \"", name,
-              "\" not found");
+    THROW_SQL_ERROR(ERR_MSG("tombstoned object \"", name, "\" not found"));
   }
 
   auto object = _snapshot->GetObject(*object_id);
   if (!object) {
-    SDB_THROW(ERROR_SERVER_ILLEGAL_NAME, "tombstoned object \"", name,
-              "\" not found");
+    THROW_SQL_ERROR(ERR_MSG("tombstoned object \"", name, "\" not found"));
   }
 
   ObjectId tombstone_parent;
@@ -4094,7 +4103,8 @@ void Catalog::DropIndexByIdLocked(ObjectId database_id, ObjectId index_id,
     SDB_ASSERT(clone);
     auto obj = clone->GetObject(index_id);
     if (!obj) {
-      SDB_THROW(ERROR_SERVER_ILLEGAL_NAME);
+      THROW_SQL_ERROR(
+        ERR_MSG("index with id ", index_id.id(), " does not exist"));
     }
     if (!IsIndex(obj->GetType())) {
       ThrowWrongObjectType(obj->GetName(), "index", obj->GetType());
@@ -4451,8 +4461,8 @@ namespace {
 TableEngine CheckTableForDrop(std::string_view bytes, ReadContext ctx) {
   auto table = catalog::DeserializeObject<Table>(bytes, ctx);
   if (!table) {
-    SDB_THROW(ERROR_SERVER_ILLEGAL_STATE,
-              "failed to deserialize table definition during drop recovery");
+    THROW_SQL_ERROR(
+      ERR_MSG("failed to deserialize table definition during drop recovery"));
   }
   return table->GetEngine();
 }
@@ -4617,9 +4627,8 @@ void OpenDatabase::AddRoles() {
     [&](CatalogStore::Key, std::string_view bytes) {
       auto role = catalog::DeserializeObject<catalog::Role>(bytes, {});
       if (!role) {
-        SDB_THROW(
-          ERROR_INTERNAL,
-          "Failed to read roles, error: Failed to read role definition");
+        THROW_SQL_ERROR(ERR_MSG(
+          "Failed to read roles, error: Failed to read role definition"));
       }
       _catalog.RegisterRole(std::move(role));
       return true;
@@ -4630,7 +4639,7 @@ void OpenDatabase::AddDatabase(ObjectId database_id, std::string_view bytes) {
   auto db =
     catalog::DeserializeObject<catalog::Database>(bytes, {.id = database_id});
   if (!db) {
-    SDB_THROW(ERROR_INTERNAL, "Failed to read database definition");
+    THROW_SQL_ERROR(ERR_MSG("Failed to read database definition"));
   }
   _database_name = db->GetName();
   _catalog.RegisterDatabase(db);
@@ -4683,7 +4692,7 @@ void OpenDatabase::RegisterFunctions(ObjectId db_id, ObjectId schema_id) {
                  .schema_id = schema_id,
                });
       if (!function) {
-        SDB_THROW(ERROR_INTERNAL, "Failed to read function definition");
+        THROW_SQL_ERROR(ERR_MSG("Failed to read function definition"));
       }
       _catalog.RegisterFunction(db_id, schema_id, std::move(function));
       return true;
@@ -4701,7 +4710,7 @@ void OpenDatabase::RegisterTokenizers(ObjectId db_id, ObjectId schema_id) {
                                                        .schema_id = schema_id,
                                                      });
       if (!tokenizer) {
-        SDB_THROW(ERROR_INTERNAL, "Failed to read tokenizer definition");
+        THROW_SQL_ERROR(ERR_MSG("Failed to read tokenizer definition"));
       }
       _catalog.RegisterTokenizer(db_id, schema_id, std::move(tokenizer));
       return true;
@@ -4716,7 +4725,7 @@ void OpenDatabase::RegisterViews(ObjectId db_id, ObjectId schema_id) {
       auto view = catalog::DeserializeObject<PgSqlView>(
         bytes, {.id = view_id, .database_id = db_id, .schema_id = schema_id});
       if (!view) {
-        SDB_THROW(ERROR_INTERNAL, "Failed to read view definition");
+        THROW_SQL_ERROR(ERR_MSG("Failed to read view definition"));
       }
       _catalog.RegisterView(schema_id, std::move(view));
       CollectDeletedDefinitions(view_id, DeletedScope::Relation);
@@ -4740,7 +4749,7 @@ void OpenDatabase::RegisterSequences(ObjectId db_id, ObjectId schema_id,
                                                       .schema_id = schema_id,
                                                     });
       if (!seq) {
-        SDB_THROW(ERROR_INTERNAL, "Failed to read sequence definition");
+        THROW_SQL_ERROR(ERR_MSG("Failed to read sequence definition"));
       }
       if (seq->GetOwnerTableId().isSet() != owned) {
         return true;
@@ -4766,7 +4775,7 @@ void OpenDatabase::RegisterTypes(ObjectId db_id, ObjectId schema_id) {
                                                        .schema_id = schema_id,
                                                      });
       if (!type) {
-        SDB_THROW(ERROR_INTERNAL, "Failed to read type definition");
+        THROW_SQL_ERROR(ERR_MSG("Failed to read type definition"));
       }
       _catalog.RegisterType(db_id, schema_id, std::move(type));
       return true;
@@ -4822,7 +4831,7 @@ void OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
           bytes,
           {.id = table_id, .database_id = db_id, .schema_id = schema_id});
         if (!table) {
-          SDB_THROW(ERROR_INTERNAL, "Failed to read table definition");
+          THROW_SQL_ERROR(ERR_MSG("Failed to read table definition"));
         }
         if (table->GetEngine() == TableEngine::Transactional) {
           GetCatalogStore().ValidateStoreTable(
@@ -4866,7 +4875,7 @@ void OpenDatabase::AddIndex(ObjectId database_id, ObjectId schema_id,
     index = catalog::DeserializeObject<InvertedIndex>(bytes, ctx);
   }
   if (!index) {
-    SDB_THROW(ERROR_INTERNAL, "Failed to read index definition");
+    THROW_SQL_ERROR(ERR_MSG("Failed to read index definition"));
   }
   _catalog.RegisterIndex(database_id, schema_id, index);
 
@@ -4891,7 +4900,7 @@ void OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
   auto schema =
     catalog::DeserializeObject<catalog::Schema>(bytes, {.database_id = db_id});
   if (!schema) {
-    SDB_THROW(ERROR_INTERNAL, "Failed to read schema definition");
+    THROW_SQL_ERROR(ERR_MSG("Failed to read schema definition"));
   }
   _schema_name = schema->GetName();
 
@@ -4956,7 +4965,7 @@ void InitCatalog() {
 
   try {
     open_db();
-  } catch (const basics::Exception& e) {
+  } catch (const SqlException& e) {
     SDB_FATAL(GENERAL, "Failed to open database, ", e.message());
   }
 

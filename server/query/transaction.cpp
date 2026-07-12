@@ -30,11 +30,10 @@
 
 #include "basics/assert.h"
 #include "basics/duckdb_engine.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "basics/log.h"
 #include "catalog/catalog.h"
 #include "catalog/store/store.h"
+#include "pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 #include "search/tick_domain.h"
@@ -254,8 +253,7 @@ void Transaction::Commit() {
     } catch (const std::exception& e) {
       _search_txn->Abort();
       Destroy();
-      SDB_THROW(ERROR_INTERNAL,
-                "Failed to commit search-table WAL: ", e.what());
+      THROW_SQL_ERROR(ERR_MSG("Failed to commit search-table WAL: ", e.what()));
     }
   }
 

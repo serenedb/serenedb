@@ -32,12 +32,11 @@
 #include <memory>
 #include <utility>
 
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "basics/misc.hpp"
 #include "geo/s2/multi_point_region.h"
 #include "geo/s2/multi_polyline_region.h"
 #include "geo/shape_container.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::geo {
 namespace {
@@ -176,10 +175,10 @@ template<typename Func>
 void WithGeometryReader(WkbCursor& cursor, Func&& func) {
   uint8_t b;
   if (!cursor.ReadByte(b)) {
-    SDB_THROW(ERROR_BAD_PARAMETER, "WKB: truncated byte-order byte");
+    THROW_SQL_ERROR(ERR_MSG("WKB: truncated byte-order byte"));
   }
   if (b > 1) {
-    SDB_THROW(ERROR_BAD_PARAMETER, "WKB: bad byte-order byte");
+    THROW_SQL_ERROR(ERR_MSG("WKB: bad byte-order byte"));
   }
   irs::ResolveBool(b == 1, [&]<bool LittleEndian> {
     WkbReader<LittleEndian> r{cursor};
@@ -195,11 +194,10 @@ template<class R>
 void ReadHeader(R& r, WkbType& type) {
   uint32_t raw_type;
   if (!r.ReadU32(raw_type)) {
-    SDB_THROW(ERROR_BAD_PARAMETER, "WKB: truncated type word");
+    THROW_SQL_ERROR(ERR_MSG("WKB: truncated type word"));
   }
   if ((raw_type & (kEwkbZFlag | kEwkbMFlag)) != 0) {
-    SDB_THROW(ERROR_BAD_PARAMETER,
-              "WKB: Z/M dimensions not supported (CRS84 is 2D)");
+    THROW_SQL_ERROR(ERR_MSG("WKB: Z/M dimensions not supported (CRS84 is 2D)"));
   }
   const bool has_srid = (raw_type & kEwkbSridFlag) != 0;
   const uint32_t bare = raw_type & 0x000000FF;  // ISO WKB PointZ=1001 also
@@ -207,16 +205,16 @@ void ReadHeader(R& r, WkbType& type) {
                                                 // but Z/M check above rejects.
   if (bare < std::to_underlying(WkbType::Min) ||
       bare > std::to_underlying(WkbType::Max)) {
-    SDB_THROW(ERROR_BAD_PARAMETER, "WKB: unsupported geometry type");
+    THROW_SQL_ERROR(ERR_MSG("WKB: unsupported geometry type"));
   }
   if (has_srid) {
     uint32_t srid;
     if (!r.ReadU32(srid)) {
-      SDB_THROW(ERROR_BAD_PARAMETER, "WKB: truncated SRID");
+      THROW_SQL_ERROR(ERR_MSG("WKB: truncated SRID"));
     }
     if (static_cast<int32_t>(srid) != kCRS84Srid) {
-      SDB_THROW(ERROR_BAD_PARAMETER,
-                "WKB: only SRID 4326 (CRS84) is supported; got ", srid);
+      THROW_SQL_ERROR(
+        ERR_MSG("WKB: only SRID 4326 (CRS84) is supported; got ", srid));
     }
   }
   type = static_cast<WkbType>(bare);
@@ -225,7 +223,7 @@ void ReadHeader(R& r, WkbType& type) {
 template<class R>
 void ReadPoint(R& r, S2LatLng& out) {
   if (!r.ReadLatLng(out)) {
-    SDB_THROW(ERROR_BAD_PARAMETER, "WKB: truncated Point coordinates");
+    THROW_SQL_ERROR(ERR_MSG("WKB: truncated Point coordinates"));
   }
 }
 
@@ -233,14 +231,14 @@ template<class R>
 void ReadLineStringVertices(R& r, std::vector<S2LatLng>& cache) {
   uint32_t count;
   if (!r.ReadU32(count)) {
-    SDB_THROW(ERROR_BAD_PARAMETER, "WKB: truncated LineString vertex count");
+    THROW_SQL_ERROR(ERR_MSG("WKB: truncated LineString vertex count"));
   }
   cache.clear();
   cache.reserve(count);
   for (uint32_t i = 0; i < count; ++i) {
     S2LatLng ll;
     if (!r.ReadLatLng(ll)) {
-      SDB_THROW(ERROR_BAD_PARAMETER, "WKB: truncated LineString vertex ", i);
+      THROW_SQL_ERROR(ERR_MSG("WKB: truncated LineString vertex ", i));
     }
     cache.push_back(ll);
   }
@@ -259,7 +257,7 @@ template<class R>
 void ReadPolygonLoops(R& r, std::vector<std::unique_ptr<S2Loop>>& out) {
   uint32_t ring_count;
   if (!r.ReadU32(ring_count)) {
-    SDB_THROW(ERROR_BAD_PARAMETER, "WKB: truncated Polygon ring count");
+    THROW_SQL_ERROR(ERR_MSG("WKB: truncated Polygon ring count"));
   }
   out.clear();
   out.reserve(ring_count);
@@ -267,21 +265,21 @@ void ReadPolygonLoops(R& r, std::vector<std::unique_ptr<S2Loop>>& out) {
   for (uint32_t i = 0; i < ring_count; ++i) {
     uint32_t vcount;
     if (!r.ReadU32(vcount)) {
-      SDB_THROW(ERROR_BAD_PARAMETER, "WKB: truncated Polygon ring-", i,
-                " vertex count");
+      THROW_SQL_ERROR(
+        ERR_MSG("WKB: truncated Polygon ring-", i, " vertex count"));
     }
     if (vcount < 4) {
-      SDB_THROW(ERROR_BAD_PARAMETER,
-                "WKB: Polygon ring must have >= 4 vertices (closed); ring ", i,
-                " has ", vcount);
+      THROW_SQL_ERROR(
+        ERR_MSG("WKB: Polygon ring must have >= 4 vertices (closed); ring ", i,
+                " has ", vcount));
     }
     std::vector<S2Point> pts;
     pts.reserve(vcount - 1);
     S2LatLng ll;
     for (uint32_t v = 0; v < vcount; ++v) {
       if (!r.ReadLatLng(ll)) {
-        SDB_THROW(ERROR_BAD_PARAMETER, "WKB: truncated Polygon ring-", i,
-                  " vertex ", v);
+        THROW_SQL_ERROR(
+          ERR_MSG("WKB: truncated Polygon ring-", i, " vertex ", v));
       }
       // Skip the last vertex: WKB closes the ring, S2Loop must be open.
       if (v + 1 < vcount) {
@@ -290,8 +288,8 @@ void ReadPolygonLoops(R& r, std::vector<std::unique_ptr<S2Loop>>& out) {
     }
     auto loop = std::make_unique<S2Loop>(pts, S2Debug::DISABLE);
     if (!loop->IsValid()) {
-      SDB_THROW(ERROR_BAD_PARAMETER, "WKB: Polygon ring-", i,
-                " is not a valid ", "S2 loop");
+      THROW_SQL_ERROR(
+        ERR_MSG("WKB: Polygon ring-", i, " is not a valid ", "S2 loop"));
     }
     auto* current = loop.get();
     out.push_back(std::move(loop));
@@ -302,8 +300,8 @@ void ReadPolygonLoops(R& r, std::vector<std::unique_ptr<S2Loop>>& out) {
     if (!first->Contains(*current)) {
       current->Invert();
       if (!first->Contains(*current)) {
-        SDB_THROW(ERROR_BAD_PARAMETER, "WKB: Polygon ring-", i,
-                  " is not a hole in the outer ring");
+        THROW_SQL_ERROR(
+          ERR_MSG("WKB: Polygon ring-", i, " is not a hole in the outer ring"));
       }
     }
   }
@@ -330,7 +328,7 @@ void ParseLineString(R& r, ShapeContainer& region) {
   }
   auto line = std::make_unique<S2Polyline>(pts, S2Debug::DISABLE);
   if (!line->IsValid()) {
-    SDB_THROW(ERROR_BAD_PARAMETER, "WKB: LineString is not a valid S2Polyline");
+    THROW_SQL_ERROR(ERR_MSG("WKB: LineString is not a valid S2Polyline"));
   }
   region.reset(std::move(line), ShapeContainer::Type::S2Polyline);
 }
@@ -354,7 +352,7 @@ template<class R>
 void ParseMultiPoint(R& r, ShapeContainer& region) {
   uint32_t count;
   if (!r.ReadU32(count)) {
-    SDB_THROW(ERROR_BAD_PARAMETER, "WKB: truncated MultiPoint count");
+    THROW_SQL_ERROR(ERR_MSG("WKB: truncated MultiPoint count"));
   }
   auto multi = std::make_unique<S2MultiPointRegion>();
   multi->Impl().reserve(count);
@@ -363,8 +361,8 @@ void ParseMultiPoint(R& r, ShapeContainer& region) {
       WkbType sub_type;
       ReadHeader(sub, sub_type);
       if (sub_type != WkbType::Point) {
-        SDB_THROW(ERROR_BAD_PARAMETER, "WKB: MultiPoint member ", i,
-                  " is not a Point");
+        THROW_SQL_ERROR(
+          ERR_MSG("WKB: MultiPoint member ", i, " is not a Point"));
       }
       S2LatLng ll;
       ReadPoint(sub, ll);
@@ -378,7 +376,7 @@ template<class R>
 void ParseMultiLineString(R& r, ShapeContainer& region) {
   uint32_t count;
   if (!r.ReadU32(count)) {
-    SDB_THROW(ERROR_BAD_PARAMETER, "WKB: truncated MultiLineString count");
+    THROW_SQL_ERROR(ERR_MSG("WKB: truncated MultiLineString count"));
   }
   auto multi = std::make_unique<S2MultiPolylineRegion>();
   multi->Impl().reserve(count);
@@ -390,8 +388,8 @@ void ParseMultiLineString(R& r, ShapeContainer& region) {
       WkbType sub_type;
       ReadHeader(sub, sub_type);
       if (sub_type != WkbType::LineString) {
-        SDB_THROW(ERROR_BAD_PARAMETER, "WKB: MultiLineString member ", i,
-                  " is not a LineString");
+        THROW_SQL_ERROR(
+          ERR_MSG("WKB: MultiLineString member ", i, " is not a LineString"));
       }
       ReadLineStringVertices(sub, verts);
       std::vector<S2Point> pts;
@@ -401,8 +399,8 @@ void ParseMultiLineString(R& r, ShapeContainer& region) {
       }
       S2Polyline line{pts, S2Debug::DISABLE};
       if (!line.IsValid()) {
-        SDB_THROW(ERROR_BAD_PARAMETER, "WKB: MultiLineString member ", i,
-                  " is not a valid S2Polyline");
+        THROW_SQL_ERROR(ERR_MSG("WKB: MultiLineString member ", i,
+                                " is not a valid S2Polyline"));
       }
       multi->Impl().push_back(std::move(line));
     });
@@ -414,7 +412,7 @@ template<class R>
 void ParseMultiPolygon(R& r, ShapeContainer& region) {
   uint32_t count;
   if (!r.ReadU32(count)) {
-    SDB_THROW(ERROR_BAD_PARAMETER, "WKB: truncated MultiPolygon count");
+    THROW_SQL_ERROR(ERR_MSG("WKB: truncated MultiPolygon count"));
   }
   // Flatten all member loops into one S2Polygon -- S2 handles disjoint
   // polygons natively through S2Polygon::InitNested.
@@ -424,8 +422,8 @@ void ParseMultiPolygon(R& r, ShapeContainer& region) {
       WkbType sub_type;
       ReadHeader(sub, sub_type);
       if (sub_type != WkbType::Polygon) {
-        SDB_THROW(ERROR_BAD_PARAMETER, "WKB: MultiPolygon member ", i,
-                  " is not a Polygon");
+        THROW_SQL_ERROR(
+          ERR_MSG("WKB: MultiPolygon member ", i, " is not a Polygon"));
       }
       std::vector<std::unique_ptr<S2Loop>> loops;
       ReadPolygonLoops(sub, loops);
@@ -457,10 +455,9 @@ void ParseGeometry(R& r, ShapeContainer& region) {
     case WkbType::MultiPolygon:
       return ParseMultiPolygon(r, region);
     case WkbType::GeometryCollection:
-      SDB_THROW(ERROR_BAD_PARAMETER,
-                "WKB: GeometryCollection is not supported");
+      THROW_SQL_ERROR(ERR_MSG("WKB: GeometryCollection is not supported"));
   }
-  SDB_THROW(ERROR_BAD_PARAMETER, "WKB: unreachable geometry type");
+  THROW_SQL_ERROR(ERR_MSG("WKB: unreachable geometry type"));
 }
 
 }  // namespace
@@ -472,7 +469,7 @@ bool ParseShapeWKB(std::string_view bytes, ShapeContainer& region) {
     WithGeometryReader(cursor,
                        [&]<class R>(R& r) { ParseGeometry(r, region); });
     return true;
-  } catch (const sdb::basics::Exception&) {
+  } catch (const sdb::SqlException&) {
     return false;
   }
 }

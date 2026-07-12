@@ -1,8 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2014-2023 ArangoDB GmbH, Cologne, Germany
-/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -16,31 +15,22 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
 
-#include <string_view>
+#include <string>
 
-#include "basics/error-registry.h"
-#include "basics/error_code.h"
+namespace sdb::pg {
 
-namespace sdb {
+struct SqlErrorData {
+  int errcode{};
+  int cursorpos{-1};
+  std::string errmsg;
+  std::string errdetail;
+  std::string errhint;
+  std::string context;
+};
 
-void SetError(ErrorCode);
-
-std::string_view LastError() noexcept;
-
-constexpr std::string_view GetErrorStr(ErrorCode code) noexcept {
-  using sdb::error::ErrorMessages;
-  auto it = ErrorMessages.find(code);
-
-  if (it == ErrorMessages.end()) {
-    return "unknown error";
-  }
-
-  return it->second;
-}
-
-}  // namespace sdb
+}  // namespace sdb::pg

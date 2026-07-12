@@ -27,9 +27,9 @@
 #include <string_view>
 #include <utility>
 
-#include "basics/exceptions.h"
 #include "basics/log.h"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 namespace {
@@ -41,9 +41,9 @@ SolrSynonymsTokenizer::SynonymsList SplitLine(const std::string_view line,
   for (auto& s : outputs) {
     s = absl::StripAsciiWhitespace(s);
     if (s.empty()) {
-      SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-                "solr_synonyms: failed to parse synonyms: Failed parse line ",
-                line_number);
+      THROW_SQL_ERROR(
+        ERR_MSG("solr_synonyms: failed to parse synonyms: Failed parse line ",
+                line_number));
     }
   }
 
@@ -72,10 +72,10 @@ SolrSynonymsTokenizer::SynonymsLines SolrSynonymsTokenizer::ParseSynonymsLines(
 
     if (sides.size() > 1) {
       if (sides.size() != 2) {
-        SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-                  "solr_synonyms: failed to parse synonyms: More than one "
+        THROW_SQL_ERROR(
+          ERR_MSG("solr_synonyms: failed to parse synonyms: More than one "
                   "explicit mapping specified on the line ",
-                  line_number);
+                  line_number));
       }
 
       synonyms_line.in = SplitLine(sides[0], line_number);

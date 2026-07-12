@@ -43,7 +43,6 @@
 
 #include "basics/asio_ns.h"
 #include "basics/duckdb_engine.h"
-#include "basics/exceptions.h"
 #include "basics/message_buffer.h"
 #include "basics/metrics.h"
 #include "basics/static_strings.h"
@@ -143,7 +142,7 @@ class HttpSession final
       const auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
       const auto dbname = StaticStrings::kDefaultDatabase;
       auto database = snapshot->GetDatabase(dbname);
-      SDB_ENSURE(database, ERROR_INTERNAL);
+      SDB_ENSURE(database);
       const auto database_id = database->GetId();
       const std::string_view user =
         _user.empty() ? StaticStrings::kDefaultUser : _user;

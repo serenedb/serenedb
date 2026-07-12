@@ -33,7 +33,6 @@
 #include "basics/containers/flat_hash_set.h"
 #include "basics/containers/node_hash_map.h"
 #include "basics/down_cast.h"
-#include "basics/errors.h"
 #include "catalog/column_expr.h"
 #include "catalog/database.h"
 #include "catalog/drop_task.h"
@@ -421,7 +420,7 @@ class Catalog final {
   explicit Catalog();
 
   // All mutators throw on failure: pg::SqlException with the PG-compatible
-  // errcode/message for user-facing errors, basics::Exception for internal
+  // errcode/message for user-facing errors, SqlException for internal
   // (store/serialization) failures. Create* whose statement supports IF NOT
   // EXISTS and Drop* with `missing_ok` return false instead of throwing when
   // the object already exists / is absent.

@@ -23,7 +23,6 @@
 #include "app/app_server.h"
 #include "basics/assert.h"
 #include "basics/down_cast.h"
-#include "basics/errors.h"
 #include "catalog/catalog.h"
 #include "catalog/secondary_index.h"
 #include "catalog/table.h"

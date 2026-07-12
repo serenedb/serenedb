@@ -21,7 +21,6 @@
 #pragma once
 
 #include "basics/empty.hpp"
-#include "basics/exceptions.h"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/posting/iterator_pos.hpp"
@@ -29,6 +28,7 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 
@@ -873,7 +873,7 @@ bool PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand,
   // initialize skip levels
   const auto num_levels = _skip.NumLevels();
   SDB_ENSURE(1 <= num_levels && num_levels <= doc_limits::kMaxSkipLevels,
-             sdb::ERROR_INTERNAL, "Invalid number of skip levels ", num_levels,
+             "Invalid number of skip levels ", num_levels,
              ", must be in range of [1, ", doc_limits::kMaxSkipLevels, "].");
   SDB_ASSERT(!doc_limits::valid(_skip.Reader().UpperBound()));
   _skip.Reader().Init(num_levels);

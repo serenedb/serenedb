@@ -30,7 +30,7 @@
 #include <string_view>
 #include <vector>
 
-#include "basics/exceptions.h"
+#include "pg/sql_exception_macro.h"
 
 class S2Polyline;
 class S2Polygon;

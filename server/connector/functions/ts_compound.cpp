@@ -22,7 +22,6 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/utils/string.hpp>
 
-#include "basics/exceptions.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "ts_common.hpp"

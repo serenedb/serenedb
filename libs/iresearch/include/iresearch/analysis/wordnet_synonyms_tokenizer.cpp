@@ -29,9 +29,9 @@
 #include <string_view>
 #include <utility>
 
-#include "basics/exceptions.h"
 #include "basics/log.h"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 namespace {
@@ -58,17 +58,17 @@ std::vector<std::string_view> ParseParams(const std::string_view line,
   std::string_view params;
 
   if (!RegexWordnet(line, &params)) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "wordnet_synonyms: failed to parse synonyms: Failed parse line ",
-              line_number);
+    THROW_SQL_ERROR(
+      ERR_MSG("wordnet_synonyms: failed to parse synonyms: Failed parse line ",
+              line_number));
   }
 
   std::vector<std::string_view> outputs = absl::StrSplit(params, ',');
   if (outputs.size() < kWordnetMinCountParams ||
       outputs.size() > kWordnetMaxCountParams) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "wordnet_synonyms: failed to parse synonyms: Failed parse line ",
-              line_number);
+    THROW_SQL_ERROR(
+      ERR_MSG("wordnet_synonyms: failed to parse synonyms: Failed parse line ",
+              line_number));
   }
   return outputs;
 }
@@ -96,10 +96,10 @@ WordnetSynonymsTokenizer::SynonymsMap WordnetSynonymsTokenizer::Parse(
 
     if (raw_synonym.size() < 3 || raw_synonym.front() != '\'' ||
         raw_synonym.back() != '\'') {
-      SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-                "wordnet_synonyms: failed to parse synonyms: Failed parse "
+      THROW_SQL_ERROR(
+        ERR_MSG("wordnet_synonyms: failed to parse synonyms: Failed parse "
                 "line ",
-                line_number);
+                line_number));
     }
 
     std::string synonym = absl::StrReplaceAll(

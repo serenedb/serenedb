@@ -20,9 +20,10 @@
 
 #pragma once
 
+#include <exception>
 #include <source_location>
+#include <string>
 
-#include "basics/exceptions.h"
 #include "pg/sql_error.h"
 
 namespace sdb {
@@ -33,6 +34,7 @@ class SqlException final : public std::exception {
     : _location{location}, _data{std::move(err)} {}
 
   const char* what() const noexcept final { return _data.errmsg.c_str(); }
+  const std::string& message() const noexcept { return _data.errmsg; }
   const pg::SqlErrorData& error() const noexcept { return _data; }
   auto location() const noexcept { return _location; }
 

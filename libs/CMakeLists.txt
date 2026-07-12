@@ -12,8 +12,6 @@ add_definitions(
 add_library(
     serene_base
     STATIC
-    basics/encoding_utils.cpp
-    basics/exceptions.cpp
     basics/file_utils.cpp
     basics/metrics.cpp
     basics/number_of_cores.cpp
@@ -22,7 +20,6 @@ add_library(
     basics/lifecycle.cpp
     basics/application-exit.cpp
     basics/debugging.cpp
-    basics/error.cpp
     basics/files.cpp
     basics/lockfile.cpp
     basics/signals.cpp
@@ -56,7 +53,7 @@ target_include_directories(
 
 # Rebuild generated error files so they are up-to-date when all
 # dependent stuff is built
-add_dependencies(serene_base errorfiles exitcodefiles)
+add_dependencies(serene_base exitcodefiles)
 
 target_link_libraries(
     serene_base
@@ -138,7 +135,7 @@ target_include_directories(serene PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
 
 target_include_directories(serene SYSTEM PUBLIC ${OPENSSL_INCLUDE_DIR})
 
-add_dependencies(serene errorfiles exitcodefiles)
+add_dependencies(serene exitcodefiles)
 
 add_subdirectory(geo)
 add_subdirectory(build_id)

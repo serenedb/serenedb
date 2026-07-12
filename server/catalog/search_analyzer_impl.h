@@ -28,9 +28,8 @@
 #include <magic_enum/magic_enum.hpp>
 #include <utility>
 
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "basics/object_pool.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::search {
 

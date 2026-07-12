@@ -4940,17 +4940,17 @@ void InitCatalog() {
 
   if (GetCatalog().GetCatalogSnapshot()->GetRoles().empty()) {
     std::string initial_verifier;
-    if (const char* pw = std::getenv("SERENEDB_INITIAL_PASSWORD");
+    if (const char* pw = std::getenv("POSTGRES_PASSWORD");
         pw != nullptr && *pw != '\0') {
       auto verifier = network::BuildScramVerifierString(pw);
       if (!verifier) {
         SDB_FATAL(GENERAL,
                   "could not derive a password verifier from "
-                  "SERENEDB_INITIAL_PASSWORD");
+                  "POSTGRES_PASSWORD");
       }
       initial_verifier = std::move(*verifier);
       SDB_INFO(GENERAL, "bootstrap: initial password set for role '",
-               StaticStrings::kDefaultUser, "' from SERENEDB_INITIAL_PASSWORD");
+               StaticStrings::kDefaultUser, "' from POSTGRES_PASSWORD");
     }
     auto root = std::make_shared<Role>(persistence::RoleData{
       .id = id::kRootUser,

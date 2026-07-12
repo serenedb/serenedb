@@ -49,6 +49,9 @@ statement ok
 CREATE INDEX cc_idx ON cc_t USING inverted(id, body cc_dict)
   WITH (refresh_interval = 1);
 
+statement ok
+SET sdb_faults = 'long_waited_advance';
+
 ###############################################################################
 # Round 1: 8 concurrent writers x 250 rows, refresher loop in parallel
 ###############################################################################

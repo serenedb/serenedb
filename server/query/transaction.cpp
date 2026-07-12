@@ -22,13 +22,17 @@
 
 #include <absl/cleanup/cleanup.h>
 
+#include <chrono>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/storage/block_manager.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
+#include <random>
+#include <thread>
 
 #include "basics/assert.h"
+#include "basics/debugging.h"
 #include "basics/duckdb_engine.h"
 #include "basics/log.h"
 #include "catalog/catalog.h"
@@ -194,6 +198,14 @@ void Transaction::CommitSearch(
     max_queries =
       std::max<uint64_t>(max_queries, entry.transaction->GetQueries());
   }
+  SDB_IF_FAILURE("long_waited_advance") {
+    static std::atomic<uint32_t> gSeedCounter{0};
+    static thread_local std::mt19937 gRng{
+      gSeedCounter.fetch_add(1, std::memory_order_relaxed)};
+    std::this_thread::sleep_for(std::chrono::microseconds(
+      std::uniform_int_distribution<int>(0, 20000)(gRng)));
+  }
+
   const auto last_tick =
     search::TickDomain::Instance().Advance(max_queries + 1);
 

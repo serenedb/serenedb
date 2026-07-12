@@ -77,12 +77,9 @@ class Server final {
   std::string _tls_ciphers;
   std::string _tls_groups;
   network::TlsMinVersion _tls_min_version = network::TlsMinVersion::Tls12;
-  std::string _auth_user;
-  std::string _auth_password;
   std::string _api_key;
   std::string _bearer_token;
   std::string _cors_origins;
-  network::pg::AuthMethod _auth_method = network::pg::AuthMethod::Scram;
   std::uint32_t _io_threads = 0;
   std::uint32_t _max_message = 0;
   std::uint32_t _max_connections = 0;

@@ -27,9 +27,10 @@
 
 #include <cstdint>
 #include <span>
+#include <string_view>
 #include <vector>
 
-#include "basics/result.h"
+#include "basics/exceptions.h"
 
 class S2Polyline;
 class S2Polygon;
@@ -143,7 +144,7 @@ struct GeoOptions {
   int8_t level_mod{1};
   bool optimize_for_space{false};
 
-  sdb::Result Validate() const noexcept;
+  void Validate(std::string_view analyzer) const;
 };
 
 inline S2RegionTermIndexer::Options S2Options(const GeoOptions& opts,

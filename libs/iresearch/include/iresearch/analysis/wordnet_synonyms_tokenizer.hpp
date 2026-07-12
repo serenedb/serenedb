@@ -26,8 +26,7 @@
 #include <string>
 #include <string_view>
 
-#include "basics/result.h"
-#include "basics/result_or.h"
+#include "basics/exceptions.h"
 #include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
@@ -60,9 +59,8 @@ class WordnetSynonymsTokenizer final
     return "wordnet_synonyms";
   }
 
-  static sdb::ResultOr<SynonymsMap> Parse(std::string_view input);
-  static sdb::ResultOr<std::shared_ptr<const State>> MakeState(
-    std::string text);
+  static SynonymsMap Parse(std::string_view input);
+  static std::shared_ptr<const State> MakeState(std::string text);
 
   explicit WordnetSynonymsTokenizer(
     std::shared_ptr<const State> state) noexcept;

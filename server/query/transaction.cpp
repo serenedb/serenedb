@@ -30,6 +30,8 @@
 
 #include "basics/assert.h"
 #include "basics/duckdb_engine.h"
+#include "basics/errors.h"
+#include "basics/exceptions.h"
 #include "basics/log.h"
 #include "catalog/catalog.h"
 #include "catalog/store/store.h"
@@ -230,7 +232,7 @@ void Transaction::CommitSearch(
   _search_transactions.clear();
 }
 
-Result Transaction::Commit() {
+void Transaction::Commit() {
   // Search-table segments commit on the database WAL tick; register their flush
   // up-front -- before any commit point -- so a concurrent background
   // RefreshCommit waits for them. They commit in the WAL block below.
@@ -252,16 +254,15 @@ Result Transaction::Commit() {
     } catch (const std::exception& e) {
       _search_txn->Abort();
       Destroy();
-      return {ERROR_INTERNAL, "Failed to commit search-table WAL: ", e.what()};
+      SDB_THROW(ERROR_INTERNAL,
+                "Failed to commit search-table WAL: ", e.what());
     }
   }
 
   Destroy();
-
-  return {};
 }
 
-Result Transaction::Rollback() {
+void Transaction::Rollback() {
   for (auto& search_transaction : _search_transactions) {
     search_transaction.second.transaction->Abort();
   }
@@ -270,7 +271,6 @@ Result Transaction::Rollback() {
   }
   RollbackVariables();
   Destroy();
-  return {};
 }
 
 search::InvertedIndexSnapshotPtr Transaction::EnsureSearchSnapshot(

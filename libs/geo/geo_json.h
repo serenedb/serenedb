@@ -28,7 +28,7 @@
 #include <string_view>
 #include <vector>
 
-#include "basics/result.h"
+#include "basics/exceptions.h"
 #include "geo/coding.h"
 
 class S2LatLng;
@@ -99,71 +99,22 @@ Type ParseType(simdjson::ondemand::object& object) noexcept;
 /// {
 ///   "type": "Point",
 ///   "coordinates": [lon, lat]
-Result ParsePoint(simdjson::ondemand::value json, S2LatLng& region);
-
-/// Expects an GeoJson MultiPoint:
-///
-/// https://www.rfc-editor.org/rfc/rfc7946#section-3.1.3
-/// {
-///   "type": "MultiPoint",
-///   "coordinates": [
-///     [lon0, lat0], [lon1, lat1], ...
-Result ParseMultiPoint(simdjson::ondemand::value json,
-                       S2MultiPointRegion& region);
-
-/// Expects an GeoJson LineString:
-///
-/// https://www.rfc-editor.org/rfc/rfc7946#section-3.1.4
-/// {
-///   "type": "LineString",
-///   "coordinates": [
-///     [lon0, lat0], [lon1, lat1], ...
-Result ParseLinestring(simdjson::ondemand::value json, S2Polyline& region);
-
-/// Expects an GeoJson MultiLineString:
-///
-/// https://www.rfc-editor.org/rfc/rfc7946#section-3.1.5
-/// {
-///   "type": "MultiLineString",
-///   "coordinates": [
-///     [[lon0, lat0], [lon1, lat1], ...], ...
-Result ParseMultiLinestring(simdjson::ondemand::value json,
-                            S2MultiPolylineRegion& region);
-
-/// Expects an GeoJson Polygon:
-/// Each loop should be closed, so should contains at least four points
-///
-/// https://www.rfc-editor.org/rfc/rfc7946#section-3.1.6
-/// {
-///   "type": "Polygon",
-///   "coordinates": [
-///     [[lon0, lat0], [lon1, lat1], [lon2, lat2], [lon3, lat3], ...], ...
-Result ParsePolygon(simdjson::ondemand::value json, S2Polygon& region);
-
-/// Expects an GeoJson MultiPolygon:
-/// Each loop should be closed, so should contains at least four points
-///
-/// https://www.rfc-editor.org/rfc/rfc7946#section-3.1.7
-/// {
-///   "type": "MultiPolygon",
-///   "coordinates": [
-///     [[lon0, lat0], [lon1, lat1], [lon2, lat2], [lon3, lat3], ...], ...
-Result ParseMultiPolygon(simdjson::ondemand::value json, S2Polygon& region);
+void ParsePoint(simdjson::ondemand::value json, S2LatLng& region);
 
 /// Convenience function to build a region from a GeoJson type.
-Result ParseRegion(simdjson::ondemand::value json, ShapeContainer& region);
+void ParseRegion(simdjson::ondemand::value json, ShapeContainer& region);
 
 template<bool Valid = true>
-Result ParseRegion(simdjson::ondemand::value json, ShapeContainer& region,
-                   std::vector<S2LatLng>& cache,
-                   coding::Options options = coding::Options::Invalid,
-                   Encoder* encoder = nullptr);
+void ParseRegion(simdjson::ondemand::value json, ShapeContainer& region,
+                 std::vector<S2LatLng>& cache,
+                 coding::Options options = coding::Options::Invalid,
+                 Encoder* encoder = nullptr);
 
 template<bool Valid = true>
-Result ParseCoordinates(simdjson::ondemand::value json, ShapeContainer& region,
-                        bool geo_json,
-                        coding::Options options = coding::Options::Invalid,
-                        Encoder* encoder = nullptr);
+void ParseCoordinates(simdjson::ondemand::value json, ShapeContainer& region,
+                      bool geo_json,
+                      coding::Options options = coding::Options::Invalid,
+                      Encoder* encoder = nullptr);
 
 }  // namespace json
 }  // namespace sdb::geo

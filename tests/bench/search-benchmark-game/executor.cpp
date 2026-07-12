@@ -101,8 +101,7 @@ size_t Executor::ExecuteCount(std::string_view query) {
 irs::Filter::ptr Executor::ParseFilter(std::string_view str) {
   auto root = std::make_unique<irs::MixedBooleanFilter>();
   sdb::ParserContext context{*root, kTextFieldId, *_tokenizer};
-  auto r = sdb::ParseQuery(context, str);
-  if (!r.ok()) {
+  if (!sdb::ParseQuery(context, str)) {
     return {};
   }
   if (root->empty()) {

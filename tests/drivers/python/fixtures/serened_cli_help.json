@@ -90,41 +90,11 @@
           "categoryLabel": "Server"
         },
         {
-          "name": "auth_method",
-          "flag": "--auth_method",
-          "type": "",
-          "defaultValue": "scram",
-          "description": "Password auth method for --auth_password: scram (SCRAM-SHA-256, default), md5, or password (cleartext; requires TLS).",
-          "source": "server",
-          "category": "server",
-          "categoryLabel": "Server"
-        },
-        {
-          "name": "auth_password",
-          "flag": "--auth_password",
-          "type": "",
-          "defaultValue": "",
-          "description": "Temporary single-user password (empty = trust). Placeholder until RBAC; SCRAM-SHA-256 by default. Cleartext password auth requires TLS.",
-          "source": "server",
-          "category": "server",
-          "categoryLabel": "Server"
-        },
-        {
           "name": "auth_timeout",
           "flag": "--auth_timeout",
           "type": "",
           "defaultValue": "30s",
           "description": "Max time from connect to authenticated, per connection (0 = off). pg: covers TLS+startup+auth; http: the request-header read deadline.",
-          "source": "server",
-          "category": "server",
-          "categoryLabel": "Server"
-        },
-        {
-          "name": "auth_user",
-          "flag": "--auth_user",
-          "type": "",
-          "defaultValue": "postgres",
-          "description": "User the temporary --auth_password / token credentials apply to.",
           "source": "server",
           "category": "server",
           "categoryLabel": "Server"

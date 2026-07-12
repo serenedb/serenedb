@@ -23,6 +23,7 @@
 #include <iresearch/search/prefix_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
+#include "basics/exceptions.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "ts_common.hpp"
@@ -34,13 +35,8 @@ void FromPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
                 const duckdb::BoundFunctionExpression& func) {
   SDB_ASSERT(func.GetChildren().size() == 1);
   std::string prefix;
-  if (auto r =
-        GetVarcharArg(*func.GetChildren()[0], "ts_starts_with text", prefix);
-      !r.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(r.errorMessage()),
-                    ERR_HINT("Example: ts_starts_with('pre')."));
-  }
+  GetVarcharArg(*func.GetChildren()[0], prefix,
+                {"ts_starts_with text", "Example: ts_starts_with('pre')."});
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
       column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

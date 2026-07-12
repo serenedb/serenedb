@@ -35,8 +35,6 @@
 #include "basics/error-registry.h"
 #include "basics/error.h"
 #include "basics/errors.h"
-#include "basics/result.h"
-#include "basics/result_or.h"
 #include "basics/system-compiler.h"
 
 #define SDB_THROW(...)                            \
@@ -87,13 +85,6 @@ template<typename... Args>
 }
 
 template<typename... Args>
-[[noreturn]] void ThrowErrorImpl(std::source_location location, Result&& r) {
-  SDB_ASSERT(!r.ok());
-  auto code = r.errorNumber();
-  ThrowErrorImpl(location, code, std::move(r).errorMessage());
-}
-
-template<typename... Args>
 struct ThrowError {
   [[noreturn]] ThrowError(Args&&... args, std::source_location location =
                                             std::source_location::current()) {
@@ -105,78 +96,6 @@ template<typename... Args>
 ThrowError(Args&&...) -> ThrowError<Args...>;
 
 }  // namespace detail
-namespace helper {
-
-// just so we don't have to include logger and application-exit into this
-// central header.
-[[noreturn]] void DieWithLogMessage(const char*);
-
-}  // namespace helper
-
-template<typename F, typename E>
-Result SafeCall(F&& fn, E&& err) noexcept {
-  // The outer try/catch catches possible exceptions thrown by result.reset(),
-  // due to allocation failure. If we don't have enough memory to allocate an
-  // error, let's just give up.
-  try {
-    try {
-      if constexpr (std::is_void_v<std::invoke_result_t<F>>) {
-        std::forward<F>(fn)();
-        return {};
-      } else {
-        return std::forward<F>(fn)();
-      }
-      // TODO check whether there are other specific exceptions we should catch
-    } catch (const basics::Exception& e) {
-      return err(e.code(), e.message());
-    } catch (const std::bad_alloc& e) {
-      return err(ERROR_OUT_OF_MEMORY, e.what());
-    } catch (const std::exception& e) {
-      return err(ERROR_INTERNAL, e.what());
-    } catch (...) {
-      return err(ERROR_INTERNAL, "");
-    }
-  } catch (const std::exception& e) {
-    helper::DieWithLogMessage(e.what());
-  } catch (...) {
-    helper::DieWithLogMessage(nullptr);
-  }
-}
-
-template<typename F>
-Result SafeCall(F&& fn) noexcept {
-  return SafeCall(
-    std::forward<F>(fn),
-    [](ErrorCode code, std::string_view msg) { return Result{code, msg}; });
-}
-
-template<typename F, typename T = std::invoke_result_t<F>>
-ResultOr<T> SafeCallT(F&& fn) noexcept {
-  // The outer try/catch catches possible exceptions thrown by result.reset(),
-  // due to allocation failure. If we don't have enough memory to allocate an
-  // error, let's just give up.
-  try {
-    try {
-      return std::forward<F>(fn)();
-      // TODO check whether there are other specific exceptions we should catch
-    } catch (const basics::Exception& e) {
-      return std::unexpected<Result>(std::in_place, e.code(), e.message());
-    } catch (const std::bad_alloc&) {
-      return std::unexpected<Result>(std::in_place, ERROR_OUT_OF_MEMORY);
-    } catch (const std::exception& e) {
-      return std::unexpected<Result>(std::in_place, ERROR_INTERNAL, e.what());
-    } catch (...) {
-      return std::unexpected<Result>(std::in_place, ERROR_INTERNAL);
-    }
-  } catch (const std::exception& e) {
-    helper::DieWithLogMessage(e.what());
-  } catch (...) {
-    helper::DieWithLogMessage(nullptr);
-  }
-}
-
-Result TryToResult(yaclib::Result<Result>&& try_result) noexcept;
-
 namespace helper {
 
 // just so we don't have to include logger into this header

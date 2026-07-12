@@ -121,19 +121,19 @@ CREATE TABLE g1_reject(pk INTEGER PRIMARY KEY,
 statement error
 CREATE INDEX g1_reject_text_i ON g1_reject USING inverted(pk, i any_text_dict);
 ----
-db error: ERROR: Failed to create index: Column 'i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
+db error: ERROR: Column 'i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
 
 
 statement error
 CREATE INDEX g1_reject_text_js ON g1_reject USING inverted(pk, js any_text_dict);
 ----
-db error: ERROR: Failed to create index: Column 'js' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[])
+db error: ERROR: Column 'js' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[])
 
 
 statement error
 CREATE INDEX g1_reject_text_g ON g1_reject USING inverted(pk, g any_text_dict);
 ----
-db error: ERROR: Failed to create index: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
+db error: ERROR: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
 
 
 # --- teardown ---------------------------------------------------------------

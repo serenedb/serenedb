@@ -22,6 +22,7 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/utils/string.hpp>
 
+#include "basics/exceptions.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "search.h"
@@ -36,22 +37,15 @@ void FromTokenize(irs::BooleanFilter& parent, const FilterContext& ctx,
     "Example: ts_tokenize('quick fox') or ts_tokenize('foo', 'keyword').";
   SDB_ASSERT(func.GetChildren().size() >= 1 && func.GetChildren().size() <= 2);
   std::string text;
-  if (auto r = GetVarcharArg(*func.GetChildren()[0], "ts_tokenize text", text);
-      !r.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-  }
+  GetVarcharArg(*func.GetChildren()[0], text,
+                {"ts_tokenize text", kSyntaxHint});
   if (func.GetChildren().size() == 1) {
     BuildFtsTokens(parent, ctx, column_info, text, /*require_all=*/false);
     return;
   }
   std::string analyzer_name;
-  if (auto r = GetVarcharArg(*func.GetChildren()[1],
-                             "ts_tokenize analyzer name", analyzer_name);
-      !r.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-  }
+  GetVarcharArg(*func.GetChildren()[1], analyzer_name,
+                {"ts_tokenize analyzer name", kSyntaxHint});
   if (analyzer_name == irs::StringTokenizer::type_name()) {
     BuildFtsTerm(parent, ctx, column_info, duckdb::Value(text));
     return;

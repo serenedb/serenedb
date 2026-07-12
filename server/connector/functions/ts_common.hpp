@@ -38,7 +38,6 @@
 #include <magic_enum/magic_enum.hpp>
 
 #include "basics/containers/node_hash_map.h"
-#include "basics/result.h"
 #include "catalog/tokenizer.h"
 #include "connector/search_filter_builder.hpp"
 
@@ -115,25 +114,33 @@ const duckdb::Value* TryGetConstant(const duckdb::Expression& expr);
 
 const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr);
 
-Result ValidateFilterType(duckdb::LogicalTypeId type_id);
+// True when `type_id` is a filterable column type; speculative claim sites
+// decline on false.
+bool IsFilterableType(duckdb::LogicalTypeId type_id);
+// Same check for ts_* callers, where an unfilterable column type is a user
+// error: throws THROW_SQL_ERROR("Unsupported type id ... for filter").
+void ValidateFilterType(duckdb::LogicalTypeId type_id);
 
 bool IsNumericTypeId(duckdb::LogicalTypeId id);
 bool IsRangeNumericValueType(duckdb::LogicalTypeId id);
 
-Result GetVarcharArg(const duckdb::Expression& expr, std::string_view label,
-                     std::string& out);
-Result GetIntArg(const duckdb::Expression& expr, std::string_view label,
-                 int64_t& out);
-Result GetBoolArg(const duckdb::Expression& expr, std::string_view label,
-                  bool& out);
-Result GetDoubleArg(const duckdb::Expression& expr, std::string_view label,
-                    double& out);
+struct ArgError {
+  std::string_view label;
+  std::string_view hint;
+};
+
+void GetVarcharArg(const duckdb::Expression& expr, std::string& out,
+                   ArgError err);
+void GetIntArg(const duckdb::Expression& expr, int64_t& out, ArgError err);
+void GetBoolArg(const duckdb::Expression& expr, bool& out, ArgError err);
+void GetDoubleArg(const duckdb::Expression& expr, double& out, ArgError err);
 
 void ResetNumericStream(irs::NumericTokenizer& stream,
                         duckdb::LogicalTypeId type_id,
                         const duckdb::Value& value);
 
-// All throw THROW_SQL_ERROR on any failure.
+// Throws THROW_SQL_ERROR on invalid arguments: ts_* syntax is only
+// reachable through the inverted index, so there is no fallback plan.
 void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
                   const duckdb::Expression& expr);

@@ -1090,7 +1090,7 @@ catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   if (!entry) {
     return {};
   }
-  return entry->GetTokenizer().value_or(catalog::Tokenizer::TokenizerWrapper{});
+  return entry->GetTokenizer();
 }
 
 std::shared_ptr<catalog::Tokenizer> ResolveCatalogTokenizer(

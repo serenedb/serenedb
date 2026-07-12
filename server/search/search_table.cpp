@@ -73,29 +73,30 @@ std::filesystem::path SearchTable::GetChunkDir(ObjectId db_id,
   return path;
 }
 
-Result SearchTable::DropIndexDir(ObjectId db_id, ObjectId schema_id,
-                                 ObjectId table_id) {
+absl::Status SearchTable::DropIndexDir(ObjectId db_id, ObjectId schema_id,
+                                       ObjectId table_id) {
   auto path = GetPath(db_id, schema_id, table_id);
   std::error_code ec;
   std::filesystem::remove_all(path, ec);
   if (ec) {
-    return Result{ERROR_INTERNAL, "Failed to remove search table directory '" +
-                                    path.string() + "': " + ec.message()};
+    return absl::InternalError(
+      absl::StrCat("Failed to remove search table directory '", path.string(),
+                   "': ", ec.message()));
   }
-  return {};
+  return absl::OkStatus();
 }
 
-Result SearchTable::DropWalShard(ObjectId db_id, ObjectId table_id) {
+absl::Status SearchTable::DropWalShard(ObjectId db_id, ObjectId table_id) {
   auto chunk_dir = GetChunkDir(db_id, table_id);
   std::error_code ec;
   std::filesystem::remove_all(chunk_dir, ec);
   if (ec) {
-    return Result{ERROR_INTERNAL,
-                  "Failed to remove search table chunk directory '" +
-                    chunk_dir.string() + "': " + ec.message()};
+    return absl::InternalError(
+      absl::StrCat("Failed to remove search table chunk directory '",
+                   chunk_dir.string(), "': ", ec.message()));
   }
   GetSearchEngine().GetDbWal(db_id).DeregisterShard(table_id);
-  return {};
+  return absl::OkStatus();
 }
 
 std::shared_ptr<SearchTable> SearchTable::Create(
@@ -209,7 +210,7 @@ ResultWithTime SearchTable::RefreshUnsafe(
   RefreshResult& code) {
   const auto begin = std::chrono::steady_clock::now();
   code = RefreshResult::NoChanges;
-  Result result;
+  auto result = absl::OkStatus();
   try {
     std::unique_lock<absl::Mutex> lock{_refresh_mutex, std::try_to_lock};
     if (!lock.owns_lock()) {
@@ -233,8 +234,8 @@ ResultWithTime SearchTable::RefreshUnsafe(
       }
     }
   } catch (const std::exception& e) {
-    result = {ERROR_INTERNAL, "refresh failed for search table ",
-              GetTableId().id(), ": ", e.what()};
+    result = absl::InternalError(absl::StrCat(
+      "refresh failed for search table ", GetTableId().id(), ": ", e.what()));
   }
   const uint64_t time_ms =
     std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -249,10 +250,10 @@ ResultWithTime SearchTable::CompactUnsafe(
   const irs::IndexFieldOptions* field_options) {
   const auto begin = std::chrono::steady_clock::now();
   empty_compaction = false;
-  Result result;
+  auto result = absl::OkStatus();
   if (!policy) {
-    result = {ERROR_BAD_PARAMETER, "unset compaction policy for search table ",
-              GetTableId().id()};
+    result = absl::InvalidArgumentError(absl::StrCat(
+      "unset compaction policy for search table ", GetTableId().id()));
   } else {
     try {
       // iresearch serializes Compact against refresh/DML internally, so a long
@@ -260,14 +261,15 @@ ResultWithTime SearchTable::CompactUnsafe(
       const auto res =
         _writer->Compact(policy, field_options, nullptr, progress);
       if (!res) {
-        result = {ERROR_INTERNAL, "compaction failed for search table ",
-                  GetTableId().id()};
+        result = absl::InternalError(absl::StrCat(
+          "compaction failed for search table ", GetTableId().id()));
       } else {
         empty_compaction = (res.size == 0);  // nothing merged -> idle round
       }
     } catch (const std::exception& e) {
-      result = {ERROR_INTERNAL, "consolidation failed for search table ",
-                GetTableId().id(), ": ", e.what()};
+      result = absl::InternalError(
+        absl::StrCat("consolidation failed for search table ",
+                     GetTableId().id(), ": ", e.what()));
     }
   }
   const uint64_t time_ms =
@@ -279,12 +281,12 @@ ResultWithTime SearchTable::CompactUnsafe(
 
 ResultWithTime SearchTable::CleanupUnsafe() {
   const auto begin = std::chrono::steady_clock::now();
-  Result result;
+  auto result = absl::OkStatus();
   try {
     irs::directory_utils::RemoveAllUnreferenced(*_dir);
   } catch (const std::exception& e) {
-    result = {ERROR_INTERNAL, "cleanup failed for search table ",
-              GetTableId().id(), ": ", e.what()};
+    result = absl::InternalError(absl::StrCat(
+      "cleanup failed for search table ", GetTableId().id(), ": ", e.what()));
   }
   const uint64_t time_ms =
     std::chrono::duration_cast<std::chrono::milliseconds>(

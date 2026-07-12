@@ -1889,9 +1889,9 @@ bool TryClaimIResearchConjunct(
   duckdb::ClientContext& context) {
   const auto before = and_root.size();
   std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&conjunct, 1};
-  auto r =
+  const auto claimed =
     connector::MakeSearchFilter(and_root, single, getter, context, expr_getter);
-  if (r.ok() && and_root.size() > before) {
+  if (claimed.ok() && and_root.size() > before) {
     return true;
   }
   while (and_root.size() > before) {

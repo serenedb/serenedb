@@ -23,9 +23,7 @@
 #include <duckdb/planner/expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/search/boolean_filter.hpp>
-#include <optional>
 
-#include "basics/result.h"
 #include "comparison_op.hpp"
 
 namespace sdb::connector {
@@ -40,22 +38,24 @@ const duckdb::BoundFunctionExpression* TryGetGeoDistanceCall(
   const FilterContext& ctx, const duckdb::Expression& expr);
 
 // ST_Distance_Centroid(field, centroid) = / != distance  ->  point range.
-Result FromGeoDistanceBinaryEq(irs::BooleanFilter& filter,
-                               const FilterContext& ctx,
-                               const duckdb::BoundFunctionExpression& geo_call,
-                               const duckdb::Expression& dist_expr);
+void FromGeoDistanceBinaryEq(irs::BooleanFilter& filter,
+                             const FilterContext& ctx,
+                             const duckdb::BoundFunctionExpression& geo_call,
+                             const duckdb::Expression& dist_expr);
 
 // ST_Distance_Centroid(field, centroid) </<=/>/>= distance  ->  one-sided.
-Result FromGeoDistanceComparison(
-  irs::BooleanFilter& filter, const FilterContext& ctx,
-  const duckdb::BoundFunctionExpression& geo_call,
-  const duckdb::Expression& dist_expr, ComparisonOp op);
+void FromGeoDistanceComparison(irs::BooleanFilter& filter,
+                               const FilterContext& ctx,
+                               const duckdb::BoundFunctionExpression& geo_call,
+                               const duckdb::Expression& dist_expr,
+                               ComparisonOp op);
 
 // Dispatch a function expression that names a geo predicate
-// (ST_Distance_Between / ST_Intersects / ST_Contains). Returns nullopt
-// if `func` is not a geo function so the caller can fall through.
-std::optional<Result> TryDispatchGeoFunction(
-  irs::BooleanFilter& filter, const FilterContext& ctx,
-  const duckdb::BoundFunctionExpression& func);
+// (ST_Distance_Between / ST_Intersects / ST_Contains). Returns false
+// if `func` is not a geo function so the caller can fall through; a geo
+// function that fails to build throws.
+bool TryDispatchGeoFunction(irs::BooleanFilter& filter,
+                            const FilterContext& ctx,
+                            const duckdb::BoundFunctionExpression& func);
 
 }  // namespace sdb::connector

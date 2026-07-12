@@ -315,7 +315,7 @@ struct SourceWkbParser {
     const std::string_view bytes{reinterpret_cast<const char*>(value.data()),
                                  value.size()};
     shape = {};
-    return sdb::geo::ParseShapeWKB(bytes, shape).ok();
+    return sdb::geo::ParseShapeWKB(bytes, shape);
   }
 };
 

@@ -13,4 +13,4 @@ statement error
 CREATE INDEX variant_idx_bad_idx ON variant_idx_bad
   USING inverted(id, v variant_path_dict);
 ----
-db error: ERROR: Failed to create index: Column 'v' has unsupported type VARIANT and can not be indexed
+db error: ERROR: Column 'v' has unsupported type VARIANT and can not be indexed

@@ -23,6 +23,7 @@
 #include <iresearch/search/regexp_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
+#include "basics/exceptions.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "ts_common.hpp"
@@ -54,21 +55,13 @@ void FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
     "Syntax is 'perl' (default) or 'posix'.";
   SDB_ASSERT(func.GetChildren().size() >= 1 && func.GetChildren().size() <= 2);
   std::string pattern;
-  if (auto r =
-        GetVarcharArg(*func.GetChildren()[0], "ts_regexp pattern", pattern);
-      !r.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-  }
+  GetVarcharArg(*func.GetChildren()[0], pattern,
+                {"ts_regexp pattern", kSyntaxHint});
   auto syntax = irs::RegexpSyntax::Perl;
   if (func.GetChildren().size() == 2) {
     std::string syntax_name;
-    if (auto r = GetVarcharArg(*func.GetChildren()[1], "ts_regexp syntax",
-                               syntax_name);
-        !r.ok()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-    }
+    GetVarcharArg(*func.GetChildren()[1], syntax_name,
+                  {"ts_regexp syntax", kSyntaxHint});
     auto parsed = magic_enum::enum_cast<irs::RegexpSyntax>(
       syntax_name, magic_enum::case_insensitive);
     if (!parsed) {

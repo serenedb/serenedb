@@ -132,12 +132,12 @@ class Index : public Object {
   containers::FlatHashSet<Column::Id> _referenced_columns_set;
 };
 
-ResultOr<std::shared_ptr<SecondaryIndex>> CreateSecondaryIndex(
+std::shared_ptr<SecondaryIndex> CreateSecondaryIndex(
   ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
   std::string name, std::vector<catalog::CreateIndexColumn> columns,
   bool unique);
 
-ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
+std::shared_ptr<InvertedIndex> CreateInvertedIndex(
   duckdb::ClientContext& context, ObjectId database_id,
   std::string_view schema_name, ObjectId schema_id, ObjectId id,
   ObjectId relation_id, std::string name,

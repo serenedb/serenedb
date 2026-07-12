@@ -914,11 +914,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
         static_cast<uint32_t>(OptionsParser::EraseOptionOrDefault<
                               tokenizer_options::kNormRowGroupSize>());
     }
-    auto r = _features.Validate(type);
-    if (!r.ok()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG(r.errorMessage()));
-    }
+    _features.Validate(type);
   }
 
   irs::analysis::TokenizerConfig _config;
@@ -957,17 +953,8 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
     norm_row_group_size, std::move(cfg));
 
   auto& catalog = catalog::GetCatalog();
-  auto r = catalog.CreateTokenizer(catalog::AccessContext{conn_ctx.GetRoleId()},
-                                   db_id, schema, std::move(tokenizer));
-
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME) && !if_not_exists) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-      ERR_MSG("text search dictionary \"", name, "\" already exists"));
-  }
-  if (!r.ok() && !r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-    SDB_THROW(std::move(r));
-  }
+  catalog.CreateTokenizer(catalog::AccessContext{conn_ctx.GetRoleId()}, db_id,
+                          schema, std::move(tokenizer), if_not_exists);
 }
 
 }  // namespace sdb::pg

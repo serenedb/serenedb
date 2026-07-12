@@ -34,9 +34,7 @@ namespace sdb {
 // VerifyLockFile: existing file? read the pid, check if that process is alive
 // (kill(pid, 0)), then try to acquire the lock. Returns
 // ERROR_SERVER_DATADIR_LOCKED if held; ERROR_OK if it's a stale leftover.
-// DestroyLockFile: release the lock + unlink + close.
 ErrorCode CreateLockFile(const char* filename);
 ErrorCode VerifyLockFile(const char* filename);
-ErrorCode DestroyLockFile(const char* filename);
 
 }  // namespace sdb

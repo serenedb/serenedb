@@ -2,7 +2,6 @@ target_sources(
     sereneserver
     PRIVATE
         io_context.cpp
-        ada_re2_provider.cpp
         tls_context.cpp
         listen_spec.cpp
         proxy_protocol.cpp

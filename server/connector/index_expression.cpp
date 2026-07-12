@@ -58,27 +58,6 @@
 namespace sdb::connector {
 namespace {
 
-bool IsJsonExtractString(std::string_view name) noexcept {
-  return name == "->>" || name == "#>>" ||     //
-         name == "json_extract_field_text" ||  //
-         name == "json_extract_index_text" ||  //
-         name == "json_extract_path_text" ||   //
-         name == "json_extract_string" ||      //
-         name == "pg_json_extract_path_text";
-}
-
-bool IsJsonExtract(std::string_view name) noexcept {
-  if (IsJsonExtractString(name)) {
-    return true;
-  }
-  return name == "->" || name == "#>" ||  //
-         name == "json_extract" ||        //
-         name == "json_extract_field" ||  //
-         name == "json_extract_index" ||  //
-         name == "json_extract_path" ||   //
-         name == "pg_json_extract_path";
-}
-
 class ChunkBindingResolver final : public duckdb::ColumnBindingResolver {
  public:
   ChunkBindingResolver(duckdb::vector<duckdb::ColumnBinding> b,
@@ -90,35 +69,6 @@ class ChunkBindingResolver final : public duckdb::ColumnBindingResolver {
     VisitExpression(&expr);
   }
 };
-
-bool IsValidKey(const duckdb::Value& v) {
-  switch (v.type().id()) {
-    case duckdb::LogicalTypeId::VARCHAR:
-    case duckdb::LogicalTypeId::TINYINT:
-    case duckdb::LogicalTypeId::SMALLINT:
-    case duckdb::LogicalTypeId::INTEGER:
-    case duckdb::LogicalTypeId::BIGINT:
-      return true;
-    default:
-      return false;
-  }
-}
-
-bool IsValidPathList(const duckdb::Value& v) {
-  if (v.type().id() != duckdb::LogicalTypeId::LIST) {
-    return false;
-  }
-  const auto& children = duckdb::ListValue::GetChildren(v);
-  if (children.empty()) {
-    return false;
-  }
-  for (const auto& child : children) {
-    if (child.IsNull() || !IsValidKey(child)) {
-      return false;
-    }
-  }
-  return true;
-}
 
 // TODO(mkornaukhov): replace with the regular constant-folding optimizer.
 duckdb::unique_ptr<duckdb::Expression> FoldConstantCasts(
@@ -189,45 +139,6 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
   return copy;
 }
 
-const duckdb::BoundColumnRefExpression* TryGetJsonLeafColumnRef(
-  const duckdb::Expression& expr) {
-  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION ||
-      !IsJsonExtractString(expr.Cast<duckdb::BoundFunctionExpression>()
-                             .Function()
-                             .GetName()
-                             .GetIdentifierName())) {
-    return nullptr;
-  }
-  const duckdb::Expression* cur = &expr;
-  while (cur->GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
-    const auto& f = cur->Cast<duckdb::BoundFunctionExpression>();
-    if (!IsJsonExtract(f.Function().GetName().GetIdentifierName()) ||
-        f.GetChildren().size() < 2) {
-      return nullptr;
-    }
-    for (size_t i = 1; i < f.GetChildren().size(); ++i) {
-      const auto* key_expr = f.GetChildren()[i].get();
-      if (key_expr->GetExpressionClass() !=
-          duckdb::ExpressionClass::BOUND_CONSTANT) {
-        return nullptr;
-      }
-      const auto& key_const = key_expr->Cast<duckdb::BoundConstantExpression>();
-      if (key_const.GetValue().IsNull()) {
-        return nullptr;
-      }
-      if (!IsValidKey(key_const.GetValue()) &&
-          !IsValidPathList(key_const.GetValue())) {
-        return nullptr;
-      }
-    }
-    cur = f.GetChildren()[0].get();
-  }
-  if (cur->GetExpressionClass() != duckdb::ExpressionClass::BOUND_COLUMN_REF) {
-    return nullptr;
-  }
-  return &cur->Cast<duckdb::BoundColumnRefExpression>();
-}
-
 std::vector<catalog::Column::Id> CollectDependentColumns(
   const duckdb::Expression& expr) {
   constexpr size_t kReserved = 8;
@@ -248,90 +159,6 @@ std::vector<catalog::Column::Id> CollectDependentColumns(
   std::ranges::sort(out);
   out.erase(std::ranges::unique(out).begin(), out.end());
   return out;
-}
-
-void RejectUserDefinedFunctions(const duckdb::Expression& expr,
-                                duckdb::ClientContext& context) {
-  auto visit = [&](auto& self, const duckdb::Expression& node) -> void {
-    if (node.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
-      const auto& f = node.Cast<duckdb::BoundFunctionExpression>();
-      const auto& schema = f.Function().GetSchemaName();
-      const auto& cat = f.Function().GetCatalogName();
-      bool is_user_defined = !cat.empty() && cat != SYSTEM_CATALOG;
-      if (!is_user_defined) {
-        auto& sys = duckdb::Catalog::GetSystemCatalog(context);
-        auto entry = sys.GetEntry<duckdb::ScalarFunctionCatalogEntry>(
-          context,
-          schema.empty() ? duckdb::Identifier::DefaultSchema() : schema,
-          f.Function().GetName(), duckdb::OnEntryNotFound::RETURN_NULL);
-        if (!entry) {
-          is_user_defined = true;
-        } else if (!entry->internal) {
-          is_user_defined = true;
-        }
-      }
-      if (is_user_defined) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-          ERR_MSG("user-defined functions in indexed expressions are not "
-                  "supported yet (function: ",
-                  f.Function().GetName().GetIdentifierName(), ")"));
-      }
-    }
-    duckdb::ExpressionIterator::EnumerateChildren(
-      node, [&](const duckdb::Expression& child) { self(self, child); });
-  };
-  visit(visit, expr);
-}
-
-void RejectUserDefinedFunctions(const duckdb::ParsedExpression& expr,
-                                duckdb::ClientContext& context) {
-  auto visit = [&](auto& self, const duckdb::ParsedExpression& node) -> void {
-    if (node.GetExpressionClass() == duckdb::ExpressionClass::FUNCTION) {
-      const auto& f = node.Cast<duckdb::FunctionExpression>();
-      auto fail = [&] {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                        ERR_MSG("user-defined functions in indexed "
-                                "expressions are not supported yet"));
-      };
-      const auto& parsed_schema = f.GetQualifiedName().Schema();
-      const auto schema = parsed_schema.empty()
-                            ? duckdb::Identifier::DefaultSchema()
-                            : parsed_schema;
-      auto check_catalog = [&](duckdb::Catalog& cat) {
-        for (auto type : {duckdb::CatalogType::MACRO_ENTRY,
-                          duckdb::CatalogType::SCALAR_FUNCTION_ENTRY}) {
-          auto entry = cat.GetEntry(context, type, schema, f.FunctionName(),
-                                    duckdb::OnEntryNotFound::RETURN_NULL);
-          if (!entry) {
-            continue;
-          }
-          if (entry->type == duckdb::CatalogType::MACRO_ENTRY) {
-            fail();
-          }
-          if (entry->type == duckdb::CatalogType::SCALAR_FUNCTION_ENTRY &&
-              !entry->internal) {
-            fail();
-          }
-        }
-      };
-      if (!f.GetQualifiedName().Catalog().empty()) {
-        auto cat = duckdb::Catalog::GetCatalogEntry(
-          context, f.GetQualifiedName().Catalog());
-        if (cat) {
-          check_catalog(*cat);
-        }
-      } else {
-        for (auto& cat_ref :
-             duckdb::DatabaseManager::Get(context).GetDatabases(context)) {
-          check_catalog(cat_ref.get()->GetCatalog());
-        }
-      }
-    }
-    duckdb::ParsedExpressionIterator::EnumerateChildren(
-      node, [&](const duckdb::ParsedExpression& child) { self(self, child); });
-  };
-  visit(visit, expr);
 }
 
 void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,

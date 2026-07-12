@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/status/status.h>
 #include <absl/synchronization/mutex.h>
 #include <absl/time/time.h>
 
@@ -33,7 +34,6 @@
 #include <shared_mutex>
 
 #include "basics/assert.h"
-#include "basics/result.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/search_table_options.h"
 #include "search/maintenance.h"
@@ -81,9 +81,9 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   // Drop on-disk artifacts. The index dir nests under the schema, so a
   // schema/database drop already wipes it; the WAL shard lives under the
   // per-database WAL and always needs its own per-table drop.
-  static Result DropIndexDir(ObjectId db_id, ObjectId schema_id,
-                             ObjectId table_id);
-  static Result DropWalShard(ObjectId db_id, ObjectId table_id);
+  static absl::Status DropIndexDir(ObjectId db_id, ObjectId schema_id,
+                                   ObjectId table_id);
+  static absl::Status DropWalShard(ObjectId db_id, ObjectId table_id);
 
   irs::IndexWriter::Transaction GetTransaction() noexcept {
     SDB_ASSERT(_writer);

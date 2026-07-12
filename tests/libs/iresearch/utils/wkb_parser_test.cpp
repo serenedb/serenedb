@@ -81,7 +81,7 @@ TEST(WkbParser, Point) {
   WkbBuilder b;
   b.Header(1).PutXY(6.5, 50.3);
   ShapeContainer shape;
-  ASSERT_TRUE(ParseShapeWKB(b.View(), shape).ok());
+  ASSERT_TRUE(ParseShapeWKB(b.View(), shape));
   EXPECT_EQ(ShapeContainer::Type::S2Point, shape.type());
 }
 
@@ -89,7 +89,7 @@ TEST(WkbParser, LineString) {
   WkbBuilder b;
   b.Header(2).PutU32(3).PutXY(0.0, 0.0).PutXY(1.0, 1.0).PutXY(2.0, 1.5);
   ShapeContainer shape;
-  ASSERT_TRUE(ParseShapeWKB(b.View(), shape).ok());
+  ASSERT_TRUE(ParseShapeWKB(b.View(), shape));
   EXPECT_EQ(ShapeContainer::Type::S2Polyline, shape.type());
   ASSERT_NE(shape.region(), nullptr);
 }
@@ -103,7 +103,7 @@ TEST(WkbParser, Polygon_SingleRing) {
   b.PutXY(0.0, 0.0).PutXY(1.0, 0.0).PutXY(1.0, 1.0).PutXY(0.0, 1.0).PutXY(0.0,
                                                                           0.0);
   ShapeContainer shape;
-  ASSERT_TRUE(ParseShapeWKB(b.View(), shape).ok());
+  ASSERT_TRUE(ParseShapeWKB(b.View(), shape));
   EXPECT_EQ(ShapeContainer::Type::S2Polygon, shape.type());
 }
 
@@ -124,7 +124,7 @@ TEST(WkbParser, Polygon_WithHole) {
                                                                           4.0);
 
   ShapeContainer shape;
-  ASSERT_TRUE(ParseShapeWKB(b.View(), shape).ok());
+  ASSERT_TRUE(ParseShapeWKB(b.View(), shape));
   ASSERT_EQ(ShapeContainer::Type::S2Polygon, shape.type());
 
   // Inside outer, outside hole -- contained.
@@ -141,7 +141,7 @@ TEST(WkbParser, Polygon_RingTooShort) {
   b.Header(3).PutU32(1).PutU32(3);  // only 3 vertices, need 4
   b.PutXY(0.0, 0.0).PutXY(1.0, 0.0).PutXY(0.0, 0.0);
   ShapeContainer shape;
-  EXPECT_FALSE(ParseShapeWKB(b.View(), shape).ok());
+  EXPECT_FALSE(ParseShapeWKB(b.View(), shape));
 }
 
 TEST(WkbParser, MultiPoint) {
@@ -150,7 +150,7 @@ TEST(WkbParser, MultiPoint) {
   b.Header(1).PutXY(6.5, 50.3);
   b.Header(1).PutXY(7.0, 51.0);
   ShapeContainer shape;
-  ASSERT_TRUE(ParseShapeWKB(b.View(), shape).ok());
+  ASSERT_TRUE(ParseShapeWKB(b.View(), shape));
   EXPECT_EQ(ShapeContainer::Type::S2Multipoint, shape.type());
 }
 
@@ -160,7 +160,7 @@ TEST(WkbParser, MultiLineString) {
   b.Header(2).PutU32(2).PutXY(0.0, 0.0).PutXY(1.0, 1.0);
   b.Header(2).PutU32(2).PutXY(2.0, 2.0).PutXY(3.0, 3.0);
   ShapeContainer shape;
-  ASSERT_TRUE(ParseShapeWKB(b.View(), shape).ok());
+  ASSERT_TRUE(ParseShapeWKB(b.View(), shape));
   EXPECT_EQ(ShapeContainer::Type::S2Multipolyline, shape.type());
 }
 
@@ -176,7 +176,7 @@ TEST(WkbParser, MultiPolygon_TwoDisjoint) {
   b.PutXY(5.0, 5.0).PutXY(6.0, 5.0).PutXY(6.0, 6.0).PutXY(5.0, 6.0).PutXY(5.0,
                                                                           5.0);
   ShapeContainer shape;
-  ASSERT_TRUE(ParseShapeWKB(b.View(), shape).ok());
+  ASSERT_TRUE(ParseShapeWKB(b.View(), shape));
   EXPECT_EQ(ShapeContainer::Type::S2Polygon, shape.type());
 }
 
@@ -184,7 +184,7 @@ TEST(WkbParser, EwkbPoint_AcceptsCRS84) {
   WkbBuilder b;
   b.EwkbHeader(1, 4326).PutXY(6.5, 50.3);
   ShapeContainer shape;
-  ASSERT_TRUE(ParseShapeWKB(b.View(), shape).ok());
+  ASSERT_TRUE(ParseShapeWKB(b.View(), shape));
   EXPECT_EQ(ShapeContainer::Type::S2Point, shape.type());
 }
 
@@ -192,7 +192,7 @@ TEST(WkbParser, EwkbPoint_RejectsNonCRS84) {
   WkbBuilder b;
   b.EwkbHeader(1, 3857).PutXY(6.5, 50.3);  // Web Mercator
   ShapeContainer shape;
-  EXPECT_FALSE(ParseShapeWKB(b.View(), shape).ok());
+  EXPECT_FALSE(ParseShapeWKB(b.View(), shape));
 }
 
 TEST(WkbParser, RejectsZM) {
@@ -200,33 +200,33 @@ TEST(WkbParser, RejectsZM) {
   b.PutU8(1).PutU32(1 | 0x80000000);  // PointZ via EWKB flag
   b.PutXY(0.0, 0.0).PutDouble(0.0);
   ShapeContainer shape;
-  EXPECT_FALSE(ParseShapeWKB(b.View(), shape).ok());
+  EXPECT_FALSE(ParseShapeWKB(b.View(), shape));
 }
 
 TEST(WkbParser, RejectsGeometryCollection) {
   WkbBuilder b;
   b.Header(7).PutU32(0);
   ShapeContainer shape;
-  EXPECT_FALSE(ParseShapeWKB(b.View(), shape).ok());
+  EXPECT_FALSE(ParseShapeWKB(b.View(), shape));
 }
 
 TEST(WkbParser, RejectsEmpty) {
   ShapeContainer shape;
-  EXPECT_FALSE(ParseShapeWKB({}, shape).ok());
+  EXPECT_FALSE(ParseShapeWKB({}, shape));
 }
 
 TEST(WkbParser, RejectsTruncatedPoint) {
   WkbBuilder b;
   b.Header(1).PutDouble(6.5);  // missing latitude
   ShapeContainer shape;
-  EXPECT_FALSE(ParseShapeWKB(b.View(), shape).ok());
+  EXPECT_FALSE(ParseShapeWKB(b.View(), shape));
 }
 
 TEST(WkbParser, RejectsBadByteOrder) {
   WkbBuilder b;
   b.PutU8(2).PutU32(1).PutXY(0.0, 0.0);  // byte-order must be 0 or 1
   ShapeContainer shape;
-  EXPECT_FALSE(ParseShapeWKB(b.View(), shape).ok());
+  EXPECT_FALSE(ParseShapeWKB(b.View(), shape));
 }
 
 // Big-endian WKB encoding (byte-order byte = 0). Reuses the little-endian
@@ -251,7 +251,7 @@ TEST(WkbParser, BigEndian_Point) {
   push_be_double(lng);
   push_be_double(lat);
   ShapeContainer shape;
-  ASSERT_TRUE(ParseShapeWKB(buf, shape).ok());
+  ASSERT_TRUE(ParseShapeWKB(buf, shape));
   EXPECT_EQ(ShapeContainer::Type::S2Point, shape.type());
 }
 

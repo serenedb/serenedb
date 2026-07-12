@@ -20,6 +20,7 @@
 
 #include <stdexcept>
 
+#include "basics/exceptions.h"
 #include "gtest/gtest.h"
 #include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
@@ -235,9 +236,7 @@ TEST(wordnet_synonyms_tests, test_homonyms_double_reset) {
 TEST(wordnet_synonyms_tests, parsing_one_line) {
   {
     std::string_view data0("s(100000002,1,'come',v,1,0).");
-    auto result = WordnetSynonymsTokenizer::Parse(data0);
-    ASSERT_TRUE(result);
-    const auto input = *result;
+    const auto input = WordnetSynonymsTokenizer::Parse(data0);
     WordnetSynonymsTokenizer::SynonymsMap expected{{"come", {"100000002"}}};
     ASSERT_EQ(expected, input);
   }
@@ -246,9 +245,7 @@ TEST(wordnet_synonyms_tests, parsing_one_line) {
 TEST(wordnet_synonyms_tests, parsing_empty) {
   {
     std::string_view data0("");
-    auto result = WordnetSynonymsTokenizer::Parse(data0);
-    ASSERT_TRUE(result);
-    const auto input = *result;
+    const auto input = WordnetSynonymsTokenizer::Parse(data0);
 
     WordnetSynonymsTokenizer::SynonymsMap expected{};
     ASSERT_EQ(expected, input);
@@ -259,9 +256,7 @@ TEST(wordnet_synonyms_tests, parsing_some_lines) {
   std::string_view data0(
     "s(100000002,1,'come',v,1,0).\ns(100000002,2,'advance',v,1,0).\n\ns("
     "100000002,3,'approach',v,1,0).\ns(100000003,1,'release',v,1,0).");
-  auto result = WordnetSynonymsTokenizer::Parse(data0);
-  ASSERT_TRUE(result);
-  const auto input = *result;
+  const auto input = WordnetSynonymsTokenizer::Parse(data0);
 
   WordnetSynonymsTokenizer::SynonymsMap expected{
     {"come", {"100000002"}},
@@ -274,9 +269,7 @@ TEST(wordnet_synonyms_tests, parsing_some_lines) {
 
 TEST(wordnet_synonyms_tests, parsing_short_version) {
   std::string_view data0("s(301380267,1,'aerial',s).");
-  auto result = WordnetSynonymsTokenizer::Parse(data0);
-  ASSERT_TRUE(result);
-  const auto input = *result;
+  const auto input = WordnetSynonymsTokenizer::Parse(data0);
 
   WordnetSynonymsTokenizer::SynonymsMap expected{
     {"aerial", {"301380267"}},
@@ -288,9 +281,7 @@ TEST(wordnet_synonyms_tests, parsing_homonym_diffrent_synset_order) {
   std::string_view data0(
     "s(100000001,1,'word0',v,1,0).\ns(100000002,2,'word0',v,1,0).\n\ns("
     "100000004,3,'word0',v,1,0).\ns(100000003,1,'word0',v,1,0).");
-  auto result = WordnetSynonymsTokenizer::Parse(data0);
-  ASSERT_TRUE(result);
-  const auto input = *result;
+  const auto input = WordnetSynonymsTokenizer::Parse(data0);
   WordnetSynonymsTokenizer::SynonymsMap expected{
     {"word0", {"100000001", "100000002", "100000003", "100000004"}},
   };
@@ -301,9 +292,7 @@ TEST(wordnet_synonyms_tests, parsing_duplicate_synsets) {
   std::string_view data0(
     "s(100000002,1,'word1',v,1,0).\ns(100000003,1,'word2',v,1,0).\ns(100000002,"
     "1,'word1',v,1,0).\n");
-  auto result = WordnetSynonymsTokenizer::Parse(data0);
-  ASSERT_TRUE(result);
-  const auto input = *result;
+  const auto input = WordnetSynonymsTokenizer::Parse(data0);
   WordnetSynonymsTokenizer::SynonymsMap expected{
     {"word1", {"100000002"}},
     {"word2", {"100000003"}},
@@ -313,9 +302,15 @@ TEST(wordnet_synonyms_tests, parsing_duplicate_synsets) {
 
 TEST(wordnet_synonyms_tests, parsing_broken_short_line) {
   for (std::string_view data0 : {std::string("a"), std::string("go")}) {
-    auto result = WordnetSynonymsTokenizer::Parse(data0);
-    ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
-    ASSERT_EQ(result.error().errorMessage(), "Failed parse line 1");
+    try {
+      WordnetSynonymsTokenizer::Parse(data0);
+      FAIL() << "expected sdb::basics::Exception";
+    } catch (const sdb::basics::Exception& e) {
+      EXPECT_EQ(e.code(), sdb::ERROR_BAD_PARAMETER);
+      EXPECT_EQ(e.message(),
+                "wordnet_synonyms: failed to parse synonyms: Failed parse "
+                "line 1");
+    }
   }
 }
 
@@ -327,38 +322,62 @@ TEST(wordnet_synonyms_tests, parsing_broken_synonym) {
                                  std::string("s(100000002,1,,v,1,0)."),
                                  std::string("s(100000002,1, ,v,1,0)."),
                                  std::string("s(100000002,1,a,v,1,0).")}) {
-    auto result = WordnetSynonymsTokenizer::Parse(data0);
-    ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
-    ASSERT_EQ(result.error().errorMessage(), "Failed parse line 1");
+    try {
+      WordnetSynonymsTokenizer::Parse(data0);
+      FAIL() << "expected sdb::basics::Exception";
+    } catch (const sdb::basics::Exception& e) {
+      EXPECT_EQ(e.code(), sdb::ERROR_BAD_PARAMETER);
+      EXPECT_EQ(e.message(),
+                "wordnet_synonyms: failed to parse synonyms: Failed parse "
+                "line 1");
+    }
   }
 }
 
 TEST(wordnet_synonyms_tests, parsing_broken_second_line) {
   std::string_view data0("s(100000002,1,'come',v,1,0).\nasd");
-  auto result = WordnetSynonymsTokenizer::Parse(data0);
-  ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
-  ASSERT_EQ(result.error().errorMessage(), "Failed parse line 2");
+  try {
+    WordnetSynonymsTokenizer::Parse(data0);
+    FAIL() << "expected sdb::basics::Exception";
+  } catch (const sdb::basics::Exception& e) {
+    EXPECT_EQ(e.code(), sdb::ERROR_BAD_PARAMETER);
+    EXPECT_EQ(e.message(),
+              "wordnet_synonyms: failed to parse synonyms: Failed parse "
+              "line 2");
+  }
 }
 
 TEST(wordnet_synonyms_tests, parsing_broken_line_more_param) {
   std::string_view data0("s(100000002,1,'come',v,1,0,2).\n");
-  auto result = WordnetSynonymsTokenizer::Parse(data0);
-  ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
-  ASSERT_EQ(result.error().errorMessage(), "Failed parse line 1");
+  try {
+    WordnetSynonymsTokenizer::Parse(data0);
+    FAIL() << "expected sdb::basics::Exception";
+  } catch (const sdb::basics::Exception& e) {
+    EXPECT_EQ(e.code(), sdb::ERROR_BAD_PARAMETER);
+    EXPECT_EQ(e.message(),
+              "wordnet_synonyms: failed to parse synonyms: Failed parse "
+              "line 1");
+  }
 }
 
 TEST(wordnet_synonyms_tests, parsing_broken_line_less_param) {
   std::string_view data0("s(100000002,1,'come').\n");
-  auto result = WordnetSynonymsTokenizer::Parse(data0);
-  ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
-  ASSERT_EQ(result.error().errorMessage(), "Failed parse line 1");
+  try {
+    WordnetSynonymsTokenizer::Parse(data0);
+    FAIL() << "expected sdb::basics::Exception";
+  } catch (const sdb::basics::Exception& e) {
+    EXPECT_EQ(e.code(), sdb::ERROR_BAD_PARAMETER);
+    EXPECT_EQ(e.message(),
+              "wordnet_synonyms: failed to parse synonyms: Failed parse "
+              "line 1");
+  }
 }
 
 TEST(wordnet_synonyms_tests, make_state_owning_storage) {
   auto state = WordnetSynonymsTokenizer::MakeState(
     "s(100000002,1,'come',v,1,0).\ns(100000002,2,'advance',v,1,0).");
-  ASSERT_TRUE(state);
-  WordnetSynonymsTokenizer stream{std::move(*state)};
+  ASSERT_NE(nullptr, state);
+  WordnetSynonymsTokenizer stream{std::move(state)};
 
   auto* term = irs::get<irs::TermAttr>(stream);
 
@@ -377,9 +396,12 @@ TEST(wordnet_synonyms_tests, make_state_owning_storage) {
 }
 
 TEST(wordnet_synonyms_tests, make_state_invalid_input) {
-  auto state = WordnetSynonymsTokenizer::MakeState("not a wordnet record");
-  ASSERT_FALSE(state);
-  ASSERT_TRUE(state.error().is(sdb::ERROR_BAD_PARAMETER));
+  try {
+    WordnetSynonymsTokenizer::MakeState("not a wordnet record");
+    FAIL() << "expected sdb::basics::Exception";
+  } catch (const sdb::basics::Exception& e) {
+    EXPECT_EQ(e.code(), sdb::ERROR_BAD_PARAMETER);
+  }
 }
 
 TEST(wordnet_synonyms_tests, factory_make_json) {

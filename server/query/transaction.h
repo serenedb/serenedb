@@ -27,7 +27,6 @@
 
 #include "basics/containers/flat_hash_map.h"
 #include "basics/down_cast.h"
-#include "basics/result.h"
 #include "catalog/catalog.h"
 #include "query/config.h"
 #include "search/inverted_index_storage.h"
@@ -70,9 +69,9 @@ class Transaction : public Config {
   // commit the store database, in which case no recovery cursor is recorded.
   void CommitSearch(std::optional<search::WalCursor> cursor) noexcept;
 
-  Result Commit();
+  void Commit();
 
-  Result Rollback();
+  void Rollback();
 
   // True once any statement that reads or writes the current database ran
   // inside the active explicit transaction; gates late SET TRANSACTION

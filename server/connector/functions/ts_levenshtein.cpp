@@ -23,6 +23,7 @@
 #include <iresearch/search/levenshtein_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
+#include "basics/exceptions.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "ts_common.hpp"
@@ -39,19 +40,11 @@ LevenshteinArgs ParseLevenshteinArgs(
     "2 for >=6).";
   SDB_ASSERT(func.GetChildren().size() >= 1 && func.GetChildren().size() <= 4);
   LevenshteinArgs out;
-  if (auto r =
-        GetVarcharArg(*func.GetChildren()[0], "ts_levenshtein text", out.text);
-      !r.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-  }
+  GetVarcharArg(*func.GetChildren()[0], out.text,
+                {"ts_levenshtein text", kSyntaxHint});
   if (func.GetChildren().size() >= 2) {
-    if (auto r = GetIntArg(*func.GetChildren()[1], "ts_levenshtein distance",
-                           out.distance);
-        !r.ok()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-    }
+    GetIntArg(*func.GetChildren()[1], out.distance,
+              {"ts_levenshtein distance", kSyntaxHint});
   } else {
     // No explicit distance: pick by term length. Keeps short queries from
     // matching unrelated tokens that happen to be within 2 edits.
@@ -66,13 +59,8 @@ LevenshteinArgs ParseLevenshteinArgs(
       ERR_HINT(kSyntaxHint));
   }
   if (func.GetChildren().size() >= 3) {
-    if (auto r =
-          GetBoolArg(*func.GetChildren()[2], "ts_levenshtein transpositions",
-                     out.with_transpositions);
-        !r.ok()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-    }
+    GetBoolArg(*func.GetChildren()[2], out.with_transpositions,
+               {"ts_levenshtein transpositions", kSyntaxHint});
   }
   if (out.with_transpositions && out.distance > 3) {
     THROW_SQL_ERROR(
@@ -83,12 +71,8 @@ LevenshteinArgs ParseLevenshteinArgs(
       ERR_HINT(kSyntaxHint));
   }
   if (func.GetChildren().size() >= 4) {
-    if (auto r = GetVarcharArg(*func.GetChildren()[3], "ts_levenshtein prefix",
-                               out.prefix);
-        !r.ok()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-    }
+    GetVarcharArg(*func.GetChildren()[3], out.prefix,
+                  {"ts_levenshtein prefix", kSyntaxHint});
   }
   return out;
 }

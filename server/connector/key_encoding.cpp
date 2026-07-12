@@ -29,6 +29,8 @@
 
 #include "basics/exceptions.h"
 #include "basics/string_utils.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector::key_encoding {
 namespace {
@@ -148,8 +150,8 @@ void AppendScalarValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
       break;
     }
     default:
-      SDB_THROW(ERROR_NOT_IMPLEMENTED,
-                "Unsupported key type: ", type.ToString());
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("Unsupported key type: ", type.ToString()));
   }
 }
 

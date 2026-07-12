@@ -31,6 +31,8 @@
 #include "basics/down_cast.h"
 #include "catalog/table_options.h"
 #include "connector/common.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "search_remove_filter.hpp"
 
 namespace sdb::connector {
@@ -446,11 +448,12 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(const duckdb::Vector& vec,
             } break;
             case simdjson::ondemand::json_type::object:
             case simdjson::ondemand::json_type::array:
-              SDB_THROW(
-                ERROR_BAD_PARAMETER,
-                "JSON expression indexed by an inverted index must point to a "
-                "primitive (string/number/boolean/null) leaf; got an object or "
-                "array");
+              THROW_SQL_ERROR(
+                ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+                ERR_MSG(
+                  "JSON expression indexed by an inverted index must point to "
+                  "a primitive (string/number/boolean/null) leaf; got an "
+                  "object or array"));
             default:
               break;
           }

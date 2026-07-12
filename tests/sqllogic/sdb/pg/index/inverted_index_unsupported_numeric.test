@@ -19,7 +19,7 @@ CREATE TABLE unsup_hugeint (id INTEGER PRIMARY KEY, big HUGEINT);
 statement error
 CREATE INDEX unsup_hugeint_idx ON unsup_hugeint USING inverted(id, big);
 ----
-db error: ERROR: Failed to create index: Column 'big' has unsupported type HUGEINT and can not be indexed
+db error: ERROR: Column 'big' has unsupported type HUGEINT and can not be indexed
 
 
 statement ok
@@ -29,7 +29,7 @@ CREATE TABLE unsup_decimal (id INTEGER PRIMARY KEY, amount DECIMAL(20, 4));
 statement error
 CREATE INDEX unsup_decimal_idx ON unsup_decimal USING inverted(id, amount);
 ----
-db error: ERROR: Failed to create index: Column 'amount' has unsupported type DECIMAL(20,4) and can not be indexed
+db error: ERROR: Column 'amount' has unsupported type DECIMAL(20,4) and can not be indexed
 
 
 # 64-bit unsigned ints and 128-bit unsigneds do not fit the NumericTokenizer
@@ -43,7 +43,7 @@ CREATE TABLE unsup_ubigint (id INTEGER PRIMARY KEY, n UBIGINT);
 statement error
 CREATE INDEX unsup_ubigint_idx ON unsup_ubigint USING inverted(id, n);
 ----
-db error: ERROR: Failed to create index: Column 'n' has unsupported type UBIGINT and can not be indexed
+db error: ERROR: Column 'n' has unsupported type UBIGINT and can not be indexed
 
 
 statement ok
@@ -53,7 +53,7 @@ CREATE TABLE unsup_uhugeint (id INTEGER PRIMARY KEY, n UHUGEINT);
 statement error
 CREATE INDEX unsup_uhugeint_idx ON unsup_uhugeint USING inverted(id, n);
 ----
-db error: ERROR: Failed to create index: Column 'n' has unsupported type UHUGEINT and can not be indexed
+db error: ERROR: Column 'n' has unsupported type UHUGEINT and can not be indexed
 
 
 # INTERVAL is a composite (months/days/micros): rejected.
@@ -65,7 +65,7 @@ CREATE TABLE unsup_interval (id INTEGER PRIMARY KEY, iv INTERVAL);
 statement error
 CREATE INDEX unsup_interval_idx ON unsup_interval USING inverted(id, iv);
 ----
-db error: ERROR: Failed to create index: Column 'iv' has unsupported type INTERVAL and can not be indexed
+db error: ERROR: Column 'iv' has unsupported type INTERVAL and can not be indexed
 
 
 # UTINYINT/USMALLINT/UINTEGER + TIME + TIMETZ now fit the NumericTokenizer
@@ -105,13 +105,13 @@ CREATE TABLE unsup_jsondoc (id INTEGER PRIMARY KEY, content JSON);
 statement error
 CREATE INDEX unsup_jsondoc_huge ON unsup_jsondoc USING inverted(id, ((content->'v')::HUGEINT));
 ----
-db error: ERROR: Failed to create index: Column 'CAST(("content" -> 'v') AS hugeint)' has unsupported type HUGEINT and can not be indexed
+db error: ERROR: Column 'CAST(("content" -> 'v') AS hugeint)' has unsupported type HUGEINT and can not be indexed
 
 
 statement error
 CREATE INDEX unsup_jsondoc_dec ON unsup_jsondoc USING inverted(id, ((content->'v')::DECIMAL(20,4)));
 ----
-db error: ERROR: Failed to create index: Column 'CAST(("content" -> 'v') AS DECIMAL(20, 4))' has unsupported type DECIMAL(20,4) and can not be indexed
+db error: ERROR: Column 'CAST(("content" -> 'v') AS DECIMAL(20, 4))' has unsupported type DECIMAL(20,4) and can not be indexed
 
 
 

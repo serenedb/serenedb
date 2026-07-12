@@ -28,8 +28,9 @@
 #include <magic_enum/magic_enum.hpp>
 #include <utility>
 
+#include "basics/errors.h"
+#include "basics/exceptions.h"
 #include "basics/object_pool.hpp"
-#include "basics/result.h"
 
 namespace sdb::search {
 
@@ -51,7 +52,7 @@ class Features final {
 
   // Validate that features are supported by serened an ensure that
   // their dependencies are met.
-  Result Validate(std::string_view type = {}) const;
+  void Validate(std::string_view type = {}) const;
 
   bool HasFeatures(irs::IndexFeatures features) const noexcept {
     return (_index_features & features) == features;
@@ -90,7 +91,6 @@ class AnalyzerImpl final {
     static ptr make(NumberStreamTag);
     static ptr make(BoolStreamTag);
     static ptr make(NullStreamTag);
-    static ptr make(std::string_view bytes);
   };
 
   using CacheType = irs::UnboundedObjectPool<Builder>;

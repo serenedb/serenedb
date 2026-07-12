@@ -53,28 +53,30 @@ bool RegexWordnet(const std::string_view input, std::string_view* result) {
   return true;
 }
 
-sdb::ResultOr<std::vector<std::string_view>> ParseParams(
-  const std::string_view line) {
+std::vector<std::string_view> ParseParams(const std::string_view line,
+                                          const size_t line_number) {
   std::string_view params;
 
   if (!RegexWordnet(line, &params)) {
-    return std::unexpected<sdb::Result>{std::in_place,
-                                        sdb::ERROR_BAD_PARAMETER};
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
+              "wordnet_synonyms: failed to parse synonyms: Failed parse line ",
+              line_number);
   }
 
   std::vector<std::string_view> outputs = absl::StrSplit(params, ',');
   if (outputs.size() < kWordnetMinCountParams ||
       outputs.size() > kWordnetMaxCountParams) {
-    return std::unexpected<sdb::Result>{std::in_place,
-                                        sdb::ERROR_BAD_PARAMETER};
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
+              "wordnet_synonyms: failed to parse synonyms: Failed parse line ",
+              line_number);
   }
   return outputs;
 }
 
 }  // namespace
 
-sdb::ResultOr<WordnetSynonymsTokenizer::SynonymsMap>
-WordnetSynonymsTokenizer::Parse(const std::string_view input) {
+WordnetSynonymsTokenizer::SynonymsMap WordnetSynonymsTokenizer::Parse(
+  const std::string_view input) {
   std::vector<std::string_view> lines = absl::StrSplit(input, '\n');
 
   size_t line_number{};
@@ -87,21 +89,17 @@ WordnetSynonymsTokenizer::Parse(const std::string_view input) {
       continue;
     }
 
-    const auto params = ParseParams(line);
-    if (params.error().is(sdb::ERROR_BAD_PARAMETER)) {
-      return std::unexpected<sdb::Result>{std::in_place,
-                                          sdb::ERROR_BAD_PARAMETER,
-                                          "Failed parse line ", line_number};
-    }
+    std::vector<std::string_view> params = ParseParams(line, line_number);
 
-    const std::string_view syn_set_id = (*params)[0];
-    const std::string_view raw_synonym = (*params)[2];
+    const std::string_view syn_set_id = params[0];
+    const std::string_view raw_synonym = params[2];
 
     if (raw_synonym.size() < 3 || raw_synonym.front() != '\'' ||
         raw_synonym.back() != '\'') {
-      return std::unexpected<sdb::Result>{std::in_place,
-                                          sdb::ERROR_BAD_PARAMETER,
-                                          "Failed parse line ", line_number};
+      SDB_THROW(sdb::ERROR_BAD_PARAMETER,
+                "wordnet_synonyms: failed to parse synonyms: Failed parse "
+                "line ",
+                line_number);
     }
 
     std::string synonym = absl::StrReplaceAll(
@@ -125,31 +123,21 @@ WordnetSynonymsTokenizer::WordnetSynonymsTokenizer(
   SDB_ASSERT(_state);
 }
 
-sdb::ResultOr<std::shared_ptr<const WordnetSynonymsTokenizer::State>>
+std::shared_ptr<const WordnetSynonymsTokenizer::State>
 WordnetSynonymsTokenizer::MakeState(std::string text) {
   auto state = std::make_shared<State>();
 
   // Order matters: views in `mapping`'s values point into `text`, so the
   // backing buffer is populated before parsing builds the views over it.
   state->text = std::move(text);
-
-  auto mapping = Parse(state->text);
-  if (!mapping) {
-    return std::unexpected{std::move(mapping.error())};
-  }
-  state->mapping = std::move(*mapping);
+  state->mapping = Parse(state->text);
 
   return state;
 }
 
 Analyzer::ptr WordnetSynonymsTokenizer::Make(Options opts) {
-  auto state = MakeState(std::move(opts.synonyms_text));
-  if (!state) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "wordnet_synonyms: failed to parse synonyms: ",
-              state.error().errorMessage());
-  }
-  return std::make_unique<WordnetSynonymsTokenizer>(std::move(*state));
+  return std::make_unique<WordnetSynonymsTokenizer>(
+    MakeState(std::move(opts.synonyms_text)));
 }
 
 bool WordnetSynonymsTokenizer::next() {

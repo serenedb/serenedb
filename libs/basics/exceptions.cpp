@@ -30,8 +30,6 @@
 #include <cstring>
 #endif
 
-#include <yaclib/util/result.hpp>
-
 #include "basics/application-exit.h"
 #include "basics/debugging.h"
 #include "basics/error.h"
@@ -59,11 +57,6 @@ Exception::Exception(ErrorCode code, std::string&& error_message,
 } catch (...) {
 }
 
-[[noreturn]] void helper::DieWithLogMessage(const char* error_message) {
-  SDB_FATAL(GENERAL, "Failed to create an error message, giving up. ",
-            error_message);
-}
-
 [[noreturn]] void helper::LogAndAbort(const char* what) {
   // In SDB_DEV, SDB_ASSERT already routes through
   // CrashHandler::assertionFailure
@@ -72,10 +65,6 @@ Exception::Exception(ErrorCode code, std::string&& error_message,
   SDB_ASSERT(false, what);
   log::LogCrash(what != nullptr ? what : "LogAndAbort");
   std::abort();
-}
-
-Result TryToResult(yaclib::Result<Result>&& try_result) noexcept {
-  return SafeCall([&] { return std::move(try_result).Ok(); });
 }
 
 }  // namespace sdb::basics

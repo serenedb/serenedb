@@ -536,7 +536,17 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
         }
       }
 
-      auto auth = _auth.Authenticate(request.Header(HttpHeader::Authorization));
+      // A unix socket is inherently local; a TCP peer is loopback only if its
+      // address is 127.0.0.0/8 or ::1. A passwordless role is trusted only when
+      // this is true (see HttpAuthenticator) -- never over the network.
+      bool peer_is_loopback = true;
+      if constexpr (Kind != SocketKind::Unix) {
+        asio_ns::error_code peer_ec;
+        const auto peer_ep = _socket.Lowest().remote_endpoint(peer_ec);
+        peer_is_loopback = !peer_ec && peer_ep.address().is_loopback();
+      }
+      auto auth = _auth.Authenticate(request.Header(HttpHeader::Authorization),
+                                     peer_is_loopback);
       _user = std::move(auth.context.user);
       if (auth.status != 0) {
         writer.Fixed(auth.status, "application/json",

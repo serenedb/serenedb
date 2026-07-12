@@ -21,16 +21,16 @@ SELECT 1;
 
 
 # After the restart the ruleset is reloaded from the store: the 3 force-
-# prepended safety rules (local + loopback trust) followed by the two authored
-# rules, in order.
+# prepended safety rules (the bootstrap superuser trusted on local + loopback)
+# followed by the two authored rules, in order.
 connection after_crash
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT rule_number, type, database, user_name, address, auth_method
 FROM pg_hba_file_rules ORDER BY rule_number;
 ----
 rule_number	type	database	user_name	address	auth_method
-1	local	{all}	{all}	(empty)	trust
-2	host	{all}	{all}	127.0.0.1/32	trust
-3	host	{all}	{all}	::1/128	trust
+1	local	{all}	{postgres}	(empty)	trust
+2	host	{all}	{postgres}	127.0.0.1/32	trust
+3	host	{all}	{postgres}	::1/128	trust
 4	host	{mopdb}	{+guards}	10.0.0.0/8	scram-sha-256
 5	host	{all}	{all}	0.0.0.0/0	reject

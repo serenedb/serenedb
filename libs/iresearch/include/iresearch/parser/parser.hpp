@@ -23,7 +23,7 @@
 #include <string>
 #include <string_view>
 
-#include "basics/result.h"
+#include "basics/exceptions.h"
 #include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
@@ -151,6 +151,7 @@ struct ParserContext {
   }
 };
 
-Result ParseQuery(ParserContext& ctx, std::string_view input);
+// Returns false on a parse error; the message is in ctx.error_message.
+bool ParseQuery(ParserContext& ctx, std::string_view input);
 
 }  // namespace sdb

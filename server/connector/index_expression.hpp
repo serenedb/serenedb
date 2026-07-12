@@ -41,9 +41,6 @@ struct IndexedExpression {
   bool is_geojson = false;
 };
 
-const duckdb::BoundColumnRefExpression* TryGetJsonLeafColumnRef(
-  const duckdb::Expression& expr);
-
 std::vector<catalog::Column::Id> CollectDependentColumns(
   const duckdb::Expression& expr);
 
@@ -63,13 +60,6 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
 duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefsForChunk(
   const duckdb::Expression& expr, const duckdb::DataChunk& chunk,
   ObjectId table_id, std::span<const catalog::Column::Id> slot_to_col_id);
-
-void RejectUserDefinedFunctions(const duckdb::Expression& expr,
-                                duckdb::ClientContext& context);
-
-// Pre-bind variant: walks parsed tree to reject macros (which inline at bind).
-void RejectUserDefinedFunctions(const duckdb::ParsedExpression& expr,
-                                duckdb::ClientContext& context);
 
 void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,
                                  duckdb::idx_t num_rows);

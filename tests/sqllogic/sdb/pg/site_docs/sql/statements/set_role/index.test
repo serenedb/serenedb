@@ -1,0 +1,80 @@
+# DOCS_TEST: example_001
+
+statement ok
+DROP TABLE IF EXISTS doc_report;
+
+statement ok
+DROP ROLE IF EXISTS doc_reporter;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE ROLE doc_reporter;
+
+statement ok
+CREATE TABLE doc_report (id int);
+
+statement ok
+INSERT INTO doc_report VALUES (1);
+
+statement ok
+GRANT SELECT ON doc_report TO doc_reporter;
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+SET ROLE doc_reporter;
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query TTT
+SELECT current_user, current_role, session_user;
+----
+current_user	current_role	session_user
+doc_reporter	doc_reporter	postgres
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query I
+SELECT id FROM doc_report;
+----
+id
+1
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement ok
+RESET ROLE;
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query T
+SHOW role;
+----
+role
+none
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+statement error db error: ERROR: role "doc_no_such_role" does not exist
+SET ROLE doc_no_such_role;
+
+# DOCS_TEST: example_008
+
+statement ok
+DROP TABLE doc_report;
+
+statement ok
+DROP ROLE doc_reporter;

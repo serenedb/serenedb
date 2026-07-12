@@ -140,7 +140,7 @@ void DoRefresh(Storage& idx, bool run_cleanup, RefreshResult& code) {
     } else {
       SDB_WARN(SEARCH, "error after running for ", time_ms,
                "ms while refreshing Search index '", idx.GetId().id(),
-               "': ", res.errorNumber(), " ", res.errorMessage());
+               "': ", res.message());
     }
   }
   if (!run_cleanup) {
@@ -155,7 +155,7 @@ void DoRefresh(Storage& idx, bool run_cleanup, RefreshResult& code) {
   } else {
     SDB_WARN(SEARCH, "error after running for ", time_ms,
              "ms while cleaning up Search index '", idx.GetId().id(),
-             "': ", res.errorNumber(), " ", res.errorMessage());
+             "': ", res.message());
   }
 }
 
@@ -183,7 +183,7 @@ bool DoCompaction(Storage& idx, const irs::CompactionPolicy& policy) {
   } else {
     SDB_DEBUG(SEARCH, "error after running for ", time_ms,
               "ms while compacting Search index '", idx.GetId().id(),
-              "': ", res.errorNumber(), " ", res.errorMessage());
+              "': ", res.message());
   }
   return !empty_compaction;
 }

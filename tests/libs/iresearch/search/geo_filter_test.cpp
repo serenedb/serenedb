@@ -413,8 +413,7 @@ TEST(GeoFilterTest, query) {
 
     GeoFilter q;
     q.mutable_options()->type = GeoFilterType::Intersects;
-    ASSERT_TRUE(
-      json::ParseRegion(json.value(), q.mutable_options()->shape).ok());
+    json::ParseRegion(json.value(), q.mutable_options()->shape);
     ASSERT_EQ(ShapeContainer::Type::S2Point, q.mutable_options()->shape.type());
     *q.mutable_field_id() = kGeo;
     q.mutable_options()->store_field_id = kGeo;
@@ -440,8 +439,7 @@ TEST(GeoFilterTest, query) {
 
     GeoFilter q;
     q.mutable_options()->type = GeoFilterType::Intersects;
-    ASSERT_TRUE(
-      json::ParseRegion(json.value(), q.mutable_options()->shape).ok());
+    json::ParseRegion(json.value(), q.mutable_options()->shape);
     ASSERT_EQ(ShapeContainer::Type::S2Polygon,
               q.mutable_options()->shape.type());
     *q.mutable_field_id() = kGeo;
@@ -782,8 +780,7 @@ TEST(GeoFilterTest, checkScorer) {
 
     GeoFilter q;
     q.mutable_options()->type = GeoFilterType::Intersects;
-    ASSERT_TRUE(
-      json::ParseRegion(json.value(), q.mutable_options()->shape).ok());
+    json::ParseRegion(json.value(), q.mutable_options()->shape);
     ASSERT_EQ(ShapeContainer::Type::S2Polygon,
               q.mutable_options()->shape.type());
     *q.mutable_field_id() = kGeo;
@@ -844,8 +841,7 @@ TEST(GeoFilterTest, checkScorer) {
     GeoFilter q;
     q.boost(1.5f);
     q.mutable_options()->type = GeoFilterType::Intersects;
-    ASSERT_TRUE(
-      json::ParseRegion(json.value(), q.mutable_options()->shape).ok());
+    json::ParseRegion(json.value(), q.mutable_options()->shape);
     ASSERT_EQ(ShapeContainer::Type::S2Polygon,
               q.mutable_options()->shape.type());
     *q.mutable_field_id() = kGeo;

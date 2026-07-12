@@ -795,73 +795,73 @@ CREATE TABLE t_err (id INT, emb FLOAT[3], emb_int INT[3]);
 statement error
 CREATE INDEX bad_opt ON t_err USING inverted(emb ivf (metric = 'l2', ef_search = 50));
 ----
-db error: ERROR: Failed to create index: Column 'emb': unknown ivf option 'ef_search'. Accepted options: metric (string: l2|l1|cosine|ip, REQUIRED), nlist (int >= 1, default auto ~sqrt(rows)), nlist_factor (number > 0, nlist = round(nlist_factor * sqrt(rows)), default 2.0), quant (string: sq8|sq4|pq|rabitq|none, default none; sq8|sq4|pq|rabitq need l2|ip), pq_m (int >= 1, divides dimension, quant='pq' only, default auto ~d/2), rabitq_bits (int 1-9, quant='rabitq' only, default 1)
+db error: ERROR: Column 'emb': unknown ivf option 'ef_search'. Accepted options: metric (string: l2|l1|cosine|ip, REQUIRED), nlist (int >= 1, default auto ~sqrt(rows)), nlist_factor (number > 0, nlist = round(nlist_factor * sqrt(rows)), default 2.0), quant (string: sq8|sq4|pq|rabitq|none, default none; sq8|sq4|pq|rabitq need l2|ip), pq_m (int >= 1, divides dimension, quant='pq' only, default auto ~d/2), rabitq_bits (int 1-9, quant='rabitq' only, default 1)
 
 
 statement error
 CREATE INDEX bad_metric ON t_err USING inverted(emb ivf (metric = 'manhattan'));
 ----
-db error: ERROR: Failed to create index: Column 'emb': unknown ivf metric 'manhattan'. Expected one of: l2 l1 cosine ip
+db error: ERROR: Column 'emb': unknown ivf metric 'manhattan'. Expected one of: l2 l1 cosine ip
 
 
 statement error
 CREATE INDEX bad_nlist_zero ON t_err USING inverted(emb ivf (metric = 'l2', nlist = 0));
 ----
-db error: ERROR: Failed to create index: Column 'emb': ivf option 'nlist' must be positive, got 0
+db error: ERROR: Column 'emb': ivf option 'nlist' must be positive, got 0
 
 
 statement error
 CREATE INDEX bad_nlist_type ON t_err USING inverted(emb ivf (metric = 'l2', nlist = 'sixteen'));
 ----
-db error: ERROR: Failed to create index: Column 'emb': ivf option 'nlist' must be an integer, got 'sixteen'
+db error: ERROR: Column 'emb': ivf option 'nlist' must be an integer, got 'sixteen'
 
 
 statement error
 CREATE INDEX bad_nlist_factor_zero ON t_err USING inverted(emb ivf (metric = 'l2', nlist_factor = 0));
 ----
-db error: ERROR: Failed to create index: Column 'emb': ivf option 'nlist_factor' must be positive, got 0
+db error: ERROR: Column 'emb': ivf option 'nlist_factor' must be positive, got 0
 
 
 statement error
 CREATE INDEX bad_nlist_both ON t_err USING inverted(emb ivf (metric = 'l2', nlist = 4, nlist_factor = 2.0));
 ----
-db error: ERROR: Failed to create index: Column 'emb': ivf options 'nlist' and 'nlist_factor' are mutually exclusive
+db error: ERROR: Column 'emb': ivf options 'nlist' and 'nlist_factor' are mutually exclusive
 
 
 statement error
 CREATE INDEX bad_train_zero ON t_err USING inverted(emb ivf (metric = 'l2', train_sample = 0));
 ----
-db error: ERROR: Failed to create index: Column 'emb': unknown ivf option 'train_sample'. Accepted options: metric (string: l2|l1|cosine|ip, REQUIRED), nlist (int >= 1, default auto ~sqrt(rows)), nlist_factor (number > 0, nlist = round(nlist_factor * sqrt(rows)), default 2.0), quant (string: sq8|sq4|pq|rabitq|none, default none; sq8|sq4|pq|rabitq need l2|ip), pq_m (int >= 1, divides dimension, quant='pq' only, default auto ~d/2), rabitq_bits (int 1-9, quant='rabitq' only, default 1)
+db error: ERROR: Column 'emb': unknown ivf option 'train_sample'. Accepted options: metric (string: l2|l1|cosine|ip, REQUIRED), nlist (int >= 1, default auto ~sqrt(rows)), nlist_factor (number > 0, nlist = round(nlist_factor * sqrt(rows)), default 2.0), quant (string: sq8|sq4|pq|rabitq|none, default none; sq8|sq4|pq|rabitq need l2|ip), pq_m (int >= 1, divides dimension, quant='pq' only, default auto ~d/2), rabitq_bits (int 1-9, quant='rabitq' only, default 1)
 
 
 statement error
 CREATE INDEX bad_quant ON t_err USING inverted(emb ivf (metric = 'l2', quant = 'foo'));
 ----
-db error: ERROR: Failed to create index: Column 'emb': unknown ivf quant 'foo'. Expected one of: sq8 sq4 pq rabitq none
+db error: ERROR: Column 'emb': unknown ivf quant 'foo'. Expected one of: sq8 sq4 pq rabitq none
 
 
 statement error
 CREATE INDEX bad_metric_type ON t_err USING inverted(emb ivf (metric = 7));
 ----
-db error: ERROR: Failed to create index: Column 'emb': unknown ivf metric '7'. Expected one of: l2 l1 cosine ip
+db error: ERROR: Column 'emb': unknown ivf metric '7'. Expected one of: l2 l1 cosine ip
 
 
 statement error
 CREATE INDEX bad_scalar ON t_err USING inverted(id ivf (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'id' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not INTEGER
+db error: ERROR: Column 'id' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not INTEGER
 
 
 statement error
 CREATE INDEX bad_int_arr ON t_err USING inverted(emb_int ivf (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'emb_int' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not INTEGER[3]
+db error: ERROR: Column 'emb_int' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not INTEGER[3]
 
 
 statement error
 CREATE INDEX m_real_empty ON t_err USING inverted(emb ivf ());
 ----
-db error: ERROR: Failed to create index: Column 'emb': ivf opclass requires the 'metric' option (one of: l2, l1, cosine, ip). Example: ivf (metric = 'l2')
+db error: ERROR: Column 'emb': ivf opclass requires the 'metric' option (one of: l2, l1, cosine, ip). Example: ivf (metric = 'l2')
 
 
 statement ok
@@ -887,25 +887,25 @@ HINT: 'ivf' is a built-in opclass; use the options form 'ivf (...)'
 statement error
 CREATE INDEX m_fake_empty ON t_err USING inverted(emb fake_idx ());
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on 'emb' (known: included, ivf)
+db error: ERROR: Unknown built-in opclass 'fake_idx' on 'emb' (known: included, ivf)
 
 
 statement error
 CREATE INDEX m_fake_real ON t_err USING inverted(emb fake_idx (m = 16));
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on 'emb' (known: included, ivf)
+db error: ERROR: Unknown built-in opclass 'fake_idx' on 'emb' (known: included, ivf)
 
 
 statement error
 CREATE INDEX m_fake_fake ON t_err USING inverted(emb fake_idx (foo = 1));
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on 'emb' (known: included, ivf)
+db error: ERROR: Unknown built-in opclass 'fake_idx' on 'emb' (known: included, ivf)
 
 
 statement error
 CREATE INDEX m_fake_name ON t_err USING inverted(emb fake_dict);
 ----
-db error: ERROR: Failed to create index: Unknown opclass 'fake_dict' on column 'emb': no text dictionary by that name in schema 'public'
+db error: ERROR: Unknown opclass 'fake_dict' on column 'emb': no text dictionary by that name in schema 'public'
 
 
 

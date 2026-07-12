@@ -28,7 +28,6 @@
 
 namespace sdb {
 
-ErrorCode GetError();
 void SetError(ErrorCode);
 
 std::string_view LastError() noexcept;

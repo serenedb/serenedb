@@ -172,36 +172,4 @@ ErrorCode VerifyLockFile(const char* filename) {
   return ERROR_SERVER_DATADIR_LOCKED;
 }
 
-ErrorCode DestroyLockFile(const char* filename) {
-  absl::WriterMutexLock locker{&gOpenedFilesLock};
-  for (size_t i = 0; i < gOpenedFiles.size(); ++i) {
-    if (gOpenedFiles[i].first != filename) {
-      continue;
-    }
-    int fd = SERENEDB_OPEN(filename, O_RDWR | SERENEDB_O_CLOEXEC);
-    if (fd < 0) {
-      return ERROR_OK;
-    }
-    struct flock lock{};
-    lock.l_type = F_UNLCK;
-    lock.l_whence = SEEK_SET;
-    auto res = ERROR_OK;
-    if (fcntl(fd, F_SETLK, &lock) != 0) {
-      res = ERROR_SYS_ERROR;
-      SetError(res);
-    }
-    SERENEDB_CLOSE(fd);
-
-    if (res == ERROR_OK) {
-      std::error_code ec;
-      std::filesystem::remove(filename, ec);
-    }
-
-    SERENEDB_CLOSE(gOpenedFiles[i].second);
-    gOpenedFiles.erase(gOpenedFiles.begin() + i);
-    return res;
-  }
-  return ERROR_OK;
-}
-
 }  // namespace sdb

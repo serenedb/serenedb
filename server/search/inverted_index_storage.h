@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include <absl/status/status.h>
 #include <absl/synchronization/mutex.h>
 #include <absl/time/time.h>
 
@@ -32,6 +33,7 @@
 #include <memory>
 #include <mutex>
 
+#include "basics/errors.h"
 #include "catalog/inverted_index.h"
 #include "catalog/types.h"
 #include "search/maintenance.h"
@@ -261,14 +263,14 @@ class InvertedIndexStorage final
     std::atomic<uint64_t> _time_num{0};
   };
 
-  Result CompactUnsafeImpl(const irs::CompactionPolicy& policy,
-                           const irs::MergeWriter::FlushProgress& progress,
-                           bool& empty_compaction,
-                           const irs::IndexFieldOptions* field_options);
-  Result RefreshUnsafeImpl(bool wait,
-                           const irs::ProgressReportCallback& progress,
-                           RefreshResult& code, bool for_checkpoint);
-  Result CleanupUnsafeImpl();
+  absl::Status CompactUnsafeImpl(
+    const irs::CompactionPolicy& policy,
+    const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
+    const irs::IndexFieldOptions* field_options);
+  absl::Status RefreshUnsafeImpl(bool wait,
+                                 const irs::ProgressReportCallback& progress,
+                                 RefreshResult& code, bool for_checkpoint);
+  absl::Status CleanupUnsafeImpl();
 
   ObjectId _index_id;
   SearchEngine& _search;

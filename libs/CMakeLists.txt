@@ -17,9 +17,6 @@ add_library(
     basics/file_utils.cpp
     basics/metrics.cpp
     basics/number_of_cores.cpp
-    basics/physical_memory.cpp
-    basics/result.cpp
-    basics/result_error.cpp
     basics/string_utils.cpp
     basics/static_strings.cpp
     basics/lifecycle.cpp
@@ -37,8 +34,6 @@ add_library(
     basics/crash_handler.cpp
     basics/random/random_generator.cpp
     basics/random/uniform_character.cpp
-    basics/ssl/ssl_interface.cpp
-    basics/ssl/ssl_helper.cpp
     basics/message_buffer.cpp
     basics/message_sequence_view.cpp
     basics/duckdb_engine.cpp
@@ -76,6 +71,8 @@ target_link_libraries(
         absl::node_hash_set
         absl::node_hash_map
         absl::synchronization
+        absl::status
+        absl::statusor
         absl::strings
         faiss
         fmt::fmt

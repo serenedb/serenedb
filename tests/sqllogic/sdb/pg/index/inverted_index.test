@@ -1199,7 +1199,7 @@ CREATE TABLE dup_tok (id INTEGER PRIMARY KEY, txt VARCHAR);
 statement error
 CREATE INDEX dup_tok_idx ON dup_tok USING inverted(id, txt tok_kw, txt test_english);
 ----
-db error: ERROR: Failed to create index: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
+db error: ERROR: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
 
 
 # Same column listed twice with the same tokenizer is also rejected --
@@ -1207,7 +1207,7 @@ db error: ERROR: Failed to create index: Column 'txt' is listed more than once w
 statement error
 CREATE INDEX dup_tok_same_idx ON dup_tok USING inverted(id, txt tok_kw, txt tok_kw);
 ----
-db error: ERROR: Failed to create index: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
+db error: ERROR: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
 
 
 # A bare column (no opclass) implicitly binds the default tokenizer, so it
@@ -1217,13 +1217,13 @@ db error: ERROR: Failed to create index: Column 'txt' is listed more than once w
 statement error
 CREATE INDEX dup_tok_bare_idx ON dup_tok USING inverted(id, txt, txt);
 ----
-db error: ERROR: Failed to create index: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
+db error: ERROR: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
 
 
 statement error
 CREATE INDEX dup_tok_bare_mix_idx ON dup_tok USING inverted(id, txt, txt tok_kw);
 ----
-db error: ERROR: Failed to create index: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
+db error: ERROR: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
 
 
 # Stacking a tokenizer with `included()` on the same column stays legal:

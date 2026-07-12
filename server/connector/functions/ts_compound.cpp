@@ -22,6 +22,7 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/utils/string.hpp>
 
+#include "basics/exceptions.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "ts_common.hpp"
@@ -125,12 +126,8 @@ void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
   if (!should.empty()) {
     int64_t min_should = 1;
     if (func.GetChildren().size() == 4) {
-      if (auto r = GetIntArg(*func.GetChildren()[3],
-                             "ts_compound min_should_match", min_should);
-          !r.ok()) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-      }
+      GetIntArg(*func.GetChildren()[3], min_should,
+                {"ts_compound min_should_match", kSyntaxHint});
       if (min_should < 1 || min_should > static_cast<int64_t>(should.size())) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("ts_compound min_should_match must be in [1, ",

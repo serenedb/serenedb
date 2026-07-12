@@ -1557,12 +1557,9 @@ void yyerror(sdb::ParserContext& ctx, const char *s) {
 extern void LexerSetInput(std::string_view input);
 extern void LexerCleanup(void);
 
-sdb::Result sdb::ParseQuery(sdb::ParserContext& ctx, std::string_view input) {
+bool sdb::ParseQuery(sdb::ParserContext& ctx, std::string_view input) {
     LexerSetInput(input);
     int result = yyparse(ctx);
     LexerCleanup();
-    if (result != 0) {
-        return {sdb::ERROR_BAD_PARAMETER, std::move(ctx.error_message)};
-    }
-    return {};
+    return result == 0;
 }

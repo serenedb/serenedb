@@ -39,8 +39,6 @@ struct ErrorContainer {
 // holds the last error that occurred in the current thread
 thread_local ErrorContainer gLastError;
 
-ErrorCode GetError() { return gLastError.number; }
-
 std::string_view LastError() noexcept {
   ErrorCode err = gLastError.number;
 

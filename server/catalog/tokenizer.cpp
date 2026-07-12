@@ -24,7 +24,6 @@
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
-#include <expected>
 #include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
@@ -46,17 +45,10 @@ using persistence::TokenizerData;
 
 }  // namespace
 
-ResultOr<Tokenizer::TokenizerWrapper> Tokenizer::GetTokenizer() {
+Tokenizer::TokenizerWrapper Tokenizer::GetTokenizer() {
   absl::MutexLock lock{&_m};
   if (_pool.empty()) {
-    irs::analysis::Analyzer::ptr analyzer;
-    if (auto r = basics::SafeCall([&] -> Result {
-          analyzer = CreateAnalyzer();
-          return {};
-        });
-        !r.ok()) {
-      return std::unexpected<Result>{std::move(r)};
-    }
+    auto analyzer = CreateAnalyzer();
     return TokenizerWrapper{analyzer.release(), Deleter{this}};
   }
   auto analyzer = std::move(_pool.back());

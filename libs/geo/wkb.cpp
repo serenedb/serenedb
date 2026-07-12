@@ -33,6 +33,7 @@
 #include <utility>
 
 #include "basics/errors.h"
+#include "basics/exceptions.h"
 #include "basics/misc.hpp"
 #include "geo/s2/multi_point_region.h"
 #include "geo/s2/multi_polyline_region.h"
@@ -172,18 +173,17 @@ class WkbReader {
 // every Multi* sub-geometry header so each sub-geometry can carry its
 // own byte order per OGC.
 template<typename Func>
-Result WithGeometryReader(WkbCursor& cursor, Func&& func) {
+void WithGeometryReader(WkbCursor& cursor, Func&& func) {
   uint8_t b;
   if (!cursor.ReadByte(b)) {
-    return {ERROR_BAD_PARAMETER, "WKB: truncated byte-order byte"};
+    SDB_THROW(ERROR_BAD_PARAMETER, "WKB: truncated byte-order byte");
   }
   if (b > 1) {
-    return {ERROR_BAD_PARAMETER, "WKB: bad byte-order byte"};
+    SDB_THROW(ERROR_BAD_PARAMETER, "WKB: bad byte-order byte");
   }
-  return irs::ResolveBool(b == 1, [&]<bool LittleEndian> {
+  irs::ResolveBool(b == 1, [&]<bool LittleEndian> {
     WkbReader<LittleEndian> r{cursor};
-    return std::forward<Func>(func)
-      .template operator()<WkbReader<LittleEndian>>(r);
+    std::forward<Func>(func).template operator()<WkbReader<LittleEndian>>(r);
   });
 }
 
@@ -192,14 +192,14 @@ Result WithGeometryReader(WkbCursor& cursor, Func&& func) {
 // called -- the templated reader's Byteswap value already reflects it.
 // Rejects Z/M dimensions and non-CRS84 SRIDs.
 template<class R>
-Result ReadHeader(R& r, WkbType& type) {
+void ReadHeader(R& r, WkbType& type) {
   uint32_t raw_type;
   if (!r.ReadU32(raw_type)) {
-    return {ERROR_BAD_PARAMETER, "WKB: truncated type word"};
+    SDB_THROW(ERROR_BAD_PARAMETER, "WKB: truncated type word");
   }
   if ((raw_type & (kEwkbZFlag | kEwkbMFlag)) != 0) {
-    return {ERROR_BAD_PARAMETER,
-            "WKB: Z/M dimensions not supported (CRS84 is 2D)"};
+    SDB_THROW(ERROR_BAD_PARAMETER,
+              "WKB: Z/M dimensions not supported (CRS84 is 2D)");
   }
   const bool has_srid = (raw_type & kEwkbSridFlag) != 0;
   const uint32_t bare = raw_type & 0x000000FF;  // ISO WKB PointZ=1001 also
@@ -207,46 +207,43 @@ Result ReadHeader(R& r, WkbType& type) {
                                                 // but Z/M check above rejects.
   if (bare < std::to_underlying(WkbType::Min) ||
       bare > std::to_underlying(WkbType::Max)) {
-    return {ERROR_BAD_PARAMETER, "WKB: unsupported geometry type"};
+    SDB_THROW(ERROR_BAD_PARAMETER, "WKB: unsupported geometry type");
   }
   if (has_srid) {
     uint32_t srid;
     if (!r.ReadU32(srid)) {
-      return {ERROR_BAD_PARAMETER, "WKB: truncated SRID"};
+      SDB_THROW(ERROR_BAD_PARAMETER, "WKB: truncated SRID");
     }
     if (static_cast<int32_t>(srid) != kCRS84Srid) {
-      return {ERROR_BAD_PARAMETER,
-              "WKB: only SRID 4326 (CRS84) is supported; got ", srid};
+      SDB_THROW(ERROR_BAD_PARAMETER,
+                "WKB: only SRID 4326 (CRS84) is supported; got ", srid);
     }
   }
   type = static_cast<WkbType>(bare);
-  return {};
 }
 
 template<class R>
-Result ReadPoint(R& r, S2LatLng& out) {
+void ReadPoint(R& r, S2LatLng& out) {
   if (!r.ReadLatLng(out)) {
-    return {ERROR_BAD_PARAMETER, "WKB: truncated Point coordinates"};
+    SDB_THROW(ERROR_BAD_PARAMETER, "WKB: truncated Point coordinates");
   }
-  return {};
 }
 
 template<class R>
-Result ReadLineStringVertices(R& r, std::vector<S2LatLng>& cache) {
+void ReadLineStringVertices(R& r, std::vector<S2LatLng>& cache) {
   uint32_t count;
   if (!r.ReadU32(count)) {
-    return {ERROR_BAD_PARAMETER, "WKB: truncated LineString vertex count"};
+    SDB_THROW(ERROR_BAD_PARAMETER, "WKB: truncated LineString vertex count");
   }
   cache.clear();
   cache.reserve(count);
   for (uint32_t i = 0; i < count; ++i) {
     S2LatLng ll;
     if (!r.ReadLatLng(ll)) {
-      return {ERROR_BAD_PARAMETER, "WKB: truncated LineString vertex ", i};
+      SDB_THROW(ERROR_BAD_PARAMETER, "WKB: truncated LineString vertex ", i);
     }
     cache.push_back(ll);
   }
-  return {};
 }
 
 // Polygon = ring count + (ring = vertex count + vertices). First ring is
@@ -259,10 +256,10 @@ Result ReadLineStringVertices(R& r, std::vector<S2LatLng>& cache) {
 // more than half the earth survive), and subsequent loops are inverted only
 // when they aren't already contained in the outer.
 template<class R>
-Result ReadPolygonLoops(R& r, std::vector<std::unique_ptr<S2Loop>>& out) {
+void ReadPolygonLoops(R& r, std::vector<std::unique_ptr<S2Loop>>& out) {
   uint32_t ring_count;
   if (!r.ReadU32(ring_count)) {
-    return {ERROR_BAD_PARAMETER, "WKB: truncated Polygon ring count"};
+    SDB_THROW(ERROR_BAD_PARAMETER, "WKB: truncated Polygon ring count");
   }
   out.clear();
   out.reserve(ring_count);
@@ -270,21 +267,21 @@ Result ReadPolygonLoops(R& r, std::vector<std::unique_ptr<S2Loop>>& out) {
   for (uint32_t i = 0; i < ring_count; ++i) {
     uint32_t vcount;
     if (!r.ReadU32(vcount)) {
-      return {ERROR_BAD_PARAMETER, "WKB: truncated Polygon ring-", i,
-              " vertex count"};
+      SDB_THROW(ERROR_BAD_PARAMETER, "WKB: truncated Polygon ring-", i,
+                " vertex count");
     }
     if (vcount < 4) {
-      return {ERROR_BAD_PARAMETER,
-              "WKB: Polygon ring must have >= 4 vertices (closed); ring ", i,
-              " has ", vcount};
+      SDB_THROW(ERROR_BAD_PARAMETER,
+                "WKB: Polygon ring must have >= 4 vertices (closed); ring ", i,
+                " has ", vcount);
     }
     std::vector<S2Point> pts;
     pts.reserve(vcount - 1);
     S2LatLng ll;
     for (uint32_t v = 0; v < vcount; ++v) {
       if (!r.ReadLatLng(ll)) {
-        return {ERROR_BAD_PARAMETER, "WKB: truncated Polygon ring-", i,
-                " vertex ", v};
+        SDB_THROW(ERROR_BAD_PARAMETER, "WKB: truncated Polygon ring-", i,
+                  " vertex ", v);
       }
       // Skip the last vertex: WKB closes the ring, S2Loop must be open.
       if (v + 1 < vcount) {
@@ -293,8 +290,8 @@ Result ReadPolygonLoops(R& r, std::vector<std::unique_ptr<S2Loop>>& out) {
     }
     auto loop = std::make_unique<S2Loop>(pts, S2Debug::DISABLE);
     if (!loop->IsValid()) {
-      return {ERROR_BAD_PARAMETER, "WKB: Polygon ring-", i, " is not a valid ",
-              "S2 loop"};
+      SDB_THROW(ERROR_BAD_PARAMETER, "WKB: Polygon ring-", i,
+                " is not a valid ", "S2 loop");
     }
     auto* current = loop.get();
     out.push_back(std::move(loop));
@@ -305,33 +302,27 @@ Result ReadPolygonLoops(R& r, std::vector<std::unique_ptr<S2Loop>>& out) {
     if (!first->Contains(*current)) {
       current->Invert();
       if (!first->Contains(*current)) {
-        return {ERROR_BAD_PARAMETER, "WKB: Polygon ring-", i,
-                " is not a hole in the outer ring"};
+        SDB_THROW(ERROR_BAD_PARAMETER, "WKB: Polygon ring-", i,
+                  " is not a hole in the outer ring");
       }
     }
   }
-  return {};
 }
 
 template<class R>
-Result ParseGeometry(R& r, ShapeContainer& region);
+void ParseGeometry(R& r, ShapeContainer& region);
 
 template<class R>
-Result ParsePoint(R& r, ShapeContainer& region) {
+void ParsePoint(R& r, ShapeContainer& region) {
   S2LatLng ll;
-  if (auto res = ReadPoint(r, ll); res.fail()) {
-    return res;
-  }
+  ReadPoint(r, ll);
   region.reset(ll.ToPoint());
-  return {};
 }
 
 template<class R>
-Result ParseLineString(R& r, ShapeContainer& region) {
+void ParseLineString(R& r, ShapeContainer& region) {
   std::vector<S2LatLng> verts;
-  if (auto res = ReadLineStringVertices(r, verts); res.fail()) {
-    return res;
-  }
+  ReadLineStringVertices(r, verts);
   std::vector<S2Point> pts;
   pts.reserve(verts.size());
   for (const auto& ll : verts) {
@@ -339,22 +330,18 @@ Result ParseLineString(R& r, ShapeContainer& region) {
   }
   auto line = std::make_unique<S2Polyline>(pts, S2Debug::DISABLE);
   if (!line->IsValid()) {
-    return {ERROR_BAD_PARAMETER, "WKB: LineString is not a valid S2Polyline"};
+    SDB_THROW(ERROR_BAD_PARAMETER, "WKB: LineString is not a valid S2Polyline");
   }
   region.reset(std::move(line), ShapeContainer::Type::S2Polyline);
-  return {};
 }
 
 template<class R>
-Result ParsePolygon(R& r, ShapeContainer& region) {
+void ParsePolygon(R& r, ShapeContainer& region) {
   std::vector<std::unique_ptr<S2Loop>> loops;
-  if (auto res = ReadPolygonLoops(r, loops); res.fail()) {
-    return res;
-  }
+  ReadPolygonLoops(r, loops);
   auto poly = std::make_unique<S2Polygon>();
   poly->InitNested(std::move(loops));
   region.reset(std::move(poly), ShapeContainer::Type::S2Polygon);
-  return {};
 }
 
 // Each Multi* member is a complete WKB sub-geometry with its own
@@ -364,44 +351,34 @@ Result ParsePolygon(R& r, ShapeContainer& region) {
 // outer reader (`r`) is unused inside the lambda but its cursor flows
 // through transparently.
 template<class R>
-Result ParseMultiPoint(R& r, ShapeContainer& region) {
+void ParseMultiPoint(R& r, ShapeContainer& region) {
   uint32_t count;
   if (!r.ReadU32(count)) {
-    return {ERROR_BAD_PARAMETER, "WKB: truncated MultiPoint count"};
+    SDB_THROW(ERROR_BAD_PARAMETER, "WKB: truncated MultiPoint count");
   }
   auto multi = std::make_unique<S2MultiPointRegion>();
   multi->Impl().reserve(count);
   for (uint32_t i = 0; i < count; ++i) {
-    auto res =
-      WithGeometryReader(r.cursor(), [&]<class Sub>(Sub& sub) -> Result {
-        WkbType sub_type;
-        if (auto e = ReadHeader(sub, sub_type); e.fail()) {
-          return e;
-        }
-        if (sub_type != WkbType::Point) {
-          return {ERROR_BAD_PARAMETER, "WKB: MultiPoint member ", i,
-                  " is not a Point"};
-        }
-        S2LatLng ll;
-        if (auto e = ReadPoint(sub, ll); e.fail()) {
-          return e;
-        }
-        multi->Impl().push_back(ll.ToPoint());
-        return {};
-      });
-    if (res.fail()) {
-      return res;
-    }
+    WithGeometryReader(r.cursor(), [&]<class Sub>(Sub& sub) {
+      WkbType sub_type;
+      ReadHeader(sub, sub_type);
+      if (sub_type != WkbType::Point) {
+        SDB_THROW(ERROR_BAD_PARAMETER, "WKB: MultiPoint member ", i,
+                  " is not a Point");
+      }
+      S2LatLng ll;
+      ReadPoint(sub, ll);
+      multi->Impl().push_back(ll.ToPoint());
+    });
   }
   region.reset(std::move(multi), ShapeContainer::Type::S2Multipoint);
-  return {};
 }
 
 template<class R>
-Result ParseMultiLineString(R& r, ShapeContainer& region) {
+void ParseMultiLineString(R& r, ShapeContainer& region) {
   uint32_t count;
   if (!r.ReadU32(count)) {
-    return {ERROR_BAD_PARAMETER, "WKB: truncated MultiLineString count"};
+    SDB_THROW(ERROR_BAD_PARAMETER, "WKB: truncated MultiLineString count");
   }
   auto multi = std::make_unique<S2MultiPolylineRegion>();
   multi->Impl().reserve(count);
@@ -409,85 +386,63 @@ Result ParseMultiLineString(R& r, ShapeContainer& region) {
   // hit the allocator inside the loop.
   std::vector<S2LatLng> verts;
   for (uint32_t i = 0; i < count; ++i) {
-    auto res =
-      WithGeometryReader(r.cursor(), [&]<class Sub>(Sub& sub) -> Result {
-        WkbType sub_type;
-        if (auto e = ReadHeader(sub, sub_type); e.fail()) {
-          return e;
-        }
-        if (sub_type != WkbType::LineString) {
-          return {ERROR_BAD_PARAMETER, "WKB: MultiLineString member ", i,
-                  " is not a LineString"};
-        }
-        if (auto e = ReadLineStringVertices(sub, verts); e.fail()) {
-          return e;
-        }
-        std::vector<S2Point> pts;
-        pts.reserve(verts.size());
-        for (const auto& ll : verts) {
-          pts.push_back(ll.ToPoint());
-        }
-        S2Polyline line{pts, S2Debug::DISABLE};
-        if (!line.IsValid()) {
-          return {ERROR_BAD_PARAMETER, "WKB: MultiLineString member ", i,
-                  " is not a valid S2Polyline"};
-        }
-        multi->Impl().push_back(std::move(line));
-        return {};
-      });
-    if (res.fail()) {
-      return res;
-    }
+    WithGeometryReader(r.cursor(), [&]<class Sub>(Sub& sub) {
+      WkbType sub_type;
+      ReadHeader(sub, sub_type);
+      if (sub_type != WkbType::LineString) {
+        SDB_THROW(ERROR_BAD_PARAMETER, "WKB: MultiLineString member ", i,
+                  " is not a LineString");
+      }
+      ReadLineStringVertices(sub, verts);
+      std::vector<S2Point> pts;
+      pts.reserve(verts.size());
+      for (const auto& ll : verts) {
+        pts.push_back(ll.ToPoint());
+      }
+      S2Polyline line{pts, S2Debug::DISABLE};
+      if (!line.IsValid()) {
+        SDB_THROW(ERROR_BAD_PARAMETER, "WKB: MultiLineString member ", i,
+                  " is not a valid S2Polyline");
+      }
+      multi->Impl().push_back(std::move(line));
+    });
   }
   region.reset(std::move(multi), ShapeContainer::Type::S2Multipolyline);
-  return {};
 }
 
 template<class R>
-Result ParseMultiPolygon(R& r, ShapeContainer& region) {
+void ParseMultiPolygon(R& r, ShapeContainer& region) {
   uint32_t count;
   if (!r.ReadU32(count)) {
-    return {ERROR_BAD_PARAMETER, "WKB: truncated MultiPolygon count"};
+    SDB_THROW(ERROR_BAD_PARAMETER, "WKB: truncated MultiPolygon count");
   }
   // Flatten all member loops into one S2Polygon -- S2 handles disjoint
   // polygons natively through S2Polygon::InitNested.
   std::vector<std::unique_ptr<S2Loop>> all_loops;
   for (uint32_t i = 0; i < count; ++i) {
-    auto res =
-      WithGeometryReader(r.cursor(), [&]<class Sub>(Sub& sub) -> Result {
-        WkbType sub_type;
-        if (auto e = ReadHeader(sub, sub_type); e.fail()) {
-          return e;
-        }
-        if (sub_type != WkbType::Polygon) {
-          return {ERROR_BAD_PARAMETER, "WKB: MultiPolygon member ", i,
-                  " is not a Polygon"};
-        }
-        std::vector<std::unique_ptr<S2Loop>> loops;
-        if (auto e = ReadPolygonLoops(sub, loops); e.fail()) {
-          return e;
-        }
-        for (auto& loop : loops) {
-          all_loops.push_back(std::move(loop));
-        }
-        return {};
-      });
-    if (res.fail()) {
-      return res;
-    }
+    WithGeometryReader(r.cursor(), [&]<class Sub>(Sub& sub) {
+      WkbType sub_type;
+      ReadHeader(sub, sub_type);
+      if (sub_type != WkbType::Polygon) {
+        SDB_THROW(ERROR_BAD_PARAMETER, "WKB: MultiPolygon member ", i,
+                  " is not a Polygon");
+      }
+      std::vector<std::unique_ptr<S2Loop>> loops;
+      ReadPolygonLoops(sub, loops);
+      for (auto& loop : loops) {
+        all_loops.push_back(std::move(loop));
+      }
+    });
   }
   auto poly = std::make_unique<S2Polygon>();
   poly->InitNested(std::move(all_loops));
   region.reset(std::move(poly), ShapeContainer::Type::S2Polygon);
-  return {};
 }
 
 template<class R>
-Result ParseGeometry(R& r, ShapeContainer& region) {
+void ParseGeometry(R& r, ShapeContainer& region) {
   WkbType type;
-  if (auto res = ReadHeader(r, type); res.fail()) {
-    return res;
-  }
+  ReadHeader(r, type);
   switch (type) {
     case WkbType::Point:
       return ParsePoint(r, region);
@@ -502,17 +457,24 @@ Result ParseGeometry(R& r, ShapeContainer& region) {
     case WkbType::MultiPolygon:
       return ParseMultiPolygon(r, region);
     case WkbType::GeometryCollection:
-      return {ERROR_BAD_PARAMETER, "WKB: GeometryCollection is not supported"};
+      SDB_THROW(ERROR_BAD_PARAMETER,
+                "WKB: GeometryCollection is not supported");
   }
-  return {ERROR_BAD_PARAMETER, "WKB: unreachable geometry type"};
+  SDB_THROW(ERROR_BAD_PARAMETER, "WKB: unreachable geometry type");
 }
 
 }  // namespace
 
-Result ParseShapeWKB(std::string_view bytes, ShapeContainer& region) {
-  WkbCursor cursor{bytes};
-  return WithGeometryReader(
-    cursor, [&]<class R>(R& r) -> Result { return ParseGeometry(r, region); });
+// The WKB subsystem boundary: deep readers throw, this converts to a value.
+bool ParseShapeWKB(std::string_view bytes, ShapeContainer& region) {
+  try {
+    WkbCursor cursor{bytes};
+    WithGeometryReader(cursor,
+                       [&]<class R>(R& r) { ParseGeometry(r, region); });
+    return true;
+  } catch (const sdb::basics::Exception&) {
+    return false;
+  }
 }
 
 }  // namespace sdb::geo

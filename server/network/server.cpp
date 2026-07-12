@@ -31,6 +31,7 @@
 
 #include "basics/log.h"
 #include "basics/number_of_cores.h"
+#include "basics/static_strings.h"
 #include "catalog/catalog.h"
 #include "catalog/role.h"
 #include "network/connection.h"
@@ -70,23 +71,11 @@ ABSL_FLAG(std::string, tls_ciphers,
 ABSL_FLAG(std::string, tls_groups, "X25519:P-256",
           "TLS key-exchange groups, colon-separated.");
 
-ABSL_FLAG(std::string, auth_user, "postgres",
-          "User the temporary --auth_password / token credentials apply to.");
-
-ABSL_FLAG(
-  std::string, auth_password, "",
-  "Temporary single-user password (empty = trust). Placeholder until "
-  "RBAC; SCRAM-SHA-256 by default. Cleartext password auth requires TLS.");
-
 ABSL_FLAG(std::string, auth_api_key, "",
           "Static HTTP ApiKey credential as id:key (empty = ApiKey rejected).");
 
 ABSL_FLAG(std::string, auth_bearer_token, "",
           "Static HTTP Bearer token (empty = Bearer rejected).");
-
-ABSL_FLAG(std::string, auth_method, "scram",
-          "Password auth method for --auth_password: scram (SCRAM-SHA-256, "
-          "default), md5, or password (cleartext; requires TLS).");
 
 ABSL_FLAG(uint64_t, pg_max_message_bytes, sdb::network::kDefaultMaxMessageBytes,
           "Maximum size of a single pg-wire message (statement text / bound "
@@ -121,38 +110,6 @@ ABSL_FLAG(absl::Duration, http_body_timeout, absl::Seconds(30),
 
 namespace sdb {
 namespace {
-
-const char* AuthMethodName(network::pg::AuthMethod method) {
-  switch (method) {
-    case network::pg::AuthMethod::Scram:
-      return "scram-sha-256";
-    case network::pg::AuthMethod::Md5:
-      return "md5";
-    case network::pg::AuthMethod::Cleartext:
-      return "password";
-  }
-  return "password";
-}
-
-// Throwaway credential source: one user from the config flags. RBAC will
-// provide a real CredentialProvider via the same seam.
-class ConfigCredentialProvider final : public network::CredentialProvider {
- public:
-  ConfigCredentialProvider(std::string user, network::Credential credential)
-    : _user{std::move(user)}, _credential{std::move(credential)} {}
-
-  std::optional<network::Credential> LookupCredential(
-    std::string_view username) const override {
-    if (username == _user) {
-      return _credential;
-    }
-    return std::nullopt;
-  }
-
- private:
-  std::string _user;
-  network::Credential _credential;
-};
 
 // Per-role credential source: looks the connecting user up in the catalog and,
 // if the role carries a stored SCRAM verifier (rolpassword), returns it so the
@@ -193,8 +150,6 @@ Server::Server()
     _tls_ca{absl::GetFlag(FLAGS_tls_ca)},
     _tls_ciphers{absl::GetFlag(FLAGS_tls_ciphers)},
     _tls_groups{absl::GetFlag(FLAGS_tls_groups)},
-    _auth_user{absl::GetFlag(FLAGS_auth_user)},
-    _auth_password{absl::GetFlag(FLAGS_auth_password)},
     _api_key{absl::GetFlag(FLAGS_auth_api_key)},
     _bearer_token{absl::GetFlag(FLAGS_auth_bearer_token)},
     _cors_origins{absl::GetFlag(FLAGS_http_cors_origins)},
@@ -219,17 +174,6 @@ Server::Server()
               "not supported), got '",
               min_version, "'");
   }
-  const auto method = absl::GetFlag(FLAGS_auth_method);
-  if (method == "scram") {
-    _auth_method = network::pg::AuthMethod::Scram;
-  } else if (method == "md5") {
-    _auth_method = network::pg::AuthMethod::Md5;
-  } else if (method == "password" || method == "cleartext") {
-    _auth_method = network::pg::AuthMethod::Cleartext;
-  } else {
-    SDB_FATAL(GENERAL, "--auth_method must be scram, md5, or password, got '",
-              method, "'");
-  }
   _max_message = static_cast<std::uint32_t>(std::min<std::uint64_t>(
     absl::GetFlag(FLAGS_pg_max_message_bytes), 0xFFFFFFFFull));
   _max_connections = static_cast<std::uint32_t>(std::min<std::uint64_t>(
@@ -240,20 +184,9 @@ Server::Server()
 Server::~Server() { gInstance = nullptr; }
 
 void Server::SetupAuth() {
-  if (!_auth_password.empty()) {
-    network::Credential credential;
-    credential.cleartext = _auth_password;
-    if (_auth_method == network::pg::AuthMethod::Scram) {
-      credential.scram = network::BuildScramVerifier(_auth_password);
-      if (!credential.scram) {
-        SDB_FATAL(GENERAL, "could not build SCRAM verifier for auth");
-      }
-    }
-    _credentials = std::make_unique<ConfigCredentialProvider>(
-      _auth_user, std::move(credential));
-    SDB_INFO(GENERAL, "network auth enabled for user '", _auth_user, "' (",
-             AuthMethodName(_auth_method), ")");
-  } else {
+  // Auth resolves every connection through the catalog's per-role credentials
+  // (RBAC). A role with no stored password is trusted only over loopback (see
+  // the HBA loopback-gated fallback in pg_wire_session / http auth).
     _credentials = std::make_unique<CatalogCredentialProvider>();
     SDB_INFO(GENERAL, "network auth using per-role catalog passwords (",
              AuthMethodName(_auth_method), ")");
@@ -342,7 +275,6 @@ void Server::AddUnixListener(const network::ListenSpec& spec) {
     deps.allow_cleartext_without_tls = true;
     deps.cancel = &_cancel;
     deps.max_message_bytes = _max_message;
-    deps.auth_method = _auth_method;
     deps.active = &_active;
     deps.max_connections = spec.max_connections.value_or(_max_connections);
     deps.auth_timeout = _auth_timeout;
@@ -399,7 +331,6 @@ void Server::AddListener(const network::ListenSpec& spec) {
     deps.require_tls = spec.RequireTls() && ssl != nullptr;
     deps.cancel = &_cancel;
     deps.max_message_bytes = _max_message;
-    deps.auth_method = _auth_method;
     deps.active = &_active;
     deps.max_connections = spec.max_connections.value_or(_max_connections);
     deps.auth_timeout = _auth_timeout;

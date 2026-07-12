@@ -31,7 +31,6 @@
 #include "basics/down_cast.h"
 #include "basics/exceptions.h"
 #include "basics/log.h"
-#include "basics/result.h"
 #include "basics/serializer.h"
 #include "geo/geo_json.h"
 #include "geo/geo_params.h"
@@ -133,7 +132,7 @@ class GeoJsonAnalyzerImpl final : public GeoJsonAnalyzer {
       _shape = {};
       const std::string_view bytes{reinterpret_cast<const char*>(wkb.data()),
                                    wkb.size()};
-      if (auto r = sdb::geo::ParseShapeWKB(bytes, _shape); r.fail()) {
+      if (!sdb::geo::ParseShapeWKB(bytes, _shape)) {
         return false;
       }
       if (_type == Type::Point &&
@@ -157,7 +156,7 @@ class GeoJsonAnalyzerImpl final : public GeoJsonAnalyzer {
       _shape = {};
       const std::string_view bytes{reinterpret_cast<const char*>(wkb.data()),
                                    wkb.size()};
-      if (auto r = sdb::geo::ParseShapeWKB(bytes, _shape); r.fail()) {
+      if (!sdb::geo::ParseShapeWKB(bytes, _shape)) {
         return false;
       }
       if (_type == Type::Point &&
@@ -234,9 +233,7 @@ bool GeoAnalyzer::reset(std::string_view value) {
 }
 
 irs::analysis::Analyzer::ptr GeoPointAnalyzer::Make(Options opts) {
-  if (!opts.options.Validate().ok()) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "geo_point: invalid geo options");
-  }
+  opts.options.Validate("geo_point");
   if (opts.latitude.empty() != opts.longitude.empty()) {
     SDB_THROW(sdb::ERROR_BAD_PARAMETER,
               "geo_point: latitude and longitude must both be set or both "
@@ -266,7 +263,7 @@ bool GeoPointAnalyzer::resetWKB(bytes_view wkb) {
   sdb::geo::ShapeContainer shape;
   const std::string_view bytes{reinterpret_cast<const char*>(wkb.data()),
                                wkb.size()};
-  if (auto r = sdb::geo::ParseShapeWKB(bytes, shape); r.fail()) {
+  if (!sdb::geo::ParseShapeWKB(bytes, shape)) {
     return false;
   }
   if (shape.type() != sdb::geo::ShapeContainer::Type::S2Point) {
@@ -356,9 +353,7 @@ bool GeoPointAnalyzer::ParsePoint(simdjson::ondemand::value json,
 }
 
 irs::analysis::Analyzer::ptr GeoJsonAnalyzer::Make(Options opts) {
-  if (!opts.options.Validate().ok()) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "geo_json: invalid geo options");
-  }
+  opts.options.Validate("geo_json");
   if (opts.coding == Coding::Source) {
     return std::make_unique<GeoJsonAnalyzerImpl<SourceAnalyzerData>>(opts);
   }

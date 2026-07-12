@@ -39,7 +39,6 @@
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
-#include "basics/errors.h"
 #include "basics/serializer.h"
 #include "basics/simdjson_sink.h"
 #include "catalog/catalog.h"
@@ -54,6 +53,7 @@
 #include "pg/commands/create_tsdictionary.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
+#include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 #include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
@@ -287,13 +287,10 @@ void CreateTextIndex(duckdb::ClientContext& context, ObjectId database_id,
   };
 
   const auto index_name = absl::StrCat(index, kEsTextIndexSuffix);
-  auto r = catalog.CreateInvertedIndex(
-    catalog::NoAccessCheck(), context, database_id, kEsSchema, index,
-    index_name, std::move(idx_columns), std::move(options),
-    {.create_with_tombstone = true});
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
+  catalog.CreateInvertedIndex(catalog::NoAccessCheck(), context, database_id,
+                              kEsSchema, index, index_name,
+                              std::move(idx_columns), std::move(options),
+                              {.create_with_tombstone = true});
 
   auto fresh = catalog.GetCatalogSnapshot();
   auto relation = fresh->GetRelation(catalog::NoAccessCheck(), database_id,
@@ -305,10 +302,7 @@ void CreateTextIndex(duckdb::ClientContext& context, ObjectId database_id,
   storage->StartTasks();
   storage->Refresh();
   storage->FinishCreation();
-  r = catalog.RemoveTombstone(database_id, kEsSchema, index_name);
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
+  catalog.RemoveTombstone(database_id, kEsSchema, index_name);
 }
 
 void EsCreateIndexExecute(duckdb::ClientContext& context,
@@ -332,11 +326,8 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
   {
     auto schema = std::make_shared<catalog::Schema>(
       conn_ctx.GetRoleId(), database_id, ObjectId{}, kEsSchema);
-    auto r = catalog.CreateSchema(catalog::NoAccessCheck(), database_id,
-                                  std::move(schema));
-    if (!r.ok() && !r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-      SDB_THROW(std::move(r));
-    }
+    catalog.CreateSchema(catalog::NoAccessCheck(), database_id,
+                         std::move(schema), /*if_not_exists=*/true);
   }
 
   catalog::CreateTableOptions options;
@@ -371,14 +362,10 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
   }
   add_column(kSourceColumn, duckdb::LogicalType::VARCHAR);
 
-  auto r = catalog.CreateTable(catalog::NoAccessCheck(), database_id, kEsSchema,
-                               std::move(options), {});
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+  if (!catalog.CreateTable(catalog::NoAccessCheck(), database_id, kEsSchema,
+                           std::move(options), {.if_not_exists = true})) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
                     ERR_MSG("index [", data.index, "] already exists"));
-  }
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
   }
 
   if (!text_columns.empty()) {
@@ -404,15 +391,19 @@ void EsDropIndexExecute(duckdb::ClientContext& context,
 
   auto& conn_ctx = GetSereneDBContext(context);
   auto& catalog = catalog::GetCatalog();
-  auto r = catalog.DropTable(catalog::NoAccessCheck(), conn_ctx.GetDatabase(),
-                             kEsSchema, data.index, true);
-  if (r.is(ERROR_SERVER_ILLEGAL_NAME) ||
-      r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
+  // ES "no such index" covers both a missing name and a name that resolves
+  // to a non-table relation, so gate the drop on an actual table existing.
+  auto snapshot = catalog.GetCatalogSnapshot();
+  if (!snapshot->GetTable(catalog::NoAccessCheck(), conn_ctx.GetDatabaseId(),
+                          kEsSchema, data.index)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("no such index [", data.index, "]"));
   }
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
+  if (!catalog.DropTable(catalog::NoAccessCheck(), conn_ctx.GetDatabase(),
+                         kEsSchema, data.index, /*cascade=*/true,
+                         /*missing_ok=*/true)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("no such index [", data.index, "]"));
   }
 
   output.SetChildCardinality(1);

@@ -24,25 +24,26 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_split.h>
 
-#include <expected>
 #include <string_view>
 #include <utility>
 
 #include "basics/exceptions.h"
 #include "basics/log.h"
-#include "basics/result.h"
 #include "iresearch/analysis/token_attributes.hpp"
 
 namespace irs::analysis {
 namespace {
 
-SolrSynonymsTokenizer::SynonymsList SplitLine(const std::string_view line) {
+SolrSynonymsTokenizer::SynonymsList SplitLine(const std::string_view line,
+                                              const size_t line_number) {
   std::vector<std::string_view> outputs(absl::StrSplit(line, ','));
 
   for (auto& s : outputs) {
     s = absl::StripAsciiWhitespace(s);
     if (s.empty()) {
-      SDB_THROW(sdb::ERROR_BAD_PARAMETER);
+      SDB_THROW(sdb::ERROR_BAD_PARAMETER,
+                "solr_synonyms: failed to parse synonyms: Failed parse line ",
+                line_number);
     }
   }
 
@@ -54,8 +55,8 @@ SolrSynonymsTokenizer::SynonymsList SplitLine(const std::string_view line) {
 
 }  // namespace
 
-sdb::ResultOr<SolrSynonymsTokenizer::SynonymsLines>
-SolrSynonymsTokenizer::ParseSynonymsLines(std::string_view input) {
+SolrSynonymsTokenizer::SynonymsLines SolrSynonymsTokenizer::ParseSynonymsLines(
+  std::string_view input) {
   SynonymsLines synonyms_lines;
 
   std::vector<std::string_view> lines = absl::StrSplit(input, '\n');
@@ -71,39 +72,25 @@ SolrSynonymsTokenizer::ParseSynonymsLines(std::string_view input) {
 
     if (sides.size() > 1) {
       if (sides.size() != 2) {
-        return std::unexpected<sdb::Result>{
-          std::in_place, sdb::ERROR_BAD_PARAMETER,
-          "More than one explicit mapping specified on the line ", line_number};
+        SDB_THROW(sdb::ERROR_BAD_PARAMETER,
+                  "solr_synonyms: failed to parse synonyms: More than one "
+                  "explicit mapping specified on the line ",
+                  line_number);
       }
 
-      try {
-        synonyms_line.in = SplitLine(sides[0]);
-        synonyms_line.out = SplitLine(sides[1]);
-      } catch (...) {
-        return std::unexpected<sdb::Result>{std::in_place,
-                                            sdb::ERROR_BAD_PARAMETER,
-                                            "Failed parse line ", line_number};
-      }
-
-      synonyms_lines.push_back(std::move(synonyms_line));
-
+      synonyms_line.in = SplitLine(sides[0], line_number);
+      synonyms_line.out = SplitLine(sides[1], line_number);
     } else {
-      try {
-        synonyms_line.out = SplitLine(sides[0]);
-      } catch (...) {
-        return std::unexpected<sdb::Result>{std::in_place,
-                                            sdb::ERROR_BAD_PARAMETER,
-                                            "Failed parse line ", line_number};
-      }
-
-      synonyms_lines.push_back(std::move(synonyms_line));
+      synonyms_line.out = SplitLine(sides[0], line_number);
     }
+
+    synonyms_lines.push_back(std::move(synonyms_line));
   }
 
   return synonyms_lines;
 }
 
-sdb::ResultOr<SolrSynonymsTokenizer::SynonymsMap> SolrSynonymsTokenizer::Parse(
+SolrSynonymsTokenizer::SynonymsMap SolrSynonymsTokenizer::Parse(
   const SynonymsLines& lines) {
   SynonymsMap result;
   for (const auto& synonyms_line : lines) {
@@ -126,7 +113,7 @@ SolrSynonymsTokenizer::SolrSynonymsTokenizer(
   SDB_ASSERT(_state);
 }
 
-sdb::ResultOr<std::shared_ptr<const SolrSynonymsTokenizer::State>>
+std::shared_ptr<const SolrSynonymsTokenizer::State>
 SolrSynonymsTokenizer::MakeState(std::string text) {
   auto state = std::make_shared<State>();
 
@@ -134,30 +121,15 @@ SolrSynonymsTokenizer::MakeState(std::string text) {
   // `synonyms`'s value pointers reference SynonymsLine elements in `lines`.
   // Populate each buffer before deriving views from it.
   state->text = std::move(text);
-
-  auto lines = ParseSynonymsLines(state->text);
-  if (!lines) {
-    return std::unexpected{std::move(lines).error()};
-  }
-  state->lines = std::move(*lines);
-
-  auto synonyms = Parse(state->lines);
-  if (!synonyms) {
-    return std::unexpected{std::move(synonyms).error()};
-  }
-  state->synonyms = std::move(*synonyms);
+  state->lines = ParseSynonymsLines(state->text);
+  state->synonyms = Parse(state->lines);
 
   return state;
 }
 
 Analyzer::ptr SolrSynonymsTokenizer::Make(Options opts) {
-  auto state = MakeState(std::move(opts.synonyms_text));
-  if (!state) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "solr_synonyms: failed to parse synonyms: ",
-              state.error().errorMessage());
-  }
-  return std::make_unique<SolrSynonymsTokenizer>(std::move(*state));
+  return std::make_unique<SolrSynonymsTokenizer>(
+    MakeState(std::move(opts.synonyms_text)));
 }
 
 bool SolrSynonymsTokenizer::next() {

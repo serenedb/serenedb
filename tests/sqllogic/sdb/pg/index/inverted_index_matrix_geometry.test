@@ -91,21 +91,21 @@ CREATE INDEX m_gl_inc ON m_gl USING inverted(pk) INCLUDE (gs, ga);
 statement error
 CREATE INDEX m_gl_kw_list ON m_gl USING inverted(pk, gs kw_dict);
 ----
-db error: ERROR: Failed to create index: Column 'gs' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
+db error: ERROR: Column 'gs' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
 
 
 # Indexed GEOMETRY[N] with ngram: rejected at CREATE INDEX.
 statement error
 CREATE INDEX m_gl_ng_array ON m_gl USING inverted(pk, ga ng_dict);
 ----
-db error: ERROR: Failed to create index: Column 'ga' has unsupported type GEOMETRY('OGC:CRS84')[2] and can not be indexed
+db error: ERROR: Column 'ga' has unsupported type GEOMETRY('OGC:CRS84')[2] and can not be indexed
 
 
 # Indexed GEOMETRY[] with geo analyzer: rejected (geo analyzer validator).
 statement error
 CREATE INDEX m_gl_geo_list ON m_gl USING inverted(pk, gs geo_s2_dict);
 ----
-db error: ERROR: Failed to create index: Column 'gs' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
+db error: ERROR: Column 'gs' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
 
 
 # INCLUDE-only path still indexes rows.

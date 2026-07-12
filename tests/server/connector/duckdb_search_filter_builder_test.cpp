@@ -143,8 +143,7 @@ catalog::ColumnTokenizer IdentityAnalyzerProvider(uint64_t) {
     "test_string_verbartim", {}, DEFAULT_ROW_GROUP_SIZE,
     irs::analysis::TokenizerConfig{.config = irs::StringTokenizer::Options{}});
   auto tokenizer = gStringTokenizer.GetTokenizer();
-  EXPECT_TRUE(tokenizer);
-  return {.analyzer = *std::move(tokenizer),
+  return {.analyzer = std::move(tokenizer),
           .features = irs::IndexFeatures::None};
 }
 
@@ -156,8 +155,7 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
     irs::analysis::TokenizerConfig{
       .config = irs::analysis::SegmentationTokenizer::Options{}});
   auto tokenizer = gStringTokenizer.GetTokenizer();
-  EXPECT_TRUE(tokenizer);
-  return {.analyzer = *std::move(tokenizer), .features = Features};
+  return {.analyzer = std::move(tokenizer), .features = Features};
 }
 
 catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
@@ -177,8 +175,7 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
     DEFAULT_ROW_GROUP_SIZE,
     irs::analysis::TokenizerConfig{.config = std::move(ngram_opts)});
   auto tokenizer = gNgramTokenizer.GetTokenizer();
-  EXPECT_TRUE(tokenizer);
-  return {.analyzer = *std::move(tokenizer),
+  return {.analyzer = std::move(tokenizer),
           .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq};
 }
 
@@ -194,9 +191,8 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
     DEFAULT_ROW_GROUP_SIZE,
     irs::analysis::TokenizerConfig{.config = std::move(wildcard_opts)});
   auto tokenizer = gWildcardTokenizer.GetTokenizer();
-  EXPECT_TRUE(tokenizer);
   return {
-    .analyzer = *std::move(tokenizer),
+    .analyzer = std::move(tokenizer),
     .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq,
     .tokenizer_column = kTestTokenizerColumnId,
   };
@@ -209,9 +205,8 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
     irs::analysis::TokenizerConfig{
       .config = irs::analysis::GeoJsonAnalyzer::Options{}});
   auto tokenizer = gGeoTokenizer.GetTokenizer();
-  EXPECT_TRUE(tokenizer);
   return {
-    .analyzer = *std::move(tokenizer),
+    .analyzer = std::move(tokenizer),
     .features = irs::IndexFeatures::None,
     .tokenizer_column = kTestTokenizerColumnId,
   };
@@ -630,7 +625,7 @@ class SearchFilterBuilderTest : public ::testing::Test {
 
     // Per-expression claim loop, mirroring production
     // (iresearch_plan.cpp:572-584): MakeSearchFilter is invoked once per
-    // LogicalFilter expression, and a predicate that cannot be translated
+    // LogicalFilter expression, and a predicate it declines (non-ok status)
     // is simply not claimed instead of failing the whole build. This is
     // also what lets us coexist with DuckDB optimizer rewrites (e.g. the
     // distributivity rule adding factored conjuncts to an OR) that may
@@ -648,9 +643,10 @@ class SearchFilterBuilderTest : public ::testing::Test {
         // filter builder's named-analyzer resolver runs with a real
         // context (the resolver returns nullptr for unknown names,
         // surfacing the "tokenizer not found in catalog" error).
-        auto result = sdb::connector::MakeSearchFilter(root, single, getter,
-                                                       *_conn.context);
-        if (result.ok() && root.size() > before) {
+        const bool ok =
+          sdb::connector::MakeSearchFilter(root, single, getter, *_conn.context)
+            .ok();
+        if (ok && root.size() > before) {
           ++claimed;
         } else {
           while (root.size() > before) {
@@ -2721,7 +2717,8 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_NonConstantCentroid) {
   irs::And expected;
   AssertFilter(
     expected, "SELECT * FROM foo WHERE ST_Distance_Between(g, c, 100.0, 500.0)",
-    columns, false, GeoJsonAnalyzerProvider);
+    columns, false, GeoJsonAnalyzerProvider,
+    "ST_Distance_Between centroid must be a constant");
 }
 
 TEST_F(SearchFilterBuilderTest, test_GeoInRange_WrongAnalyzer) {
@@ -2733,7 +2730,8 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_WrongAnalyzer) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Between(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0)",
-               columns, false, SegmentationAnalyzerProvider);
+               columns, false, SegmentationAnalyzerProvider,
+               "Analyzer for field is not a geo analyzer");
 }
 
 TEST_F(SearchFilterBuilderTest, test_GeoInRange_InvalidGeoJsonCentroid) {
@@ -2743,7 +2741,8 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_InvalidGeoJsonCentroid) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Between(g, "
                "'not a geojson', 100.0, 500.0)",
-               columns, false, GeoJsonAnalyzerProvider);
+               columns, false, GeoJsonAnalyzerProvider,
+               "Geo argument is not valid JSON");
 }
 
 // ===========================================================================
@@ -2845,7 +2844,8 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_NonConstantDistance) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') < d",
-               columns, false, GeoJsonAnalyzerProvider);
+               columns, false, GeoJsonAnalyzerProvider,
+               "Geo distance: comparison value must be a constant DOUBLE");
 }
 
 TEST_F(SearchFilterBuilderTest, test_GeoDistance_WrongAnalyzer) {
@@ -2855,7 +2855,8 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_WrongAnalyzer) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') < 100.0",
-               columns, false, SegmentationAnalyzerProvider);
+               columns, false, SegmentationAnalyzerProvider,
+               "Analyzer for field is not a geo analyzer");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastLevenshtein) {

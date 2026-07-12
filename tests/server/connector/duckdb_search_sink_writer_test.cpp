@@ -136,8 +136,7 @@ class DuckDBSearchSinkWriterTest : public ::testing::Test {
       irs::analysis::TokenizerConfig{.config =
                                        irs::StringTokenizer::Options{}});
     auto tokenizer = gStringTokenizer.GetTokenizer();
-    EXPECT_TRUE(tokenizer);
-    return {.analyzer = *std::move(tokenizer),
+    return {.analyzer = std::move(tokenizer),
             .features = irs::IndexFeatures::None};
   }
 

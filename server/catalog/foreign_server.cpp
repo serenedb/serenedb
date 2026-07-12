@@ -180,11 +180,11 @@ std::string RedactConnstrSecrets(std::string_view text) {
   return out;
 }
 
-ForeignServer::ForeignServer(ObjectId schema_id, ObjectId id,
+ForeignServer::ForeignServer(Permissions perm, ObjectId schema_id, ObjectId id,
                              std::string_view name, std::string fdw_name,
                              std::vector<std::string> option_keys,
                              std::vector<std::string> option_values)
-  : Object{Permissions{}, schema_id, id, name, ObjectType::ForeignServer},
+  : Object{std::move(perm), schema_id, id, name, ObjectType::ForeignServer},
     _fdw_name{std::move(fdw_name)},
     _option_keys{std::move(option_keys)},
     _option_values{std::move(option_values)} {}
@@ -195,12 +195,14 @@ std::shared_ptr<ForeignServer> ForeignServer::Deserialize(
   basics::ReadTuple(src, data);
 
   return std::make_shared<ForeignServer>(
-    ctx.schema_id, ctx.id, data.name, std::move(data.fdw_name),
-    std::move(data.option_keys), std::move(data.option_values));
+    std::move(data.perm), ctx.schema_id, ctx.id, data.name,
+    std::move(data.fdw_name), std::move(data.option_keys),
+    std::move(data.option_values));
 }
 
 void ForeignServer::Serialize(duckdb::Serializer& sink) const {
   ForeignServerData data{
+    .perm = GetPermissions(),
     .name = std::string{GetName()},
     .fdw_name = _fdw_name,
     .option_keys = _option_keys,

@@ -2217,6 +2217,29 @@ void RequireObjectOwner(const Snapshot& snapshot, ObjectId role,
 // Common case: the object that confers authority IS the one acted on. Resolves
 // `object_id` once; a missing object is a no-op (the mutation reports
 // not-found).
+// Authority over a USER MAPPING follows its FOREIGN SERVER (PG semantics):
+// the server's owner (or a superuser) manages mappings for anyone; a role may
+// manage its OWN mapping if it holds USAGE on the server.
+// A per-role mapping's own role may self-manage with USAGE; a
+// PUBLIC mapping has an unset role, which never equals the acting role.
+void RequireUserMappingAuthority(const Snapshot& snapshot, ObjectId role,
+                                 ObjectId server_id, ObjectId mapping_role) {
+  auto server = snapshot.GetObject(server_id);
+  if (!server) {
+    return;
+  }
+  const auto& closure = snapshot.ClosureFor(role);
+  if (closure.Owns(*server)) {
+    return;
+  }
+  if (mapping_role == role && closure.Can(*server, AclMode::Usage)) {
+    return;
+  }
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+    ERR_MSG("must be owner of foreign server ", server->GetName()));
+}
+
 void RequireObjectOwner(const Snapshot& snapshot, ObjectId role,
                         ObjectId object_id) {
   if (auto obj = snapshot.GetObject(object_id)) {
@@ -2876,7 +2899,7 @@ Result Catalog::CreateTokenizer(const AccessContext& ax, ObjectId database_id,
 }
 
 Result Catalog::CreateForeignServer(
-  ObjectId database_id, std::string_view schema,
+  const AccessContext& ax, ObjectId database_id, std::string_view schema,
   std::shared_ptr<ForeignServer> foreign_server) {
   absl::MutexLock lock{&_mutex};
   auto schema_id =
@@ -2884,6 +2907,10 @@ Result Catalog::CreateForeignServer(
   if (!schema_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
+  // Gated like other schema-scoped DDL: CREATE on the containing schema
+  // (superusers pass implicitly). PG gates on FDW USAGE instead, but serenedb
+  // has no foreign-data-wrapper catalog object to hang an ACL on.
+  RequireCreateOn(*_snapshot, ax.role, *schema_id);
   foreign_server->SetParentId(*schema_id);
 
   return Apply(
@@ -2903,7 +2930,8 @@ Result Catalog::CreateForeignServer(
     });
 }
 
-Result Catalog::CreateUserMapping(ObjectId database_id, std::string_view schema,
+Result Catalog::CreateUserMapping(const AccessContext& ax, ObjectId database_id,
+                                  std::string_view schema,
                                   std::shared_ptr<UserMapping> user_mapping) {
   absl::MutexLock lock{&_mutex};
   auto schema_id =
@@ -2911,6 +2939,8 @@ Result Catalog::CreateUserMapping(ObjectId database_id, std::string_view schema,
   if (!schema_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
+  RequireUserMappingAuthority(*_snapshot, ax.role, user_mapping->GetServerId(),
+                              user_mapping->GetRoleId());
   user_mapping->SetParentId(*schema_id);
 
   return Apply(
@@ -4606,7 +4636,8 @@ Result Catalog::DropTokenizer(std::string_view database,
   });
 }
 
-Result Catalog::DropForeignServer(std::string_view database,
+Result Catalog::DropForeignServer(const AccessContext& ax,
+                                  std::string_view database,
                                   std::string_view schema,
                                   std::string_view name, bool cascade) {
   absl::MutexLock lock{&_mutex};
@@ -4626,6 +4657,8 @@ Result Catalog::DropForeignServer(std::string_view database,
   if (!foreign_server_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
+  // PG semantics: only the server's owner (or a superuser) may drop it.
+  RequireObjectOwner(*_snapshot, ax.role, *foreign_server_id);
 
   // The server's dependent user mappings (see ForeignServerDependency). PG-style
   // RESTRICT (the default) refuses the drop while any exist; CASCADE removes
@@ -4677,7 +4710,8 @@ Result Catalog::DropForeignServer(std::string_view database,
     });
 }
 
-Result Catalog::DropUserMapping(std::string_view database,
+Result Catalog::DropUserMapping(const AccessContext& ax,
+                                std::string_view database,
                                 std::string_view schema, std::string_view name,
                                 bool cascade) {
   absl::MutexLock lock{&_mutex};
@@ -4696,6 +4730,10 @@ Result Catalog::DropUserMapping(std::string_view database,
     _snapshot->GetObjectId<ResolveType::UserMapping>(*schema_id, name);
   if (!user_mapping_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  if (auto mapping = _snapshot->GetObject<UserMapping>(*user_mapping_id)) {
+    RequireUserMappingAuthority(*_snapshot, ax.role, mapping->GetServerId(),
+                                mapping->GetRoleId());
   }
 
   auto plan = _snapshot->ComputeDropPlan(*user_mapping_id);

@@ -473,9 +473,11 @@ class Catalog final {
   Result CreateTokenizer(const AccessContext& ax, ObjectId database_id,
                          std::string_view schema,
                          std::shared_ptr<Tokenizer> dict);
-  Result CreateForeignServer(ObjectId database_id, std::string_view schema,
+  Result CreateForeignServer(const AccessContext& ax, ObjectId database_id,
+                             std::string_view schema,
                              std::shared_ptr<ForeignServer> foreign_server);
-  Result CreateUserMapping(ObjectId database_id, std::string_view schema,
+  Result CreateUserMapping(const AccessContext& ax, ObjectId database_id,
+                           std::string_view schema,
                            std::shared_ptr<UserMapping> user_mapping);
   Result CreateType(const AccessContext& ax, ObjectId database_id,
                     std::string_view schema, std::shared_ptr<PgSqlType> type);
@@ -538,9 +540,11 @@ class Catalog final {
                       bool cascade);
   Result DropTokenizer(std::string_view database, std::string_view schema,
                        std::string_view name, bool cascade);
-  Result DropForeignServer(std::string_view database, std::string_view schema,
+  Result DropForeignServer(const AccessContext& ax, std::string_view database,
+                           std::string_view schema,
                            std::string_view name, bool cascade);
-  Result DropUserMapping(std::string_view database, std::string_view schema,
+  Result DropUserMapping(const AccessContext& ax, std::string_view database,
+                         std::string_view schema,
                          std::string_view name, bool cascade);
   Result DropTable(const AccessContext& ax, std::string_view database,
                    std::string_view schema, std::string_view name,

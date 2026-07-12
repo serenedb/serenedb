@@ -24,10 +24,14 @@
 #include <vector>
 
 #include "catalog/identifiers/object_id.h"
+#include "catalog/object.h"
 
 namespace sdb::catalog::persistence {
 
 struct UserMappingData {
+  // Owner (the owning server's owner) + ACL; authority over a mapping follows
+  // its server.
+  Permissions perm;
   std::string name;
   std::string server_name;
   std::string user_name;

@@ -44,9 +44,9 @@ class UserMapping : public Object {
   void Serialize(duckdb::Serializer& sink) const final;
   std::shared_ptr<Object> Clone() const final;
 
-  UserMapping(ObjectId schema_id, ObjectId id, std::string_view name,
-              std::string server_name, std::string user_name,
-              std::vector<std::string> option_keys,
+  UserMapping(Permissions perm, ObjectId schema_id, ObjectId id,
+              std::string_view name, std::string server_name,
+              std::string user_name, std::vector<std::string> option_keys,
               std::vector<std::string> option_values,
               ObjectId server_id = {}, ObjectId role_id = {});
 

@@ -26,6 +26,9 @@
 namespace sdb::catalog::persistence {
 
 struct ForeignServerData {
+  // Owner (the creating role) + ACL; persisted so DROP SERVER's owner check
+  // survives restart.
+  Permissions perm;
   std::string name;
   std::string fdw_name;
   std::vector<std::string> option_keys;

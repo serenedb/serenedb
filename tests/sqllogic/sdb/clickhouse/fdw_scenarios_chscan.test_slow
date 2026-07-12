@@ -1,0 +1,220 @@
+control substitution on
+
+# Situational coverage for FOREIGN SERVER <-> USER MAPPING <-> RBAC-role
+# dependencies and password handling that the create_server / fdw_creds tests
+# don't reach: multi-mapping RESTRICT/CASCADE, IF [NOT] EXISTS on mappings,
+# CURRENT_USER resolution, one role mapped across two servers, server-OPTIONS
+# password redaction, and that the transient attach secret never lingers in
+# duckdb_secrets(). Superuser (default connection); enforcement itself is in
+# fdw_permissions_chscan. Needs a live ClickHouse (_chscan). Unique names (fs_*).
+#
+# The fixture user `scanner` (password 'pass word') exercises the password paths;
+# the auth-free `default` user cannot (it rejects a non-empty password).
+
+statement ok
+DROP ROLE IF EXISTS fs_alice;
+
+statement ok
+DROP ROLE IF EXISTS fs_bob;
+
+statement ok
+CREATE ROLE fs_alice;
+
+statement ok
+CREATE ROLE fs_bob;
+
+statement ok
+CREATE SERVER fs_srv FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+
+# The transient attach secret is dropped after CREATE SERVER -- nothing lingers.
+query
+SELECT count(*) AS n FROM duckdb_secrets() WHERE name LIKE '__sdb_fdw_secret_%';
+----
+n
+0
+
+# ===== multiple mappings each block RESTRICT until the LAST is gone =====
+
+statement ok
+CREATE USER MAPPING FOR PUBLIC SERVER fs_srv OPTIONS (user 'default');
+
+statement ok
+CREATE USER MAPPING FOR fs_alice SERVER fs_srv OPTIONS (user 'a');
+
+statement ok
+CREATE USER MAPPING FOR fs_bob SERVER fs_srv OPTIONS (user 'b');
+
+query
+SELECT count(*) AS n FROM pg_user_mapping um
+JOIN pg_foreign_server s ON um.umserver = s.oid WHERE s.srvname = 'fs_srv';
+----
+n
+3
+
+# RESTRICT (default) refused while ANY mapping remains.
+statement error
+DROP SERVER fs_srv;
+----
+db error: ERROR: cannot drop server "fs_srv" because other objects depend on it<slt:ignore>
+
+
+statement ok
+DROP USER MAPPING FOR fs_bob SERVER fs_srv;
+
+# Still two mappings -> still refused.
+statement error
+DROP SERVER fs_srv;
+----
+db error: ERROR: cannot drop server "fs_srv" because other objects depend on it<slt:ignore>
+
+
+statement ok
+DROP USER MAPPING FOR PUBLIC SERVER fs_srv;
+
+statement ok
+DROP USER MAPPING FOR fs_alice SERVER fs_srv;
+
+# Last mapping gone -> RESTRICT drop now succeeds.
+statement ok
+DROP SERVER fs_srv;
+
+# ===== IF [NOT] EXISTS on USER MAPPING =====
+
+statement ok
+CREATE SERVER fs_ine FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+
+statement ok
+CREATE USER MAPPING FOR fs_alice SERVER fs_ine OPTIONS (user 'a');
+
+# IF NOT EXISTS is a no-op on an existing mapping...
+statement ok
+CREATE USER MAPPING IF NOT EXISTS FOR fs_alice SERVER fs_ine OPTIONS (user 'x');
+
+# ...while a plain duplicate errors.
+statement error
+CREATE USER MAPPING FOR fs_alice SERVER fs_ine OPTIONS (user 'x');
+----
+db error: ERROR: user mapping for "fs_alice" on server "fs_ine" already exists<slt:ignore>
+
+
+# DROP USER MAPPING IF EXISTS on a missing mapping is a no-op...
+statement ok
+DROP USER MAPPING IF EXISTS FOR fs_bob SERVER fs_ine;
+
+# ...while a plain drop of a missing mapping errors.
+statement error
+DROP USER MAPPING FOR fs_bob SERVER fs_ine;
+----
+db error: ERROR: user mapping for "fs_bob" on server "fs_ine" does not exist<slt:ignore>
+
+
+statement ok
+DROP SERVER fs_ine CASCADE;
+
+# ===== CREATE USER MAPPING FOR CURRENT_USER resolves to the session role =====
+
+statement ok
+CREATE SERVER fs_cu FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+
+statement ok
+CREATE USER MAPPING FOR CURRENT_USER SERVER fs_cu OPTIONS (user 'default');
+
+# The mapping is stored for the current session role (postgres), FOR-role
+# resolved to a real oid (joins to pg_roles).
+query
+SELECT count(*) AS n FROM pg_user_mapping um
+JOIN pg_foreign_server s ON um.umserver = s.oid WHERE s.srvname = 'fs_cu';
+----
+n
+1
+
+statement ok
+DROP SERVER fs_cu CASCADE;
+
+# ===== one role mapped on TWO servers: dropping one keeps DROP ROLE blocked =====
+
+statement ok
+CREATE SERVER fs_a FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+
+statement ok
+CREATE SERVER fs_b FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+
+statement ok
+CREATE USER MAPPING FOR fs_alice SERVER fs_a OPTIONS (user 'a');
+
+statement ok
+CREATE USER MAPPING FOR fs_alice SERVER fs_b OPTIONS (user 'a');
+
+# fs_alice is referenced by two mappings -> DROP ROLE refused.
+statement error
+DROP ROLE fs_alice;
+----
+db error: ERROR: role "fs_alice" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Drop server A (cascades its mapping); fs_alice is STILL blocked by server B's.
+statement ok
+DROP SERVER fs_a CASCADE;
+
+statement error
+DROP ROLE fs_alice;
+----
+db error: ERROR: role "fs_alice" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Drop server B too -> fs_alice's last mapping gone -> now droppable.
+statement ok
+DROP SERVER fs_b CASCADE;
+
+statement ok
+DROP ROLE fs_alice;
+
+# ===== password in SERVER OPTIONS is redacted in pg_foreign_server.srvoptions =====
+# Uses the fixture user `scanner`/`'pass word'` so the eager attach connects.
+
+statement ok
+CREATE SERVER fs_pw FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest',
+           user 'scanner', password 'pass word');
+
+# The password value is gone from the catalog view (redacted for everyone).
+query
+SELECT array_to_string(srvoptions, ' ') NOT LIKE '%pass word%' AS redacted
+FROM pg_foreign_server WHERE srvname = 'fs_pw';
+----
+redacted
+t
+
+# The server still connects with the (real, unredacted) stored credentials.
+query
+SELECT count(*) AS n FROM fs_pw.chtest.vedernikoff;
+----
+n
+6
+
+# The `passwd` alias is redacted too.
+statement ok
+CREATE SERVER fs_pw2 FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest',
+           user 'scanner', passwd 'pass word');
+
+query
+SELECT array_to_string(srvoptions, ' ') NOT LIKE '%pass word%' AS redacted
+FROM pg_foreign_server WHERE srvname = 'fs_pw2';
+----
+redacted
+t
+
+statement ok
+DROP SERVER fs_pw CASCADE;
+
+statement ok
+DROP SERVER fs_pw2 CASCADE;
+
+statement ok
+DROP ROLE fs_bob;

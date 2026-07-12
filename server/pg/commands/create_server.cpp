@@ -216,15 +216,18 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
 
   auto [keys, values] = SplitOptions(options);
 
+  // Owner = the creating role; the default ACL then gives the owner USAGE and
+  // the public nothing (auth::ClassPrivs/PublicDefaultPrivs).
   auto server = std::make_shared<catalog::ForeignServer>(
-    ObjectId{}, ObjectId{}, name, std::string{fdw_name}, std::move(keys),
-    std::move(values));
+    catalog::Permissions{conn_ctx.GetRoleId()}, ObjectId{}, ObjectId{}, name,
+    std::string{fdw_name}, std::move(keys), std::move(values));
 
   // Validate + attach first; only persist if the connection works, so a failed
   // CREATE SERVER leaves nothing behind.
   RunAttach(*server);
 
-  auto r = catalog.CreateForeignServer(db_id, kSchema, server);
+  auto r = catalog.CreateForeignServer(
+    catalog::ActingAs(conn_ctx.GetRoleId()), db_id, kSchema, server);
   if (!r.ok()) {
     RunDetach(name);
     if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
@@ -246,8 +249,9 @@ void DropForeignServer(ConnectionContext& conn_ctx, std::string_view name,
   // The catalog drops the server and, under CASCADE, its user mappings in one
   // atomic transaction (server<-mapping dependency). RESTRICT (the default)
   // returns ERROR_BAD_PARAMETER while any mapping still depends on the server.
-  auto r =
-    catalog.DropForeignServer(conn_ctx.GetDatabase(), kSchema, name, cascade);
+  auto r = catalog.DropForeignServer(catalog::ActingAs(conn_ctx.GetRoleId()),
+                                     conn_ctx.GetDatabase(), kSchema, name,
+                                     cascade);
 
   if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
     if (!missing_ok) {
@@ -309,9 +313,11 @@ void CreateUserMapping(ConnectionContext& conn_ctx, std::string_view user,
 
   auto [keys, values] = SplitOptions(options);
 
+  // A mapping's authority follows its server (PG): stamp the server's owner.
   auto mapping = std::make_shared<catalog::UserMapping>(
-    ObjectId{}, ObjectId{}, name, std::string{server}, role, std::move(keys),
-    std::move(values), server_obj->GetId(), role_id);
+    catalog::Permissions{server_obj->GetOwner()}, ObjectId{}, ObjectId{}, name,
+    std::string{server}, role, std::move(keys), std::move(values),
+    server_obj->GetId(), role_id);
 
   // A PUBLIC mapping drives the live (instance-global) attachment. Validate the
   // merged credentials on a throwaway alias BEFORE persisting, so a bad mapping
@@ -325,7 +331,8 @@ void CreateUserMapping(ConnectionContext& conn_ctx, std::string_view user,
     }
   }
 
-  auto r = catalog.CreateUserMapping(db_id, kSchema, mapping);
+  auto r = catalog.CreateUserMapping(
+    catalog::ActingAs(conn_ctx.GetRoleId()), db_id, kSchema, mapping);
   if (!r.ok()) {
     if (if_not_exists && r.is(ERROR_SERVER_DUPLICATE_NAME)) {
       return;
@@ -350,8 +357,9 @@ void DropUserMapping(ConnectionContext& conn_ctx, std::string_view user,
   const auto name = catalog::MakeUserMappingName(role, server);
 
   auto& catalog = catalog::GetCatalog();
-  auto r =
-    catalog.DropUserMapping(conn_ctx.GetDatabase(), kSchema, name, false);
+  auto r = catalog.DropUserMapping(catalog::ActingAs(conn_ctx.GetRoleId()),
+                                   conn_ctx.GetDatabase(), kSchema, name,
+                                   false);
   if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
     if (!missing_ok) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),

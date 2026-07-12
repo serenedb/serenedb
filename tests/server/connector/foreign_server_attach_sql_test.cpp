@@ -49,7 +49,7 @@ namespace {
 ForeignServer MakeServer(std::string_view name, std::string fdw,
                          std::vector<std::string> keys,
                          std::vector<std::string> vals) {
-  return ForeignServer{ObjectId{},     ObjectId{},      name,
+  return ForeignServer{Permissions{}, ObjectId{},      ObjectId{}, name,
                        std::move(fdw), std::move(keys), std::move(vals)};
 }
 
@@ -141,8 +141,8 @@ TEST(ForeignServerAttachSql, PublicMappingOverridesServerOptionByKey) {
   auto server =
     MakeServer("vedernikoff_srv", "postgres_fdw", {"user", "host", "database"},
                {"kostya", "h", "postgres"});
-  UserMapping mapping{ObjectId{}, ObjectId{}, "pubmap", "vedernikoff_srv",
-                      "public",   {"user"},   {"pudge"}};
+  UserMapping mapping{Permissions{}, ObjectId{}, ObjectId{}, "pubmap",
+                      "vedernikoff_srv", "public", {"user"}, {"pudge"}};
   PreparedAttach prepared("", server, &mapping);
 
   EXPECT_EQ(prepared.SecretValue("user"), "pudge");

@@ -59,7 +59,7 @@ catalog::MaterializedData SystemTableSnapshot<PgForeignServer>::GetTableData() {
       PgForeignServer row{
         .oid = server->GetId().id(),
         .srvname = server->GetName(),
-        .srvowner = id::kRootUser.id(),
+        .srvowner = server->GetOwner().id(),
         .srvfdw = 0,
         .srvtype = {},
         .srvversion = {},

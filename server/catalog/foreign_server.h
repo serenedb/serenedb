@@ -45,8 +45,9 @@ class ForeignServer : public Object {
   void Serialize(duckdb::Serializer& sink) const final;
   std::shared_ptr<Object> Clone() const final;
 
-  ForeignServer(ObjectId schema_id, ObjectId id, std::string_view name,
-                std::string fdw_name, std::vector<std::string> option_keys,
+  ForeignServer(Permissions perm, ObjectId schema_id, ObjectId id,
+                std::string_view name, std::string fdw_name,
+                std::vector<std::string> option_keys,
                 std::vector<std::string> option_values);
 
   std::string_view GetFdwName() const noexcept { return _fdw_name; }

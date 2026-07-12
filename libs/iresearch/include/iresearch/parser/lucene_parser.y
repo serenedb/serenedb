@@ -41,7 +41,6 @@ struct StringSpan {
 
 %{
 #include "parser.hpp"
-#include "basics/error.h"
 
 #pragma clang diagnostic ignored "-Wunused-but-set-variable"
 %}

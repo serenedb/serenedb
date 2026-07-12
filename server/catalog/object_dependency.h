@@ -385,11 +385,15 @@ struct SchemaDependency : ObjectDependencyBase {
 
 struct DatabaseDependency : ObjectDependencyBase {
   containers::FlatHashSet<ObjectId> schemas;
+  containers::FlatHashSet<ObjectId> subscriptions;
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<DatabaseDependency>(*this);
   }
   void Emit(DropEmitter& e, ObjectId self) const final {
     for (auto id : schemas) {
+      e.EmitAutoDrop(id);
+    }
+    for (auto id : subscriptions) {
       e.EmitAutoDrop(id);
     }
   }

@@ -407,6 +407,13 @@ Result Snapshot::RegisterObject(std::shared_ptr<T> object, ObjectId parent_id,
       return r;
     }
     return AddObjectDefinition(parent_id, std::move(object));
+  } else if constexpr (std::is_same_v<T, Subscription>) {
+    auto r = AddToResolution<ResolveType::Subscription>(
+      parent_id, object->GetId(), object->GetName(), replace);
+    if (!r.ok()) {
+      return r;
+    }
+    return AddObjectDefinition(parent_id, std::move(object));
   } else {
     static_assert(false);
   }
@@ -446,6 +453,9 @@ void Snapshot::UnregisterObject(std::shared_ptr<T> object, ObjectId parent_id,
     RemoveFromResolution<ResolveType::Relation>(
       object->GetParentId(), object->GetName(), maybe_not_found);
     parent_id = object->GetRelationId();
+  } else if constexpr (std::is_same_v<T, Subscription>) {
+    RemoveFromResolution<ResolveType::Subscription>(
+      parent_id, object->GetName(), maybe_not_found);
   } else {
     static_assert(false);
   }
@@ -823,6 +833,10 @@ void Snapshot::AddDependencies(ObjectId parent_id, const Object& obj) {
     case ObjectType::Column:
     case ObjectType::CheckConstraint:
       SDB_ASSERT(_in_load);
+      break;
+    case ObjectType::Subscription:
+      GetDependencyForWrite<DatabaseDependency>(parent_id)
+        ->subscriptions.insert(id);
       break;
     case ObjectType::Invalid:
     case ObjectType::Tombstone:
@@ -1641,6 +1655,11 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
           schema_deps->sequences.erase(id);
         }
       } break;
+      case ObjectType::Subscription: {
+        auto db_deps = GetDependencyForWrite<DatabaseDependency>(parent_id);
+        SDB_ASSERT(db_deps);
+        db_deps->subscriptions.erase(id);
+      } break;
       case ObjectType::Invalid:
       case ObjectType::Tombstone:
       case ObjectType::Column:
@@ -1654,6 +1673,7 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
     case ObjectType::Database: {
       auto db_deps = GetDependency<DatabaseDependency>(id);
       drop_childs(db_deps->schemas);
+      drop_childs(db_deps->subscriptions);
     } break;
     case ObjectType::Role:
       break;
@@ -1704,6 +1724,7 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
     case ObjectType::PgSqlType:
     case ObjectType::Tokenizer:
     case ObjectType::Sequence:
+    case ObjectType::Subscription:
       break;
     case ObjectType::Invalid:
     case ObjectType::Tombstone:
@@ -1817,6 +1838,14 @@ Result Catalog::RegisterType(ObjectId database_id, ObjectId schema_id,
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     return clone->RegisterObject(std::move(type), schema_id, false);
+  });
+}
+
+Result Catalog::RegisterSubscription(ObjectId database_id,
+                                     std::shared_ptr<Subscription> sub) {
+  absl::MutexLock lock{&_mutex};
+  return Apply(_snapshot, [&](auto& clone) {
+    return clone->RegisterObject(std::move(sub), database_id, false);
   });
 }
 
@@ -2774,6 +2803,34 @@ Result Catalog::CreateType(const AccessContext& ax, ObjectId database_id,
                                        type->GetId(), bytes);
     },
     [&](auto clone) { clone->UnregisterObject(type, *schema_id, true); });
+}
+
+Result Catalog::CreateSubscription(const AccessContext& ax,
+                                   ObjectId database_id,
+                                   std::shared_ptr<Subscription> sub) {
+  absl::MutexLock lock{&_mutex};
+
+  RequireCreateOn(*_snapshot, ax.role, database_id);
+  sub->SetParentId(database_id);
+
+  return Apply(
+    _snapshot,
+    [&](auto& clone) -> Result {
+      auto result = clone->RegisterObject(sub, database_id,
+                                          /*replace=*/false);
+      if (result.fail()) {
+        return result;
+      }
+      SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
+
+      duckdb::MemoryStream stream;
+      auto bytes = catalog::SerializeObject(*sub, stream);
+      return _engine->CreateDefinition(database_id, ObjectType::Subscription,
+                                       sub->GetId(), bytes);
+    },
+    [&](auto& clone) {
+      return clone->UnregisterObject(sub, database_id, true);
+    });
 }
 
 template<typename T>
@@ -4578,6 +4635,7 @@ class OpenDatabase {
 
   Result RegisterDatabases();
   Result RegisterSchemas(ObjectId database_id);
+  Result RegisterSubscriptions(ObjectId database_id);
   Result RegisterFunctions(ObjectId database_id, ObjectId schema_id);
   Result RegisterTokenizers(ObjectId database_id, ObjectId schema_id);
   Result RegisterViews(ObjectId database_id, ObjectId schema_id);
@@ -4602,6 +4660,8 @@ class OpenDatabase {
   Result AddIndex(ObjectId database_id, ObjectId schema_id, ObjectId table_id,
                   ObjectId index_id, ObjectType entry_type,
                   std::string_view bytes);
+  Result AddSubscription(ObjectId database_id, ObjectId subscription_id,
+                         std::string_view bytes);
 
   bool IsDeleted(ObjectId id, DeletedScope scope) {
     return _deleted[magic_enum::enum_integer(scope)].contains(id);
@@ -4664,6 +4724,10 @@ Result OpenDatabase::AddDatabase(ObjectId database_id, std::string_view bytes) {
   }
   CollectDeletedDefinitions(database_id, DeletedScope::Database);
   auto r = RegisterSchemas(database_id);
+  if (r.ok()) {
+    r = RegisterSubscriptions(database_id);
+  }
+
   ClearDeletedDefinitions(DeletedScope::Database);
   return r;
 }
@@ -4699,6 +4763,18 @@ Result OpenDatabase::RegisterSchemas(ObjectId database_id) {
         return std::move(drop.error());
       }
       DropTask::Schedule(std::move(*drop)).Detach();
+      return {};
+    });
+}
+
+Result OpenDatabase::RegisterSubscriptions(ObjectId database_id) {
+  return GetCatalogStore().VisitBoot(
+    database_id, ObjectType::Subscription,
+    [&](CatalogStore::Key key, std::string_view bytes) -> Result {
+      if (!IsDeleted(key.id, DeletedScope::Database)) {
+        return AddSubscription(database_id, key.id, bytes);
+      }
+      // drop not implemented yet.
       return {};
     });
 }
@@ -4982,6 +5058,17 @@ Result OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
     return r;
   }
   return {};
+}
+
+Result OpenDatabase::AddSubscription(ObjectId database_id,
+                                     ObjectId subscription_id,
+                                     std::string_view bytes) {
+  auto sub = catalog::DeserializeObject<catalog::Subscription>(
+    bytes, {.id = subscription_id, .database_id = database_id});
+  if (!sub) {
+    return Result{ERROR_INTERNAL, "Failed to read subscription definition"};
+  }
+  return _catalog.RegisterSubscription(database_id, std::move(sub));
 }
 
 }  // namespace

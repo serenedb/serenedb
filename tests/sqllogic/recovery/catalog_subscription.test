@@ -1,0 +1,51 @@
+control substitution on
+
+onlyif serenedb
+statement ok
+DROP ROLE IF EXISTS sub_rec_vedernikoff;
+
+onlyif serenedb
+statement ok
+CREATE ROLE sub_rec_vedernikoff;
+
+onlyif serenedb
+statement ok
+CREATE SUBSCRIPTION my_sub1 CONNECTION 'host=localhost dbname=mydb' PUBLICATION my_pub1;
+
+onlyif serenedb
+statement ok
+GRANT TEMP ON DATABASE postgres TO sub_rec_vedernikoff;
+
+onlyif serenedb
+query
+SELECT subname FROM pg_subscription ORDER BY subname;
+----
+subname
+my_sub1
+
+onlyif serenedb
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+onlyif serenedb
+statement error connection closed
+SELECT 1;
+
+
+onlyif serenedb
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT subname FROM pg_subscription ORDER BY subname;
+----
+subname
+my_sub1
+
+onlyif serenedb
+connection after_crash
+statement ok
+REVOKE ALL ON DATABASE postgres FROM sub_rec_vedernikoff;
+
+onlyif serenedb
+connection after_crash
+statement ok
+DROP ROLE sub_rec_vedernikoff;

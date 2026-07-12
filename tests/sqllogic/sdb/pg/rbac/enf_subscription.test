@@ -1,0 +1,110 @@
+# serenedb-only: CREATE SUBSCRIPTION is gated on CREATE on the current
+# database (Catalog::CreateSubscription -> RequireCreateOn), and the creator
+# is recorded as the subscription owner. Both directions of each matrix:
+# deny without the privilege / allow with it / deny again after revoke, and
+# DROP ROLE refused while the role owns a subscription / allowed once
+# DROP DATABASE has cascaded the subscription away (there is no
+# DROP SUBSCRIPTION yet, so the cascade is the only way the ownership edge
+# can disappear -- which is exactly what makes it observable here).
+#
+# Uses the `database=` connection directive: the subscription lives in its
+# own database so the cascade can run without touching the default one.
+#
+# Lore: vedernikoff subscribes to the mop bulletin; clickclack decides who
+# may press the button.
+
+statement ok
+DROP DATABASE IF EXISTS subenf_vault;
+
+
+statement ok
+DROP ROLE IF EXISTS subenf_vedernikoff;
+
+
+statement ok
+CREATE ROLE subenf_vedernikoff LOGIN PASSWORD 'subenf_pw';
+
+
+statement ok
+CREATE DATABASE subenf_vault;
+
+
+# ---- (1) without CREATE on the database the pragma is refused ----
+
+connection c_sub user=subenf_vedernikoff password=subenf_pw database=subenf_vault
+statement error
+CREATE SUBSCRIPTION subenf_sub1 CONNECTION 'host=localhost dbname=mydb' PUBLICATION subenf_pub;
+----
+db error: ERROR: permission denied for database subenf_vault
+
+
+# The refused statement must not leave anything behind.
+connection c_vault_admin database=subenf_vault
+query
+SELECT subname FROM pg_subscription ORDER BY subname;
+----
+subname
+
+
+# ---- (2) with CREATE granted the same statement succeeds ----
+
+connection default
+statement ok
+GRANT CREATE ON DATABASE subenf_vault TO subenf_vedernikoff;
+
+
+connection c_sub user=subenf_vedernikoff password=subenf_pw database=subenf_vault
+statement ok
+CREATE SUBSCRIPTION subenf_sub1 CONNECTION 'host=localhost dbname=mydb' PUBLICATION subenf_pub;
+
+
+# The creator -- not the bootstrap superuser -- is recorded as subowner.
+connection c_vault_admin database=subenf_vault
+query
+SELECT r.rolname FROM pg_subscription s JOIN pg_roles r ON r.oid = s.subowner WHERE s.subname = 'subenf_sub1';
+----
+rolname
+subenf_vedernikoff
+
+
+# ---- (3) revoking CREATE closes the gate again on the live session ----
+
+connection default
+statement ok
+REVOKE CREATE ON DATABASE subenf_vault FROM subenf_vedernikoff;
+
+
+connection c_sub user=subenf_vedernikoff password=subenf_pw database=subenf_vault
+statement error
+CREATE SUBSCRIPTION subenf_sub2 CONNECTION 'host=localhost dbname=mydb' PUBLICATION subenf_pub;
+----
+db error: ERROR: permission denied for database subenf_vault
+
+
+connection c_vault_admin database=subenf_vault
+query
+SELECT subname FROM pg_subscription ORDER BY subname;
+----
+subname
+subenf_sub1
+
+
+# ---- (4) DROP ROLE is refused while the role owns a subscription ----
+
+connection default
+statement error
+DROP ROLE subenf_vedernikoff;
+----
+db error: ERROR: role "subenf_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# ---- (5) DROP DATABASE cascades over the subscription; the ownership edge
+# goes with it, so the same DROP ROLE now succeeds ----
+
+connection default
+statement ok
+DROP DATABASE subenf_vault;
+
+
+statement ok
+DROP ROLE subenf_vedernikoff;

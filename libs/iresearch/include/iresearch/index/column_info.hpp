@@ -29,8 +29,10 @@
 #include <optional>
 #include <string_view>
 
+#include "basics/system-compiler.h"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
+#include "iresearch/utils/vector.hpp"
 
 namespace irs {
 
@@ -40,6 +42,35 @@ enum class VectorMetric : uint8_t {
   Cosine,
   L1,
 };
+
+template<VectorMetric Metric>
+auto ComputeDistance(const byte_type* l, const byte_type* r, uint16_t d) {
+  if constexpr (Metric == VectorMetric::L2Sqr) {
+    return vector::L2Space<float, float, float>::Dist(l, r, d);
+  } else if constexpr (Metric == VectorMetric::L1) {
+    return vector::L1Space<float, float, float>::Dist(l, r, d);
+  } else if constexpr (Metric == VectorMetric::InnerProduct) {
+    return vector::DotProductImpl<float, float>::Compute(l, r, d);
+  } else if constexpr (Metric == VectorMetric::Cosine) {
+    auto [ll, lr, rr] =
+      vector::CosineDistanceImpl<float, float, float>::Compute(l, r, d);
+    const float denom = std::sqrt(ll) * std::sqrt(rr);
+    return denom == 0.f ? 0.f : lr / denom;
+  }
+  SDB_UNREACHABLE();
+}
+
+constexpr bool VectorMetricNearestIsLargest(VectorMetric metric) noexcept {
+  switch (metric) {
+    case VectorMetric::InnerProduct:
+    case VectorMetric::Cosine:
+      return true;
+    case VectorMetric::L2Sqr:
+    case VectorMetric::L1:
+      return false;
+  }
+  SDB_UNREACHABLE();
+}
 
 enum class VectorQuantization : uint8_t {
   None = 0,

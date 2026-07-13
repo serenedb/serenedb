@@ -47,6 +47,7 @@ namespace irs {
 class ColReader;
 class ColumnReader;
 class ReadContext;
+class IdxWriter;
 class IvfTermIterator;
 
 struct BuiltIvf {
@@ -54,25 +55,10 @@ struct BuiltIvf {
   uint32_t d = 0;
   std::vector<doc_id_t> cluster_docs;
   std::vector<uint64_t> cluster_offsets;
-  std::vector<float> fine_centroids;
-
-  std::vector<float> l1_centroids;
-  std::vector<uint32_t> cell_fine_base;
-  std::vector<uint32_t> cell_n_l2;
-  std::vector<float> radii;
-  uint32_t n_l1 = 0;
-  CentroidShapeKind shape_kind = CentroidShapeKind::TwoLayer;
-  bstring stats;
+  CentroidsBuilder centroids;
 };
 
 class QuantizerWriter;
-
-struct CentroidShape {
-  CentroidShapeKind kind;
-  uint32_t total_target;
-  uint32_t n_l1;
-  uint32_t n_l2_target;
-};
 
 class IvfBuilder {
  public:
@@ -81,20 +67,9 @@ class IvfBuilder {
   BuiltIvf Compute(const ColumnReader& vector_column, ReadContext& ctx,
                    QuantizerWriter* qw) const;
 
-  static CentroidShape ResolveCentroidShape(uint64_t valid_count,
-                                            const IvfInfo& info);
-
  private:
   IvfInfo _info;
 };
-
-struct IvfResidentSpan {
-  uint64_t offset;
-  uint64_t byte_size;
-};
-
-IvfResidentSpan WriteIvfCentroidBody(IndexOutput& out, VectorMetric metric,
-                                     const BuiltIvf& built);
 
 class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
  public:
@@ -142,13 +117,14 @@ class IvfWriter {
 
   ~IvfWriter();
 
+  void SetIdxWriter(IdxWriter& idx) noexcept { _idx = &idx; }
+
   void Compute(const ColumnReader& col, ReadContext& ctx);
+
+  void FlushTree();
 
   field_id ColumnId() const noexcept { return _info.centroids_id; }
   VectorMetric Metric() const noexcept { return _info.metric; }
-  std::shared_ptr<const BuiltIvf> Built() const noexcept {
-    return _built ? _result.built : nullptr;
-  }
 
   bool Empty() const noexcept { return !_built; }
 
@@ -159,10 +135,11 @@ class IvfWriter {
   struct Result {
     field_id postings_id;
     std::unique_ptr<QuantizerWriter> qw;
-    std::shared_ptr<const BuiltIvf> built;
+    BuiltIvf data;
   };
 
   IvfInfo _info;
+  IdxWriter* _idx = nullptr;
   Result _result;
   bool _built = false;
   std::unique_ptr<IvfTermReader> _reader;

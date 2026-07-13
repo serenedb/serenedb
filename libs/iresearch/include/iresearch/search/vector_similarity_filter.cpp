@@ -20,9 +20,7 @@
 
 #include "iresearch/search/vector_similarity_filter.hpp"
 
-#include <algorithm>
 #include <array>
-#include <cmath>
 #include <span>
 #include <vector>
 
@@ -39,11 +37,6 @@
 #include "iresearch/search/vector_similarity_query.hpp"
 
 namespace irs {
-namespace {
-
-constexpr double kL1Overprobe = 3.0;
-
-}  // namespace
 
 QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
@@ -58,15 +51,9 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
   const auto* ivf = segment.Ivf(opts.centroids_id);
   const auto* vector_col = segment.Column(field_id());
   if (!postings || !ivf || !vector_col || ivf->Empty() ||
-      opts.query.size() != ivf->Dimension()) {
+      opts.query.size() != ivf->Dim()) {
     return QueryBuilder::Empty();
   }
-
-  const uint32_t n1 = std::min<uint32_t>(
-    ivf->L1Count(),
-    static_cast<uint32_t>(std::max<double>(
-      1.0,
-      std::ceil(kL1Overprobe * std::sqrt(static_cast<double>(opts.nprobe))))));
 
   auto idx_in = segment.ReopenIvf();
   if (!idx_in) {
@@ -81,7 +68,7 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
     (has_pay && metric_ok && !ivf->QuantStats().empty())
       ? opts.quant
       : VectorQuantization::None;
-  const uint32_t d = ivf->Dimension();
+  const uint32_t d = static_cast<uint32_t>(ivf->Dim());
 
   std::shared_ptr<const QuantizerCodebook> codebook;
   if (quant != VectorQuantization::None) {
@@ -96,8 +83,8 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
 
   std::vector<uint32_t> fine_ids;
   std::vector<float> probed_centroids;
-  ivf->SearchGlobal(opts.query, *idx_in, n1, opts.nprobe, fine_ids,
-                    needs_centroids ? &probed_centroids : nullptr);
+  ivf->Search(opts.query, *idx_in, opts.nprobe, fine_ids,
+              needs_centroids ? &probed_centroids : nullptr);
   if (fine_ids.empty()) {
     return QueryBuilder::Empty();
   }

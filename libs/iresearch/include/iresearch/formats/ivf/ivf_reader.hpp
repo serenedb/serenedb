@@ -48,8 +48,6 @@ using VectorDistanceFn = float (*)(const byte_type*, const byte_type*,
 
 VectorDistanceFn ResolveVectorDistance(VectorMetric metric);
 
-bool VectorMetricNearestIsLargest(VectorMetric metric) noexcept;
-
 bool VectorMetricIsAngular(VectorMetric metric) noexcept;
 
 inline constexpr bool Better(bool nearest_is_largest, float candidate,

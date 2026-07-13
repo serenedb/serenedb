@@ -20,8 +20,7 @@
 
 #include "iresearch/formats/ivf/clustering.hpp"
 
-#include <faiss/Clustering.h>
-#include <faiss/IndexFlat.h>
+#include <superkmeans/superkmeans.h>
 
 #include <algorithm>
 #include <cmath>
@@ -62,12 +61,12 @@ void NormalizeRows(float* data, size_t n, uint32_t d) {
     for (uint32_t j = 0; j < d; ++j) {
       sum += row[j] * row[j];
     }
-    if (sum <= 0.f) {
+    if (sum == 0.f) {
       continue;
     }
-    const float inv = 1.f / std::sqrt(sum);
+    const float inv_norm = 1.f / std::sqrt(sum);
     for (uint32_t j = 0; j < d; ++j) {
-      row[j] *= inv;
+      row[j] *= inv_norm;
     }
   }
 }
@@ -76,27 +75,16 @@ std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
                                   size_t n, uint32_t k, uint32_t d,
                                   uint32_t seed, uint32_t niter,
                                   uint32_t nredo) {
-  const bool angular = VectorMetricIsAngular(metric);
+  skmeans::SuperKMeansConfig cfg;
+  cfg.iters = std::max<uint32_t>(1, niter);
+  cfg.seed = seed;
+  cfg.angular = VectorMetricIsAngular(metric);
+  cfg.sampling_fraction = 1.0f;
+  cfg.max_points_per_cluster =
+    std::max<uint32_t>(256, static_cast<uint32_t>((n + k - 1) / k));
 
-  faiss::ClusteringParameters cp;
-  cp.niter = static_cast<int>(std::max<uint32_t>(1, niter));
-  cp.nredo = static_cast<int>(std::max<uint32_t>(1, nredo));
-  cp.seed = static_cast<int>(seed);
-  cp.spherical = angular;
-  cp.min_points_per_centroid = 1;
-  cp.max_points_per_centroid = static_cast<int>(std::max<size_t>(
-    static_cast<size_t>(cp.max_points_per_centroid), (n + k - 1) / k));
-  cp.init_method = faiss::ClusteringInitMethod::KMEANS_PLUS_PLUS;
-
-  faiss::Clustering clus(static_cast<int>(d), static_cast<int>(k), cp);
-  if (angular) {
-    faiss::IndexFlatIP index(static_cast<int>(d));
-    clus.train(static_cast<faiss::idx_t>(n), data, index);
-  } else {
-    faiss::IndexFlatL2 index(static_cast<int>(d));
-    clus.train(static_cast<faiss::idx_t>(n), data, index);
-  }
-  return std::move(clus.centroids);
+  skmeans::SuperKMeans kmeans(k, d, cfg);
+  return kmeans.Train(data, n);
 }
 
 uint32_t NearestCentroid(VectorMetric metric, const float* v,
@@ -115,6 +103,29 @@ void AssignNearest(VectorMetric metric, const float* data, size_t n,
     out.push_back(
       NearestImpl(dist, nearest_is_largest, data + i * d, centroids, k, d));
   }
+}
+
+std::vector<bool> ReadValidity(const ColumnReader& vector_column, uint64_t rows,
+                               ReadContext& ctx) {
+  std::vector<bool> valid(rows, true);
+  const ColumnReader* validity = vector_column.Validity();
+  if (!validity) {
+    return valid;
+  }
+  duckdb::Vector vbatch{duckdb::LogicalType{duckdb::LogicalTypeId::VALIDITY},
+                        duckdb::idx_t{0}};
+  vbatch.BufferMutable().GetValidityMask().Initialize(STANDARD_VECTOR_SIZE);
+  auto vscan = validity->InitScan(ctx);
+  for (uint64_t start = 0; start < rows; start += STANDARD_VECTOR_SIZE) {
+    const auto take =
+      std::min<duckdb::idx_t>(STANDARD_VECTOR_SIZE, rows - start);
+    validity->Scan(vscan, vbatch, take);
+    const auto& mask = vbatch.Buffer().GetValidityMask();
+    for (uint64_t k = 0; k < take; ++k) {
+      valid[start + k] = mask.RowIsValid(k);
+    }
+  }
+  return valid;
 }
 
 }  // namespace irs

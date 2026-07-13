@@ -58,18 +58,6 @@ VectorDistanceFn ResolveVectorDistance(VectorMetric metric) {
   SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED, "unsupported IVF vector metric");
 }
 
-bool VectorMetricNearestIsLargest(VectorMetric metric) noexcept {
-  switch (metric) {
-    case VectorMetric::InnerProduct:
-    case VectorMetric::Cosine:
-      return true;
-    case VectorMetric::L2Sqr:
-    case VectorMetric::L1:
-      return false;
-  }
-  return false;
-}
-
 bool VectorMetricIsAngular(VectorMetric metric) noexcept {
   return metric == VectorMetric::InnerProduct || metric == VectorMetric::Cosine;
 }

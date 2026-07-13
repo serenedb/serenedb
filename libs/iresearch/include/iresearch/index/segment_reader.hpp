@@ -69,7 +69,7 @@ class SegmentReader final : public SubReader {
   NormReader::ptr norms(field_id field) const final;
 
   const ColumnReader* Column(field_id field) const final;
-  const TwoLayerCentroids* Ivf(field_id field) const final;
+  const CentroidsTree* Ivf(field_id field) const final;
   IndexInput::ptr ReopenIvf() const final;
   const ColReader* GetColReader() const final;
 

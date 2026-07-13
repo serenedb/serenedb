@@ -359,7 +359,25 @@ endif()
 sdb_update_module(${GIT_EXECUTABLE} "faiss" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 set(FAISS_ENABLE_GPU OFF CACHE BOOL "" FORCE)
 set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "" FORCE)
+set(FAISS_ENABLE_EXTRAS OFF CACHE BOOL "" FORCE)
 add_subdirectory(faiss)
+
+################################################################################
+### SuperKMeans library
+################################################################################
+set(SKMEANS_COMPILE_TESTS OFF CACHE BOOL "" FORCE)
+set(SKMEANS_COMPILE_BENCHMARKS OFF CACHE BOOL "" FORCE)
+set(SKMEANS_COMPILE_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(SKMEANS_ENABLE_GPU OFF CACHE BOOL "" FORCE)
+set(SKMEANS_SKIP_FFTW ON CACHE BOOL "" FORCE)
+if(ARCH_AMD64)
+    set(SKMEANS_PORTABLE ON CACHE BOOL "" FORCE)
+elseif(ARCH_AARCH64)
+    set(SKMEANS_MARCH "armv8-a+sve" CACHE STRING "" FORCE)
+endif()
+
+sdb_update_module(${GIT_EXECUTABLE} "SuperKMeans" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+add_subdirectory(SuperKMeans)
 
 ################################################################################
 ## snowball stemmer

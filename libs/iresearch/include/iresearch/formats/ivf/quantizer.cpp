@@ -23,7 +23,7 @@
 #include <faiss/impl/ProductQuantizer.h>
 #include <faiss/impl/RaBitQuantizer.h>
 #include <faiss/impl/ScalarQuantizer.h>
-#include <faiss/impl/pq4_fast_scan.h>
+#include <faiss/impl/fast_scan/fast_scan.h>
 #include <faiss/utils/AlignedTable.h>
 #include <faiss/utils/distances.h>
 #include <faiss/utils/quantize_lut.h>

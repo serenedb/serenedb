@@ -66,7 +66,7 @@ struct IdxReader::Impl {
   Encryption::Stream::ptr cipher;
   IndexInput::ptr in;
   uint64_t body_start{};
-  std::vector<std::pair<field_id, TwoLayerCentroids>> ivf_entries;
+  std::vector<std::pair<field_id, CentroidsTree>> ivf_entries;
   sdb::containers::FlatHashMap<field_id, size_t> ivf_by_id;
   std::vector<std::pair<field_id, TermDictMeta>> term_dicts;
   sdb::containers::FlatHashMap<field_id, size_t> term_dict_by_id;
@@ -150,12 +150,24 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
     [&](duckdb::Deserializer::List& list, duckdb::idx_t /*i*/) {
       list.ReadObject([&](duckdb::Deserializer& obj) {
         const auto id = obj.ReadProperty<uint64_t>(0, "id");
-        const auto offset = obj.ReadProperty<uint64_t>(1, "offset");
-        const auto byte_size = obj.ReadProperty<uint64_t>(2, "byte_size");
+        const auto tree_offset = obj.ReadProperty<uint64_t>(1, "tree_offset");
+        const auto tree_byte_size =
+          obj.ReadProperty<uint64_t>(2, "tree_byte_size");
+        const auto stats_offset = obj.ReadProperty<uint64_t>(3, "stats_offset");
+        const auto stats_byte_size =
+          obj.ReadProperty<uint64_t>(4, "stats_byte_size");
 
         auto body = _impl->in->Dup();
-        body->Seek(offset);
-        auto entry = TwoLayerCentroids::Deserialize(*body, byte_size);
+        body->Seek(tree_offset);
+        auto entry = CentroidsTree::Deserialize(*body, tree_byte_size);
+
+        if (stats_byte_size != 0) {
+          body->Seek(stats_offset);
+          const size_t stats_size = static_cast<size_t>(body->ReadI64());
+          bstring stats(stats_size, 0);
+          body->ReadData(stats.data(), stats_size);
+          entry.SetQuantStats(std::move(stats));
+        }
 
         const size_t idx = _impl->ivf_entries.size();
         _impl->ivf_entries.emplace_back(id, std::move(entry));
@@ -171,7 +183,7 @@ bool IdxReader::HasIvf(field_id id) const noexcept {
   return _impl->ivf_by_id.contains(id);
 }
 
-const TwoLayerCentroids* IdxReader::Ivf(field_id id) const noexcept {
+const CentroidsTree* IdxReader::Ivf(field_id id) const noexcept {
   auto it = _impl->ivf_by_id.find(id);
   return it == _impl->ivf_by_id.end() ? nullptr
                                       : &_impl->ivf_entries[it->second].second;

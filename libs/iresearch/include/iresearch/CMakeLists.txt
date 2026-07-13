@@ -275,6 +275,7 @@ target_link_libraries(
     PUBLIC ${FASTTEXT_LIBRARY_STATIC}
     PUBLIC ${SIMD_LIBRARY_STATIC}
     PUBLIC ${FAISS_LIB}
+    PUBLIC superkmeans::superkmeans
     PUBLIC re2
     PUBLIC serene_geo
     PUBLIC streamvbyte

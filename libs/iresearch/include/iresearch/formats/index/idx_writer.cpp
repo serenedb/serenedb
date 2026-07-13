@@ -32,7 +32,6 @@
 #include "basics/math_utils.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
-#include "iresearch/formats/ivf/ivf_writer.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/directory.hpp"
@@ -48,11 +47,8 @@ constexpr duckdb::field_id_t kFooterSlotIvf = 101;
 }  // namespace
 
 struct IvfCentroidEntry {
-  field_id column_id;
-  VectorMetric metric;
-  std::shared_ptr<const BuiltIvf> built;
-  uint64_t offset = 0;
-  uint64_t byte_size = 0;
+  field_id id;
+  IvfCentroidMeta meta;
 };
 
 struct TermDictEntry {
@@ -117,10 +113,9 @@ IndexOutput& IdxWriter::BlocksOut() {
   return *_impl->out;
 }
 
-void IdxWriter::AddIvf(field_id id, VectorMetric metric,
-                       std::shared_ptr<const BuiltIvf> built) {
-  _impl->ivf_entries.push_back(IvfCentroidEntry{
-    .column_id = id, .metric = metric, .built = std::move(built)});
+void IdxWriter::AddIvf(field_id id, IvfCentroidMeta meta) {
+  _impl->ivf_entries.push_back(
+    IvfCentroidEntry{.id = id, .meta = std::move(meta)});
 }
 
 void IdxWriter::AddTermDictEntry(field_id id, TermDictMeta meta) {
@@ -138,12 +133,6 @@ void IdxWriter::Commit() {
   }
 
   EnsureOut();
-
-  for (auto& e : _impl->ivf_entries) {
-    const auto span = WriteIvfCentroidBody(*_impl->out, e.metric, *e.built);
-    e.offset = span.offset;
-    e.byte_size = span.byte_size;
-  }
 
   const uint64_t footer_offset = _impl->out->Position();
 
@@ -167,16 +156,19 @@ void IdxWriter::Commit() {
         obj.WriteProperty<uint64_t>(8, "norm", e.meta.norm);
       });
     });
-  serializer.WriteList(kFooterSlotIvf, "ivf", _impl->ivf_entries.size(),
-                       [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-                         const auto& e = _impl->ivf_entries[i];
-                         list.WriteObject([&](duckdb::Serializer& obj) {
-                           obj.WriteProperty<uint64_t>(0, "id", e.column_id);
-                           obj.WriteProperty<uint64_t>(1, "offset", e.offset);
-                           obj.WriteProperty<uint64_t>(2, "byte_size",
-                                                       e.byte_size);
-                         });
-                       });
+  serializer.WriteList(
+    kFooterSlotIvf, "ivf", _impl->ivf_entries.size(),
+    [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+      const auto& e = _impl->ivf_entries[i];
+      list.WriteObject([&](duckdb::Serializer& obj) {
+        obj.WriteProperty<uint64_t>(0, "id", e.id);
+        obj.WriteProperty<uint64_t>(1, "tree_offset", e.meta.tree_offset);
+        obj.WriteProperty<uint64_t>(2, "tree_byte_size", e.meta.tree_byte_size);
+        obj.WriteProperty<uint64_t>(3, "stats_offset", e.meta.stats_offset);
+        obj.WriteProperty<uint64_t>(4, "stats_byte_size",
+                                    e.meta.stats_byte_size);
+      });
+    });
   serializer.End();
 
   IndexOutput* trailer_out = _impl->out.get();

@@ -20,13 +20,17 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
 
+#include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/index/column_info.hpp"
 
 namespace irs {
+
+class ReadContext;
 
 void NormalizeRows(float* data, size_t n, uint32_t d);
 
@@ -41,5 +45,24 @@ uint32_t NearestCentroid(VectorMetric metric, const float* v,
 void AssignNearest(VectorMetric metric, const float* data, size_t n,
                    const float* centroids, uint32_t k, uint32_t d,
                    std::vector<uint32_t>& out);
+
+std::vector<bool> ReadValidity(const ColumnReader& vector_column, uint64_t rows,
+                               ReadContext& ctx);
+
+template<typename Sink>
+void StreamRowBatches(const ColumnReader& child, uint64_t rows, uint32_t d,
+                      ReadContext& ctx, Sink&& sink) {
+  const auto rows_per_batch =
+    static_cast<duckdb::idx_t>(std::max<uint64_t>(1, STANDARD_VECTOR_SIZE / d));
+  duckdb::Vector batch{duckdb::LogicalType::FLOAT,
+                       static_cast<duckdb::idx_t>(rows_per_batch) * d};
+  auto scan = child.InitScan(ctx);
+  for (uint64_t first = 0; first < rows; first += rows_per_batch) {
+    const auto n = static_cast<duckdb::idx_t>(
+      std::min<uint64_t>(rows_per_batch, rows - first));
+    child.ScanCount(scan, batch, static_cast<duckdb::idx_t>(n) * d, 0);
+    sink(first, n, duckdb::FlatVector::GetData<float>(batch));
+  }
+}
 
 }  // namespace irs

@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <utility>
@@ -46,9 +47,9 @@ std::vector<size_t> SplitByCentroids(VectorMetric metric, std::span<float> data,
                                      size_t d) {
   const size_t n = data.size() / d;
   const size_t c = centroids.size() / d;
-  std::vector<size_t> offsets(c, 0);
+  std::vector<size_t> counts(c, 0);
   if (n == 0 || c == 0) {
-    return offsets;
+    return counts;
   }
 
   std::vector<uint32_t> assign;
@@ -56,16 +57,20 @@ std::vector<size_t> SplitByCentroids(VectorMetric metric, std::span<float> data,
                 static_cast<uint32_t>(c), static_cast<uint32_t>(d), assign);
 
   for (const uint32_t a : assign) {
-    ++offsets[a];
+    ++counts[a];
   }
-  size_t running = 0;
-  for (auto& off : offsets) {
-    const size_t count = std::exchange(off, running);
-    running += count;
+
+  std::vector<size_t> starts(c);
+  {
+    size_t running = 0;
+    for (size_t i = 0; i < c; ++i) {
+      starts[i] = running;
+      running += counts[i];
+    }
   }
 
   std::vector<float> reordered(data.size());
-  std::vector<size_t> cursor = offsets;
+  std::vector<size_t> cursor = starts;
   for (size_t i = 0; i < n; ++i) {
     const uint32_t bucket = assign[i];
     const size_t pos = cursor[bucket]++;
@@ -73,46 +78,69 @@ std::vector<size_t> SplitByCentroids(VectorMetric metric, std::span<float> data,
                 d * sizeof(float));
   }
   std::memcpy(data.data(), reordered.data(), data.size() * sizeof(float));
-  return offsets;
+  return counts;
+}
+
+std::vector<size_t> ExclusiveScan(std::span<const size_t> counts) {
+  std::vector<size_t> starts(counts.size());
+  size_t running = 0;
+  for (size_t i = 0; i < counts.size(); ++i) {
+    starts[i] = running;
+    running += counts[i];
+  }
+  return starts;
 }
 
 }  // namespace
 
-CentroidsNode CentroidsNode::Deserialize(IndexInput& in, size_t level, size_t d,
-                                         size_t offset, size_t size) {
+std::vector<CentroidsNode> CentroidsNode::Deserialize(
+  IndexInput& in, size_t level, size_t d, std::span<const size_t> starts,
+  std::span<const size_t> sizes) {
+  SDB_ASSERT(starts.size() == sizes.size());
   const size_t n_total = static_cast<size_t>(in.ReadI64());
   const size_t body_start = static_cast<size_t>(in.Position());
-  CentroidsNode node{.size = size == 0 ? n_total - offset : size,
-                     .level = level};
-  if (level > 0) {
-    node.next_level_offset = body_start +
-                             n_total * sizeof(node.centroids[0]) * d +
-                             n_total * sizeof(node.offsets[0]);
-  }
+  const size_t stride = d * sizeof(float) + (level > 0 ? sizeof(size_t) : 0);
+  std::vector<CentroidsNode> nodes;
+  nodes.reserve(starts.size());
+  for (auto&& [start, size] : std::views::zip(starts, sizes)) {
+    CentroidsNode node{level, d};
+    node.size = size == 0 ? n_total - start : size;
 
-  in.Seek(body_start + offset * d * sizeof(node.centroids[0]));
-  node.centroids.resize(node.size * d);
-  in.ReadData(reinterpret_cast<byte_type*>(node.centroids.data()),
-              node.size * sizeof(node.centroids[0]) * d);
+    in.Seek(body_start + start * stride);
+    node.centroids.resize(node.size * d);
+    in.ReadData(reinterpret_cast<byte_type*>(node.centroids.data()),
+                node.size * sizeof(node.centroids[0]) * d);
 
-  if (level > 0) {
-    const size_t offsets_start =
-      body_start + n_total * sizeof(node.centroids[0]) * d;
-    in.Seek(offsets_start + offset * sizeof(node.offsets[0]));
-    node.offsets.resize(node.size);
-    in.ReadData(reinterpret_cast<byte_type*>(node.offsets.data()),
-                node.size * sizeof(node.offsets[0]));
+    if (level > 0) {
+      node.counts.resize(node.size);
+      in.ReadData(reinterpret_cast<byte_type*>(node.counts.data()),
+                  node.size * sizeof(node.counts[0]));
+    }
+    nodes.emplace_back(std::move(node));
   }
-  return node;
+  if (level > 0) {
+    in.Seek(body_start + n_total * stride);
+  }
+  return nodes;
 }
 
-void CentroidsNode::Serialize(IndexOutput& out) const {
+void CentroidsNode::Serialize(IndexOutput& out,
+                              std::span<const size_t> clusters) const {
   out.WriteU64(size);
-  out.WriteData(reinterpret_cast<const byte_type*>(centroids.data()),
-                centroids.size() * sizeof(centroids[0]));
-  if (level > 0) {
-    out.WriteData(reinterpret_cast<const byte_type*>(offsets.data()),
-                  offsets.size() * sizeof(offsets[0]));
+  SDB_ASSERT(!clusters.empty());
+  for (size_t i = 0; i < clusters.size(); ++i) {
+    const size_t length = i == clusters.size() - 1
+                            ? size - clusters[i]
+                            : clusters[i + 1] - clusters[i];
+
+    out.WriteData(
+      reinterpret_cast<const byte_type*>(centroids.data() + clusters[i] * d),
+      length * d * sizeof(centroids[0]));
+    if (level > 0) {
+      out.WriteData(
+        reinterpret_cast<const byte_type*>(counts.data() + clusters[i]),
+        length * sizeof(counts[0]));
+    }
   }
 }
 
@@ -134,11 +162,19 @@ void IVFHeader::Serialize(IndexOutput& out) const {
 }
 
 CentroidsTree CentroidsTree::Deserialize(IndexInput& in, uint64_t byte_size) {
-  CentroidsTree tree;
-  tree._head = IVFHeader::Deserialize(in);
-  size_t level = static_cast<size_t>(in.ReadI64());
-  tree._root = CentroidsNode::Deserialize(in, level, tree._head.d);
-  return tree;
+  auto head = IVFHeader::Deserialize(in);
+  const size_t level = static_cast<size_t>(in.ReadI64());
+  std::array<size_t, 1> starts{0};
+  std::array<size_t, 1> sizes{0};
+  auto nodes = CentroidsNode::Deserialize(in, level, head.d, starts, sizes);
+  SDB_ASSERT(nodes.size() == 1);
+  // Deserialize left `in` positioned at the start of level-1's body (a
+  // no-op seek to the current position when level == 0) -- capture that so
+  // Search can restore it on every call, since it will be re-called many
+  // times against the same stream and must not depend on where the
+  // previous call happened to leave the cursor.
+  const size_t next_level_offset = static_cast<size_t>(in.Position());
+  return {std::move(head), std::move(nodes.front()), next_level_offset};
 }
 
 void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
@@ -147,8 +183,13 @@ void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
   const size_t n_layers = _root.level + 1;
   const auto per_layer = static_cast<uint32_t>(std::ceil(std::pow(
     static_cast<double>(nprobe), 1.0 / static_cast<double>(n_layers))));
+  if (_root.level > 0) {
+    in.Seek(_next_level_offset);
+  }
+  const std::array<size_t, 1> root_base{0};
   irs::ResolveEnum<VectorMetric>(_head.metric, [&]<VectorMetric Metric>() {
-    _root.Search<Metric>(query, in, per_layer, out_ids, out_centroids);
+    CentroidsNode::Search<Metric>(query, in, per_layer, out_ids, out_centroids,
+                                  std::span{&_root, 1}, root_base);
   });
 }
 
@@ -160,7 +201,6 @@ CentroidsBuilder CentroidsBuilder::Create(const ColumnReader& vector_column,
   builder._metric = metric;
   builder._d = d;
   {
-    CentroidsNode leaf;
     const auto* child = vector_column.Child();
     SDB_ASSERT(child);
 
@@ -195,11 +235,12 @@ CentroidsBuilder CentroidsBuilder::Create(const ColumnReader& vector_column,
                      });
     SDB_ASSERT(seen == valid_count);
 
+    CentroidsNode leaf{0, d};
+
     leaf.centroids = n_clusters == 0
                        ? std::vector<float>{}
                        : TrainCentroids(metric, sample.data(), valid_count,
                                         n_clusters, d, kTrainSeed);
-    leaf.level = 0;
     leaf.size = leaf.centroids.size() / d;
     builder._nodes.emplace_back(std::move(leaf));
   }
@@ -212,10 +253,9 @@ CentroidsBuilder CentroidsBuilder::Create(const ColumnReader& vector_column,
     auto new_centroids = TrainCentroids(
       metric, current_centroids.data(), current_centroids.size() / d,
       static_cast<uint32_t>(n_clusters), d, kTrainSeed);
-    CentroidsNode node;
+    CentroidsNode node{builder._nodes.back().level + 1, d};
     node.centroids = std::move(new_centroids);
     node.size = node.centroids.size() / d;
-    node.level = builder._nodes.back().level + 1;
     builder._nodes.emplace_back(std::move(node));
     current_centroids = std::span{builder._nodes.back().centroids};
   }
@@ -226,8 +266,8 @@ CentroidsBuilder CentroidsBuilder::Create(const ColumnReader& vector_column,
 
 void CentroidsBuilder::Finish() {
   for (size_t i = 1; i < _nodes.size(); ++i) {
-    _nodes[i - 1].offsets = SplitByCentroids(_metric, _nodes[i].centroids,
-                                             _nodes[i - 1].centroids, _d);
+    _nodes[i - 1].counts = SplitByCentroids(_metric, _nodes[i].centroids,
+                                            _nodes[i - 1].centroids, _d);
   }
 }
 
@@ -236,8 +276,10 @@ CentroidsSpan CentroidsBuilder::Serialize(IndexOutput& out) const {
   const size_t offset = static_cast<size_t>(out.Position());
   head.Serialize(out);
   out.WriteU64(_nodes[0].level);
-  for (const auto& node : _nodes) {
-    node.Serialize(out);
+  const std::array<size_t, 1> root_clusters{0};
+  _nodes[0].Serialize(out, root_clusters);
+  for (size_t i = 1; i < _nodes.size(); ++i) {
+    _nodes[i].Serialize(out, ExclusiveScan(_nodes[i - 1].counts));
   }
   return {.offset = offset,
           .byte_size = static_cast<size_t>(out.Position()) - offset};

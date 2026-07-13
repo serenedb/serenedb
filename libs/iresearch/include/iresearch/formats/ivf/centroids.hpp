@@ -48,62 +48,110 @@ struct IVFHeader {
 
 struct CentroidsNode {
   std::vector<float> centroids;
-  std::vector<size_t> offsets;
+  std::vector<size_t> counts;  // level > 0: child count of each centroid
   size_t size;
   size_t level;
-  size_t next_level_offset;
+  size_t d;
 
-  static CentroidsNode Deserialize(IndexInput& in, size_t level, size_t d,
-                                   size_t offset = 0, size_t size = 0);
-  void Serialize(IndexOutput& out) const;
+  CentroidsNode(size_t level, size_t d) : level{level}, d{d} {}
+
+  static std::vector<CentroidsNode> Deserialize(IndexInput& in, size_t level,
+                                                size_t d,
+                                                std::span<const size_t> starts,
+                                                std::span<const size_t> sizes);
+  void Serialize(IndexOutput& out, std::span<const size_t> clusters) const;
 
   template<VectorMetric Metric>
-  void Search(std::span<const float> query, IndexInput& in, uint32_t nprobe,
-              std::vector<uint32_t>& out_ids, std::vector<float>* out_centroids,
-              size_t base = 0) const {
+  static void Search(std::span<const float> query, IndexInput& in,
+                     uint32_t nprobe, std::vector<uint32_t>& out_ids,
+                     std::vector<float>* out_centroids,
+                     std::span<const CentroidsNode> nodes,
+                     std::span<const size_t> bases) {
+    SDB_ASSERT(!nodes.empty());
+    const size_t level = nodes[0].level;
     const uint16_t d = query.size();
     const auto* q = reinterpret_cast<const byte_type*>(query.data());
-    std::vector<std::pair<float, size_t>> scored;
-    scored.reserve(size);
-    for (size_t i = 0; i < size; ++i) {
-      const byte_type* c =
-        reinterpret_cast<const byte_type*>(centroids.data() + d * i);
-      scored.emplace_back(ComputeDistance<Metric>(q, c, d), i);
-    }
-    const auto k = std::min<size_t>(nprobe, size);
-    const auto mid = scored.begin() + k;
     constexpr bool kOrder = VectorMetricNearestIsLargest(Metric);
-    std::partial_sort(scored.begin(), mid, scored.end(),
-                      [&](const auto& l, const auto& r) noexcept {
-                        if constexpr (kOrder) {
-                          return l.first > r.first;
-                        } else {
-                          return l.first < r.first;
-                        }
-                      });
+    const auto by_dist = [](const auto& l, const auto& r) noexcept {
+      if constexpr (kOrder) {
+        return l.dist > r.dist;
+      } else {
+        return l.dist < r.dist;
+      }
+    };
+
     if (level == 0) {
+      // Leaf level: score, pick top-k, emit global leaf ids directly. No
+      // child recursion, no per-centroid child-count involved at all.
+      struct Scored {
+        float dist;
+        size_t id;
+        std::span<const float> centroid;
+      };
+      std::vector<Scored> scored;
+      for (size_t node_index = 0; node_index < nodes.size(); ++node_index) {
+        const auto& node = nodes[node_index];
+        scored.reserve(scored.size() + node.size);
+        for (size_t i = 0; i < node.size; ++i) {
+          const byte_type* c =
+            reinterpret_cast<const byte_type*>(node.centroids.data() + d * i);
+          scored.push_back({ComputeDistance<Metric>(q, c, d),
+                            bases[node_index] + i,
+                            std::span{node.centroids}.subspan(i * d, d)});
+        }
+      }
+      const auto k = std::min<size_t>(nprobe * nodes.size(), scored.size());
+      const auto mid = scored.begin() + k;
+      std::partial_sort(scored.begin(), mid, scored.end(), by_dist);
       out_ids.reserve(out_ids.size() + k);
       if (out_centroids) {
         out_centroids->reserve(out_centroids->size() + k * d);
       }
       for (auto it = scored.begin(); it != mid; ++it) {
-        const auto i = it->second;
-        out_ids.emplace_back(static_cast<uint32_t>(base + i));
+        out_ids.emplace_back(static_cast<uint32_t>(it->id));
         if (out_centroids) {
-          out_centroids->append_range(std::span{centroids}.subspan(i * d, d));
+          out_centroids->append_range(it->centroid);
         }
       }
-    } else {
-      for (auto it = scored.begin(); it != mid; ++it) {
-        const auto i = it->second;
-        in.Seek(next_level_offset);
-        const size_t offset = offsets[i];
-        const size_t size =
-          i + 1 < offsets.size() ? offsets[i + 1] - offsets[i] : 0;
-        auto child = CentroidsNode::Deserialize(in, level - 1, d, offset, size);
-        child.Search<Metric>(query, in, nprobe, out_ids, out_centroids, offset);
+      return;
+    }
+
+    // level > 0: score, pick top-k, batch-fetch their children, recurse.
+    // Each scored entry carries its absolute global start (a running
+    // prefix-sum over this node's own counts) and child count directly --
+    // no "peek at the next entry" needed, no last-item special case.
+    struct Scored {
+      float dist;
+      size_t start;
+      size_t count;
+    };
+    std::vector<Scored> scored;
+    for (size_t node_index = 0; node_index < nodes.size(); ++node_index) {
+      const auto& node = nodes[node_index];
+      scored.reserve(scored.size() + node.size);
+      size_t start = bases[node_index];
+      for (size_t i = 0; i < node.size; ++i) {
+        const byte_type* c =
+          reinterpret_cast<const byte_type*>(node.centroids.data() + d * i);
+        scored.push_back(
+          {ComputeDistance<Metric>(q, c, d), start, node.counts[i]});
+        start += node.counts[i];
       }
     }
+    const auto k = std::min<size_t>(nprobe * nodes.size(), scored.size());
+    const auto mid = scored.begin() + k;
+    std::partial_sort(scored.begin(), mid, scored.end(), by_dist);
+    std::vector<size_t> starts, sizes;
+    starts.reserve(k);
+    sizes.reserve(k);
+    for (auto it = scored.begin(); it != mid; ++it) {
+      starts.emplace_back(it->start);
+      sizes.emplace_back(it->count);
+    }
+    auto next_nodes =
+      CentroidsNode::Deserialize(in, level - 1, d, starts, sizes);
+    Search<Metric>(query, in, nprobe, out_ids, out_centroids, next_nodes,
+                   starts);
   }
 };
 
@@ -111,7 +159,12 @@ class CentroidsBuilder;
 
 class CentroidsTree {
  public:
-  CentroidsTree() = default;
+  CentroidsTree(IVFHeader&& head, CentroidsNode&& root,
+                size_t next_level_offset)
+    : _head{std::move(head)},
+      _root{std::move(root)},
+      _next_level_offset{next_level_offset} {}
+
   CentroidsTree(const CentroidsTree&) = delete;
   CentroidsTree(CentroidsTree&&) = default;
 
@@ -136,6 +189,8 @@ class CentroidsTree {
  private:
   IVFHeader _head;
   CentroidsNode _root;
+  size_t _next_level_offset;  // byte position where _root.level-1's body
+                              // begins; meaningless when _root.level == 0
 };
 
 struct CentroidsSpan {

@@ -42,6 +42,7 @@
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/function/cast/default_casts.hpp>
 #include <duckdb/inet/inet_ipaddress.hpp>
+#include <duckdb/main/client_context.hpp>
 #include <limits>
 #include <string>
 #include <string_view>
@@ -49,6 +50,8 @@
 #include <vector>
 
 #include "connector/pg_logical_types.h"
+#include "icu-datefunc.hpp"
+#include "icu-helpers.hpp"
 #include "pg/pg_types.h"
 
 namespace sdb::pg {
@@ -551,6 +554,51 @@ struct BlobText {
   }
 };
 
+std::unique_ptr<icu::Calendar> MakeCalendar(std::string tz_name) {
+  auto tz = duckdb::ICUHelpers::TryGetTimeZone(tz_name);
+  if (!tz) {
+    return nullptr;
+  }
+  UErrorCode status = U_ZERO_ERROR;
+  std::unique_ptr<icu::Calendar> calendar{
+    icu::Calendar::createInstance(tz.release(), status)};
+  if (U_FAILURE(status)) {
+    return nullptr;
+  }
+  return calendar;
+}
+
+}  // namespace
+
+icu::Calendar* DeserializeContext::CalendarFor(std::string_view tz_name) {
+  std::string key{tz_name};
+  auto it = named_calendars.find(key);
+  if (it != named_calendars.end()) {
+    return it->second.get();
+  }
+  auto calendar = MakeCalendar(key);
+  auto* raw = calendar.get();
+  named_calendars.emplace(std::move(key), std::move(calendar));
+  return raw;
+}
+
+void FillDeserializeContext(duckdb::ClientContext& client,
+                            DeserializeContext& context) {
+  duckdb::Value value;
+  if (!client.TryGetCurrentSetting("TimeZone", value) || value.IsNull()) {
+    context.session_calendar.reset();
+    return;
+  }
+  const auto tz_name = value.ToString();
+  if (IsUtcTimeZoneName(tz_name)) {
+    context.session_calendar.reset();
+  } else {
+    context.session_calendar = MakeCalendar(tz_name);
+  }
+}
+
+namespace {
+
 struct TimestampText {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
@@ -567,12 +615,35 @@ struct TimestampText {
 
 struct TimestampTzText {
   template<typename Sink>
-  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+  static bool Decode(DeserializeContext& ctx, std::string_view data,
+                     Sink& sink) {
     duckdb::timestamp_t result;
-    if (duckdb::Timestamp::TryConvertTimestamp(data.data(), data.size(), result,
-                                               false) !=
-        duckdb::TimestampCastResult::SUCCESS) {
+    bool has_offset = false;
+    duckdb::string_t tz_name{};
+    if (duckdb::Timestamp::TryConvertTimestampTZ(
+          data.data(), data.size(), result, /*use_offset=*/true, has_offset,
+          tz_name) != duckdb::TimestampCastResult::SUCCESS) {
       return false;
+    }
+    if (!has_offset && result.IsFinite()) {
+      icu::Calendar* calendar = nullptr;
+      if (tz_name.GetSize() != 0) {
+        calendar = ctx.CalendarFor({tz_name.GetData(), tz_name.GetSize()});
+        if (!calendar) {
+          return false;
+        }
+      } else {
+        // No zone in the text: interpret in the session zone (null = UTC).
+        calendar = ctx.session_calendar.get();
+      }
+      if (calendar) {
+        try {
+          result = duckdb::timestamp_t{
+            duckdb::ICUDateFunc::FromNaive(calendar, result).value};
+        } catch (const std::exception&) {
+          return false;
+        }
+      }
     }
     sink.Fixed(duckdb::timestamp_tz_t{result});
     return true;

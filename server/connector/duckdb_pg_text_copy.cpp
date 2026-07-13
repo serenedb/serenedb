@@ -281,6 +281,7 @@ struct PgTextCopyFromGlobalState final
   std::shared_ptr<const catalog::Snapshot> snapshot;
   std::vector<sdb::pg::DeserializationFunction<sdb::pg::VectorSink>>
     deserializers;
+  sdb::pg::DeserializeContext dctx;
   std::string partial;  // bytes pulled but not yet ending in a full row
   bool finished = false;
   bool header_pending = false;  // drop the first line (COPY ... HEADER)
@@ -304,6 +305,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitGlobalFrom(
   const auto& bind = input.bind_data->Cast<PgTextCopyFromBindData>();
   auto result = duckdb::make_uniq<PgTextCopyFromGlobalState>();
   result->header_pending = bind.header;
+  sdb::pg::FillDeserializeContext(context, result->dctx);
 
   // pg-wire STDIN routes through the CopyInBridge, which needs the server-side
   // wire connection. A real file falls through to the OS filesystem and works
@@ -514,7 +516,8 @@ void ScanFrom(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
           type, sdb::pg::VarFormat::Text));
     }
   }
-  sdb::pg::DeserializeContext dctx{g.snapshot.get()};
+  auto& dctx = g.dctx;
+  dctx.snapshot = g.snapshot.get();
   std::string field_buf;  // reused per field across this chunk
   duckdb::idx_t row = 0;
   bool eof = false;

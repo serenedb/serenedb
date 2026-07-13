@@ -2075,6 +2075,7 @@ BindInfo PgWireSession<Kind>::ParseBindVars(std::string_view cursor,
   values.reserve(params);
   const auto snapshot = _connection_ctx->AcquireCatalogSnapshot();
   sdb::pg::DeserializeContext dctx{snapshot.get()};
+  sdb::pg::FillDeserializeContext(_connection_ctx->GetClientContext(), dctx);
   for (uint16_t i = 0; i < params; ++i) {
     if (cursor.size() < sizeof(int32_t)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROTOCOL_VIOLATION),

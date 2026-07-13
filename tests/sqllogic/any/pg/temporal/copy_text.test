@@ -1,0 +1,152 @@
+control substitution on
+
+# COPY (FORMAT text) round-trip with temporal payload under a non-UTC
+# session, plus every text-escaping trigger: embedded tab / newline /
+# backslash, control bytes (\r \v \f \b), a literal backslash-N that must
+# stay data (not the NULL marker), real NULLs, and a TIMESTAMPTZ[] column
+# whose rendered form nests quoting inside the COPY escaping.
+
+statement ok
+SET TIME ZONE 'America/New_York';
+
+statement ok
+CREATE TABLE ctsrc
+(
+  id   INTEGER PRIMARY KEY,
+  ts   TIMESTAMPTZ,
+  ttz  TIMETZ,
+  note TEXT,
+  tss  TIMESTAMPTZ[]
+);
+
+statement ok
+CREATE TABLE ctdst
+(
+  id   INTEGER PRIMARY KEY,
+  ts   TIMESTAMPTZ,
+  ttz  TIMETZ,
+  note TEXT,
+  tss  TIMESTAMPTZ[]
+);
+
+statement count 7
+INSERT INTO ctsrc VALUES
+    (1, TIMESTAMPTZ '2024-01-15 12:00:00+00', TIMETZ '12:00:00+05:30', 'plain',
+        ARRAY[TIMESTAMPTZ '2024-01-15 12:00:00+00', TIMESTAMPTZ '2024-07-15 12:00:00+00']::TIMESTAMPTZ[]),
+    (2, TIMESTAMPTZ '2024-07-15 12:00:00+00', TIMETZ '23:59:59-03:30', e'tab\tx', NULL),
+    (3, TIMESTAMPTZ '2024-01-15 12:00:00+00', TIMETZ '12:00:00+05:30', e'nl\nx', NULL),
+    (4, TIMESTAMPTZ '2024-01-15 12:00:00+00', TIMETZ '12:00:00+05:30', e'bs\\x', NULL),
+    (5, TIMESTAMPTZ '2024-01-15 12:00:00+00', TIMETZ '12:00:00+05:30', e'\\N', NULL),
+    (6, TIMESTAMPTZ '2024-01-15 12:00:00+00', TIMETZ '12:00:00+05:30', NULL, NULL),
+    (7, TIMESTAMPTZ '2024-01-15 12:00:00+00', TIMETZ '12:00:00+05:30',
+        chr(13) || chr(11) || chr(12) || chr(8), NULL);
+
+statement count 7
+COPY ctsrc TO '${__TEST_DIR__}/copy_text_tz.txt' (FORMAT text);
+
+statement count 7
+COPY ctdst FROM '${__TEST_DIR__}/copy_text_tz.txt' (FORMAT text);
+
+query
+SELECT
+  (SELECT count(*) FROM (SELECT * FROM ctsrc EXCEPT SELECT * FROM ctdst) a)
+  + (SELECT count(*) FROM (SELECT * FROM ctdst EXCEPT SELECT * FROM ctsrc) b)
+  AS diff;
+----
+diff
+0
+
+# The real NULL stayed NULL and the literal backslash-N stayed a two-char
+# string.
+query
+SELECT count(*) AS null_notes FROM ctdst WHERE note IS NULL;
+----
+null_notes
+1
+
+query
+SELECT length(note) AS bsn_len FROM ctdst WHERE id = 5;
+----
+bsn_len
+2
+
+# Escaped bytes survived verbatim (rendered via placeholders so the expected
+# output stays single-line).
+query
+SELECT id,
+  replace(replace(replace(replace(replace(replace(replace(note,
+    chr(92), '<B>'), chr(9), '<T>'), chr(10), '<N>'),
+    chr(13), '<R>'), chr(11), '<V>'), chr(12), '<F>'), chr(8), '<H>') AS viz
+FROM ctdst WHERE id IN (2, 3, 4, 5, 7) ORDER BY id;
+----
+id	viz
+2	tab<T>x
+3	nl<N>x
+4	bs<B>x
+5	<B>N
+7	<R><V><F><H>
+
+query
+SELECT extract(epoch FROM ts)::BIGINT AS ep, ttz FROM ctdst WHERE id = 2;
+----
+ep	ttz
+1721044800	23:59:59-03:30
+
+query
+SELECT CASE WHEN tss[1] = TIMESTAMPTZ '2024-01-15 12:00:00+00'
+             AND tss[2] = TIMESTAMPTZ '2024-07-15 12:00:00+00'
+       THEN 1 ELSE 0 END AS arr_ok
+FROM ctdst WHERE id = 1;
+----
+arr_ok
+1
+
+# ---------------------------------------------------------------------------
+# TIMESTAMPTZ text input through COPY: offset-less strings parse in the
+# session zone (NY winter -05), named zones resolve with DST (summer -04),
+# explicit offsets apply, and the ambiguous fall-back local time takes the
+# first occurrence.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE rawsrc(s TEXT);
+
+statement count 4
+INSERT INTO rawsrc VALUES
+    ('2024-01-15 07:00:00'),
+    ('2024-07-15 08:00:00 America/New_York'),
+    ('2024-01-15 12:00:00+00'),
+    ('2024-11-03 01:30:00');
+
+statement count 4
+COPY rawsrc TO '${__TEST_DIR__}/copy_text_tz_in.txt' (FORMAT text);
+
+statement ok
+CREATE TABLE tzin(ts TIMESTAMPTZ);
+
+statement count 4
+COPY tzin FROM '${__TEST_DIR__}/copy_text_tz_in.txt' (FORMAT text);
+
+query
+SELECT extract(epoch FROM ts)::BIGINT AS ep FROM tzin ORDER BY ep;
+----
+ep
+1705320000
+1705320000
+1721044800
+1730615400
+
+statement ok
+DROP TABLE rawsrc;
+
+statement ok
+DROP TABLE tzin;
+
+statement ok
+SET TIME ZONE 'UTC';
+
+statement ok
+DROP TABLE ctsrc;
+
+statement ok
+DROP TABLE ctdst;

@@ -109,10 +109,10 @@ query
 SELECT pk, ttz FROM ttzu_i ORDER BY pk;
 ----
 pk	ttz
-1	12:00:00+00:00
-2	12:30:00+02:00
-3	09:00:00-02:00
-4	10:30:00+00:00
+1	12:00:00+00
+2	12:30:00+02
+3	09:00:00-02
+4	10:30:00+00
 
 # TIMETZ list column: element-level range through the same encoder.
 statement ok

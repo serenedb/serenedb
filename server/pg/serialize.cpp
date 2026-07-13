@@ -40,6 +40,7 @@
 #include <immintrin.h>
 #endif
 #include <duckdb/common/allocator.hpp>
+#include <duckdb/common/operator/add.hpp>
 #include <duckdb/common/operator/string_cast.hpp>
 #include <duckdb/common/types/bit.hpp>
 #include <duckdb/common/types/cast_helpers.hpp>
@@ -894,11 +895,63 @@ struct TimestampNsBinCore {
   }
 };
 
+// PG EncodeTimezone shape: ±HH[:MM[:SS]], parts only when nonzero.
+void WriteTzOffsetSuffix(SerializationContext& ctx, int32_t offset_secs) {
+  const bool negative = offset_secs < 0;
+  const auto abs_offset = negative ? -offset_secs : offset_secs;
+  const auto offset_h = abs_offset / 3600;
+  const auto offset_m = (abs_offset % 3600) / 60;
+  const auto offset_s = abs_offset % 60;
+  const size_t len = offset_s != 0 ? 9 : (offset_m != 0 ? 6 : 3);
+  ctx.writer->Write(len, [&](uint8_t* dst) {
+    char* buf = reinterpret_cast<char*>(dst);
+    *buf++ = negative ? '-' : '+';
+    *buf++ = '0' + offset_h / 10;
+    *buf++ = '0' + offset_h % 10;
+    if (len > 3) {
+      *buf++ = ':';
+      *buf++ = '0' + offset_m / 10;
+      *buf++ = '0' + offset_m % 10;
+      if (len > 6) {
+        *buf++ = ':';
+        *buf++ = '0' + offset_s / 10;
+        *buf++ = '0' + offset_s % 10;
+      }
+    }
+    return len;
+  });
+}
+
+int32_t SessionTzOffsetSeconds(const icu::TimeZone& tz, int64_t utc_ms) {
+  int32_t raw_ms = 0;
+  int32_t dst_ms = 0;
+  UErrorCode status = U_ZERO_ERROR;
+  tz.getOffset(static_cast<UDate>(utc_ms), false, raw_ms, dst_ms, status);
+  if (U_FAILURE(status)) {
+    return 0;
+  }
+  return (raw_ms + dst_ms) / 1000;
+}
+
 template<WrapContext InContainer>
 struct TimestampTzTextCore {
   using Value = duckdb::timestamp_tz_t;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value tz) {
     const auto ts = duckdb::timestamp_t{tz};
+    if (ctx.time_zone && ts.IsFinite()) {
+      const auto offset_secs =
+        SessionTzOffsetSeconds(*ctx.time_zone, ts.value / 1000);
+      int64_t local_us = 0;
+      if (duckdb::TryAddOperator::Operation(
+            ts.value, int64_t{offset_secs} * 1'000'000, local_us)) {
+        auto str = duckdb::Timestamp::ToString(duckdb::timestamp_t{local_us});
+        WithWrapIfNested<InContainer>(ctx, [&] {
+          ctx.writer->Write(str);
+          WriteTzOffsetSuffix(ctx, offset_secs);
+        });
+        return;
+      }
+    }
     auto str = duckdb::Timestamp::ToString(ts);
     WithWrapIfNested<InContainer>(ctx, [&] {
       ctx.writer->Write(str);
@@ -923,6 +976,21 @@ struct TimestampTzNsTextCore {
   using Value = duckdb::timestamp_tz_ns_t;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value tz) {
     duckdb::StringHeap heap{duckdb::Allocator::DefaultAllocator()};
+    if (ctx.time_zone && tz.IsFinite()) {
+      const auto offset_secs =
+        SessionTzOffsetSeconds(*ctx.time_zone, tz.value / 1'000'000);
+      int64_t local_ns = 0;
+      if (duckdb::TryAddOperator::Operation(
+            tz.value, int64_t{offset_secs} * 1'000'000'000, local_ns)) {
+        const auto str =
+          duckdb::StringCast::Operation(duckdb::timestamp_ns_t{local_ns}, heap);
+        WithWrapIfNested<InContainer>(ctx, [&] {
+          ctx.writer->Write(std::string_view{str.GetData(), str.GetSize()});
+          WriteTzOffsetSuffix(ctx, offset_secs);
+        });
+        return;
+      }
+    }
     const auto str = duckdb::StringCast::Operation(tz, heap);
     WithWrapIfNested<InContainer>(ctx, [&] {
       ctx.writer->Write(std::string_view{str.GetData(), str.GetSize()});
@@ -976,23 +1044,8 @@ struct TimeNsBinCore {
 struct TimeTzTextCore {
   using Value = duckdb::dtime_tz_t;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value tz) {
-    // Format: HH:MM:SS[.mmm][±HH:MM]
     ctx.writer->Write(duckdb::Time::ToString(tz.time()));
-    const auto offset_secs = tz.offset();
-    const bool negative = offset_secs < 0;
-    const auto abs_offset = negative ? -offset_secs : offset_secs;
-    const auto offset_h = abs_offset / 3600;
-    const auto offset_m = (abs_offset % 3600) / 60;
-    ctx.writer->Write(6, [&](uint8_t* dst) {
-      char* buf = reinterpret_cast<char*>(dst);
-      *buf++ = negative ? '-' : '+';
-      *buf++ = '0' + offset_h / 10;
-      *buf++ = '0' + offset_h % 10;
-      *buf++ = ':';
-      *buf++ = '0' + offset_m / 10;
-      *buf++ = '0' + offset_m % 10;
-      return size_t{6};
-    });
+    WriteTzOffsetSuffix(ctx, tz.offset());
   }
 };
 
@@ -2216,6 +2269,13 @@ void ByteaOutEscape(char* buf, std::string_view value) {
 void FillContext(const Config& config, SerializationContext& context) {
   context.extra_float_digits = config.GetExtraFloatDigits();
   context.bytea_output = config.GetByteaOutput();
+  const auto tz_name = config.GetTimeZone();
+  if (IsUtcTimeZoneName(tz_name)) {
+    context.time_zone.reset();
+  } else {
+    context.time_zone.reset(
+      icu::TimeZone::createTimeZone(icu::UnicodeString::fromUTF8(tz_name)));
+  }
   context.snapshot = config.CatalogSnapshot().get();
   // types_cache stays lazy (GetSerializersCache); record results only.
   context.types_cache.reset();

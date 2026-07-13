@@ -34,12 +34,12 @@ CREATE INDEX enf_secret_idx ON enf_secret(id);
 
 
 statement ok
-CREATE ROLE enf_user LOGIN;
+CREATE ROLE enf_user LOGIN PASSWORD 'enf_user_pw';
 
 
 # ---- As enf_user (non-superuser, no grants): every access denied ----
 
-connection c_enf user=enf_user
+connection c_enf user=enf_user password=enf_user_pw
 statement error
 SELECT * FROM enf_secret;
 ----
@@ -47,28 +47,28 @@ db error: ERROR: permission denied for table enf_secret
 
 
 # M1 regression: reading the table via its INDEX name must ALSO be denied.
-connection c_enf user=enf_user
+connection c_enf user=enf_user password=enf_user_pw
 statement error
 SELECT * FROM enf_secret_idx;
 ----
 db error: ERROR: permission denied for table enf_secret
 
 
-connection c_enf user=enf_user
+connection c_enf user=enf_user password=enf_user_pw
 statement error
 INSERT INTO enf_secret VALUES (3, '777-88-9999');
 ----
 db error: ERROR: permission denied for table enf_secret
 
 
-connection c_enf user=enf_user
+connection c_enf user=enf_user password=enf_user_pw
 statement error
 UPDATE enf_secret SET ssn = 'x' WHERE id = 1;
 ----
 db error: ERROR: permission denied for table enf_secret
 
 
-connection c_enf user=enf_user
+connection c_enf user=enf_user password=enf_user_pw
 statement error
 DELETE FROM enf_secret WHERE id = 1;
 ----
@@ -82,7 +82,7 @@ statement ok
 GRANT SELECT ON enf_secret TO enf_user;
 
 
-connection c_enf user=enf_user
+connection c_enf user=enf_user password=enf_user_pw
 query
 SELECT id, ssn FROM enf_secret ORDER BY id;
 ----
@@ -92,7 +92,7 @@ id	ssn
 
 
 # SELECT via the index name now also works (same privilege).
-connection c_enf user=enf_user
+connection c_enf user=enf_user password=enf_user_pw
 query
 SELECT count(*) FROM enf_secret_idx;
 ----
@@ -100,7 +100,7 @@ count
 2
 
 
-connection c_enf user=enf_user
+connection c_enf user=enf_user password=enf_user_pw
 statement error
 INSERT INTO enf_secret VALUES (3, '777-88-9999');
 ----
@@ -114,12 +114,12 @@ statement ok
 GRANT INSERT ON enf_secret TO enf_user;
 
 
-connection c_enf user=enf_user
+connection c_enf user=enf_user password=enf_user_pw
 statement ok
 INSERT INTO enf_secret VALUES (3, '777-88-9999');
 
 
-connection c_enf user=enf_user
+connection c_enf user=enf_user password=enf_user_pw
 query
 SELECT count(*) FROM enf_secret;
 ----
@@ -134,7 +134,7 @@ statement ok
 REVOKE SELECT ON enf_secret FROM enf_user;
 
 
-connection c_enf user=enf_user
+connection c_enf user=enf_user password=enf_user_pw
 statement error
 SELECT * FROM enf_secret;
 ----
@@ -163,7 +163,7 @@ statement ok
 GRANT enf_group TO enf_user;
 
 
-connection c_enf user=enf_user
+connection c_enf user=enf_user password=enf_user_pw
 query
 SELECT count(*) FROM enf_secret;
 ----
@@ -187,7 +187,7 @@ count
 # ungated). A DIRECT read of pg_authid by a non-superuser is refused, matching
 # PostgreSQL -- see any/pg/rbac/cat_authid_shadow_superuser_only.test.
 
-connection c_enf user=enf_user
+connection c_enf user=enf_user password=enf_user_pw
 query
 SELECT (count(*) >= 1) AS sees_roles FROM pg_roles WHERE rolname = 'postgres';
 ----
@@ -195,7 +195,7 @@ sees_roles
 t
 
 
-connection c_enf user=enf_user
+connection c_enf user=enf_user password=enf_user_pw
 statement error
 SELECT (rolpassword IS NULL) AS password_masked
 FROM pg_authid WHERE rolname = 'postgres';

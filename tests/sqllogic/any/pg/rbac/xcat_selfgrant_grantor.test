@@ -30,7 +30,7 @@ CREATE TABLE xcat_sg_mop (id int, payload text);
 
 
 statement ok
-CREATE ROLE xcat_sg_deleg LOGIN;
+CREATE ROLE xcat_sg_deleg LOGIN PASSWORD 'xcat_sg_deleg_pw';
 
 
 statement ok
@@ -54,7 +54,7 @@ xcat_sg_deleg=r*/postgres
 
 # deleg (not the owner) grants SELECT onward to recv. The grantor recorded in
 # recv's element is xcat_sg_deleg -- the delegator, not postgres.
-connection c_deleg user=xcat_sg_deleg
+connection c_deleg user=xcat_sg_deleg password=xcat_sg_deleg_pw
 statement ok
 GRANT SELECT ON xcat_sg_mop TO xcat_sg_recv;
 
@@ -126,7 +126,7 @@ t	t
 # A REVOKE issued by a different grantor -- e.g. the owner -- does not touch
 # another grantor's grant, so we revoke from deleg's own session. After that,
 # recv's element is gone; deleg's own element (grantor postgres) survives.
-connection c_deleg user=xcat_sg_deleg
+connection c_deleg user=xcat_sg_deleg password=xcat_sg_deleg_pw
 statement ok
 REVOKE SELECT ON xcat_sg_mop FROM xcat_sg_recv;
 

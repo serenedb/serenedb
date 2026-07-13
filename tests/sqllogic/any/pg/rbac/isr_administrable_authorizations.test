@@ -42,7 +42,7 @@ DROP ROLE IF EXISTS isr_adm_babsky;
 # ----------------------------------------------------------------------
 
 statement ok
-CREATE ROLE isr_adm_androed LOGIN;
+CREATE ROLE isr_adm_androed LOGIN PASSWORD 'isr_adm_androed_pw';
 
 
 statement ok
@@ -146,7 +146,7 @@ administrable
 # kostya edge applicable in its session, but cannot administer it.
 # ----------------------------------------------------------------------
 
-connection c_androed user=isr_adm_androed
+connection c_androed user=isr_adm_androed password=isr_adm_androed_pw
 query
 SELECT grantee, role_name, is_grantable FROM information_schema.applicable_roles
 WHERE grantee LIKE 'isr_adm_%' ORDER BY grantee, role_name;
@@ -157,7 +157,7 @@ isr_adm_deadinside	isr_adm_iceberg	NO
 isr_adm_kostya	isr_adm_deadinside	NO
 
 
-connection c_androed user=isr_adm_androed
+connection c_androed user=isr_adm_androed password=isr_adm_androed_pw
 query
 SELECT count(*) AS administrable FROM information_schema.administrable_role_authorizations;
 ----
@@ -168,7 +168,7 @@ administrable
 # administrable is a strict subset of applicable: every administrable row is
 # also applicable, and here the subset is empty -- so the count difference
 # equals the full applicable count (in androed's own session, three edges).
-connection c_androed user=isr_adm_androed
+connection c_androed user=isr_adm_androed password=isr_adm_androed_pw
 query
 SELECT
   (SELECT count(*) FROM information_schema.applicable_roles) AS applicable,

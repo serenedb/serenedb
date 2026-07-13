@@ -234,21 +234,13 @@ void SereneDBClientState::TransactionCommit(
     }
   }
   tls_committing_ctx = nullptr;
-  auto r = _connection_ctx->Commit();
-  if (!r.ok()) {
-    throw duckdb::TransactionException("SereneDB commit failed: %s",
-                                       r.errorMessage());
-  }
+  _connection_ctx->Commit();
 }
 
 void SereneDBClientState::TransactionRollback(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
   tls_committing_ctx = nullptr;
-  auto r = _connection_ctx->Rollback();
-  if (!r.ok()) {
-    throw duckdb::TransactionException("SereneDB rollback failed: %s",
-                                       r.errorMessage());
-  }
+  _connection_ctx->Rollback();
 }
 
 void SereneDBClientState::QueryBegin(duckdb::ClientContext& context) {

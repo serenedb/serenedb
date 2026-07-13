@@ -23,8 +23,8 @@
 #include <duckdb/common/types/geometry_crs.hpp>
 #include <string_view>
 
-#include "basics/errors.h"
-#include "basics/result.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::catalog {
 
@@ -38,24 +38,25 @@ inline bool IsCRS84Identifier(std::string_view id) noexcept {
 }
 
 // Validate that a GEOMETRY-typed value or column declares a CRS84-compatible
-// CRS. The error message is intentionally subject-free ("GEOMETRY type ...")
-// so callers can prepend their own context (e.g. "Column 'foo': ...",
-// "Centroid argument: ..."). Single point of truth for the CRS contract:
-// future enhancements (proper PROJJSON-aware comparison, override knobs,
-// etc.) live here.
-inline Result ValidateGeometryCRS84(const duckdb::LogicalType& type) noexcept {
+// CRS; throws THROW_SQL_ERROR with `subject` as the message prefix (e.g.
+// "Column 'foo'", "GEOMETRY constant"). Single point of truth for the CRS
+// contract: future enhancements (proper PROJJSON-aware comparison, override
+// knobs, etc.) live here.
+inline void ValidateGeometryCRS84(const duckdb::LogicalType& type,
+                                  std::string_view subject) {
   if (!duckdb::GeoType::HasCRS(type)) {
-    return {ERROR_BAD_PARAMETER,
-            "GEOMETRY type has no CRS attached; declare it with "
-            "::GEOMETRY('OGC:CRS84')"};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(subject,
+                            ": GEOMETRY type has no CRS attached; declare it "
+                            "with ::GEOMETRY('OGC:CRS84')"));
   }
   const auto& crs = duckdb::GeoType::GetCRS(type);
   if (!IsCRS84Identifier(crs.GetIdentifier())) {
-    return {ERROR_BAD_PARAMETER, "GEOMETRY type has invalid CRS '",
-            crs.GetIdentifier(),
-            "'; only CRS84 is supported (EPSG:4326, OGC:CRS84, 4326)"};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(subject, ": GEOMETRY type has invalid CRS '", crs.GetIdentifier(),
+              "'; only CRS84 is supported (EPSG:4326, OGC:CRS84, 4326)"));
   }
-  return {};
 }
 
 }  // namespace sdb::catalog

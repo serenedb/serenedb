@@ -21,6 +21,7 @@
 #include "geo/coding.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/str_cat.h>
 #include <s2/s2latlng.h>
 #include <s2/s2point.h>
 #include <s2/s2polygon.h>
@@ -30,12 +31,10 @@
 
 #include "basics/application-exit.h"
 #include "basics/assert.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "basics/log.h"
-#include "basics/result.h"
 #include "geo/shape_container.h"
 #include "geo_json.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::geo {
 
@@ -137,43 +136,47 @@ bool ParseShape(simdjson::ondemand::value json, ShapeContainer& region,
                 Encoder* encoder) {
   SDB_ASSERT(encoder == nullptr || encoder->length() == 0);
 
-  Result r;
-  if (json.type() == simdjson::ondemand::json_type::array) {
-    r = geo::json::ParseCoordinates<P != Parsing::FromIndex>(json, region,
-                                                             /*geoJson=*/true,
-                                                             options, encoder);
-  } else if constexpr (P == Parsing::OnlyPoint) {
-    auto handle_point = [&] {
+  auto parse = [&] {
+    if (json.type() == simdjson::ondemand::json_type::array) {
+      geo::json::ParseCoordinates<P != Parsing::FromIndex>(json, region,
+                                                           /*geoJson=*/true,
+                                                           options, encoder);
+    } else if constexpr (P == Parsing::OnlyPoint) {
       S2LatLng ll;
-      r = geo::json::ParsePoint(json, ll);
-      if (r.ok() && encoder) {
-        SDB_ASSERT(options != geo::coding::Options::Invalid);
-        SDB_ASSERT(encoder->avail() >= sizeof(uint8_t));
-        // to match what ParseCoordinates stores
-        encoder->put8(0);
-        if (geo::coding::IsOptionsS2(options)) {
-          auto pt = ll.ToPoint();
-          geo::EncodePoint(*encoder, pt);
-          return pt;
-        } else {
-          geo::EncodeLatLng(*encoder, ll, options);
+      geo::json::ParsePoint(json, ll);
+      auto handle_point = [&] {
+        if (encoder) {
+          SDB_ASSERT(options != geo::coding::Options::Invalid);
+          SDB_ASSERT(encoder->avail() >= sizeof(uint8_t));
+          // to match what ParseCoordinates stores
+          encoder->put8(0);
+          if (geo::coding::IsOptionsS2(options)) {
+            auto pt = ll.ToPoint();
+            geo::EncodePoint(*encoder, pt);
+            return pt;
+          } else {
+            geo::EncodeLatLng(*encoder, ll, options);
+          }
+        } else if (options == geo::coding::Options::S2LatLngU32) {
+          geo::ToLatLngU32(ll);
         }
-      } else if (r.ok() && options == geo::coding::Options::S2LatLngU32) {
-        geo::ToLatLngU32(ll);
-      }
-      return ll.ToPoint();
-    };
-    if (r.ok()) {
+        return ll.ToPoint();
+      };
       region.reset(handle_point(), options);
+    } else {
+      geo::json::ParseRegion<P != Parsing::FromIndex>(json, region, cache,
+                                                      options, encoder);
     }
-  } else {
-    r = geo::json::ParseRegion<P != Parsing::FromIndex>(json, region, cache,
-                                                        options, encoder);
-  }
+  };
+
   if constexpr (P != Parsing::FromIndex) {
-    if (!r.ok()) {
+    try {
+      parse();
+    } catch (const sdb::SqlException&) {
       return false;
     }
+  } else {
+    parse();
   }
   return true;
 }
@@ -365,28 +368,15 @@ bool DecodePolygon(Decoder& decoder, S2Polygon& polygon, uint8_t tag,
   return true;
 }
 
-Result GeoOptions::Validate() const noexcept {
+void GeoOptions::Validate(std::string_view analyzer) const {
   auto check_bounds = [&]<typename T>(auto name, auto min, auto max,
-                                      const T& value) -> Result {
+                                      const T& value) {
     static_assert(std::is_arithmetic_v<T>, "Check supports only numerics");
     if (value < min || max < value) {
-      return {ERROR_BAD_PARAMETER,
-              "'",
-              name,
-              "' out of bounds: [",
-              min,
-              "..",
-              max,
-              "]."};
+      THROW_SQL_ERROR(ERR_MSG(analyzer, ": '", name, "' out of bounds: [", min,
+                              "..", max, "]."));
     }
-    return {};
   };
-
-#define DO_CHECK_BOUNDS(field, min_val, max_val)       \
-  res = check_bounds(#field, min_val, max_val, field); \
-  if (!res.ok()) {                                     \
-    return res;                                        \
-  }
 
   constexpr int32_t kMinCells = 0;
   constexpr int32_t kMaxCells = std::numeric_limits<int32_t>::max();
@@ -395,16 +385,14 @@ Result GeoOptions::Validate() const noexcept {
   constexpr int32_t kMinLevelMod = 1;
   constexpr int32_t kMaxLevelMod = 3;
 
-  Result res;
-  DO_CHECK_BOUNDS(max_cells, kMinCells, kMaxCells)
-  DO_CHECK_BOUNDS(min_level, kMinLevel, kMaxLevel)
-  DO_CHECK_BOUNDS(max_level, kMinLevel, kMaxLevel)
-  DO_CHECK_BOUNDS(level_mod, kMinLevelMod, kMaxLevelMod)
+  check_bounds("max_cells", kMinCells, kMaxCells, max_cells);
+  check_bounds("min_level", kMinLevel, kMaxLevel, min_level);
+  check_bounds("max_level", kMinLevel, kMaxLevel, max_level);
+  check_bounds("level_mod", kMinLevelMod, kMaxLevelMod, level_mod);
   if (min_level > max_level) {
-    return {ERROR_BAD_PARAMETER,
-            "'min_level' should be less than or equal to 'max_level'."};
+    THROW_SQL_ERROR(ERR_MSG(
+      analyzer, ": 'min_level' should be less than or equal to 'max_level'."));
   }
-  return {};
 }
 
 template bool ParseShape<Parsing::FromIndex>(simdjson::ondemand::value json,

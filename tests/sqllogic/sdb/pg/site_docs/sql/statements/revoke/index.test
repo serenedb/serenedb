@@ -1,0 +1,105 @@
+# DOCS_TEST: example_001
+
+statement ok
+DROP TABLE IF EXISTS doc_vault;
+
+statement ok
+DROP ROLE IF EXISTS doc_auditor;
+
+statement ok
+DROP ROLE IF EXISTS doc_team;
+
+statement ok
+DROP ROLE IF EXISTS doc_member;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE doc_vault (id int, secret text);
+
+statement ok
+CREATE ROLE doc_auditor;
+
+statement ok
+CREATE ROLE doc_team;
+
+statement ok
+CREATE ROLE doc_member;
+
+statement ok
+GRANT SELECT, INSERT ON doc_vault TO doc_auditor WITH GRANT OPTION;
+
+statement ok
+GRANT doc_team TO doc_member;
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+REVOKE INSERT ON doc_vault FROM doc_auditor;
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query T
+SELECT has_table_privilege('doc_auditor', 'doc_vault', 'INSERT');
+----
+has_table_privilege
+f
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+REVOKE GRANT OPTION FOR SELECT ON doc_vault FROM doc_auditor;
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query T
+SELECT has_table_privilege('doc_auditor', 'doc_vault', 'SELECT');
+----
+has_table_privilege
+t
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement ok
+REVOKE doc_team FROM doc_member;
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query T
+SELECT pg_has_role('doc_member', 'doc_team', 'MEMBER');
+----
+pg_has_role
+f
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+statement ok
+REVOKE ALL PRIVILEGES ON doc_vault FROM doc_auditor;
+
+# DOCS_TEST: example_009
+
+statement ok
+DROP TABLE doc_vault;
+
+statement ok
+DROP ROLE doc_auditor;
+
+statement ok
+DROP ROLE doc_team;
+
+statement ok
+DROP ROLE doc_member;

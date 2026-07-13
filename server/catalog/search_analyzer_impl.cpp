@@ -33,6 +33,8 @@
 #include "basics/containers/flat_hash_set.h"
 #include "basics/serializer.h"
 #include "catalog/object.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::search {
 
@@ -51,26 +53,29 @@ bool Features::Add(std::string_view feature_name) {
   return true;
 }
 
-Result Features::Validate(std::string_view type) const {
+void Features::Validate(std::string_view type) const {
   if (HasFeatures(irs::IndexFeatures::Offs) &&
       !HasFeatures(irs::IndexFeatures::Pos)) {
-    return {
-      ERROR_BAD_PARAMETER,
-      "missing feature 'position' required when 'offset' feature is specified"};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("missing feature 'position' required when 'offset' feature is "
+              "specified"));
   }
 
   if (HasFeatures(irs::IndexFeatures::Pos) &&
       !HasFeatures(irs::IndexFeatures::Freq)) {
-    return {ERROR_BAD_PARAMETER,
-            "missing feature 'frequency' required when 'position' feature is "
-            "specified"};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("missing feature 'frequency' required when 'position' feature is "
+              "specified"));
   }
 
   if (HasFeatures(irs::IndexFeatures::Norm) &&
       !HasFeatures(irs::IndexFeatures::Freq)) {
-    return {
-      ERROR_BAD_PARAMETER,
-      "missing feature 'frequency' required when 'norm' feature is specified"};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("missing feature 'frequency' required when 'norm' feature is "
+              "specified"));
   }
 
   const auto supported_features = [&] {
@@ -95,11 +100,10 @@ Result Features::Validate(std::string_view type) const {
   }();
 
   if (!irs::IsSubsetOf(_index_features, supported_features)) {
-    return {ERROR_BAD_PARAMETER, "Unsupported index features are specified: ",
-            std::to_underlying(_index_features)};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("Unsupported index features are specified: ",
+                            std::to_underlying(_index_features)));
   }
-
-  return {};
 }
 
 bool IsGeoAnalyzer(std::string_view type) noexcept {
@@ -124,21 +128,6 @@ AnalyzerImpl::Builder::ptr AnalyzerImpl::Builder::make(BoolStreamTag) {
 
 AnalyzerImpl::Builder::ptr AnalyzerImpl::Builder::make(NullStreamTag) {
   return std::make_unique<irs::NullTokenizer>();
-}
-
-AnalyzerImpl::Builder::ptr AnalyzerImpl::Builder::make(std::string_view bytes) {
-  if (bytes.empty()) {
-    return {};
-  }
-  try {
-    auto stream = catalog::ReadStream(bytes);
-    duckdb::BinaryDeserializer src{stream};
-    irs::analysis::TokenizerConfig cfg;
-    basics::ReadTuple(src, cfg);
-    return irs::analysis::CreateAnalyzer(std::move(cfg));
-  } catch (...) {
-    return {};
-  }
 }
 
 }  // namespace sdb::search

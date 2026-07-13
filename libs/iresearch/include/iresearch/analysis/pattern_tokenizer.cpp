@@ -24,7 +24,7 @@
 
 #include <string_view>
 
-#include "basics/exceptions.h"
+#include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 
@@ -38,11 +38,11 @@ PatternTokenizer::~PatternTokenizer() = default;
 
 Analyzer::ptr PatternTokenizer::Make(Options opts) {
   if (opts.pattern.empty()) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "pattern: empty pattern");
+    THROW_SQL_ERROR(ERR_MSG("pattern: empty pattern"));
   }
   re2::RE2 re(opts.pattern, re2::RE2::Quiet);
   if (!re.ok()) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "pattern: invalid regex");
+    THROW_SQL_ERROR(ERR_MSG("pattern: invalid regex"));
   }
   return std::make_unique<PatternTokenizer>(opts.pattern, opts.group);
 }

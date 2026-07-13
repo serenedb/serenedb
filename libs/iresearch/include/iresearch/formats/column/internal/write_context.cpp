@@ -23,8 +23,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/storage/block.hpp>
 
-#include "basics/errors.h"
-#include "basics/exceptions.h"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 
@@ -57,7 +56,7 @@ void WriteContext::Write(duckdb::QueryContext /*context*/,
                          duckdb::FileBuffer& block,
                          duckdb::block_id_t block_id) {
   const auto cursor = static_cast<duckdb::block_id_t>(_out->Position());
-  SDB_ENSURE(cursor == block_id, sdb::ERROR_INTERNAL,
+  SDB_ENSURE(cursor == block_id,
              "WriteContext::Write out-of-order: cursor=", cursor,
              " expected=", block_id);
   _out->WriteData(reinterpret_cast<const byte_type*>(block.InternalBuffer()),
@@ -66,28 +65,27 @@ void WriteContext::Write(duckdb::QueryContext /*context*/,
 
 void WriteContext::Read(duckdb::QueryContext /*context*/,
                         duckdb::Block& /*block*/) {
-  SDB_THROW(sdb::ERROR_INTERNAL, "WriteContext::Read on write-only context");
+  THROW_SQL_ERROR(ERR_MSG("WriteContext::Read on write-only context"));
 }
 
 void WriteContext::ReadBlocks(duckdb::QueryContext /*context*/,
                               duckdb::FileBuffer& /*buffer*/,
                               duckdb::block_id_t /*start_block*/,
                               duckdb::idx_t /*block_count*/) {
-  SDB_THROW(sdb::ERROR_INTERNAL,
-            "WriteContext::ReadBlocks on write-only context");
+  THROW_SQL_ERROR(ERR_MSG("WriteContext::ReadBlocks on write-only context"));
 }
 
 bool WriteContext::IsRootBlock(duckdb::MetaBlockPointer /*root*/) {
-  SDB_THROW(sdb::ERROR_INTERNAL, "WriteContext::IsRootBlock");
+  THROW_SQL_ERROR(ERR_MSG("WriteContext::IsRootBlock"));
 }
 
 duckdb::idx_t WriteContext::GetMetaBlock() {
-  SDB_THROW(sdb::ERROR_INTERNAL, "WriteContext::GetMetaBlock");
+  THROW_SQL_ERROR(ERR_MSG("WriteContext::GetMetaBlock"));
 }
 
 void WriteContext::WriteHeader(duckdb::QueryContext /*context*/,
                                duckdb::DatabaseHeader /*header*/) {
-  SDB_THROW(sdb::ERROR_INTERNAL, "WriteContext::WriteHeader");
+  THROW_SQL_ERROR(ERR_MSG("WriteContext::WriteHeader"));
 }
 
 duckdb::idx_t WriteContext::TotalBlocks() {

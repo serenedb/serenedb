@@ -37,6 +37,7 @@
 #include "basics/log.h"
 #include "catalog/catalog.h"
 #include "catalog/store/store.h"
+#include "pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 #include "search/tick_domain.h"
@@ -242,7 +243,7 @@ void Transaction::CommitSearch(
   _search_transactions.clear();
 }
 
-Result Transaction::Commit() {
+void Transaction::Commit() {
   // Search-table segments commit on the database WAL tick; register their flush
   // up-front -- before any commit point -- so a concurrent background
   // RefreshCommit waits for them. They commit in the WAL block below.
@@ -264,16 +265,14 @@ Result Transaction::Commit() {
     } catch (const std::exception& e) {
       _search_txn->Abort();
       Destroy();
-      return {ERROR_INTERNAL, "Failed to commit search-table WAL: ", e.what()};
+      THROW_SQL_ERROR(ERR_MSG("Failed to commit search-table WAL: ", e.what()));
     }
   }
 
   Destroy();
-
-  return {};
 }
 
-Result Transaction::Rollback() {
+void Transaction::Rollback() {
   for (auto& search_transaction : _search_transactions) {
     search_transaction.second.transaction->Abort();
   }
@@ -282,7 +281,6 @@ Result Transaction::Rollback() {
   }
   RollbackVariables();
   Destroy();
-  return {};
 }
 
 search::InvertedIndexSnapshotPtr Transaction::EnsureSearchSnapshot(

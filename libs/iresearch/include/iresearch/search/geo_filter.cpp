@@ -30,7 +30,6 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 
 #include "basics/down_cast.h"
-#include "basics/errors.h"
 #include "basics/log.h"
 #include "basics/memory.hpp"
 #include "geo/geo_json.h"
@@ -315,7 +314,7 @@ struct SourceWkbParser {
     const std::string_view bytes{reinterpret_cast<const char*>(value.data()),
                                  value.size()};
     shape = {};
-    return sdb::geo::ParseShapeWKB(bytes, shape).ok();
+    return sdb::geo::ParseShapeWKB(bytes, shape);
   }
 };
 

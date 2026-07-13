@@ -27,7 +27,7 @@
 
 #include <string_view>
 
-#include "basics/exceptions.h"
+#include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 
@@ -36,7 +36,7 @@ StemmingTokenizer::StemmingTokenizer(Options options)
 
 Analyzer::ptr StemmingTokenizer::Make(Options opts) {
   if (opts.locale.isBogus()) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "stem: invalid locale");
+    THROW_SQL_ERROR(ERR_MSG("stem: invalid locale"));
   }
   return std::make_unique<StemmingTokenizer>(std::move(opts));
 }

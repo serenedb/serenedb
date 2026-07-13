@@ -15,7 +15,7 @@ DROP ROLE IF EXISTS ocr_vedernikoff;
 
 
 statement ok
-CREATE ROLE ocr_vedernikoff LOGIN;
+CREATE ROLE ocr_vedernikoff LOGIN PASSWORD 'ocr_vedernikoff_pw';
 
 
 statement ok
@@ -46,7 +46,7 @@ t	t
 
 
 # The owner can DROP her own table -- the ownership gate recognizes her.
-connection c user=ocr_vedernikoff
+connection c user=ocr_vedernikoff password=ocr_vedernikoff_pw
 statement ok
 DROP TABLE ocr_iceberg;
 

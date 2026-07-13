@@ -373,7 +373,7 @@ class ColumnExistenceQuery : public QueryBuilder {
         static_cast<uint32_t>(row_count));
     }
     const auto* col_reader = _segment.GetColReader();
-    SDB_ENSURE(col_reader, sdb::ERROR_INTERNAL,
+    SDB_ENSURE(col_reader,
                "column_existence_filter: segment has no .col reader");
     return memory::make_managed<ColumnExistenceIterator>(
       *column, *col_reader, static_cast<CostAttr::Type>(row_count));

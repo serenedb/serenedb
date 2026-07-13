@@ -39,7 +39,6 @@
 #include "basics/common.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/debugging.h"
-#include "basics/result_or.h"
 #include "basics/shared.hpp"
 
 namespace sdb::basics {
@@ -101,12 +100,6 @@ namespace string_utils {
 // STRING CONVERSION
 // -----------------------------------------------------------------------------
 
-/// escape unicode
-///
-/// This method escapes a unicode character string by replacing the unicode
-/// characters by a \\uXXXX sequence.
-std::string EscapeUnicode(std::string_view value, bool escape_slash = true);
-
 std::string_view Trim(std::string_view source_str,
                       std::string_view trim_str = " \t\n\r");
 
@@ -115,24 +108,9 @@ void TrimInPlace(std::string& str, std::string_view trim_str = " \t\n\r");
 std::string_view RTrim(std::string_view source_str,
                        std::string_view trim_str = " \t\n\r");
 
-/// url decodes the path part of a string
-std::string UrlDecodePath(std::string_view str);
-
-/// url encodes the string
-std::string UrlEncode(const char* src, size_t len);
-inline std::string UrlEncode(std::string_view value) {
-  return UrlEncode(value.data(), value.size());
-}
-
 // -----------------------------------------------------------------------------
 // CONVERT TO STRING
 // -----------------------------------------------------------------------------
-
-/// converts integer to string
-std::string Itoa(int16_t i);
-
-/// converts unsigned integer to string
-std::string Itoa(uint16_t i);
 
 /// converts integer to string
 std::string Itoa(int64_t i);
@@ -140,16 +118,8 @@ std::string Itoa(int64_t i);
 /// converts unsigned integer to string
 std::string Itoa(uint64_t i);
 
-/// converts unsigned integer to string
-size_t Itoa(uint64_t i, char* result);
-
-void Itoa(uint64_t i, std::string& result);
-
 /// converts integer to string
 std::string Itoa(int32_t i);
-
-/// converts unsigned integer to string
-std::string Itoa(uint32_t i);
 
 // -----------------------------------------------------------------------------
 // CONVERT FROM STRING
@@ -168,35 +138,16 @@ inline int Hex2int(char ch, int error_value = 0) {
   return error_value;
 }
 
-/// parses a boolean
-bool Boolean(std::string_view str);
-
-/// parses an integer
-int64_t Int64(const char* value, size_t size) noexcept;
-inline int64_t Int64(std::string_view value) noexcept {
-  return Int64(value.data(), value.size());
-}
-
 /// parses an unsigned integer
 uint64_t Uint64(const char* value, size_t size) noexcept;
 inline uint64_t Uint64(std::string_view value) noexcept {
   return Uint64(value.data(), value.size());
 }
 
-/// parses an unsigned integers, but returns any errors
-ResultOr<uint64_t> TryUint64(const char* value, size_t size) noexcept;
-ResultOr<uint64_t> TryUint64(std::string_view value) noexcept;
-
 /// parses an unsigned integer
 uint32_t Uint32(const char* value, size_t size) noexcept;
 inline uint32_t Uint32(std::string_view value) noexcept {
   return Uint32(value.data(), value.size());
-}
-
-/// parses a decimal
-double DoubleDecimal(const char* value, size_t size);
-inline double DoubleDecimal(std::string_view value) {
-  return DoubleDecimal(value.data(), value.size());
 }
 
 // -----------------------------------------------------------------------------
@@ -217,16 +168,8 @@ inline std::string EncodeHex(std::string_view value) {
 /// ...
 std::string FormatSize(uint64_t value);
 
-/// Translates a set of HTTP headers into a string, which is
-/// properly escaped to put it into a log file.
-std::string HeadersToString(
-  const containers::FlatHashMap<std::string, std::string>& headers);
-
 /// returns "an" for words starting with a vowel sound, "a" otherwise
 std::string_view GetArticle(std::string_view word) noexcept;
-
-// helper function to strip-non-numeric data from a string
-std::string RemoveWhitespaceAndComments(const std::string& value);
 
 // Returns the English plural form of a word
 // doesn't work for all the cases, cause applies basic rules:

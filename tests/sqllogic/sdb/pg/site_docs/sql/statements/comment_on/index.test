@@ -43,7 +43,7 @@ COMMENT ON COLUMN test_table.title IS 'very nice column';
 statement error
 COMMENT ON VIEW test_view IS 'very nice view';
 ----
-db error: ERROR: view
+db error: ERROR: "test_view" is not a table
 
 
 # DOCS_TEST: example_004
@@ -53,7 +53,7 @@ db error: ERROR: view
 statement error
 COMMENT ON INDEX test_index IS 'very nice index';
 ----
-db error: ERROR: index
+db error: ERROR: "test_index" is not a table
 
 
 # DOCS_TEST: example_005
@@ -63,7 +63,7 @@ db error: ERROR: index
 statement error
 COMMENT ON SEQUENCE test_sequence IS 'very nice sequence';
 ----
-db error: ERROR: sequence
+db error: ERROR: "test_sequence" is not a table
 
 
 # DOCS_TEST: example_006

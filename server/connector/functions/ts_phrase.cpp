@@ -489,12 +489,8 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
                   f->GetChildren().size()),
           ERR_HINT(kSyntaxHint));
       }
-      if (auto r =
-            GetVarcharArg(*f->GetChildren()[0], "## phrase part text", out);
-          !r.ok()) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-      }
+      GetVarcharArg(*f->GetChildren()[0], out,
+                    {"## phrase part text", kSyntaxHint});
       return out;
     };
 
@@ -536,12 +532,8 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
             ERR_HINT(kSyntaxHint));
         }
         std::string phrase_text;
-        if (auto r = GetVarcharArg(*f->GetChildren()[0], "## ts_phrase text",
-                                   phrase_text);
-            !r.ok()) {
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                          ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-        }
+        GetVarcharArg(*f->GetChildren()[0], phrase_text,
+                      {"## ts_phrase text", kSyntaxHint});
         EmitPhraseTokens(*options, ctx, column_info, phrase_text, gap);
       } break;
       case TSQueryOp::Any: {
@@ -570,12 +562,8 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
         terms_opts.min_match = 1;
         for (const auto* arg : sub_args) {
           std::string term_text;
-          if (auto r = GetVarcharArg(UnwrapTSQueryCast(*arg),
-                                     "## ts_any phrase part term", term_text);
-              !r.ok()) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-          }
+          GetVarcharArg(UnwrapTSQueryCast(*arg), term_text,
+                        {"## ts_any phrase part term", kSyntaxHint});
           terms_opts.terms.emplace(
             irs::ViewCast<irs::byte_type>(std::string_view{term_text}));
         }

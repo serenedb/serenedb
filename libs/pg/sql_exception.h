@@ -20,13 +20,32 @@
 
 #pragma once
 
-#include <expected>
+#include <exception>
+#include <source_location>
+#include <string>
 
-#include "basics/result.h"
+#include "pg/sql_error.h"
 
 namespace sdb {
 
-template<typename T>
-using ResultOr = std::expected<T, Result>;
+class SqlException final : public std::exception {
+ public:
+  SqlException(pg::SqlErrorData&& err, std::source_location location)
+    : _location{location}, _data{std::move(err)} {}
+
+  const char* what() const noexcept final { return _data.errmsg.c_str(); }
+  const std::string& message() const noexcept { return _data.errmsg; }
+  const pg::SqlErrorData& error() const noexcept { return _data; }
+  auto location() const noexcept { return _location; }
+
+ private:
+  std::source_location _location;
+  pg::SqlErrorData _data;
+};
 
 }  // namespace sdb
+
+#define SQL_DATA_UNWRAP(...) {__VA_ARGS__}
+
+#define THROW_SQL_ERROR_FROM_DATA(sqlData) \
+  throw ::sdb::SqlException { (sqlData), std::source_location::current() }

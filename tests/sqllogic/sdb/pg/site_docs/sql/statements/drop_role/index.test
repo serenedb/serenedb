@@ -1,0 +1,62 @@
+# DOCS_TEST: example_001
+
+statement ok
+DROP ROLE IF EXISTS doc_r1;
+
+statement ok
+DROP ROLE IF EXISTS doc_r2;
+
+statement ok
+DROP ROLE IF EXISTS doc_r3;
+
+statement ok
+DROP ROLE IF EXISTS doc_u1;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE ROLE doc_r1;
+
+statement ok
+CREATE ROLE doc_r2;
+
+statement ok
+CREATE ROLE doc_r3;
+
+statement ok
+CREATE USER doc_u1;
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP ROLE doc_r1;
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP ROLE doc_r2, doc_r3;
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP USER doc_u1;
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP ROLE IF EXISTS doc_r1;
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement error db error: ERROR: role "doc_r1" does not exist
+DROP ROLE doc_r1;

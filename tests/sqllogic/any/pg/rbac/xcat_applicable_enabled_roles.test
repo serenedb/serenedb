@@ -36,7 +36,7 @@ CREATE ROLE xcat_ar_mid;
 
 
 statement ok
-CREATE ROLE xcat_ar_leaf LOGIN;
+CREATE ROLE xcat_ar_leaf LOGIN PASSWORD 'xcat_ar_leaf_pw';
 
 
 statement ok
@@ -103,7 +103,7 @@ xcat_ar_admin	xcat_ar_top	YES
 # enabled_roles, evaluated inside the leaf's own session, is the FULL transitive
 # closure: leaf itself, mid (direct), and top (reached through mid). All three
 # appear because the default inherit option carries privileges up the chain.
-connection c_leaf user=xcat_ar_leaf
+connection c_leaf user=xcat_ar_leaf password=xcat_ar_leaf_pw
 query
 SELECT role_name FROM information_schema.enabled_roles
 WHERE role_name IN ('xcat_ar_leaf', 'xcat_ar_mid', 'xcat_ar_top')
@@ -119,7 +119,7 @@ xcat_ar_top
 # it can see (its own membership in mid, and mid's membership in top, since leaf
 # inherits the right to see mid's edges): the closure of edges, but each row is
 # still a single direct grant, never a synthesized leaf->top edge.
-connection c_leaf user=xcat_ar_leaf
+connection c_leaf user=xcat_ar_leaf password=xcat_ar_leaf_pw
 query
 SELECT count(*) AS leaf_self_to_top
 FROM information_schema.applicable_roles
@@ -144,7 +144,7 @@ leaf_direct_roles
 0
 
 
-connection c_leaf2 user=xcat_ar_leaf
+connection c_leaf2 user=xcat_ar_leaf password=xcat_ar_leaf_pw
 query
 SELECT role_name FROM information_schema.enabled_roles
 WHERE role_name IN ('xcat_ar_leaf', 'xcat_ar_mid', 'xcat_ar_top')

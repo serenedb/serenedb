@@ -30,9 +30,8 @@
 
 #include "basics/assert.h"
 #include "basics/containers/node_hash_map.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "catalog/types.h"
+#include "pg/sql_exception_macro.h"
 
 namespace duckdb {
 
@@ -118,7 +117,7 @@ class Config {
   // the connection thread. The check stays in release builds -- a scope hole
   // must surface as an error, not a null dereference.
   const std::shared_ptr<const catalog::Snapshot>& CatalogSnapshot() const {
-    SDB_ENSURE(_snapshot, ERROR_INTERNAL,
+    SDB_ENSURE(_snapshot,
                "no catalog snapshot acquired for the current statement");
     return _snapshot;
   }

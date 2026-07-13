@@ -33,8 +33,8 @@
 #include "basics/assert.h"
 #include "basics/debugging.h"
 #include "basics/duckdb_engine.h"
-#include "basics/exceptions.h"
 #include "catalog/table_options.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 

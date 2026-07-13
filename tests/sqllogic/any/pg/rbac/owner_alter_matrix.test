@@ -23,7 +23,7 @@ DROP TABLE IF EXISTS oam_clickclack;
 
 
 statement ok
-CREATE ROLE oam_vedernikoff LOGIN;
+CREATE ROLE oam_vedernikoff LOGIN PASSWORD 'oam_vedernikoff_pw';
 
 
 statement ok
@@ -31,7 +31,7 @@ CREATE ROLE oam_mop;
 
 
 statement ok
-CREATE ROLE oam_iceberg LOGIN;
+CREATE ROLE oam_iceberg LOGIN PASSWORD 'oam_iceberg_pw';
 
 
 # vedernikoff can SET ROLE to oam_mop (default GRANT carries the set option).
@@ -61,7 +61,7 @@ oam_vedernikoff
 
 
 # (a) owner transfers to a role it can SET ROLE to, which holds schema CREATE
-connection c user=oam_vedernikoff
+connection c user=oam_vedernikoff password=oam_vedernikoff_pw
 statement ok
 ALTER TABLE oam_clickclack OWNER TO oam_mop;
 
@@ -79,7 +79,7 @@ ALTER TABLE oam_clickclack OWNER TO oam_vedernikoff;
 
 
 # (b) owner cannot transfer to a role it cannot SET ROLE to
-connection c user=oam_vedernikoff
+connection c user=oam_vedernikoff password=oam_vedernikoff_pw
 statement error
 ALTER TABLE oam_clickclack OWNER TO oam_iceberg;
 ----
@@ -87,7 +87,7 @@ db error: ERROR: must be able to SET ROLE "oam_iceberg"<slt:ignore>
 
 
 # (c) non-owner cannot transfer
-connection c2 user=oam_iceberg
+connection c2 user=oam_iceberg password=oam_iceberg_pw
 statement error
 ALTER TABLE oam_clickclack OWNER TO oam_iceberg;
 ----

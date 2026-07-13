@@ -34,9 +34,7 @@
 #include "catalog/store/store.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
 #include "pg/progress_registry.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {
@@ -121,24 +119,17 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
     auto snapshot = catalog_impl.GetCatalogSnapshot();
     if (snapshot->GetTable(catalog::NoAccessCheck(), _database_id, _schema_name,
                            _options.name)) {
-      auto drop_result = catalog_impl.DropTable(
-        catalog::ActingAs(context), _database_name, _schema_name, _options.name,
-        /*cascade=*/true);
-      if (!drop_result.ok()) {
-        SDB_THROW(std::move(drop_result));
-      }
+      catalog_impl.DropTable(catalog::ActingAs(context), _database_name,
+                             _schema_name, _options.name, /*cascade=*/true,
+                             /*missing_ok=*/false);
     }
   }
   // A valid table id puts CreateTable in CTAS mode: tombstoned, no store table.
   catalog::CreateTableOperationOptions op_options;
   op_options.table_id = _table_id;
   // Ownership is attributed to the creating role via the access context.
-  auto create_result =
-    catalog_impl.CreateTable(catalog::ActingAs(context), _database_id,
-                             _schema_name, _options, op_options);
-  if (!create_result.ok()) {
-    SDB_THROW(std::move(create_result));
-  }
+  catalog_impl.CreateTable(catalog::ActingAs(context), _database_id,
+                           _schema_name, _options, op_options);
 
   auto& store_db = *duckdb::DatabaseManager::Get(context).GetDatabase(
     context, duckdb::Identifier{catalog::kStoreDatabaseName});
@@ -176,8 +167,9 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
      table_name = _options.name](duckdb::MetaTransaction& meta_txn) {
       meta_txn.PopTransactionOverride(store_db);
       store_db.GetTransactionManager().RollbackTransaction(second_txn);
-      std::ignore = catalog::GetCatalog().DropTable(
-        catalog::NoAccessCheck(), database_name, schema_name, table_name, true);
+      catalog::GetCatalog().DropTable(catalog::NoAccessCheck(), database_name,
+                                      schema_name, table_name,
+                                      /*cascade=*/true, /*missing_ok=*/true);
     };
   auto& metrics = sdb_state->Progress();
   metrics.SetCommand(pg::ProgressCommand::CreateTableAs);
@@ -267,9 +259,9 @@ duckdb::SinkFinalizeType SereneDBPhysicalCTAS::Finalize(
   auto err = gstate.store_db.GetTransactionManager().CommitTransaction(
     context, *gstate.second_txn);
   if (err.HasError()) {
-    std::ignore = catalog::GetCatalog().DropTable(
+    catalog::GetCatalog().DropTable(
       catalog::NoAccessCheck(), gstate.database_name, gstate.schema_name,
-      gstate.table_name, true);
+      gstate.table_name, /*cascade=*/true, /*missing_ok=*/true);
     err.Throw("Failed to commit CREATE TABLE AS data transaction");
   }
 
@@ -277,12 +269,8 @@ duckdb::SinkFinalizeType SereneDBPhysicalCTAS::Finalize(
   if (gstate.progress) {
     gstate.progress->SetPhase(pg::progress_phase::CreateTableAs::Finalizing);
   }
-  auto r = catalog::GetCatalog().RemoveTombstone(
-    gstate.database_id, gstate.schema_name, gstate.table_name);
-  if (!r.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("Failed to remove tombstone: ", r.errorMessage()));
-  }
+  catalog::GetCatalog().RemoveTombstone(gstate.database_id, gstate.schema_name,
+                                        gstate.table_name);
   gstate.finalized = true;
   return result;
 }

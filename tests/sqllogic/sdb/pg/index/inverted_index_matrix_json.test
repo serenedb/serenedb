@@ -169,32 +169,32 @@ CREATE INDEX m_jl_inc ON m_jl USING inverted(pk) INCLUDE (js, ja);
 statement error
 CREATE INDEX m_jl_kw_list ON m_jl USING inverted(pk, js kw_dict);
 ----
-db error: ERROR: Failed to create index: Column 'js' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[])
+db error: ERROR: Column 'js' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[])
 
 
 statement error
 CREATE INDEX m_jl_ng_list ON m_jl USING inverted(pk, js ng_dict);
 ----
-db error: ERROR: Failed to create index: Column 'js' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[])
+db error: ERROR: Column 'js' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[])
 
 
 statement error
 CREATE INDEX m_jl_geo_list ON m_jl USING inverted(pk, js geo_s2_dict);
 ----
-db error: ERROR: Failed to create index: Column 'js' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+db error: ERROR: Column 'js' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
 
 
 # Indexed JSON[N] same.
 statement error
 CREATE INDEX m_jl_kw_array ON m_jl USING inverted(pk, ja kw_dict);
 ----
-db error: ERROR: Failed to create index: Column 'ja' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[2])
+db error: ERROR: Column 'ja' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[2])
 
 
 statement error
 CREATE INDEX m_jl_geo_array ON m_jl USING inverted(pk, ja geo_src_dict);
 ----
-db error: ERROR: Failed to create index: Column 'ja' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+db error: ERROR: Column 'ja' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
 
 
 # INCLUDE-only path indexes rows.

@@ -309,7 +309,9 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx,
                              SegDocBufferedScanLocalState& l,
                              duckdb::DataChunk& output) {
   if (!g.cs_projections.empty()) {
-    SDB_IF_FAILURE("SearchIncludeFetchFault") { SDB_THROW(ERROR_DEBUG); }
+    SDB_IF_FAILURE("SearchIncludeFetchFault") {
+      THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+    }
   }
   if (g.has_external_projections) {
     SDB_ASSERT(l.bind_data);
@@ -325,7 +327,9 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx,
   }
   const auto batch = l.hit_batcher->Emit(output);
   if (batch.pk != nullptr) {
-    SDB_IF_FAILURE("SearchPkFetchFault") { SDB_THROW(ERROR_DEBUG); }
+    SDB_IF_FAILURE("SearchPkFetchFault") {
+      THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+    }
     batch.pk->Flatten(batch.count);
     AppendPrimaryKeysFromVector(l.pk_batch, *batch.pk, batch.count);
   }
@@ -362,7 +366,7 @@ bool EmitBufferedScoreDocs(duckdb::ClientContext& ctx, CommonScanGlobalState& g,
   }
   SDB_IF_FAILURE("SearchLookupFault") {
     if (g.has_external_projections) {
-      SDB_THROW(ERROR_DEBUG);
+      THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
     }
   }
   auto& batcher = *l.hit_batcher;

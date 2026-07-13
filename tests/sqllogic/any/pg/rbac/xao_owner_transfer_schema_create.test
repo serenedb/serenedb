@@ -27,7 +27,7 @@ DROP ROLE IF EXISTS xao_otp_mop;
 
 
 statement ok
-CREATE ROLE xao_otp_vedernikoff LOGIN;
+CREATE ROLE xao_otp_vedernikoff LOGIN PASSWORD 'xao_otp_vedernikoff_pw';
 
 
 statement ok
@@ -63,7 +63,7 @@ ALTER SEQUENCE xao_otp_seq OWNER TO xao_otp_vedernikoff;
 
 
 # Without CREATE on public, the new owner mop cannot receive the table.
-connection cdenied user=xao_otp_vedernikoff
+connection cdenied user=xao_otp_vedernikoff password=xao_otp_vedernikoff_pw
 statement error
 ALTER TABLE xao_otp_clickclack OWNER TO xao_otp_mop;
 ----
@@ -77,17 +77,17 @@ GRANT CREATE ON SCHEMA public TO xao_otp_mop;
 
 
 # Now the transfers succeed.
-connection ctab user=xao_otp_vedernikoff
+connection ctab user=xao_otp_vedernikoff password=xao_otp_vedernikoff_pw
 statement ok
 ALTER TABLE xao_otp_clickclack OWNER TO xao_otp_mop;
 
 
-connection cview user=xao_otp_vedernikoff
+connection cview user=xao_otp_vedernikoff password=xao_otp_vedernikoff_pw
 statement ok
 ALTER VIEW xao_otp_iceberg OWNER TO xao_otp_mop;
 
 
-connection cseq user=xao_otp_vedernikoff
+connection cseq user=xao_otp_vedernikoff password=xao_otp_vedernikoff_pw
 statement ok
 ALTER SEQUENCE xao_otp_seq OWNER TO xao_otp_mop;
 

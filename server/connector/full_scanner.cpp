@@ -25,7 +25,7 @@
 
 #include "basics/assert.h"
 #include "basics/debugging.h"
-#include "basics/exceptions.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 
@@ -62,7 +62,9 @@ void FullScanner::Scan(uint64_t start_row, duckdb::idx_t count,
   if (_bound.empty() || count == 0) {
     return;
   }
-  SDB_IF_FAILURE("SearchIncludeFetchFault") { SDB_THROW(ERROR_DEBUG); }
+  SDB_IF_FAILURE("SearchIncludeFetchFault") {
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+  }
   for (auto& b : _bound) {
     auto& out = output.data[b.output_slot];
     if (b.extract) {

@@ -36,8 +36,6 @@
 #include "basics/assert.h"
 #include "basics/debugging.h"
 #include "basics/down_cast.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "basics/log.h"
 #include "catalog/catalog.h"
 #include "catalog/column_expr.h"
@@ -51,8 +49,6 @@
 #include "connector/search_sink_writer.hpp"
 #include "connector/search_table_dispatch.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "query/transaction.h"
 #include "search/search_table.h"
 #include "search/search_table_changes.h"
@@ -85,13 +81,9 @@ struct SearchInsertGlobalState : duckdb::GlobalSinkState {
   ~SearchInsertGlobalState() override {
     if (ctas_mode && !ctas_finalized && !ctas_table_name.empty()) {
       try {
-        auto& catalog = catalog::GetCatalog();
-        auto r = catalog.DropTable(catalog::NoAccessCheck(), ctas_database_name,
-                                   ctas_schema_name, ctas_table_name, true);
-        if (!r.ok()) {
-          SDB_WARN(SEARCH, "CTAS rollback: failed to drop half-created table '",
-                   ctas_table_name, "': ", r.errorMessage());
-        }
+        catalog::GetCatalog().DropTable(
+          catalog::NoAccessCheck(), ctas_database_name, ctas_schema_name,
+          ctas_table_name, /*cascade=*/true, /*missing_ok=*/true);
       } catch (const std::exception& e) {
         SDB_WARN(SEARCH, "CTAS rollback: failed to drop half-created table '",
                  ctas_table_name, "': ", e.what());
@@ -148,22 +140,15 @@ std::shared_ptr<catalog::Table> CreateCtasTable(
   const bool if_not_exists =
     create_info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
   catalog::CreateTableOperationOptions op_options;
+  op_options.if_not_exists = if_not_exists;
+  // A valid pre-allocated id puts CreateTable in CTAS mode: tombstoned and with
+  // no backing store table (a Search table never has one).
   op_options.table_id = catalog::NextId();
 
-  auto r = catalog_impl.CreateTable(catalog::NoAccessCheck(), database_id,
-                                    schema.name.GetIdentifierName(),
-                                    std::move(options), op_options);
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-    if (if_not_exists) {
-      return nullptr;
-    }
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DUPLICATE_TABLE),
-      ERR_MSG("relation \"", table_info.GetTableName().GetIdentifierName(),
-              "\" already exists"));
-  }
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
+  if (!catalog_impl.CreateTable(catalog::NoAccessCheck(), database_id,
+                                schema.name.GetIdentifierName(),
+                                std::move(options), op_options)) {
+    return nullptr;
   }
 
   auto snapshot = catalog_impl.GetCatalogSnapshot();
@@ -188,11 +173,8 @@ void RemoveCtasTombstoneIfNeeded(SearchInsertGlobalState& state) {
   }
   SDB_IF_FAILURE("crash_before_remove_tombstone") { SDB_IMMEDIATE_ABORT(); }
   auto& catalog = catalog::GetCatalog();
-  auto r = catalog.RemoveTombstone(
-    state.ctas_database_id, state.ctas_schema_name, state.ctas_table_name);
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
+  catalog.RemoveTombstone(state.ctas_database_id, state.ctas_schema_name,
+                          state.ctas_table_name);
   state.ctas_finalized = true;
 
   // The CTAS table is now visible; start its background maintenance. CTAS skips

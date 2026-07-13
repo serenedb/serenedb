@@ -27,8 +27,8 @@
 
 #include <string_view>
 
-#include "basics/exceptions.h"
 #include "iresearch/store/store_utils.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 namespace {
@@ -50,22 +50,19 @@ Analyzer::ptr Construct(const ClassificationTokenizer::Options& options) {
       model = new_model;
     }
   } catch (const std::exception& e) {
-    SDB_THROW(
-      sdb::ERROR_BAD_PARAMETER,
+    THROW_SQL_ERROR(ERR_MSG(
       absl::StrCat("classification: failed to load fasttext model from: ",
-                   options.model_location, ", error: ", e.what()));
+                   options.model_location, ", error: ", e.what())));
   } catch (...) {
-    SDB_THROW(
-      sdb::ERROR_BAD_PARAMETER,
+    THROW_SQL_ERROR(ERR_MSG(
       absl::StrCat("classification: failed to load fasttext model from: ",
-                   options.model_location));
+                   options.model_location)));
   }
 
   if (!model) {
-    SDB_THROW(
-      sdb::ERROR_BAD_PARAMETER,
+    THROW_SQL_ERROR(ERR_MSG(
       absl::StrCat("classification: failed to load fasttext model from: ",
-                   options.model_location));
+                   options.model_location)));
   }
 
   return std::make_unique<ClassificationTokenizer>(options, std::move(model));
@@ -75,15 +72,13 @@ Analyzer::ptr Construct(const ClassificationTokenizer::Options& options) {
 
 Analyzer::ptr ClassificationTokenizer::Make(Options opts) {
   if (opts.model_location.empty()) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "classification: empty model location");
+    THROW_SQL_ERROR(ERR_MSG("classification: empty model location"));
   }
   if (opts.top_k <= 0) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "classification: top_k must be positive");
+    THROW_SQL_ERROR(ERR_MSG("classification: top_k must be positive"));
   }
   if (opts.threshold < 0.0 || opts.threshold > 1.0) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "classification: threshold must be in [0, 1]");
+    THROW_SQL_ERROR(ERR_MSG("classification: threshold must be in [0, 1]"));
   }
   return Construct(opts);
 }

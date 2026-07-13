@@ -41,7 +41,7 @@ CREATE ROLE xog_l_mid;
 
 
 statement ok
-CREATE ROLE xog_l_leaf LOGIN;
+CREATE ROLE xog_l_leaf LOGIN PASSWORD 'xog_l_leaf_pw';
 
 
 # Build the chain and the three sources: UPDATE on the grandparent group,
@@ -88,18 +88,18 @@ t	t	t	f
 
 
 # Real DML proves the chain-inherited UPDATE and the direct INSERT both work.
-connection c_leaf user=xog_l_leaf
+connection c_leaf user=xog_l_leaf password=xog_l_leaf_pw
 statement ok
 INSERT INTO xog_l_pudge VALUES (2, 'mop');
 
 
-connection c_leaf user=xog_l_leaf
+connection c_leaf user=xog_l_leaf password=xog_l_leaf_pw
 statement ok
 UPDATE xog_l_pudge SET payload = 'reowned' WHERE id = 1;
 
 
 # DELETE is denied for real.
-connection c_leaf user=xog_l_leaf
+connection c_leaf user=xog_l_leaf password=xog_l_leaf_pw
 statement error
 DELETE FROM xog_l_pudge WHERE id = 1;
 ----
@@ -132,19 +132,19 @@ t	t	f
 
 
 # UPDATE now denied for real; INSERT (direct) and SELECT (PUBLIC) still work.
-connection c_leaf user=xog_l_leaf
+connection c_leaf user=xog_l_leaf password=xog_l_leaf_pw
 statement error
 UPDATE xog_l_pudge SET payload = 'nope' WHERE id = 2;
 ----
 db error: ERROR: permission denied for table xog_l_pudge<slt:ignore>
 
 
-connection c_leaf user=xog_l_leaf
+connection c_leaf user=xog_l_leaf password=xog_l_leaf_pw
 statement ok
 INSERT INTO xog_l_pudge VALUES (3, 'babsky');
 
 
-connection c_leaf user=xog_l_leaf
+connection c_leaf user=xog_l_leaf password=xog_l_leaf_pw
 query
 SELECT count(*) AS n FROM xog_l_pudge;
 ----

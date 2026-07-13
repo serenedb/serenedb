@@ -41,6 +41,7 @@
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
+#include "pg/sql_utils.h"
 
 namespace sdb::connector {
 namespace {
@@ -61,13 +62,7 @@ std::shared_ptr<catalog::Tokenizer> LookupTokenizerDict(
 
 catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   catalog::Tokenizer& dict) {
-  auto result = dict.GetTokenizer();
-  if (!result) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INTERNAL_ERROR),
-      ERR_MSG("failed to get tokenizer: ", result.error().errorMessage()));
-  }
-  return std::move(*result);
+  return dict.GetTokenizer();
 }
 
 struct DynamicCtx {

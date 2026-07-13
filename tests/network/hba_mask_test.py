@@ -168,6 +168,17 @@ MASK_CASES = [
         "expect": {"127.0.0.9": TRUST, "127.0.1.9": REJECTED},
     },
     {
+        # A rule authored in v4-mapped-v6 form (::ffff:x) must still match a v4
+        # client -- PG promotes the client to ::ffff:x and retries. Without the
+        # promotion the reject is skipped and the client falls open through the
+        # 0.0.0.0/0 allow. 127.0.0.9/.10 dodge the loopback safety rule (only
+        # 127.0.0.1/32), so the authored rules decide.
+        "name": "v4-mapped-rule-matches-v4-client",
+        "hba": ("host all all ::ffff:127.0.0.9/128 reject\n"
+                "host all all 0.0.0.0/0             trust\n"),
+        "expect": {"127.0.0.9": REJECTED, "127.0.0.10": TRUST},
+    },
+    {
         # 127.5.5.5 is not covered by the force-prepended safety rule
         # (host 127.0.0.1/32 trust), so with no matching user rule it falls
         # through to implicit reject. (127.0.0.1 itself can never be rejected --

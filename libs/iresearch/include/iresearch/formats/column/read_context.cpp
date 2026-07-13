@@ -28,10 +28,9 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/storage/block.hpp>
 
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/types.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 namespace {
@@ -133,7 +132,7 @@ duckdb::unique_ptr<duckdb::Block> ReadContext::CreateBlock(
 
 void ReadContext::Read(duckdb::QueryContext context, duckdb::Block& block) {
   const auto id = static_cast<size_t>(block.id);
-  SDB_ENSURE(id < _ranges.size() && _in, sdb::ERROR_INTERNAL,
+  SDB_ENSURE(id < _ranges.size() && _in,
              "ReadContext::Read: unregistered block ", block.id);
   const auto [offset, size] = _ranges[id];
   SDB_ASSERT(block.Size() >= size, "block buffer sector-rounds up");
@@ -150,18 +149,16 @@ void ReadContext::ReadBlocks(duckdb::QueryContext /*context*/,
                              duckdb::FileBuffer& /*buffer*/,
                              duckdb::block_id_t /*start_block*/,
                              duckdb::idx_t /*block_count*/) {
-  SDB_THROW(sdb::ERROR_INTERNAL,
-            "ReadContext::ReadBlocks: contiguous multi-block "
-            "reads are not supported");
+  THROW_SQL_ERROR(
+    ERR_MSG("ReadContext::ReadBlocks: contiguous multi-block "
+            "reads are not supported"));
 }
 
 duckdb::block_id_t ReadContext::GetFreeBlockId() {
-  SDB_THROW(sdb::ERROR_INTERNAL,
-            "ReadContext::GetFreeBlockId on read-only context");
+  THROW_SQL_ERROR(ERR_MSG("ReadContext::GetFreeBlockId on read-only context"));
 }
 duckdb::block_id_t ReadContext::PeekFreeBlockId() {
-  SDB_THROW(sdb::ERROR_INTERNAL,
-            "ReadContext::PeekFreeBlockId on read-only context");
+  THROW_SQL_ERROR(ERR_MSG("ReadContext::PeekFreeBlockId on read-only context"));
 }
 void ReadContext::Write(duckdb::FileBuffer& block,
                         duckdb::block_id_t block_id) {
@@ -170,20 +167,17 @@ void ReadContext::Write(duckdb::FileBuffer& block,
 void ReadContext::Write(duckdb::QueryContext /*context*/,
                         duckdb::FileBuffer& /*block*/,
                         duckdb::block_id_t /*block_id*/) {
-  SDB_THROW(sdb::ERROR_INTERNAL, "ReadContext::Write on read-only context");
+  THROW_SQL_ERROR(ERR_MSG("ReadContext::Write on read-only context"));
 }
 bool ReadContext::IsRootBlock(duckdb::MetaBlockPointer /*root*/) {
-  SDB_THROW(sdb::ERROR_INTERNAL,
-            "ReadContext::IsRootBlock on read-only context");
+  THROW_SQL_ERROR(ERR_MSG("ReadContext::IsRootBlock on read-only context"));
 }
 duckdb::idx_t ReadContext::GetMetaBlock() {
-  SDB_THROW(sdb::ERROR_INTERNAL,
-            "ReadContext::GetMetaBlock on read-only context");
+  THROW_SQL_ERROR(ERR_MSG("ReadContext::GetMetaBlock on read-only context"));
 }
 void ReadContext::WriteHeader(duckdb::QueryContext /*context*/,
                               duckdb::DatabaseHeader /*header*/) {
-  SDB_THROW(sdb::ERROR_INTERNAL,
-            "ReadContext::WriteHeader on read-only context");
+  THROW_SQL_ERROR(ERR_MSG("ReadContext::WriteHeader on read-only context"));
 }
 duckdb::idx_t ReadContext::TotalBlocks() { return 0; }
 

@@ -868,41 +868,28 @@ void PgWireSession<Kind>::WriteCommandTag(
   WriteCommandComplete(this->_send, prepared, rows);
 }
 
-// Capture the client's peer IP once, before auth, for HBA CIDR matching. Unix
-// sockets have no peer IP (_peer_family stays 0). A v4-mapped-v6 address is
-// normalized back to AF_INET so family-strict matching stays PG-faithful.
+// Capture the client's peer IP once, before auth. Unix sockets and capture
+// failures leave _peer_addr unspecified (no IP). A v4-mapped-v6 address is
+// normalized back to IPv4 so HBA family-strict matching stays PG-faithful and
+// is_loopback() sees the v4.
 template<SocketKind Kind>
 void PgWireSession<Kind>::CapturePeerAddress() {
   if constexpr (Kind == SocketKind::Unix) {
-    _peer_family = 0;
-    return;
+    return;  // no IP; the gate treats a unix peer as local via is_local
   } else {
     asio_ns::error_code ec;
     const auto endpoint = this->_socket.Lowest().remote_endpoint(ec);
     if (ec) {
-      _peer_family = 0;
-      return;
+      return;  // no usable peer: stays unspecified -> gate fails closed
     }
     const auto address = endpoint.address();
-    if (address.is_v4()) {
-      const auto bytes = address.to_v4().to_bytes();
-      _peer_family = AF_INET;
-      _peer_addr.fill(0);
-      std::copy(bytes.begin(), bytes.end(), _peer_addr.begin());
-    } else {
-      auto v6 = address.to_v6();
-      if (v6.is_v4_mapped()) {
-        const auto bytes =
-          asio_ns::ip::make_address_v4(asio_ns::ip::v4_mapped, v6).to_bytes();
-        _peer_family = AF_INET;
-        _peer_addr.fill(0);
-        std::copy(bytes.begin(), bytes.end(), _peer_addr.begin());
-      } else {
-        const auto bytes = v6.to_bytes();
-        _peer_family = AF_INET6;
-        std::copy(bytes.begin(), bytes.end(), _peer_addr.begin());
+    if (address.is_v6()) {
+      if (const auto v6 = address.to_v6(); v6.is_v4_mapped()) {
+        _peer_addr = asio_ns::ip::make_address_v4(asio_ns::ip::v4_mapped, v6);
+        return;
       }
     }
+    _peer_addr = address;
   }
 }
 
@@ -944,8 +931,17 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
   client.is_local = Kind == SocketKind::Unix;
   client.is_ssl = this->_socket.IsTls();
   client.is_gss = false;
-  client.family = _peer_family;
-  client.addr = _peer_addr;
+  if (!_peer_addr.is_unspecified()) {
+    if (_peer_addr.is_v4()) {
+      client.family = AF_INET;
+      const auto bytes = _peer_addr.to_v4().to_bytes();
+      std::copy(bytes.begin(), bytes.end(), client.addr.begin());
+    } else {
+      client.family = AF_INET6;
+      const auto bytes = _peer_addr.to_v6().to_bytes();
+      std::copy(bytes.begin(), bytes.end(), client.addr.begin());
+    }
+  }  // else: unix / no-IP -> family 0, addr zeroed (ClientInfo defaults)
   client.is_replication = false;
   client.user = UserName();
   client.database = DatabaseName();
@@ -979,17 +975,13 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
       break;
   }
 
-  // A password method matched: verify against the stored credential. Under the
-  // zero-config default ruleset a role with no stored password logs in under
-  // trust (SerenedB's "no password set" convenience). Once an HBA ruleset is
-  // explicitly configured, a password method must never silently downgrade to
-  // trust -- a role without a usable verifier fails, as in PostgreSQL.
+  // A password method matched: verify against the stored credential. A role
+  // with no usable verifier fails, as in PostgreSQL. Passwordless trust is
+  // expressed entirely in HBA (the superuser's loopback `trust` rules) and is
+  // therefore already decided above, before this point.
   const auto credential =
     _credentials ? _credentials->LookupCredential(UserName()) : std::nullopt;
   if (!credential) {
-    if (ruleset->is_default) {
-      co_return true;
-    }
     WriteFatalResponse(
       this->_send,
       SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_PASSWORD),

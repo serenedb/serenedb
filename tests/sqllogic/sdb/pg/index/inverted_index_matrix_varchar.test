@@ -137,7 +137,7 @@ CREATE INDEX g2_e_expr_wild_ns ON g2_e USING inverted(pk, (decode(encode(b, 'hex
 statement error
 CREATE INDEX g2_e_expr_wild_int ON g2_e USING inverted(pk, (n + 1) ng_dict);
 ----
-db error: ERROR: Failed to create index: Column '(n + 1)' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
+db error: ERROR: Column '(n + 1)' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
 
 
 statement ok

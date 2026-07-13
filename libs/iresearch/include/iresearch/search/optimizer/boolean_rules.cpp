@@ -33,6 +33,7 @@
 #include <utility>
 #include <vector>
 
+#include "basics/system-compiler.h"
 #include "iresearch/search/automaton_filter.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/filter_optimizer.hpp"

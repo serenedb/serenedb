@@ -189,12 +189,8 @@ void FromPlainToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
     "Example: plainto_tsquery('quick fox'). AND-semantics over tokens.";
   SDB_ASSERT(func.GetChildren().size() == 1);
   std::string text;
-  if (auto r =
-        GetVarcharArg(*func.GetChildren()[0], "plainto_tsquery text", text);
-      !r.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-  }
+  GetVarcharArg(*func.GetChildren()[0], text,
+                {"plainto_tsquery text", kSyntaxHint});
   BuildFtsTokens(parent, ctx, column_info, text, /*require_all=*/true);
 }
 
@@ -208,12 +204,8 @@ void FromWebsearchToTsquery(irs::BooleanFilter& parent,
     "Example: websearch_to_tsquery('\"quick fox\" -slow OR fast').";
   SDB_ASSERT(func.GetChildren().size() == 1);
   std::string text;
-  if (auto r = GetVarcharArg(*func.GetChildren()[0],
-                             "websearch_to_tsquery text", text);
-      !r.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-  }
+  GetVarcharArg(*func.GetChildren()[0], text,
+                {"websearch_to_tsquery text", kSyntaxHint});
   ParseWebsearchQuery(text, column_info, ctx, parent);
 }
 
@@ -236,11 +228,7 @@ void FromToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
     "AND/OR/NOT, +/-, prefix/wildcard/regex, ranges, ^N, ~N.";
   SDB_ASSERT(func.GetChildren().size() == 1);
   std::string text;
-  if (auto r = GetVarcharArg(*func.GetChildren()[0], "to_tsquery text", text);
-      !r.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-  }
+  GetVarcharArg(*func.GetChildren()[0], text, {"to_tsquery text", kSyntaxHint});
   auto& mixed = ctx.negated ? Negate<irs::MixedBooleanFilter>(parent)
                             : AddFilter<irs::MixedBooleanFilter>(parent);
   mixed.boost(ctx.boost);
@@ -248,10 +236,11 @@ void FromToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
     mixed, PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
     ctx.tokenizer};
   parser_ctx.strict_field = true;
-  if (auto r = sdb::ParseQuery(parser_ctx, text); !r.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("to_tsquery parse error: ", r.errorMessage()),
-                    ERR_HINT(kSyntaxHint));
+  if (!sdb::ParseQuery(parser_ctx, text)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("to_tsquery parse error: ", parser_ctx.error_message),
+      ERR_HINT(kSyntaxHint));
   }
 }
 

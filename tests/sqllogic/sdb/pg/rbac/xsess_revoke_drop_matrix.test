@@ -128,11 +128,14 @@ statement ok
 DROP ROLE xsess_eve;
 
 
+# The refusal is the generic auth failure, not "does not exist": auth runs
+# before role lookup, so a dropped role is indistinguishable from a bad
+# password (role names cannot be probed).
 connection c_eve user=xsess_eve password=xsess_eve_pw
 statement error
 SELECT 1;
 ----
-db error: FATAL: role "xsess_eve" does not exist<slt:ignore>
+db error: FATAL: password authentication failed for user "xsess_eve"<slt:ignore>
 
 
 # ---- cleanup ----

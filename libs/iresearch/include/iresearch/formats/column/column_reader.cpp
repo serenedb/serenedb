@@ -53,8 +53,6 @@
 #include <utility>
 
 #include "basics/assert.h"
-#include "basics/error.h"
-#include "basics/exceptions.h"
 #include "iresearch/formats/column/array_column_reader.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/internal/gather_arms.hpp"
@@ -63,6 +61,7 @@
 #include "iresearch/formats/column/struct_column_reader.hpp"
 #include "iresearch/formats/column/variant_column_reader.hpp"
 #include "iresearch/store/data_input.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 namespace {
@@ -86,8 +85,7 @@ ColumnBlockMeta DeserializeColumnBlockMeta(duckdb::Deserializer& d,
   auto stats = d.ReadProperty<duckdb::BaseStatistics>(4, "statistics");
   auto& cfg = duckdb::DBConfig::GetConfig(d.Get<duckdb::DatabaseInstance&>());
   auto codec = cfg.TryGetCompressionFunction(compression_type, physical);
-  SDB_ENSURE(codec, sdb::ERROR_INTERNAL,
-             "ColumnReader: missing compression function for codec ",
+  SDB_ENSURE(codec, "ColumnReader: missing compression function for codec ",
              static_cast<uint8_t>(compression_type));
   return ColumnBlockMeta{std::move(stats), tuple_count, file_offset, byte_size,
                          codec.get()};

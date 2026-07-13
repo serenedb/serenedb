@@ -21,8 +21,6 @@
 #pragma once
 
 #include "basics/debugging.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/iterator_doc.hpp"
@@ -33,6 +31,7 @@
 #include "iresearch/search/make_disjunction.hpp"
 #include "iresearch/search/max_score_iterator.hpp"
 #include "iresearch/store/store_utils.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 
@@ -457,7 +456,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::WandIterator(
   IndexFeatures field_features, std::span<const PostingCookie> metas,
   IteratorFieldOptions options, ScoreMergeType type) const {
   SDB_IF_FAILURE("irs::WandIterator") {  //
-    SDB_THROW(sdb::ERROR_DEBUG);
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
 
   return ResolveWandType(
@@ -474,7 +473,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::WandIterator(
 
       if (metas.size() == 1) {
         SDB_IF_FAILURE("irs::SingleWandIterator") {
-          SDB_THROW(sdb::ERROR_DEBUG);
+          THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
         }
         return make_postings_iterator.template operator()<true>(metas[0]);
       }
@@ -492,7 +491,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::WandIterator(
       using Adapter = WandPostingAdapter<Iterator>;
 
       SDB_IF_FAILURE("irs::MaxScoreIterator") {  //
-        SDB_THROW(sdb::ERROR_DEBUG);
+        THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
       }
       return memory::make_managed<MaxScoreIterator<Adapter>>(
         std::move(iterators));

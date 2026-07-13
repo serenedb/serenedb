@@ -19,7 +19,7 @@ DROP ROLE IF EXISTS rcr_intern;
 
 # CREATEDB + CREATEROLE accepted directly in CREATE ROLE, with the NO* negations.
 statement ok
-CREATE ROLE rcr_smith LOGIN NOCREATEDB CREATEROLE;
+CREATE ROLE rcr_smith LOGIN PASSWORD 'rcr_smith_pw' NOCREATEDB CREATEROLE;
 
 
 statement ok
@@ -27,7 +27,7 @@ CREATE ROLE rcr_dbsmith LOGIN CREATEDB NOCREATEROLE;
 
 
 statement ok
-CREATE ROLE rcr_intern LOGIN;
+CREATE ROLE rcr_intern LOGIN PASSWORD 'rcr_intern_pw';
 
 
 query
@@ -42,13 +42,13 @@ rcr_smith	f	t
 
 
 # A CREATEROLE role can create a role.
-connection c_smith user=rcr_smith
+connection c_smith user=rcr_smith password=rcr_smith_pw
 statement ok
 CREATE ROLE rcr_minted;
 
 
 # A role without CREATEROLE cannot create a role.
-connection c_intern user=rcr_intern
+connection c_intern user=rcr_intern password=rcr_intern_pw
 statement error
 CREATE ROLE rcr_blocked;
 ----
@@ -56,7 +56,7 @@ db error: ERROR: permission denied to create role<slt:ignore>
 
 
 # A role without CREATEDB cannot create a database.
-connection c_intern user=rcr_intern
+connection c_intern user=rcr_intern password=rcr_intern_pw
 statement error
 CREATE DATABASE rcr_blocked_db;
 ----

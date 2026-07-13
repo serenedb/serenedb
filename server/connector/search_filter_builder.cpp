@@ -71,6 +71,7 @@
 #include "basics/string_utils.h"
 #include "basics/system-compiler.h"
 #include "comparison_op.hpp"
+#include "connector/common.h"
 #include "connector/json_extract_names.hpp"
 #include "functions/search.h"
 #include "functions/string.h"
@@ -1408,11 +1409,13 @@ void ResetNumericStream(irs::NumericTokenizer& stream,
       stream.reset(value.GetValue<int32_t>());
       break;
     case catalog::term_dict::Kind::NumericI64:
-      if (value.type().InternalType() == duckdb::PhysicalType::INT64) {
+      if (type_id == duckdb::LogicalTypeId::TIME_TZ) {
+        stream.reset(TimeTzIndexTerm(value.GetValueUnsafe<int64_t>()));
+      } else if (value.type().InternalType() == duckdb::PhysicalType::INT64) {
         // Raw physical value: it is exactly what the sink indexed, and
-        // GetValue() would cast to BIGINT (unimplemented for TIMETZ /
-        // TIME_NS / TIMESTAMPTZ_NS). Requires the type's semantic order to
-        // match int64 comparison of the raw representation.
+        // GetValue() would cast to BIGINT (unimplemented for TIME_NS /
+        // TIMESTAMPTZ_NS). Requires the type's semantic order to match
+        // int64 comparison of the raw representation.
         stream.reset(value.GetValueUnsafe<int64_t>());
       } else {
         stream.reset(value.GetValue<int64_t>());

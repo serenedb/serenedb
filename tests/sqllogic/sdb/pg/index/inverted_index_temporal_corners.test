@@ -436,12 +436,10 @@ SELECT pk FROM c_tz_i WHERE ts > TIMESTAMPTZ '2024-01-01 12:00:00+00' ORDER BY p
 pk
 
 # ============================================================================
-# TIMETZ with mixed offsets: the index ranges over the raw packed bits
-# (local time first, reversed-offset tiebreak), while SQL comparison uses the
-# UTC-normalized sort_key. 12:30:00+02 is 10:30 UTC — semantically outside
-# [11:30, 13:00] UTC — but its local time lies inside the packed-bits window,
-# so the index range includes it. Both behaviors pinned here; if the index
-# ever switches to sort_key encoding, the first expectation must drop pk 2.
+# TIMETZ with mixed offsets: terms encode dtime_tz_t::sort_key(), so index
+# ranges follow SQL comparison semantics (UTC instant first, offset tiebreak).
+# 12:30:00+02 is 10:30 UTC — outside [11:30, 13:00] UTC — even though its
+# local time lies inside the window.
 # ============================================================================
 
 statement ok
@@ -469,7 +467,6 @@ SELECT pk FROM c_ttz_i WHERE ttz @@ ts_between(TIMETZ '11:30:00+00', TIMETZ '13:
 ----
 pk
 1
-2
 
 query
 SELECT pk FROM c_ttz_plain WHERE ttz BETWEEN TIMETZ '11:30:00+00' AND TIMETZ '13:00:00+00' ORDER BY pk;
@@ -477,9 +474,8 @@ SELECT pk FROM c_ttz_plain WHERE ttz BETWEEN TIMETZ '11:30:00+00' AND TIMETZ '13
 pk
 1
 
-# Plain < on the index table stays a residual DuckDB filter (semantic UTC
-# order: 10:30, 11:00, 12:00 are all before 12:15 UTC) — unlike ts_between,
-# which forces the raw-bits index range above.
+# Plain < on the index table stays a residual DuckDB filter; result matches
+# the plain table (semantic UTC order: 10:30, 11:00, 12:00 all before 12:15).
 query
 SELECT pk FROM c_ttz_i WHERE ttz < TIMETZ '12:15:00+00' ORDER BY pk;
 ----

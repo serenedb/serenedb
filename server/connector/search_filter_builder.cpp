@@ -1409,6 +1409,10 @@ void ResetNumericStream(irs::NumericTokenizer& stream,
       break;
     case catalog::term_dict::Kind::NumericI64:
       if (value.type().InternalType() == duckdb::PhysicalType::INT64) {
+        // Raw physical value: it is exactly what the sink indexed, and
+        // GetValue() would cast to BIGINT (unimplemented for TIMETZ /
+        // TIME_NS / TIMESTAMPTZ_NS). Requires the type's semantic order to
+        // match int64 comparison of the raw representation.
         stream.reset(value.GetValueUnsafe<int64_t>());
       } else {
         stream.reset(value.GetValue<int64_t>());

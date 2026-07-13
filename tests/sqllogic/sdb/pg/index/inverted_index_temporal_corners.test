@@ -1,0 +1,523 @@
+control substitution on
+
+# Corner cases for raw-int64/int32 temporal term encoding: the sign-bit flip
+# at raw value 0 (the 1970 epoch), the ±infinity sentinels at the int
+# extremes, strict-vs-inclusive bounds landing exactly on stored terms, tz
+# normalization, and the TIMETZ packed-bits ordering.
+
+statement ok
+SET TIME ZONE 'UTC';
+
+# ============================================================================
+# TIMESTAMP: sign boundary at the 1970 epoch (raw micros -1 / 0 / +1).
+# ============================================================================
+
+statement ok
+CREATE TABLE c_ep(pk INTEGER PRIMARY KEY, ts TIMESTAMP);
+
+statement ok
+CREATE INDEX c_ep_i ON c_ep USING inverted(pk, ts);
+
+statement ok
+INSERT INTO c_ep VALUES
+    (1, TIMESTAMP '1969-12-31 23:59:59.999999'),
+    (2, TIMESTAMP '1970-01-01 00:00:00'),
+    (3, TIMESTAMP '1970-01-01 00:00:00.000001');
+
+statement ok
+VACUUM (REFRESH_TABLE) c_ep;
+
+query
+SELECT pk FROM c_ep_i WHERE ts @@ ts_between(TIMESTAMP '1969-12-31 23:59:59.999999', TIMESTAMP '1970-01-01 00:00:00.000001', true, true) ORDER BY pk;
+----
+pk
+1
+2
+3
+
+query
+SELECT pk FROM c_ep_i WHERE ts @@ ts_between(TIMESTAMP '1969-12-31 23:59:59.999999', TIMESTAMP '1970-01-01 00:00:00.000001', false, false) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM c_ep_i WHERE ts @@ ts_between(TIMESTAMP '1970-01-01 00:00:00', TIMESTAMP '2000-01-01 00:00:00', true, true) ORDER BY pk;
+----
+pk
+2
+3
+
+query
+SELECT pk FROM c_ep_i WHERE ts @@ ts_between(TIMESTAMP '1900-01-01 00:00:00', TIMESTAMP '1970-01-01 00:00:00', false, false) ORDER BY pk;
+----
+pk
+1
+
+# Plain comparison operators at the epoch.
+query
+SELECT pk FROM c_ep_i WHERE ts > TIMESTAMP '1970-01-01 00:00:00' ORDER BY pk;
+----
+pk
+3
+
+query
+SELECT pk FROM c_ep_i WHERE ts >= TIMESTAMP '1970-01-01 00:00:00' ORDER BY pk;
+----
+pk
+2
+3
+
+query
+SELECT pk FROM c_ep_i WHERE ts < TIMESTAMP '1970-01-01 00:00:00' ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM c_ep_i WHERE ts <= TIMESTAMP '1970-01-01 00:00:00' ORDER BY pk;
+----
+pk
+1
+2
+
+# ============================================================================
+# TIMESTAMP: ±infinity sentinels (±INT64_MAX) and year 1 / 9999 extremes.
+# ============================================================================
+
+statement ok
+CREATE TABLE c_inf(pk INTEGER PRIMARY KEY, ts TIMESTAMP);
+
+statement ok
+CREATE INDEX c_inf_i ON c_inf USING inverted(pk, ts);
+
+statement ok
+INSERT INTO c_inf VALUES
+    (1, '-infinity'),
+    (2, TIMESTAMP '0001-01-01 00:00:00'),
+    (3, TIMESTAMP '9999-12-31 23:59:59.999999'),
+    (4, 'infinity');
+
+statement ok
+VACUUM (REFRESH_TABLE) c_inf;
+
+query
+SELECT pk FROM c_inf_i WHERE ts @@ ts_between('-infinity'::TIMESTAMP, 'infinity'::TIMESTAMP, true, true) ORDER BY pk;
+----
+pk
+1
+2
+3
+4
+
+query
+SELECT pk FROM c_inf_i WHERE ts @@ ts_between('-infinity'::TIMESTAMP, 'infinity'::TIMESTAMP, false, false) ORDER BY pk;
+----
+pk
+2
+3
+
+query
+SELECT pk FROM c_inf_i WHERE ts @@ ts_between(TIMESTAMP '9999-12-31 23:59:59.999999', 'infinity'::TIMESTAMP, true, true) ORDER BY pk;
+----
+pk
+3
+4
+
+query
+SELECT pk FROM c_inf_i WHERE ts @@ ts_between('-infinity'::TIMESTAMP, TIMESTAMP '0001-01-01 00:00:00', true, false) ORDER BY pk;
+----
+pk
+1
+
+# Plain comparison operators against the sentinels and finite extremes.
+query
+SELECT pk FROM c_inf_i WHERE ts > '-infinity'::TIMESTAMP ORDER BY pk;
+----
+pk
+2
+3
+4
+
+query
+SELECT pk FROM c_inf_i WHERE ts < 'infinity'::TIMESTAMP ORDER BY pk;
+----
+pk
+1
+2
+3
+
+query
+SELECT pk FROM c_inf_i WHERE ts >= TIMESTAMP '9999-12-31 23:59:59.999999' ORDER BY pk;
+----
+pk
+3
+4
+
+query
+SELECT pk FROM c_inf_i WHERE ts <= TIMESTAMP '0001-01-01 00:00:00' ORDER BY pk;
+----
+pk
+1
+2
+
+# ============================================================================
+# DATE: int32 sign boundary at 1970-01-01, BC dates, ±infinity (±INT32 ends).
+# ============================================================================
+
+statement ok
+CREATE TABLE c_d(pk INTEGER PRIMARY KEY, d DATE);
+
+statement ok
+CREATE INDEX c_d_i ON c_d USING inverted(pk, d);
+
+statement ok
+INSERT INTO c_d VALUES
+    (1, '-infinity'),
+    (2, DATE '4713-01-01 (BC)'),
+    (3, DATE '1969-12-31'),
+    (4, DATE '1970-01-01'),
+    (5, DATE '1970-01-02'),
+    (6, DATE '9999-12-31'),
+    (7, 'infinity');
+
+statement ok
+VACUUM (REFRESH_TABLE) c_d;
+
+query
+SELECT pk FROM c_d_i WHERE d @@ ts_between(DATE '1969-12-31', DATE '1970-01-02', true, true) ORDER BY pk;
+----
+pk
+3
+4
+5
+
+query
+SELECT pk FROM c_d_i WHERE d @@ ts_between(DATE '1969-12-31', DATE '1970-01-02', false, false) ORDER BY pk;
+----
+pk
+4
+
+query
+SELECT pk FROM c_d_i WHERE d @@ ts_between('-infinity'::DATE, DATE '4713-01-01 (BC)', true, true) ORDER BY pk;
+----
+pk
+1
+2
+
+query
+SELECT pk FROM c_d_i WHERE d @@ ts_between(DATE '9999-12-31', 'infinity'::DATE, false, true) ORDER BY pk;
+----
+pk
+7
+
+# ============================================================================
+# TIMESTAMP_S / _MS / _NS: sign boundary in each raw unit, and the NS int64
+# range edges (1677-09-21 .. 2262-04-11).
+# ============================================================================
+
+statement ok
+CREATE TABLE c_sc(pk INTEGER PRIMARY KEY, s TIMESTAMP_S, ms TIMESTAMP_MS, ns TIMESTAMP_NS);
+
+statement ok
+CREATE INDEX c_sc_s  ON c_sc USING inverted(pk, s);
+
+statement ok
+CREATE INDEX c_sc_ms ON c_sc USING inverted(pk, ms);
+
+statement ok
+CREATE INDEX c_sc_ns ON c_sc USING inverted(pk, ns);
+
+statement ok
+INSERT INTO c_sc VALUES
+    (1, TIMESTAMP_S '1969-12-31 23:59:59', TIMESTAMP_MS '1969-12-31 23:59:59.999',
+        TIMESTAMP_NS '1969-12-31 23:59:59.999999999'),
+    (2, TIMESTAMP_S '1970-01-01 00:00:00', TIMESTAMP_MS '1970-01-01 00:00:00.000',
+        TIMESTAMP_NS '1970-01-01 00:00:00'),
+    (3, TIMESTAMP_S '1970-01-01 00:00:01', TIMESTAMP_MS '1970-01-01 00:00:00.001',
+        TIMESTAMP_NS '1970-01-01 00:00:00.000000001'),
+    (4, NULL, NULL, TIMESTAMP_NS '1677-09-22 00:00:00.000000001'),
+    (5, NULL, NULL, TIMESTAMP_NS '2262-04-11 23:47:16.854775806');
+
+statement ok
+VACUUM (REFRESH_TABLE) c_sc;
+
+query
+SELECT pk FROM c_sc_s WHERE s @@ ts_between(TIMESTAMP_S '1969-12-31 23:59:59', TIMESTAMP_S '1970-01-01 00:00:01', false, false) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM c_sc_ms WHERE ms @@ ts_between(TIMESTAMP_MS '1969-12-31 23:59:59.999', TIMESTAMP_MS '1970-01-01 00:00:00.001', false, false) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM c_sc_ns WHERE ns @@ ts_between(TIMESTAMP_NS '1969-12-31 23:59:59.999999999', TIMESTAMP_NS '1970-01-01 00:00:00.000000001', false, false) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM c_sc_ns WHERE ns @@ ts_between(TIMESTAMP_NS '1677-09-22 00:00:00', TIMESTAMP_NS '1677-09-23 00:00:00', true, true) ORDER BY pk;
+----
+pk
+4
+
+query
+SELECT pk FROM c_sc_ns WHERE ns @@ ts_between(TIMESTAMP_NS '2262-04-11 00:00:00', TIMESTAMP_NS '2262-04-11 23:47:16.854775806', true, true) ORDER BY pk;
+----
+pk
+5
+
+# Plain comparison operators split the epoch with the range-edge rows present.
+query
+SELECT pk FROM c_sc_ns WHERE ns >= TIMESTAMP_NS '1970-01-01 00:00:00' ORDER BY pk;
+----
+pk
+2
+3
+5
+
+query
+SELECT pk FROM c_sc_ns WHERE ns < TIMESTAMP_NS '1970-01-01 00:00:00' ORDER BY pk;
+----
+pk
+1
+4
+
+# ============================================================================
+# TIME / TIME_NS: day boundaries 00:00:00 and 24:00:00, 1-unit-above-zero
+# values, strict bounds landing exactly on stored terms.
+# ============================================================================
+
+statement ok
+CREATE TABLE c_t(pk INTEGER PRIMARY KEY, t TIME, tns TIME_NS);
+
+statement ok
+CREATE INDEX c_t_t   ON c_t USING inverted(pk, t);
+
+statement ok
+CREATE INDEX c_t_tns ON c_t USING inverted(pk, tns);
+
+statement ok
+INSERT INTO c_t VALUES
+    (1, TIME '00:00:00',        TIME_NS '00:00:00'),
+    (2, TIME '00:00:00.000001', TIME_NS '00:00:00.000000001'),
+    (3, TIME '23:59:59.999999', TIME_NS '23:59:59.999999999'),
+    (4, TIME '24:00:00',        TIME_NS '24:00:00');
+
+statement ok
+VACUUM (REFRESH_TABLE) c_t;
+
+query
+SELECT pk FROM c_t_t WHERE t @@ ts_between(TIME '00:00:00', TIME '00:00:00', true, true) ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM c_t_t WHERE t @@ ts_between(TIME '00:00:00', TIME '24:00:00', false, false) ORDER BY pk;
+----
+pk
+2
+3
+
+query
+SELECT pk FROM c_t_t WHERE t @@ ts_between(TIME '23:59:59.999999', TIME '24:00:00', true, true) ORDER BY pk;
+----
+pk
+3
+4
+
+query
+SELECT pk FROM c_t_tns WHERE tns @@ ts_between(TIME_NS '00:00:00', TIME_NS '00:00:00.000000001', false, true) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM c_t_tns WHERE tns @@ ts_between(TIME_NS '23:59:59.999999999', TIME_NS '24:00:00', true, false) ORDER BY pk;
+----
+pk
+3
+
+# Plain comparison operators at the day boundaries.
+query
+SELECT pk FROM c_t_t WHERE t >= TIME '24:00:00' ORDER BY pk;
+----
+pk
+4
+
+query
+SELECT pk FROM c_t_t WHERE t < TIME '00:00:00.000001' ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM c_t_tns WHERE tns <= TIME_NS '00:00:00.000000001' ORDER BY pk;
+----
+pk
+1
+2
+
+query
+SELECT pk FROM c_t_tns WHERE tns > TIME_NS '23:59:59.999999999' ORDER BY pk;
+----
+pk
+4
+
+# ============================================================================
+# TIMESTAMPTZ: offsets normalize to UTC at parse time — one instant written
+# three ways indexes to one term; bounds in any offset are equivalent; an
+# offset-less literal is interpreted in the session zone (+05:30 here).
+# ============================================================================
+
+statement ok
+CREATE TABLE c_tz(pk INTEGER PRIMARY KEY, ts TIMESTAMPTZ);
+
+statement ok
+CREATE INDEX c_tz_i ON c_tz USING inverted(pk, ts);
+
+statement ok
+INSERT INTO c_tz VALUES
+    (1, TIMESTAMPTZ '2024-01-01 12:00:00+00'),
+    (2, TIMESTAMPTZ '2024-01-01 14:00:00+02'),
+    (3, TIMESTAMPTZ '2024-01-01 06:30:00-05:30');
+
+statement ok
+VACUUM (REFRESH_TABLE) c_tz;
+
+query
+SELECT pk FROM c_tz_i WHERE ts @@ ts_between(TIMESTAMPTZ '2024-01-01 12:00:00+00', TIMESTAMPTZ '2024-01-01 12:00:00+00', true, true) ORDER BY pk;
+----
+pk
+1
+2
+3
+
+query
+SELECT pk FROM c_tz_i WHERE ts @@ ts_between(TIMESTAMPTZ '2024-01-01 13:00:00+02', TIMESTAMPTZ '2024-01-01 14:30:00+02', true, true) ORDER BY pk;
+----
+pk
+1
+2
+3
+
+statement ok
+SET TIME ZONE 'Asia/Kolkata';
+
+query
+SELECT pk FROM c_tz_i WHERE ts @@ ts_between(TIMESTAMPTZ '2024-01-01 17:30:00', TIMESTAMPTZ '2024-01-01 17:30:00', true, true) ORDER BY pk;
+----
+pk
+1
+2
+3
+
+statement ok
+SET TIME ZONE 'UTC';
+
+# Plain comparison operators: all three rows are the same instant.
+query
+SELECT pk FROM c_tz_i WHERE ts >= TIMESTAMPTZ '2024-01-01 14:00:00+02' ORDER BY pk;
+----
+pk
+1
+2
+3
+
+query
+SELECT pk FROM c_tz_i WHERE ts > TIMESTAMPTZ '2024-01-01 12:00:00+00' ORDER BY pk;
+----
+pk
+
+# ============================================================================
+# TIMETZ with mixed offsets: the index ranges over the raw packed bits
+# (local time first, reversed-offset tiebreak), while SQL comparison uses the
+# UTC-normalized sort_key. 12:30:00+02 is 10:30 UTC — semantically outside
+# [11:30, 13:00] UTC — but its local time lies inside the packed-bits window,
+# so the index range includes it. Both behaviors pinned here; if the index
+# ever switches to sort_key encoding, the first expectation must drop pk 2.
+# ============================================================================
+
+statement ok
+CREATE TABLE c_ttz(pk INTEGER PRIMARY KEY, ttz TIMETZ);
+
+statement ok
+CREATE TABLE c_ttz_plain(pk INTEGER PRIMARY KEY, ttz TIMETZ);
+
+statement ok
+CREATE INDEX c_ttz_i ON c_ttz USING inverted(pk, ttz);
+
+statement ok
+INSERT INTO c_ttz VALUES
+    (1, TIMETZ '12:00:00+00'), (2, TIMETZ '12:30:00+02'), (3, TIMETZ '09:00:00-02');
+
+statement ok
+INSERT INTO c_ttz_plain VALUES
+    (1, TIMETZ '12:00:00+00'), (2, TIMETZ '12:30:00+02'), (3, TIMETZ '09:00:00-02');
+
+statement ok
+VACUUM (REFRESH_TABLE) c_ttz;
+
+query
+SELECT pk FROM c_ttz_i WHERE ttz @@ ts_between(TIMETZ '11:30:00+00', TIMETZ '13:00:00+00', true, true) ORDER BY pk;
+----
+pk
+1
+2
+
+query
+SELECT pk FROM c_ttz_plain WHERE ttz BETWEEN TIMETZ '11:30:00+00' AND TIMETZ '13:00:00+00' ORDER BY pk;
+----
+pk
+1
+
+# Plain < on the index table stays a residual DuckDB filter (semantic UTC
+# order: 10:30, 11:00, 12:00 are all before 12:15 UTC) — unlike ts_between,
+# which forces the raw-bits index range above.
+query
+SELECT pk FROM c_ttz_i WHERE ttz < TIMETZ '12:15:00+00' ORDER BY pk;
+----
+pk
+1
+2
+3
+
+query
+SELECT pk FROM c_ttz_plain WHERE ttz < TIMETZ '12:15:00+00' ORDER BY pk;
+----
+pk
+1
+2
+3
+
+# --- teardown ---------------------------------------------------------------
+
+statement ok
+DROP TABLE c_ep;
+
+statement ok
+DROP TABLE c_inf;
+
+statement ok
+DROP TABLE c_d;
+
+statement ok
+DROP TABLE c_sc;
+
+statement ok
+DROP TABLE c_t;
+
+statement ok
+DROP TABLE c_tz;
+
+statement ok
+DROP TABLE c_ttz;
+
+statement ok
+DROP TABLE c_ttz_plain;

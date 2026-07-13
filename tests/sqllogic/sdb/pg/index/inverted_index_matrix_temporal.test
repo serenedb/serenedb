@@ -250,6 +250,8 @@ SELECT pk FROM m_time_t WHERE t @@ ts_between(TIME_NS '12:00:00', TIME_NS '23:00
 pk
 2
 
+
+
 query
 SELECT pk FROM m_time_ttz WHERE ttz @@ ts_between(TIMETZ '12:00:00+02', TIMETZ '23:00:00+02', true, true);
 ----

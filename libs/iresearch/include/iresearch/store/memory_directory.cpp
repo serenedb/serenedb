@@ -194,16 +194,6 @@ void MemoryIndexOutput::FlushBuffer() {
 MemoryIndexOutput::MemoryIndexOutput(MemoryFile& file) noexcept
   : IndexOutput{nullptr, nullptr}, _file{file} {}
 
-void MemoryIndexOutput::Truncate(size_t pos) noexcept {
-  auto idx = _file.buffer_offset(pos);
-  SDB_ASSERT(idx < _file.buffer_count());
-  auto buf = _file.get_buffer(idx);
-  _offset = buf.offset;
-  _buf = buf.data;
-  _pos = _buf + pos - _offset;
-  _end = _buf + buf.size;
-}
-
 void MemoryIndexOutput::WriteDirect(const byte_type* b, size_t len) {
   Write(*this, b, len);
 }

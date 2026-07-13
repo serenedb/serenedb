@@ -52,42 +52,7 @@
 #include "pg/sql_exception_macro.h"
 
 using namespace sdb;
-namespace {
-
-enum class StatResultType {
-  Error,  // in case it cannot be determined
-  Directory,
-  SymLink,
-  File,
-  Other  // potentially file
-};
-
-StatResultType DoStatResultType(const struct stat& stbuf) {
-  if (S_ISDIR(stbuf.st_mode)) {
-    return StatResultType::Directory;
-  }
-
-  if (S_ISLNK(stbuf.st_mode)) {
-    return StatResultType::SymLink;
-  }
-
-  if ((stbuf.st_mode & S_IFMT) == S_IFREG) {
-    return StatResultType::File;
-  }
-
-  return StatResultType::Other;
-}
-
-StatResultType DoStatResultType(const char* path) {
-  struct stat stbuf;
-  int res = SERENEDB_STAT(path, &stbuf);
-  if (res != 0) {
-    return StatResultType::Error;
-  }
-  return DoStatResultType(stbuf);
-}
-
-}  // namespace
+namespace {}  // namespace
 namespace sdb::basics::file_utils {
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -96,8 +61,10 @@ namespace sdb::basics::file_utils {
 /// path will be modified in-place
 ////////////////////////////////////////////////////////////////////////////////
 
+namespace {
+
 std::string_view RemoveTrailingSeparator(std::string_view name) {
-  return string_utils::RTrim(name, SERENEDB_DIR_SEPARATOR_STR);
+  return name.substr(0, name.find_last_not_of(SERENEDB_DIR_SEPARATOR_STR) + 1);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -109,6 +76,8 @@ std::string_view RemoveTrailingSeparator(std::string_view name) {
 void NormalizePath(std::string& name) {
   absl::c_replace(name, '/', SERENEDB_DIR_SEPARATOR_CHR);
 }
+
+}  // namespace
 
 ////////////////////////////////////////////////////////////////////////////////
 /// creates a filename
@@ -242,10 +211,6 @@ void Spit(const char* filename, std::string_view s, bool sync) {
     // intentionally ignore this error -- nothing we can do about it.
     std::ignore = fsync(fd);
   }
-}
-
-bool IsDirectory(const char* path) {
-  return DoStatResultType(path) == ::StatResultType::Directory;
 }
 
 }  // namespace sdb::basics::file_utils

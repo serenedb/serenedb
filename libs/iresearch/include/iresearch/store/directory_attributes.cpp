@@ -23,17 +23,7 @@
 
 #include "directory_attributes.hpp"
 
-#include "iresearch/error/error.hpp"
-
 namespace irs {
-
-void IndexFileRefs::clear() {
-  _refs.visit([](const auto&, size_t) { return true; }, true);
-
-  if (!_refs.empty()) {
-    throw IllegalState{"Cannot clear ref_counter due to live refs."};
-  }
-}
 
 DirectoryAttributes::DirectoryAttributes(std::unique_ptr<irs::Encryption> enc)
   : _enc{std::move(enc)}, _refs{std::make_unique<IndexFileRefs>()} {}

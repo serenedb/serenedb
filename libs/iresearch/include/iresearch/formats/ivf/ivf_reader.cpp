@@ -104,12 +104,6 @@ void IvfVectorReader::ReadInto(uint64_t start, uint64_t count) {
   }
 }
 
-const float* IvfVectorReader::ReadDoc(doc_id_t doc) {
-  const uint64_t row = static_cast<uint64_t>(doc) - doc_limits::min();
-  ReadInto(row * _d, _d);
-  return duckdb::FlatVector::GetData<float>(_buf);
-}
-
 const float* IvfVectorReader::ReadDocBatch(doc_id_t first, size_t count) {
   SDB_ASSERT(count >= 1);
   const uint64_t row0 = static_cast<uint64_t>(first) - doc_limits::min();

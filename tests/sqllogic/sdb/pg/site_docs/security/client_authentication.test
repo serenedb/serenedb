@@ -1,0 +1,40 @@
+# DOCS_TEST: example_001
+
+statement ok
+DROP ROLE IF EXISTS doc_sec_dana;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE ROLE doc_sec_dana LOGIN PASSWORD 'first_secret';
+
+statement ok
+ALTER ROLE doc_sec_dana PASSWORD 'rotated_secret';
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER ROLE doc_sec_dana PASSWORD NULL;
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER ROLE doc_sec_dana VALID UNTIL '2099-01-01 00:00:00+00';
+
+query
+SELECT rolvaliduntil IS NOT NULL AS has_expiry FROM pg_roles
+WHERE rolname = 'doc_sec_dana';
+----
+has_expiry
+t
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP ROLE doc_sec_dana;

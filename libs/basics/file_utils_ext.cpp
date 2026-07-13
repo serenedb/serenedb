@@ -593,49 +593,6 @@ bool FileSync(const path_char_t* file) noexcept {
 
 #endif  // _WIN32
 
-bool Absolute(bool& result, const path_char_t* path) noexcept {
-  if (!path) {
-    return false;
-  }
-
-#ifdef _WIN32
-  if (MAX_PATH > wcslen(path)) {
-    result = !PathIsRelativeW(path);
-  } else {
-    // ensure that PathIsRelativeW(...) is given a value shorter than MAX_PATH
-    // still ok since to determine if absolute only need the start of the path
-    irs::basic_string<wchar_t> buf(path, MAX_PATH - 1);  // -1 for '\0'
-
-    result = !PathIsRelativeW(buf.c_str());
-  }
-#else
-  result = path[0] == '/';  // a null terminated string is at least size 1
-#endif
-
-  return true;
-}
-
-bool BlockSize(FILE_BLKSIZE_T& result, const path_char_t* file) noexcept {
-  SDB_ASSERT(file != nullptr);
-#ifdef _WIN32
-  // TODO FIXME find a workaround
-  IRS_IGNORE(file);
-  result = 512;
-
-  return true;
-#else
-  FILE_STAT_T info;
-
-  if (0 != PathStats(info, file)) {
-    return false;
-  }
-
-  result = info.st_blksize;
-
-  return true;
-#endif  // _WIN32
-}
-
 bool ByteSize(uint64_t& result, const path_char_t* file) noexcept {
   SDB_ASSERT(file != nullptr);
   FILE_STAT_T info;

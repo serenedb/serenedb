@@ -217,7 +217,6 @@ struct Snapshot {
   std::shared_ptr<Table> GetTable(const AccessContext& ax, ObjectId database_id,
                                   std::string_view schema,
                                   std::string_view name) const;
-  std::shared_ptr<Table> GetTable(const AccessContext& ax, ObjectId id) const;
   std::shared_ptr<Sequence> GetSequence(const AccessContext& ax,
                                         ObjectId database, ObjectId schema_id,
                                         std::string_view name) const;

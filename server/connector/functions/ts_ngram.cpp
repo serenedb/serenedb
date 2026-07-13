@@ -44,21 +44,13 @@ void FromNgram(irs::BooleanFilter& filter, const FilterContext& ctx,
   SDB_ASSERT(func.GetChildren().size() >= 1 && func.GetChildren().size() <= 2);
 
   std::string target;
-  if (auto r = GetVarcharArg(*func.GetChildren()[0], "ts_ngram text", target);
-      !r.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-  }
+  GetVarcharArg(*func.GetChildren()[0], target, {"ts_ngram text", kSyntaxHint});
 
   float threshold = 0.7f;
   if (func.GetChildren().size() == 2) {
     double thr;
-    if (auto r =
-          GetDoubleArg(*func.GetChildren()[1], "ts_ngram threshold", thr);
-        !r.ok()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-    }
+    GetDoubleArg(*func.GetChildren()[1], thr,
+                 {"ts_ngram threshold", kSyntaxHint});
     threshold = static_cast<float>(thr);
   }
   if (threshold < 0.f || threshold > 1.f) {

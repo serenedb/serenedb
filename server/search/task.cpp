@@ -127,9 +127,11 @@ CompactionOptions PinCompactionOptions(SearchTable& /*table*/) {
 template<class Storage>
 void DoRefresh(Storage& idx, bool run_cleanup, RefreshResult& code) {
   SDB_IF_FAILURE("SearchRefreshTask::lockInvertedIndexStorage") {
-    SDB_THROW(ERROR_DEBUG);
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
-  SDB_IF_FAILURE("SearchRefreshTask::commitUnsafe") { SDB_THROW(ERROR_DEBUG); }
+  SDB_IF_FAILURE("SearchRefreshTask::commitUnsafe") {
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+  }
   {
     metrics::Scoped guard{metrics::Gauge::RefreshActive};
     code = RefreshResult::Undefined;
@@ -140,13 +142,15 @@ void DoRefresh(Storage& idx, bool run_cleanup, RefreshResult& code) {
     } else {
       SDB_WARN(SEARCH, "error after running for ", time_ms,
                "ms while refreshing Search index '", idx.GetId().id(),
-               "': ", res.errorNumber(), " ", res.errorMessage());
+               "': ", res.message());
     }
   }
   if (!run_cleanup) {
     return;
   }
-  SDB_IF_FAILURE("SearchRefreshTask::cleanupUnsafe") { SDB_THROW(ERROR_DEBUG); }
+  SDB_IF_FAILURE("SearchRefreshTask::cleanupUnsafe") {
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+  }
   metrics::Scoped guard{metrics::Gauge::CleanupActive};
   auto [res, time_ms] = idx.CleanupUnsafe();
   if (res.ok()) {
@@ -155,17 +159,17 @@ void DoRefresh(Storage& idx, bool run_cleanup, RefreshResult& code) {
   } else {
     SDB_WARN(SEARCH, "error after running for ", time_ms,
              "ms while cleaning up Search index '", idx.GetId().id(),
-             "': ", res.errorNumber(), " ", res.errorMessage());
+             "': ", res.message());
   }
 }
 
 template<class Storage>
 bool DoCompaction(Storage& idx, const irs::CompactionPolicy& policy) {
   SDB_IF_FAILURE("SearchCompactionTask::lockInvertedIndexStorage") {
-    SDB_THROW(ERROR_DEBUG);
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
   SDB_IF_FAILURE("SearchCompactionTask::compactUnsafe") {
-    SDB_THROW(ERROR_DEBUG);
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
   // Pin the merge's field options for its whole lifetime (storage-specific, see
   // PinCompactionOptions). A target found already dropped has nothing to merge.
@@ -183,7 +187,7 @@ bool DoCompaction(Storage& idx, const irs::CompactionPolicy& policy) {
   } else {
     SDB_DEBUG(SEARCH, "error after running for ", time_ms,
               "ms while compacting Search index '", idx.GetId().id(),
-              "': ", res.errorNumber(), " ", res.errorMessage());
+              "': ", res.message());
   }
   return !empty_compaction;
 }

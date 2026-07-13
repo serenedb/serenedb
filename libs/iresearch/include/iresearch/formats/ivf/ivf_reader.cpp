@@ -27,10 +27,10 @@
 #include <vector>
 
 #include "basics/assert.h"
-#include "basics/exceptions.h"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/type_limits.hpp"
 #include "iresearch/utils/vector.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 namespace {
@@ -55,7 +55,7 @@ VectorDistanceFn ResolveVectorDistance(VectorMetric metric) {
     case VectorMetric::Cosine:
       return &CosineSimilarity;
   }
-  SDB_THROW(sdb::ERROR_NOT_IMPLEMENTED, "unsupported IVF vector metric");
+  THROW_SQL_ERROR(ERR_MSG("unsupported IVF vector metric"));
 }
 
 bool VectorMetricNearestIsLargest(VectorMetric metric) noexcept {

@@ -26,11 +26,11 @@ DROP ROLE IF EXISTS vac_vedernikoff;
 
 
 statement ok
-CREATE ROLE vac_clickclack LOGIN;
+CREATE ROLE vac_clickclack LOGIN PASSWORD 'vac_clickclack_pw';
 
 
 statement ok
-CREATE ROLE vac_vedernikoff LOGIN;
+CREATE ROLE vac_vedernikoff LOGIN PASSWORD 'vac_vedernikoff_pw';
 
 
 statement ok
@@ -61,24 +61,24 @@ VACUUM (recompute_stats_table) vac_mop;
 
 
 # Owner may maintain its own table.
-connection c_owner user=vac_clickclack
+connection c_owner user=vac_clickclack password=vac_clickclack_pw
 statement ok
 VACUUM (recompute_stats_table) vac_mop;
 
 
-connection c_owner user=vac_clickclack
+connection c_owner user=vac_clickclack password=vac_clickclack_pw
 statement ok
 VACUUM (refresh_table) vac_mop;
 
 
 # Non-owner without MAINTAIN: the table is SKIPPED with a warning, not an error
 # -- the statement still succeeds (PG warn-and-skip semantics).
-connection c_other user=vac_vedernikoff
+connection c_other user=vac_vedernikoff password=vac_vedernikoff_pw
 statement ok
 VACUUM (recompute_stats_table) vac_mop;
 
 
-connection c_other user=vac_vedernikoff
+connection c_other user=vac_vedernikoff password=vac_vedernikoff_pw
 statement ok
 VACUUM (refresh_table) vac_mop;
 
@@ -96,7 +96,7 @@ other_maint
 t
 
 
-connection c_other2 user=vac_vedernikoff
+connection c_other2 user=vac_vedernikoff password=vac_vedernikoff_pw
 statement ok
 VACUUM (recompute_stats_table) vac_mop;
 
@@ -113,7 +113,7 @@ other_maint
 f
 
 
-connection c_other3 user=vac_vedernikoff
+connection c_other3 user=vac_vedernikoff password=vac_vedernikoff_pw
 statement ok
 VACUUM (recompute_stats_table) vac_mop;
 

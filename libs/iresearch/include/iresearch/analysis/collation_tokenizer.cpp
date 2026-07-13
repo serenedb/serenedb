@@ -27,8 +27,8 @@
 
 #include <string_view>
 
-#include "basics/exceptions.h"
 #include "collation_tokenizer_encoder.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 namespace {
@@ -54,14 +54,14 @@ CollationTokenizer::CollationTokenizer(Options options)
 
 Analyzer::ptr CollationTokenizer::Make(Options opts) {
   if (opts.locale.isBogus()) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "collation: invalid locale");
+    THROW_SQL_ERROR(ERR_MSG("collation: invalid locale"));
   }
   auto err = UErrorCode::U_ZERO_ERROR;
   std::unique_ptr<icu::Collator> collator{
     icu::Collator::createInstance(opts.locale, err)};
   if (!collator || !U_SUCCESS(err)) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "collation: failed to create collator for the locale");
+    THROW_SQL_ERROR(
+      ERR_MSG("collation: failed to create collator for the locale"));
   }
   return std::make_unique<CollationTokenizer>(std::move(opts));
 }

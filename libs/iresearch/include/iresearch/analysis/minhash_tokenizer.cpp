@@ -24,10 +24,10 @@
 
 #include <absl/strings/escaping.h>
 
-#include "basics/exceptions.h"
 #include "basics/wyhash.h"
 #include "iresearch/analysis/tokenizer_config.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 namespace {
@@ -38,7 +38,7 @@ constexpr OffsAttr kEmptyOffset;
 
 Analyzer::ptr MinHashTokenizer::Make(Options opts) {
   if (opts.num_hashes == 0) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "minhash: num_hashes must be positive");
+    THROW_SQL_ERROR(ERR_MSG("minhash: num_hashes must be positive"));
   }
   Analyzer::ptr sub;
   if (opts.analyzer) {

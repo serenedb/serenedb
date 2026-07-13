@@ -25,8 +25,8 @@
 
 #include <string_view>
 
-#include "basics/exceptions.h"
 #include "iresearch/analysis/tokenizer_config.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 namespace {
@@ -153,15 +153,13 @@ bool PipelineTokenizer::reset(std::string_view data) {
 
 Analyzer::ptr PipelineTokenizer::Make(Options opts) {
   if (opts.children.empty()) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "pipeline: requires at least one child analyzer");
+    THROW_SQL_ERROR(ERR_MSG("pipeline: requires at least one child analyzer"));
   }
   std::vector<Analyzer::ptr> live_children;
   live_children.reserve(opts.children.size());
   for (auto& child : opts.children) {
     if (!child) {
-      SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-                "pipeline: null child analyzer config");
+      THROW_SQL_ERROR(ERR_MSG("pipeline: null child analyzer config"));
     }
     live_children.emplace_back(CreateAnalyzer(std::move(*child)));
   }

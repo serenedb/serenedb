@@ -38,6 +38,7 @@
 #include <utility>
 #include <vector>
 
+#include "basics/system-compiler.h"
 #include "catalog/table_options.h"
 #include "connector/column_extract.h"
 #include "connector/duckdb_table_function.h"

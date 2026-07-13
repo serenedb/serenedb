@@ -39,7 +39,7 @@ DROP ROLE IF EXISTS doc_kostya;
 
 
 statement ok
-CREATE ROLE doc_vedernikoff LOGIN;
+CREATE ROLE doc_vedernikoff LOGIN PASSWORD 'doc_vedernikoff_pw';
 
 
 statement ok
@@ -55,7 +55,7 @@ GRANT CREATE, USAGE ON SCHEMA public TO doc_vedernikoff;
 # clears when ownership is moved away by ALTER ... OWNER TO.
 # =====================================================================
 
-connection ccreate user=doc_vedernikoff
+connection ccreate user=doc_vedernikoff password=doc_vedernikoff_pw
 statement ok
 CREATE TABLE doc_t (id int);
 
@@ -99,14 +99,14 @@ DROP TABLE doc_t;
 # =====================================================================
 
 statement ok
-CREATE ROLE doc_vedernikoff LOGIN;
+CREATE ROLE doc_vedernikoff LOGIN PASSWORD 'doc_vedernikoff_pw';
 
 
 statement ok
 GRANT CREATE, USAGE ON SCHEMA public TO doc_vedernikoff;
 
 
-connection ccreate2 user=doc_vedernikoff
+connection ccreate2 user=doc_vedernikoff password=doc_vedernikoff_pw
 statement ok
 CREATE TABLE doc_t (id int);
 
@@ -137,14 +137,14 @@ DROP ROLE doc_vedernikoff;
 # =====================================================================
 
 statement ok
-CREATE ROLE doc_vedernikoff LOGIN;
+CREATE ROLE doc_vedernikoff LOGIN PASSWORD 'doc_vedernikoff_pw';
 
 
 statement ok
 GRANT CREATE, USAGE ON SCHEMA public TO doc_vedernikoff;
 
 
-connection ccreate3 user=doc_vedernikoff
+connection ccreate3 user=doc_vedernikoff password=doc_vedernikoff_pw
 statement ok
 CREATE TABLE doc_t (id int);
 
@@ -183,7 +183,7 @@ DROP ROLE doc_kostya;
 # =====================================================================
 
 statement ok
-CREATE ROLE doc_vedernikoff LOGIN;
+CREATE ROLE doc_vedernikoff LOGIN PASSWORD 'doc_vedernikoff_pw';
 
 
 statement ok
@@ -198,7 +198,7 @@ statement ok
 GRANT SELECT ON doc_base TO doc_vedernikoff;
 
 
-connection ccreate4 user=doc_vedernikoff
+connection ccreate4 user=doc_vedernikoff password=doc_vedernikoff_pw
 statement ok
 CREATE VIEW doc_v AS SELECT id FROM doc_base;
 
@@ -239,14 +239,14 @@ DROP ROLE doc_vedernikoff;
 # =====================================================================
 
 statement ok
-CREATE ROLE doc_vedernikoff LOGIN;
+CREATE ROLE doc_vedernikoff LOGIN PASSWORD 'doc_vedernikoff_pw';
 
 
 statement ok
 GRANT CREATE, USAGE ON SCHEMA public TO doc_vedernikoff;
 
 
-connection ccreate5 user=doc_vedernikoff
+connection ccreate5 user=doc_vedernikoff password=doc_vedernikoff_pw
 statement ok
 CREATE SEQUENCE doc_seq;
 

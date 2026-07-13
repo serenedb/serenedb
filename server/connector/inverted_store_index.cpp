@@ -35,7 +35,6 @@
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
-#include "basics/errors.h"
 #include "basics/log.h"
 #include "catalog/catalog.h"
 #include "catalog/inverted_index.h"
@@ -54,8 +53,8 @@ namespace {
 ObjectId OptionId(const duckdb::case_insensitive_map_t<duckdb::Value>& options,
                   const char* key) {
   auto it = options.find(key);
-  SDB_ENSURE(it != options.end(), ERROR_INTERNAL, "store index is missing the ",
-             key, " option");
+  SDB_ENSURE(it != options.end(), "store index is missing the ", key,
+             " option");
   return ObjectId{it->second.GetValue<uint64_t>()};
 }
 
@@ -124,16 +123,14 @@ InvertedStoreIndex::ReplaySession& InvertedStoreIndex::EnsureReplaySession() {
     return *_replay;
   }
   auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
-  SDB_ENSURE(snapshot, ERROR_INTERNAL,
-             "inverted index replay: no catalog snapshot");
+  SDB_ENSURE(snapshot, "inverted index replay: no catalog snapshot");
   auto inverted = snapshot->GetObject<catalog::InvertedIndex>(_index_id);
   auto table = snapshot->GetObject<catalog::Table>(_table_id);
-  SDB_ENSURE(inverted && table, ERROR_INTERNAL,
-             "inverted index replay: catalog objects for ", _index_id.id(),
-             " missing");
-  auto storage = inverted->GetData();
-  SDB_ENSURE(storage, ERROR_INTERNAL, "inverted index replay: storage ",
+  SDB_ENSURE(inverted && table, "inverted index replay: catalog objects for ",
              _index_id.id(), " missing");
+  auto storage = inverted->GetData();
+  SDB_ENSURE(storage, "inverted index replay: storage ", _index_id.id(),
+             " missing");
   const search::WalCursor cursor = storage->GetRecoveryWalCursor();
   uint64_t durable_offset = 0;
   auto& block_manager = db.GetStorageManager().GetBlockManager();
@@ -255,7 +252,7 @@ void InvertedStoreIndex::FinishReplay() {
   session.storage->RecordFlushCursor(
     last_tick, search::WalCursor{sm.GetBlockManager().GetCheckpointIteration(),
                                  sm.GetWALSize()});
-  SDB_ENSURE(session.trx.Commit(last_tick), ERROR_INTERNAL,
+  SDB_ENSURE(session.trx.Commit(last_tick),
              "inverted index replay: commit failed for index ", _index_id.id());
   session.expr_conn.Rollback();
   _replay.reset();
@@ -412,9 +409,10 @@ duckdb::IndexStorageInfo InvertedStoreIndex::MakeStorageInfo() const {
 void InvertedStoreIndex::CheckpointBarrier() const {
   auto* catalog = catalog::TryGetCatalog();
   if (!catalog) {
-    SDB_THROW(ERROR_INTERNAL, "inverted index ", _index_id.id(),
+    THROW_SQL_ERROR(
+      ERR_MSG("inverted index ", _index_id.id(),
               ": catalog is shut down, cannot verify index durability; "
-              "refusing to checkpoint (WAL retained for replay)");
+              "refusing to checkpoint (WAL retained for replay)"));
   }
   auto snapshot = catalog->GetCatalogSnapshot();
   SDB_ASSERT(snapshot);
@@ -426,8 +424,7 @@ void InvertedStoreIndex::CheckpointBarrier() const {
   if (!storage) {
     return;
   }
-  SDB_ENSURE(!storage->IsOutOfSync(), ERROR_INTERNAL, "inverted index ",
-             _index_id.id(),
+  SDB_ENSURE(!storage->IsOutOfSync(), "inverted index ", _index_id.id(),
              " is out of sync with its store table; refusing to checkpoint "
              "(WAL retained for replay; REINDEX to clear)");
   storage->CheckpointRefresh();

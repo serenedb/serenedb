@@ -108,7 +108,7 @@ struct StringSpan {
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
 union YYSTYPE
 {
-#line 56 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 55 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
 
     StringSpan sv;
     int num;

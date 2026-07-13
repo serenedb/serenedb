@@ -35,6 +35,7 @@
 #include "basics/assert.h"
 #include "basics/bit_utils.hpp"
 #include "basics/down_cast.h"
+#include "basics/system-compiler.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/inverted_index.h"
 #include "catalog/scorer_options.h"

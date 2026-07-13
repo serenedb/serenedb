@@ -342,21 +342,21 @@ CREATE TABLE g16_t(pk INTEGER PRIMARY KEY,
 statement error
 CREATE INDEX g16_imp_ub ON g16_t USING inverted(pk, ub);
 ----
-db error: ERROR: Failed to create index: Column 'ub' has unsupported type UBIGINT and can not be indexed
+db error: ERROR: Column 'ub' has unsupported type UBIGINT and can not be indexed
 
 
 # (b) implicit (no opclass) on UHUGEINT: 128-bit unsigned, Unsupported.
 statement error
 CREATE INDEX g16_imp_uh ON g16_t USING inverted(pk, uh);
 ----
-db error: ERROR: Failed to create index: Column 'uh' has unsupported type UHUGEINT and can not be indexed
+db error: ERROR: Column 'uh' has unsupported type UHUGEINT and can not be indexed
 
 
 # (c) implicit (no opclass) on BIT: bitstring is Unsupported.
 statement error
 CREATE INDEX g16_imp_bi ON g16_t USING inverted(pk, bi);
 ----
-db error: ERROR: Failed to create index: Column 'bi' has unsupported type BIT and can not be indexed
+db error: ERROR: Column 'bi' has unsupported type BIT and can not be indexed
 
 
 # (d) implicit (no opclass) on ENUM: the type's alias (from CREATE TYPE) is
@@ -364,14 +364,14 @@ db error: ERROR: Failed to create index: Column 'bi' has unsupported type BIT an
 statement error
 CREATE INDEX g16_imp_en ON g16_t USING inverted(pk, en);
 ----
-db error: ERROR: Failed to create index: Column 'en' has unsupported type g16_enum_t and can not be indexed
+db error: ERROR: Column 'en' has unsupported type g16_enum_t and can not be indexed
 
 
 # (e) implicit (no opclass) on VARIANT: STRUCT-backed catch-all type, Unsupported.
 statement error
 CREATE INDEX g16_imp_vr ON g16_t USING inverted(pk, vr);
 ----
-db error: ERROR: Failed to create index: Column 'vr' has unsupported type VARIANT and can not be indexed
+db error: ERROR: Column 'vr' has unsupported type VARIANT and can not be indexed
 
 
 # (f) implicit (no opclass) on LIST<HUGEINT>: container path in Validate
@@ -380,28 +380,28 @@ db error: ERROR: Failed to create index: Column 'vr' has unsupported type VARIAN
 statement error
 CREATE INDEX g16_imp_lh ON g16_t USING inverted(pk, lh);
 ----
-db error: ERROR: Failed to create index: Column 'lh' has unsupported type HUGEINT[] and can not be indexed
+db error: ERROR: Column 'lh' has unsupported type HUGEINT[] and can not be indexed
 
 
 # (g) implicit (no opclass) on LIST<DECIMAL(10,2)>: same container path.
 statement error
 CREATE INDEX g16_imp_ld ON g16_t USING inverted(pk, ld);
 ----
-db error: ERROR: Failed to create index: Column 'ld' has unsupported type DECIMAL(10,2)[] and can not be indexed
+db error: ERROR: Column 'ld' has unsupported type DECIMAL(10,2)[] and can not be indexed
 
 
 # (h) implicit (no opclass) on LIST<INTERVAL>.
 statement error
 CREATE INDEX g16_imp_li ON g16_t USING inverted(pk, li);
 ----
-db error: ERROR: Failed to create index: Column 'li' has unsupported type INTERVAL[] and can not be indexed
+db error: ERROR: Column 'li' has unsupported type INTERVAL[] and can not be indexed
 
 
 # (i) implicit (no opclass) on LIST<UUID>.
 statement error
 CREATE INDEX g16_imp_lu ON g16_t USING inverted(pk, lu);
 ----
-db error: ERROR: Failed to create index: Column 'lu' has unsupported type UUID[] and can not be indexed
+db error: ERROR: Column 'lu' has unsupported type UUID[] and can not be indexed
 
 
 # (j) implicit (no opclass) on ARRAY<HUGEINT,2>: the container branch renders
@@ -409,14 +409,14 @@ db error: ERROR: Failed to create index: Column 'lu' has unsupported type UUID[]
 statement error
 CREATE INDEX g16_imp_ah ON g16_t USING inverted(pk, ah);
 ----
-db error: ERROR: Failed to create index: Column 'ah' has unsupported type HUGEINT[2] and can not be indexed
+db error: ERROR: Column 'ah' has unsupported type HUGEINT[2] and can not be indexed
 
 
 # (k) implicit (no opclass) on ARRAY<DECIMAL(10,2),2>: same array path.
 statement error
 CREATE INDEX g16_imp_ad ON g16_t USING inverted(pk, ad);
 ----
-db error: ERROR: Failed to create index: Column 'ad' has unsupported type DECIMAL(10,2)[2] and can not be indexed
+db error: ERROR: Column 'ad' has unsupported type DECIMAL(10,2)[2] and can not be indexed
 
 
 # --- teardown ---------------------------------------------------------------

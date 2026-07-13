@@ -26,8 +26,7 @@
 #include <string_view>
 
 #include "basics/assert.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::basics {
 
@@ -91,7 +90,7 @@ class Buffer {
 
   void resetTo(size_t position) {
     if (position > _capacity) [[unlikely]] {
-      SDB_THROW(sdb::ERROR_BAD_PARAMETER, "index out of bounds");
+      THROW_SQL_ERROR(ERR_MSG("index out of bounds"));
     }
     _size = position;
   }
@@ -133,7 +132,7 @@ class Buffer {
 
   decltype(auto) at(this auto& self, size_t position) {
     if (position >= self._size) [[unlikely]] {
-      SDB_THROW(sdb::ERROR_BAD_PARAMETER, "index out of bounds");
+      THROW_SQL_ERROR(ERR_MSG("index out of bounds"));
     }
     return self[position];
   }
@@ -245,7 +244,7 @@ class Buffer {
     auto capacity = new_len;
 #endif
     if (capacity > std::numeric_limits<index_t>::max()) [[unlikely]] {
-      SDB_THROW(sdb::ERROR_INTERNAL, "Buffer is unable to allocate");
+      THROW_SQL_ERROR(ERR_MSG("Buffer is unable to allocate"));
     }
     // copy existing data into buffer
     memcpy(buffer, _buffer, _size);

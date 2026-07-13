@@ -32,8 +32,7 @@
 #include <utility>
 
 #include "basics/assert.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::basics {
 
@@ -152,8 +151,8 @@ class JsonSource {
     const std::string_view found = _curr.type().get(actual) == simdjson::SUCCESS
                                      ? magic_enum::enum_name(actual)
                                      : std::string_view{"invalid JSON"};
-    SDB_THROW(ERROR_BAD_PARAMETER, "JSON: expected ",
-              magic_enum::enum_name(expected), " but found ", found);
+    THROW_SQL_ERROR(ERR_MSG("JSON: expected ", magic_enum::enum_name(expected),
+                            " but found ", found));
   }
 
   Value _curr;

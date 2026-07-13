@@ -24,8 +24,8 @@
 
 #include <string_view>
 
-#include "basics/exceptions.h"
 #include "iresearch/utils/utf8_utils.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 
@@ -52,7 +52,7 @@ Analyzer::ptr NGramTokenizerBase::Make(Options opts) {
       return NGramTokenizer<NGramTokenizerBase::InputType::UTF8>::make(
         std::move(opts));
   }
-  SDB_THROW(sdb::ERROR_BAD_PARAMETER, "ngram: unsupported input type");
+  THROW_SQL_ERROR(ERR_MSG("ngram: unsupported input type"));
 }
 
 template<NGramTokenizerBase::InputType StreamType>

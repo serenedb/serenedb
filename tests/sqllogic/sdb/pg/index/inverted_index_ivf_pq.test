@@ -124,10 +124,10 @@ CREATE TABLE pq_bad (pk INTEGER PRIMARY KEY, emb FLOAT[8])
 statement error
 CREATE INDEX pq_bad_cos ON pq_bad USING inverted(pk, emb ivf (metric = 'cosine', quant = 'pq', pq_m = 4));
 ----
-db error: ERROR: Failed to create index: Column 'emb': ivf quantization supports only metric 'l2' or 'ip'
+db error: ERROR: Column 'emb': ivf quantization supports only metric 'l2' or 'ip'
 
 
 statement error
 CREATE INDEX pq_bad_m ON pq_bad USING inverted(pk, emb ivf (metric = 'l2', quant = 'pq', pq_m = 3));
 ----
-db error: ERROR: Failed to create index: Column 'emb': ivf option 'pq_m' (3) must divide the vector dimension 8
+db error: ERROR: Column 'emb': ivf option 'pq_m' (3) must divide the vector dimension 8

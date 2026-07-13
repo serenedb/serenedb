@@ -39,7 +39,7 @@ CREATE TABLE ident_makak (id int, gul text);
 # ============================================================================
 
 statement ok
-CREATE ROLE "ident_Vedernikoff" LOGIN;
+CREATE ROLE "ident_Vedernikoff" LOGIN PASSWORD 'ident_Vedernikoff_pw';
 
 
 statement ok
@@ -167,7 +167,7 @@ t	f
 # current_user, and the quoted-name oracle matches the real query path.
 # ============================================================================
 
-connection c_v user=ident_Vedernikoff
+connection c_v user=ident_Vedernikoff password=ident_Vedernikoff_pw
 query
 SELECT current_user AS cu, session_user AS su, current_role AS cr;
 ----
@@ -177,7 +177,7 @@ ident_Vedernikoff	ident_Vedernikoff	ident_Vedernikoff
 
 # SELECT is held -> the real read works on the MixedCase connection.
 
-connection c_v user=ident_Vedernikoff
+connection c_v user=ident_Vedernikoff password=ident_Vedernikoff_pw
 query
 SELECT count(*) AS n FROM ident_makak;
 ----
@@ -187,7 +187,7 @@ n
 
 # INSERT was revoked -> the real write is denied under the MixedCase identity.
 
-connection c_v user=ident_Vedernikoff
+connection c_v user=ident_Vedernikoff password=ident_Vedernikoff_pw
 statement error
 INSERT INTO ident_makak VALUES (1, 'iceberg');
 ----

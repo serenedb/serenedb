@@ -22,19 +22,19 @@
 
 #include "wildcard_filter.hpp"
 
-#include "basics/exceptions.h"
 #include "iresearch/search/automaton_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/wildcard_utils.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 
 QueryBuilder::ptr ByWildcard::PrepareSegment(const SubReader&,
                                              const PrepareContext&) const {
-  SDB_THROW(sdb::ERROR_INTERNAL,
-            "ByWildcard must be lowered by the optimizer before prepare");
+  THROW_SQL_ERROR(
+    ERR_MSG("ByWildcard must be lowered by the optimizer before prepare"));
 }
 
 Filter::ptr LowerWildcard(irs::field_id id, bytes_view term,

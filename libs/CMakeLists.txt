@@ -12,20 +12,14 @@ add_definitions(
 add_library(
     serene_base
     STATIC
-    basics/encoding_utils.cpp
-    basics/exceptions.cpp
     basics/file_utils.cpp
     basics/metrics.cpp
     basics/number_of_cores.cpp
-    basics/physical_memory.cpp
-    basics/result.cpp
-    basics/result_error.cpp
     basics/string_utils.cpp
     basics/static_strings.cpp
     basics/lifecycle.cpp
     basics/application-exit.cpp
     basics/debugging.cpp
-    basics/error.cpp
     basics/files.cpp
     basics/lockfile.cpp
     basics/signals.cpp
@@ -37,8 +31,6 @@ add_library(
     basics/crash_handler.cpp
     basics/random/random_generator.cpp
     basics/random/uniform_character.cpp
-    basics/ssl/ssl_interface.cpp
-    basics/ssl/ssl_helper.cpp
     basics/message_buffer.cpp
     basics/message_sequence_view.cpp
     basics/duckdb_engine.cpp
@@ -61,7 +53,7 @@ target_include_directories(
 
 # Rebuild generated error files so they are up-to-date when all
 # dependent stuff is built
-add_dependencies(serene_base errorfiles exitcodefiles)
+add_dependencies(serene_base exitcodefiles)
 
 target_link_libraries(
     serene_base
@@ -76,6 +68,8 @@ target_link_libraries(
         absl::node_hash_set
         absl::node_hash_map
         absl::synchronization
+        absl::status
+        absl::statusor
         absl::strings
         faiss
         fmt::fmt
@@ -141,7 +135,7 @@ target_include_directories(serene PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
 
 target_include_directories(serene SYSTEM PUBLIC ${OPENSSL_INCLUDE_DIR})
 
-add_dependencies(serene errorfiles exitcodefiles)
+add_dependencies(serene exitcodefiles)
 
 add_subdirectory(geo)
 add_subdirectory(build_id)

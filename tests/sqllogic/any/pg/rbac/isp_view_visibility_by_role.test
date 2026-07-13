@@ -26,11 +26,11 @@ CREATE TABLE isp_kryakva (id int, body text);
 
 
 statement ok
-CREATE ROLE isp_pavel LOGIN;
+CREATE ROLE isp_pavel LOGIN PASSWORD 'isp_pavel_pw';
 
 
 statement ok
-CREATE ROLE isp_salam LOGIN;
+CREATE ROLE isp_salam LOGIN PASSWORD 'isp_salam_pw';
 
 
 statement ok
@@ -64,7 +64,7 @@ isp_salam	UPDATE	NO
 # invisible. table_privileges and role_table_grants agree.
 # ============================================================================
 
-connection c_pavel user=isp_pavel
+connection c_pavel user=isp_pavel password=isp_pavel_pw
 query
 SELECT grantee, privilege_type, is_grantable
 FROM information_schema.table_privileges
@@ -76,7 +76,7 @@ isp_pavel	INSERT	NO
 isp_pavel	SELECT	NO
 
 
-connection c_pavel user=isp_pavel
+connection c_pavel user=isp_pavel password=isp_pavel_pw
 query
 SELECT grantee, privilege_type
 FROM information_schema.role_table_grants
@@ -89,7 +89,7 @@ isp_pavel	SELECT
 
 
 # pavel cannot see salam's grants at all.
-connection c_pavel user=isp_pavel
+connection c_pavel user=isp_pavel password=isp_pavel_pw
 query
 SELECT count(*) AS salam_rows_seen
 FROM information_schema.table_privileges
@@ -103,7 +103,7 @@ salam_rows_seen
 # Connected AS salam: the mirror image -- only salam's two rows are visible.
 # ============================================================================
 
-connection c_salam user=isp_salam
+connection c_salam user=isp_salam password=isp_salam_pw
 query
 SELECT grantee, privilege_type, is_grantable
 FROM information_schema.table_privileges
@@ -115,7 +115,7 @@ isp_salam	DELETE	NO
 isp_salam	UPDATE	NO
 
 
-connection c_salam user=isp_salam
+connection c_salam user=isp_salam password=isp_salam_pw
 query
 SELECT count(*) AS pavel_rows_seen
 FROM information_schema.table_privileges
@@ -134,7 +134,7 @@ statement ok
 REVOKE INSERT ON isp_kryakva FROM isp_pavel;
 
 
-connection c_pavel user=isp_pavel
+connection c_pavel user=isp_pavel password=isp_pavel_pw
 query
 SELECT grantee, privilege_type
 FROM information_schema.table_privileges

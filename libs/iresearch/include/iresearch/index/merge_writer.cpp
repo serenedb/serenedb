@@ -530,7 +530,7 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
     }
 
     if (!norm_writer) {
-      SDB_ENSURE(field_limits::valid(opts.id), sdb::ERROR_INTERNAL,
+      SDB_ENSURE(field_limits::valid(opts.id),
                  "MergeNormColumnFromSources: GetNormColumnOptions did not "
                  "mint a valid id for field ",
                  id);

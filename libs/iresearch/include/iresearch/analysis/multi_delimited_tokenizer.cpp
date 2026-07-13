@@ -26,9 +26,9 @@
 #include <string_view>
 
 #include "absl/container/flat_hash_map.h"
-#include "basics/exceptions.h"
 #include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/fstext/fst_draw.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 namespace {
@@ -410,14 +410,14 @@ Analyzer::ptr MultiDelimitedTokenizer::Make(
   for (size_t i = 0; i < opts.delimiters.size(); ++i) {
     const bytes_view view{opts.delimiters[i]};
     if (view.empty()) {
-      SDB_THROW(sdb::ERROR_BAD_PARAMETER, "multi_delimited: empty delimiter");
+      THROW_SQL_ERROR(ERR_MSG("multi_delimited: empty delimiter"));
     }
     for (size_t j = 0; j < i; ++j) {
       const bytes_view known{opts.delimiters[j]};
       if (view.starts_with(known) || known.starts_with(view)) {
-        SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-                  "multi_delimited: delimiters must not be prefixes of one "
-                  "another");
+        THROW_SQL_ERROR(
+          ERR_MSG("multi_delimited: delimiters must not be prefixes of one "
+                  "another"));
       }
     }
   }

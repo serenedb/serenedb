@@ -35,6 +35,7 @@
 
 #include "basics/file_utils.h"
 #include "basics/log.h"
+#include "basics/static_strings.h"
 
 namespace sdb::network::pg::hba {
 namespace {
@@ -663,20 +664,47 @@ bool NameMatcher::Matches(const ClientInfo& client,
   return false;
 }
 
+bool AddrMatcher::Contains(const std::array<uint8_t, 16>& candidate) const {
+  for (int i = 0; i < 16; ++i) {
+    if ((candidate[i] & mask[i]) != (addr[i] & mask[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+namespace {
+
+// The IPv4-mapped IPv6 form of a client's v4 address (::ffff:a.b.c.d): 10 zero
+// bytes, 0xff, 0xff, then the 4 v4 bytes (RFC 4291). Lets a v4 client be tested
+// against an IPv6 rule, matching PostgreSQL's check_ip promotion.
+std::array<uint8_t, 16> V4Mapped(const std::array<uint8_t, 16>& v4) {
+  std::array<uint8_t, 16> mapped{};
+  mapped[10] = 0xff;
+  mapped[11] = 0xff;
+  std::copy_n(v4.begin(), 4, mapped.begin() + 12);
+  return mapped;
+}
+
+}  // namespace
+
 bool AddrMatcher::Matches(int client_family,
                           const std::array<uint8_t, 16>& client_addr) const {
   if (kind == Kind::All) {
     return true;
   }
-  if (kind != Kind::Mask || client_family != family) {
+  if (kind != Kind::Mask) {
     return false;  // SameHost/SameNet/Hostname are handled by Decide, not here
   }
-  for (int i = 0; i < 16; ++i) {
-    if ((client_addr[i] & mask[i]) != (addr[i] & mask[i])) {
-      return false;
-    }
+  if (client_family == family) {
+    return Contains(client_addr);
   }
-  return true;
+
+  if (client_family == AF_INET && family == AF_INET6) {
+    return Contains(V4Mapped(client_addr));
+  }
+
+  return false;
 }
 
 Decision Decide(const Ruleset& ruleset, const ClientInfo& client,
@@ -789,24 +817,30 @@ std::optional<Ruleset> Parse(std::string_view text, ParseError& error) {
 
 namespace {
 
-// The un-removable safety rule (force-prepended): a local + loopback escape
-// hatch so a bad ruleset can never lock an admin out (CockroachDB's mandatory
-// rule + loopback default). Kept as text so it flows through the same parser.
-constexpr std::string_view kSafetyRules =
-  "local all all trust\n"
-  "host all all 127.0.0.1/32 trust\n"
-  "host all all ::1/128 trust\n";
+// The un-removable safety net, force-prepended onto every ruleset (the built-in
+// default and any user-authored one) so a bad ruleset can never lock the admin
+// out (CockroachDB's mandatory-root-rule shape). Scoped to the BOOTSTRAP
+// SUPERUSER: it can always authenticate locally (unix socket + loopback),
+// while every other role falls through to the rest of the ruleset -- so
+// loopback can be password-gated or rejected for non-superusers. Built at
+// runtime because it embeds the superuser's name; it flows through the same
+// parser as any authored ruleset.
+std::string SafetyRules() {
+  const std::string_view super = StaticStrings::kDefaultUser;
+  return absl::StrCat("local all ", super, " trust\n", "host all ", super,
+                      " 127.0.0.1/32 trust\n", "host all ", super,
+                      " ::1/128 trust\n");
+}
 
-// The default ruleset when no `hba` is configured: unix sockets trust (local
-// admin), every TCP connection authenticates via SCRAM against the stored
-// per-role credential (a role with no stored password logs in under trust).
-// This reproduces the pre-HBA behavior of a bare --auth_method server exactly,
-// so enabling HBA with an empty config is behavior-preserving -- in particular
-// it does NOT blanket-trust loopback TCP (password auth still applies there).
-// The loopback-trust escape hatch (kSafetyRules) is force-prepended only onto a
-// user-authored ruleset, as anti-lockout insurance, not into this default.
+// The default ruleset when no `hba` is configured. Every role authenticates via
+// SCRAM against its stored credential, locally and remotely alike, so a role
+// with no password cannot log in (as in PostgreSQL). The one exception is the
+// bootstrap superuser's passwordless local access, which comes from the
+// force-prepended SafetyRules -- not from this text -- so the zero-config local
+// launch stays friction-free for the superuser while everyone else fails
+// closed.
 constexpr std::string_view kDefaultRules =
-  "local all all trust\n"
+  "local all all scram-sha-256\n"
   "host all all 0.0.0.0/0 scram-sha-256\n"
   "host all all ::0/0 scram-sha-256\n";
 
@@ -838,9 +872,7 @@ std::shared_ptr<const Ruleset>& LiveRuleset() {
 }  // namespace
 
 Ruleset DefaultRuleset() {
-  Ruleset rs = ParseTrusted(kDefaultRules);
-  rs.is_default = true;
-  return rs;
+  return ParseTrusted(absl::StrCat(SafetyRules(), kDefaultRules));
 }
 
 std::shared_ptr<const Ruleset> GetHbaRuleset() {
@@ -857,7 +889,7 @@ std::optional<ParseError> SetHbaFromText(std::string_view text) {
   if (!parsed) {
     return err;  // keep-last-good: live ruleset untouched
   }
-  Ruleset combined = ParseTrusted(kSafetyRules);
+  Ruleset combined = ParseTrusted(SafetyRules());
   // Force-prepend the safety rules unless the user's ruleset already begins
   // with the exact same escape hatch (compare the leading lines verbatim), so
   // we don't duplicate them.

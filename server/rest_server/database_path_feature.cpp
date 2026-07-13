@@ -93,8 +93,7 @@ DatabasePathFeature::DatabasePathFeature()
   // remains is handled by VerifyLockFile on the next start.
   std::string lock_filename =
     basics::file_utils::BuildFilename(_directory, "LOCK");
-  auto res = VerifyLockFile(lock_filename.c_str());
-  if (res != ERROR_OK) {
+  if (!VerifyLockFile(lock_filename.c_str())) {
     std::string other_pid;
     try {
       other_pid = basics::file_utils::Slurp(lock_filename);
@@ -121,11 +120,10 @@ DatabasePathFeature::DatabasePathFeature()
                           lock_filename, "': ", ec.message());
     }
   }
-  res = CreateLockFile(lock_filename.c_str());
-  if (res != ERROR_OK) {
+  if (!CreateLockFile(lock_filename.c_str())) {
     SDB_FATAL_EXIT_CODE(GENERAL, EXIT_COULD_NOT_LOCK,
                         "failed to lock the database directory using '",
-                        lock_filename, "': ", GetErrorStr(res));
+                        lock_filename, "'");
   }
 
   gInstance = this;

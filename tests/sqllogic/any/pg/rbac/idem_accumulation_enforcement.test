@@ -30,7 +30,7 @@ INSERT INTO idem_kostyatable VALUES (1, 'iceberg'), (2, 'vedernikoff');
 
 
 statement ok
-CREATE ROLE idem_gul LOGIN;
+CREATE ROLE idem_gul LOGIN PASSWORD 'idem_gul_pw';
 
 
 # ---- Baseline: oracle says nothing held, and the real path denies both ----
@@ -43,7 +43,7 @@ sel	ins
 f	f
 
 
-connection c_gul user=idem_gul
+connection c_gul user=idem_gul password=idem_gul_pw
 statement error
 SELECT * FROM idem_kostyatable;
 ----
@@ -57,7 +57,7 @@ statement ok
 GRANT SELECT ON idem_kostyatable TO idem_gul;
 
 
-connection c_gul user=idem_gul
+connection c_gul user=idem_gul password=idem_gul_pw
 query
 SELECT id, mop FROM idem_kostyatable ORDER BY id;
 ----
@@ -71,7 +71,7 @@ statement ok
 GRANT SELECT ON idem_kostyatable TO idem_gul;
 
 
-connection c_gul user=idem_gul
+connection c_gul user=idem_gul password=idem_gul_pw
 query
 SELECT count(*) AS n FROM idem_kostyatable;
 ----
@@ -79,7 +79,7 @@ n
 2
 
 
-connection c_gul user=idem_gul
+connection c_gul user=idem_gul password=idem_gul_pw
 statement error
 INSERT INTO idem_kostyatable VALUES (3, 'pudge');
 ----
@@ -102,12 +102,12 @@ sel	ins	del
 t	t	f
 
 
-connection c_gul user=idem_gul
+connection c_gul user=idem_gul password=idem_gul_pw
 statement ok
 INSERT INTO idem_kostyatable VALUES (3, 'clickclack');
 
 
-connection c_gul user=idem_gul
+connection c_gul user=idem_gul password=idem_gul_pw
 query
 SELECT count(*) AS n FROM idem_kostyatable;
 ----
@@ -117,7 +117,7 @@ n
 
 # DELETE was never granted: the real delete is denied even though SELECT and
 # INSERT accumulated.
-connection c_gul user=idem_gul
+connection c_gul user=idem_gul password=idem_gul_pw
 statement error
 DELETE FROM idem_kostyatable WHERE id = 1;
 ----
@@ -146,7 +146,7 @@ t	t
 
 
 # Real read still works through the PUBLIC source.
-connection c_gul user=idem_gul
+connection c_gul user=idem_gul password=idem_gul_pw
 query
 SELECT count(*) AS n FROM idem_kostyatable;
 ----
@@ -169,14 +169,14 @@ sel	ins
 f	t
 
 
-connection c_gul user=idem_gul
+connection c_gul user=idem_gul password=idem_gul_pw
 statement error
 SELECT * FROM idem_kostyatable;
 ----
 db error: ERROR: permission denied for table idem_kostyatable<slt:ignore>
 
 
-connection c_gul user=idem_gul
+connection c_gul user=idem_gul password=idem_gul_pw
 statement ok
 INSERT INTO idem_kostyatable VALUES (4, 'babsky');
 
@@ -198,12 +198,12 @@ sel	ins	upd	del
 t	t	t	t
 
 
-connection c_gul user=idem_gul
+connection c_gul user=idem_gul password=idem_gul_pw
 statement ok
 DELETE FROM idem_kostyatable WHERE id = 4;
 
 
-connection c_gul user=idem_gul
+connection c_gul user=idem_gul password=idem_gul_pw
 query
 SELECT count(*) AS n FROM idem_kostyatable;
 ----

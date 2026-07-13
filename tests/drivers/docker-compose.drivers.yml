@@ -16,6 +16,9 @@ services:
       - test-network
     command: >
       sh -c '
+        mkdir -p /tmp/serenedb_datadir &&
+        printf "host all all 0.0.0.0/0 trust\nhost all all ::0/0 trust\nlocal all all trust\n" \
+          > /tmp/serenedb_datadir/pg_hba.conf &&
         exec /serenedb/${BUILD_DIR}/bin/serened /tmp/serenedb_datadir \
           --listen postgres://0.0.0.0:5432 \
       '

@@ -20,11 +20,11 @@ DROP ROLE IF EXISTS xog_b_babsky;
 
 
 statement ok
-CREATE ROLE xog_b_mop LOGIN;
+CREATE ROLE xog_b_mop LOGIN PASSWORD 'xog_b_mop_pw';
 
 
 statement ok
-CREATE ROLE xog_b_babsky LOGIN;
+CREATE ROLE xog_b_babsky LOGIN PASSWORD 'xog_b_babsky_pw';
 
 
 statement ok
@@ -87,7 +87,7 @@ acl_rows
 
 # Real query path: the non-super owner can SELECT, INSERT, UPDATE, DELETE on its
 # own table over an authenticated connection -- ownership bypasses the ACL.
-connection c_mop user=xog_b_mop
+connection c_mop user=xog_b_mop password=xog_b_mop_pw
 query
 SELECT count(*) AS n FROM xog_iceberg;
 ----
@@ -95,23 +95,23 @@ n
 2
 
 
-connection c_mop user=xog_b_mop
+connection c_mop user=xog_b_mop password=xog_b_mop_pw
 statement ok
 INSERT INTO xog_iceberg VALUES (3, 'mop');
 
 
-connection c_mop user=xog_b_mop
+connection c_mop user=xog_b_mop password=xog_b_mop_pw
 statement ok
 UPDATE xog_iceberg SET payload = 'reowned' WHERE id = 1;
 
 
-connection c_mop user=xog_b_mop
+connection c_mop user=xog_b_mop password=xog_b_mop_pw
 statement ok
 DELETE FROM xog_iceberg WHERE id = 2;
 
 
 # The unrelated role cannot even SELECT (it has no grant of any kind).
-connection c_babsky user=xog_b_babsky
+connection c_babsky user=xog_b_babsky password=xog_b_babsky_pw
 statement error
 SELECT * FROM xog_iceberg;
 ----
@@ -120,7 +120,7 @@ db error: ERROR: permission denied for table xog_iceberg<slt:ignore>
 
 # The unrelated role is not the owner, so DROP TABLE is refused with the
 # canonical ownership error.
-connection c_babsky user=xog_b_babsky
+connection c_babsky user=xog_b_babsky password=xog_b_babsky_pw
 statement error
 DROP TABLE xog_iceberg;
 ----
@@ -133,7 +133,7 @@ statement ok
 GRANT SELECT, INSERT, UPDATE, DELETE ON xog_iceberg TO xog_b_babsky;
 
 
-connection c_babsky user=xog_b_babsky
+connection c_babsky user=xog_b_babsky password=xog_b_babsky_pw
 statement error
 DROP TABLE xog_iceberg;
 ----
@@ -141,7 +141,7 @@ db error: ERROR: must be owner of table xog_iceberg<slt:ignore>
 
 
 # But with full DML, the now-granted babsky can read and write for real.
-connection c_babsky user=xog_b_babsky
+connection c_babsky user=xog_b_babsky password=xog_b_babsky_pw
 query
 SELECT count(*) AS n FROM xog_iceberg;
 ----
@@ -149,13 +149,13 @@ n
 2
 
 
-connection c_babsky user=xog_b_babsky
+connection c_babsky user=xog_b_babsky password=xog_b_babsky_pw
 statement ok
 INSERT INTO xog_iceberg VALUES (4, 'babsky');
 
 
 # The owner can drop its own table -- recreate it afterward so cleanup is clean.
-connection c_mop user=xog_b_mop
+connection c_mop user=xog_b_mop password=xog_b_mop_pw
 statement ok
 DROP TABLE xog_iceberg;
 

@@ -34,7 +34,7 @@ CREATE ROLE xog_h_grp;
 
 
 statement ok
-CREATE ROLE xog_h_negaimorit LOGIN;
+CREATE ROLE xog_h_negaimorit LOGIN PASSWORD 'xog_h_negaimorit_pw';
 
 
 statement ok
@@ -67,7 +67,7 @@ t	t	t	f
 
 # Real DML proves all three sources at once: SELECT (public), INSERT (inherit),
 # UPDATE (direct) all succeed on a real connection.
-connection c_n user=xog_h_negaimorit
+connection c_n user=xog_h_negaimorit password=xog_h_negaimorit_pw
 query
 SELECT count(*) AS n FROM xog_h_iceberg;
 ----
@@ -75,18 +75,18 @@ n
 1
 
 
-connection c_n user=xog_h_negaimorit
+connection c_n user=xog_h_negaimorit password=xog_h_negaimorit_pw
 statement ok
 INSERT INTO xog_h_iceberg VALUES (2, 'mop');
 
 
-connection c_n user=xog_h_negaimorit
+connection c_n user=xog_h_negaimorit password=xog_h_negaimorit_pw
 statement ok
 UPDATE xog_h_iceberg SET payload = 'reowned' WHERE id = 1;
 
 
 # DELETE is in no source -> denied for real.
-connection c_n user=xog_h_negaimorit
+connection c_n user=xog_h_negaimorit password=xog_h_negaimorit_pw
 statement error
 DELETE FROM xog_h_iceberg WHERE id = 1;
 ----
@@ -109,14 +109,14 @@ t	f	t
 
 
 # INSERT now denied on the real path; SELECT still works.
-connection c_n user=xog_h_negaimorit
+connection c_n user=xog_h_negaimorit password=xog_h_negaimorit_pw
 statement error
 INSERT INTO xog_h_iceberg VALUES (3, 'gone');
 ----
 db error: ERROR: permission denied for table xog_h_iceberg<slt:ignore>
 
 
-connection c_n user=xog_h_negaimorit
+connection c_n user=xog_h_negaimorit password=xog_h_negaimorit_pw
 query
 SELECT count(*) AS n FROM xog_h_iceberg;
 ----
@@ -141,7 +141,7 @@ f	t
 # reads or filters rows needs SELECT on the referenced columns, which the role
 # no longer has -- the oracle above already pins UPDATE=t at the privilege
 # level, which is the byte-identical surface.)
-connection c_n user=xog_h_negaimorit
+connection c_n user=xog_h_negaimorit password=xog_h_negaimorit_pw
 statement error
 SELECT * FROM xog_h_iceberg;
 ----

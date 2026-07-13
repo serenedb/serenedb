@@ -37,7 +37,7 @@ INSERT INTO gbm_ledger VALUES (1, 42);
 
 
 statement ok
-CREATE ROLE gbm_vedernikoff LOGIN;
+CREATE ROLE gbm_vedernikoff LOGIN PASSWORD 'gbm_vedernikoff_pw';
 
 
 statement ok
@@ -45,7 +45,7 @@ CREATE ROLE gbm_mop LOGIN;
 
 
 statement ok
-CREATE ROLE gbm_clickclack LOGIN;
+CREATE ROLE gbm_clickclack LOGIN PASSWORD 'gbm_clickclack_pw';
 
 
 # mop owns nothing here; postgres (superuser) owns the table and confers the
@@ -61,7 +61,7 @@ GRANT SELECT (secret) ON gbm_ledger TO gbm_mop WITH GRANT OPTION;
 
 # === the bug: column GRANTED BY by a non-member is rejected for the RIGHT
 # reason (membership), not "permission denied for table". ===
-connection c_ved user=gbm_vedernikoff
+connection c_ved user=gbm_vedernikoff password=gbm_vedernikoff_pw
 statement error
 GRANT SELECT (secret) ON gbm_ledger TO gbm_clickclack GRANTED BY gbm_mop;
 ----
@@ -69,7 +69,7 @@ db error: ERROR: must be member of role "gbm_mop"<slt:ignore>
 
 
 # Parity check: the table-level path rejects with the same membership error.
-connection c_ved user=gbm_vedernikoff
+connection c_ved user=gbm_vedernikoff password=gbm_vedernikoff_pw
 statement error
 GRANT SELECT ON gbm_ledger TO gbm_clickclack GRANTED BY gbm_mop;
 ----
@@ -77,7 +77,7 @@ db error: ERROR: must be member of role "gbm_mop"<slt:ignore>
 
 
 # An unknown GRANTED BY role still errors on the missing role first.
-connection c_ved2 user=gbm_vedernikoff
+connection c_ved2 user=gbm_vedernikoff password=gbm_vedernikoff_pw
 statement error
 GRANT SELECT (secret) ON gbm_ledger TO gbm_clickclack GRANTED BY gbm_ghost;
 ----
@@ -91,14 +91,14 @@ statement ok
 GRANT gbm_mop TO gbm_vedernikoff;
 
 
-connection c_ved3 user=gbm_vedernikoff
+connection c_ved3 user=gbm_vedernikoff password=gbm_vedernikoff_pw
 statement ok
 GRANT SELECT (secret) ON gbm_ledger TO gbm_clickclack GRANTED BY gbm_mop;
 
 
 # clickclack can now read the column it was granted, and the grant is attributed
 # to mop (the GRANTED BY grantor), so revoking mop's membership does not strip it.
-connection c_cc user=gbm_clickclack
+connection c_cc user=gbm_clickclack password=gbm_clickclack_pw
 query
 SELECT secret FROM gbm_ledger;
 ----

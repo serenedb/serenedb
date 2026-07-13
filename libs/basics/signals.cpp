@@ -29,29 +29,6 @@
 
 namespace sdb::signals {
 
-void MaskAllSignalsServer() {
-#ifdef SERENEDB_HAVE_POSIX_THREADS
-  sigset_t all;
-  sigfillset(&all);
-  // Keep failure-class signals unblocked so they're delivered to the
-  // offending thread; absl's failure signal handler relies on that.
-  sigdelset(&all, SIGSEGV);
-  sigdelset(&all, SIGBUS);
-  sigdelset(&all, SIGILL);
-  sigdelset(&all, SIGFPE);
-  sigdelset(&all, SIGABRT);
-  pthread_sigmask(SIG_SETMASK, &all, nullptr);
-#endif
-}
-
-void UnmaskAllSignals() {
-#ifdef SERENEDB_HAVE_POSIX_THREADS
-  sigset_t all;
-  sigfillset(&all);
-  pthread_sigmask(SIG_UNBLOCK, &all, nullptr);
-#endif
-}
-
 void InstallShutdownHandlers() {
 #ifdef SERENEDB_HAVE_SIGNAL_H
   struct sigaction action = {};

@@ -47,7 +47,6 @@
 #include "auth/role_closure.h"
 #include "basics/build.h"
 #include "basics/down_cast.h"
-#include "basics/exceptions.h"
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
 #include "catalog/secondary_index.h"
@@ -79,7 +78,7 @@ namespace {
                   ERR_MSG("relation \"", rel, "\" does not exist"));
 }
 
-[[noreturn]] void ThrowInvalidPrivilege(const basics::Exception& e) {
+[[noreturn]] void ThrowInvalidPrivilege(const SqlException& e) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                   ERR_MSG(e.message()));
 }
@@ -674,7 +673,7 @@ bool HasTablePrivilegeImpl(ConnectionContext& conn_ctx,
                                        catalog::ObjectType::Table, priv_text);
     }
     ThrowRelationNotFound(name.relation);
-  } catch (const basics::Exception& e) {
+  } catch (const SqlException& e) {
     ThrowInvalidPrivilege(e);
   }
 }
@@ -720,7 +719,7 @@ bool HasTablePrivilegeByOidImpl(const catalog::Snapshot& snapshot,
   try {
     return HasAnyObjectPrivilegeText(snapshot, role_id, *table,
                                      catalog::ObjectType::Table, priv_text);
-  } catch (const basics::Exception& e) {
+  } catch (const SqlException& e) {
     ThrowInvalidPrivilege(e);
   }
 }
@@ -842,7 +841,7 @@ void HasTablePrivilegeOidName3Function(duckdb::DataChunk& args,
       } else {
         ThrowRelationNotFound(name.relation);
       }
-    } catch (const basics::Exception& e) {
+    } catch (const SqlException& e) {
       ThrowInvalidPrivilege(e);
     }
   }
@@ -986,7 +985,7 @@ bool HasObjectPrivilegeByName(const catalog::Snapshot& snapshot,
   try {
     return HasAnyObjectPrivilegeText(snapshot, role_id, *object, type,
                                      priv_text);
-  } catch (const basics::Exception& e) {
+  } catch (const SqlException& e) {
     ThrowInvalidPrivilege(e);
   }
 }
@@ -1049,7 +1048,7 @@ bool HasObjectPrivilegeByOidImpl(const catalog::Snapshot& snapshot,
   try {
     return HasAnyObjectPrivilegeText(snapshot, role_id, *object, type,
                                      priv_text);
-  } catch (const basics::Exception& e) {
+  } catch (const SqlException& e) {
     ThrowInvalidPrivilege(e);
   }
 }
@@ -1465,7 +1464,7 @@ void HasColumnPrivilegeNameName4Function(duckdb::DataChunk& args,
         out[i] = SystemRelationColumnPriv(conn_ctx, *snapshot, role->GetId(),
                                           name, col, priv);
       }
-    } catch (const basics::Exception& e) {
+    } catch (const SqlException& e) {
       ThrowInvalidPrivilege(e);
     }
   }
@@ -1511,7 +1510,7 @@ void HasColumnPrivilegeName3Function(duckdb::DataChunk& args,
         out[i] = SystemRelationColumnPriv(conn_ctx, *snapshot, current->GetId(),
                                           name, col, priv);
       }
-    } catch (const basics::Exception& e) {
+    } catch (const SqlException& e) {
       ThrowInvalidPrivilege(e);
     }
   }
@@ -1551,7 +1550,7 @@ void HasColumnPrivilegeOidAttnum3Function(duckdb::DataChunk& args,
       out[i] =
         HasColumnPrivByAttnum(*snapshot, current->GetId(), *table, attnum[ci],
                               {p[pi].GetData(), p[pi].GetSize()});
-    } catch (const basics::Exception& e) {
+    } catch (const SqlException& e) {
       ThrowInvalidPrivilege(e);
     }
   }
@@ -1629,7 +1628,7 @@ void HasColumnPrivilegeNameAttnum4Function(duckdb::DataChunk& args,
       } else {
         validity.SetInvalid(i);
       }
-    } catch (const basics::Exception& e) {
+    } catch (const SqlException& e) {
       ThrowInvalidPrivilege(e);
     }
   }
@@ -1671,7 +1670,7 @@ void HasColumnPrivilegeOidNameAttnum4Function(duckdb::DataChunk& args,
       } else {
         validity.SetInvalid(i);
       }
-    } catch (const basics::Exception& e) {
+    } catch (const SqlException& e) {
       ThrowInvalidPrivilege(e);
     }
   }
@@ -1711,7 +1710,7 @@ void HasColumnPrivilegeOidOidAttnum4Function(duckdb::DataChunk& args,
       out[i] = HasColumnPrivByAttnum(
         *snapshot, ObjectId{static_cast<uint64_t>(roid[ui])}, *table,
         attnum[ci], {p[pi].GetData(), p[pi].GetSize()});
-    } catch (const basics::Exception& e) {
+    } catch (const SqlException& e) {
       ThrowInvalidPrivilege(e);
     }
   }
@@ -1761,7 +1760,7 @@ void HasAnyColumnPrivilegeName3Function(duckdb::DataChunk& args,
       } else {
         ThrowRelationNotFound(name.relation);
       }
-    } catch (const basics::Exception& e) {
+    } catch (const SqlException& e) {
       ThrowInvalidPrivilege(e);
     }
   }
@@ -1797,7 +1796,7 @@ void HasAnyColumnPrivilegeOid2Function(duckdb::DataChunk& args,
     try {
       out[i] = HasAnyTablePrivilegeText(*snapshot, current->GetId(), *table,
                                         {p[pi].GetData(), p[pi].GetSize()});
-    } catch (const basics::Exception& e) {
+    } catch (const SqlException& e) {
       ThrowInvalidPrivilege(e);
     }
   }
@@ -1841,7 +1840,7 @@ void HasAnyColumnPrivilegeName2Function(duckdb::DataChunk& args,
       } else {
         ThrowRelationNotFound(name.relation);
       }
-    } catch (const basics::Exception& e) {
+    } catch (const SqlException& e) {
       ThrowInvalidPrivilege(e);
     }
   }

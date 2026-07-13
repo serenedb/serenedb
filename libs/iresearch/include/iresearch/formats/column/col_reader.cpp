@@ -32,12 +32,12 @@
 #include <utility>
 
 #include "basics/assert.h"
-#include "basics/exceptions.h"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/store/data_input.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 namespace {
@@ -64,7 +64,6 @@ IndexInput::ptr OpenColFile(const Directory& dir,
 void CheckBlockRange(const ColumnBlockMeta& m, field_id id,
                      uint64_t footer_offset) {
   SDB_ENSURE(m.file_offset + m.byte_size <= footer_offset,
-             sdb::ERROR_SERVER_CORRUPTED_DATAFILE,
              ".col reader: column data on column id ", id,
              " out of range (offset ", m.file_offset, ", size ", m.byte_size,
              ")");
@@ -107,15 +106,13 @@ std::vector<NormRowGroupMeta> DeserializeNormMetas(duckdb::Deserializer& d,
         p.non_zero_count = po.ReadProperty<uint64_t>(4, "non_zero_count");
         p.file_offset = po.ReadProperty<uint64_t>(5, "file_offset");
         SDB_ENSURE(p.byte_size == 1 || p.byte_size == 2 || p.byte_size == 4,
-                   sdb::ERROR_SERVER_CORRUPTED_DATAFILE,
                    ".col reader: norm byte_size on column id ", id, ": ",
                    p.byte_size);
-        SDB_ENSURE(p.row_count != 0, sdb::ERROR_SERVER_CORRUPTED_DATAFILE,
+        SDB_ENSURE(p.row_count != 0,
                    ".col reader: norm row_count==0 on column id ", id);
         SDB_ENSURE(
           p.file_offset + static_cast<uint64_t>(p.row_count) * p.byte_size <=
             footer_offset,
-          sdb::ERROR_SERVER_CORRUPTED_DATAFILE,
           ".col reader: norm data on column id ", id, " out of range (offset ",
           p.file_offset, ")");
         pointers.push_back(p);
@@ -137,14 +134,13 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
     static_cast<uint64_t>(format_utils::HeaderLength(kFormatName));
   SDB_ENSURE(
     file_len > header_len + sizeof(uint64_t) + format_utils::kFooterLen,
-    sdb::ERROR_SERVER_CORRUPTED_DATAFILE, ".col reader: truncated `.col` file ",
-    segment_name, " (length ", file_len, ")");
+    ".col reader: truncated `.col` file ", segment_name, " (length ", file_len,
+    ")");
   const uint64_t footer_offset_pos =
     file_len - format_utils::kFooterLen - sizeof(uint64_t);
   fin->Seek(footer_offset_pos);
   const uint64_t footer_offset = static_cast<uint64_t>(fin->ReadI64());
   SDB_ENSURE(footer_offset >= header_len && footer_offset < footer_offset_pos,
-             sdb::ERROR_SERVER_CORRUPTED_DATAFILE,
              ".col reader: corrupted `.col` file ", segment_name,
              ": footer offset ", footer_offset, " out of range [", header_len,
              ", ", footer_offset_pos, ")");
@@ -162,8 +158,7 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
         auto col = ColumnReader::Make(std::move(meta));
         const auto id = col->Id();
         const bool ok = _by_id.emplace(id, col.get()).second;
-        SDB_ENSURE(ok, sdb::ERROR_SERVER_CORRUPTED_DATAFILE,
-                   ".col footer: duplicate column field_id ", id);
+        SDB_ENSURE(ok, ".col footer: duplicate column field_id ", id);
         _columns.push_back(std::move(col));
       });
     });
@@ -180,8 +175,7 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
         auto nr = std::make_unique<NormColumnReader>(id, std::move(pointers),
                                                      _ctx.In());
         const bool ok = _norm_by_id.emplace(id, nr.get()).second;
-        SDB_ENSURE(ok, sdb::ERROR_SERVER_CORRUPTED_DATAFILE,
-                   ".col footer: duplicate norm field_id ", id);
+        SDB_ENSURE(ok, ".col footer: duplicate norm field_id ", id);
         _norm_readers.push_back(std::move(nr));
       });
     });

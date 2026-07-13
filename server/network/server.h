@@ -54,6 +54,14 @@ class Server final {
   // busy-spinning on an instant Delay() during startup.
   void StartIoPool();
   void StartListeners();
+  // Two-phase stop, mirroring start. StopAccepting() closes the listeners so no
+  // new connection is taken; it runs EARLY, before the rest of the engine comes
+  // down. stop() joins the DuckDB workers and then tears the io pool down; it
+  // must run LAST -- after every subsystem that submits DuckDB work (search,
+  // background, store, catalog) is down -- because a session query pipeline
+  // runs on a DuckDB worker and pushes results up into the io pool, so the pool
+  // can only be freed once no worker is left to touch it.
+  void StopAccepting() noexcept;
   void stop();
 
   // The io worker pool (sockets + reused for background timers); null until
@@ -77,12 +85,9 @@ class Server final {
   std::string _tls_ciphers;
   std::string _tls_groups;
   network::TlsMinVersion _tls_min_version = network::TlsMinVersion::Tls12;
-  std::string _auth_user;
-  std::string _auth_password;
   std::string _api_key;
   std::string _bearer_token;
   std::string _cors_origins;
-  network::pg::AuthMethod _auth_method = network::pg::AuthMethod::Scram;
   std::uint32_t _io_threads = 0;
   std::uint32_t _max_message = 0;
   std::uint32_t _max_connections = 0;

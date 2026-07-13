@@ -28,7 +28,6 @@
 
 #include "basics/assert.h"
 #include "basics/bit_utils.hpp"
-#include "basics/result.h"
 #include "basics/serializer.h"
 #include "catalog/identifiers/object_id.h"
 

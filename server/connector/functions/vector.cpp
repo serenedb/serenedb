@@ -34,6 +34,7 @@
 #include <iresearch/utils/vector.hpp>
 #include <vector>
 
+#include "basics/system-compiler.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 

@@ -11,7 +11,6 @@ add_executable(
     build_id_test.cpp
     metrics_test.cpp
     number_of_cores_test.cpp
-    encoding_utils_test.cpp
     random_test.cpp
     string_utils_test.cpp
     serializer_test.cpp

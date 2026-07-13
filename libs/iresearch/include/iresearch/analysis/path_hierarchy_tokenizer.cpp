@@ -24,9 +24,9 @@
 
 #include <string_view>
 
-#include "basics/exceptions.h"
 #include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 
@@ -358,7 +358,7 @@ bool ReversePathHierarchyTokenizer<SingleChar, NoReplacement>::next() {
 
 Analyzer::ptr PathHierarchyTokenizer::Make(Options opts) {
   if (opts.delimiter.empty()) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "path_hierarchy: empty delimiter");
+    THROW_SQL_ERROR(ERR_MSG("path_hierarchy: empty delimiter"));
   }
 
   if (opts.replacement.empty()) {

@@ -24,11 +24,11 @@ DROP ROLE IF EXISTS xao_nog_vedernikoff;
 
 
 statement ok
-CREATE ROLE xao_nog_mop LOGIN;
+CREATE ROLE xao_nog_mop LOGIN PASSWORD 'xao_nog_mop_pw';
 
 
 statement ok
-CREATE ROLE xao_nog_babsky LOGIN;
+CREATE ROLE xao_nog_babsky LOGIN PASSWORD 'xao_nog_babsky_pw';
 
 
 statement ok
@@ -45,7 +45,7 @@ ALTER TABLE xao_nog_clickclack OWNER TO xao_nog_mop;
 
 
 # The new owner mop may GRANT SELECT WITH GRANT OPTION to babsky.
-connection cmop user=xao_nog_mop
+connection cmop user=xao_nog_mop password=xao_nog_mop_pw
 statement ok
 GRANT SELECT ON xao_nog_clickclack TO xao_nog_babsky WITH GRANT OPTION;
 
@@ -59,7 +59,7 @@ t
 
 
 # babsky holds the grant option, so it can pass SELECT onward to vedernikoff.
-connection cbabsky user=xao_nog_babsky
+connection cbabsky user=xao_nog_babsky password=xao_nog_babsky_pw
 statement ok
 GRANT SELECT ON xao_nog_clickclack TO xao_nog_vedernikoff;
 
@@ -77,7 +77,7 @@ statement ok
 ALTER TABLE xao_nog_clickclack OWNER TO xao_nog_babsky;
 
 
-connection cbabsky2 user=xao_nog_babsky
+connection cbabsky2 user=xao_nog_babsky password=xao_nog_babsky_pw
 statement ok
 GRANT INSERT ON xao_nog_clickclack TO xao_nog_vedernikoff;
 

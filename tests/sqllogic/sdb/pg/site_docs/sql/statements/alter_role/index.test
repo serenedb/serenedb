@@ -1,0 +1,66 @@
+# DOCS_TEST: example_001
+
+statement ok
+DROP ROLE IF EXISTS doc_worker;
+
+statement ok
+DROP ROLE IF EXISTS doc_worker_renamed;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE ROLE doc_worker LOGIN PASSWORD 'worker_secret';
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER ROLE doc_worker CREATEDB;
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER ROLE doc_worker NOCREATEDB NOLOGIN;
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER ROLE doc_worker PASSWORD 'rotated_secret';
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER ROLE doc_worker VALID UNTIL '2099-12-31 00:00:00+00';
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER ROLE doc_worker RENAME TO doc_worker_renamed;
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+statement error db error: ERROR: conflicting or redundant options
+ALTER ROLE doc_worker_renamed SUPERUSER NOSUPERUSER;
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+statement error db error: ERROR: role "doc_missing" does not exist
+ALTER ROLE doc_missing LOGIN;
+
+# DOCS_TEST: example_009
+
+statement ok
+DROP ROLE doc_worker_renamed;

@@ -244,7 +244,7 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
     if (!res.ok()) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INTERNAL_ERROR),
-        ERR_MSG("compact_index: compaction failed: ", res.errorMessage()));
+        ERR_MSG("compact_index: compaction failed: ", res.message()));
     }
     inverted.Refresh();
     if (empty_compaction) {

@@ -38,13 +38,8 @@ void FromLike(irs::BooleanFilter& parent, const FilterContext& ctx,
   SDB_ASSERT(func.GetChildren().size() == 1);
 
   std::string pattern;
-  if (auto r =
-        GetVarcharArg(*func.GetChildren()[0], "ts_like pattern", pattern);
-      !r.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(r.errorMessage()),
-                    ERR_HINT("Example: ts_like('foo%bar')."));
-  }
+  GetVarcharArg(*func.GetChildren()[0], pattern,
+                {"ts_like pattern", "Example: ts_like('foo%bar')."});
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
       column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
     THROW_SQL_ERROR(

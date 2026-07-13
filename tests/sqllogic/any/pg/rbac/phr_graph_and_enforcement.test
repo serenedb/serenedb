@@ -35,7 +35,7 @@ CREATE TABLE phr_iceberg (id int, payload text);
 
 
 statement ok
-CREATE ROLE phr_clickclack LOGIN;
+CREATE ROLE phr_clickclack LOGIN PASSWORD 'phr_clickclack_pw';
 
 
 statement ok
@@ -92,7 +92,7 @@ t	t	f
 # inherited), INSERT is denied (never granted anywhere in the chain).
 # ============================================================================
 
-connection c_phr user=phr_clickclack
+connection c_phr user=phr_clickclack password=phr_clickclack_pw
 query
 SELECT count(*) FROM phr_iceberg;
 ----
@@ -100,7 +100,7 @@ count
 0
 
 
-connection c_phr user=phr_clickclack
+connection c_phr user=phr_clickclack password=phr_clickclack_pw
 statement error
 INSERT INTO phr_iceberg VALUES (1, 'clickclack');
 ----
@@ -127,7 +127,7 @@ t	f	f
 
 
 # The live path agrees: SELECT is now denied on the second connection.
-connection c_phr user=phr_clickclack
+connection c_phr user=phr_clickclack password=phr_clickclack_pw
 statement error
 SELECT * FROM phr_iceberg;
 ----
@@ -150,7 +150,7 @@ reaches_again	select_again
 t	t
 
 
-connection c_phr user=phr_clickclack
+connection c_phr user=phr_clickclack password=phr_clickclack_pw
 query
 SELECT count(*) FROM phr_iceberg;
 ----

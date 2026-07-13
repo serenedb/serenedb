@@ -31,6 +31,8 @@
 #include "basics/down_cast.h"
 #include "catalog/table_options.h"
 #include "connector/common.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "search_remove_filter.hpp"
 
 namespace sdb::connector {
@@ -122,8 +124,8 @@ void SearchSinkInsertBaseImpl::EmitPkTerms(
   for (const auto key : keys) {
     _pk_field.SetStringValue(key);
     if (!_document->Insert(&_pk_field)) {
-      SDB_THROW(ERROR_INTERNAL,
-                "Failed to insert PK field into IResearch document");
+      THROW_SQL_ERROR(
+        ERR_MSG("Failed to insert PK field into IResearch document"));
     }
     _document->NextDocument();
   }
@@ -131,7 +133,7 @@ void SearchSinkInsertBaseImpl::EmitPkTerms(
 
 void SearchSinkInsertBaseImpl::EmitField(Field* field_to_insert) {
   if (!_document->Insert(field_to_insert)) {
-    SDB_THROW(ERROR_INTERNAL, "Failed to insert field into IResearch document");
+    THROW_SQL_ERROR(ERR_MSG("Failed to insert field into IResearch document"));
   }
 }
 
@@ -203,8 +205,8 @@ void SearchSinkInsertBaseImpl::WriteListBatch(duckdb::idx_t count,
         }
         SetFieldValueFromVector<ChildKind>(_field, child_fmt, child_idx);
         if (!_document->Insert(&_field)) {
-          SDB_THROW(ERROR_INTERNAL,
-                    "Failed to insert list element into IResearch document");
+          THROW_SQL_ERROR(
+            ERR_MSG("Failed to insert list element into IResearch document"));
         }
       }
     }
@@ -408,9 +410,9 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(const duckdb::Vector& vec,
         if (doc.type().get(t) == simdjson::SUCCESS) {
           auto insert_field = [this](Field& field) {
             if (!_document->Insert(&field)) {
-              SDB_THROW(ERROR_INTERNAL,
-                        "Failed to insert JSON expression field into IResearch "
-                        "document");
+              THROW_SQL_ERROR(
+                ERR_MSG("Failed to insert JSON expression field into IResearch "
+                        "document"));
             }
           };
           switch (t) {
@@ -446,11 +448,12 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(const duckdb::Vector& vec,
             } break;
             case simdjson::ondemand::json_type::object:
             case simdjson::ondemand::json_type::array:
-              SDB_THROW(
-                ERROR_BAD_PARAMETER,
-                "JSON expression indexed by an inverted index must point to a "
-                "primitive (string/number/boolean/null) leaf; got an object or "
-                "array");
+              THROW_SQL_ERROR(
+                ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+                ERR_MSG(
+                  "JSON expression indexed by an inverted index must point to "
+                  "a primitive (string/number/boolean/null) leaf; got an "
+                  "object or array"));
             default:
               break;
           }
@@ -598,8 +601,8 @@ void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size, const PkChunk& pk) {
 void SearchSinkInsertBaseImpl::InsertNullValue() {
   _null_field.SetNullValue();
   if (!_document->Insert(&_null_field)) {
-    SDB_THROW(ERROR_INTERNAL,
-              "Failed to insert null field into IResearch document");
+    THROW_SQL_ERROR(
+      ERR_MSG("Failed to insert null field into IResearch document"));
   }
 }
 

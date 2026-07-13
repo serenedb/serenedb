@@ -22,6 +22,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <memory>
 #include <string>
 #include <string_view>
 
@@ -257,8 +258,26 @@ TEST(HbaMatch, CidrV6AndFamilyStrict) {
                  .user = "u",
                  .database = "d"};
   EXPECT_EQ(KindOf(rs, in6), Decision::Kind::Trust);
-  // v4 client never matches a v6 rule.
+  // A v4 client does not match a genuine v6 network (its v4-mapped form
+  // ::ffff:10.0.0.1 is not inside 2001:db8::/32).
   EXPECT_EQ(KindOf(rs, Ssl("10.0.0.1", "u", "d")), Decision::Kind::Reject);
+}
+
+TEST(HbaMatch, V4MappedRuleMatchesV4Client) {
+  // PG promotes a v4 client to its v4-mapped-v6 form and retries, so a rule
+  // authored in v6 (::ffff:x) form still matches a v4 client. Without this a
+  // v6-mapped reject would silently fail open through a later allow.
+  auto rs = MustParse(
+    "host all all ::ffff:127.0.0.1/128 reject\n"
+    "host all all 0.0.0.0/0 scram-sha-256\n");
+  EXPECT_EQ(KindOf(rs, Ssl("127.0.0.1", "u", "d")), Decision::Kind::Reject);
+  // A different v4 client falls through to the allow.
+  EXPECT_EQ(Decide(rs, Ssl("127.0.0.2", "u", "d"), kNoMembers).method,
+            Method::Scram);
+  // The all-addresses v6 rule (::0/0) also covers a v4 client, as in PG.
+  EXPECT_EQ(
+    KindOf(MustParse("host all all ::0/0 reject\n"), Ssl("10.0.0.1", "u", "d")),
+    Decision::Kind::Reject);
 }
 
 TEST(HbaMatch, FirstMatchWins) {
@@ -377,17 +396,37 @@ TEST(HbaParse, LocalDashIsLiteralDatabase) {
   EXPECT_EQ(KindOf(rs, local_d), Decision::Kind::Reject);
 }
 
-// Only the built-in zero-config default carries is_default=true. Authenticate()
-// keys the trust-a-password-less-role fallback off this flag, so an explicitly
-// configured ruleset never silently downgrades a password method to trust.
-TEST(HbaDefault, IsDefaultOnlyForBuiltIn) {
-  EXPECT_TRUE(DefaultRuleset().is_default);
-  EXPECT_FALSE(MustParse("host all all 0.0.0.0/0 scram-sha-256\n").is_default);
+// The zero-config default: the bootstrap superuser authenticates locally with
+// no password (the force-prepended SafetyRules), while every other role -- and
+// the superuser over a non-loopback address -- must satisfy SCRAM. So a
+// password-less non-superuser cannot log in anywhere, and the superuser cannot
+// log in remotely without a password.
+TEST(HbaDefault, SuperuserLocalTrustEveryoneElseScram) {
+  const Ruleset rs = DefaultRuleset();
+  const std::string_view super = "postgres";  // StaticStrings::kDefaultUser
 
-  // SetHbaFromText produces a non-default (admin-authored) live ruleset; an
-  // empty ("reset") ruleset is likewise non-default, not the built-in default.
-  ASSERT_FALSE(SetHbaFromText("host all all 0.0.0.0/0 scram-sha-256\n"));
-  EXPECT_FALSE(GetHbaRuleset()->is_default);
-  ASSERT_FALSE(SetHbaFromText(""));
-  EXPECT_FALSE(GetHbaRuleset()->is_default);
+  ClientInfo su_unix{.is_local = true, .user = super, .database = "d"};
+  ClientInfo su_loop{
+    .family = AF_INET, .addr = V4("127.0.0.1"), .user = super, .database = "d"};
+  ClientInfo su_remote{
+    .family = AF_INET, .addr = V4("10.0.0.1"), .user = super, .database = "d"};
+  EXPECT_EQ(KindOf(rs, su_unix), Decision::Kind::Trust);
+  EXPECT_EQ(KindOf(rs, su_loop), Decision::Kind::Trust);
+  EXPECT_EQ(KindOf(rs, su_remote), Decision::Kind::Method);
+
+  ClientInfo bob_unix{.is_local = true, .user = "bob", .database = "d"};
+  ClientInfo bob_loop{
+    .family = AF_INET, .addr = V4("127.0.0.1"), .user = "bob", .database = "d"};
+  ClientInfo bob_remote{
+    .family = AF_INET, .addr = V4("10.0.0.1"), .user = "bob", .database = "d"};
+  EXPECT_EQ(KindOf(rs, bob_unix), Decision::Kind::Method);
+  EXPECT_EQ(KindOf(rs, bob_loop), Decision::Kind::Method);
+  EXPECT_EQ(KindOf(rs, bob_remote), Decision::Kind::Method);
+
+  // SetHbaFromText force-prepends the superuser escape hatch, so even a
+  // reject-everything admin ruleset cannot lock the superuser out on loopback.
+  ASSERT_FALSE(SetHbaFromText("host all all 0.0.0.0/0 reject\n"));
+  EXPECT_EQ(KindOf(*GetHbaRuleset(), su_loop), Decision::Kind::Trust);
+  EXPECT_EQ(KindOf(*GetHbaRuleset(), bob_loop), Decision::Kind::Reject);
+  SetHbaRuleset(std::make_shared<const Ruleset>(DefaultRuleset()));  // restore
 }

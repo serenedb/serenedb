@@ -676,7 +676,7 @@ statement error
 CREATE INDEX dup_expr_err_idx ON dup_expr_err
 USING inverted(id, (content->'v') verbatim_dict, (content->'v') en_text);
 ----
-db error: ERROR: Failed to create index: Expression '("content" -> 'v')' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed expression. Stack `included(...)` on the same expression instead, or remove the duplicate.
+db error: ERROR: Expression '("content" -> 'v')' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed expression. Stack `included(...)` on the same expression instead, or remove the duplicate.
 
 
 

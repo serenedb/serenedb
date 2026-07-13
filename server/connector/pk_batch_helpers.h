@@ -26,10 +26,10 @@
 #include <type_traits>
 
 #include "basics/assert.h"
-#include "basics/exceptions.h"
 #include "connector/index_source.h"
 #include "connector/primary_key.hpp"
 #include "connector/search_pk_lookup.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 
@@ -56,8 +56,9 @@ inline void AppendPrimaryKeysFromVector(PrimaryKeyBatch& pk,
     }
     return;
   }
-  SDB_THROW(ERROR_INTERNAL, "stored PK column type ", vec.GetType().ToString(),
-            " does not match the index source's expected key shape");
+  THROW_SQL_ERROR(
+    ERR_MSG("stored PK column type ", vec.GetType().ToString(),
+            " does not match the index source's expected key shape"));
 }
 
 }  // namespace sdb::connector

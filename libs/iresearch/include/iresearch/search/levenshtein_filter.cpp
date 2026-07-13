@@ -22,7 +22,6 @@
 
 #include "levenshtein_filter.hpp"
 
-#include "basics/exceptions.h"
 #include "basics/noncopyable.hpp"
 #include "basics/shared.hpp"
 #include "basics/std.hpp"
@@ -39,6 +38,7 @@
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
 #include "iresearch/utils/levenshtein_utils.hpp"
 #include "iresearch/utils/utf8_utils.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 namespace {
@@ -96,7 +96,7 @@ class LevenshteinIterator : public WrappedTermIterator {
                       const LevenshteinAutomatonOptions& options)
     : LevenshteinIterator{reader,
                           [&]() -> const automaton_table_matcher& {
-                            SDB_ENSURE(options.compiled, sdb::ERROR_INTERNAL,
+                            SDB_ENSURE(options.compiled,
                                        "filter has no compiled acceptor");
                             return options.compiled->matcher;
                           }(),
@@ -200,14 +200,14 @@ QueryBuilder::ptr PrepareLevenshteinSegment(
 }  // namespace
 
 field_visitor ByEditDistance::visitor(const ByEditDistanceAllOptions&) {
-  SDB_THROW(sdb::ERROR_INTERNAL,
-            "ByEditDistance must be lowered by the optimizer before visitor");
+  THROW_SQL_ERROR(
+    ERR_MSG("ByEditDistance must be lowered by the optimizer before visitor"));
 }
 
 QueryBuilder::ptr ByEditDistance::PrepareSegment(const SubReader&,
                                                  const PrepareContext&) const {
-  SDB_THROW(sdb::ERROR_INTERNAL,
-            "ByEditDistance must be lowered by the optimizer before prepare");
+  THROW_SQL_ERROR(
+    ERR_MSG("ByEditDistance must be lowered by the optimizer before prepare"));
 }
 
 QueryBuilder::ptr LevenshteinAutomatonFilter::PrepareSegment(

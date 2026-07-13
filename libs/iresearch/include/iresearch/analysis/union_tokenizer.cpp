@@ -22,8 +22,8 @@
 
 #include <string_view>
 
-#include "basics/exceptions.h"
 #include "iresearch/analysis/tokenizer_config.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 namespace {
@@ -131,14 +131,13 @@ bool UnionTokenizer::reset(std::string_view data) {
 
 Analyzer::ptr UnionTokenizer::Make(Options opts) {
   if (opts.children.empty()) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "union: requires at least one child analyzer");
+    THROW_SQL_ERROR(ERR_MSG("union: requires at least one child analyzer"));
   }
   std::vector<Analyzer::ptr> live_children;
   live_children.reserve(opts.children.size());
   for (auto& child : opts.children) {
     if (!child) {
-      SDB_THROW(sdb::ERROR_BAD_PARAMETER, "union: null child analyzer config");
+      THROW_SQL_ERROR(ERR_MSG("union: null child analyzer config"));
     }
     live_children.push_back(CreateAnalyzer(std::move(*child)));
   }

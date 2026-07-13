@@ -29,8 +29,6 @@
 #include <vector>
 
 #include "basics/containers/flat_hash_map.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "basics/math_utils.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
@@ -40,6 +38,7 @@
 #include "iresearch/store/directory.hpp"
 #include "iresearch/store/directory_attributes.hpp"
 #include "iresearch/utils/encryption.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 namespace {
@@ -88,14 +87,12 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
   auto* enc = dir.attributes().encryption();
   if (Decrypt(filename, *raw_in, enc, _impl->cipher)) {
     SDB_ENSURE(_impl->cipher && _impl->cipher->block_size(),
-               sdb::ERROR_INTERNAL,
                "IdxReader: Decrypt returned true but cipher / block_size() "
                "is null for ",
                filename);
   }
   const auto raw_len = raw_in->Length();
   SDB_ENSURE(raw_len >= raw_in->Position() + kTrailerLen,
-             sdb::ERROR_SERVER_CORRUPTED_DATAFILE,
              "idx: truncated `.idx` file ", filename, " (length ", raw_len,
              " is not large enough to contain header + footer offset + "
              "iresearch footer)");
@@ -117,9 +114,9 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
 
   const uint64_t body_len =
     _impl->cipher ? _impl->in->Length() : raw_len - kTrailerLen;
-  SDB_ENSURE(footer_offset <= body_len, sdb::ERROR_SERVER_CORRUPTED_DATAFILE,
-             "idx: corrupted `.idx` file ", filename, ": footer offset ",
-             footer_offset, " is out of body range [0, ", body_len, "]");
+  SDB_ENSURE(footer_offset <= body_len, "idx: corrupted `.idx` file ", filename,
+             ": footer offset ", footer_offset, " is out of body range [0, ",
+             body_len, "]");
   const auto footer_in = _impl->in->Dup();
   footer_in->Seek(footer_offset);
 

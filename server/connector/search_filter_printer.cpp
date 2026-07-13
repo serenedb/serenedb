@@ -49,7 +49,7 @@
 #include <iresearch/utils/numeric_utils.hpp>
 
 #include "basics/down_cast.h"
-#include "basics/exceptions.h"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 namespace {
@@ -157,22 +157,22 @@ struct PhrasePartVisitor : util::Noncopyable {
     absl::StrAppend(out, "Prefix:", TermToString(opts.term));
   }
   auto operator()(const ByWildcardOptions&) const {
-    SDB_THROW(sdb::ERROR_INTERNAL,
-              "Wildcard phrase part must be lowered by the optimizer before "
-              "printing");
+    THROW_SQL_ERROR(
+      ERR_MSG("Wildcard phrase part must be lowered by the optimizer before "
+              "printing"));
   }
   auto operator()(const ByEditDistanceOptions&) const {
-    SDB_THROW(sdb::ERROR_INTERNAL,
-              "Levenshtein phrase part must be lowered by the optimizer before "
-              "printing");
+    THROW_SQL_ERROR(
+      ERR_MSG("Levenshtein phrase part must be lowered by the optimizer before "
+              "printing"));
   }
   auto operator()(const LevenshteinAutomatonOptions& opts) const {
     absl::StrAppend(out, "LevenshteinAutomaton:", TermToString(opts.target));
   }
   auto operator()(const ByRegexpOptions&) const {
-    SDB_THROW(sdb::ERROR_INTERNAL,
-              "Regexp phrase part must be lowered by the optimizer before "
-              "printing");
+    THROW_SQL_ERROR(
+      ERR_MSG("Regexp phrase part must be lowered by the optimizer before "
+              "printing"));
   }
   auto operator()(const AutomatonOptions& opts) const {
     absl::StrAppend(out, "Automaton:", TermToString(opts.pattern));
@@ -359,9 +359,9 @@ struct FilterPrinter {
       return node;
     }
     if (type == Type<Not>::id()) {
-      SDB_THROW(sdb::ERROR_INTERNAL,
-                "Not filter must be lowered to Exclusion by the optimizer "
-                "before printing");
+      THROW_SQL_ERROR(
+        ERR_MSG("Not filter must be lowered to Exclusion by the optimizer "
+                "before printing"));
     }
     if (type == Type<Exclusion>::id()) {
       const auto& f = downCast<const Exclusion>(filter);
@@ -430,9 +430,9 @@ struct FilterPrinter {
       return node;
     }
     if (type == Type<ByEditDistance>::id()) {
-      SDB_THROW(sdb::ERROR_INTERNAL,
-                "ByEditDistance filter must be lowered to "
-                "LevenshteinAutomatonFilter by the optimizer before printing");
+      THROW_SQL_ERROR(
+        ERR_MSG("ByEditDistance filter must be lowered to "
+                "LevenshteinAutomatonFilter by the optimizer before printing"));
     }
     if (type == Type<LevenshteinAutomatonFilter>::id()) {
       const auto& f = downCast<const LevenshteinAutomatonFilter>(filter);
@@ -470,16 +470,16 @@ struct FilterPrinter {
       return node;
     }
     if (type == Type<ByWildcard>::id()) {
-      SDB_THROW(sdb::ERROR_INTERNAL,
-                "ByWildcard filter must be lowered to "
+      THROW_SQL_ERROR(
+        ERR_MSG("ByWildcard filter must be lowered to "
                 "ByTerm/ByPrefix/AutomatonFilter by the optimizer before "
-                "printing");
+                "printing"));
     }
     if (type == Type<ByRegexp>::id()) {
-      SDB_THROW(sdb::ERROR_INTERNAL,
-                "ByRegexp filter must be lowered to "
+      THROW_SQL_ERROR(
+        ERR_MSG("ByRegexp filter must be lowered to "
                 "ByTerm/ByPrefix/AutomatonFilter by the optimizer before "
-                "printing");
+                "printing"));
     }
     if (type == Type<AutomatonFilter>::id()) {
       const auto& f = downCast<const AutomatonFilter>(filter);

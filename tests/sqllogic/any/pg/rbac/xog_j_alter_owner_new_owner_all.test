@@ -30,11 +30,11 @@ CREATE ROLE xog_j_mop LOGIN;
 
 
 statement ok
-CREATE ROLE xog_j_babsky LOGIN;
+CREATE ROLE xog_j_babsky LOGIN PASSWORD 'xog_j_babsky_pw';
 
 
 statement ok
-CREATE ROLE xog_j_kostya LOGIN;
+CREATE ROLE xog_j_kostya LOGIN PASSWORD 'xog_j_kostya_pw';
 
 
 statement ok
@@ -103,7 +103,7 @@ t	t	t	t	t	t	t
 
 
 # The new owner can read and write its table for real, with no relacl row.
-connection c_b user=xog_j_babsky
+connection c_b user=xog_j_babsky password=xog_j_babsky_pw
 query
 SELECT count(*) AS n FROM xog_j_iceberg;
 ----
@@ -111,7 +111,7 @@ n
 1
 
 
-connection c_b user=xog_j_babsky
+connection c_b user=xog_j_babsky password=xog_j_babsky_pw
 statement ok
 INSERT INTO xog_j_iceberg VALUES (2, 'reowned');
 
@@ -126,7 +126,7 @@ sel	ins
 t	f
 
 
-connection c_k user=xog_j_kostya
+connection c_k user=xog_j_kostya password=xog_j_kostya_pw
 query
 SELECT count(*) AS n FROM xog_j_iceberg;
 ----
@@ -135,7 +135,7 @@ n
 
 
 # kostya still cannot INSERT (it only ever held SELECT).
-connection c_k user=xog_j_kostya
+connection c_k user=xog_j_kostya password=xog_j_kostya_pw
 statement error
 INSERT INTO xog_j_iceberg VALUES (3, 'nope');
 ----

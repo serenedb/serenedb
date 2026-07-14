@@ -27,7 +27,7 @@
 #include <s2/s2latlng_rect.h>
 #include <s2/s2latlng_rect_bounder.h>
 
-#include "basics/exceptions.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::geo {
 
@@ -41,7 +41,7 @@ S2Point S2MultiPointRegion::GetCentroid() const noexcept {
 }
 
 S2Region* S2MultiPointRegion::Clone() const {
-  SDB_THROW(ERROR_NOT_IMPLEMENTED);
+  THROW_SQL_ERROR(ERR_MSG("not implemented"));
 }
 
 S2Cap S2MultiPointRegion::GetCapBound() const {

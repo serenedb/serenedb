@@ -27,8 +27,6 @@
 #include <utility>
 #include <vector>
 
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "basics/math_utils.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
@@ -37,6 +35,7 @@
 #include "iresearch/store/directory.hpp"
 #include "iresearch/store/directory_attributes.hpp"
 #include "iresearch/utils/encryption.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 namespace {
@@ -95,7 +94,6 @@ void IdxWriter::EnsureOut() {
   const bool encrypted =
     Encrypt(_impl->filename, *out, enc, enc_header, _impl->cipher);
   SDB_ENSURE(!encrypted || (_impl->cipher && _impl->cipher->block_size()),
-             sdb::ERROR_INTERNAL,
              "IdxWriter::EnsureOut: Encrypt returned true but cipher / "
              "block_size() is null for ",
              _impl->filename);

@@ -27,11 +27,10 @@
 #include <string_view>
 #include <vector>
 
-#include "basics/result.h"
-#include "basics/result_or.h"
 #include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 
@@ -87,11 +86,9 @@ class SolrSynonymsTokenizer final : public TypedAnalyzer<SolrSynonymsTokenizer>,
     return "solr_synonyms";
   }
 
-  static sdb::ResultOr<SynonymsLines> ParseSynonymsLines(
-    std::string_view input);
-  static sdb::ResultOr<SynonymsMap> Parse(const SynonymsLines& lines);
-  static sdb::ResultOr<std::shared_ptr<const State>> MakeState(
-    std::string text);
+  static SynonymsLines ParseSynonymsLines(std::string_view input);
+  static SynonymsMap Parse(const SynonymsLines& lines);
+  static std::shared_ptr<const State> MakeState(std::string text);
 
   explicit SolrSynonymsTokenizer(std::shared_ptr<const State> state) noexcept;
 

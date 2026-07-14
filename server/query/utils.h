@@ -31,6 +31,5 @@ inline constexpr std::string_view kReservedSymbol = "$";
 
 // column_name<separator>unique_id -> column_name
 std::string_view ToAlias(std::string_view name);
-std::vector<std::string> ToAliases(std::span<const std::string> names);
 
 }  // namespace sdb::query

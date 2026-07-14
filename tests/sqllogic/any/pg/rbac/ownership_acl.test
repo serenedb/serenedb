@@ -25,7 +25,7 @@ INSERT INTO own_mop_babsky VALUES (1, 'clickclack'), (2, 'iceberg');
 
 
 statement ok
-CREATE ROLE own_acl_vedernikoff LOGIN;
+CREATE ROLE own_acl_vedernikoff LOGIN PASSWORD 'own_acl_vedernikoff_pw';
 
 
 # Before any explicit grant, relacl holds at most the owner row -- there is no
@@ -95,7 +95,7 @@ INSERT INTO own_mop_babsky VALUES (3, 'vedernikoff');
 # INSERT and DELETE are allowed, UPDATE is denied (never granted). The deny
 # block ends with a trailing ignore marker because serenedb appends a DETAIL
 # line PG does not.
-connection c_v user=own_acl_vedernikoff
+connection c_v user=own_acl_vedernikoff password=own_acl_vedernikoff_pw
 query
 SELECT count(*) AS n FROM own_mop_babsky;
 ----
@@ -103,12 +103,12 @@ n
 3
 
 
-connection c_v user=own_acl_vedernikoff
+connection c_v user=own_acl_vedernikoff password=own_acl_vedernikoff_pw
 statement ok
 INSERT INTO own_mop_babsky VALUES (4, 'mop');
 
 
-connection c_v user=own_acl_vedernikoff
+connection c_v user=own_acl_vedernikoff password=own_acl_vedernikoff_pw
 statement error
 UPDATE own_mop_babsky SET secret = 'deadinside' WHERE id = 1;
 ----
@@ -132,7 +132,7 @@ grantee_rows
 
 # After the revoke the grantee can no longer read on the real query path, but
 # the owner still holds everything -- ownership was never in the ACL.
-connection c_v user=own_acl_vedernikoff
+connection c_v user=own_acl_vedernikoff password=own_acl_vedernikoff_pw
 statement error
 SELECT id FROM own_mop_babsky;
 ----

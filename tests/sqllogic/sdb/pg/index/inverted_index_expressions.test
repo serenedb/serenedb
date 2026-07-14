@@ -745,25 +745,25 @@ CREATE TABLE bad_types(id INTEGER PRIMARY KEY, a INTEGER, s VARCHAR, k VARCHAR, 
 statement error
 CREATE INDEX bad_struct ON bad_types USING inverted(id, ({'x': a, 'y': s}));
 ----
-db error: ERROR: Failed to create index: Column 'struct_pack(x := a, y := s)' has unsupported type STRUCT(x INTEGER, y VARCHAR) and can not be indexed
+db error: ERROR: Column 'struct_pack(x := a, y := s)' has unsupported type STRUCT(x INTEGER, y VARCHAR) and can not be indexed
 
 
 statement error
 CREATE INDEX bad_map ON bad_types USING inverted(id, (map([k], [v])));
 ----
-db error: ERROR: Failed to create index: Column '"map"(list_value(k), list_value(v))' has unsupported type MAP(VARCHAR, VARCHAR) and can not be indexed
+db error: ERROR: Column '"map"(list_value(k), list_value(v))' has unsupported type MAP(VARCHAR, VARCHAR) and can not be indexed
 
 
 statement error
 CREATE INDEX bad_list_struct ON bad_types USING inverted(id, ([{'x': a}]));
 ----
-db error: ERROR: Failed to create index: Column 'list_value(struct_pack(x := a))' has unsupported type STRUCT(x INTEGER)[] and can not be indexed
+db error: ERROR: Column 'list_value(struct_pack(x := a))' has unsupported type STRUCT(x INTEGER)[] and can not be indexed
 
 
 statement error
 CREATE INDEX bad_list_map ON bad_types USING inverted(id, ([map([k], [v])]));
 ----
-db error: ERROR: Failed to create index: Column 'list_value("map"(list_value(k), list_value(v)))' has unsupported type MAP(VARCHAR, VARCHAR)[] and can not be indexed
+db error: ERROR: Column 'list_value("map"(list_value(k), list_value(v)))' has unsupported type MAP(VARCHAR, VARCHAR)[] and can not be indexed
 
 
 statement ok
@@ -781,38 +781,38 @@ CREATE TABLE bad_scalars(
 statement error
 CREATE INDEX bad_decimal ON bad_scalars USING inverted(id, (dc + 1));
 ----
-db error: ERROR: Failed to create index: Column '(dc + 1)' has unsupported type DECIMAL(13,2) and can not be indexed
+db error: ERROR: Column '(dc + 1)' has unsupported type DECIMAL(13,2) and can not be indexed
 
 
 statement error
 CREATE INDEX bad_hugeint ON bad_scalars USING inverted(id, (hi + 1));
 ----
-db error: ERROR: Failed to create index: Column '(hi + 1)' has unsupported type HUGEINT and can not be indexed
+db error: ERROR: Column '(hi + 1)' has unsupported type HUGEINT and can not be indexed
 
 
 statement error
 CREATE INDEX bad_interval ON bad_scalars USING inverted(id, (iv));
 ----
-db error: ERROR: Failed to create index: Column 'iv' has unsupported type INTERVAL and can not be indexed
+db error: ERROR: Column 'iv' has unsupported type INTERVAL and can not be indexed
 
 
 statement error
 CREATE INDEX bad_uuid ON bad_scalars USING inverted(id, (uu));
 ----
-db error: ERROR: Failed to create index: Column 'uu' has unsupported type UUID and can not be indexed
+db error: ERROR: Column 'uu' has unsupported type UUID and can not be indexed
 
 
 statement error
 CREATE INDEX bad_union ON bad_scalars
 USING inverted(id, (union_value(num := a)));
 ----
-db error: ERROR: Failed to create index: Column 'union_value(num := a)' has unsupported type UNION(num INTEGER) and can not be indexed
+db error: ERROR: Column 'union_value(num := a)' has unsupported type UNION(num INTEGER) and can not be indexed
 
 
 statement error
 CREATE INDEX bad_list_list ON bad_scalars USING inverted(id, ([[a]]));
 ----
-db error: ERROR: Failed to create index: Column 'list_value(list_value(a))' has unsupported type INTEGER[][] and can not be indexed
+db error: ERROR: Column 'list_value(list_value(a))' has unsupported type INTEGER[][] and can not be indexed
 
 
 # --- @@ on indexed expressions (forces filter pushdown) -------------------
@@ -1274,7 +1274,7 @@ statement error
 CREATE INDEX inc_e_zstd_bad ON inc_e_num USING inverted(
     id, (a + b) included (compression='zstd'));
 ----
-db error: ERROR: Failed to create index: Column '(a + b)': compression 'ZSTD' is not supported for type INTEGER
+db error: ERROR: Column '(a + b)': compression 'ZSTD' is not supported for type INTEGER
 
 
 statement ok
@@ -1303,14 +1303,14 @@ statement error
 CREATE INDEX inc_e_bad ON inc_e_num USING inverted(
     id, (a + b) included (bogus='value'));
 ----
-db error: ERROR: Failed to create index: Column '(a + b)': unknown included option 'bogus'. Accepted options: compression (string, default 'auto'), row_group_size (int >= 1), hyperloglog (bool, default false)
+db error: ERROR: Column '(a + b)': unknown included option 'bogus'. Accepted options: compression (string, default 'auto'), row_group_size (int >= 1), hyperloglog (bool, default false)
 
 
 statement error
 CREATE INDEX inc_e_dict_with_opts ON inc_e_num USING inverted(
     id, (a + b) verbatim_dict (compression='zstd'));
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'verbatim_dict' on '(a + b)' (known: included, ivf)
+db error: ERROR: Unknown built-in opclass 'verbatim_dict' on '(a + b)' (known: included, ivf)
 
 
 # --- IVF on an indexed expression: `(expr) ivf(metric='l2')` builds an ANN graph over the expression's value.
@@ -1400,7 +1400,7 @@ statement error
 CREATE INDEX ivf_e3_idx ON ivf_e3 USING inverted(
     id, (array_value(a, b, c)) ivf(metric='l2'));
 ----
-db error: ERROR: Failed to create index: Column 'array_value(a, b, c)' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not INTEGER[3]
+db error: ERROR: Column 'array_value(a, b, c)' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not INTEGER[3]
 
 
 # Non-ARRAY return type rejected when ivf is requested.
@@ -1409,7 +1409,7 @@ statement error
 CREATE INDEX ivf_e_scalar ON ivf_e USING inverted(
     id, (x + y + z) ivf(metric='l2'));
 ----
-db error: ERROR: Failed to create index: Column '((x + y) + z)' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not FLOAT
+db error: ERROR: Column '((x + y) + z)' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not FLOAT
 
 
 # --- INCLUDE columns alongside an indexed expression ---------------------
@@ -1574,7 +1574,7 @@ statement error
 CREATE INDEX geo_expr_bad_idx ON geo_expr_bad USING inverted(
     id, (LOWER(s)) geo_expr_dict);
 ----
-db error: ERROR: Failed to create index: Column 'lower(s)' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+db error: ERROR: Column 'lower(s)' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
 
 
 # Positive case: a JSON-typed expression is accepted.

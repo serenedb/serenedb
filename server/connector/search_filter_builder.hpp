@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
+#include <absl/status/status.h>
 
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/planner/expression.hpp>
@@ -30,7 +30,6 @@
 #include <span>
 
 #include "basics/containers/flat_hash_map.h"
-#include "basics/result.h"
 #include "catalog/inverted_index.h"
 #include "catalog/table.h"
 
@@ -65,15 +64,19 @@ using ExpressionGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
 // Builds iresearch filters into `root` from an implicit-AND list of
 // DuckDB bound filter expressions (as found in a LogicalFilter). Each
 // expression either becomes a child of `root` (on success) or causes
-// MakeSearchFilter to return a failure Result (leaving `root` in an
-// unspecified but still safely-destructible state -- caller should discard
-// it on failure).
+// MakeSearchFilter to throw (leaving `root` in an unspecified but still
+// safely-destructible state -- caller should discard it on failure).
 //
 // The ClientContext is required (reference, not pointer): the filter
 // builder needs it to resolve named catalog analyzers at filter-build
 // time (`TOKENIZE(text, 'english')` whose stub never runs) and to read
 // the `sdb_scored_terms_limit` session setting.
-Result MakeSearchFilter(
+// A non-ok status means "the index cannot claim this predicate" and carries
+// the reason; the optimizer treats it as "decline, fall back" (`root` may
+// hold partially-added children the caller must roll back), ts_offsets
+// surfaces it as a SQL error. Genuine user errors under index-only syntax
+// (`@@`, ts_*, geo, ::boost) throw SqlException at origin instead.
+absl::Status MakeSearchFilter(
   irs::And& root,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
   const ColumnGetter& column_getter, duckdb::ClientContext& context,

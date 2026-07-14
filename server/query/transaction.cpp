@@ -22,17 +22,22 @@
 
 #include <absl/cleanup/cleanup.h>
 
+#include <chrono>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/storage/block_manager.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
+#include <random>
+#include <thread>
 
 #include "basics/assert.h"
+#include "basics/debugging.h"
 #include "basics/duckdb_engine.h"
 #include "basics/log.h"
 #include "catalog/catalog.h"
 #include "catalog/store/store.h"
+#include "pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 #include "search/tick_domain.h"
@@ -194,6 +199,14 @@ void Transaction::CommitSearch(
     max_queries =
       std::max<uint64_t>(max_queries, entry.transaction->GetQueries());
   }
+  SDB_IF_FAILURE("long_waited_advance") {
+    static std::atomic<uint32_t> gSeedCounter{0};
+    static thread_local std::mt19937 gRng{
+      gSeedCounter.fetch_add(1, std::memory_order_relaxed)};
+    std::this_thread::sleep_for(std::chrono::microseconds(
+      std::uniform_int_distribution<int>(0, 20000)(gRng)));
+  }
+
   const auto last_tick =
     search::TickDomain::Instance().Advance(max_queries + 1);
 
@@ -230,7 +243,7 @@ void Transaction::CommitSearch(
   _search_transactions.clear();
 }
 
-Result Transaction::Commit() {
+void Transaction::Commit() {
   // Search-table segments commit on the database WAL tick; register their flush
   // up-front -- before any commit point -- so a concurrent background
   // RefreshCommit waits for them. They commit in the WAL block below.
@@ -252,16 +265,14 @@ Result Transaction::Commit() {
     } catch (const std::exception& e) {
       _search_txn->Abort();
       Destroy();
-      return {ERROR_INTERNAL, "Failed to commit search-table WAL: ", e.what()};
+      THROW_SQL_ERROR(ERR_MSG("Failed to commit search-table WAL: ", e.what()));
     }
   }
 
   Destroy();
-
-  return {};
 }
 
-Result Transaction::Rollback() {
+void Transaction::Rollback() {
   for (auto& search_transaction : _search_transactions) {
     search_transaction.second.transaction->Abort();
   }
@@ -270,7 +281,6 @@ Result Transaction::Rollback() {
   }
   RollbackVariables();
   Destroy();
-  return {};
 }
 
 search::InvertedIndexSnapshotPtr Transaction::EnsureSearchSnapshot(

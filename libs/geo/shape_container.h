@@ -28,7 +28,6 @@
 #include <memory>
 #include <vector>
 
-#include "basics/result.h"
 #include "geo/coding.h"
 
 class S2Polyline;

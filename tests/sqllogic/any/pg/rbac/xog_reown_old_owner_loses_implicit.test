@@ -25,7 +25,7 @@ DROP ROLE IF EXISTS xog_ro_kostya;
 
 
 statement ok
-CREATE ROLE xog_ro_mop LOGIN;
+CREATE ROLE xog_ro_mop LOGIN PASSWORD 'xog_ro_mop_pw';
 
 
 statement ok
@@ -45,7 +45,7 @@ ALTER TABLE xog_ro_iceberg OWNER TO xog_ro_mop;
 
 
 # mop, as owner, grants SELECT to kostya. The ACL row records mop as grantor.
-connection c_mop user=xog_ro_mop
+connection c_mop user=xog_ro_mop password=xog_ro_mop_pw
 statement ok
 GRANT SELECT ON xog_ro_iceberg TO xog_ro_kostya;
 

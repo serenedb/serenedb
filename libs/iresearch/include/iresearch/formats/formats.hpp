@@ -22,11 +22,11 @@
 
 #pragma once
 
-#include "basics/exceptions.h"
 #include "basics/memory.hpp"
 #include "iresearch/formats/column/norm_reader.hpp"
 #include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/index/column_info.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace duckdb {
 

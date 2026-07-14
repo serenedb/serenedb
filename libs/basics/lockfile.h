@@ -19,9 +19,6 @@
 
 #pragma once
 
-#include "basics/error.h"
-#include "basics/errors.h"
-
 namespace sdb {
 
 // Pid-locking primitives backed by fcntl(2) F_WRLCK / F_UNLCK on a small file
@@ -30,13 +27,12 @@ namespace sdb {
 // kernel-level.
 //
 // CreateLockFile: O_EXCL-create the file, write the pid, take an exclusive
-// fcntl lock. ERROR_OK on success.
+// fcntl lock. Returns true on success; failures are logged with the errno
+// detail.
 // VerifyLockFile: existing file? read the pid, check if that process is alive
-// (kill(pid, 0)), then try to acquire the lock. Returns
-// ERROR_SERVER_DATADIR_LOCKED if held; ERROR_OK if it's a stale leftover.
-// DestroyLockFile: release the lock + unlink + close.
-ErrorCode CreateLockFile(const char* filename);
-ErrorCode VerifyLockFile(const char* filename);
-ErrorCode DestroyLockFile(const char* filename);
+// (kill(pid, 0)), then try to acquire the lock. Returns false if held by a
+// live process; true if free or a stale leftover.
+bool CreateLockFile(const char* filename);
+bool VerifyLockFile(const char* filename);
 
 }  // namespace sdb

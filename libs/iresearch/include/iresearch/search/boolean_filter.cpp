@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "all_filter.hpp"
+#include "basics/system-compiler.h"
 #include "conjunction.hpp"
 #include "disjunction.hpp"
 #include "exclusion.hpp"

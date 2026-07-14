@@ -27,21 +27,17 @@
 #include <unistd.h>
 #include <zlib.h>
 
-#include "basics/error.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "basics/operating-system.h"
 #include "basics/string_utils.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb {
 
 static constexpr size_t kReadBufferSize = 8192;
 
 bool SlurpFile(const char* filename, std::string& result) {
-  SetError(ERROR_OK);
   const int fd = SERENEDB_OPEN(filename, O_RDONLY | SERENEDB_O_CLOEXEC);
   if (fd == -1) {
-    SetError(ERROR_SYS_ERROR);
     return false;
   }
   absl::Cleanup guard = [&]() noexcept { SERENEDB_CLOSE(fd); };
@@ -56,7 +52,6 @@ bool SlurpFile(const char* filename, std::string& result) {
     }
     if (n < 0) {
       result = {};
-      SetError(ERROR_SYS_ERROR);
       return false;
     }
     true_size += n;
@@ -64,10 +59,8 @@ bool SlurpFile(const char* filename, std::string& result) {
 }
 
 bool SlurpGzipFile(const char* filename, std::string& result) {
-  SetError(ERROR_OK);
   gzFile gz_fd = gzopen(filename, "rb");
   if (!gz_fd) {
-    SetError(ERROR_SYS_ERROR);
     return false;
   }
   absl::Cleanup fd_guard = [&gz_fd]() noexcept { gzclose(gz_fd); };
@@ -82,7 +75,6 @@ bool SlurpGzipFile(const char* filename, std::string& result) {
     }
     if (n < 0) {
       result = {};
-      SetError(ERROR_SYS_ERROR);
       return false;
     }
     true_size += n;
@@ -97,7 +89,7 @@ Sha256Functor::Sha256Functor()
 #endif
   auto* context = static_cast<EVP_MD_CTX*>(_context);
   if (context == nullptr) {
-    SDB_THROW(ERROR_OUT_OF_MEMORY);
+    THROW_SQL_ERROR(ERR_MSG("cannot allocate EVP_MD_CTX for sha256"));
   }
   if (EVP_DigestInit_ex(context, EVP_sha256(), nullptr) == 0) {
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
@@ -105,7 +97,7 @@ Sha256Functor::Sha256Functor()
 #else
     EVP_MD_CTX_destroy(_context);
 #endif
-    SDB_THROW(ERROR_INTERNAL, "unable to initialize SHA256 processor");
+    THROW_SQL_ERROR(ERR_MSG("unable to initialize SHA256 processor"));
   }
 }
 

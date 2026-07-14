@@ -40,6 +40,7 @@
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/type_limits.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 namespace {

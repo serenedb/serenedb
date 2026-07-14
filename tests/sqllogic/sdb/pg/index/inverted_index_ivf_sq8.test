@@ -390,13 +390,13 @@ CREATE TABLE sq8_bad (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 statement error
 CREATE INDEX sq8_bad_cos ON sq8_bad USING inverted(pk, emb ivf (metric = 'cosine', quant = 'sq8'));
 ----
-db error: ERROR: Failed to create index: Column 'emb': ivf quantization supports only metric 'l2' or 'ip'
+db error: ERROR: Column 'emb': ivf quantization supports only metric 'l2' or 'ip'
 
 
 statement error
 CREATE INDEX sq8_bad_l1 ON sq8_bad USING inverted(pk, emb ivf (metric = 'l1', quant = 'sq8'));
 ----
-db error: ERROR: Failed to create index: Column 'emb': ivf quantization supports only metric 'l2' or 'ip'
+db error: ERROR: Column 'emb': ivf quantization supports only metric 'l2' or 'ip'
 
 
 # ===========================================================================

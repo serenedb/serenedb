@@ -24,7 +24,6 @@
 #include <duckdb/common/types/data_chunk.hpp>
 
 #include "basics/assert.h"
-#include "basics/exceptions.h"
 #include "catalog/catalog.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"

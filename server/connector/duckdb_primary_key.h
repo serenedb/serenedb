@@ -35,11 +35,11 @@
 #include <vector>
 
 #include "basics/assert.h"
-#include "basics/exceptions.h"
 #include "basics/string_utils.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/primary_key.hpp"  // for AppendSigned, ReadSigned
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector::duckdb_primary_key {
 
@@ -159,8 +159,7 @@ inline void AppendPKValue(std::string& key,
       break;
     }
     default:
-      SDB_THROW(ERROR_NOT_IMPLEMENTED,
-                "Unsupported PK type: ", type.ToString());
+      THROW_SQL_ERROR(ERR_MSG("Unsupported PK type: ", type.ToString()));
   }
 }
 

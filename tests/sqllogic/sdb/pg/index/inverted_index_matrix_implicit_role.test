@@ -80,7 +80,7 @@ CREATE TABLE g7_g(pk INTEGER PRIMARY KEY, g GEOMETRY('OGC:CRS84'));
 statement error
 CREATE INDEX g7_g_imp ON g7_g USING inverted(pk, g);
 ----
-db error: ERROR: Failed to create index: Column 'g' has unsupported type GEOMETRY('OGC:CRS84') and can not be indexed
+db error: ERROR: Column 'g' has unsupported type GEOMETRY('OGC:CRS84') and can not be indexed
 
 
 statement ok
@@ -198,13 +198,13 @@ CREATE TABLE g7_gl(pk INTEGER PRIMARY KEY,
 statement error
 CREATE INDEX g7_gl_imp ON g7_gl USING inverted(pk, gs);
 ----
-db error: ERROR: Failed to create index: Column 'gs' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
+db error: ERROR: Column 'gs' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
 
 
 statement error
 CREATE INDEX g7_ga_imp ON g7_gl USING inverted(pk, ga);
 ----
-db error: ERROR: Failed to create index: Column 'ga' has unsupported type GEOMETRY('OGC:CRS84')[3] and can not be indexed
+db error: ERROR: Column 'ga' has unsupported type GEOMETRY('OGC:CRS84')[3] and can not be indexed
 
 
 ## ============================================================================
@@ -232,21 +232,21 @@ CREATE TABLE g8_nested(pk INTEGER PRIMARY KEY,
 statement error
 CREATE INDEX g8_ill_imp ON g8_nested USING inverted(pk, ill);
 ----
-db error: ERROR: Failed to create index: Column 'ill' has unsupported type INTEGER[][] and can not be indexed
+db error: ERROR: Column 'ill' has unsupported type INTEGER[][] and can not be indexed
 
 
 # (b) VARCHAR[][] — implicit (no opclass) rejected: nested LIST, string leaf.
 statement error
 CREATE INDEX g8_vll_imp ON g8_nested USING inverted(pk, vll);
 ----
-db error: ERROR: Failed to create index: Column 'vll' has unsupported type VARCHAR[][] and can not be indexed
+db error: ERROR: Column 'vll' has unsupported type VARCHAR[][] and can not be indexed
 
 
 # (c) INTEGER[3][3] — implicit (no opclass) rejected: nested ARRAY.
 statement error
 CREATE INDEX g8_iaa_imp ON g8_nested USING inverted(pk, iaa);
 ----
-db error: ERROR: Failed to create index: Column 'iaa' has unsupported type INTEGER[3][3] and can not be indexed
+db error: ERROR: Column 'iaa' has unsupported type INTEGER[3][3] and can not be indexed
 
 
 # Sanity anchor: flat INTEGER[] on the same table indexes fine.
@@ -324,28 +324,28 @@ count
 statement error
 CREATE INDEX g9_smv_kw_s ON g9_smv USING inverted(pk, s kw_dict);
 ----
-db error: ERROR: Failed to create index: Column 's' has unsupported type STRUCT(a INTEGER, b VARCHAR) and can not be indexed
+db error: ERROR: Column 's' has unsupported type STRUCT(a INTEGER, b VARCHAR) and can not be indexed
 
 
 # (f) MAP column with kw_dict (text tokenizer): same path as (d).
 statement error
 CREATE INDEX g9_smv_kw_m ON g9_smv USING inverted(pk, m kw_dict);
 ----
-db error: ERROR: Failed to create index: Column 'm' has unsupported type MAP(VARCHAR, INTEGER) and can not be indexed
+db error: ERROR: Column 'm' has unsupported type MAP(VARCHAR, INTEGER) and can not be indexed
 
 
 # (e) STRUCT in indexed-list with NO opclass (implicit term_dict path): rejected.
 statement error
 CREATE INDEX g9_smv_imp_s ON g9_smv USING inverted(pk, s);
 ----
-db error: ERROR: Failed to create index: Column 's' has unsupported type STRUCT(a INTEGER, b VARCHAR) and can not be indexed
+db error: ERROR: Column 's' has unsupported type STRUCT(a INTEGER, b VARCHAR) and can not be indexed
 
 
 # (g) MAP in indexed-list with NO opclass (implicit term_dict path): rejected.
 statement error
 CREATE INDEX g9_smv_imp_m ON g9_smv USING inverted(pk, m);
 ----
-db error: ERROR: Failed to create index: Column 'm' has unsupported type MAP(VARCHAR, INTEGER) and can not be indexed
+db error: ERROR: Column 'm' has unsupported type MAP(VARCHAR, INTEGER) and can not be indexed
 
 
 # --- teardown ---------------------------------------------------------------

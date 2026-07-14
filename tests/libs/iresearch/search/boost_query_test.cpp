@@ -86,7 +86,7 @@ class BoostQueryTestCase : public tests::IndexTestBase {
     irs::analysis::DelimitedTokenizer tokenizer(" ");
     auto root = std::make_unique<irs::MixedBooleanFilter>();
     sdb::ParserContext ctx{*root, kContentFieldId, tokenizer};
-    EXPECT_TRUE(sdb::ParseQuery(ctx, query).ok());
+    EXPECT_TRUE(sdb::ParseQuery(ctx, query)) << ctx.error_message;
     irs::Filter::ptr f = std::move(root);
     irs::Optimize(f);
     return f;

@@ -64,8 +64,6 @@ def genCHeaderFile(errors):
   header = """
 #pragma once
 
-#include "basics/error.h"
-
 // NOLINTBEGIN
 // clang-format off
 namespace sdb {

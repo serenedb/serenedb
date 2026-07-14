@@ -74,43 +74,43 @@ CREATE TABLE g19_t(pk           INTEGER PRIMARY KEY,
 statement error
 CREATE INDEX g19_imp_list_ubig ON g19_t USING inverted(pk, list_ubig);
 ----
-db error: ERROR: Failed to create index: Column 'list_ubig' has unsupported type UBIGINT[] and can not be indexed
+db error: ERROR: Column 'list_ubig' has unsupported type UBIGINT[] and can not be indexed
 
 
 statement error
 CREATE INDEX g19_imp_list_uhuge ON g19_t USING inverted(pk, list_uhuge);
 ----
-db error: ERROR: Failed to create index: Column 'list_uhuge' has unsupported type UHUGEINT[] and can not be indexed
+db error: ERROR: Column 'list_uhuge' has unsupported type UHUGEINT[] and can not be indexed
 
 
 statement error
 CREATE INDEX g19_imp_list_bit ON g19_t USING inverted(pk, list_bit);
 ----
-db error: ERROR: Failed to create index: Column 'list_bit' has unsupported type BIT[] and can not be indexed
+db error: ERROR: Column 'list_bit' has unsupported type BIT[] and can not be indexed
 
 
 statement error
 CREATE INDEX g19_imp_list_enum ON g19_t USING inverted(pk, list_enum);
 ----
-db error: ERROR: Failed to create index: Column 'list_enum' has unsupported type g19_enum_t[] and can not be indexed
+db error: ERROR: Column 'list_enum' has unsupported type g19_enum_t[] and can not be indexed
 
 
 statement error
 CREATE INDEX g19_imp_list_struct ON g19_t USING inverted(pk, list_struct);
 ----
-db error: ERROR: Failed to create index: Column 'list_struct' has unsupported type STRUCT(a INTEGER)[] and can not be indexed
+db error: ERROR: Column 'list_struct' has unsupported type STRUCT(a INTEGER)[] and can not be indexed
 
 
 statement error
 CREATE INDEX g19_imp_list_map ON g19_t USING inverted(pk, list_map);
 ----
-db error: ERROR: Failed to create index: Column 'list_map' has unsupported type MAP(VARCHAR, INTEGER)[] and can not be indexed
+db error: ERROR: Column 'list_map' has unsupported type MAP(VARCHAR, INTEGER)[] and can not be indexed
 
 
 statement error
 CREATE INDEX g19_imp_list_variant ON g19_t USING inverted(pk, list_variant);
 ----
-db error: ERROR: Failed to create index: Column 'list_variant' has unsupported type VARIANT[] and can not be indexed
+db error: ERROR: Column 'list_variant' has unsupported type VARIANT[] and can not be indexed
 
 
 # ----------------------------------------------------------------------------
@@ -122,25 +122,25 @@ db error: ERROR: Failed to create index: Column 'list_variant' has unsupported t
 statement error
 CREATE INDEX g19_imp_arr_ubig ON g19_t USING inverted(pk, arr_ubig);
 ----
-db error: ERROR: Failed to create index: Column 'arr_ubig' has unsupported type UBIGINT[3] and can not be indexed
+db error: ERROR: Column 'arr_ubig' has unsupported type UBIGINT[3] and can not be indexed
 
 
 statement error
 CREATE INDEX g19_imp_arr_uhuge ON g19_t USING inverted(pk, arr_uhuge);
 ----
-db error: ERROR: Failed to create index: Column 'arr_uhuge' has unsupported type UHUGEINT[3] and can not be indexed
+db error: ERROR: Column 'arr_uhuge' has unsupported type UHUGEINT[3] and can not be indexed
 
 
 statement error
 CREATE INDEX g19_imp_arr_uuid ON g19_t USING inverted(pk, arr_uuid);
 ----
-db error: ERROR: Failed to create index: Column 'arr_uuid' has unsupported type UUID[3] and can not be indexed
+db error: ERROR: Column 'arr_uuid' has unsupported type UUID[3] and can not be indexed
 
 
 statement error
 CREATE INDEX g19_imp_arr_intv ON g19_t USING inverted(pk, arr_intv);
 ----
-db error: ERROR: Failed to create index: Column 'arr_intv' has unsupported type INTERVAL[3] and can not be indexed
+db error: ERROR: Column 'arr_intv' has unsupported type INTERVAL[3] and can not be indexed
 
 
 # ARRAY<GEOMETRY('OGC:CRS84'),3>: rejected by the explicit GEOMETRY
@@ -150,7 +150,7 @@ db error: ERROR: Failed to create index: Column 'arr_intv' has unsupported type 
 statement error
 CREATE INDEX g19_imp_arr_geom ON g19_t USING inverted(pk, arr_geom);
 ----
-db error: ERROR: Failed to create index: Column 'arr_geom' has unsupported type GEOMETRY('OGC:CRS84')[3] and can not be indexed
+db error: ERROR: Column 'arr_geom' has unsupported type GEOMETRY('OGC:CRS84')[3] and can not be indexed
 
 
 # ----------------------------------------------------------------------------
@@ -161,19 +161,19 @@ db error: ERROR: Failed to create index: Column 'arr_geom' has unsupported type 
 statement error
 CREATE INDEX g19_imp_bit_s ON g19_t USING inverted(pk, bit_s);
 ----
-db error: ERROR: Failed to create index: Column 'bit_s' has unsupported type BIT and can not be indexed
+db error: ERROR: Column 'bit_s' has unsupported type BIT and can not be indexed
 
 
 statement error
 CREATE INDEX g19_imp_enum_s ON g19_t USING inverted(pk, enum_s);
 ----
-db error: ERROR: Failed to create index: Column 'enum_s' has unsupported type g19_enum_t and can not be indexed
+db error: ERROR: Column 'enum_s' has unsupported type g19_enum_t and can not be indexed
 
 
 statement error
 CREATE INDEX g19_imp_vr ON g19_t USING inverted(pk, vr);
 ----
-db error: ERROR: Failed to create index: Column 'vr' has unsupported type VARIANT and can not be indexed
+db error: ERROR: Column 'vr' has unsupported type VARIANT and can not be indexed
 
 
 # ----------------------------------------------------------------------------
@@ -185,7 +185,7 @@ db error: ERROR: Failed to create index: Column 'vr' has unsupported type VARIAN
 statement error
 CREATE INDEX g19_imp_expr_nested ON g19_t USING inverted(pk, ([[pk]]));
 ----
-db error: ERROR: Failed to create index: Column 'list_value(list_value(pk))' has unsupported type INTEGER[][] and can not be indexed
+db error: ERROR: Column 'list_value(list_value(pk))' has unsupported type INTEGER[][] and can not be indexed
 
 
 # ----------------------------------------------------------------------------

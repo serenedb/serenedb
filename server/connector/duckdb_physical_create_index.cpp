@@ -103,8 +103,7 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   ~CreateIndexGlobalState() {
     if (created && !finalized) {
       try {
-        auto& catalog = catalog::GetCatalog();
-        std::ignore = catalog.DropIndexById(database_id, index_id, true);
+        catalog::GetCatalog().DropIndexById(database_id, index_id, true);
       } catch (...) {
       }
     }
@@ -275,7 +274,9 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   bool if_not_exists =
     _info->on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
 
-  Result create_result;
+  // CREATE INDEX requires ownership of the target relation; the mutation
+  // enforces it and throws "must be owner of table <name>" on a non-owner.
+  bool created = false;
   if (state->index_type == catalog::ObjectType::InvertedIndex) {
     auto find_with = [&](std::string_view name) -> const duckdb::Value* {
       auto it = _info->options.find(name);
@@ -358,28 +359,25 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     state->pk_term = options.pk_term;
     state->pk_column = options.pk_column;
 
-    create_result = catalog_impl.CreateInvertedIndex(
+    created = catalog_impl.CreateInvertedIndex(
       catalog::ActingAs(context), context, _database_id,
       _schema_entry.name.GetIdentifierName(), _relation->GetName(),
       _info->GetIndexName().GetIdentifierName(), std::move(idx_columns),
-      std::move(options), {.create_with_tombstone = true});
+      std::move(options),
+      {.create_with_tombstone = true, .if_not_exists = if_not_exists});
   } else {
     bool unique =
       (_info->constraint_type == duckdb::IndexConstraintType::UNIQUE);
-    create_result = catalog_impl.CreateSecondaryIndex(
+    created = catalog_impl.CreateSecondaryIndex(
       catalog::ActingAs(context), _database_id,
       _schema_entry.name.GetIdentifierName(), _relation->GetName(),
       _info->GetIndexName().GetIdentifierName(), std::move(idx_columns), unique,
-      {.create_with_tombstone = true});
+      {.create_with_tombstone = true, .if_not_exists = if_not_exists});
   }
 
-  if (create_result.is(ERROR_SERVER_DUPLICATE_NAME) && if_not_exists) {
+  if (!created) {
+    // Index already exists, nothing to do
     return state;
-  }
-  if (!create_result.ok()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INTERNAL_ERROR),
-      ERR_MSG("Failed to create index: ", create_result.errorMessage()));
   }
 
   state->created = true;
@@ -397,8 +395,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     sdb_state->transaction_abort_cleanup =
       [database_id = _database_id,
        index_id = state->index_id](duckdb::MetaTransaction&) {
-        std::ignore =
-          catalog::GetCatalog().DropIndexById(database_id, index_id, true);
+        catalog::GetCatalog().DropIndexById(database_id, index_id, true);
       };
   }
   if (state->progress) {
@@ -631,13 +628,8 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
     gstate.progress->SetPhase(pg::progress_phase::CreateIndex::Finalizing);
   }
   SDB_IF_FAILURE("crash_before_remove_tombstone") { SDB_IMMEDIATE_ABORT(); }
-  auto& catalog = catalog::GetCatalog();
-  auto r = catalog.RemoveTombstone(_database_id, gstate.schema_name,
-                                   gstate.index_name);
-  if (!r.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("Failed to remove tombstone: ", r.errorMessage()));
-  }
+  catalog::GetCatalog().RemoveTombstone(_database_id, gstate.schema_name,
+                                        gstate.index_name);
   if (auto sdb_state = context.registered_state->Get<SereneDBClientState>(
         kSereneDBClientStateKey)) {
     sdb_state->transaction_abort_cleanup = nullptr;

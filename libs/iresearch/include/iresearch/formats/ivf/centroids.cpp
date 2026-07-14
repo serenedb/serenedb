@@ -34,6 +34,7 @@
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 namespace {
@@ -167,9 +168,7 @@ CentroidsTree CentroidsTree::Deserialize(IndexInput& in, uint64_t byte_size) {
   const size_t n_total_pos = static_cast<size_t>(in.Position());
   const size_t n_total = static_cast<size_t>(in.ReadI64());
   in.Seek(n_total_pos);
-  const std::array starts{size_t{0}};
-  const std::array sizes{n_total};
-  auto nodes = CentroidsNode::Deserialize(in, level, head.d, starts, sizes);
+  auto nodes = CentroidsNode::Deserialize(in, level, head.d, {0}, {n_total});
   auto node = std::move(nodes.front());
   const size_t next_level_offset = static_cast<size_t>(in.Position());
   return {std::move(head), std::move(node), next_level_offset};

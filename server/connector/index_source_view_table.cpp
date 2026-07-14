@@ -29,7 +29,6 @@
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
-#include "basics/errors.h"
 #include "catalog/store/store.h"
 #include "catalog/table.h"
 #include "pg/errcodes.h"
@@ -174,8 +173,7 @@ TableRowIdIndexSource::TableRowIdIndexSource(
     },
     [&](duckdb::idx_t col_id) {
       auto it = id_to_pos.find(col_id);
-      SDB_ENSURE(it != id_to_pos.end(), ERROR_INTERNAL,
-                 "column id is not on the store table");
+      SDB_ENSURE(it != id_to_pos.end(), "column id is not on the store table");
       SDB_ASSERT(it->second < columns.LogicalColumnCount());
       return AddFetchColumn(
         columns.GetColumn(duckdb::LogicalIndex(it->second)));

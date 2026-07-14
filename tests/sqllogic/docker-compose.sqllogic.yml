@@ -26,6 +26,7 @@ services:
     environment:
       - BUILD_DIR
       - HOME=/serenedb
+      - POSTGRES_PASSWORD=postgres
     networks:
       - test-network
     command: >

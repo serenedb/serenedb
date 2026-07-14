@@ -27,9 +27,9 @@
 #include <span>
 #include <string_view>
 
-#include "basics/exceptions.h"
 #include "catalog/table_options.h"
 #include "connector/index_expression.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 
@@ -62,7 +62,7 @@ class DuckDBSinkIndexWriter {
 
   virtual bool SwitchColumn(const ColumnDescriptor& col,
                             const duckdb::Vector& vec, duckdb::idx_t count) {
-    SDB_THROW(ERROR_INTERNAL, "SwitchColumn call not implemented");
+    THROW_SQL_ERROR(ERR_MSG("SwitchColumn call not implemented"));
   }
 
   virtual bool SwitchExpression(const ExpressionDescriptor& expr_desc,
@@ -76,7 +76,7 @@ class DuckDBSinkIndexWriter {
   }
 
   virtual void DeleteRow(std::string_view row_key) {
-    SDB_THROW(ERROR_INTERNAL, "DeleteRow call not implemented");
+    THROW_SQL_ERROR(ERR_MSG("DeleteRow call not implemented"));
   }
 };
 

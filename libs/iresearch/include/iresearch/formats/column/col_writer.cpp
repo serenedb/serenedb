@@ -29,13 +29,12 @@
 #include <utility>
 
 #include "basics/assert.h"
-#include "basics/error.h"
-#include "basics/exceptions.h"
 #include "basics/serialization.h"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/formats/ivf/ivf_writer.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 

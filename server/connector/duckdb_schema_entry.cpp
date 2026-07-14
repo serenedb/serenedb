@@ -66,6 +66,7 @@
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
+#include "pg/sql_utils.h"
 #include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
@@ -477,21 +478,18 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     // CREATE OR REPLACE: drop the existing table first (DuckDB semantics; PG
     // has no OR REPLACE for tables). A missing table is fine -- replace then
     // degrades to a plain create.
-    auto drop = catalog_impl.DropTable(
-      catalog::ActingAs(transaction.GetContext()),
-      catalog.GetName().GetIdentifierName(), name.GetIdentifierName(),
-      table_info.GetTableName().GetIdentifierName(), /*cascade=*/false);
-    if (!drop.ok() && !drop.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND) &&
-        !drop.is(ERROR_SERVER_ILLEGAL_NAME)) {
-      SDB_THROW(std::move(drop));
-    }
+    catalog_impl.DropTable(catalog::ActingAs(transaction.GetContext()),
+                           catalog.GetName().GetIdentifierName(),
+                           name.GetIdentifierName(),
+                           table_info.GetTableName().GetIdentifierName(),
+                           /*cascade=*/false, /*missing_ok=*/true);
   }
 
-  bool if_not_exists =
-    create_info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
   bool replace =
     create_info.on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
   catalog::CreateTableOperationOptions op_options;
+  op_options.if_not_exists =
+    create_info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
 
   // CREATE OR REPLACE TABLE (non-AS): drop the pre-existing table (cascade)
   // then create the new one, mirroring native duckdb's REPLACE_ON_CONFLICT.
@@ -502,47 +500,32 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     if (snapshot->GetTable(catalog::NoAccessCheck(), database_id,
                            name.GetIdentifierName(),
                            table_info.GetTableName().GetIdentifierName())) {
-      auto drop_result = catalog_impl.DropTable(
-        catalog::ActingAs(transaction.GetContext()),
-        catalog.GetName().GetIdentifierName(), name.GetIdentifierName(),
-        table_info.GetTableName().GetIdentifierName(), /*cascade=*/true);
-      if (!drop_result.ok()) {
-        SDB_THROW(std::move(drop_result));
-      }
+      catalog_impl.DropTable(catalog::ActingAs(transaction.GetContext()),
+                             catalog.GetName().GetIdentifierName(),
+                             name.GetIdentifierName(),
+                             table_info.GetTableName().GetIdentifierName(),
+                             /*cascade=*/true, /*missing_ok=*/false);
     }
   }
 
   // Creator owns the table (and its generated serial/PK sequences) via the
   // access context.
   const ObjectId role{GetSereneDBContext(transaction.GetContext()).GetRoleId()};
-  auto r = catalog_impl.CreateTable(catalog::ActingAs(role), database_id,
-                                    name.GetIdentifierName(),
-                                    std::move(options), op_options);
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-    if (if_not_exists) {
-      return nullptr;
+  if (catalog_impl.CreateTable(catalog::ActingAs(role), database_id,
+                               name.GetIdentifierName(), std::move(options),
+                               op_options)) {
+    // Search tables maintain themselves in the background
+    // (commit/consolidate/GC). Kick the maintenance chains now that the table
+    // and its iresearch store exist; mirrors the inverted-index StartTasks in
+    // CreateIndex.
+    auto new_snapshot = catalog_impl.GetCatalogSnapshot();
+    if (auto sdb_table = new_snapshot->GetTable(
+          catalog::NoAccessCheck(), database_id, name.GetIdentifierName(),
+          table_info.GetTableName().GetIdentifierName());
+        sdb_table && sdb_table->GetEngine() == catalog::TableEngine::Search) {
+      sdb_table->GetData()->StartTasks();  // GetData asserts the store is bound
     }
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DUPLICATE_TABLE),
-      ERR_MSG("relation \"", table_info.GetTableName().GetIdentifierName(),
-              "\" already exists"));
   }
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
-
-  // Search tables maintain themselves in the background
-  // (commit/consolidate/GC). Kick the maintenance chains now that the table and
-  // its iresearch store exist; mirrors the inverted-index StartTasks in
-  // CreateIndex.
-  auto new_snapshot = catalog_impl.GetCatalogSnapshot();
-  if (auto sdb_table = new_snapshot->GetTable(
-        catalog::NoAccessCheck(), database_id, name.GetIdentifierName(),
-        table_info.GetTableName().GetIdentifierName());
-      sdb_table && sdb_table->GetEngine() == catalog::TableEngine::Search) {
-    sdb_table->GetData()->StartTasks();  // GetData asserts the store is bound
-  }
-
   return nullptr;
 }
 
@@ -610,7 +593,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
     info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
 
   auto& context = transaction.GetContext();
-  Result create_result;
+  bool created;
   if (index_type == catalog::ObjectType::InvertedIndex) {
     auto find_with = [&](std::string_view key) -> const duckdb::Value* {
       auto it = info.options.find(key);
@@ -631,32 +614,22 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
         v->DefaultCastAs(duckdb::LogicalType::VARCHAR).GetValue<std::string>();
       options.topk_scorer = catalog::ParseScorerExpression(context, value);
     }
-    create_result = catalog_impl.CreateInvertedIndex(
+    created = catalog_impl.CreateInvertedIndex(
       catalog::ActingAs(context), context, database_id,
       name.GetIdentifierName(), sdb_table->GetName(),
       info.GetIndexName().GetIdentifierName(), std::move(idx_columns),
       std::move(options),
-      /*operation_options=*/{});
+      /*operation_options=*/{.if_not_exists = if_not_exists});
   } else {
     bool unique = (info.constraint_type == duckdb::IndexConstraintType::UNIQUE);
-    create_result = catalog_impl.CreateSecondaryIndex(
+    created = catalog_impl.CreateSecondaryIndex(
       catalog::ActingAs(context), database_id, name.GetIdentifierName(),
       sdb_table->GetName(), info.GetIndexName().GetIdentifierName(),
       std::move(idx_columns), unique,
-      /*operation_options=*/{});
+      /*operation_options=*/{.if_not_exists = if_not_exists});
   }
-
-  if (create_result.is(ERROR_SERVER_DUPLICATE_NAME)) {
-    if (if_not_exists) {
-      return nullptr;
-    }
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DUPLICATE_TABLE),
-      ERR_MSG("relation \"", info.GetIndexName().GetIdentifierName(),
-              "\" already exists"));
-  }
-  if (!create_result.ok()) {
-    SDB_THROW(std::move(create_result));
+  if (!created) {
+    return nullptr;
   }
 
   // Start background tasks for inverted indexes
@@ -737,12 +710,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
     // Always replace=true for the catalog layer since we're replacing
     // the whole PgSqlFunction with the merged version. CreateFunction
     // preserves the prior owner on replace (PG semantics).
-    auto r =
-      catalog_impl.CreateFunction(catalog::ActingAs(role), database_id,
-                                  name.GetIdentifierName(), function, true);
-    if (!r.ok()) {
-      SDB_THROW(std::move(r));
-    }
+    catalog_impl.CreateFunction(catalog::ActingAs(role), database_id,
+                                name.GetIdentifierName(), function,
+                                /*replace=*/true, /*if_not_exists=*/false);
     return nullptr;
   }
 
@@ -750,21 +720,10 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
   auto function = std::make_shared<catalog::PgSqlFunction>(
     role, ObjectId{}, ObjectId{}, info.GetFunctionName().GetIdentifierName(),
     std::move(new_macro_info));
-  auto r =
-    catalog_impl.CreateFunction(catalog::ActingAs(role), database_id,
-                                name.GetIdentifierName(), function, false);
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-    if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {
-      return nullptr;
-    }
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DUPLICATE_TABLE),
-      ERR_MSG("relation \"", info.GetFunctionName().GetIdentifierName(),
-              "\" already exists"));
-  }
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
+  catalog_impl.CreateFunction(
+    catalog::ActingAs(role), database_id, name.GetIdentifierName(), function,
+    /*replace=*/false,
+    info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT);
   return nullptr;
 }
 
@@ -785,26 +744,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateView(
     info.on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
   // CreateView preserves the prior owner on replace (PG: CREATE OR REPLACE
   // keeps the original owner).
-  auto r = catalog_impl.CreateView(catalog::ActingAs(role), database_id,
-                                   name.GetIdentifierName(), view, replace);
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-    if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {
-      return nullptr;
-    }
-    if (replace) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-                      ERR_MSG("\"", info.GetViewName().GetIdentifierName(),
-                              "\" is not a view"));
-    }
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DUPLICATE_TABLE),
-      ERR_MSG("relation \"", info.GetViewName().GetIdentifierName(),
-              "\" already exists"));
-  }
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
-
+  catalog_impl.CreateView(
+    catalog::ActingAs(role), database_id, name.GetIdentifierName(), view,
+    replace, info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT);
   return nullptr;
 }
 
@@ -846,18 +788,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateSequence(
                                                       std::move(options));
 
   auto& catalog_impl = catalog::GetCatalog();
-  auto r = catalog_impl.CreateSequence(catalog::ActingAs(role), database_id,
-                                       name.GetIdentifierName(), sequence,
-                                       if_not_exists);
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-      ERR_MSG("relation \"", info.GetSequenceName().GetIdentifierName(),
-              "\" already exists"));
-  }
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
+  catalog_impl.CreateSequence(catalog::ActingAs(role), database_id,
+                              name.GetIdentifierName(), sequence,
+                              if_not_exists);
   return nullptr;
 }
 
@@ -898,20 +831,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateType(
   auto type = std::make_shared<catalog::PgSqlType>(
     role, ObjectId{}, ObjectId{}, info.GetTypeName().GetIdentifierName(),
     std::move(type_info));
-  auto r = catalog_impl.CreateType(catalog::ActingAs(role), database_id,
-                                   name.GetIdentifierName(), type);
-
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-    if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {
-      return nullptr;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-                    ERR_MSG("type \"", info.GetTypeName().GetIdentifierName(),
-                            "\" already exists"));
-  }
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
+  catalog_impl.CreateType(
+    catalog::ActingAs(role), database_id, name.GetIdentifierName(), type,
+    info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT);
   return nullptr;
 }
 
@@ -921,48 +843,6 @@ void SereneDBSchemaEntry::DropEntry(duckdb::ClientContext& context,
   info.SetSchema(name);
   DropObject(context, info);
 }
-
-namespace {
-
-// Maps the Result of a relation-level rename (table / view / index) to a
-// PG-compatible error. DuckDB's binder resolves the relation before we reach
-// here, so ERROR_SERVER_DATA_SOURCE_NOT_FOUND / ERROR_SERVER_ILLEGAL_NAME can
-// only happen on a race with a concurrent DROP -- handle defensively.
-void HandleRenameRelationError(Result r, std::string_view name,
-                               std::string_view new_name,
-                               std::string_view expected_type) {
-  if (r.ok()) {
-    return;
-  }
-  if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-                    ERR_MSG("\"", name, "\" is not ",
-                            basics::string_utils::GetArticle(expected_type),
-                            " ", expected_type));
-  }
-  if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND) ||
-      r.is(ERROR_SERVER_ILLEGAL_NAME)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                    ERR_MSG("relation \"", name, "\" does not exist"));
-  }
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
-                    ERR_MSG("relation \"", new_name, "\" already exists"));
-  }
-  SDB_THROW(std::move(r));
-}
-
-// Maps a "relation not found" result from a table-level catalog op to the PG
-// "relation does not exist" error. DuckDB's binder already enforces IF EXISTS,
-// so reaching here means a race with a concurrent DROP -- handle defensively.
-void ThrowIfTableMissing(const Result& r, std::string_view table_name) {
-  if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                    ERR_MSG("relation \"", table_name, "\" does not exist"));
-  }
-}
-
-}  // namespace
 
 void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
                                 duckdb::AlterInfo& info) {
@@ -980,32 +860,11 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
     }
     auto& rename_info = fn_info.Cast<duckdb::RenameScalarFunctionInfo>();
 
-    Result r = catalog_impl.RenameFunction(
+    catalog_impl.RenameFunction(
       ax, db, name.GetIdentifierName(),
       info.GetQualifiedName().Name().GetIdentifierName(),
-      rename_info.new_name.GetIdentifierName());
-
-    if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND) ||
-        r.is(ERROR_SERVER_ILLEGAL_NAME)) {
-      const bool missing_ok =
-        info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL;
-      if (!missing_ok) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
-          ERR_MSG("could not find a function named \"",
-                  info.GetQualifiedName().Name().GetIdentifierName(), "\""));
-      }
-      return;
-    }
-    if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_DUPLICATE_TABLE),
-        ERR_MSG("relation \"", rename_info.new_name.GetIdentifierName(),
-                "\" already exists"));
-    }
-    if (!r.ok()) {
-      SDB_THROW(std::move(r));
-    }
+      rename_info.new_name.GetIdentifierName(),
+      info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL);
     return;
   }
 
@@ -1016,13 +875,9 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
                       ERR_MSG("only RENAME is supported for ALTER VIEW"));
     }
     auto& rename_info = view_info.Cast<duckdb::RenameViewInfo>();
-    Result r = catalog_impl.RenameView(
-      ax, db, name.GetIdentifierName(),
-      info.GetQualifiedName().Name().GetIdentifierName(),
-      rename_info.new_view_name.GetIdentifierName());
-    HandleRenameRelationError(
-      std::move(r), info.GetQualifiedName().Name().GetIdentifierName(),
-      rename_info.new_view_name.GetIdentifierName(), "view");
+    catalog_impl.RenameView(ax, db, name.GetIdentifierName(),
+                            info.GetQualifiedName().Name().GetIdentifierName(),
+                            rename_info.new_view_name.GetIdentifierName());
     return;
   }
 
@@ -1037,26 +892,15 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
         ? std::string{}
         : comment_info.comment_value.DefaultCastAs(duckdb::LogicalType::VARCHAR)
             .GetValue<std::string>();
-    Result r = catalog_impl.ChangeTable(
+    catalog_impl.ChangeTable(
       ax, db, name.GetIdentifierName(),
       info.GetQualifiedName().Name().GetIdentifierName(),
       [&](const catalog::Table& table,
           std::shared_ptr<catalog::Table>& updated) {
-        return table.SetComment(updated, comment);
-      });
-    if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-      if (info.if_not_found != duckdb::OnEntryNotFound::RETURN_NULL) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-          ERR_MSG("relation \"",
-                  info.GetQualifiedName().Name().GetIdentifierName(),
-                  "\" does not exist"));
-      }
-      return;
-    }
-    if (!r.ok()) {
-      SDB_THROW(std::move(r));
-    }
+        table.SetComment(updated, comment);
+      },
+      {.missing_ok =
+         info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL});
     return;
   }
 
@@ -1067,35 +911,16 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
         ? std::string{}
         : comment_info.comment_value.DefaultCastAs(duckdb::LogicalType::VARCHAR)
             .GetValue<std::string>();
-    Result r = catalog_impl.ChangeTable(
+    catalog_impl.ChangeTable(
       ax, db, name.GetIdentifierName(),
       info.GetQualifiedName().Name().GetIdentifierName(),
       [&](const catalog::Table& table,
           std::shared_ptr<catalog::Table>& updated) {
-        return table.SetColumnComment(
+        table.SetColumnComment(
           updated, comment_info.column_name.GetIdentifierName(), comment);
-      });
-    if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-      if (info.if_not_found != duckdb::OnEntryNotFound::RETURN_NULL) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-          ERR_MSG("relation \"",
-                  info.GetQualifiedName().Name().GetIdentifierName(),
-                  "\" does not exist"));
-      }
-      return;
-    }
-    if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-        ERR_MSG("column \"", comment_info.column_name.GetIdentifierName(),
-                "\" of relation \"",
-                info.GetQualifiedName().Name().GetIdentifierName(),
-                "\" does not exist"));
-    }
-    if (!r.ok()) {
-      SDB_THROW(std::move(r));
-    }
+      },
+      {.missing_ok =
+         info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL});
     return;
   }
 
@@ -1140,39 +965,24 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
     case duckdb::AlterTableType::DROP_CONSTRAINT: {
       auto& drop_info = table_info.Cast<duckdb::DropConstraintInfo>();
 
-      Result r = catalog_impl.ChangeTable(
+      catalog_impl.ChangeTable(
         ax, db, name.GetIdentifierName(), table_name,
         [&](const catalog::Table& table,
             std::shared_ptr<catalog::Table>& updated) {
-          return table.DropCheckConstraint(updated, drop_info.constraint_name);
-        });
-
-      if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
-        auto actual_type =
-          basics::string_utils::GetPluralFormLowerCase(r.errorMessage());
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-          ERR_MSG("ALTER action DROP CONSTRAINT cannot be performed on "
-                  "relation \"",
-                  table_name, "\""),
-          ERR_DETAIL("This operation is not supported for ", actual_type, "."));
-      }
-
-      ThrowIfTableMissing(r, table_name);
-
-      if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
-        if (!drop_info.if_constraint_not_found) {
+          table.DropCheckConstraint(updated, drop_info.constraint_name,
+                                    drop_info.if_constraint_not_found);
+        },
+        {.on_type_mismatch = [&](const catalog::Object& obj) {
           THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-            ERR_MSG("constraint \"", drop_info.constraint_name,
-                    "\" of relation \"", table_name, "\" does not exist"));
-        }
-        return;
-      }
-
-      if (!r.ok()) {
-        SDB_THROW(std::move(r));
-      }
+            ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+            ERR_MSG("ALTER action DROP CONSTRAINT cannot be performed on "
+                    "relation \"",
+                    table_name, "\""),
+            ERR_DETAIL("This operation is not supported for ",
+                       basics::string_utils::GetPluralFormLowerCase(
+                         pg::ToPgObjectTypeName(obj.GetType())),
+                       "."));
+        }});
       return;
     }
 
@@ -1180,142 +990,72 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       auto& rename_info = table_info.Cast<duckdb::RenameTableInfo>();
       // RenameRelation routes by actual object type, so ALTER TABLE on a view
       // or index (which Postgres allows) still renames the correct object.
-      Result r = catalog_impl.RenameRelation(
+      catalog_impl.RenameRelation(
         ax, db, name.GetIdentifierName(), table_name,
         rename_info.new_table_name.GetIdentifierName());
-      HandleRenameRelationError(std::move(r), table_name,
-                                rename_info.new_table_name.GetIdentifierName(),
-                                "table");
       return;
     }
 
     case duckdb::AlterTableType::RENAME_CONSTRAINT: {
       auto& rename_info = table_info.Cast<duckdb::RenameConstraintInfo>();
 
-      Result r = catalog_impl.ChangeTable(
+      catalog_impl.ChangeTable(
         ax, db, name.GetIdentifierName(), table_name,
         [&](const catalog::Table& table,
             std::shared_ptr<catalog::Table>& updated) {
-          return table.RenameConstraint(updated, rename_info.old_name,
-                                        rename_info.new_name);
-        });
-
-      if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH) ||
-          r.is(ERROR_SERVER_ILLEGAL_NAME)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-          ERR_MSG("constraint \"", rename_info.old_name, "\" for table \"",
-                  table_name, "\" does not exist"));
-      }
-
-      ThrowIfTableMissing(r, table_name);
-
-      if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-          ERR_MSG("constraint \"", rename_info.new_name, "\" for relation \"",
-                  table_name, "\" already exists"));
-      }
-
-      if (!r.ok()) {
-        SDB_THROW(std::move(r));
-      }
+          table.RenameConstraint(updated, rename_info.old_name,
+                                 rename_info.new_name);
+        },
+        {.on_type_mismatch = [&](const catalog::Object&) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+            ERR_MSG("constraint \"", rename_info.old_name, "\" for table \"",
+                    table_name, "\" does not exist"));
+        }});
       return;
     }
 
     case duckdb::AlterTableType::RENAME_COLUMN: {
       auto& rename_info = table_info.Cast<duckdb::RenameColumnInfo>();
 
-      Result r = catalog_impl.ChangeTable(
+      catalog_impl.ChangeTable(
         ax, db, name.GetIdentifierName(), table_name,
         [&](const catalog::Table& table,
             std::shared_ptr<catalog::Table>& updated) {
-          return table.RenameColumn(updated,
-                                    rename_info.old_name.GetIdentifierName(),
-                                    rename_info.new_name.GetIdentifierName());
-        });
-
-      if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-          ERR_MSG("cannot rename columns of a non-table relation"));
-      }
-
-      ThrowIfTableMissing(r, table_name);
-
-      if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-          ERR_MSG("column \"", rename_info.old_name.GetIdentifierName(),
-                  "\" does not exist"));
-      }
-
-      if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
-          ERR_MSG("column \"", rename_info.new_name.GetIdentifierName(),
-                  "\" of relation \"", table_name, "\" already exists"));
-      }
-
-      if (!r.ok()) {
-        SDB_THROW(std::move(r));
-      }
+          table.RenameColumn(updated, rename_info.old_name.GetIdentifierName(),
+                             rename_info.new_name.GetIdentifierName());
+        },
+        {.on_type_mismatch = [](const catalog::Object&) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+            ERR_MSG("cannot rename columns of a non-table relation"));
+        }});
       return;
     }
 
     case duckdb::AlterTableType::SET_NOT_NULL: {
       auto& not_null_info = table_info.Cast<duckdb::SetNotNullInfo>();
 
-      Result r = catalog_impl.ChangeTable(
+      catalog_impl.ChangeTable(
         ax, db, name.GetIdentifierName(), table_name,
         [&](const catalog::Table& table,
             std::shared_ptr<catalog::Table>& updated) {
-          return table.SetNotNull(
-            updated, not_null_info.column_name.GetIdentifierName());
+          table.SetNotNull(updated,
+                           not_null_info.column_name.GetIdentifierName());
         });
-
-      if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-          ERR_MSG("relation \"", table_name, "\" does not exist"));
-      }
-      if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-          ERR_MSG("column \"", not_null_info.column_name.GetIdentifierName(),
-                  "\" of relation \"", table_name, "\" does not exist"));
-      }
-      if (!r.ok()) {
-        SDB_THROW(std::move(r));
-      }
       return;
     }
 
     case duckdb::AlterTableType::DROP_NOT_NULL: {
       auto& not_null_info = table_info.Cast<duckdb::DropNotNullInfo>();
 
-      Result r = catalog_impl.ChangeTable(
+      catalog_impl.ChangeTable(
         ax, db, name.GetIdentifierName(), table_name,
         [&](const catalog::Table& table,
             std::shared_ptr<catalog::Table>& updated) {
-          return table.DropNotNull(
-            updated, not_null_info.column_name.GetIdentifierName());
+          table.DropNotNull(updated,
+                            not_null_info.column_name.GetIdentifierName());
         });
-
-      if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-          ERR_MSG("relation \"", table_name, "\" does not exist"));
-      }
-      if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-          ERR_MSG("column \"", not_null_info.column_name.GetIdentifierName(),
-                  "\" of relation \"", table_name, "\" does not exist"));
-      }
-      if (!r.ok()) {
-        SDB_THROW(std::move(r));
-      }
       return;
     }
 
@@ -1326,35 +1066,14 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       if (default_info.expression) {
         expr = std::make_shared<ColumnExpr>(default_info.expression->Copy());
       }
-      Result r = catalog_impl.ChangeTable(
-        ax, db, name.GetIdentifierName(), table_name,
-        [&](const catalog::Table& table,
-            std::shared_ptr<catalog::Table>& updated) {
-          return table.SetDefault(updated,
-                                  default_info.column_name.GetIdentifierName(),
-                                  std::move(expr));
-        });
-
-      if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-          ERR_MSG("relation \"", table_name, "\" does not exist"));
-      }
-      if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-          ERR_MSG("column \"", default_info.column_name.GetIdentifierName(),
-                  "\" of relation \"", table_name, "\" does not exist"));
-      }
-      if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-          ERR_MSG("cannot set a default on generated column \"",
-                  default_info.column_name.GetIdentifierName(), "\""));
-      }
-      if (!r.ok()) {
-        SDB_THROW(std::move(r));
-      }
+      catalog_impl.ChangeTable(ax, db, name.GetIdentifierName(), table_name,
+                               [&](const catalog::Table& table,
+                                   std::shared_ptr<catalog::Table>& updated) {
+                                 table.SetDefault(
+                                   updated,
+                                   default_info.column_name.GetIdentifierName(),
+                                   std::move(expr));
+                               });
       return;
     }
 
@@ -1367,15 +1086,16 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       if (add_info.constraint->type == duckdb::ConstraintType::UNIQUE) {
         auto& unique = add_info.constraint->Cast<duckdb::UniqueConstraint>();
         const bool is_pk = unique.IsPrimaryKey();
-        Result r = catalog_impl.ChangeTable(
+        catalog_impl.ChangeTable(
           ax, db, name.GetIdentifierName(), table_name,
           [&](const catalog::Table& table,
-              std::shared_ptr<catalog::Table>& updated) -> Result {
+              std::shared_ptr<catalog::Table>& updated) {
             std::vector<catalog::Column::Id> ids;
             if (unique.HasIndex()) {
               auto idx = unique.GetIndex().index;
               if (idx >= table.Columns().size()) {
-                return Result{ERROR_SERVER_ILLEGAL_NAME};
+                THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                                ERR_MSG("column does not exist"));
               }
               ids.push_back(table.Columns()[idx].GetId());
             } else {
@@ -1384,14 +1104,16 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
                   table.Columns(),
                   [&](const auto& c) { return c.GetName() == cn; });
                 if (it == table.Columns().end()) {
-                  return Result{ERROR_SERVER_ILLEGAL_NAME};
+                  THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                                  ERR_MSG("column does not exist"));
                 }
                 ids.push_back(it->GetId());
               }
             }
             if (is_pk) {
-              return table.AddPrimaryKey(updated, std::move(ids),
-                                         unique.constraint_name);
+              table.AddPrimaryKey(updated, std::move(ids),
+                                  unique.constraint_name);
+              return;
             }
             std::string uq_name = unique.constraint_name;
             if (uq_name.empty()) {
@@ -1405,12 +1127,9 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
                           ? absl::StrCat(table_name, "_key")
                           : absl::StrCat(table_name, "_", col0, "_key");
             }
-            return table.AddUniqueConstraint(updated, std::move(ids),
-                                             std::move(uq_name));
+            table.AddUniqueConstraint(updated, std::move(ids),
+                                      std::move(uq_name));
           });
-        if (!r.ok()) {
-          SDB_THROW(std::move(r));
-        }
         return;
       }
       if (add_info.constraint->type != duckdb::ConstraintType::CHECK) {
@@ -1428,22 +1147,12 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
                             : absl::StrCat(table_name, "_", col, "_check");
       }
       auto expr = std::make_shared<ColumnExpr>(check.expression->Copy());
-      Result r = catalog_impl.ChangeTable(
-        ax, db, name.GetIdentifierName(), table_name,
-        [&](const catalog::Table& table,
-            std::shared_ptr<catalog::Table>& updated) {
-          return table.AddCheckConstraint(updated, std::move(cname),
-                                          std::move(expr));
-        });
-
-      if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-          ERR_MSG("relation \"", table_name, "\" does not exist"));
-      }
-      if (!r.ok()) {
-        SDB_THROW(std::move(r));
-      }
+      catalog_impl.ChangeTable(ax, db, name.GetIdentifierName(), table_name,
+                               [&](const catalog::Table& table,
+                                   std::shared_ptr<catalog::Table>& updated) {
+                                 table.AddCheckConstraint(
+                                   updated, std::move(cname), std::move(expr));
+                               });
       return;
     }
 
@@ -1459,42 +1168,21 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       if (cd.HasDefaultValue()) {
         column.expr = std::make_shared<ColumnExpr>(cd.DefaultValue().Copy());
       }
-      Result r = catalog_impl.ChangeTable(
-        ax, db, name.GetIdentifierName(), table_name,
-        [&](const catalog::Table& table,
-            std::shared_ptr<catalog::Table>& updated) {
-          return table.AddColumn(updated, column,
-                                 add_info.if_column_not_exists);
-        });
-      if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
-          ERR_MSG("column \"", cd.Name().GetIdentifierName(),
-                  "\" of relation \"", table_name, "\" already exists"));
-      }
-      ThrowIfTableMissing(r, table_name);
-      if (!r.ok()) {
-        SDB_THROW(std::move(r));
-      }
+      catalog_impl.ChangeTable(ax, db, name.GetIdentifierName(), table_name,
+                               [&](const catalog::Table& table,
+                                   std::shared_ptr<catalog::Table>& updated) {
+                                 table.AddColumn(updated, column,
+                                                 add_info.if_column_not_exists);
+                               });
       return;
     }
 
     case duckdb::AlterTableType::REMOVE_COLUMN: {
       auto& remove_info = table_info.Cast<duckdb::RemoveColumnInfo>();
-      Result r = catalog_impl.DropTableColumn(
+      catalog_impl.DropTableColumn(
         ax, db, name.GetIdentifierName(), table_name,
         remove_info.removed_column.GetIdentifierName(),
         remove_info.if_column_exists);
-      ThrowIfTableMissing(r, table_name);
-      if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-          ERR_MSG("column \"", remove_info.removed_column.GetIdentifierName(),
-                  "\" of relation \"", table_name, "\" does not exist"));
-      }
-      if (!r.ok()) {
-        SDB_THROW(std::move(r));
-      }
       return;
     }
 
@@ -1616,17 +1304,9 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       }
 
       std::string field_using_sql = remap.remap_expression->ToString();
-      Result r = catalog_impl.ChangeColumnType(
+      catalog_impl.ChangeColumnType(
         ax, db, name.GetIdentifierName(), table_name, root_column,
         std::move(remap.new_type), std::move(field_using_sql));
-      if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-          ERR_MSG("relation \"", table_name, "\" does not exist"));
-      }
-      if (!r.ok()) {
-        SDB_THROW(std::move(r));
-      }
       return;
     }
 
@@ -1636,20 +1316,10 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       if (type_info.expression) {
         using_sql = type_info.expression->ToString();
       }
-      Result r = catalog_impl.ChangeColumnType(
+      catalog_impl.ChangeColumnType(
         ax, db, name.GetIdentifierName(), table_name,
         type_info.column_name.GetIdentifierName(), type_info.target_type,
         std::move(using_sql));
-      ThrowIfTableMissing(r, table_name);
-      if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-          ERR_MSG("column \"", type_info.column_name.GetIdentifierName(),
-                  "\" of relation \"", table_name, "\" does not exist"));
-      }
-      if (!r.ok()) {
-        SDB_THROW(std::move(r));
-      }
       return;
     }
 

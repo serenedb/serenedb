@@ -60,6 +60,7 @@
 #include "basics/dtoa.h"
 #include "basics/log.h"
 #include "basics/misc.hpp"
+#include "basics/system-compiler.h"
 #include "connector/pg_logical_types.h"
 #include "pg/errcodes.h"
 #include "pg/pg_types.h"

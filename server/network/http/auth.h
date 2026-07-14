@@ -89,8 +89,10 @@ struct AuthResult {
 // Authorization-header authentication over the SAME credential store as the
 // pg wire (one user database for both protocols): Basic verifies the
 // cleartext against the stored credential (direct constant-time compare or
-// the scram-verifier derivation). No provider configured => trust, matching
-// the pg session's unconfigured-server behavior.
+// the scram-verifier derivation). A passwordless role (or an unconfigured
+// server) is trusted only over a LOCAL (loopback/unix) connection -- the
+// caller passes `is_loopback`; a remote peer with no stored credential is
+// refused, matching the pg session's loopback-gated trust fallback.
 class HttpAuthenticator {
  public:
   HttpAuthenticator(const network::CredentialProvider* credentials,
@@ -100,10 +102,11 @@ class HttpAuthenticator {
 
   bool Enabled() const noexcept { return _credentials != nullptr; }
 
-  AuthResult Authenticate(std::string_view authorization_header) const;
+  AuthResult Authenticate(std::string_view authorization_header,
+                          bool is_loopback) const;
 
  private:
-  AuthResult Basic(std::string_view payload) const;
+  AuthResult Basic(std::string_view payload, bool is_loopback) const;
   AuthResult ApiKey(std::string_view payload) const;
   AuthResult Bearer(std::string_view payload) const;
 

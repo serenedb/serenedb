@@ -33,7 +33,7 @@ GRANT SELECT ON xmb_eoc_clickclack TO xmb_eoc_iceberg;
 
 
 statement ok
-CREATE ROLE xmb_eoc_mop LOGIN;
+CREATE ROLE xmb_eoc_mop LOGIN PASSWORD 'xmb_eoc_mop_pw';
 
 
 # ---- INHERIT TRUE, SET TRUE: wields privileges and can SET ----
@@ -52,7 +52,7 @@ member	usage	setrole	sel
 t	t	t	t
 
 
-connection c1 user=xmb_eoc_mop
+connection c1 user=xmb_eoc_mop password=xmb_eoc_mop_pw
 query
 SELECT count(*) FROM xmb_eoc_clickclack;
 ----
@@ -76,7 +76,7 @@ member	usage	setrole	sel
 t	f	t	f
 
 
-connection c2 user=xmb_eoc_mop
+connection c2 user=xmb_eoc_mop password=xmb_eoc_mop_pw
 statement error
 SELECT * FROM xmb_eoc_clickclack;
 ----
@@ -97,7 +97,7 @@ usage	sel
 t	t
 
 
-connection c3 user=xmb_eoc_mop
+connection c3 user=xmb_eoc_mop password=xmb_eoc_mop_pw
 query
 SELECT count(*) FROM xmb_eoc_clickclack;
 ----

@@ -22,6 +22,7 @@
 
 #include "phrase_filter.hpp"
 
+#include "basics/system-compiler.h"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/collectors.hpp"

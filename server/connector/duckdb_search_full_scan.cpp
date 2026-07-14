@@ -51,8 +51,6 @@
 #include "basics/assert.h"
 #include "basics/debugging.h"
 #include "basics/down_cast.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "catalog/scorer_options.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_client_state.h"
@@ -806,8 +804,7 @@ duckdb::idx_t SearchFullScanScanLocalState::EmitChunk(
   if (bulk_doc_in_seg < bulk_seg_doc_count) {
     auto* scanner =
       GetOrOpenSegmentFullScanner(*this, g, *g.reader, current_seg_idx);
-    SDB_ENSURE(scanner, sdb::ERROR_INTERNAL,
-               "bulk cs scan: segment has no columnstore reader");
+    SDB_ENSURE(scanner, "bulk cs scan: segment has no columnstore reader");
     const auto take = std::min<duckdb::idx_t>(
       STANDARD_VECTOR_SIZE, bulk_seg_doc_count - bulk_doc_in_seg);
     scanner->Scan(bulk_doc_in_seg, take, output);
@@ -826,7 +823,7 @@ duckdb::idx_t SearchFullScanScanLocalState::EmitChunk(
   }
   SDB_IF_FAILURE("SearchLookupFault") {
     if (g.has_external_projections) {
-      SDB_THROW(ERROR_DEBUG);
+      THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
     }
   }
   return EmitReadyBatch(ctx, g, *this, output);
@@ -946,7 +943,7 @@ irs::TermIterator::ptr TsDictLocalState::MakeTermSource(
   const FieldState& field, const irs::TermReader& reader) {
   if (field.having_filter) {
     auto cursor = field.having_filter->CompileTermIterator(reader);
-    SDB_ENSURE(cursor, sdb::ERROR_INTERNAL,
+    SDB_ENSURE(cursor,
                "ts_dict: claimed having filter failed to compile a term "
                "iterator");
     return cursor;
@@ -1114,8 +1111,7 @@ duckdb::idx_t TsDictLocalState::EmitField(duckdb::DataChunk& output,
         return nullptr;
       }
       const auto* meta = irs::get<irs::TermMeta>(*_cursor);
-      SDB_ENSURE(meta, sdb::ERROR_INTERNAL,
-                 "ts_dict: term iterator has no term_meta");
+      SDB_ENSURE(meta, "ts_dict: term iterator has no term_meta");
       return meta;
     }();
     TsDictEmitter emitter{TsDictEmitContext{

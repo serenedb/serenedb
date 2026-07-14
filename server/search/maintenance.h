@@ -20,10 +20,10 @@
 
 #pragma once
 
+#include <absl/status/status.h>
+
 #include <cstddef>
 #include <cstdint>
-
-#include "basics/result.h"
 
 // Background-maintenance vocabulary shared by the maintained iresearch stores
 // (InvertedIndexStorage, SearchTable) and the loops in search/task.h that drive
@@ -50,8 +50,12 @@ enum class RefreshResult {
   Done,
 };
 
+// Outcome of a best-effort background tick (refresh / compaction /
+// cleanup): the *Impl worker throws, the *Unsafe wrapper converts it to a
+// Status and the caller logs + counts it. A failure is never propagated
+// past the caller.
 struct ResultWithTime {
-  Result res;
+  absl::Status res;
   uint64_t time_ms;
 };
 

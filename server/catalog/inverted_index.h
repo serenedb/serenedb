@@ -112,20 +112,20 @@ constexpr bool IsNumeric(Kind k) noexcept { return k >= Kind::NumericI32; }
 
 constexpr bool IsSupported(Kind k) noexcept { return k != Kind::Unsupported; }
 
-Result Validate(std::string_view label, const duckdb::LogicalType& type,
-                std::string_view opclass);
+void Validate(std::string_view label, const duckdb::LogicalType& type,
+              std::string_view opclass);
 
 }  // namespace term_dict
 namespace included {
 
-Result Validate(std::string_view label, const duckdb::LogicalType& type);
+void Validate(std::string_view label, const duckdb::LogicalType& type);
 
 }  // namespace included
 namespace ivf {
 
 uint32_t Dimension(const duckdb::LogicalType& type) noexcept;
 
-Result Validate(std::string_view label, const duckdb::LogicalType& type);
+void Validate(std::string_view label, const duckdb::LogicalType& type);
 
 }  // namespace ivf
 

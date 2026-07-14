@@ -24,7 +24,6 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 
-#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -377,10 +376,12 @@ class PgWireSession
   uint32_t _max_conn = 0;
   std::chrono::milliseconds _auth_timeout{0};
   ProxyMode _proxy = ProxyMode::Off;
-  // Client peer address, captured once from the socket before auth for HBA
-  // matching. _peer_family is 0 for unix sockets (no IP).
-  int _peer_family = 0;
-  std::array<uint8_t, 16> _peer_addr{};
+  // Client peer IP, captured once from the socket before auth. Unspecified
+  // (the default) for a unix socket or a capture failure -- both no-IP, so the
+  // gate falls back to is_local / fails closed. Normalized so a v4-mapped-v6
+  // loopback reads as IPv4. Feeds HBA CIDR matching and the passwordless-trust
+  // gate (via asio's address::is_loopback()).
+  asio_ns::ip::address _peer_addr;
   FrameReader _frames;
   // The current command frame's pending _recv consume. Normally the command
   // loop applies it after the handler; COPY FROM STDIN consumes it early (so

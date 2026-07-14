@@ -1,0 +1,93 @@
+# DOCS_TEST: example_001
+
+statement ok
+DROP ROLE IF EXISTS doc_analyst;
+
+statement ok
+DROP ROLE IF EXISTS doc_app;
+
+statement ok
+DROP ROLE IF EXISTS doc_admins;
+
+statement ok
+DROP ROLE IF EXISTS doc_lead;
+
+statement ok
+DROP ROLE IF EXISTS doc_svc;
+
+statement ok
+DROP ROLE IF EXISTS doc_temp;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE ROLE doc_analyst;
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE ROLE doc_app LOGIN PASSWORD 'app_secret';
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE USER doc_lead PASSWORD 'lead_secret';
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE ROLE doc_admins WITH CREATEDB CREATEROLE;
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE ROLE doc_svc LOGIN PASSWORD 'svc_secret' VALID UNTIL '2099-12-31 00:00:00+00';
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE ROLE doc_temp IN ROLE doc_admins;
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+statement error db error: ERROR: conflicting or redundant options
+CREATE ROLE doc_bad LOGIN NOLOGIN;
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+statement error db error: ERROR: role "doc_analyst" already exists
+CREATE ROLE doc_analyst;
+
+# DOCS_TEST: example_009
+
+statement ok
+DROP ROLE doc_analyst;
+
+statement ok
+DROP ROLE doc_app;
+
+statement ok
+DROP ROLE doc_lead;
+
+statement ok
+DROP ROLE doc_svc;
+
+statement ok
+DROP ROLE doc_temp;
+
+statement ok
+DROP ROLE doc_admins;

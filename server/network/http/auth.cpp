@@ -46,16 +46,18 @@ bool TakeScheme(std::string_view& header, std::string_view scheme) {
 }  // namespace
 
 AuthResult HttpAuthenticator::Authenticate(
-  std::string_view authorization_header) const {
+  std::string_view authorization_header, bool is_loopback) const {
   if (!Enabled()) {
-    return {};  // trust: unconfigured-server behavior, same as pg-wire
+    // Unconfigured server: trust a local (loopback/unix) client, but never
+    // blanket-trust a remote HTTP peer.
+    return is_loopback ? AuthResult{} : AuthResult{.status = kUnauthorized};
   }
   std::string_view header = authorization_header;
   if (header.empty()) {
     return {.status = kUnauthorized};
   }
   if (TakeScheme(header, "Basic")) {
-    return Basic(header);
+    return Basic(header, is_loopback);
   }
   if (TakeScheme(header, "ApiKey")) {
     return ApiKey(header);
@@ -66,7 +68,8 @@ AuthResult HttpAuthenticator::Authenticate(
   return {.status = kUnauthorized};
 }
 
-AuthResult HttpAuthenticator::Basic(std::string_view payload) const {
+AuthResult HttpAuthenticator::Basic(std::string_view payload,
+                                    bool is_loopback) const {
   const auto decoded = network::Base64Decode(payload);
   if (!decoded) {
     return {.status = kUnauthorized};
@@ -82,8 +85,13 @@ AuthResult HttpAuthenticator::Basic(std::string_view payload) const {
   const auto credential = _credentials->LookupCredential(user);
   if (!credential) {
     // Same trust semantics as the pg session: a user without a configured
-    // credential is not challenged.
-    return {.status = 0, .context = {.user = std::string{user}}};
+    // credential is not challenged -- but ONLY over a local (loopback/unix)
+    // connection. A remote peer to a passwordless role is refused, so the
+    // loopback convenience never extends to the network.
+    if (is_loopback) {
+      return {.status = 0, .context = {.user = std::string{user}}};
+    }
+    return {.status = kUnauthorized};
   }
   if (credential->cleartext) {
     const auto& expected = *credential->cleartext;

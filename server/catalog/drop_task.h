@@ -24,6 +24,7 @@
 #include <absl/strings/substitute.h>
 
 #include <chrono>
+#include <cstdint>
 #include <duckdb/main/database_manager.hpp>
 #include <exception>
 #include <limits>
@@ -34,7 +35,6 @@
 
 #include "app/app_server.h"
 #include "basics/assert.h"
-#include "basics/errors.h"
 #include "catalog/database.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/index.h"
@@ -45,7 +45,9 @@
 #include "search/inverted_index_storage.h"
 namespace sdb::catalog {
 
-using AsyncResult = yaclib::Future<Result>;
+enum class DropOutcome : uint8_t { Done, Retry };
+
+using AsyncResult = yaclib::Future<DropOutcome>;
 
 inline constexpr auto kInitialDelay = std::chrono::milliseconds{1};
 inline constexpr auto kMaxDelay = std::chrono::milliseconds{1000};
@@ -70,7 +72,7 @@ class DropTask {
     if (!task->AllowToDrop()) {
       SDB_TRACE(STORAGE, "Waiting till the snapshots will free the object ",
                 task->GetContext());
-      return yaclib::MakeFuture<Result>(ERROR_LOCKED);
+      return yaclib::MakeFuture<DropOutcome>(DropOutcome::Retry);
     }
     task->_object.reset();
     return task->Execute();
@@ -142,7 +144,7 @@ struct IndexDrop final : public DropTask {
   ObjectId GetDatabaseId() const { return _db_id; }
 
   AsyncResult Execute() final;
-  Result Finalize();
+  void Finalize();
 
  private:
   ObjectId _db_id;
@@ -156,7 +158,7 @@ struct TableDropBase : public DropTask {
   virtual void EmitStoreFkCleanups(CatalogStore::WriteContext&) const {}
   virtual void EmitStoreDrops(CatalogStore::WriteContext&) const {}
 
-  Result Finalize();
+  void Finalize();
 
  protected:
   TableDropBase(ObjectId id, std::vector<ObjectId> owned_sequences,
@@ -311,7 +313,7 @@ struct SchemaDrop final : public DropTask {
   }
 
   AsyncResult Execute() final;
-  Result Finalize();
+  void Finalize();
 
   bool AllowToDropDependencies() const noexcept final {
     return absl::c_all_of(_tables, [](const auto& table) {
@@ -354,7 +356,7 @@ struct DatabaseDrop final : public DropTask {
   }
 
   AsyncResult Execute() final;
-  Result Finalize();
+  void Finalize();
 
   bool AllowToDropDependencies() const noexcept final {
     return absl::c_all_of(_schemas, [](const auto& schema) {

@@ -52,7 +52,6 @@
 #include "pg/sql_exception_macro.h"
 
 using namespace sdb;
-namespace {}  // namespace
 namespace sdb::basics::file_utils {
 
 ////////////////////////////////////////////////////////////////////////////////

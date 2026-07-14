@@ -518,56 +518,6 @@ DocIterator::ptr KnnVectorQuery::Execute(const ExecutionContext& ctx,
   return it ? DocIterator::ptr{std::move(it)} : DocIterator::empty();
 }
 
-bool KnnVectorQuery::CollectTopK(ScoreCollector& collector,
-                                 const ExecutionContext& /*ctx*/,
-                                 const StatsBuffer& /*stats*/) const {
-  if (_state.quant == VectorQuantization::None || _inner) {
-    return false;
-  }
-  if (_state.cookies.empty()) {
-    return true;  // nothing probed; a valid (empty) collection
-  }
-  SDB_ASSERT(_segment.docs_mask() == nullptr);
-  SDB_ASSERT(_state.reader);
-  SDB_ASSERT(_state.vector_column);
-  SDB_ASSERT(_state.pay_starts.size() == _state.cookies.size());
-  SDB_ASSERT(_state.cluster_counts.size() == _state.cookies.size());
-  SDB_ASSERT(_state.codebook);
-
-  const bool has_centroids =
-    _state.cluster_centroids.size() == _state.cookies.size() * _state.d;
-  std::unique_ptr<IndexInput> pay_root;
-  std::vector<score_t> boosted;
-
-  for (size_t c = 0; c < _state.cookies.size(); ++c) {
-    auto ci = MakeClusterIterator(_state, c, has_centroids, pay_root);
-    if (!ci) {
-      continue;
-    }
-    SDB_VERIFY(ci->vr,
-               "IVF quantized cluster has postings but no readable payload "
-               "stream");
-
-    QVectorIterator qv{std::move(ci->postings), std::move(ci->vr), _boost,
-                       _state.cluster_counts[c]};
-    while (true) {
-      qv.AdvanceBlock();
-      auto docs = qv.GetDocsBlock();
-      if (docs.empty()) {
-        break;
-      }
-      auto dist = qv.GetDistBlock();
-      SDB_ASSERT(docs.size() == dist.size());
-      boosted.resize(dist.size());
-      for (size_t i = 0; i < dist.size(); ++i) {
-        boosted[i] = dist[i] * _boost;
-      }
-      collector.AddDocs(docs.data(), docs.size(), boosted.data());
-    }
-  }
-  return true;
-}
-
 DocIterator::ptr RangeVectorQuery::Execute(const ExecutionContext& ctx,
                                            const StatsBuffer& stats) const {
   if (_state.cookies.empty()) {

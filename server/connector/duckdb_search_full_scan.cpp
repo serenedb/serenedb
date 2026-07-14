@@ -608,27 +608,20 @@ void CollectSegmentTopK(SearchFullScanTopKLocalState& s,
   const irs::StatsBuffer& stats =
     g.stats ? *g.stats : irs::StatsBuffer::Empty();
 
-  if (seg.docs_mask() == nullptr &&
-      seg_query.CollectTopK(collector, {.wand = {.wand_enabled = false}},
-                            stats)) {
-    collector.SetScoreThreshold(s.local_threshold);
-  } else {
-    const bool wand_enabled =
-      WandEnabled(s.bind_data->inverted_index.get(), search.text_scorer);
-    auto it = seg.mask(
-      seg_query.Execute({.wand = {.wand_enabled = wand_enabled}}, stats));
-    auto score_func = it->PrepareScore({
-      .scorer = g.scorer_obj.get(),
-      .segment = &seg,
-      .fetcher = &s.score_fetcher,
-    });
-    if (auto* it_threshold =
-          irs::GetMutable<irs::ScoreThresholdAttr>(it.get())) {
-      collector.SetScoreThreshold(it_threshold->value);
-    }
-    it->Collect(score_func, s.score_fetcher, collector);
-    collector.SetScoreThreshold(s.local_threshold);
+  const bool wand_enabled =
+    WandEnabled(s.bind_data->inverted_index.get(), search.text_scorer);
+  auto it = seg.mask(
+    seg_query.Execute({.wand = {.wand_enabled = wand_enabled}}, stats));
+  auto score_func = it->PrepareScore({
+    .scorer = g.scorer_obj.get(),
+    .segment = &seg,
+    .fetcher = &s.score_fetcher,
+  });
+  if (auto* it_threshold = irs::GetMutable<irs::ScoreThresholdAttr>(it.get())) {
+    collector.SetScoreThreshold(it_threshold->value);
   }
+  it->Collect(score_func, s.score_fetcher, collector);
+  collector.SetScoreThreshold(s.local_threshold);
 
   const irs::score_t kth = s.local_threshold;
   auto cur = g.global_kth_score.load(std::memory_order_relaxed);

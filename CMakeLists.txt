@@ -637,7 +637,7 @@ else() # glibc distr
 endif()
 if(STATIC_EXECUTABLES)
     set(CMAKE_POSITION_INDEPENDENT_CODE OFF CACHE BOOL "" FORCE)
-    set(DEFAULT_LIBS "-static ${DEFAULT_LIBS} -lgcc_eh")
+    set(DEFAULT_LIBS "-static ${DEFAULT_LIBS}")
 endif()
 
 message(STATUS "DEFAULT_LIBS=${DEFAULT_LIBS}")

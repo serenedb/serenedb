@@ -104,7 +104,7 @@ std::vector<CentroidsNode> CentroidsNode::Deserialize(
   nodes.reserve(starts.size());
   for (auto&& [start, size] : std::views::zip(starts, sizes)) {
     CentroidsNode node{level, d};
-    node.size = size == 0 ? n_total - start : size;
+    node.size = size;
 
     in.Seek(body_start + start * stride);
     node.centroids.resize(node.size * d);
@@ -164,17 +164,15 @@ void IVFHeader::Serialize(IndexOutput& out) const {
 CentroidsTree CentroidsTree::Deserialize(IndexInput& in, uint64_t byte_size) {
   auto head = IVFHeader::Deserialize(in);
   const size_t level = static_cast<size_t>(in.ReadI64());
-  std::array<size_t, 1> starts{0};
-  std::array<size_t, 1> sizes{0};
+  const size_t n_total_pos = static_cast<size_t>(in.Position());
+  const size_t n_total = static_cast<size_t>(in.ReadI64());
+  in.Seek(n_total_pos);
+  const std::array starts{size_t{0}};
+  const std::array sizes{n_total};
   auto nodes = CentroidsNode::Deserialize(in, level, head.d, starts, sizes);
-  SDB_ASSERT(nodes.size() == 1);
-  // Deserialize left `in` positioned at the start of level-1's body (a
-  // no-op seek to the current position when level == 0) -- capture that so
-  // Search can restore it on every call, since it will be re-called many
-  // times against the same stream and must not depend on where the
-  // previous call happened to leave the cursor.
+  auto node = std::move(nodes.front());
   const size_t next_level_offset = static_cast<size_t>(in.Position());
-  return {std::move(head), std::move(nodes.front()), next_level_offset};
+  return {std::move(head), std::move(node), next_level_offset};
 }
 
 void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
@@ -244,8 +242,8 @@ CentroidsBuilder CentroidsBuilder::Create(const ColumnReader& vector_column,
     leaf.size = leaf.centroids.size() / d;
     builder._nodes.emplace_back(std::move(leaf));
   }
-  auto current_centroids = std::span{builder._nodes.back().centroids};
-  while (current_centroids.size() > kCentroidsThreshold) {
+  while (builder._nodes.back().size > kCentroidsThreshold) {
+    auto current_centroids = std::span{builder._nodes.back().centroids};
     n_clusters = std::clamp<size_t>(
       static_cast<size_t>(kCentroidsFactor *
                           std::sqrt(static_cast<double>(n_clusters))),
@@ -257,7 +255,6 @@ CentroidsBuilder CentroidsBuilder::Create(const ColumnReader& vector_column,
     node.centroids = std::move(new_centroids);
     node.size = node.centroids.size() / d;
     builder._nodes.emplace_back(std::move(node));
-    current_centroids = std::span{builder._nodes.back().centroids};
   }
   absl::c_reverse(builder._nodes);
 

@@ -205,3 +205,6 @@
 [submodule "third_party/SuperKMeans"]
 	path = third_party/SuperKMeans
 	url = https://github.com/serenedb/SuperKMeans.git
+[submodule "third_party/OpenBLAS"]
+	path = third_party/OpenBLAS
+	url = https://github.com/serenedb/OpenBLAS.git

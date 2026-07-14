@@ -81,8 +81,6 @@ struct CentroidsNode {
     };
 
     if (level == 0) {
-      // Leaf level: score, pick top-k, emit global leaf ids directly. No
-      // child recursion, no per-centroid child-count involved at all.
       struct Scored {
         float dist;
         size_t id;
@@ -116,10 +114,6 @@ struct CentroidsNode {
       return;
     }
 
-    // level > 0: score, pick top-k, batch-fetch their children, recurse.
-    // Each scored entry carries its absolute global start (a running
-    // prefix-sum over this node's own counts) and child count directly --
-    // no "peek at the next entry" needed, no last-item special case.
     struct Scored {
       float dist;
       size_t start;
@@ -137,6 +131,9 @@ struct CentroidsNode {
           {ComputeDistance<Metric>(q, c, d), start, node.counts[i]});
         start += node.counts[i];
       }
+    }
+    if (scored.empty()) {
+      return;
     }
     const auto k = std::min<size_t>(nprobe * nodes.size(), scored.size());
     const auto mid = scored.begin() + k;
@@ -189,8 +186,7 @@ class CentroidsTree {
  private:
   IVFHeader _head;
   CentroidsNode _root;
-  size_t _next_level_offset;  // byte position where _root.level-1's body
-                              // begins; meaningless when _root.level == 0
+  size_t _next_level_offset;
 };
 
 struct CentroidsSpan {

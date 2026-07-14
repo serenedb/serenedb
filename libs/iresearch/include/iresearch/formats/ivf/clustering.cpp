@@ -20,6 +20,7 @@
 
 #include "iresearch/formats/ivf/clustering.hpp"
 
+#include <superkmeans/distance_computers/batch_computers.h>
 #include <superkmeans/superkmeans.h>
 
 #include <algorithm>
@@ -52,6 +53,18 @@ uint32_t NearestImpl(VectorDistanceFn dist, bool nearest_is_largest,
   return best;
 }
 
+void ComputeL2NormsRowMajor(const float* data, size_t n, uint32_t d,
+                            float* out) noexcept {
+  for (size_t i = 0; i < n; ++i) {
+    const float* row = data + i * d;
+    float sum = 0.f;
+    for (uint32_t j = 0; j < d; ++j) {
+      sum += row[j] * row[j];
+    }
+    out[i] = sum;
+  }
+}
+
 }  // namespace
 
 void NormalizeRows(float* data, size_t n, uint32_t d) {
@@ -76,10 +89,11 @@ std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
                                   uint32_t seed, uint32_t niter,
                                   uint32_t nredo) {
   skmeans::SuperKMeansConfig cfg;
-  cfg.iters = std::max<uint32_t>(1, niter);
+  cfg.iters = 1;
   cfg.seed = seed;
   cfg.angular = VectorMetricIsAngular(metric);
   cfg.sampling_fraction = 1.0f;
+  cfg.data_already_rotated = true;
   cfg.max_points_per_cluster =
     std::max<uint32_t>(256, static_cast<uint32_t>((n + k - 1) / k));
 
@@ -96,13 +110,34 @@ uint32_t NearestCentroid(VectorMetric metric, const float* v,
 void AssignNearest(VectorMetric metric, const float* data, size_t n,
                    const float* centroids, uint32_t k, uint32_t d,
                    std::vector<uint32_t>& out) {
-  const auto dist = ResolveVectorDistance(metric);
-  const bool nearest_is_largest = VectorMetricNearestIsLargest(metric);
-  out.reserve(out.size() + n);
-  for (size_t i = 0; i < n; ++i) {
-    out.push_back(
-      NearestImpl(dist, nearest_is_largest, data + i * d, centroids, k, d));
+  const size_t base = out.size();
+  out.resize(base + n);
+  if (n == 0) {
+    return;
   }
+  if (metric == VectorMetric::L1 || k == 0) {
+    const auto dist = ResolveVectorDistance(metric);
+    const bool nearest_is_largest = VectorMetricNearestIsLargest(metric);
+    for (size_t i = 0; i < n; ++i) {
+      out[base + i] =
+        NearestImpl(dist, nearest_is_largest, data + i * d, centroids, k, d);
+    }
+    return;
+  }
+
+  using BatchComputer = skmeans::BatchComputer<skmeans::DistanceFunction::l2,
+                                               skmeans::Quantization::f32>;
+  std::vector<float> norms_x(n);
+  std::vector<float> norms_y(k);
+  ComputeL2NormsRowMajor(data, n, d, norms_x.data());
+  ComputeL2NormsRowMajor(centroids, k, d, norms_y.data());
+  std::vector<float> out_distances(n);
+  const size_t tile_n = std::min<size_t>(n, skmeans::X_BATCH_SIZE);
+  const size_t tile_k = std::min<size_t>(k, skmeans::Y_BATCH_SIZE);
+  std::vector<float> tmp_distances(tile_n * tile_k);
+  BatchComputer::FindNearestNeighbor(
+    data, centroids, n, k, d, norms_x.data(), norms_y.data(), out.data() + base,
+    out_distances.data(), tmp_distances.data());
 }
 
 std::vector<bool> ReadValidity(const ColumnReader& vector_column, uint64_t rows,

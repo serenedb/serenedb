@@ -343,6 +343,37 @@ target_compile_definitions(
 add_subdirectory(fastText)
 
 ################################################################################
+### BLAS
+################################################################################
+add_library(sdb_blas INTERFACE)
+add_library(sdb::blas ALIAS sdb_blas)
+
+set(MKL_INTERFACE_FULL "intel_lp64")
+find_package(MKL CONFIG QUIET)
+if(MKL_FOUND)
+    target_link_libraries(sdb_blas INTERFACE MKL::MKL)
+elseif(APPLE)
+    set(BLA_VENDOR Apple)
+    find_package(BLAS REQUIRED)
+    target_link_libraries(sdb_blas INTERFACE ${BLAS_LIBRARIES})
+else()
+    sdb_update_module(${GIT_EXECUTABLE} "OpenBLAS" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    set(USE_THREAD 0 CACHE BOOL "" FORCE)
+    set(USE_OPENMP 0 CACHE BOOL "" FORCE)
+    set(USE_LOCKING 1 CACHE BOOL "" FORCE)
+    set(NO_WARMUP 1 CACHE BOOL "" FORCE)
+    set(NO_AFFINITY 1 CACHE BOOL "" FORCE)
+    set(NO_LAPACK 1 CACHE BOOL "" FORCE)
+    set(CMAKE_Fortran_COMPILER NOTFOUND CACHE FILEPATH "" FORCE)
+    set(DYNAMIC_ARCH OFF CACHE BOOL "" FORCE)
+    if(ARCH_AARCH64)
+        set(TARGET ARMV8 CACHE STRING "" FORCE)
+    endif()
+    add_subdirectory(OpenBLAS)
+    target_link_libraries(sdb_blas INTERFACE openblas)
+endif()
+
+################################################################################
 ### faiss library
 ################################################################################
 set(FAISS_LIB "")
@@ -351,9 +382,8 @@ if(ARCH_AMD64)
     set(FAISS_OPT_LEVEL "avx2")
     set(FAISS_LIB faiss_avx2)
 elseif(ARCH_AARCH64)
-    # TODO(mbkkt) is it ok?
-    set(FAISS_OPT_LEVEL "sve")
-    set(FAISS_LIB faiss_sve)
+    set(FAISS_OPT_LEVEL "dd")
+    set(FAISS_LIB faiss)
 endif()
 
 sdb_update_module(${GIT_EXECUTABLE} "faiss" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
@@ -373,7 +403,7 @@ set(SKMEANS_SKIP_FFTW ON CACHE BOOL "" FORCE)
 if(ARCH_AMD64)
     set(SKMEANS_PORTABLE ON CACHE BOOL "" FORCE)
 elseif(ARCH_AARCH64)
-    set(SKMEANS_MARCH "armv8-a+sve" CACHE STRING "" FORCE)
+    set(SKMEANS_MARCH "${AARCH64_MARCH}" CACHE STRING "" FORCE)
 endif()
 
 sdb_update_module(${GIT_EXECUTABLE} "SuperKMeans" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")

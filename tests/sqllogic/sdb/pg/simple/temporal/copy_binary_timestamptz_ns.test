@@ -1,5 +1,3 @@
-hash-threshold 100
-
 control substitution on
 
 statement ok

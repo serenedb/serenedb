@@ -196,8 +196,8 @@ class PositionImpl final : public PosAttr {
 
   void ReadAttributes() noexcept {
     if constexpr (IteratorTraits::Offset()) {
-      _offs.start += _offs_start_deltas[_buf_pos];
-      _offs.end = _offs.start + _offs_lengths[_buf_pos];
+      _offs.start += _offs_start_deltas.block[_buf_pos];
+      _offs.end = _offs.start + _offs_lengths.block[_buf_pos];
     }
   }
 
@@ -210,8 +210,8 @@ class PositionImpl final : public PosAttr {
   void ReadBlock() {
     IteratorTraits::ReadBlock(*_pos_in, _enc_buf, _pos_deltas);
     if constexpr (IteratorTraits::Offset()) {
-      IteratorTraits::ReadBlock(*_pay_in, _enc_buf, _offs_start_deltas);
-      IteratorTraits::ReadBlock(*_pay_in, _enc_buf, _offs_lengths);
+      IteratorTraits::ReadBlock(*_pay_in, _enc_buf, _offs_start_deltas.block);
+      IteratorTraits::ReadBlock(*_pay_in, _enc_buf, _offs_lengths.block);
     }
   }
 
@@ -233,10 +233,14 @@ class PositionImpl final : public PosAttr {
   template<typename T>
   using ForOffset = utils::Need<IteratorTraits::Offset(), T>;
 
-  uint32_t _pos_deltas[doc_limits::kBlockSize];
-  [[no_unique_address]] ForOffset<uint32_t[doc_limits::kBlockSize]>
+  struct Block {
+    alignas(16) uint32_t block[doc_limits::kBlockSize];
+  };
+
+  alignas(16) uint32_t _pos_deltas[doc_limits::kBlockSize];
+  [[no_unique_address]] ForOffset<Block>
     _offs_start_deltas;
-  [[no_unique_address]] ForOffset<uint32_t[doc_limits::kBlockSize]>
+  [[no_unique_address]] ForOffset<Block>
     _offs_lengths;
   uint32_t _freq = 0;      // length of the posting list for a document
   uint32_t* _enc_buf;      // auxillary buffer to decode data

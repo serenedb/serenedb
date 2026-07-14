@@ -513,7 +513,7 @@ class PostingsWriterImpl final : public PostingsWriterBase {
     // Buffer for document deltas
     doc_id_t docs[doc_limits::kBlockSize]{};
     // Buffer for frequencies
-    uint32_t freqs[doc_limits::kBlockSize]{};
+    alignas(16) uint32_t freqs[doc_limits::kBlockSize]{};
     // Buffer for skip documents
     doc_id_t skip_doc[doc_limits::kMaxSkipLevels]{};
     // Buffer for skip pointers
@@ -521,21 +521,21 @@ class PostingsWriterImpl final : public PostingsWriterBase {
   } _doc_buf;
   struct {
     // Buffer for position deltas
-    uint32_t buf[pos_limits::kBlockSize]{};
+    alignas(16) uint32_t buf[pos_limits::kBlockSize]{};
     // Buffer for skip pointers
     uint64_t skip_ptr[doc_limits::kMaxSkipLevels]{};
   } _prox_buf;
   struct {
     // Buffer for start offsets
-    uint32_t offs_start_buf[pos_limits::kBlockSize]{};
+    alignas(16) uint32_t offs_start_buf[pos_limits::kBlockSize]{};
     // Buffer for offset lengths
-    uint32_t offs_len_buf[pos_limits::kBlockSize]{};
+    alignas(16) uint32_t offs_len_buf[pos_limits::kBlockSize]{};
     // Buffer for skip pointers
     uint64_t skip_ptr[doc_limits::kMaxSkipLevels]{};
   } _pay_buf;
   struct {
     // Buffer for encoding (worst case)
-    uint32_t buf[std::max(doc_limits::kBlockSize, pos_limits::kBlockSize)];
+    alignas(16) uint32_t buf[std::max(doc_limits::kBlockSize, pos_limits::kBlockSize)];
   } _encbuf;
   bool _volatile_attributes;
 };

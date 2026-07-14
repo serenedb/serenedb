@@ -380,9 +380,9 @@ class SingleWandIterator : public DocIterator {
   const byte_type* _stats = nullptr;
   score_t _boost = kNoBoost;
 
-  uint32_t _enc_buf[doc_limits::kBlockSize];
+  alignas(16) uint32_t _enc_buf[doc_limits::kBlockSize];
   uint32_t* _collected_freqs = nullptr;
-  [[no_unique_address]] uint32_t _freqs[doc_limits::kBlockSize];
+  alignas(16) [[no_unique_address]] uint32_t _freqs[doc_limits::kBlockSize];
   doc_id_t _docs[doc_limits::kBlockSize];
 #ifdef __AVX2__
   [[maybe_unused]] doc_id_t _placeholder_for_bitset_materialize[8];

@@ -66,19 +66,42 @@ class WandWriterImpl final : public WandWriter {
     _producer.Produce(_levels.front());
   }
 
-  void Write(size_t level, MemoryIndexOutput& out) final {
+  auto& Produce(size_t level) {
     SDB_ASSERT(level + 1 < _levels.size());
     auto& entry = _levels[level];
     _producer.Produce(entry, _levels[level + 1]);
+    return entry;
+  }
+
+  WandData CalculateAndGetWandData(size_t level) final {
+    auto& entry = Produce(level);
+    auto result = Producer::GetWandData(entry);
+    entry = {};
+    return result;
+  }
+
+  WandData CalculateAndGetWandDataRoot(size_t level) final {
+    SDB_ASSERT(level < _levels.size());
+    auto it = _levels.begin();
+    for (auto end = it + level; it != end;) {
+      const auto& from = *it;
+      _producer.Produce(from, *++it);
+    }
+    auto& entry = _levels[level];
+    return Producer::GetWandData(entry);
+  }
+
+  void Write(size_t level, MemoryIndexOutput& out) final {
+    auto& entry = Produce(level);
     Producer::Write(entry, out);
     entry = {};
   }
 
-  void WriteRoot(size_t level, IndexOutput& out) final {
-    SDB_ASSERT(level < _levels.size());
-    auto& entry = _levels[level];
-    Producer::Write(entry, out);
-  }
+  // void WriteRoot(size_t level, IndexOutput& out) final {
+  //   SDB_ASSERT(level < _levels.size());
+  //   auto& entry = _levels[level];
+  //   Producer::Write(entry, out);
+  // }
 
   uint8_t Size(size_t level) const noexcept final {
     SDB_ASSERT(level + 1 < _levels.size());
@@ -203,6 +226,20 @@ class FreqNormProducer : public AttributeProvider {
         out.WriteV32(entry.norm - entry.freq);
       }
     }
+  }
+
+  static WandWriter::WandData GetWandData(Entry entry) {
+    WandWriter::WandData data;
+    // TODO(mbkkt) Compute difference second time looks unnecessary.
+    SDB_ASSERT(entry.freq >= 1);
+    data.freq = entry.freq;
+    if constexpr (kNorm) {
+      SDB_ASSERT(entry.norm >= entry.freq);
+      // if entry.norm == entry.freq, then norm will be 0 and won't be written
+      // on a disk
+      data.norm = entry.norm - entry.freq;
+    }
+    return data;
   }
 
   static uint8_t Size(Entry entry) noexcept {
@@ -377,6 +414,13 @@ class FreqNormSource final : public WandSource {
     }
     if constexpr (kNorm) {
       _norm.value = norm;
+    }
+  }
+
+  void ReadFromWandData(const WandWriter::WandData& data) {
+    _freq = data.freq;
+    if constexpr (kNorm) {
+      _norm.value = data.norm + _freq;
     }
   }
 

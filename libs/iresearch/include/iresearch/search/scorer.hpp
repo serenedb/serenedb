@@ -58,14 +58,14 @@ struct Scorer;
 struct FieldCollector;
 struct TermCollector;
 
-struct WandSource : AttributeProvider {
-  using ptr = std::unique_ptr<WandSource>;
-
-  virtual void Read(DataInput& in, size_t size) = 0;
-};
-
 struct WandWriter {
   using ptr = std::unique_ptr<WandWriter>;
+
+  struct WandData {
+    uint32_t freq{1};
+    // Stored as delta from freq; 0 means norm == freq (i.e. "no norm written").
+    uint32_t norm{0};
+  };
 
   static constexpr byte_type kMaxSize = 127;
 
@@ -78,11 +78,22 @@ struct WandWriter {
 
   virtual void Update() = 0;
 
+  virtual WandData CalculateAndGetWandData(size_t level) = 0;
+  virtual WandData CalculateAndGetWandDataRoot(size_t level) = 0;
+
   virtual void Write(size_t level, MemoryIndexOutput& out) = 0;
-  virtual void WriteRoot(size_t level, IndexOutput& out) = 0;
+  // virtual void WriteRoot(size_t level, IndexOutput& out) = 0;
 
   virtual byte_type Size(size_t level) const = 0;
   virtual byte_type SizeRoot(size_t level) = 0;
+};
+
+struct WandSource : AttributeProvider {
+  using ptr = std::unique_ptr<WandSource>;
+
+  virtual void Read(DataInput& in, size_t size) = 0;
+
+  virtual void ReadFromWandData(const WandWriter::WandData& data) = 0;
 };
 
 struct ScoreContext {

@@ -20,6 +20,9 @@
 
 #pragma once
 
+#include <unistd.h>
+#include "iresearch/search/scorer.hpp"
+#include "iresearch/formats/posting/common.hpp"
 #include "basics/containers/bitset.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/format_utils.hpp"
@@ -263,6 +266,10 @@ class PostingsWriterBase : public PostingsWriter {
     }
   }
 
+  bool HasValidWandWriter() const {
+    return _valid_writer;
+  }
+
   SkipWriter _skip;
   TermMetaImpl _last_state;   // Last final term state
   bitset _docs;               // Set of all processed documents
@@ -302,32 +309,95 @@ inline void PostingsWriterBase::PrepareWriters(const FieldProperties& meta) {
   }
 }
 
-inline void PostingsWriterBase::WriteSkip(size_t level,
-                                          MemoryIndexOutput& out) const {
+inline void PostingsWriterBase::WriteSkip(size_t level, MemoryIndexOutput& out) const {
   SDB_ASSERT(_doc_out);
   const doc_id_t doc = _doc.block_last;
   const uint64_t doc_ptr = _doc_out->Position();
 
-  out.WriteV32(doc);  // - doc_.skip_doc[level];
-  out.WriteV64(doc_ptr - _doc.skip_ptr[level]);
+  auto doc_delta = doc -  _doc.skip_doc[level];
+  uint32_t doc_size = ByteSizeFor124(doc_delta);
+  auto doc_ptr_delta = doc_ptr - _doc.skip_ptr[level];
+  uint32_t doc_ptr_code = ByteSize1248ForSkipEntry(doc_ptr_delta);
+
+  // out.WriteV32(doc);  // - doc_.skip_doc[level];
+  // out.WriteV64(doc_ptr - _doc.skip_ptr[level]);
 
   _doc.skip_doc[level] = doc;
   _doc.skip_ptr[level] = doc_ptr;
 
+  uint32_t pos_ptr_code = 0;
+  uint64_t pos_ptr_delta = 0;
+  uint32_t pay_ptr_code = 0;
+  uint64_t pay_ptr_delta = 0;
   if (_features.HasPosition()) {
     SDB_ASSERT(_pos_out);
     const uint64_t pos_ptr = _pos_out->Position();
-    out.WriteV64(pos_ptr - _pos.skip_ptr[level]);
+    pos_ptr_delta = pos_ptr - _pos.skip_ptr[level];
+    pos_ptr_code = ByteSize1248ForSkipEntry(pos_ptr_delta);
+    //out.WriteV64(pos_ptr - _pos.skip_ptr[level]);
     _pos.skip_ptr[level] = pos_ptr;
     if (_features.HasOffset()) {
       SDB_ASSERT(_pay_out);
       const uint64_t pay_ptr = _pay_out->Position();
-      out.WriteV64(pay_ptr - _pay.skip_ptr[level]);
+      pay_ptr_delta = pay_ptr - _pay.skip_ptr[level];
+      pay_ptr_code = ByteSize1248ForSkipEntry(pay_ptr_delta);
+      // out.WriteV64(pay_ptr - _pay.skip_ptr[level]);
       _pay.skip_ptr[level] = pay_ptr;
+    }
+    // SDB_ASSERT(_pos.size <= std::numeric_limits<uint8_t>::max());
+    // out.WriteByte(_pos.size);
+  }
+
+  uint32_t freq_code = 0;
+  uint32_t norm_code = 0;
+  WandWriter::WandData data;
+  if (HasValidWandWriter()) {
+    data = _valid_writer->CalculateAndGetWandData(level);
+    freq_code = ByteSize124ForSkipEntry(data.freq);
+    norm_code = (data.norm > 0 ? ByteSize124ForSkipEntry(data.norm) : 0);
+  }
+
+  out.WriteByte((doc_size - 1) | (freq_code << 2) | (norm_code << 4));
+  Serialize124(doc_size, doc_delta, out);
+  if (HasValidWandWriter()) {
+    Serialize124ForSkipEntry(freq_code, data.freq, out);
+    if (norm_code > 0) {
+      Serialize124ForSkipEntry(norm_code, data.norm, out);
+    }
+  }
+
+  out.WriteByte(doc_ptr_code | (pos_ptr_code << 2) | (pay_ptr_code << 4));
+  Serialize1248ForSkipEntry(doc_ptr_code, doc_ptr_delta, out);
+  if (_features.HasPosition()) {
+    Serialize1248ForSkipEntry(pos_ptr_code, pos_ptr_delta, out);
+    if (_features.HasOffset()) {
+      Serialize1248ForSkipEntry(pay_ptr_code, pay_ptr_delta, out);
     }
     SDB_ASSERT(_pos.size <= std::numeric_limits<uint8_t>::max());
     out.WriteByte(_pos.size);
   }
+
+  // // 2 encoding bytes
+  // out.WriteU16((doc_size - 1) | (doc_ptr_code << 2) | (pos_ptr_code << 4) | (pay_ptr_code << 6) | (freq_code << 8) | (norm_code << 10));
+
+  // Serialize124(doc_size, doc_delta, out);
+  // Serialize1248ForSkipEntry(doc_ptr_code, doc_ptr_delta, out);
+
+  // if (_features.HasPosition()) {
+  //   Serialize1248ForSkipEntry(pos_ptr_code, pos_ptr_delta, out);
+  //   if (_features.HasOffset()) {
+  //     Serialize1248ForSkipEntry(pay_ptr_code, pay_ptr_delta, out);
+  //   }
+  //   SDB_ASSERT(_pos.size <= std::numeric_limits<uint8_t>::max());
+  //   out.WriteByte(_pos.size);
+  // }
+
+  // if (HasValidWandWriter()) {
+  //   Serialize124ForSkipEntry(freq_code, data.freq, out);
+  //   if (norm_code > 0) {
+  //     Serialize124ForSkipEntry(norm_code, data.norm, out);
+  //   }
+  // }
 }
 
 inline void PostingsWriterBase::Prepare(IndexOutput& out,
@@ -402,11 +472,66 @@ inline void PostingsWriterBase::Encode(BufferedOutput& out,
     out.WriteV64(meta.e_skip_start);
   }
 
+  // uint32_t doc_size = ByteSizeFor124(meta.docs_count);
+  // uint32_t freq_size = 1;
+  // if (_features.HasFrequency()) {
+  //   SDB_ASSERT(meta.freq >= meta.docs_count);
+  //   freq_size = ByteSizeFor124(meta.freq - meta.docs_count);
+  // }
+
+  // uint64_t doc_start_delta = meta.doc_start - _last_state.doc_start;
+  // uint32_t doc_start_size = ByteSize1248ForSkipEntry(doc_start_delta);
+
+  // uint32_t pos_start_delta_size = 0;
+  // uint32_t pay_start_delta_size = 0;
+  // if (_features.HasPosition()) {
+  //   pos_start_delta_size = ByteSize1248ForSkipEntry(meta.pos_start - _last_state.pos_start);
+  //   if (_features.HasOffset()) {
+  //     pay_start_delta_size = ByteSize1248ForSkipEntry(meta.pay_start - _last_state.pay_start);
+  //   }
+  // }
+
+  // uint32_t encoding = (doc_size - 1) | ((freq_size - 1) << 2) | (doc_start_size << 4) | (pos_start_delta_size << 6) | (pay_start_delta_size << 8);
+
+  // uint32_t opt_size = 0;
+  // if (meta.docs_count == 1) {
+  //   opt_size = ByteSizeFor124(meta.e_single_doc);
+  //   encoding |= ((opt_size - 1) << 10);
+  // } else if (meta.docs_count > _skip.Skip0()) {
+  //   opt_size = ByteSize1248ForSkipEntry(meta.e_skip_start);
+  //   encoding |= (opt_size << 10);
+  // }
+
+  // out.WriteU16(encoding);
+
+  // Serialize124(doc_size, meta.docs_count, out);
+  // if (_features.HasFrequency()) {
+  //   Serialize124(freq_size, meta.freq - meta.docs_count, out);
+  // }
+
+  // Serialize1248ForSkipEntry(doc_start_size, doc_start_delta, out);
+
+  // if (_features.HasPosition()) {
+  //   Serialize1248ForSkipEntry(pos_start_delta_size, meta.pos_start - _last_state.pos_start, out);
+  //   if (_features.HasOffset()) {
+  //     Serialize1248ForSkipEntry(pay_start_delta_size, meta.pay_start - _last_state.pay_start, out);
+  //   }
+  //   SDB_ASSERT(meta.pos_offset <= std::numeric_limits<uint8_t>::max());
+  //   out.WriteByte(meta.pos_offset);
+  // }
+
+  // if (meta.docs_count == 1) {
+  //   Serialize124(opt_size, meta.e_single_doc, out);
+  // } else if (meta.docs_count > _skip.Skip0()) {
+  //   Serialize1248ForSkipEntry(opt_size, meta.e_skip_start, out);
+  // }
+
   _last_state = meta;
 }
 
 inline void PostingsWriterBase::BeginTerm(TermMetaImpl& meta) {
   meta.doc_start = _doc_out->Position();
+  std::fill_n(_doc.skip_doc, doc_limits::kMaxSkipLevels, doc_limits::invalid());
   std::fill_n(_doc.skip_ptr, doc_limits::kMaxSkipLevels, meta.doc_start);
   if (_features.HasPosition()) {
     SDB_ASSERT(_pos_out);
@@ -440,11 +565,22 @@ inline void PostingsWriterBase::EndTerm(TermMetaImpl& meta) {
 
   const bool has_skip_list = _skip.Skip0() < meta.docs_count;
   auto write_max_score = [&](size_t level) {
-    ApplyToWriter([&](auto& writer) {
-      const uint8_t size = writer.SizeRoot(level);
-      _doc_out->WriteByte(size);
-    });
-    ApplyToWriter([&](auto& writer) { writer.WriteRoot(level, *_doc_out); });
+    if (HasValidWandWriter()) {
+      auto wand_data = _valid_writer->CalculateAndGetWandDataRoot(level);
+      uint32_t freq_code = ByteSize124ForSkipEntry(wand_data.freq);
+      uint32_t norm_code = (wand_data.norm > 0 ? ByteSize124ForSkipEntry(wand_data.norm) : 0);
+      _doc_out->WriteByte(freq_code | (norm_code << 2));
+
+      Serialize124ForSkipEntry(freq_code, wand_data.freq, *_doc_out);
+      if (norm_code > 0) {
+        Serialize124ForSkipEntry(norm_code, wand_data.norm, *_doc_out);
+      }
+    }
+    // ApplyToWriter([&](auto& writer) {
+    //   const uint8_t size = writer.SizeRoot(level);
+    //   _doc_out->WriteByte(size);
+    // });
+    // ApplyToWriter([&](auto& writer) { writer.WriteRoot(level, *_doc_out); });
   };
 
   if (1 == meta.docs_count) {
@@ -729,15 +865,16 @@ void PostingsWriterImpl<FormatTraits>::Write(DocIterator& docs,
     if (doc_limits::valid(_doc.last) && _doc.Empty()) {
       _skip.Skip(docs_count, [this](size_t level, MemoryIndexOutput& out) {
         WriteSkip(level, out);
+        // WriteSkip(level, out);
 
-        // FIXME(gnusi): optimize for 1 writer case? compile? maybe just 1
-        // composite wand writer?
-        ApplyToWriter([&](auto& writer) {
-          const uint8_t size = writer.Size(level);
-          SDB_ASSERT(size <= WandWriter::kMaxSize);
-          out.WriteByte(size);
-        });
-        ApplyToWriter([&](auto& writer) { writer.Write(level, out); });
+        // // FIXME(gnusi): optimize for 1 writer case? compile? maybe just 1
+        // // composite wand writer?
+        // ApplyToWriter([&](auto& writer) {
+        //   const uint8_t size = writer.Size(level);
+        //   SDB_ASSERT(size <= WandWriter::kMaxSize);
+        //   out.WriteByte(size);
+        // });
+        // ApplyToWriter([&](auto& writer) { writer.Write(level, out); });
       });
     }
 

@@ -147,10 +147,10 @@ DocIterator::ptr MultiTermQuery::Execute(const ExecutionContext& ctx,
     cookies.reserve(scored_count);
     for (const auto& entry : terms) {
       SDB_ASSERT(entry.cookie);
-      cookies.emplace_back(entry.cookie.get(),
-                           scorer ? all_stats[entry.stat_offset].c_str()
-                                  : nullptr,
-                           entry.boost * _boost, reader->meta());
+      cookies.emplace_back(
+        entry.cookie.get(),
+        scorer ? all_stats[entry.stat_offset].c_str() : nullptr,
+        entry.boost * _boost, reader->meta());
     }
 
     auto docs = reader->Iterator(features, cookies, ctx.wand, _min_match,

@@ -84,7 +84,7 @@ WHERE txt IS NOT NULL AND txt <> '';
 
 statement ok
 CREATE INDEX docs_ann ON docs USING inverted(
-  emb hnsw (metric = 'cosine', m = 16, ef_construction = 64)
+  emb ivf (metric = 'cosine')
 );
 
 
@@ -104,10 +104,15 @@ QUERY PLAN
 │ ~3 rows                                │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: docs_ann (ANN)                  │
+│ Index: docs_ann                        │
 │ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Vector KNN ───╮                     │
+│ │ Field: emb     │                     │
+│ │ Metric: cosine │                     │
+│ │ Dims: 384      │                     │
+│ ╰────────────────╯                     │
 │ Top: 3                                 │
-│ Dims: 384                              │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
 │ ~4 rows                                │

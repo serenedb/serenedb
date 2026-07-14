@@ -611,10 +611,4 @@ PrepareCollector::ptr ByGranularRange::MakeCollector(
                                                  options().scored_terms_limit);
 }
 
-void ByGranularRange::visit(const SubReader& segment, const TermReader& reader,
-                            const options_type& options,
-                            FilterVisitor& visitor) {
-  VisitImpl(segment, reader, options, visitor);
-}
-
 }  // namespace irs

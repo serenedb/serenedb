@@ -60,11 +60,7 @@ void FromTokenizeListInAnyAllOf(
   std::optional<size_t> min_match;
   if (is_any && outer.GetChildren().size() == 2) {
     int64_t m;
-    if (auto r = GetIntArg(*outer.GetChildren()[1], "ts_any min_match", m);
-        !r.ok()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-    }
+    GetIntArg(*outer.GetChildren()[1], m, {"ts_any min_match", kSyntaxHint});
     if (m < 1) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG("ts_any min_match must be >= 1, got ", m),
@@ -109,12 +105,8 @@ void FromTokenizeListInAnyAllOf(
   catalog::Tokenizer::TokenizerWrapper override_wrapper;
   if (tokenize_call.GetChildren().size() == 2) {
     std::string analyzer_name;
-    if (auto r = GetVarcharArg(*tokenize_call.GetChildren()[1],
-                               "ts_tokenize analyzer name", analyzer_name);
-        !r.ok()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-    }
+    GetVarcharArg(*tokenize_call.GetChildren()[1], analyzer_name,
+                  {"ts_tokenize analyzer name", kSyntaxHint});
     if (analyzer_name == irs::StringTokenizer::type_name()) {
       use_identity = true;
     } else {
@@ -284,11 +276,7 @@ void ExtractAnyAllOfArgs(
 
   if (func.GetChildren().size() == 2) {
     int64_t m;
-    if (auto r = GetIntArg(*func.GetChildren()[1], "ts_any min_match", m);
-        !r.ok()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-    }
+    GetIntArg(*func.GetChildren()[1], m, {"ts_any min_match", kSyntaxHint});
     if (m < 1) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG("ts_any min_match must be >= 1, got ", m),

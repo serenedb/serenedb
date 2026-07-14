@@ -359,7 +359,7 @@ TEST(GeoFilterTest, query) {
       }
 
       EXPECT_FALSE(irs::doc_limits::valid(it->value()));
-      while (it->next()) {
+      while (!irs::doc_limits::eof(it->advance())) {
         auto doc_id = it->value();
         EXPECT_EQ(doc_id, seek_it->seek(doc_id));
         EXPECT_EQ(doc_id, seek_it->seek(doc_id));
@@ -375,7 +375,7 @@ TEST(GeoFilterTest, query) {
         auto it = prepared->Execute(i);
         EXPECT_NE(nullptr, it);
 
-        while (it->next()) {
+        while (!irs::doc_limits::eof(it->advance())) {
           const auto doc_id = it->value();
           auto seek_it = prepared->Execute(i);
           EXPECT_NE(nullptr, seek_it);
@@ -387,7 +387,7 @@ TEST(GeoFilterTest, query) {
                 actual_results.find(irs::tests::ReadStoredStr<std::string>(
                   values, seek_it->value())));
             }
-          } while (seek_it->next());
+          } while (!irs::doc_limits::eof(seek_it->advance()));
           EXPECT_TRUE(irs::doc_limits::eof(seek_it->value()));
         }
         EXPECT_TRUE(irs::doc_limits::eof(it->value()));
@@ -413,8 +413,7 @@ TEST(GeoFilterTest, query) {
 
     GeoFilter q;
     q.mutable_options()->type = GeoFilterType::Intersects;
-    ASSERT_TRUE(
-      json::ParseRegion(json.value(), q.mutable_options()->shape).ok());
+    json::ParseRegion(json.value(), q.mutable_options()->shape);
     ASSERT_EQ(ShapeContainer::Type::S2Point, q.mutable_options()->shape.type());
     *q.mutable_field_id() = kGeo;
     q.mutable_options()->store_field_id = kGeo;
@@ -440,8 +439,7 @@ TEST(GeoFilterTest, query) {
 
     GeoFilter q;
     q.mutable_options()->type = GeoFilterType::Intersects;
-    ASSERT_TRUE(
-      json::ParseRegion(json.value(), q.mutable_options()->shape).ok());
+    json::ParseRegion(json.value(), q.mutable_options()->shape);
     ASSERT_EQ(ShapeContainer::Type::S2Polygon,
               q.mutable_options()->shape.type());
     *q.mutable_field_id() = kGeo;
@@ -723,7 +721,7 @@ TEST(GeoFilterTest, checkScorer) {
 
       EXPECT_FALSE(irs::doc_limits::valid(it->value()));
       cur_it = it.get();
-      while (it->next()) {
+      while (!irs::doc_limits::eof(it->advance())) {
         const auto doc_id = it->value();
         EXPECT_EQ(doc_id, seek_it->seek(doc_id));
         EXPECT_EQ(doc_id, seek_it->seek(doc_id));
@@ -743,7 +741,7 @@ TEST(GeoFilterTest, checkScorer) {
         auto it = prepared.Execute(i);
         EXPECT_NE(nullptr, it);
 
-        while (it->next()) {
+        while (!irs::doc_limits::eof(it->advance())) {
           const auto doc_id = it->value();
           auto seek_it = prepared.Execute(i);
           EXPECT_NE(nullptr, seek_it);
@@ -755,7 +753,7 @@ TEST(GeoFilterTest, checkScorer) {
                 actual_results.find(irs::tests::ReadStoredStr<std::string>(
                   values, seek_it->value())));
             }
-          } while (seek_it->next());
+          } while (!irs::doc_limits::eof(seek_it->advance()));
           EXPECT_TRUE(irs::doc_limits::eof(seek_it->value()));
         }
         EXPECT_TRUE(irs::doc_limits::eof(it->value()));
@@ -782,8 +780,7 @@ TEST(GeoFilterTest, checkScorer) {
 
     GeoFilter q;
     q.mutable_options()->type = GeoFilterType::Intersects;
-    ASSERT_TRUE(
-      json::ParseRegion(json.value(), q.mutable_options()->shape).ok());
+    json::ParseRegion(json.value(), q.mutable_options()->shape);
     ASSERT_EQ(ShapeContainer::Type::S2Polygon,
               q.mutable_options()->shape.type());
     *q.mutable_field_id() = kGeo;
@@ -844,8 +841,7 @@ TEST(GeoFilterTest, checkScorer) {
     GeoFilter q;
     q.boost(1.5f);
     q.mutable_options()->type = GeoFilterType::Intersects;
-    ASSERT_TRUE(
-      json::ParseRegion(json.value(), q.mutable_options()->shape).ok());
+    json::ParseRegion(json.value(), q.mutable_options()->shape);
     ASSERT_EQ(ShapeContainer::Type::S2Polygon,
               q.mutable_options()->shape.type());
     *q.mutable_field_id() = kGeo;

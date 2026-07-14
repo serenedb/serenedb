@@ -22,6 +22,7 @@
 
 #include "column_existence_filter.hpp"
 
+#include <array>
 #include <bit>
 #include <cstdint>
 #include <cstring>
@@ -37,7 +38,7 @@
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/all_iterator.hpp"
+#include "iresearch/index/iterators.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -52,15 +53,9 @@ class ColumnExistenceIterator : public DocIterator {
   ColumnExistenceIterator(const ColumnReader& reader,
                           const ColReader& col_reader,
                           CostAttr::Type cost) noexcept
-    : _reader{&reader},
-      _ctx{col_reader},
-      _scan{reader, _ctx, /*validity_side=*/true},
-      _batch{reader.Type(), /*capacity=*/0} {
-    _batch.BufferMutable().GetValidityMask().Initialize(STANDARD_VECTOR_SIZE);
+    : _reader{&reader}, _ctx{col_reader} {
+    SDB_ASSERT(cost != 0);
     std::get<CostAttr>(_attrs) = CostAttr{cost};
-    if (cost == 0) {
-      _doc = doc_limits::eof();
-    }
   }
 
   Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
@@ -88,7 +83,7 @@ class ColumnExistenceIterator : public DocIterator {
       if (_word != 0) {
         continue;
       }
-      if (_rg_remaining > 0) {
+      if (_block_remaining > 0) {
         LoadChunk();
         continue;
       }
@@ -102,6 +97,13 @@ class ColumnExistenceIterator : public DocIterator {
     if (target <= _doc) [[unlikely]] {
       return _doc;
     }
+    const uint64_t row = target - doc_limits::min();
+    if (row >= _block_row) {
+      if (!SeekBlock(row)) {
+        return _doc = doc_limits::eof();
+      }
+      LoadChunk();
+    }
     while (_doc < target && !doc_limits::eof(_doc)) {
       advance();
     }
@@ -110,67 +112,147 @@ class ColumnExistenceIterator : public DocIterator {
 
   doc_id_t LazySeek(doc_id_t target) noexcept final { return seek(target); }
 
+  IRS_DOC_ITERATOR_DEFAULTS_NO_COUNT
+
   uint32_t count() noexcept final {
-    uint32_t c = 0;
-    while (!doc_limits::eof(advance())) {
-      ++c;
+    uint32_t c = CountLoadedChunk();
+    while (true) {
+      if (_block_remaining == 0) {
+        if (!NextBlock()) {
+          break;
+        }
+      }
+      if (_mode == BlockMode::AllValid) {
+        c += static_cast<uint32_t>(_block_remaining);
+        _block_remaining = 0;
+        continue;
+      }
+      LoadChunk();
+      c += CountLoadedChunk();
     }
+    _word = 0;
+    _word_count = 0;
+    _word_idx = 0;
+    _doc = doc_limits::eof();
     return c;
   }
 
-  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
-               ScoreCollector& collector) final {
-    CollectImpl(*this, scorer, fetcher, collector);
-  }
-
-  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
-                                      uint64_t* mask,
-                                      FillBlockScoreContext score,
-                                      FillBlockMatchContext match) final {
-    return FillBlockImpl(*this, min, max, mask, score, match);
-  }
-
  private:
-  // Walk validity RGs, skipping any with row_count == 0. For each, set
-  // up `_rg_row` / `_rg_remaining` / `_rg_is_empty` and pull the first
-  // chunk. Returns false when no more RGs exist.
-  bool OpenNextRg() noexcept {
-    while (_next_vrg < _reader->ValidityRgCount()) {
-      const auto vrg = _next_vrg++;
-      const auto rg_count = _reader->ValidityRgRowCount(vrg);
-      if (rg_count == 0) {
+  enum class BlockMode : uint8_t { AllValid, FromValidity, FromData };
+
+  bool NextBlock() noexcept {
+    const auto blocks = _reader->DataBlocks();
+    while (_next_block < blocks.size()) {
+      const auto b = _next_block++;
+      const auto& m = blocks[b];
+      if (m.tuple_count == 0) {
         continue;
       }
-      _rg_row = _reader->ValidityRgFirstRow(vrg);
-      _rg_remaining = rg_count;
-      _rg_is_empty = _reader->IsValidityRgEmpty(vrg);
-      LoadChunk();
+      _block_row = _reader->DataBlockFirstRow(b);
+      _block_remaining = m.tuple_count;
+      if (m.codec->validity ==
+          duckdb::CompressionValidity::NO_VALIDITY_REQUIRED) {
+        _mode = BlockMode::FromData;
+      } else if (const auto* v = _reader->Validity()) {
+        const auto w = v->Locate(_block_row);
+        _mode = _reader->IsValidityRgEmpty(w.block) ? BlockMode::AllValid
+                                                    : BlockMode::FromValidity;
+      } else {
+        _mode = BlockMode::AllValid;
+      }
       return true;
     }
     return false;
   }
 
-  // Load up to STANDARD_VECTOR_SIZE rows of validity from the current RG
-  // into `_batch`. EMPTY rgs synthesise all-ones; non-EMPTY rgs go
-  // through the codec scan. Bits past `take` in the last word are
-  // masked so the bit walk doesn't emit past the chunk.
+  bool OpenNextRg() noexcept {
+    if (!NextBlock()) {
+      return false;
+    }
+    LoadChunk();
+    return true;
+  }
+
+  bool SeekBlock(uint64_t row) noexcept {
+    while (row >= _block_row + _block_remaining) {
+      if (!NextBlock()) {
+        return false;
+      }
+    }
+    const uint64_t chunk = (row - _block_row) / STANDARD_VECTOR_SIZE;
+    const uint64_t skip = chunk * STANDARD_VECTOR_SIZE;
+    _block_row += skip;
+    _block_remaining -= skip;
+    return true;
+  }
+
+  uint32_t CountLoadedChunk() noexcept {
+    uint32_t c = static_cast<uint32_t>(std::popcount(_word));
+    while (_word_idx < _word_count) {
+      c += static_cast<uint32_t>(std::popcount(_chunk_words[_word_idx++]));
+    }
+    _word = 0;
+    return c;
+  }
+
+  struct SourceScan {
+    SourceScan(const ColumnReader& r, ReadContext& ctx,
+               const duckdb::LogicalType& type, duckdb::idx_t batch_rows)
+      : reader{&r}, scan{r.InitScan(ctx)}, batch{type, batch_rows} {
+      batch.BufferMutable().GetValidityMask().Initialize(STANDARD_VECTOR_SIZE);
+    }
+
+    const ColumnReader* reader;
+    ColumnReader::ScanState scan;
+    duckdb::Vector batch;
+  };
+
+  SourceScan& Source() noexcept {
+    SDB_ASSERT(_mode != BlockMode::AllValid);
+    auto& slot = _mode == BlockMode::FromData ? _data : _validity;
+    if (!slot) {
+      if (_mode == BlockMode::FromData) {
+        slot = std::make_unique<SourceScan>(
+          *_reader, _ctx, _reader->Type(), duckdb::idx_t{STANDARD_VECTOR_SIZE});
+      } else {
+        slot = std::make_unique<SourceScan>(
+          *_reader->Validity(), _ctx,
+          duckdb::LogicalType{duckdb::LogicalTypeId::VALIDITY},
+          duckdb::idx_t{0});
+      }
+    }
+    return *slot;
+  }
+
   void LoadChunk() noexcept {
     const auto take =
-      std::min<duckdb::idx_t>(_rg_remaining, STANDARD_VECTOR_SIZE);
-    auto* words = _batch.BufferMutable().GetValidityMask().GetData();
-    if (_rg_is_empty) {
-      std::memset(words, 0xFF, ((take + 63) / 64) * sizeof(*words));
-    } else {
-      _scan.Scan(_rg_row, take, _batch, /*out_offset=*/0);
-    }
+      std::min<duckdb::idx_t>(_block_remaining, STANDARD_VECTOR_SIZE);
     _word_count = (take + 63) / 64;
+    duckdb::validity_t* words;
+    if (_mode == BlockMode::AllValid) {
+      words = _ones.data();
+      std::memset(words, 0xFF, _word_count * sizeof(*words));
+    } else {
+      auto& src = Source();
+      words = src.batch.BufferMutable().GetValidityMask().GetData();
+      const uint64_t cur = src.reader->GatherCursor(src.scan);
+      if (_block_row > cur) {
+        src.reader->Skip(src.scan, _block_row - cur);
+      }
+      if (_mode == BlockMode::FromData) {
+        std::memset(words, 0xFF, _word_count * sizeof(*words));
+        src.reader->ScanCount(src.scan, src.batch, take, /*result_offset=*/0);
+      } else {
+        src.reader->Scan(src.scan, src.batch, take);
+      }
+    }
     if (const auto tail = (_word_count * 64) - take; tail != 0) {
       words[_word_count - 1] &= (~uint64_t{0}) >> tail;
     }
     _chunk_words = words;
-    _chunk_base = doc_limits::min() + _rg_row;
-    _rg_row += take;
-    _rg_remaining -= take;
+    _chunk_base = doc_limits::min() + _block_row;
+    _block_row += take;
+    _block_remaining -= take;
     _word_idx = 0;
     _word = 0;
   }
@@ -179,14 +261,15 @@ class ColumnExistenceIterator : public DocIterator {
 
   const ColumnReader* _reader;
   ReadContext _ctx;
-  ColumnReader::RangeScan _scan;
-  duckdb::Vector _batch;
+  std::unique_ptr<SourceScan> _validity;
+  std::unique_ptr<SourceScan> _data;
+  std::array<duckdb::validity_t, STANDARD_VECTOR_SIZE / 64> _ones;
   Attributes _attrs;
 
-  size_t _next_vrg = 0;
-  uint64_t _rg_row = 0;        // row position of the next chunk to scan
-  uint64_t _rg_remaining = 0;  // rows left in the current RG
-  bool _rg_is_empty = false;
+  size_t _next_block = 0;
+  uint64_t _block_row = 0;
+  uint64_t _block_remaining = 0;
+  BlockMode _mode = BlockMode::AllValid;
 
   const duckdb::validity_t* _chunk_words = nullptr;
   uint64_t _chunk_base = 0;  // doc-id of bit 0 of word 0 in current chunk
@@ -198,7 +281,7 @@ class ColumnExistenceIterator : public DocIterator {
 
 class AllDocsExistenceIterator : public DocIterator {
  public:
-  AllDocsExistenceIterator(uint32_t docs_count, score_t /*boost*/) noexcept
+  explicit AllDocsExistenceIterator(uint32_t docs_count) noexcept
     : _max_doc{doc_limits::min() + docs_count - 1} {
     std::get<CostAttr>(_attrs).reset(_max_doc);
   }
@@ -223,6 +306,37 @@ class AllDocsExistenceIterator : public DocIterator {
 
   doc_id_t LazySeek(doc_id_t target) noexcept final { return seek(target); }
 
+  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final {
+    DocIterator::CollectImpl(*this, scorer, fetcher, collector);
+  }
+
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                      uint64_t* mask,
+                                      FillBlockScoreContext score,
+                                      FillBlockMatchContext match) final {
+    return DocIterator::FillBlockImpl(*this, min, max, mask, score, match);
+  }
+
+  uint32_t EmitScoredDocs(doc_id_t* out, score_t* scores, doc_id_t max,
+                          const ScoreFunction& scorer,
+                          ColumnArgsFetcher* fetcher, doc_id_t min) final {
+    return DocIterator::EmitScoredDocsImpl(*this, out, scores, max, scorer,
+                                           fetcher, min);
+  }
+
+  // All docs in [_doc, _max_doc] have the column; fill in one iota pass.
+  uint32_t EmitDocs(doc_id_t* out, doc_id_t max) noexcept final {
+    auto doc = _doc;
+    const auto end = max <= _max_doc ? max : _max_doc + 1;
+    uint32_t n = 0;
+    while (doc < end) {
+      out[n++] = doc++;
+    }
+    _doc = doc <= _max_doc ? doc : doc_limits::eof();
+    return n;
+  }
+
   uint32_t count() noexcept final {
     if (doc_limits::eof(_doc)) {
       return 0;
@@ -230,18 +344,6 @@ class AllDocsExistenceIterator : public DocIterator {
     const auto c = _max_doc - _doc;
     _doc = doc_limits::eof();
     return c;
-  }
-
-  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
-               ScoreCollector& collector) final {
-    CollectImpl(*this, scorer, fetcher, collector);
-  }
-
-  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
-                                      uint64_t* mask,
-                                      FillBlockScoreContext score,
-                                      FillBlockMatchContext match) final {
-    return FillBlockImpl(*this, min, max, mask, score, match);
   }
 
  private:
@@ -266,12 +368,12 @@ class ColumnExistenceQuery : public QueryBuilder {
     if (row_count == 0) {
       return DocIterator::empty();
     }
-    if (!column->HasValidity()) {
+    if (!column->HasValidity() && !column->NullsInData()) {
       return memory::make_managed<AllDocsExistenceIterator>(
-        static_cast<uint32_t>(row_count), _boost);
+        static_cast<uint32_t>(row_count));
     }
     const auto* col_reader = _segment.GetColReader();
-    SDB_ENSURE(col_reader, sdb::ERROR_INTERNAL,
+    SDB_ENSURE(col_reader,
                "column_existence_filter: segment has no .col reader");
     return memory::make_managed<ColumnExistenceIterator>(
       *column, *col_reader, static_cast<CostAttr::Type>(row_count));

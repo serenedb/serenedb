@@ -46,7 +46,6 @@
 
 #include "basics/assert.h"
 #include "basics/static_strings.h"
-#include "basics/string_utils.h"
 #include "catalog/catalog.h"
 #include "catalog/search_analyzer_impl.h"
 #include "catalog/tokenizer.h"
@@ -106,46 +105,14 @@ void DropTSDictionaryPragma(duckdb::ClientContext& context,
 
   auto name = pg::ParseObjectName(dict_name, StaticStrings::kPublic);
 
-  auto r = catalog.DropTokenizer(conn_ctx.GetDatabase(), name.schema,
-                                 name.relation, false);
-
-  std::string_view object_name = "text search dictionary";
-  if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
-    // The error message from catalog contains the actual object type name
-    auto actual_type = r.errorMessage();
-    auto actual_name = absl::AsciiStrToLower(actual_type);
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-      ERR_MSG("\"", name.relation, "\" is not ",
-              basics::string_utils::GetArticle(object_name), " ", object_name),
-      ERR_HINT("Use DROP ", absl::AsciiStrToUpper(actual_type), " to remove ",
-               basics::string_utils::GetArticle(actual_name), " ", actual_name,
-               "."));
-  }
-  if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
-    if (!missing_ok) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-        ERR_MSG(object_name, " \"", name.relation, "\" does not exist"));
-    }
-    conn_ctx.AddNotice(SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                                      ERR_MSG(object_name, " \"", name.relation,
-                                              "\" does not exist, skipping")));
-    r = {};
-  }
-  // Cascade RESTRICT: catalog packs PG DETAIL lines into errorMessage.
-  if (r.is(ERROR_BAD_PARAMETER)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-      ERR_MSG("cannot drop ", object_name, " ", name.relation,
-              " because other objects depend on it"),
-      ERR_DETAIL(std::move(r).errorMessage()),
-      ERR_HINT("Use DROP ... CASCADE to drop the dependent objects too."));
+  if (!catalog.DropTokenizer(conn_ctx.GetDatabase(), name.schema, name.relation,
+                             false, missing_ok)) {
+    conn_ctx.AddNotice(
+      SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                     ERR_MSG("text search dictionary \"", name.relation,
+                             "\" does not exist, skipping")));
   }
   SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
 }
 
 }  // namespace

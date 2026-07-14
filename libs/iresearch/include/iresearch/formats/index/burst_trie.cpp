@@ -56,6 +56,7 @@
 #include "iresearch/utils/hash_utils.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
+#include "pg/sql_exception_macro.h"
 
 // fstext includes don't remove them or comment!
 // clang-format off
@@ -760,6 +761,7 @@ void FieldWriter::Impl::write(const BasicTermReader& reader) {
   const auto props = reader.properties();
   const auto index_features = props.index_features;
   BeginField(props);
+  _pw->SetTermPayloadWriter(reader.PayloadWriter());
 
   uint64_t term_count = 0;
   uint64_t sum_dfreq = 0;
@@ -928,7 +930,6 @@ void TermReaderBase::LoadFromMeta(field_id id, const TermDictMeta& meta,
   if (IndexFeatures::None != (meta.features & IndexFeatures::Freq)) {
     // TODO(mbkkt) for what reason we store uint64_t if we read to uint32_t
     SDB_ENSURE(meta.total_term_freq <= std::numeric_limits<uint32_t>::max(),
-               sdb::ERROR_SERVER_CORRUPTED_DATAFILE,
                "TermReaderBase: total_term_freq ", meta.total_term_freq,
                " exceeds uint32_t::max");
     _freq.value = static_cast<uint32_t>(meta.total_term_freq);
@@ -1994,7 +1995,7 @@ class SingleTermIterator : public SeekTermIterator {
 
   bytes_view value() const noexcept final { return _value.value; }
 
-  bool next() final { throw NotSupported(); }
+  bool next() final { return false; }
 
   SeekResult seek_ge(bytes_view) final { throw NotSupported(); }
 
@@ -2655,6 +2656,11 @@ class FieldReader::Impl {
                                    field_options, min_match, type);
     }
 
+    std::unique_ptr<IndexInput> ReopenPayload() const final {
+      SDB_ASSERT(_owner && _owner->_pr);
+      return _owner->_pr->ReopenPayload();
+    }
+
    private:
     FieldReader::Impl* _owner;
     std::unique_ptr<FST> _fst;
@@ -2688,9 +2694,8 @@ void FieldReader::Impl::prepare(const ReaderState& state) {
 
   _terms_in = state.idx->ReopenIn();
   if (!_terms_in) {
-    SDB_ENSURE(entries.empty(), sdb::ERROR_SERVER_CORRUPTED_DATAFILE,
-               "burst_trie: TermDicts span has ", entries.size(),
-               " entries but `.idx` body stream is null");
+    SDB_ENSURE(entries.empty(), "burst_trie: TermDicts span has ",
+               entries.size(), " entries but `.idx` body stream is null");
     return;
   }
   _terms_in->Seek(state.idx->BodyStart());
@@ -2706,12 +2711,10 @@ void FieldReader::Impl::prepare(const ReaderState& state) {
     auto& field = _fields.emplace_back(*this);
     field.PrepareFromMeta(id, meta, *_terms_in);
     auto [it, ok] = _id_to_field.emplace(id, &field);
-    SDB_ENSURE(ok, sdb::ERROR_SERVER_CORRUPTED_DATAFILE,
-               ".idx footer: duplicate term-dict field_id ", id);
+    SDB_ENSURE(ok, ".idx footer: duplicate term-dict field_id ", id);
     _sorted_ids.push_back(id);
   }
   SDB_ENSURE(std::is_sorted(_sorted_ids.begin(), _sorted_ids.end()),
-             sdb::ERROR_SERVER_CORRUPTED_DATAFILE,
              "burst_trie: term-dict entries are not sorted by field_id");
 }
 

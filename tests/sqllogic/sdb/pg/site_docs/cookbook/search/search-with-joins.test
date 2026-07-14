@@ -1,0 +1,93 @@
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tx (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE products (id INTEGER PRIMARY KEY, title VARCHAR, category VARCHAR NOT NULL);
+
+statement ok
+CREATE INDEX products_idx ON products USING inverted (id, title tx, category);
+
+statement ok
+INSERT INTO products VALUES
+(1, 'trail running shoe', 'footwear'),
+(2, 'road running shoe',  'footwear'),
+(3, 'running jacket',      'apparel'),
+(4, 'wireless earbuds',    'electronics'),
+(5, 'running socks',       'apparel');
+
+statement ok
+VACUUM (REFRESH_TABLE) products;
+
+statement ok
+CREATE TABLE orders (order_id INTEGER PRIMARY KEY, product_id INTEGER, qty INTEGER, amount INTEGER);
+
+statement ok
+INSERT INTO orders VALUES
+(1, 1, 2, 240),
+(2, 1, 1, 120),
+(3, 2, 3, 270),
+(4, 3, 1, 80),
+(5, 4, 5, 200);
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT p.title, sum(o.amount) AS revenue, sum(o.qty) AS units
+FROM products_idx p
+JOIN orders o ON o.product_id = p.id
+WHERE p.title @@ 'running'
+GROUP BY p.title
+ORDER BY revenue DESC, p.title;
+----
+title	revenue	units
+trail running shoe	360	3
+road running shoe	270	3
+running jacket	80	1
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT p.category, sum(o.amount) AS revenue
+FROM products_idx p
+JOIN orders o ON o.product_id = p.id
+WHERE p.title @@ 'running'
+GROUP BY p.category
+ORDER BY revenue DESC, p.category;
+----
+category	revenue
+footwear	630
+apparel	80
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT p.title, coalesce(sum(o.amount), 0) AS revenue
+FROM products_idx p
+LEFT JOIN orders o ON o.product_id = p.id
+WHERE p.title @@ 'running'
+GROUP BY p.title
+ORDER BY revenue DESC, p.title;
+----
+title	revenue
+trail running shoe	360
+road running shoe	270
+running jacket	80
+running socks	0

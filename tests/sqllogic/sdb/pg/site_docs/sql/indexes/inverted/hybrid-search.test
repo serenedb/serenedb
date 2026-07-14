@@ -21,7 +21,7 @@ CREATE TEXT SEARCH DICTIONARY catalog_en (
 
 statement ok
 CREATE INDEX catalog_idx ON catalog
-    USING inverted (id, name catalog_en, category, emb hnsw (metric = 'l2'));
+    USING inverted (id, name catalog_en, category, emb ivf (metric = 'l2'));
 
 statement ok
 INSERT INTO catalog VALUES

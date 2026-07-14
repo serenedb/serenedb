@@ -1,0 +1,770 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include "iresearch/formats/ivf/ivf_writer.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <duckdb/common/types/validity_mask.hpp>
+#include <duckdb/common/types/vector.hpp>
+#include <duckdb/common/vector/array_vector.hpp>
+#include <numeric>
+#include <random>
+#include <span>
+#include <utility>
+
+#include "basics/assert.h"
+#include "basics/memory.hpp"
+#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/formats/column/col_writer.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/column_writer.hpp"
+#include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/formats/ivf/centroids.hpp"
+#include "iresearch/formats/ivf/clustering.hpp"
+#include "iresearch/formats/ivf/ivf_reader.hpp"
+#include "iresearch/formats/ivf/quantizer.hpp"
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/store/data_output.hpp"
+#include "iresearch/utils/type_limits.hpp"
+#include "pg/sql_exception_macro.h"
+
+namespace irs {
+namespace {
+
+constexpr uint32_t kClusterSeed = 42;
+constexpr double kNlistSqrtMultiplier = 2.0;
+constexpr uint64_t kTrainPointsPerCentroid = 64;
+constexpr uint32_t kDefaultClusterIters = 25;
+constexpr uint32_t kClusterRedo = 1;
+constexpr uint64_t kSampleSegmentOversample = 4;
+constexpr uint64_t kBruteForceMaxRows = 64;
+constexpr uint64_t kFlatMaxRows = 0;  // disabled
+
+template<typename Sink>
+void StreamRowBatches(const ColumnReader& child, uint64_t rows, uint32_t d,
+                      ReadContext& ctx, Sink&& sink) {
+  const auto rows_per_batch =
+    static_cast<duckdb::idx_t>(std::max<uint64_t>(1, STANDARD_VECTOR_SIZE / d));
+  duckdb::Vector batch{duckdb::LogicalType::FLOAT,
+                       static_cast<duckdb::idx_t>(rows_per_batch) * d};
+  auto scan = child.InitScan(ctx);
+  for (uint64_t first = 0; first < rows; first += rows_per_batch) {
+    const auto n = static_cast<duckdb::idx_t>(
+      std::min<uint64_t>(rows_per_batch, rows - first));
+    child.ScanCount(scan, batch, static_cast<duckdb::idx_t>(n) * d,
+                    /*result_offset=*/0);
+    sink(first, n, duckdb::FlatVector::GetData<float>(batch));
+  }
+}
+
+template<typename Sink>
+void StreamSelectedRanges(const ColumnReader& child,
+                          std::span<const std::pair<uint64_t, uint64_t>> ranges,
+                          uint32_t d, ReadContext& ctx, Sink&& sink) {
+  const auto rows_per_batch =
+    static_cast<duckdb::idx_t>(std::max<uint64_t>(1, STANDARD_VECTOR_SIZE / d));
+  duckdb::Vector batch{duckdb::LogicalType::FLOAT,
+                       static_cast<duckdb::idx_t>(rows_per_batch) * d};
+  auto scan = child.InitScan(ctx);
+  uint64_t pos = 0;
+  for (const auto& [start, n_rows] : ranges) {
+    for (uint64_t off = 0; off < n_rows; off += rows_per_batch) {
+      const auto n = static_cast<duckdb::idx_t>(
+        std::min<uint64_t>(rows_per_batch, n_rows - off));
+      const uint64_t elem = (start + off) * d;
+      if (elem > pos) {
+        child.Skip(scan, static_cast<duckdb::idx_t>(elem - pos));
+        pos = elem;
+      }
+      child.ScanCount(scan, batch, static_cast<duckdb::idx_t>(n) * d,
+                      /*result_offset=*/0);
+      pos += static_cast<uint64_t>(n) * d;
+      sink(start + off, n, duckdb::FlatVector::GetData<float>(batch));
+    }
+  }
+}
+
+uint64_t ResolveTrainSample(const IvfInfo& info, uint64_t valid_count,
+                            uint32_t nlist) {
+  uint64_t n_train;
+  if (info.train_sample != 0) {
+    n_train = std::min<uint64_t>(valid_count, info.train_sample);
+  } else {
+    n_train = std::min<uint64_t>(
+      valid_count, static_cast<uint64_t>(nlist) * kTrainPointsPerCentroid);
+  }
+  // Train requires at least `nlist` points; nlist is already <= valid_count.
+  return std::clamp<uint64_t>(n_train, nlist, valid_count);
+}
+
+std::vector<bool> ReadValidity(const ColumnReader& vector_column, uint64_t rows,
+                               ReadContext& ctx) {
+  std::vector<bool> valid(rows, true);
+  const ColumnReader* validity = vector_column.Validity();
+  if (!validity) {
+    return valid;
+  }
+  duckdb::Vector vbatch{duckdb::LogicalType{duckdb::LogicalTypeId::VALIDITY},
+                        duckdb::idx_t{0}};
+  vbatch.BufferMutable().GetValidityMask().Initialize(STANDARD_VECTOR_SIZE);
+  auto vscan = validity->InitScan(ctx);
+  for (uint64_t start = 0; start < rows; start += STANDARD_VECTOR_SIZE) {
+    const auto take =
+      std::min<duckdb::idx_t>(STANDARD_VECTOR_SIZE, rows - start);
+    validity->Scan(vscan, vbatch, take);
+    const auto& mask = vbatch.Buffer().GetValidityMask();
+    for (uint64_t k = 0; k < take; ++k) {
+      valid[start + k] = mask.RowIsValid(k);
+    }
+  }
+  return valid;
+}
+
+uint32_t ResolveNlist(const IvfInfo& info, uint64_t valid_count) {
+  const double factor =
+    info.nlist_factor > 0.0f ? info.nlist_factor : kNlistSqrtMultiplier;
+  uint32_t nlist =
+    info.nlist != 0
+      ? info.nlist
+      : static_cast<uint32_t>(std::max<int64_t>(
+          1,
+          std::llround(factor * std::sqrt(static_cast<double>(valid_count)))));
+  return static_cast<uint32_t>(
+    std::min<uint64_t>(nlist, std::max<uint64_t>(valid_count, 1)));
+}
+
+}  // namespace
+
+CentroidShape IvfBuilder::ResolveCentroidShape(uint64_t valid_count,
+                                               const IvfInfo& info) {
+  const uint32_t total_target = ResolveNlist(info, valid_count);
+  if (valid_count < kBruteForceMaxRows) {
+    return {CentroidShapeKind::BruteForce, 1, 1, 1};
+  }
+  if (valid_count < kFlatMaxRows) {
+    return {CentroidShapeKind::Flat, total_target, 1, total_target};
+  }
+  const uint32_t n_l1 = static_cast<uint32_t>(std::clamp<uint64_t>(
+    static_cast<uint64_t>(
+      std::llround(std::ceil(std::sqrt(static_cast<double>(total_target))))),
+    1, valid_count));
+  const uint32_t n_l2_target = static_cast<uint32_t>(std::max<uint64_t>(
+    1, (static_cast<uint64_t>(total_target) + n_l1 - 1) / n_l1));
+  return {CentroidShapeKind::TwoLayer, total_target, n_l1, n_l2_target};
+}
+
+BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
+                             ReadContext& ctx, QuantizerWriter* qw) const {
+  const auto* child = vector_column.Child();
+  SDB_ASSERT(child);
+  const auto d = static_cast<uint32_t>(vector_column.ArraySize());
+  const auto rows = vector_column.RowCount();
+
+  BuiltIvf out;
+  out.d = d;
+  if (rows == 0 || d == 0) {
+    return out;
+  }
+
+  const auto valid = ReadValidity(vector_column, rows, ctx);
+  uint64_t valid_count = 0;
+  for (uint64_t r = 0; r < rows; ++r) {
+    valid_count += valid[r] ? 1 : 0;
+  }
+  if (valid_count == 0) {
+    return out;
+  }
+
+  const auto shape = ResolveCentroidShape(valid_count, _info);
+  const uint32_t total_target = shape.total_target;
+  const uint32_t n_l1 = shape.n_l1;
+  const uint32_t n_l2_target = shape.n_l2_target;
+  uint64_t n_train = ResolveTrainSample(_info, valid_count, total_target);
+  if (_info.quant.kind == VectorQuantization::PQ) {
+    n_train = std::min<uint64_t>(valid_count, std::max<uint64_t>(n_train, 256));
+  }
+  const uint32_t cluster_iters =
+    _info.cluster_iters != 0 ? _info.cluster_iters : kDefaultClusterIters;
+
+  std::vector<float> sample(static_cast<size_t>(n_train) * d);
+  {
+    std::mt19937_64 rng{kClusterSeed};
+    uint64_t seen = 0;
+    const auto reservoir_sink = [&](uint64_t first, duckdb::idx_t n,
+                                    const float* p) {
+      for (duckdb::idx_t k = 0; k < n; ++k) {
+        if (!valid[first + k]) {
+          continue;
+        }
+        const float* v = p + static_cast<size_t>(k) * d;
+        if (seen < n_train) {
+          std::memcpy(sample.data() + seen * d, v, d * sizeof(float));
+        } else {
+          const uint64_t j =
+            std::uniform_int_distribution<uint64_t>{0, seen}(rng);
+          if (j < n_train) {
+            std::memcpy(sample.data() + j * d, v, d * sizeof(float));
+          }
+        }
+        ++seen;
+      }
+    };
+
+    const uint64_t target = (n_train > valid_count / kSampleSegmentOversample)
+                              ? valid_count
+                              : n_train * kSampleSegmentOversample;
+    const size_t n_seg = child->DataRgCount();
+    if (target >= valid_count || n_seg <= 1) {
+      StreamRowBatches(*child, rows, d, ctx, reservoir_sink);
+      SDB_ASSERT(seen == valid_count);
+    } else {
+      std::vector<size_t> order(n_seg);
+      std::iota(order.begin(), order.end(), size_t{0});
+      std::mt19937_64 seg_rng{kClusterSeed};
+      std::shuffle(order.begin(), order.end(), seg_rng);
+
+      std::vector<std::pair<uint64_t, uint64_t>> ranges;
+      uint64_t valid_selected = 0;
+      for (size_t i = 0; i < n_seg && valid_selected < target; ++i) {
+        const uint64_t w_begin = child->DataBlockFirstRow(order[i]);
+        const uint64_t w_end = child->DataBlockFirstRow(order[i] + 1);
+        // Rows fully contained in this segment; a straddling boundary row would
+        // force decoding an unselected neighbor, so drop it (<=1 per boundary).
+        const uint64_t r_lo = (w_begin + d - 1) / d;
+        const uint64_t r_hi = w_end / d;
+        if (r_lo >= r_hi) {
+          continue;
+        }
+        uint64_t vc = 0;
+        for (uint64_t r = r_lo; r < r_hi; ++r) {
+          vc += valid[r] ? 1 : 0;
+        }
+        if (vc == 0) {
+          continue;
+        }
+        ranges.emplace_back(r_lo, r_hi - r_lo);
+        valid_selected += vc;
+      }
+      std::sort(ranges.begin(), ranges.end());
+      StreamSelectedRanges(
+        *child, std::span<const std::pair<uint64_t, uint64_t>>{ranges}, d, ctx,
+        reservoir_sink);
+      SDB_ASSERT(seen >= n_train && seen <= valid_count);
+    }
+  }
+
+  const VectorMetric m = _info.metric;
+  const bool pq = _info.quant.kind == VectorQuantization::PQ;
+  if (m == VectorMetric::Cosine) {
+    NormalizeRows(sample.data(), n_train, d);
+  }
+
+  const uint32_t base_seed = kClusterSeed;
+  std::vector<float> l1_centroids;
+  if (n_l1 == 1) {
+    l1_centroids.assign(d, 0.f);
+    for (uint64_t i = 0; i < n_train; ++i) {
+      const float* v = sample.data() + static_cast<size_t>(i) * d;
+      for (uint32_t j = 0; j < d; ++j) {
+        l1_centroids[j] += v[j];
+      }
+    }
+    const float inv = 1.f / static_cast<float>(n_train);
+    for (uint32_t j = 0; j < d; ++j) {
+      l1_centroids[j] *= inv;
+    }
+    if (VectorMetricIsAngular(m)) {
+      NormalizeRows(l1_centroids.data(), 1, d);
+    }
+  } else {
+    l1_centroids = TrainCentroids(m, sample.data(), n_train, n_l1, d, base_seed,
+                                  cluster_iters, kClusterRedo);
+  }
+
+  std::vector<uint32_t> doc_cell;
+  doc_cell.reserve(valid_count);
+  {
+    std::vector<float> gather;
+    gather.reserve(STANDARD_VECTOR_SIZE * d);
+    size_t gathered = 0;
+    const bool sq_train =
+      qw != nullptr && (_info.quant.kind == VectorQuantization::SQ8 ||
+                        _info.quant.kind == VectorQuantization::SQ4);
+    const auto flush = [&]() {
+      if (gathered == 0) {
+        return;
+      }
+      AssignNearest(m, gather.data(), gathered, l1_centroids.data(), n_l1, d,
+                    doc_cell);
+      // Scalar quantizers accumulate their global [vmin, vdiff] over every
+      // vector here (streamed), not just the centroid-training sample.
+      if (sq_train) {
+        qw->Train(gather.data(), gathered);
+      }
+      gather.clear();
+      gathered = 0;
+    };
+    StreamRowBatches(*child, rows, d, ctx,
+                     [&](uint64_t first, duckdb::idx_t n, const float* p) {
+                       for (duckdb::idx_t k = 0; k < n; ++k) {
+                         if (!valid[first + k]) {
+                           continue;
+                         }
+                         const float* v = p + static_cast<size_t>(k) * d;
+                         gather.insert(gather.end(), v, v + d);
+                         if (++gathered >= STANDARD_VECTOR_SIZE) {
+                           flush();
+                         }
+                       }
+                     });
+    flush();
+    SDB_ASSERT(doc_cell.size() == valid_count);
+  }
+
+  std::vector<std::vector<uint32_t>> sample_groups(n_l1);
+  {
+    std::vector<uint32_t> sample_assign;
+    AssignNearest(m, sample.data(), n_train, l1_centroids.data(), n_l1, d,
+                  sample_assign);
+    for (uint64_t i = 0; i < n_train; ++i) {
+      SDB_ASSERT(sample_assign[i] < n_l1);
+      sample_groups[sample_assign[i]].push_back(static_cast<uint32_t>(i));
+    }
+  }
+
+  std::vector<uint32_t> cell_fine_base(n_l1);
+  std::vector<uint32_t> cell_n_l2(n_l1);
+  uint32_t next_fine_id = 0;
+  std::vector<float> l2_centroids;
+  std::vector<float> cell_sample;
+  std::vector<float> residual_sample;
+  if (pq) {
+    residual_sample.reserve(static_cast<size_t>(n_train) * d);
+  }
+  out.fine_centroids.reserve(static_cast<size_t>(total_target) * d);
+
+  for (uint32_t c = 0; c < n_l1; ++c) {
+    const float* l1c = l1_centroids.data() + static_cast<size_t>(c) * d;
+    const auto& sidx = sample_groups[c];
+    const size_t ms = sidx.size();
+
+    uint32_t n_l2;
+    if (ms == 0) {
+      n_l2 = 1;
+      l2_centroids.assign(l1c, l1c + d);
+    } else {
+      n_l2 = static_cast<uint32_t>(std::clamp<size_t>(n_l2_target, 1, ms));
+      if (n_l2 == 1) {
+        l2_centroids.assign(d, 0.f);
+        for (const uint32_t si : sidx) {
+          const float* v = sample.data() + static_cast<size_t>(si) * d;
+          for (uint32_t j = 0; j < d; ++j) {
+            l2_centroids[j] += v[j];
+          }
+        }
+        const float inv = 1.f / static_cast<float>(ms);
+        for (uint32_t j = 0; j < d; ++j) {
+          l2_centroids[j] *= inv;
+        }
+        if (VectorMetricIsAngular(m)) {
+          NormalizeRows(l2_centroids.data(), 1, d);
+        }
+      } else {
+        cell_sample.resize(ms * d);
+        for (size_t i = 0; i < ms; ++i) {
+          std::memcpy(cell_sample.data() + i * d,
+                      sample.data() + static_cast<size_t>(sidx[i]) * d,
+                      static_cast<size_t>(d) * sizeof(float));
+        }
+        l2_centroids =
+          TrainCentroids(m, cell_sample.data(), ms, n_l2, d, base_seed + c,
+                         cluster_iters, kClusterRedo);
+      }
+    }
+
+    out.fine_centroids.insert(
+      out.fine_centroids.end(), l2_centroids.data(),
+      l2_centroids.data() + static_cast<size_t>(n_l2) * d);
+    if (pq) {
+      for (const uint32_t si : sidx) {
+        const float* v = sample.data() + static_cast<size_t>(si) * d;
+        const uint32_t best =
+          NearestCentroid(m, v, l2_centroids.data(), n_l2, d);
+        const float* cen = l2_centroids.data() + static_cast<size_t>(best) * d;
+        const size_t base = residual_sample.size();
+        residual_sample.resize(base + d);
+        for (uint32_t j = 0; j < d; ++j) {
+          residual_sample[base + j] = v[j] - cen[j];
+        }
+      }
+    }
+
+    cell_fine_base[c] = next_fine_id;
+    cell_n_l2[c] = n_l2;
+    next_fine_id += n_l2;
+  }
+
+  const uint32_t n_fine = next_fine_id;
+  const auto radius_dist = ResolveVectorDistance(m);
+  std::vector<float> radii(n_fine, 0.f);
+  std::vector<uint32_t> doc_fine;
+  doc_fine.reserve(valid_count);
+  {
+    size_t seen = 0;
+    StreamRowBatches(
+      *child, rows, d, ctx,
+      [&](uint64_t first, duckdb::idx_t n, const float* p) {
+        for (duckdb::idx_t k = 0; k < n; ++k) {
+          if (!valid[first + k]) {
+            continue;
+          }
+          const float* v = p + static_cast<size_t>(k) * d;
+          const uint32_t cell = doc_cell[seen++];
+          const float* cc = out.fine_centroids.data() +
+                            static_cast<size_t>(cell_fine_base[cell]) * d;
+          const uint32_t best = NearestCentroid(m, v, cc, cell_n_l2[cell], d);
+          const uint32_t fine = cell_fine_base[cell] + best;
+          doc_fine.push_back(fine);
+          const float* fc = cc + static_cast<size_t>(best) * d;
+          const float dcur = radius_dist(reinterpret_cast<const byte_type*>(v),
+                                         reinterpret_cast<const byte_type*>(fc),
+                                         static_cast<uint16_t>(d));
+          radii[fine] = std::max(radii[fine], dcur);
+        }
+      });
+    SDB_ASSERT(seen == valid_count);
+    SDB_ASSERT(doc_fine.size() == valid_count);
+  }
+  if (m == VectorMetric::L2Sqr) {
+    for (auto& x : radii) {
+      x = std::sqrt(x);
+    }
+  }
+
+  out.cluster_offsets.assign(n_fine + 1, 0);
+  for (const uint32_t f : doc_fine) {
+    ++out.cluster_offsets[f + 1];
+  }
+  for (uint32_t f = 0; f < n_fine; ++f) {
+    out.cluster_offsets[f + 1] += out.cluster_offsets[f];
+  }
+  out.cluster_docs.resize(valid_count);
+  {
+    std::vector<uint64_t> cursor(out.cluster_offsets.begin(),
+                                 out.cluster_offsets.begin() + n_fine);
+    size_t seen = 0;
+    for (uint64_t r = 0; r < rows; ++r) {
+      if (!valid[r]) {
+        continue;
+      }
+      const uint32_t f = doc_fine[seen++];
+      out.cluster_docs[cursor[f]++] =
+        static_cast<doc_id_t>(r + doc_limits::min());
+    }
+    SDB_ASSERT(seen == valid_count);
+  }
+
+  std::span<const byte_type> stats;
+  if (qw != nullptr) {
+    if (pq) {
+      qw->Train(residual_sample.data(), residual_sample.size() / d);
+    }
+    stats = qw->StatsBytes();
+  }
+
+  out.l1_centroids = std::move(l1_centroids);
+  out.cell_fine_base = std::move(cell_fine_base);
+  out.cell_n_l2 = std::move(cell_n_l2);
+  out.radii = std::move(radii);
+  out.n_l1 = n_l1;
+  out.shape_kind = shape.kind;
+  out.stats.assign(stats.begin(), stats.end());
+  out.empty = false;
+  return out;
+}
+
+IvfResidentSpan WriteIvfCentroidBody(IndexOutput& out, VectorMetric metric,
+                                     const BuiltIvf& built) {
+  const uint32_t d = built.d;
+  const uint32_t n_l1 = built.n_l1;
+  std::vector<uint64_t> body_offsets;
+  body_offsets.reserve(n_l1);
+  std::vector<uint32_t> fine_ids_scratch;
+
+  for (uint32_t c = 0; c < n_l1; ++c) {
+    body_offsets.push_back(out.Position());
+    const uint32_t n_l2 = built.cell_n_l2[c];
+    const uint32_t base = built.cell_fine_base[c];
+    out.WriteU32(n_l2);
+    out.WriteData(
+      reinterpret_cast<const byte_type*>(built.fine_centroids.data() +
+                                         static_cast<size_t>(base) * d),
+      static_cast<size_t>(n_l2) * d * sizeof(float));
+    fine_ids_scratch.resize(n_l2);
+    for (uint32_t s = 0; s < n_l2; ++s) {
+      fine_ids_scratch[s] = base + s;
+    }
+    out.WriteData(reinterpret_cast<const byte_type*>(fine_ids_scratch.data()),
+                  static_cast<size_t>(n_l2) * sizeof(uint32_t));
+    out.WriteData(reinterpret_cast<const byte_type*>(built.radii.data() + base),
+                  static_cast<size_t>(n_l2) * sizeof(float));
+  }
+
+  const uint64_t resident_offset = out.Position();
+  TwoLayerCentroids::WriteFooter(out, metric, built.shape_kind, d, n_l1,
+                                 std::span<const float>{built.l1_centroids},
+                                 std::span<const uint64_t>{body_offsets},
+                                 std::span<const byte_type>{built.stats});
+  const uint64_t resident_size = out.Position() - resident_offset;
+  SDB_ASSERT(resident_size ==
+             TwoLayerCentroids::FooterSize(d, n_l1, built.stats.size()));
+  return {.offset = resident_offset, .byte_size = resident_size};
+}
+
+class IvfTermIterator final : public TermIterator {
+ public:
+  static constexpr size_t kWidth = kCentroidTermWidth;
+
+  IvfTermIterator(std::span<const doc_id_t> cluster_docs,
+                  std::span<const uint64_t> cluster_offsets)
+    : _cluster_docs{cluster_docs},
+      _cluster_offsets{cluster_offsets},
+      _count{cluster_offsets.empty() ? 0 : cluster_offsets.size() - 1},
+      _terms(_count * kWidth) {
+    for (size_t c = 0; c < _count; ++c) {
+      EncodeCentroidTerm(static_cast<uint32_t>(c), _terms.data() + c * kWidth);
+    }
+  }
+
+  bytes_view value() const noexcept final {
+    return {_terms.data() + _cur * kWidth, kWidth};
+  }
+
+  bool next() final {
+    if (_next >= _count) {
+      return false;
+    }
+    _cur = _next++;
+    return true;
+  }
+
+  void read() noexcept final {}
+
+  DocIterator::ptr postings(IndexFeatures /*features*/) const final {
+    const doc_id_t* p = _cluster_docs.data() + _cluster_offsets[_cur];
+    const size_t len = _cluster_offsets[_cur + 1] - _cluster_offsets[_cur];
+    _doc_itr.Reset({p, len});
+    return memory::to_managed<DocIterator>(_doc_itr);
+  }
+
+  Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
+
+ private:
+  class DocIter final : public DocIterator {
+   public:
+    void Reset(std::span<const doc_id_t> docs) noexcept {
+      _docs = docs;
+      _pos = 0;
+      _doc = doc_limits::invalid();
+      _notified = false;
+    }
+
+    doc_id_t advance() noexcept final {
+      if (!_notified) {
+        _notified = true;
+        _change(*this);
+      }
+      if (_pos >= _docs.size()) {
+        return _doc = doc_limits::eof();
+      }
+      return _doc = _docs[_pos++];
+    }
+
+    doc_id_t seek(doc_id_t target) noexcept final {
+      if (doc_limits::eof(target)) {
+        return _doc = doc_limits::eof();
+      }
+      while (_doc < target) {
+        if (doc_limits::eof(advance())) {
+          break;
+        }
+      }
+      return _doc;
+    }
+
+    uint32_t GetFreq() const final { return 1; }
+
+    Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+      return type == irs::Type<AttrProviderChangeAttr>::id() ? &_change
+                                                             : nullptr;
+    }
+
+    IRS_DOC_ITERATOR_DEFAULTS
+
+   private:
+    std::span<const doc_id_t> _docs;
+    size_t _pos = 0;
+    bool _notified = false;
+    AttrProviderChangeAttr _change;
+  };
+
+  std::span<const doc_id_t> _cluster_docs;
+  std::span<const uint64_t> _cluster_offsets;
+  size_t _count;
+  std::vector<byte_type> _terms;
+  size_t _cur = 0;
+  size_t _next = 0;
+  mutable DocIter _doc_itr;
+};
+
+IvfTermReader::IvfTermReader(field_id postings_id,
+                             std::span<const doc_id_t> cluster_docs,
+                             std::span<const uint64_t> cluster_offsets,
+                             QuantizerWriter* qw, const ColumnReader* vectors,
+                             ReadContext* ctx, uint32_t d,
+                             std::span<const float> fine_centroids)
+  : _cluster_docs{cluster_docs},
+    _cluster_offsets{cluster_offsets},
+    _qw{qw},
+    _vectors{vectors},
+    _ctx{ctx},
+    _d{d},
+    _fine_centroids{fine_centroids},
+    _count{cluster_offsets.empty() ? 0 : cluster_offsets.size() - 1},
+    _meta{postings_id,
+          qw != nullptr ? IndexFeatures::Pay : IndexFeatures::None} {
+  size_t first = _count;
+  size_t last = _count;
+  for (size_t c = 0; c < _count; ++c) {
+    if (cluster_offsets[c + 1] == cluster_offsets[c]) {
+      continue;
+    }
+    if (first == _count) {
+      first = c;
+    }
+    last = c;
+  }
+  if (first != _count) {
+    EncodeCentroidTerm(static_cast<uint32_t>(first), _min_buf.data());
+    _min = {_min_buf.data(), _min_buf.size()};
+    EncodeCentroidTerm(static_cast<uint32_t>(last), _max_buf.data());
+    _max = {_max_buf.data(), _max_buf.size()};
+  }
+}
+
+IvfTermReader::~IvfTermReader() = default;
+
+TermIterator::ptr IvfTermReader::iterator() const {
+  _it = std::make_unique<IvfTermIterator>(_cluster_docs, _cluster_offsets);
+  return memory::to_managed<TermIterator>(*_it);
+}
+
+void IvfTermReader::WriteTermPayload(IndexOutput& out,
+                                     std::span<const doc_id_t> docs) {
+  SDB_ASSERT(_qw && _vectors && _vectors->Child() && _ctx);
+  const size_t cluster = _term_idx++;
+  if (cluster < _count && (cluster + 1) * _d <= _fine_centroids.size()) {
+    _qw->SetClusterCentroid(_fine_centroids.data() + cluster * _d);
+  }
+  const size_t n = docs.size();
+  if (n == 0) {
+    return;
+  }
+  _qw->BeginCluster(n);
+  constexpr size_t kBatch = STANDARD_VECTOR_SIZE;
+  const ColumnReader& child = *_vectors->Child();
+  auto scan = child.InitScan(*_ctx);
+  uint64_t pos = 0;
+  duckdb::Vector batch{duckdb::LogicalType::FLOAT,
+                       static_cast<duckdb::idx_t>(kBatch) * _d};
+  const float* vecs = duckdb::FlatVector::GetData<float>(batch);
+  size_t filled = 0;
+  size_t k = 0;
+  while (k < n) {
+    const size_t run = std::min(ConsecutiveRunLength(docs, k), kBatch - filled);
+    const uint64_t r = static_cast<uint64_t>(docs[k]) - doc_limits::min();
+    const uint64_t elem = r * _d;
+    if (elem < pos) {
+      scan = child.InitScan(*_ctx);
+      pos = 0;
+    }
+    if (elem > pos) {
+      child.Skip(scan, static_cast<duckdb::idx_t>(elem - pos));
+      pos = elem;
+    }
+    child.ScanCount(scan, batch, static_cast<duckdb::idx_t>(run) * _d,
+                    static_cast<duckdb::idx_t>(filled) * _d);
+    pos += static_cast<uint64_t>(run) * _d;
+    filled += run;
+    k += run;
+    if (filled == kBatch) {
+      _qw->EncodeCluster(out, vecs, filled);
+      filled = 0;
+    }
+  }
+  if (filled != 0) {
+    _qw->EncodeCluster(out, vecs, filled);
+  }
+  _qw->FinishCluster(out);
+}
+
+void IvfTermReader::Finish(IndexOutput& /*out*/) { SDB_ASSERT(_qw); }
+
+void IvfWriter::Compute(const ColumnReader& col, ReadContext& ctx) {
+  const auto d = static_cast<uint32_t>(col.ArraySize());
+  const uint32_t pq_niter =
+    _info.cluster_iters != 0 ? _info.cluster_iters : kDefaultClusterIters;
+  auto qw =
+    MakeQuantizerWriter(_info.quant.kind, d, _info.metric, _info.quant.pq_m,
+                        pq_niter, _info.quant.nb_bits);
+
+  IvfBuilder builder{_info};
+  auto built = builder.Compute(col, ctx, qw.get());
+  if (built.empty) {
+    return;
+  }
+  _result = Result{.postings_id = _info.postings_id,
+                   .qw = std::move(qw),
+                   .built = std::make_shared<BuiltIvf>(std::move(built))};
+  _built = true;
+}
+
+const BasicTermReader* IvfWriter::ClusterReader(ReadContext& ctx,
+                                                const ColReader& col_reader) {
+  if (!_built) {
+    return nullptr;
+  }
+  if (!_reader) {
+    _reader = std::make_unique<IvfTermReader>(
+      _result.postings_id, _result.built->cluster_docs,
+      _result.built->cluster_offsets, _result.qw.get(),
+      col_reader.Column(_result.postings_id), &ctx, _result.built->d,
+      _result.built->fine_centroids);
+  }
+  return _reader.get();
+}
+
+IvfWriter::IvfWriter(IvfInfo info) : _info{std::move(info)} {}
+
+IvfWriter::~IvfWriter() = default;
+
+}  // namespace irs

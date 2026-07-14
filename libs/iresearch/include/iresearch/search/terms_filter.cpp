@@ -28,44 +28,60 @@
 #include "iresearch/search/filter_visitor.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/term_filter.hpp"
+#include "iresearch/search/term_iterator.hpp"
 
 namespace irs {
 namespace {
 
-template<typename Visitor>
-void VisitImpl(const SubReader& segment, const TermReader& field,
-               const ByTermsOptions::search_terms& search_terms,
-               Visitor& visitor) {
-  auto terms = field.iterator(SeekMode::NORMAL);
+class ByTermsIterator : public WrappedTermIterator {
+ public:
+  ByTermsIterator(const TermReader& reader,
+                  const ByTermsOptions::search_terms& terms)
+    : WrappedTermIterator{reader.iterator(SeekMode::NORMAL)},
+      _cursor{terms.begin()},
+      _end{terms.end()} {}
 
-  if (!terms) [[unlikely]] {
-    return;
+  score_t Boost() const noexcept { return _boost; }
+  uint32_t Index() const noexcept { return _index; }
+
+  bool next() final {
+    if (_started) {
+      if (_cursor == _end) {
+        return false;
+      }
+      ++_cursor;
+      ++_index;
+    }
+    _started = true;
+    while (_cursor != _end) {
+      if (_impl->seek(_cursor->term)) {
+        _boost = _cursor->boost;
+        return true;
+      }
+      ++_cursor;
+      ++_index;
+    }
+    return false;
   }
 
-  visitor.Prepare(segment, field, *terms);
-
-  [[maybe_unused]] uint32_t idx = 0;
-  for (auto& term : search_terms) {
-    if constexpr (requires { visitor.SetIndex(idx); }) {
-      visitor.SetIndex(idx++);
-    }
-
-    if (!terms->seek(term.term)) {
-      continue;
-    }
-
-    terms->read();
-
-    visitor.Visit(term.boost);
-  }
-}
+ private:
+  ByTermsOptions::search_terms::const_iterator _cursor;
+  ByTermsOptions::search_terms::const_iterator _end;
+  score_t _boost = kNoBoost;
+  uint32_t _index = 0;
+  bool _started = false;
+};
 
 }  // namespace
 
 void ByTerms::visit(const SubReader& segment, const TermReader& field,
-                    const ByTermsOptions::search_terms& terms,
-                    FilterVisitor& visitor) {
-  VisitImpl(segment, field, terms, visitor);
+                    const ByTermsOptions& options, FilterVisitor& visitor) {
+  ByTermsIterator terms(field, options.terms);
+  visitor.Prepare(segment, field, terms.GetImpl());
+  if (!terms.next()) {
+    return;
+  }
+  VisitTerms(terms, visitor);
 }
 
 QueryBuilder::ptr ByTerms::PrepareSegment(const SubReader& segment,
@@ -93,7 +109,11 @@ QueryBuilder::ptr ByTerms::PrepareSegment(const SubReader& segment,
                       : nullptr;
   AllTermsVisitor mtv{query->State(), collector ? &collector->Field() : nullptr,
                       collector ? &collector->Terms() : nullptr};
-  VisitImpl(segment, *reader, terms, mtv);
+  ByTermsIterator it(*reader, options.terms);
+  if (it.next()) {
+    mtv.Prepare(segment, *reader, it.GetImpl());
+    VisitTerms(it, mtv);
+  }
   return query;
 }
 
@@ -104,6 +124,20 @@ QueryBuilder::ptr ByTerms::PrepareSegment(const SubReader& segment,
 
 PrepareCollector::ptr ByTerms::MakeCollector(const Scorer* scorer) const {
   return std::make_unique<ByTermsCollector>(scorer, options().terms.size());
+}
+
+TermPredicate::ptr ByTerms::CompileTermPredicate() const {
+  if (options().min_match != 1) {
+    return nullptr;
+  }
+  return MakeTermPredicate(TermSetAcceptor{&options().terms});
+}
+
+TermIterator::ptr ByTerms::CompileTermIterator(const TermReader& reader) const {
+  if (options().min_match != 1) {
+    return nullptr;
+  }
+  return memory::make_managed<ByTermsIterator>(reader, options().terms);
 }
 
 }  // namespace irs

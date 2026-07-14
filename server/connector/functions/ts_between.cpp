@@ -46,18 +46,10 @@ RangeArgs ParseRangeArgs(const duckdb::BoundFunctionExpression& func) {
       (i == 0 ? out.min : out.max) = val;
     }
   }
-  if (auto r =
-        GetBoolArg(*func.GetChildren()[2], "ts_between min_incl", out.min_incl);
-      !r.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-  }
-  if (auto r =
-        GetBoolArg(*func.GetChildren()[3], "ts_between max_incl", out.max_incl);
-      !r.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-  }
+  GetBoolArg(*func.GetChildren()[2], out.min_incl,
+             {"ts_between min_incl", kSyntaxHint});
+  GetBoolArg(*func.GetChildren()[3], out.max_incl,
+             {"ts_between max_incl", kSyntaxHint});
   if (out.min && out.max && out.min->type().id() != out.max->type().id()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -139,10 +131,7 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
                              "BOOLEAN and numeric columns."));
   }
 
-  if (auto r = ValidateFilterType(col_type); !r.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(r.errorMessage()));
-  }
+  ValidateFilterType(col_type);
   const auto bound_type =
     inclusive ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
 
@@ -290,10 +279,7 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
                              "analyzer), BOOLEAN and numeric columns."));
   }
 
-  if (auto r = ValidateFilterType(col_type); !r.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(r.errorMessage()));
-  }
+  ValidateFilterType(col_type);
 
   if (col_type == duckdb::LogicalTypeId::VARCHAR ||
       col_type == duckdb::LogicalTypeId::BLOB) {

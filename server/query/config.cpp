@@ -36,8 +36,8 @@
 #include <optional>
 
 #include "basics/assert.h"
-#include "basics/exceptions.h"
 #include "catalog/catalog.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb {
 namespace {
@@ -172,12 +172,6 @@ bool Config::IsExplicitTransaction() const {
   return !_client_ctx.transaction.IsAutoCommit();
 }
 
-bool Config::IsTransactionInvalidated() const {
-  auto& txn = _client_ctx.transaction;
-  return txn.HasActiveTransaction() &&
-         duckdb::ValidChecker::IsInvalidated(txn.ActiveTransaction());
-}
-
 void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {
   // Called from pre-commit / pre-rollback hooks while the DuckDB transaction
   // is still active, so catalog lookups performed by custom-impl set_local
@@ -191,7 +185,7 @@ void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {
   const bool is_reset = value.IsNull();
 
   // Best-effort restore; swallow to keep noexcept contract.
-  std::ignore = basics::SafeCall([&] {
+  try {
     // Built-in options first.
     duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
     auto setting_index = db_config.TryGetSettingIndex(name_ref, option);
@@ -240,7 +234,8 @@ void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {
       _client_ctx.config.user_settings.SetUserSetting(
         ext.setting_index.GetIndex(), std::move(typed));
     }
-  });
+  } catch (...) {
+  }
 }
 
 void Config::RollbackVariables() noexcept {

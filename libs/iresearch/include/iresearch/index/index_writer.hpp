@@ -31,12 +31,11 @@
 #include <limits>
 #include <optional>
 #include <string_view>
+#include <yaclib/algo/wait_group.hpp>
 
 #include "basics/async_utils.hpp"
 #include "basics/noncopyable.hpp"
 #include "basics/object_pool.hpp"
-#include "basics/thread_utils.hpp"
-#include "basics/wait_group.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/column_info.hpp"
 
@@ -688,13 +687,11 @@ class IndexWriter : private util::Noncopyable {
   struct FlushedSegment : public IndexSegment {
     FlushedSegment() = default;
     explicit FlushedSegment(IndexSegment&& segment, DocMap&& old2new,
-                            DocsMask&& docs_mask, size_t docs_begin,
-                            PreloadedHnswGraphs&& hnsw_graphs = {}) noexcept
+                            DocsMask&& docs_mask, size_t docs_begin) noexcept
       : IndexSegment{std::move(segment)},
         old2new{std::move(old2new)},
         docs_mask{std::move(docs_mask)},
         document_mask{{this->docs_mask.set.get_allocator()}},
-        hnsw_graphs{std::move(hnsw_graphs)},
         _docs_begin{docs_begin},
         _docs_end{_docs_begin + meta.docs_count} {}
 
@@ -713,7 +710,6 @@ class IndexWriter : private util::Noncopyable {
     // Flushed segment removals
     DocsMask docs_mask;
     DocumentMask document_mask;
-    PreloadedHnswGraphs hnsw_graphs;
     bool was_flush = false;
 
    private:
@@ -882,7 +878,10 @@ class IndexWriter : private util::Noncopyable {
     std::deque<PendingSegmentContext> pending_segments;
     // entries from 'pending_segments_' that are available for reuse
     Freelist pending_freelist;
-    WaitGroup pending;
+    // Holds a +1 token so Wait() on an idle context returns immediately;
+    // the flush side releases it via Done() right before Wait().
+    yaclib::WaitGroup<> pending{1};
+    absl::Mutex pending_mutex;
 
     // set of segments to be removed from the index upon commit
     CompactingSegments segment_mask;

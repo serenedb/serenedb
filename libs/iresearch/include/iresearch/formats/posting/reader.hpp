@@ -21,8 +21,6 @@
 #pragma once
 
 #include "basics/debugging.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/iterator_doc.hpp"
@@ -33,6 +31,7 @@
 #include "iresearch/search/make_disjunction.hpp"
 #include "iresearch/search/max_score_iterator.hpp"
 #include "iresearch/store/store_utils.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 
@@ -102,6 +101,10 @@ class PostingsReaderBase : public PostingsReader {
   size_t decode(const byte_type* in, IndexFeatures field_features,
                 TermMeta& state) final;
 
+  std::unique_ptr<IndexInput> ReopenPayload() const final {
+    return _pay_in ? _pay_in->Reopen() : nullptr;
+  }
+
  protected:
   explicit PostingsReaderBase(size_t block_size) noexcept
     : _block_size{block_size} {}
@@ -117,6 +120,12 @@ class PostingsReaderBase : public PostingsReader {
 inline void PostingsReaderBase::prepare(DataInput& in, const ReaderState& state,
                                         IndexFeatures features) {
   std::string buf;
+
+  SDB_ASSERT(IndexFeatures::None == (features & IndexFeatures::Offs) ||
+             IndexFeatures::None == (features & IndexFeatures::Pay));
+  const bool needs_pay =
+    IndexFeatures::None !=
+    (features & (IndexFeatures::Offs | IndexFeatures::Pay));
 
   // prepare document input
   PrepareInput(buf, _doc_in, IOAdvice::RANDOM, state,
@@ -145,22 +154,21 @@ inline void PostingsReaderBase::prepare(DataInput& in, const ReaderState& state,
     // error detection which could recognize
     // some forms of corruption.
     format_utils::ReadChecksum(*_pos_in);
+  }
 
-    if (IndexFeatures::None != (features & IndexFeatures::Offs)) {
-      // prepare positions input
-      PrepareInput(buf, _pay_in, IOAdvice::RANDOM, state,
-                   PostingsWriterBase::kPayExt,
-                   PostingsWriterBase::kPayFormatName,
-                   static_cast<int32_t>(PostingsFormat::Min),
-                   static_cast<int32_t>(PostingsFormat::Max));
+  if (needs_pay) {
+    PrepareInput(buf, _pay_in, IOAdvice::RANDOM, state,
+                 PostingsWriterBase::kPayExt,
+                 PostingsWriterBase::kPayFormatName,
+                 static_cast<int32_t>(PostingsFormat::Min),
+                 static_cast<int32_t>(PostingsFormat::Max));
 
-      // Since terms pos postings too large
-      // it is too costly to verify checksum of
-      // the entire file. Here we perform cheap
-      // error detection which could recognize
-      // some forms of corruption.
-      format_utils::ReadChecksum(*_pay_in);
-    }
+    // Since terms pos postings too large
+    // it is too costly to verify checksum of
+    // the entire file. Here we perform cheap
+    // error detection which could recognize
+    // some forms of corruption.
+    format_utils::ReadChecksum(*_pay_in);
   }
 
   // check postings format
@@ -199,6 +207,9 @@ inline size_t PostingsReaderBase::decode(const byte_type* in,
       term_meta.pay_start += vread<uint64_t>(p);
     }
     term_meta.pos_offset = *p++;
+  }
+  if (IndexFeatures::None != (features & IndexFeatures::Pay)) {
+    term_meta.pay_start += vread<uint64_t>(p);
   }
 
   if (1 == term_meta.docs_count) {
@@ -445,7 +456,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::WandIterator(
   IndexFeatures field_features, std::span<const PostingCookie> metas,
   IteratorFieldOptions options, ScoreMergeType type) const {
   SDB_IF_FAILURE("irs::WandIterator") {  //
-    SDB_THROW(sdb::ERROR_DEBUG);
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
 
   return ResolveWandType(
@@ -462,7 +473,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::WandIterator(
 
       if (metas.size() == 1) {
         SDB_IF_FAILURE("irs::SingleWandIterator") {
-          SDB_THROW(sdb::ERROR_DEBUG);
+          THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
         }
         return make_postings_iterator.template operator()<true>(metas[0]);
       }
@@ -480,7 +491,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::WandIterator(
       using Adapter = WandPostingAdapter<Iterator>;
 
       SDB_IF_FAILURE("irs::MaxScoreIterator") {  //
-        SDB_THROW(sdb::ERROR_DEBUG);
+        THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
       }
       return memory::make_managed<MaxScoreIterator<Adapter>>(
         std::move(iterators));

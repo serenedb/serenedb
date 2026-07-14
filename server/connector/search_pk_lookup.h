@@ -33,8 +33,8 @@
 #include "basics/assert.h"
 #include "basics/debugging.h"
 #include "basics/duckdb_engine.h"
-#include "basics/exceptions.h"
 #include "catalog/table_options.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 
@@ -54,43 +54,5 @@ SegmentPkColumn(const irs::IndexReader& reader, size_t seg_idx) noexcept {
   }
   return {col_reader, pk_col};
 }
-
-class SegmentPkSequentialFetcher {
- public:
-  SegmentPkSequentialFetcher(const irs::ColReader& col_reader,
-                             const irs::ColumnReader& pk_col)
-    : _ctx{col_reader}, _pk_col{&pk_col} {}
-
-  SegmentPkSequentialFetcher(const SegmentPkSequentialFetcher&) = delete;
-  SegmentPkSequentialFetcher& operator=(const SegmentPkSequentialFetcher&) =
-    delete;
-
-  void Reset(const irs::ColReader& col_reader,
-             const irs::ColumnReader& pk_col) {
-    _ctx.Reset(col_reader);
-    _pk_col = &pk_col;
-  }
-
-  template<typename DocIds>
-  void Fetch(const DocIds& docs, duckdb::Vector& out) {
-    if (docs.size() == 0) {
-      return;
-    }
-    SDB_IF_FAILURE("SearchPkFetchFault") { SDB_THROW(ERROR_DEBUG); }
-    SDB_ASSERT(docs.IsSorted());
-    irs::ColumnReader::RangeScan range{*_pk_col, _ctx};
-    irs::ColumnReader::ScanRowsBatched(range, docs, out, 0);
-  }
-
- private:
-  irs::ReadContext _ctx;
-  const irs::ColumnReader* _pk_col;
-};
-
-struct PkLookupBuffers {
-  std::unique_ptr<duckdb::Vector> seg_pk_vec;
-  std::unique_ptr<SegmentPkSequentialFetcher> fetcher;
-  uint32_t last_seg_idx = std::numeric_limits<uint32_t>::max();
-};
 
 }  // namespace sdb::connector

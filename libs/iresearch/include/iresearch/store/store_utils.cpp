@@ -23,18 +23,17 @@
 #include "store_utils.hpp"
 
 #include "basics/crc.hpp"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "basics/memory.hpp"
 #include "basics/shared.hpp"
 #include "basics/std.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 
 void BytesViewInput::ReadData(byte_type* b, uint64_t size) {
   const uint64_t remain = std::distance(_pos, _data.data() + _data.size());
-  SDB_ENSURE(size <= remain, sdb::ERROR_INTERNAL, "short read (need ", size,
-             " bytes, ", remain, " remaining)");
+  SDB_ENSURE(size <= remain, "short read (need ", size, " bytes, ", remain,
+             " remaining)");
   if (size != 0) {
     std::memcpy(b, _pos, sizeof(byte_type) * size);
     _pos += size;
@@ -51,14 +50,6 @@ void BytesViewInput::ReadData(uint64_t offset, byte_type* b,
   }
 
   _pos = _data.data() + _data.size();
-}
-
-void BytesViewInput::ReadData(bstring& buf, size_t size) {
-  const auto used = buf.size();
-
-  buf.resize(used + size);
-
-  ReadData(buf.data() + used, size);
 }
 
 uint32_t BytesViewInput::Checksum(uint64_t offset) const {

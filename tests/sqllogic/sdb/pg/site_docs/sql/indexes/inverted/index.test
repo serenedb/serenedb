@@ -10,7 +10,7 @@ CREATE TABLE articles (
 statement ok
 INSERT INTO articles VALUES
     (1, 'Inverted indexes', 'Full text search over tokenized columns'),
-    (2, 'Vector search', 'Approximate nearest neighbor search with HNSW'),
+    (2, 'Vector search', 'Approximate nearest neighbor search with IVF'),
     (3, 'Geospatial search', 'Indexing GeoJSON shapes for spatial queries');
 
 # DOCS_TEST_BODY

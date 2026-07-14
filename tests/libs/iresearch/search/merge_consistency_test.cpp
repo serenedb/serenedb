@@ -148,7 +148,7 @@ void CollectSegment(const tests::PreparedFilter& prepared, size_t i,
     });
   }
 
-  while (docs->next()) {
+  while (!irs::doc_limits::eof(docs->advance())) {
     irs::score_t value = 0;
     if (scorer != nullptr) {
       docs->FetchScoreArgs(0);

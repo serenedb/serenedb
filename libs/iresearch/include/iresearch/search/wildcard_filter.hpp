@@ -105,6 +105,8 @@ class ByWildcard final : public FilterWithField<ByWildcardOptions> {
  public:
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
+
+  TermPredicate::ptr CompileTermPredicate() const final;
 };
 
 }  // namespace irs

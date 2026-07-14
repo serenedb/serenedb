@@ -43,10 +43,9 @@
 #include <vector>
 
 #include "basics/assert.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "basics/log.h"
 #include "basics/zstd_context.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::search {
 namespace {
@@ -247,7 +246,7 @@ ParsedOp ParseOp(Cursor& c, std::vector<uint64_t>& seg_scratch,
     case kKindTruncate:
       break;  // bodyless
     default:
-      SDB_ENSURE(false, ERROR_INTERNAL,
+      SDB_ENSURE(false,
                  "unknown search WAL op kind: ", static_cast<int>(op.kind));
   }
   return op;
@@ -280,16 +279,15 @@ void ReplayChunkFile(
     sizeof(uint8_t) + 2 * sizeof(uint64_t) + sizeof(uint64_t);
   while (reader.CurrentOffset() < reader.FileSize()) {
     uint64_t remaining = reader.FileSize() - reader.CurrentOffset();
-    SDB_ENSURE(remaining >= kChunkHdr, ERROR_INTERNAL,
-               "corrupt search chunk file '", chunk_path, "': trailing ",
-               remaining, " bytes < frame header");
+    SDB_ENSURE(remaining >= kChunkHdr, "corrupt search chunk file '",
+               chunk_path, "': trailing ", remaining, " bytes < frame header");
     auto codec = reader.Read<uint8_t>();
     auto raw_len = reader.Read<uint64_t>();
     auto comp_len = reader.Read<uint64_t>();
     auto pk_base = reader.Read<uint64_t>();
     SDB_ENSURE(reader.FileSize() - reader.CurrentOffset() >= comp_len,
-               ERROR_INTERNAL, "corrupt search chunk file '", chunk_path,
-               "': frame of ", comp_len, " bytes exceeds remaining file");
+               "corrupt search chunk file '", chunk_path, "': frame of ",
+               comp_len, " bytes exceeds remaining file");
     comp_buf.resize(comp_len);
     reader.ReadData(comp_buf.data(), comp_len);
 
@@ -299,15 +297,15 @@ void ReplayChunkFile(
       raw_buf.resize(raw_len);
       const size_t got = ZSTD_decompressDCtx(dctx, raw_buf.data(), raw_len,
                                              comp_buf.data(), comp_len);
-      SDB_ENSURE(!ZSTD_isError(got) && got == raw_len, ERROR_INTERNAL,
+      SDB_ENSURE(!ZSTD_isError(got) && got == raw_len,
                  "corrupt search chunk file '", chunk_path,
                  "': zstd decompress failed (", raw_len, " expected)");
       src = raw_buf.data();
       src_len = raw_len;
     } else {
       SDB_ENSURE(codec == kChunkCodecNone && comp_len == raw_len,
-                 ERROR_INTERNAL, "corrupt search chunk file '", chunk_path,
-                 "': unknown codec ", codec);
+                 "corrupt search chunk file '", chunk_path, "': unknown codec ",
+                 codec);
       src = comp_buf.data();
       src_len = comp_len;
     }
@@ -444,8 +442,8 @@ SearchDbWal::SearchDbWal(duckdb::FileSystem& fs, std::filesystem::path wal_dir,
     }
     std::error_code ec;
     std::filesystem::remove(path, ec);
-    SDB_ENSURE(!ec, ERROR_INTERNAL, "remove corrupted wal file '",
-               path.string(), "': ", ec.message());
+    SDB_ENSURE(!ec, "remove corrupted wal file '", path.string(),
+               "': ", ec.message());
   }
   _tick.store(max_tick, std::memory_order_relaxed);
 }
@@ -462,11 +460,10 @@ void SearchDbWal::EnsureActiveSegmentLocked(uint64_t first_tick) {
   }
   std::error_code ec;
   std::filesystem::create_directories(_wal_dir, ec);
-  SDB_ENSURE(!ec, ERROR_INTERNAL, "create wal dir '", _wal_dir.string(),
-             "': ", ec.message());
+  SDB_ENSURE(!ec, "create wal dir '", _wal_dir.string(), "': ", ec.message());
   auto seg_path = _wal_dir / SegmentName(first_tick);
   std::error_code exists_ec;
-  SDB_ENSURE(!std::filesystem::exists(seg_path, exists_ec), ERROR_INTERNAL,
+  SDB_ENSURE(!std::filesystem::exists(seg_path, exists_ec),
              "search WAL: new active segment '", seg_path.string(),
              "' already exists -- tick seed regressed");
   _active = std::make_unique<duckdb::BufferedFileWriter>(_fs, seg_path.string(),
@@ -576,8 +573,7 @@ SearchDbWal::ChunkWriter SearchDbWal::NewChunkWriter(ObjectId table_id) {
   auto dir = ChunkDir(table_id.id());
   std::error_code ec;
   std::filesystem::create_directories(dir, ec);
-  SDB_ENSURE(!ec, ERROR_INTERNAL, "create chunk dir '", dir.string(),
-             "': ", ec.message());
+  SDB_ENSURE(!ec, "create chunk dir '", dir.string(), "': ", ec.message());
 
   uint64_t seg_id;
   {

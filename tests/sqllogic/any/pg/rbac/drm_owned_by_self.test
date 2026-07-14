@@ -72,7 +72,7 @@ db error: ERROR: current user cannot be dropped
 # --- Role owns a table it created: ownership is a dependency ---
 
 statement ok
-CREATE ROLE obs_vedernikoff;
+CREATE ROLE obs_vedernikoff PASSWORD 'obs_vedernikoff_pw';
 
 
 statement ok
@@ -103,7 +103,7 @@ DROP ROLE obs_vedernikoff;
 # --- Same dependency, removed by dropping the owned table instead ---
 
 statement ok
-CREATE ROLE obs_vedernikoff;
+CREATE ROLE obs_vedernikoff PASSWORD 'obs_vedernikoff_pw';
 
 
 statement ok
@@ -127,7 +127,7 @@ DROP ROLE obs_vedernikoff;
 # --- Owning several tables: each is a separate dependency ---
 
 statement ok
-CREATE ROLE obs_vedernikoff;
+CREATE ROLE obs_vedernikoff PASSWORD 'obs_vedernikoff_pw';
 
 
 statement ok
@@ -184,7 +184,7 @@ DROP TABLE obs_t2;
 # --- Owned table that has its own dependent (a view): CASCADE vs RESTRICT ---
 
 statement ok
-CREATE ROLE obs_vedernikoff;
+CREATE ROLE obs_vedernikoff PASSWORD 'obs_vedernikoff_pw';
 
 
 statement ok
@@ -225,7 +225,7 @@ DROP ROLE obs_vedernikoff;
 # --- Actor dimension: who may issue DROP ROLE ---
 
 statement ok
-CREATE ROLE obs_vedernikoff LOGIN;
+CREATE ROLE obs_vedernikoff LOGIN PASSWORD 'obs_vedernikoff_pw';
 
 
 statement ok
@@ -234,7 +234,7 @@ CREATE ROLE obs_mop LOGIN;
 
 # A plain (non-CREATEROLE) role cannot drop itself: the role-admin check fires
 # before the current-user check, with the generic DETAIL.
-connection c_ved user=obs_vedernikoff
+connection c_ved user=obs_vedernikoff password=obs_vedernikoff_pw
 statement error
 DROP ROLE obs_vedernikoff;
 ----
@@ -243,7 +243,7 @@ DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on the tar
 
 
 # The same plain role cannot drop a different role either.
-connection c_ved2 user=obs_vedernikoff
+connection c_ved2 user=obs_vedernikoff password=obs_vedernikoff_pw
 statement error
 DROP ROLE obs_mop;
 ----
@@ -263,14 +263,14 @@ DROP ROLE obs_mop;
 # A CREATEROLE admin gets ADMIN on every role it creates, so it passes the
 # role-admin check -- but the ownership dependency still blocks the drop.
 statement ok
-CREATE ROLE obs_babsky LOGIN;
+CREATE ROLE obs_babsky LOGIN PASSWORD 'obs_babsky_pw';
 
 
 statement ok
 ALTER ROLE obs_babsky CREATEROLE;
 
 
-connection c_bab user=obs_babsky
+connection c_bab user=obs_babsky password=obs_babsky_pw
 statement ok
 CREATE ROLE obs_clickclack;
 
@@ -286,7 +286,7 @@ ALTER TABLE obs_clickclack OWNER TO obs_clickclack;
 
 # babsky may administer clickclack, so it gets past the permission check, but
 # clickclack owns the table -> blocked by the dependency, same as a superuser.
-connection c_bab2 user=obs_babsky
+connection c_bab2 user=obs_babsky password=obs_babsky_pw
 statement error
 DROP ROLE obs_clickclack;
 ----
@@ -299,7 +299,7 @@ statement ok
 ALTER TABLE obs_clickclack OWNER TO postgres;
 
 
-connection c_bab3 user=obs_babsky
+connection c_bab3 user=obs_babsky password=obs_babsky_pw
 statement ok
 DROP ROLE obs_clickclack;
 

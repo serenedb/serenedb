@@ -27,8 +27,6 @@
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
-#include "basics/errors.h"
-#include "basics/result.h"
 #include "basics/system-compiler.h"
 #include "catalog/identifiers/object_id.h"
 
@@ -103,14 +101,14 @@ class ResolutionTable {
   }
 
   template<ResolveType Type>
-  Result AddObject(ObjectId parent_id, std::string_view object_name,
-                   ObjectId object_id, bool replace) {
+  bool AddObject(ObjectId parent_id, std::string_view object_name,
+                 ObjectId object_id, bool replace) {
     if constexpr (Type == ResolveType::Database) {
       auto& databases = CloneData(_databases);
       if (!replace) {
         auto [_, inserted] = databases.try_emplace(object_name, object_id);
         if (!inserted) {
-          return {ERROR_SERVER_DUPLICATE_NAME};
+          return false;
         }
         auto [_, schemas] = CloneData(_schemas).try_emplace(
           object_id, std::make_shared<MapByName<ObjectId>>());
@@ -118,18 +116,18 @@ class ResolutionTable {
       } else {
         InsertOrRebind(databases, object_name, object_id);
       }
-      return {};
+      return true;
     } else if constexpr (Type == ResolveType::Role) {
       auto& roles = CloneData(_roles);
       if (!replace) {
         auto [_, inserted] = roles.try_emplace(object_name, object_id);
         if (!inserted) {
-          return {ERROR_USER_DUPLICATE};
+          return false;
         }
       } else {
         InsertOrRebind(roles, object_name, object_id);
       }
-      return {};
+      return true;
     } else {
       auto insert = [replace](MapByIdPtr<MapByNamePtr<ObjectId>>& insert_map,
                               ObjectId parent_id, std::string_view object_name,
@@ -147,13 +145,11 @@ class ResolutionTable {
         return true;
       };
       if constexpr (Type == ResolveType::Function) {
-        return insert(_functions, parent_id, object_name, object_id)
-                 ? Result{}
-                 : Result{ERROR_SERVER_DUPLICATE_NAME};
+        return insert(_functions, parent_id, object_name, object_id);
       } else if constexpr (Type == ResolveType::Schema) {
         auto inserted = insert(_schemas, parent_id, object_name, object_id);
         if (!inserted) {
-          return {ERROR_SERVER_DUPLICATE_NAME};
+          return false;
         }
         if (!replace) {
           auto [_, insert_relation] =
@@ -180,27 +176,17 @@ class ResolutionTable {
           SDB_ASSERT(insert_user_mapping);
           SDB_ASSERT(insert_type);
         }
-        return {};
+        return true;
       } else if constexpr (Type == ResolveType::Relation) {
-        return insert(_relations, parent_id, object_name, object_id)
-                 ? Result{}
-                 : Result{ERROR_SERVER_DUPLICATE_NAME};
+        return insert(_relations, parent_id, object_name, object_id);
       } else if constexpr (Type == ResolveType::Tokenizer) {
-        return insert(_tokenizers, parent_id, object_name, object_id)
-                 ? Result{}
-                 : Result{ERROR_SERVER_DUPLICATE_NAME};
+        return insert(_tokenizers, parent_id, object_name, object_id);
       } else if constexpr (Type == ResolveType::ForeignServer) {
-        return insert(_foreign_servers, parent_id, object_name, object_id)
-                 ? Result{}
-                 : Result{ERROR_SERVER_DUPLICATE_NAME};
+        return insert(_foreign_servers, parent_id, object_name, object_id);
       } else if constexpr (Type == ResolveType::UserMapping) {
-        return insert(_user_mappings, parent_id, object_name, object_id)
-                 ? Result{}
-                 : Result{ERROR_SERVER_DUPLICATE_NAME};
+        return insert(_user_mappings, parent_id, object_name, object_id);
       } else if constexpr (Type == ResolveType::Type) {
-        return insert(_types, parent_id, object_name, object_id)
-                 ? Result{}
-                 : Result{ERROR_SERVER_DUPLICATE_NAME};
+        return insert(_types, parent_id, object_name, object_id);
       } else {
         SDB_UNREACHABLE();
       }

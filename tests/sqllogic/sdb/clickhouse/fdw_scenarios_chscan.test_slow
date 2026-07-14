@@ -28,7 +28,9 @@ CREATE SERVER fs_srv FOREIGN DATA WRAPPER clickhouse_fdw
   OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
 
 # The transient attach secret is dropped after CREATE SERVER -- nothing lingers.
-query
+# Retried: a CONCURRENT fdw test (shared single-port server) legitimately holds
+# its own transient secret for the duration of its ATTACH probe.
+query ok retry 10 backoff 200ms
 SELECT count(*) AS n FROM duckdb_secrets() WHERE name LIKE '__sdb_fdw_secret_%';
 ----
 n

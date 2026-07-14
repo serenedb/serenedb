@@ -22,11 +22,15 @@
 
 #pragma once
 
+#include <optional>
+
 #include "absl/strings/str_cat.h"
 #include "fst/closure.h"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/formats.hpp"
+#include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/filter.hpp"
+#include "iresearch/search/filter_visitor.hpp"
 #include "iresearch/utils/automaton.hpp"
 #include "iresearch/utils/fstext/fst_sorted_range_matcher.hpp"
 #include "iresearch/utils/fstext/fst_states_map.hpp"
@@ -396,20 +400,12 @@ void Visit(const SubReader& segment, const TermReader& reader,
            const automaton_table_matcher& matcher, Visitor& visitor) {
   SDB_ASSERT(fst::kError != matcher.Properties(0));
   auto terms = reader.iterator(matcher);
-
-  if (!terms) [[unlikely]] {
+  SDB_ASSERT(terms);
+  if (!terms->next()) {
     return;
   }
-
-  if (terms->next()) {
-    visitor.Prepare(segment, reader, *terms);
-
-    do {
-      terms->read();
-
-      visitor.Visit(kNoBoost);
-    } while (terms->next());
-  }
+  visitor.Prepare(segment, reader, *terms);
+  VisitTerms(*terms, visitor);
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -443,6 +439,46 @@ inline automaton MakeAny() {
   Utf8EmplaceRhoArc(a, 0, 1);
   return a;
 }
+
+inline automaton MakeTermAcceptor(bytes_view term) {
+  automaton a;
+  a.AddStates(static_cast<automaton::StateId>(term.size()) + 1);
+  a.SetStart(0);
+  for (size_t i = 0; i < term.size(); ++i) {
+    a.EmplaceArc(static_cast<automaton::StateId>(i), RangeLabel::From(term[i]),
+                 static_cast<automaton::StateId>(i + 1));
+  }
+  a.SetFinal(static_cast<automaton::StateId>(term.size()), true);
+  return a;
+}
+
+inline automaton MakePrefixAcceptor(bytes_view prefix) {
+  auto a = MakeTermAcceptor(prefix);
+  const auto last = static_cast<automaton::StateId>(prefix.size());
+  a.EmplaceArc(last, RangeLabel::From(0, 255), last);
+  return a;
+}
+
+//////////////////////////////////////////////////////////////////////////////
+/// @brief acceptor for the byte-lexicographic interval between `min` and
+///        `max`. IsNull(min) / IsNull(max) mean unbounded on that side;
+///        the *_inclusive flags pick closed vs open endpoints. An empty
+///        (min > max) interval yields an acceptor with no final states.
+//////////////////////////////////////////////////////////////////////////////
+automaton MakeRangeAcceptor(bytes_view min, bytes_view max, bool min_inclusive,
+                            bool max_inclusive);
+
+//////////////////////////////////////////////////////////////////////////////
+/// @brief interval-aware product of two epsilon-free range-labeled
+///        acceptors: accepts exactly the terms both accept. Arc ranges are
+///        intersected pairwise, so overlapping range labels compose
+///        correctly where label-equality intersection (fst::Intersect)
+///        would not. Returns nullopt on an epsilon arc or once the product
+///        exceeds `state_budget` states.
+//////////////////////////////////////////////////////////////////////////////
+std::optional<automaton> IntersectAcceptors(const automaton& lhs,
+                                            const automaton& rhs,
+                                            size_t state_budget);
 
 inline automaton MakeAll() {
   // TODO(mbkkt) speedup: We can just make such automaton

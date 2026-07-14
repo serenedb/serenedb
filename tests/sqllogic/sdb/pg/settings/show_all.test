@@ -230,7 +230,36 @@ profiling_coverage	SELECT	The profiling coverage (SELECT or ALL)
 profiling_mode	NULL	DEPRECATED: Sets the profiling mode
 profiling_output	(empty)	The file to which profile output should be saved, or empty to print to the terminal
 profiling_renderer_settings	{}	A map of settings passed to the renderer of the profiler output (e.g. {'max_extra_lines': 100}) - settings not recognized by the active renderer are ignored
-progress_bar_time	<slt:ignore>	Sets <slt:ignore>
+progress_bar_time	2000	Sets the time (in milliseconds) how long a query needs to take before we start printing a progress bar
+refresh_interval	1000	Background refresh interval (ms) for newly created inverted indexes. Per-index WITH (refresh_interval = ...) overrides. 0 disables the refresh task. Default: 1000.
+regex_match_operator_semantics	partial	Configures whether regex match operators use partial or full string matching
+role	none	Sets the current role.
+row_group_size	122880	Default column row-group size for INCLUDEd in newly created inverted indexes. Per-column (row_group_size = ...) and per-index WITH (row_group_size = ...) override. Reads from existing indexes are unaffected. Default: 122'880.
+s3_access_key_id	NULL	S3 Access Key ID
+s3_allow_recursive_globbing	on	Whether globs on S3-like storage are optimized with recursive strategy (alterative is listing)
+s3_endpoint	NULL	S3 Endpoint
+s3_kms_key_id	NULL	S3 KMS Key ID
+s3_region	NULL	S3 Region
+s3_requester_pays	off	S3 use requester pays mode
+s3_secret_access_key	NULL	S3 Access Key
+s3_session_token	NULL	S3 Session Token
+s3_uploader_max_filesize	800GB	S3 Uploader max filesize (between 50GB and 5TB)
+s3_uploader_max_parts_per_file	10000	S3 Uploader max parts per file (between 1 and 10000)
+s3_uploader_thread_limit	50	S3 Uploader global thread limit
+s3_url_compatibility_mode	off	Disable Globs and Query Parameters on S3 URLs
+s3_url_style	vhost	S3 URL style
+s3_use_ssl	on	S3 use SSL
+s3_version_id_pinning	off	Pin S3 reads to a specific object version for consistency
+scalar_subquery_error_on_multiple_rows	on	When a scalar subquery returns multiple rows - return a random row instead of returning an error.
+scheduler_process_partial	off	Partially process tasks before rescheduling - allows for more scheduler fairness between separate queries
+schema	public	Sets the default search schema. Equivalent to setting search_path to a single value.
+scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
+sdb_disable_top_k_optimization	off	When true, the optimizer skips pulling `ORDER BY <scorer>(...) DESC LIMIT k` into the inverted-index scan, so WAND (Block-Max top-K) pruning never engages. Default: false (optimization on).
+sdb_nprobe	8	Number of IVF cluster lists scanned per vector-similarity query. Higher values improve recall at the cost of latency. Default 8.
+sdb_rerank_factor	4	Multiplier applied to LIMIT k to size the candidate pool re-scored with exact distances for a quantized IVF vector-similarity query (pool = sdb_rerank_factor * k). Higher values improve recall at the cost of latency; 0 disables reranking (top-k picked by the approximate quantized distance). Default 4. Unquantized (quant = 'none') indexes never rerank, regardless of this setting.
+sdb_scored_terms_limit	1024	The maximum number of terms to consider for scoring in multi-term filters. Higher values give more accurate IDF-style scoring at the cost of memory and per-query work. 0 disables scored-term collection entirely.
+sdb_strict_ddl	off	When enabled, DDL inside a transaction block fails instead of committing immediately (DDL is not transactional).
+search_path	<slt:ignore>	Sets the default catalog search path as a comma-separated list of values
 secret_directory	<slt:ignore>	Set the directory to which persistent secrets are stored
 server_encoding	UTF8	Shows the server (database) character set encoding.
 server_version	18.3	Shows the server version.
@@ -528,7 +557,8 @@ scheduler_process_partial	off	Partially process tasks before rescheduling - allo
 schema	public	Sets the default search schema. Equivalent to setting search_path to a single value.
 scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
 sdb_disable_top_k_optimization	off	When true, the optimizer skips pulling `ORDER BY <scorer>(...) DESC LIMIT k` into the inverted-index scan, so WAND (Block-Max top-K) pruning never engages. Default: false (optimization on).
-sdb_ef_search	0	Per-session override for the HNSW search-time neighbourhood size (efSearch). 0 (default) uses Top-K value instead.
+sdb_nprobe	8	Number of IVF cluster lists scanned per vector-similarity query. Higher values improve recall at the cost of latency. Default 8.
+sdb_rerank_factor	4	Multiplier applied to LIMIT k to size the candidate pool re-scored with exact distances for a quantized IVF vector-similarity query (pool = sdb_rerank_factor * k). Higher values improve recall at the cost of latency; 0 disables reranking (top-k picked by the approximate quantized distance). Default 4. Unquantized (quant = 'none') indexes never rerank, regardless of this setting.
 sdb_scored_terms_limit	1024	The maximum number of terms to consider for scoring in multi-term filters. Higher values give more accurate IDF-style scoring at the cost of memory and per-query work. 0 disables scored-term collection entirely.
 sdb_strict_ddl	off	When enabled, DDL inside a transaction block fails instead of committing immediately (DDL is not transactional).
 search_path	<slt:ignore>	Sets the default catalog search path as a comma-separated list of values

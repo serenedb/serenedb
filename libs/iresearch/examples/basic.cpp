@@ -140,8 +140,7 @@ irs::Filter::ptr ParseQuery(std::string_view query_str,
                             bool scored = false) {
   auto root = std::make_unique<irs::MixedBooleanFilter>();
   sdb::ParserContext context{*root, default_field, tokenizer};
-  auto result = sdb::ParseQuery(context, query_str);
-  if (!result.ok()) {
+  if (!sdb::ParseQuery(context, query_str)) {
     std::cerr << "Query parse error: " << context.error_message << "\n";
     return {};
   }

@@ -29,7 +29,6 @@
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
-#include "basics/errors.h"
 #include "catalog/store/store.h"
 #include "catalog/table.h"
 #include "pg/errcodes.h"
@@ -174,8 +173,7 @@ TableRowIdIndexSource::TableRowIdIndexSource(
     },
     [&](duckdb::idx_t col_id) {
       auto it = id_to_pos.find(col_id);
-      SDB_ENSURE(it != id_to_pos.end(), ERROR_INTERNAL,
-                 "column id is not on the store table");
+      SDB_ENSURE(it != id_to_pos.end(), "column id is not on the store table");
       SDB_ASSERT(it->second < columns.LogicalColumnCount());
       return AddFetchColumn(
         columns.GetColumn(duckdb::LogicalIndex(it->second)));
@@ -183,15 +181,15 @@ TableRowIdIndexSource::TableRowIdIndexSource(
   FinishInit(context);
 }
 
-duckdb::idx_t RowIdFetchIndexSource::Materialize(duckdb::ClientContext& context,
-                                                 PrimaryKeyBatch& batch,
-                                                 duckdb::idx_t start,
-                                                 duckdb::idx_t count,
-                                                 duckdb::DataChunk& output) {
+void RowIdFetchIndexSource::Materialize(duckdb::ClientContext& context,
+                                        PrimaryKeyBatch& batch,
+                                        duckdb::idx_t start,
+                                        duckdb::idx_t count,
+                                        duckdb::DataChunk& output) {
   if (count == 0) {
-    return count;
+    return;
   }
-  auto& pk = std::get<PrimaryKeyI64>(batch);
+  auto& pk = batch;
   SDB_ASSERT(start + count <= pk.rows.size());
 
   SortRows(pk, start, count);
@@ -202,10 +200,8 @@ duckdb::idx_t RowIdFetchIndexSource::Materialize(duckdb::ClientContext& context,
   // Rows deleted in the source since CREATE INDEX produce no fetch result --
   // pre-null every slot so stale rowids surface as NULLs instead of garbage.
   for (duckdb::idx_t c = 0; c < _col_to_fetch.size(); ++c) {
-    auto& dst = _tf_target.data[c];
-    for (duckdb::idx_t k = 0; k < count; ++k) {
-      duckdb::FlatVector::SetNull(dst, k, true);
-    }
+    duckdb::FlatVector::ValidityMutable(_tf_target.data[c])
+      .SetAllInvalid(count);
   }
 
   auto& storage = _table->Cast<duckdb::DuckTableEntry>().GetStorage();
@@ -249,7 +245,6 @@ duckdb::idx_t RowIdFetchIndexSource::Materialize(duckdb::ClientContext& context,
   }
 
   RunCastPass(output, count);
-  return count;
 }
 
 }  // namespace sdb::connector

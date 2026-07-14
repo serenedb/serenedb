@@ -1,0 +1,129 @@
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY syn (
+    template = 'pipeline',
+    step1_template = 'text',
+    step1_locale = 'en_US.UTF-8',
+    step1_case = 'lower',
+    step1_stemming = false,
+    step2_template = 'solr_synonyms',
+    step2_synonyms = 'tv, television, telly
+laptop => notebook',
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE catalog (id INTEGER PRIMARY KEY, name VARCHAR);
+
+statement ok
+CREATE INDEX catalog_idx ON catalog USING inverted (id, name syn);
+
+statement ok
+INSERT INTO catalog VALUES
+(1, 'wall mounted tv'),
+(2, 'smart television screen'),
+(3, 'gaming laptop'),
+(4, 'wireless headphones');
+
+statement ok
+VACUUM (REFRESH_TABLE) catalog;
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, name FROM catalog_idx WHERE name @@ 'telly' ORDER BY id;
+----
+id	name
+1	wall mounted tv
+2	smart television screen
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, name FROM catalog_idx WHERE name @@ 'tv' ORDER BY id;
+----
+id	name
+1	wall mounted tv
+2	smart television screen
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, name FROM catalog_idx WHERE name @@ 'notebook' ORDER BY id;
+----
+id	name
+3	gaming laptop
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT ts_lexize('syn', 'telly') AS telly, ts_lexize('syn', 'laptop') AS laptop;
+----
+telly	laptop
+{television,telly,tv}	{notebook}
+
+# DOCS_TEST: example_005
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wn (
+    template = 'pipeline',
+    step1_template = 'text',
+    step1_locale = 'en_US.UTF-8',
+    step1_case = 'lower',
+    step1_stemming = false,
+    step2_template = 'wordnet_synonyms',
+    step2_synonyms = 's(100000001,1,''couch'',n,1,0).
+s(100000001,2,''sofa'',n,1,0).
+s(100000001,3,''divan'',n,1,0).',
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE furniture (id INTEGER PRIMARY KEY, name VARCHAR);
+
+statement ok
+CREATE INDEX furniture_idx ON furniture USING inverted (id, name wn);
+
+statement ok
+INSERT INTO furniture VALUES
+(1, 'leather couch'),
+(2, 'fabric sofa'),
+(3, 'velvet divan');
+
+statement ok
+VACUUM (REFRESH_TABLE) furniture;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, name FROM furniture_idx WHERE name @@ 'sofa' ORDER BY id;
+----
+id	name
+1	leather couch
+2	fabric sofa
+3	velvet divan
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+SELECT ts_lexize('wn', 'sofa')  AS sofa,
+       ts_lexize('wn', 'couch') AS couch,
+       ts_lexize('wn', 'table') AS unknown;
+----
+sofa	couch	unknown
+{100000001}	{100000001}	{}

@@ -529,8 +529,7 @@ std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp) {
 
 duckdb::TableFunction MakeFastPathLookupFunction(const ViewFastPath& fp) {
   const auto* entry = LookupRegistry(fp.function_name);
-  SDB_ENSURE(entry, ERROR_INTERNAL,
-             "fast-path classification missing for function ",
+  SDB_ENSURE(entry, "fast-path classification missing for function ",
              fp.function_name);
   return entry->make_lookup();
 }

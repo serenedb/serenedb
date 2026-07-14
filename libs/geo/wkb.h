@@ -20,9 +20,8 @@
 
 #pragma once
 
+#include <string>
 #include <string_view>
-
-#include "basics/result.h"
 
 namespace sdb::geo {
 
@@ -37,6 +36,6 @@ class ShapeContainer;
 // established at CREATE INDEX time implies 2D).
 //
 // WKB coordinate order is (longitude, latitude) per OGC SFA.
-Result ParseShapeWKB(std::string_view bytes, ShapeContainer& region);
+bool ParseShapeWKB(std::string_view bytes, ShapeContainer& region);
 
 }  // namespace sdb::geo

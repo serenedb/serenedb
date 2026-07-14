@@ -36,7 +36,8 @@ statement ok
 CREATE ROLE vu_forever LOGIN PASSWORD 'mop_secret' VALID UNTIL 'infinity';
 
 
-# Passwordless role: trust login, so the expiry never applies.
+# Passwordless role: cannot authenticate at all (no trust downgrade), so the
+# expiry is moot -- the refusal is the generic auth failure, not an expiry one.
 statement ok
 CREATE ROLE vu_trust_expired LOGIN VALID UNTIL '2000-01-01 00:00:00+00';
 
@@ -67,13 +68,13 @@ current_user
 vu_forever
 
 
-# --- passwordless role with a past expiry -> trust login, expiry not consulted ---
+# --- passwordless role with a past expiry -> refused like any passwordless
+# role; a password method never downgrades to trust ---
 connection c_trust user=vu_trust_expired password=irrelevant
-query
-SELECT current_user;
+statement error
+SELECT 1;
 ----
-current_user
-vu_trust_expired
+db error: FATAL: password authentication failed for user "vu_trust_expired"<slt:ignore>
 
 
 # --- ALTER ROLE pushes the expiry into the future -> the role can log in again ---

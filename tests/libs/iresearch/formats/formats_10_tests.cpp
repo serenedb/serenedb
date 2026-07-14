@@ -198,7 +198,7 @@ class Format10TestCase : public tests::FormatTestCase {
           }
 
           if (inc == 1) {
-            ASSERT_FALSE(actual->next());
+            ASSERT_FALSE(!irs::doc_limits::eof(actual->advance()));
             ASSERT_TRUE(irs::doc_limits::eof(actual->value()));
 
             // seek after the existing documents
@@ -213,7 +213,7 @@ class Format10TestCase : public tests::FormatTestCase {
             field.index_features, irs::IndexFeatures::None,
             {.cookie = &read_meta}, irs::IteratorFieldOptions{false});
           ASSERT_FALSE(irs::doc_limits::valid(it->value()));
-          ASSERT_TRUE(it->next());
+          ASSERT_TRUE(!irs::doc_limits::eof(it->advance()));
           ASSERT_EQ(docs.front().first, it->value());
           ASSERT_TRUE(irs::doc_limits::eof(it->seek(docs.back().first + 42)));
         }
@@ -243,11 +243,11 @@ class Format10TestCase : public tests::FormatTestCase {
             ASSERT_EQ(doc->first, expected.seek(doc->first));
             AssertFrequencyAndPositions(expected, *it);
             if (doc != docs.rbegin()) {
-              ASSERT_TRUE(it->next());
+              ASSERT_TRUE(!irs::doc_limits::eof(it->advance()));
               const auto expected_doc = (doc - 1)->first;
               ASSERT_EQ(expected_doc, it->value());
 
-              ASSERT_TRUE(expected.next());
+              ASSERT_TRUE(!irs::doc_limits::eof(expected.advance()));
               ASSERT_EQ(expected_doc, expected.value());
               AssertFrequencyAndPositions(expected, *it);
             }
@@ -262,7 +262,7 @@ class Format10TestCase : public tests::FormatTestCase {
           ASSERT_FALSE(irs::doc_limits::valid(it->value()));
           ASSERT_FALSE(
             irs::doc_limits::valid(it->seek(irs::doc_limits::invalid())));
-          ASSERT_TRUE(it->next());
+          ASSERT_TRUE(!irs::doc_limits::eof(it->advance()));
           ASSERT_EQ(docs.front().first, it->value());
         }
 
@@ -273,7 +273,7 @@ class Format10TestCase : public tests::FormatTestCase {
             {.cookie = &read_meta}, irs::IteratorFieldOptions{false});
           ASSERT_FALSE(irs::doc_limits::valid(it->value()));
           ASSERT_TRUE(irs::doc_limits::eof(it->seek(irs::doc_limits::eof())));
-          ASSERT_FALSE(it->next());
+          ASSERT_FALSE(!irs::doc_limits::eof(it->advance()));
           ASSERT_TRUE(irs::doc_limits::eof(it->value()));
         }
       }
@@ -402,7 +402,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       auto it = reader->Iterator(field.index_features, irs::IndexFeatures::None,
                                  {.cookie = &read_meta},
                                  irs::IteratorFieldOptions{false});
-      for (size_t i = 0; it->next();) {
+      for (size_t i = 0; !irs::doc_limits::eof(it->advance());) {
         ASSERT_EQ(docs0[i++].first, it->value());
       }
     }
@@ -427,7 +427,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       auto it = reader->Iterator(field.index_features, irs::IndexFeatures::None,
                                  {.cookie = &read_meta},
                                  irs::IteratorFieldOptions{false});
-      for (size_t i = 0; it->next();) {
+      for (size_t i = 0; !irs::doc_limits::eof(it->advance());) {
         ASSERT_EQ(docs1[i++].first, it->value());
       }
     }
@@ -541,7 +541,7 @@ TEST_P(Format10TestCase, postings_read_write) {
       auto it = reader->Iterator(field.index_features, irs::IndexFeatures::None,
                                  {.cookie = &read_meta},
                                  irs::IteratorFieldOptions{false});
-      for (size_t i = 0; it->next();) {
+      for (size_t i = 0; !irs::doc_limits::eof(it->advance());) {
         ASSERT_EQ(docs0[i++].first, it->value());
       }
     }
@@ -565,7 +565,7 @@ TEST_P(Format10TestCase, postings_read_write) {
       auto it = reader->Iterator(field.index_features, irs::IndexFeatures::None,
                                  {.cookie = &read_meta},
                                  irs::IteratorFieldOptions{false});
-      for (size_t i = 0; it->next();) {
+      for (size_t i = 0; !irs::doc_limits::eof(it->advance());) {
         ASSERT_EQ(docs1[i++].first, it->value());
       }
     }

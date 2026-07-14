@@ -416,7 +416,7 @@ class FsIndexInput : public BufferedIndexInput {
 
   FsIndexInput& operator=(const FsIndexInput&) = delete;
 
-  byte_type _buf[1024];
+  byte_type _buf[8192];
   FileHandle::ptr _handle;  // shared file handle
   size_t _pool_size;  // size of pool for instances of pooled_fs_index_input
   uint64_t _pos;      // current input stream position

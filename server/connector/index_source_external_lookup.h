@@ -54,14 +54,13 @@ class ExternalLookupIndexSource final : public ViewIndexSourceBase {
     std::span<const duckdb::LogicalType> projected_types,
     std::span<const catalog::Column::Id> bind_column_ids);
 
-  PrimaryKeyBatch CreatePkBatch() const final {
-    return PrimaryKeyBatch{std::in_place_type<PrimaryKeyI64>};
+  PrimaryKeyBatch::Kind PkKind() const final {
+    return PrimaryKeyBatch::Kind::I64;
   }
 
-  duckdb::idx_t Materialize(duckdb::ClientContext& context,
-                            PrimaryKeyBatch& batch, duckdb::idx_t start,
-                            duckdb::idx_t count,
-                            duckdb::DataChunk& output) final;
+  void Materialize(duckdb::ClientContext& context, PrimaryKeyBatch& batch,
+                   duckdb::idx_t start, duckdb::idx_t count,
+                   duckdb::DataChunk& output) final;
 
  private:
   // "SELECT <pk>, <cols> FROM <table> WHERE <pk> IN (" -- constant across

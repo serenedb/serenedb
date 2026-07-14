@@ -23,7 +23,7 @@ CREATE TABLE isp_makak (id int, blob text);
 
 
 statement ok
-CREATE ROLE isp_lambda LOGIN;
+CREATE ROLE isp_lambda LOGIN PASSWORD 'isp_lambda_pw';
 
 
 statement ok
@@ -65,7 +65,7 @@ isp_lambda	INSERT
 # benefits from it) AND lambda's own INSERT row.
 # ============================================================================
 
-connection c_lambda user=isp_lambda
+connection c_lambda user=isp_lambda password=isp_lambda_pw
 query
 SELECT grantee, privilege_type
 FROM information_schema.table_privileges
@@ -83,7 +83,7 @@ isp_lambda	INSERT
 # the two views.
 # ============================================================================
 
-connection c_lambda user=isp_lambda
+connection c_lambda user=isp_lambda password=isp_lambda_pw
 query
 SELECT grantee, privilege_type
 FROM information_schema.role_table_grants
@@ -95,7 +95,7 @@ isp_lambda	INSERT
 
 
 # The PUBLIC row count differs by view from lambda's seat: 1 vs 0.
-connection c_lambda user=isp_lambda
+connection c_lambda user=isp_lambda password=isp_lambda_pw
 query
 SELECT
   (SELECT count(*) FROM information_schema.table_privileges
@@ -116,7 +116,7 @@ statement ok
 REVOKE SELECT ON isp_makak FROM PUBLIC;
 
 
-connection c_lambda user=isp_lambda
+connection c_lambda user=isp_lambda password=isp_lambda_pw
 query
 SELECT grantee, privilege_type
 FROM information_schema.table_privileges

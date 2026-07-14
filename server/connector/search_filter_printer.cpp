@@ -42,12 +42,14 @@
 #include <iresearch/search/search_range.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
+#include <iresearch/search/vector_radius_filter.hpp>
+#include <iresearch/search/vector_similarity_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/search/wildcard_ngram_filter.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 
 #include "basics/down_cast.h"
-#include "basics/exceptions.h"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 namespace {
@@ -155,22 +157,22 @@ struct PhrasePartVisitor : util::Noncopyable {
     absl::StrAppend(out, "Prefix:", TermToString(opts.term));
   }
   auto operator()(const ByWildcardOptions&) const {
-    SDB_THROW(sdb::ERROR_INTERNAL,
-              "Wildcard phrase part must be lowered by the optimizer before "
-              "printing");
+    THROW_SQL_ERROR(
+      ERR_MSG("Wildcard phrase part must be lowered by the optimizer before "
+              "printing"));
   }
   auto operator()(const ByEditDistanceOptions&) const {
-    SDB_THROW(sdb::ERROR_INTERNAL,
-              "Levenshtein phrase part must be lowered by the optimizer before "
-              "printing");
+    THROW_SQL_ERROR(
+      ERR_MSG("Levenshtein phrase part must be lowered by the optimizer before "
+              "printing"));
   }
   auto operator()(const LevenshteinAutomatonOptions& opts) const {
     absl::StrAppend(out, "LevenshteinAutomaton:", TermToString(opts.target));
   }
   auto operator()(const ByRegexpOptions&) const {
-    SDB_THROW(sdb::ERROR_INTERNAL,
-              "Regexp phrase part must be lowered by the optimizer before "
-              "printing");
+    THROW_SQL_ERROR(
+      ERR_MSG("Regexp phrase part must be lowered by the optimizer before "
+              "printing"));
   }
   auto operator()(const AutomatonOptions& opts) const {
     absl::StrAppend(out, "Automaton:", TermToString(opts.pattern));
@@ -226,6 +228,20 @@ std::string_view GeoShapeTypeName(sdb::geo::ShapeContainer::Type type) {
       return "S2Multipoint";
     case T::S2Multipolyline:
       return "S2Multipolyline";
+  }
+  return "?";
+}
+
+std::string_view VectorMetricName(VectorMetric metric) {
+  switch (metric) {
+    case VectorMetric::L2Sqr:
+      return "l2";
+    case VectorMetric::InnerProduct:
+      return "ip";
+    case VectorMetric::Cosine:
+      return "cosine";
+    case VectorMetric::L1:
+      return "l1";
   }
   return "?";
 }
@@ -302,6 +318,15 @@ struct FilterPrinter {
     return s;
   }
 
+  ExplainNode BuildVectorNodeCommon(std::string title, field_id fid,
+                                    VectorMetric metric, size_t dims) const {
+    ExplainNode node{std::move(title)};
+    node.attributes["Field"] = FieldName(fid);
+    node.attributes["Metric"] = std::string{VectorMetricName(metric)};
+    node.attributes["Dims"] = absl::StrCat(dims);
+    return node;
+  }
+
   ExplainNode Build(const Filter& filter) const {
     auto node = BuildNode(filter);
     if (const auto boost = filter.BoostImpl(); boost != kNoBoost) {
@@ -334,9 +359,9 @@ struct FilterPrinter {
       return node;
     }
     if (type == Type<Not>::id()) {
-      SDB_THROW(sdb::ERROR_INTERNAL,
-                "Not filter must be lowered to Exclusion by the optimizer "
-                "before printing");
+      THROW_SQL_ERROR(
+        ERR_MSG("Not filter must be lowered to Exclusion by the optimizer "
+                "before printing"));
     }
     if (type == Type<Exclusion>::id()) {
       const auto& f = downCast<const Exclusion>(filter);
@@ -405,9 +430,9 @@ struct FilterPrinter {
       return node;
     }
     if (type == Type<ByEditDistance>::id()) {
-      SDB_THROW(sdb::ERROR_INTERNAL,
-                "ByEditDistance filter must be lowered to "
-                "LevenshteinAutomatonFilter by the optimizer before printing");
+      THROW_SQL_ERROR(
+        ERR_MSG("ByEditDistance filter must be lowered to "
+                "LevenshteinAutomatonFilter by the optimizer before printing"));
     }
     if (type == Type<LevenshteinAutomatonFilter>::id()) {
       const auto& f = downCast<const LevenshteinAutomatonFilter>(filter);
@@ -445,16 +470,16 @@ struct FilterPrinter {
       return node;
     }
     if (type == Type<ByWildcard>::id()) {
-      SDB_THROW(sdb::ERROR_INTERNAL,
-                "ByWildcard filter must be lowered to "
+      THROW_SQL_ERROR(
+        ERR_MSG("ByWildcard filter must be lowered to "
                 "ByTerm/ByPrefix/AutomatonFilter by the optimizer before "
-                "printing");
+                "printing"));
     }
     if (type == Type<ByRegexp>::id()) {
-      SDB_THROW(sdb::ERROR_INTERNAL,
-                "ByRegexp filter must be lowered to "
+      THROW_SQL_ERROR(
+        ERR_MSG("ByRegexp filter must be lowered to "
                 "ByTerm/ByPrefix/AutomatonFilter by the optimizer before "
-                "printing");
+                "printing"));
     }
     if (type == Type<AutomatonFilter>::id()) {
       const auto& f = downCast<const AutomatonFilter>(filter);
@@ -496,6 +521,28 @@ struct FilterPrinter {
       ExplainNode node{"Geo Distance"};
       node.attributes["Field"] = FieldName(f.field_id());
       node.attributes["Range"] = GeoDistanceRange(f);
+      return node;
+    }
+    if (type == Type<ByVectorSimilarity>::id()) {
+      const auto& f = downCast<const ByVectorSimilarity>(filter);
+      const auto& o = f.options();
+      ExplainNode node = BuildVectorNodeCommon("Vector KNN", f.field_id(),
+                                               o.metric, o.query.size());
+      if (o.inner) {
+        node.children.push_back(Build(*o.inner));
+      }
+      return node;
+    }
+    if (type == Type<ByRadius>::id()) {
+      const auto& f = downCast<const ByRadius>(filter);
+      const auto& o = f.options();
+      ExplainNode node = BuildVectorNodeCommon("Vector Range", f.field_id(),
+                                               o.metric, o.query.size());
+      node.attributes["Radius"] =
+        absl::StrCat(o.inclusive ? "<= " : "< ", o.radius);
+      if (o.inner) {
+        node.children.push_back(Build(*o.inner));
+      }
       return node;
     }
     if (type == Type<ProxyFilter>::id()) {

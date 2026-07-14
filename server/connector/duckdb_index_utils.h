@@ -39,36 +39,20 @@ namespace sdb::connector {
 
 enum class DuckDBWriteKind { Insert, Delete };
 
-// Writer for ONE inverted index, identified by id -- the store-side
-// BoundIndex feeds exactly its own index. nullptr when the index is not an
-// inverted index of `table_id` (e.g. concurrently dropped).
 template<DuckDBWriteKind Kind>
 std::unique_ptr<DuckDBSinkIndexWriter> CreateInvertedIndexWriter(
   ObjectId table_id, ObjectId index_id, ConnectionContext& conn_ctx,
   duckdb::optional_ptr<duckdb::ClientContext> expr_context = nullptr);
 
-// Catalog column positions to project for a CREATE INDEX backfill scan:
-// union of index-key columns and PK columns, sorted+deduped (== catalog
-// column order). For tables with a generated PK the caller appends ROW_ID
-// at chunk position equal to projection.size().
-//
-// `index_column_positions` are positions into `columns` (positional, not
-// Column::Id). `pk_column_ids` are Column::Id values, resolved internally.
 std::vector<size_t> BuildCreateIndexProjection(
   std::span<const catalog::Column> columns,
   std::span<const catalog::Column::Id> pk_column_ids,
   std::span<const duckdb::idx_t> index_column_positions);
 
-// Evaluates each indexed expression against `chunk` and writes its result as
-// a virtual column into `sink` under the original `row_keys`. Stamps each
-// expression's column id into the keys, switches the writer to it, and
-// emits the value via the serializer. Shared by INSERT, UPDATE, CREATE
-// INDEX backfill, and WAL recovery.
 void EvaluateAndWriteIndexedExpressions(
   DuckDBSinkIndexWriter& sink, std::span<const IndexedExpression> indexed_exprs,
   duckdb::DataChunk& chunk, ObjectId table_id,
   std::span<const catalog::Column::Id> slot_to_col_id,
-  duckdb::ClientContext& client_context, duckdb::idx_t num_rows,
-  std::vector<std::string>& row_keys);
+  duckdb::ClientContext& client_context, duckdb::idx_t num_rows);
 
 }  // namespace sdb::connector

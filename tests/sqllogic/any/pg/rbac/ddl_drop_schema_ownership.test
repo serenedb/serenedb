@@ -16,11 +16,11 @@ CREATE SCHEMA dss_clickclack;
 
 
 statement ok
-CREATE ROLE dss_vedernikoff LOGIN;
+CREATE ROLE dss_vedernikoff LOGIN PASSWORD 'dss_vedernikoff_pw';
 
 
 # Non-owner DROP SCHEMA is refused (PG: "must be owner of schema ...").
-connection c_ved user=dss_vedernikoff
+connection c_ved user=dss_vedernikoff password=dss_vedernikoff_pw
 statement error
 DROP SCHEMA dss_clickclack;
 ----

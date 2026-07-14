@@ -134,6 +134,10 @@ struct AddrMatcher {
   // `kind` and produces a reject-at-connect Decision.
   bool Matches(int client_family,
                const std::array<uint8_t, 16>& client_addr) const;
+
+  // True if `candidate` (16 raw bytes, network order) is inside addr/mask.
+  // Masks may be non-contiguous, so this is a plain AND-compare.
+  bool Contains(const std::array<uint8_t, 16>& candidate) const;
 };
 
 // A parsed name=value auth option (map=, clientcert=, ldap*, ...). Carried
@@ -157,9 +161,6 @@ struct Rule {
 struct Ruleset {
   std::vector<Rule> rules;  // first-match-wins, in seq order
   uint64_t version = 0;
-  // True only for the built-in zero-config default (never explicitly set or
-  // persisted). Password methods trust password-less roles only here.
-  bool is_default = false;
 };
 
 // The outcome of matching a connection against the ruleset.

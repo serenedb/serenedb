@@ -106,7 +106,7 @@ TEST_P(Format13TestCase, open_10_with_13) {
     ASSERT_TRUE(term_itr->next());
 
     for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
-         docs_itr->next();) {
+         !irs::doc_limits::eof(docs_itr->advance());) {
       ASSERT_EQ(1,
                 expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
                   values, docs_itr->value())));
@@ -178,7 +178,7 @@ TEST_P(Format13TestCase, formats_13) {
     ASSERT_TRUE(term_itr->next());
 
     for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
-         docs_itr->next();) {
+         !irs::doc_limits::eof(docs_itr->advance());) {
       ASSERT_EQ(1,
                 expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
                   values, docs_itr->value())));
@@ -206,7 +206,7 @@ TEST_P(Format13TestCase, formats_13) {
     ASSERT_TRUE(term_itr->next());
 
     for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
-         docs_itr->next();) {
+         !irs::doc_limits::eof(docs_itr->advance());) {
       ASSERT_EQ(1,
                 expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
                   values, docs_itr->value())));

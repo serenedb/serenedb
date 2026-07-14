@@ -44,7 +44,7 @@ DROP ROLE IF EXISTS isr_en_solo;
 # ----------------------------------------------------------------------
 
 statement ok
-CREATE ROLE isr_en_pudge LOGIN;
+CREATE ROLE isr_en_pudge LOGIN PASSWORD 'isr_en_pudge_pw';
 
 
 statement ok
@@ -60,7 +60,7 @@ CREATE ROLE isr_en_iceberg;
 
 
 # Before any membership, pudge's session has only pudge enabled.
-connection c_pudge user=isr_en_pudge
+connection c_pudge user=isr_en_pudge password=isr_en_pudge_pw
 query
 SELECT role_name FROM information_schema.enabled_roles
 WHERE role_name LIKE 'isr_en_%' ORDER BY role_name;
@@ -83,7 +83,7 @@ GRANT isr_en_iceberg TO isr_en_deadinside;
 
 # Now pudge's session has the entire upward closure enabled: itself + 3 ancestors.
 # A fresh connection picks up the membership changes made on the control session.
-connection c_pudge2 user=isr_en_pudge
+connection c_pudge2 user=isr_en_pudge password=isr_en_pudge_pw
 query
 SELECT role_name FROM information_schema.enabled_roles
 WHERE role_name LIKE 'isr_en_%' ORDER BY role_name;
@@ -96,7 +96,7 @@ isr_en_pudge
 
 
 # The closure is exactly four roles (count is robust to filtering noise).
-connection c_pudge2 user=isr_en_pudge
+connection c_pudge2 user=isr_en_pudge password=isr_en_pudge_pw
 query
 SELECT count(*) AS n FROM information_schema.enabled_roles
 WHERE role_name LIKE 'isr_en_%';
@@ -107,7 +107,7 @@ n
 
 # enabled_roles is node-collapsed: even though the leaf iceberg is reached by a
 # single path here, it shows up exactly once.
-connection c_pudge2 user=isr_en_pudge
+connection c_pudge2 user=isr_en_pudge password=isr_en_pudge_pw
 query
 SELECT count(*) AS leaf FROM information_schema.enabled_roles
 WHERE role_name = 'isr_en_iceberg';
@@ -135,7 +135,7 @@ GRANT isr_en_iceberg TO isr_en_mop;
 
 
 # iceberg is reachable by two paths now, yet appears exactly once.
-connection c_pudge3 user=isr_en_pudge
+connection c_pudge3 user=isr_en_pudge password=isr_en_pudge_pw
 query
 SELECT count(*) AS iceberg_rows FROM information_schema.enabled_roles
 WHERE role_name = 'isr_en_iceberg';
@@ -145,7 +145,7 @@ iceberg_rows
 
 
 # The enabled set grew by exactly one node (mop); the closure is now five roles.
-connection c_pudge3 user=isr_en_pudge
+connection c_pudge3 user=isr_en_pudge password=isr_en_pudge_pw
 query
 SELECT role_name FROM information_schema.enabled_roles
 WHERE role_name LIKE 'isr_en_%' ORDER BY role_name;
@@ -172,7 +172,7 @@ REVOKE isr_en_mop FROM isr_en_pudge;
 
 
 # mop is gone; iceberg remains (still reached via deadinside). Back to four.
-connection c_pudge4 user=isr_en_pudge
+connection c_pudge4 user=isr_en_pudge password=isr_en_pudge_pw
 query
 SELECT role_name FROM information_schema.enabled_roles
 WHERE role_name LIKE 'isr_en_%' ORDER BY role_name;
@@ -189,10 +189,10 @@ isr_en_pudge
 # ----------------------------------------------------------------------
 
 statement ok
-CREATE ROLE isr_en_solo LOGIN;
+CREATE ROLE isr_en_solo LOGIN PASSWORD 'isr_en_solo_pw';
 
 
-connection c_solo user=isr_en_solo
+connection c_solo user=isr_en_solo password=isr_en_solo_pw
 query
 SELECT role_name FROM information_schema.enabled_roles
 WHERE role_name LIKE 'isr_en_%' ORDER BY role_name;
@@ -203,7 +203,7 @@ isr_en_solo
 
 # A foreign session never sees an unrelated chain. solo cannot see pudge's
 # ancestors (kostya/deadinside/iceberg) in its own enabled_roles.
-connection c_solo user=isr_en_solo
+connection c_solo user=isr_en_solo password=isr_en_solo_pw
 query
 SELECT count(*) AS foreign_nodes FROM information_schema.enabled_roles
 WHERE role_name IN ('isr_en_pudge', 'isr_en_kostya', 'isr_en_deadinside', 'isr_en_iceberg');

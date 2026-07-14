@@ -162,7 +162,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -196,7 +196,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -223,7 +223,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -249,7 +249,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -280,7 +280,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -311,7 +311,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -338,7 +338,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -364,7 +364,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -395,7 +395,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -426,7 +426,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -452,7 +452,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -479,7 +479,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -509,7 +509,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -539,7 +539,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -565,7 +565,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -592,7 +592,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -1394,7 +1394,9 @@ TEST_P(RangeFilterTestCase, visit) {
   // get term dictionary for field
   const auto* reader = segment.field(field);
   ASSERT_NE(nullptr, reader);
-  irs::ByRange::visit(segment, *reader, range, visitor);
+  irs::ByRangeOptions options;
+  options.range = range;
+  irs::ByRange::visit(segment, *reader, options, visitor);
   ASSERT_EQ(1, visitor.prepare_calls_counter());
   ASSERT_EQ(2, visitor.visit_calls_counter());
   ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{

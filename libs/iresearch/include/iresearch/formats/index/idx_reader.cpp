@@ -29,23 +29,22 @@
 #include <vector>
 
 #include "basics/containers/flat_hash_map.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "basics/math_utils.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
-#include "iresearch/formats/hnsw/hnsw_reader.hpp"  // ReadHNSW
+#include "iresearch/formats/ivf/centroids.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/store/directory_attributes.hpp"
 #include "iresearch/utils/encryption.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 namespace {
 
 constexpr duckdb::field_id_t kFooterSlotTermDict = 100;
-constexpr duckdb::field_id_t kFooterSlotHnsw = 101;
+constexpr duckdb::field_id_t kFooterSlotIvf = 101;
 
 IndexInput::ptr OpenAndCheckHeader(const Directory& dir,
                                    std::string_view filename) {
@@ -66,14 +65,12 @@ struct IdxReader::Impl {
   Encryption::Stream::ptr cipher;
   IndexInput::ptr in;
   uint64_t body_start{};
-  std::vector<std::pair<field_id, HNSWEntry>> hnsw_entries;
-  sdb::containers::FlatHashMap<field_id, size_t> hnsw_by_id;
+  std::vector<std::pair<field_id, TwoLayerCentroids>> ivf_entries;
+  sdb::containers::FlatHashMap<field_id, size_t> ivf_by_id;
   std::vector<std::pair<field_id, TermDictMeta>> term_dicts;
-  sdb::containers::FlatHashMap<field_id, size_t> term_dict_by_id;
 };
 
-IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
-                     const PreloadedHnswGraphs& preloaded)
+IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
   : _impl{std::make_unique<Impl>()} {
   const auto filename = absl::StrCat(segment_name, ".", kIdxFormatExt);
   bool exists = false;
@@ -89,14 +86,12 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
   auto* enc = dir.attributes().encryption();
   if (Decrypt(filename, *raw_in, enc, _impl->cipher)) {
     SDB_ENSURE(_impl->cipher && _impl->cipher->block_size(),
-               sdb::ERROR_INTERNAL,
                "IdxReader: Decrypt returned true but cipher / block_size() "
                "is null for ",
                filename);
   }
   const auto raw_len = raw_in->Length();
   SDB_ENSURE(raw_len >= raw_in->Position() + kTrailerLen,
-             sdb::ERROR_SERVER_CORRUPTED_DATAFILE,
              "idx: truncated `.idx` file ", filename, " (length ", raw_len,
              " is not large enough to contain header + footer offset + "
              "iresearch footer)");
@@ -118,9 +113,9 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
 
   const uint64_t body_len =
     _impl->cipher ? _impl->in->Length() : raw_len - kTrailerLen;
-  SDB_ENSURE(footer_offset <= body_len, sdb::ERROR_SERVER_CORRUPTED_DATAFILE,
-             "idx: corrupted `.idx` file ", filename, ": footer offset ",
-             footer_offset, " is out of body range [0, ", body_len, "]");
+  SDB_ENSURE(footer_offset <= body_len, "idx: corrupted `.idx` file ", filename,
+             ": footer offset ", footer_offset, " is out of body range [0, ",
+             body_len, "]");
   const auto footer_in = _impl->in->Dup();
   footer_in->Seek(footer_offset);
 
@@ -141,47 +136,24 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
         meta.has_wand = obj.ReadProperty<bool>(6, "has_wand");
         meta.body_offset = obj.ReadProperty<uint64_t>(7, "body_offset");
         meta.norm = obj.ReadProperty<uint64_t>(8, "norm");
-        const size_t idx = _impl->term_dicts.size();
         _impl->term_dicts.emplace_back(id, std::move(meta));
-        _impl->term_dict_by_id.emplace(id, idx);
       });
     });
   deserializer.ReadList(
-    kFooterSlotHnsw, "hnsw",
+    kFooterSlotIvf, "ivf",
     [&](duckdb::Deserializer::List& list, duckdb::idx_t /*i*/) {
       list.ReadObject([&](duckdb::Deserializer& obj) {
-        auto id = obj.ReadProperty<uint64_t>(0, "id");
-        auto graph_offset = obj.ReadProperty<uint64_t>(1, "graph_offset");
-        auto graph_byte_size = obj.ReadProperty<uint64_t>(2, "graph_byte_size");
-        HNSWInfo info;
-        info.max_doc =
-          static_cast<doc_id_t>(obj.ReadProperty<uint64_t>(3, "max_doc"));
-        info.metric =
-          static_cast<HNSWMetric>(obj.ReadProperty<uint8_t>(4, "metric"));
+        const auto id = obj.ReadProperty<uint64_t>(0, "id");
+        const auto offset = obj.ReadProperty<uint64_t>(1, "offset");
+        const auto byte_size = obj.ReadProperty<uint64_t>(2, "byte_size");
 
-        std::shared_ptr<const faiss::HNSW> hnsw;
-        if (auto pit = preloaded.find(id); pit != preloaded.end()) {
-          hnsw = pit->second;
-        } else {
-          _impl->in->Seek(graph_offset);
-          auto mutable_hnsw = std::make_shared<faiss::HNSW>();
-          irs::ReadHNSW(*_impl->in, *mutable_hnsw);
-          SDB_ENSURE(_impl->in->Position() - graph_offset == graph_byte_size,
-                     sdb::ERROR_SERVER_CORRUPTED_DATAFILE,
-                     "idx: ReadHNSW must consume exactly graph_byte_size "
-                     "bytes (consumed ",
-                     _impl->in->Position() - graph_offset, ", expected ",
-                     graph_byte_size, ")");
-          hnsw = std::move(mutable_hnsw);
-        }
+        auto body = _impl->in->Dup();
+        body->Seek(offset);
+        auto entry = TwoLayerCentroids::Deserialize(*body, byte_size);
 
-        info.m = hnsw->nb_neighbors(1);
-        info.ef_construction = hnsw->efConstruction;
-
-        const size_t idx = _impl->hnsw_entries.size();
-        _impl->hnsw_entries.emplace_back(
-          id, HNSWEntry{.graph = std::move(hnsw), .info = info});
-        _impl->hnsw_by_id.emplace(id, idx);
+        const size_t idx = _impl->ivf_entries.size();
+        _impl->ivf_entries.emplace_back(id, std::move(entry));
+        _impl->ivf_by_id.emplace(id, idx);
       });
     });
   deserializer.End();
@@ -189,27 +161,10 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
 
 IdxReader::~IdxReader() = default;
 
-bool IdxReader::HasHNSW(field_id id) const noexcept {
-  return _impl->hnsw_by_id.contains(id);
-}
-
-const HNSWEntry* IdxReader::HNSW(field_id id) const noexcept {
-  auto it = _impl->hnsw_by_id.find(id);
-  return it == _impl->hnsw_by_id.end()
-           ? nullptr
-           : &_impl->hnsw_entries[it->second].second;
-}
-
-std::span<const std::pair<field_id, HNSWEntry>> IdxReader::HNSWEntries()
-  const noexcept {
-  return _impl->hnsw_entries;
-}
-
-const TermDictMeta* IdxReader::TermDict(field_id id) const noexcept {
-  auto it = _impl->term_dict_by_id.find(id);
-  return it == _impl->term_dict_by_id.end()
-           ? nullptr
-           : &_impl->term_dicts[it->second].second;
+const TwoLayerCentroids* IdxReader::Ivf(field_id id) const noexcept {
+  auto it = _impl->ivf_by_id.find(id);
+  return it == _impl->ivf_by_id.end() ? nullptr
+                                      : &_impl->ivf_entries[it->second].second;
 }
 
 std::span<const std::pair<field_id, TermDictMeta>> IdxReader::TermDicts()

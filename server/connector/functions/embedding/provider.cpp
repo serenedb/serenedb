@@ -22,6 +22,7 @@
 
 #include <absl/strings/str_cat.h>
 
+#include "basics/system-compiler.h"
 #include "connector/functions/embedding/provider_openai.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"

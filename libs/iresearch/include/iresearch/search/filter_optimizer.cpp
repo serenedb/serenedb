@@ -88,6 +88,7 @@ void Optimize(Filter::ptr& root, const OptimizeContext& ctx) {
   }
   RunPass(root, ctx);
   optimizer::LowerAutomatons(root, ctx);
+  optimizer::FuseIntersections(root, ctx);
 }
 
 }  // namespace irs

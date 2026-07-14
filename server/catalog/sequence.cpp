@@ -24,9 +24,9 @@
 #include <duckdb/common/serializer/serializer.hpp>
 
 #include "basics/assert.h"
-#include "basics/exceptions.h"
 #include "basics/serializer.h"
 #include "catalog/store/store.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::catalog {
 
@@ -69,16 +69,12 @@ uint64_t Sequence::LoadFromDb() const {
   if (store.TryGetBootSequenceValue(GetId(), value)) {
     return value;
   }
-  if (auto r = store.GetSequenceValue(GetId(), value); !r.ok()) {
-    SDB_THROW(std::move(r));
-  }
+  store.GetSequenceValue(GetId(), value);
   return value;
 }
 
 void Sequence::Persist(uint64_t value) {
-  if (auto r = GetCatalogStore().PutSequenceValue(GetId(), value); !r.ok()) {
-    SDB_THROW(std::move(r));
-  }
+  GetCatalogStore().PutSequenceValue(GetId(), value);
 }
 
 uint64_t Sequence::ReserveCached(uint64_t count) {

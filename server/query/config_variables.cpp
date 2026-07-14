@@ -47,6 +47,7 @@
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "query/config.h"
+#include "query/config_variable_names.h"
 
 namespace sdb {
 
@@ -317,18 +318,40 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      "sdb_ef_search",
+      "sdb_nprobe",
       {
         LogicalTypeId::INTEGER,
-        "Per-session override for the HNSW search-time neighbourhood size "
-        "(efSearch). 0 (default) uses Top-K value instead.",
-        [] { return duckdb::Value::INTEGER(0); },
+        "Number of IVF cluster lists scanned per vector-similarity query. "
+        "Higher values improve recall at the cost of latency. Default 8.",
+        [] { return duckdb::Value::INTEGER(8); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          auto n = value.GetValue<int32_t>();
+          if (n < 1) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                            ERR_MSG("invalid value for parameter "
+                                    "\"sdb_nprobe\": \"",
+                                    value.ToString(), "\""));
+          }
+        },
+      },
+    },
+    {
+      "sdb_rerank_factor",
+      {
+        LogicalTypeId::INTEGER,
+        "Multiplier applied to LIMIT k to size the candidate pool re-scored "
+        "with exact distances for a quantized IVF vector-similarity query "
+        "(pool = sdb_rerank_factor * k). Higher values improve recall at the "
+        "cost of latency; 0 disables reranking (top-k picked by the "
+        "approximate quantized distance). Default 4. Unquantized (quant = "
+        "'none') indexes never rerank, regardless of this setting.",
+        [] { return duckdb::Value::INTEGER(4); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto n = value.GetValue<int32_t>();
           if (n < 0) {
             THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                             ERR_MSG("invalid value for parameter "
-                                    "\"sdb_ef_search\": \"",
+                                    "\"sdb_rerank_factor\": \"",
                                     value.ToString(), "\""));
           }
         },
@@ -408,7 +431,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      "refresh_interval",
+      kRefreshIntervalSetting,
       {
         LogicalTypeId::UINTEGER,
         "Background refresh interval (ms) for newly created inverted indexes. "
@@ -419,7 +442,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      "compaction_interval",
+      kCompactionIntervalSetting,
       {
         LogicalTypeId::UINTEGER,
         "Background compaction interval (ms) for newly created inverted "
@@ -430,7 +453,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      "cleanup_interval_step",
+      kCleanupIntervalStepSetting,
       {
         LogicalTypeId::UINTEGER,
         "Number of commit ticks between background unreferenced-file cleanup "

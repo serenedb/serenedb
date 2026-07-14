@@ -90,6 +90,8 @@ class DocIteratorWrapper : public irs::DocIterator {
     });
   }
 
+  IRS_DOC_ITERATOR_DEFAULTS
+
  private:
   irs::DocIterator::ptr _it;
   std::vector<irs::doc_id_t> _docs;
@@ -504,15 +506,16 @@ class EmptyFilterVisitor : public irs::FilterVisitor {
  public:
   void Prepare(const irs::SubReader& /*segment*/,
                const irs::TermReader& /*field*/,
-               const irs::SeekTermIterator& terms) noexcept final {
+               irs::SeekTermIterator& terms) noexcept final {
     _it = &terms;
     ++_prepare_calls_counter;
   }
 
-  void Visit(irs::score_t boost) noexcept final {
-    ASSERT_NE(nullptr, _it);
+  bool Visit(irs::score_t boost) noexcept final {
+    EXPECT_NE(nullptr, _it);
     _terms.emplace_back(_it->value(), boost);
     ++_visit_calls_counter;
+    return true;
   }
 
   void reset() noexcept {

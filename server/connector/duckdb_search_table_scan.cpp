@@ -24,7 +24,6 @@
 #include <duckdb/common/types/data_chunk.hpp>
 
 #include "basics/assert.h"
-#include "basics/exceptions.h"
 #include "catalog/catalog.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
@@ -55,8 +54,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchTableScanInitGlobal(
     tbd.table->GetId(), [&] { return search->GetDirectoryReader(); });
   state->total_segments = state->reader->size();
 
-  // COUNT(*)-style scan projects no real columns -- answer with the live row
-  // count instead of materialising columns.
   if (IsCountOnlyScan(bind_data, input)) {
     state->count_only = true;
     state->count_remaining = state->reader->live_docs_count();
@@ -70,17 +67,10 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchTableScanInitGlobal(
        ++out_slot) {
     const auto col_id = input.column_ids[out_slot];
     if (col_id == kColumnIdentifierGeneratedPk) {
-      // Row identity on a no-PK table: materialise the synthetic PK from the
-      // stored kGeneratedPKId BIGINT column (written alongside the PK term on
-      // insert). This is the rowid DELETE/UPDATE plans project.
       state->cs_projections.push_back(ColumnstoreProjection{
         .output_slot = out_slot, .column_id = catalog::Column::kGeneratedPKId});
       continue;
     }
-    // Explicit-PK row identity: DELETE/UPDATE plans project PK columns as
-    // VIRTUAL_COLUMN_START + table-position (BuildRowIdColumns). Map back to
-    // the real (stored) column. Special sentinels (tableoid/score/rowid) land
-    // far above the table range and fall through to the rejection below.
     if (col_id >= duckdb::VIRTUAL_COLUMN_START) {
       const auto table_pos = col_id - duckdb::VIRTUAL_COLUMN_START;
       const auto& columns = tbd.table->Columns();
@@ -124,46 +114,43 @@ void SearchTableScanFunction(duckdb::ClientContext& /*context*/,
   }
   SDB_ASSERT(gstate.reader);
   const auto& reader = *gstate.reader;
-  const auto batch_size = static_cast<duckdb::idx_t>(STANDARD_VECTOR_SIZE);
 
   duckdb::idx_t produced = 0;
-  // One segment per batch: SelectByDocIds writes from output slot 0, so two
-  // segments cannot share a batch. next_segment is the base's cursor so scan
-  // progress reports it; this scan is single-threaded (MaxThreads() == 1).
   while (produced == 0 &&
          gstate.next_segment.load(std::memory_order_relaxed) < reader.size()) {
-    auto& segment = reader[gstate.next_segment.load(std::memory_order_relaxed)];
+    const auto segment_idx =
+      gstate.next_segment.load(std::memory_order_relaxed);
+    auto& segment = reader[segment_idx];
 
-    if (!gstate.materializer) {
+    if (!gstate.live_docs) {
       const auto* cs_reader = segment.GetColReader();
       if (!cs_reader) {
-        // Segment has no columnstore (e.g. an empty pre-INSERT commit).
         gstate.next_segment.fetch_add(1, std::memory_order_relaxed);
         continue;
       }
-      gstate.materializer = std::make_unique<ColumnstoreMaterializer>(
-        *cs_reader, gstate.cs_projections, gstate.client_context);
-      // mask() wraps the all-docs iterator to skip deleted docs.
+      if (!gstate.hit_batcher) {
+        gstate.hit_batcher = std::make_unique<HitBatcher>(
+          gstate.cs_projections, /*fetch_pk=*/false, /*track_scores=*/false);
+      }
+      gstate.hit_batcher->BeginSegment(static_cast<uint32_t>(segment_idx),
+                                       cs_reader, gstate.client_context);
       gstate.live_docs = segment.mask(segment.docs_iterator());
     }
 
-    // Collect this batch's live rows (row = doc_id - min); the iterator's
-    // position persists across calls.
-    gstate.row_ids.clear();
-    while (gstate.row_ids.size() < batch_size && gstate.live_docs->next()) {
-      gstate.row_ids.push_back(gstate.live_docs->value() -
-                               irs::doc_limits::min());
+    auto& batcher = *gstate.hit_batcher;
+    while (!batcher.Ready() &&
+           !irs::doc_limits::eof(gstate.live_docs->advance())) {
+      batcher.Push(gstate.live_docs->value());
     }
-    if (gstate.row_ids.empty()) {
-      gstate.next_segment.fetch_add(1, std::memory_order_relaxed);
-      gstate.materializer.reset();
-      gstate.live_docs.reset();
-      continue;
+    if (!batcher.Ready()) {
+      batcher.Finalize();
+      if (!batcher.Ready()) {
+        gstate.next_segment.fetch_add(1, std::memory_order_relaxed);
+        gstate.live_docs.reset();
+        continue;
+      }
     }
-
-    gstate.materializer->SelectByDocIds(gstate.row_ids, output,
-                                        /*output_start=*/0);
-    produced = gstate.row_ids.size();
+    produced = batcher.Emit(output).count;
   }
 
   if (produced == 0) {

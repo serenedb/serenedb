@@ -1,0 +1,97 @@
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+statement ok
+CREATE TABLE products (id INTEGER PRIMARY KEY, title VARCHAR);
+
+statement ok
+CREATE INDEX products_idx ON products USING inverted (id, title en);
+
+statement ok
+INSERT INTO products VALUES
+(1, 'Coffee Beans'),
+(2, 'Organic Fair Trade Coffee Beans Dark Roast Whole Bean One Kilogram Bag'),
+(3, 'Espresso Coffee'),
+(4, 'Single Origin Ethiopian Coffee'),
+(5, 'Stainless Steel Pour Over Coffee Maker With Reusable Mesh Filter Set'),
+(6, 'Cold Brew Coffee'),
+(7, 'Ground Coffee'),
+(8, 'Decaf Coffee Pods Variety Pack Assortment Box Forty Count');
+
+statement ok
+VACUUM (REFRESH_TABLE) products;
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title
+FROM products_idx
+WHERE title @@ 'coffee'
+ORDER BY BM25(products_idx.tableoid) DESC, id;
+----
+id	title
+1	Coffee Beans
+3	Espresso Coffee
+7	Ground Coffee
+6	Cold Brew Coffee
+4	Single Origin Ethiopian Coffee
+8	Decaf Coffee Pods Variety Pack Assortment Box Forty Count
+5	Stainless Steel Pour Over Coffee Maker With Reusable Mesh Filter Set
+2	Organic Fair Trade Coffee Beans Dark Roast Whole Bean One Kilogram Bag
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title
+FROM products_idx
+WHERE title @@ 'coffee'
+ORDER BY CASE WHEN id IN (2, 5) THEN 0 ELSE 1 END,
+         BM25(products_idx.tableoid) DESC, id;
+----
+id	title
+5	Stainless Steel Pour Over Coffee Maker With Reusable Mesh Filter Set
+2	Organic Fair Trade Coffee Beans Dark Roast Whole Bean One Kilogram Bag
+1	Coffee Beans
+3	Espresso Coffee
+7	Ground Coffee
+6	Cold Brew Coffee
+4	Single Origin Ethiopian Coffee
+8	Decaf Coffee Pods Variety Pack Assortment Box Forty Count
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title
+FROM products_idx
+WHERE title @@ 'coffee'
+ORDER BY array_position(ARRAY[5, 2, 7], id) NULLS LAST,
+         BM25(products_idx.tableoid) DESC, id;
+----
+id	title
+5	Stainless Steel Pour Over Coffee Maker With Reusable Mesh Filter Set
+2	Organic Fair Trade Coffee Beans Dark Roast Whole Bean One Kilogram Bag
+7	Ground Coffee
+1	Coffee Beans
+3	Espresso Coffee
+6	Cold Brew Coffee
+4	Single Origin Ethiopian Coffee
+8	Decaf Coffee Pods Variety Pack Assortment Box Forty Count

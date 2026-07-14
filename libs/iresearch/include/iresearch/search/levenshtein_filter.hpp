@@ -23,6 +23,7 @@
 #pragma once
 
 #include <memory>
+#include <utility>
 
 #include "filter.hpp"
 #include "iresearch/utils/automaton.hpp"
@@ -36,6 +37,7 @@ class ByEditDistance;
 class LevenshteinAutomatonFilter;
 struct FilterVisitor;
 struct CompiledAcceptor;
+struct PayAttr;
 
 struct ByEditDistanceAllOptions {
   //////////////////////////////////////////////////////////////////////////////
@@ -122,10 +124,10 @@ auto ExecuteLevenshtein(uint8_t max_distance,
 ////////////////////////////////////////////////////////////////////////////////
 class ByEditDistance final : public FilterWithField<ByEditDistanceOptions> {
  public:
-  static field_visitor visitor(const ByEditDistanceAllOptions& options);
-
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
+
+  TermPredicate::ptr CompileTermPredicate() const final;
 };
 
 struct LevenshteinAutomatonOptions {
@@ -160,6 +162,10 @@ class LevenshteinAutomatonFilter final
                                    const PrepareContext& ctx) const final;
 
   PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
+
+  TermPredicate::ptr CompileTermPredicate() const final;
+
+  TermIterator::ptr CompileTermIterator(const TermReader& reader) const final;
 };
 
 Filter::ptr LowerLevenshtein(irs::field_id id,

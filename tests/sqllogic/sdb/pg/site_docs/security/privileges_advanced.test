@@ -1,0 +1,80 @@
+# DOCS_TEST: example_001
+
+statement ok
+DROP TABLE IF EXISTS doc_pa_docs;
+
+statement ok
+DROP ROLE IF EXISTS doc_pa_editor;
+
+statement ok
+DROP ROLE IF EXISTS doc_pa_viewer;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE doc_pa_docs (id int, body text);
+
+statement ok
+CREATE ROLE doc_pa_editor LOGIN PASSWORD 'doc_pa_editor_pw';
+
+statement ok
+CREATE ROLE doc_pa_viewer LOGIN PASSWORD 'doc_pa_viewer_pw';
+
+statement ok
+GRANT SELECT ON doc_pa_docs TO doc_pa_editor WITH GRANT OPTION;
+
+query
+SELECT relacl FROM pg_class WHERE relname = 'doc_pa_docs';
+----
+relacl
+{postgres=arwdDxtm/postgres,doc_pa_editor=r*/postgres}
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+SET ROLE doc_pa_editor;
+
+statement ok
+GRANT SELECT ON doc_pa_docs TO doc_pa_viewer;
+
+statement ok
+RESET ROLE;
+
+query
+SELECT has_table_privilege('doc_pa_viewer', 'doc_pa_docs', 'SELECT') AS viewer_reads;
+----
+viewer_reads
+t
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement error db error: ERROR: dependent privileges exist
+REVOKE SELECT ON doc_pa_docs FROM doc_pa_editor;
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+REVOKE SELECT ON doc_pa_docs FROM doc_pa_editor CASCADE;
+
+query
+SELECT has_table_privilege('doc_pa_editor', 'doc_pa_docs', 'SELECT') AS editor,
+       has_table_privilege('doc_pa_viewer', 'doc_pa_docs', 'SELECT') AS viewer;
+----
+editor	viewer
+f	f
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP TABLE doc_pa_docs;
+
+statement ok
+DROP ROLE doc_pa_editor, doc_pa_viewer;

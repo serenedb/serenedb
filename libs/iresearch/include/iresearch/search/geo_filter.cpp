@@ -30,7 +30,6 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 
 #include "basics/down_cast.h"
-#include "basics/errors.h"
 #include "basics/log.h"
 #include "basics/memory.hpp"
 #include "geo/geo_json.h"
@@ -124,18 +123,6 @@ class GeoIterator : public DocIterator {
     });
   }
 
-  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
-                                      uint64_t* mask,
-                                      FillBlockScoreContext score,
-                                      FillBlockMatchContext match) final {
-    return FillBlockImpl(*this, min, max, mask, score, match);
-  }
-
-  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
-               ScoreCollector& collector) final {
-    CollectImpl(*this, scorer, fetcher, collector);
-  }
-
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
   }
@@ -174,7 +161,7 @@ class GeoIterator : public DocIterator {
     return doc + 1;
   }
 
-  uint32_t count() final { return CountImpl(*this); }
+  IRS_DOC_ITERATOR_DEFAULTS
 
  private:
   bool Accept(doc_id_t doc) {
@@ -327,7 +314,7 @@ struct SourceWkbParser {
     const std::string_view bytes{reinterpret_cast<const char*>(value.data()),
                                  value.size()};
     shape = {};
-    return sdb::geo::ParseShapeWKB(bytes, shape).ok();
+    return sdb::geo::ParseShapeWKB(bytes, shape);
   }
 };
 

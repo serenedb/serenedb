@@ -215,15 +215,7 @@ void CreateRole(ConnectionContext& ctx, std::string_view name,
       options.has_password, options.password, options.password_is_null),
   });
 
-  auto r =
-    catalog.CreateRole(catalog::ActingAs(ctx.GetRoleId()), std::move(role));
-  if (r.is(ERROR_USER_DUPLICATE)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-                    ERR_MSG("role \"", name, "\" already exists"));
-  }
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
+  catalog.CreateRole(catalog::ActingAs(ctx.GetRoleId()), std::move(role));
 
   for (const auto& g : options.in_roles) {
     GrantRole(ctx, g, name, /*revoke=*/false, MemberOptions{});
@@ -238,19 +230,10 @@ void CreateRole(ConnectionContext& ctx, std::string_view name,
 
 void DropRole(ConnectionContext& ctx, std::string_view name, bool missing_ok) {
   auto& catalog = GlobalCatalog();
-  auto r = catalog.DropRole(catalog::ActingAs(ctx.GetRoleId()), name);
-  if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
-    if (missing_ok) {
-      ctx.AddNotice(SQL_ERROR_DATA(
-        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-        ERR_MSG("role \"", name, "\" does not exist, skipping")));
-      return;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("role \"", name, "\" does not exist"));
-  }
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
+  if (!catalog.DropRole(catalog::ActingAs(ctx.GetRoleId()), name, missing_ok)) {
+    ctx.AddNotice(
+      SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                     ERR_MSG("role \"", name, "\" does not exist, skipping")));
   }
 }
 
@@ -265,16 +248,6 @@ catalog::RoleOption SetBit(catalog::RoleOption options, catalog::RoleOption bit,
     return options & ~bit;
   }
   return options;
-}
-
-void CheckRoleChangeResult(const Result& r, std::string_view name) {
-  if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("role \"", name, "\" does not exist"));
-  }
-  if (!r.ok()) {
-    SDB_THROW(r.clone());
-  }
 }
 
 void SyncIsSuperuser(ConnectionContext& conn) {
@@ -297,11 +270,11 @@ void AlterRole(ConnectionContext& ctx, std::string_view name,
     opts.has_password, opts.password, opts.password_is_null);
 
   auto& catalog = GlobalCatalog();
-  auto r = catalog.ChangeRole(
+  catalog.ChangeRole(
     catalog::ActingAs(ctx.GetRoleId()), name, "alter",
     /*allow_self=*/false,
     [&](const catalog::Role& old_role,
-        std::shared_ptr<catalog::Role>& new_role) -> Result {
+        std::shared_ptr<catalog::Role>& new_role) {
       new_role = std::static_pointer_cast<catalog::Role>(old_role.Clone());
       catalog::RoleOption o = new_role->Options();
       o = SetBit(o, catalog::RoleOption::Login, opts.login);
@@ -321,28 +294,20 @@ void AlterRole(ConnectionContext& ctx, std::string_view name,
       if (opts.has_conn_limit) {
         new_role->SetConnLimit(conn_limit);
       }
-      return {};
     });
-  CheckRoleChangeResult(r, name);
 }
 
 void RenameRole(ConnectionContext& ctx, std::string_view name,
                 std::string_view new_name) {
   auto& catalog = GlobalCatalog();
-  auto r = catalog.ChangeRole(
+  catalog.ChangeRole(
     catalog::ActingAs(ctx.GetRoleId()), name, "rename",
     /*allow_self=*/false,
     [&](const catalog::Role& old_role,
-        std::shared_ptr<catalog::Role>& new_role) -> Result {
+        std::shared_ptr<catalog::Role>& new_role) {
       new_role = std::static_pointer_cast<catalog::Role>(old_role.Clone());
       new_role->SetName(new_name);
-      return {};
     });
-  if (r.is(ERROR_USER_DUPLICATE)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-                    ERR_MSG("role \"", new_name, "\" already exists"));
-  }
-  CheckRoleChangeResult(r, name);
 }
 
 std::string SetRole(ConnectionContext& conn, std::string_view name) {
@@ -409,11 +374,11 @@ void AlterRoleConfig(ConnectionContext& ctx, std::string_view name,
   const bool is_self = name == ctx.user();
 
   auto& catalog = GlobalCatalog();
-  auto r = catalog.ChangeRole(
+  catalog.ChangeRole(
     catalog::ActingAs(ctx.GetRoleId()), name, "alter",
     /*allow_self=*/is_self,
     [&](const catalog::Role& old_role,
-        std::shared_ptr<catalog::Role>& new_role) -> Result {
+        std::shared_ptr<catalog::Role>& new_role) {
       new_role = std::static_pointer_cast<catalog::Role>(old_role.Clone());
       if (op == "RESET_ALL") {
         new_role->ResetAllConfig();
@@ -422,9 +387,7 @@ void AlterRoleConfig(ConnectionContext& ctx, std::string_view name,
       } else {
         new_role->SetConfig(setting, value);
       }
-      return {};
     });
-  CheckRoleChangeResult(r, name);
 }
 
 namespace {
@@ -547,14 +510,13 @@ void AlterDefaultPrivileges(ConnectionContext& ctx,
 
   const catalog::AclMode privs = ParseAclModeOrThrow(privileges, type);
 
-  auto r = catalog.ChangeDefaultAcl(
-    catalog::ActingAs(ctx.GetRoleId()), defacl_role_name, schema_id, objtype_c,
-    type, [&](catalog::Acl& acl) {
-      ApplyAclChange(acl, grantee_id, defacl_role_id, privs, revoke,
-                     opts.with_grant_option, opts.grant_option_only,
-                     opts.cascade);
-    });
-  CheckRoleChangeResult(r, defacl_role_name);
+  catalog.ChangeDefaultAcl(catalog::ActingAs(ctx.GetRoleId()), defacl_role_name,
+                           schema_id, objtype_c, type, [&](catalog::Acl& acl) {
+                             ApplyAclChange(
+                               acl, grantee_id, defacl_role_id, privs, revoke,
+                               opts.with_grant_option, opts.grant_option_only,
+                               opts.cascade);
+                           });
 }
 
 namespace {
@@ -684,7 +646,7 @@ void GrantObjectColumns(ConnectionContext& ctx, catalog::ObjectType type,
     }
     privs &= kColumnPrivs;
     for (const auto& column : p.columns) {
-      auto r = catalog.ChangeColumnAcl(
+      catalog.ChangeColumnAcl(
         ctx.GetDatabaseId(), schema_name, rel_name, column,
         [&](const catalog::Snapshot& live, ObjectId owner, catalog::Acl& acl) {
           ApplyAclGrant(
@@ -696,9 +658,6 @@ void GrantObjectColumns(ConnectionContext& ctx, catalog::ObjectType type,
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
           ERR_MSG("must be member of role \"", opts.granted_by, "\""));
-      }
-      if (!r.ok()) {
-        SDB_THROW(std::move(r));
       }
     }
   }
@@ -768,7 +727,7 @@ void GrantObject(ConnectionContext& ctx, catalog::ObjectType type,
   const ObjectId acl_database_id = type == catalog::ObjectType::Database
                                      ? target->GetId()
                                      : ctx.GetDatabaseId();
-  auto r = catalog.ChangeAcl(
+  catalog.ChangeAcl(
     acl_database_id, schema_name, rel_name, type,
     [&](const catalog::Snapshot& live, ObjectId owner, catalog::Acl& acl) {
       ApplyAclGrant(
@@ -785,9 +744,6 @@ void GrantObject(ConnectionContext& ctx, catalog::ObjectType type,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
                     ERR_MSG("dependent privileges exist"),
                     ERR_HINT("Use CASCADE to revoke them too."));
-  }
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
   }
   if (no_authority) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -810,14 +766,11 @@ void GrantObject(ConnectionContext& ctx, catalog::ObjectType type,
             col.GetAcl().empty()) {
           continue;
         }
-        auto cr = catalog.ChangeColumnAcl(
+        catalog.ChangeColumnAcl(
           ctx.GetDatabaseId(), schema_name, rel_name, col.GetName(),
           [&](const catalog::Snapshot&, ObjectId owner, catalog::Acl& acl) {
             AclRevoke(acl, grantee_id, owner, privs);
           });
-        if (!cr.ok()) {
-          SDB_THROW(std::move(cr));
-        }
       }
     }
   }
@@ -884,12 +837,9 @@ void GrantRole(ConnectionContext& ctx, std::string_view role,
     .set_option = opts.set != 0,
   };
 
-  auto r = catalog.ChangeMembership(catalog::ActingAs(ctx.GetRoleId()), role_id,
-                                    role, member_id, member, edge, revoke,
-                                    opts.admin_option_only);
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
+  catalog.ChangeMembership(catalog::ActingAs(ctx.GetRoleId()), role_id, role,
+                           member_id, member, edge, revoke,
+                           opts.admin_option_only);
 }
 
 void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
@@ -923,12 +873,9 @@ void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
     schema_name = parsed.schema;
     rel_name = parsed.relation;
   }
-  auto r = catalog.ChangeOwner(catalog::ActingAs(current_id),
-                               ctx.GetDatabaseId(), schema_name, rel_name, type,
-                               new_owner_id, new_owner_name);
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
+  catalog.ChangeOwner(catalog::ActingAs(current_id), ctx.GetDatabaseId(),
+                      schema_name, rel_name, type, new_owner_id,
+                      new_owner_name);
 }
 
 }  // namespace sdb::pg

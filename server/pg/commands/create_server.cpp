@@ -32,7 +32,6 @@
 #include <vector>
 
 #include "basics/duckdb_engine.h"
-#include "basics/errors.h"
 #include "basics/log.h"
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
@@ -230,23 +229,20 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
     std::string{fdw_name}, std::move(keys), std::move(values));
 
   // Validate + attach first; only persist if the connection works, so a failed
-  // CREATE SERVER leaves nothing behind.
+  // CREATE SERVER leaves nothing behind. Any persist failure (duplicate name,
+  // schema unresolved, write error) throws out of the catalog -- detach before
+  // it surfaces so the failed CREATE leaves no live attachment either.
   RunAttach(*server);
 
-  auto r = catalog.CreateForeignServer(
-    catalog::ActingAs(conn_ctx.GetRoleId()), db_id, kSchema, server);
-  if (!r.ok()) {
-    RunDetach(name);
-    if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-      if (if_not_exists) {
-        return;
-      }
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-                      ERR_MSG("server \"", name, "\" already exists"));
+  try {
+    if (!catalog.CreateForeignServer(catalog::ActingAs(conn_ctx.GetRoleId()),
+                                     db_id, kSchema, server, if_not_exists)) {
+      // A concurrent CREATE SERVER won the race past the pre-check above.
+      RunDetach(name);
     }
-    // Any other persist failure (e.g. schema unresolved, write error) must
-    // surface as itself, not be mislabelled "already exists".
-    SDB_THROW(std::move(r));
+  } catch (...) {
+    RunDetach(name);
+    throw;
   }
 }
 
@@ -255,28 +251,12 @@ void DropForeignServer(ConnectionContext& conn_ctx, std::string_view name,
   auto& catalog = catalog::GetCatalog();
   // The catalog drops the server and, under CASCADE, its user mappings in one
   // atomic transaction (server<-mapping dependency). RESTRICT (the default)
-  // returns ERROR_BAD_PARAMETER while any mapping still depends on the server.
-  auto r = catalog.DropForeignServer(catalog::ActingAs(conn_ctx.GetRoleId()),
-                                     conn_ctx.GetDatabase(), kSchema, name,
-                                     cascade);
-
-  if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
-    if (!missing_ok) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                      ERR_MSG("server \"", name, "\" does not exist"));
-    }
+  // throws DEPENDENT_OBJECTS_STILL_EXIST while any mapping still depends on
+  // the server; absent + missing_ok returns false.
+  if (!catalog.DropForeignServer(catalog::ActingAs(conn_ctx.GetRoleId()),
+                                 conn_ctx.GetDatabase(), kSchema, name, cascade,
+                                 missing_ok)) {
     return;
-  }
-  if (r.is(ERROR_BAD_PARAMETER)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-      ERR_MSG("cannot drop server \"", name,
-              "\" because other objects depend on it"),
-      ERR_HINT("Use DROP SERVER ... CASCADE to drop the dependent objects "
-               "too."));
-  }
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
   }
 
   RunDetach(name);
@@ -338,15 +318,10 @@ void CreateUserMapping(ConnectionContext& conn_ctx, std::string_view user,
     }
   }
 
-  auto r = catalog.CreateUserMapping(
-    catalog::ActingAs(conn_ctx.GetRoleId()), db_id, kSchema, mapping);
-  if (!r.ok()) {
-    if (if_not_exists && r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-      return;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-                    ERR_MSG("user mapping for \"", role, "\" on server \"",
-                            server, "\" already exists"));
+  if (!catalog.CreateUserMapping(catalog::ActingAs(conn_ctx.GetRoleId()), db_id,
+                                 kSchema, mapping, if_not_exists)) {
+    // A concurrent CREATE USER MAPPING won the race past the pre-check above.
+    return;
   }
 
   // A PUBLIC mapping supplies the credentials the (instance-global) attachment
@@ -364,19 +339,15 @@ void DropUserMapping(ConnectionContext& conn_ctx, std::string_view user,
   const auto name = catalog::MakeUserMappingName(role, server);
 
   auto& catalog = catalog::GetCatalog();
-  auto r = catalog.DropUserMapping(catalog::ActingAs(conn_ctx.GetRoleId()),
-                                   conn_ctx.GetDatabase(), kSchema, name,
-                                   false);
-  if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
+  if (!catalog.DropUserMapping(catalog::ActingAs(conn_ctx.GetRoleId()),
+                               conn_ctx.GetDatabase(), kSchema, name,
+                               /*cascade=*/false)) {
     if (!missing_ok) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                       ERR_MSG("user mapping for \"", role, "\" on server \"",
                               server, "\" does not exist"));
     }
     return;
-  }
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
   }
   // Dropping a PUBLIC mapping reverts the attachment to the server's own creds.
   if (role == "public") {

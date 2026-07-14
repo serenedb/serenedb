@@ -34,7 +34,7 @@ CREATE TEXT SEARCH DICTIONARY imdb_en(
 -- The view is the table. The hf:// glob expands across train, test, and
 -- unsupervised splits (3 files, 100k rows). SereneDB recognises
 -- `SELECT * FROM read_parquet(literal)` as a fast-path source and builds
--- a (file_index, file_row_number) pair PK automatically -- no WITH (pk = ...).
+-- a (file_index, file_row_number) pair PK automatically.
 -- Labels: 0 = negative, 1 = positive, -1 = unsupervised (no label).
 CREATE VIEW imdb_v AS
   SELECT * FROM read_parquet('hf://datasets/stanfordnlp/imdb@~parquet/plain_text/**/*.parquet');

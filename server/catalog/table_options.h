@@ -34,6 +34,7 @@
 #include "catalog/fwd.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"
+#include "catalog/search_table_options.h"
 #include "catalog/sequence.h"
 #include "query/utils.h"
 
@@ -56,11 +57,25 @@ class Column final : public Object {
   static constexpr Id kGeneratedPKId{kMaxRealIdValue + 1};
   static constexpr Id kInvertedIndexScoreId{kMaxRealIdValue + 2};
   static constexpr Id kInvertedIndexOffsetsId{kMaxRealIdValue + 3};
+  static constexpr Id kInvertedIndexTermId{kMaxRealIdValue + 4};
+  static constexpr Id kInvertedIndexTermCountId{kMaxRealIdValue + 5};
+  static constexpr Id kInvertedIndexTermFreqId{kMaxRealIdValue + 6};
+  static constexpr Id kInvertedIndexTermScoreId{kMaxRealIdValue + 7};
+  static constexpr Id kInvertedIndexTermRawId{kMaxRealIdValue + 8};
   // Sentinel for "no/invalid column id". numeric_limits<Id>::max() does NOT
   // work (Id is a class wrapping uint64_t, not an arithmetic type).
   static constexpr Id kInvalidId{std::numeric_limits<uint64_t>::max()};
 
   static constexpr std::string_view kScoreName = "sdb_inverted_index_score";
+  static constexpr std::string_view kTermName = "sdb_inverted_index_term$";
+  static constexpr std::string_view kTermRawName =
+    "sdb_inverted_index_term_raw$";
+  static constexpr std::string_view kTermCountName =
+    "sdb_inverted_index_term_count$";
+  static constexpr std::string_view kTermFreqName =
+    "sdb_inverted_index_term_freq$";
+  static constexpr std::string_view kTermScoreName =
+    "sdb_inverted_index_term_score$";
   // Prefix used in virtual offsets column names. Ends with kReservedSymbol so
   // it can never collide with a user-defined column name.
   static constexpr std::string_view kOffsetsNamePrefix =
@@ -187,6 +202,8 @@ struct CreateTableOptions {
   std::vector<TableUnique> unique_constraints;
   std::vector<TableForeignKey> foreign_keys;
   TableEngine engine = TableEngine::Transactional;
+  // Background-maintenance options for Search-engine tables (empty otherwise).
+  SearchTableOptions search_options;
 };
 // NOLINTEND
 

@@ -1,0 +1,218 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geo_s2_dict(template = 'geojson',
+    coding = 's2point');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geo_src_dict(template = 'geojson',
+    coding = 'source');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geopoint_dict(template = 'geopoint', latitude = 'lat', longitude = 'lng');
+
+
+# ============================================================================
+# g21 -- Geo + IVF rejection completeness
+#
+# Closes the remaining gaps in the geo-tokenizer and ivf validators:
+#   - geo_s2_dict / geo_src_dict / geopoint_dict on ARRAY/LIST<JSON>: JSON is
+#     a VARCHAR alias so term_dict accepts the container; the geo-tokenizer
+#     validator then rejects it because col_id is ARRAY/LIST, not a JSON or
+#     GEOMETRY scalar leaf;
+#   - geo_s2_dict / geo_src_dict / geopoint_dict on ARRAY/LIST of GEOMETRY:
+#     term_dict::Validate runs before the geo-tokenizer validator and
+#     rejects LIST/ARRAY-of-GEOMETRY children with the generic
+#     "unsupported type ... and can not be indexed" message; the geo-analyzer
+#     branch never fires for these, so we assert the term_dict error;
+#   - geo_s2_dict on scalar GEOMETRY without an OGC:CRS84 annotation (CRS84
+#     validator's "no CRS attached" branch);
+#   - geo_s2_dict / geo_src_dict / geopoint_dict on expression sources that
+#     reduce to a non-geo type (VARCHAR / INTEGER / GEOMETRY-CRS84 for the
+#     geopoint JSON-only branch);
+#   - geo_src_dict on scalar BLOB (geo analyzer rejects non-GEOMETRY/non-JSON
+#     leaves, even though text-tokenizers accept BLOB);
+#   - ivf on scalar DOUBLE (column-form, not just g5's FLOAT-scalar) and on
+#     expression sources of every wrong shape (scalar FLOAT/VARCHAR,
+#     LIST<FLOAT>, ARRAY<DOUBLE,3>, ARRAY<INTEGER,3>).
+# Parenthesized single-column-ref expressions parse as COLUMN_REF, so the
+# error message renders the bare column name (e.g. (v) -> Column 'v'); only
+# the index identifiers carry the col/expr distinction.
+# ============================================================================
+
+statement ok
+CREATE TABLE g21_t(pk INTEGER PRIMARY KEY,
+                   arr_g GEOMETRY('OGC:CRS84')[3], arr_j JSON[3],
+                   list_g GEOMETRY('OGC:CRS84')[], list_j JSON[],
+                   g_nocrs GEOMETRY,
+                   b BLOB, v VARCHAR, n INTEGER, dbl DOUBLE,
+                   f_scalar FLOAT,
+                   emb_list FLOAT[],
+                   arr_d DOUBLE[3], arr_i INTEGER[3],
+                   g_crs84 GEOMETRY('OGC:CRS84'));
+
+# --- geo_s2_dict rejections -------------------------------------------------
+
+# (a) ARRAY<GEOMETRY-CRS84>: term_dict::Validate runs first and rejects
+# LIST/ARRAY-of-GEOMETRY before the geo-tokenizer is consulted.
+statement error
+CREATE INDEX g21_s2_col_arr_g ON g21_t USING inverted(pk, arr_g geo_s2_dict);
+----
+db error: ERROR: Column 'arr_g' has unsupported type GEOMETRY('OGC:CRS84')[3] and can not be indexed
+
+
+# (b) ARRAY<JSON>: JSON is VARCHAR-aliased so term_dict accepts the container;
+# the geo-tokenizer validator then rejects it because col_id is ARRAY.
+statement error
+CREATE INDEX g21_s2_col_arr_j ON g21_t USING inverted(pk, arr_j geo_s2_dict);
+----
+db error: ERROR: Column 'arr_j' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# (c) Scalar GEOMETRY with no CRS attached -> CRS84 validator's no-CRS branch.
+statement error
+CREATE INDEX g21_s2_col_nocrs ON g21_t USING inverted(pk, g_nocrs geo_s2_dict);
+----
+db error: ERROR: Column 'g_nocrs': GEOMETRY type has no CRS attached; declare it with ::GEOMETRY('OGC:CRS84')
+
+
+# (d) Expression-source scalar VARCHAR -> geo-tokenizer rejects non-geo leaf.
+statement error
+CREATE INDEX g21_s2_expr_v ON g21_t USING inverted(pk, (v) geo_s2_dict);
+----
+db error: ERROR: Column 'v' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# (e) Expression-source scalar INTEGER -> same.
+statement error
+CREATE INDEX g21_s2_expr_n ON g21_t USING inverted(pk, (n) geo_s2_dict);
+----
+db error: ERROR: Column 'n' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# --- geo_src_dict rejections ------------------------------------------------
+
+# (f) ARRAY<GEOMETRY-CRS84>: term_dict rejects ARRAY-of-GEOMETRY first.
+statement error
+CREATE INDEX g21_src_col_arr_g ON g21_t USING inverted(pk, arr_g geo_src_dict);
+----
+db error: ERROR: Column 'arr_g' has unsupported type GEOMETRY('OGC:CRS84')[3] and can not be indexed
+
+
+# (g) LIST<GEOMETRY-CRS84>: term_dict rejects LIST-of-GEOMETRY first.
+statement error
+CREATE INDEX g21_src_col_list_g ON g21_t USING inverted(pk, list_g geo_src_dict);
+----
+db error: ERROR: Column 'list_g' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
+
+
+# (h) LIST<JSON>: JSON is VARCHAR-aliased, so term_dict accepts; geo-tokenizer
+# then rejects the LIST container.
+statement error
+CREATE INDEX g21_src_col_list_j ON g21_t USING inverted(pk, list_j geo_src_dict);
+----
+db error: ERROR: Column 'list_j' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# (i) Scalar BLOB: text-tokenizers accept BLOB, but geo analyzers reject it.
+statement error
+CREATE INDEX g21_src_col_b ON g21_t USING inverted(pk, b geo_src_dict);
+----
+db error: ERROR: Column 'b' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# (j) Expression-source scalar VARCHAR.
+statement error
+CREATE INDEX g21_src_expr_v ON g21_t USING inverted(pk, (v) geo_src_dict);
+----
+db error: ERROR: Column 'v' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# --- geopoint_dict rejections -----------------------------------------------
+
+# (k) ARRAY<GEOMETRY-CRS84>: term_dict rejects ARRAY-of-GEOMETRY first.
+statement error
+CREATE INDEX g21_gp_col_arr_g ON g21_t USING inverted(pk, arr_g geopoint_dict);
+----
+db error: ERROR: Column 'arr_g' has unsupported type GEOMETRY('OGC:CRS84')[3] and can not be indexed
+
+
+# (l) ARRAY<JSON>: term_dict accepts; geo-tokenizer then rejects the container.
+statement error
+CREATE INDEX g21_gp_col_arr_j ON g21_t USING inverted(pk, arr_j geopoint_dict);
+----
+db error: ERROR: Column 'arr_j' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# (m) Expression-source GEOMETRY('OGC:CRS84'): CRS84 passes, then the
+# geopoint-specific JSON-only message fires.
+statement error
+CREATE INDEX g21_gp_expr_g_crs84 ON g21_t USING inverted(pk, (g_crs84) geopoint_dict);
+----
+db error: ERROR: Column 'g_crs84' is GEOMETRY but the analyzer is geopoint; geopoint's latitude/longitude paths are JSON-only -- use a geojson analyzer for GEOMETRY columns
+
+
+# (n) Expression-source scalar VARCHAR: geo-tokenizer rejection.
+statement error
+CREATE INDEX g21_gp_expr_v ON g21_t USING inverted(pk, (v) geopoint_dict);
+----
+db error: ERROR: Column 'v' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# --- ivf rejections --------------------------------------------------------
+
+# (o) Column-form scalar DOUBLE: must be ARRAY(FLOAT, N).
+statement error
+CREATE INDEX g21_ivf_col_dbl ON g21_t USING inverted(pk, dbl ivf (metric = 'l2'));
+----
+db error: ERROR: Column 'dbl' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not DOUBLE
+
+
+# (p) Expression-source scalar FLOAT: still not ARRAY.
+statement error
+CREATE INDEX g21_ivf_expr_f ON g21_t USING inverted(pk, (f_scalar) ivf (metric = 'l2'));
+----
+db error: ERROR: Column 'f_scalar' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not FLOAT
+
+
+# (q) Expression-source scalar VARCHAR: not ARRAY at all.
+statement error
+CREATE INDEX g21_ivf_expr_v ON g21_t USING inverted(pk, (v) ivf (metric = 'l2'));
+----
+db error: ERROR: Column 'v' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not VARCHAR
+
+
+# (r) Expression-source LIST<FLOAT>: variable-length, not fixed ARRAY.
+statement error
+CREATE INDEX g21_ivf_expr_emb_list ON g21_t USING inverted(pk, (emb_list) ivf (metric = 'l2'));
+----
+db error: ERROR: Column 'emb_list' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not FLOAT[]
+
+
+# (s) Expression-source ARRAY<DOUBLE,3>: element type must be FLOAT.
+statement error
+CREATE INDEX g21_ivf_expr_arr_d ON g21_t USING inverted(pk, (arr_d) ivf (metric = 'l2'));
+----
+db error: ERROR: Column 'arr_d' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not DOUBLE[3]
+
+
+# (t) Expression-source ARRAY<INTEGER,3>: element type must be FLOAT.
+statement error
+CREATE INDEX g21_ivf_expr_arr_i ON g21_t USING inverted(pk, (arr_i) ivf (metric = 'l2'));
+----
+db error: ERROR: Column 'arr_i' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not INTEGER[3]
+
+
+# --- teardown ---------------------------------------------------------------
+
+statement ok
+DROP TABLE g21_t;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY geo_s2_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY geo_src_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY geopoint_dict;

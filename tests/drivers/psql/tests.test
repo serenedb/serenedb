@@ -1170,7 +1170,7 @@ skipif postgres
 > +-----------+-------+
 > (3 rows)
 
-# serened's pg_opclass surfaces the `hnsw` builtin (inverted AM, FLOAT[])
+# serened's pg_opclass surfaces the `ivf` builtin (inverted AM, FLOAT[])
 # plus every CREATE TEXT SEARCH DICTIONARY as an inverted-AM opclass.
 skipif postgres
 \dAc
@@ -1180,7 +1180,7 @@ skipif postgres
 > |    AM    | Input type | Storage type | Operator class | Default? |
 > +----------+------------+--------------+----------------+----------+
 > | inverted | any        | [NULL]       | included       | no       |
-> | inverted | real[]     | [NULL]       | hnsw           | no       |
+> | inverted | real[]     | [NULL]       | ivf            | no       |
 > | inverted | text       | [NULL]       | simple_dict    | no       |
 > +----------+------------+--------------+----------------+----------+
 > (3 rows)
@@ -1194,7 +1194,7 @@ skipif postgres
 > |    AM    | Input type | Storage type | Operator class | Default? |
 > +----------+------------+--------------+----------------+----------+
 > | inverted | any        | [NULL]       | included       | no       |
-> | inverted | real[]     | [NULL]       | hnsw           | no       |
+> | inverted | real[]     | [NULL]       | ivf            | no       |
 > | inverted | text       | [NULL]       | simple_dict    | no       |
 > +----------+------------+--------------+----------------+----------+
 > (3 rows)

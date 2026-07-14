@@ -34,6 +34,7 @@
 #include <iresearch/utils/vector.hpp>
 #include <vector>
 
+#include "basics/system-compiler.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 
@@ -335,14 +336,14 @@ void RegisterNormalize(duckdb::ExtensionLoader& loader) {
 template<Norm N>
 void RegisterNorm(duckdb::ExtensionLoader& loader) {
   std::string name;
-  irs::HNSWMetric metric;
+  irs::VectorMetric metric;
   ScoreEmit score_emit = ScoreEmit::Identity;
   if constexpr (N == Norm::L1) {
     name = kL1Norm;
-    metric = irs::HNSWMetric::L1;
+    metric = irs::VectorMetric::L1;
   } else if constexpr (N == Norm::L2) {
     name = kL2Norm;
-    metric = irs::HNSWMetric::L2Sqr;
+    metric = irs::VectorMetric::L2Sqr;
     score_emit = ScoreEmit::Sqrt;
   } else {
     SDB_UNREACHABLE();
@@ -371,39 +372,39 @@ template<Distance D>
 void RegisterDistance(duckdb::ExtensionLoader& loader) {
   std::string name;
   std::string op_name;
-  irs::HNSWMetric metric;
+  irs::VectorMetric metric;
   duckdb::OrderType order = duckdb::OrderType::ASCENDING;
   ScoreEmit score_emit = ScoreEmit::Identity;
   if constexpr (D == Distance::L1) {
     name = kL1Distance;
     op_name = kL1DistanceOp;
-    metric = irs::HNSWMetric::L1;
+    metric = irs::VectorMetric::L1;
   } else if constexpr (D == Distance::L2) {
     name = kL2Distance;
     op_name = kL2DistanceOp;
-    metric = irs::HNSWMetric::L2Sqr;
+    metric = irs::VectorMetric::L2Sqr;
     score_emit = ScoreEmit::Sqrt;
   } else if constexpr (D == Distance::L2Sqr) {
     name = kL2SqrDistance;
-    metric = irs::HNSWMetric::L2Sqr;
+    metric = irs::VectorMetric::L2Sqr;
   } else if constexpr (D == Distance::Cosine) {
     name = kCosineDistance;
     op_name = kCosineDistanceOp;
-    metric = irs::HNSWMetric::Cosine;
+    metric = irs::VectorMetric::Cosine;
+    score_emit = ScoreEmit::OneMinus;
   } else if constexpr (D == Distance::CosineSimilarity) {
     name = kCosineSimilarity;
-    metric = irs::HNSWMetric::Cosine;
+    metric = irs::VectorMetric::Cosine;
     order = duckdb::OrderType::DESCENDING;
-    score_emit = ScoreEmit::OneMinus;
   } else if constexpr (D == Distance::IP) {
     name = kIP;
-    metric = irs::HNSWMetric::NegativeIP;
+    metric = irs::VectorMetric::InnerProduct;
     order = duckdb::OrderType::DESCENDING;
-    score_emit = ScoreEmit::Negate;
   } else if constexpr (D == Distance::NegativeIP) {
     name = kNegativeIP;
     op_name = kNegativeIPDistanceOp;
-    metric = irs::HNSWMetric::NegativeIP;
+    metric = irs::VectorMetric::InnerProduct;
+    score_emit = ScoreEmit::Negate;
   } else {
     SDB_UNREACHABLE();
   }

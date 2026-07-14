@@ -1,0 +1,324 @@
+hash-threshold 100
+
+# `SELECT col, count(*) FROM idx GROUP BY col` over a keyword NOT NULL column
+# is a facet served from the term dictionary: the groups are exactly the
+# field's live terms and each group's size is the term's live document count.
+# The user's own GROUP BY merges the per-segment term rows (summing counts), so
+# results stay exact under deletion masks. A nullable column converts too for
+# the bare shape, with the NULL group synthesized from the null-marker field;
+# count(col), any WHERE on a nullable column, extra aggregates, multiple group
+# keys and cross-field WHERE clauses fall back to the document scan.
+# Background maintenance is disabled; visibility is driven by
+# VACUUM (REFRESH_TABLE).
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY fct_kw(template = 'keyword')
+
+statement ok
+CREATE TABLE ft(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, opt VARCHAR)
+
+statement ok
+CREATE INDEX ft_idx ON ft USING inverted(cat fct_kw, opt fct_kw)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO ft VALUES
+  (1, 'red',   'x'),
+  (2, 'green', NULL),
+  (3, 'red',   'y'),
+  (4, 'blue',  'x'),
+  (5, 'red',   'x'),
+  (6, 'green', 'z')
+
+statement ok
+VACUUM (REFRESH_TABLE) ft;
+
+query TI
+SELECT cat, count(*) AS n FROM ft_idx GROUP BY cat ORDER BY cat
+----
+cat	n
+blue	1
+green	2
+red	3
+
+query TI
+SELECT cat, count(*) AS n FROM ft GROUP BY cat ORDER BY cat
+----
+cat	n
+blue	1
+green	2
+red	3
+
+query TI
+SELECT cat, count(cat) AS n FROM ft_idx GROUP BY cat ORDER BY cat
+----
+cat	n
+blue	1
+green	2
+red	3
+
+query T
+SELECT cat FROM ft_idx GROUP BY cat ORDER BY cat
+----
+cat
+blue
+green
+red
+
+query TI
+SELECT cat, count(*) AS n FROM ft_idx GROUP BY cat
+ORDER BY n DESC, cat LIMIT 2
+----
+cat	n
+red	3
+green	2
+
+query TI
+SELECT cat, count(*) AS n FROM ft_idx GROUP BY cat
+HAVING count(*) > 1 ORDER BY cat
+----
+cat	n
+green	2
+red	3
+
+# Same-field WHERE composes: acceptor or post-filter over the terms.
+query TI
+SELECT cat, count(*) AS n FROM ft_idx WHERE cat LIKE 'r%'
+GROUP BY cat ORDER BY cat
+----
+cat	n
+red	3
+
+query TI
+SELECT cat, count(*) AS n FROM ft_idx WHERE cat = 'blue' OR length(cat) = 5
+GROUP BY cat ORDER BY cat
+----
+cat	n
+blue	1
+green	2
+
+query
+EXPLAIN SELECT cat, count(*) AS n FROM ft_idx GROUP BY cat
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$cat, │
+│              CAST(#1 AS BIGINT)           │
+│ ~3 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~3 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ PROJECTION ────────┴─────────────────────╮
+│ Projections:                              │
+│ sdb_inverted_index_term$cat,              │
+│ sdb_inverted_index_term_count$cat         │
+│ ~6 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: ft_idx                             │
+│ TsDict: cat                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$cat,              │
+│ sdb_inverted_index_term_count$cat         │
+│ ~6 rows                                   │
+╰───────────────────────────────────────────╯
+
+# A nullable column converts for the bare facet shape: the scan synthesizes
+# the NULL group from the column's null-marker field. count(col), any WHERE
+# and the other unservable shapes below fall back to the document scan.
+query TI
+SELECT opt, count(*) AS n FROM ft_idx GROUP BY opt ORDER BY opt NULLS FIRST
+----
+opt	n
+NULL	1
+x	3
+y	1
+z	1
+
+query
+EXPLAIN SELECT opt, count(*) AS n FROM ft_idx GROUP BY opt
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$opt, │
+│              CAST(#1 AS BIGINT)           │
+│ ~3 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~3 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ PROJECTION ────────┴─────────────────────╮
+│ Projections:                              │
+│ sdb_inverted_index_term$opt,              │
+│ sdb_inverted_index_term_count$opt         │
+│ ~6 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: ft_idx                             │
+│ TsDict: opt                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$opt,              │
+│ sdb_inverted_index_term_count$opt         │
+│ ~6 rows                                   │
+╰───────────────────────────────────────────╯
+
+query T
+SELECT opt FROM ft_idx GROUP BY opt ORDER BY opt NULLS FIRST
+----
+opt
+NULL
+x
+y
+z
+
+query TI
+SELECT opt, count(opt) AS n FROM ft_idx GROUP BY opt ORDER BY opt NULLS FIRST
+----
+opt	n
+NULL	0
+x	3
+y	1
+z	1
+
+query TI
+SELECT opt, count(*) AS n FROM ft_idx WHERE opt IS NULL GROUP BY opt
+----
+opt	n
+NULL	1
+
+query TII
+SELECT cat, count(*) AS n, sum(id) AS s FROM ft_idx GROUP BY cat ORDER BY cat
+----
+cat	n	s
+blue	1	4
+green	2	8
+red	3	9
+
+query TI
+SELECT cat, count(*) AS n FROM ft_idx WHERE id < 3 GROUP BY cat ORDER BY cat
+----
+cat	n
+green	1
+red	1
+
+# Deletions: 'blue' dies with row 4 and 'red' loses row 5; facet counts are
+# live-exact on the still-dirty segment.
+statement ok
+DELETE FROM ft WHERE id IN (4, 5)
+
+statement ok
+VACUUM (REFRESH_TABLE) ft;
+
+query TI
+SELECT cat, count(*) AS n FROM ft_idx GROUP BY cat ORDER BY cat
+----
+cat	n
+green	2
+red	2
+
+# A fresh clean segment sums with the dirty one per term.
+statement ok
+INSERT INTO ft VALUES (7, 'red', 'x'), (8, 'amber', NULL)
+
+statement ok
+VACUUM (REFRESH_TABLE) ft;
+
+query TI
+SELECT cat, count(*) AS n FROM ft_idx GROUP BY cat ORDER BY cat
+----
+cat	n
+amber	1
+green	2
+red	3
+
+query TI
+SELECT cat, count(*) AS n FROM ft_idx GROUP BY cat
+ORDER BY n DESC, cat LIMIT 2
+----
+cat	n
+red	3
+green	2
+
+query TI
+SELECT cat, count(*) AS n FROM ft GROUP BY cat ORDER BY cat
+----
+cat	n
+amber	1
+green	2
+red	3
+
+# The NULL group stays exact through deletion masks and across segments: the
+# deletions masked two x rows in the now-dirty first segment while row 8
+# added a NULL in the clean second one.
+query TI
+SELECT opt, count(*) AS n FROM ft_idx GROUP BY opt ORDER BY opt NULLS FIRST
+----
+opt	n
+NULL	2
+x	2
+y	1
+z	1
+
+query TI
+SELECT opt, count(*) AS n FROM ft GROUP BY opt ORDER BY opt NULLS FIRST
+----
+opt	n
+NULL	2
+x	2
+y	1
+z	1
+
+# Deleting a NULL row must shrink the NULL group before compaction: the
+# null-marker postings are masked exactly like term postings.
+statement ok
+DELETE FROM ft WHERE id = 2
+
+statement ok
+VACUUM (REFRESH_TABLE) ft;
+
+query TI
+SELECT opt, count(*) AS n FROM ft_idx GROUP BY opt ORDER BY opt NULLS FIRST
+----
+opt	n
+NULL	1
+x	2
+y	1
+z	1
+
+query TI
+SELECT opt, count(*) AS n FROM ft GROUP BY opt ORDER BY opt NULLS FIRST
+----
+opt	n
+NULL	1
+x	2
+y	1
+z	1
+
+# Masking the last NULL row of a segment drops its synthesized row entirely;
+# with no NULL rows left anywhere the group vanishes.
+statement ok
+DELETE FROM ft WHERE id = 8
+
+statement ok
+VACUUM (REFRESH_TABLE) ft;
+
+query TI
+SELECT opt, count(*) AS n FROM ft_idx GROUP BY opt ORDER BY opt NULLS FIRST
+----
+opt	n
+x	2
+y	1
+z	1
+
+query TI
+SELECT opt, count(*) AS n FROM ft GROUP BY opt ORDER BY opt NULLS FIRST
+----
+opt	n
+x	2
+y	1
+z	1

@@ -161,9 +161,7 @@ class PhysicalPgWireCollector : public duckdb::PhysicalResultCollector {
       sdb::pg::ProgressMetrics::Add(
         lstate.progress->bytes_processed,
         static_cast<int64_t>(chunk.GetAllocationSize()));
-      SDB_IF_FAILURE("pause_copy_to_mid_stream") {
-        sdb::WaitWhileFailurePointDebugging("pause_copy_to_mid_stream");
-      }
+      SDB_WAIT_ON_FAILURE("pause_copy_to_mid_stream");
     }
 
     if (ctx.mode == WireSinkContext::Mode::Direct) {

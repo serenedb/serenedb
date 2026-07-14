@@ -89,6 +89,15 @@ class Table final : public Object {
   const auto& UniqueConstraints() const noexcept { return _unique_constraints; }
   const auto& ForeignKeys() const noexcept { return _foreign_keys; }
 
+  // Background-maintenance options (Search-engine tables only; default/empty
+  // elsewhere), resolved from WITH / config-var defaults at CREATE.
+  const SearchTableOptions& SearchOptions() const noexcept {
+    return _search_options;
+  }
+  void SetSearchOptions(const SearchTableOptions& options) noexcept {
+    _search_options = options;
+  }
+
   ObjectId GetGeneratedPkSeqId() const noexcept { return _generated_pk_seq_id; }
 
   const std::shared_ptr<search::SearchTable>& GetData() const noexcept {
@@ -100,52 +109,56 @@ class Table final : public Object {
     _data = std::move(data);
   }
 
-  Result RenameColumn(std::shared_ptr<Table>& result, std::string_view old_name,
-                      std::string_view new_name) const;
-  Result RenameConstraint(std::shared_ptr<Table>& result,
-                          std::string_view old_name,
-                          std::string_view new_name) const;
-  Result DropCheckConstraint(std::shared_ptr<Table>& result,
-                             std::string_view constraint_name) const;
-  Result SetNotNull(std::shared_ptr<Table>& result,
-                    std::string_view column_name) const;
-  Result DropNotNull(std::shared_ptr<Table>& result,
-                     std::string_view column_name) const;
+  // Mutation helpers clone the table into `result` on success. They throw a
+  // PG-compatible pg::SqlException on user errors (missing column/constraint,
+  // duplicate names); a helper that leaves `result` null performed a sanctioned
+  // no-op (e.g. IF [NOT] EXISTS).
+  void RenameColumn(std::shared_ptr<Table>& result, std::string_view old_name,
+                    std::string_view new_name) const;
+  void RenameConstraint(std::shared_ptr<Table>& result,
+                        std::string_view old_name,
+                        std::string_view new_name) const;
+  void DropCheckConstraint(std::shared_ptr<Table>& result,
+                           std::string_view constraint_name,
+                           bool missing_ok) const;
+  void SetNotNull(std::shared_ptr<Table>& result,
+                  std::string_view column_name) const;
+  void DropNotNull(std::shared_ptr<Table>& result,
+                   std::string_view column_name) const;
   // expr == nullptr drops the default; otherwise sets it.
-  Result SetDefault(std::shared_ptr<Table>& result,
-                    std::string_view column_name,
-                    std::shared_ptr<ColumnExpr> expr) const;
+  void SetDefault(std::shared_ptr<Table>& result, std::string_view column_name,
+                  std::shared_ptr<ColumnExpr> expr) const;
   // Appends a CHECK constraint; the name is uniquified against existing ones.
-  Result AddCheckConstraint(std::shared_ptr<Table>& result, std::string name,
-                            std::shared_ptr<ColumnExpr> expr) const;
+  void AddCheckConstraint(std::shared_ptr<Table>& result, std::string name,
+                          std::shared_ptr<ColumnExpr> expr) const;
   // Sets the primary key to `pk_columns` (by id) and adds the implied NOT NULL
-  // for each key column. Errors ERROR_SERVER_DUPLICATE_NAME if a PK already
-  // exists (a table can have only one).
-  Result AddPrimaryKey(std::shared_ptr<Table>& result,
-                       std::vector<Column::Id> pk_columns,
-                       std::string name = {}) const;
+  // for each key column. Throws if a PK already exists (a table can have only
+  // one).
+  void AddPrimaryKey(std::shared_ptr<Table>& result,
+                     std::vector<Column::Id> pk_columns,
+                     std::string name = {}) const;
   // Appends a UNIQUE constraint over `columns` (by id).
-  Result AddUniqueConstraint(std::shared_ptr<Table>& result,
-                             std::vector<Column::Id> columns,
-                             std::string name = {}) const;
+  void AddUniqueConstraint(std::shared_ptr<Table>& result,
+                           std::vector<Column::Id> columns,
+                           std::string name = {}) const;
   std::shared_ptr<Table> DropCheckConstraint(ObjectId constraint_id) const;
   std::shared_ptr<Table> DropColumnDefault(Column::Id column_id) const;
   std::shared_ptr<Table> DropColumn(Column::Id column_id) const;
   std::shared_ptr<Table> DropForeignKeysReferencing(
     ObjectId referenced_table) const;
-  Result AddColumn(std::shared_ptr<Table>& result, Column column,
-                   bool if_not_exists) const;
-  Result ChangeColumnType(std::shared_ptr<Table>& result,
-                          std::string_view column_name,
-                          duckdb::LogicalType new_type) const;
-  Result ChangeColumnAcl(std::shared_ptr<Table>& result,
-                         std::string_view column_name,
-                         absl::FunctionRef<void(Acl&)> mutate) const;
-  Result SetComment(std::shared_ptr<Table>& result,
-                    std::string_view comment) const;
-  Result SetColumnComment(std::shared_ptr<Table>& result,
-                          std::string_view column_name,
-                          std::string_view comment) const;
+  void AddColumn(std::shared_ptr<Table>& result, Column column,
+                 bool if_not_exists) const;
+  void ChangeColumnType(std::shared_ptr<Table>& result,
+                        std::string_view column_name,
+                        duckdb::LogicalType new_type) const;
+  void ChangeColumnAcl(std::shared_ptr<Table>& result,
+                       std::string_view column_name,
+                       absl::FunctionRef<void(Acl&)> mutate) const;
+  void SetComment(std::shared_ptr<Table>& result,
+                  std::string_view comment) const;
+  void SetColumnComment(std::shared_ptr<Table>& result,
+                        std::string_view column_name,
+                        std::string_view comment) const;
   std::string_view Comment() const noexcept { return _comment; }
 
  private:
@@ -172,6 +185,7 @@ class Table final : public Object {
   std::vector<TableForeignKey> _foreign_keys;
   mutable std::shared_ptr<search::SearchTable> _data;
   std::string _comment;
+  SearchTableOptions _search_options;
 };
 
 }  // namespace sdb::catalog

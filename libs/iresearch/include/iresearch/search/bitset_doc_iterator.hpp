@@ -46,6 +46,8 @@ class BitsetDocIterator : public DocIterator, private util::Noncopyable {
                                       FillBlockScoreContext score,
                                       FillBlockMatchContext match) final;
 
+  IRS_DOC_ITERATOR_EMIT_DEFAULTS
+
  protected:
   explicit BitsetDocIterator(CostAttr::Type cost) noexcept
     : _cost{cost}, _begin{nullptr}, _end{nullptr} {

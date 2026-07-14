@@ -93,9 +93,6 @@ void SetGranularTerm(ByGranularRangeOptions::terms& boundary,
 //////////////////////////////////////////////////////////////////////////////
 class ByGranularRange : public FilterWithField<ByGranularRangeOptions> {
  public:
-  static void visit(const SubReader& segment, const TermReader& reader,
-                    const options_type& options, FilterVisitor& visitor);
-
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
   static QueryBuilder::ptr PrepareSegment(const SubReader& segment,

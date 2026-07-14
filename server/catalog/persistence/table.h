@@ -40,6 +40,7 @@ struct TableData {
   std::vector<TableForeignKey> foreign_keys;
   Permissions perm;
   std::string comment;
+  SearchTableOptions search_options;
   ObjectId pk_constraint_id;
   ObjectId pk_index_id;
 };

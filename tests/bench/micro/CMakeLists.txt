@@ -17,6 +17,8 @@ add_bench(lower_bound)
 add_bench(memory_file)
 add_bench(segmentation_stream)
 add_bench(split_by_non_alpha)
+add_bench(determinize_star)
+add_bench(term_enumeration)
 add_bench(top_term_selector)
 add_bench(random)
 add_bench(io_buffers)
@@ -37,6 +39,8 @@ add_bench(ci_fold128)
 add_bench(ci_compare)
 add_bench(socket_write)
 add_bench(duckdb_collector)
+add_bench(columnstore_vs_duckdb)
+add_bench(select_thresholds)
 target_include_directories(
     serenedb-bench-micro-ci_hash
     SYSTEM

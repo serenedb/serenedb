@@ -24,9 +24,9 @@
 
 #include "basics/memory.hpp"
 #include "iresearch/formats/column/norm_reader.hpp"
-#include "iresearch/formats/hnsw/hnsw_writer.hpp"
 #include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/index/column_info.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace duckdb {
 
@@ -95,6 +95,15 @@ struct TermMeta : Attribute {
   uint32_t freq = 0;
 };
 
+struct TermPayloadWriter {
+  virtual ~TermPayloadWriter() = default;
+
+  virtual void WriteTermPayload(IndexOutput& out,
+                                std::span<const doc_id_t> docs) = 0;
+
+  virtual void Finish(IndexOutput& out) = 0;
+};
+
 struct PostingsWriter {
   using ptr = std::unique_ptr<PostingsWriter>;
 
@@ -107,6 +116,7 @@ struct PostingsWriter {
   // out - corresponding terms stream
   virtual void Prepare(IndexOutput& out, const FlushState& state) = 0;
   virtual void BeginField(const FieldProperties& meta) = 0;
+  virtual void SetTermPayloadWriter(TermPayloadWriter*) {}
   virtual void Write(DocIterator& docs, TermMeta& meta) = 0;
   virtual void BeginBlock() = 0;
   virtual void Encode(BufferedOutput& out, const TermMeta& state) = 0;
@@ -126,6 +136,8 @@ struct BasicTermReader : public AttributeProvider {
 
   // Returns the most significant term
   virtual bytes_view(max)() const = 0;
+
+  virtual TermPayloadWriter* PayloadWriter() const { return nullptr; }
 };
 
 struct IteratorFieldOptions : WandContext {
@@ -179,6 +191,8 @@ struct PostingsReader {
                                     IteratorFieldOptions options,
                                     size_t min_match,
                                     ScoreMergeType type) const = 0;
+
+  virtual std::unique_ptr<IndexInput> ReopenPayload() const { return nullptr; }
 
   DocIterator::ptr Iterator(IndexFeatures field_features,
                             IndexFeatures required_features,
@@ -237,6 +251,8 @@ struct TermReader : public AttributeProvider {
                             WandContext options = {}) const {
     return Iterator(features, {&cookie, 1}, options);
   }
+
+  virtual std::unique_ptr<IndexInput> ReopenPayload() const { return nullptr; }
 
   // Returns field metadata.
   virtual const FieldMeta& meta() const = 0;
@@ -335,9 +351,6 @@ void FormatBlock128Init();
 
 namespace formats {
 
-// Checks whether a format with the specified name is registered.
-bool Exists(std::string_view name, bool load_library = true);
-
 // Find a format by name, or nullptr if not found
 // indirect call to <class>::make(...)
 // NOTE: make(...) MUST be defined in CPP to ensire proper code scope
@@ -346,9 +359,6 @@ Format::ptr Get(std::string_view name, bool load_library = true) noexcept;
 // For static lib reference all known formats in lib
 // no explicit call of fn is required, existence of fn is sufficient.
 inline void Init() { FormatBlock128Init(); }
-
-// Load all formats from plugins directory.
-void LoadAll(std::string_view path);
 
 // Visit all loaded formats, terminate early if visitor returns false.
 bool Visit(const std::function<bool(std::string_view)>& visitor);

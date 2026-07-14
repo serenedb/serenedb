@@ -22,7 +22,6 @@
 
 #pragma once
 
-#include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/search/scorer.hpp"
 
 namespace duckdb {
@@ -48,7 +47,6 @@ struct IndexReaderOptions {
   ScorerPtr scorer = nullptr;  // A list of topk scorers
   duckdb::DatabaseInstance* db = nullptr;
   bool index = true;  // Open inverted index
-  PreloadedHnswGraphs hnsw_graphs;
 };
 
 }  // namespace irs

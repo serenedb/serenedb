@@ -34,11 +34,12 @@
 
 #include "auth/acl.h"
 #include "basics/down_cast.h"
-#include "basics/errors.h"
 #include "basics/serializer.h"
 #include "catalog/column_expr.h"
 #include "catalog/persistence/table.h"
 #include "database/ticks.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::catalog {
 namespace {
@@ -107,6 +108,7 @@ std::shared_ptr<Table> Table::Deserialize(duckdb::Deserializer& src,
     std::move(data.unique_constraints), std::move(data.foreign_keys),
     std::move(data.pk_name), data.pk_constraint_id, data.pk_index_id);
   table->_comment = std::move(data.comment);
+  table->_search_options = data.search_options;
   return table;
 }
 
@@ -123,38 +125,41 @@ void Table::Serialize(duckdb::Serializer& sink) const {
     .foreign_keys = _foreign_keys,
     .perm = GetPermissions(),
     .comment = _comment,
+    .search_options = _search_options,
     .pk_constraint_id = _pk_constraint_id,
     .pk_index_id = _pk_index_id,
   };
   basics::WriteTuple(sink, data);
 }
 
-Result Table::RenameColumn(std::shared_ptr<Table>& result,
-                           std::string_view old_name,
-                           std::string_view new_name) const {
+void Table::RenameColumn(std::shared_ptr<Table>& result,
+                         std::string_view old_name,
+                         std::string_view new_name) const {
   auto column_it = _columns.end();
   for (auto it = _columns.begin(); it != _columns.end(); ++it) {
     if (it->GetName() == new_name) {
-      return Result{ERROR_SERVER_DUPLICATE_NAME};
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
+                      ERR_MSG("column \"", new_name, "\" of relation \"",
+                              GetName(), "\" already exists"));
     }
     if (it->GetName() == old_name) {
       column_it = it;
     }
   }
   if (column_it == _columns.end()) {
-    return Result{ERROR_SERVER_ILLEGAL_NAME};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                    ERR_MSG("column \"", old_name, "\" does not exist"));
   }
 
   auto new_table = basics::downCast<Table>(Clone());
   new_table->_columns[std::distance(_columns.begin(), column_it)].SetName(
     new_name);
   result = std::move(new_table);
-  return {};
 }
 
-Result Table::RenameConstraint(std::shared_ptr<Table>& result,
-                               std::string_view old_name,
-                               std::string_view new_name) const {
+void Table::RenameConstraint(std::shared_ptr<Table>& result,
+                             std::string_view old_name,
+                             std::string_view new_name) const {
   // new_name must be free across every constraint on the table.
   auto name_taken = [&](std::string_view n) {
     return absl::c_any_of(_check_constraints,
@@ -166,40 +171,45 @@ Result Table::RenameConstraint(std::shared_ptr<Table>& result,
            _pk_name == n;
   };
   if (name_taken(new_name)) {
-    return Result{ERROR_SERVER_DUPLICATE_NAME};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                    ERR_MSG("constraint \"", new_name, "\" for relation \"",
+                            GetName(), "\" already exists"));
   }
   auto new_table = basics::downCast<Table>(Clone());
   for (auto& c : new_table->_check_constraints) {
     if (c.GetName() == old_name) {
       c.SetName(new_name);
       result = std::move(new_table);
-      return {};
+      return;
     }
   }
   for (auto& u : new_table->_unique_constraints) {
     if (u.name == old_name) {
       u.name = std::string{new_name};
       result = std::move(new_table);
-      return {};
+      return;
     }
   }
   for (auto& f : new_table->_foreign_keys) {
     if (f.name == old_name) {
       f.name = std::string{new_name};
       result = std::move(new_table);
-      return {};
+      return;
     }
   }
   if (new_table->_pk_name == old_name) {
     new_table->_pk_name = std::string{new_name};
     result = std::move(new_table);
-    return {};
+    return;
   }
-  return Result{ERROR_SERVER_ILLEGAL_NAME};
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                  ERR_MSG("constraint \"", old_name, "\" for table \"",
+                          GetName(), "\" does not exist"));
 }
 
-Result Table::DropCheckConstraint(std::shared_ptr<Table>& result,
-                                  std::string_view constraint_name) const {
+void Table::DropCheckConstraint(std::shared_ptr<Table>& result,
+                                std::string_view constraint_name,
+                                bool missing_ok) const {
   auto new_table = basics::downCast<Table>(Clone());
   if (auto it = absl::c_find_if(new_table->_check_constraints,
                                 [&](const CheckConstraint& c) {
@@ -208,7 +218,7 @@ Result Table::DropCheckConstraint(std::shared_ptr<Table>& result,
       it != new_table->_check_constraints.end()) {
     new_table->_check_constraints.erase(it);
     result = std::move(new_table);
-    return {};
+    return;
   }
   if (auto it = absl::c_find_if(
         new_table->_unique_constraints,
@@ -216,7 +226,7 @@ Result Table::DropCheckConstraint(std::shared_ptr<Table>& result,
       it != new_table->_unique_constraints.end()) {
     new_table->_unique_constraints.erase(it);
     result = std::move(new_table);
-    return {};
+    return;
   }
   if (auto it = absl::c_find_if(
         new_table->_foreign_keys,
@@ -224,7 +234,7 @@ Result Table::DropCheckConstraint(std::shared_ptr<Table>& result,
       it != new_table->_foreign_keys.end()) {
     new_table->_foreign_keys.erase(it);
     result = std::move(new_table);
-    return {};
+    return;
   }
   if (!new_table->_pk_columns.empty() &&
       new_table->_pk_name == constraint_name) {
@@ -233,24 +243,31 @@ Result Table::DropCheckConstraint(std::shared_ptr<Table>& result,
     new_table->_pk_constraint_id = ObjectId{};
     new_table->_pk_index_id = ObjectId{};
     result = std::move(new_table);
-    return {};
+    return;
   }
-  return Result{ERROR_SERVER_ILLEGAL_NAME};
+  if (missing_ok) {
+    return;
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                  ERR_MSG("constraint \"", constraint_name, "\" of relation \"",
+                          GetName(), "\" does not exist"));
 }
 
-Result Table::SetNotNull(std::shared_ptr<Table>& result,
-                         std::string_view column_name) const {
+void Table::SetNotNull(std::shared_ptr<Table>& result,
+                       std::string_view column_name) const {
   auto col = absl::c_find_if(
     _columns, [&](const Column& c) { return c.GetName() == column_name; });
   if (col == _columns.end()) {
-    return Result{ERROR_SERVER_ILLEGAL_NAME};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                    ERR_MSG("column \"", column_name, "\" of relation \"",
+                            GetName(), "\" does not exist"));
   }
   // Idempotent: SET NOT NULL on an already-NOT NULL column is a no-op.
   for (const auto& c : _check_constraints) {
     auto idx = c.IsNotNull(_columns);
     if (idx && _columns[*idx].GetId() == col->GetId()) {
       result = basics::downCast<Table>(Clone());
-      return {};
+      return;
     }
   }
   auto name = absl::StrCat(GetName(), "_", column_name, "_not_null");
@@ -269,15 +286,16 @@ Result Table::SetNotNull(std::shared_ptr<Table>& result,
     new_table->GetId(), NextId(), name,
     std::make_shared<ColumnExpr>(std::move(is_not_null)));
   result = std::move(new_table);
-  return {};
 }
 
-Result Table::DropNotNull(std::shared_ptr<Table>& result,
-                          std::string_view column_name) const {
+void Table::DropNotNull(std::shared_ptr<Table>& result,
+                        std::string_view column_name) const {
   auto col = absl::c_find_if(
     _columns, [&](const Column& c) { return c.GetName() == column_name; });
   if (col == _columns.end()) {
-    return Result{ERROR_SERVER_ILLEGAL_NAME};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                    ERR_MSG("column \"", column_name, "\" of relation \"",
+                            GetName(), "\" does not exist"));
   }
   auto new_table = basics::downCast<Table>(Clone());
   std::erase_if(new_table->_check_constraints, [&](const CheckConstraint& c) {
@@ -285,55 +303,56 @@ Result Table::DropNotNull(std::shared_ptr<Table>& result,
     return idx && new_table->_columns[*idx].GetId() == col->GetId();
   });
   result = std::move(new_table);
-  return {};
 }
 
-Result Table::SetDefault(std::shared_ptr<Table>& result,
-                         std::string_view column_name,
-                         std::shared_ptr<ColumnExpr> expr) const {
+void Table::SetDefault(std::shared_ptr<Table>& result,
+                       std::string_view column_name,
+                       std::shared_ptr<ColumnExpr> expr) const {
   auto it = absl::c_find_if(
     _columns, [&](const Column& c) { return c.GetName() == column_name; });
   if (it == _columns.end()) {
-    return Result{ERROR_SERVER_ILLEGAL_NAME};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                    ERR_MSG("column \"", column_name, "\" of relation \"",
+                            GetName(), "\" does not exist"));
   }
   // A generated column stores its generated expression in `expr`; setting a
   // default would clobber it.
   if (it->IsGenerated()) {
-    return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("cannot set a default on generated column \"",
+                            column_name, "\""));
   }
   auto new_table = basics::downCast<Table>(Clone());
   new_table->_columns[std::distance(_columns.begin(), it)].expr =
     std::move(expr);
   result = std::move(new_table);
-  return {};
 }
 
-Result Table::SetComment(std::shared_ptr<Table>& result,
-                         std::string_view comment) const {
+void Table::SetComment(std::shared_ptr<Table>& result,
+                       std::string_view comment) const {
   auto new_table = basics::downCast<Table>(Clone());
   new_table->_comment = std::string{comment};
   result = std::move(new_table);
-  return {};
 }
 
-Result Table::SetColumnComment(std::shared_ptr<Table>& result,
-                               std::string_view column_name,
-                               std::string_view comment) const {
+void Table::SetColumnComment(std::shared_ptr<Table>& result,
+                             std::string_view column_name,
+                             std::string_view comment) const {
   auto it = absl::c_find_if(
     _columns, [&](const Column& c) { return c.GetName() == column_name; });
   if (it == _columns.end()) {
-    return Result{ERROR_SERVER_ILLEGAL_NAME};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                    ERR_MSG("column \"", column_name, "\" of relation \"",
+                            GetName(), "\" does not exist"));
   }
   auto new_table = basics::downCast<Table>(Clone());
   new_table->_columns[std::distance(_columns.begin(), it)].comment =
     std::string{comment};
   result = std::move(new_table);
-  return {};
 }
 
-Result Table::AddCheckConstraint(std::shared_ptr<Table>& result,
-                                 std::string name,
-                                 std::shared_ptr<ColumnExpr> expr) const {
+void Table::AddCheckConstraint(std::shared_ptr<Table>& result, std::string name,
+                               std::shared_ptr<ColumnExpr> expr) const {
   for (size_t counter = 1; absl::c_any_of(
          _check_constraints,
          [&](const CheckConstraint& c) { return c.GetName() == name; });
@@ -344,18 +363,20 @@ Result Table::AddCheckConstraint(std::shared_ptr<Table>& result,
   new_table->_check_constraints.emplace_back(new_table->GetId(), NextId(), name,
                                              std::move(expr));
   result = std::move(new_table);
-  return {};
 }
 
-Result Table::AddPrimaryKey(std::shared_ptr<Table>& result,
-                            std::vector<Column::Id> pk_columns,
-                            std::string name) const {
+void Table::AddPrimaryKey(std::shared_ptr<Table>& result,
+                          std::vector<Column::Id> pk_columns,
+                          std::string name) const {
   if (!_pk_columns.empty()) {
-    return Result{ERROR_SERVER_DUPLICATE_NAME};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TABLE_DEFINITION),
+                    ERR_MSG("multiple primary keys for table \"", GetName(),
+                            "\" are not allowed"));
   }
   for (auto col_id : pk_columns) {
     if (!ColumnById(col_id)) {
-      return Result{ERROR_SERVER_ILLEGAL_NAME};
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                      ERR_MSG("column does not exist"));
     }
   }
   auto new_table = basics::downCast<Table>(Clone());
@@ -370,28 +391,25 @@ Result Table::AddPrimaryKey(std::shared_ptr<Table>& result,
   for (auto col_id : pk_columns) {
     const auto* col = new_table->ColumnById(col_id);
     std::shared_ptr<Table> tmp;
-    if (auto r = new_table->SetNotNull(tmp, col->GetName()); !r.ok()) {
-      return r;
-    }
+    new_table->SetNotNull(tmp, col->GetName());
     new_table = basics::downCast<Table>(std::move(tmp));
   }
   result = std::move(new_table);
-  return {};
 }
 
-Result Table::AddUniqueConstraint(std::shared_ptr<Table>& result,
-                                  std::vector<Column::Id> columns,
-                                  std::string name) const {
+void Table::AddUniqueConstraint(std::shared_ptr<Table>& result,
+                                std::vector<Column::Id> columns,
+                                std::string name) const {
   for (auto col_id : columns) {
     if (!ColumnById(col_id)) {
-      return Result{ERROR_SERVER_ILLEGAL_NAME};
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                      ERR_MSG("column does not exist"));
     }
   }
   auto new_table = basics::downCast<Table>(Clone());
   new_table->_unique_constraints.push_back(
     TableUnique{std::move(name), std::move(columns), NextId(), NextId()});
   result = std::move(new_table);
-  return {};
 }
 
 std::shared_ptr<Object> Table::Clone() const {
@@ -402,16 +420,19 @@ std::shared_ptr<Object> Table::Clone() const {
   cloned->SetTombstoned(Tombstoned());
   cloned->SetData(_data);
   cloned->_comment = _comment;
+  cloned->_search_options = _search_options;
   return cloned;
 }
 
-Result Table::ChangeColumnAcl(std::shared_ptr<Table>& result,
-                              std::string_view column_name,
-                              absl::FunctionRef<void(Acl&)> mutate) const {
+void Table::ChangeColumnAcl(std::shared_ptr<Table>& result,
+                            std::string_view column_name,
+                            absl::FunctionRef<void(Acl&)> mutate) const {
   auto it = absl::c_find_if(
     _columns, [&](const Column& c) { return c.GetName() == column_name; });
   if (it == _columns.end()) {
-    return Result{ERROR_SERVER_ILLEGAL_NAME};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                    ERR_MSG("column \"", column_name, "\" of relation \"",
+                            GetName(), "\" does not exist"));
   }
 
   auto new_table = basics::downCast<Table>(Clone());
@@ -420,7 +441,6 @@ Result Table::ChangeColumnAcl(std::shared_ptr<Table>& result,
   mutate(acl);
   column.SetPermissions(Permissions{ObjectId{}, std::move(acl)});
   result = std::move(new_table);
-  return {};
 }
 
 std::shared_ptr<Table> Table::DropColumnDefault(Column::Id column_id) const {
@@ -453,14 +473,17 @@ std::shared_ptr<Table> Table::DropColumn(Column::Id column_id) const {
   return cloned;
 }
 
-Result Table::AddColumn(std::shared_ptr<Table>& result, Column column,
-                        bool if_not_exists) const {
+void Table::AddColumn(std::shared_ptr<Table>& result, Column column,
+                      bool if_not_exists) const {
   for (const auto& c : _columns) {
     if (c.GetName() == column.GetName()) {
       if (if_not_exists) {
-        return {};
+        return;
       }
-      return Result{ERROR_SERVER_DUPLICATE_NAME};
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
+        ERR_MSG("column \"", column.GetName(), "\" of relation \"", GetName(),
+                "\" already exists"));
     }
   }
   auto new_table = basics::downCast<Table>(Clone());
@@ -468,22 +491,22 @@ Result Table::AddColumn(std::shared_ptr<Table>& result, Column column,
   new_table->_columns.push_back(std::move(column));
   new_table->RebuildColumnIndex();
   result = std::move(new_table);
-  return {};
 }
 
-Result Table::ChangeColumnType(std::shared_ptr<Table>& result,
-                               std::string_view column_name,
-                               duckdb::LogicalType new_type) const {
+void Table::ChangeColumnType(std::shared_ptr<Table>& result,
+                             std::string_view column_name,
+                             duckdb::LogicalType new_type) const {
   auto it = absl::c_find_if(
     _columns, [&](const Column& c) { return c.GetName() == column_name; });
   if (it == _columns.end()) {
-    return Result{ERROR_SERVER_ILLEGAL_NAME};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                    ERR_MSG("column \"", column_name, "\" of relation \"",
+                            GetName(), "\" does not exist"));
   }
   auto new_table = basics::downCast<Table>(Clone());
   new_table->_columns[std::distance(_columns.begin(), it)].type =
     std::move(new_type);
   result = std::move(new_table);
-  return {};
 }
 
 std::shared_ptr<Table> Table::DropForeignKeysReferencing(

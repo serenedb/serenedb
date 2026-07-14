@@ -38,33 +38,33 @@ CREATE INDEX clickclack_vault_v_idx ON clickclack_vault_v USING inverted (secret
 
 
 statement ok
-CREATE ROLE vedernikoff_intern LOGIN;
+CREATE ROLE vedernikoff_intern LOGIN PASSWORD 'vedernikoff_intern_pw';
 
 
 # ---- superuser-only role DDL must refuse a non-superuser ----
 
-connection c_intern user=vedernikoff_intern
+connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 statement error
 CREATE ROLE sneaky;
 ----
 db error: ERROR: permission denied to create role<slt:ignore>
 
 
-connection c_intern user=vedernikoff_intern
+connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 statement error
 DROP ROLE postgres;
 ----
 db error: ERROR: permission denied to drop role<slt:ignore>
 
 
-connection c_intern user=vedernikoff_intern
+connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 statement error
 ALTER ROLE postgres LOGIN;
 ----
 db error: ERROR: permission denied to alter role<slt:ignore>
 
 
-connection c_intern user=vedernikoff_intern
+connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 statement error
 GRANT postgres TO vedernikoff_intern;
 ----
@@ -73,14 +73,14 @@ db error: ERROR: permission denied to grant role "postgres"<slt:ignore>
 
 # ---- GRANT/REVOKE on an unowned table must refuse (no self-service grants) ----
 
-connection c_intern user=vedernikoff_intern
+connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 statement error
 GRANT SELECT ON clickclack_vault TO vedernikoff_intern;
 ----
 db error: ERROR: permission denied for table clickclack_vault
 
 
-connection c_intern user=vedernikoff_intern
+connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 statement error
 REVOKE SELECT ON clickclack_vault FROM PUBLIC;
 ----
@@ -89,21 +89,21 @@ db error: ERROR: permission denied for table clickclack_vault
 
 # ---- DML gates beyond plain SELECT/INSERT ----
 
-connection c_intern user=vedernikoff_intern
+connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 statement error
 TRUNCATE clickclack_vault;
 ----
 db error: ERROR: permission denied for table clickclack_vault
 
 
-connection c_intern user=vedernikoff_intern
+connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 statement error
 MERGE INTO clickclack_vault USING (SELECT 1 AS id) s ON clickclack_vault.id = s.id WHEN MATCHED THEN DO NOTHING;
 ----
 db error: ERROR: permission denied for table clickclack_vault
 
 
-connection c_intern user=vedernikoff_intern
+connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 statement error
 COPY clickclack_vault TO '${__TEST_DIR__}/rbac_authorization_denied_never_written.csv';
 ----
@@ -115,7 +115,7 @@ db error: ERROR: permission denied for table clickclack_vault
 # SELECT on clickclack_vault_v, matching how any read of the view is checked.
 # (The table-backed twin, gated on the base table, is covered in enforcement.test.)
 
-connection c_intern user=vedernikoff_intern
+connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 statement error
 SELECT * FROM clickclack_vault_v_idx;
 ----
@@ -128,7 +128,7 @@ statement ok
 GRANT SELECT ON clickclack_vault_v TO vedernikoff_intern;
 
 
-connection c_intern user=vedernikoff_intern
+connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 query
 SELECT count(*) AS n FROM clickclack_vault_v_idx;
 ----
@@ -141,7 +141,7 @@ statement ok
 REVOKE SELECT ON clickclack_vault_v FROM vedernikoff_intern;
 
 
-connection c_intern user=vedernikoff_intern
+connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 statement error
 SELECT * FROM clickclack_vault_v_idx;
 ----
@@ -150,7 +150,7 @@ db error: ERROR: permission denied for view clickclack_vault_v
 
 # ---- the is_superuser GUC must reflect the session role ----
 
-connection c_intern user=vedernikoff_intern
+connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 query
 SHOW is_superuser;
 ----
@@ -184,7 +184,7 @@ GRANT mop_committee TO vedernikoff_intern;
 
 
 # Positive control: inherited SELECT works.
-connection c_intern user=vedernikoff_intern
+connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 query
 SELECT count(*) AS n FROM clickclack_vault;
 ----
@@ -206,7 +206,7 @@ DROP ROLE mop_committee;
 
 # Revoke + drop severed the inherited grant; the dangling membership edge must
 # not keep granting.
-connection c_intern user=vedernikoff_intern
+connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 statement error
 SELECT * FROM clickclack_vault;
 ----
@@ -220,7 +220,7 @@ statement ok
 CREATE ROLE mop_committee;
 
 
-connection c_intern user=vedernikoff_intern
+connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 statement error
 SELECT * FROM clickclack_vault;
 ----

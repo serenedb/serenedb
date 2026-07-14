@@ -55,7 +55,6 @@
 #include "basics/debugging.h"
 #include "basics/down_cast.h"
 #include "basics/duckdb_engine.h"
-#include "basics/exceptions.h"
 #include "basics/log.h"
 #include "basics/static_strings.h"
 #include "catalog/database.h"
@@ -93,13 +92,13 @@ duckdb::unique_ptr<duckdb::PreparedStatement> PrepareOrFatal(
   return stmt;
 }
 
-Result Exec(duckdb::PreparedStatement& stmt,
-            duckdb::vector<duckdb::Value> values) {
+absl::Status Exec(duckdb::PreparedStatement& stmt,
+                  duckdb::vector<duckdb::Value> values) {
   auto res = stmt.Execute(values, /*allow_stream_result=*/false);
   if (res->HasError()) {
-    return {ERROR_INTERNAL, res->GetError()};
+    return absl::InternalError(res->GetError());
   }
-  return {};
+  return absl::OkStatus();
 }
 
 duckdb::Value IdValue(ObjectId id) { return duckdb::Value::UBIGINT(id.id()); }
@@ -118,13 +117,13 @@ std::string QuotedIdent(const std::string& name) {
 }
 
 template<typename Fn>
-Result RunInTransaction(duckdb::Connection& conn, Fn&& fn) {
+absl::Status RunInTransaction(duckdb::Connection& conn, Fn&& fn) {
   try {
     conn.BeginTransaction();
   } catch (const std::exception& e) {
-    return {ERROR_INTERNAL, e.what()};
+    return absl::InternalError(e.what());
   }
-  Result r = [&]() noexcept { return fn(); }();
+  auto r = [&]() noexcept { return fn(); }();
   try {
     if (r.ok()) {
       conn.Commit();
@@ -133,7 +132,7 @@ Result RunInTransaction(duckdb::Connection& conn, Fn&& fn) {
     }
   } catch (const std::exception& e) {
     if (r.ok()) {
-      return {ERROR_INTERNAL, e.what()};
+      return absl::InternalError(e.what());
     }
   }
   return r;
@@ -650,23 +649,24 @@ void CatalogStore::Shutdown() {
   }
 }
 
-Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
+absl::Status CatalogStore::ExecuteEntries(
+  std::vector<WriteContext::Entry>& entries) {
   absl::MutexLock lock{&_mutex};
-  return RunInTransaction(*_conn, [&]() -> Result {
+  return RunInTransaction(*_conn, [&]() -> absl::Status {
     for (const auto& entry : entries) {
       switch (entry.op) {
         case WriteContext::Op::PutDefinition: {
           if (auto r = Exec(*_delete_definition,
                             {IdValue(entry.key.parent_id),
                              TypeValue(entry.key.type), IdValue(entry.key.id)});
-              r.fail()) {
+              !r.ok()) {
             return r;
           }
           if (auto r =
                 Exec(*_insert_definition,
                      {IdValue(entry.key.parent_id), TypeValue(entry.key.type),
                       IdValue(entry.key.id), DefValue(entry.def)});
-              r.fail()) {
+              !r.ok()) {
             return r;
           }
           break;
@@ -675,33 +675,33 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
           if (auto r = Exec(*_delete_definition,
                             {IdValue(entry.key.parent_id),
                              TypeValue(entry.key.type), IdValue(entry.key.id)});
-              r.fail()) {
+              !r.ok()) {
             return r;
           }
           break;
         }
         case WriteContext::Op::PutSequence: {
           if (auto r = Exec(*_delete_sequence_batch, {IdValue(entry.key.id)});
-              r.fail()) {
+              !r.ok()) {
             return r;
           }
           if (auto r = Exec(*_insert_sequence_batch,
                             {IdValue(entry.key.id),
                              duckdb::Value::UBIGINT(entry.sequence_value)});
-              r.fail()) {
+              !r.ok()) {
             return r;
           }
           break;
         }
         case WriteContext::Op::DropSequence: {
           if (auto r = Exec(*_delete_sequence_batch, {IdValue(entry.key.id)});
-              r.fail()) {
+              !r.ok()) {
             return r;
           }
           break;
         }
         case WriteContext::Op::CreateStoreTable: {
-          if (auto r = ExecuteCreateStoreTable(entry.store_table); r.fail()) {
+          if (auto r = ExecuteCreateStoreTable(entry.store_table); !r.ok()) {
             return r;
           }
           break;
@@ -711,7 +711,7 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
             absl::StrCat("DROP TABLE IF EXISTS \"", kStoreAlias, "\".main.",
                          QuotedIdent(entry.store_table.name)));
           if (res->HasError()) {
-            return {ERROR_INTERNAL, res->GetError()};
+            return absl::InternalError(res->GetError());
           }
           break;
         }
@@ -721,7 +721,7 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
                          QuotedIdent(entry.store_table.name), " RENAME TO ",
                          QuotedIdent(entry.name_a)));
           if (res->HasError()) {
-            return {ERROR_INTERNAL, res->GetError()};
+            return absl::InternalError(res->GetError());
           }
           break;
         }
@@ -731,12 +731,12 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
             QuotedIdent(entry.store_table.name), " RENAME COLUMN ",
             QuotedIdent(entry.name_a), " TO ", QuotedIdent(entry.name_b)));
           if (res->HasError()) {
-            return {ERROR_INTERNAL, res->GetError()};
+            return absl::InternalError(res->GetError());
           }
           break;
         }
         case WriteContext::Op::DropStoreCheck: {
-          auto r = basics::SafeCall([&]() -> Result {
+          try {
             auto& context = *_conn->context;
             duckdb::AlterEntryData data{
               duckdb::QualifiedName{duckdb::Identifier{kStoreAlias},
@@ -748,10 +748,8 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
             auto& catalog = duckdb::Catalog::GetCatalog(
               context, duckdb::Identifier{kStoreAlias});
             catalog.Alter(context, info);
-            return {};
-          });
-          if (r.fail()) {
-            return r;
+          } catch (const std::exception& e) {
+            return absl::InternalError(e.what());
           }
           break;
         }
@@ -761,7 +759,7 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
                          QuotedIdent(entry.store_table.name), " ALTER COLUMN ",
                          QuotedIdent(entry.name_a), " DROP NOT NULL"));
           if (res->HasError()) {
-            return {ERROR_INTERNAL, res->GetError()};
+            return absl::InternalError(res->GetError());
           }
           break;
         }
@@ -771,7 +769,7 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
                          QuotedIdent(entry.store_table.name), " ALTER COLUMN ",
                          QuotedIdent(entry.name_a), " SET NOT NULL"));
           if (res->HasError()) {
-            return {ERROR_INTERNAL, res->GetError()};
+            return absl::InternalError(res->GetError());
           }
           break;
         }
@@ -781,7 +779,7 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
                                       QuotedIdent(entry.store_table.name),
                                       " ADD CHECK (", entry.name_a, ")"));
           if (res->HasError()) {
-            return {ERROR_INTERNAL, res->GetError()};
+            return absl::InternalError(res->GetError());
           }
           break;
         }
@@ -798,7 +796,7 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
                                       QuotedIdent(entry.store_table.name),
                                       " ADD PRIMARY KEY (", cols, ")"));
           if (res->HasError()) {
-            return {ERROR_INTERNAL, res->GetError()};
+            return absl::InternalError(res->GetError());
           }
           break;
         }
@@ -814,7 +812,7 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
             "ALTER TABLE \"", kStoreAlias, "\".main.",
             QuotedIdent(entry.store_table.name), " ADD UNIQUE (", cols, ")"));
           if (res->HasError()) {
-            return {ERROR_INTERNAL, res->GetError()};
+            return absl::InternalError(res->GetError());
           }
           break;
         }
@@ -852,7 +850,7 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
           }
           auto res = _conn->Query(sql);
           if (res->HasError()) {
-            return {ERROR_INTERNAL, res->GetError()};
+            return absl::InternalError(res->GetError());
           }
           break;
         }
@@ -861,12 +859,12 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
             "DROP INDEX IF EXISTS \"", kStoreAlias, "\".main.",
             QuotedIdent(StoreIndexName(entry.store_index.index_id))));
           if (res->HasError()) {
-            return {ERROR_INTERNAL, res->GetError()};
+            return absl::InternalError(res->GetError());
           }
           break;
         }
         case WriteContext::Op::DropStoreForeignKey: {
-          auto r = basics::SafeCall([&]() -> Result {
+          try {
             auto& context = *_conn->context;
             duckdb::AlterEntryData data{
               duckdb::QualifiedName{duckdb::Identifier{kStoreAlias},
@@ -884,10 +882,8 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
             auto& catalog = duckdb::Catalog::GetCatalog(
               context, duckdb::Identifier{kStoreAlias});
             catalog.Alter(context, info);
-            return {};
-          });
-          if (r.fail()) {
-            return r;
+          } catch (const std::exception& e) {
+            return absl::InternalError(e.what());
           }
           break;
         }
@@ -897,7 +893,7 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
                          QuotedIdent(entry.store_table.name), " DROP COLUMN ",
                          QuotedIdent(entry.name_a)));
           if (res->HasError()) {
-            return {ERROR_INTERNAL, res->GetError()};
+            return absl::InternalError(res->GetError());
           }
           break;
         }
@@ -922,7 +918,7 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
             res = _conn->Query(base);
           }
           if (res->HasError()) {
-            return {ERROR_INTERNAL, res->GetError()};
+            return absl::InternalError(res->GetError());
           }
           break;
         }
@@ -936,19 +932,19 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
           }
           auto res = _conn->Query(sql);
           if (res->HasError()) {
-            return {ERROR_INTERNAL, res->GetError()};
+            return absl::InternalError(res->GetError());
           }
           break;
         }
       }
     }
-    return {};
+    return absl::OkStatus();
   });
 }
 
-Result CatalogStore::ExecuteCreateStoreTable(const StoreTableDef& def) {
+absl::Status CatalogStore::ExecuteCreateStoreTable(const StoreTableDef& def) {
   auto r = ExecuteCreateStoreTableImpl(def, /*with_checks=*/true);
-  if (r.fail() && !def.checks.empty()) {
+  if (!r.ok() && !def.checks.empty()) {
     // CHECK expressions may reference facade-only types or functions the store
     // catalog cannot bind. The store table omits them; the facade-bound CHECK
     // is carried into every write plan instead (RetargetStoreConstraints), so
@@ -956,88 +952,84 @@ Result CatalogStore::ExecuteCreateStoreTable(const StoreTableDef& def) {
     auto retry = ExecuteCreateStoreTableImpl(def, /*with_checks=*/false);
     if (retry.ok()) {
       SDB_TRACE(GENERAL, "store table \"", def.name,
-                "\": CHECK constraints kept facade-side: ", r.errorMessage());
+                "\": CHECK constraints kept facade-side: ", r.message());
       return retry;
     }
   }
   return r;
 }
 
-Result CatalogStore::ExecuteCreateStoreTableImpl(const StoreTableDef& def,
-                                                 bool with_checks) {
-  return basics::SafeCall([&]() -> Result {
-    auto info =
-      duckdb::make_uniq<duckdb::CreateTableInfo>(duckdb::QualifiedName{
-        duckdb::Identifier{kStoreAlias}, duckdb::Identifier{"main"},
-        duckdb::Identifier{def.name}});
-    for (const auto& col : def.columns) {
-      info->columns.AddColumn(
-        duckdb::ColumnDefinition{duckdb::Identifier{col.name}, col.type});
+absl::Status CatalogStore::ExecuteCreateStoreTableImpl(const StoreTableDef& def,
+                                                       bool with_checks) try {
+  auto info = duckdb::make_uniq<duckdb::CreateTableInfo>(duckdb::QualifiedName{
+    duckdb::Identifier{kStoreAlias}, duckdb::Identifier{"main"},
+    duckdb::Identifier{def.name}});
+  for (const auto& col : def.columns) {
+    info->columns.AddColumn(
+      duckdb::ColumnDefinition{duckdb::Identifier{col.name}, col.type});
+  }
+  for (auto idx : def.not_null) {
+    info->constraints.push_back(
+      duckdb::make_uniq<duckdb::NotNullConstraint>(duckdb::LogicalIndex{idx}));
+  }
+  if (!def.pk_columns.empty()) {
+    duckdb::vector<duckdb::Identifier> pk;
+    pk.reserve(def.pk_columns.size());
+    for (const auto& name : def.pk_columns) {
+      pk.emplace_back(name);
     }
-    for (auto idx : def.not_null) {
-      info->constraints.push_back(duckdb::make_uniq<duckdb::NotNullConstraint>(
-        duckdb::LogicalIndex{idx}));
+    info->constraints.push_back(
+      duckdb::make_uniq<duckdb::UniqueConstraint>(std::move(pk), true));
+  }
+  for (const auto& unique : def.unique_constraints) {
+    duckdb::vector<duckdb::Identifier> names;
+    names.reserve(unique.size());
+    for (const auto& name : unique) {
+      names.emplace_back(name);
     }
-    if (!def.pk_columns.empty()) {
-      duckdb::vector<duckdb::Identifier> pk;
-      pk.reserve(def.pk_columns.size());
-      for (const auto& name : def.pk_columns) {
-        pk.emplace_back(name);
-      }
+    info->constraints.push_back(
+      duckdb::make_uniq<duckdb::UniqueConstraint>(std::move(names), false));
+  }
+  for (const auto& fk : def.foreign_keys) {
+    duckdb::vector<duckdb::Identifier> fk_cols;
+    duckdb::vector<duckdb::Identifier> pk_cols;
+    for (const auto& name : fk.columns) {
+      fk_cols.emplace_back(name);
+    }
+    for (const auto& name : fk.referenced_columns) {
+      pk_cols.emplace_back(name);
+    }
+    duckdb::ForeignKeyInfo fk_info;
+    fk_info.type = duckdb::ForeignKeyType::FK_TYPE_FOREIGN_KEY_TABLE;
+    fk_info.table = duckdb::Identifier{fk.referenced_table};
+    info->constraints.push_back(duckdb::make_uniq<duckdb::ForeignKeyConstraint>(
+      std::move(pk_cols), std::move(fk_cols), std::move(fk_info)));
+  }
+  if (with_checks) {
+    for (const auto& check : def.checks) {
       info->constraints.push_back(
-        duckdb::make_uniq<duckdb::UniqueConstraint>(std::move(pk), true));
+        duckdb::make_uniq<duckdb::CheckConstraint>(check->Copy()));
     }
-    for (const auto& unique : def.unique_constraints) {
-      duckdb::vector<duckdb::Identifier> names;
-      names.reserve(unique.size());
-      for (const auto& name : unique) {
-        names.emplace_back(name);
-      }
-      info->constraints.push_back(
-        duckdb::make_uniq<duckdb::UniqueConstraint>(std::move(names), false));
-    }
-    for (const auto& fk : def.foreign_keys) {
-      duckdb::vector<duckdb::Identifier> fk_cols;
-      duckdb::vector<duckdb::Identifier> pk_cols;
-      for (const auto& name : fk.columns) {
-        fk_cols.emplace_back(name);
-      }
-      for (const auto& name : fk.referenced_columns) {
-        pk_cols.emplace_back(name);
-      }
-      duckdb::ForeignKeyInfo fk_info;
-      fk_info.type = duckdb::ForeignKeyType::FK_TYPE_FOREIGN_KEY_TABLE;
-      fk_info.table = duckdb::Identifier{fk.referenced_table};
-      info->constraints.push_back(
-        duckdb::make_uniq<duckdb::ForeignKeyConstraint>(
-          std::move(pk_cols), std::move(fk_cols), std::move(fk_info)));
-    }
-    if (with_checks) {
-      for (const auto& check : def.checks) {
-        info->constraints.push_back(
-          duckdb::make_uniq<duckdb::CheckConstraint>(check->Copy()));
-      }
-    }
-    auto& context = *_conn->context;
-    auto& catalog =
-      duckdb::Catalog::GetCatalog(context, duckdb::Identifier{kStoreAlias});
-    // Acquire the store's (shared) checkpoint lock before creating the table.
-    // The direct catalog.CreateTable() call bypasses the statement-execution
-    // path that normally registers the modification and takes this lock (which
-    // serenedb's DROP/ALTER do go through, via _conn->Query). Without it, a
-    // store table can be created concurrently with a store checkpoint; the new
-    // table is then not in the checkpoint's snapshot, so MergeCheckpointDeltas
-    // never merges its index's added_data delta -> the entry is stranded -> a
-    // later delete fails "0 out of 1" -> "Failed to rollback transaction".
-    duckdb::MetaTransaction::Get(context).ModifyDatabase(
-      catalog.GetAttached(),
-      duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY);
-    SDB_IF_FAILURE("pause_store_create_table") {
-      sdb::WaitWhileFailurePointDebugging("pause_store_create_table");
-    }
-    catalog.CreateTable(context, std::move(info));
-    return {};
-  });
+  }
+  auto& context = *_conn->context;
+  auto& catalog =
+    duckdb::Catalog::GetCatalog(context, duckdb::Identifier{kStoreAlias});
+  // Acquire the store's (shared) checkpoint lock before creating the table.
+  // The direct catalog.CreateTable() call bypasses the statement-execution
+  // path that normally registers the modification and takes this lock (which
+  // serenedb's DROP/ALTER do go through, via _conn->Query). Without it, a
+  // store table can be created concurrently with a store checkpoint; the new
+  // table is then not in the checkpoint's snapshot, so MergeCheckpointDeltas
+  // never merges its index's added_data delta -> the entry is stranded -> a
+  // later delete fails "0 out of 1" -> "Failed to rollback transaction".
+  duckdb::MetaTransaction::Get(context).ModifyDatabase(
+    catalog.GetAttached(),
+    duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY);
+  SDB_WAIT_ON_FAILURE("pause_store_create_table");
+  catalog.CreateTable(context, std::move(info));
+  return absl::OkStatus();
+} catch (const std::exception& e) {
+  return absl::InternalError(e.what());
 }
 
 void CatalogStore::ValidateStoreTable(const StoreTableDef& def) {
@@ -1049,7 +1041,7 @@ void CatalogStore::ValidateStoreTable(const StoreTableDef& def) {
     SDB_ASSERT(false, "store table validation: ", e.what());
     return;
   }
-  std::ignore = basics::SafeCall([&]() -> Result {
+  try {
     auto& context = *_conn->context;
     duckdb::EntryLookupInfo lookup{
       duckdb::CatalogType::TABLE_ENTRY,
@@ -1059,27 +1051,28 @@ void CatalogStore::ValidateStoreTable(const StoreTableDef& def) {
     auto entry = duckdb::Catalog::GetEntry(
       context, lookup, duckdb::OnEntryNotFound::RETURN_NULL);
     SDB_ASSERT(entry, "store table missing for ", def.name);
-    if (!entry) {
-      return {};
-    }
-    const auto& columns = entry->Cast<duckdb::TableCatalogEntry>().GetColumns();
-    SDB_ASSERT(columns.LogicalColumnCount() == def.columns.size(),
-               "store table column count mismatch for ", def.name);
-    duckdb::idx_t i = 0;
-    for (const auto& col : columns.Logical()) {
-      if (i >= def.columns.size()) {
-        break;
+    if (entry) {
+      const auto& columns =
+        entry->Cast<duckdb::TableCatalogEntry>().GetColumns();
+      SDB_ASSERT(columns.LogicalColumnCount() == def.columns.size(),
+                 "store table column count mismatch for ", def.name);
+      duckdb::idx_t i = 0;
+      for (const auto& col : columns.Logical()) {
+        if (i >= def.columns.size()) {
+          break;
+        }
+        SDB_ASSERT(col.Name().GetIdentifierName() == def.columns[i].name,
+                   "store table column name mismatch for ", def.name, ": ",
+                   col.Name().GetIdentifierName(), " vs ", def.columns[i].name);
+        SDB_ASSERT(col.Type() == def.columns[i].type,
+                   "store table column type mismatch for ", def.name, ".",
+                   def.columns[i].name);
+        ++i;
       }
-      SDB_ASSERT(col.Name().GetIdentifierName() == def.columns[i].name,
-                 "store table column name mismatch for ", def.name, ": ",
-                 col.Name().GetIdentifierName(), " vs ", def.columns[i].name);
-      SDB_ASSERT(col.Type() == def.columns[i].type,
-                 "store table column type mismatch for ", def.name, ".",
-                 def.columns[i].name);
-      ++i;
     }
-    return {};
-  });
+  } catch (const std::exception& e) {
+    SDB_ASSERT(false, "store table validation: ", e.what());
+  }
   try {
     _conn->Rollback();
   } catch (const std::exception&) {
@@ -1087,53 +1080,67 @@ void CatalogStore::ValidateStoreTable(const StoreTableDef& def) {
 #endif
 }
 
-Result CatalogStore::CreateDefinition(ObjectId parent_id, ObjectType type,
-                                      ObjectId id, std::string_view def) {
+void CatalogStore::CreateDefinition(ObjectId parent_id, ObjectType type,
+                                    ObjectId id, std::string_view def) {
   WriteContext ctx;
   ctx.PutDefinition(parent_id, type, id, def);
-  return ExecuteEntries(ctx._entries);
+  if (auto r = ExecuteEntries(ctx._entries); !r.ok()) {
+    THROW_SQL_ERROR(ERR_MSG(r.message()));
+  }
 }
 
-Result CatalogStore::Write(absl::FunctionRef<void(WriteContext&)> fill) {
+void CatalogStore::Write(absl::FunctionRef<void(WriteContext&)> fill) {
   WriteContext ctx;
   fill(ctx);
-  return ExecuteEntries(ctx._entries);
+  if (auto r = ExecuteEntries(ctx._entries); !r.ok()) {
+    THROW_SQL_ERROR(ERR_MSG(r.message()));
+  }
 }
 
-Result CatalogStore::DropDefinition(ObjectId parent_id, ObjectType type,
-                                    ObjectId id) {
+void CatalogStore::DropDefinition(ObjectId parent_id, ObjectType type,
+                                  ObjectId id) {
   WriteContext ctx;
   ctx.DropDefinition(parent_id, type, id);
-  return ExecuteEntries(ctx._entries);
+  if (auto r = ExecuteEntries(ctx._entries); !r.ok()) {
+    THROW_SQL_ERROR(ERR_MSG(r.message()));
+  }
 }
 
-Result CatalogStore::DropSequence(ObjectId sequence_id) {
+void CatalogStore::DropSequence(ObjectId sequence_id) {
   WriteContext ctx;
   ctx.DropSequence(sequence_id);
-  return ExecuteEntries(ctx._entries);
+  if (auto r = ExecuteEntries(ctx._entries); !r.ok()) {
+    THROW_SQL_ERROR(ERR_MSG(r.message()));
+  }
 }
 
-Result CatalogStore::DropEntry(ObjectId parent_id, ObjectType type) {
+void CatalogStore::DropEntry(ObjectId parent_id, ObjectType type) {
   absl::MutexLock lock{&_mutex};
-  return RunInTransaction(*_conn, [&]() -> Result {
+  auto r = RunInTransaction(*_conn, [&]() -> absl::Status {
     return Exec(*_delete_by_parent_type, {IdValue(parent_id), TypeValue(type)});
   });
+  if (!r.ok()) {
+    THROW_SQL_ERROR(ERR_MSG(r.message()));
+  }
 }
 
-Result CatalogStore::DropEntry(ObjectId parent_id) {
+void CatalogStore::DropEntry(ObjectId parent_id) {
   absl::MutexLock lock{&_mutex};
-  return RunInTransaction(*_conn, [&]() -> Result {
+  auto r = RunInTransaction(*_conn, [&]() -> absl::Status {
     return Exec(*_delete_by_parent, {IdValue(parent_id)});
   });
+  if (!r.ok()) {
+    THROW_SQL_ERROR(ERR_MSG(r.message()));
+  }
 }
 
-Result CatalogStore::WriteTombstone(ObjectId parent_id, ObjectId id) {
-  return CreateDefinition(parent_id, ObjectType::Tombstone, id, {});
+void CatalogStore::WriteTombstone(ObjectId parent_id, ObjectId id) {
+  CreateDefinition(parent_id, ObjectType::Tombstone, id, {});
 }
 
-Result CatalogStore::VisitDefinitions(
+void CatalogStore::VisitDefinitions(
   ObjectId parent_id, ObjectType type,
-  absl::FunctionRef<Result(Key, std::string_view)> visitor) {
+  absl::FunctionRef<bool(Key, std::string_view)> visitor) {
   duckdb::unique_ptr<duckdb::QueryResult> res;
   {
     absl::MutexLock lock{&_mutex};
@@ -1141,7 +1148,7 @@ Result CatalogStore::VisitDefinitions(
     res = _select_definitions->Execute(params, /*allow_stream_result=*/false);
   }
   if (res->HasError()) {
-    return {ERROR_INTERNAL, res->GetError()};
+    THROW_SQL_ERROR(ERR_MSG(res->GetError()));
   }
   while (auto chunk = res->Fetch()) {
     chunk->Flatten();
@@ -1150,19 +1157,16 @@ Result CatalogStore::VisitDefinitions(
     const auto* defs =
       duckdb::FlatVector::GetData<duckdb::string_t>(chunk->data[1]);
     for (duckdb::idx_t i = 0; i < count; ++i) {
-      if (auto r =
-            visitor(Key{parent_id, type, ObjectId{ids[i]}},
-                    std::string_view{defs[i].GetData(), defs[i].GetSize()});
-          r.fail()) {
-        return r;
+      if (!visitor(Key{parent_id, type, ObjectId{ids[i]}},
+                   std::string_view{defs[i].GetData(), defs[i].GetSize()})) {
+        return;
       }
     }
   }
-  return {};
 }
 
 void CatalogStore::BootConsumeCatalog(duckdb::DataChunk& input) {
-  SDB_ENSURE(_boot_loading.load(std::memory_order_acquire), ERROR_FORBIDDEN,
+  SDB_ENSURE(_boot_loading.load(std::memory_order_acquire),
              "sdb_init_catalog is internal to server startup");
   duckdb::UnifiedVectorFormat parents;
   duckdb::UnifiedVectorFormat types;
@@ -1190,7 +1194,7 @@ void CatalogStore::BootConsumeCatalog(duckdb::DataChunk& input) {
 }
 
 void CatalogStore::BootConsumeSequences(duckdb::DataChunk& input) {
-  SDB_ENSURE(_boot_loading.load(std::memory_order_acquire), ERROR_FORBIDDEN,
+  SDB_ENSURE(_boot_loading.load(std::memory_order_acquire),
              "sdb_init_sequences is internal to server startup");
   duckdb::UnifiedVectorFormat ids;
   duckdb::UnifiedVectorFormat counters;
@@ -1206,11 +1210,11 @@ void CatalogStore::BootConsumeSequences(duckdb::DataChunk& input) {
   }
 }
 
-Result CatalogStore::LoadBootState() {
+void CatalogStore::LoadBootState() {
   _boot_defs.clear();
   _boot_sequences.clear();
   _boot_loading.store(true, std::memory_order_release);
-  Result r;
+  auto status = absl::OkStatus();
   {
     absl::MutexLock lock{&_mutex};
     auto res = _conn->Query(
@@ -1218,20 +1222,20 @@ Result CatalogStore::LoadBootState() {
                    "id, def FROM ",
                    kCatalogTable, "))"));
     if (res->HasError()) {
-      r = Result{ERROR_INTERNAL, res->GetError()};
+      status = absl::InternalError(res->GetError());
     } else {
       res = _conn->Query(absl::StrCat(
         "SELECT * FROM sdb_init_sequences((SELECT id, counter FROM ",
         kSequenceTable, "))"));
       if (res->HasError()) {
-        r = Result{ERROR_INTERNAL, res->GetError()};
+        status = absl::InternalError(res->GetError());
       }
     }
   }
   _boot_loading.store(false, std::memory_order_release);
-  if (r.fail()) {
+  if (!status.ok()) {
     ReleaseBootState();
-    return r;
+    THROW_SQL_ERROR(ERR_MSG(status.message()));
   }
   for (auto& [key, defs] : _boot_defs) {
     std::sort(defs.begin(), defs.end(),
@@ -1239,22 +1243,20 @@ Result CatalogStore::LoadBootState() {
                 return lhs.id.id() < rhs.id.id();
               });
   }
-  return {};
 }
 
-Result CatalogStore::VisitBoot(
+void CatalogStore::VisitBoot(
   ObjectId parent_id, ObjectType type,
-  absl::FunctionRef<Result(Key, std::string_view)> visitor) const {
+  absl::FunctionRef<bool(Key, std::string_view)> visitor) const {
   const auto it = _boot_defs.find({parent_id.id(), static_cast<uint8_t>(type)});
   if (it == _boot_defs.end()) {
-    return {};
+    return;
   }
   for (const auto& def : it->second) {
-    if (auto r = visitor(Key{parent_id, type, def.id}, def.def); r.fail()) {
-      return r;
+    if (!visitor(Key{parent_id, type, def.id}, def.def)) {
+      return;
     }
   }
-  return {};
 }
 
 bool CatalogStore::TryGetBootSequenceValue(ObjectId sequence_id,
@@ -1284,18 +1286,21 @@ uint64_t CatalogStore::BootSequencesLoaded() const {
   return _boot_sequences.size();
 }
 
-Result CatalogStore::PutSequenceValue(ObjectId sequence_id, uint64_t value) {
+void CatalogStore::PutSequenceValue(ObjectId sequence_id, uint64_t value) {
   absl::MutexLock lock{&_seq_mutex};
-  return RunInTransaction(*_seq_conn, [&]() -> Result {
-    if (auto r = Exec(*_delete_sequence, {IdValue(sequence_id)}); r.fail()) {
+  auto r = RunInTransaction(*_seq_conn, [&]() -> absl::Status {
+    if (auto r = Exec(*_delete_sequence, {IdValue(sequence_id)}); !r.ok()) {
       return r;
     }
     return Exec(*_insert_sequence,
                 {IdValue(sequence_id), duckdb::Value::UBIGINT(value)});
   });
+  if (!r.ok()) {
+    THROW_SQL_ERROR(ERR_MSG(r.message()));
+  }
 }
 
-Result CatalogStore::GetSequenceValue(ObjectId sequence_id, uint64_t& value) {
+void CatalogStore::GetSequenceValue(ObjectId sequence_id, uint64_t& value) {
   value = 0;
   duckdb::unique_ptr<duckdb::QueryResult> res;
   {
@@ -1304,26 +1309,25 @@ Result CatalogStore::GetSequenceValue(ObjectId sequence_id, uint64_t& value) {
     res = _select_sequence->Execute(params, /*allow_stream_result=*/false);
   }
   if (res->HasError()) {
-    return {ERROR_INTERNAL, res->GetError()};
+    THROW_SQL_ERROR(ERR_MSG(res->GetError()));
   }
   if (auto chunk = res->Fetch(); chunk && chunk->size() > 0) {
     SDB_ASSERT(chunk->size() == 1);
     chunk->Flatten();
     value = duckdb::FlatVector::GetData<uint64_t>(chunk->data[0])[0];
   }
-  return {};
 }
 
 void CatalogStore::EnsureSystemDatabase() {
   bool has_system = false;
-  std::ignore = VisitDefinitions(id::kInstance, ObjectType::Database,
-                                 [&](Key key, std::string_view) -> Result {
-                                   if (key.id == id::kSystemDB) {
-                                     has_system = true;
-                                     return {ERROR_INTERNAL};  // found, stop
-                                   }
-                                   return {};  // keep scanning
-                                 });
+  VisitDefinitions(id::kInstance, ObjectType::Database,
+                   [&](Key key, std::string_view) {
+                     if (key.id == id::kSystemDB) {
+                       has_system = true;
+                       return false;  // found, stop
+                     }
+                     return true;  // keep scanning
+                   });
 
   if (has_system) {
     SDB_TRACE(STARTUP, "Found system database");
@@ -1334,21 +1338,14 @@ void CatalogStore::EnsureSystemDatabase() {
                     StaticStrings::kDefaultDatabase};
   duckdb::MemoryStream stream;
   auto database_bytes = SerializeObject(database, stream);
-  auto r = CreateDefinition(id::kInstance, ObjectType::Database, id::kSystemDB,
-                            database_bytes);
-  if (!r.ok()) {
-    SDB_FATAL(STARTUP, "unable to write database marker: ", r.errorMessage());
-  }
+  CreateDefinition(id::kInstance, ObjectType::Database, id::kSystemDB,
+                   database_bytes);
 
   const auto schema_id = NextId();
   Schema schema{catalog::Permissions{id::kRootUser}, id::kSystemDB, schema_id,
                 StaticStrings::kPublic};
   auto schema_bytes = SerializeObject(schema, stream);
-  r = CreateDefinition(id::kSystemDB, ObjectType::Schema, schema_id,
-                       schema_bytes);
-  if (!r.ok()) {
-    SDB_FATAL(STARTUP, "unable to write schema marker: ", r.errorMessage());
-  }
+  CreateDefinition(id::kSystemDB, ObjectType::Schema, schema_id, schema_bytes);
 }
 
 CatalogStore& GetCatalogStore() { return CatalogStore::instance(); }

@@ -26,9 +26,11 @@
 #include "basics/log.h"
 #include "basics/string_utils.h"
 #include "catalog/inverted_index.h"
-#include "connector/duckdb_search_sink_writer.h"
 #include "connector/duckdb_table_entry.h"
+#include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
@@ -38,13 +40,13 @@ std::unique_ptr<DuckDBSinkIndexWriter> MakeDuckDBSearchWriter(
   DuckDBWriteKind kind, irs::IndexWriter::Transaction& trx,
   TokenizerProvider&& tokenizer_provider,
   EntryInfoProvider&& entry_info_provider,
-  std::span<const catalog::Column::Id> columns,
-  std::vector<IndexedExpression>&& indexed_exprs) {
+  std::span<const catalog::Column::Id> indexed_columns,
+  std::vector<IndexedExpression>&& indexed_exprs, PkPolicy pk_policy) {
   switch (kind) {
     case DuckDBWriteKind::Insert:
       return std::make_unique<DuckDBSearchSinkInsertWriter>(
-        trx, std::move(tokenizer_provider), columns,
-        std::move(entry_info_provider), std::move(indexed_exprs));
+        trx, std::move(tokenizer_provider), indexed_columns,
+        std::move(entry_info_provider), std::move(indexed_exprs), pk_policy);
     case DuckDBWriteKind::Delete:
       return std::make_unique<DuckDBSearchSinkDeleteWriter>(trx);
   }
@@ -67,25 +69,36 @@ std::unique_ptr<DuckDBSinkIndexWriter> CreateInvertedIndexWriter(
       }
       auto& inverted_index =
         basics::downCast<const catalog::InvertedIndex>(index);
+      if constexpr (Kind == DuckDBWriteKind::Delete) {
+        if (!inverted_index.GetOptions().pk_term) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+            ERR_MSG("inverted index \"", inverted_index.GetName(),
+                    "\" was created WITH (store_pk = 'none') and does not "
+                    "index row PKs: DELETE/UPDATE cannot maintain it; drop "
+                    "the index first or recreate it without store_pk = "
+                    "'none'"));
+        }
+      }
       auto tokenizer_provider = MakeTokenizerProvider(snapshot, inverted_index);
       auto entry_info_provider = MakeEntryInfoProvider(inverted_index);
       std::vector<IndexedExpression> indexed_exprs;
       if constexpr (Kind == DuckDBWriteKind::Insert) {
-        // Deletes are key-only; skipping the deserialization also keeps
-        // rollback paths (no usable transaction context) working.
         indexed_exprs = MakeIndexedExpressions(
           inverted_index,
           expr_context ? *expr_context : conn_ctx.GetClientContext());
       }
+      const auto& index_options = inverted_index.GetOptions();
       writer =
         MakeDuckDBSearchWriter(Kind, index_txn, std::move(tokenizer_provider),
                                std::move(entry_info_provider),
-                               index.GetColumns(), std::move(indexed_exprs));
+                               index.GetColumns(), std::move(indexed_exprs),
+                               PkPolicy{.index_term = index_options.pk_term,
+                                        .column = index_options.pk_column});
     });
   return writer;
 }
 
-// Explicit instantiations
 template std::unique_ptr<DuckDBSinkIndexWriter>
 CreateInvertedIndexWriter<DuckDBWriteKind::Insert>(
   ObjectId table_id, ObjectId index_id, ConnectionContext& conn_ctx,
@@ -99,9 +112,6 @@ std::vector<size_t> BuildCreateIndexProjection(
   std::span<const catalog::Column> columns,
   std::span<const catalog::Column::Id> pk_column_ids,
   std::span<const duckdb::idx_t> index_column_positions) {
-  // Sort + unique on a small vector is faster than a hash set and avoids
-  // an allocation. Sorted order == catalog order, which keeps the
-  // projection stable across call sites.
   std::vector<size_t> projection;
   projection.reserve(index_column_positions.size() + pk_column_ids.size());
 
@@ -127,9 +137,7 @@ void EvaluateAndWriteIndexedExpressions(
   DuckDBSinkIndexWriter& sink, std::span<const IndexedExpression> indexed_exprs,
   duckdb::DataChunk& chunk, ObjectId table_id,
   std::span<const catalog::Column::Id> slot_to_col_id,
-  duckdb::ClientContext& client_context, duckdb::idx_t num_rows,
-  std::vector<std::string>& row_keys) {
-  std::vector<std::string_view> view_row_keys{row_keys.begin(), row_keys.end()};
+  duckdb::ClientContext& client_context, duckdb::idx_t num_rows) {
   for (const auto& indexed_expr : indexed_exprs) {
     SDB_ASSERT(indexed_expr.normalized_expr);
     auto result = EvaluateExprOverChunk(
@@ -138,7 +146,7 @@ void EvaluateAndWriteIndexedExpressions(
 
     const ExpressionDescriptor expr_desc{result.GetType(),
                                          indexed_expr.field_id};
-    sink.SwitchExpression(expr_desc, result, view_row_keys, num_rows);
+    sink.SwitchExpression(expr_desc, result, num_rows);
   }
 }
 

@@ -99,14 +99,16 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
   _num_proj_cols = select_names.size();
 }
 
-duckdb::idx_t ExternalLookupIndexSource::Materialize(
-  duckdb::ClientContext& context, PrimaryKeyBatch& batch, duckdb::idx_t start,
-  duckdb::idx_t count, duckdb::DataChunk& output) {
-  output.SetCardinality(count);
+void ExternalLookupIndexSource::Materialize(duckdb::ClientContext& context,
+                                            PrimaryKeyBatch& batch,
+                                            duckdb::idx_t start,
+                                            duckdb::idx_t count,
+                                            duckdb::DataChunk& output) {
   if (count == 0) {
-    return count;
+    return;
   }
-  auto& pk = std::get<PrimaryKeyI64>(batch);
+  auto& pk = batch;
+  SDB_ASSERT(pk.kind == PrimaryKeyBatch::Kind::I64);
   SDB_ASSERT(start + count <= pk.rows.size());
 
   // Key -> output slots still waiting for their row. One slot per key in the
@@ -161,7 +163,6 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
   }
 
   RunCastPass(output, count);
-  return count;
 }
 
 }  // namespace sdb::connector

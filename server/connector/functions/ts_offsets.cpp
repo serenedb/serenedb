@@ -174,9 +174,7 @@ auto& EnsureField(duckdb::ClientContext& context,
   auto column_id = kStandaloneSyntheticColumnId;
   catalog::Tokenizer::TokenizerWrapper wrapper;
   if (bind.IsStandalone()) {
-    auto wrapper_or = bind.dict_tokenizer->GetTokenizer();
-    SDB_ENSURE(wrapper_or.has_value(), ERROR_INTERNAL);
-    wrapper = std::move(*wrapper_or);
+    wrapper = bind.dict_tokenizer->GetTokenizer();
   } else {
     auto snapshot = GetSereneDBContext(context).CatalogSnapshot();
     auto column_tokenizer = bind.inverted_index->GetTokenizer(
@@ -340,14 +338,10 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
           duckdb::ProjectionIndex{kSyntheticColumnIdx}) {
       return std::nullopt;
     }
-    auto wrapper_or = dict_tokenizer->GetTokenizer();
-    if (!wrapper_or.has_value()) {
-      return std::nullopt;
-    }
     SearchColumnInfo info;
     info.field_id = static_cast<irs::field_id>(column_id);
     info.logical_type = duckdb::LogicalType::VARCHAR;
-    info.tokenizer.analyzer = std::move(*wrapper_or);
+    info.tokenizer.analyzer = dict_tokenizer->GetTokenizer();
     info.tokenizer.features = irs::IndexFeatures::Freq |
                               irs::IndexFeatures::Pos |
                               irs::IndexFeatures::Offs;
@@ -358,11 +352,10 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
   duckdb::unique_ptr<duckdb::Expression> match_owner = std::move(match_expr);
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts{
     &match_owner, 1};
-  auto result = MakeSearchFilter(*root, conjuncts, column_getter, context);
-  if (!result.ok()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("failed to build filter from tsquery: ", result.errorMessage()));
+  if (auto s = MakeSearchFilter(*root, conjuncts, column_getter, context);
+      !s.ok()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG(s.message()));
   }
   irs::Filter::ptr filter = std::move(root);
   irs::Optimize(filter);

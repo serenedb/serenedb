@@ -37,14 +37,13 @@
 #include <string_view>
 
 #include "absl/strings/str_cat.h"
-#include "basics/exceptions.h"
 #include "basics/file_utils_ext.hpp"
 #include "basics/log.h"
 #include "basics/misc.hpp"
-#include "basics/thread_utils.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/utils/snowball_stemmer.hpp"
 #include "iresearch/utils/utf8_utils.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 namespace {
@@ -394,21 +393,20 @@ TextTokenizer::TextTokenizer(Options options, stopwords_t stopwords)
 
 Analyzer::ptr TextTokenizer::Make(Options opts) {
   if (opts.locale.isBogus()) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "text: invalid locale");
+    THROW_SQL_ERROR(ERR_MSG("text: invalid locale"));
   }
   if (opts.min_gram_set && opts.max_gram_set && opts.min_gram > opts.max_gram) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "text: min_gram must not exceed max_gram");
+    THROW_SQL_ERROR(ERR_MSG("text: min_gram must not exceed max_gram"));
   }
   TextTokenizer::stopwords_t stopwords;
   if (!BuildStopwords(opts, stopwords)) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "text: failed to load stopwords from the configured path");
+    THROW_SQL_ERROR(
+      ERR_MSG("text: failed to load stopwords from the configured path"));
   }
   IcuObjects obj;
   if (!InitFromOptions(opts, &obj, true)) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "text: failed to initialize the analyzer for the locale");
+    THROW_SQL_ERROR(
+      ERR_MSG("text: failed to initialize the analyzer for the locale"));
   }
   return std::make_unique<TextTokenizer>(std::move(opts), std::move(stopwords));
 }

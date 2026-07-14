@@ -108,6 +108,21 @@ inline constexpr std::string_view kHasAnyTokens = "has_any_tokens";
 inline constexpr std::string_view kTsHighlight = "ts_highlight";
 inline constexpr std::string_view kOffsets = "ts_offsets";
 
+// Term-dictionary access -- optimizer-claimed aggregate stubs.
+inline constexpr std::string_view kTsDictAgg = "ts_dict_agg";
+inline constexpr std::string_view kTsDictRawAgg = "ts_dict_raw_agg";
+inline constexpr std::string_view kTsDictCount = "ts_dict_count";
+inline constexpr std::string_view kTsDictFreq = "ts_dict_freq";
+inline constexpr std::string_view kTsDictScore = "ts_dict_score";
+inline constexpr std::string_view kTsDictMin = "ts_dict_min";
+inline constexpr std::string_view kTsDictMax = "ts_dict_max";
+
+inline bool IsTsDictFunctionName(std::string_view name) {
+  return name == kTsDictAgg || name == kTsDictRawAgg || name == kTsDictCount ||
+         name == kTsDictFreq || name == kTsDictScore || name == kTsDictMin ||
+         name == kTsDictMax;
+}
+
 // Geo -- ST_Distance_Centroid is only usable inside an index scan
 // (the filter builder turns `expr OP const` into a GeoDistanceFilter).
 inline constexpr std::string_view kGeoInRange = "ST_Distance_Between";

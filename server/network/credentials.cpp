@@ -220,12 +220,6 @@ std::array<uint8_t, kScramKeyLen> ScramServerSignature(
   return signature;
 }
 
-std::string BuildMd5Password(std::string_view username,
-                             std::string_view password,
-                             std::span<const uint8_t> salt) {
-  return BuildMd5Response(BuildMd5Verifier(username, password), salt);
-}
-
 bool IsMd5Verifier(std::string_view s) {
   return s.size() == 35 && s.starts_with("md5") &&
          std::ranges::all_of(s.substr(3), [](unsigned char c) {

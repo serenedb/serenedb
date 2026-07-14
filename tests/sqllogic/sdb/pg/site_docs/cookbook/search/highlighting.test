@@ -1,0 +1,124 @@
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY hl (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    offset = true
+);
+
+statement ok
+CREATE TABLE articles (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+INSERT INTO articles VALUES
+(1, 'SereneDB runs full text search directly over an inverted index'),
+(2, 'Vector search ranks similar documents by embedding distance'),
+(3, 'The same inverted index powers faceted search and result highlighting'),
+(4, 'No relevant content in this row at all');
+
+statement ok
+CREATE INDEX articles_idx ON articles USING inverted (id, body hl);
+
+statement ok
+VACUUM (REFRESH_TABLE) articles;
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, ts_highlight(body) AS snippet
+FROM articles_idx
+WHERE body @@ 'search'
+ORDER BY id;
+----
+id	snippet
+1	SereneDB runs full text <b>search</b> directly over an inverted index
+2	Vector <b>search</b> ranks similar documents by embedding distance
+3	The same inverted index powers faceted <b>search</b> and result highlighting
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, ts_highlight(body, 'StartSel=<mark>, StopSel=</mark>') AS snippet
+FROM articles_idx
+WHERE body @@ 'search'
+ORDER BY id;
+----
+id	snippet
+1	SereneDB runs full text <mark>search</mark> directly over an inverted index
+2	Vector <mark>search</mark> ranks similar documents by embedding distance
+3	The same inverted index powers faceted <mark>search</mark> and result highlighting
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, ts_highlight(body) AS snippet
+FROM articles_idx
+WHERE body @@ ts_phrase('inverted index')
+ORDER BY id;
+----
+id	snippet
+1	SereneDB runs full text search directly over an <b>inverted index</b>
+3	The same <b>inverted index</b> powers faceted search and result highlighting
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, ts_offsets(body) AS offsets
+FROM articles_idx
+WHERE body @@ 'search'
+ORDER BY id;
+----
+id	offsets
+1	{24,30}
+2	{7,13}
+3	{39,45}
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, ts_highlight(body) AS snippet
+FROM articles_idx
+WHERE body @@ 'search'
+ORDER BY BM25(articles_idx.tableoid) DESC, id
+LIMIT 2;
+----
+id	snippet
+1	SereneDB runs full text <b>search</b> directly over an inverted index
+2	Vector <b>search</b> ranks similar documents by embedding distance
+
+# DOCS_TEST: example_006
+
+statement ok
+INSERT INTO articles VALUES
+(5, 'This is a long introduction with plenty of filler words before we finally mention the search engine and then continue rambling for a while afterwards to pad the sentence out well past the default snippet window so truncation is visible');
+
+statement ok
+VACUUM (REFRESH_TABLE) articles;
+
+# DOCS_TEST_BODY
+
+query
+SELECT ts_highlight(body, 'MaxWords=9') AS snippet
+FROM articles_idx
+WHERE id = 5 AND body @@ 'search';
+----
+snippet
+of filler words before we finally mention the <b>search</b>

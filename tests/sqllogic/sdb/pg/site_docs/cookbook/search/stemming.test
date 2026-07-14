@@ -1,0 +1,68 @@
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY body_dict (template = 'text', locale = 'en_US.UTF-8', case = 'lower', stemming = true, stopwords = '"the","a","an","is","are","for"', frequency = true, position = true);
+
+statement ok
+CREATE TABLE articles (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX articles_idx ON articles USING inverted (id, body body_dict);
+
+statement ok
+INSERT INTO articles VALUES
+(1, 'the cats are running'),
+(2, 'a dog runs fast'),
+(3, 'running shoes for runners');
+
+statement ok
+VACUUM (REFRESH_TABLE) articles;
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, body FROM articles_idx WHERE body @@ 'run' ORDER BY id;
+----
+id	body
+1	the cats are running
+2	a dog runs fast
+3	running shoes for runners
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, body FROM articles_idx WHERE body @@ 'runner' ORDER BY id;
+----
+id	body
+3	running shoes for runners
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT ts_lexize('body_dict', 'running runners ran') AS stems, ts_lexize('body_dict', 'the cats are running') AS with_stopwords;
+----
+stems	with_stopwords
+{run,runner,ran}	{cat,run}
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT unnest(ts_dict_agg(body)) AS term FROM articles_idx ORDER BY term;
+----
+term
+cat
+dog
+fast
+run
+runner
+shoe

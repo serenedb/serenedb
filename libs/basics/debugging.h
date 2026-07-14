@@ -33,9 +33,13 @@
 
 #define SDB_IF_FAILURE(what) if (sdb::ShouldFailDebugging(what))
 
+#define SDB_WAIT_ON_FAILURE(what) sdb::WaitWhileFailurePointDebugging(what)
+
 #else
 
 #define SDB_IF_FAILURE(what) if constexpr (false)
+
+#define SDB_WAIT_ON_FAILURE(what)
 
 #endif
 

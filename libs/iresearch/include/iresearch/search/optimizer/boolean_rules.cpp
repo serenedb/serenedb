@@ -21,18 +21,34 @@
 #include "iresearch/search/optimizer/boolean_rules.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/str_cat.h>
+#include <absl/strings/str_join.h>
+#include <re2/re2.h>
 
 #include <algorithm>
+#include <optional>
+#include <span>
+#include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
+#include "basics/system-compiler.h"
+#include "iresearch/search/automaton_filter.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
+#include "iresearch/search/levenshtein_filter.hpp"
 #include "iresearch/search/mixed_boolean_filter.hpp"
 #include "iresearch/search/optimizer/common.hpp"
+#include "iresearch/search/prefix_filter.hpp"
+#include "iresearch/search/range_filter.hpp"
+#include "iresearch/search/regexp_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/terms_filter.hpp"
+#include "iresearch/search/wildcard_filter.hpp"
+#include "iresearch/utils/automaton_utils.hpp"
+#include "iresearch/utils/regexp_utils.hpp"
+#include "iresearch/utils/string.hpp"
 
 namespace irs::optimizer {
 namespace {
@@ -99,6 +115,39 @@ struct SingleChildRule {
   static constexpr bool kEnable = true;
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
+};
+
+struct OrAcceptorFusionRule {
+  static constexpr std::string_view kName = "or_acceptor_fusion";
+  static constexpr std::array kTargets{Type<Or>::id()};
+  static constexpr bool kEnable = true;
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
+
+ private:
+  struct AcceptorInfo {
+    field_id field;
+    score_t boost;
+    size_t scored_terms_limit;
+  };
+
+  static std::optional<AcceptorInfo> InfoOf(const Filter& child);
+  static void RenderQuoted(std::string& out, bytes_view bytes);
+  static bool RenderWildcard(std::string& out, bytes_view pattern);
+  static bool Render(std::string& out, const Filter& child);
+};
+
+struct AndAcceptorFusionRule {
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
+
+ private:
+  struct Operand {
+    field_id field;
+    automaton acceptor;
+    bstring pattern;
+  };
+
+  static std::optional<Operand> OperandOf(const Filter& child);
 };
 
 struct ByTermsRule {
@@ -448,6 +497,278 @@ bool ByTermsRule::Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
   return true;
 }
 
+std::optional<OrAcceptorFusionRule::AcceptorInfo> OrAcceptorFusionRule::InfoOf(
+  const Filter& child) {
+  const auto info = [](const auto& filter, size_t scored_terms_limit) {
+    return AcceptorInfo{filter.field_id(), filter.Boost(), scored_terms_limit};
+  };
+  const auto type = child.type();
+  if (type == Type<ByTerm>::id()) {
+    return info(sdb::basics::downCast<ByTerm>(child), 0);
+  }
+  if (type == Type<ByPrefix>::id()) {
+    const auto& filter = sdb::basics::downCast<ByPrefix>(child);
+    return info(filter, filter.options().scored_terms_limit);
+  }
+  if (type == Type<ByWildcard>::id()) {
+    const auto& filter = sdb::basics::downCast<ByWildcard>(child);
+    return info(filter, filter.options().scored_terms_limit);
+  }
+  if (type == Type<ByRegexp>::id()) {
+    const auto& filter = sdb::basics::downCast<ByRegexp>(child);
+    return info(filter, filter.options().scored_terms_limit);
+  }
+  if (type == Type<AutomatonFilter>::id()) {
+    const auto& filter = sdb::basics::downCast<AutomatonFilter>(child);
+    return info(filter, filter.options().scored_terms_limit);
+  }
+  return std::nullopt;
+}
+
+void OrAcceptorFusionRule::RenderQuoted(std::string& out, bytes_view bytes) {
+  const auto chars = ViewCast<char>(bytes);
+  absl::StrAppend(&out, RE2::QuoteMeta({chars.data(), chars.size()}));
+}
+
+bool OrAcceptorFusionRule::RenderWildcard(std::string& out,
+                                          bytes_view pattern) {
+  bstring chunk;
+  const auto flush = [&] {
+    RenderQuoted(out, chunk);
+    chunk.clear();
+  };
+  for (size_t i = 0; i < pattern.size(); ++i) {
+    switch (pattern[i]) {
+      case '%':
+        flush();
+        absl::StrAppend(&out, ".*");
+        break;
+      case '_':
+        flush();
+        absl::StrAppend(&out, ".");
+        break;
+      case '\\':
+        if (++i == pattern.size()) {
+          return false;
+        }
+        chunk += pattern[i];
+        break;
+      default:
+        chunk += pattern[i];
+        break;
+    }
+  }
+  flush();
+  return true;
+}
+
+bool OrAcceptorFusionRule::Render(std::string& out, const Filter& child) {
+  const auto type = child.type();
+  if (type == Type<ByTerm>::id()) {
+    RenderQuoted(out, sdb::basics::downCast<ByTerm>(child).options().term);
+    return true;
+  }
+  if (type == Type<ByPrefix>::id()) {
+    RenderQuoted(out, sdb::basics::downCast<ByPrefix>(child).options().term);
+    absl::StrAppend(&out, ".*");
+    return true;
+  }
+  if (type == Type<ByWildcard>::id()) {
+    return RenderWildcard(
+      out, sdb::basics::downCast<ByWildcard>(child).options().term);
+  }
+  if (type == Type<AutomatonFilter>::id()) {
+    const auto& options =
+      sdb::basics::downCast<AutomatonFilter>(child).options();
+    if (options.pattern.empty()) {
+      return false;
+    }
+    const auto chars = ViewCast<char>(bytes_view{options.pattern});
+    absl::StrAppend(&out, "(?:");
+    out.append(chars.data(), chars.size());
+    absl::StrAppend(&out, ")");
+    return true;
+  }
+  SDB_ASSERT(type == Type<ByRegexp>::id());
+  const auto& options = sdb::basics::downCast<ByRegexp>(child).options();
+  if (options.syntax != RegexpSyntax::Perl) {
+    return false;
+  }
+  const auto chars = ViewCast<char>(bytes_view{options.pattern});
+  out.append(chars.data(), chars.size());
+  return true;
+}
+
+bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
+                                 const OptimizeContext& ctx) {
+  auto& node = sdb::basics::downCast<Or>(*slot);
+  if (node.size() < 2 || node.min_match_count() != 1) {
+    return false;
+  }
+  const auto head = InfoOf(node[0]);
+  if (!head) {
+    return false;
+  }
+  size_t seekable = 0;
+  size_t scored_terms_limit = 0;
+  for (const auto& child : node) {
+    const auto info = InfoOf(*child);
+    if (!info || info->field != head->field) {
+      return false;
+    }
+    if (ctx.scored && info->boost != head->boost) {
+      return false;
+    }
+    seekable += child->type() == Type<ByTerm>::id() ||
+                child->type() == Type<ByPrefix>::id();
+    scored_terms_limit += info->scored_terms_limit;
+  }
+  if (seekable == node.size() && !ctx.fuse_seekable_acceptors) {
+    return false;
+  }
+  std::vector<std::string> fragments;
+  fragments.reserve(node.size());
+  for (const auto& child : node) {
+    auto& fragment = fragments.emplace_back("(?:");
+    if (!Render(fragment, *child)) {
+      return false;
+    }
+    absl::StrAppend(&fragment, ")");
+  }
+  const auto rendered = absl::StrJoin(fragments, "|");
+  const auto pattern = ViewCast<byte_type>(std::string_view{rendered});
+  auto dfa = FromRegexp(pattern, kDefaultMaxDfaStates, RegexpSyntax::Perl);
+  if (dfa.NumStates() == 0 || !Validate(dfa)) {
+    return false;
+  }
+  auto fused = std::make_unique<AutomatonFilter>();
+  *fused->mutable_field_id() = head->field;
+  *fused->mutable_options() =
+    AutomatonOptions{std::move(dfa), pattern, scored_terms_limit};
+  fused->boost(ctx.scored ? node.Boost() * head->boost : node.Boost());
+  slot = std::move(fused);
+  return true;
+}
+
+std::optional<AndAcceptorFusionRule::Operand> AndAcceptorFusionRule::OperandOf(
+  const Filter& child) {
+  const auto type = child.type();
+  if (type == Type<ByTerm>::id()) {
+    const auto& filter = sdb::basics::downCast<ByTerm>(child);
+    return Operand{filter.field_id(), MakeTermAcceptor(filter.options().term),
+                   filter.options().term};
+  }
+  if (type == Type<ByPrefix>::id()) {
+    const auto& filter = sdb::basics::downCast<ByPrefix>(child);
+    auto pattern = filter.options().term;
+    pattern += static_cast<byte_type>('%');
+    return Operand{filter.field_id(), MakePrefixAcceptor(filter.options().term),
+                   std::move(pattern)};
+  }
+  if (type == Type<ByRange>::id()) {
+    const auto& filter = sdb::basics::downCast<ByRange>(child);
+    const auto& range = filter.options().range;
+    const auto bound = [](const bstring& value, BoundType type) {
+      return type == BoundType::Unbounded ? bytes_view{} : bytes_view{value};
+    };
+    bstring pattern;
+    pattern += static_cast<byte_type>(
+      range.min_type == BoundType::Exclusive ? '(' : '[');
+    pattern += range.min;
+    pattern += static_cast<byte_type>('.');
+    pattern += static_cast<byte_type>('.');
+    pattern += range.max;
+    pattern += static_cast<byte_type>(
+      range.max_type == BoundType::Exclusive ? ')' : ']');
+    return Operand{filter.field_id(),
+                   MakeRangeAcceptor(bound(range.min, range.min_type),
+                                     bound(range.max, range.max_type),
+                                     range.min_type == BoundType::Inclusive,
+                                     range.max_type == BoundType::Inclusive),
+                   std::move(pattern)};
+  }
+  if (type == Type<AutomatonFilter>::id()) {
+    const auto& filter = sdb::basics::downCast<AutomatonFilter>(child);
+    const auto& options = filter.options();
+    if (!options.compiled) {
+      return std::nullopt;
+    }
+    return Operand{filter.field_id(), options.compiled->acceptor,
+                   options.pattern};
+  }
+  if (type == Type<LevenshteinAutomatonFilter>::id()) {
+    const auto& filter =
+      sdb::basics::downCast<LevenshteinAutomatonFilter>(child);
+    const auto& options = filter.options();
+    if (!options.compiled) {
+      return std::nullopt;
+    }
+    auto pattern = options.target;
+    pattern += static_cast<byte_type>('~');
+    return Operand{filter.field_id(), options.compiled->acceptor,
+                   std::move(pattern)};
+  }
+  return std::nullopt;
+}
+
+bool AndAcceptorFusionRule::Apply(Filter::ptr& slot,
+                                  const OptimizeContext& ctx) {
+  if (!ctx.fuse_acceptor_intersections || ctx.scored) {
+    return false;
+  }
+  auto& node = sdb::basics::downCast<And>(*slot);
+  if (node.size() < 2) {
+    return false;
+  }
+  auto& children = node.mutable_filters();
+  absl::InlinedVector<size_t, 8> order(children.size());
+  absl::c_iota(order, size_t{0});
+  absl::c_stable_sort(order, [&](size_t lhs, size_t rhs) {
+    return AcceptorRank(*children[lhs]) < AcceptorRank(*children[rhs]);
+  });
+  if (children[order.front()]->type() ==
+      Type<LevenshteinAutomatonFilter>::id()) {
+    return false;
+  }
+  auto driver = OperandOf(*children[order.front()]);
+  if (!driver) {
+    return false;
+  }
+  auto fused = std::move(driver->acceptor);
+  auto pattern = std::move(driver->pattern);
+  bool any = false;
+  for (const auto index : std::span{order}.subspan(1)) {
+    auto& child = children[index];
+    auto operand = OperandOf(*child);
+    if (!operand || operand->field != driver->field) {
+      continue;
+    }
+    auto product =
+      IntersectAcceptors(fused, operand->acceptor, kDefaultMaxDfaStates);
+    if (!product || !Validate(*product)) {
+      continue;
+    }
+    fused = std::move(*product);
+    pattern += static_cast<byte_type>('&');
+    pattern += operand->pattern;
+    child = nullptr;
+    any = true;
+  }
+  if (!any) {
+    return false;
+  }
+  auto fused_filter = std::make_unique<AutomatonFilter>();
+  *fused_filter->mutable_field_id() = driver->field;
+  *fused_filter->mutable_options() =
+    AutomatonOptions{std::move(fused), pattern, 0};
+  children[order.front()] = std::move(fused_filter);
+  std::erase_if(children, [](const auto& child) { return !child; });
+  if (children.size() == 1) {
+    slot = std::move(children.front());
+  }
+  return true;
+}
+
 bool OrUnsatRule::Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
   const auto& node = sdb::basics::downCast<Or>(*slot);
   const auto min_match = node.min_match_count();
@@ -507,9 +828,39 @@ void InitBooleanRules() {
   RegisterRule<OrAllFoldRule>();
   RegisterRule<SingleChildRule>();
   RegisterRule<ByTermsRule>();
+  RegisterRule<OrAcceptorFusionRule>();
   RegisterRule<OrUnsatRule>();
   RegisterRule<OrAllRequiredRule>();
   RegisterRule<MixedDegenerateRule>();
+}
+
+size_t AcceptorRank(const Filter& filter) noexcept {
+  const auto type = filter.type();
+  if (type == Type<ByTerm>::id()) {
+    return 0;
+  }
+  if (type == Type<ByTerms>::id()) {
+    return 1;
+  }
+  if (type == Type<ByPrefix>::id() || type == Type<ByRange>::id()) {
+    return 2;
+  }
+  if (type == Type<AutomatonFilter>::id() ||
+      type == Type<LevenshteinAutomatonFilter>::id()) {
+    return 3;
+  }
+  return 4;
+}
+
+void FuseIntersections(Filter::ptr& root, const OptimizeContext& ctx) {
+  if (!root || !ctx.fuse_acceptor_intersections) {
+    return;
+  }
+  TraverseFilter(root, [&](Filter::ptr& slot) {
+    if (slot->type() == Type<And>::id()) {
+      AndAcceptorFusionRule::Apply(slot, ctx);
+    }
+  });
 }
 
 }  // namespace irs::optimizer

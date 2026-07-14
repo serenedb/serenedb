@@ -20,7 +20,6 @@
 
 #include "connector/index_source_factory.h"
 
-#include "basics/errors.h"
 #include "catalog/catalog.h"
 #include "catalog/pk_spec.h"
 #include "catalog/table.h"

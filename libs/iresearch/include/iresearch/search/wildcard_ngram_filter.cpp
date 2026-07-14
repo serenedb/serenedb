@@ -100,6 +100,8 @@ class WildcardIterator : public DocIterator {
     return _approx->GetMutable(type);
   }
 
+  IRS_DOC_ITERATOR_DEFAULTS
+
   doc_id_t advance() final {
     while (!doc_limits::eof(_approx->advance())) {
       if (Check(_approx->value())) {
@@ -286,8 +288,8 @@ QueryBuilder::ptr ByWildcardNgram::PrepareSegment(
       if (token.back() == 0xFF) {
         token = kEmptyStringView<byte_type>;
       }
-      return wrap(ByPrefix::PrepareSegment(segment, sub_ctx, field_id(), token,
-                                           kDefaultScoredTermsLimit));
+      return wrap(
+        ByPrefix::PrepareSegment(segment, sub_ctx, field_id(), token));
     }
     case WildcardNgramKind::kPhrase:
       return wrap(MakePhraseFilter(field_id(), opts.parts.front())

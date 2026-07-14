@@ -110,7 +110,8 @@ CREATE MACRO mja_arrow_shadow(v, l) AS list_transform(l, v -> v || 'q')
 statement error
 SELECT mja_arrow_shadow('unused', ['p', 'r'])
 ----
-db error<slt:ignore>
+db error: ERROR: Invalid lambda parameters<slt:ignore>! Parameters must be unqualified comma-separated names like x or (x, y).
+
 
 statement ok
 SET lambda_syntax = 'DEFAULT'

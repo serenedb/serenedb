@@ -62,3 +62,55 @@ SELECT mja_shadow('unused', ['p', 'r']) AS t
 ----
 t
 {pq,rq}
+
+# Macro parameters referenced inside a keyword-lambda body still substitute;
+# the lambda's own parameter stays untouched.
+
+statement ok
+CREATE MACRO mja_add(l, num) AS list_transform(l, lambda x: x + num)
+
+query T
+SELECT mja_add([1, 2, 3], 10) AS t
+----
+t
+{11,12,13}
+
+statement ok
+CREATE MACRO mja_reduce(l, num) AS list_reduce(l, lambda x, y: x + y + num)
+
+query I
+SELECT mja_reduce([1, 2, 3], 10) AS t
+----
+t
+26
+
+# The deprecated single-arrow lambda syntax keeps working in macros when its
+# parameter does not collide with a macro parameter.
+
+statement ok
+SET lambda_syntax = 'ENABLE_SINGLE_ARROW'
+
+statement ok
+CREATE MACRO mja_arrow(l, num) AS list_transform(l, x -> x + num)
+
+query T
+SELECT mja_arrow([1, 2], 5) AS t
+----
+t
+{6,7}
+
+# Pinned behavior change: an arrow whose LHS names a macro parameter is a
+# JSON extract even under ENABLE_SINGLE_ARROW, so an arrow-lambda shadowing
+# a macro parameter no longer binds. Keyword lambdas remain the way to
+# shadow (mja_shadow above).
+
+statement ok
+CREATE MACRO mja_arrow_shadow(v, l) AS list_transform(l, v -> v || 'q')
+
+statement error
+SELECT mja_arrow_shadow('unused', ['p', 'r'])
+----
+db error<slt:ignore>
+
+statement ok
+SET lambda_syntax = 'DEFAULT'

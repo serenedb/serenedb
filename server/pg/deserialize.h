@@ -30,9 +30,9 @@
 #include <memory>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <vector>
 
+#include "basics/containers/flat_hash_map.h"
 #include "basics/containers/node_hash_map.h"
 #include "pg/serialize.h"
 
@@ -47,17 +47,13 @@ struct RecordDeserializers;
 struct DeserializeContext {
   const catalog::Snapshot* snapshot = nullptr;
   std::unique_ptr<RecordDeserializers> record_cache;
-  // Session zone for offset-less TIMESTAMPTZ text; null = UTC. Calendars are
-  // mutated by FromNaive -- do not share contexts across threads.
   std::unique_ptr<icu::Calendar> session_calendar;
-  // Zone names from input text, lazily resolved; unknown names cache a null.
-  std::unordered_map<std::string, std::unique_ptr<icu::Calendar>>
+  containers::FlatHashMap<std::string, std::unique_ptr<icu::Calendar>>
     named_calendars;
 
   icu::Calendar* CalendarFor(std::string_view tz_name);
 };
 
-// Resolves the session TimeZone into `session_calendar` (null for UTC).
 void FillDeserializeContext(duckdb::ClientContext& client,
                             DeserializeContext& context);
 

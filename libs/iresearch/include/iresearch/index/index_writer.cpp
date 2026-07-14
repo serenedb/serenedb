@@ -787,7 +787,7 @@ void IndexWriter::FlushContext::Emplace(ActiveSegmentContext&& active) {
     return;
   }
 
-  std::lock_guard lock{pending.Mutex()};
+  std::lock_guard lock{pending_mutex};
   auto* node = [&] {
     if (is_null) {
       return &pending_segments.emplace_back(std::move(active._segment),
@@ -803,7 +803,7 @@ void IndexWriter::FlushContext::Emplace(ActiveSegmentContext&& active) {
 }
 
 void IndexWriter::FlushContext::AddToPending(ActiveSegmentContext& active) {
-  std::lock_guard lock{pending.Mutex()};
+  std::lock_guard lock{pending_mutex};
   const auto size_before = pending_segments.size();
   SDB_ASSERT(active._segment != nullptr);
   pending_segments.emplace_back(active._segment, size_before);
@@ -897,7 +897,7 @@ uint64_t IndexWriter::FlushContext::FlushPending(uint64_t committed_tick,
   }
 
   if (to_next_pending_segments != 0) {
-    std::lock_guard lock{next->pending.Mutex()};
+    std::lock_guard lock{next->pending_mutex};
     for (auto& entry : pending_segments) {
       if (auto& segment = entry.segment; segment != nullptr) {
         SDB_ASSERT(tick < segment->first_tick);
@@ -1159,7 +1159,9 @@ void IndexWriter::Clear(uint64_t tick) {
 
   auto ctx = SwitchFlushContext();
   // Ensure there are no active struct update operations
+  ctx->pending.Done();
   ctx->pending.Wait();
+  ctx->pending.Reset(1);
   // TODO(mbkkt) Move some pending to the next flush ctx?
   //  It's not super trivial for spliting segments
   //  It's not important now, because truncate running in exclusive mode
@@ -1279,7 +1281,7 @@ uint64_t IndexWriter::BufferedDocs() const {
   auto ctx = GetFlushContext();
   // 'pending_used_segment_contexts_'/'pending_free_segment_contexts_'
   // may be modified
-  std::lock_guard lock{ctx->pending.Mutex()};
+  std::lock_guard lock{ctx->pending_mutex};
 
   for (const auto& entry : ctx->pending_segments) {
     SDB_ASSERT(entry.segment != nullptr);
@@ -1445,7 +1447,7 @@ CompactionResult IndexWriter::Compact(
     }
     auto refs = dir.GetRefs();
     // Prevent concurrent imports modification
-    std::lock_guard ctx_lock{ctx->pending.Mutex()};
+    std::lock_guard ctx_lock{ctx->pending_mutex};
     // register compaction for the next transaction
     ctx->imports.emplace_back(
       std::move(compaction_segment), writer_limits::kMaxTick,
@@ -1505,7 +1507,7 @@ CompactionResult IndexWriter::Compact(
   }
 
   auto refs = dir.GetRefs();
-  std::lock_guard ctx_lock{ctx->pending.Mutex()};
+  std::lock_guard ctx_lock{ctx->pending_mutex};
   auto& segment_mask = ctx->segment_mask;
   segment_mask.reserve(segment_mask.size() + mappings.size() +
                        candidates.size());
@@ -1574,7 +1576,7 @@ bool IndexWriter::Import(const IndexReader& reader,
   auto flush = GetFlushContext();
 
   // lock due to context modification
-  std::lock_guard lock{flush->pending.Mutex()};
+  std::lock_guard lock{flush->pending_mutex};
 
   // IMPORTANT NOTE!
   // Will be committed in the upcoming Commit
@@ -1705,7 +1707,9 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   // noexcept block: I'm not sure is it really necessary or not
   auto ctx = SwitchFlushContext();
   // ensure there are no active struct update operations
+  ctx->pending.Done();
   ctx->pending.Wait();
+  ctx->pending.Reset(1);
   // Stage 0
   // wait for any outstanding segments to settle to ensure that any rollbacks
   // are properly tracked in 'modification_queries_'

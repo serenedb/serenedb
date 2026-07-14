@@ -297,13 +297,6 @@ class SearchSinkDeleteBaseImpl {
   std::shared_ptr<SearchRemoveFilterBase> _remove_filter;
 };
 
-class SearchSinkBackfillTrxHolder {
- protected:
-  SearchSinkBackfillTrxHolder(irs::IndexWriter::Transaction trx)
-    : _trx_storage{std::move(trx)} {}
-  irs::IndexWriter::Transaction _trx_storage;
-};
-
 class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
                                            public SearchSinkInsertBaseImpl {
  public:

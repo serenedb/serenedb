@@ -197,8 +197,6 @@ class MemoryIndexOutput : public IndexOutput {
     _offset = 0;
   }
 
-  void Truncate(size_t pos) noexcept;
-
   void Flush() noexcept final { _file.Length(Position()); }
 
   uint32_t Checksum() override { throw NotSupported{}; }

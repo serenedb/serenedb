@@ -124,8 +124,6 @@ auto ExecuteLevenshtein(uint8_t max_distance,
 ////////////////////////////////////////////////////////////////////////////////
 class ByEditDistance final : public FilterWithField<ByEditDistanceOptions> {
  public:
-  static field_visitor visitor(const ByEditDistanceAllOptions& options);
-
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
 

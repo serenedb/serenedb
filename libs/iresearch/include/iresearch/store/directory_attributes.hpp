@@ -73,7 +73,6 @@ class IndexFileRefs final {
 
   IndexFileRefs() = default;
   ref_t add(std::string_view key) { return _refs.add(key); }
-  void clear();
   bool remove(std::string_view key) { return _refs.remove(key); }
 
   counter_t& refs() noexcept { return _refs; }

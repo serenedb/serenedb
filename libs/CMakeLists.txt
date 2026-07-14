@@ -123,7 +123,7 @@ target_compile_definitions(iresearch-static PRIVATE -DDISABLE_EXECINFO)
 ## serene
 ################################################################################
 
-add_library(serene STATIC app/app_server.cpp app/init.cpp app/version.cpp)
+add_library(serene STATIC app/app_server.cpp app/init.cpp)
 
 target_link_libraries(serene PUBLIC s2 boost_boost serene_base simdjson)
 

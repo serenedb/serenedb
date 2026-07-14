@@ -172,12 +172,6 @@ bool Config::IsExplicitTransaction() const {
   return !_client_ctx.transaction.IsAutoCommit();
 }
 
-bool Config::IsTransactionInvalidated() const {
-  auto& txn = _client_ctx.transaction;
-  return txn.HasActiveTransaction() &&
-         duckdb::ValidChecker::IsInvalidated(txn.ActiveTransaction());
-}
-
 void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {
   // Called from pre-commit / pre-rollback hooks while the DuckDB transaction
   // is still active, so catalog lookups performed by custom-impl set_local

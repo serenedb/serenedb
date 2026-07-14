@@ -2275,44 +2275,6 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
   }
 }
 
-TEST_P(GranularRangeFilterTestCase, visit) {
-  // add segment
-  {
-    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                                &ByRangeJsonFieldFactory);
-
-    add_segment(gen, irs::kOmCreate);
-  }
-
-  tests::EmptyFilterVisitor visitor;
-  irs::ByGranularRange::options_type opts;
-  opts.is_granular = false;
-  auto& rng = opts.range;
-  rng.min = {static_cast<irs::bstring>(
-    irs::ViewCast<irs::byte_type>(std::string_view("abc")))};
-  rng.max = {static_cast<irs::bstring>(
-    irs::ViewCast<irs::byte_type>(std::string_view("abcd")))};
-  rng.min_type = irs::BoundType::Inclusive;
-  rng.max_type = irs::BoundType::Inclusive;
-
-  // read segment
-  auto index = open_reader();
-  ASSERT_EQ(1, index.size());
-  auto& segment = index[0];
-  // get term dictionary for field
-  const auto* reader = segment.field(kPrefix);
-  ASSERT_TRUE(reader != nullptr);
-
-  irs::ByGranularRange::visit(segment, *reader, opts, visitor);
-  ASSERT_EQ(2, visitor.prepare_calls_counter());
-  ASSERT_EQ(2, visitor.visit_calls_counter());
-  ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{
-              {"abc", irs::kNoBoost}, {"abcd", irs::kNoBoost}}),
-            visitor.term_refs<char>());
-
-  visitor.reset();
-}
-
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(granular_range_filter_test,

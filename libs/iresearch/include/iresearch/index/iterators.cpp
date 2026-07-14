@@ -81,25 +81,6 @@ struct EmptyDocIterator : ResettableDocIterator {
 EmptyDocIterator gEmptyDocIterator;
 
 // Represents an iterator without terms
-struct EmptyTermIterator : TermIterator {
-  bytes_view value() const noexcept final { return {}; }
-
-  DocIterator::ptr postings(IndexFeatures /*features*/) const noexcept final {
-    return DocIterator::empty();
-  }
-
-  void read() noexcept final {}
-
-  bool next() noexcept final { return false; }
-
-  Attribute* GetMutable(TypeInfo::type_id /*type*/) noexcept final {
-    return nullptr;
-  }
-};
-
-EmptyTermIterator gEmptyTermIterator;
-
-// Represents an iterator without terms
 struct EmptySeekTermIterator : SeekTermIterator {
   bytes_view value() const noexcept final { return {}; }
 
@@ -128,20 +109,12 @@ EmptySeekTermIterator gEmptySeekIterator;
 
 }  // namespace
 
-TermIterator::ptr TermIterator::empty() noexcept {
-  return memory::to_managed<TermIterator>(gEmptyTermIterator);
-}
-
 SeekTermIterator::ptr SeekTermIterator::empty() noexcept {
   return memory::to_managed<SeekTermIterator>(gEmptySeekIterator);
 }
 
 DocIterator::ptr DocIterator::empty() noexcept {
   return memory::to_managed<DocIterator>(gEmptyDocIterator);
-}
-
-ResettableDocIterator::ptr ResettableDocIterator::empty() noexcept {
-  return memory::to_managed<ResettableDocIterator>(gEmptyDocIterator);
 }
 
 }  // namespace irs

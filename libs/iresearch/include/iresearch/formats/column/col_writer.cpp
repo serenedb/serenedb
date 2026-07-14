@@ -140,17 +140,6 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
                             compression, hyperloglog);
 }
 
-NormColumnWriter* ColWriter::OpenNormColumn(field_id id) {
-  if (!_field_options) {
-    return nullptr;
-  }
-  const auto opts = _field_options->GetNormColumnOptions(id);
-  if (!field_limits::valid(opts.id)) {
-    return nullptr;
-  }
-  return &OpenNormColumn(opts.id, opts.row_group_size);
-}
-
 NormColumnWriter& ColWriter::OpenNormColumn(field_id id,
                                             uint32_t row_group_size) {
   if (auto it = _norm_by_id.find(id); it != _norm_by_id.end()) {

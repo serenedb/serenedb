@@ -31,11 +31,11 @@
 #include <limits>
 #include <optional>
 #include <string_view>
+#include <yaclib/algo/wait_group.hpp>
 
 #include "basics/async_utils.hpp"
 #include "basics/noncopyable.hpp"
 #include "basics/object_pool.hpp"
-#include "basics/wait_group.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/column_info.hpp"
 
@@ -878,7 +878,10 @@ class IndexWriter : private util::Noncopyable {
     std::deque<PendingSegmentContext> pending_segments;
     // entries from 'pending_segments_' that are available for reuse
     Freelist pending_freelist;
-    WaitGroup pending;
+    // Holds a +1 token so Wait() on an idle context returns immediately;
+    // the flush side releases it via Done() right before Wait().
+    yaclib::WaitGroup<> pending{1};
+    absl::Mutex pending_mutex;
 
     // set of segments to be removed from the index upon commit
     CompactingSegments segment_mask;

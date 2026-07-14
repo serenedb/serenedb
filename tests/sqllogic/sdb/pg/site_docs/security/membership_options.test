@@ -1,0 +1,101 @@
+# DOCS_TEST: example_001
+
+statement ok
+DROP ROLE IF EXISTS doc_mo_lead;
+
+statement ok
+DROP ROLE IF EXISTS doc_mo_deputy;
+
+statement ok
+DROP ROLE IF EXISTS doc_mo_staff;
+
+statement ok
+DROP ROLE IF EXISTS doc_mo_alice;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE ROLE doc_mo_lead;
+
+statement ok
+CREATE ROLE doc_mo_deputy LOGIN PASSWORD 'doc_mo_deputy_pw';
+
+statement ok
+GRANT doc_mo_lead TO doc_mo_deputy WITH ADMIN OPTION;
+
+query
+SELECT pg_has_role('doc_mo_deputy', 'doc_mo_lead', 'MEMBER WITH ADMIN OPTION') AS can_admin;
+----
+can_admin
+t
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE ROLE doc_mo_staff LOGIN PASSWORD 'doc_mo_staff_pw';
+
+statement ok
+SET ROLE doc_mo_deputy;
+
+statement ok
+GRANT doc_mo_lead TO doc_mo_staff;
+
+statement ok
+RESET ROLE;
+
+query
+SELECT pg_has_role('doc_mo_staff', 'doc_mo_lead', 'MEMBER') AS is_member;
+----
+is_member
+t
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE ROLE doc_mo_alice LOGIN PASSWORD 'doc_mo_alice_pw' NOINHERIT;
+
+statement ok
+GRANT doc_mo_lead TO doc_mo_alice;
+
+query
+SELECT rolinherit FROM pg_roles WHERE rolname = 'doc_mo_alice';
+----
+rolinherit
+f
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+GRANT doc_mo_deputy TO doc_mo_staff;
+
+query
+SELECT pg_has_role('doc_mo_staff', 'doc_mo_lead', 'MEMBER') AS reaches_lead;
+----
+reaches_lead
+t
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement error db error: ERROR: role "doc_mo_staff" is a member of role "doc_mo_lead"
+GRANT doc_mo_staff TO doc_mo_lead;
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP ROLE doc_mo_staff;
+
+statement ok
+DROP ROLE doc_mo_deputy, doc_mo_alice;
+
+statement ok
+DROP ROLE doc_mo_lead;

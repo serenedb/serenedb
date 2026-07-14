@@ -179,7 +179,6 @@ class BytesViewInput : public IndexInput {
     BytesViewInput::ReadData(b, count);
   }
   void ReadData(uint64_t offset, byte_type* b, size_t count) noexcept final;
-  void ReadData(bstring& buf, size_t count);
 
   int16_t ReadI16() noexcept final { return irs::read<uint16_t>(_pos); }
   int32_t ReadI32() noexcept final { return irs::read<uint32_t>(_pos); }

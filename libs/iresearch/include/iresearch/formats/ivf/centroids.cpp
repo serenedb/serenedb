@@ -28,8 +28,6 @@
 #include <cstring>
 #include <utility>
 
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "iresearch/formats/ivf/clustering.hpp"
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/store/data_input.hpp"

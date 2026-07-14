@@ -21,6 +21,7 @@
 #include "init.h"
 
 #include <absl/debugging/symbolize.h>
+#include <absl/strings/ascii.h>
 #include <fast_float/fast_float.h>
 #include <sys/resource.h>
 
@@ -33,7 +34,6 @@
 #include <string_view>
 #include <yaclib/log.hpp>
 
-#include "app/version.h"
 #include "basics/crash_handler.h"
 #include "basics/files.h"
 #include "basics/log.h"
@@ -73,7 +73,7 @@ void CheckMaxMapCount() {
   if (!SlurpFile("/proc/sys/vm/max_map_count", s)) {
     return;
   }
-  const auto trimmed = basics::string_utils::Trim(s);
+  const auto trimmed = absl::StripAsciiWhitespace(s);
   uint64_t actual = 0;
   if (auto [p, ec] = fast_float::from_chars(
         trimmed.data(), trimmed.data() + trimmed.size(), actual);
@@ -96,14 +96,12 @@ void InitProcess(const char* argv0) {
   // Order matters:
   //   * RaiseFdLimit              soft NOFILE -> 65535 (or hard, if lower)
   //   * random::Reset             seeds the PRNGs the basics layer holds
-  //   * Version::initialize       fills the Version table
   //   * FUNCTABLE_INIT            picks the zlib-ng dispatch (SIMD)
   //   * InitializeSymbolizer      lets the absl crash handler symbolize
   //   * YACLIB_INIT_DEBUG         routes yaclib's debug-asserts through us
   RaiseFdLimit();
   CheckMaxMapCount();
   random::Reset();
-  Version::initialize();
   FUNCTABLE_INIT;
   absl::InitializeSymbolizer(argv0);
   YACLIB_INIT_DEBUG([](std::string_view file, std::size_t line,

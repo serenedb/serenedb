@@ -58,9 +58,6 @@ class ColumnWriter final {
   void Append(uint64_t start_row, const duckdb::Vector& vec,
               duckdb::idx_t count);
 
-  void Append(uint64_t start_row, const duckdb::Vector& vec,
-              const duckdb::SelectionVector& sel, duckdb::idx_t count);
-
   template<typename Fill>
   void PushInStaging(uint64_t row, Fill&& fill) {
     PadNullsTo(row);

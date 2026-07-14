@@ -1,0 +1,133 @@
+# DOCS_TEST: example_001
+
+statement ok
+DROP ROLE IF EXISTS doc_sec_alice;
+
+statement ok
+DROP ROLE IF EXISTS doc_sec_batch;
+
+statement ok
+DROP ROLE IF EXISTS doc_sec_carol;
+
+statement ok
+DROP ROLE IF EXISTS doc_sec_deploy;
+
+statement ok
+DROP ROLE IF EXISTS doc_sec_renamed;
+
+statement ok
+DROP TABLE IF EXISTS doc_sec_audit;
+
+statement ok
+DROP ROLE IF EXISTS doc_sec_owner;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE ROLE doc_sec_alice LOGIN PASSWORD 'doc_sec_alice_pw';
+
+query
+SELECT rolname, rolcanlogin FROM pg_roles WHERE rolname = 'doc_sec_alice';
+----
+rolname	rolcanlogin
+doc_sec_alice	t
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE ROLE doc_sec_batch;
+
+statement ok
+CREATE USER doc_sec_carol;
+
+query
+SELECT rolname, rolcanlogin FROM pg_roles
+WHERE rolname IN ('doc_sec_batch', 'doc_sec_carol') ORDER BY rolname;
+----
+rolname	rolcanlogin
+doc_sec_batch	f
+doc_sec_carol	t
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE ROLE doc_sec_deploy LOGIN PASSWORD 'doc_sec_deploy_pw' CREATEDB CREATEROLE;
+
+query
+SELECT rolcreatedb, rolcreaterole, rolsuper FROM pg_roles
+WHERE rolname = 'doc_sec_deploy';
+----
+rolcreatedb	rolcreaterole	rolsuper
+t	t	f
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER ROLE doc_sec_alice PASSWORD 'doc_sec_rotated_pw';
+
+statement ok
+ALTER ROLE doc_sec_alice VALID UNTIL '2099-01-01 00:00:00+00';
+
+statement ok
+ALTER ROLE doc_sec_batch LOGIN PASSWORD 'doc_sec_batch_pw';
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER ROLE doc_sec_carol RENAME TO doc_sec_renamed;
+
+query
+SELECT count(*) AS remaining FROM pg_roles WHERE rolname = 'doc_sec_carol';
+----
+remaining
+0
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE ROLE doc_sec_owner;
+
+statement ok
+CREATE TABLE doc_sec_audit (id int);
+
+statement ok
+ALTER TABLE doc_sec_audit OWNER TO doc_sec_owner;
+
+statement error db error: ERROR: role "doc_sec_owner" cannot be dropped because some objects depend on it
+DROP ROLE doc_sec_owner;
+
+statement ok
+DROP TABLE doc_sec_audit;
+
+statement ok
+DROP ROLE doc_sec_owner;
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP ROLE doc_sec_alice, doc_sec_batch;
+
+statement ok
+DROP ROLE IF EXISTS doc_sec_missing;
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP ROLE IF EXISTS doc_sec_deploy;
+
+statement ok
+DROP ROLE IF EXISTS doc_sec_renamed;

@@ -64,8 +64,6 @@ class ColWriter final {
 
   IvfWriter& AttachIVF(field_id column_id, IvfInfo info);
 
-  NormColumnWriter* OpenNormColumn(field_id id);
-
   NormColumnWriter& OpenNormColumn(field_id id, uint32_t row_group_size);
 
   std::span<const std::unique_ptr<NormColumnWriter>> NormWriters()

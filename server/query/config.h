@@ -97,7 +97,6 @@ class Config {
   IsolationLevel GetIsolationLevel() const;
   bool GetStrictDDL() const;
   bool IsExplicitTransaction() const;
-  bool IsTransactionInvalidated() const;
 
   void DropCatalogSnapshot() { _snapshot.reset(); }
 

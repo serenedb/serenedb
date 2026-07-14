@@ -351,9 +351,6 @@ void FormatBlock128Init();
 
 namespace formats {
 
-// Checks whether a format with the specified name is registered.
-bool Exists(std::string_view name, bool load_library = true);
-
 // Find a format by name, or nullptr if not found
 // indirect call to <class>::make(...)
 // NOTE: make(...) MUST be defined in CPP to ensire proper code scope
@@ -362,9 +359,6 @@ Format::ptr Get(std::string_view name, bool load_library = true) noexcept;
 // For static lib reference all known formats in lib
 // no explicit call of fn is required, existence of fn is sufficient.
 inline void Init() { FormatBlock128Init(); }
-
-// Load all formats from plugins directory.
-void LoadAll(std::string_view path);
 
 // Visit all loaded formats, terminate early if visitor returns false.
 bool Visit(const std::function<bool(std::string_view)>& visitor);

@@ -61,24 +61,6 @@ void FillStats(bstring& stats_buf, const Scorer* scorer,
   scorer->collect(stats_buf.data(), field, term);
 }
 
-FieldCollector MergeFieldCollectors(
-  std::span<const FieldCollector> collectors) noexcept {
-  FieldCollector merged;
-  for (const auto& collector : collectors) {
-    FieldCollector::Merge(merged, collector);
-  }
-  return merged;
-}
-
-TermCollector MergeTermCollectors(
-  std::span<const TermCollector> collectors) noexcept {
-  TermCollector merged;
-  for (const auto& collector : collectors) {
-    TermCollector::Merge(merged, collector);
-  }
-  return merged;
-}
-
 void FieldPrepareCollector::Merge(PrepareCollector&& other) {
   auto& field = sdb::basics::downCast<FieldPrepareCollector>(other);
   FieldCollector::Merge(_field, field._field);

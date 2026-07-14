@@ -97,76 +97,8 @@ inline std::optional<bool> ParseBool(std::string_view value) {
 namespace string_utils {
 
 // -----------------------------------------------------------------------------
-// STRING CONVERSION
-// -----------------------------------------------------------------------------
-
-std::string_view Trim(std::string_view source_str,
-                      std::string_view trim_str = " \t\n\r");
-
-void TrimInPlace(std::string& str, std::string_view trim_str = " \t\n\r");
-
-std::string_view RTrim(std::string_view source_str,
-                       std::string_view trim_str = " \t\n\r");
-
-// -----------------------------------------------------------------------------
-// CONVERT TO STRING
-// -----------------------------------------------------------------------------
-
-/// converts integer to string
-std::string Itoa(int64_t i);
-
-/// converts unsigned integer to string
-std::string Itoa(uint64_t i);
-
-/// converts integer to string
-std::string Itoa(int32_t i);
-
-// -----------------------------------------------------------------------------
-// CONVERT FROM STRING
-// -----------------------------------------------------------------------------
-
-/// converts a single hex to integer
-inline int Hex2int(char ch, int error_value = 0) {
-  if ('0' <= ch && ch <= '9') {
-    return ch - '0';
-  } else if ('A' <= ch && ch <= 'F') {
-    return ch - 'A' + 10;
-  } else if ('a' <= ch && ch <= 'f') {
-    return ch - 'a' + 10;
-  }
-
-  return error_value;
-}
-
-/// parses an unsigned integer
-uint64_t Uint64(const char* value, size_t size) noexcept;
-inline uint64_t Uint64(std::string_view value) noexcept {
-  return Uint64(value.data(), value.size());
-}
-
-/// parses an unsigned integer
-uint32_t Uint32(const char* value, size_t size) noexcept;
-inline uint32_t Uint32(std::string_view value) noexcept {
-  return Uint32(value.data(), value.size());
-}
-
-// -----------------------------------------------------------------------------
 // ADDITIONAL STRING UTILITIES
 // -----------------------------------------------------------------------------
-
-std::string EncodeHex(const char* value, size_t length);
-inline std::string EncodeHex(std::string_view value) {
-  return EncodeHex(value.data(), value.size());
-}
-
-/// returns a human-readable size string, e.g.
-/// - 0 => "0 bytes"
-/// - 1 => "1 byte"
-/// - 255 => "255 bytes"
-/// - 2048 => "2.0 KB"
-/// - 1048576 => "1.0 MB"
-/// ...
-std::string FormatSize(uint64_t value);
 
 /// returns "an" for words starting with a vowel sound, "a" otherwise
 std::string_view GetArticle(std::string_view word) noexcept;
@@ -177,23 +109,6 @@ std::string_view GetArticle(std::string_view word) noexcept;
 // consonant + y -> -y +ies;
 // otherwise -> +s.
 std::string GetPluralFormLowerCase(std::string_view word);
-
-struct EscapeJsonOptions {
-  // escape forward slashes when serializing VPack values into
-  // JSON with a Dumper (requires escapeControl = true)
-  bool escape_forward_slashes = false;
-
-  // with a Dumper (creates \uxxxx sequences or displays '\n', '\r' or \'t',
-  // when set to false, replaces the control characters with whitespaces)
-  bool escape_control = true;
-
-  // escape multi-byte Unicode characters when dumping them to JSON
-  // with a Dumper (creates \uxxxx sequences)
-  bool escape_unicode = false;
-};
-
-template<typename Sink>
-void EscapeJsonStr(std::string_view str, Sink* sink, EscapeJsonOptions options);
 
 }  // namespace string_utils
 }  // namespace sdb::basics

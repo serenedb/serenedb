@@ -83,13 +83,6 @@ std::optional<ScramVerifier> BuildScramVerifier(std::string_view password);
 // SCRAM twin of BuildMd5Verifier -- plaintext -> stored rolpassword string.
 std::optional<std::string> BuildScramVerifierString(std::string_view password);
 
-// The AuthenticationMD5Password expected response:
-// "md5" + md5_hex(md5_hex(password + username) + salt). The server compares
-// this against the client's PasswordMessage (constant-time at the call site).
-std::string BuildMd5Password(std::string_view username,
-                             std::string_view password,
-                             std::span<const uint8_t> salt);
-
 bool IsMd5Verifier(std::string_view s);
 
 std::string BuildMd5Verifier(std::string_view username,

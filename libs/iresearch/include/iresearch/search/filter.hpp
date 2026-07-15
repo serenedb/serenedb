@@ -59,10 +59,6 @@ struct ExecutionContext {
   const DocumentMask* pending_docs_mask = nullptr;
   // If enabled, wand would use first scorer from scorers
   WandContext wand{};
-  // The result will be consumed purely by top-k Collect() (no ordered
-  // advance/seek, no deleted-docs mask wrap). Lets a query return a
-  // collect-only iterator (e.g. a disjoint-cluster union) that skips the
-  // doc-id merge. Set only by the top-k full-scan path.
   bool top_k_collect = false;
 };
 

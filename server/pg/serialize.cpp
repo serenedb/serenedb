@@ -770,7 +770,9 @@ struct TimestampSecTextCore {
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx,
                                       Value timestamp) {
     auto str = duckdb::Timestamp::ToString(
-      duckdb::Timestamp::FromEpochSeconds(timestamp.value));
+      timestamp.IsFinite()
+        ? duckdb::Timestamp::FromEpochSeconds(timestamp.value)
+        : duckdb::timestamp_t(timestamp.value));
     WithWrapIfNested<InContainer>(ctx, [&] { ctx.writer->Write(str); });
   }
 };
@@ -820,7 +822,8 @@ struct TimestampMsTextCore {
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx,
                                       Value timestamp) {
     auto str = duckdb::Timestamp::ToString(
-      duckdb::Timestamp::FromEpochMs(timestamp.value));
+      timestamp.IsFinite() ? duckdb::Timestamp::FromEpochMs(timestamp.value)
+                           : duckdb::timestamp_t(timestamp.value));
     WithWrapIfNested<InContainer>(ctx, [&] { ctx.writer->Write(str); });
   }
 };

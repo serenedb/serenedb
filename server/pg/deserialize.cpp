@@ -596,66 +596,68 @@ void FillDeserializeContext(duckdb::ClientContext& client,
 
 namespace {
 
-struct TimestampText {
-  template<typename Sink>
-  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
-    duckdb::timestamp_t result;
-    if (duckdb::Timestamp::TryConvertTimestamp(data.data(), data.size(), result,
-                                               false) !=
-        duckdb::TimestampCastResult::SUCCESS) {
-      return false;
-    }
-    sink.Fixed(result);
+inline bool ConvertTimestampTzText(DeserializeContext& ctx,
+                                   std::string_view data,
+                                   duckdb::timestamp_t& result,
+                                   int32_t* nanos = nullptr) {
+  bool has_offset = false;
+  duckdb::string_t tz_name{};
+  if (duckdb::Timestamp::TryConvertTimestampTZ(
+        data.data(), data.size(), result, /*use_offset=*/true, has_offset,
+        tz_name, nanos) != duckdb::TimestampCastResult::SUCCESS) {
+    return false;
+  }
+  if (has_offset || !result.IsFinite()) {
     return true;
   }
-};
+  icu::Calendar* calendar = nullptr;
+  if (tz_name.GetSize() != 0) {
+    calendar = ctx.CalendarFor({tz_name.GetData(), tz_name.GetSize()});
+    if (!calendar) {
+      return false;
+    }
+  } else {
+    // No zone in the text: interpret in the session zone (null = UTC).
+    calendar = ctx.session_calendar.get();
+  }
+  if (calendar) {
+    try {
+      result = duckdb::timestamp_t{
+        duckdb::ICUDateFunc::FromNaive(calendar, result).value};
+    } catch (const std::exception&) {
+      return false;
+    }
+  }
+  return true;
+}
 
 struct TimestampTzText {
   template<typename Sink>
   static bool Decode(DeserializeContext& ctx, std::string_view data,
                      Sink& sink) {
     duckdb::timestamp_t result;
-    bool has_offset = false;
-    duckdb::string_t tz_name{};
-    if (duckdb::Timestamp::TryConvertTimestampTZ(
-          data.data(), data.size(), result, /*use_offset=*/true, has_offset,
-          tz_name) != duckdb::TimestampCastResult::SUCCESS) {
+    if (!ConvertTimestampTzText(ctx, data, result)) {
       return false;
-    }
-    if (!has_offset && result.IsFinite()) {
-      icu::Calendar* calendar = nullptr;
-      if (tz_name.GetSize() != 0) {
-        calendar = ctx.CalendarFor({tz_name.GetData(), tz_name.GetSize()});
-        if (!calendar) {
-          return false;
-        }
-      } else {
-        // No zone in the text: interpret in the session zone (null = UTC).
-        calendar = ctx.session_calendar.get();
-      }
-      if (calendar) {
-        try {
-          result = duckdb::timestamp_t{
-            duckdb::ICUDateFunc::FromNaive(calendar, result).value};
-        } catch (const std::exception&) {
-          return false;
-        }
-      }
     }
     sink.Fixed(duckdb::timestamp_tz_t{result});
     return true;
   }
 };
 
-struct TimeText {
+struct TimestampTzNsText {
   template<typename Sink>
-  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
-    duckdb::dtime_t result;
-    duckdb::idx_t pos = 0;
-    if (!duckdb::Time::TryConvertTime(data.data(), data.size(), pos, result)) {
+  static bool Decode(DeserializeContext& ctx, std::string_view data,
+                     Sink& sink) {
+    duckdb::timestamp_t result;
+    int32_t nanos = 0;
+    if (!ConvertTimestampTzText(ctx, data, result, &nanos)) {
       return false;
     }
-    sink.Fixed(result);
+    duckdb::timestamp_ns_t ns;
+    if (!duckdb::Timestamp::TryFromTimestampNanos(result, nanos, ns)) {
+      return false;
+    }
+    sink.Fixed(duckdb::timestamp_tz_ns_t{ns});
     return true;
   }
 };
@@ -668,22 +670,6 @@ struct TimeTzText {
     bool has_offset = false;
     if (!duckdb::Time::TryConvertTimeTZ(data.data(), data.size(), pos, result,
                                         has_offset)) {
-      return false;
-    }
-    sink.Fixed(result);
-    return true;
-  }
-};
-
-struct DateText {
-  template<typename Sink>
-  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
-    duckdb::date_t result;
-    duckdb::idx_t pos = 0;
-    bool special = false;
-    if (duckdb::Date::TryConvertDate(data.data(), data.size(), pos, result,
-                                     special) !=
-        duckdb::DateCastResult::SUCCESS) {
       return false;
     }
     sink.Fixed(result);
@@ -774,7 +760,7 @@ struct IntervalText {
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
     duckdb::interval_t result;
     if (!duckdb::Interval::FromCString(data.data(), data.size(), result,
-                                       nullptr, /*strict=*/false)) {
+                                       nullptr, /*strict=*/true)) {
       return false;
     }
     sink.Fixed(result);
@@ -1817,16 +1803,17 @@ DeserializationFunction<Sink> GetDeserialization(
     case BLOB:
       return SelectDecoder<BlobBin, BlobText, Sink>(binary);
     case DATE:
-      return SelectDecoder<DateBin, DateText, Sink>(binary);
+      return SelectDecoder<DateBin, CastText<duckdb::date_t>, Sink>(binary);
     case TIME:
-      return SelectDecoder<TimeBin, TimeText, Sink>(binary);
+      return SelectDecoder<TimeBin, CastText<duckdb::dtime_t>, Sink>(binary);
     case TIME_NS:
       return SelectDecoder<TimeNsBin, CastText<duckdb::dtime_ns_t>, Sink>(
         binary);
     case TIME_TZ:
       return SelectDecoder<TimeTzBin, TimeTzText, Sink>(binary);
     case TIMESTAMP:
-      return SelectDecoder<TimestampBin, TimestampText, Sink>(binary);
+      return SelectDecoder<TimestampBin, CastText<duckdb::timestamp_t>, Sink>(
+        binary);
     case TIMESTAMP_SEC:
       return SelectDecoder<TimestampSecBin, CastText<duckdb::timestamp_sec_t>,
                            Sink>(binary);
@@ -1839,8 +1826,7 @@ DeserializationFunction<Sink> GetDeserialization(
     case TIMESTAMP_TZ:
       return SelectDecoder<TimestampTzBin, TimestampTzText, Sink>(binary);
     case TIMESTAMP_TZ_NS:
-      return SelectDecoder<TimestampTzNsBin,
-                           CastText<duckdb::timestamp_tz_ns_t>, Sink>(binary);
+      return SelectDecoder<TimestampTzNsBin, TimestampTzNsText, Sink>(binary);
     case INTERVAL:
       return SelectDecoder<IntervalBin, IntervalText, Sink>(binary);
     case UUID:

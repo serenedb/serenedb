@@ -387,12 +387,27 @@ elseif(ARCH_AARCH64)
     set(FAISS_OPT_LEVEL "dd")
     set(FAISS_LIB faiss)
 endif()
+# Export FAISS_LIB so sibling subdirs (libs/, iresearch/) link the SAME target.
+# It is set in this subdirectory's scope, so without exporting it ${FAISS_LIB}
+# is empty in libs/ and consumers silently fall back to the scalar base `faiss`
+# target -- which, with the SQ-refactored faiss, disables SIMD in the SQ8
+# distance kernel (the ~6x query regression). faiss_avx2 is compiled globally
+# with -mavx2, so it links cleanly (unlike the buggy x86 DD build) and runs the
+# AVX2 SQ kernels.
+set(FAISS_LIB "${FAISS_LIB}" CACHE INTERNAL "faiss target to link" FORCE)
 
 sdb_update_module(${GIT_EXECUTABLE} "faiss" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 set(FAISS_ENABLE_GPU OFF CACHE BOOL "" FORCE)
 set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "" FORCE)
 set(FAISS_ENABLE_EXTRAS OFF CACHE BOOL "" FORCE)
 add_subdirectory(faiss)
+
+# faiss's base target exports these -Wno-* usage requirements PUBLIC (its
+# Clustering.h / IDSelector.h headers trip our -Werror -Wsuggest-* build); the
+# alt-SIMD variants don't. We link ${FAISS_LIB}, so mirror the suppressions onto
+# it. No-op when ${FAISS_LIB} is the base `faiss`, which already sets them.
+target_compile_options(${FAISS_LIB} PUBLIC
+  -Wno-suggest-override -Wno-sign-compare -Wno-suggest-destructor-override)
 
 ################################################################################
 ## snowball stemmer

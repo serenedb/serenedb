@@ -1,0 +1,68 @@
+# Casts between the sub-precision temporal types: widening is exact,
+# narrowing rounds half-up in the target unit. The unimplemented casts at the
+# bottom are pinned so adding them (or accidentally changing an error into a
+# silent misparse) surfaces here.
+
+statement ok
+SET TIME ZONE 'UTC';
+
+query
+SELECT (TIMESTAMP '2024-07-15 12:34:56.789123')::TIMESTAMP_S AS us2s,
+       (TIMESTAMP '2024-07-15 12:34:56.789123')::TIMESTAMP_MS AS us2ms,
+       (TIMESTAMP '2024-07-15 12:34:56.789123')::TIMESTAMP_NS AS us2ns;
+----
+us2s	us2ms	us2ns
+2024-07-15 12:34:57	2024-07-15 12:34:56.789	2024-07-15 12:34:56.789123
+
+query
+SELECT (TIMESTAMP_S '2024-07-15 12:34:56')::TIMESTAMP AS s2us,
+       (TIMESTAMP_MS '2024-07-15 12:34:56.789')::TIMESTAMP AS ms2us,
+       (TIMESTAMP_NS '2024-07-15 12:34:56.789123456')::TIMESTAMP AS ns2us;
+----
+s2us	ms2us	ns2us
+2024-07-15 12:34:56	2024-07-15 12:34:56.789	2024-07-15 12:34:56.789123
+
+query
+SELECT (TIMESTAMP_S '2024-07-15 12:34:56')::TIMESTAMP_NS AS s2ns,
+       (TIMESTAMP_NS '2024-07-15 12:34:56.789123456')::TIMESTAMP_MS AS ns2ms;
+----
+s2ns	ns2ms
+2024-07-15 12:34:56	2024-07-15 12:34:56.789
+
+query
+SELECT (TIMESTAMP_NS '2024-07-15 12:34:56.789123456')::DATE AS ns2d,
+       (DATE '2024-07-15')::TIMESTAMP_NS AS d2ns;
+----
+ns2d	d2ns
+2024-07-15	2024-07-15 00:00:00
+
+query
+SELECT (TIME_NS '12:34:56.789123456')::TIME AS tns2t;
+----
+tns2t
+12:34:56.789123
+
+# ICU cast: instant -> naive nanos in the session zone. The binary wire
+# carries micros, so the extended engine sees the truncated rendering.
+skipif pg-wire-extended
+query
+SELECT (TIMESTAMPTZ_NS '2024-07-15 12:34:56.789123456+00')::TIMESTAMP_NS AS tzns2ns;
+----
+tzns2ns
+2024-07-15 12:34:56.789123456
+
+onlyif pg-wire-extended
+query
+SELECT (TIMESTAMPTZ_NS '2024-07-15 12:34:56.789123456+00')::TIMESTAMP_NS AS tzns2ns;
+----
+tzns2ns
+2024-07-15 12:34:56.789123
+
+query
+SELECT (TIME '12:34:56.789')::TIME_NS AS t2tns;
+----
+t2tns
+12:34:56.789
+
+# Unimplemented casts between SereneDB-only types, pinned with their error
+# text.

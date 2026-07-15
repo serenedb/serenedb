@@ -22,6 +22,7 @@
 
 #include <absl/functional/function_ref.h>
 #include <absl/strings/ascii.h>
+#include <absl/strings/str_cat.h>
 
 #include <span>
 #include <string>
@@ -70,12 +71,9 @@ class Options {
     std::vector<std::string> out;
     out.reserve(_keys.size());
     for (size_t i = 0; i < _keys.size(); ++i) {
-      std::string entry = _keys[i];
-      entry += '=';
-      if (!redact_secrets || !IsSecretKey(_keys[i])) {
-        entry += _values[i];
-      }
-      out.push_back(std::move(entry));
+      const bool redact = redact_secrets && IsSecretKey(_keys[i]);
+      out.push_back(
+        absl::StrCat(_keys[i], "=", redact ? std::string_view{} : _values[i]));
     }
     return out;
   }

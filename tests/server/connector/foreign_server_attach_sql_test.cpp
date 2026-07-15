@@ -49,8 +49,9 @@ namespace {
 ForeignServer MakeServer(std::string_view name, std::string fdw,
                          std::vector<std::string> keys,
                          std::vector<std::string> vals) {
-  return ForeignServer{Permissions{}, ObjectId{},      ObjectId{}, name,
-                       std::move(fdw), std::move(keys), std::move(vals)};
+  return ForeignServer{Permissions{}, ObjectId{}, ObjectId{}, name,
+                       std::move(fdw),
+                       Options{std::move(keys), std::move(vals)}};
 }
 
 // A live ClientContext plus the transient secret PrepareForeignServerAttach
@@ -141,8 +142,10 @@ TEST(ForeignServerAttachSql, PublicMappingOverridesServerOptionByKey) {
   auto server =
     MakeServer("vedernikoff_srv", "postgres_fdw", {"user", "host", "database"},
                {"kostya", "h", "postgres"});
-  UserMapping mapping{Permissions{}, ObjectId{}, ObjectId{}, "pubmap",
-                      "vedernikoff_srv", "public", {"user"}, {"pudge"}};
+  UserMapping mapping{Permissions{}, ObjectId{},
+                      ObjectId{},    "pubmap",
+                      "vedernikoff_srv", "public",
+                      Options{{"user"}, {"pudge"}}};
   PreparedAttach prepared("", server, &mapping);
 
   EXPECT_EQ(prepared.SecretValue("user"), "pudge");

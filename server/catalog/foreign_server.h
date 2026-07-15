@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "catalog/object.h"
+#include "catalog/options.h"
 
 namespace duckdb {
 
@@ -46,23 +47,15 @@ class ForeignServer : public Object {
   std::shared_ptr<Object> Clone() const final;
 
   ForeignServer(Permissions perm, ObjectId schema_id, ObjectId id,
-                std::string_view name, std::string fdw_name,
-                std::vector<std::string> option_keys,
-                std::vector<std::string> option_values);
+                std::string_view name, std::string fdw_name, Options options);
 
   std::string_view GetFdwName() const noexcept { return _fdw_name; }
 
-  const std::vector<std::string>& GetOptionKeys() const noexcept {
-    return _option_keys;
-  }
-  const std::vector<std::string>& GetOptionValues() const noexcept {
-    return _option_values;
-  }
+  const Options& GetOptions() const noexcept { return _options; }
 
  private:
   std::string _fdw_name;
-  std::vector<std::string> _option_keys;
-  std::vector<std::string> _option_values;
+  Options _options;
 };
 
 class UserMapping;

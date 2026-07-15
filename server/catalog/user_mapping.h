@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "catalog/object.h"
+#include "catalog/options.h"
 
 namespace duckdb {
 
@@ -46,9 +47,8 @@ class UserMapping : public Object {
 
   UserMapping(Permissions perm, ObjectId schema_id, ObjectId id,
               std::string_view name, std::string server_name,
-              std::string user_name, std::vector<std::string> option_keys,
-              std::vector<std::string> option_values,
-              ObjectId server_id = {}, ObjectId role_id = {});
+              std::string user_name, Options options, ObjectId server_id = {},
+              ObjectId role_id = {});
 
   std::string_view GetServerName() const noexcept { return _server_name; }
   std::string_view GetUserName() const noexcept { return _user_name; }
@@ -59,18 +59,12 @@ class UserMapping : public Object {
   // role->mapping dependency so DROP ROLE is aware of it).
   ObjectId GetRoleId() const noexcept { return _role_id; }
 
-  const std::vector<std::string>& GetOptionKeys() const noexcept {
-    return _option_keys;
-  }
-  const std::vector<std::string>& GetOptionValues() const noexcept {
-    return _option_values;
-  }
+  const Options& GetOptions() const noexcept { return _options; }
 
  private:
   std::string _server_name;
   std::string _user_name;
-  std::vector<std::string> _option_keys;
-  std::vector<std::string> _option_values;
+  Options _options;
   ObjectId _server_id;
   ObjectId _role_id;
 };

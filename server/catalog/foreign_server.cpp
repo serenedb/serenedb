@@ -101,17 +101,9 @@ std::vector<std::pair<std::string, std::string>> MergeConnectionOptions(
     }
     merged.emplace_back(std::move(key), std::string{value});
   };
-  const auto& skeys = server.GetOptionKeys();
-  const auto& svals = server.GetOptionValues();
-  for (size_t i = 0; i < skeys.size(); ++i) {
-    set_opt(skeys[i], svals[i]);
-  }
+  server.GetOptions().Visit(set_opt);
   if (public_mapping != nullptr) {
-    const auto& mkeys = public_mapping->GetOptionKeys();
-    const auto& mvals = public_mapping->GetOptionValues();
-    for (size_t i = 0; i < mkeys.size(); ++i) {
-      set_opt(mkeys[i], mvals[i]);
-    }
+    public_mapping->GetOptions().Visit(set_opt);
   }
   return merged;
 }
@@ -183,12 +175,10 @@ std::string RedactConnstrSecrets(std::string_view text) {
 
 ForeignServer::ForeignServer(Permissions perm, ObjectId schema_id, ObjectId id,
                              std::string_view name, std::string fdw_name,
-                             std::vector<std::string> option_keys,
-                             std::vector<std::string> option_values)
+                             Options options)
   : Object{std::move(perm), schema_id, id, name, ObjectType::ForeignServer},
     _fdw_name{std::move(fdw_name)},
-    _option_keys{std::move(option_keys)},
-    _option_values{std::move(option_values)} {}
+    _options{std::move(options)} {}
 
 std::shared_ptr<ForeignServer> ForeignServer::Deserialize(
   duckdb::Deserializer& src, ReadContext ctx) {
@@ -197,8 +187,8 @@ std::shared_ptr<ForeignServer> ForeignServer::Deserialize(
 
   return std::make_shared<ForeignServer>(
     std::move(data.perm), ctx.schema_id, ctx.id, data.name,
-    std::move(data.fdw_name), std::move(data.option_keys),
-    std::move(data.option_values));
+    std::move(data.fdw_name),
+    Options{std::move(data.option_keys), std::move(data.option_values)});
 }
 
 void ForeignServer::Serialize(duckdb::Serializer& sink) const {
@@ -206,8 +196,8 @@ void ForeignServer::Serialize(duckdb::Serializer& sink) const {
     .perm = GetPermissions(),
     .name = std::string{GetName()},
     .fdw_name = _fdw_name,
-    .option_keys = _option_keys,
-    .option_values = _option_values,
+    .option_keys = {_options.Keys().begin(), _options.Keys().end()},
+    .option_values = {_options.Values().begin(), _options.Values().end()},
   };
   basics::WriteTuple(sink, data);
 }

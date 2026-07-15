@@ -53,10 +53,9 @@ std::string DetachSql(std::string_view name) {
   return absl::StrCat("DETACH ", catalog::QuoteSqlIdentifier(name));
 }
 
-// Lower-case the option keys and stringify the values into parallel vectors
-// (the storage shape shared by ForeignServer and UserMapping).
-std::pair<std::vector<std::string>, std::vector<std::string>> SplitOptions(
-  const duckdb::named_parameter_map_t& options) {
+// Lower-case the option keys and stringify the values into the Options
+// storage shared by ForeignServer and UserMapping.
+catalog::Options MakeCatalogOptions(const duckdb::named_parameter_map_t& options) {
   std::vector<std::string> keys;
   std::vector<std::string> values;
   keys.reserve(options.size());
@@ -65,7 +64,7 @@ std::pair<std::vector<std::string>, std::vector<std::string>> SplitOptions(
     keys.push_back(absl::AsciiStrToLower(key.GetIdentifierName()));
     values.push_back(value.ToString());
   }
-  return {std::move(keys), std::move(values)};
+  return catalog::Options{std::move(keys), std::move(values)};
 }
 
 // Establish the live attachment for a server (validates connectivity too).
@@ -217,13 +216,11 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
                     ERR_MSG("server \"", name, "\" already exists"));
   }
 
-  auto [keys, values] = SplitOptions(options);
-
   // Owner = the creating role; the default ACL then gives the owner USAGE and
   // the public nothing (auth::ClassPrivs/PublicDefaultPrivs).
   auto server = std::make_shared<catalog::ForeignServer>(
     catalog::Permissions{conn_ctx.GetRoleId()}, ObjectId{}, ObjectId{}, name,
-    std::string{fdw_name}, std::move(keys), std::move(values));
+    std::string{fdw_name}, MakeCatalogOptions(options));
 
   // Validate + attach first; only persist if the connection works, so a failed
   // CREATE SERVER leaves nothing behind. Any persist failure (duplicate name,
@@ -295,12 +292,10 @@ void CreateUserMapping(ConnectionContext& conn_ctx, std::string_view user,
                             server, "\" already exists"));
   }
 
-  auto [keys, values] = SplitOptions(options);
-
   // A mapping's authority follows its server (PG): stamp the server's owner.
   auto mapping = std::make_shared<catalog::UserMapping>(
     catalog::Permissions{server_obj->GetOwner()}, ObjectId{}, ObjectId{}, name,
-    std::string{server}, role, std::move(keys), std::move(values),
+    std::string{server}, role, MakeCatalogOptions(options),
     server_obj->GetId(), role_id);
 
   // A PUBLIC mapping drives the live (instance-global) attachment. Validate the

@@ -30,7 +30,7 @@
 #include "catalog/catalog.h"
 #include "catalog/user_mapping.h"
 #include "pg/pg_catalog/fwd.h"
-#include "pg/pg_catalog/make_options.h"
+#include "catalog/options.h"
 
 namespace sdb::pg {
 
@@ -65,7 +65,10 @@ catalog::MaterializedData SystemTableSnapshot<PgUserMapping>::GetTableData() {
         .oid = mapping->GetId().id(),
         .umuser = mapping->GetRoleId().id(),
         .umserver = umserver,
-        .umoptions = MakeOptions(*mapping, /*redact_secrets=*/false),
+        // Cleartext, like PG's base catalog: this table is superuser-only
+        // (kSuperuserOnly), the read gate is the guard. Everyone else goes
+        // through the pg_user_mappings view's per-viewer CASE.
+        .umoptions = mapping->GetOptions().ToStrings(/*redact_secrets=*/false),
       };
       values.push_back(std::move(row));
     }

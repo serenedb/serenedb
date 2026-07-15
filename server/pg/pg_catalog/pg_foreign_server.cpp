@@ -30,7 +30,7 @@
 #include "catalog/foreign_server.h"
 #include "catalog/identifiers/object_id.h"
 #include "pg/pg_catalog/fwd.h"
-#include "pg/pg_catalog/make_options.h"
+#include "catalog/options.h"
 
 namespace sdb::pg {
 namespace {
@@ -61,7 +61,10 @@ catalog::MaterializedData SystemTableSnapshot<PgForeignServer>::GetTableData() {
         .srvtype = {},
         .srvversion = {},
         .srvacl = {},
-        .srvoptions = MakeOptions(*server, /*redact_secrets=*/true),
+        // Redacted: this table is world-readable like PG's, but unlike PG our
+        // server options may carry credentials (the eager attach takes them),
+        // so a secret VALUE never renders here.
+        .srvoptions = server->GetOptions().ToStrings(/*redact_secrets=*/true),
       };
       values.push_back(std::move(row));
     }

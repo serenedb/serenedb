@@ -406,8 +406,13 @@ add_subdirectory(faiss)
 # Clustering.h / IDSelector.h headers trip our -Werror -Wsuggest-* build); the
 # alt-SIMD variants don't. We link ${FAISS_LIB}, so mirror the suppressions onto
 # it. No-op when ${FAISS_LIB} is the base `faiss`, which already sets them.
-target_compile_options(${FAISS_LIB} PUBLIC
-  -Wno-suggest-override -Wno-sign-compare -Wno-suggest-destructor-override)
+target_compile_options(
+    ${FAISS_LIB}
+    PUBLIC
+        -Wno-suggest-override
+        -Wno-sign-compare
+        -Wno-suggest-destructor-override
+)
 
 ################################################################################
 ## snowball stemmer

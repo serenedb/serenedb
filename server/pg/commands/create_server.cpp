@@ -91,10 +91,7 @@ void RunAttach(const catalog::ForeignServer& server) {
 }
 
 void RunDetach(std::string_view name) {
-  // Best-effort: the attachment may be absent (e.g. boot replay skipped a down
-  // remote). Ignore errors.
-  auto conn = DuckDBEngine::Instance().CreateConnection();
-  conn->Query(DetachSql(name));
+  catalog::DetachForeignServerAttachment(name);
 }
 
 // Resolve a USER MAPPING role spec: CURRENT_USER/USER -> the session user;

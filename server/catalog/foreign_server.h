@@ -94,6 +94,13 @@ std::string PrepareForeignServerAttach(
 void DropForeignServerSecret(duckdb::ClientContext& context,
                              std::string_view secret_name);
 
+// Best-effort DETACH of a server's live (instance-global) DuckDB attachment,
+// on a fresh engine connection. Used by DROP SERVER and by the DROP SCHEMA /
+// DROP DATABASE cascade sweeps -- the generic drop plan removes catalog state
+// only, never the attachment. The attachment may legitimately be absent (boot
+// replay skips a down remote), so errors are swallowed.
+void DetachForeignServerAttachment(std::string_view server_name);
+
 // Quote an SQL identifier with double quotes, doubling any embedded quote.
 std::string QuoteSqlIdentifier(std::string_view name);
 

@@ -38,6 +38,7 @@
 #include <utility>
 #include <vector>
 
+#include "basics/duckdb_engine.h"
 #include "basics/serializer.h"
 #include "catalog/persistence/foreign_server.h"
 #include "catalog/user_mapping.h"
@@ -277,6 +278,11 @@ void DropForeignServerSecret(duckdb::ClientContext& context,
       duckdb::OnEntryNotFound::RETURN_NULL,
       duckdb::SecretPersistType::TEMPORARY);
   });
+}
+
+void DetachForeignServerAttachment(std::string_view server_name) {
+  auto conn = DuckDBEngine::Instance().CreateConnection();
+  conn->Query("DETACH " + QuoteSqlIdentifier(server_name));
 }
 
 }  // namespace sdb::catalog

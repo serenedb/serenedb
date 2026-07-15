@@ -84,7 +84,7 @@ struct SerializationContext {
 
 // UTC fast-path spellings; other zero-offset aliases just take the ICU path.
 inline bool IsUtcTimeZoneName(std::string_view name) noexcept {
-  return name == "UTC" || name == "Etc/UTC" || name == "GMT";
+  return name == "UTC" || name == "GMT" || name == "Etc/UTC";
 }
 
 void FillContext(const Config& config, SerializationContext& context);

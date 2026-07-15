@@ -64,5 +64,164 @@ SELECT (TIME '12:34:56.789')::TIME_NS AS t2tns;
 t2tns
 12:34:56.789
 
-# Unimplemented casts between SereneDB-only types, pinned with their error
-# text.
+# Sub-precision / nanosecond temporal types cast into TIME_TZ: the wall-clock
+# time-of-day is kept (nanoseconds rounded to the µs TIME_TZ resolution) and
+# offset +00 is attached, matching the naive TIMESTAMP -> TIME_TZ cast.
+query
+SELECT (TIME_NS      '12:34:56.789123456')::TIMETZ             AS time_ns,
+       (TIMESTAMP_S   '2024-07-15 12:34:56')::TIMETZ           AS ts_s,
+       (TIMESTAMP_MS  '2024-07-15 12:34:56.789')::TIMETZ       AS ts_ms,
+       (TIMESTAMP_NS  '2024-07-15 12:34:56.789123456')::TIMETZ AS ts_ns;
+----
+time_ns	ts_s	ts_ms	ts_ns
+12:34:56.789123+00	12:34:56+00	12:34:56.789+00	12:34:56.789123+00
+
+# The direct cast agrees with routing through TIME (::TIME::TIMETZ).
+query
+SELECT (TIMESTAMP_MS '2024-07-15 12:34:56.789')::TIMETZ
+         = (TIMESTAMP_MS '2024-07-15 12:34:56.789')::TIME::TIMETZ AS ms_ok,
+       (TIME_NS '12:34:56.789123456')::TIMETZ
+         = (TIME_NS '12:34:56.789123456')::TIME::TIMETZ AS tns_ok;
+----
+ms_ok	tns_ok
+t	t
+
+# Casts into TIME_NS (the finest time-of-day type, so the time value is kept
+# at full precision; the date and any offset are dropped). TIMETZ and the
+# naive timestamps are context-free; TIMESTAMPTZ[_NS] localise the instant to
+# the session zone (UTC here). Text protocol only: TIME_NS ships on the µs
+# `time` OID, so the binary/extended wire would truncate the nanosecond tail.
+onlyif pg-wire-simple
+query
+SELECT (TIMETZ         '12:34:56.789123+02')::TIME_NS               AS from_timetz,
+       (TIMESTAMP_S    '2024-07-15 12:34:56')::TIME_NS              AS from_ts_s,
+       (TIMESTAMP_MS   '2024-07-15 12:34:56.789')::TIME_NS          AS from_ts_ms,
+       (TIMESTAMP      '2024-07-15 12:34:56.789123')::TIME_NS       AS from_ts,
+       (TIMESTAMPTZ    '2024-07-15 16:34:56.789+00')::TIME_NS       AS from_tstz,
+       (TIMESTAMPTZ_NS '2024-07-15 16:34:56.789123456+00')::TIME_NS AS from_tstz_ns;
+----
+from_timetz	from_ts_s	from_ts_ms	from_ts	from_tstz	from_tstz_ns
+12:34:56.789123	12:34:56	12:34:56.789	12:34:56.789123	16:34:56.789	16:34:56.789123456
+
+# TIMESTAMPTZ_NS -> TIME_TZ: localise to the session zone, round nanoseconds
+# to the µs TIME_TZ resolution, attach the session offset.
+query
+SELECT (TIMESTAMPTZ_NS '2024-07-15 16:34:56.789123456+00')::TIMETZ AS tstz_ns_to_ttz;
+----
+tstz_ns_to_ttz
+16:34:56.789123+00
+
+# The TIMESTAMPTZ[_NS] casts are session-dependent: a non-UTC zone shifts the
+# extracted wall clock (and the attached TIME_TZ offset). 2024-07-15 is EDT (-04).
+statement ok
+SET TIME ZONE 'America/New_York';
+
+onlyif pg-wire-simple
+query
+SELECT (TIMESTAMPTZ    '2024-07-15 16:34:56.789+00')::TIME_NS        AS tstz_ny,
+       (TIMESTAMPTZ_NS '2024-07-15 16:34:56.789123456+00')::TIME_NS  AS tstz_ns_ny,
+       (TIMESTAMPTZ_NS '2024-07-15 16:34:56.789123456+00')::TIMETZ   AS ttz_ny;
+----
+tstz_ny	tstz_ns_ny	ttz_ny
+12:34:56.789	12:34:56.789123456	12:34:56.789123-04
+
+statement ok
+SET TIME ZONE 'UTC';
+
+# Context-free timestamp casts: TIMESTAMP_NS -> TIMESTAMP_S rounds to the whole
+# second; TIMESTAMPTZ <-> TIMESTAMPTZ_NS scale the same UTC instant (no zone).
+query
+SELECT (TIMESTAMP_NS   '2024-01-02 12:34:56.789123456')::TIMESTAMP_S    AS tsns_to_s,
+       (TIMESTAMPTZ     '2024-01-02 12:34:56.789+00')::TIMESTAMPTZ_NS    AS tstz_to_tstzns,
+       (TIMESTAMPTZ_NS  '2024-01-02 12:34:56.789123456+00')::TIMESTAMPTZ AS tstzns_to_tstz;
+----
+tsns_to_s	tstz_to_tstzns	tstzns_to_tstz
+2024-01-02 12:34:57	2024-01-02 12:34:56.789+00	2024-01-02 12:34:56.789123+00
+
+# TIMESTAMPTZ_NS -> naive timestamp / time / date: localise the instant to the
+# session zone (UTC here), at each target's precision (TIMESTAMP_S rounds up).
+query
+SELECT (TIMESTAMPTZ_NS '2024-01-02 16:34:56.789123456+00')::TIMESTAMP    AS to_ts,
+       (TIMESTAMPTZ_NS '2024-01-02 16:34:56.789123456+00')::TIMESTAMP_MS AS to_ms,
+       (TIMESTAMPTZ_NS '2024-01-02 16:34:56.789123456+00')::TIMESTAMP_S  AS to_s,
+       (TIMESTAMPTZ_NS '2024-01-02 16:34:56.789123456+00')::TIME         AS to_time,
+       (TIMESTAMPTZ_NS '2024-01-02 16:34:56.789123456+00')::DATE         AS to_date;
+----
+to_ts	to_ms	to_s	to_time	to_date
+2024-01-02 16:34:56.789123	2024-01-02 16:34:56.789	2024-01-02 16:34:57	16:34:56.789123	2024-01-02
+
+# Session-dependent: New York (EST, -05) shifts the localised wall clock.
+statement ok
+SET TIME ZONE 'America/New_York';
+
+query
+SELECT (TIMESTAMPTZ_NS '2024-01-02 16:34:56.789123456+00')::TIMESTAMP AS to_ts_ny,
+       (TIMESTAMPTZ_NS '2024-01-02 16:34:56.789123456+00')::DATE      AS to_date_ny;
+----
+to_ts_ny	to_date_ny
+2024-01-02 11:34:56.789123	2024-01-02
+
+statement ok
+SET TIME ZONE 'UTC';
+
+# naive TIMESTAMP*/DATE -> TIMESTAMPTZ_NS is session-aware (interpret the wall
+# clock in the session zone), matching naive -> TIMESTAMPTZ. Under UTC the two
+# agree; nanoseconds and date-at-midnight are preserved.
+onlyif pg-wire-simple
+query
+SELECT (TIMESTAMP    '2024-01-02 16:00:00.123')::TIMESTAMPTZ           AS tstz,
+       (TIMESTAMP    '2024-01-02 16:00:00.123')::TIMESTAMPTZ_NS        AS tstz_ns,
+       (TIMESTAMP_NS '2024-01-02 16:00:00.123456789')::TIMESTAMPTZ_NS  AS tsns_to_tstzns,
+       (DATE '2024-01-02')::TIMESTAMPTZ_NS                             AS date_to_tstzns;
+----
+tstz	tstz_ns	tsns_to_tstzns	date_to_tstzns
+2024-01-02 16:00:00.123+00	2024-01-02 16:00:00.123+00	2024-01-02 16:00:00.123456789+00	2024-01-02 00:00:00+00
+
+# New York (EST, -05): the wall clock is interpreted in the session zone (not
+# treated as UTC), keeping the local time and attaching -05. Text protocol only:
+# the binary wire renders TIMESTAMPTZ[_NS] in UTC (+00) rather than session-local.
+statement ok
+SET TIME ZONE 'America/New_York';
+
+onlyif pg-wire-simple
+query
+SELECT (TIMESTAMP '2024-01-02 16:00:00.123')::TIMESTAMPTZ_NS AS tstz_ns_ny,
+       (DATE '2024-01-02')::TIMESTAMPTZ_NS                   AS date_to_tstzns_ny;
+----
+tstz_ns_ny	date_to_tstzns_ny
+2024-01-02 16:00:00.123-05	2024-01-02 00:00:00-05
+
+statement ok
+SET TIME ZONE 'UTC';
+
+# Round-trip X::t2::t1 = X is NOT universal: it holds only when t2 can carry
+# everything t1 has. Lossless when the first hop widens / reinterprets;
+# lossy when it narrows precision, drops the TIMETZ offset, or drops the date.
+
+# Lossless round-trips (t2 preserves all of t1): all true.
+query
+SELECT (TIMESTAMP_S  '2024-01-02 12:34:56')::TIMESTAMP_NS::TIMESTAMP_S
+         = TIMESTAMP_S '2024-01-02 12:34:56'                                       AS s_via_ns,
+       (TIMESTAMP '2024-01-02 12:34:56.789123')::TIMESTAMPTZ::TIMESTAMP
+         = TIMESTAMP '2024-01-02 12:34:56.789123'                                  AS ts_via_tstz,
+       (TIME '12:34:56.789123')::TIMETZ::TIME
+         = TIME '12:34:56.789123'                                                  AS time_via_ttz,
+       (DATE '2024-01-02')::TIMESTAMP::DATE
+         = DATE '2024-01-02'                                                       AS date_via_ts,
+       (TIMESTAMP_NS '2024-01-02 12:34:56.789123456')::TIMESTAMPTZ_NS::TIMESTAMP_NS
+         = TIMESTAMP_NS '2024-01-02 12:34:56.789123456'                            AS tsns_via_tstzns;
+----
+s_via_ns	ts_via_tstz	time_via_ttz	date_via_ts	tsns_via_tstzns
+t	t	t	t	t
+
+# Lossy round-trips (t2 drops info that t1 carries): all false.
+query
+SELECT (TIMESTAMP_NS '2024-01-02 12:34:56.789123456')::TIMESTAMP::TIMESTAMP_NS
+         = TIMESTAMP_NS '2024-01-02 12:34:56.789123456'                            AS ns_lost_via_us,
+       (TIMETZ '12:34:56.789123+05')::TIME::TIMETZ
+         = TIMETZ '12:34:56.789123+05'                                             AS offset_lost,
+       (TIMESTAMP '2024-01-02 12:34:56.789123')::DATE::TIMESTAMP
+         = TIMESTAMP '2024-01-02 12:34:56.789123'                                  AS time_lost;
+----
+ns_lost_via_us	offset_lost	time_lost
+f	f	f

@@ -571,14 +571,12 @@ std::unique_ptr<icu::Calendar> MakeCalendar(std::string tz_name) {
 }  // namespace
 
 icu::Calendar* DeserializeContext::CalendarFor(std::string_view tz_name) {
-  auto it = named_calendars.find(tz_name);
-  if (it != named_calendars.end()) {
+  auto it = named_calendars.try_emplace(tz_name, nullptr).first;
+  if (it->second) {
     return it->second.get();
   }
-  auto calendar = MakeCalendar(std::string{tz_name});
-  auto* raw = calendar.get();
-  named_calendars.emplace(tz_name, std::move(calendar));
-  return raw;
+  it->second = MakeCalendar(std::string{tz_name});
+  return it->second.get();
 }
 
 void FillDeserializeContext(duckdb::ClientContext& client,

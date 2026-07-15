@@ -374,3 +374,28 @@ COPY (SELECT * FROM (VALUES
 statement ok
 CREATE TABLE numbers AS
     FROM '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_014_1_numbers_json.json';
+
+# DOCS_TEST: example_016
+
+statement ok
+COPY (
+    SELECT '{"id": "rec_1", "name": "FENDT 826 VARIO", "tags": ["farm"]}' AS line
+    UNION ALL
+    SELECT '{"id": "rec_2", "name": "VENTO 375", "tags": ["hvac", "cooling"]}' AS line
+) TO '${__TEST_DIR__}/data_import_and_export_json_loading_json_example_016_1_records_nd_json.jsonl' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
+
+# DOCS_TEST_RAW
+#| FROM read_json('records.jsonl',
+#|                format = 'newline_delimited',
+#|                columns = {id: 'VARCHAR', name: 'VARCHAR', tags: 'VARCHAR[]'});
+
+# DOCS_TEST_BODY
+
+query
+FROM read_json('${__TEST_DIR__}/data_import_and_export_json_loading_json_example_016_1_records_nd_json.jsonl',
+               format = 'newline_delimited',
+               columns = {id: 'VARCHAR', name: 'VARCHAR', tags: 'VARCHAR[]'});
+----
+id	name	tags
+rec_1	FENDT 826 VARIO	{farm}
+rec_2	VENTO 375	{hvac,cooling}

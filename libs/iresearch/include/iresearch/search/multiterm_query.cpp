@@ -149,8 +149,8 @@ DocIterator::ptr MultiTermQuery::Execute(const ExecutionContext& ctx,
       SDB_ASSERT(entry.cookie);
       cookies.emplace_back(
         entry.cookie.get(),
-        scorer ? all_stats[entry.stat_offset].c_str() : nullptr, entry.boost,
-        reader->meta());
+        scorer ? all_stats[entry.stat_offset].c_str() : nullptr,
+        entry.boost * _boost, reader->meta());
     }
 
     auto docs = reader->Iterator(features, cookies, ctx.wand, _min_match,
@@ -171,7 +171,7 @@ DocIterator::ptr MultiTermQuery::Execute(const ExecutionContext& ctx,
       {
         .cookie = entry.cookie.get(),
         .stats = scorer ? all_stats[entry.stat_offset].c_str() : nullptr,
-        .boost = entry.boost,
+        .boost = entry.boost * _boost,
         .field = reader->meta(),
       },
       ctx.wand);

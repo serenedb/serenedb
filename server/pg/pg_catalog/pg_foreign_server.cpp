@@ -22,7 +22,6 @@
 
 #include <absl/strings/ascii.h>
 
-#include <deque>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -50,8 +49,6 @@ catalog::MaterializedData SystemTableSnapshot<PgForeignServer>::GetTableData() {
   const auto database_id = GetDatabaseId();
 
   std::vector<PgForeignServer> values;
-  std::deque<std::string> option_storage;
-  std::deque<std::vector<std::string_view>> option_spans;
 
   for (const auto& schema : catalog->GetSchemas(database_id)) {
     for (const auto& server :
@@ -64,7 +61,7 @@ catalog::MaterializedData SystemTableSnapshot<PgForeignServer>::GetTableData() {
         .srvtype = {},
         .srvversion = {},
         .srvacl = {},
-        .srvoptions = MakeOptions(*server, option_storage, option_spans),
+        .srvoptions = MakeOptions(*server, /*redact_secrets=*/true),
       };
       values.push_back(std::move(row));
     }

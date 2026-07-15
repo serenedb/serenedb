@@ -3,8 +3,12 @@ control substitution on
 # FDW credential-handling regression tests for the review fixes:
 #  A) a connection-option VALUE containing a space (a password) round-trips
 #     through the connstr instead of corrupting it;
-#  B) secret values are redacted in pg_user_mapping case-insensitively (quoted
-#     "PASSWORD") and for the clickhouse `passwd` alias;
+#  B) PG-parity credential exposure: pg_user_mapping is superuser-only and its
+#     umoptions carry the password in CLEARTEXT (the read gate is the guard,
+#     like PG's base catalog); the world-readable pg_foreign_server redacts
+#     secret VALUES case-insensitively (quoted "PASSWORD") and for the
+#     clickhouse `passwd` alias, because unlike PG our srvoptions may carry
+#     creds; a non-superuser is denied pg_user_mapping outright;
 #  C) a PUBLIC mapping with bad credentials is rejected AND does not detach a
 #     currently-working server (atomic re-attach);
 #  D) DROP SERVER cascades to its USER MAPPINGs (no orphan a future same-named
@@ -29,30 +33,42 @@ SELECT count(*) FROM fc_space.chtest.vedernikoff;
 count
 6
 
-# ===== B: the password value is redacted (gone), order-independent check =====
+# ===== B: PG-parity exposure -- superuser sees umoptions cleartext =====
+# The runner connects as a superuser; the mapping's password is visible
+# verbatim (PG shows privileged viewers the cleartext too; ours differs only
+# in WHO passes the gate: the whole table is superuser-only).
 query
-SELECT array_to_string(umoptions, ' ') NOT LIKE '%pass word%' AS redacted
+SELECT array_to_string(umoptions, ' ') LIKE '%pass word%' AS visible
 FROM pg_user_mapping um JOIN pg_foreign_server fs ON um.umserver = fs.oid
 WHERE fs.srvname = 'fc_space';
 ----
-redacted
+visible
 t
 
-# A quoted "PASSWORD" key (mixed case) is still redacted (normalised + matched
-# case-insensitively), and the server still connects.
+# A quoted "PASSWORD" key (mixed case) in SERVER options is redacted in the
+# world-readable srvoptions (normalised + matched case-insensitively), and the
+# eager attach still resolves it; the mapping's copy stays cleartext for the
+# superuser.
 statement ok
 CREATE SERVER fc_pwkey FOREIGN DATA WRAPPER clickhouse_fdw
-  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner', "PASSWORD" 'pass word');
 
 statement ok
 CREATE USER MAPPING FOR PUBLIC SERVER fc_pwkey OPTIONS (user 'scanner', "PASSWORD" 'pass word');
 
 query
-SELECT array_to_string(umoptions, ' ') NOT LIKE '%pass word%' AS redacted
+SELECT array_to_string(srvoptions, ' ') NOT LIKE '%pass word%' AS redacted
+FROM pg_foreign_server WHERE srvname = 'fc_pwkey';
+----
+redacted
+t
+
+query
+SELECT array_to_string(umoptions, ' ') LIKE '%pass word%' AS visible
 FROM pg_user_mapping um JOIN pg_foreign_server fs ON um.umserver = fs.oid
 WHERE fs.srvname = 'fc_pwkey';
 ----
-redacted
+visible
 t
 
 query
@@ -61,21 +77,71 @@ SELECT count(*) FROM fc_pwkey.chtest.vedernikoff;
 count
 6
 
-# The `passwd` alias (a valid clickhouse password key) is also redacted and connects.
+# The `passwd` alias (a valid clickhouse password key) is also redacted in
+# srvoptions and connects.
 statement ok
 CREATE SERVER fc_passwd FOREIGN DATA WRAPPER clickhouse_fdw
-  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner', passwd 'pass word');
 
 statement ok
 CREATE USER MAPPING FOR PUBLIC SERVER fc_passwd OPTIONS (user 'scanner', passwd 'pass word');
 
 query
-SELECT array_to_string(umoptions, ' ') NOT LIKE '%pass word%' AS redacted
-FROM pg_user_mapping um JOIN pg_foreign_server fs ON um.umserver = fs.oid
-WHERE fs.srvname = 'fc_passwd';
+SELECT array_to_string(srvoptions, ' ') NOT LIKE '%pass word%' AS redacted
+FROM pg_foreign_server WHERE srvname = 'fc_passwd';
 ----
 redacted
 t
+
+query
+SELECT array_to_string(umoptions, ' ') LIKE '%pass word%' AS visible
+FROM pg_user_mapping um JOIN pg_foreign_server fs ON um.umserver = fs.oid
+WHERE fs.srvname = 'fc_passwd';
+----
+visible
+t
+
+# A non-superuser is denied the base catalog outright (PG parity: raw
+# pg_user_mapping has no PUBLIC grant) but reads the world-readable
+# pg_foreign_server -- with the secret value redacted.
+statement ok
+DROP ROLE IF EXISTS fc_snoop;
+
+statement ok
+CREATE ROLE fc_snoop LOGIN PASSWORD 'fc_snoop_pw';
+
+# NB: a `connection` record binds the NEXT record only (later records revert
+# to the default superuser connection), so it is repeated per record.
+connection c_snoop user=fc_snoop password=fc_snoop_pw
+statement error
+SELECT count(*) FROM pg_user_mapping;
+----
+db error: ERROR: permission denied for table pg_user_mapping<slt:ignore>
+
+
+connection c_snoop user=fc_snoop password=fc_snoop_pw
+query
+SELECT array_to_string(srvoptions, ' ') NOT LIKE '%pass word%' AS redacted
+FROM pg_foreign_server WHERE srvname = 'fc_pwkey';
+----
+redacted
+t
+
+# The pg_user_mappings VIEW stays reachable (it runs with owner privileges
+# over the superuser-only base table), but its per-viewer CASE NULLs umoptions
+# for a role with no stake in the server -- PG parity: row visible, options not.
+connection c_snoop user=fc_snoop password=fc_snoop_pw
+query
+SELECT count(*) AS rows_visible, count(umoptions) AS options_visible
+FROM pg_user_mappings um JOIN pg_foreign_server fs ON um.srvid = fs.oid
+WHERE fs.srvname = 'fc_pwkey';
+----
+rows_visible	options_visible
+1	0
+
+connection default
+statement ok
+DROP ROLE fc_snoop;
 
 query
 SELECT count(*) FROM fc_passwd.chtest.vedernikoff;

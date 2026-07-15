@@ -22,7 +22,6 @@
 
 #include <absl/strings/ascii.h>
 
-#include <deque>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -43,8 +42,6 @@ catalog::MaterializedData SystemTableSnapshot<PgUserMapping>::GetTableData() {
   const auto database_id = GetDatabaseId();
 
   std::vector<PgUserMapping> values;
-  std::deque<std::string> option_storage;
-  std::deque<std::vector<std::string_view>> option_spans;
 
   for (const auto& schema : catalog->GetSchemas(database_id)) {
     // Resolve umserver by name: foreign servers live in the same (db, schema)
@@ -62,12 +59,13 @@ catalog::MaterializedData SystemTableSnapshot<PgUserMapping>::GetTableData() {
           it != server_oids.end()) {
         umserver = it->second;
       }
-      // PG uses 0 for PUBLIC; role oids are not resolvable here either.
+      // PG uses 0 for PUBLIC; a FOR <role> mapping carries the role's id, so
+      // pg_user_mappings' per-viewer CASE (own-mapping visibility) resolves.
       PgUserMapping row{
         .oid = mapping->GetId().id(),
-        .umuser = 0,
+        .umuser = mapping->GetRoleId().id(),
         .umserver = umserver,
-        .umoptions = MakeOptions(*mapping, option_storage, option_spans),
+        .umoptions = MakeOptions(*mapping, /*redact_secrets=*/false),
       };
       values.push_back(std::move(row));
     }

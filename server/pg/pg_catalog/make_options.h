@@ -22,7 +22,6 @@
 
 #include <absl/strings/ascii.h>
 
-#include <deque>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -31,30 +30,34 @@
 
 namespace sdb::pg {
 
-// Build "key=value" option strings, redacting any secret value so credentials
-// are not dumped into the catalog (clickhouse accepts both `password` and
-// `passwd`). The strings are appended to `storage` (stable addresses) and a
-// span over the row's slice is returned. Shared by the pg_foreign_server and
-// pg_user_mapping system tables, whose objects both expose GetOptionKeys()/
-// GetOptionValues().
+// Build the owning "key=value" option strings for a row of pg_foreign_server /
+// pg_user_mapping (their objects both expose GetOptionKeys()/GetOptionValues()).
+//
+// `redact_secrets` follows PG's exposure model per table:
+//  - pg_user_mapping is superuser-only (kSuperuserOnly -> empty ACL), so like
+//    PG's base catalog its umoptions carry the password in cleartext -- the
+//    read gate is the guard, and a superuser can recover the credential.
+//  - pg_foreign_server is world-readable like PG's, but PG's validator keeps
+//    passwords out of srvoptions while ours may carry them (the eager attach
+//    takes creds in SERVER options) -- so secret VALUES are redacted there
+//    (clickhouse accepts both `password` and `passwd`; keys stay visible).
 template<typename Object>
-Array<Text> MakeOptions(const Object& object, std::deque<std::string>& storage,
-                        std::deque<std::vector<std::string_view>>& spans) {
+std::vector<std::string> MakeOptions(const Object& object,
+                                     bool redact_secrets) {
   const auto& keys = object.GetOptionKeys();
   const auto& vals = object.GetOptionValues();
-  auto& span = spans.emplace_back();
-  span.reserve(keys.size());
+  std::vector<std::string> out;
+  out.reserve(keys.size());
   for (size_t i = 0; i < keys.size(); ++i) {
     std::string entry = keys[i];
     entry += '=';
     const auto lkey = absl::AsciiStrToLower(keys[i]);
-    if (lkey != "password" && lkey != "passwd") {
+    if (!redact_secrets || (lkey != "password" && lkey != "passwd")) {
       entry += vals[i];
     }
-    storage.push_back(std::move(entry));
-    span.push_back(storage.back());
+    out.push_back(std::move(entry));
   }
-  return Array<Text>{span};
+  return out;
 }
 
 }  // namespace sdb::pg

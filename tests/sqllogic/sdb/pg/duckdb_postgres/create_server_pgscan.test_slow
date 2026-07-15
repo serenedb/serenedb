@@ -118,8 +118,9 @@ count
 2
 
 
-# The per-user mapping's password is redacted in the catalog: no mapping row for
-# this server leaks the 'pudge' password value (checked across both mappings).
+# The superuser-only pg_user_mapping shows the per-user mapping's password
+# cleartext (PG-parity exposure; the read gate is the guard): exactly the
+# vedernikoff mapping row carries 'pudge', the password-less PUBLIC one doesn't.
 query
 SELECT count(*) FROM pg_user_mapping um
 JOIN pg_foreign_server s ON um.umserver = s.oid
@@ -127,7 +128,17 @@ WHERE s.srvname = 'srv_${__DATABASE__}'
   AND array_to_string(umoptions, ' ') LIKE '%pudge%';
 ----
 count
-0
+1
+
+# pg_user_mappings resolves usename from the persisted role id (umuser was
+# once hardcoded 0, collapsing every mapping to 'public').
+query
+SELECT usename FROM pg_user_mappings
+WHERE srvname = 'srv_${__DATABASE__}' ORDER BY usename;
+----
+usename
+public
+vedernikoff
 
 
 # IF NOT EXISTS is a no-op on an existing server. (OPTIONS kept identical to the

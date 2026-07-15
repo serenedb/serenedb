@@ -34,7 +34,7 @@ struct PgUserMapping {
   Oid oid;
   Oid umuser;
   Oid umserver;
-  Array<Text> umoptions;
+  std::vector<std::string> umoptions;
 };
 // NOLINTEND
 

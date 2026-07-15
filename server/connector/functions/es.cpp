@@ -176,13 +176,15 @@ CreateIndexRequest ParseCreateIndexBody(std::string_view index,
   if (body.empty()) {
     return request;
   }
+  simdjson::padded_string padded{body};
+  simdjson::ondemand::parser parser;
+  simdjson::ondemand::document doc;
+  if (parser.iterate(padded).get(doc) != simdjson::SUCCESS) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+      ERR_MSG("Failed to parse mapping for index [", index, "]: invalid JSON"));
+  }
   try {
-    simdjson::padded_string padded{body};
-    simdjson::ondemand::parser parser;
-    simdjson::ondemand::document doc;
-    if (parser.iterate(padded).get(doc) != simdjson::SUCCESS) {
-      throw std::runtime_error{"invalid JSON"};
-    }
     basics::JsonSource source{doc};
     basics::ReadObject(source, request);
   } catch (const std::exception& e) {

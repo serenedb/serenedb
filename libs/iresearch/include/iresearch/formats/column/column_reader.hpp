@@ -317,4 +317,33 @@ class ColumnReader {
                                            duckdb::Vector& result) const;
 };
 
+class RangeScanCursor {
+ public:
+  RangeScanCursor(const ColumnReader& child, ReadContext& ctx)
+    : _child{&child}, _ctx{&ctx}, _scan{child.InitScan(ctx)} {}
+
+  void SeekTo(uint64_t elem) {
+    if (elem < _pos) {
+      _scan = _child->InitScan(*_ctx);
+      _pos = 0;
+    }
+    if (elem > _pos) {
+      _child->Skip(_scan, static_cast<duckdb::idx_t>(elem - _pos));
+      _pos = elem;
+    }
+  }
+
+  void Read(duckdb::Vector& result, duckdb::idx_t count,
+            duckdb::idx_t result_offset) {
+    _child->ScanCount(_scan, result, count, result_offset);
+    _pos += static_cast<uint64_t>(count);
+  }
+
+ private:
+  const ColumnReader* _child;
+  ReadContext* _ctx;
+  ColumnReader::ScanState _scan;
+  uint64_t _pos = 0;
+};
+
 }  // namespace irs

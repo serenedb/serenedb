@@ -46,6 +46,7 @@ namespace irs {
 namespace {
 
 constexpr uint32_t kDefaultClusterIters = 25;
+constexpr uint64_t kMinPqTrainSample = 256;
 
 }  // namespace
 
@@ -62,13 +63,35 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
     return result;
   }
 
-  auto centroids =
-    CentroidsBuilder::Create(vector_column, ctx, rows, _info.metric, d);
+  const bool pq = _info.quant.kind == VectorQuantization::PQ;
+  const bool sq_train =
+    qw != nullptr && (_info.quant.kind == VectorQuantization::SQ8 ||
+                      _info.quant.kind == VectorQuantization::SQ4);
+
+  auto centroids = CentroidsBuilder::Create(
+    vector_column, ctx, rows, _info.metric, d, pq ? kMinPqTrainSample : 0);
   centroids.Finish();
   const auto leaf = centroids.LeafCentroids();
   const uint32_t n_leaf = static_cast<uint32_t>(leaf.size() / d);
   if (n_leaf == 0) {
     return result;
+  }
+
+  if (pq && qw != nullptr) {
+    const auto sample = centroids.TrainingSample();
+    const size_t n_sample = sample.size() / d;
+    auto ids = centroids.AssignCentroids(sample, d);
+    SDB_ASSERT(ids.size() == n_sample);
+    std::vector<float> residuals(sample.size());
+    for (size_t i = 0; i < n_sample; ++i) {
+      const float* v = sample.data() + i * d;
+      const float* c = leaf.data() + static_cast<size_t>(ids[i]) * d;
+      float* r = residuals.data() + i * d;
+      for (uint32_t j = 0; j < d; ++j) {
+        r[j] = v[j] - c[j];
+      }
+    }
+    qw->Train(residuals.data(), n_sample);
   }
 
   const auto valid = ReadValidity(vector_column, rows, ctx);
@@ -77,13 +100,8 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
     valid_count += valid[r] ? 1 : 0;
   }
 
-  const bool pq = _info.quant.kind == VectorQuantization::PQ;
-  const bool sq_train =
-    qw != nullptr && (_info.quant.kind == VectorQuantization::SQ8 ||
-                      _info.quant.kind == VectorQuantization::SQ4);
   std::vector<uint32_t> doc_cluster;
   doc_cluster.reserve(valid_count);
-  std::vector<float> residual_sample;
 
   {
     std::vector<float> gather;
@@ -98,17 +116,6 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
       doc_cluster.insert(doc_cluster.end(), ids.begin(), ids.end());
       if (sq_train) {
         qw->Train(gather.data(), gathered);
-      } else if (pq && qw != nullptr) {
-        const size_t base = residual_sample.size();
-        residual_sample.resize(base + gathered * d);
-        for (size_t i = 0; i < gathered; ++i) {
-          const float* v = gather.data() + i * d;
-          const float* c = leaf.data() + static_cast<size_t>(ids[i]) * d;
-          float* r = residual_sample.data() + base + i * d;
-          for (uint32_t j = 0; j < d; ++j) {
-            r[j] = v[j] - c[j];
-          }
-        }
       }
       gather.clear();
       gathered = 0;
@@ -128,10 +135,6 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
                      });
     flush();
     SDB_ASSERT(doc_cluster.size() == valid_count);
-  }
-
-  if (pq && qw != nullptr) {
-    qw->Train(residual_sample.data(), residual_sample.size() / d);
   }
 
   result.cluster_offsets.assign(n_leaf + 1, 0);
@@ -313,9 +316,7 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
   }
   _qw->BeginCluster(n);
   constexpr size_t kBatch = STANDARD_VECTOR_SIZE;
-  const ColumnReader& child = *_vectors->Child();
-  auto scan = child.InitScan(*_ctx);
-  uint64_t pos = 0;
+  RangeScanCursor cursor{*_vectors->Child(), *_ctx};
   duckdb::Vector batch{duckdb::LogicalType::FLOAT,
                        static_cast<duckdb::idx_t>(kBatch) * _d};
   const float* vecs = duckdb::FlatVector::GetData<float>(batch);
@@ -324,18 +325,9 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
   while (k < n) {
     const size_t run = std::min(ConsecutiveRunLength(docs, k), kBatch - filled);
     const uint64_t r = static_cast<uint64_t>(docs[k]) - doc_limits::min();
-    const uint64_t elem = r * _d;
-    if (elem < pos) {
-      scan = child.InitScan(*_ctx);
-      pos = 0;
-    }
-    if (elem > pos) {
-      child.Skip(scan, static_cast<duckdb::idx_t>(elem - pos));
-      pos = elem;
-    }
-    child.ScanCount(scan, batch, static_cast<duckdb::idx_t>(run) * _d,
-                    static_cast<duckdb::idx_t>(filled) * _d);
-    pos += static_cast<uint64_t>(run) * _d;
+    cursor.SeekTo(r * _d);
+    cursor.Read(batch, static_cast<duckdb::idx_t>(run) * _d,
+                static_cast<duckdb::idx_t>(filled) * _d);
     filled += run;
     k += run;
     if (filled == kBatch) {

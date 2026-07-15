@@ -200,7 +200,8 @@ class CentroidsBuilder {
 
   static CentroidsBuilder Create(const ColumnReader& vector_column,
                                  ReadContext& ctx, size_t rows,
-                                 VectorMetric metric, uint32_t d);
+                                 VectorMetric metric, uint32_t d,
+                                 uint64_t min_train_sample = 0);
 
   void Finish();
 
@@ -210,11 +211,14 @@ class CentroidsBuilder {
     return _nodes.back().centroids;
   }
 
+  std::span<const float> TrainingSample() const noexcept { return _sample; }
+
   std::vector<uint32_t> AssignCentroids(std::span<const float> data,
                                         size_t d) const;
 
  private:
   std::vector<CentroidsNode> _nodes;
+  std::vector<float> _sample;
   VectorMetric _metric = VectorMetric::L2Sqr;
   uint32_t _d = 0;
   size_t _n_clusters;

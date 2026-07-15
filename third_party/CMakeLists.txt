@@ -364,8 +364,8 @@ else()
     set(NO_WARMUP 1 CACHE BOOL "" FORCE)
     set(NO_AFFINITY 1 CACHE BOOL "" FORCE)
     set(NO_LAPACK 1 CACHE BOOL "" FORCE)
-    set(BUILD_SINGLE 1 CACHE BOOL "" FORCE)  # only sgemm_ is ever called; drops DOUBLE/COMPLEX/COMPLEX16
-    set(NO_CBLAS 1 CACHE BOOL "" FORCE)      # only the Fortran-ABI sgemm_ is called, never cblas_sgemm
+    set(BUILD_SINGLE 1 CACHE BOOL "" FORCE) # only sgemm_ is ever called; drops DOUBLE/COMPLEX/COMPLEX16
+    set(NO_CBLAS 1 CACHE BOOL "" FORCE) # only the Fortran-ABI sgemm_ is called, never cblas_sgemm
     set(CMAKE_Fortran_COMPILER NOTFOUND CACHE FILEPATH "" FORCE)
     set(DYNAMIC_ARCH OFF CACHE BOOL "" FORCE)
     if(ARCH_AARCH64)

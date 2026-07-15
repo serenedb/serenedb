@@ -26,6 +26,8 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <numeric>
+#include <random>
 #include <utility>
 
 #include "iresearch/formats/ivf/clustering.hpp"
@@ -40,6 +42,8 @@ namespace {
 constexpr size_t kCentroidsFactor = 2;
 constexpr size_t kCentroidsThreshold = (1 << 12);
 constexpr size_t kTrainSeed = 42;
+constexpr uint64_t kTrainPointsPerCentroid = 64;
+constexpr uint64_t kSampleSegmentOversample = 4;
 
 std::vector<size_t> SplitByCentroids(VectorMetric metric, std::span<float> data,
                                      std::span<const float> centroids,
@@ -88,6 +92,97 @@ std::vector<size_t> ExclusiveScan(std::span<const size_t> counts) {
     running += counts[i];
   }
   return starts;
+}
+
+template<typename Sink>
+void StreamSelectedRanges(const ColumnReader& child,
+                          std::span<const std::pair<uint64_t, uint64_t>> ranges,
+                          uint32_t d, ReadContext& ctx, Sink&& sink) {
+  const auto rows_per_batch =
+    static_cast<duckdb::idx_t>(std::max<uint64_t>(1, STANDARD_VECTOR_SIZE / d));
+  duckdb::Vector batch{duckdb::LogicalType::FLOAT,
+                       static_cast<duckdb::idx_t>(rows_per_batch) * d};
+  RangeScanCursor cursor{child, ctx};
+  for (const auto& [start, n_rows] : ranges) {
+    for (uint64_t off = 0; off < n_rows; off += rows_per_batch) {
+      const auto n = static_cast<duckdb::idx_t>(
+        std::min<uint64_t>(rows_per_batch, n_rows - off));
+      cursor.SeekTo((start + off) * d);
+      cursor.Read(batch, static_cast<duckdb::idx_t>(n) * d, 0);
+      sink(start + off, n, duckdb::FlatVector::GetData<float>(batch));
+    }
+  }
+}
+
+std::vector<float> GatherTrainingSample(const ColumnReader& child,
+                                        uint64_t rows, uint32_t d,
+                                        ReadContext& ctx,
+                                        const std::vector<bool>& valid,
+                                        uint64_t valid_count, uint64_t n_train,
+                                        uint32_t seed) {
+  std::vector<float> sample(static_cast<size_t>(n_train) * d);
+  std::mt19937_64 rng{seed};
+  uint64_t seen = 0;
+  const auto reservoir_sink = [&](uint64_t first, duckdb::idx_t n,
+                                  const float* p) {
+    for (duckdb::idx_t k = 0; k < n; ++k) {
+      if (!valid[first + k]) {
+        continue;
+      }
+      const float* v = p + static_cast<size_t>(k) * d;
+      if (seen < n_train) {
+        std::memcpy(sample.data() + seen * d, v, d * sizeof(float));
+      } else {
+        const uint64_t j =
+          std::uniform_int_distribution<uint64_t>{0, seen}(rng);
+        if (j < n_train) {
+          std::memcpy(sample.data() + j * d, v, d * sizeof(float));
+        }
+      }
+      ++seen;
+    }
+  };
+
+  const uint64_t target = (n_train > valid_count / kSampleSegmentOversample)
+                            ? valid_count
+                            : n_train * kSampleSegmentOversample;
+  const size_t n_seg = child.DataRgCount();
+  if (target >= valid_count || n_seg <= 1) {
+    StreamRowBatches(child, rows, d, ctx, reservoir_sink);
+    SDB_ASSERT(seen == valid_count);
+  } else {
+    std::vector<size_t> order(n_seg);
+    std::iota(order.begin(), order.end(), size_t{0});
+    std::mt19937_64 seg_rng{seed};
+    std::shuffle(order.begin(), order.end(), seg_rng);
+
+    std::vector<std::pair<uint64_t, uint64_t>> ranges;
+    uint64_t valid_selected = 0;
+    for (size_t i = 0; i < n_seg && valid_selected < target; ++i) {
+      const uint64_t w_begin = child.DataBlockFirstRow(order[i]);
+      const uint64_t w_end = child.DataBlockFirstRow(order[i] + 1);
+      const uint64_t r_lo = (w_begin + d - 1) / d;
+      const uint64_t r_hi = w_end / d;
+      if (r_lo >= r_hi) {
+        continue;
+      }
+      uint64_t vc = 0;
+      for (uint64_t r = r_lo; r < r_hi; ++r) {
+        vc += valid[r] ? 1 : 0;
+      }
+      if (vc == 0) {
+        continue;
+      }
+      ranges.emplace_back(r_lo, r_hi - r_lo);
+      valid_selected += vc;
+    }
+    std::sort(ranges.begin(), ranges.end());
+    StreamSelectedRanges(child,
+                         std::span<const std::pair<uint64_t, uint64_t>>{ranges},
+                         d, ctx, reservoir_sink);
+    SDB_ASSERT(seen >= n_train && seen <= valid_count);
+  }
+  return sample;
 }
 
 }  // namespace
@@ -190,7 +285,8 @@ void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
 
 CentroidsBuilder CentroidsBuilder::Create(const ColumnReader& vector_column,
                                           ReadContext& ctx, size_t rows,
-                                          VectorMetric metric, uint32_t d) {
+                                          VectorMetric metric, uint32_t d,
+                                          uint64_t min_train_sample) {
   size_t n_clusters;
   CentroidsBuilder builder;
   builder._metric = metric;
@@ -214,27 +310,23 @@ CentroidsBuilder CentroidsBuilder::Create(const ColumnReader& vector_column,
             size_t{1}, valid_count);
     builder._n_clusters = n_clusters;
 
-    std::vector<float> sample(valid_count * d);
-    uint64_t seen = 0;
-    StreamRowBatches(*child, rows, d, ctx,
-                     [&](uint64_t first, duckdb::idx_t n, const float* p) {
-                       for (duckdb::idx_t k = 0; k < n; ++k) {
-                         if (!valid[first + k]) {
-                           continue;
-                         }
-                         std::memcpy(sample.data() + seen * d,
-                                     p + static_cast<size_t>(k) * d,
-                                     d * sizeof(float));
-                         ++seen;
-                       }
-                     });
-    SDB_ASSERT(seen == valid_count);
+    uint64_t n_train =
+      std::min<uint64_t>(valid_count, n_clusters * kTrainPointsPerCentroid);
+    if (min_train_sample > 0) {
+      n_train = std::min<uint64_t>(
+        valid_count, std::max<uint64_t>(n_train, min_train_sample));
+    }
+    n_train = std::clamp<uint64_t>(
+      n_train, std::min<uint64_t>(n_clusters, valid_count), valid_count);
+
+    builder._sample = GatherTrainingSample(*child, rows, d, ctx, valid,
+                                           valid_count, n_train, kTrainSeed);
 
     CentroidsNode leaf{0, d};
 
     leaf.centroids = n_clusters == 0
                        ? std::vector<float>{}
-                       : TrainCentroids(metric, sample.data(), valid_count,
+                       : TrainCentroids(metric, builder._sample.data(), n_train,
                                         n_clusters, d, kTrainSeed);
     leaf.size = leaf.centroids.size() / d;
     builder._nodes.emplace_back(std::move(leaf));

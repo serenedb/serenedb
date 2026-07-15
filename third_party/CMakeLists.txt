@@ -706,7 +706,16 @@ set(LATEST_STORAGE TRUE CACHE BOOL "" FORCE)
 # Suppress the per-extension "vcpkg.json present but VCPKG_BUILD not set" warning.
 set(VCPKG_BUILD ON CACHE BOOL "" FORCE)
 set(BUILD_EXTENSIONS
-    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;clickhouse_scanner;autocomplete;icu;inet"
+    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet"
+    CACHE STRING
+    ""
+    FORCE
+)
+# Extensions whose build config lives NEXT TO the extension instead of as a
+# shim inside the duckdb fork (.github/config/extensions/): duckdb includes
+# these files after the BUILD_EXTENSIONS list is resolved.
+set(DUCKDB_EXTENSION_CONFIGS
+    "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_clickhouse/extension_config.cmake"
     CACHE STRING
     ""
     FORCE

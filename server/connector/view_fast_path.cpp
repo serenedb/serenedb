@@ -363,11 +363,10 @@ std::optional<ViewFastPath> ResolveViewFastPath(
         return std::nullopt;
       }
       ViewFastPath out;
-      out.catalog_ref =
-        CatalogTableRef{
-          .catalog = entry.ParentCatalog().GetName().GetIdentifierName(),
-          .schema = entry.ParentSchema().name.GetIdentifierName(),
-          .table = entry.name.GetIdentifierName()};
+      out.catalog_ref = CatalogTableRef{
+        .catalog = entry.ParentCatalog().GetName().GetIdentifierName(),
+        .schema = entry.ParentSchema().name.GetIdentifierName(),
+        .table = entry.name.GetIdentifierName()};
       out.pk_spec = catalog::PkSpec::ExternalDBKey;
       out.pk_column_index = *pk_index;
       out.pk_column_name = std::move(*pk_name);

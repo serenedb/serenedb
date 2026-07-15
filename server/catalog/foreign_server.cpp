@@ -60,8 +60,8 @@ std::string StorageTypeForFdw(std::string_view fdw) {
 }
 
 // Canonicalise a (lower-cased) option key to the connector's secret parameter
-// name. The connectors resolve aliases in their connstr parser, but their secret
-// overlays read exact keys, so we resolve the aliases here instead.
+// name. The connectors resolve aliases in their connstr parser, but their
+// secret overlays read exact keys, so we resolve the aliases here instead.
 std::string CanonicalOptionKey(std::string_view storage, std::string key) {
   if (key == "hostname") {
     return "host";
@@ -85,8 +85,9 @@ std::string CanonicalOptionKey(std::string_view storage, std::string key) {
   return key;
 }
 
-// Server options merged with a PUBLIC user mapping's (the mapping wins per key),
-// keys lower-cased and canonicalised to the connector's secret parameters.
+// Server options merged with a PUBLIC user mapping's (the mapping wins per
+// key), keys lower-cased and canonicalised to the connector's secret
+// parameters.
 std::vector<std::pair<std::string, std::string>> MergeConnectionOptions(
   std::string_view storage, const ForeignServer& server,
   const UserMapping* public_mapping) {
@@ -213,8 +214,8 @@ std::shared_ptr<Object> ForeignServer::Clone() const {
 std::string MakeForeignServerSecretName(std::string_view alias) {
   std::string out = "__sdb_fdw_secret_";
   for (char c : alias) {
-    out += (std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_') ? c
-                                                                          : '_';
+    out +=
+      (std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_') ? c : '_';
   }
   return out;
 }
@@ -234,8 +235,8 @@ std::string PrepareForeignServerAttach(duckdb::ClientContext& context,
   auto secret = duckdb::make_uniq<duckdb::KeyValueSecret>(
     std::vector<std::string>{}, duckdb::Identifier{storage}, "config",
     duckdb::Identifier{secret_name});
-  for (const auto& [key, value] : MergeConnectionOptions(storage, server,
-                                                         public_mapping)) {
+  for (const auto& [key, value] :
+       MergeConnectionOptions(storage, server, public_mapping)) {
     secret->secret_map[duckdb::Identifier{key}] = duckdb::Value(value);
   }
   secret->redact_keys = {"password"};

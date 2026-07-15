@@ -28,9 +28,9 @@
 
 #include "basics/containers/flat_hash_map.h"
 #include "catalog/catalog.h"
+#include "catalog/options.h"
 #include "catalog/user_mapping.h"
 #include "pg/pg_catalog/fwd.h"
-#include "catalog/options.h"
 
 namespace sdb::pg {
 

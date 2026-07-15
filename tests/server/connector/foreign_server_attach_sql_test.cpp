@@ -49,9 +49,9 @@ namespace {
 ForeignServer MakeServer(std::string_view name, std::string fdw,
                          std::vector<std::string> keys,
                          std::vector<std::string> vals) {
-  return ForeignServer{Permissions{}, ObjectId{}, ObjectId{}, name,
-                       std::move(fdw),
-                       Options{std::move(keys), std::move(vals)}};
+  return ForeignServer{
+    Permissions{}, ObjectId{},     ObjectId{},
+    name,          std::move(fdw), Options{std::move(keys), std::move(vals)}};
 }
 
 // A live ClientContext plus the transient secret PrepareForeignServerAttach
@@ -64,8 +64,8 @@ struct PreparedAttach {
 
   PreparedAttach(std::string_view alias, const ForeignServer& server,
                  const UserMapping* mapping) {
-    secret_name = MakeForeignServerSecretName(
-      alias.empty() ? server.GetName() : alias);
+    secret_name =
+      MakeForeignServerSecretName(alias.empty() ? server.GetName() : alias);
     sql = PrepareForeignServerAttach(*conn->context, secret_name, server,
                                      mapping, alias);
   }
@@ -97,8 +97,8 @@ struct PreparedAttach {
   }
 };
 
-// postgres dialect: `database` is canonicalised to `dbname` in the secret, and a
-// spaced password rides as a plain Value (no quoting). The ATTACH carries no
+// postgres dialect: `database` is canonicalised to `dbname` in the secret, and
+// a spaced password rides as a plain Value (no quoting). The ATTACH carries no
 // credentials -- just the secret name.
 TEST(ForeignServerAttachSql, PostgresRenamesDbnameAndCarriesSpacedValue) {
   auto server = MakeServer("vedernikoff_srv", "postgres_fdw",
@@ -132,7 +132,8 @@ TEST(ForeignServerAttachSql, ClickHouseRenamesDatabase) {
 TEST(ForeignServerAttachSql, BareFdwNamesMap) {
   PreparedAttach pg("", MakeServer("s", "postgres", {"host"}, {"h"}), nullptr);
   EXPECT_NE(pg.sql.find("(TYPE postgres,"), std::string::npos);
-  PreparedAttach ch("", MakeServer("t", "clickhouse", {"host"}, {"h"}), nullptr);
+  PreparedAttach ch("", MakeServer("t", "clickhouse", {"host"}, {"h"}),
+                    nullptr);
   EXPECT_NE(ch.sql.find("(TYPE clickhouse,"), std::string::npos);
 }
 
@@ -142,9 +143,12 @@ TEST(ForeignServerAttachSql, PublicMappingOverridesServerOptionByKey) {
   auto server =
     MakeServer("vedernikoff_srv", "postgres_fdw", {"user", "host", "database"},
                {"kostya", "h", "postgres"});
-  UserMapping mapping{Permissions{}, ObjectId{},
-                      ObjectId{},    "pubmap",
-                      "vedernikoff_srv", "public",
+  UserMapping mapping{Permissions{},
+                      ObjectId{},
+                      ObjectId{},
+                      "pubmap",
+                      "vedernikoff_srv",
+                      "public",
                       Options{{"user"}, {"pudge"}}};
   PreparedAttach prepared("", server, &mapping);
 

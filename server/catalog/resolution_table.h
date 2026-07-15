@@ -115,9 +115,9 @@ class ResolutionTable {
         SDB_ASSERT(schemas);
         // Foreign servers are database-scoped, like PG (pg_foreign_server has
         // no namespace column).
-        auto [_, servers] = CloneData(_foreign_servers)
-                              .try_emplace(object_id,
-                                           std::make_shared<MapByName<ObjectId>>());
+        auto [_, servers] =
+          CloneData(_foreign_servers)
+            .try_emplace(object_id, std::make_shared<MapByName<ObjectId>>());
         SDB_ASSERT(servers);
       } else {
         InsertOrRebind(databases, object_name, object_id);

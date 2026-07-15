@@ -2874,8 +2874,7 @@ void Catalog::RequireCreateForeignServer(const AccessContext& ax,
   RequireCreateOn(*_snapshot, ax.role, database_id);
 }
 
-bool Catalog::CreateForeignServer(const AccessContext& ax,
-                                  ObjectId database_id,
+bool Catalog::CreateForeignServer(const AccessContext& ax, ObjectId database_id,
                                   std::shared_ptr<ForeignServer> foreign_server,
                                   bool if_not_exists) {
   absl::MutexLock lock{&_mutex};
@@ -2910,9 +2909,9 @@ bool Catalog::CreateUserMapping(const AccessContext& ax, ObjectId database_id,
   absl::MutexLock lock{&_mutex};
   const auto server_id = user_mapping->GetServerId();
   if (!_snapshot->GetObject<ForeignServer>(server_id)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("server \"", user_mapping->GetServerName(),
-                            "\" does not exist"));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+      ERR_MSG("server \"", user_mapping->GetServerName(), "\" does not exist"));
   }
   RequireUserMappingAuthority(*_snapshot, ax.role, server_id,
                               user_mapping->GetRoleId());
@@ -4666,9 +4665,9 @@ bool Catalog::DropForeignServer(const AccessContext& ax,
   // PG semantics: only the server's owner (or a superuser) may drop it.
   RequireObjectOwner(*_snapshot, ax.role, *foreign_server_id);
 
-  // The server's dependent user mappings (see ForeignServerDependency). PG-style
-  // RESTRICT (the default) refuses the drop while any exist; CASCADE removes
-  // them together with the server, in one transaction.
+  // The server's dependent user mappings (see ForeignServerDependency).
+  // PG-style RESTRICT (the default) refuses the drop while any exist; CASCADE
+  // removes them together with the server, in one transaction.
   const auto server_dep =
     _snapshot->GetDependency<ForeignServerDependency>(*foreign_server_id);
   std::vector<ObjectId> mapping_ids{server_dep->user_mappings.begin(),
@@ -5058,11 +5057,11 @@ void OpenDatabase::RegisterForeignServers(ObjectId db_id) {
   GetCatalogStore().VisitBoot(
     db_id, ObjectType::ForeignServer,
     [&](CatalogStore::Key key, std::string_view bytes) {
-      auto foreign_server = catalog::DeserializeObject<ForeignServer>(
-        bytes, {
-                 .id = key.id,
-                 .database_id = db_id,
-               });
+      auto foreign_server =
+        catalog::DeserializeObject<ForeignServer>(bytes, {
+                                                           .id = key.id,
+                                                           .database_id = db_id,
+                                                         });
       if (!foreign_server) {
         THROW_SQL_ERROR(ERR_MSG("Failed to read foreign server definition"));
       }

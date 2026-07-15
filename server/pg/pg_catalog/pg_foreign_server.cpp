@@ -29,8 +29,8 @@
 #include "catalog/catalog.h"
 #include "catalog/foreign_server.h"
 #include "catalog/identifiers/object_id.h"
-#include "pg/pg_catalog/fwd.h"
 #include "catalog/options.h"
+#include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
 namespace {

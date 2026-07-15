@@ -51,7 +51,8 @@ std::string DetachSql(std::string_view name) {
 
 // Lower-case the option keys and stringify the values into the Options
 // storage shared by ForeignServer and UserMapping.
-catalog::Options MakeCatalogOptions(const duckdb::named_parameter_map_t& options) {
+catalog::Options MakeCatalogOptions(
+  const duckdb::named_parameter_map_t& options) {
   std::vector<std::string> keys;
   std::vector<std::string> values;
   keys.reserve(options.size());
@@ -165,9 +166,8 @@ void ReattachServer(ObjectId db_id, std::string_view server_name,
   // Credentials verified by the probe: swap the live attachment under a
   // freshly-registered secret.
   const auto secret = catalog::MakeForeignServerSecretName(server_name);
-  auto sql =
-    catalog::PrepareForeignServerAttach(*conn->context, secret, *server,
-                                        pub.get());
+  auto sql = catalog::PrepareForeignServerAttach(*conn->context, secret,
+                                                 *server, pub.get());
   if (sql.empty()) {
     return;
   }

@@ -53,8 +53,10 @@ std::shared_ptr<UserMapping> UserMapping::Deserialize(duckdb::Deserializer& src,
   UserMappingData data;
   basics::ReadTuple(src, data);
 
+  // parent = the owning server (persisted as server_id), like PG's
+  // (umuser, umserver) identity; the name is the mapped role.
   return std::make_shared<UserMapping>(
-    std::move(data.perm), ctx.schema_id, ctx.id, data.name,
+    std::move(data.perm), data.server_id, ctx.id, data.name,
     std::move(data.server_name), std::move(data.user_name),
     Options{std::move(data.option_keys), std::move(data.option_values)},
     data.server_id, data.role_id);

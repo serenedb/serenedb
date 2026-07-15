@@ -69,20 +69,4 @@ class UserMapping : public Object {
   ObjectId _role_id;
 };
 
-// Schema-unique synthetic name for a user mapping:
-// "<len(user)>:<user>@<server>". A PUBLIC mapping uses user "public". The
-// length prefix makes the (user, server)
-// -> name mapping injective even when a user or server name contains '@' (which
-// a plain "<user>@<server>" could not disambiguate, e.g. ("a","b@c") vs
-// ("a@b","c")).
-inline std::string MakeUserMappingName(std::string_view user_name,
-                                       std::string_view server_name) {
-  std::string out = std::to_string(user_name.size());
-  out += ':';
-  out += user_name;
-  out += '@';
-  out += server_name;
-  return out;
-}
-
 }  // namespace sdb::catalog

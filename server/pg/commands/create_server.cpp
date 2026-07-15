@@ -33,7 +33,6 @@
 
 #include "basics/duckdb_engine.h"
 #include "basics/log.h"
-#include "basics/static_strings.h"
 #include "catalog/catalog.h"
 #include "catalog/foreign_server.h"
 #include "catalog/role.h"
@@ -43,9 +42,6 @@
 
 namespace sdb::pg {
 namespace {
-
-// Servers are not schema-qualified in PG; serenedb keeps them in `public`.
-constexpr std::string_view kSchema = StaticStrings::kPublic;
 
 // "DETACH <ident>" -- built in several places (probe cleanup, the atomic
 // re-attach swap, the revert path); the alias is double-quoted.
@@ -141,12 +137,11 @@ std::string ProbeAttach(const catalog::ForeignServer& server,
 void ReattachServer(ObjectId db_id, std::string_view server_name,
                     bool throw_on_error) {
   auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
-  auto server = snapshot->GetForeignServer(db_id, kSchema, server_name);
+  auto server = snapshot->GetForeignServer(db_id, server_name);
   if (!server) {
     return;
   }
-  auto pub = snapshot->GetUserMapping(
-    db_id, kSchema, catalog::MakeUserMappingName("public", server_name));
+  auto pub = snapshot->GetUserMapping(server->GetId(), "public");
 
   auto conn = DuckDBEngine::Instance().CreateConnection();
   auto err = ProbeAttach(*server, pub.get());
@@ -207,8 +202,8 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
   // attachment past the cleanup branch. Checking here also avoids connecting a
   // remote on behalf of a caller who lacks the privilege.
   catalog.RequireCreateForeignServer(catalog::ActingAs(conn_ctx.GetRoleId()),
-                                     db_id, kSchema);
-  if (catalog.GetCatalogSnapshot()->GetForeignServer(db_id, kSchema, name)) {
+                                     db_id);
+  if (catalog.GetCatalogSnapshot()->GetForeignServer(db_id, name)) {
     if (if_not_exists) {
       return;
     }
@@ -230,7 +225,7 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
 
   try {
     if (!catalog.CreateForeignServer(catalog::ActingAs(conn_ctx.GetRoleId()),
-                                     db_id, kSchema, server, if_not_exists)) {
+                                     db_id, server, if_not_exists)) {
       // A concurrent CREATE SERVER won the race past the pre-check above.
       RunDetach(name);
     }
@@ -248,7 +243,7 @@ void DropForeignServer(ConnectionContext& conn_ctx, std::string_view name,
   // throws DEPENDENT_OBJECTS_STILL_EXIST while any mapping still depends on
   // the server; absent + missing_ok returns false.
   if (!catalog.DropForeignServer(catalog::ActingAs(conn_ctx.GetRoleId()),
-                                 conn_ctx.GetDatabase(), kSchema, name, cascade,
+                                 conn_ctx.GetDatabase(), name, cascade,
                                  missing_ok)) {
     return;
   }
@@ -264,7 +259,7 @@ void CreateUserMapping(ConnectionContext& conn_ctx, std::string_view user,
 
   auto& catalog = catalog::GetCatalog();
   auto snapshot = catalog.GetCatalogSnapshot();
-  auto server_obj = snapshot->GetForeignServer(db_id, kSchema, server);
+  auto server_obj = snapshot->GetForeignServer(db_id, server);
   if (!server_obj) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("server \"", server, "\" does not exist"));
@@ -282,8 +277,9 @@ void CreateUserMapping(ConnectionContext& conn_ctx, std::string_view user,
     role_id = role_obj->GetId();
   }
 
-  const auto name = catalog::MakeUserMappingName(role, server);
-  if (snapshot->GetUserMapping(db_id, kSchema, name)) {
+  // The mapping's catalog name IS the mapped role; parent = the server (PG's
+  // (umuser, umserver) identity).
+  if (snapshot->GetUserMapping(server_obj->GetId(), role)) {
     if (if_not_exists) {
       return;
     }
@@ -294,8 +290,8 @@ void CreateUserMapping(ConnectionContext& conn_ctx, std::string_view user,
 
   // A mapping's authority follows its server (PG): stamp the server's owner.
   auto mapping = std::make_shared<catalog::UserMapping>(
-    catalog::Permissions{server_obj->GetOwner()}, ObjectId{}, ObjectId{}, name,
-    std::string{server}, role, MakeCatalogOptions(options),
+    catalog::Permissions{server_obj->GetOwner()}, server_obj->GetId(),
+    ObjectId{}, role, std::string{server}, role, MakeCatalogOptions(options),
     server_obj->GetId(), role_id);
 
   // A PUBLIC mapping drives the live (instance-global) attachment. Validate the
@@ -311,7 +307,7 @@ void CreateUserMapping(ConnectionContext& conn_ctx, std::string_view user,
   }
 
   if (!catalog.CreateUserMapping(catalog::ActingAs(conn_ctx.GetRoleId()), db_id,
-                                 kSchema, mapping, if_not_exists)) {
+                                 mapping, if_not_exists)) {
     // A concurrent CREATE USER MAPPING won the race past the pre-check above.
     return;
   }
@@ -328,11 +324,10 @@ void DropUserMapping(ConnectionContext& conn_ctx, std::string_view user,
                      std::string_view server, bool missing_ok) {
   auto db_id = conn_ctx.GetDatabaseId();
   const auto role = ResolveRole(conn_ctx, user);
-  const auto name = catalog::MakeUserMappingName(role, server);
 
   auto& catalog = catalog::GetCatalog();
   if (!catalog.DropUserMapping(catalog::ActingAs(conn_ctx.GetRoleId()),
-                               conn_ctx.GetDatabase(), kSchema, name,
+                               conn_ctx.GetDatabase(), server, role,
                                /*cascade=*/false)) {
     if (!missing_ok) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),

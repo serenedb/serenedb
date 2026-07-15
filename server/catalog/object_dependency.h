@@ -352,14 +352,11 @@ struct SchemaDependency : ObjectDependencyBase {
   containers::FlatHashSet<ObjectId> functions;
   containers::FlatHashSet<ObjectId> views;
   containers::FlatHashSet<ObjectId> tokenizers;
-  containers::FlatHashSet<ObjectId> foreign_servers;
-  containers::FlatHashSet<ObjectId> user_mappings;
   containers::FlatHashSet<ObjectId> types;
   containers::FlatHashSet<ObjectId> sequences;
   bool Empty() const {
     return tables.empty() && functions.empty() && views.empty() &&
-           tokenizers.empty() && foreign_servers.empty() &&
-           user_mappings.empty() && types.empty() && sequences.empty();
+           tokenizers.empty() && types.empty() && sequences.empty();
   }
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<SchemaDependency>(*this);
@@ -383,22 +380,22 @@ struct SchemaDependency : ObjectDependencyBase {
     for (auto id : tokenizers) {
       e.EmitAutoDrop(id);
     }
-    for (auto id : foreign_servers) {
-      e.EmitAutoDrop(id);
-    }
-    for (auto id : user_mappings) {
-      e.EmitAutoDrop(id);
-    }
   }
 };
 
 struct DatabaseDependency : ObjectDependencyBase {
   containers::FlatHashSet<ObjectId> schemas;
+  // Foreign servers are database children, like PG (pg_foreign_server has no
+  // namespace column; DROP SCHEMA can never take a server down).
+  containers::FlatHashSet<ObjectId> foreign_servers;
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<DatabaseDependency>(*this);
   }
   void Emit(DropEmitter& e, ObjectId self) const final {
     for (auto id : schemas) {
+      e.EmitAutoDrop(id);
+    }
+    for (auto id : foreign_servers) {
       e.EmitAutoDrop(id);
     }
   }
@@ -425,7 +422,8 @@ struct RoleDependency : ObjectDependencyBase {
 };
 
 struct ForeignServerDependency : ObjectDependencyBase {
-  // User mappings created FOR this server. DROP SERVER cascades to them
+  // The server's user mappings -- its catalog CHILDREN (a mapping's parent is
+  // its server; the name is the mapped role). DROP SERVER cascades to them
   // (Catalog::DropForeignServer drops them in the same transaction) and DROP
   // SERVER RESTRICT is refused while any remain -- PG server<-mapping semantics.
   containers::FlatHashSet<ObjectId> user_mappings;

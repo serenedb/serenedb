@@ -30,7 +30,6 @@
 #include "catalog/catalog.h"
 #include "catalog/databases.h"
 #include "catalog/foreign_server.h"
-#include "catalog/schema.h"
 #include "connector/duckdb_catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_transaction.h"
@@ -109,16 +108,12 @@ void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
   // Collect the database's foreign servers BEFORE the drop: the cascade
   // sweeps their catalog rows, but their live (instance-global) DuckDB
   // attachments are invisible to the drop plan and must be detached once the
-  // drop commits (mirrors the DROP SCHEMA path in DropObject).
+  // drop commits.
   std::vector<std::string> detach_servers;
   {
     auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
-    const auto db_id = GetDatabaseId();
-    for (const auto& schema : snapshot->GetSchemas(db_id)) {
-      for (const auto& srv :
-           snapshot->GetForeignServers(db_id, schema->GetName())) {
-        detach_servers.emplace_back(srv->GetName());
-      }
+    for (const auto& srv : snapshot->GetForeignServers(GetDatabaseId())) {
+      detach_servers.emplace_back(srv->GetName());
     }
   }
 

@@ -314,27 +314,10 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
           ERR_MSG("cannot drop schema ", info_name,
                   " because it is required by the database system"));
       } else {
-        // Collect the schema's foreign servers BEFORE the drop: the cascade
-        // sweeps their catalog rows, but their live (instance-global) DuckDB
-        // attachments are invisible to the drop plan and must be detached
-        // once the drop commits -- a leaked attachment stays readable with
-        // no ACLs and blocks re-CREATE of a same-named server.
-        std::vector<std::string> detach_servers;
-        if (auto snapshot = catalog.GetCatalogSnapshot()) {
-          if (auto db = snapshot->GetDatabase(info_catalog)) {
-            for (const auto& srv :
-                 snapshot->GetForeignServers(db->GetId(), info_name)) {
-              detach_servers.emplace_back(srv->GetName());
-            }
-          }
-        }
+        // Foreign servers are database children (PG shape): DROP SCHEMA can
+        // never take one down, so no attachment cleanup is needed here.
         dropped = catalog.DropSchema(catalog::ActingAs(context), info_catalog,
                                      info_name, info.cascade, missing_ok);
-        if (dropped) {
-          for (const auto& server_name : detach_servers) {
-            catalog::DetachForeignServerAttachment(server_name);
-          }
-        }
       }
       break;
     default:

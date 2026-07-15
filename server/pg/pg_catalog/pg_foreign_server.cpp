@@ -50,24 +50,21 @@ catalog::MaterializedData SystemTableSnapshot<PgForeignServer>::GetTableData() {
 
   std::vector<PgForeignServer> values;
 
-  for (const auto& schema : catalog->GetSchemas(database_id)) {
-    for (const auto& server :
-         catalog->GetForeignServers(database_id, schema->GetName())) {
-      PgForeignServer row{
-        .oid = server->GetId().id(),
-        .srvname = server->GetName(),
-        .srvowner = server->GetOwner().id(),
-        .srvfdw = 0,
-        .srvtype = {},
-        .srvversion = {},
-        .srvacl = {},
-        // Redacted: this table is world-readable like PG's, but unlike PG our
-        // server options may carry credentials (the eager attach takes them),
-        // so a secret VALUE never renders here.
-        .srvoptions = server->GetOptions().ToStrings(/*redact_secrets=*/true),
-      };
-      values.push_back(std::move(row));
-    }
+  for (const auto& server : catalog->GetForeignServers(database_id)) {
+    PgForeignServer row{
+      .oid = server->GetId().id(),
+      .srvname = server->GetName(),
+      .srvowner = server->GetOwner().id(),
+      .srvfdw = 0,
+      .srvtype = {},
+      .srvversion = {},
+      .srvacl = {},
+      // Redacted: this table is world-readable like PG's, but unlike PG our
+      // server options may carry credentials (the eager attach takes them),
+      // so a secret VALUE never renders here.
+      .srvoptions = server->GetOptions().ToStrings(/*redact_secrets=*/true),
+    };
+    values.push_back(std::move(row));
   }
 
   auto result = CreateColumns<PgForeignServer>(values.size());

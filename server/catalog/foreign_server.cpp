@@ -185,8 +185,9 @@ std::shared_ptr<ForeignServer> ForeignServer::Deserialize(
   ForeignServerData data;
   basics::ReadTuple(src, data);
 
+  // parent = the database (servers are database children, like PG).
   return std::make_shared<ForeignServer>(
-    std::move(data.perm), ctx.schema_id, ctx.id, data.name,
+    std::move(data.perm), ctx.database_id, ctx.id, data.name,
     std::move(data.fdw_name),
     Options{std::move(data.option_keys), std::move(data.option_values)});
 }
@@ -206,7 +207,7 @@ std::shared_ptr<Object> ForeignServer::Clone() const {
   duckdb::MemoryStream stream;
   return DeserializeObject<ForeignServer>(
     SerializeObject(*this, stream),
-    {.id = GetId(), .schema_id = GetParentId()});
+    {.id = GetId(), .database_id = GetParentId()});
 }
 
 std::string MakeForeignServerSecretName(std::string_view alias) {

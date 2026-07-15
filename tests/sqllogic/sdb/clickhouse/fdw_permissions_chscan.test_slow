@@ -26,16 +26,17 @@ CREATE ROLE fp_owner LOGIN PASSWORD 'owner_pw';
 statement ok
 CREATE ROLE fp_other LOGIN PASSWORD 'other_pw';
 
-# ===== CREATE SERVER is gated on CREATE in the public schema =====
+# ===== CREATE SERVER is gated on CREATE on the DATABASE (PG-shape: =====
+# ===== servers are database children, not schema members)           =====
 
-# A plain non-superuser without CREATE on public is denied -- with REACHABLE
-# credentials, so the denial must fire BEFORE the remote is attached.
+# A plain non-superuser without CREATE on the database is denied -- with
+# REACHABLE credentials, so the denial must fire BEFORE the remote is attached.
 connection c_other user=fp_other password=other_pw
 statement error
 CREATE SERVER fp_denied FOREIGN DATA WRAPPER clickhouse_fdw
   OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
 ----
-db error: ERROR: permission denied for schema public<slt:ignore>
+db error: ERROR: permission denied for database<slt:ignore>
 
 
 # The denied CREATE left no orphaned attachment: the superuser can create the
@@ -48,9 +49,10 @@ CREATE SERVER fp_denied FOREIGN DATA WRAPPER clickhouse_fdw
 statement ok
 DROP SERVER fp_denied;
 
-# The superuser grants CREATE on public to fp_owner.
+# The superuser grants CREATE on the database to fp_owner (servers are
+# database children; a schema grant would not help).
 statement ok
-GRANT CREATE ON SCHEMA public TO fp_owner;
+GRANT CREATE ON DATABASE ${__DATABASE__} TO fp_owner;
 
 # Now fp_owner may create its server (and it connects, proving attach ran).
 connection c_owner user=fp_owner password=owner_pw
@@ -144,7 +146,7 @@ statement ok
 DROP SERVER fp_shared CASCADE;
 
 statement ok
-REVOKE CREATE ON SCHEMA public FROM fp_owner;
+REVOKE CREATE ON DATABASE ${__DATABASE__} FROM fp_owner;
 
 statement ok
 DROP ROLE fp_owner;

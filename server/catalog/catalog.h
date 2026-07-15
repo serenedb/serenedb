@@ -184,10 +184,12 @@ struct Snapshot {
     ObjectId database, std::string_view schema) const;
   std::vector<std::shared_ptr<Tokenizer>> GetTokenizers(
     ObjectId database, std::string_view schema) const;
+  // Foreign servers are database children (PG: no schema); a mapping's parent
+  // is its server and its name is the mapped role ("public" for PUBLIC).
   std::vector<std::shared_ptr<ForeignServer>> GetForeignServers(
-    ObjectId database, std::string_view schema) const;
+    ObjectId database) const;
   std::vector<std::shared_ptr<UserMapping>> GetUserMappings(
-    ObjectId database, std::string_view schema) const;
+    ObjectId server) const;
   std::vector<std::shared_ptr<PgSqlType>> GetTypes(
     ObjectId database, std::string_view schema) const;
 
@@ -222,11 +224,9 @@ struct Snapshot {
                                           std::string_view schema,
                                           std::string_view name) const;
   std::shared_ptr<ForeignServer> GetForeignServer(ObjectId database,
-                                                  std::string_view schema,
                                                   std::string_view name) const;
-  std::shared_ptr<UserMapping> GetUserMapping(ObjectId database,
-                                              std::string_view schema,
-                                              std::string_view name) const;
+  std::shared_ptr<UserMapping> GetUserMapping(ObjectId server,
+                                              std::string_view role) const;
   std::shared_ptr<PgSqlType> GetType(const AccessContext& ax, ObjectId database,
                                      std::string_view schema,
                                      std::string_view name) const;
@@ -449,10 +449,10 @@ class Catalog final {
                         std::shared_ptr<PgSqlFunction> function);
   void RegisterTokenizer(ObjectId database_id, ObjectId schema_id,
                          std::shared_ptr<Tokenizer> tokenizer);
-  void RegisterForeignServer(ObjectId database_id, ObjectId schema_id,
+  void RegisterForeignServer(ObjectId database_id,
                              std::shared_ptr<ForeignServer> foreign_server);
-  void RegisterUserMapping(ObjectId database_id, ObjectId schema_id,
-                           std::shared_ptr<UserMapping> user_mapping);
+  // parent = the mapping's persisted server id.
+  void RegisterUserMapping(std::shared_ptr<UserMapping> user_mapping);
   void RegisterType(ObjectId database_id, ObjectId schema_id,
                     std::shared_ptr<PgSqlType> type);
   void RegisterTable(ObjectId database_id, ObjectId schema_id,
@@ -494,17 +494,18 @@ class Catalog final {
   bool CreateTokenizer(const AccessContext& ax, ObjectId database_id,
                        std::string_view schema, std::shared_ptr<Tokenizer> dict,
                        bool if_not_exists);
+  // Foreign servers are database children, like PG (no schema).
   bool CreateForeignServer(const AccessContext& ax, ObjectId database_id,
-                           std::string_view schema,
                            std::shared_ptr<ForeignServer> foreign_server,
                            bool if_not_exists);
   // Throws INSUFFICIENT_PRIVILEGE if `ax.role` may not CREATE a foreign server
-  // in `schema`. Called by the command layer BEFORE it connects the remote, so
-  // a denied CREATE SERVER never opens (and orphans) an attachment.
-  void RequireCreateForeignServer(const AccessContext& ax, ObjectId database_id,
-                                  std::string_view schema);
+  // in the database. Called by the command layer BEFORE it connects the
+  // remote, so a denied CREATE SERVER never opens (and orphans) an attachment.
+  void RequireCreateForeignServer(const AccessContext& ax,
+                                  ObjectId database_id);
+  // The mapping's parent is its server (from GetServerId()); its name is the
+  // mapped role.
   bool CreateUserMapping(const AccessContext& ax, ObjectId database_id,
-                         std::string_view schema,
                          std::shared_ptr<UserMapping> user_mapping,
                          bool if_not_exists);
   bool CreateType(const AccessContext& ax, ObjectId database_id,
@@ -573,13 +574,12 @@ class Catalog final {
   bool DropTokenizer(std::string_view database, std::string_view schema,
                      std::string_view name, bool cascade, bool missing_ok);
   bool DropForeignServer(const AccessContext& ax, std::string_view database,
-                         std::string_view schema, std::string_view name,
-                         bool cascade, bool missing_ok);
-  // Returns false when the mapping (or its database/schema) is absent -- the
+                         std::string_view name, bool cascade, bool missing_ok);
+  // Returns false when the mapping (or its database/server) is absent -- the
   // command layer phrases the PG error, which names the mapping's role and
   // server separately.
   bool DropUserMapping(const AccessContext& ax, std::string_view database,
-                       std::string_view schema, std::string_view name,
+                       std::string_view server, std::string_view role,
                        bool cascade);
   bool DropTable(const AccessContext& ax, std::string_view database,
                  std::string_view schema, std::string_view name, bool cascade,

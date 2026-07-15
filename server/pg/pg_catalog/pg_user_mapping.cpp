@@ -43,28 +43,14 @@ catalog::MaterializedData SystemTableSnapshot<PgUserMapping>::GetTableData() {
 
   std::vector<PgUserMapping> values;
 
-  for (const auto& schema : catalog->GetSchemas(database_id)) {
-    // Resolve umserver by name: foreign servers live in the same (db, schema)
-    // as their mappings, so build a name -> oid lookup first.
-    containers::FlatHashMap<std::string_view, uint64_t> server_oids;
-    for (const auto& server :
-         catalog->GetForeignServers(database_id, schema->GetName())) {
-      server_oids.emplace(server->GetName(), server->GetId().id());
-    }
-
-    for (const auto& mapping :
-         catalog->GetUserMappings(database_id, schema->GetName())) {
-      uint64_t umserver = 0;
-      if (auto it = server_oids.find(mapping->GetServerName());
-          it != server_oids.end()) {
-        umserver = it->second;
-      }
+  for (const auto& server : catalog->GetForeignServers(database_id)) {
+    for (const auto& mapping : catalog->GetUserMappings(server->GetId())) {
       // PG uses 0 for PUBLIC; a FOR <role> mapping carries the role's id, so
       // pg_user_mappings' per-viewer CASE (own-mapping visibility) resolves.
       PgUserMapping row{
         .oid = mapping->GetId().id(),
         .umuser = mapping->GetRoleId().id(),
-        .umserver = umserver,
+        .umserver = server->GetId().id(),
         // Cleartext, like PG's base catalog: this table is superuser-only
         // (kSuperuserOnly), the read gate is the guard. Everyone else goes
         // through the pg_user_mappings view's per-viewer CASE.

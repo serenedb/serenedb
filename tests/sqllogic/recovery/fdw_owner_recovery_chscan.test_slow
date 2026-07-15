@@ -28,7 +28,7 @@ statement ok
 CREATE ROLE fo_other LOGIN PASSWORD 'other_pw';
 
 statement ok
-GRANT CREATE ON SCHEMA public TO fo_owner;
+GRANT CREATE ON DATABASE ${__DATABASE__} TO fo_owner;
 
 # fo_owner creates and owns the server + a PUBLIC mapping (owner = server owner).
 connection c_owner user=fo_owner password=owner_pw
@@ -112,7 +112,7 @@ DROP SERVER fo_srv CASCADE;
 # With the server (and its mapping) gone, fo_owner owns nothing -> droppable.
 connection after_crash
 statement ok
-REVOKE CREATE ON SCHEMA public FROM fo_owner;
+REVOKE CREATE ON DATABASE ${__DATABASE__} FROM fo_owner;
 
 connection after_crash
 statement ok

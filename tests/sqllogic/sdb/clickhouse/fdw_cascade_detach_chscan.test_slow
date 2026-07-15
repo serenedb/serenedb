@@ -1,10 +1,10 @@
 control substitution on
 
-# DROP SCHEMA ... CASCADE / DROP DATABASE sweep foreign-server catalog rows via
-# the generic drop plan, which knows nothing about the live (instance-global)
-# DuckDB attachments. Regression: the sweeps must detach them too -- a leaked
-# attachment stayed readable with no ACLs and blocked re-CREATE of a
-# same-named server until restart.
+# Foreign servers are DATABASE children (PG shape: pg_foreign_server has no
+# namespace column), so DROP SCHEMA can never take a server down -- while DROP
+# DATABASE sweeps its servers' catalog rows AND must detach their live
+# (instance-global) DuckDB attachments (a leaked attachment stayed readable
+# with no ACLs and blocked re-CREATE of a same-named server until restart).
 
 statement ok
 DROP DATABASE IF EXISTS fcd_vault;
@@ -22,42 +22,24 @@ SELECT count(*) AS n FROM fcd_srv.chtest.vedernikoff;
 n
 6
 
-# ===== DROP SCHEMA ... CASCADE detaches the schema's servers =====
+# ===== DROP SCHEMA ... CASCADE does NOT touch servers (PG parity) =====
 
 statement ok
 DROP SCHEMA public CASCADE;
 
 query
-SELECT count(*) AS n FROM pg_foreign_server;
+SELECT count(*) AS n FROM pg_foreign_server WHERE srvname = 'fcd_srv';
 ----
 n
-0
+1
 
 query
 SELECT count(*) AS n FROM pg_user_mapping;
 ----
 n
-0
+1
 
-# The live attachment is gone too (this leaked before, still serving reads).
-query
-SELECT count(*) AS n FROM (SHOW DATABASES) WHERE database_name = 'fcd_srv';
-----
-n
-0
-
-statement ok
-CREATE SCHEMA public;
-
-# The name is immediately reusable -- no "database with name ... already
-# exists" from a leaked attachment.
-statement ok
-CREATE SERVER fcd_srv FOREIGN DATA WRAPPER clickhouse_fdw
-  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
-
-statement ok
-CREATE USER MAPPING FOR PUBLIC SERVER fcd_srv OPTIONS (user 'default');
-
+# The attachment stays live and the server keeps serving.
 query
 SELECT count(*) AS n FROM fcd_srv.chtest.vedernikoff;
 ----
@@ -65,7 +47,17 @@ n
 6
 
 statement ok
+CREATE SCHEMA public;
+
+statement ok
 DROP SERVER fcd_srv CASCADE;
+
+# ...and an explicit DROP SERVER detaches, so the name is reusable.
+query
+SELECT count(*) AS n FROM (SHOW DATABASES) WHERE database_name = 'fcd_srv';
+----
+n
+0
 
 # ===== DROP DATABASE detaches the dropped database's servers =====
 

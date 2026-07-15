@@ -878,6 +878,8 @@ class IndexWriter : private util::Noncopyable {
     std::deque<PendingSegmentContext> pending_segments;
     // entries from 'pending_segments_' that are available for reuse
     Freelist pending_freelist;
+    // Holds a +1 token so Wait() on an idle context returns immediately;
+    // the flush side releases it via Done() right before Wait().
     yaclib::WaitGroup<> pending{1};
     absl::Mutex pending_mutex;
 

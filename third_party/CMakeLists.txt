@@ -364,6 +364,8 @@ else()
     set(NO_WARMUP 1 CACHE BOOL "" FORCE)
     set(NO_AFFINITY 1 CACHE BOOL "" FORCE)
     set(NO_LAPACK 1 CACHE BOOL "" FORCE)
+    set(BUILD_SINGLE 1 CACHE BOOL "" FORCE)  # only sgemm_ is ever called; drops DOUBLE/COMPLEX/COMPLEX16
+    set(NO_CBLAS 1 CACHE BOOL "" FORCE)      # only the Fortran-ABI sgemm_ is called, never cblas_sgemm
     set(CMAKE_Fortran_COMPILER NOTFOUND CACHE FILEPATH "" FORCE)
     set(DYNAMIC_ARCH OFF CACHE BOOL "" FORCE)
     if(ARCH_AARCH64)
@@ -391,23 +393,6 @@ set(FAISS_ENABLE_GPU OFF CACHE BOOL "" FORCE)
 set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "" FORCE)
 set(FAISS_ENABLE_EXTRAS OFF CACHE BOOL "" FORCE)
 add_subdirectory(faiss)
-
-################################################################################
-### SuperKMeans library
-################################################################################
-set(SKMEANS_COMPILE_TESTS OFF CACHE BOOL "" FORCE)
-set(SKMEANS_COMPILE_BENCHMARKS OFF CACHE BOOL "" FORCE)
-set(SKMEANS_COMPILE_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(SKMEANS_ENABLE_GPU OFF CACHE BOOL "" FORCE)
-set(SKMEANS_SKIP_FFTW ON CACHE BOOL "" FORCE)
-if(ARCH_AMD64)
-    set(SKMEANS_PORTABLE ON CACHE BOOL "" FORCE)
-elseif(ARCH_AARCH64)
-    set(SKMEANS_MARCH "${AARCH64_MARCH}" CACHE STRING "" FORCE)
-endif()
-
-sdb_update_module(${GIT_EXECUTABLE} "SuperKMeans" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-add_subdirectory(SuperKMeans)
 
 ################################################################################
 ## snowball stemmer

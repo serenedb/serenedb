@@ -18,8 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <superkmeans/common.h>
-
 #include <cmath>
 #include <random>
 #include <vector>
@@ -252,41 +250,6 @@ TEST(clustering_test, assign_nearest_matches_scalar_reference) {
           << "metric=" << static_cast<int>(m) << " n=" << n << " row=" << i
           << " batched=" << batched[i] << " expected=" << expected;
       }
-    }
-  }
-}
-
-TEST(clustering_test, assign_nearest_tile_boundary) {
-  constexpr uint32_t d = 4;
-  std::mt19937 gen{123};
-  std::uniform_real_distribution<float> coord{-1000.f, 1000.f};
-  const auto random_vectors = [&](size_t rows) {
-    std::vector<float> out(rows * d);
-    for (float& v : out) {
-      v = coord(gen);
-    }
-    return out;
-  };
-
-  const std::vector<std::pair<size_t, uint32_t>> shapes{
-    {skmeans::X_BATCH_SIZE + 8, 8},
-    {8, static_cast<uint32_t>(skmeans::Y_BATCH_SIZE) + 8},
-  };
-
-  for (const auto& [n, k] : shapes) {
-    const auto data = random_vectors(n);
-    const auto centroids = random_vectors(k);
-
-    std::vector<uint32_t> batched;
-    AssignNearest(VectorMetric::L2Sqr, data.data(), n, centroids.data(), k, d,
-                  batched);
-    ASSERT_EQ(batched.size(), n);
-
-    for (size_t i = 0; i < n; ++i) {
-      const uint32_t expected = NearestCentroid(
-        VectorMetric::L2Sqr, data.data() + i * d, centroids.data(), k, d);
-      EXPECT_EQ(batched[i], expected)
-        << "n=" << n << " k=" << k << " row=" << i;
     }
   }
 }

@@ -20,8 +20,10 @@
 
 #include "iresearch/formats/ivf/clustering.hpp"
 
-#include <superkmeans/distance_computers/batch_computers.h>
-#include <superkmeans/superkmeans.h>
+#include <faiss/Clustering.h>
+#include <faiss/IndexFlat.h>
+#include <faiss/SuperKMeans.h>
+#include <faiss/utils/distances.h>
 
 #include <algorithm>
 #include <cmath>
@@ -53,16 +55,15 @@ uint32_t NearestImpl(VectorDistanceFn dist, bool nearest_is_largest,
   return best;
 }
 
-void ComputeL2NormsRowMajor(const float* data, size_t n, uint32_t d,
-                            float* out) noexcept {
-  for (size_t i = 0; i < n; ++i) {
-    const float* row = data + i * d;
-    float sum = 0.f;
-    for (uint32_t j = 0; j < d; ++j) {
-      sum += row[j] * row[j];
-    }
-    out[i] = sum;
-  }
+void ConfigureClusteringParams(faiss::ClusteringParameters& cp, uint32_t niter,
+                               uint32_t nredo, uint32_t seed, size_t n,
+                               uint32_t k) {
+  cp.niter = static_cast<int>(niter);
+  cp.nredo = static_cast<int>(nredo);
+  cp.seed = static_cast<int>(seed);
+  cp.min_points_per_centroid = 1;
+  cp.max_points_per_centroid = std::max<int>(cp.max_points_per_centroid,
+                                             static_cast<int>((n + k - 1) / k));
 }
 
 }  // namespace
@@ -88,17 +89,34 @@ std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
                                   size_t n, uint32_t k, uint32_t d,
                                   uint32_t seed, uint32_t niter,
                                   uint32_t nredo) {
-  skmeans::SuperKMeansConfig cfg;
-  cfg.iters = 1;
-  cfg.seed = seed;
-  cfg.angular = VectorMetricIsAngular(metric);
-  cfg.sampling_fraction = 1.0f;
-  cfg.data_already_rotated = true;
-  cfg.max_points_per_cluster =
-    std::max<uint32_t>(256, static_cast<uint32_t>((n + k - 1) / k));
+  if (VectorMetricIsAngular(metric)) {
+    faiss::ClusteringParameters cp;
+    ConfigureClusteringParams(cp, niter, nredo, seed, n, k);
+    cp.spherical = true;
 
-  skmeans::SuperKMeans kmeans(k, d, cfg);
-  return kmeans.Train(data, n);
+    std::vector<float> normalized(data, data + static_cast<size_t>(n) * d);
+    NormalizeRows(normalized.data(), n, d);
+    faiss::Clustering clus(static_cast<int>(d), static_cast<int>(k), cp);
+    faiss::IndexFlatIP index(static_cast<int>(d));
+    clus.train(static_cast<faiss::idx_t>(n), normalized.data(), index);
+    return std::move(clus.centroids);
+  }
+
+  constexpr uint32_t kSuperKMeansMinD = 32;
+  if (d >= kSuperKMeansMinD) {
+    faiss::SuperKMeansParameters cp;
+    ConfigureClusteringParams(cp, niter, nredo, seed, n, k);
+    faiss::SuperKMeans kmeans(static_cast<int>(d), static_cast<int>(k), cp);
+    kmeans.train(static_cast<faiss::idx_t>(n), data);
+    return std::move(kmeans.centroids);
+  }
+
+  faiss::ClusteringParameters cp;
+  ConfigureClusteringParams(cp, niter, nredo, seed, n, k);
+  faiss::Clustering clus(static_cast<int>(d), static_cast<int>(k), cp);
+  faiss::IndexFlatL2 index(static_cast<int>(d));
+  clus.train(static_cast<faiss::idx_t>(n), data, index);
+  return std::move(clus.centroids);
 }
 
 uint32_t NearestCentroid(VectorMetric metric, const float* v,
@@ -125,19 +143,13 @@ void AssignNearest(VectorMetric metric, const float* data, size_t n,
     return;
   }
 
-  using BatchComputer = skmeans::BatchComputer<skmeans::DistanceFunction::l2,
-                                               skmeans::Quantization::f32>;
-  std::vector<float> norms_x(n);
-  std::vector<float> norms_y(k);
-  ComputeL2NormsRowMajor(data, n, d, norms_x.data());
-  ComputeL2NormsRowMajor(centroids, k, d, norms_y.data());
-  std::vector<float> out_distances(n);
-  const size_t tile_n = std::min<size_t>(n, skmeans::X_BATCH_SIZE);
-  const size_t tile_k = std::min<size_t>(k, skmeans::Y_BATCH_SIZE);
-  std::vector<float> tmp_distances(tile_n * tile_k);
-  BatchComputer::FindNearestNeighbor(
-    data, centroids, n, k, d, norms_x.data(), norms_y.data(), out.data() + base,
-    out_distances.data(), tmp_distances.data());
+  std::vector<int64_t> indexes(n);
+  std::vector<float> distances(n);
+  faiss::knn_L2sqr(data, centroids, d, n, k, 1, distances.data(),
+                   indexes.data());
+  for (size_t i = 0; i < n; ++i) {
+    out[base + i] = static_cast<uint32_t>(indexes[i]);
+  }
 }
 
 std::vector<bool> ReadValidity(const ColumnReader& vector_column, uint64_t rows,

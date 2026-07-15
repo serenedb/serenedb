@@ -1188,6 +1188,31 @@ a
 1
 2
 
+# Multi-token bare-string cast under a boost keeps OR semantics.
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick turtle'::tsquery ^ 3.0) ORDER BY a;
+----
+a
+1
+2
+3
+
+# ts_any under a boost -- same match set as unboosted.
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_any(['quick', 'turtle']) ^ 2.0) ORDER BY a;
+----
+a
+1
+2
+3
+
+# ts_starts_with under a boost.
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_starts_with('turt') ^ 2.0) ORDER BY a;
+----
+a
+3
+
 # ----------------------------------------------------------------------
 # NOT / AND combinations.
 # ----------------------------------------------------------------------

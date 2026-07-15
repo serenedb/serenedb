@@ -196,6 +196,78 @@ id	body	score
 8	apple	0.8938179
 
 
+# --- Boost scales a clause's score contribution; match sets are unchanged.
+# Every doc is single-token, so score = idf * boost. Power-of-two boosts are
+# exact in float32, so the expected scores are the idfs above shifted. ---
+
+# Baseline disjunction ranks by idf: apricot (1.9924302) > apple (0.8938179).
+query IT
+SELECT id, body FROM mt_idx
+WHERE body @@ ('apple'::tsquery || 'apricot'::tsquery)
+ORDER BY BM25(mt_idx.tableoid) DESC, id;
+----
+id	body
+10	apricot
+1	apple
+2	apple
+3	apple
+8	apple
+
+# A 4x boost on the commoner term overturns the idf gap:
+# apple 4 * 0.8938179 = 3.5752716 > apricot 1.9924302.
+query ITR
+SELECT id, body, BM25(mt_idx.tableoid) AS score FROM mt_idx
+WHERE body @@ (('apple'::tsquery ^ 4.0) || 'apricot'::tsquery)
+ORDER BY BM25(mt_idx.tableoid) DESC, id;
+----
+id	body	score
+1	apple	3.5752716
+2	apple	3.5752716
+3	apple	3.5752716
+8	apple	3.5752716
+10	apricot	1.9924302
+
+# A multi-token bare-string cast under a boost keeps OR semantics and scales
+# every expanded term: scores are exactly 2x the unboosted idfs.
+query ITR
+SELECT id, body, BM25(mt_idx.tableoid) AS score FROM mt_idx
+WHERE body @@ ('apple apricot'::tsquery ^ 2.0)
+ORDER BY BM25(mt_idx.tableoid) DESC, id;
+----
+id	body	score
+10	apricot	3.9848604
+1	apple	1.7876358
+2	apple	1.7876358
+3	apple	1.7876358
+8	apple	1.7876358
+
+# Boost on a prefix clause: 4x on appl* outranks the rarer apr* expansion.
+query IT
+SELECT id, body FROM mt_idx
+WHERE body @@ ((ts_starts_with('appl') ^ 4.0) || ts_starts_with('apr'))
+ORDER BY BM25(mt_idx.tableoid) DESC, id;
+----
+id	body
+1	apple
+2	apple
+3	apple
+8	apple
+10	apricot
+
+# Boost on ts_any scales both terms uniformly: 2x idf, order unchanged.
+query ITR
+SELECT id, body, BM25(mt_idx.tableoid) AS score FROM mt_idx
+WHERE body @@ (ts_any(['apple', 'apricot']) ^ 2.0)
+ORDER BY BM25(mt_idx.tableoid) DESC, id;
+----
+id	body	score
+10	apricot	3.9848604
+1	apple	1.7876358
+2	apple	1.7876358
+3	apple	1.7876358
+8	apple	1.7876358
+
+
 statement ok
 DROP TABLE mt;
 

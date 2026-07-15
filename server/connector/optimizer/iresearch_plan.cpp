@@ -848,13 +848,27 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
                     ERR_MSG(fn, "(): column not found in index"));
   }
   const auto* info = found.bind_data->inverted_index->FindColumnInfo(col_id);
-  if (!info || !info->IsTermDict() ||
-      col_ref.GetReturnType().id() != duckdb::LogicalTypeId::VARCHAR) {
+  const auto& col_type = col_ref.GetReturnType();
+  const auto text_type = [&] {
+    switch (col_type.id()) {
+      case duckdb::LogicalTypeId::VARCHAR:
+        return true;
+      case duckdb::LogicalTypeId::LIST:
+        return duckdb::ListType::GetChildType(col_type).id() ==
+               duckdb::LogicalTypeId::VARCHAR;
+      case duckdb::LogicalTypeId::ARRAY:
+        return duckdb::ArrayType::GetChildType(col_type).id() ==
+               duckdb::LogicalTypeId::VARCHAR;
+      default:
+        return false;
+    }
+  }();
+  if (!info || !info->IsTermDict() || !text_type) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG(fn, "(): column has no text term dictionary"),
-      ERR_HINT(
-        "ts_dict_agg requires a text-tokenized or keyword VARCHAR column"));
+      ERR_HINT("ts_dict_agg requires a text-tokenized or keyword VARCHAR "
+               "column, or an array of such"));
   }
 
   const auto [kind, agg_name] = *fn_info;

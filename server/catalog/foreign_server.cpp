@@ -22,6 +22,7 @@
 
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
+#include <absl/strings/str_cat.h>
 
 #include <cctype>
 #include <duckdb/catalog/catalog_transaction.hpp>
@@ -253,8 +254,8 @@ std::string PrepareForeignServerAttach(duckdb::ClientContext& context,
   });
 
   const std::string_view attach_name = alias.empty() ? server.GetName() : alias;
-  return "ATTACH '' AS " + QuoteSqlIdentifier(attach_name) + " (TYPE " +
-         storage + ", SECRET " + std::string{secret_name} + ")";
+  return absl::StrCat("ATTACH '' AS ", QuoteSqlIdentifier(attach_name),
+                      " (TYPE ", storage, ", SECRET ", secret_name, ")");
 }
 
 void DropForeignServerSecret(duckdb::ClientContext& context,
@@ -274,7 +275,7 @@ void DropForeignServerSecret(duckdb::ClientContext& context,
 
 void DetachForeignServerAttachment(std::string_view server_name) {
   auto conn = DuckDBEngine::Instance().CreateConnection();
-  conn->Query("DETACH " + QuoteSqlIdentifier(server_name));
+  conn->Query(absl::StrCat("DETACH ", QuoteSqlIdentifier(server_name)));
 }
 
 }  // namespace sdb::catalog

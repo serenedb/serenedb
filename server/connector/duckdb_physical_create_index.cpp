@@ -21,6 +21,8 @@
 #include "connector/duckdb_physical_create_index.h"
 
 #include <absl/strings/match.h>
+#include <absl/strings/str_cat.h>
+#include <absl/synchronization/mutex.h>
 
 #include <atomic>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -34,7 +36,6 @@
 #include <duckdb/parser/expression/lambda_expression.hpp>
 #include <duckdb/planner/operator/logical_create_index.hpp>
 #include <iostream>
-#include <mutex>
 
 #include "app/app_server.h"
 #include "basics/assert.h"
@@ -84,12 +85,13 @@ struct InsertColumnMeta {
 void ThrowOnDuplicateExternalKeys(duckdb::ClientContext& context,
                                   const ViewFastPath& fast_path) {
   const auto& ref = *fast_path.catalog_ref;
-  const auto table = catalog::QuoteSqlIdentifier(ref.catalog) + "." +
-                     catalog::QuoteSqlIdentifier(ref.schema) + "." +
-                     catalog::QuoteSqlIdentifier(ref.table);
+  const auto table = absl::StrCat(catalog::QuoteSqlIdentifier(ref.catalog), ".",
+                                  catalog::QuoteSqlIdentifier(ref.schema), ".",
+                                  catalog::QuoteSqlIdentifier(ref.table));
   const auto key = catalog::QuoteSqlIdentifier(fast_path.pk_column_name);
-  const auto sql = "SELECT " + key + ", count(*) AS n FROM " + table +
-                   " GROUP BY " + key + " HAVING count(*) > 1 LIMIT 1";
+  const auto sql =
+    absl::StrCat("SELECT ", key, ", count(*) AS n FROM ", table, " GROUP BY ",
+                 key, " HAVING count(*) > 1 LIMIT 1");
   duckdb::Connection con(*context.db);
   auto result = con.Query(sql);
   if (result->HasError()) {
@@ -130,7 +132,7 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   // on_conflict = 'nothing': Sink keeps the first row seen per external key
   // and drops the rest, so the index holds one document per key value.
   bool collapse_dup_keys = false;
-  std::mutex seen_keys_lock;
+  absl::Mutex seen_keys_lock;
   containers::FlatHashSet<int64_t> seen_keys;
 
   std::atomic<duckdb::idx_t> backfill_count_atomic{0};
@@ -594,7 +596,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     duckdb::SelectionVector sel(num_rows);
     duckdb::idx_t kept = 0;
     {
-      std::lock_guard lock(gstate.seen_keys_lock);
+      absl::MutexLock lock{&gstate.seen_keys_lock};
       for (duckdb::idx_t row = 0; row < num_rows; ++row) {
         if (gstate.seen_keys.insert(keys[fmt.sel->get_index(row)]).second) {
           sel.set_index(kept++, row);

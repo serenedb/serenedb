@@ -20,6 +20,8 @@
 
 #include "connector/index_source_external_lookup.h"
 
+#include <absl/strings/str_cat.h>
+
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -90,11 +92,12 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
   // real column is projected.
   std::string select_list = Quote(_fast_path.pk_column_name);
   for (const auto& name : select_names) {
-    select_list += ", " + Quote(name);
+    absl::StrAppend(&select_list, ", ", Quote(name));
   }
-  _sql_prefix = "SELECT " + select_list + " FROM " + Quote(ref.catalog) + "." +
-                Quote(ref.schema) + "." + Quote(ref.table) + " WHERE " +
-                Quote(_fast_path.pk_column_name) + " IN (";
+  _sql_prefix =
+    absl::StrCat("SELECT ", select_list, " FROM ", Quote(ref.catalog), ".",
+                 Quote(ref.schema), ".", Quote(ref.table), " WHERE ",
+                 Quote(_fast_path.pk_column_name), " IN (");
   _num_proj_cols = select_names.size();
 }
 
@@ -121,15 +124,15 @@ void ExternalLookupIndexSource::Materialize(duckdb::ClientContext& context,
     auto [it, inserted] = pending.try_emplace(key);
     if (inserted) {
       if (!key_list.empty()) {
-        key_list += ",";
+        key_list += ',';
       }
-      key_list += std::to_string(key);
+      absl::StrAppend(&key_list, key);
     }
     it->second.push_back(i);
   }
 
   duckdb::Connection con(*context.db);
-  auto result = con.Query(_sql_prefix + key_list + ")");
+  auto result = con.Query(absl::StrCat(_sql_prefix, key_list, ")"));
   if (result->HasError()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
                     ERR_MSG("external lookup failed: ", result->GetError()));

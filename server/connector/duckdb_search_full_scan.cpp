@@ -610,8 +610,8 @@ void CollectSegmentTopK(SearchFullScanTopKLocalState& s,
 
   const bool wand_enabled =
     WandEnabled(s.bind_data->inverted_index.get(), search.text_scorer);
-  auto it = seg.mask(
-    seg_query.Execute({.wand = {.wand_enabled = wand_enabled}}, stats));
+  auto it = seg.mask(seg_query.Execute(
+    {.wand = {.wand_enabled = wand_enabled}, .top_k_collect = true}, stats));
   auto score_func = it->PrepareScore({
     .scorer = g.scorer_obj.get(),
     .segment = &seg,

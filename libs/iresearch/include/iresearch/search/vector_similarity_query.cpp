@@ -40,6 +40,7 @@
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/cost.hpp"
+#include "iresearch/search/disjoint_union.hpp"
 #include "iresearch/search/make_disjunction.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
@@ -235,7 +236,50 @@ class QVectorIterator : public VectorDistanceIterator {
     _pos = 0;
   }
 
-  IRS_DOC_ITERATOR_DEFAULTS
+  // Top-k collect for a single IVF cluster: the quantized distance IS the
+  // score, so stream each leaf block straight into the collector's batched
+  // AddDocs path
+  // -- no per-doc advance()/FetchScoreArgs and no ScoreFunction indirection.
+  // The scorer argument is intentionally unused (the distance is the score,
+  // mirroring the exact-rerank contract the scored path also honours).
+  void Collect(const ScoreFunction& /*scorer*/, ColumnArgsFetcher& /*fetcher*/,
+               ScoreCollector& collector) final {
+    for (;;) {
+      AdvanceBlock();
+      const auto docs = GetDocsBlock();
+      if (docs.empty()) {
+        break;
+      }
+      const auto dist = GetDistBlock();
+      SDB_ASSERT(docs.size() == dist.size());
+      if (_boost == kNoBoost) {
+        // Distance already carries the (unit) boost -- push it straight
+        // through, no copy and no per-block allocation (the concurrent hot
+        // path).
+        collector.AddDocs(docs.data(), docs.size(), dist.data());
+      } else {
+        // A leaf block never exceeds kPostingBlock docs, so this stays
+        // on-stack.
+        std::array<score_t, kPostingBlock> boosted;
+        for (size_t i = 0; i < dist.size(); ++i) {
+          boosted[i] = dist[i] * _boost;
+        }
+        collector.AddDocs(docs.data(), docs.size(), boosted.data());
+      }
+    }
+    _doc = doc_limits::eof();
+  }
+
+  uint32_t count() final { return irs::DocIterator::CountImpl(*this); }
+
+  IRS_DOC_ITERATOR_EMIT_DEFAULTS
+
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                      uint64_t* mask,
+                                      irs::FillBlockScoreContext score,
+                                      irs::FillBlockMatchContext match) final {
+    return irs::DocIterator::FillBlockImpl(*this, min, max, mask, score, match);
+  }
 
  private:
   void FillDistancesBlock() {
@@ -496,6 +540,20 @@ DocIterator::ptr KnnVectorQuery::Execute(const ExecutionContext& ctx,
         _state.cluster_counts[c]));
     }
     if (ok && !children.empty()) {
+      // Probed IVF clusters are disjoint (each doc is assigned to one cluster).
+      // For a pure top-k collect with no deleted-docs mask, union them without
+      // the ordered k-way merge / Sum accumulate: stream each cluster straight
+      // into the collector. Guarded so any ordered consumer (mask wrap, count,
+      // streaming scan, hybrid inner filter) still gets the seekable union.
+      if (ctx.top_k_collect && !_inner && _segment.docs_mask() == nullptr) {
+        std::vector<DocIterator::ptr> itrs;
+        itrs.reserve(children.size());
+        for (auto& child : children) {
+          DocIterator::ptr it = std::move(child);
+          itrs.emplace_back(std::move(it));
+        }
+        return memory::make_managed<DisjointUnion>(std::move(itrs), docs_count);
+      }
       using Disjunction =
         DisjunctionIterator<ScoreAdapter, ScoreMergeType::Sum>;
       auto v = MakeDisjunction<Disjunction>(WandContext{}, docs_count,

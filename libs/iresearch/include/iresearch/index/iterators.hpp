@@ -613,6 +613,29 @@ struct ResettableDocIterator : DocIterator {
   virtual void reset() = 0;
 };
 
+struct CollectOnlyDocIterator : DocIterator {
+  using ptr = memory::managed_ptr<CollectOnlyDocIterator>;
+
+  doc_id_t advance() final { SDB_UNREACHABLE(); }
+  doc_id_t seek(doc_id_t /*target*/) final { SDB_UNREACHABLE(); }
+  uint32_t count() final { SDB_UNREACHABLE(); }
+  uint32_t EmitDocs(doc_id_t* /*out*/, doc_id_t /*max*/) final {
+    SDB_UNREACHABLE();
+  }
+  uint32_t EmitScoredDocs(doc_id_t* /*out*/, score_t* /*scores*/,
+                          doc_id_t /*max*/, const ScoreFunction& /*scorer*/,
+                          ColumnArgsFetcher* /*fetcher*/,
+                          doc_id_t /*min*/) final {
+    SDB_UNREACHABLE();
+  }
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t /*min*/, doc_id_t /*max*/,
+                                      uint64_t* /*mask*/,
+                                      FillBlockScoreContext /*score*/,
+                                      FillBlockMatchContext /*match*/) final {
+    SDB_UNREACHABLE();
+  }
+};
+
 struct TermIterator : Iterator<bytes_view, AttributeProvider> {
   using ptr = memory::managed_ptr<TermIterator>;
 

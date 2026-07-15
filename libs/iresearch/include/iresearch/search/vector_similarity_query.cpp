@@ -24,6 +24,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <tuple>
 #include <vector>
 
 #include "basics/assert.h"
@@ -40,10 +41,10 @@
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/cost.hpp"
-#include "iresearch/search/disjoint_union.hpp"
 #include "iresearch/search/make_disjunction.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
+#include "iresearch/utils/attribute_helper.hpp"
 
 namespace irs {
 namespace {
@@ -475,6 +476,41 @@ memory::managed_ptr<VectorDistanceIterator> MakeRawReranker(
     state.estimation);
 }
 
+class DisjointClusterUnion : public CollectOnlyDocIterator {
+ public:
+  DisjointClusterUnion(std::vector<DocIterator::ptr>&& itrs,
+                       doc_id_t docs_count)
+    : _itrs{std::move(itrs)} {
+    std::get<CostAttr>(_attrs).reset(docs_count);
+  }
+
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    return irs::GetMutable(_attrs, type);
+  }
+
+  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
+    _scorers.clear();
+    _scorers.reserve(_itrs.size());
+    for (auto& it : _itrs) {
+      _scorers.emplace_back(it->PrepareScore(ctx));
+    }
+    return ScoreFunction::Default();
+  }
+
+  void Collect(const ScoreFunction& /*scorer*/, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final {
+    SDB_ASSERT(_scorers.size() == _itrs.size());
+    for (size_t i = 0, n = _itrs.size(); i < n; ++i) {
+      _itrs[i]->Collect(_scorers[i], fetcher, collector);
+    }
+  }
+
+ private:
+  std::vector<DocIterator::ptr> _itrs;
+  std::vector<ScoreFunction> _scorers;
+  std::tuple<CostAttr> _attrs;
+};
+
 }  // namespace
 
 void RerankExactDistances(const SubReader& segment,
@@ -552,7 +588,8 @@ DocIterator::ptr KnnVectorQuery::Execute(const ExecutionContext& ctx,
           DocIterator::ptr it = std::move(child);
           itrs.emplace_back(std::move(it));
         }
-        return memory::make_managed<DisjointUnion>(std::move(itrs), docs_count);
+        return memory::make_managed<DisjointClusterUnion>(std::move(itrs),
+                                                          docs_count);
       }
       using Disjunction =
         DisjunctionIterator<ScoreAdapter, ScoreMergeType::Sum>;

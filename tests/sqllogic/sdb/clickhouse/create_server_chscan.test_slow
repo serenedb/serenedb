@@ -134,3 +134,15 @@ SELECT id FROM chsrv.chtest.vedernikoff LIMIT 1;
 # DROP SERVER IF EXISTS on a missing server is a no-op.
 statement ok
 DROP SERVER IF EXISTS chsrv;
+
+# PG parity: a server name is a BARE identifier (PG's CREATE SERVER takes
+# ColId, servers are not schema-qualified) -- qualification is a syntax error,
+# not a server named "a.b".
+statement error
+CREATE SERVER a.b FOREIGN DATA WRAPPER clickhouse_fdw OPTIONS (host 'x');
+
+statement error
+DROP SERVER a.b;
+
+statement error
+CREATE USER MAPPING FOR PUBLIC SERVER a.b OPTIONS (user 'x');

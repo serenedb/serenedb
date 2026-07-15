@@ -1,0 +1,98 @@
+control substitution on
+
+# Binary COPY round-trip of the PG temporal types at their edges: ±infinity
+# sentinels, year 1 / 9999, and the TIME day boundaries. Each database
+# round-trips its own PGCOPY file.
+
+statement ok
+SET TIME ZONE 'UTC';
+
+statement ok
+CREATE TABLE cb_src
+(
+  id  INTEGER PRIMARY KEY,
+  ts  TIMESTAMP,
+  tz  TIMESTAMPTZ,
+  d   DATE,
+  t   TIME,
+  ttz TIMETZ
+);
+
+statement ok
+CREATE TABLE cb_dst
+(
+  id  INTEGER PRIMARY KEY,
+  ts  TIMESTAMP,
+  tz  TIMESTAMPTZ,
+  d   DATE,
+  t   TIME,
+  ttz TIMETZ
+);
+
+statement count 5
+INSERT INTO cb_src VALUES
+    (1, '-infinity', '-infinity', '-infinity',
+        TIME '00:00:00', TIMETZ '00:00:00+05:30'),
+    (2, TIMESTAMP '0001-01-01 00:00:00', TIMESTAMPTZ '0001-01-01 00:00:00+00',
+        DATE '0001-01-01', TIME '00:00:00.000001', TIMETZ '12:00:00-03:30'),
+    (3, TIMESTAMP '2024-06-15 12:34:56.789123', TIMESTAMPTZ '2024-06-15 12:34:56+00',
+        DATE '2024-06-15', TIME '12:34:56.789123', TIMETZ '23:59:59.999999+05:45'),
+    (4, TIMESTAMP '9999-12-31 23:59:59.999999', TIMESTAMPTZ '9999-12-31 23:59:59+00',
+        DATE '9999-12-31', TIME '23:59:59.999999', TIMETZ '12:00:00+05:30'),
+    (5, 'infinity', 'infinity', 'infinity',
+        TIME '24:00:00', TIMETZ '12:00:00+05:30');
+
+statement count 5
+COPY cb_src TO '${__TEST_DIR__}/copy_binary_tz.bin' (FORMAT binary);
+
+statement count 5
+COPY cb_dst FROM '${__TEST_DIR__}/copy_binary_tz.bin' (FORMAT binary);
+
+query
+SELECT
+  (SELECT count(*) FROM (SELECT * FROM cb_src EXCEPT SELECT * FROM cb_dst) a)
+  + (SELECT count(*) FROM (SELECT * FROM cb_dst EXCEPT SELECT * FROM cb_src) b)
+  AS diff;
+----
+diff
+0
+
+query
+SELECT count(*) AS pos FROM cb_dst
+WHERE ts = 'infinity'::TIMESTAMP
+  AND tz = 'infinity'::TIMESTAMPTZ
+  AND d  = 'infinity'::DATE;
+----
+pos
+1
+
+query
+SELECT count(*) AS neg FROM cb_dst
+WHERE ts = '-infinity'::TIMESTAMP
+  AND tz = '-infinity'::TIMESTAMPTZ
+  AND d  = '-infinity'::DATE;
+----
+neg
+1
+
+query
+SELECT id, extract(epoch FROM tz)::BIGINT AS ep FROM cb_dst
+WHERE id IN (2, 3, 4) ORDER BY id;
+----
+id	ep
+2	-62135596800
+3	1718454896
+4	253402300799
+
+query
+SELECT id, t, ttz FROM cb_dst WHERE id IN (1, 5) ORDER BY id;
+----
+id	t	ttz
+1	00:00:00	00:00:00+05:30
+5	24:00:00	12:00:00+05:30
+
+statement ok
+DROP TABLE cb_src;
+
+statement ok
+DROP TABLE cb_dst;

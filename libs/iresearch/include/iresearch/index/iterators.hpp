@@ -607,8 +607,6 @@ struct DocIterator : AttributeProvider {
 struct ResettableDocIterator : DocIterator {
   using ptr = memory::managed_ptr<ResettableDocIterator>;
 
-  [[nodiscard]] static ResettableDocIterator::ptr empty() noexcept;
-
   // Reset iterator to initial state
   virtual void reset() = 0;
 };
@@ -638,8 +636,6 @@ struct CollectOnlyDocIterator : DocIterator {
 
 struct TermIterator : Iterator<bytes_view, AttributeProvider> {
   using ptr = memory::managed_ptr<TermIterator>;
-
-  [[nodiscard]] static TermIterator::ptr empty() noexcept;
 
   // Read term attributes
   virtual void read() = 0;

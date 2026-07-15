@@ -22,7 +22,7 @@
 
 #include <cstddef>
 
-#include "type_traits.h"
+#include "basics/type_utils.hpp"
 
 namespace sdb::type {
 

@@ -41,45 +41,6 @@ constexpr size_t AlignUp(size_t size, size_t alignment) noexcept {
 }
 
 template<typename Alloc>
-class AllocatorDeallocator {
- public:
-  using allocator_type = Alloc;
-  using pointer = typename allocator_type::pointer;
-
-  explicit AllocatorDeallocator(const allocator_type& alloc) : _alloc{alloc} {}
-
-  void operator()(pointer p) noexcept {
-    // deallocate storage
-    std::allocator_traits<allocator_type>::deallocate(_alloc, p, 1);
-  }
-
- private:
-  [[no_unique_address]] allocator_type _alloc;
-};
-
-template<typename Alloc>
-class AllocatorDeleter {
- public:
-  using allocator_type = Alloc;
-  using pointer = typename allocator_type::pointer;
-
-  explicit AllocatorDeleter(const allocator_type& alloc) : _alloc{alloc} {}
-
-  void operator()(pointer p) noexcept {
-    using traits_t = std::allocator_traits<allocator_type>;
-
-    // destroy object
-    traits_t::destroy(_alloc, p);
-
-    // deallocate storage
-    traits_t::deallocate(_alloc, p, 1);
-  }
-
- private:
-  [[no_unique_address]] allocator_type _alloc;
-};
-
-template<typename Alloc>
 class AllocatorArrayDeallocator {
   using traits_t = std::allocator_traits<Alloc>;
 
@@ -109,32 +70,6 @@ class AllocatorArrayDeallocator {
       _size = std::exchange(other._size, 0);
     }
     return *this;
-  }
-
-  allocator_type& alloc() noexcept { return _alloc; }
-  size_t size() const noexcept { return _size; }
-
- private:
-  [[no_unique_address]] allocator_type _alloc;
-  size_t _size;
-};
-
-template<typename Alloc>
-class AllocatorArrayDeleter {
-  using traits_t = std::allocator_traits<Alloc>;
-
- public:
-  using allocator_type = typename traits_t::allocator_type;
-  using pointer = typename traits_t::pointer;
-
-  AllocatorArrayDeleter(const allocator_type& alloc, size_t size)
-    : _alloc{alloc}, _size{size} {}
-
-  void operator()(pointer p) noexcept {
-    for (auto begin = p, end = p + _size; begin != end; ++begin) {
-      traits_t::destroy(_alloc, begin);
-    }
-    traits_t::deallocate(_alloc, p, _size);
   }
 
   allocator_type& alloc() noexcept { return _alloc; }
@@ -274,69 +209,6 @@ managed_ptr<Base> make_tracked(IResourceManager& rm, Args&&... args) {
     new Tracked<Derived>{rm, std::forward<Args>(args)...}};
 }
 // NOLINTEND
-
-template<typename T, typename Alloc, typename... Types>
-inline std::enable_if_t<
-  !std::is_array_v<T>,
-  std::unique_ptr<T, AllocatorDeleter<std::remove_cv_t<Alloc>>>>
-AllocateUnique(Alloc& alloc, Types&&... args) {
-  using traits_t = std::allocator_traits<std::remove_cv_t<Alloc>>;
-  using pointer = typename traits_t::pointer;
-  using allocator_type = typename traits_t::allocator_type;
-  using deleter_t = AllocatorDeleter<allocator_type>;
-
-  // allocate space for 1 object
-  pointer p = alloc.allocate(1);
-
-  try {
-    // construct object
-    traits_t::construct(alloc, p, std::forward<Types>(args)...);
-  } catch (...) {
-    // free allocated storage in case of any error during construction
-    alloc.deallocate(p, 1);
-    throw;
-  }
-
-  return std::unique_ptr<T, deleter_t>{p, deleter_t{alloc}};
-}
-
-template<
-  typename T, typename Alloc,
-  typename = std::enable_if_t<std::is_array_v<T> && std::extent_v<T> == 0>>
-auto AllocateUnique(Alloc& alloc, size_t size) {
-  using traits_t = std::allocator_traits<std::remove_cv_t<Alloc>>;
-  using pointer = typename traits_t::pointer;
-  using allocator_type = typename traits_t::allocator_type;
-  using deleter_t = AllocatorArrayDeleter<allocator_type>;
-  using unique_ptr_t = std::unique_ptr<T, deleter_t>;
-
-  pointer p = nullptr;
-
-  if (!size) {
-    return unique_ptr_t{p, deleter_t{alloc, size}};
-  }
-
-  p = alloc.allocate(size);  // allocate space for 'size' object
-
-  auto begin = p;
-
-  try {
-    for (auto end = begin + size; begin != end; ++begin) {
-      traits_t::construct(alloc, begin);  // construct object
-    }
-  } catch (...) {
-    // destroy constructed objects
-    for (; p != begin; --begin) {
-      traits_t::destroy(alloc, begin);
-    }
-
-    // free allocated storage in case of any error during construction
-    alloc.deallocate(p, size);
-    throw;
-  }
-
-  return unique_ptr_t{p, deleter_t{alloc, size}};
-}
 
 // do not construct objects in a block
 struct AllocateOnlyTag final {};

@@ -53,7 +53,6 @@
 #include "auth/role_closure.h"
 #include "basics/application-exit.h"
 #include "basics/assert.h"
-#include "basics/buffer.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/debugging.h"
@@ -1229,11 +1228,6 @@ std::shared_ptr<Table> Snapshot::GetTable(const AccessContext& ax,
     return nullptr;
   }
   return EnforceRead(ax, basics::downCast<Table>(std::move(rel)));
-}
-
-std::shared_ptr<Table> Snapshot::GetTable(const AccessContext& ax,
-                                          ObjectId id) const {
-  return EnforceRead(ax, GetObject<Table>(id));
 }
 
 std::shared_ptr<Sequence> Snapshot::GetSequence(const AccessContext& ax,

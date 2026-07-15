@@ -1,0 +1,89 @@
+# DOCS_TEST: example_001
+
+statement ok
+DROP TABLE IF EXISTS doc_sec_reports;
+
+statement ok
+DROP ROLE IF EXISTS doc_sec_analysts;
+
+statement ok
+DROP ROLE IF EXISTS doc_sec_bob;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE ROLE doc_sec_analysts;
+
+statement ok
+CREATE ROLE doc_sec_bob LOGIN PASSWORD 'doc_sec_bob_pw';
+
+statement ok
+CREATE TABLE doc_sec_reports (id int, total int);
+
+statement ok
+GRANT SELECT ON doc_sec_reports TO doc_sec_analysts;
+
+statement ok
+GRANT doc_sec_analysts TO doc_sec_bob;
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT pg_has_role('doc_sec_bob', 'doc_sec_analysts', 'MEMBER') AS is_member;
+----
+is_member
+t
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT has_table_privilege('doc_sec_bob', 'doc_sec_reports', 'SELECT') AS can_read;
+----
+can_read
+t
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+SET ROLE doc_sec_analysts;
+
+query
+SELECT current_user, session_user;
+----
+current_user	session_user
+doc_sec_analysts	postgres
+
+statement ok
+RESET ROLE;
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement ok
+REVOKE doc_sec_analysts FROM doc_sec_bob;
+
+query
+SELECT pg_has_role('doc_sec_bob', 'doc_sec_analysts', 'MEMBER') AS is_member;
+----
+is_member
+f
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP TABLE doc_sec_reports;
+
+statement ok
+DROP ROLE doc_sec_bob;
+
+statement ok
+DROP ROLE doc_sec_analysts;

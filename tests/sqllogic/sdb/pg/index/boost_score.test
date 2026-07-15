@@ -1,0 +1,139 @@
+hash-threshold 100
+
+# Boost must scale the BM25 contribution of every query shape, not only
+# plain terms: phrase, boolean groups, and the automaton family
+# (fuzzy / wildcard / regexp) all route boost differently (PhraseQuery,
+# BooleanQuery folding into child contexts, MultiTermQuery). Every doc here
+# is two tokens (dl == avgdl), so scores are stable and a 2x / 4x boost is
+# exact in float32: the boosted expectation is the unboosted score doubled.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY bsc_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+)
+
+
+statement ok
+CREATE TABLE bsc (id INTEGER PRIMARY KEY, body VARCHAR)
+
+
+statement ok
+CREATE INDEX bsc_idx ON bsc USING inverted(id, body bsc_en)
+
+
+statement ok
+INSERT INTO bsc VALUES
+  (1, 'quick fox'), (2, 'quick fox'), (3, 'lazy dog'), (4, 'grey turtle')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bsc;
+
+
+# --- Phrase (PhraseQuery) ---
+
+query IR
+SELECT id, BM25(bsc_idx.tableoid) AS s FROM bsc_idx
+WHERE body @@ ts_phrase('quick fox') ORDER BY id;
+----
+id	s
+1	1.3862944
+2	1.3862944
+
+query IR
+SELECT id, BM25(bsc_idx.tableoid) AS s FROM bsc_idx
+WHERE body @@ (ts_phrase('quick fox') ^ 2.0) ORDER BY id;
+----
+id	s
+1	2.7725887
+2	2.7725887
+
+
+# --- Boost on an OR group (BooleanQuery folds into children) ---
+
+query IR
+SELECT id, BM25(bsc_idx.tableoid) AS s FROM bsc_idx
+WHERE body @@ (ts_phrase('lazy') || ts_phrase('turtle')) ORDER BY id;
+----
+id	s
+3	1.2039728
+4	1.2039728
+
+query IR
+SELECT id, BM25(bsc_idx.tableoid) AS s FROM bsc_idx
+WHERE body @@ ((ts_phrase('lazy') || ts_phrase('turtle')) ^ 2.0) ORDER BY id;
+----
+id	s
+3	2.4079456
+4	2.4079456
+
+
+# --- Boost on an AND group ---
+
+query IR
+SELECT id, BM25(bsc_idx.tableoid) AS s FROM bsc_idx
+WHERE body @@ (ts_phrase('quick') && ts_phrase('fox')) ORDER BY id;
+----
+id	s
+1	1.3862944
+2	1.3862944
+
+query IR
+SELECT id, BM25(bsc_idx.tableoid) AS s FROM bsc_idx
+WHERE body @@ ((ts_phrase('quick') && ts_phrase('fox')) ^ 2.0) ORDER BY id;
+----
+id	s
+1	2.7725887
+2	2.7725887
+
+
+# --- Fuzzy (per-term similarity contribution must still scale) ---
+
+query IR
+SELECT id, BM25(bsc_idx.tableoid) AS s FROM bsc_idx
+WHERE body @@ ts_levenshtein('turtel', 2) ORDER BY id;
+----
+id	s
+4	1.0033107
+
+query IR
+SELECT id, BM25(bsc_idx.tableoid) AS s FROM bsc_idx
+WHERE body @@ (ts_levenshtein('turtel', 2) ^ 2.0) ORDER BY id;
+----
+id	s
+4	2.0066214
+
+
+# --- Wildcard / regexp (automaton -> MultiTermQuery) ---
+
+query IR
+SELECT id, BM25(bsc_idx.tableoid) AS s FROM bsc_idx
+WHERE body @@ (ts_like('turt%') ^ 2.0) ORDER BY id;
+----
+id	s
+4	2.4079456
+
+query IR
+SELECT id, BM25(bsc_idx.tableoid) AS s FROM bsc_idx
+WHERE body @@ (ts_regexp('turtl.', 'posix') ^ 2.0) ORDER BY id;
+----
+id	s
+4	2.4079456
+
+
+# --- Nested boosts compose multiplicatively: 2.0 * 2.0 = 4x ---
+
+query IR
+SELECT id, BM25(bsc_idx.tableoid) AS s FROM bsc_idx
+WHERE body @@ ((ts_phrase('quick fox') ^ 2.0) ^ 2.0) ORDER BY id;
+----
+id	s
+1	5.5451775
+2	5.5451775

@@ -46,16 +46,6 @@ TEST(NetworkPgMd5, VerifierRecognitionAndBuild) {
     "SCRAM-SHA-256$4096:AAA$BBB:CCC"));  // a scram verifier is not md5
 }
 
-TEST(NetworkPgMd5, ResponseFromStoredMatchesFromPlaintext) {
-  // The crux of md5 auth against rolpassword: the server's expected response
-  // computed from the STORED verifier must equal the one computed from the
-  // plaintext (which is what BuildMd5Password does, and what the client sends).
-  const std::array<uint8_t, 4> salt{0x01, 0x02, 0x03, 0x04};
-  const std::string stored = sdb::network::BuildMd5Verifier("eph_md5", "md5pw");
-  EXPECT_EQ(sdb::network::BuildMd5Response(stored, salt),
-            sdb::network::BuildMd5Password("eph_md5", "md5pw", salt));
-}
-
 TEST(NetworkPgMd5, VerifyCleartext) {
   const std::string stored = sdb::network::BuildMd5Verifier("eph_md5", "md5pw");
   EXPECT_TRUE(

@@ -58,8 +58,7 @@ DatabasePathFeature::DatabasePathFeature()
 
   // strip trailing separators and make the path absolute so log lines and
   // error messages aren't ambiguous about which directory we're touching.
-  _directory =
-    basics::string_utils::RTrim(_directory, SERENEDB_DIR_SEPARATOR_STR);
+  _directory.erase(_directory.find_last_not_of(SERENEDB_DIR_SEPARATOR_STR) + 1);
   std::error_code ec;
   if (auto abs = std::filesystem::absolute(_directory, ec); !ec) {
     _directory = abs.string();
@@ -75,7 +74,7 @@ DatabasePathFeature::DatabasePathFeature()
     _hba_config_file = basics::file_utils::BuildFilename(_directory, hba);
   }
 
-  if (!basics::file_utils::IsDirectory(_directory)) {
+  if (!std::filesystem::is_directory(_directory, ec)) {
     std::filesystem::create_directories(_directory, ec);
     if (!ec) {
       SDB_INFO(GENERAL, "Created database directory: ", _directory);
@@ -130,11 +129,5 @@ DatabasePathFeature::DatabasePathFeature()
 }
 
 DatabasePathFeature::~DatabasePathFeature() { gInstance = nullptr; }
-
-std::string DatabasePathFeature::subdirectoryName(
-  std::string_view sub_directory) const {
-  SDB_ASSERT(!_directory.empty());
-  return basics::file_utils::BuildFilename(_directory, sub_directory);
-}
 
 }  // namespace sdb

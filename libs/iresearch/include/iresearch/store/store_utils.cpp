@@ -52,14 +52,6 @@ void BytesViewInput::ReadData(uint64_t offset, byte_type* b,
   _pos = _data.data() + _data.size();
 }
 
-void BytesViewInput::ReadData(bstring& buf, size_t size) {
-  const auto used = buf.size();
-
-  buf.resize(used + size);
-
-  ReadData(buf.data() + used, size);
-}
-
 uint32_t BytesViewInput::Checksum(uint64_t offset) const {
   Crc32c crc;
 

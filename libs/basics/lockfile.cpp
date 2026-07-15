@@ -20,6 +20,7 @@
 #include "basics/lockfile.h"
 
 #include <absl/cleanup/cleanup.h>
+#include <absl/strings/numbers.h>
 #include <absl/synchronization/mutex.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -37,7 +38,6 @@
 
 #include "basics/log.h"
 #include "basics/operating-system.h"
-#include "basics/string_utils.h"
 
 namespace sdb {
 namespace {
@@ -128,8 +128,10 @@ bool VerifyLockFile(const char* filename) {
     return true;
   }
 
-  uint32_t fc = basics::string_utils::Uint32(buffer, n);
-  if (fc == 0) {
+  uint32_t fc = 0;
+  if (!absl::SimpleAtoi(std::string_view{buffer, static_cast<size_t>(n)},
+                        &fc) ||
+      fc == 0) {
     return true;
   }
 

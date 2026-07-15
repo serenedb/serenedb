@@ -383,8 +383,7 @@ std::span<const highlight::Passage> GetPassages(
     highlight::Passage passage;
     const auto hit_start = view[cursor].first;
     const auto start =
-      hit_start == 0 ? sentence_iter.first()
-                     : sentence_iter.preceding(static_cast<int32_t>(hit_start));
+      sentence_iter.preceding(static_cast<int32_t>(hit_start + 1));
     passage.range.byte_start =
       start == icu::BreakIterator::DONE ? 0 : static_cast<uint32_t>(start);
     const auto end = sentence_iter.next();
@@ -398,6 +397,11 @@ std::span<const highlight::Passage> GetPassages(
         break;
       }
       sum += SloppyWeight(h.first - passage.range.byte_start);
+    }
+    SDB_ASSERT(cursor > passage.start);
+    if (cursor == passage.start) {
+      ++cursor;
+      continue;
     }
     passage.end = static_cast<uint32_t>(cursor);
     passage.score = sum * NormForPassage(passage.range.byte_start);

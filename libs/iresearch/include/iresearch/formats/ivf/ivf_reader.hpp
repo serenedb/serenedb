@@ -63,8 +63,6 @@ class IvfVectorReader {
 
   uint32_t Dimension() const noexcept { return _d; }
 
-  const float* ReadDoc(doc_id_t doc);
-
   const float* ReadDocBatch(doc_id_t first, size_t count);
 
  private:

@@ -7,11 +7,9 @@ namespace duckdb {
 // The ClickHouse mirror of PostgresOptimizer: run the shared dbconnector
 // ORDER BY / LIMIT / TOP_N pushdown over the ClickHouse scans. The shared rule
 // folds the clause into the scan's remote SQL and REMOVES the local plan node;
-// divergent order keys are rewritten via the ClickHouse dialect (see
-// TryBuildOrderByClause), and fold_limit_with_table_filters=false refuses
-// LIMIT-bearing folds over scans with REQUIRED filters -- their rendering may
-// be inexact and re-applied locally, and a remote LIMIT would cut the stream
-// BEFORE that re-check.
+// the ClickHouse dialect selects the order-key rewrites and refuses
+// LIMIT-bearing folds over scans with REQUIRED filters (those may be
+// re-applied locally, after a folded LIMIT already cut the stream).
 //
 // PostgresOptimizer's other two passes have no ClickHouse analog by design:
 //  - DisableParallelLimit: postgres splits a scan into CTID-range tasks, so a
@@ -28,10 +26,6 @@ void ClickHouseOptimizer::Optimize(OptimizerExtensionInput &input, unique_ptr<Lo
 		auto config = dbconnector::optimizer::OrderByAndLimitOptimizer::CreateConfig(
 		    input.context, "ch_order_pushdown", '`', dbconnector::query::QuoteEscapeStyle::BACKSLASH, scan_name,
 		    dbconnector::query::Dialect::ClickHouse);
-		// The dialect rewrites divergent order keys remotely (isNaN prefix for
-		// floats, toString for text-backed/UUID columns); the scan re-applies
-		// inexact filters locally, so LIMIT folds over a filtered scan are refused.
-		config.fold_limit_with_table_filters = false;
 		dbconnector::optimizer::OrderByAndLimitOptimizer::Optimize(config, input, plan);
 	}
 }

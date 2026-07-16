@@ -1295,7 +1295,7 @@ std::shared_ptr<UserMapping> Snapshot::GetUserMapping(
   return GetObject<UserMapping>(*id);
 }
 
-void Snapshot::RequireForeignServerNameFreeElsewhere(
+void Snapshot::RequireForeignServerNameGloballyUnique(
   ObjectId database_id, std::string_view name) const {
   for (const auto& db : GetDatabases()) {
     if (db->GetId() == database_id) {
@@ -2909,8 +2909,8 @@ bool Catalog::CreateForeignServer(const AccessContext& ax, ObjectId database_id,
   // database's attachment). Reject up front, naming the owner. The create-time
   // ATTACH cannot be relied on for this -- it only collides while the first
   // server's attachment is live, not when its remote is down.
-  _snapshot->RequireForeignServerNameFreeElsewhere(database_id,
-                                                   foreign_server->GetName());
+  _snapshot->RequireForeignServerNameGloballyUnique(database_id,
+                                                    foreign_server->GetName());
   foreign_server->SetParentId(database_id);
 
   Apply(

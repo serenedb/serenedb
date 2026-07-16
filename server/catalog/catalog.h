@@ -229,8 +229,8 @@ struct Snapshot {
                                               std::string_view role) const;
   // Throws DUPLICATE_OBJECT naming the owning database if any OTHER database
   // has a foreign server named `name` (attachment aliases are instance-global).
-  void RequireForeignServerNameFreeElsewhere(ObjectId database_id,
-                                             std::string_view name) const;
+  void RequireForeignServerNameGloballyUnique(ObjectId database_id,
+                                              std::string_view name) const;
   std::shared_ptr<PgSqlType> GetType(const AccessContext& ax, ObjectId database,
                                      std::string_view schema,
                                      std::string_view name) const;

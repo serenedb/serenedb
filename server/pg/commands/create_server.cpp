@@ -212,7 +212,7 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
   // connection error -- or not at all when the other server's attachment is
   // currently down, after which DROP DATABASE there would detach OUR live
   // attachment. (The catalog re-checks under its lock; this is the UX gate.)
-  snapshot->RequireForeignServerNameFreeElsewhere(db_id, name);
+  snapshot->RequireForeignServerNameGloballyUnique(db_id, name);
 
   // Owner = the creating role; the default ACL then gives the owner USAGE and
   // the public nothing (auth::ClassPrivs/PublicDefaultPrivs).

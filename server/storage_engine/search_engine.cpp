@@ -34,7 +34,6 @@
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/search/filter_optimizer.hpp>
 #include <utility>
-#include <yaclib/async/wait.hpp>
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
@@ -101,16 +100,8 @@ void SearchEngine::start() {
 
 void SearchEngine::stop() {
   _stopping.store(true, std::memory_order_release);
-
-  std::vector<yaclib::Future<>> loops;
-  {
-    absl::MutexLock lock{&_loops_mutex};
-    loops = std::move(_loops);
-    _loops.clear();
-  }
-  if (!loops.empty()) {
-    yaclib::Wait(loops.begin(), loops.end());
-  }
+  _loops.Done();
+  _loops.Wait();
   // Close the per-database WALs (flush + release file handles) before shutdown.
   absl::MutexLock lock(&_db_wals_mu);
   _db_wals.clear();
@@ -122,13 +113,8 @@ void SearchEngine::StartTasks(const std::shared_ptr<Storage>& storage) {
   if (_stopping.load(std::memory_order_acquire)) {
     return;
   }
-  absl::MutexLock lock{&_loops_mutex};
-  // Drop loops whose target was already dropped (their coroutine returned) so
-  // the registry stays bounded across many CREATE/DROP cycles.
-  std::erase_if(
-    _loops, [](const yaclib::Future<>& f) { return !f.Valid() || f.Ready(); });
-  _loops.push_back(RefreshLoop<Storage>(storage));
-  _loops.push_back(CompactionCoordinator<Storage>(storage));
+  _loops.Consume(RefreshLoop<Storage>(storage),
+                 CompactionCoordinator<Storage>(storage));
 }
 
 template void SearchEngine::StartTasks(

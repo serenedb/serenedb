@@ -26,8 +26,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
-#include <vector>
-#include <yaclib/async/future.hpp>
+#include <yaclib/algo/wait_group.hpp>
 
 #include "absl/synchronization/mutex.h"
 #include "basics/containers/flat_hash_map.h"
@@ -117,8 +116,10 @@ class SearchEngine final {
   containers::FlatHashMap<ObjectId, std::unique_ptr<SearchDbWal>> _db_wals;
   std::atomic<bool> _stopping{false};
   std::atomic<int> _running_compactions{0};
-  absl::Mutex _loops_mutex;
-  std::vector<yaclib::Future<>> _loops ABSL_GUARDED_BY(_loops_mutex);
+  // Live loop futures plus one baseline token held for the engine's lifetime:
+  // loops come and go with CREATE/DROP, and a transient zero would complete the
+  // group for good. stop() Done()s the token, then Waits.
+  yaclib::WaitGroup<> _loops{1};
 };
 
 }  // namespace search

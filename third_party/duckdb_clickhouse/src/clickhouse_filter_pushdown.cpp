@@ -48,8 +48,10 @@ string ClickHouseFilterPushdown::TransformFilters(const vector<column_t> &column
 		if (IsVirtualColumn(column_id) || comparison_unsafe || is_stringified) {
 			exact = false;
 		} else {
-			filter_text = dbconnector::table_scan::FilterPushdown::TransformFilter(config, names[column_id], filter,
-			                                                                       column_id, &exact);
+			auto rendered = dbconnector::table_scan::FilterPushdown::TransformFilter(config, names[column_id], filter,
+			                                                                         column_id);
+			filter_text = std::move(rendered.sql);
+			exact = rendered.exact;
 		}
 
 		if ((filter_text.empty() || !exact) && inexact_filters && !ExpressionFilter::IsOptionalFilter(filter)) {

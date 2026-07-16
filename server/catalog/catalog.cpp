@@ -1295,23 +1295,6 @@ std::shared_ptr<UserMapping> Snapshot::GetUserMapping(
   return GetObject<UserMapping>(*id);
 }
 
-void Snapshot::RequireForeignServerNameGloballyUnique(
-  ObjectId database_id, std::string_view name) const {
-  for (const auto& db : GetDatabases()) {
-    if (db->GetId() == database_id) {
-      continue;
-    }
-    if (GetObjectId<ResolveType::ForeignServer>(db->GetId(), name)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-        ERR_MSG("server \"", name, "\" already exists in database \"",
-                db->GetName(), "\""),
-        ERR_HINT("Foreign server attachment names are instance-wide; "
-                 "choose a name not used by any database."));
-    }
-  }
-}
-
 std::shared_ptr<Table> Snapshot::GetTable(const AccessContext& ax,
                                           ObjectId db_id,
                                           std::string_view schema,
@@ -2909,8 +2892,18 @@ bool Catalog::CreateForeignServer(const AccessContext& ax, ObjectId database_id,
   // database's attachment). Reject up front, naming the owner. The create-time
   // ATTACH cannot be relied on for this -- it only collides while the first
   // server's attachment is live, not when its remote is down.
-  _snapshot->RequireForeignServerNameGloballyUnique(database_id,
-                                                    foreign_server->GetName());
+  for (const auto& db : _snapshot->GetDatabases()) {
+    if (db->GetId() != database_id &&
+        _snapshot->GetObjectId<ResolveType::ForeignServer>(
+          db->GetId(), foreign_server->GetName())) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+        ERR_MSG("server \"", foreign_server->GetName(),
+                "\" already exists in database \"", db->GetName(), "\""),
+        ERR_HINT("Foreign server attachment names are instance-wide; "
+                 "choose a name not used by any database."));
+    }
+  }
   foreign_server->SetParentId(database_id);
 
   Apply(

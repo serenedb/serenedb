@@ -208,11 +208,21 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
   }
   // The live attachment alias is instance-global while catalog names are
   // per-database: reject a name owned by ANY database before touching the
-  // remote, naming the owner. Without this the collision surfaces as a bogus
-  // connection error -- or not at all when the other server's attachment is
-  // currently down, after which DROP DATABASE there would detach OUR live
-  // attachment. (The catalog re-checks under its lock; this is the UX gate.)
-  snapshot->RequireForeignServerNameGloballyUnique(db_id, name);
+  // remote. Without this the collision surfaces as a bogus connection error --
+  // or not at all when the other server's attachment is currently down, after
+  // which DROP DATABASE there would detach OUR live attachment. The catalog
+  // re-throws the same error under its lock; this copy is the UX gate that
+  // fires before the network attach.
+  for (const auto& db : snapshot->GetDatabases()) {
+    if (db->GetId() != db_id && snapshot->GetForeignServer(db->GetId(), name)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+        ERR_MSG("server \"", name, "\" already exists in database \"",
+                db->GetName(), "\""),
+        ERR_HINT("Foreign server attachment names are instance-wide; "
+                 "choose a name not used by any database."));
+    }
+  }
 
   // Owner = the creating role; the default ACL then gives the owner USAGE and
   // the public nothing (auth::ClassPrivs/PublicDefaultPrivs).

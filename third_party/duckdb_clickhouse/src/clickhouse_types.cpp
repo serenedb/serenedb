@@ -91,7 +91,7 @@ static uhugeint_t ClickHouseUInt128ToUhugeint(const clickhouse::UInt128 &value) 
   return uhugeint_t(absl::Uint128High64(value), absl::Uint128Low64(value));
 }
 
-LogicalType ClickHouseToLogicalType(const clickhouse::Type &type) {
+static LogicalType ClickHouseToLogicalType(const clickhouse::Type &type) {
   switch (type.GetCode()) {
   case clickhouse::Type::UInt8:
     return LogicalType::UTINYINT;

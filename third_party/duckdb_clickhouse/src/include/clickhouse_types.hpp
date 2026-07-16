@@ -16,9 +16,6 @@
 #include <string>
 
 namespace duckdb {
-
-LogicalType ClickHouseToLogicalType(const clickhouse::Type &type);
-
 LogicalType ClickHouseTypeStringToLogicalType(const std::string &type_str);
 
 void ClickHouseColumnToVector(const clickhouse::Column &col, Vector &out, idx_t src_offset, idx_t count);

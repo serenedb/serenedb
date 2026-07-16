@@ -75,9 +75,6 @@ class Options {
   }
   static bool IsSecretKey(std::string_view key) { return !IsPlainKey(key); }
 
-  size_t Size() const noexcept { return _keys.size(); }
-  bool Empty() const noexcept { return _keys.empty(); }
-
   void Visit(
     absl::FunctionRef<void(std::string_view key, std::string_view value)>
       visitor) const {

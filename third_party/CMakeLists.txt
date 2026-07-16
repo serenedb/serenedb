@@ -510,11 +510,10 @@ set(CURL_LIBRARIES CURL::libcurl CACHE INTERNAL "")
 set(CURL_LIBRARY CURL::libcurl CACHE INTERNAL "")
 
 ################################################################################
-## clickhouse-cpp (compiled into our own static lib; do NOT add_subdirectory
-## its CMakeLists -- that bundles contrib/{absl,lz4,zstd} and collides with ours)
+## clickhouse-cpp (submodule; compiled into our own static lib; do NOT
+## add_subdirectory its CMakeLists -- that bundles contrib/{absl,lz4,zstd}
+## and collides with ours)
 ################################################################################
-
-# TODO: register third_party/clickhouse-cpp as a git submodule
 
 file(
     GLOB_RECURSE CLICKHOUSE_CPP_SOURCES

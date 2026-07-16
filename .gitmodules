@@ -202,3 +202,7 @@
 	path = third_party/duckdb_inet
 	url = https://github.com/serenedb/duckdb-inet.git
 	shallow = true
+[submodule "third_party/clickhouse-cpp"]
+	path = third_party/clickhouse-cpp
+	url = https://github.com/serenedb/clickhouse-cpp.git
+	shallow = true

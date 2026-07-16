@@ -29,7 +29,6 @@ string ClickHouseFilterPushdown::TransformFilters(const vector<column_t> &column
 		auto column_id = column_ids[entry.GetIndex()];
 		auto &filter = entry.Filter();
 		string filter_text;
-		bool exact = true;
 
 		// Keep the filter local (do not push) when:
 		//  - virtual column (rowid), or
@@ -45,22 +44,18 @@ string ClickHouseFilterPushdown::TransformFilters(const vector<column_t> &column
 		bool comparison_unsafe =
 		    types && column_id < types->size() && ClickHouseComparisonUnsafe((*types)[column_id], ch_type);
 		bool is_stringified = stringified && column_id < stringified->size() && (*stringified)[column_id];
-		if (IsVirtualColumn(column_id) || comparison_unsafe || is_stringified) {
-			exact = false;
-		} else {
-			auto rendered = dbconnector::table_scan::FilterPushdown::TransformFilter(config, names[column_id], filter,
-			                                                                         column_id);
-			filter_text = std::move(rendered.sql);
-			exact = rendered.exact;
+		if (!IsVirtualColumn(column_id) && !comparison_unsafe && !is_stringified) {
+			filter_text = dbconnector::table_scan::FilterPushdown::TransformFilter(config, names[column_id], filter,
+			                                                                       column_id);
 		}
 
-		if ((filter_text.empty() || !exact) && inexact_filters && !ExpressionFilter::IsOptionalFilter(filter)) {
-			// The remote WHERE misses (part of) this required filter, and the optimizer
-			// erased it from the plan believing the scan applies it -- the scan must
-			// re-apply it locally or rows leak through unfiltered.
-			inexact_filters->push_back(entry.GetIndex());
-		}
 		if (filter_text.empty()) {
+			// The remote WHERE misses this required filter, and the optimizer erased
+			// it from the plan believing the scan applies it -- the scan must
+			// re-apply it locally or rows leak through unfiltered.
+			if (inexact_filters && !ExpressionFilter::IsOptionalFilter(filter)) {
+				inexact_filters->push_back(entry.GetIndex());
+			}
 			continue;
 		}
 		if (!result.empty()) {

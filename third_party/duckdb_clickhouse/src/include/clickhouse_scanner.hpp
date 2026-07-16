@@ -40,9 +40,6 @@ struct ClickHouseBindData : public dbconnector::BindData {
 	//! Remote ORDER BY / LIMIT clauses folded in by the shared dbconnector
 	//! OrderByAndLimitOptimizer (the folded plan node is removed).
 	dbconnector::optimizer::OrderByAndLimitBindData order_by_and_limit;
-	//! Required by the dbconnector::BindData contract; the aggregate optimizer is
-	//! not registered for ClickHouse (postgres does not register it either).
-	dbconnector::optimizer::AggregateBindData aggregate;
 	//! Column to emit (cast to Int64) for COLUMN_IDENTIFIER_ROW_ID, enabling UPDATE/DELETE.
 	//! Empty when the table has no integer primary key usable as a row identifier.
 	std::string rowid_column;
@@ -64,9 +61,6 @@ struct ClickHouseBindData : public dbconnector::BindData {
 	//! bind-time type metadata. Ordering needs no veto: the shared optimizer
 	//! rewrites order keys per dialect instead.
 	bool ColumnPushdownUnsafe(idx_t col) const;
-	dbconnector::optimizer::AggregateBindData &GetAggregateBindData() override {
-		return aggregate;
-	}
 
 	unique_ptr<FunctionData> Copy() const override;
 	bool Equals(const FunctionData &other) const override;

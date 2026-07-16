@@ -246,11 +246,19 @@ std::shared_ptr<Object> ForeignServer::Clone() const {
     {.id = GetId(), .database_id = GetParentId()});
 }
 
-std::string PrepareForeignServerAttach(duckdb::ClientContext& context,
-                                       std::string_view secret_name,
-                                       const ForeignServer& server,
-                                       const UserMapping* public_mapping,
-                                       std::string_view alias) {
+// Registers a TEMPORARY DuckDB secret named `secret_name` carrying the server's
+// connection options merged with a PUBLIC user mapping's (its user/password
+// win), and returns the `ATTACH '' AS "<alias>" (TYPE <storage>, SECRET
+// <secret_name>)` statement that consumes it. Option values are stored as
+// duckdb Values (no connstr quoting), so a password may contain spaces/quotes
+// freely and never appears in SQL text. Returns "" (registering nothing) for
+// an unsupported FDW. The connector captures the resolved params at ATTACH
+// time, so the secret may be dropped right after the statement runs.
+static std::string PrepareForeignServerAttach(duckdb::ClientContext& context,
+                                              std::string_view secret_name,
+                                              const ForeignServer& server,
+                                              const UserMapping* public_mapping,
+                                              std::string_view alias) {
   const auto storage = StorageTypeForFdw(server.GetFdwName());
   if (storage.empty()) {
     return {};

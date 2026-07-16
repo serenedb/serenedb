@@ -76,6 +76,25 @@ id
 2
 4
 
+# NULLS FIRST with LIMIT above the NULL count: the TopN optimizer injects an
+# OPTIONAL (note IS NULL OR <runtime threshold>) filter into the scan, and the
+# threshold branch has no SQL form. Dropping just that branch (the upstream
+# blanket drop) pushes a hard `note IS NULL` and silently loses every non-NULL
+# row -- LIMIT 2 above cannot catch that, so these assert past the NULLs.
+query
+SELECT id FROM chtop.chtest.widgets ORDER BY note NULLS FIRST, id LIMIT 3;
+----
+id
+2
+4
+5
+
+query
+SELECT count(*) AS n FROM (SELECT id FROM chtop.chtest.widgets ORDER BY note NULLS FIRST LIMIT 5) s;
+----
+n
+5
+
 # NULLS LAST puts them at the end.
 query
 SELECT id FROM chtop.chtest.widgets ORDER BY note NULLS LAST, id LIMIT 3;

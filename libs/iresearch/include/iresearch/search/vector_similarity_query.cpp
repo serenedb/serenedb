@@ -25,6 +25,7 @@
 #include <optional>
 #include <span>
 #include <tuple>
+#include <type_traits>
 #include <vector>
 
 #include "basics/assert.h"
@@ -406,26 +407,49 @@ struct ClusterInputs {
   std::unique_ptr<QuantizerReader> vr;
 };
 
-std::optional<ClusterInputs> MakeClusterIterator(
-  const VectorState& state, size_t c, bool has_centroids,
-  std::unique_ptr<IndexInput>& pay_root) {
+std::optional<ClusterInputs> MakeClusterIterator(const VectorState& state,
+                                                 size_t c, bool has_centroids,
+                                                 IndexInput& pay_root) {
   const PostingCookie cookie{.cookie = state.cookies[c].get(),
                              .field = state.reader->meta()};
   auto postings = state.reader->Iterator(IndexFeatures::None, cookie);
   if (!postings) {
     return std::nullopt;
   }
-  if (!pay_root) {
-    pay_root = state.reader->ReopenPayload();
-  }
-  auto vr =
-    pay_root ? MakeQuantizerReader(state.codebook, pay_root->Dup()) : nullptr;
-  if (vr) {
-    const float* centroid =
-      has_centroids ? state.cluster_centroids.data() + c * state.d : nullptr;
-    vr->StartCluster(state.pay_starts[c], state.cluster_counts[c], centroid);
-  }
+  auto vr = MakeQuantizerReader(state.codebook, pay_root.Dup());
+  SDB_ASSERT(vr);
+  const float* centroid =
+    has_centroids ? state.cluster_centroids.data() + c * state.d : nullptr;
+  vr->StartCluster(state.pay_starts[c], state.cluster_counts[c], centroid);
   return ClusterInputs{std::move(postings), std::move(vr)};
+}
+
+using QVectorIterators = std::vector<memory::managed_ptr<QVectorIterator>>;
+
+template<typename Out>
+bool BuildClusterIterators(const VectorState& state, score_t boost, Out& out) {
+  auto pay_root = state.reader->ReopenPayload();
+  if (!pay_root) {
+    return false;
+  }
+  out.reserve(state.cookies.size());
+  const bool has_centroids =
+    state.cluster_centroids.size() == state.cookies.size() * state.d;
+  for (size_t c = 0; c < state.cookies.size(); ++c) {
+    auto ci = MakeClusterIterator(state, c, has_centroids, *pay_root);
+    if (!ci) {
+      continue;
+    }
+    auto qit = memory::make_managed<QVectorIterator>(std::move(ci->postings),
+                                                     std::move(ci->vr), boost,
+                                                     state.cluster_counts[c]);
+    if constexpr (std::is_same_v<Out, ScoreAdapters>) {
+      out.emplace_back(DocIterator::ptr{std::move(qit)});
+    } else {
+      out.emplace_back(std::move(qit));
+    }
+  }
+  return true;
 }
 
 memory::managed_ptr<VectorDistanceIterator> MakeRawReranker(
@@ -467,8 +491,7 @@ memory::managed_ptr<VectorDistanceIterator> MakeRawReranker(
 
 class DisjointClusterUnion : public DocIterator {
  public:
-  DisjointClusterUnion(std::vector<QVectorIterator::ptr>&& itrs,
-                       doc_id_t docs_count)
+  DisjointClusterUnion(QVectorIterators&& itrs, doc_id_t docs_count)
     : _itrs{std::move(itrs)}, _attrs{docs_count} {}
 
   doc_id_t advance() final { SDB_UNREACHABLE(); }
@@ -510,7 +533,7 @@ class DisjointClusterUnion : public DocIterator {
   }
 
  private:
-  std::vector<QVectorIterator::ptr> _itrs;
+  QVectorIterators _itrs;
   std::vector<ScoreFunction> _scorers;
   CostAttr _attrs;
 };
@@ -560,50 +583,33 @@ DocIterator::ptr KnnVectorQuery::Execute(const ExecutionContext& ctx,
     SDB_ASSERT(_state.cluster_counts.size() == _state.cookies.size());
     SDB_ASSERT(_state.codebook);
 
-    ScoreAdapters children;
-    children.reserve(_state.cookies.size());
-    bool ok = true;
-    const bool has_centroids =
-      _state.cluster_centroids.size() == _state.cookies.size() * _state.d;
-    std::unique_ptr<IndexInput> pay_root;
-    for (size_t c = 0; c < _state.cookies.size(); ++c) {
-      auto ci = MakeClusterIterator(_state, c, has_centroids, pay_root);
-      if (!ci) {
-        continue;
-      }
-      if (!ci->vr) {
-        ok = false;
-        break;
-      }
-      children.emplace_back(memory::make_managed<QVectorIterator>(
-        std::move(ci->postings), std::move(ci->vr), _boost,
-        _state.cluster_counts[c]));
-    }
-    if (ok && !children.empty()) {
-      if (ctx.top_k_collect && !_inner && _segment.docs_mask() == nullptr) {
-        std::vector<DocIterator::ptr> itrs;
-        itrs.reserve(children.size());
-        for (auto& child : children) {
-          DocIterator::ptr it = std::move(child);
-          itrs.emplace_back(std::move(it));
-        }
-        return memory::make_managed<DisjointClusterUnion>(std::move(itrs),
+    if (ctx.top_k_collect && !_inner && _segment.docs_mask() == nullptr) {
+      QVectorIterators children;
+      if (BuildClusterIterators(_state, _boost, children) &&
+          !children.empty()) {
+        return memory::make_managed<DisjointClusterUnion>(std::move(children),
                                                           docs_count);
       }
-      using Disjunction =
-        DisjunctionIterator<ScoreAdapter, ScoreMergeType::Sum>;
-      auto v = MakeDisjunction<Disjunction>(WandContext{}, docs_count,
-                                            std::move(children));
-      if (!_inner) {
-        return v;
+    } else {
+      ScoreAdapters children;
+      if (BuildClusterIterators(_state, _boost, children) &&
+          !children.empty()) {
+        using Disjunction =
+          DisjunctionIterator<ScoreAdapter, ScoreMergeType::Sum>;
+        auto v = MakeDisjunction<Disjunction>(WandContext{}, docs_count,
+                                              std::move(children));
+        if (!_inner) {
+          return v;
+        }
+        auto inner_it = _inner->Execute(ctx, stats);
+        if (!inner_it) {
+          return DocIterator::empty();
+        }
+        return MergeWithInner(
+          std::move(v),
+          memory::make_managed<FilterIterator>(std::move(inner_it)), docs_count,
+          ScoreMergeType::Sum);
       }
-      auto inner_it = _inner->Execute(ctx, stats);
-      if (!inner_it) {
-        return DocIterator::empty();
-      }
-      return MergeWithInner(
-        std::move(v), memory::make_managed<FilterIterator>(std::move(inner_it)),
-        docs_count, ScoreMergeType::Sum);
     }
   }
 

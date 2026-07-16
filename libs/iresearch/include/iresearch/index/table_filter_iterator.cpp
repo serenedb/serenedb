@@ -20,7 +20,6 @@
 
 #include "iresearch/index/table_filter_iterator.hpp"
 
-#include <algorithm>
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 
@@ -47,17 +46,13 @@ TableFilterDocIterator::TableFilterDocIterator(
     const auto* reader = col_reader.Column(spec.field);
     SDB_ASSERT(reader != nullptr,
                "table-filter column missing from the segment columnstore");
-    // `scratch` copies the cache buffer's shared_ptr, so moving the cache into
-    // the struct afterwards keeps both valid.
-    duckdb::VectorCache cache{duckdb::Allocator::Get(context), reader->Type()};
-    duckdb::Vector scratch{cache};
     _filters.push_back(FilterCol{
       .reader = reader,
       .filter = spec.filter,
       .state = duckdb::TableFilterState::Initialize(context, *spec.filter),
       .scan = reader->InitScan(_ctx),
-      .cache = std::move(cache),
-      .scratch = std::move(scratch),
+      .scratch =
+        std::make_unique<irs::ColumnReader::VectorScratch>(reader->Type()),
     });
   }
 }
@@ -136,10 +131,9 @@ duckdb::idx_t TableFilterDocIterator::FilterBlock(irs::doc_id_t* docs,
         if (z == duckdb::FilterPropagateResult::FILTER_ALWAYS_TRUE) {
           continue;
         }
-        f.scratch.ResetFromCache(f.cache);
         survivors =
           f.reader->GatherFilter(f.scan, anchor, span, _sel, survivors,
-                                 *f.filter, *f.state, f.scratch);
+                                 *f.filter, *f.state, f.scratch->Reset());
       }
       // `_sel[0..survivors)` hold surviving span offsets (ascending); map back
       // to docs and compact in place (w <= i + k, so writes never clobber
@@ -179,9 +173,10 @@ uint32_t TableFilterDocIterator::count() {
 
 uint32_t TableFilterDocIterator::EmitDocs(irs::doc_id_t* out, irs::doc_id_t min,
                                           irs::doc_id_t max) {
-  const auto n = _inner->EmitDocs(_docbuf.data(), min, max);
-  const auto survivors = FilterBlock(_docbuf.data(), nullptr, n);
-  std::copy_n(_docbuf.data(), survivors, out);
+  // Emit straight into the caller's buffer and compact in place: FilterBlock
+  // only ever shrinks [0, n), so no staging copy is needed.
+  const auto n = _inner->EmitDocs(out, min, max);
+  const auto survivors = FilterBlock(out, nullptr, n);
   _doc = _inner->value();
   return static_cast<uint32_t>(survivors);
 }
@@ -190,11 +185,8 @@ uint32_t TableFilterDocIterator::EmitScoredDocs(
   irs::doc_id_t* out, irs::score_t* scores, irs::doc_id_t max,
   const irs::ScoreFunction& scorer, irs::ColumnArgsFetcher* fetcher,
   irs::doc_id_t min) {
-  const auto n = _inner->EmitScoredDocs(_docbuf.data(), _scorebuf.data(), max,
-                                        scorer, fetcher, min);
-  const auto survivors = FilterBlock(_docbuf.data(), _scorebuf.data(), n);
-  std::copy_n(_docbuf.data(), survivors, out);
-  std::copy_n(_scorebuf.data(), survivors, scores);
+  const auto n = _inner->EmitScoredDocs(out, scores, max, scorer, fetcher, min);
+  const auto survivors = FilterBlock(out, scores, n);
   _doc = _inner->value();
   return static_cast<uint32_t>(survivors);
 }

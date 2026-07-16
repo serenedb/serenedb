@@ -168,8 +168,8 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
   // evaluate the predicate.
   for (auto& f : _filters) {
     if (f.output_slots.empty()) {
-      f.scratch = std::make_unique<duckdb::Vector>(
-        f.reader->Type(), static_cast<duckdb::idx_t>(STANDARD_VECTOR_SIZE));
+      f.scratch =
+        std::make_unique<irs::ColumnReader::VectorScratch>(f.reader->Type());
     }
   }
 }
@@ -384,7 +384,7 @@ HitBatcher::Batch HitBatcher::EmitFiltered(duckdb::DataChunk& output) {
         continue;
       }
       auto& target = f.output_slots.empty()
-                       ? *f.scratch
+                       ? f.scratch->Reset()
                        : output.data[f.output_slots.front()];
       survivors = f.reader->GatherFilter(*f.scan, anchor, span, _sel, survivors,
                                          *f.filter, *f.state, target);

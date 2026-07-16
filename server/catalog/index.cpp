@@ -121,21 +121,7 @@ constexpr std::array<std::string_view, 2> kKnownOpclassTypes{
   kIVFKind,
 };
 constexpr std::string_view kCompressionField = "compression";
-constexpr std::string_view kRowGroupSizeField = "row_group_size";
 constexpr std::string_view kHyperLogLogField = "hyperloglog";
-
-uint32_t ParseRowGroupSize(std::string_view kind, std::string_view column_name,
-                           std::string_view key, const duckdb::Value& v) {
-  auto n = GetIndexIntOption(kind, column_name, key, v);
-  if (n == 0) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("Column '", column_name, "': ", kind, " option '", key,
-              "' must be in [1, ", std::numeric_limits<uint32_t>::max(),
-              "], got ", n));
-  }
-  return n;
-}
 
 uint32_t ParsePositiveUintOption(std::string_view kind,
                                  std::string_view column_name,
@@ -555,9 +541,6 @@ void ApplyIncludedOpclass(
     if (key == kCompressionField) {
       entry.compression = ParseCompressionOption(
         context, kIncludedKind, owner_label, key, raw_val, value_type);
-    } else if (key == kRowGroupSizeField) {
-      entry.row_group_size =
-        ParseRowGroupSize(kIncludedKind, owner_label, key, raw_val);
     } else if (key == kHyperLogLogField) {
       entry.hyperloglog =
         GetIndexBoolOption(kIncludedKind, owner_label, key, raw_val);
@@ -566,8 +549,7 @@ void ApplyIncludedOpclass(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG("Column '", owner_label, "': unknown included option '", key,
                 "'. Accepted options: compression (string, default 'auto'), "
-                "row_group_size (int >= 1), hyperloglog (bool, default "
-                "false)"));
+                "hyperloglog (bool, default false)"));
     }
   }
 }

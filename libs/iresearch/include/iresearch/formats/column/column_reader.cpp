@@ -527,6 +527,13 @@ duckdb::idx_t ColumnReader::GatherFilter(ScanState& s, uint64_t anchor,
     seg.Filter(s.st, span, result, sel, approved, filter, filter_state);
     s.st.offset_in_column += span;
     s.st.internal_index = s.st.offset_in_column;
+    // Codecs are picked per block: a later block of the same column may need
+    // the validity child (decode path below), whose cursor only moves
+    // relatively -- keep it in step with the data cursor.
+    if (_validity) {
+      SDB_ASSERT(!s.child_states.empty());
+      _validity->SkipRows(s.child_states[0], span);
+    }
   } else {
     // Separate validity (or no codec filter): decode the span with validity
     // into `scratch`, then narrow the selection natively.

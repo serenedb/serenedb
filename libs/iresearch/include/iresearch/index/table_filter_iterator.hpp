@@ -110,11 +110,10 @@ class TableFilterDocIterator : public irs::DocIterator {
     const duckdb::TableFilter* filter = nullptr;
     duckdb::unique_ptr<duckdb::TableFilterState> state;
     irs::ColumnReader::ScanState scan;
-    // Codec Scan/Filter may morph `scratch` (e.g. dict_fsst emits a DICTIONARY
-    // vector), so every use resets it from `cache` first -- the same per-call
-    // contract DataChunk::Reset gives duckdb's own scans.
-    duckdb::VectorCache cache;
-    duckdb::Vector scratch;
+    // Codec Scan/Filter may morph the vector (e.g. dict_fsst emits a
+    // DICTIONARY view over codec-owned buffers), so every use goes through
+    // VectorScratch::Reset() -- never reuse it dirty.
+    std::unique_ptr<irs::ColumnReader::VectorScratch> scratch;
   };
 
   // Compacts docs[0..n) (and scores[0..n) when non-null, ascending) in place to

@@ -1,0 +1,177 @@
+# Lookup-column (non-INCLUDE) filter pushdown at 50k rows: the filter can only
+# run inside the source lookup (DataTable::LookupScan FilterSelection), which
+# forces streaming (AfterLimit) and compacts each 2048-pk batch to survivors --
+# including batches with zero survivors. Top-k over a WAND index with a lookup
+# filter must fall back to streaming and still seed the WAND threshold from
+# the dynamic TOP_N boundary. Expected values are arithmetic over the
+# construction; top-k is oracle-checked.
+
+hash-threshold 100
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY lkf_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE TABLE lkf (id INT PRIMARY KEY, body VARCHAR, val INT, g INT);
+
+
+# tf tiers for BM25 (1 + i % 5 repeats); val = i is a LOOKUP column (not
+# INCLUDEd), g = i % 100 is covered.
+statement ok
+INSERT INTO lkf
+SELECT i, repeat('fox ', 1 + (i % 5)), i, i % 100
+FROM generate_series(1, 50000) t(i);
+
+
+statement ok
+CREATE INDEX lkf_idx ON lkf
+    USING inverted(id, body lkf_en)
+    INCLUDE (g)
+    WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) lkf;
+
+
+# --- streaming lookup filter -------------------------------------------------
+
+# val % 10 = 3 -> 5000 survivors; sum = 5000 * (3 + 49993) / 2.
+query
+SELECT count(*) AS n, sum(val) AS s FROM (
+  SELECT val FROM lkf_idx WHERE body @@ 'fox' AND val % 10 = 3
+) t;
+----
+n	s
+5000	124990000
+
+
+# Selective filter: whole 2048-pk batches produce zero survivors and the scan
+# must keep pulling instead of ending the segment.
+query
+SELECT val FROM lkf_idx WHERE body @@ 'fox' AND val BETWEEN 30001 AND 30003 ORDER BY val;
+----
+val
+30001
+30002
+30003
+
+
+# Lookup filter + covered `.col` filter in one query (both planes).
+query
+SELECT count(*) AS n FROM (
+  SELECT val FROM lkf_idx WHERE body @@ 'fox' AND val > 40000 AND g = 7
+) t;
+----
+n
+100
+
+
+# count(*) must honor the lookup filter (the count-only fast path cannot run
+# it; the scan has to materialize). val is unique, so exactly one row.
+query
+SELECT count(*) AS n FROM lkf_idx WHERE body @@ 'fox' AND val = 12345;
+----
+n
+1
+
+
+# --- top-k with a lookup filter (forced streaming + WAND boundary seeding) ---
+
+# val BETWEEN 20001 AND 20060 admits 60 docs, 12 per tf tier; k = 24 selects
+# the tf-5 and tf-4 tiers: ids with i % 5 in {4, 3}. The best-scoring docs
+# outside the val range are poison for a dropped/reordered filter.
+query
+SELECT id FROM (
+  SELECT id FROM lkf_idx
+  WHERE body @@ 'fox' AND val BETWEEN 20001 AND 20060
+  ORDER BY BM25(lkf_idx.tableoid) DESC LIMIT 24
+) t ORDER BY id;
+----
+id
+20003
+20004
+20008
+20009
+20013
+20014
+20018
+20019
+20023
+20024
+20028
+20029
+20033
+20034
+20038
+20039
+20043
+20044
+20048
+20049
+20053
+20054
+20058
+20059
+
+
+statement ok
+SET sdb_disable_top_k_optimization = true;
+
+
+query
+SELECT id FROM (
+  SELECT id FROM lkf_idx
+  WHERE body @@ 'fox' AND val BETWEEN 20001 AND 20060
+  ORDER BY BM25(lkf_idx.tableoid) DESC LIMIT 24
+) t ORDER BY id;
+----
+id
+20003
+20004
+20008
+20009
+20013
+20014
+20018
+20019
+20023
+20024
+20028
+20029
+20033
+20034
+20038
+20039
+20043
+20044
+20048
+20049
+20053
+20054
+20058
+20059
+
+
+statement ok
+RESET sdb_disable_top_k_optimization;
+
+
+statement ok
+DROP INDEX lkf_idx;
+
+statement ok
+DROP TABLE lkf;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY lkf_en;

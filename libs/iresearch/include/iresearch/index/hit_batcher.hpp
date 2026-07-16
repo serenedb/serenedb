@@ -107,7 +107,10 @@ class HitBatcher {
     std::vector<duckdb::idx_t> output_slots;
     std::unique_ptr<duckdb::TableFilterState> state;
     std::unique_ptr<irs::ColumnReader::ScanState> scan;
-    std::unique_ptr<duckdb::Vector> scratch;
+    // Codec Scan/Filter may morph the vector (e.g. dict_fsst emits a
+    // DICTIONARY view over codec-owned buffers), so every use goes through
+    // VectorScratch::Reset() -- never reuse it dirty.
+    std::unique_ptr<irs::ColumnReader::VectorScratch> scratch;
   };
 
   enum class Pending : uint8_t { None, Dense, Scratch };

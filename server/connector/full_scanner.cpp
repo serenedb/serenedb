@@ -99,8 +99,8 @@ FullScanner::FullScanner(
   // evaluate the predicate.
   for (auto& f : _filters) {
     if (f.output_slots.empty()) {
-      f.scratch = std::make_unique<duckdb::Vector>(
-        f.reader->Type(), static_cast<duckdb::idx_t>(STANDARD_VECTOR_SIZE));
+      f.scratch =
+        std::make_unique<irs::ColumnReader::VectorScratch>(f.reader->Type());
     }
   }
 }
@@ -150,8 +150,8 @@ duckdb::idx_t FullScanner::Scan(uint64_t start_row, duckdb::idx_t count,
     if (survivors == 0) {
       break;
     }
-    auto& target =
-      f.output_slots.empty() ? *f.scratch : output.data[f.output_slots.front()];
+    auto& target = f.output_slots.empty() ? f.scratch->Reset()
+                                          : output.data[f.output_slots.front()];
     survivors = f.reader->GatherFilter(*f.scan, start_row, count, _sel,
                                        survivors, *f.filter, *f.state, target);
   }

@@ -58,11 +58,4 @@ clickhouse::ColumnRef ClickHouseColumnFromVector(const std::string &ch_type, Vec
 //! abort) and IPv4/IPv6 (address vs text). `ch_type` is the server-declared type string.
 bool ClickHouseComparisonUnsafe(const LogicalType &duckdb_type, const std::string &ch_type);
 
-//! True when pushing an ORDER BY on a column of this type to ClickHouse can order rows
-//! differently than DuckDB (so a TOP_N must not fold): FLOAT/DOUBLE (NaN placement),
-//! UUID (internal vs canonical order), and -- via `ch_type` -- Enum and IPv4/IPv6.
-//! Narrower than the comparison set: DATE/TIMESTAMP/TIME order by the stored value
-//! identically in both engines (no literal parsing is involved).
-bool ClickHouseOrderingUnsafe(const LogicalType &duckdb_type, const std::string &ch_type);
-
 } // namespace duckdb

@@ -37,7 +37,7 @@ string ClickHouseFilterPushdown::TransformFilters(const vector<column_t> &column
 		//    can't recover -- or the column is stringified (surfaced as VARCHAR via
 		//    toString()): the shared renderer quotes the bare column, so it cannot
 		//    inject toString().
-		if (!IsVirtualColumn(column_id) && !bind_data.ColumnPushdownUnsafe(column_id, false)) {
+		if (!IsVirtualColumn(column_id) && !bind_data.ColumnPushdownUnsafe(column_id)) {
 			filter_text = dbconnector::table_scan::FilterPushdown::TransformFilter(config, bind_data.names[column_id],
 			                                                                       filter, column_id);
 		}

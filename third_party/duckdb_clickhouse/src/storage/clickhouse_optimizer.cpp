@@ -7,12 +7,13 @@ namespace duckdb {
 // The ClickHouse mirror of PostgresOptimizer: run the shared dbconnector
 // ORDER BY / LIMIT / TOP_N pushdown over the ClickHouse scans. The shared rule
 // folds the clause into the scan's remote SQL and REMOVES the local plan node,
-// so it only fires when the remote result is exactly DuckDB's; two
-// ClickHouse-specific vetoes enforce that:
-//  - order keys whose native ClickHouse ordering differs from DuckDB's (float
-//    NaN placement, UUID/Enum/IP) or that are surfaced via toString() (text
-//    order != value order) are marked in the bind data's order_key_unsafe
-//    bitmap (ClickHouseBindData::EnsureOrderKeySafety); the sort stays local.
+// so it only fires when the remote result is exactly DuckDB's:
+//  - order keys whose native ClickHouse ordering differs from DuckDB's are
+//    REWRITTEN by the shared optimizer via the ClickHouse dialect (isNaN
+//    prefix for float NaN placement, toString for UUID and text-backed
+//    columns -- which matches the local values by construction, since the
+//    read path surfaces those columns as their toString() text); compound
+//    keys nesting a divergent scalar cannot be rewritten and stay local.
 //  - fold_limit_with_table_filters=false: a scan carrying REQUIRED table
 //    filters refuses LIMIT-bearing folds -- their remote rendering may be
 //    inexact and re-applied locally, and a remote LIMIT would cut the stream
@@ -32,11 +33,11 @@ void ClickHouseOptimizer::Optimize(OptimizerExtensionInput &input, unique_ptr<Lo
 	// clickhouse_scan share the bind data, so run the rule for each name.
 	for (const char *scan_name : {"clickhouse_scan_pushdown", "clickhouse_scan"}) {
 		auto config = dbconnector::optimizer::OrderByAndLimitOptimizer::CreateConfig(
-		    input.context, "ch_order_pushdown", '`', dbconnector::query::QuoteEscapeStyle::BACKSLASH, scan_name);
-		// ClickHouse-unsafe order keys are marked per column in the bind data's
-		// order_key_unsafe bitmap (ClickHouseBindData::EnsureOrderKeySafety); the
-		// scan re-applies inexact filters locally, so LIMIT folds over a filtered
-		// scan are refused.
+		    input.context, "ch_order_pushdown", '`', dbconnector::query::QuoteEscapeStyle::BACKSLASH, scan_name,
+		    dbconnector::query::Dialect::ClickHouse);
+		// The dialect rewrites divergent order keys remotely (isNaN prefix for
+		// floats, toString for text-backed/UUID columns); the scan re-applies
+		// inexact filters locally, so LIMIT folds over a filtered scan are refused.
 		config.fold_limit_with_table_filters = false;
 		dbconnector::optimizer::OrderByAndLimitOptimizer::Optimize(config, input, plan);
 	}

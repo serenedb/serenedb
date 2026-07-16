@@ -10,9 +10,10 @@ control substitution on
 #
 # Refusal gates (no fold; TOP_N stays local): a REQUIRED filter on the scan (its
 # remote rendering may be inexact and re-applied locally AFTER a remote LIMIT
-# already cut the stream), non-column order keys, and keys whose remote ordering
-# diverges from DuckDB's (ClickHouseOrderingUnsafe: floats/UUID/Enum/IP,
-# toString()-stringified columns) -- see pushdown_divergence_chscan.
+# already cut the stream), non-column order keys, and compound keys nesting a
+# divergent scalar. Scalar keys whose native ClickHouse ordering diverges are
+# REWRITTEN instead of refused (isNaN prefix for floats, toString for UUID and
+# text-backed columns) -- see pushdown_divergence_chscan.
 #
 # Fixtures: chtest.vedernikoff (6 rows, ids 1..6), chtest.widgets (5 rows, note has
 # 2 NULLs at ids 2 and 4).

@@ -1108,23 +1108,19 @@ static bool ClickHouseTypeTextDiverges(const std::string &ch_type) {
          ch_type.find("Dynamic") != std::string::npos;
 }
 
-// The type-id switches below only see the TOP-LEVEL DuckDB type, so a divergent
+// The type-id switch below only sees the TOP-LEVEL DuckDB type, so a divergent
 // scalar nested inside a compound column (Tuple/Array/Map/Nested -> STRUCT/LIST/
 // MAP) would slip through: tupleElement(col,'f') comparisons on a Float or
 // DateTime field push as exact while the remote evaluates them differently.
 // Matched by substring on the original CH type string: floats (NaN placement),
-// UUID (half-swapped byte order) and "Decimal(" (a nested Decimal(>38) field
-// surfaces as text locally but compares/orders numerically remotely).
-static bool ClickHouseInnerOrderingDiverges(const std::string &ch_type) {
-  return ch_type.find("Float32") != std::string::npos || ch_type.find("Float64") != std::string::npos ||
-         ch_type.find("UUID") != std::string::npos || ch_type.find("Decimal(") != std::string::npos;
-}
-
-// Comparison additionally vetoes the date family ("Date" also covers Date32/
-// DateTime/DateTime64); ordering by raw epoch integers is monotone on both
-// sides, so dates stay safe as order keys.
+// UUID (half-swapped byte order), "Decimal(" (a nested Decimal(>38) field
+// surfaces as text locally but compares numerically remotely) and the date
+// family ("Date" also covers Date32/DateTime/DateTime64: literals parse in the
+// server's time zone).
 static bool ClickHouseInnerComparisonDiverges(const std::string &ch_type) {
-  return ClickHouseInnerOrderingDiverges(ch_type) || ch_type.find("Date") != std::string::npos;
+  return ch_type.find("Float32") != std::string::npos || ch_type.find("Float64") != std::string::npos ||
+         ch_type.find("UUID") != std::string::npos || ch_type.find("Decimal(") != std::string::npos ||
+         ch_type.find("Date") != std::string::npos;
 }
 
 static bool IsCompoundType(const LogicalType &duckdb_type) {
@@ -1162,18 +1158,6 @@ bool ClickHouseComparisonUnsafe(const LogicalType &duckdb_type, const std::strin
     return true;
   default:
     return (IsCompoundType(duckdb_type) && ClickHouseInnerComparisonDiverges(ch_type)) ||
-           IsTextMappedDecimal(duckdb_type, ch_type) || ClickHouseTypeTextDiverges(ch_type);
-  }
-}
-
-bool ClickHouseOrderingUnsafe(const LogicalType &duckdb_type, const std::string &ch_type) {
-  switch (duckdb_type.id()) {
-  case LogicalTypeId::FLOAT:
-  case LogicalTypeId::DOUBLE:
-  case LogicalTypeId::UUID:
-    return true;
-  default:
-    return (IsCompoundType(duckdb_type) && ClickHouseInnerOrderingDiverges(ch_type)) ||
            IsTextMappedDecimal(duckdb_type, ch_type) || ClickHouseTypeTextDiverges(ch_type);
   }
 }

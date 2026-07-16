@@ -1,14 +1,16 @@
 control substitution on
 
-# Pushdown must NOT be applied to columns whose ClickHouse comparison/ordering
-# semantics differ from DuckDB's -- pushing such a predicate can silently EXCLUDE
-# rows the local scan must return, and a local re-check cannot recover rows that
-# never crossed the wire. So these filters/orderings are kept local
-# (ClickHouseComparisonUnsafe / ClickHouseOrderingUnsafe):
-#   * Float NaN: DuckDB treats NaN as greater than everything and NaN = NaN;
-#     ClickHouse uses IEEE (NaN compares false), so `f > x` would drop NaN rows.
-#   * Enum: mapped to VARCHAR, compared by label locally but by ordinal remotely,
-#     and an unknown label ABORTS the remote query instead of returning 0 rows.
+# Columns whose ClickHouse comparison/ordering semantics differ from DuckDB's
+# must not change the result -- a wrongly pushed predicate can silently EXCLUDE
+# rows, and a local re-check cannot recover rows that never crossed the wire:
+#   * FILTERS on such columns are kept local (ClickHouseComparisonUnsafe):
+#     Float NaN (DuckDB: NaN greater than everything, NaN = NaN; ClickHouse:
+#     IEEE, so `f > x` would drop NaN rows) and Enum (compared by label locally
+#     but by ordinal remotely; an unknown label ABORTS the remote query).
+#   * ORDER keys are REWRITTEN per dialect so the remote reproduces DuckDB's
+#     order and the sort still pushes: isNaN() prefix for floats, toString()
+#     for text-backed columns (Enum labels); compound keys nesting a divergent
+#     scalar cannot be rewritten and stay local.
 # The fixture is created server-side via clickhouse_execute so it can hold a NaN.
 
 statement ok
@@ -60,13 +62,22 @@ id
 2
 
 # Enum ORDER BY is by label text in DuckDB ('apple' < 'zebra'); the native CH
-# order is by ordinal (zebra=1 < apple=2). A folded remote TOP_N would ship the
-# 'zebra' row; the correct answer is 'apple'.
+# order is by ordinal (zebra=1 < apple=2). The fold now pushes ORDER BY
+# toString(e), which sorts by label on the server too -- the answer must still
+# be 'apple', now computed remotely.
 query
 SELECT e FROM chdiv.default.pdiv ORDER BY e LIMIT 1;
 ----
 e
 apple
+
+# Float ORDER BY folds with an isNaN() prefix key that pins NaN to the greatest
+# position like DuckDB: DESC LIMIT 1 must ship exactly the NaN row.
+query
+SELECT id FROM chdiv.default.pdiv ORDER BY f DESC LIMIT 1;
+----
+id
+2
 
 statement ok
 DROP TABLE chdiv.default.pdiv;

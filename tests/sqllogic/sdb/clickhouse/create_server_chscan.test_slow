@@ -146,3 +146,46 @@ DROP SERVER a.b;
 
 statement error
 CREATE USER MAPPING FOR PUBLIC SERVER a.b OPTIONS (user 'x');
+
+# PG parity: DATA is required -- FOREIGN WRAPPER is a syntax error, like PG.
+statement error
+CREATE SERVER cs_nodata FOREIGN WRAPPER clickhouse_fdw OPTIONS (host 'x');
+
+# PG parity: the mapped role is a ColId -- a reserved keyword is a syntax
+# error, not a role literally named "select".
+statement error
+CREATE USER MAPPING FOR select SERVER cs_x OPTIONS (user 'x');
+
+# PG parity: CURRENT_ROLE and SESSION_USER are accepted role specs (PG's
+# auth_ident); both resolve to the connected superuser here.
+statement ok
+CREATE SERVER cs_roles FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+
+statement ok
+CREATE USER MAPPING FOR CURRENT_ROLE SERVER cs_roles OPTIONS (user 'default');
+
+query
+SELECT usename FROM pg_user_mappings WHERE srvname = 'cs_roles';
+----
+usename
+postgres
+
+statement ok
+DROP USER MAPPING FOR CURRENT_ROLE SERVER cs_roles;
+
+statement ok
+CREATE USER MAPPING FOR SESSION_USER SERVER cs_roles OPTIONS (user 'default');
+
+statement ok
+DROP USER MAPPING FOR SESSION_USER SERVER cs_roles;
+
+statement ok
+DROP SERVER cs_roles;
+
+# PG parity: DROP USER MAPPING with a missing SERVER blames the server, not
+# the mapping.
+statement error
+DROP USER MAPPING FOR postgres SERVER cs_missing_srv;
+----
+db error: ERROR: server "cs_missing_srv" does not exist<slt:ignore>

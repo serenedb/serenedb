@@ -24,6 +24,7 @@
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 
+#include <atomic>
 #include <cctype>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/common/enums/on_create_conflict.hpp>
@@ -126,7 +127,6 @@ std::string QuoteSqlIdentifier(std::string_view name) {
 }
 
 std::string RedactConnstrSecrets(std::string_view text) {
-  static constexpr std::string_view kSecretKeys[] = {"password", "passwd"};
   auto is_ident = [](char c) {
     return (std::isalnum(static_cast<unsigned char>(c)) != 0) || c == '_';
   };
@@ -134,16 +134,21 @@ std::string RedactConnstrSecrets(std::string_view text) {
   out.reserve(text.size());
   size_t i = 0;
   while (i < text.size()) {
-    bool matched = false;
-    for (const auto key : kSecretKeys) {
-      // Match `<key>=` where <key> is a whole word (not a suffix of a longer
-      // identifier such as "xpassword=").
-      if (i + key.size() < text.size() &&
-          absl::EqualsIgnoreCase(text.substr(i, key.size()), key) &&
-          text[i + key.size()] == '=' && (i == 0 || !is_ident(text[i - 1]))) {
+    // Match `<key>=` where <key> is a whole word (not a suffix of a longer
+    // identifier). Fail-closed like Options::IsSecretKey: any key not on the
+    // plain allow-list gets its value redacted -- over-redacting free text in
+    // an error message is the safe direction.
+    if (is_ident(text[i]) && (i == 0 || !is_ident(text[i - 1]))) {
+      size_t key_end = i;
+      while (key_end < text.size() && is_ident(text[key_end])) {
+        ++key_end;
+      }
+      const auto key = text.substr(i, key_end - i);
+      if (key_end < text.size() && text[key_end] == '=' &&
+          Options::IsSecretKey(key)) {
         out.append(key);
         out += "=<redacted>";
-        size_t j = i + key.size() + 1;  // first char of the value
+        size_t j = key_end + 1;  // first char of the value
         if (j < text.size() && text[j] == '\'') {
           // DSN-quoted value: skip to the closing unescaped quote (\' and \\
           // are escapes, as libpq DSN quoting emits).
@@ -163,14 +168,14 @@ std::string RedactConnstrSecrets(std::string_view text) {
           }
         }
         i = j;
-        matched = true;
-        break;
+        continue;
       }
+      out.append(text.substr(i, key_end - i));
+      i = key_end;
+      continue;
     }
-    if (!matched) {
-      out += text[i];
-      ++i;
-    }
+    out += text[i];
+    ++i;
   }
   return out;
 }
@@ -213,11 +218,19 @@ std::shared_ptr<Object> ForeignServer::Clone() const {
 }
 
 std::string MakeForeignServerSecretName(std::string_view alias) {
+  // The temporary-secret store is instance-global while sanitized aliases can
+  // collide (distinct names mapping to one sanitized form, or same-named
+  // servers in different databases); registration REPLACEs and drop is
+  // by-name, so a bare alias would let concurrent attaches swap or drop each
+  // other's credentials mid-window. The counter makes every attach's secret
+  // name private to the Prepare/Drop pair that generated it.
+  static std::atomic<uint64_t> counter{0};
   std::string out = "__sdb_fdw_secret_";
   for (char c : alias) {
     out +=
       (std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_') ? c : '_';
   }
+  absl::StrAppend(&out, "_", counter.fetch_add(1, std::memory_order_relaxed));
   return out;
 }
 
@@ -239,8 +252,12 @@ std::string PrepareForeignServerAttach(duckdb::ClientContext& context,
   for (const auto& [key, value] :
        MergeConnectionOptions(storage, server, public_mapping)) {
     secret->secret_map[duckdb::Identifier{key}] = duckdb::Value(value);
+    // Fail-closed: everything not on the plain allow-list stays hidden from
+    // duckdb_secrets() for the attach window's duration.
+    if (Options::IsSecretKey(key)) {
+      secret->redact_keys.insert(duckdb::Identifier{key});
+    }
   }
-  secret->redact_keys = {"password"};
 
   auto& secret_manager = duckdb::SecretManager::Get(context);
   // RegisterSecret needs an active transaction; these attach paths run on a

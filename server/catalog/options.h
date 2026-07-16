@@ -45,13 +45,37 @@ class Options {
     SDB_ASSERT(_keys.size() == _values.size());
   }
 
-  // The one shared secrecy rule for option values (clickhouse accepts both
-  // `password` and `passwd`), matched case-insensitively. Used by the pg
-  // catalog views' redaction and any future dump tooling.
-  static bool IsSecretKey(std::string_view key) {
-    return absl::EqualsIgnoreCase(key, "password") ||
-           absl::EqualsIgnoreCase(key, "passwd");
+  // The one shared secrecy rule for option values, matched case-insensitively.
+  // Fail-closed: only connection-addressing / client-behavior keys are plain;
+  // every unrecognized key is treated as a secret, because the connectors keep
+  // growing credential-bearing options (password/passwd, sslpassword,
+  // oauth_client_secret, scram_*_key, uri with user:pass@host). Used by the pg
+  // catalog views' redaction, the connstr/error redactor, the transient attach
+  // secret's redact_keys, and any future dump tooling.
+  static bool IsPlainKey(std::string_view key) {
+    static constexpr std::string_view kPlainKeys[] = {"host",
+                                                      "hostaddr",
+                                                      "port",
+                                                      "user",
+                                                      "username",
+                                                      "dbname",
+                                                      "database",
+                                                      "schema",
+                                                      "sslmode",
+                                                      "sslrootcert",
+                                                      "secure",
+                                                      "compression",
+                                                      "connect_timeout",
+                                                      "read_timeout",
+                                                      "application_name"};
+    for (const auto plain : kPlainKeys) {
+      if (absl::EqualsIgnoreCase(key, plain)) {
+        return true;
+      }
+    }
+    return false;
   }
+  static bool IsSecretKey(std::string_view key) { return !IsPlainKey(key); }
 
   size_t Size() const noexcept { return _keys.size(); }
   bool Empty() const noexcept { return _keys.empty(); }

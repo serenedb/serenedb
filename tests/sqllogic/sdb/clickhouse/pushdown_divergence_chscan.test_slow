@@ -71,5 +71,43 @@ apple
 statement ok
 DROP TABLE chdiv.default.pdiv;
 
+# ===== nested divergent types: a Tuple field must behave like a top-level =====
+# column of that type. The vetoes key on the ORIGINAL ClickHouse type string,
+# so Tuple(f Float64) is comparison- and ordering-unsafe exactly like a bare
+# Float64: tupleElement filters stay local and ORDER BY the tuple stays local.
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}',
+  'CREATE TABLE default.pdiv_t (id Int64, s Tuple(f Float64)) ENGINE = MergeTree ORDER BY id');
+----
+n
+1
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}',
+  'INSERT INTO default.pdiv_t VALUES (1, tuple(0.1)), (2, tuple(nan)), (3, tuple(5.0))');
+----
+n
+1
+
+# NaN > 0.5 is TRUE in DuckDB; a pushed tupleElement(s,'f') > 0.5 would drop
+# the NaN row on the server.
+query
+SELECT id FROM chdiv.default.pdiv_t WHERE (s).f > 0.5 ORDER BY id;
+----
+id
+2
+3
+
+# ORDER BY the tuple column: DuckDB sorts NaN above everything, so DESC LIMIT 1
+# is the NaN row; ClickHouse's IEEE ordering would pick id=3 (5.0) instead.
+query
+SELECT id FROM chdiv.default.pdiv_t ORDER BY s DESC LIMIT 1;
+----
+id
+2
+
+statement ok
+DROP TABLE chdiv.default.pdiv_t;
+
 statement ok
 DETACH chdiv;

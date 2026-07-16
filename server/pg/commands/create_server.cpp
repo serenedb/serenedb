@@ -90,12 +90,16 @@ void RunDetach(std::string_view name) {
   catalog::DetachForeignServerAttachment(name);
 }
 
-// Resolve a USER MAPPING role spec: CURRENT_USER/USER -> the session user;
-// PUBLIC stays "public"; otherwise the literal role name.
+// Resolve a USER MAPPING role spec: CURRENT_USER/USER/CURRENT_ROLE -> the
+// current user, SESSION_USER -> the authenticated session user (they differ
+// after SET ROLE); PUBLIC stays "public"; otherwise the literal role name.
 std::string ResolveRole(ConnectionContext& conn_ctx, std::string_view user) {
   const auto lower = absl::AsciiStrToLower(user);
-  if (lower == "current_user" || lower == "user") {
+  if (lower == "current_user" || lower == "user" || lower == "current_role") {
     return std::string{conn_ctx.user()};
+  }
+  if (lower == "session_user") {
+    return conn_ctx.SessionUserName();
   }
   if (lower == "public") {
     return "public";
@@ -185,6 +189,18 @@ void ReattachServer(ObjectId db_id, std::string_view server_name,
     }
     SDB_WARN(GENERAL, "Re-attach of foreign server \"", server_name,
              "\" failed after a successful probe: ", err);
+    return;
+  }
+  // The probe and swap run without the catalog lock (they hit the network); a
+  // concurrent DROP SERVER may have removed the catalog row -- and detached
+  // the OLD attachment -- while they ran. An attachment without a catalog row
+  // is unreachable for cleanup and squats on the global alias until restart,
+  // so re-check and undo. (If the drop's detach lands after our attach
+  // instead, it removes ours by name -- either interleaving converges on
+  // "no row, no attachment".)
+  if (!catalog::GetCatalog().GetCatalogSnapshot()->GetForeignServer(
+        db_id, server_name)) {
+    conn->Query(DetachSql(server_name));
   }
 }
 
@@ -209,6 +225,26 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
     }
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
                     ERR_MSG("server \"", name, "\" already exists"));
+  }
+  // The live attachment alias is instance-global while catalog names are
+  // per-database: reject a name owned by ANY database before touching the
+  // remote, naming the owner. Without this the collision surfaces as a bogus
+  // connection error -- or not at all when the other server's attachment is
+  // currently down, after which DROP DATABASE there would detach OUR live
+  // attachment. (The catalog re-checks under its lock; this is the UX gate.)
+  {
+    auto snapshot = catalog.GetCatalogSnapshot();
+    for (const auto& db : snapshot->GetDatabases()) {
+      if (db->GetId() != db_id &&
+          snapshot->GetForeignServer(db->GetId(), name)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+          ERR_MSG("server \"", name, "\" already exists in database \"",
+                  db->GetName(), "\""),
+          ERR_HINT("Foreign server attachment names are instance-wide; "
+                   "choose a name not used by any database."));
+      }
+    }
   }
 
   // Owner = the creating role; the default ACL then gives the owner USAGE and
@@ -330,6 +366,11 @@ void DropUserMapping(ConnectionContext& conn_ctx, std::string_view user,
                                conn_ctx.GetDatabase(), server, role,
                                /*cascade=*/false)) {
     if (!missing_ok) {
+      // PG blames the server when the server itself is what's missing.
+      if (!catalog.GetCatalogSnapshot()->GetForeignServer(db_id, server)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                        ERR_MSG("server \"", server, "\" does not exist"));
+      }
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                       ERR_MSG("user mapping for \"", role, "\" on server \"",
                               server, "\" does not exist"));

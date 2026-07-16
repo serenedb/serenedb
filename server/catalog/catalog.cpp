@@ -2886,6 +2886,26 @@ bool Catalog::CreateForeignServer(const AccessContext& ax, ObjectId database_id,
                          database_id, foreign_server->GetName())) {
     return false;
   }
+  // Catalog names are per-database, but the live attachment alias is
+  // instance-global: a second same-named server would race the first for the
+  // alias (nondeterministic boot winner; DROP DATABASE detaching the other
+  // database's attachment). Reject up front, naming the owner. The create-time
+  // ATTACH cannot be relied on for this -- it only collides while the first
+  // server's attachment is live, not when its remote is down.
+  for (const auto& db : _snapshot->GetDatabases()) {
+    if (db->GetId() == database_id) {
+      continue;
+    }
+    if (_snapshot->GetObjectId<ResolveType::ForeignServer>(
+          db->GetId(), foreign_server->GetName())) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+        ERR_MSG("server \"", foreign_server->GetName(),
+                "\" already exists in database \"", db->GetName(), "\""),
+        ERR_HINT("Foreign server attachment names are instance-wide; "
+                 "choose a name not used by any database."));
+    }
+  }
   foreign_server->SetParentId(database_id);
 
   Apply(
@@ -2919,6 +2939,17 @@ bool Catalog::CreateUserMapping(const AccessContext& ax, ObjectId database_id,
   if (if_not_exists && _snapshot->GetObjectId<ResolveType::UserMapping>(
                          server_id, user_mapping->GetName())) {
     return false;
+  }
+  // Re-check the mapped role under the lock: the command layer resolved it on
+  // an earlier snapshot, and the DROP-ROLE-blocking dependency edge is only
+  // added by the registration below -- a concurrent DROP ROLE in that window
+  // would otherwise leave an orphan mapping for a dead role. PUBLIC mappings
+  // carry no role id.
+  if (user_mapping->GetRoleId().isSet() &&
+      !_snapshot->GetObject<Role>(user_mapping->GetRoleId())) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+      ERR_MSG("role \"", user_mapping->GetName(), "\" does not exist"));
   }
   user_mapping->SetParentId(server_id);
 
@@ -3183,6 +3214,30 @@ void Catalog::ChangeRoleImpl(
   callback(*role, new_role_ptr);
   if (!new_role_ptr) {
     return;
+  }
+  // User mappings resolve by the mapped role's NAME under their server (PG
+  // keys them by oid); a rename would strand every mapping for this role --
+  // undroppable by either name, yet still shown by pg_user_mappings. Block
+  // the rename like DROP ROLE is blocked, until mappings are re-keyed.
+  if (new_role_ptr->GetName() != role->GetName()) {
+    for (const auto& db : _snapshot->GetDatabases()) {
+      for (const auto& server : _snapshot->GetForeignServers(db->GetId())) {
+        for (const auto& mapping :
+             _snapshot->GetUserMappings(server->GetId())) {
+          if (mapping->GetRoleId() == role->GetId()) {
+            THROW_SQL_ERROR(
+              ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+              ERR_MSG("role \"", name,
+                      "\" cannot be renamed because user mappings depend on "
+                      "it"),
+              ERR_DETAIL("user mapping for \"", name, "\" on server \"",
+                         server->GetName(), "\" depends on role \"", name,
+                         "\""),
+              ERR_HINT("Drop the user mapping(s) first."));
+          }
+        }
+      }
+    }
   }
   // A change may only add privileged attributes the actor holds itself.
   RequireAttributesGrantable(*_snapshot, actor_id,

@@ -216,3 +216,102 @@ DROP SERVER fc_atomic CASCADE;
 
 statement ok
 DROP SERVER fc_drop CASCADE;
+
+# Rerun hygiene: a previously aborted run on a long-lived instance may have
+# left these behind (databases/servers/roles are instance-global).
+statement ok
+DROP SERVER IF EXISTS fc_failclosed CASCADE;
+
+statement ok
+DROP SERVER IF EXISTS fc_xsrv CASCADE;
+
+statement ok
+DROP DATABASE IF EXISTS fc_xdb;
+
+statement ok
+DROP SERVER IF EXISTS fc_rensrv CASCADE;
+
+statement ok
+DROP ROLE IF EXISTS fc_ren;
+
+statement ok
+DROP ROLE IF EXISTS fc_ren2;
+
+# ===== E: fail-closed redaction -- unrecognized option keys are secrets =====
+# The connectors keep growing credential-bearing keys (sslpassword, uri,
+# oauth_client_secret, ...); serenedb cannot enumerate them all, so redaction
+# is an allow-list: any key that is not plain connection addressing is redacted
+# in the world-readable srvoptions. Plain keys stay visible.
+statement ok
+CREATE SERVER fc_failclosed FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner',
+           password 'pass word', sslpassword 'sup3r secret');
+
+query
+SELECT array_to_string(srvoptions, ' ') NOT LIKE '%sup3r secret%' AS redacted,
+       array_to_string(srvoptions, ' ') LIKE '%database=chtest%' AS plain_visible
+FROM pg_foreign_server WHERE srvname = 'fc_failclosed';
+----
+redacted	plain_visible
+t	t
+
+statement ok
+DROP SERVER fc_failclosed CASCADE;
+
+# ===== F: server names are instance-global (the attach alias is) =====
+# Catalog rows are per-database, but the live attachment alias is shared by
+# the whole instance: a same-named server in another database is rejected up
+# front, naming the owner -- otherwise DROP DATABASE would detach the other
+# database's live attachment and boot replay would pick a random winner.
+statement ok
+CREATE SERVER fc_xsrv FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner', password 'pass word');
+
+statement ok
+CREATE DATABASE fc_xdb;
+
+connection c_xdb database=fc_xdb
+statement error
+CREATE SERVER fc_xsrv FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+----
+db error: ERROR: server "fc_xsrv" already exists in database<slt:ignore>
+
+
+connection default
+statement ok
+DROP DATABASE fc_xdb;
+
+statement ok
+DROP SERVER fc_xsrv CASCADE;
+
+# ===== G: ALTER ROLE RENAME is blocked while a mapping references the role =====
+# Mappings resolve by the mapped role's NAME under their server (PG keys them
+# by oid); renaming would strand the mapping -- undroppable under either name.
+statement ok
+CREATE ROLE fc_ren LOGIN PASSWORD 'fc_ren_pw';
+
+statement ok
+CREATE SERVER fc_rensrv FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner', password 'pass word');
+
+statement ok
+CREATE USER MAPPING FOR fc_ren SERVER fc_rensrv OPTIONS (user 'scanner');
+
+statement error
+ALTER ROLE fc_ren RENAME TO fc_ren2;
+----
+db error: ERROR: role "fc_ren" cannot be renamed because user mappings depend on it<slt:ignore>
+
+
+statement ok
+DROP USER MAPPING FOR fc_ren SERVER fc_rensrv;
+
+statement ok
+ALTER ROLE fc_ren RENAME TO fc_ren2;
+
+statement ok
+DROP SERVER fc_rensrv CASCADE;
+
+statement ok
+DROP ROLE fc_ren2;

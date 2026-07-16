@@ -465,16 +465,31 @@ memory::managed_ptr<VectorDistanceIterator> MakeRawReranker(
     state.estimation);
 }
 
-class DisjointClusterUnion : public CollectOnlyDocIterator {
+class DisjointClusterUnion : public DocIterator {
  public:
-  DisjointClusterUnion(std::vector<DocIterator::ptr>&& itrs,
+  DisjointClusterUnion(std::vector<QVectorIterator::ptr>&& itrs,
                        doc_id_t docs_count)
-    : _itrs{std::move(itrs)} {
-    std::get<CostAttr>(_attrs).reset(docs_count);
+    : _itrs{std::move(itrs)}, _attrs{docs_count} {}
+
+  doc_id_t advance() final { SDB_UNREACHABLE(); }
+  doc_id_t seek(doc_id_t) final { SDB_UNREACHABLE(); }
+  uint32_t count() final { SDB_UNREACHABLE(); }
+  uint32_t EmitDocs(doc_id_t*, doc_id_t) final { SDB_UNREACHABLE(); }
+  uint32_t EmitScoredDocs(doc_id_t*, score_t*, doc_id_t, const ScoreFunction&,
+                          ColumnArgsFetcher*, doc_id_t) final {
+    SDB_UNREACHABLE();
+  }
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t, doc_id_t, uint64_t*,
+                                      FillBlockScoreContext,
+                                      FillBlockMatchContext) final {
+    SDB_UNREACHABLE();
   }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
+    if (type == Type<CostAttr>::id()) {
+      return &_attrs;
+    }
+    return nullptr;
   }
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
@@ -495,9 +510,9 @@ class DisjointClusterUnion : public CollectOnlyDocIterator {
   }
 
  private:
-  std::vector<DocIterator::ptr> _itrs;
+  std::vector<QVectorIterator::ptr> _itrs;
   std::vector<ScoreFunction> _scorers;
-  std::tuple<CostAttr> _attrs;
+  CostAttr _attrs;
 };
 
 }  // namespace

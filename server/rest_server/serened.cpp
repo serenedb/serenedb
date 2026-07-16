@@ -100,6 +100,12 @@ int RunServer(int argc, char** argv) {
         // immediately instead of spinning until search.stop() below.
         search.RequestStop();
       }
+      if (up_background) {
+        // The stop flag above is only observed once a sleeper wakes: cancel the
+        // armed delay timers so the loops see it now instead of when a
+        // stretched refresh timer (up to 5x the interval) expires.
+        background.CancelDelays();
+      }
       if (up_network) {
         // Stop taking new connections early, but keep the io pool alive: the
         // search/background loops below still drain their timers on it.

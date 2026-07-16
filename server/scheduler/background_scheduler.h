@@ -20,13 +20,19 @@
 
 #pragma once
 
+#include <absl/container/flat_hash_set.h>
+#include <absl/synchronization/mutex.h>
+
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <yaclib/async/future.hpp>
 #include <yaclib/async/run.hpp>
 #include <yaclib/exe/executor.hpp>
 #include <yaclib/runtime/fair_thread_pool.hpp>
 #include <yaclib/util/intrusive_ptr.hpp>
+
+#include "basics/asio_ns.h"
 
 namespace sdb {
 
@@ -64,12 +70,22 @@ class BackgroundScheduler final {
 
   yaclib::IExecutor& executor() noexcept { return *_pool; }
 
-  // Completes after `d` (best-effort; immediate if the io pool is unavailable).
+  // Completes after `d` (best-effort; immediate if the io pool is unavailable
+  // or CancelDelays() has run).
   yaclib::Future<> Delay(clock::duration d);
+
+  // Shutdown: wake every armed Delay and complete future ones immediately.
+  // Stop flags are only checked when a sleeper wakes, so without this a loop
+  // parked on a long timer (e.g. a stretched refresh delay) holds up its join
+  // for the timer's remainder.
+  void CancelDelays();
 
  private:
   std::uint64_t _threads;
   yaclib::IntrusivePtr<yaclib::FairThreadPool> _pool;
+  absl::Mutex _delays_mutex;
+  absl::flat_hash_set<std::shared_ptr<asio_ns::steady_timer>> _delays;
+  bool _delays_cancelled = false;
 };
 
 }  // namespace sdb

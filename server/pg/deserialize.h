@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <unicode/calendar.h>
+
 #include <duckdb/common/operator/cast_operators.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/value.hpp>
@@ -30,6 +32,7 @@
 #include <string_view>
 #include <vector>
 
+#include "basics/containers/flat_hash_map.h"
 #include "basics/containers/node_hash_map.h"
 #include "pg/serialize.h"
 
@@ -44,7 +47,15 @@ struct RecordDeserializers;
 struct DeserializeContext {
   const catalog::Snapshot* snapshot = nullptr;
   std::unique_ptr<RecordDeserializers> record_cache;
+  std::unique_ptr<icu::Calendar> session_calendar;
+  containers::FlatHashMap<std::string, std::unique_ptr<icu::Calendar>>
+    named_calendars;
+
+  icu::Calendar* CalendarFor(std::string_view tz_name);
 };
+
+void FillDeserializeContext(duckdb::ClientContext& client,
+                            DeserializeContext& context);
 
 // A decoder parses the PG-wire bytes of one field and stores the result through
 // a Sink. Two sinks share one set of decoders: COPY FROM decodes directly into

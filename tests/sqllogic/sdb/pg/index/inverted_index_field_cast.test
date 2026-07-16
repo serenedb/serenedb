@@ -1,0 +1,58 @@
+statement ok
+SET TIME ZONE 'UTC';
+
+statement ok
+CREATE TABLE mfc(pk INTEGER PRIMARY KEY, ts TIMESTAMP);
+
+statement ok
+CREATE INDEX mfc_ts_expr ON mfc USING inverted(pk, (ts + INTERVAL '1 hour'));
+
+statement ok
+CREATE INDEX mfc_int_expr ON mfc USING inverted(pk, (pk * 2));
+
+statement count 2
+INSERT INTO mfc VALUES
+    (1, TIMESTAMP '2024-01-01 00:00:00'),
+    (2, TIMESTAMP '2024-06-15 12:00:00');
+
+statement ok
+VACUUM (REFRESH_TABLE) mfc;
+
+query
+SELECT pk FROM mfc_ts_expr
+WHERE (ts + INTERVAL '1 hour') >= TIMESTAMP '2024-03-01 00:00:00' ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM mfc_ts_expr
+WHERE (ts + INTERVAL '1 hour')::TIMESTAMPTZ >= TIMESTAMPTZ '2024-03-01 00:00:00+00' ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM mfc_ts_expr
+WHERE (ts + INTERVAL '1 hour')::TIMESTAMPTZ < TIMESTAMPTZ '2024-03-01 00:00:00+00' ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM mfc_int_expr WHERE (pk * 2) >= 3 ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM mfc_int_expr WHERE (pk * 2) < 3000000000 ORDER BY pk;
+----
+pk
+1
+2
+
+query
+SELECT pk FROM mfc_int_expr WHERE (pk * 2) >= 3000000000 ORDER BY pk;
+----
+pk

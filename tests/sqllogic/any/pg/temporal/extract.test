@@ -1,0 +1,119 @@
+# extract / date_part / date_trunc across DATE, TIME, TIMESTAMP, TIMESTAMPTZ,
+# INTERVAL. Every extract is cast to INT/BIGINT so numeric-vs-double rendering
+# differences between the two databases cannot leak into the output. Session is
+# pinned to UTC so TIMESTAMPTZ fields are deterministic.
+
+statement ok
+SET TIME ZONE 'UTC';
+
+query
+SELECT
+  extract(year FROM DATE '2024-03-09')::INT AS y,
+  extract(quarter FROM DATE '2024-03-09')::INT AS q,
+  extract(month FROM DATE '2024-03-09')::INT AS mon,
+  extract(week FROM DATE '2024-03-09')::INT AS w,
+  extract(day FROM DATE '2024-03-09')::INT AS d,
+  extract(dow FROM DATE '2024-03-09')::INT AS dow,
+  extract(isodow FROM DATE '2024-03-09')::INT AS isodow,
+  extract(doy FROM DATE '2024-03-09')::INT AS doy,
+  extract(century FROM DATE '2024-03-09')::INT AS c,
+  extract(decade FROM DATE '2024-03-09')::INT AS dec;
+----
+y	q	mon	w	d	dow	isodow	doy	c	dec
+2024	1	3	10	9	6	6	69	21	202
+
+query
+SELECT
+  extract(isoyear FROM DATE '2023-01-01')::INT AS isoy,
+  extract(week FROM DATE '2023-01-01')::INT AS w,
+  extract(dow FROM DATE '2023-01-01')::INT AS dow;
+----
+isoy	w	dow
+2022	52	0
+
+query
+SELECT
+  extract(hour FROM TIMESTAMP '2024-03-09 15:20:30')::INT AS h,
+  extract(minute FROM TIMESTAMP '2024-03-09 15:20:30')::INT AS m,
+  extract(second FROM TIMESTAMP '2024-03-09 15:20:30')::INT AS s,
+  extract(epoch FROM TIMESTAMP '2024-03-09 15:20:30')::BIGINT AS ep;
+----
+h	m	s	ep
+15	20	30	1709997630
+
+query
+SELECT
+  date_part('year', TIMESTAMP '2024-03-09 15:20:30')::INT AS y,
+  date_part('hour', TIMESTAMP '2024-03-09 15:20:30')::INT AS h;
+----
+y	h
+2024	15
+
+query
+SELECT
+  extract(hour FROM TIMESTAMPTZ '2024-03-09 15:20:30+02')::INT AS h_utc,
+  extract(epoch FROM TIMESTAMPTZ '2024-03-09 15:20:30+02')::BIGINT AS ep;
+----
+h_utc	ep
+13	1709990430
+
+query
+SELECT
+  extract(hour FROM TIME '15:20:30.123456')::INT AS h,
+  extract(minute FROM TIME '15:20:30.123456')::INT AS m,
+  extract(epoch FROM TIME '15:20:30.123456')::BIGINT AS sec_of_day;
+----
+h	m	sec_of_day
+15	20	55230
+
+query
+SELECT
+  extract(year FROM INTERVAL '14 months')::INT AS y,
+  extract(month FROM INTERVAL '14 months')::INT AS mon,
+  extract(day FROM INTERVAL '40 days')::INT AS d,
+  extract(hour FROM INTERVAL '26:30:00')::INT AS h;
+----
+y	mon	d	h
+1	2	40	26
+
+query
+SELECT date_trunc('hour', TIMESTAMP '2024-03-09 15:20:30') AS hr;
+----
+hr
+2024-03-09 15:00:00
+
+query
+SELECT date_trunc('day', TIMESTAMP '2024-03-09 15:20:30') AS day;
+----
+day
+2024-03-09 00:00:00
+
+query
+SELECT date_trunc('week', TIMESTAMP '2024-03-09 15:20:30') AS wk;
+----
+wk
+2024-03-04 00:00:00
+
+query
+SELECT date_trunc('month', TIMESTAMP '2024-03-09 15:20:30') AS mon;
+----
+mon
+2024-03-01 00:00:00
+
+query
+SELECT date_trunc('quarter', TIMESTAMP '2024-05-09 15:20:30') AS q;
+----
+q
+2024-04-01 00:00:00
+
+query
+SELECT date_trunc('year', TIMESTAMP '2024-03-09 15:20:30') AS yr;
+----
+yr
+2024-01-01 00:00:00
+
+query
+SELECT date_trunc('day', TIMESTAMPTZ '2024-03-09 15:20:30+02') AS day_tz;
+----
+day_tz
+2024-03-09 00:00:00+00

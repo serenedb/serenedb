@@ -1,0 +1,137 @@
+control substitution on
+
+# Binary COPY of the sub-precision temporal types at their edges: ±infinity
+# sentinels, the 1677/2262 int64 nanos limits, BC timestamps, and sub-second
+# boundaries. The PG temporal types are covered cross-validated in
+# any/pg/temporal/copy_binary.test.
+
+statement ok
+SET TIME ZONE 'UTC';
+
+statement ok
+CREATE TABLE tbnd_src
+(
+  id    INTEGER PRIMARY KEY,
+  ts    TIMESTAMP,
+  ts_s  TIMESTAMP_S,
+  ts_ms TIMESTAMP_MS,
+  ts_ns TIMESTAMP_NS,
+  tz_ns TIMESTAMPTZ_NS,
+  t_ns  TIME_NS
+);
+
+statement ok
+CREATE TABLE tbnd_dst
+(
+  id    INTEGER PRIMARY KEY,
+  ts    TIMESTAMP,
+  ts_s  TIMESTAMP_S,
+  ts_ms TIMESTAMP_MS,
+  ts_ns TIMESTAMP_NS,
+  tz_ns TIMESTAMPTZ_NS,
+  t_ns  TIME_NS
+);
+
+statement count 5
+INSERT INTO tbnd_src VALUES
+    (1, '0001-01-01 00:00:00',
+        '0001-01-01 00:00:00', '0001-01-01 00:00:00.001',
+        '1677-09-22 00:00:00', '1677-09-22 00:00:00+00',
+        '00:00:00.000001'),
+    (2, '9999-12-31 23:59:59.999999',
+        '9999-12-31 23:59:59', '9999-12-31 23:59:59.999',
+        '2262-04-11 23:47:16.854775', '2262-04-11 23:47:16.854775+00',
+        '23:59:59.999999'),
+    (3, '4713-01-01 (BC) 00:00:00',
+        NULL, NULL,
+        NULL, NULL,
+        NULL),
+    (4, '-infinity',
+        '-infinity', '-infinity',
+        '-infinity', '-infinity',
+        NULL),
+    (5, 'infinity',
+        'infinity', 'infinity',
+        'infinity', 'infinity',
+        NULL);
+
+statement count 5
+COPY tbnd_src TO '${__TEST_DIR__}/copy_binary_tbnd.bin' (FORMAT binary);
+
+statement count 5
+COPY tbnd_dst FROM '${__TEST_DIR__}/copy_binary_tbnd.bin' (FORMAT binary);
+
+query
+SELECT
+  (SELECT count(*) FROM (SELECT * FROM tbnd_src EXCEPT SELECT * FROM tbnd_dst) a)
+  + (SELECT count(*) FROM (SELECT * FROM tbnd_dst EXCEPT SELECT * FROM tbnd_src) b)
+  AS diff;
+----
+diff
+0
+
+query
+SELECT year(ts) AS y_ts, year(ts_s) AS y_s, year(ts_ms) AS y_ms,
+       year(ts_ns) AS y_ns, year(tz_ns::TIMESTAMP_NS) AS y_tzns
+FROM tbnd_dst WHERE id = 1;
+----
+y_ts	y_s	y_ms	y_ns	y_tzns
+1	1	1	1677	1677
+
+query
+SELECT year(ts) AS y_ts, year(ts_s) AS y_s, year(ts_ms) AS y_ms,
+       year(ts_ns) AS y_ns, year(tz_ns::TIMESTAMP_NS) AS y_tzns
+FROM tbnd_dst WHERE id = 2;
+----
+y_ts	y_s	y_ms	y_ns	y_tzns
+9999	9999	9999	2262	2262
+
+query
+SELECT year(ts) AS y_ts FROM tbnd_dst WHERE id = 3;
+----
+y_ts
+-4712
+
+query
+SELECT count(*) AS neg FROM tbnd_dst
+WHERE ts    = '-infinity'::TIMESTAMP
+  AND ts_s  = '-infinity'::TIMESTAMP_S
+  AND ts_ms = '-infinity'::TIMESTAMP_MS
+  AND ts_ns = '-infinity'::TIMESTAMP_NS
+  AND tz_ns = '-infinity'::TIMESTAMPTZ_NS;
+----
+neg
+1
+
+query
+SELECT count(*) AS pos FROM tbnd_dst
+WHERE ts    = 'infinity'::TIMESTAMP
+  AND ts_s  = 'infinity'::TIMESTAMP_S
+  AND ts_ms = 'infinity'::TIMESTAMP_MS
+  AND ts_ns = 'infinity'::TIMESTAMP_NS
+  AND tz_ns = 'infinity'::TIMESTAMPTZ_NS;
+----
+pos
+1
+
+query
+SELECT hour(t_ns) AS h1 FROM tbnd_dst WHERE id = 1;
+----
+h1
+0
+
+query
+SELECT count(*) AS us_micros FROM tbnd_dst
+WHERE id = 2
+  AND ts = '9999-12-31 23:59:59.999999'::TIMESTAMP
+  AND ts_ns = '2262-04-11 23:47:16.854775'::TIMESTAMP_NS
+  AND t_ns = '23:59:59.999999'::TIME_NS;
+----
+us_micros
+1
+
+statement ok
+DROP TABLE tbnd_src;
+
+statement ok
+DROP TABLE tbnd_dst;

@@ -1,0 +1,84 @@
+# avg and approx_quantile resolve to native per-type overloads for the
+# extended-precision temporal types (TIMESTAMP_S/MS/NS) and, for quantiles,
+# FLOAT: the result keeps the input type instead of being cast to
+# TIMESTAMP / DOUBLE. avg is exact (hugeint accumulation); approx_quantile is
+# a t-digest over doubles, so its sub-microsecond ns digits are approximate --
+# pinned by type + second bucket there, by exact value where the double is
+# exact (s/ms/float).
+
+statement ok
+SET TIME ZONE 'UTC';
+
+statement ok
+CREATE TABLE agg(
+  f FLOAT,
+  ts_s TIMESTAMP_S, ts_ms TIMESTAMP_MS, ts_ns TIMESTAMP_NS
+);
+
+statement count 3
+INSERT INTO agg VALUES
+  (1.5, '2024-01-01 00:00:00', '2024-01-01 00:00:00.100', '2024-01-01 00:00:00.100000001'),
+  (2.5, '2024-01-01 00:00:02', '2024-01-01 00:00:00.300', '2024-01-01 00:00:00.300000003'),
+  (3.5, '2024-01-01 00:00:04', '2024-01-01 00:00:00.500', '2024-01-01 00:00:00.500000005');
+
+
+# Return type is the native input type, not a cast-to-canonical type.
+query
+SELECT typeof(avg(ts_s))              AS avg_s,
+       typeof(avg(ts_ms))             AS avg_ms,
+       typeof(avg(ts_ns))             AS avg_ns,
+       typeof(approx_quantile(ts_s,  0.5)) AS q_s,
+       typeof(approx_quantile(ts_ms, 0.5)) AS q_ms,
+       typeof(approx_quantile(ts_ns, 0.5)) AS q_ns,
+       typeof(approx_quantile(f,     0.5)) AS q_f
+FROM agg;
+----
+avg_s	avg_ms	avg_ns	q_s	q_ms	q_ns	q_f
+TIMESTAMP_S	TIMESTAMP_MS	TIMESTAMP_NS	TIMESTAMP_S	TIMESTAMP_MS	TIMESTAMP_NS	FLOAT
+
+
+# avg is exact at full precision, including the nanosecond tail.
+query
+SELECT avg(ts_s)::VARCHAR  AS avg_s,
+       avg(ts_ms)::VARCHAR AS avg_ms,
+       avg(ts_ns)::VARCHAR AS avg_ns
+FROM agg;
+----
+avg_s	avg_ms	avg_ns
+2024-01-01 00:00:02	2024-01-01 00:00:00.3	2024-01-01 00:00:00.300000003
+
+
+# approx_quantile median: exact where the double representation is exact.
+query
+SELECT approx_quantile(ts_s,  0.5)::VARCHAR AS q_s,
+       approx_quantile(ts_ms, 0.5)::VARCHAR AS q_ms,
+       approx_quantile(f,     0.5)::VARCHAR AS q_f
+FROM agg;
+----
+q_s	q_ms	q_f
+2024-01-01 00:00:02	2024-01-01 00:00:00.3	2.5
+
+
+# ns quantile keeps the native type; the sub-us value is approximate, so pin
+# only the type and the second bucket.
+query
+SELECT typeof(approx_quantile(ts_ns, 0.5))                    AS ty,
+       date_trunc('second', approx_quantile(ts_ns, 0.5))::VARCHAR AS q_ns_sec
+FROM agg;
+----
+ty	q_ns_sec
+TIMESTAMP_NS	2024-01-01 00:00:00
+
+
+# The list (multi-quantile) variant also binds natively.
+query
+SELECT typeof(approx_quantile(ts_ns, [0.25, 0.5, 0.75]))       AS ty,
+       (approx_quantile(ts_ms, [0.25, 0.5, 0.75]))[2]::VARCHAR AS ms_median
+FROM agg;
+----
+ty	ms_median
+TIMESTAMP_NS[]	2024-01-01 00:00:00.3
+
+
+statement ok
+DROP TABLE agg;

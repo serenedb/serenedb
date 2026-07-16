@@ -1,0 +1,97 @@
+# Casts between the PG temporal types, under a DST session zone so the
+# session-dependent conversions (naive <-> instant, offset attachment) are
+# exercised. TIMESTAMPTZ results render via ::VARCHAR (server-side string,
+# identical in both wire modes).
+
+statement ok
+SET TIME ZONE 'America/New_York';
+
+query
+SELECT (DATE '2024-07-15')::TIMESTAMP AS d2ts,
+       (TIMESTAMP '2024-07-15 12:34:56.789')::DATE AS ts2d;
+----
+d2ts	ts2d
+2024-07-15 00:00:00	2024-07-15
+
+query
+SELECT (DATE '2024-07-15')::TIMESTAMPTZ::VARCHAR AS d2tstz;
+----
+d2tstz
+2024-07-15 00:00:00-04
+
+query
+SELECT (TIMESTAMP '2024-07-15 12:34:56.789')::TIME AS ts2t;
+----
+ts2t
+12:34:56.789
+
+query
+SELECT (TIMESTAMP '2024-07-15 12:34:56.789')::TIMESTAMPTZ::VARCHAR AS ts2tstz;
+----
+ts2tstz
+2024-07-15 12:34:56.789-04
+
+query
+SELECT (TIMESTAMPTZ '2024-07-15 16:34:56.789+00')::TIMESTAMP AS tstz2ts,
+       (TIMESTAMPTZ '2024-07-15 16:34:56.789+00')::DATE AS tstz2d;
+----
+tstz2ts	tstz2d
+2024-07-15 12:34:56.789	2024-07-15
+
+query
+SELECT (TIMESTAMPTZ '2024-07-15 16:34:56.789+00')::TIMETZ AS tstz2ttz;
+----
+tstz2ttz
+12:34:56.789-04
+
+query
+SELECT (TIME '12:34:56.789')::TIMETZ AS t2ttz;
+----
+t2ttz
+12:34:56.789-04
+
+query
+SELECT (TIMETZ '12:34:56.789+05:30')::TIME AS ttz2t;
+----
+ttz2t
+12:34:56.789
+
+# Winter instant: the session-dependent casts pick the standard offset.
+query
+SELECT (DATE '2024-01-15')::TIMESTAMPTZ::VARCHAR AS d2tstz_winter,
+       (TIMESTAMPTZ '2024-01-15 17:00:00+00')::TIMESTAMP AS tstz2ts_winter;
+----
+d2tstz_winter	tstz2ts_winter
+2024-01-15 00:00:00-05	2024-01-15 12:00:00
+
+# TIMESTAMPTZ -> TIME takes the session-local time of day (DST-aware).
+query
+SELECT (TIMESTAMPTZ '2024-07-15 16:34:56.789+00')::TIME AS tstz2t_summer,
+       (TIMESTAMPTZ '2024-01-15 17:00:00+00')::TIME AS tstz2t_winter;
+----
+tstz2t_summer	tstz2t_winter
+12:34:56.789	12:00:00
+
+statement ok
+SET TIME ZONE 'Asia/Kolkata';
+
+query
+SELECT (TIMESTAMPTZ '2024-07-15 16:34:56.789+00')::TIME AS tstz2t_kolkata;
+----
+tstz2t_kolkata
+22:04:56.789
+
+statement ok
+SET TIME ZONE 'UTC';
+
+# TIME <-> INTERVAL: the interval carries the time of day; the reverse takes
+# the fractional-day portion (months/days ignored, negatives wrap forward).
+query
+SELECT (TIME '12:34:56.789')::INTERVAL AS t2iv,
+       (INTERVAL '13:45:30')::TIME AS iv2t,
+       (INTERVAL '25:45:30')::TIME AS iv2t_wrap,
+       (INTERVAL '-2 hours')::TIME AS iv2t_neg,
+       (INTERVAL '1 month 2 days 03:04:05')::TIME AS iv2t_md;
+----
+t2iv	iv2t	iv2t_wrap	iv2t_neg	iv2t_md
+12:34:56.789	13:45:30	01:45:30	22:00:00	03:04:05

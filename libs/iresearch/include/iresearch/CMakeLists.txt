@@ -108,6 +108,9 @@ set(IResearch_core_sources
     ./index/iterators.cpp
     ./index/merge_writer.cpp
     ./index/norm.cpp
+    ./index/hit_batcher.cpp
+    ./index/table_filter_iterator.cpp
+    ./index/column_extract.cpp
     ./index/postings.cpp
     ./index/segment_reader.cpp
     ./index/segment_reader_impl.cpp

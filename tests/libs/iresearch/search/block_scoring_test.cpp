@@ -20,10 +20,12 @@
 
 #include <absl/algorithm/container.h>
 
+#include <limits>
 #include <optional>
 #include <ostream>
 #include <span>
 #include <utility>
+#include <vector>
 
 template<typename T1, typename T2>
 std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
@@ -35,6 +37,7 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/delimited_tokenizer.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
+#include "iresearch/index/iterators.hpp"
 #include "iresearch/parser/parser.hpp"
 #include "iresearch/search/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
@@ -416,6 +419,76 @@ TEST_P(BlockScoringTestCase, TfidfBytermBlockScoring) {
   ASSERT_LE(result_count, kTopK);
 
   VerifyScoresAndDocs(docs, result_count);
+}
+
+// The collector no longer filters docs itself (the row filter runs upstream in
+// the DocIterator); the caller feeds only the survivors. Top-k selection and
+// the threshold must still hold over that filtered stream.
+TEST(NthPartitionScoreCollectorPredicate, FiltersAndPreservesThreshold) {
+  const auto accept = [](irs::doc_id_t doc) { return doc % 2 == 0; };
+
+  constexpr size_t kTopK = 3;
+  std::vector<irs::ScoreDoc> hits(2 * kTopK);
+  irs::score_t threshold = std::numeric_limits<irs::score_t>::min();
+  irs::NthPartitionScoreCollector collector(threshold, kTopK, std::span{hits});
+
+  for (irs::doc_id_t doc = 1; doc <= 20; ++doc) {
+    if (accept(doc)) {
+      collector.Add(static_cast<irs::score_t>(doc), doc);
+    }
+  }
+
+  const size_t accepted = collector.AcceptedCount();
+  ASSERT_GE(accepted, kTopK);
+  std::span<irs::ScoreDoc> result{hits.data(), accepted};
+
+  for (const auto& hit : result) {
+    EXPECT_EQ(0u, hit.doc % 2)
+      << "doc " << hit.doc << " leaked past the filter";
+  }
+
+  absl::c_sort(result, [](const irs::ScoreDoc& l, const irs::ScoreDoc& r) {
+    return l.score > r.score;
+  });
+  EXPECT_EQ(20u, result[0].doc);
+  EXPECT_EQ(18u, result[1].doc);
+  EXPECT_EQ(16u, result[2].doc);
+}
+
+TEST(NthPartitionScoreCollectorPredicate, FiltersBatchedAddDocsAcrossChunks) {
+  const auto accept = [](irs::doc_id_t doc) { return doc % 2 == 0; };
+
+  constexpr size_t kTopK = 3;
+  std::vector<irs::ScoreDoc> hits(2 * kTopK);
+  irs::score_t threshold = std::numeric_limits<irs::score_t>::min();
+  irs::NthPartitionScoreCollector collector(threshold, kTopK, std::span{hits});
+
+  // A batch of survivors spanning more than kScoreBlock (32) docs in a single
+  // AddDocs call exercises the batched collection path across chunk boundaries.
+  constexpr irs::doc_id_t kN = 100;
+  std::vector<irs::doc_id_t> docs;
+  std::vector<irs::score_t> scores;
+  for (irs::doc_id_t i = 1; i <= kN; ++i) {
+    if (accept(i)) {
+      docs.push_back(i);
+      scores.push_back(static_cast<irs::score_t>(i));
+    }
+  }
+  collector.AddDocs(docs.data(), docs.size(), scores.data());
+
+  const size_t accepted = collector.AcceptedCount();
+  ASSERT_GE(accepted, kTopK);
+  std::span<irs::ScoreDoc> result{hits.data(), accepted};
+  for (const auto& hit : result) {
+    EXPECT_EQ(0u, hit.doc % 2)
+      << "doc " << hit.doc << " leaked past the filter";
+  }
+  absl::c_sort(result, [](const irs::ScoreDoc& l, const irs::ScoreDoc& r) {
+    return l.score > r.score;
+  });
+  EXPECT_EQ(100u, result[0].doc);
+  EXPECT_EQ(98u, result[1].doc);
+  EXPECT_EQ(96u, result[2].doc);
 }
 
 // Test TFIDF with topic field search (many matches) - verify actual values

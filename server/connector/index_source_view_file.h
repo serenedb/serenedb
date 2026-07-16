@@ -22,6 +22,7 @@
 
 #include <duckdb/common/types.hpp>
 #include <duckdb/function/table_function.hpp>
+#include <duckdb/planner/table_filter_set.hpp>
 #include <span>
 
 #include "connector/index_source_view.h"
@@ -34,11 +35,21 @@ class ViewFileIndexSourceBase : public ViewIndexSourceBase {
                           ViewFastPath fast_path,
                           std::span<const duckdb::idx_t> projected_columns,
                           std::span<const duckdb::LogicalType> projected_types,
-                          std::span<const catalog::Column::Id> bind_column_ids);
+                          std::span<const catalog::Column::Id> bind_column_ids,
+                          duckdb::TableFilterSet* pushed_filters);
+
+  // Re-keys the scan's output-slot-keyed filters onto this reader's projected
+  // columns, dropping non-lookup slots (e.g. the score) that have no source
+  // column -- forwarding those to the reader mismatches column types.
+  void BuildPushedFilters(const duckdb::TableFilterSet* input_filters);
 
   duckdb::TableFunction _lookup_func;
   duckdb::unique_ptr<duckdb::FunctionData> _bind_data;
   duckdb::vector<duckdb::ColumnIndex> _column_indexes;
+  // Lookup-column filters forwarded to the underlying reader (parquet row-group
+  // pruning + native FilterSelection); the lookup scan compacts to survivors.
+  // Null when none.
+  duckdb::unique_ptr<duckdb::TableFilterSet> _pushed_filters;
 };
 
 class ViewFileSingleFileIndexSource final : public ViewFileIndexSourceBase {
@@ -47,14 +58,16 @@ class ViewFileSingleFileIndexSource final : public ViewFileIndexSourceBase {
     duckdb::ClientContext& context, ViewFastPath fast_path,
     std::span<const duckdb::idx_t> projected_columns,
     std::span<const duckdb::LogicalType> projected_types,
-    std::span<const catalog::Column::Id> bind_column_ids);
+    std::span<const catalog::Column::Id> bind_column_ids,
+    duckdb::TableFilterSet* pushed_filters = nullptr);
 
   PrimaryKeyBatch::Kind PkKind() const final {
     return PrimaryKeyBatch::Kind::I64;
   }
-  void Materialize(duckdb::ClientContext& context, PrimaryKeyBatch& batch,
-                   duckdb::idx_t start, duckdb::idx_t count,
-                   duckdb::DataChunk& output) final;
+  duckdb::idx_t Materialize(duckdb::ClientContext& context,
+                            PrimaryKeyBatch& batch, duckdb::idx_t start,
+                            duckdb::idx_t count,
+                            duckdb::DataChunk& output) final;
 
  private:
   duckdb::unique_ptr<duckdb::GlobalTableFunctionState> _lookup_gstate;
@@ -66,14 +79,16 @@ class ViewFileGlobIndexSource final : public ViewFileIndexSourceBase {
                           ViewFastPath fast_path,
                           std::span<const duckdb::idx_t> projected_columns,
                           std::span<const duckdb::LogicalType> projected_types,
-                          std::span<const catalog::Column::Id> bind_column_ids);
+                          std::span<const catalog::Column::Id> bind_column_ids,
+                          duckdb::TableFilterSet* pushed_filters = nullptr);
 
   PrimaryKeyBatch::Kind PkKind() const final {
     return PrimaryKeyBatch::Kind::I64I64;
   }
-  void Materialize(duckdb::ClientContext& context, PrimaryKeyBatch& batch,
-                   duckdb::idx_t start, duckdb::idx_t count,
-                   duckdb::DataChunk& output) final;
+  duckdb::idx_t Materialize(duckdb::ClientContext& context,
+                            PrimaryKeyBatch& batch, duckdb::idx_t start,
+                            duckdb::idx_t count,
+                            duckdb::DataChunk& output) final;
 
  private:
   // Per-file lookup state, built lazily on first hit and reused across batches.
@@ -82,6 +97,13 @@ class ViewFileGlobIndexSource final : public ViewFileIndexSourceBase {
     duckdb::unique_ptr<duckdb::GlobalTableFunctionState> gstate;
   };
   std::vector<CachedFileLookup> _file_cache;
+
+  // Each per-file lookup writes its survivors compactly from row 0 (the lookup
+  // TF's per-call contract). We run each file into `_file_target` and append
+  // its survivors into `_tf_target` at the running offset, so the batch
+  // accumulates across files instead of each file overwriting the last.
+  duckdb::DataChunk _file_target;
+  std::vector<duckdb::idx_t> _file_survivor_idx;
 };
 
 }  // namespace sdb::connector

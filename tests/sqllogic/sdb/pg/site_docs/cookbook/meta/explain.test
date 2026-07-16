@@ -86,7 +86,7 @@ QUERY PLAN
 │ Table: exams          │  │ Table: students                  │
 │ Type: Sequential Scan │  │ Type: Sequential Scan            │
 │ Projections: sid      │  │ Projections: sid, name           │
-│ ~3 rows               │  │ Filters:                         │
+│ ~3 rows               │  │ Column Filter:                   │
 ╰───────────────────────╯  │ (name >= 'Ma') AND (name < 'Mb') │
                            │ ~1 row                           │
                            ╰──────────────────────────────────╯

@@ -85,10 +85,6 @@ QUERY PLAN
 │ Aggregates: min(#0), max(#0)             │
 │ ~1 row                                   │
 ╰─────────────────────┬────────────────────╯
-╭─ PROJECTION ────────┴────────────────────╮
-│ Projections: sdb_inverted_index_term$cat │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: mmx1_idx                          │
 │ Filter:                                  │
@@ -276,10 +272,6 @@ WHERE length(cat) = 2
 QUERY PLAN
 ╭─ UNGROUPED_AGGREGATE ────────────────────╮
 │ Aggregates: min(#0), max(#0)             │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
-╭─ PROJECTION ────────┴────────────────────╮
-│ Projections: sdb_inverted_index_term$cat │
 │ ~1 row                                   │
 ╰─────────────────────┬────────────────────╯
 ╭─ FILTER ────────────┴────────────────────╮

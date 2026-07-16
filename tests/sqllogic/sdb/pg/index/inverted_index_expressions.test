@@ -325,7 +325,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: mix_idx              │
 │ Lookup: table               │
-│ Filter:                     │
+│ Index Filter:               │
 │ ╭─ Term ──────────────────╮ │
 │ │ Field: (a || b)(string) │ │
 │ │ Value: foobar           │ │
@@ -353,7 +353,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────╮
 │ Index: mix_idx                                    │
 │ Lookup: table                                     │
-│ Filter:                                           │
+│ Index Filter:                                     │
 │ ╭─ And ────────────╮                              │
 │ ╰─────────┬────────╯                              │
 │           ├────────────────────────╮              │
@@ -982,7 +982,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: tx_n_idx             │
 │ Lookup: table               │
-│ Filter:                     │
+│ Index Filter:               │
 │ ╭─ Term ──────────────────╮ │
 │ │ Field: (a + b)(numeric) │ │
 │ │ Value: 30               │ │
@@ -998,7 +998,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────╮
 │ Index: tx_v_idx               │
 │ Lookup: table                 │
-│ Filter:                       │
+│ Index Filter:                 │
 │ ╭─ Term ────────────────────╮ │
 │ │ Field: (s1 || s2)(string) │ │
 │ │ Value: foobar             │ │
@@ -1014,7 +1014,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: tx_b_idx          │
 │ Lookup: table            │
-│ Filter:                  │
+│ Index Filter:            │
 │ ╭─ Term ───────────────╮ │
 │ │ Field: (a > b)(bool) │ │
 │ │ Value: true          │ │
@@ -1352,7 +1352,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: ivf_e_idx                       │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Vector KNN ────────────────╮        │
 │ │ Field: array_value(x, y, z) │        │
 │ │ Metric: l2                  │        │

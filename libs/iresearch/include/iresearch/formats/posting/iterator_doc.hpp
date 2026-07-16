@@ -80,28 +80,38 @@ class PostingIteratorBase : public DocIterator {
     return left_in_leaf + left_in_list;
   }
 
-  uint32_t EmitDocs(doc_id_t* out, doc_id_t max) final {
+  uint32_t EmitDocs(doc_id_t* out, doc_id_t min, doc_id_t max) final {
     if constexpr (IteratorTraits::Position()) {
       // Position postings decode per-doc state in advance(); no bulk shortcut.
-      return DocIterator::EmitDocsImpl(*this, out, max);
+      return DocIterator::EmitDocsImpl(*this, out, min, max);
     } else {
       // advance() inlined with the hot state hoisted into locals so it stays
       // in registers across the loop; write back once at the end.
       uint32_t n = 0;
       auto doc = _doc;
       auto left_in_leaf = _left_in_leaf;
-      while (doc < max) {
-        out[n++] = doc;
+      // Skip docs below the window (no-op when already positioned:
+      // value()==min).
+      auto next = [&] IRS_FORCE_INLINE {
         if (left_in_leaf == 0) [[unlikely]] {
           if (_left_in_list == 0) {
             doc = doc_limits::eof();
-            break;
+            return false;
           }
           ReadLeaf(doc);
           left_in_leaf = _left_in_leaf;
         }
         doc = *(std::end(_docs) - left_in_leaf);
         --left_in_leaf;
+        return true;
+      };
+      while (doc < min && next()) {
+      }
+      while (doc < max) {
+        out[n++] = doc;
+        if (!next()) {
+          break;
+        }
       }
       _doc = doc;
       _left_in_leaf = left_in_leaf;

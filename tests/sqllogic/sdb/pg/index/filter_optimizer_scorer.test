@@ -46,7 +46,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: fo_score_idx  │
 │ Lookup: table        │
-│ Filter:              │
+│ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: s(string) │ │
 │ │ Value: alpha     │ │
@@ -62,7 +62,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: fo_score_idx                    │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Term ───────────╮                   │
 │ │ Field: s(string) │                   │
 │ │ Value: alpha     │                   │
@@ -80,7 +80,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────╮
 │ Index: fo_score_idx │
 │ Lookup: table       │
-│ Filter:             │
+│ Index Filter:       │
 │ ╭─ All ──╮          │
 │ ╰────────╯          │
 │ Projections: id     │
@@ -94,7 +94,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: fo_score_idx                    │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Or ─────────────╮                   │
 │ ╰─────────┬────────╯                   │
 │           ├────────────────╮           │
@@ -115,7 +115,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────╮
 │ Index: fo_score_idx │
 │ Lookup: table       │
-│ Filter:             │
+│ Index Filter:       │
 │ ╭─ All ──╮          │
 │ ╰────────╯          │
 │ Projections: id     │
@@ -129,7 +129,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: fo_score_idx                    │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ All ──╮                             │
 │ ╰────────╯                             │
 │ Score: bm25(k1=1.2, b=0.75)            │
@@ -145,7 +145,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────────────────────────────────────────────────╮
 │ Index: fo_score_ng_idx                                                                  │
 │ Lookup: table                                                                           │
-│ Filter:                                                                                 │
+│ Index Filter:                                                                           │
 │ ╭─ Terms ─────────────────────────────────────────────────────────────────────────────╮ │
 │ │ Field: g(string)                                                                    │ │
 │ │ Values:                                                                             │ │
@@ -163,7 +163,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────╮
 │ Index: fo_score_ng_idx                        │
 │ Lookup: table                                 │
-│ Filter:                                       │
+│ Index Filter:                                 │
 │ ╭─ Ngram Similarity ────────────────────────╮ │
 │ │ Field: g(string)                          │ │
 │ │ Ngrams:                                   │ │
@@ -182,7 +182,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Index: fo_score_ng_idx                                                                                                                                                                       │
 │ Lookup: table                                                                                                                                                                                │
-│ Filter:                                                                                                                                                                                      │
+│ Index Filter:                                                                                                                                                                                │
 │ ╭─ Phrase ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
 │ │ Field: g(string)                                                                                                                                                                         │ │
 │ │ Parts:                                                                                                                                                                                   │ │
@@ -199,7 +199,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Index: fo_score_ng_idx                                                                                                                                                                       │
 │ Lookup: table                                                                                                                                                                                │
-│ Filter:                                                                                                                                                                                      │
+│ Index Filter:                                                                                                                                                                                │
 │ ╭─ Phrase ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
 │ │ Field: g(string)                                                                                                                                                                         │ │
 │ │ Parts:                                                                                                                                                                                   │ │
@@ -217,7 +217,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────╮
 │ Index: fo_score_idx          │
 │ Lookup: table                │
-│ Filter:                      │
+│ Index Filter:                │
 │ ╭─ Terms ──────────────────╮ │
 │ │ Field: s(string)         │ │
 │ │ Values: 'alpha', 'gamma' │ │
@@ -234,7 +234,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: fo_score_idx                    │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Terms ──────────────────╮           │
 │ │ Field: s(string)         │           │
 │ │ Values: 'alpha', 'gamma' │           │
@@ -253,7 +253,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────╮
 │ Index: fo_score_idx                        │
 │ Lookup: table                              │
-│ Filter:                                    │
+│ Index Filter:                              │
 │ ╭─ Exclusion ──────╮                       │
 │ ╰─────────┬────────╯                       │
 │           ├─────────────────────╮          │
@@ -272,7 +272,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────╮
 │ Index: fo_score_idx                        │
 │ Lookup: table                              │
-│ Filter:                                    │
+│ Index Filter:                              │
 │ ╭─ Exclusion ──────╮                       │
 │ ╰─────────┬────────╯                       │
 │           ├─────────────────────╮          │
@@ -292,7 +292,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────╮
 │ Index: fo_score_idx   │
 │ Lookup: table         │
-│ Filter:               │
+│ Index Filter:         │
 │ ╭─ Granular Range ──╮ │
 │ │ Field: n(numeric) │ │
 │ │ Range: >1, <4     │ │
@@ -309,7 +309,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────╮
 │ Index: fo_score_idx                          │
 │ Lookup: table                                │
-│ Filter:                                      │
+│ Index Filter:                                │
 │ ╭─ And ─────────────╮                        │
 │ ╰─────────┬─────────╯                        │
 │           ├──────────────────────╮           │
@@ -329,7 +329,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: fo_score_idx  │
 │ Lookup: table        │
-│ Filter:              │
+│ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
 │ │ Value: alpha     │ │
@@ -346,7 +346,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: fo_score_idx                    │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ And ────────────╮                   │
 │ ╰─────────┬────────╯                   │
 │           ├────────────────╮           │
@@ -367,7 +367,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────╮
 │ Index: fo_score_idx   │
 │ Lookup: table         │
-│ Filter:               │
+│ Index Filter:         │
 │ ╭─ Granular Range ──╮ │
 │ │ Field: n(numeric) │ │
 │ │ Range: >1, <4     │ │
@@ -384,7 +384,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────╮
 │ Index: fo_score_idx                          │
 │ Lookup: table                                │
-│ Filter:                                      │
+│ Index Filter:                                │
 │ ╭─ And ─────────────╮                        │
 │ ╰─────────┬─────────╯                        │
 │           ├──────────────────────╮           │

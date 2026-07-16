@@ -18,15 +18,15 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/hit_batcher.h"
+#include "iresearch/index/hit_batcher.hpp"
 
 #include <bit>
 #include <duckdb/common/vector/list_vector.hpp>
+#include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <limits>
 
 #include "basics/assert.h"
-#include "catalog/table_options.h"
 #include "iresearch/formats/column/col_reader.hpp"
 
 namespace sdb::connector {
@@ -37,12 +37,16 @@ constexpr duckdb::idx_t kMinDenseBatch = 64;
 
 }  // namespace
 
-HitBatcher::HitBatcher(std::span<const ColumnstoreProjection> projections,
-                       bool fetch_pk, bool track_scores)
+HitBatcher::HitBatcher(
+  std::span<const ColumnstoreProjection> projections, irs::field_id pk_field_id,
+  bool track_scores,
+  std::span<const TableFilterDocIterator::FilterSpec> filters)
   : _projections{projections},
-    _fetch_pk{fetch_pk},
-    _track_scores{track_scores} {
-  _sel.Initialize(STANDARD_VECTOR_SIZE);
+    _pk_field_id{pk_field_id},
+    _track_scores{track_scores},
+    _filter_specs{filters.begin(), filters.end()} {
+  _sel_data = duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE);
+  _sel.Initialize(_sel_data);
 }
 
 HitBatcher::~HitBatcher() = default;
@@ -58,6 +62,9 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
   _compact = false;
   _compact_dense = false;
   _columns.clear();
+  _filters.clear();
+  _score_filter = nullptr;
+  _score_state.reset();
   _rg_col = nullptr;
   if (col_reader == nullptr) {
     _ctx.reset();
@@ -67,6 +74,32 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
     _ctx->Reset(*col_reader);
   } else {
     _ctx = std::make_unique<irs::ReadContext>(*col_reader);
+  }
+
+  // Pushed table filters for this segment (applied in EmitFiltered). The score
+  // filter needs no columnstore reader; each `.col` filter binds its column.
+  for (const auto& spec : _filter_specs) {
+    if (spec.is_score) {
+      if (_track_scores) {
+        _score_filter = spec.filter;
+        _score_state =
+          duckdb::TableFilterState::Initialize(*context, *spec.filter);
+      }
+      continue;
+    }
+    const auto* r = col_reader->Column(spec.field);
+    if (r == nullptr) {
+      continue;
+    }
+    auto& f = _filters.emplace_back();
+    f.reader = r;
+    f.field = spec.field;
+    f.filter = spec.filter;
+    f.state = duckdb::TableFilterState::Initialize(*context, *spec.filter);
+    f.scan = std::make_unique<irs::ColumnReader::ScanState>(r->InitScan(*_ctx));
+    if (_rg_col == nullptr) {
+      _rg_col = r;
+    }
   }
 
   const auto bind = [&](Column& c, const irs::ColumnReader& r) {
@@ -80,9 +113,8 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
     }
   };
 
-  if (_fetch_pk) {
-    const auto* pk = col_reader->Column(
-      static_cast<irs::field_id>(catalog::Column::kGeneratedPKId));
+  if (_pk_field_id != irs::field_limits::invalid()) {
+    const auto* pk = col_reader->Column(_pk_field_id);
     SDB_ASSERT(pk != nullptr);
     auto& c = _columns.emplace_back();
     c.is_pk = true;
@@ -96,6 +128,22 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
     const auto* r = col_reader->Column(static_cast<irs::field_id>(p.column_id));
     if (r == nullptr) {
       continue;
+    }
+    // A projected column that is also a `.col` filter column materializes as
+    // part of its filter step (decode once into this slot, then Slice) --
+    // record the slot on the filter and don't scan it again below.
+    if (!p.IsExtract()) {
+      FilterCol* fc = nullptr;
+      for (auto& f : _filters) {
+        if (f.field == p.column_id) {
+          fc = &f;
+          break;
+        }
+      }
+      if (fc != nullptr) {
+        fc->output_slots.push_back(p.output_slot);
+        continue;
+      }
     }
     auto& c = _columns.emplace_back();
     c.slot = p.output_slot;
@@ -115,34 +163,21 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
       bind(c, *r);
     }
   }
+
+  // Filter-only columns (not projected) decode into a private scratch just to
+  // evaluate the predicate.
+  for (auto& f : _filters) {
+    if (f.output_slots.empty()) {
+      f.scratch = std::make_unique<duckdb::Vector>(
+        f.reader->Type(), static_cast<duckdb::idx_t>(STANDARD_VECTOR_SIZE));
+    }
+  }
 }
 
 uint64_t HitBatcher::RgEndFor(uint64_t row) const noexcept {
   return std::min(_rg_col != nullptr ? _rg_col->RowGroupEnd(row)
                                      : std::numeric_limits<uint64_t>::max(),
                   row + STANDARD_VECTOR_SIZE);
-}
-
-bool HitBatcher::Push(irs::doc_id_t doc) {
-  SDB_ASSERT(!Ready(), "emit the pending batch before pushing more");
-  if (_compact) {
-    Compact();
-    if (Ready()) {
-      SDB_ASSERT(_len <= STANDARD_VECTOR_SIZE);
-      _docs[_len++] = doc;
-      return true;
-    }
-  }
-  const uint64_t row = doc - irs::doc_limits::min();
-  if (_len != _group &&
-      (row >= _group_rg_end || _len == STANDARD_VECTOR_SIZE)) {
-    CloseGroup();
-  }
-  if (_len == _group) {
-    _group_rg_end = RgEndFor(row);
-  }
-  _docs[_len++] = doc;
-  return Ready();
 }
 
 duckdb::idx_t HitBatcher::OpenWindow(uint64_t row) {
@@ -210,6 +245,15 @@ void HitBatcher::Compact() {
 void HitBatcher::CloseGroup() {
   const auto hits = _len - _group;
   if (hits == 0) {
+    return;
+  }
+  if (HasFilters()) {
+    // Filtered scans fuse filter+materialize per window in EmitFiltered
+    // (RowGroup::Scan-style), so a window is never accumulated into the scratch
+    // path -- it closes as its own dense batch straight from offset 0.
+    SDB_ASSERT(_group == 0);
+    _ready = Pending::Dense;
+    _batch = _len;
     return;
   }
   const uint64_t anchor = Row(_group);
@@ -281,8 +325,127 @@ void HitBatcher::MaterializeColumn(Column& c, uint64_t anchor,
   }
 }
 
+HitBatcher::Batch HitBatcher::EmitFiltered(duckdb::DataChunk& output) {
+  SDB_ASSERT(_ready == Pending::Dense,
+             "filtered windows close as dense batches");
+  Batch batch;
+  batch.seg = _seg_idx;
+  duckdb::idx_t count = _batch;
+
+  // Phase 1: the score filter is the cheap one -- a comparison on the already
+  // computed, in-memory scores, no columnstore read. Run it first so the `.col`
+  // pass reads only survivors. Compacts _docs/_scores in place (survivor
+  // indices ascend, so writes never clobber unread input).
+  if (_score_filter != nullptr && _track_scores && count != 0) {
+    duckdb::Vector svec{duckdb::LogicalType::FLOAT,
+                        reinterpret_cast<duckdb::data_ptr_t>(_scores.data()),
+                        count};
+    duckdb::SelectionVector score_sel;
+    duckdb::idx_t kept = count;
+    duckdb::ColumnSegment::FilterSelection(score_sel, svec, *_score_state,
+                                           count, kept);
+    for (duckdb::idx_t s = 0; s < kept; ++s) {
+      const auto idx = score_sel.get_index(s);
+      _docs[s] = _docs[idx];
+      _scores[s] = _scores[idx];
+    }
+    count = kept;
+  }
+
+  // The `.col` filters and every column materialization key their span offsets
+  // off this anchor/span, so both are fixed before the doc array is compacted.
+  duckdb::idx_t survivors = count;
+  uint64_t anchor = 0;
+  duckdb::idx_t span = 0;
+  if (count != 0) {
+    anchor = Row(0);
+    span = static_cast<duckdb::idx_t>(Row(count - 1) - anchor + 1);
+    _sel.Initialize(_sel_data);
+    for (duckdb::idx_t i = 0; i < count; ++i) {
+      _sel.set_index(i, Row(i) - anchor);
+    }
+    // Phase 2: `.col` codec filters -- each narrows `_sel`; a projected filter
+    // column decodes straight into its output slot (Sliced below), a
+    // filter-only column into private scratch. Whole-window zonemap skips a
+    // dead group.
+    for (auto& f : _filters) {
+      if (survivors == 0) {
+        break;
+      }
+      const auto block = f.reader->Locate(anchor).block;
+      const auto& expr = f.filter->Cast<duckdb::ExpressionFilter>();
+      const auto z = expr.CheckStatistics(f.reader->RowGroupStatistics(block));
+      if (z == duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE) {
+        survivors = 0;
+        break;
+      }
+      if (z == duckdb::FilterPropagateResult::FILTER_ALWAYS_TRUE &&
+          f.output_slots.empty()) {
+        continue;
+      }
+      auto& target = f.output_slots.empty()
+                       ? *f.scratch
+                       : output.data[f.output_slots.front()];
+      survivors = f.reader->GatherFilter(*f.scan, anchor, span, _sel, survivors,
+                                         *f.filter, *f.state, target);
+    }
+    // Map `_sel[0..survivors)` (surviving span offsets, ascending) back to the
+    // doc/score arrays, compacting in place (s <= k, so no clobber).
+    if (!_filters.empty()) {
+      duckdb::idx_t k = 0;
+      for (duckdb::idx_t s = 0; s < survivors; ++s) {
+        const uint64_t want = _sel.get_index(s);
+        while ((Row(k) - anchor) != want) {
+          ++k;
+        }
+        _docs[s] = _docs[k];
+        if (_track_scores) {
+          _scores[s] = _scores[k];
+        }
+      }
+    }
+    // Slice each projected filter column (decoded over the full span) down to
+    // the survivors -- zero-copy dictionary view -- and Reference it into any
+    // further slots the same column is projected to.
+    for (auto& f : _filters) {
+      if (f.output_slots.empty()) {
+        continue;
+      }
+      auto& first = output.data[f.output_slots.front()];
+      first.Slice(_sel, survivors);
+      for (std::size_t j = 1; j < f.output_slots.size(); ++j) {
+        output.data[f.output_slots[j]].Reference(first);
+      }
+    }
+  }
+
+  // Materialize the survivors of the non-filter projected columns (and PK),
+  // keyed off the same anchor/span the `_sel` offsets were built against.
+  for (auto& c : _columns) {
+    auto& out = c.is_pk ? *_pk_out : output.data[c.slot];
+    if (survivors != 0) {
+      MaterializeColumn(c, anchor, span, survivors, 0, out, 0, /*dense=*/true);
+    }
+    if (c.is_pk) {
+      batch.pk = _pk_out.get();
+    }
+  }
+
+  batch.count = survivors;
+  batch.docs = {_docs.data(), survivors};
+  if (_track_scores) {
+    batch.scores = {_scores.data(), survivors};
+  }
+  _ready = Pending::None;
+  _compact = true;
+  return batch;
+}
+
 HitBatcher::Batch HitBatcher::Emit(duckdb::DataChunk& output) {
   SDB_ASSERT(Ready());
+  if (HasFilters()) {
+    return EmitFiltered(output);
+  }
   Batch batch;
   batch.seg = _seg_idx;
   if (_ready == Pending::Dense) {

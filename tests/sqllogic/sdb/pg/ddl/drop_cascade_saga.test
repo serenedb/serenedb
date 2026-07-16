@@ -207,22 +207,22 @@ INSERT INTO vedernikoff_mop_listings_c (tag) VALUES ('outreach_c');
 query
 SELECT id, tag FROM vedernikoff_mop_listings_a;
 ----
-id   tag
-100  outreach_a
+id	tag
+100	outreach_a
 
 
 query
 SELECT id, tag FROM vedernikoff_mop_listings_b;
 ----
-id   tag
-101  outreach_b
+id	tag
+101	outreach_b
 
 
 query
 SELECT id, tag FROM vedernikoff_mop_listings_c;
 ----
-id   tag
-102  outreach_c
+id	tag
+102	outreach_c
 
 
 # Plain DROP must complain.
@@ -250,25 +250,25 @@ INSERT INTO vedernikoff_mop_listings_c (tag) VALUES ('after_cascade_c');
 query
 SELECT id, tag FROM vedernikoff_mop_listings_a ORDER BY tag;
 ----
-id    tag
-NULL  after_cascade_a
-100   outreach_a
+id	tag
+NULL	after_cascade_a
+100	outreach_a
 
 
 query
 SELECT id, tag FROM vedernikoff_mop_listings_b ORDER BY tag;
 ----
-id    tag
-NULL  after_cascade_b
-101   outreach_b
+id	tag
+NULL	after_cascade_b
+101	outreach_b
 
 
 query
 SELECT id, tag FROM vedernikoff_mop_listings_c ORDER BY tag;
 ----
-id    tag
-NULL  after_cascade_c
-102   outreach_c
+id	tag
+NULL	after_cascade_c
+102	outreach_c
 
 
 statement ok
@@ -347,17 +347,17 @@ INSERT INTO vedernikoff_mop_team.candidates (note) VALUES ('mop_after');
 query
 SELECT id, note FROM vedernikoff_clickclack_team.candidates ORDER BY note;
 ----
-id    note
-NULL  cc_after
-7000  cc_round1
+id	note
+NULL	cc_after
+7000	cc_round1
 
 
 query
 SELECT id, note FROM vedernikoff_mop_team.candidates ORDER BY note;
 ----
-id    note
-NULL  mop_after
-7001  mop_round1
+id	note
+NULL	mop_after
+7001	mop_round1
 
 
 statement ok
@@ -418,9 +418,9 @@ INSERT INTO vedernikoff_iceberg_audit.runs VALUES (2, -5);
 query
 SELECT id, score FROM vedernikoff_iceberg_audit.runs ORDER BY id;
 ----
-id  score
-1   42
-2   -5
+id	score
+1	42
+2	-5
 
 
 statement ok
@@ -939,8 +939,8 @@ INSERT INTO vedernikoff_layer_f.consumer (note) VALUES ('captured');
 query
 SELECT id, note FROM vedernikoff_layer_f.consumer;
 ----
-id   note
-200  captured
+id	note
+200	captured
 
 
 # CASCADE the bottom layer; everything reachable should fall.
@@ -961,9 +961,9 @@ INSERT INTO vedernikoff_layer_f.consumer (note) VALUES ('after_cascade');
 query
 SELECT id, note FROM vedernikoff_layer_f.consumer ORDER BY note;
 ----
-id    note
-NULL  after_cascade
-200   captured
+id	note
+NULL	after_cascade
+200	captured
 
 
 statement ok
@@ -1011,9 +1011,9 @@ INSERT INTO vedernikoff_solid_journal (body) VALUES (repeat('z', 5000));
 query
 SELECT id, length(body) FROM vedernikoff_solid_journal ORDER BY length(body);
 ----
-id    length
-1     11
-NULL  5000
+id	length
+1	11
+NULL	5000
 
 
 statement ok
@@ -1258,9 +1258,9 @@ INSERT INTO vedernikoff_mop_iceberg_papers (title) VALUES (repeat('z', 10000));
 query
 SELECT id, handle FROM vedernikoff_mop_iceberg_authors ORDER BY handle;
 ----
-id    handle
-50    a1
-NULL  a2
+id	handle
+50	a1
+NULL	a2
 
 
 statement ok

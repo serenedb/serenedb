@@ -24,11 +24,11 @@
 
 namespace irs {
 
-// Surfaces the raw per-doc distance computed by VectorDistanceIterator as the
-// document score. The iterator publishes the value through a BoostBlockAttr and
-// this scorer reads it back unchanged -- it does not negate. Whether nearest or
-// farthest wins is imposed by the NthPartitionScoreCollector<Order> the caller
-// selects, not here; the distance kernel lives next to the vector reads.
+// Surfaces the per-doc distance computed by VectorDistanceIterator as the
+// document score. The iterator publishes the value through a BoostBlockAttr;
+// the scoring distance is already "larger = nearer" for every metric
+// (ResolveScoringDistance negates distance kernels), so the caller's top-k
+// collector is uniformly "largest wins" with no negation here.
 struct VectorSimilarityScorer final : ScorerBase<VectorSimilarityScorer, void> {
   static constexpr std::string_view type_name() noexcept {
     return "vector_similarity";

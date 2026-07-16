@@ -192,24 +192,24 @@ QUERY PLAN
 │ file_row_number = file_row_number  │
 │ ~5 rows                            │
 ╰──────────────────┬─────────────────╯
-                   ├───────────────────────────────────────╮
-╭─ READ_PARQUET ───┴─────────────────╮  ╭─ TOP_N ──────────┴─────────────────╮
-│ Function: READ_PARQUET             │  │ Top: 4                             │
-│ Projections: body, unused1         │  │ Order By: read_parquet.unused1 ASC │
-│ ~5 rows                            │  │ ~4 rows                            │
-╰────────────────────────────────────╯  ╰──────────────────┬─────────────────╯
-                                        ╭─ PROJECTION ─────┴─────────────────╮
-                                        │ Projections: unused1, file_index,  │
-                                        │              file_row_number       │
-                                        │ ~5 rows                            │
-                                        ╰──────────────────┬─────────────────╯
-                                        ╭─ READ_PARQUET ───┴─────────────────╮
-                                        │ Function: READ_PARQUET             │
-                                        │ Projections: unused1               │
-                                        │ Filters:                           │
-                                        │ optional: Dynamic Filter (unused1) │
-                                        │ ~5 rows                            │
-                                        ╰────────────────────────────────────╯
+                   ├─────────────────────────────────────────╮
+╭─ READ_PARQUET ───┴─────────────────╮  ╭─ TOP_N ────────────┴───────────────────╮
+│ Function: READ_PARQUET             │  │ Top: 4                                 │
+│ Projections: body, unused1         │  │ Order By: read_parquet.unused1 ASC     │
+│ ~5 rows                            │  │ ~4 rows                                │
+╰────────────────────────────────────╯  ╰────────────────────┬───────────────────╯
+                                        ╭─ PROJECTION ───────┴───────────────────╮
+                                        │ Projections: unused1, file_index,      │
+                                        │              file_row_number           │
+                                        │ ~5 rows                                │
+                                        ╰────────────────────┬───────────────────╯
+                                        ╭─ READ_PARQUET ─────┴───────────────────╮
+                                        │ Function: READ_PARQUET                 │
+                                        │ Projections: unused1                   │
+                                        │ Column Filter:                         │
+                                        │ optional: Dynamic Filter (unused1 < ?) │
+                                        │ ~5 rows                                │
+                                        ╰────────────────────────────────────────╯
 
 statement ok
 CREATE INDEX prune_idx5 ON prune_v5 USING inverted(body prune_en);

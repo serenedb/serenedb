@@ -369,7 +369,7 @@ QUERY PLAN
 ╰───────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ──┴───────────────────╮
 │ Index: docs_idx                       │
-│ Filter:                               │
+│ Index Filter:                         │
 │ ╭─ Term ──────────────╮               │
 │ │ Field: body(string) │               │
 │ │ Value: fox          │               │
@@ -392,7 +392,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
 │ │ Value: fox          │                │
@@ -419,7 +419,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
 │ │ Value: fox          │                │
@@ -505,7 +505,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
 │ │ Value: fox          │                │
@@ -666,7 +666,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
 │ │ Value: fox          │                │
@@ -709,7 +709,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │  │ Index: docs_idx                        │
 │ Lookup: table                          │  │ Lookup: table                          │
-│ Filter:                                │  │ Filter:                                │
+│ Index Filter:                          │  │ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │  │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │  │ │ Field: body(string) │                │
 │ │ Value: fox          │                │  │ │ Value: lazy         │                │
@@ -762,7 +762,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
 │ │ Value: fox          │                │
@@ -793,7 +793,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
 │ │ Value: fox          │                │
@@ -935,7 +935,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ────────╮
 │ Index: docs_idx                        │  │ Index: docs2_idx        │
 │ Lookup: table                          │  │ Lookup: table           │
-│ Filter:                                │  │ Filter:                 │
+│ Index Filter:                          │  │ Index Filter:           │
 │ ╭─ Term ──────────────╮                │  │ ╭─ Term ──────────────╮ │
 │ │ Field: body(string) │                │  │ │ Field: body(string) │ │
 │ │ Value: fox          │                │  │ │ Value: fox          │ │
@@ -985,7 +985,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ SEQ_SCAN ┴───────────╮
 │ Index: docs_idx                        │  │ Table: meta           │
 │ Lookup: table                          │  │ Type: Sequential Scan │
-│ Filter:                                │  │ Projections: id, tag  │
+│ Index Filter:                          │  │ Projections: id, tag  │
 │ ╭─ Term ──────────────╮                │  │ ~3 rows               │
 │ │ Field: body(string) │                │  ╰───────────────────────╯
 │ │ Value: fox          │                │
@@ -1075,10 +1075,10 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ───┴───────────────────╮  │ Limit: 2                               │  │ Limit: 2                               │
 │ Index: docs_idx                        │  │ Index: docs_idx                        │  │ ~2 rows                                │  │ ~2 rows                                │
 │ Lookup: table                          │  │ Lookup: table                          │  ╰────────────────────┬───────────────────╯  ╰────────────────────┬───────────────────╯
-│ Filter:                                │  │ Filter:                                │  ╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index Filter:                          │  │ Index Filter:                          │  ╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ ╭─ Term ──────────────╮                │  │ ╭─ Term ──────────────╮                │  │ Index: docs_idx                        │  │ Index: docs_idx                        │
 │ │ Field: body(string) │                │  │ │ Field: body(string) │                │  │ Lookup: table                          │  │ Lookup: table                          │
-│ │ Value: fox          │                │  │ │ Value: lazy         │                │  │ Filter:                                │  │ Filter:                                │
+│ │ Value: fox          │                │  │ │ Value: lazy         │                │  │ Index Filter:                          │  │ Index Filter:                          │
 │ ╰─────────────────────╯                │  │ ╰─────────────────────╯                │  │ ╭─ Term ──────────────╮                │  │ ╭─ Term ──────────────╮                │
 │ Score: bm25(k1=1.2, b=0.75)            │  │ Score: bm25(k1=1.2, b=0.75)            │  │ │ Field: body(string) │                │  │ │ Field: body(string) │                │
 │ Projections: id,                       │  │ Projections: id,                       │  │ │ Value: fox          │                │  │ │ Value: lazy         │                │
@@ -1130,10 +1130,10 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ───┴───────────────────╮  │ Limit: 2                               │  │ Limit: 2                               │
 │ Index: docs_idx                        │  │ Index: docs_idx                        │  │ ~2 rows                                │  │ ~2 rows                                │
 │ Lookup: table                          │  │ Lookup: table                          │  ╰────────────────────┬───────────────────╯  ╰────────────────────┬───────────────────╯
-│ Filter:                                │  │ Filter:                                │  ╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index Filter:                          │  │ Index Filter:                          │  ╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ ╭─ Term ──────────────╮                │  │ ╭─ Term ──────────────╮                │  │ Index: docs_idx                        │  │ Index: docs_idx                        │
 │ │ Field: body(string) │                │  │ │ Field: body(string) │                │  │ Lookup: table                          │  │ Lookup: table                          │
-│ │ Value: fox          │                │  │ │ Value: lazy         │                │  │ Filter:                                │  │ Filter:                                │
+│ │ Value: fox          │                │  │ │ Value: lazy         │                │  │ Index Filter:                          │  │ Index Filter:                          │
 │ ╰─────────────────────╯                │  │ ╰─────────────────────╯                │  │ ╭─ Term ──────────────╮                │  │ ╭─ Term ──────────────╮                │
 │ Score: bm25(k1=1.2, b=0.75)            │  │ Score: bm25(k1=1.2, b=0.75)            │  │ │ Field: body(string) │                │  │ │ Field: body(string) │                │
 │ Projections: id,                       │  │ Projections: id,                       │  │ │ Value: fox          │                │  │ │ Value: lazy         │                │

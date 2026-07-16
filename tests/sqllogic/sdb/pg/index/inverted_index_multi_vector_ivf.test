@@ -55,7 +55,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: mv_ivf                          │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Vector KNN ─╮                       │
 │ │ Field: a     │                       │
 │ │ Metric: l2   │                       │
@@ -80,7 +80,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: mv_ivf                          │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Vector KNN ───╮                     │
 │ │ Field: b       │                     │
 │ │ Metric: cosine │                     │

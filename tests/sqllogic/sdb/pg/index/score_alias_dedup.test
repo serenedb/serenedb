@@ -60,7 +60,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: vedernikoff_alias_idx           │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Term ─────────────────╮             │
 │ │ Field: abramov(string) │             │
 │ │ Value: clickclack      │             │
@@ -119,11 +119,13 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: vedernikoff_alias_idx           │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Term ─────────────────╮             │
 │ │ Field: abramov(string) │             │
 │ │ Value: clickclack      │             │
 │ ╰────────────────────────╯             │
+│ Column Filter:                         │
+│ optional: Dynamic Filter (kostya > ?)  │
 │ Score: bm25(k1=1.2, b=0.75)            │
 │ Projections: kostya,                   │
 │              sdb_inverted_index_score  │
@@ -187,7 +189,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: deadinside_alias_idx            │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Vector KNN ──────╮                  │
 │ │ Field: clickclack │                  │
 │ │ Metric: l2        │                  │
@@ -297,7 +299,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: vedernikoff_alias_idx           │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Term ─────────────────╮             │
 │ │ Field: abramov(string) │             │
 │ │ Value: clickclack      │             │
@@ -332,11 +334,13 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: vedernikoff_alias_idx           │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Term ─────────────────╮             │
 │ │ Field: abramov(string) │             │
 │ │ Value: clickclack      │             │
 │ ╰────────────────────────╯             │
+│ Column Filter:                         │
+│ optional: Dynamic Filter (kostya <= ?) │
 │ Score: bm25(k1=1.2, b=0.75)            │
 │ Projections: kostya,                   │
 │              sdb_inverted_index_score  │

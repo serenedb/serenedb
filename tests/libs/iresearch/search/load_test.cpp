@@ -91,7 +91,7 @@ void FillViaEmitDocs(irs::DocIterator& iter, irs::doc_id_t window_min,
                      std::vector<irs::doc_id_t>& docs) {
   docs.resize(window_max -
               window_min);  // value() >= window_min, matches <= span
-  const auto n = iter.EmitDocs(docs.data(), window_max);
+  const auto n = iter.EmitDocs(docs.data(), window_min, window_max);
   docs.resize(n);
 }
 

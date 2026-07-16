@@ -51,7 +51,7 @@ struct ScoreThresholdAttr final : Attribute {
     return "score_threshold";
   }
 
-  score_t value = std::numeric_limits<score_t>::min();
+  score_t value = std::numeric_limits<score_t>::lowest();
 };
 
 struct Scorer;

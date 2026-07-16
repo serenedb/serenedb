@@ -187,6 +187,11 @@ class ColumnReader {
     return *_children[i];
   }
 
+  // Zonemap for row group `rg`, used by pushed table-filter pruning.
+  const duckdb::BaseStatistics& RowGroupStatistics(size_t rg) const noexcept {
+    SDB_ASSERT(rg < _segments.size());
+    return _segments[rg].statistics;
+  }
   bool IsValidityRgEmpty(size_t vrg) const noexcept {
     SDB_ASSERT(_validity && vrg < _validity->_segments.size());
     return _validity->_segments[vrg].codec->type ==
@@ -226,6 +231,23 @@ class ColumnReader {
                            const duckdb::SelectionVector& sel,
                            duckdb::idx_t hits, duckdb::idx_t span,
                            duckdb::Vector& out) const;
+
+  // Narrows `sel` (offsets within [0, span) of the requested rows, ascending)
+  // to the subset whose value in [anchor, anchor+span) passes `filter`, exactly
+  // like RowGroup::Scan's per-column filter step. Uses the compression codec's
+  // ColumnSegment::Filter (dict evaluates the predicate once per entry) when
+  // the codec self-describes nulls; otherwise decodes the span (data +
+  // validity) into `scratch` and narrows via ColumnSegment::FilterSelection.
+  // Positions the scan to `anchor` first (rows must ascend across calls).
+  // `scratch` is a caller-owned throwaway of this column's type. Returns the
+  // survivor count; on return `sel[0..survivors)` are the surviving span
+  // offsets.
+  duckdb::idx_t GatherFilter(ScanState& s, uint64_t anchor, duckdb::idx_t span,
+                             duckdb::SelectionVector& sel,
+                             duckdb::idx_t sel_count,
+                             const duckdb::TableFilter& filter,
+                             duckdb::TableFilterState& filter_state,
+                             duckdb::Vector& scratch) const;
 
   class PointReader {
    public:

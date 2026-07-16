@@ -202,7 +202,7 @@ void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   if (!expr.BindInfo()) {
     // Reached when neither the iresearch_plan rule nor
     // OffsetsStandaloneBind populated bind data (literal first arg, no
-    // surrounding SearchScan, unresolved dict name, etc.). Same shape
+    // surrounding search scan, unresolved dict name, etc.). Same shape
     // as the function's pre-rewrite stub error.
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

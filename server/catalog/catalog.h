@@ -498,11 +498,16 @@ class Catalog final {
   bool CreateForeignServer(const AccessContext& ax, ObjectId database_id,
                            std::shared_ptr<ForeignServer> foreign_server,
                            bool if_not_exists);
-  // Throws INSUFFICIENT_PRIVILEGE if `ax.role` may not CREATE a foreign server
-  // in the database. Called by the command layer BEFORE it connects the
-  // remote, so a denied CREATE SERVER never opens (and orphans) an attachment.
-  void RequireCreateForeignServer(const AccessContext& ax,
-                                  ObjectId database_id);
+  // Every CREATE SERVER check in ONE lock acquisition: throws on a missing
+  // CREATE privilege or a name collision (in this or ANY database -- the
+  // attach alias is instance-global); returns false when if_not_exists and
+  // the server already exists. The command layer runs this BEFORE connecting
+  // the remote (a denied/duplicate CREATE must not touch the network);
+  // CreateForeignServer repeats the checks under the lock when persisting,
+  // because the connect happens between the two calls.
+  bool AuthorizeCreateForeignServer(const AccessContext& ax,
+                                    ObjectId database_id, std::string_view name,
+                                    bool if_not_exists);
   // The mapping's parent is its server (from GetServerId()); its name is the
   // mapped role.
   bool CreateUserMapping(const AccessContext& ax, ObjectId database_id,

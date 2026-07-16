@@ -191,37 +191,13 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
   auto db_id = conn_ctx.GetDatabaseId();
 
   auto& catalog = catalog::GetCatalog();
-  // Authorize BEFORE connecting the remote: RunAttach below creates an
-  // instance-global DuckDB attachment, and the in-catalog gate throws (not a
-  // Result), so a denied CREATE that attached first would orphan that
-  // attachment past the cleanup branch. Checking here also avoids connecting a
-  // remote on behalf of a caller who lacks the privilege.
-  catalog.RequireCreateForeignServer(catalog::ActingAs(conn_ctx.GetRoleId()),
-                                     db_id);
-  auto snapshot = catalog.GetCatalogSnapshot();
-  if (snapshot->GetForeignServer(db_id, name)) {
-    if (if_not_exists) {
-      return;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-                    ERR_MSG("server \"", name, "\" already exists"));
-  }
-  // The live attachment alias is instance-global while catalog names are
-  // per-database: reject a name owned by ANY database before touching the
-  // remote. Without this the collision surfaces as a bogus connection error --
-  // or not at all when the other server's attachment is currently down, after
-  // which DROP DATABASE there would detach OUR live attachment. The catalog
-  // re-throws the same error under its lock; this copy is the UX gate that
-  // fires before the network attach.
-  for (const auto& db : snapshot->GetDatabases()) {
-    if (db->GetId() != db_id && snapshot->GetForeignServer(db->GetId(), name)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-        ERR_MSG("server \"", name, "\" already exists in database \"",
-                db->GetName(), "\""),
-        ERR_HINT("Foreign server attachment names are instance-wide; "
-                 "choose a name not used by any database."));
-    }
+  // Every check in one locked catalog call, BEFORE connecting the remote: a
+  // denied or duplicate CREATE must not touch the network (nor orphan the
+  // instance-global attachment RunAttach creates). CreateForeignServer below
+  // repeats the checks under the same lock when persisting.
+  if (!catalog.AuthorizeCreateForeignServer(
+        catalog::ActingAs(conn_ctx.GetRoleId()), db_id, name, if_not_exists)) {
+    return;
   }
 
   // Owner = the creating role; the default ACL then gives the owner USAGE and

@@ -2868,10 +2868,45 @@ bool Catalog::CreateTokenizer(const AccessContext& ax, ObjectId database_id,
   return true;
 }
 
-void Catalog::RequireCreateForeignServer(const AccessContext& ax,
-                                         ObjectId database_id) {
+// CREATE SERVER name checks shared by the pre-attach authorize and the
+// persisting create (both under _mutex): same-database duplicate first, then
+// the cross-database collision -- catalog names are per-database, but the
+// live attachment alias is instance-global, so a second same-named server
+// would race the first for it (nondeterministic boot winner; DROP DATABASE
+// detaching the other database's attachment). The create-time ATTACH cannot
+// catch this -- it only collides while the first server's attachment is live,
+// not when its remote is down. Returns false for the if_not_exists no-op.
+static bool CheckForeignServerName(const Snapshot& snapshot,
+                                   ObjectId database_id, std::string_view name,
+                                   bool if_not_exists) {
+  if (snapshot.GetForeignServer(database_id, name)) {
+    if (if_not_exists) {
+      return false;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                    ERR_MSG("server \"", name, "\" already exists"));
+  }
+  for (const auto& db : snapshot.GetDatabases()) {
+    if (db->GetId() != database_id &&
+        snapshot.GetForeignServer(db->GetId(), name)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+        ERR_MSG("server \"", name, "\" already exists in database \"",
+                db->GetName(), "\""),
+        ERR_HINT("Foreign server attachment names are instance-wide; "
+                 "choose a name not used by any database."));
+    }
+  }
+  return true;
+}
+
+bool Catalog::AuthorizeCreateForeignServer(const AccessContext& ax,
+                                           ObjectId database_id,
+                                           std::string_view name,
+                                           bool if_not_exists) {
   absl::MutexLock lock{&_mutex};
   RequireCreateOn(*_snapshot, ax.role, database_id);
+  return CheckForeignServerName(*_snapshot, database_id, name, if_not_exists);
 }
 
 bool Catalog::CreateForeignServer(const AccessContext& ax, ObjectId database_id,
@@ -2882,27 +2917,9 @@ bool Catalog::CreateForeignServer(const AccessContext& ax, ObjectId database_id,
   // the database, same as CREATE SCHEMA -- PG gates on FDW USAGE instead, but
   // serenedb has no foreign-data-wrapper catalog object to hang an ACL on.
   RequireCreateOn(*_snapshot, ax.role, database_id);
-  if (if_not_exists && _snapshot->GetObjectId<ResolveType::ForeignServer>(
-                         database_id, foreign_server->GetName())) {
+  if (!CheckForeignServerName(*_snapshot, database_id,
+                              foreign_server->GetName(), if_not_exists)) {
     return false;
-  }
-  // Catalog names are per-database, but the live attachment alias is
-  // instance-global: a second same-named server would race the first for the
-  // alias (nondeterministic boot winner; DROP DATABASE detaching the other
-  // database's attachment). Reject up front, naming the owner. The create-time
-  // ATTACH cannot be relied on for this -- it only collides while the first
-  // server's attachment is live, not when its remote is down.
-  for (const auto& db : _snapshot->GetDatabases()) {
-    if (db->GetId() != database_id &&
-        _snapshot->GetObjectId<ResolveType::ForeignServer>(
-          db->GetId(), foreign_server->GetName())) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-        ERR_MSG("server \"", foreign_server->GetName(),
-                "\" already exists in database \"", db->GetName(), "\""),
-        ERR_HINT("Foreign server attachment names are instance-wide; "
-                 "choose a name not used by any database."));
-    }
   }
   foreign_server->SetParentId(database_id);
 

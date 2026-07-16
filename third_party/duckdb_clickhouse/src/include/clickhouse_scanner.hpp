@@ -38,11 +38,7 @@ struct ClickHouseBindData : public dbconnector::BindData {
 	//! May be empty (older bind paths); callers must bounds-check.
 	vector<std::string> clickhouse_types;
 	//! Remote ORDER BY / LIMIT clauses folded in by the shared dbconnector
-	//! OrderByAndLimitOptimizer (the folded plan node is removed). The optimizer
-	//! rewrites order keys per dialect (isNaN prefix, toString) so the remote
-	//! sort reproduces DuckDB's ordering, and limit-over-local-refilter folds
-	//! are refused via the Config's fold_limit_with_table_filters=false -- so a
-	//! fold only happens when the remote result is exactly DuckDB's.
+	//! OrderByAndLimitOptimizer (the folded plan node is removed).
 	dbconnector::optimizer::OrderByAndLimitBindData order_by_and_limit;
 	//! Required by the dbconnector::BindData contract; the aggregate optimizer is
 	//! not registered for ClickHouse (postgres does not register it either).

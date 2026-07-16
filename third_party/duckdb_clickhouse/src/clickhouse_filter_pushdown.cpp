@@ -14,14 +14,11 @@ string ClickHouseFilterPushdown::TransformFilters(const vector<column_t> &column
 	if (!filters || !filters->HasFilters()) {
 		return string();
 	}
-	// ClickHouse dialect for the shared filter renderer: backtick identifiers,
-	// single-quoted constants, backslash escaping (CH treats backslash as an escape
-	// inside both `...` and '...'), BLOB as unhex('HEX'), and the ClickHouse dialect
-	// flag (no COLLATE, tupleElement(...) for Tuple fields). `auto` because the
-	// Config type is private to FilterPushdown (only CreateConfig may mint one).
+	// Backslash escaping: CH treats backslash as an escape inside both `...`
+	// and '...'; BLOBs render as unhex('HEX').
 	auto config = dbconnector::table_scan::FilterPushdown::CreateConfig(
-	    '`', '\'', dbconnector::query::QuoteEscapeStyle::BACKSLASH, "unhex('", ")",
-	    dbconnector::query::Dialect::ClickHouse);
+	    '`', '\'', dbconnector::query::QuoteEscapeStyle::BACKSLASH, dbconnector::query::Dialect::ClickHouse,
+	    "unhex('", ")");
 	string result;
 	for (auto &entry : *filters) {
 		auto column_id = column_ids[entry.GetIndex()];

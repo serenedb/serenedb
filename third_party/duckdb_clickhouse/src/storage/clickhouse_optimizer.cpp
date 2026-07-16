@@ -6,19 +6,12 @@ namespace duckdb {
 
 // The ClickHouse mirror of PostgresOptimizer: run the shared dbconnector
 // ORDER BY / LIMIT / TOP_N pushdown over the ClickHouse scans. The shared rule
-// folds the clause into the scan's remote SQL and REMOVES the local plan node,
-// so it only fires when the remote result is exactly DuckDB's:
-//  - order keys whose native ClickHouse ordering differs from DuckDB's are
-//    REWRITTEN by the shared optimizer via the ClickHouse dialect (isNaN
-//    prefix for float NaN placement, toString for UUID and text-backed
-//    columns -- which matches the local values by construction, since the
-//    read path surfaces those columns as their toString() text); compound
-//    keys nesting a divergent scalar cannot be rewritten and stay local.
-//  - fold_limit_with_table_filters=false: a scan carrying REQUIRED table
-//    filters refuses LIMIT-bearing folds -- their remote rendering may be
-//    inexact and re-applied locally, and a remote LIMIT would cut the stream
-//    BEFORE that re-check. Optional (advisory) filters never change the row
-//    set, so they do not block.
+// folds the clause into the scan's remote SQL and REMOVES the local plan node;
+// divergent order keys are rewritten via the ClickHouse dialect (see
+// TryBuildOrderByClause), and fold_limit_with_table_filters=false refuses
+// LIMIT-bearing folds over scans with REQUIRED filters -- their rendering may
+// be inexact and re-applied locally, and a remote LIMIT would cut the stream
+// BEFORE that re-check.
 //
 // PostgresOptimizer's other two passes have no ClickHouse analog by design:
 //  - DisableParallelLimit: postgres splits a scan into CTID-range tasks, so a

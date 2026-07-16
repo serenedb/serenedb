@@ -1,0 +1,63 @@
+control substitution on
+
+# TopN + WHERE over the postgres connector: DuckDB's TopN optimizer injects
+# OPTIONAL dynamic filters into the scan, and the shared renderer must handle
+# them without breaking the required parts:
+#  - `WHERE x > 5 ORDER BY x LIMIT n` puts (x > 5 AND optional(<runtime
+#    threshold>)) on the scan. The threshold has no SQL form; the renderer
+#    must drop just that piece and still push x > 5 -- failing the whole
+#    conjunction makes the pg connector THROW ("Unsupported filter pushdown")
+#    on this everyday query.
+#  - NULLS FIRST orderings inject optional(col IS NULL OR <threshold>). The
+#    unrenderable branch must fail the whole OR (and with it the optional),
+#    NOT be dropped from it -- dropping pushed a hard `col IS NULL` and every
+#    non-NULL row silently vanished. LIMIT must exceed the NULL count or the
+#    all-NULL wrong answer still satisfies the assertion.
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pg_${__DATABASE__} (TYPE postgres);
+
+statement ok
+CREATE SCHEMA pg_${__DATABASE__}.${__DATABASE__}_topt;
+
+statement ok
+CREATE TABLE pg_${__DATABASE__}.${__DATABASE__}_topt.items (id INTEGER, note TEXT);
+
+statement count 5
+INSERT INTO pg_${__DATABASE__}.${__DATABASE__}_topt.items VALUES
+  (1, 'in stock'), (2, NULL), (3, 'low'), (4, NULL), (5, 'flagship');
+
+# Required filter + TopN threshold on the same column: x > 5 analogue.
+query
+SELECT id FROM pg_${__DATABASE__}.${__DATABASE__}_topt.items WHERE id > 1 ORDER BY id LIMIT 3;
+----
+id
+2
+3
+4
+
+# NULLS FIRST past the NULL count: ids 2,4 (NULL notes) then the smallest note.
+query
+SELECT id FROM pg_${__DATABASE__}.${__DATABASE__}_topt.items ORDER BY note NULLS FIRST, id LIMIT 3;
+----
+id
+2
+4
+5
+
+# No row may vanish when the LIMIT covers the whole table.
+query
+SELECT count(*) AS n FROM (
+  SELECT id FROM pg_${__DATABASE__}.${__DATABASE__}_topt.items ORDER BY note NULLS FIRST LIMIT 5) s;
+----
+n
+5
+
+statement ok
+DROP TABLE pg_${__DATABASE__}.${__DATABASE__}_topt.items;
+
+statement ok
+DROP SCHEMA pg_${__DATABASE__}.${__DATABASE__}_topt;
+
+statement ok
+DETACH pg_${__DATABASE__};

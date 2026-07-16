@@ -47,6 +47,20 @@ unique_ptr<FunctionData> ClickHouseBindData::Copy() const {
 	return std::move(result);
 }
 
+void ClickHouseBindData::EnsureOrderKeySafety() {
+	if (order_key_safety_computed) {
+		return;
+	}
+	order_key_safety_computed = true;
+	auto &unsafe_keys = order_by_and_limit.order_key_unsafe;
+	unsafe_keys.assign(types.size(), false);
+	for (idx_t i = 0; i < types.size(); i++) {
+		const bool is_stringified = i < stringified.size() && stringified[i];
+		const auto ch_type = i < clickhouse_types.size() ? clickhouse_types[i] : std::string();
+		unsafe_keys[i] = is_stringified || ClickHouseOrderingUnsafe(types[i], ch_type);
+	}
+}
+
 bool ClickHouseBindData::Equals(const FunctionData &other_p) const {
 	auto &other = other_p.Cast<ClickHouseBindData>();
 	return database == other.database && table == other.table && sql == other.sql &&

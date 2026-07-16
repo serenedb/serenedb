@@ -1,13 +1,6 @@
 #include "storage/clickhouse_optimizer.hpp"
 
-#include "duckdb/planner/operator/logical_get.hpp"
-#include "duckdb/planner/filter/expression_filter.hpp"
-
 #include "dbconnector/optimizer/order_by_and_limit_optimizer.hpp"
-#include "dbconnector/optimizer/optimizer_util.hpp"
-
-#include "clickhouse_scanner.hpp"
-#include "clickhouse_types.hpp"
 
 namespace duckdb {
 
@@ -16,14 +9,15 @@ namespace duckdb {
 // folds the clause into the scan's remote SQL and REMOVES the local plan node,
 // so it only fires when the remote result is exactly DuckDB's; two
 // ClickHouse-specific vetoes enforce that:
-//  - order_key_unsafe: an order key whose native ClickHouse ordering differs
-//    from DuckDB's (float NaN placement, UUID/Enum/IP -- ClickHouseOrderingUnsafe)
-//    or that is surfaced via toString() (text order != value order) refuses the
-//    fold; the sort stays local.
-//  - limit_unsafe: a scan carrying REQUIRED table filters refuses LIMIT-bearing
-//    folds -- their remote rendering may be inexact and re-applied locally, and
-//    a remote LIMIT would cut the stream BEFORE that re-check. Optional
-//    (advisory) filters never change the row set, so they do not block.
+//  - order keys whose native ClickHouse ordering differs from DuckDB's (float
+//    NaN placement, UUID/Enum/IP) or that are surfaced via toString() (text
+//    order != value order) are marked in the bind data's order_key_unsafe
+//    bitmap (ClickHouseBindData::EnsureOrderKeySafety); the sort stays local.
+//  - fold_limit_with_table_filters=false: a scan carrying REQUIRED table
+//    filters refuses LIMIT-bearing folds -- their remote rendering may be
+//    inexact and re-applied locally, and a remote LIMIT would cut the stream
+//    BEFORE that re-check. Optional (advisory) filters never change the row
+//    set, so they do not block.
 //
 // PostgresOptimizer's other two passes have no ClickHouse analog by design:
 //  - DisableParallelLimit: postgres splits a scan into CTID-range tasks, so a
@@ -39,25 +33,11 @@ void ClickHouseOptimizer::Optimize(OptimizerExtensionInput &input, unique_ptr<Lo
 	for (const char *scan_name : {"clickhouse_scan_pushdown", "clickhouse_scan"}) {
 		auto config = dbconnector::optimizer::OrderByAndLimitOptimizer::CreateConfig(
 		    input.context, "ch_order_pushdown", '`', dbconnector::query::QuoteEscapeStyle::BACKSLASH, scan_name);
-		config.order_key_unsafe = [](const LogicalGet &get, column_t column_id) {
-			auto &bind_data = get.bind_data->Cast<ClickHouseBindData>();
-			if (column_id < bind_data.stringified.size() && bind_data.stringified[column_id]) {
-				return true;
-			}
-			LogicalType key_type = column_id < bind_data.types.size() ? bind_data.types[column_id]
-			                                                          : LogicalType(LogicalTypeId::INVALID);
-			std::string key_ch_type =
-			    column_id < bind_data.clickhouse_types.size() ? bind_data.clickhouse_types[column_id] : std::string();
-			return ClickHouseOrderingUnsafe(key_type, key_ch_type);
-		};
-		config.limit_unsafe = [](const LogicalGet &get) {
-			for (auto &entry : get.table_filters) {
-				if (!ExpressionFilter::IsOptionalFilter(entry.Filter())) {
-					return true;
-				}
-			}
-			return false;
-		};
+		// ClickHouse-unsafe order keys are marked per column in the bind data's
+		// order_key_unsafe bitmap (ClickHouseBindData::EnsureOrderKeySafety); the
+		// scan re-applies inexact filters locally, so LIMIT folds over a filtered
+		// scan are refused.
+		config.fold_limit_with_table_filters = false;
 		dbconnector::optimizer::OrderByAndLimitOptimizer::Optimize(config, input, plan);
 	}
 }

@@ -39,6 +39,7 @@ unique_ptr<FunctionData> ClickHouseBindData::Copy() const {
 	result->stringified = stringified;
 	result->clickhouse_types = clickhouse_types;
 	result->order_by_and_limit = order_by_and_limit;
+	result->aggregate = aggregate;
 	result->rowid_column = rowid_column;
 	result->table_entry = table_entry;
 	result->has_cardinality = has_cardinality;

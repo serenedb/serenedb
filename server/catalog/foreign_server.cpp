@@ -151,6 +151,10 @@ void DropForeignServerSecret(duckdb::ClientContext& context,
 
 }  // namespace
 
+bool IsSupportedFdw(std::string_view fdw_name) {
+  return !StorageTypeForFdw(fdw_name).empty();
+}
+
 std::string QuoteSqlIdentifier(std::string_view name) {
   return duckdb::KeywordHelper::WriteQuoted(std::string{name}, '"');
 }

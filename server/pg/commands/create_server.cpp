@@ -190,36 +190,33 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
                          const duckdb::named_parameter_map_t& options) {
   auto db_id = conn_ctx.GetDatabaseId();
 
-  auto& catalog = catalog::GetCatalog();
-  // Every check in one locked catalog call, BEFORE connecting the remote: a
-  // denied or duplicate CREATE must not touch the network (nor orphan the
-  // instance-global attachment RunAttach creates). CreateForeignServer below
-  // repeats the checks under the same lock when persisting.
-  if (!catalog.AuthorizeCreateForeignServer(
-        catalog::ActingAs(conn_ctx.GetRoleId()), db_id, name, if_not_exists)) {
-    return;
-  }
-
   // Owner = the creating role; the default ACL then gives the owner USAGE and
   // the public nothing (auth::ClassPrivs/PublicDefaultPrivs).
   auto server = std::make_shared<catalog::ForeignServer>(
     catalog::Permissions{conn_ctx.GetRoleId()}, ObjectId{}, ObjectId{}, name,
     std::string{fdw_name}, MakeCatalogOptions(options));
 
-  // Validate + attach first; only persist if the connection works, so a failed
-  // CREATE SERVER leaves nothing behind. Any persist failure (duplicate name,
-  // schema unresolved, write error) throws out of the catalog -- detach before
-  // it surfaces so the failed CREATE leaves no live attachment either.
-  RunAttach(*server);
-
+  // The catalog validates everything under its mutex (privilege, supported
+  // FDW, name collisions) and persists -- a denied or invalid CREATE never
+  // touches the network. The live ATTACH runs after; a connect failure
+  // compensates by dropping the just-created row, so a failed CREATE SERVER
+  // still leaves nothing behind.
+  auto& catalog = catalog::GetCatalog();
+  if (!catalog.CreateForeignServer(catalog::ActingAs(conn_ctx.GetRoleId()),
+                                   db_id, server, if_not_exists)) {
+    return;
+  }
   try {
-    if (!catalog.CreateForeignServer(catalog::ActingAs(conn_ctx.GetRoleId()),
-                                     db_id, server, if_not_exists)) {
-      // A concurrent CREATE SERVER won the race past the pre-check above.
-      catalog::DetachForeignServerAttachment(name);
-    }
+    RunAttach(*server);
   } catch (...) {
-    catalog::DetachForeignServerAttachment(name);
+    try {
+      catalog.DropForeignServer(catalog::ActingAs(conn_ctx.GetRoleId()),
+                                conn_ctx.GetDatabase(), name, /*cascade=*/true,
+                                /*missing_ok=*/true);
+    } catch (...) {
+      // Surface the connect error, not the cleanup's -- boot replay heals a
+      // row that outlives this (it re-attaches persisted servers).
+    }
     throw;
   }
 }

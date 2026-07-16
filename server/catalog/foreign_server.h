@@ -60,6 +60,10 @@ class ForeignServer : public Object {
 
 class UserMapping;
 
+// True when the FDW name maps to a connector storage type (clickhouse_fdw,
+// postgres_fdw and their bare aliases).
+bool IsSupportedFdw(std::string_view fdw_name);
+
 // Registers the transient secret, runs the ATTACH on `conn`, drops the secret.
 // nullopt = unsupported FDW (nothing run); "" = success; else the REDACTED
 // error.

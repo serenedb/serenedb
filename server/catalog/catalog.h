@@ -494,20 +494,15 @@ class Catalog final {
   bool CreateTokenizer(const AccessContext& ax, ObjectId database_id,
                        std::string_view schema, std::shared_ptr<Tokenizer> dict,
                        bool if_not_exists);
-  // Foreign servers are database children, like PG (no schema).
+  // Foreign servers are database children, like PG (no schema). Every check
+  // runs here, under the mutex: CREATE privilege, supported FDW, and name
+  // collisions in this or ANY database (the attach alias is instance-global).
+  // Returns false for the if_not_exists no-op. The live ATTACH happens
+  // AFTERWARDS in the command layer, compensated by a drop on failure -- so a
+  // denied or invalid CREATE never touches the network.
   bool CreateForeignServer(const AccessContext& ax, ObjectId database_id,
                            std::shared_ptr<ForeignServer> foreign_server,
                            bool if_not_exists);
-  // Every CREATE SERVER check in ONE lock acquisition: throws on a missing
-  // CREATE privilege or a name collision (in this or ANY database -- the
-  // attach alias is instance-global); returns false when if_not_exists and
-  // the server already exists. The command layer runs this BEFORE connecting
-  // the remote (a denied/duplicate CREATE must not touch the network);
-  // CreateForeignServer repeats the checks under the lock when persisting,
-  // because the connect happens between the two calls.
-  bool AuthorizeCreateForeignServer(const AccessContext& ax,
-                                    ObjectId database_id, std::string_view name,
-                                    bool if_not_exists);
   // The mapping's parent is its server (from GetServerId()); its name is the
   // mapped role.
   bool CreateUserMapping(const AccessContext& ax, ObjectId database_id,

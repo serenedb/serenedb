@@ -22,7 +22,6 @@
 
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
-#include <absl/strings/str_replace.h>
 
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
@@ -67,27 +66,18 @@ catalog::Options MakeCatalogOptions(
 // Establish the live attachment for a server (validates connectivity too).
 void RunAttach(const catalog::ForeignServer& server) {
   auto conn = DuckDBEngine::Instance().CreateConnection();
-  const auto secret = catalog::MakeForeignServerSecretName(server.GetName());
-  auto sql =
-    catalog::PrepareForeignServerAttach(*conn->context, secret, server);
-  if (sql.empty()) {
+  const auto err = catalog::RunForeignServerAttach(*conn, server);
+  if (!err) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("foreign-data wrapper \"", server.GetFdwName(),
                             "\" is not supported"),
                     ERR_HINT("Use clickhouse_fdw or postgres_fdw."));
   }
-  auto result = conn->Query(sql);
-  catalog::DropForeignServerSecret(*conn->context, secret);
-  if (result->HasError()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_CONNECTION_EXCEPTION),
-      ERR_MSG("could not connect foreign server \"", server.GetName(),
-              "\": ", catalog::RedactConnstrSecrets(result->GetError())));
+  if (!err->empty()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_CONNECTION_EXCEPTION),
+                    ERR_MSG("could not connect foreign server \"",
+                            server.GetName(), "\": ", *err));
   }
-}
-
-void RunDetach(std::string_view name) {
-  catalog::DetachForeignServerAttachment(name);
 }
 
 // Resolve a USER MAPPING role spec: CURRENT_USER/USER/CURRENT_ROLE -> the
@@ -114,25 +104,17 @@ std::string ProbeAttach(const catalog::ForeignServer& server,
                         const catalog::UserMapping* pub) {
   const auto alias = absl::StrCat("__sdb_fdw_probe_", server.GetName());
   auto conn = DuckDBEngine::Instance().CreateConnection();
-  const auto secret = catalog::MakeForeignServerSecretName(alias);
-  auto sql = catalog::PrepareForeignServerAttach(*conn->context, secret, server,
-                                                 pub, alias);
-  if (sql.empty()) {
-    return {};  // unsupported FDW is reported elsewhere; nothing to probe
-  }
   // Clear any stale probe left by a crash between attach and detach.
   conn->Query(DetachSql(alias));
-  auto result = conn->Query(sql);
-  std::string err;
-  if (result->HasError()) {
-    // Redact here so every caller that surfaces this string (error or log) is
-    // covered -- the postgres connector echoes the full DSN, password included.
-    err = catalog::RedactConnstrSecrets(result->GetError());
-  } else {
-    conn->Query(DetachSql(alias));
+  auto err = catalog::RunForeignServerAttach(*conn, server, pub, alias);
+  if (!err) {
+    return {};  // unsupported FDW is reported elsewhere; nothing to probe
   }
-  catalog::DropForeignServerSecret(*conn->context, secret);
-  return err;
+  if (err->empty()) {
+    conn->Query(DetachSql(alias));
+    return {};
+  }
+  return std::move(*err);
 }
 
 // Re-establish a server's attachment with current credentials (server OPTIONS
@@ -169,26 +151,23 @@ void ReattachServer(ObjectId db_id, std::string_view server_name,
 
   // Credentials verified by the probe: swap the live attachment under a
   // freshly-registered secret.
-  const auto secret = catalog::MakeForeignServerSecretName(server_name);
-  auto sql = catalog::PrepareForeignServerAttach(*conn->context, secret,
-                                                 *server, pub.get());
-  if (sql.empty()) {
+  conn->Query(DetachSql(server_name));
+  const auto attach_err =
+    catalog::RunForeignServerAttach(*conn, *server, pub.get());
+  if (!attach_err) {
     return;
   }
-  conn->Query(DetachSql(server_name));
-  auto attach_result = conn->Query(sql);
-  catalog::DropForeignServerSecret(*conn->context, secret);
-  if (attach_result->HasError()) {
+  if (!attach_err->empty()) {
     // The probe connected but the live re-ATTACH failed (e.g. a transient).
     // Surface it instead of silently leaving the server detached.
-    auto err = catalog::RedactConnstrSecrets(attach_result->GetError());
     if (throw_on_error) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_CONNECTION_EXCEPTION),
-                      ERR_MSG("re-attach of foreign server \"", server_name,
-                              "\" failed after a successful probe: ", err));
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_CONNECTION_EXCEPTION),
+        ERR_MSG("re-attach of foreign server \"", server_name,
+                "\" failed after a successful probe: ", *attach_err));
     }
     SDB_WARN(GENERAL, "Re-attach of foreign server \"", server_name,
-             "\" failed after a successful probe: ", err);
+             "\" failed after a successful probe: ", *attach_err);
     return;
   }
   // The probe and swap run without the catalog lock (they hit the network); a
@@ -219,7 +198,8 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
   // remote on behalf of a caller who lacks the privilege.
   catalog.RequireCreateForeignServer(catalog::ActingAs(conn_ctx.GetRoleId()),
                                      db_id);
-  if (catalog.GetCatalogSnapshot()->GetForeignServer(db_id, name)) {
+  auto snapshot = catalog.GetCatalogSnapshot();
+  if (snapshot->GetForeignServer(db_id, name)) {
     if (if_not_exists) {
       return;
     }
@@ -232,20 +212,7 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
   // connection error -- or not at all when the other server's attachment is
   // currently down, after which DROP DATABASE there would detach OUR live
   // attachment. (The catalog re-checks under its lock; this is the UX gate.)
-  {
-    auto snapshot = catalog.GetCatalogSnapshot();
-    for (const auto& db : snapshot->GetDatabases()) {
-      if (db->GetId() != db_id &&
-          snapshot->GetForeignServer(db->GetId(), name)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-          ERR_MSG("server \"", name, "\" already exists in database \"",
-                  db->GetName(), "\""),
-          ERR_HINT("Foreign server attachment names are instance-wide; "
-                   "choose a name not used by any database."));
-      }
-    }
-  }
+  snapshot->RequireForeignServerNameFreeElsewhere(db_id, name);
 
   // Owner = the creating role; the default ACL then gives the owner USAGE and
   // the public nothing (auth::ClassPrivs/PublicDefaultPrivs).
@@ -263,10 +230,10 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
     if (!catalog.CreateForeignServer(catalog::ActingAs(conn_ctx.GetRoleId()),
                                      db_id, server, if_not_exists)) {
       // A concurrent CREATE SERVER won the race past the pre-check above.
-      RunDetach(name);
+      catalog::DetachForeignServerAttachment(name);
     }
   } catch (...) {
-    RunDetach(name);
+    catalog::DetachForeignServerAttachment(name);
     throw;
   }
 }
@@ -284,7 +251,7 @@ void DropForeignServer(ConnectionContext& conn_ctx, std::string_view name,
     return;
   }
 
-  RunDetach(name);
+  catalog::DetachForeignServerAttachment(name);
 }
 
 void CreateUserMapping(ConnectionContext& conn_ctx, std::string_view user,
@@ -363,8 +330,7 @@ void DropUserMapping(ConnectionContext& conn_ctx, std::string_view user,
 
   auto& catalog = catalog::GetCatalog();
   if (!catalog.DropUserMapping(catalog::ActingAs(conn_ctx.GetRoleId()),
-                               conn_ctx.GetDatabase(), server, role,
-                               /*cascade=*/false)) {
+                               conn_ctx.GetDatabase(), server, role)) {
     if (!missing_ok) {
       // PG blames the server when the server itself is what's missing.
       if (!catalog.GetCatalogSnapshot()->GetForeignServer(db_id, server)) {

@@ -24,7 +24,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <vector>
 
 #include "catalog/object.h"
 #include "catalog/options.h"
@@ -34,6 +33,7 @@ namespace duckdb {
 class Serializer;
 class Deserializer;
 class ClientContext;
+class Connection;
 
 }  // namespace duckdb
 namespace sdb::catalog {
@@ -60,11 +60,6 @@ class ForeignServer : public Object {
 
 class UserMapping;
 
-// The deterministic transient-secret name serenedb registers for a foreign
-// server's ATTACH `alias` (sanitised to an identifier). Pass it to
-// PrepareForeignServerAttach and DropForeignServerSecret.
-std::string MakeForeignServerSecretName(std::string_view alias);
-
 // Registers a TEMPORARY DuckDB secret named `secret_name` carrying the server's
 // connection options merged with a PUBLIC user mapping's (its user/password
 // win), keys canonicalised to the connector's secret parameters, and returns
@@ -83,10 +78,12 @@ std::string PrepareForeignServerAttach(
   const ForeignServer& server, const UserMapping* public_mapping = nullptr,
   std::string_view alias = {});
 
-// Drops a transient secret registered by PrepareForeignServerAttach; a missing
-// secret is ignored (best-effort cleanup).
-void DropForeignServerSecret(duckdb::ClientContext& context,
-                             std::string_view secret_name);
+// Registers the transient secret, runs the ATTACH on `conn`, drops the secret.
+// nullopt = unsupported FDW (nothing run); "" = success; else the REDACTED
+// error.
+std::optional<std::string> RunForeignServerAttach(
+  duckdb::Connection& conn, const ForeignServer& server,
+  const UserMapping* public_mapping = nullptr, std::string_view alias = {});
 
 // Best-effort DETACH of a server's live (instance-global) DuckDB attachment,
 // on a fresh engine connection. Used by DROP SERVER and by the DROP SCHEMA /

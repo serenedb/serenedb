@@ -29,8 +29,6 @@
 #include "connector/duckdb_client_state.h"
 #include "pg/commands/create_server.h"
 #include "pg/connection_context.h"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {
@@ -40,12 +38,6 @@ namespace {
 void CreateForeignServerPragma(duckdb::ClientContext& context,
                                const duckdb::FunctionParameters& params) {
   auto& args = params.values;
-  if (args.size() < 3) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_SYNTAX_ERROR),
-      ERR_MSG(
-        "create_foreign_server requires name, fdw_name and if_not_exists"));
-  }
   const auto name = args[0].GetValue<std::string>();
   const auto fdw_name = args[1].GetValue<std::string>();
   const auto if_not_exists = args[2].GetValue<bool>();
@@ -59,11 +51,6 @@ void CreateForeignServerPragma(duckdb::ClientContext& context,
 void DropForeignServerPragma(duckdb::ClientContext& context,
                              const duckdb::FunctionParameters& params) {
   auto& args = params.values;
-  if (args.size() < 3) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_SYNTAX_ERROR),
-      ERR_MSG("drop_foreign_server requires name, missing_ok and cascade"));
-  }
   const auto name = args[0].GetValue<std::string>();
   const auto missing_ok = args[1].GetValue<bool>();
   const auto cascade = args[2].GetValue<bool>();
@@ -76,11 +63,6 @@ void DropForeignServerPragma(duckdb::ClientContext& context,
 void CreateUserMappingPragma(duckdb::ClientContext& context,
                              const duckdb::FunctionParameters& params) {
   auto& args = params.values;
-  if (args.size() < 3) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_SYNTAX_ERROR),
-      ERR_MSG("create_user_mapping requires user, server and if_not_exists"));
-  }
   const auto user = args[0].GetValue<std::string>();
   const auto server = args[1].GetValue<std::string>();
   const auto if_not_exists = args[2].GetValue<bool>();
@@ -94,11 +76,6 @@ void CreateUserMappingPragma(duckdb::ClientContext& context,
 void DropUserMappingPragma(duckdb::ClientContext& context,
                            const duckdb::FunctionParameters& params) {
   auto& args = params.values;
-  if (args.size() < 3) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_SYNTAX_ERROR),
-      ERR_MSG("drop_user_mapping requires user, server and missing_ok"));
-  }
   const auto user = args[0].GetValue<std::string>();
   const auto server = args[1].GetValue<std::string>();
   const auto missing_ok = args[2].GetValue<bool>();
@@ -112,32 +89,40 @@ void DropUserMappingPragma(duckdb::ClientContext& context,
 void RegisterForeignServerPragma(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader(db, "serenedb");
 
-  auto create_pragma = duckdb::PragmaFunction::PragmaCall(
-    "create_foreign_server", CreateForeignServerPragma,
-    {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR,
-     duckdb::LogicalType::BOOLEAN});
-  // Connection options are passed as arbitrary named parameters.
-  create_pragma.accept_arbitrary_named_parameters = true;
-  loader.RegisterFunction(create_pragma);
-
-  auto drop_pragma = duckdb::PragmaFunction::PragmaCall(
-    "drop_foreign_server", DropForeignServerPragma,
-    {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BOOLEAN,
-     duckdb::LogicalType::BOOLEAN});
-  loader.RegisterFunction(drop_pragma);
-
-  auto create_um = duckdb::PragmaFunction::PragmaCall(
-    "create_user_mapping", CreateUserMappingPragma,
-    {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR,
-     duckdb::LogicalType::BOOLEAN});
-  create_um.accept_arbitrary_named_parameters = true;
-  loader.RegisterFunction(create_um);
-
-  auto drop_um = duckdb::PragmaFunction::PragmaCall(
-    "drop_user_mapping", DropUserMappingPragma,
-    {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR,
-     duckdb::LogicalType::BOOLEAN});
-  loader.RegisterFunction(drop_um);
+  const auto kVarchar = duckdb::LogicalType::VARCHAR;
+  const auto kBoolean = duckdb::LogicalType::BOOLEAN;
+  struct Pragma {
+    const char* name;
+    duckdb::pragma_function_t function;
+    duckdb::vector<duckdb::LogicalType> arguments;
+    // The CREATE pragmas take connection options as arbitrary named parameters.
+    bool arbitrary_named_parameters;
+  };
+  Pragma pragmas[] = {
+    {"create_foreign_server",
+     CreateForeignServerPragma,
+     {kVarchar, kVarchar, kBoolean},
+     true},
+    {"drop_foreign_server",
+     DropForeignServerPragma,
+     {kVarchar, kBoolean, kBoolean},
+     false},
+    {"create_user_mapping",
+     CreateUserMappingPragma,
+     {kVarchar, kVarchar, kBoolean},
+     true},
+    {"drop_user_mapping",
+     DropUserMappingPragma,
+     {kVarchar, kVarchar, kBoolean},
+     false},
+  };
+  for (auto& pragma : pragmas) {
+    auto function = duckdb::PragmaFunction::PragmaCall(
+      pragma.name, pragma.function, std::move(pragma.arguments));
+    function.accept_arbitrary_named_parameters =
+      pragma.arbitrary_named_parameters;
+    loader.RegisterFunction(function);
+  }
 }
 
 }  // namespace sdb::connector

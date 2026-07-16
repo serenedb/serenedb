@@ -1112,21 +1112,19 @@ static bool ClickHouseTypeTextDiverges(const std::string &ch_type) {
 // scalar nested inside a compound column (Tuple/Array/Map/Nested -> STRUCT/LIST/
 // MAP) would slip through: tupleElement(col,'f') comparisons on a Float or
 // DateTime field push as exact while the remote evaluates them differently.
-// Matched by substring on the original CH type string; "Date" also covers
-// Date32/DateTime/DateTime64. "Decimal(" is included because a nested
-// Decimal(>38) field surfaces as text locally but compares numerically remotely.
-static bool ClickHouseInnerComparisonDiverges(const std::string &ch_type) {
-  return ch_type.find("Float32") != std::string::npos || ch_type.find("Float64") != std::string::npos ||
-         ch_type.find("Date") != std::string::npos || ch_type.find("UUID") != std::string::npos ||
-         ch_type.find("Decimal(") != std::string::npos;
-}
-
-// Ordering by raw epoch integers is monotone on both sides, so the date family
-// is safe here; floats (NaN placement), UUID (half-swapped byte order) and
-// text-vs-numeric Decimal are not.
+// Matched by substring on the original CH type string: floats (NaN placement),
+// UUID (half-swapped byte order) and "Decimal(" (a nested Decimal(>38) field
+// surfaces as text locally but compares/orders numerically remotely).
 static bool ClickHouseInnerOrderingDiverges(const std::string &ch_type) {
   return ch_type.find("Float32") != std::string::npos || ch_type.find("Float64") != std::string::npos ||
          ch_type.find("UUID") != std::string::npos || ch_type.find("Decimal(") != std::string::npos;
+}
+
+// Comparison additionally vetoes the date family ("Date" also covers Date32/
+// DateTime/DateTime64); ordering by raw epoch integers is monotone on both
+// sides, so dates stay safe as order keys.
+static bool ClickHouseInnerComparisonDiverges(const std::string &ch_type) {
+  return ClickHouseInnerOrderingDiverges(ch_type) || ch_type.find("Date") != std::string::npos;
 }
 
 static bool IsCompoundType(const LogicalType &duckdb_type) {
@@ -1163,13 +1161,8 @@ bool ClickHouseComparisonUnsafe(const LogicalType &duckdb_type, const std::strin
   case LogicalTypeId::UUID:
     return true;
   default:
-    if (IsCompoundType(duckdb_type) && ClickHouseInnerComparisonDiverges(ch_type)) {
-      return true;
-    }
-    if (IsTextMappedDecimal(duckdb_type, ch_type)) {
-      return true;
-    }
-    return ClickHouseTypeTextDiverges(ch_type);
+    return (IsCompoundType(duckdb_type) && ClickHouseInnerComparisonDiverges(ch_type)) ||
+           IsTextMappedDecimal(duckdb_type, ch_type) || ClickHouseTypeTextDiverges(ch_type);
   }
 }
 
@@ -1180,13 +1173,8 @@ bool ClickHouseOrderingUnsafe(const LogicalType &duckdb_type, const std::string 
   case LogicalTypeId::UUID:
     return true;
   default:
-    if (IsCompoundType(duckdb_type) && ClickHouseInnerOrderingDiverges(ch_type)) {
-      return true;
-    }
-    if (IsTextMappedDecimal(duckdb_type, ch_type)) {
-      return true;
-    }
-    return ClickHouseTypeTextDiverges(ch_type);
+    return (IsCompoundType(duckdb_type) && ClickHouseInnerOrderingDiverges(ch_type)) ||
+           IsTextMappedDecimal(duckdb_type, ch_type) || ClickHouseTypeTextDiverges(ch_type);
   }
 }
 

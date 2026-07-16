@@ -55,10 +55,17 @@ void ClickHouseBindData::EnsureOrderKeySafety() {
 	auto &unsafe_keys = order_by_and_limit.order_key_unsafe;
 	unsafe_keys.assign(types.size(), false);
 	for (idx_t i = 0; i < types.size(); i++) {
-		const bool is_stringified = i < stringified.size() && stringified[i];
-		const auto ch_type = i < clickhouse_types.size() ? clickhouse_types[i] : std::string();
-		unsafe_keys[i] = is_stringified || ClickHouseOrderingUnsafe(types[i], ch_type);
+		unsafe_keys[i] = ColumnPushdownUnsafe(i, true);
 	}
+}
+
+bool ClickHouseBindData::ColumnPushdownUnsafe(idx_t col, bool for_ordering) const {
+	if (col < stringified.size() && stringified[col]) {
+		return true;
+	}
+	const auto ch_type = col < clickhouse_types.size() ? clickhouse_types[col] : std::string();
+	return for_ordering ? ClickHouseOrderingUnsafe(types[col], ch_type)
+	                    : ClickHouseComparisonUnsafe(types[col], ch_type);
 }
 
 bool ClickHouseBindData::Equals(const FunctionData &other_p) const {
@@ -207,7 +214,7 @@ static unique_ptr<FunctionData> ClickHouseBind(ClientContext &context, TableFunc
 
 static std::string BuildScanSQL(const ClickHouseBindData &bind_data, const vector<column_t> &column_ids,
                                 optional_ptr<TableFilterSet> filters, bool filter_pushdown,
-                                vector<idx_t> *inexact_filters = nullptr) {
+                                vector<idx_t> &inexact_filters) {
 	std::string col_names;
 	for (auto &column_id : column_ids) {
 		if (!col_names.empty()) {
@@ -243,9 +250,7 @@ static std::string BuildScanSQL(const ClickHouseBindData &bind_data, const vecto
 	}
 
 	if (filter_pushdown && filters) {
-		auto filter_string = ClickHouseFilterPushdown::TransformFilters(
-		    column_ids, filters, bind_data.names, inexact_filters, &bind_data.stringified, &bind_data.types,
-		    &bind_data.clickhouse_types);
+		auto filter_string = ClickHouseFilterPushdown::TransformFilters(column_ids, filters, bind_data, inexact_filters);
 		if (!filter_string.empty()) {
 			query += " WHERE " + filter_string;
 		}
@@ -264,7 +269,7 @@ static unique_ptr<GlobalTableFunctionState> ClickHouseInitGlobalStateInternal(Cl
 	auto result = make_uniq<ClickHouseGlobalState>();
 
 	vector<idx_t> inexact_filters;
-	auto sql = BuildScanSQL(bind_data, input.column_ids, input.filters, filter_pushdown, &inexact_filters);
+	auto sql = BuildScanSQL(bind_data, input.column_ids, input.filters, filter_pushdown, inexact_filters);
 
 	if (!inexact_filters.empty() && input.filters) {
 		// Re-apply the filters the remote WHERE cannot express exactly. Each filter is

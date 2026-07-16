@@ -20,8 +20,9 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <absl/functional/function_ref.h>
-#include <absl/strings/ascii.h>
+#include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 
 #include <span>
@@ -68,12 +69,9 @@ class Options {
                                                       "connect_timeout",
                                                       "read_timeout",
                                                       "application_name"};
-    for (const auto plain : kPlainKeys) {
-      if (absl::EqualsIgnoreCase(key, plain)) {
-        return true;
-      }
-    }
-    return false;
+    return absl::c_any_of(kPlainKeys, [&](std::string_view p) {
+      return absl::EqualsIgnoreCase(key, p);
+    });
   }
   static bool IsSecretKey(std::string_view key) { return !IsPlainKey(key); }
 

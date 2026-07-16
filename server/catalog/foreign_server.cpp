@@ -21,7 +21,6 @@
 #include "catalog/foreign_server.h"
 
 #include <absl/strings/ascii.h>
-#include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 
 #include <atomic>
@@ -33,8 +32,11 @@
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/connection.hpp>
 #include <duckdb/main/secret/secret.hpp>
 #include <duckdb/main/secret/secret_manager.hpp>
+#include <duckdb/parser/keyword_helper.hpp>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -111,19 +113,46 @@ std::vector<std::pair<std::string, std::string>> MergeConnectionOptions(
   return merged;
 }
 
+// The deterministic transient-secret name serenedb registers for a foreign
+// server's ATTACH `alias` (sanitised to an identifier).
+std::string MakeForeignServerSecretName(std::string_view alias) {
+  // The temporary-secret store is instance-global while sanitized aliases can
+  // collide (distinct names mapping to one sanitized form, or same-named
+  // servers in different databases); registration REPLACEs and drop is
+  // by-name, so a bare alias would let concurrent attaches swap or drop each
+  // other's credentials mid-window. The counter makes every attach's secret
+  // name private to the Prepare/Drop pair that generated it.
+  static std::atomic<uint64_t> counter{0};
+  std::string out = "__sdb_fdw_secret_";
+  for (char c : alias) {
+    out +=
+      (std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_') ? c : '_';
+  }
+  absl::StrAppend(&out, "_", counter.fetch_add(1, std::memory_order_relaxed));
+  return out;
+}
+
+// Drops a transient secret registered by PrepareForeignServerAttach; a missing
+// secret is ignored (best-effort cleanup).
+void DropForeignServerSecret(duckdb::ClientContext& context,
+                             std::string_view secret_name) {
+  auto& secret_manager = duckdb::SecretManager::Get(context);
+  // Like RegisterSecret, dropping needs an active transaction; wrap it (the
+  // ATTACH query has already returned the connection to autocommit).
+  context.RunFunctionInTransaction([&]() {
+    auto transaction =
+      duckdb::CatalogTransaction::GetSystemCatalogTransaction(context);
+    secret_manager.DropSecretByName(
+      transaction, duckdb::Identifier{std::string{secret_name}},
+      duckdb::OnEntryNotFound::RETURN_NULL,
+      duckdb::SecretPersistType::TEMPORARY);
+  });
+}
+
 }  // namespace
 
 std::string QuoteSqlIdentifier(std::string_view name) {
-  std::string out = "\"";
-  for (char c : name) {
-    if (c == '"') {
-      out += "\"\"";
-    } else {
-      out += c;
-    }
-  }
-  out += "\"";
-  return out;
+  return duckdb::KeywordHelper::WriteQuoted(std::string{name}, '"');
 }
 
 std::string RedactConnstrSecrets(std::string_view text) {
@@ -217,23 +246,6 @@ std::shared_ptr<Object> ForeignServer::Clone() const {
     {.id = GetId(), .database_id = GetParentId()});
 }
 
-std::string MakeForeignServerSecretName(std::string_view alias) {
-  // The temporary-secret store is instance-global while sanitized aliases can
-  // collide (distinct names mapping to one sanitized form, or same-named
-  // servers in different databases); registration REPLACEs and drop is
-  // by-name, so a bare alias would let concurrent attaches swap or drop each
-  // other's credentials mid-window. The counter makes every attach's secret
-  // name private to the Prepare/Drop pair that generated it.
-  static std::atomic<uint64_t> counter{0};
-  std::string out = "__sdb_fdw_secret_";
-  for (char c : alias) {
-    out +=
-      (std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_') ? c : '_';
-  }
-  absl::StrAppend(&out, "_", counter.fetch_add(1, std::memory_order_relaxed));
-  return out;
-}
-
 std::string PrepareForeignServerAttach(duckdb::ClientContext& context,
                                        std::string_view secret_name,
                                        const ForeignServer& server,
@@ -275,19 +287,24 @@ std::string PrepareForeignServerAttach(duckdb::ClientContext& context,
                       " (TYPE ", storage, ", SECRET ", secret_name, ")");
 }
 
-void DropForeignServerSecret(duckdb::ClientContext& context,
-                             std::string_view secret_name) {
-  auto& secret_manager = duckdb::SecretManager::Get(context);
-  // Like RegisterSecret, dropping needs an active transaction; wrap it (the
-  // ATTACH query has already returned the connection to autocommit).
-  context.RunFunctionInTransaction([&]() {
-    auto transaction =
-      duckdb::CatalogTransaction::GetSystemCatalogTransaction(context);
-    secret_manager.DropSecretByName(
-      transaction, duckdb::Identifier{std::string{secret_name}},
-      duckdb::OnEntryNotFound::RETURN_NULL,
-      duckdb::SecretPersistType::TEMPORARY);
-  });
+std::optional<std::string> RunForeignServerAttach(
+  duckdb::Connection& conn, const ForeignServer& server,
+  const UserMapping* public_mapping, std::string_view alias) {
+  const auto secret =
+    MakeForeignServerSecretName(alias.empty() ? server.GetName() : alias);
+  auto sql = PrepareForeignServerAttach(*conn.context, secret, server,
+                                        public_mapping, alias);
+  if (sql.empty()) {
+    return std::nullopt;
+  }
+  auto result = conn.Query(sql);
+  DropForeignServerSecret(*conn.context, secret);
+  if (result->HasError()) {
+    // Redact before the error is surfaced anywhere (client or log) -- the
+    // postgres connector echoes the full DSN, password included.
+    return RedactConnstrSecrets(result->GetError());
+  }
+  return "";
 }
 
 void DetachForeignServerAttachment(std::string_view server_name) {

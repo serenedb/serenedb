@@ -3,8 +3,9 @@ control substitution on
 # Situational coverage for FOREIGN SERVER <-> USER MAPPING <-> RBAC-role
 # dependencies and password handling that the create_server / fdw_creds tests
 # don't reach: multi-mapping RESTRICT/CASCADE, IF [NOT] EXISTS on mappings,
-# CURRENT_USER resolution, one role mapped across two servers, server-OPTIONS
-# password redaction, and that the transient attach secret never lingers in
+# CURRENT_USER resolution, one role mapped across two servers, redaction of the
+# plain `password` server-OPTIONS key (alias/quoted-key redaction is in
+# fdw_creds), and that the transient attach secret never lingers in
 # duckdb_secrets(). Superuser (default connection); enforcement itself is in
 # fdw_permissions_chscan. Needs a live ClickHouse (_chscan). Unique names (fs_*).
 #
@@ -199,24 +200,8 @@ SELECT count(*) AS n FROM fs_pw.chtest.vedernikoff;
 n
 6
 
-# The `passwd` alias is redacted too.
-statement ok
-CREATE SERVER fs_pw2 FOREIGN DATA WRAPPER clickhouse_fdw
-  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest',
-           user 'scanner', passwd 'pass word');
-
-query
-SELECT array_to_string(srvoptions, ' ') NOT LIKE '%pass word%' AS redacted
-FROM pg_foreign_server WHERE srvname = 'fs_pw2';
-----
-redacted
-t
-
 statement ok
 DROP SERVER fs_pw CASCADE;
-
-statement ok
-DROP SERVER fs_pw2 CASCADE;
 
 statement ok
 DROP ROLE fs_bob;

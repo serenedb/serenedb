@@ -21,10 +21,8 @@
 #pragma once
 
 #include <memory>
-#include <optional>
 #include <string>
 #include <string_view>
-#include <vector>
 
 #include "catalog/object.h"
 #include "catalog/options.h"
@@ -51,7 +49,6 @@ class UserMapping : public Object {
               ObjectId role_id = {});
 
   std::string_view GetServerName() const noexcept { return _server_name; }
-  std::string_view GetUserName() const noexcept { return _user_name; }
 
   // The owning FOREIGN SERVER's id (drives the server->mapping drop cascade).
   ObjectId GetServerId() const noexcept { return _server_id; }

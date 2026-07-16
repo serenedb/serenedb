@@ -20,8 +20,6 @@
 
 #include "pg/pg_catalog/pg_foreign_server.h"
 
-#include <absl/strings/ascii.h>
-
 #include <string>
 #include <string_view>
 #include <vector>

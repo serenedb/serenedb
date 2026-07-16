@@ -227,6 +227,10 @@ struct Snapshot {
                                                   std::string_view name) const;
   std::shared_ptr<UserMapping> GetUserMapping(ObjectId server,
                                               std::string_view role) const;
+  // Throws DUPLICATE_OBJECT naming the owning database if any OTHER database
+  // has a foreign server named `name` (attachment aliases are instance-global).
+  void RequireForeignServerNameFreeElsewhere(ObjectId database_id,
+                                             std::string_view name) const;
   std::shared_ptr<PgSqlType> GetType(const AccessContext& ax, ObjectId database,
                                      std::string_view schema,
                                      std::string_view name) const;
@@ -579,8 +583,7 @@ class Catalog final {
   // command layer phrases the PG error, which names the mapping's role and
   // server separately.
   bool DropUserMapping(const AccessContext& ax, std::string_view database,
-                       std::string_view server, std::string_view role,
-                       bool cascade);
+                       std::string_view server, std::string_view role);
   bool DropTable(const AccessContext& ax, std::string_view database,
                  std::string_view schema, std::string_view name, bool cascade,
                  bool missing_ok);

@@ -68,6 +68,11 @@ struct ClickHouseBindData : public dbconnector::BindData {
 	//! Fills order_by_and_limit.order_key_unsafe once, from the bind-time column
 	//! metadata (stringified exotics + types whose ClickHouse ordering diverges).
 	void EnsureOrderKeySafety();
+	//! Shared pushdown veto for table column `col`: stringified (text vs value
+	//! semantics), or a type whose remote comparison (for_ordering=false) /
+	//! ordering (for_ordering=true) diverges from DuckDB's. `col` must be a real
+	//! column index (not a rowid) -- it indexes the bind-time type metadata.
+	bool ColumnPushdownUnsafe(idx_t col, bool for_ordering) const;
 	dbconnector::optimizer::AggregateBindData &GetAggregateBindData() override {
 		return aggregate;
 	}

@@ -1295,6 +1295,23 @@ std::shared_ptr<UserMapping> Snapshot::GetUserMapping(
   return GetObject<UserMapping>(*id);
 }
 
+void Snapshot::RequireForeignServerNameFreeElsewhere(
+  ObjectId database_id, std::string_view name) const {
+  for (const auto& db : GetDatabases()) {
+    if (db->GetId() == database_id) {
+      continue;
+    }
+    if (GetObjectId<ResolveType::ForeignServer>(db->GetId(), name)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+        ERR_MSG("server \"", name, "\" already exists in database \"",
+                db->GetName(), "\""),
+        ERR_HINT("Foreign server attachment names are instance-wide; "
+                 "choose a name not used by any database."));
+    }
+  }
+}
+
 std::shared_ptr<Table> Snapshot::GetTable(const AccessContext& ax,
                                           ObjectId db_id,
                                           std::string_view schema,
@@ -2181,6 +2198,13 @@ void RequireObjectOwner(const Snapshot& snapshot, ObjectId role,
 // Common case: the object that confers authority IS the one acted on. Resolves
 // `object_id` once; a missing object is a no-op (the mutation reports
 // not-found).
+void RequireObjectOwner(const Snapshot& snapshot, ObjectId role,
+                        ObjectId object_id) {
+  if (auto obj = snapshot.GetObject(object_id)) {
+    RequireObjectOwner(snapshot, role, object_id, *obj);
+  }
+}
+
 // Authority over a USER MAPPING follows its FOREIGN SERVER (PG semantics):
 // the server's owner (or a superuser) manages mappings for anyone; a role may
 // manage its OWN mapping if it holds USAGE on the server.
@@ -2202,13 +2226,6 @@ void RequireUserMappingAuthority(const Snapshot& snapshot, ObjectId role,
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
     ERR_MSG("must be owner of foreign server ", server->GetName()));
-}
-
-void RequireObjectOwner(const Snapshot& snapshot, ObjectId role,
-                        ObjectId object_id) {
-  if (auto obj = snapshot.GetObject(object_id)) {
-    RequireObjectOwner(snapshot, role, object_id, *obj);
-  }
 }
 
 void RequireRoleMembership(const Snapshot& snapshot, ObjectId actor_id,
@@ -2892,20 +2909,8 @@ bool Catalog::CreateForeignServer(const AccessContext& ax, ObjectId database_id,
   // database's attachment). Reject up front, naming the owner. The create-time
   // ATTACH cannot be relied on for this -- it only collides while the first
   // server's attachment is live, not when its remote is down.
-  for (const auto& db : _snapshot->GetDatabases()) {
-    if (db->GetId() == database_id) {
-      continue;
-    }
-    if (_snapshot->GetObjectId<ResolveType::ForeignServer>(
-          db->GetId(), foreign_server->GetName())) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-        ERR_MSG("server \"", foreign_server->GetName(),
-                "\" already exists in database \"", db->GetName(), "\""),
-        ERR_HINT("Foreign server attachment names are instance-wide; "
-                 "choose a name not used by any database."));
-    }
-  }
+  _snapshot->RequireForeignServerNameFreeElsewhere(database_id,
+                                                   foreign_server->GetName());
   foreign_server->SetParentId(database_id);
 
   Apply(
@@ -3220,22 +3225,28 @@ void Catalog::ChangeRoleImpl(
   // undroppable by either name, yet still shown by pg_user_mappings. Block
   // the rename like DROP ROLE is blocked, until mappings are re-keyed.
   if (new_role_ptr->GetName() != role->GetName()) {
-    for (const auto& db : _snapshot->GetDatabases()) {
-      for (const auto& server : _snapshot->GetForeignServers(db->GetId())) {
-        for (const auto& mapping :
-             _snapshot->GetUserMappings(server->GetId())) {
-          if (mapping->GetRoleId() == role->GetId()) {
-            THROW_SQL_ERROR(
-              ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-              ERR_MSG("role \"", name,
-                      "\" cannot be renamed because user mappings depend on "
-                      "it"),
-              ERR_DETAIL("user mapping for \"", name, "\" on server \"",
-                         server->GetName(), "\" depends on role \"", name,
-                         "\""),
-              ERR_HINT("Drop the user mapping(s) first."));
-          }
+    if (auto dep = _snapshot->_deps.TryGetDependency(role->GetId())) {
+      // The role's referencing objects also hold owner/ACL referencers; only a
+      // mapping FOR this role blocks the rename.
+      for (auto id :
+           basics::downCast<const RoleDependency>(*dep).referencing_objects) {
+        auto obj = _snapshot->GetObject(id);
+        if (!obj || obj->GetType() != ObjectType::UserMapping) {
+          continue;
         }
+        const auto& mapping = basics::downCast<const UserMapping>(*obj);
+        if (mapping.GetRoleId() != role->GetId()) {
+          continue;
+        }
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+          ERR_MSG("role \"", name,
+                  "\" cannot be renamed because user mappings depend on "
+                  "it"),
+          ERR_DETAIL("user mapping for \"", name, "\" on server \"",
+                     mapping.GetServerName(), "\" depends on role \"", name,
+                     "\""),
+          ERR_HINT("Drop the user mapping(s) first."));
       }
     }
   }
@@ -4701,15 +4712,10 @@ bool Catalog::DropForeignServer(const AccessContext& ax,
 
   const auto database_id =
     _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, database);
-  if (!database_id) {
-    if (missing_ok) {
-      return false;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("server \"", name, "\" does not exist"));
-  }
   const auto foreign_server_id =
-    _snapshot->GetObjectId<ResolveType::ForeignServer>(*database_id, name);
+    database_id
+      ? _snapshot->GetObjectId<ResolveType::ForeignServer>(*database_id, name)
+      : std::nullopt;
   if (!foreign_server_id) {
     if (missing_ok) {
       return false;
@@ -4772,8 +4778,7 @@ bool Catalog::DropForeignServer(const AccessContext& ax,
 
 bool Catalog::DropUserMapping(const AccessContext& ax,
                               std::string_view database,
-                              std::string_view server, std::string_view role,
-                              bool cascade) {
+                              std::string_view server, std::string_view role) {
   absl::MutexLock lock{&_mutex};
 
   // The absent cases return false (never throw): the command layer alone can
@@ -4794,19 +4799,11 @@ bool Catalog::DropUserMapping(const AccessContext& ax,
     return false;
   }
   if (auto mapping = _snapshot->GetObject<UserMapping>(*user_mapping_id)) {
-    RequireUserMappingAuthority(*_snapshot, ax.role, mapping->GetServerId(),
+    RequireUserMappingAuthority(*_snapshot, ax.role, *server_id,
                                 mapping->GetRoleId());
   }
 
   auto plan = _snapshot->ComputeDropPlan(*user_mapping_id);
-  if (!cascade && plan.IsCascade()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-      ERR_MSG("cannot drop user mapping for \"", role, "\" on server \"",
-              server, "\" because other objects depend on it"),
-      ERR_DETAIL(plan.FormatDependentsDetail(*_snapshot, "user mapping", role)),
-      ERR_HINT("Use DROP ... CASCADE to drop the dependent objects too."));
-  }
 
   Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
     SDB_ASSERT(clone);
@@ -5426,18 +5423,10 @@ void InitCatalog() {
     for (auto& db : snapshot->GetDatabases()) {
       for (auto& server : snapshot->GetForeignServers(db->GetId())) {
         auto pub = snapshot->GetUserMapping(server->GetId(), "public");
-        const auto secret = MakeForeignServerSecretName(server->GetName());
-        auto query = PrepareForeignServerAttach(*conn->context, secret, *server,
-                                                pub.get());
-        if (query.empty()) {
-          continue;
-        }
-        auto result = conn->Query(query);
-        DropForeignServerSecret(*conn->context, secret);
-        if (result->HasError()) {
+        auto err = RunForeignServerAttach(*conn, *server, pub.get());
+        if (err && !err->empty()) {
           SDB_WARN(GENERAL, "Failed to re-attach foreign server ",
-                   server->GetName(), ": ",
-                   RedactConnstrSecrets(result->GetError()));
+                   server->GetName(), ": ", *err);
         }
       }
     }

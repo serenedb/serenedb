@@ -5,14 +5,12 @@
 #include "dbconnector/table_scan/filter_pushdown.hpp"
 
 #include "clickhouse_filter_pushdown.hpp"
-#include "clickhouse_types.hpp"
+#include "clickhouse_scanner.hpp"
 
 namespace duckdb {
 
 string ClickHouseFilterPushdown::TransformFilters(const vector<column_t> &column_ids, optional_ptr<TableFilterSet> filters,
-                                                  const vector<std::string> &names, vector<idx_t> *inexact_filters,
-                                                  const vector<bool> *stringified, const vector<LogicalType> *types,
-                                                  const vector<std::string> *clickhouse_types) {
+                                                  const ClickHouseBindData &bind_data, vector<idx_t> &inexact_filters) {
 	if (!filters || !filters->HasFilters()) {
 		return string();
 	}
@@ -31,30 +29,25 @@ string ClickHouseFilterPushdown::TransformFilters(const vector<column_t> &column
 		string filter_text;
 
 		// Keep the filter local (do not push) when:
-		//  - virtual column (rowid), or
-		//  - the column's type makes a remote comparison diverge from DuckDB's
-		//    (NaN floats, timezone-parsed timestamps, Enum/IP text, decimal) --
-		//    pushing could wrongly EXCLUDE rows the local re-check can't recover, or
-		//  - the column is stringified (surfaced as VARCHAR via toString()): the
-		//    shared renderer quotes the bare column, so it cannot inject toString().
-		std::string ch_type;
-		if (clickhouse_types && column_id < clickhouse_types->size()) {
-			ch_type = (*clickhouse_types)[column_id];
-		}
-		bool comparison_unsafe =
-		    types && column_id < types->size() && ClickHouseComparisonUnsafe((*types)[column_id], ch_type);
-		bool is_stringified = stringified && column_id < stringified->size() && (*stringified)[column_id];
-		if (!IsVirtualColumn(column_id) && !comparison_unsafe && !is_stringified) {
-			filter_text = dbconnector::table_scan::FilterPushdown::TransformFilter(config, names[column_id], filter,
-			                                                                       column_id);
+		//  - virtual column (rowid; checked FIRST -- its column_id is out of bounds
+		//    for the per-column metadata), or
+		//  - ColumnPushdownUnsafe: the column's type makes a remote comparison
+		//    diverge from DuckDB's (NaN floats, timezone-parsed timestamps, Enum/IP
+		//    text, decimal) -- pushing could wrongly EXCLUDE rows the local re-check
+		//    can't recover -- or the column is stringified (surfaced as VARCHAR via
+		//    toString()): the shared renderer quotes the bare column, so it cannot
+		//    inject toString().
+		if (!IsVirtualColumn(column_id) && !bind_data.ColumnPushdownUnsafe(column_id, false)) {
+			filter_text = dbconnector::table_scan::FilterPushdown::TransformFilter(config, bind_data.names[column_id],
+			                                                                       filter, column_id);
 		}
 
 		if (filter_text.empty()) {
 			// The remote WHERE misses this required filter, and the optimizer erased
 			// it from the plan believing the scan applies it -- the scan must
 			// re-apply it locally or rows leak through unfiltered.
-			if (inexact_filters && !ExpressionFilter::IsOptionalFilter(filter)) {
-				inexact_filters->push_back(entry.GetIndex());
+			if (!ExpressionFilter::IsOptionalFilter(filter)) {
+				inexact_filters.push_back(entry.GetIndex());
 			}
 			continue;
 		}

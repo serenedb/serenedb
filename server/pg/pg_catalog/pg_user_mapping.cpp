@@ -20,21 +20,16 @@
 
 #include "pg/pg_catalog/pg_user_mapping.h"
 
-#include <absl/strings/ascii.h>
-
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "basics/containers/flat_hash_map.h"
 #include "catalog/catalog.h"
 #include "catalog/options.h"
 #include "catalog/user_mapping.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
-
-namespace {}  // namespace
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgUserMapping>::GetTableData() {

@@ -1,0 +1,261 @@
+# Session-timezone behavior of TIMESTAMPTZ and TIMETZ across many zones:
+# whole-hour, half-hour (+05:30, -03:30, +10:30), +05:45, +14, and both DST
+# hemispheres. Raw TIMESTAMPTZ text renders in the session zone (matching
+# PG); the binary protocol carries the UTC instant, so extended-mode output
+# is pinned separately as UTC.
+
+statement ok
+SET TIME ZONE 'UTC';
+
+query
+SELECT TIMESTAMPTZ '2024-01-01 14:00:00+02' AS utc_render;
+----
+utc_render
+2024-01-01 12:00:00+00
+
+query
+SELECT
+  extract(epoch FROM TIMESTAMPTZ '2024-01-01 12:00:00+00')::BIGINT AS ep,
+  extract(epoch FROM TIMESTAMPTZ '2024-01-01 14:00:00+02')::BIGINT AS ep_same,
+  extract(epoch FROM TIMESTAMPTZ '2024-01-01 06:30:00-05:30')::BIGINT AS ep_same2;
+----
+ep	ep_same	ep_same2
+1704110400	1704110400	1704110400
+
+# ---------------------------------------------------------------------------
+# Half-hour zone, no DST: Asia/Kolkata (+05:30).
+# ---------------------------------------------------------------------------
+
+statement ok
+SET TIME ZONE 'Asia/Kolkata';
+
+query
+SELECT (TIMESTAMPTZ '2024-01-01 12:00:00+00')::VARCHAR AS r;
+----
+r
+2024-01-01 17:30:00+05:30
+
+skipif pg-wire-extended
+query
+SELECT TIMESTAMPTZ '2024-01-01 12:00:00+00' AS raw;
+----
+raw
+2024-01-01 17:30:00+05:30
+
+onlyif pg-wire-extended
+query
+SELECT TIMESTAMPTZ '2024-01-01 12:00:00+00' AS raw;
+----
+raw
+2024-01-01 12:00:00+00
+
+query
+SELECT extract(epoch FROM TIMESTAMPTZ '2024-01-01 17:30:00')::BIGINT AS ep;
+----
+ep
+1704110400
+
+query
+SELECT (TIMESTAMPTZ '2024-01-01 12:00:00+00' AT TIME ZONE 'Asia/Kolkata') AS naive;
+----
+naive
+2024-01-01 17:30:00
+
+# ---------------------------------------------------------------------------
+# 45-minute zone: Asia/Kathmandu (+05:45).
+# ---------------------------------------------------------------------------
+
+statement ok
+SET TIME ZONE 'Asia/Kathmandu';
+
+query
+SELECT (TIMESTAMPTZ '2024-01-01 12:00:00+00')::VARCHAR AS r;
+----
+r
+2024-01-01 17:45:00+05:45
+
+query
+SELECT extract(epoch FROM TIMESTAMPTZ '2024-01-01 17:45:00')::BIGINT AS ep;
+----
+ep
+1704110400
+
+# ---------------------------------------------------------------------------
+# Northern DST: America/New_York (-05 winter / -04 summer).
+# ---------------------------------------------------------------------------
+
+statement ok
+SET TIME ZONE 'America/New_York';
+
+query
+SELECT (TIMESTAMPTZ '2024-01-15 12:00:00+00')::VARCHAR AS winter,
+       (TIMESTAMPTZ '2024-07-15 12:00:00+00')::VARCHAR AS summer;
+----
+winter	summer
+2024-01-15 07:00:00-05	2024-07-15 08:00:00-04
+
+skipif pg-wire-extended
+query
+SELECT TIMESTAMPTZ '2024-01-15 12:00:00+00' AS raw_w,
+       TIMESTAMPTZ '2024-07-15 12:00:00+00' AS raw_s;
+----
+raw_w	raw_s
+2024-01-15 07:00:00-05	2024-07-15 08:00:00-04
+
+onlyif pg-wire-extended
+query
+SELECT TIMESTAMPTZ '2024-01-15 12:00:00+00' AS raw_w,
+       TIMESTAMPTZ '2024-07-15 12:00:00+00' AS raw_s;
+----
+raw_w	raw_s
+2024-01-15 12:00:00+00	2024-07-15 12:00:00+00
+
+# Spring-forward: local 01:00 -> 03:00 are one wall-clock hour apart.
+query
+SELECT (extract(epoch FROM TIMESTAMPTZ '2024-03-10 03:00:00')
+      - extract(epoch FROM TIMESTAMPTZ '2024-03-10 01:00:00'))::BIGINT AS gap;
+----
+gap
+3600
+
+# Fall-back: the ambiguous local 01:30 resolves to the same instant on both.
+query
+SELECT extract(epoch FROM TIMESTAMPTZ '2024-11-03 01:30:00')::BIGINT AS ep;
+----
+ep
+1730615400
+
+# ---------------------------------------------------------------------------
+# Northern DST, CET/CEST: Europe/Amsterdam around the 2024-03-31 transition.
+# ---------------------------------------------------------------------------
+
+statement ok
+SET TIME ZONE 'Europe/Amsterdam';
+
+query
+SELECT (TIMESTAMPTZ '2024-03-31 00:59:00+00')::VARCHAR AS before,
+       (TIMESTAMPTZ '2024-03-31 01:01:00+00')::VARCHAR AS after;
+----
+before	after
+2024-03-31 01:59:00+01	2024-03-31 03:01:00+02
+
+# ---------------------------------------------------------------------------
+# Southern-hemisphere DST, half-hour base: Australia/Adelaide
+# (+10:30 southern summer / +09:30 winter).
+# ---------------------------------------------------------------------------
+
+statement ok
+SET TIME ZONE 'Australia/Adelaide';
+
+query
+SELECT (TIMESTAMPTZ '2024-01-01 12:00:00+00')::VARCHAR AS summer,
+       (TIMESTAMPTZ '2024-07-01 12:00:00+00')::VARCHAR AS winter;
+----
+summer	winter
+2024-01-01 22:30:00+10:30	2024-07-01 21:30:00+09:30
+
+query
+SELECT extract(epoch FROM TIMESTAMPTZ '2024-01-01 22:30:00')::BIGINT AS ep_summer,
+       extract(epoch FROM TIMESTAMPTZ '2024-07-01 21:30:00')::BIGINT AS ep_winter;
+----
+ep_summer	ep_winter
+1704110400	1719835200
+
+# ---------------------------------------------------------------------------
+# Extreme offsets: Pacific/Kiritimati (+14), America/St_Johns (-03:30 winter).
+# ---------------------------------------------------------------------------
+
+statement ok
+SET TIME ZONE 'Pacific/Kiritimati';
+
+query
+SELECT (TIMESTAMPTZ '2024-01-01 12:00:00+00')::VARCHAR AS r;
+----
+r
+2024-01-02 02:00:00+14
+
+statement ok
+SET TIME ZONE 'America/St_Johns';
+
+query
+SELECT (TIMESTAMPTZ '2024-01-01 12:00:00+00')::VARCHAR AS r;
+----
+r
+2024-01-01 08:30:00-03:30
+
+# ---------------------------------------------------------------------------
+# Naive TIMESTAMP <-> zone conversions are session-independent.
+# ---------------------------------------------------------------------------
+
+statement ok
+SET TIME ZONE 'UTC';
+
+query
+SELECT (TIMESTAMP '2024-01-01 12:00:00' AT TIME ZONE 'Asia/Tokyo') AS as_instant,
+       extract(epoch FROM (TIMESTAMP '2024-01-01 12:00:00' AT TIME ZONE 'Asia/Tokyo'))::BIGINT AS ep;
+----
+as_instant	ep
+2024-01-01 03:00:00+00	1704078000
+
+# ---------------------------------------------------------------------------
+# TIMETZ: the offset is part of the value. Fractional offsets render
+# identically on both databases; comparisons are UTC-instant-first.
+# ---------------------------------------------------------------------------
+
+query
+SELECT TIMETZ '12:00:00+05:30' AS in_half,
+       TIMETZ '12:00:00-03:30' AS nl,
+       TIMETZ '12:00:00+05:45' AS ktm;
+----
+in_half	nl	ktm
+12:00:00+05:30	12:00:00-03:30	12:00:00+05:45
+
+query
+SELECT (TIMETZ '12:00:00+05:30')::TIME AS naive,
+       extract(timezone FROM TIMETZ '12:00:00+05:30')::INT AS off_east,
+       extract(hour FROM TIMETZ '12:00:00+05:45')::INT AS h;
+----
+naive	off_east	h
+12:00:00	19800	12
+
+query
+SELECT
+  CASE WHEN TIMETZ '13:00:00+02' = TIMETZ '12:00:00+01' THEN 1 ELSE 0 END AS eq_other_offset,
+  CASE WHEN TIMETZ '13:00:00+02' < TIMETZ '12:00:00+00' THEN 1 ELSE 0 END AS lt_by_utc,
+  CASE WHEN TIMETZ '12:00:00+05:30' < TIMETZ '12:00:00+05:45' THEN 1 ELSE 0 END AS east_first;
+----
+eq_other_offset	lt_by_utc	east_first
+0	1	0
+
+# ---------------------------------------------------------------------------
+# Storage round-trip: values written with mixed offsets come back as UTC
+# instants (TIMESTAMPTZ) / with their offsets (TIMETZ).
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE tz_many(id INTEGER PRIMARY KEY, ts TIMESTAMPTZ, ttz TIMETZ);
+
+statement count 3
+INSERT INTO tz_many VALUES
+    (1, TIMESTAMPTZ '2024-01-01 12:00:00+00', TIMETZ '12:00:00+05:30'),
+    (2, TIMESTAMPTZ '2024-01-01 14:00:00+02', TIMETZ '12:00:00-03:30'),
+    (3, TIMESTAMPTZ '2024-07-15 08:00:00-04', TIMETZ '23:59:59+05:45');
+
+query
+SELECT id, ts, ttz FROM tz_many ORDER BY id;
+----
+id	ts	ttz
+1	2024-01-01 12:00:00+00	12:00:00+05:30
+2	2024-01-01 12:00:00+00	12:00:00-03:30
+3	2024-07-15 12:00:00+00	23:59:59+05:45
+
+query
+SELECT id, extract(epoch FROM ts)::BIGINT AS ep FROM tz_many ORDER BY id;
+----
+id	ep
+1	1704110400
+2	1704110400
+3	1721044800
+
+statement ok
+DROP TABLE tz_many;

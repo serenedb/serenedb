@@ -496,7 +496,7 @@ void ProcessRow(
   }
 }
 
-void ScanFrom(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
+void ScanFrom(duckdb::ClientContext& context, duckdb::TableFunctionInput& input,
               duckdb::DataChunk& output) {
   auto& g = input.global_state->Cast<PgTextCopyFromGlobalState>();
   const auto& bind = input.bind_data->Cast<PgTextCopyFromBindData>();
@@ -515,6 +515,7 @@ void ScanFrom(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
     }
   }
   sdb::pg::DeserializeContext dctx{g.snapshot.get()};
+  sdb::pg::FillDeserializeContext(context, dctx);
   std::string field_buf;  // reused per field across this chunk
   duckdb::idx_t row = 0;
   bool eof = false;

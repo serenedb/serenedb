@@ -1,0 +1,203 @@
+statement ok
+SET TIME ZONE 'UTC';
+
+
+# ---- DATE ----
+
+statement ok
+CREATE TABLE t_date(d DATE);
+
+statement count 2
+INSERT INTO t_date VALUES ('2024-03-09'), ('1969-07-20');
+
+query
+SELECT
+  d::VARCHAR AS d,
+  date_part('year', d)::INT AS y,
+  date_part('doy', d)::INT AS doy,
+  date_trunc('month', d)::DATE::VARCHAR AS mon,
+  (d + INTERVAL '1 day')::DATE::VARCHAR AS next_day
+FROM t_date ORDER BY d;
+----
+d	y	doy	mon	next_day
+1969-07-20	1969	201	1969-07-01	1969-07-21
+2024-03-09	2024	69	2024-03-01	2024-03-10
+
+query
+SELECT
+  make_date(2024, 3, 9)::VARCHAR AS made,
+  date_diff('day', DATE '2024-03-01', DATE '2024-03-09') AS dd;
+----
+made	dd
+2024-03-09	8
+
+
+# ---- TIME ----
+
+query
+SELECT
+  TIME '15:20:30.123456'::VARCHAR AS t,
+  date_part('hour', TIME '15:20:30.123456')::INT AS h,
+  date_part('second', TIME '15:20:30.123456') AS s,
+  (TIME '15:20:30.123456' + INTERVAL '90 minutes')::VARCHAR AS plus90;
+----
+t	h	s	plus90
+15:20:30.123456	15	30	16:50:30.123456
+
+query
+SELECT make_time(15, 20, 30.5)::VARCHAR AS made;
+----
+made
+15:20:30.5
+
+
+# ---- TIMETZ ----
+
+query
+SELECT
+  TIMETZ '15:20:30.123456+02'::VARCHAR AS ttz,
+  TIMETZ '15:20:30.123456+02'::TIME::VARCHAR AS naive;
+----
+ttz	naive
+15:20:30.123456+02	15:20:30.123456
+
+
+# ---- TIME_NS ----
+
+query
+SELECT
+  TIME_NS '15:20:30.123456789'::VARCHAR AS tns,
+  TIME_NS '15:20:30.123456789'::TIME::VARCHAR AS us_trunc;
+----
+tns	us_trunc
+15:20:30.123456789	15:20:30.123457
+
+
+# ---- TIMESTAMP_S ----
+
+statement ok
+CREATE TABLE t_ts_s(ts TIMESTAMP_S);
+
+statement count 2
+INSERT INTO t_ts_s VALUES ('2024-01-01 12:34:56'), ('1969-07-20 20:17:40');
+
+query
+SELECT
+  ts::VARCHAR AS ts,
+  date_part('epoch', ts)::BIGINT AS epoch,
+  date_trunc('day', ts)::VARCHAR AS day,
+  (ts + INTERVAL '1 hour')::VARCHAR AS plus1h,
+  ts::TIMESTAMP::VARCHAR AS us
+FROM t_ts_s ORDER BY ts;
+----
+ts	epoch	day	plus1h	us
+1969-07-20 20:17:40	-14182940	1969-07-20 00:00:00	1969-07-20 21:17:40	1969-07-20 20:17:40
+2024-01-01 12:34:56	1704112496	2024-01-01 00:00:00	2024-01-01 13:34:56	2024-01-01 12:34:56
+
+
+# ---- TIMESTAMP_MS ----
+
+statement ok
+CREATE TABLE t_ts_ms(ts TIMESTAMP_MS);
+
+statement count 1
+INSERT INTO t_ts_ms VALUES ('2024-01-01 12:34:56.789');
+
+query
+SELECT
+  ts::VARCHAR AS ts,
+  date_part('milliseconds', ts) AS ms,
+  date_trunc('minute', ts)::VARCHAR AS minute,
+  (ts + INTERVAL '250 milliseconds')::VARCHAR AS plus250ms,
+  ts::TIMESTAMP::VARCHAR AS us
+FROM t_ts_ms;
+----
+ts	ms	minute	plus250ms	us
+2024-01-01 12:34:56.789	56789	2024-01-01 12:34:00	2024-01-01 12:34:57.039	2024-01-01 12:34:56.789
+
+
+# ---- TIMESTAMP (us) ----
+
+statement ok
+CREATE TABLE t_ts(ts TIMESTAMP);
+
+statement count 1
+INSERT INTO t_ts VALUES ('2024-01-01 12:34:56.123456');
+
+query
+SELECT
+  ts::VARCHAR AS ts,
+  date_part('microseconds', ts)::BIGINT AS us,
+  date_trunc('hour', ts)::VARCHAR AS hour,
+  (ts - INTERVAL '1 day')::VARCHAR AS minus1d
+FROM t_ts;
+----
+ts	us	hour	minus1d
+2024-01-01 12:34:56.123456	56123456	2024-01-01 12:00:00	2023-12-31 12:34:56.123456
+
+query
+SELECT
+  make_timestamp(2024, 1, 1, 12, 34, 56.5)::VARCHAR AS made,
+  to_timestamp(1704067200)::VARCHAR AS from_epoch;
+----
+made	from_epoch
+2024-01-01 12:34:56.5	2024-01-01 00:00:00+00
+
+
+# ---- TIMESTAMP_NS ----
+
+statement ok
+CREATE TABLE t_ts_ns(ts TIMESTAMP_NS);
+
+statement count 1
+INSERT INTO t_ts_ns VALUES ('2024-01-01 12:34:56.123456789');
+
+query
+SELECT
+  ts::VARCHAR AS ts,
+  nanosecond(ts) AS ns,
+  date_trunc('second', ts)::VARCHAR AS sec,
+  ts::TIMESTAMP::VARCHAR AS us_round
+FROM t_ts_ns;
+----
+ts	ns	sec	us_round
+2024-01-01 12:34:56.123456789	56123456789	2024-01-01 12:34:56	2024-01-01 12:34:56.123457
+
+
+# ---- TIMESTAMPTZ ----
+
+statement ok
+CREATE TABLE t_tstz(ts TIMESTAMPTZ);
+
+statement count 2
+INSERT INTO t_tstz VALUES ('2024-01-01 12:34:56.123456+00'), ('2024-01-01 12:34:56.123456+02');
+
+query
+SELECT
+  ts::VARCHAR AS ts,
+  date_part('epoch', ts)::BIGINT AS epoch,
+  date_trunc('day', ts)::VARCHAR AS day
+FROM t_tstz ORDER BY ts;
+----
+ts	epoch	day
+2024-01-01 10:34:56.123456+00	1704105296	2024-01-01 00:00:00+00
+2024-01-01 12:34:56.123456+00	1704112496	2024-01-01 00:00:00+00
+
+
+# ---- TIMESTAMPTZ_NS ----
+
+statement ok
+CREATE TABLE t_tstz_ns(ts TIMESTAMPTZ_NS);
+
+statement count 1
+INSERT INTO t_tstz_ns VALUES ('2024-01-01 12:34:56.123456789+00');
+
+query
+SELECT
+  ts::VARCHAR AS ts,
+  ts::TIMESTAMP_NS::VARCHAR AS naive_ns,
+  epoch_ns(ts) AS ens
+FROM t_tstz_ns;
+----
+ts	naive_ns	ens
+2024-01-01 12:34:56.123456789+00	2024-01-01 12:34:56.123456789	1704112496123456789

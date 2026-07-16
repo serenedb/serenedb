@@ -85,9 +85,11 @@ void SearchSinkInsertBaseImpl::SetFieldValueFromVector(
                        Kind == duckdb::LogicalTypeId::DATE) {
     field.SetNumericValue(
       duckdb::UnifiedVectorFormat::GetData<int32_t>(fmt)[idx]);
+  } else if constexpr (Kind == duckdb::LogicalTypeId::TIME_TZ) {
+    field.SetNumericValue(
+      TimeTzIndexTerm(duckdb::UnifiedVectorFormat::GetData<int64_t>(fmt)[idx]));
   } else if constexpr (Kind == duckdb::LogicalTypeId::BIGINT ||
                        Kind == duckdb::LogicalTypeId::TIME ||
-                       Kind == duckdb::LogicalTypeId::TIME_TZ ||
                        Kind == duckdb::LogicalTypeId::TIME_NS ||
                        Kind == duckdb::LogicalTypeId::TIMESTAMP ||
                        Kind == duckdb::LogicalTypeId::TIMESTAMP_TZ ||

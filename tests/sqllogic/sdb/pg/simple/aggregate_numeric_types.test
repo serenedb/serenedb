@@ -1,0 +1,34 @@
+# avg and approx_quantile support TINYINT and FLOAT natively. avg promotes
+# every numeric to DOUBLE (SQL standard, like the other integer/float avgs);
+# approx_quantile keeps the input type.
+
+statement ok
+CREATE TABLE n(ti TINYINT, f FLOAT);
+
+statement count 3
+INSERT INTO n VALUES (1, 1.5), (2, 2.5), (3, 3.5);
+
+# Return types: avg -> DOUBLE; approx_quantile -> input type.
+query
+SELECT typeof(avg(ti))                  AS avg_ti,
+       typeof(avg(f))                   AS avg_f,
+       typeof(approx_quantile(ti, 0.5)) AS q_ti,
+       typeof(approx_quantile(f, 0.5))  AS q_f
+FROM n;
+----
+avg_ti	avg_f	q_ti	q_f
+DOUBLE	DOUBLE	TINYINT	FLOAT
+
+# Values (median is exact for three points).
+query
+SELECT avg(ti)::VARCHAR                  AS avg_ti,
+       avg(f)::VARCHAR                   AS avg_f,
+       approx_quantile(ti, 0.5)::VARCHAR AS q_ti,
+       approx_quantile(f, 0.5)::VARCHAR  AS q_f
+FROM n;
+----
+avg_ti	avg_f	q_ti	q_f
+2	2.5	2	2.5
+
+statement ok
+DROP TABLE n;

@@ -93,6 +93,7 @@ class Config {
   std::vector<std::string> GetSearchPath() const;
   int8_t GetExtraFloatDigits() const;
   ByteaOutput GetByteaOutput() const;
+  std::string GetTimeZone() const;
   IsolationLevel GetIsolationLevel() const;
   bool GetStrictDDL() const;
   bool IsExplicitTransaction() const;

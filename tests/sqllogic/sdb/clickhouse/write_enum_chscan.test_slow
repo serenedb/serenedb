@@ -38,6 +38,30 @@ SELECT count(*) AS n FROM che.default.ce_enum_t WHERE mood = 'happy';
 n
 2
 
+# A label outside the ClickHouse enum definition is rejected with a clear
+# error (clickhouse-cpp's raw std::map::at would otherwise escape).
+statement error
+INSERT INTO che.default.ce_enum_t VALUES (5, 'confused');
+----
+db error: ERROR: Unknown label "confused" for a ClickHouse Enum column<slt:ignore>
+
+
+# CTAS: the SELECT delivers raw ENUM dictionary codes and a seconds-precision
+# timestamp -- the sink must cast to the connector's mapped types instead of
+# reinterpreting the bytes (garbage labels / 10^6-scaled instants).
+statement ok
+CREATE TABLE che.default.ce_ctas AS
+SELECT 2::BIGINT AS id, 'angry'::ce_mood AS mood, TIMESTAMP_S '2024-06-01 12:00:00' AS ts;
+
+query
+SELECT id, mood, ts FROM che.default.ce_ctas;
+----
+id	mood	ts
+2	angry	2024-06-01 12:00:00
+
+statement ok
+DROP TABLE che.default.ce_ctas;
+
 statement ok
 DROP TABLE che.default.ce_enum_t;
 

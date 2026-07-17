@@ -45,6 +45,11 @@ SELECT id, d FROM chnd.default.nd_pudge WHERE id = 2;
 id	d
 2	2021-06-19
 
+# Out-of-range dates are rejected loudly: the native protocol stores raw days
+# verbatim, so ClickHouse would otherwise render garbage for them server-side.
+statement error
+INSERT INTO chnd.default.nd_pudge VALUES (99, DATE '1099-01-01', TIMESTAMP '2021-06-19 12:00:00');
+
 statement ok
 DROP TABLE chnd.default.nd_pudge;
 

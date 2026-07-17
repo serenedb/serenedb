@@ -6,6 +6,7 @@
 #include "clickhouse_connection.hpp"
 #include "clickhouse_types.hpp"
 
+#include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/planner/operator/logical_insert.hpp"
 #include "duckdb/planner/operator/logical_create_table.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
@@ -41,6 +42,9 @@ public:
 	string qualified_table;
 	vector<string> column_names;
 	vector<string> column_types;
+	//! The connector's DuckDB-side mapping of column_types; Sink casts incoming
+	//! chunks to these before the byte-level append (see the CTAS note there).
+	vector<LogicalType> expected_types;
 };
 
 // Mirrors PostgresInsert::GetInsertColumns: maps each chunk position to the table column logical index.
@@ -92,6 +96,7 @@ unique_ptr<GlobalSinkState> ClickHouseInsert::GetGlobalSinkState(ClientContext &
 			throw InternalException("ClickHouse INSERT: column index out of range for type metadata");
 		}
 		result->column_types.push_back(insert_table->clickhouse_types[col_index]);
+		result->expected_types.push_back(ClickHouseTypeStringToLogicalType(insert_table->clickhouse_types[col_index]));
 	}
 	return std::move(result);
 }
@@ -107,9 +112,25 @@ SinkResultType ClickHouseInsert::Sink(ExecutionContext &context, DataChunk &chun
 	auto &transaction = ClickHouseTransaction::Get(context.client, gstate.table.catalog);
 	auto &connection = transaction.GetConnection();
 
+	// A CTAS plan delivers the SELECT's own vector types (no binder cast is
+	// inserted, unlike INSERT INTO): an ENUM source arrives as dictionary codes
+	// and a TIMESTAMP_S/_MS/_NS source as non-microsecond epochs, which the
+	// byte-level append below would misread. Cast to the connector's mapped
+	// types first; the aligned case costs nothing.
+	DataChunk cast_chunk;
+	DataChunk *write_chunk = &chunk;
+	if (chunk.GetTypes() != gstate.expected_types) {
+		cast_chunk.Initialize(context.client, gstate.expected_types);
+		for (idx_t c = 0; c < chunk.ColumnCount(); c++) {
+			VectorOperations::Cast(context.client, chunk.data[c], cast_chunk.data[c], chunk.size());
+		}
+		cast_chunk.SetCardinality(chunk.size());
+		write_chunk = &cast_chunk;
+	}
+
 	clickhouse::Block block;
 	for (idx_t c = 0; c < gstate.column_names.size(); c++) {
-		auto col = ClickHouseColumnFromVector(gstate.column_types[c], chunk.data[c], chunk.size());
+		auto col = ClickHouseColumnFromVector(gstate.column_types[c], write_chunk->data[c], write_chunk->size());
 		block.AppendColumn(gstate.column_names[c], col);
 	}
 	block.RefreshRowCount();

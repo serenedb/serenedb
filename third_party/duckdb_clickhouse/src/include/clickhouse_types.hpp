@@ -20,9 +20,9 @@ LogicalType ClickHouseTypeStringToLogicalType(const std::string &type_str);
 
 void ClickHouseColumnToVector(const clickhouse::Column &col, Vector &out, idx_t src_offset, idx_t count);
 
-//! Quote a ClickHouse identifier with backticks, doubling any embedded backtick. Behaviour is
-//! identical to raw `name` wrapping for normal names; it only matters for names containing a
-//! backtick. Used wherever a column/table/PK name is interpolated into generated SQL.
+//! Quote a ClickHouse identifier with backticks, backslash-escaping any embedded backtick or
+//! backslash (the shared renderer's BACKSLASH style). Behaviour is identical to raw `name`
+//! wrapping for normal names. Used wherever a column/table/PK name is interpolated into SQL.
 std::string ClickHouseQuoteIdentifier(const std::string &name);
 
 //! A fully-quoted ClickHouse string literal: single quotes, backslash-escaped

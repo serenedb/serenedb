@@ -66,3 +66,50 @@ SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT} user
 ----
 n
 1
+
+# Decimal precision > 38 exceeds DuckDB's maximum AND clickhouse-cpp's native
+# read (16-byte Int128 storage vs 32 wire bytes would desync the block), so the
+# column degrades to the same toString() projection as other unmapped types.
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT} user=default',
+  'DROP TABLE IF EXISTS default.h6_bigdec');
+----
+n
+1
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT} user=default',
+  'CREATE TABLE default.h6_bigdec (id Int64, d Decimal(76, 10)) ENGINE = MergeTree ORDER BY id');
+----
+n
+1
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT} user=default',
+  'INSERT INTO default.h6_bigdec VALUES (1, 12345678901234567890123456789.5), (2, -0.0000000001)');
+----
+n
+1
+
+query
+SELECT id, d FROM clickhouse_scan('host=${CHHOST} port=${CHPORT} user=default', 'default', 'h6_bigdec')
+ORDER BY id;
+----
+id	d
+1	12345678901234567890123456789.5
+2	-0.0000000001
+
+# A filter on the degraded column stays local and returns the right rows.
+query
+SELECT id FROM clickhouse_scan('host=${CHHOST} port=${CHPORT} user=default', 'default', 'h6_bigdec')
+WHERE d = '-0.0000000001';
+----
+id
+2
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT} user=default',
+  'DROP TABLE default.h6_bigdec');
+----
+n
+1

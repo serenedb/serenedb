@@ -334,6 +334,7 @@ bool WandEnabled(const catalog::InvertedIndex* index,
   if (!index) {
     return false;
   }
+  // TODO(mbkkt) use compatibility instead
   const auto& topk = index->GetTopKScorer();
   return topk && topk == scorer;
 }
@@ -512,10 +513,12 @@ void SereneDBScanBindData::AppendSummary(
       if (!req.having_filter) {
         continue;
       }
+      // TODO(gnusi): Maybe different name? But what?
+      // TODO(gnusi): ColumnNameFor doesn't work for indexed expressions?
       auto key = ts_dicts.size() == 1
-                   ? std::string{"Filter"}
+                   ? std::string{"Index Filter"}
                    : absl::StrCat(
-                       "Filter(",
+                       "Index Filter(",
                        ColumnNameFor(
                          bind, static_cast<catalog::Column::Id>(req.field_id)),
                        ")");
@@ -534,6 +537,8 @@ void SereneDBScanBindData::AppendSummary(
     out.insert("Score", text_scorer->ToString());
   }
   if (score_top_k) {
+    // TODO(mbkkt): prunnable/etc instead of optimized?
+    // TODO(mbkkt): streaming top k also should be marked when wand enabled
     std::string topk_val = absl::StrCat(*score_top_k);
     if (WandEnabled(bind.inverted_index.get(), text_scorer)) {
       absl::StrAppend(&topk_val, ", optimized");
@@ -551,6 +556,7 @@ void SereneDBScanBindData::AppendSummary(
   if (TsDictMode()) {
     auto names = absl::StrJoin(
       ts_dicts | std::views::transform([&](const auto& req) {
+        // TODO(gnusi): indexed expressions doesn't work?
         return ColumnNameFor(bind, catalog::Column::Id{req.field_id});
       }),
       ", ");

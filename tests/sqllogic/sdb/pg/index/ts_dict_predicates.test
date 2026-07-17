@@ -92,7 +92,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: tp_idx                            │
-│ Filter:                                  │
+│ Index Filter:                            │
 │ ╭─ Automaton ──────────╮                 │
 │ │ Field: cat(string)   │                 │
 │ │ Pattern: a%&[ap..az] │                 │
@@ -139,7 +139,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: tp_idx                            │
-│ Filter:                                  │
+│ Index Filter:                            │
 │ ╭─ Automaton ──────────╮                 │
 │ │ Field: cat(string)   │                 │
 │ │ Pattern: a%&[ap..az] │                 │
@@ -372,7 +372,7 @@ QUERY PLAN
 ╰────────────────┬───────────────╯
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: tp_idx                  │
-│ Filter:                        │
+│ Index Filter:                  │
 │ ╭─ Starts With ───────╮        │
 │ │ Field: body(string) │        │
 │ │ Prefix: ap          │        │
@@ -419,7 +419,7 @@ QUERY PLAN
 ╰──────────────────────┬──────────────────────╯
 ╭─ IRESEARCH_SCAN ─────┴──────────────────────╮
 │ Index: tp_idx                               │
-│ Filter:                                     │
+│ Index Filter:                               │
 │ ╭─ Automaton ─────────────────────────────╮ │
 │ │ Field: cat(string)                      │ │
 │ │ Pattern: (?:ap.*)|(?:banana)|(?:.*cado) │ │
@@ -464,7 +464,7 @@ QUERY PLAN
 ╰─────────────────────────┬────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────┴────────────────────────╮
 │ Index: tp_idx                                    │
-│ Filter:                                          │
+│ Index Filter:                                    │
 │ ╭─ Or ─────────────────╮                         │
 │ ╰───────────┬──────────╯                         │
 │             ├────────────────────────╮           │

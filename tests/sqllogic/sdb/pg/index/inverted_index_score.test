@@ -362,22 +362,24 @@ query
 EXPLAIN SELECT BM25(docs_idx.tableoid) as score FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_idx.tableoid) ASC LIMIT 5;
 ----
 QUERY PLAN
-╭─ TOP_N ───────────────────────────────╮
-│ Top: 5                                │
-│ Order By: #0 ASC                      │
-│ ~5 rows                               │
-╰───────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ──┴───────────────────╮
-│ Index: docs_idx                       │
-│ Index Filter:                         │
-│ ╭─ Term ──────────────╮               │
-│ │ Field: body(string) │               │
-│ │ Value: fox          │               │
-│ ╰─────────────────────╯               │
-│ Score: bm25(k1=1.2, b=0.75)           │
-│ Projections: sdb_inverted_index_score │
-│ ~7 rows                               │
-╰───────────────────────────────────────╯
+╭─ TOP_N ─────────────────────────────────────────────────╮
+│ Top: 5                                                  │
+│ Order By: #0 ASC                                        │
+│ ~5 rows                                                 │
+╰────────────────────────────┬────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮
+│ Index: docs_idx                                         │
+│ Index Filter:                                           │
+│ ╭─ Term ──────────────╮                                 │
+│ │ Field: body(string) │                                 │
+│ │ Value: fox          │                                 │
+│ ╰─────────────────────╯                                 │
+│ Column Filter:                                          │
+│ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
+│ Score: bm25(k1=1.2, b=0.75)                             │
+│ Projections: sdb_inverted_index_score                   │
+│ ~7 rows                                                 │
+╰─────────────────────────────────────────────────────────╯
 
 
 
@@ -671,6 +673,8 @@ QUERY PLAN
 │ │ Field: body(string) │                │
 │ │ Value: fox          │                │
 │ ╰─────────────────────╯                │
+│ Column Filter:                         │
+│ optional: Dynamic Filter (id < ?)      │
 │ Score: bm25(k1=1.2, b=0.75)            │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
@@ -750,14 +754,14 @@ EXPLAIN WITH scored AS (
 SELECT id, score > 0 AS has_score FROM scored ORDER BY id LIMIT 3;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 3                                 │
-│ Order By: scored.id ASC                │
-│ ~3 rows                                │
-╰────────────────────┬───────────────────╯
-╭─ PROJECTION ───────┴───────────────────╮
+╭─ PROJECTION ───────────────────────────╮
 │ Projections: id, has_score             │
 │ ~7 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ TOP_N ────────────┴───────────────────╮
+│ Top: 3                                 │
+│ Order By: id ASC                       │
+│ ~3 rows                                │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
@@ -767,6 +771,8 @@ QUERY PLAN
 │ │ Field: body(string) │                │
 │ │ Value: fox          │                │
 │ ╰─────────────────────╯                │
+│ Column Filter:                         │
+│ optional: Dynamic Filter (id < ?)      │
 │ Score: bm25(k1=1.2, b=0.75)            │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
@@ -781,14 +787,14 @@ EXPLAIN SELECT id, score > 0 AS has_score FROM (
 ) sub ORDER BY id LIMIT 3;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 3                                 │
-│ Order By: sub.id ASC                   │
-│ ~3 rows                                │
-╰────────────────────┬───────────────────╯
-╭─ PROJECTION ───────┴───────────────────╮
+╭─ PROJECTION ───────────────────────────╮
 │ Projections: id, has_score             │
 │ ~7 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ TOP_N ────────────┴───────────────────╮
+│ Top: 3                                 │
+│ Order By: id ASC                       │
+│ ~3 rows                                │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
@@ -798,6 +804,8 @@ QUERY PLAN
 │ │ Field: body(string) │                │
 │ │ Value: fox          │                │
 │ ╰─────────────────────╯                │
+│ Column Filter:                         │
+│ optional: Dynamic Filter (id < ?)      │
 │ Score: bm25(k1=1.2, b=0.75)            │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │

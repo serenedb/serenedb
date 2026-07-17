@@ -120,7 +120,7 @@ QUERY PLAN
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: cart_idx                                      │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Term ──────────────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Value: apple        │                              │
@@ -160,7 +160,7 @@ QUERY PLAN
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: cart_idx                                      │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Starts With ───────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Prefix: a           │                              │
@@ -251,7 +251,7 @@ QUERY PLAN
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: cart_idx                                      │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Automaton ──────────╮                             │
 │ │ Field: body(string)  │                             │
 │ │ Pattern: [c..]&[..g] │                             │
@@ -297,7 +297,7 @@ QUERY PLAN
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: cart_idx                                      │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Range ─────────────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Range: >=mango      │                              │
@@ -340,7 +340,7 @@ QUERY PLAN
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: cart_idx                                      │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Range ─────────────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Range: <=berry      │                              │
@@ -386,7 +386,7 @@ QUERY PLAN
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: cart_idx                                      │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Automaton ─────────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Pattern: a%e        │                              │
@@ -427,7 +427,7 @@ QUERY PLAN
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: cart_idx                                      │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Automaton ─────────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Pattern: ^a.+e$     │                              │
@@ -553,7 +553,7 @@ QUERY PLAN
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: cart_idx                                      │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Terms ───────────────────────────╮                │
 │ │ Field: body(string)               │                │
 │ │ Values:                           │                │

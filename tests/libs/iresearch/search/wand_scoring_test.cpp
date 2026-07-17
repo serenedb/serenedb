@@ -118,7 +118,7 @@ uint64_t ExecuteTopKFiltered(const irs::DirectoryReader& reader,
   }
   const auto stats = prepare_collector->Finish(irs::IResourceManager::gNoop);
 
-  irs::score_t score_threshold = std::numeric_limits<irs::score_t>::lowest();
+  irs::score_t score_threshold = std::numeric_limits<irs::score_t>::min();
   irs::NthPartitionScoreCollector collector{score_threshold, k, hits};
   irs::ColumnArgsFetcher fetcher;
   uint32_t seg_idx = 0;

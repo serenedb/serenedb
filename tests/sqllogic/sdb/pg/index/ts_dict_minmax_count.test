@@ -186,7 +186,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: mc_idx                            │
-│ Filter:                                  │
+│ Index Filter:                            │
 │ ╭─ Starts With ──────╮                   │
 │ │ Field: cat(string) │                   │
 │ │ Prefix: r          │                   │

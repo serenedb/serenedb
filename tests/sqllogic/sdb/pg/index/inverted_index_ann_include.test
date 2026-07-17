@@ -57,7 +57,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: vec_t_idx                       │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Vector KNN ─╮                       │
 │ │ Field: emb   │                       │
 │ │ Metric: l2   │                       │
@@ -93,7 +93,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: vec_t_idx                       │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Vector KNN ─╮                       │
 │ │ Field: emb   │                       │
 │ │ Metric: l2   │                       │

@@ -502,6 +502,50 @@ void ColumnReader::GatherDense(ScanState& s, uint64_t anchor,
   out.Slice(sel, hits);
 }
 
+duckdb::idx_t ColumnReader::GatherFilter(ScanState& s, uint64_t anchor,
+                                         duckdb::idx_t span,
+                                         duckdb::SelectionVector& sel,
+                                         duckdb::idx_t sel_count,
+                                         const duckdb::TableFilter& filter,
+                                         duckdb::TableFilterState& filter_state,
+                                         duckdb::Vector& result) const {
+  const uint64_t cur = ColumnReader::GatherCursor(s);
+  SDB_ASSERT(anchor >= cur, "GatherFilter requires ascending rows");
+  if (anchor > cur) {
+    ColumnReader::Skip(s, anchor - cur);
+  }
+  BeginScanVector(s);
+  SDB_ASSERT((s.window.end - s.window.begin) - s.st.offset_in_column >= span,
+             "GatherFilter span must lie within one segment");
+  auto& seg = *s.segments.back();
+  const auto& codec = seg.GetCompressionFunction();
+  duckdb::idx_t approved = sel_count;
+  if (codec.filter != nullptr &&
+      codec.validity == duckdb::CompressionValidity::NO_VALIDITY_REQUIRED) {
+    // The codec self-describes nulls, so the data segment alone is
+    // validity-complete: apply the codec filter (dict-level) over `sel`.
+    seg.Filter(s.st, span, result, sel, approved, filter, filter_state);
+    s.st.offset_in_column += span;
+    s.st.internal_index = s.st.offset_in_column;
+    // Codecs are picked per block: a later block of the same column may need
+    // the validity child (decode path below), whose cursor only moves
+    // relatively -- keep it in step with the data cursor.
+    if (_validity) {
+      SDB_ASSERT(!s.child_states.empty());
+      _validity->SkipRows(s.child_states[0], span);
+    }
+  } else {
+    // Separate validity (or no codec filter): decode the span with validity
+    // into `scratch`, then narrow the selection natively.
+    result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+    duckdb::FlatVector::ValidityMutable(result).SetAllValid(span);
+    ColumnReader::ScanCount(s, result, span, 0);
+    duckdb::ColumnSegment::FilterSelection(sel, result, filter_state, span,
+                                           approved);
+  }
+  return approved;
+}
+
 void ColumnReader::SkipRows(ScanState& s, duckdb::idx_t count) const {
   duckdb::idx_t remaining = count;
   while (remaining > 0) {

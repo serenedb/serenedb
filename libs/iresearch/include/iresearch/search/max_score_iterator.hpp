@@ -74,21 +74,80 @@ class MaxScoreIterator : public DocIterator {
   }
   doc_id_t seek(doc_id_t target) final { return advance(); }
 
-  // WAND/topk iterator: driven only through Collect; these are never reached.
+  // WAND/topk iterator: entered through Collect (top-k) and EmitScoredDocs (a
+  // windowed scored drain, e.g. TableFilterDocIterator::Collect over a filtered
+  // top-k). count()/EmitDocs()/FillBlock() are unscored paths never reached.
   uint32_t count() final {
     SDB_ASSERT(false);
     return 0;
   }
-  uint32_t EmitDocs(doc_id_t* /*out*/, doc_id_t /*max*/) final {
+  uint32_t EmitDocs(doc_id_t* /*out*/, doc_id_t /*min*/,
+                    doc_id_t /*max*/) final {
     SDB_ASSERT(false);
     return 0;
   }
-  uint32_t EmitScoredDocs(doc_id_t* /*out*/, score_t* /*scores*/,
-                          doc_id_t /*max*/, const ScoreFunction& /*scorer*/,
-                          ColumnArgsFetcher* /*fetcher*/,
-                          doc_id_t /*min*/) final {
-    SDB_ASSERT(false);
-    return 0;
+  uint32_t EmitScoredDocs(doc_id_t* out, score_t* scores, doc_id_t max,
+                          const ScoreFunction& /*scorer*/,
+                          ColumnArgsFetcher* /*fetcher*/, doc_id_t min) final {
+    // Collect's body bounded to [min, max), emitting (doc, score) ascending
+    // into out/scores instead of pushing a ScoreCollector. scorer/fetcher are
+    // unused as in Collect: children were prepared against _fetcher and scored
+    // inside the reused window machinery. Self-positions via seek (advance()
+    // asserts here), so no external prime is needed.
+    EmitSink sink{out, scores};
+
+    doc_id_t window_min = min;
+    _num_candidates = 0;
+    _num_outer_windows = 0;
+    _min_window_size = 1;
+  outer:
+    while (window_min < max) {
+      doc_id_t window_max = std::min(ComputeOuterWindow(window_min), max);
+
+      while (true) {
+        UpdateWindowScores(window_min, window_max);
+        if (!Split()) {
+          window_min = window_max;
+          goto outer;
+        }
+        const doc_id_t new_window_max =
+          std::min(ComputeOuterWindow(window_min), max);
+        if (new_window_max >= window_max) {
+          break;
+        }
+        window_max = new_window_max;
+      }
+
+      ProcessEssential([&](auto* it) {
+        if (it->value() < window_min) {
+          it->seek(window_min);
+        }
+      });
+
+      for (auto sub_min = Top(); sub_min < window_max; sub_min = Top()) {
+        ScoreAndCollectWindow(sink, sub_min, window_max);
+        if (std::get<ScoreThresholdAttr>(_attrs).value >= _next_threshold) {
+          break;
+        }
+      }
+
+      window_min = std::min(Top(), window_max);
+      ++_num_outer_windows;
+    }
+
+    if (_first_essential != _itrs_sorted.end()) {
+      // Essentials were advanced to >= max; the heap root is the next match.
+      _doc = Top();
+    } else {
+      // Split failed for the whole tail [window_min, max): nothing competitive
+      // there. Resume at the first real doc >= max (eof once exhausted) so a
+      // caller looping to eof terminates.
+      _doc = doc_limits::eof();
+      for (auto& it : _itrs) {
+        _doc = std::min(_doc, it.seek(max));
+      }
+    }
+    return sink.count;
   }
   std::pair<doc_id_t, bool> FillBlock(doc_id_t /*min*/, doc_id_t /*max*/,
                                       uint64_t* /*mask*/,
@@ -166,6 +225,49 @@ class MaxScoreIterator : public DocIterator {
   }
 
  private:
+  // Appends (doc, score) pairs produced by the shared window-scoring path into
+  // the caller's parallel arrays -- the AddDocs/AddWindow surface a
+  // ScoreCollector exposes, minus the top-k threshold (EmitScoredDocs emits
+  // every WAND survivor; the downstream collector applies its own threshold).
+  struct EmitSink {
+    doc_id_t* IRS_RESTRICT docs;
+    score_t* IRS_RESTRICT scores;
+    uint32_t count = 0;
+
+    IRS_FORCE_INLINE void AddDocs(
+      const doc_id_t* IRS_RESTRICT in_docs, size_t n,
+      const score_t* IRS_RESTRICT in_scores) noexcept {
+      std::memcpy(docs + count, in_docs, n * sizeof(doc_id_t));
+      std::memcpy(scores + count, in_scores, n * sizeof(score_t));
+      count += static_cast<uint32_t>(n);
+    }
+
+    IRS_FORCE_INLINE void AddWindow(const score_t* IRS_RESTRICT score_window,
+                                    const uint64_t* IRS_RESTRICT mask,
+                                    doc_id_t min, size_t num_blocks,
+                                    bool clear_score) noexcept {
+      for (size_t i = 0; i < num_blocks; ++i) {
+        auto word = mask[i];
+        if (word == 0) {
+          continue;
+        }
+        const score_t* IRS_RESTRICT const base = score_window + i * kBlockSize;
+        const doc_id_t doc_base = min + static_cast<doc_id_t>(i) * kBlockSize;
+        do {
+          const doc_id_t bit = std::countr_zero(word);
+          word = PopBit(word);
+          docs[count] = doc_base + bit;
+          scores[count] = base[bit];
+          ++count;
+        } while (word != 0);
+        if (clear_score) {
+          std::memset(const_cast<score_t*>(base), 0,
+                      kBlockSize * sizeof(score_t));
+        }
+      }
+    }
+  };
+
   IRS_FORCE_INLINE doc_id_t Top() const noexcept {
     return (*_first_essential)->value();
   }

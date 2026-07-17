@@ -55,56 +55,14 @@ struct OffsetsBindData;
 
 struct SereneDBScanBindData;
 
-enum class ScanSourceKind : uint8_t {
-  FullTable,
-  Search,
-};
-
-struct ScanSource {
-  ScanSourceKind Kind() const { return _kind; }
-
-  virtual void AppendSummary(
-    const SereneDBScanBindData& /*bind*/,
-    duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>& /*out*/) const {}
-
-  // Subclasses with non-copyable state (e.g. prepared queries) return a
-  // default FullTableScan.
-  virtual std::unique_ptr<ScanSource> Clone() const = 0;
-
-  bool IsSearchLike() const noexcept { return _kind == ScanSourceKind::Search; }
-
-  template<typename T>
-  const T& Cast() const {
-    auto* p = basics::downCast<T>(this);
-    SDB_ASSERT(p != nullptr, "ScanSource::Cast: null result");
-    return *p;
-  }
-  template<typename T>
-  T& Cast() {
-    auto* p = basics::downCast<T>(this);
-    SDB_ASSERT(p != nullptr, "ScanSource::Cast: null result");
-    return *p;
-  }
-
-  virtual ~ScanSource() = default;
-
- protected:
-  explicit ScanSource(ScanSourceKind k) : _kind{k} {}
-
- private:
-  ScanSourceKind _kind;
-};
-
-struct FullTableScan : ScanSource {
-  FullTableScan() : ScanSource(ScanSourceKind::FullTable) {}
-  std::unique_ptr<ScanSource> Clone() const final;
-};
-
+// Maps the per-doc score to the user-facing value. The score is already
+// "larger = nearer" for every metric (ResolveScoringDistance negates the
+// distance kernels), so the emit is applied directly -- no negation here.
 enum class ScoreEmit : uint8_t {
-  Identity,  // stored as-is (l1, l2_sqr, cosine_distance, negative_ip, l1_norm)
-  Sqrt,      // sqrt(stored)        (l2_distance / `<->` / l2_norm)
-  OneMinus,  // 1 - stored          (cosine_similarity)
-  Negate,    // -stored             (inner_product, from NegativeIP storage)
+  Identity,  // score        (cosine_similarity, inner_product)
+  SqrtNeg,   // sqrt(-score) (l2_distance / `<->` / l2_norm)
+  OneMinus,  // 1 - score    (cosine_distance)
+  Negate,    // -score       (l1, l2_sqr, negative_ip, l1_norm)
 };
 
 struct VectorScorerOptions {
@@ -124,15 +82,21 @@ struct VectorScorerOptions {
     if (radius == std::numeric_limits<float>::max()) {
       return radius;
     }
+    // The radius filter runs on the natural (positive) distance kernel, so map
+    // the user radius into that space -- the collector-side score negation does
+    // not apply here.
     switch (score_emit) {
       case ScoreEmit::Identity:
         return radius;
-      case ScoreEmit::Sqrt:
+      case ScoreEmit::SqrtNeg:
         return radius * radius;
       case ScoreEmit::OneMinus:
         return 1.0f - radius;
       case ScoreEmit::Negate:
-        return -radius;
+        return (metric == irs::VectorMetric::L2Sqr ||
+                metric == irs::VectorMetric::L1)
+                 ? radius
+                 : -radius;
     }
     SDB_UNREACHABLE();
   }
@@ -151,13 +115,35 @@ enum class TsDictTermUses : uint8_t {
 
 ENABLE_BITMASK_ENUM(TsDictTermUses);
 
-struct SearchScan : ScanSource {
-  SearchScan() : ScanSource(ScanSourceKind::Search) {}
+bool WandEnabled(const catalog::InvertedIndex* index,
+                 const std::optional<catalog::ScorerOptions>& scorer);
 
+enum class ScanEntryKind : uint8_t {
+  BaseTable,
+  InvertedIndex,
+  SecondaryIndex,
+  // A TableEngine::Search table: its iresearch store IS the table, so every
+  // column is covered in `.col` and there is no separate lookup source.
+  SearchTable,
+};
+
+constexpr catalog::Column::Id kInvalidColumnId = catalog::Column::kInvalidId;
+
+struct SereneDBScanBindData : public duckdb::FunctionData {
+  enum class Kind : uint8_t { Table, View };
+
+  std::vector<catalog::Column::Id> column_ids;
+  std::vector<duckdb::LogicalType> column_types;
+  duckdb::optional_ptr<duckdb::TableCatalogEntry> table_entry;
+  ScanEntryKind entry_kind = ScanEntryKind::BaseTable;
+
+  std::shared_ptr<const catalog::InvertedIndex> inverted_index;
+
+  // The iresearch snapshot plus the query's search configuration (stored
+  // filter, scorer, offsets, ts-dict requests). Every scan bound through this
+  // table function is a search scan, so `snapshot` is always set.
   std::shared_ptr<irs::Filter> stored_filter;
   search::InvertedIndexSnapshotPtr snapshot;
-
-  bool IsMatchAll() const noexcept;
 
   std::optional<catalog::ScorerOptions> text_scorer;
   std::optional<VectorScorerOptions> vector_scorer;
@@ -171,8 +157,6 @@ struct SearchScan : ScanSource {
     OffsetsBindData* bind = nullptr;
   };
   std::vector<OffsetsRequest> offsets;
-
-  bool EmitOffsets() const { return !offsets.empty(); }
 
   struct TsDictRequest {
     irs::field_id field_id = irs::field_limits::invalid();
@@ -191,8 +175,18 @@ struct SearchScan : ScanSource {
   // different fields in one query each get their own request.
   std::vector<TsDictRequest> ts_dicts;
 
-  bool TsDictMode() const { return !ts_dicts.empty(); }
+  bool count_only = false;
 
+  std::string lookup_label;
+  // Whether the lookup source applies pushed table filters (native storage +
+  // parquet yes; csv/json/text no). Filters on lookup columns are pushed only
+  // when true -- see IResearchSupportsPushdownType. Table-backed (sdb store)
+  // scans keep the default; view-backed scans set it from the fast path.
+  bool lookup_supports_filters = true;
+
+  bool IsMatchAll() const noexcept { return !stored_filter && !vector_scorer; }
+  bool EmitOffsets() const { return !offsets.empty(); }
+  bool TsDictMode() const { return !ts_dicts.empty(); }
   TsDictRequest& TsDictFor(irs::field_id field_id) {
     const auto it =
       std::ranges::find(ts_dicts, field_id, &TsDictRequest::field_id);
@@ -201,44 +195,16 @@ struct SearchScan : ScanSource {
     }
     return ts_dicts.emplace_back(TsDictRequest{.field_id = field_id});
   }
-
-  bool count_only = false;
-
   void AppendSummary(
-    const SereneDBScanBindData& bind,
-    duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>& out) const final;
-  std::unique_ptr<ScanSource> Clone() const final;
-};
-
-bool WandEnabled(const catalog::InvertedIndex* index,
-                 const std::optional<catalog::ScorerOptions>& scorer);
-
-enum class ScanEntryKind : uint8_t {
-  BaseTable,
-  InvertedIndex,
-  SecondaryIndex,
-};
-
-constexpr catalog::Column::Id kInvalidColumnId = catalog::Column::kInvalidId;
-
-struct SereneDBScanBindData : public duckdb::FunctionData {
-  enum class Kind : uint8_t { Table, View };
-
-  std::vector<catalog::Column::Id> column_ids;
-  std::vector<duckdb::LogicalType> column_types;
-  duckdb::optional_ptr<duckdb::TableCatalogEntry> table_entry;
-  ScanEntryKind entry_kind = ScanEntryKind::BaseTable;
-
-  std::shared_ptr<const catalog::InvertedIndex> inverted_index;
-
-  std::unique_ptr<ScanSource> scan_source = std::make_unique<FullTableScan>();
-
-  std::string lookup_label;
+    duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>& out) const;
 
   Kind GetKind() const noexcept { return _kind; }
   bool IsViewBacked() const noexcept { return _kind == Kind::View; }
   bool IsInvertedIndexEntry() const noexcept {
     return entry_kind == ScanEntryKind::InvertedIndex;
+  }
+  bool IsSearchTableEntry() const noexcept {
+    return entry_kind == ScanEntryKind::SearchTable;
   }
 
   template<typename T>
@@ -323,8 +289,6 @@ inline bool IsSereneDBScan(const duckdb::LogicalGet& get) {
 uint32_t ReadBoundedIntSetting(duckdb::ClientContext& context,
                                std::string_view name, int32_t min_inclusive,
                                uint32_t default_value);
-
-duckdb::TableFunction CreateSearchTableScanFunction();
 
 duckdb::TableFunction CreateIResearchScanFunction();
 

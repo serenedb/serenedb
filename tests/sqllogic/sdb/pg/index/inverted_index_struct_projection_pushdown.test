@@ -46,7 +46,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────╮
 │ Index: sp_t_idx                 │
 │ Lookup: table                   │
-│ Filter:                         │
+│ Index Filter:                   │
 │ ╭─ Term ───────────╮            │
 │ │ Field: t(string) │            │
 │ │ Value: first     │            │
@@ -66,7 +66,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────╮
 │ Index: sp_t_idx                 │
 │ Lookup: table                   │
-│ Filter:                         │
+│ Index Filter:                   │
 │ ╭─ Term ───────────╮            │
 │ │ Field: t(string) │            │
 │ │ Value: first     │            │
@@ -91,7 +91,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────╮
 │ Index: sp_t_idx                 │
 │ Lookup: table                   │
-│ Filter:                         │
+│ Index Filter:                   │
 │ ╭─ Term ───────────╮            │
 │ │ Field: t(string) │            │
 │ │ Value: first     │            │

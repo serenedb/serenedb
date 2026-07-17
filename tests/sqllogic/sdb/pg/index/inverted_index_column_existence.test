@@ -68,7 +68,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: ce_idx           │
 │ Lookup: table           │
-│ Filter:                 │
+│ Index Filter:           │
 │ ╭─ Not ───────────────╮ │
 │ ╰──────────┬──────────╯ │
 │ ╭─ Exists ─┴──────────╮ │
@@ -100,7 +100,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: ce_idx           │
 │ Lookup: table           │
-│ Filter:                 │
+│ Index Filter:           │
 │ ╭─ Exists ────────────╮ │
 │ │ Field: dual(string) │ │
 │ ╰─────────────────────╯ │
@@ -133,7 +133,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────┴────────────────────────╮
 │ Index: ce_idx                                    │
 │ Lookup: table                                    │
-│ Filter:                                          │
+│ Index Filter:                                    │
 │ ╭─ And ───────────────╮                          │
 │ ╰──────────┬──────────╯                          │
 │            ├────────────────────────╮            │
@@ -169,7 +169,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────┴────────────────────────╮
 │ Index: ce_idx                                    │
 │ Lookup: table                                    │
-│ Filter:                                          │
+│ Index Filter:                                    │
 │ ╭─ Exclusion ─────────╮                          │
 │ ╰──────────┬──────────╯                          │
 │            ├────────────────────────╮            │

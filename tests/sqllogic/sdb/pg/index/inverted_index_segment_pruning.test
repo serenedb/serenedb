@@ -1,0 +1,159 @@
+hash-threshold 100
+
+# Segment-level filter pruning: TableFilter::State::StartSegment returns
+# false when segment-wide zonemaps prove no row can pass the pushed column
+# filters, and the scan skips the segment. Each INSERT + VACUUM(REFRESH_TABLE)
+# round flushes its own segment, and the batches use disjoint `g` ranges, so
+# filters below kill 0, 1, 2, or all 3 segments. Results must be identical
+# either way (pruned segments contain no passing rows by construction) --
+# this file guards correctness; the perf effect is not observable from SQL.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en_segp(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+)
+
+
+statement ok
+CREATE TABLE segp (
+    id INT PRIMARY KEY,
+    g INT,
+    body VARCHAR
+)
+
+
+statement ok
+CREATE INDEX segp_idx ON segp USING inverted(id, body en_segp) INCLUDE (g)
+
+
+# Segment 1: g in [1, 10].
+statement ok
+INSERT INTO segp SELECT n, n, 'fox dog' FROM generate_series(1, 10) AS s(n)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) segp
+
+
+# Segment 2: g in [11, 20].
+statement ok
+INSERT INTO segp SELECT n, n, 'fox dog' FROM generate_series(11, 20) AS s(n)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) segp
+
+
+# Segment 3: g in [21, 30].
+statement ok
+INSERT INTO segp SELECT n, n, 'fox cat' FROM generate_series(21, 30) AS s(n)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) segp
+
+
+# Kills no segment.
+query
+SELECT count(*) FROM segp_idx WHERE body @@ ts_phrase('fox') AND g >= 1;
+----
+count
+30
+
+
+# Kills segments 1 and 2 (max(g) = 10 and 20 < 25).
+query
+SELECT id FROM segp_idx WHERE body @@ ts_phrase('fox') AND g >= 25 ORDER BY id;
+----
+id
+25
+26
+27
+28
+29
+30
+
+
+# Kills segments 2 and 3 (min(g) = 11 and 21 > 7).
+query
+SELECT id FROM segp_idx WHERE body @@ ts_phrase('fox') AND g <= 7 ORDER BY id;
+----
+id
+1
+2
+3
+4
+5
+6
+7
+
+
+# Straddles the segment 1 / segment 2 boundary: kills only segment 3.
+query
+SELECT id FROM segp_idx WHERE body @@ ts_phrase('fox') AND g BETWEEN 8 AND 12
+ORDER BY id;
+----
+id
+8
+9
+10
+11
+12
+
+
+# Kills all segments.
+query
+SELECT count(*) FROM segp_idx WHERE body @@ ts_phrase('fox') AND g > 100;
+----
+count
+0
+
+
+# Text filter and column filter combine: 'cat' only exists in segment 3,
+# the column filter kills segment 3 -> empty.
+query
+SELECT count(*) FROM segp_idx WHERE body @@ ts_phrase('cat') AND g <= 20;
+----
+count
+0
+
+
+# Top-k arm over the same data (BM25 ties broken by id).
+query
+SELECT id FROM segp_idx WHERE body @@ ts_phrase('fox') AND g >= 28
+ORDER BY BM25(segp_idx.tableoid) DESC, id LIMIT 5;
+----
+id
+28
+29
+30
+
+
+# BM25 stats must stay index-wide: a filter that prunes segments (g >= 25
+# kills segments 1 and 2) must not change any row's score relative to a
+# kills-nothing filter over the same text query.
+query
+SELECT count(*) FROM (
+    SELECT id, BM25(segp_idx.tableoid) AS s FROM segp_idx
+    WHERE body @@ ts_phrase('fox') AND g >= 25
+    EXCEPT
+    SELECT id, BM25(segp_idx.tableoid) AS s FROM segp_idx
+    WHERE body @@ ts_phrase('fox') AND g >= 1
+) t;
+----
+count
+0
+
+
+statement ok
+DROP TABLE segp
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY en_segp

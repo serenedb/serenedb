@@ -77,7 +77,7 @@ EXPLAIN SELECT pk, v, dual FROM wal_inc_idx WHERE txt @@ ts_phrase('alpha');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────╮
 │ Index: wal_inc_idx     │
-│ Filter:                │
+│ Index Filter:          │
 │ ╭─ Term ─────────────╮ │
 │ │ Field: txt(string) │ │
 │ │ Value: alpha       │ │

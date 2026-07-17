@@ -106,7 +106,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_ann                        │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Vector KNN ───╮                     │
 │ │ Field: emb     │                     │
 │ │ Metric: cosine │                     │

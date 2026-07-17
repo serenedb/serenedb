@@ -92,10 +92,6 @@ QUERY PLAN
 │ Aggregates: sum(#1), sum(#2)                         │
 │ ~2 rows                                              │
 ╰───────────────────────────┬──────────────────────────╯
-╭─ PROJECTION ──────────────┴──────────────────────────╮
-│ Projections: #0, #1, #2                              │
-│ ~5 rows                                              │
-╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: ddm_idx                                       │
 │ TsDict: body                                         │
@@ -144,10 +140,6 @@ EXPLAIN SELECT ts_dict_max(cat) AS hi FROM ddm_idx
 QUERY PLAN
 ╭─ UNGROUPED_AGGREGATE ────────────────────╮
 │ Aggregates: max(#0)                      │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
-╭─ PROJECTION ────────┴────────────────────╮
-│ Projections: sdb_inverted_index_term$cat │
 │ ~1 row                                   │
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮

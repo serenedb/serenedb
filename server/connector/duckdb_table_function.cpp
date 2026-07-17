@@ -31,6 +31,7 @@
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
+#include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
@@ -47,7 +48,6 @@
 #include "connector/duckdb_index_scan_entry.h"
 #include "connector/duckdb_scan_base.hpp"
 #include "connector/duckdb_search_full_scan.hpp"
-#include "connector/duckdb_search_table_scan.hpp"
 #include "connector/duckdb_table_entry.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/search_filter_printer.hpp"
@@ -80,7 +80,15 @@ void CopyCommon(const SereneDBScanBindData& src, SereneDBScanBindData& dst) {
   dst.table_entry = src.table_entry;
   dst.entry_kind = src.entry_kind;
   dst.inverted_index = src.inverted_index;
-  dst.scan_source = src.scan_source->Clone();
+  dst.stored_filter = src.stored_filter;
+  dst.snapshot = src.snapshot;
+  dst.text_scorer = src.text_scorer;
+  dst.vector_scorer = src.vector_scorer;
+  dst.score_top_k = src.score_top_k;
+  dst.score_order = src.score_order;
+  dst.offsets = src.offsets;
+  dst.ts_dicts = src.ts_dicts;
+  dst.count_only = src.count_only;
   dst.lookup_label = src.lookup_label;
 }
 
@@ -93,13 +101,17 @@ uint64_t EstimateFilterMatchCount(const irs::Filter& filter,
   if (type == irs::Type<irs::Empty>::id()) {
     return 0;
   }
+  // if (type == irs::Type<irs::ByVectorSimilarity>::id()) {
+  //   auto& f = basics::downCast<irs::ByVectorSimilarity>(filter);
+  //   if options no radius and no top, we need just return live_docs
+  // }
   // DuckDB's RelationStatisticsHelper::DEFAULT_SELECTIVITY
   constexpr double kDefaultFilterSelectivity = 0.2;
   return std::max<uint64_t>(live_docs * kDefaultFilterSelectivity, 1U);
 }
 
 duckdb::unique_ptr<duckdb::NodeStatistics> TsDictEstimation(
-  const SearchScan& ss, uint64_t live) {
+  const SereneDBScanBindData& ss, uint64_t live) {
   uint64_t estimate = 0;
   for (const auto& req : ss.ts_dicts) {
     const uint64_t rows = [&] -> uint64_t {
@@ -124,7 +136,7 @@ duckdb::unique_ptr<duckdb::NodeStatistics> TsDictEstimation(
 
 duckdb::unique_ptr<duckdb::NodeStatistics> InvertedIndexCardinality(
   const SereneDBScanBindData& bind) {
-  const auto& ss = bind.scan_source->Cast<SearchScan>();
+  const auto& ss = bind;
   const auto live = ss.snapshot->reader.live_docs_count();
   if (ss.TsDictMode()) {
     return TsDictEstimation(ss, live);
@@ -154,10 +166,7 @@ bool TableScanBindData::Equals(const duckdb::FunctionData& other) const {
 
 duckdb::unique_ptr<duckdb::NodeStatistics> TableScanBindData::Cardinality(
   duckdb::ClientContext&) const {
-  if (scan_source && scan_source->Kind() == ScanSourceKind::Search) {
-    return InvertedIndexCardinality(*this);
-  }
-  return nullptr;
+  return InvertedIndexCardinality(*this);
 }
 
 ObjectId TableScanBindData::RelationId() const { return table->GetId(); }
@@ -220,9 +229,6 @@ bool ViewScanBindData::Equals(const duckdb::FunctionData& other) const {
 
 duckdb::unique_ptr<duckdb::NodeStatistics> ViewScanBindData::Cardinality(
   duckdb::ClientContext& /*context*/) const {
-  if (scan_source->Kind() != ScanSourceKind::Search) {
-    return nullptr;
-  }
   return InvertedIndexCardinality(*this);
 }
 
@@ -323,23 +329,12 @@ static duckdb::vector<duckdb::column_t> SereneDBScanGetRowIdColumns(
   return result;
 }
 
-std::unique_ptr<ScanSource> FullTableScan::Clone() const {
-  return std::make_unique<FullTableScan>();
-}
-
-std::unique_ptr<ScanSource> SearchScan::Clone() const {
-  return std::make_unique<SearchScan>(*this);
-}
-
-bool SearchScan::IsMatchAll() const noexcept {
-  return !stored_filter && !vector_scorer;
-}
-
 bool WandEnabled(const catalog::InvertedIndex* index,
                  const std::optional<catalog::ScorerOptions>& scorer) {
   if (!index) {
     return false;
   }
+  // TODO(mbkkt) use compatibility instead
   const auto& topk = index->GetTopKScorer();
   return topk && topk == scorer;
 }
@@ -497,20 +492,20 @@ auto MakeFieldKindResolver(const SereneDBScanBindData& bind_data,
 
 }  // namespace
 
-void SearchScan::AppendSummary(
-  const SereneDBScanBindData& bind,
+void SereneDBScanBindData::AppendSummary(
   duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>& out) const {
+  const auto& bind = *this;
   if (bind.inverted_index) {
     const auto name_of = MakeFieldNameResolver(bind, *bind.inverted_index);
     const auto kind_of = MakeFieldKindResolver(bind, *bind.inverted_index);
     if (vector_scorer) {
       const auto display =
         MakeVectorFilter(*vector_scorer, stored_filter, vector_scorer->radius);
-      out.insert("Filter", duckdb::ExplainValue(
-                             irs::ToExplainNode(*display, name_of, kind_of)));
+      out.insert("Index Filter", duckdb::ExplainValue(irs::ToExplainNode(
+                                   *display, name_of, kind_of)));
     } else if (stored_filter) {
-      out.insert("Filter", duckdb::ExplainValue(irs::ToExplainNode(
-                             *stored_filter, name_of, kind_of)));
+      out.insert("Index Filter", duckdb::ExplainValue(irs::ToExplainNode(
+                                   *stored_filter, name_of, kind_of)));
     }
   }
   if (bind.inverted_index) {
@@ -518,10 +513,12 @@ void SearchScan::AppendSummary(
       if (!req.having_filter) {
         continue;
       }
+      // TODO(gnusi): Maybe different name? But what?
+      // TODO(gnusi): ColumnNameFor doesn't work for indexed expressions?
       auto key = ts_dicts.size() == 1
-                   ? std::string{"Filter"}
+                   ? std::string{"Index Filter"}
                    : absl::StrCat(
-                       "Filter(",
+                       "Index Filter(",
                        ColumnNameFor(
                          bind, static_cast<catalog::Column::Id>(req.field_id)),
                        ")");
@@ -540,6 +537,8 @@ void SearchScan::AppendSummary(
     out.insert("Score", text_scorer->ToString());
   }
   if (score_top_k) {
+    // TODO(mbkkt): prunnable/etc instead of optimized?
+    // TODO(mbkkt): streaming top k also should be marked when wand enabled
     std::string topk_val = absl::StrCat(*score_top_k);
     if (WandEnabled(bind.inverted_index.get(), text_scorer)) {
       absl::StrAppend(&topk_val, ", optimized");
@@ -557,6 +556,7 @@ void SearchScan::AppendSummary(
   if (TsDictMode()) {
     auto names = absl::StrJoin(
       ts_dicts | std::views::transform([&](const auto& req) {
+        // TODO(gnusi): indexed expressions doesn't work?
         return ColumnNameFor(bind, catalog::Column::Id{req.field_id});
       }),
       ", ");
@@ -730,7 +730,6 @@ SereneDBScanToValue(duckdb::TableFunctionToStringInput& input) {
     }
   }
   const bool count_only =
-    bind.scan_source && bind.scan_source->Kind() == ScanSourceKind::Search &&
     input.projected_column_ids &&
     absl::c_all_of(
       *input.projected_column_ids, [](const duckdb::ColumnIndex& ci) {
@@ -742,7 +741,7 @@ SereneDBScanToValue(duckdb::TableFunctionToStringInput& input) {
   if (!bind.lookup_label.empty() && !suppress_lookup) {
     result.insert("Lookup", bind.lookup_label);
   }
-  bind.scan_source->AppendSummary(bind, result);
+  bind.AppendSummary(result);
   if (count_only) {
     result.insert("Output", "row-count only");
   }
@@ -753,10 +752,10 @@ SereneDBScanToValue(duckdb::TableFunctionToStringInput& input) {
   return result;
 }
 
-static double CommonScanProgress(
+static double IResearchScanProgress(
   duckdb::ClientContext&, const duckdb::FunctionData*,
   const duckdb::GlobalTableFunctionState* gstate_p) {
-  const auto& gstate = gstate_p->Cast<CommonScanGlobalState>();
+  const auto& gstate = gstate_p->Cast<IResearchScanGlobalState>();
   if (gstate.total_segments == 0) {
     return -1;
   }
@@ -764,52 +763,6 @@ static double CommonScanProgress(
     gstate.next_segment.load(std::memory_order_relaxed), gstate.total_segments);
   return 100.0 * static_cast<double>(claimed) /
          static_cast<double>(gstate.total_segments);
-}
-
-static void SetCommonCallbacks(duckdb::TableFunction& func) {
-  // TODO(mbkkt) Maybe we can use bind_replace/bind_operator to make indexes?
-  func.init_local = CommonScanInitLocal;  // TODO: Use separate callbacks
-  // TODO: Better cardinality estimates
-  func.cardinality = SereneDBScanCardinality;
-  func.get_metrics = CommonScanGetMetrics;
-  func.to_string_value = SereneDBScanToValue;
-  func.table_scan_progress = CommonScanProgress;
-  // TODO: Implement dynamic_to_string
-  // TODO: Use get_partition_data for partition pruning of partitioned
-  // tables/indexes
-  func.get_bind_info = SereneDBGetBindInfo;
-  // TODO: Why type_pushdown is needed? Is it about cast for text-formats?
-  // TODO: Is get_multi_file_reader helpful for us? Will it allow us
-  // faster/simpler implementation of multi-threaded scanning?
-  // TODO: Implement supports_pushdown_extract for struct extract pushdown
-  // (e.g., JSON fields)
-  // TODO: Implement get_partition_info and get_partition_stats for partitioned
-  // tables/indexes
-  func.get_virtual_columns = SereneDBScanGetVirtualColumns;
-  func.get_row_id_columns = SereneDBScanGetRowIdColumns;
-  // TODO: Implement set_scan_order for order by primary key columns in PK/RBO
-  // scans, and for order by indexed columns in SK scans
-  func.verify_serialization = false;
-  func.projection_pushdown = true;
-  // TODO: Use filter_pushdown, filter_prune instead of RBO approach for
-  // indexes/primary keys
-  // TODO: Use late_materialization instead of our materialization approach for
-  // indexes/primary keys
-  // TODO: Better order preservation types for different scan strategies, e.g.,
-  // PK scans preserve insertion order, SK scans don't guarantee any order, but
-  // could be made to preserve index order if we implement set_scan_order
-  func.order_preservation_type = duckdb::OrderPreservationType::NO_ORDER;
-  // TODO: We can init_global on schedule for some scan types, with
-  // global_initialization, but why?
-}
-
-duckdb::TableFunction CreateSearchTableScanFunction() {
-  duckdb::TableFunction func{
-    "search_table_fullscan",   {}, SearchTableScanFunction, SereneDBScanBind,
-    SearchTableScanInitGlobal,
-  };
-  SetCommonCallbacks(func);
-  return func;
 }
 
 namespace {
@@ -834,6 +787,66 @@ bool IResearchSupportsPushdownExtract(const duckdb::FunctionData& bind_data_p,
   return info != nullptr && info->store_values;
 }
 
+// Per-filter pushdown decision (see TableFilterPushdown), finer than the
+// per-column supports_pushdown_type. BeforeLimit: covered `.col` INCLUDE
+// filters, and score-column filters (static or -- in the streaming case -- the
+// dynamic TOP_N boundary) -- applied in-scan before any limit/lookup, so a
+// pushed top-k stays valid and the lookup only fetches survivors. Drop: the
+// dynamic TOP_N score boundary in the top-k collector case (score_top_k set) --
+// the collector enforces that boundary itself, so the pushed-back filter is
+// redundant and removed entirely. AfterLimit: lookup-source filters
+// (parquet/duckdb apply them during the source scan, after the doc-id
+// selection) -- forces the scan unlimited. Reject: other virtuals, search-table
+// columns, csv/json lookups -- stay a Filter node above the scan (which, being
+// a LogicalFilter, also forces streaming, so top-k stays correct).
+duckdb::TableFilterPushdown IResearchSupportsPushdownFilter(
+  const duckdb::FunctionData& bind_data_p, duckdb::idx_t col_idx,
+  const duckdb::TableFilter& filter) {
+  const auto& bind = bind_data_p.Cast<SereneDBScanBindData>();
+  if (col_idx >= bind.column_ids.size()) {
+    return duckdb::TableFilterPushdown::Reject;
+  }
+  const auto col_id = bind.column_ids[col_idx];
+  if (col_id == catalog::Column::kInvertedIndexScoreId) {
+    // The dynamic boundary TOP_N pushes back (an optional-wrapped dynamic
+    // filter) is redundant in the top-k collector case: the collector enforces
+    // its own boundary, and this one is only populated after the scan finishes.
+    // So drop it there. In the streaming case push it (BeforeLimit): the
+    // HitBatcher applies it on the computed scores before the lookup, so the
+    // lookup only fetches survivors, and a text WAND iterator additionally
+    // seeds its threshold from it. A real/static score filter (e.g. BM25 > 0.5)
+    // is likewise pushed and applied in-scan on the computed scores.
+    if (duckdb::ExpressionFilter::GetRootOptionalDynamicFilterData(filter)) {
+      return bind.score_top_k ? duckdb::TableFilterPushdown::Drop
+                              : duckdb::TableFilterPushdown::BeforeLimit;
+    }
+    return duckdb::TableFilterPushdown::BeforeLimit;
+  }
+  if (col_id.id() > catalog::Column::kMaxRealIdValue) {
+    return duckdb::TableFilterPushdown::Reject;
+  }
+  if (bind.IsSearchTableEntry()) {
+    return duckdb::TableFilterPushdown::BeforeLimit;
+  }
+  if (bind.IsInvertedIndexEntry() && bind.inverted_index) {
+    const auto* info = bind.inverted_index->FindColumnInfo(col_id);
+    if (info && info->IsStored()) {
+      return duckdb::TableFilterPushdown::BeforeLimit;
+    }
+    if (bind.lookup_supports_filters) {
+      // Vector (ANN) search is approximate: keep the pushed top-k (BeforeLimit)
+      // so the collector runs the Top: path -- it over-fetches a pool by score,
+      // this lookup filter is applied during materialization, and the TOP_N
+      // above trims to the exact k. A text/exact scan keeps AfterLimit: the
+      // lookup filter runs after doc selection, forcing the unlimited streaming
+      // scan (a pushed top-k there could drop true matches).
+      return bind.vector_scorer ? duckdb::TableFilterPushdown::BeforeLimit
+                                : duckdb::TableFilterPushdown::AfterLimit;
+    }
+  }
+  return duckdb::TableFilterPushdown::Reject;
+}
+
 duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
   duckdb::ClientContext&, duckdb::TableFunctionGetStatisticsInput& input) {
   if (!input.bind_data) {
@@ -855,10 +868,7 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
   if (info == nullptr || !info->store_values) {
     return nullptr;
   }
-  if (bind.scan_source->Kind() != ScanSourceKind::Search) {
-    return nullptr;
-  }
-  const auto& ss = bind.scan_source->Cast<SearchScan>();
+  const auto& ss = bind;
   if (!ss.snapshot) {
     return nullptr;
   }
@@ -928,45 +938,32 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
   return nullptr;
 }
 
-duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
-  duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
-  auto& bind_data = input.bind_data->Cast<SereneDBScanBindData>();
-  SDB_ASSERT(bind_data.scan_source->Kind() == ScanSourceKind::Search);
-  return SearchFullScanInitGlobal(context, input);
-}
-
-duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
-  duckdb::ExecutionContext& context, duckdb::TableFunctionInitInput& input,
-  duckdb::GlobalTableFunctionState* global_state) {
-  auto& bind_data = input.bind_data->Cast<SereneDBScanBindData>();
-  SDB_ASSERT(bind_data.scan_source->Kind() == ScanSourceKind::Search);
-  return SearchFullScanInitLocal(context, input, global_state);
-}
-
-void IResearchScanFunction(duckdb::ClientContext& context,
-                           duckdb::TableFunctionInput& data,
-                           duckdb::DataChunk& output) {
-  auto& bind_data = data.bind_data->Cast<SereneDBScanBindData>();
-  SDB_ASSERT(bind_data.scan_source->Kind() == ScanSourceKind::Search);
-  return SearchFullScanFunction(context, data, output);
-}
-
 }  // namespace
 
 bool IsCountOnlyScan(const SereneDBScanBindData& bind_data,
                      const duckdb::TableFunctionInitInput& input) {
-  return absl::c_none_of(input.column_ids, [&](auto col_id) {
+  for (duckdb::idx_t i = 0; i < input.column_ids.size(); ++i) {
+    const auto col_id = input.column_ids[i];
     if (col_id == duckdb::COLUMN_IDENTIFIER_EMPTY ||
         col_id == duckdb::COLUMN_IDENTIFIER_ROW_ID) {
-      return false;
+      continue;
+    }
+    // A column materialized only to feed a pushed filter (present in column_ids
+    // but pruned from the output via projection_ids) does not make the scan
+    // emit rows, so it does not disqualify the count-only path -- the filter is
+    // applied by the TableFilterDocIterator's count().
+    if (!input.projection_ids.empty() &&
+        absl::c_find(input.projection_ids, i) == input.projection_ids.end()) {
+      continue;
     }
     if (col_id == kColumnIdentifierGeneratedPk ||
         col_id == kColumnIdentifierTableOid ||
-        col_id >= duckdb::VIRTUAL_COLUMN_START) {
-      return true;
+        col_id >= duckdb::VIRTUAL_COLUMN_START ||
+        col_id < bind_data.column_ids.size()) {
+      return false;
     }
-    return col_id < bind_data.column_ids.size();
-  });
+  }
+  return true;
 }
 
 duckdb::TableFunction CreateIResearchScanFunction() {
@@ -974,12 +971,38 @@ duckdb::TableFunction CreateIResearchScanFunction() {
     "iresearch_scan",        {}, IResearchScanFunction, SereneDBScanBind,
     IResearchScanInitGlobal,
   };
-  SetCommonCallbacks(func);
   func.init_local = IResearchScanInitLocal;
+  // TODO(mbkkt) Maybe we can use bind_replace/bind_operator to make indexes?
+  // TODO: Better cardinality estimates
+  func.cardinality = SereneDBScanCardinality;
+  func.get_metrics = IResearchScanGetMetrics;
+  func.to_string_value = SereneDBScanToValue;
+  func.table_scan_progress = IResearchScanProgress;
+  // TODO: Implement dynamic_to_string
+  // TODO: Use get_partition_data for partition pruning of partitioned
+  // tables/indexes
+  func.get_bind_info = SereneDBGetBindInfo;
+  // TODO: Is get_multi_file_reader helpful for us? Will it allow us
+  // faster/simpler implementation of multi-threaded scanning?
+  // TODO: Implement get_partition_info and get_partition_stats for partitioned
+  // tables/indexes
+  func.get_virtual_columns = SereneDBScanGetVirtualColumns;
+  func.get_row_id_columns = SereneDBScanGetRowIdColumns;
   func.pushdown_complex_filter = &optimizer::IResearchPushdownComplexFilter;
   func.set_scan_order = &IResearchSetScanOrder;
   func.supports_pushdown_extract = &IResearchSupportsPushdownExtract;
+  func.supports_pushdown_filter = &IResearchSupportsPushdownFilter;
   func.statistics_extended = &IResearchScanStatistics;
+  func.verify_serialization = false;
+  func.projection_pushdown = true;
+  func.filter_pushdown = true;
+  func.filter_prune = true;
+  // TODO: Use late_materialization instead of our materialization approach for
+  // indexes/primary keys
+  // TODO: Better order preservation types for different scan strategies, e.g.,
+  // PK scans preserve insertion order, SK scans don't guarantee any order, but
+  // could be made to preserve index order if we implement set_scan_order
+  func.order_preservation_type = duckdb::OrderPreservationType::NO_ORDER;
   return func;
 }
 

@@ -497,9 +497,7 @@ def test_binary_array_header_matches_pg():
 
 def test_pg_cancel_terminate_unknown_pid():
     # Both functions exist and return false for a pid that matches no backend,
-    # and warn "PID N is not a PostgreSQL backend process" (matching PG);
-    # pg_terminate_backend additionally warns that it only cancels (SereneDB
-    # cannot drop another session's connection).
+    # and warn "PID N is not a PostgreSQL backend process" (matching PG).
     c = psycopg.connect(**conn_kwargs(), autocommit=True)
     notices: list[str] = []
     c.add_notice_handler(lambda d: notices.append(d.message_primary))
@@ -507,10 +505,37 @@ def test_pg_cancel_terminate_unknown_pid():
         with c.cursor() as cur:
             assert cur.execute("select pg_cancel_backend(2147483647)").fetchone()[0] is False
             assert cur.execute("select pg_terminate_backend(2147483647)").fetchone()[0] is False
-        assert any("terminating connections is not supported" in n for n in notices), notices
-        assert any("is not a PostgreSQL backend process" in n for n in notices), notices
+        assert len(notices) == 2, notices
+        assert all("is not a PostgreSQL backend process" in n for n in notices), notices
     finally:
         c.close()
+
+
+def test_pg_terminate_backend_drops_connection():
+    # pg_terminate_backend() really terminates: the victim's connection is
+    # closed by the server, not merely its query cancelled. The close is
+    # asynchronous, so poll the victim until it observes the drop.
+    victim = psycopg.connect(**conn_kwargs(), autocommit=True)
+    killer = psycopg.connect(**conn_kwargs(), autocommit=True)
+    try:
+        with victim.cursor() as cur:
+            pid = cur.execute("select pg_backend_pid()").fetchone()[0]
+        with killer.cursor() as cur:
+            assert cur.execute(f"select pg_terminate_backend({pid})").fetchone()[0] is True
+        deadline = time.time() + 10
+        while True:
+            try:
+                victim.execute("select 1")
+            except psycopg.Error:
+                break
+            assert time.time() < deadline, "victim connection survived pg_terminate_backend"
+            time.sleep(0.05)
+    finally:
+        killer.close()
+        try:
+            victim.close()
+        except psycopg.Error:
+            pass
 
 
 def test_pg_backend_pid_is_positive():

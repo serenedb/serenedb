@@ -86,9 +86,7 @@ duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
   data->entry_kind = ScanEntryKind::InvertedIndex;
   data->inverted_index = _inverted_index;
   data->lookup_label = "table";
-  auto search = std::make_unique<SearchScan>();
-  search->snapshot = std::move(snapshot);
-  data->scan_source = std::move(search);
+  data->snapshot = std::move(snapshot);
   bind_data = std::move(data);
   return CreateIResearchScanFunction();
 }
@@ -143,12 +141,11 @@ duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
   data->inverted_index = _inverted_index;
   if (auto fp = ResolveViewFastPath(context, *_sdb_view)) {
     data->lookup_label = FormatLookupLabel(*fp);
+    data->lookup_supports_filters = fp->supports_filters;
   } else {
     data->lookup_label = "view";
   }
-  auto search = std::make_unique<SearchScan>();
-  search->snapshot = std::move(snapshot);
-  data->scan_source = std::move(search);
+  data->snapshot = std::move(snapshot);
   bind_data = std::move(data);
   return CreateIResearchScanFunction();
 }

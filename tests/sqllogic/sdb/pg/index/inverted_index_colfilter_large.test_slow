@@ -1,0 +1,331 @@
+# Large-cardinality `.col` table-filter coverage: 100k rows across 3 index
+# segments so pushed filters cross every internal boundary the small tests
+# never reach -- 2048-row emit windows, 65536-row `.col` blocks (zonemap +
+# codec choice), whole-segment MergedStatistics pruning, and the partial tail
+# vector of the bulk path. Every expected value is arithmetic over the
+# generate_series construction; top-k is cross-checked against the
+# sdb_disable_top_k_optimization streaming oracle.
+#
+# Filter columns here are INT (or a projected VARCHAR): the filter-only
+# dict-compressed VARCHAR path is covered by
+# inverted_index_colfilter_dict_scratch.test.
+
+hash-threshold 100
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY cfl_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE TABLE cfl (
+    id INT PRIMARY KEY,
+    body VARCHAR,
+    g INT,
+    h INT,
+    hn INT,
+    tag VARCHAR
+);
+
+
+# body: 'fox' repeated 1 + (i % 5) times -> 5 BM25 tiers (higher tf wins).
+# g = i (unique), h = i % 100, hn = h with NULLs at i % 1000 = 0,
+# tag = 't' || (i % 7).
+statement ok
+INSERT INTO cfl
+SELECT i,
+       repeat('fox ', 1 + (i % 5)),
+       i,
+       i % 100,
+       CASE WHEN i % 1000 = 0 THEN NULL ELSE i % 100 END,
+       't' || (i % 7)
+FROM generate_series(1, 33000) t(i);
+
+
+statement ok
+CREATE INDEX cfl_idx ON cfl
+    USING inverted(id, body cfl_en)
+    INCLUDE (g, h, hn, tag);
+
+
+# Segment 1: ids 1..33000.
+statement ok
+VACUUM (REFRESH_TABLE) cfl;
+
+
+statement ok
+INSERT INTO cfl
+SELECT i,
+       repeat('fox ', 1 + (i % 5)),
+       i,
+       i % 100,
+       CASE WHEN i % 1000 = 0 THEN NULL ELSE i % 100 END,
+       't' || (i % 7)
+FROM generate_series(33001, 66000) t(i);
+
+
+# Segment 2: ids 33001..66000.
+statement ok
+VACUUM (REFRESH_TABLE) cfl;
+
+
+statement ok
+INSERT INTO cfl
+SELECT i,
+       repeat('fox ', 1 + (i % 5)),
+       i,
+       i % 100,
+       CASE WHEN i % 1000 = 0 THEN NULL ELSE i % 100 END,
+       't' || (i % 7)
+FROM generate_series(66001, 100000) t(i);
+
+
+# Segment 3: ids 66001..100000.
+statement ok
+VACUUM (REFRESH_TABLE) cfl;
+
+
+# --- streaming: text query + projected `.col` filter column -----------------
+
+# Dense tail range; g is both filtered and projected (decode-once-then-Slice).
+query
+SELECT count(*) AS n, min(g) AS lo, max(g) AS hi
+FROM cfl_idx WHERE body @@ 'fox' AND g >= 99000;
+----
+n	lo	hi
+1001	99000	100000
+
+
+# Sparse survivors after ~48 fully-filtered leading windows in segment 2.
+query
+SELECT g, tag FROM cfl_idx
+WHERE body @@ 'fox' AND g BETWEEN 65998 AND 66002 ORDER BY g;
+----
+g	tag
+65998	t2
+65999	t3
+66000	t4
+66001	t5
+66002	t6
+
+
+# Zonemap match-none: every block (and every segment) excluded.
+query
+SELECT count(*) AS n FROM cfl_idx WHERE body @@ 'fox' AND g > 200000;
+----
+n
+0
+
+
+# --- whole-segment pruning (MergedStatistics) -------------------------------
+
+# Only segment 3 can contain g > 90000.
+query
+SELECT count(*) AS n FROM cfl_idx WHERE body @@ 'fox' AND g > 90000;
+----
+n
+10000
+
+
+# Only segment 1 can contain g <= 5.
+query
+SELECT count(*) AS n, min(g) AS lo FROM cfl_idx WHERE body @@ 'fox' AND g <= 5;
+----
+n	lo
+5	1
+
+
+# --- count-only path with a filter-only INT column --------------------------
+
+# h is scanned only to feed the filter (pruned from the output), so the scan
+# stays count-only and the TableFilterDocIterator's count() applies the filter.
+query
+SELECT count(*) AS n FROM cfl_idx WHERE body @@ 'fox' AND h = 5;
+----
+n
+1000
+
+
+# Conjunction over two filter-only columns.
+query
+SELECT count(*) AS n FROM cfl_idx WHERE body @@ 'fox' AND h = 5 AND g > 50000;
+----
+n
+500
+
+
+# --- NULLs in a filter-only column ------------------------------------------
+
+# hn = 0 has 1000 candidates (i % 100 = 0) of which 100 are NULL
+# (i % 1000 = 0); NULL must fail the predicate.
+query
+SELECT count(*) AS n FROM cfl_idx WHERE body @@ 'fox' AND hn = 0;
+----
+n
+900
+
+
+# Range predicate over the nullable column: i % 100 in 96..99 -> 4000 rows,
+# none of them NULL (i % 1000 = 0 implies hn = 0).
+query
+SELECT count(*) AS n FROM cfl_idx WHERE body @@ 'fox' AND hn >= 96;
+----
+n
+4000
+
+
+# --- filtered top-k (ORDER BY score LIMIT k) --------------------------------
+
+# g BETWEEN 50001 AND 50060 admits 60 docs, 12 per BM25 tier (tf = 1 + i % 5).
+# k = 24 selects exactly the tf-5 and tf-4 tiers: ids with i % 5 in {4, 3}.
+# The best-scoring docs outside the range are poison: dropping the filter (or
+# applying it after the heap) would return a completely different set.
+query
+SELECT id FROM (
+  SELECT id FROM cfl_idx
+  WHERE body @@ 'fox' AND g BETWEEN 50001 AND 50060
+  ORDER BY BM25(cfl_idx.tableoid) DESC LIMIT 24
+) t ORDER BY id;
+----
+id
+50003
+50004
+50008
+50009
+50013
+50014
+50018
+50019
+50023
+50024
+50028
+50029
+50033
+50034
+50038
+50039
+50043
+50044
+50048
+50049
+50053
+50054
+50058
+50059
+
+
+# Oracle arm: force streaming; the same set must come back.
+statement ok
+SET sdb_disable_top_k_optimization = true;
+
+
+query
+SELECT id FROM (
+  SELECT id FROM cfl_idx
+  WHERE body @@ 'fox' AND g BETWEEN 50001 AND 50060
+  ORDER BY BM25(cfl_idx.tableoid) DESC LIMIT 24
+) t ORDER BY id;
+----
+id
+50003
+50004
+50008
+50009
+50013
+50014
+50018
+50019
+50023
+50024
+50028
+50029
+50033
+50034
+50038
+50039
+50043
+50044
+50048
+50049
+50053
+50054
+50058
+50059
+
+
+statement ok
+RESET sdb_disable_top_k_optimization;
+
+
+# Filtered top-k where the filter kills whole segments: only segment 1 rows
+# qualify; k = 40 selects the tf-5 and tf-4 tiers (ids = 3, 4 mod 5).
+query
+SELECT count(*) AS n, min(id) AS lo, max(id) AS hi FROM (
+  SELECT id FROM cfl_idx
+  WHERE body @@ 'fox' AND g <= 100
+  ORDER BY BM25(cfl_idx.tableoid) DESC LIMIT 40
+) t;
+----
+n	lo	hi
+40	3	99
+
+
+# --- bulk match-all path (FullScanner) with `.col` filters ------------------
+
+# No text predicate: match-all + covered projection + filter -> bulk scan
+# units; g is filtered and projected. sum(20000..30000) = 250025000. The
+# range spans the segment-1 block tail, so full and partial vectors both
+# survive filtering.
+query
+SELECT count(*) AS n, sum(g) AS s FROM (
+  SELECT g FROM cfl_idx WHERE g BETWEEN 20000 AND 30000
+) t;
+----
+n	s
+10001	250025000
+
+
+# Bulk with a filter-only INT column: project tag, filter on h.
+query
+SELECT count(*) AS n FROM (
+  SELECT tag FROM cfl_idx WHERE h = 42
+) t;
+----
+n
+1000
+
+
+# Bulk with conjunctive filters where the leading blocks are fully dropped.
+query
+SELECT count(*) AS n, min(g) AS lo FROM (
+  SELECT g FROM cfl_idx WHERE g > 99990 AND h >= 91
+) t;
+----
+n	lo
+9	99991
+
+
+# Single-row spot check through the bulk path.
+query
+SELECT g, tag FROM cfl_idx WHERE g = 77777;
+----
+g	tag
+77777	t0
+
+
+statement ok
+DROP INDEX cfl_idx;
+
+statement ok
+DROP TABLE cfl;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY cfl_en;

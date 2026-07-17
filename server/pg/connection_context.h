@@ -53,7 +53,7 @@ LoginCheck RequireLoginRole(const catalog::Snapshot& snapshot,
                             const catalog::Database& database);
 
 }  // namespace sdb::pg
-namespace sdb::network::pg {
+namespace sdb::network {
 
 class CancelRegistry;
 }
@@ -68,7 +68,7 @@ class ConnectionContext final : public query::Transaction {
                     std::shared_ptr<catalog::Database> database,
                     message::Buffer* send_buffer,
                     pg::CopyMessagesQueue* copy_queue, int32_t backend_pid,
-                    network::pg::CancelRegistry* cancel_registry);
+                    network::CancelRegistry* cancel_registry);
 
   ~ConnectionContext() final { SDB_ASSERT(!HasNotices()); }
 
@@ -156,7 +156,7 @@ class ConnectionContext final : public query::Transaction {
   const std::string _database_name;
   const ObjectId _database_id;
   const int32_t _backend_pid;
-  network::pg::CancelRegistry* const _cancel_registry;
+  network::CancelRegistry* const _cancel_registry;
   std::shared_ptr<catalog::Database> _database;
   message::Buffer* const _send_buffer;
   pg::CopyMessagesQueue* const _copy_queue;

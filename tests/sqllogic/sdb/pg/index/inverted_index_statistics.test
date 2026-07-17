@@ -45,10 +45,6 @@ QUERY PLAN
 │ Aggregates: sum_no_overflow(#0) │
 │ ~1 row                          │
 ╰────────────────┬────────────────╯
-╭─ PROJECTION ───┴────────────────╮
-│ Projections: small              │
-│ ~3 rows                         │
-╰────────────────┬────────────────╯
 ╭─ IRESEARCH_SCAN ────────────────╮
 │ Index: vedernikoff_idx          │
 │ Projections: small              │
@@ -64,10 +60,6 @@ QUERY PLAN
 ╭─ UNGROUPED_AGGREGATE ──╮
 │ Aggregates: sum(#0)    │
 │ ~1 row                 │
-╰────────────┬───────────╯
-╭─ PROJECTION ───────────╮
-│ Projections: big       │
-│ ~3 rows                │
 ╰────────────┬───────────╯
 ╭─ IRESEARCH_SCAN ───────╮
 │ Index: vedernikoff_idx │

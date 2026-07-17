@@ -40,7 +40,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: wal_ivf_idx                     │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Vector KNN ─╮                       │
 │ │ Field: emb   │                       │
 │ │ Metric: l2   │                       │

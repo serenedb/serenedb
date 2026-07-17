@@ -46,7 +46,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: fo_bst_idx    │
 │ Lookup: table        │
-│ Filter:              │
+│ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: w(string) │ │
 │ │ Value: alpha     │ │

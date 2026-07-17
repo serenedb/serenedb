@@ -59,6 +59,10 @@ struct ViewFastPath {
   // 0 = not pinned. Set at query time from the index's commit payload.
   int64_t pinned_iceberg_snapshot_id = 0;
   catalog::PkSpec pk_spec;
+  // Whether the backing reader's lookup applies pushed table filters (parquet /
+  // duckdb yes; csv / json / text no). Drives filter pushdown -- see
+  // IResearchSupportsPushdownType.
+  bool supports_filters = false;
 };
 
 std::optional<ViewFastPath> ResolveViewFastPath(duckdb::ClientContext& context,

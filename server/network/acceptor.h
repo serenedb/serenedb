@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/synchronization/notification.h>
 #include <grp.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -124,12 +125,18 @@ class Acceptor final : public AcceptorBase,
                   [self = this->shared_from_this()] { self->Run().Detach(); });
   }
 
+  // Blocks until the listener is closed on its strand: accept completions run
+  // FIFO before the posted close, so afterwards every accepted session holds
+  // its WaitGroup slot (Add below) and no further session can appear.
   void Stop() noexcept override {
-    asio_ns::post(_acceptor.get_executor(), [self = this->shared_from_this()] {
-      self->_running = false;
+    absl::Notification done;
+    asio_ns::post(_acceptor.get_executor(), [this, &done] {
+      _running = false;
       asio_ns::error_code ec;
-      self->_acceptor.close(ec);
+      _acceptor.close(ec);
+      done.Notify();
     });
+    done.WaitForNotification();
   }
 
   EndpointType LocalEndpoint() const { return _acceptor.local_endpoint(); }
@@ -155,6 +162,10 @@ class Acceptor final : public AcceptorBase,
         }
         continue;
       }
+      if (!_running) {
+        // Stop() ran between the accept and this resume: drop the connection.
+        break;
+      }
       if constexpr (!kUnix) {
         // Sessions batch writes themselves (message::Buffer); Nagle on top only
         // adds delayed-ACK stalls to multi-write responses. Not valid on unix.
@@ -179,6 +190,10 @@ class Acceptor final : public AcceptorBase,
           ::setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &v, sizeof(v));
         }
       }
+      // Take the WaitGroup slot before posting Start: Stop() above is
+      // synchronous on this strand, so once Server::stop() releases the
+      // group's hold every session-to-be is already counted.
+      _deps.sessions->Add();
       asio_ns::post(connection->Lowest().get_executor(),
                     [connection] { connection->Start(); });
     }

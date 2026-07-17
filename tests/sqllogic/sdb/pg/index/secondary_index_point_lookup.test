@@ -35,13 +35,13 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ TABLE_SCAN ───────╮
-│ Table: pudge_pt    │
-│ Type: Index Scan   │
-│ Projections: a     │
-│ Filters: b = 12345 │
-│ 1 row          0µs │
-╰────────────────────╯
+╭─ TABLE_SCAN ─────────────╮
+│ Table: pudge_pt          │
+│ Type: Index Scan         │
+│ Projections: a           │
+│ Column Filter: b = 12345 │
+│ 1 row                0µs │
+╰──────────────────────────╯
 
 
 query
@@ -59,13 +59,13 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ TABLE_SCAN ──────────╮
-│ Table: pudge_pt       │
-│ Type: Sequential Scan │
-│ Projections: a        │
-│ Filters: b < 60000    │
-│ 60,000 rows       0µs │
-╰───────────────────────╯
+╭─ TABLE_SCAN ─────────────╮
+│ Table: pudge_pt          │
+│ Type: Sequential Scan    │
+│ Projections: a           │
+│ Column Filter: b < 60000 │
+│ 60,000 rows          0µs │
+╰──────────────────────────╯
 
 
 query

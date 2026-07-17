@@ -926,14 +926,14 @@ query
 EXPLAIN SELECT pid, tag FROM babsky_composite WHERE city = 'berlin' AND level = 10;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ────────────────╮
-│ Table: babsky_composite   │
-│ Type: Sequential Scan     │
-│ Projections: pid, tag     │
-│ Filters: city = 'berlin', │
-│          level = 10       │
-│ ~2 rows                   │
-╰───────────────────────────╯
+╭─ SEQ_SCAN ──────────────────────╮
+│ Table: babsky_composite         │
+│ Type: Sequential Scan           │
+│ Projections: pid, tag           │
+│ Column Filter: city = 'berlin', │
+│                level = 10       │
+│ ~2 rows                         │
+╰─────────────────────────────────╯
 
 
 query
@@ -1011,20 +1011,12 @@ query
 EXPLAIN SELECT pid, name FROM gayazov_dual_inv_idx WHERE rank = 10;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────╮
-│ Projections: #1, #2         │
-│ ~1 row                      │
-╰──────────────┬──────────────╯
-╭─ FILTER ─────┴──────────────╮
-│ Expression: rank = 10       │
-│ ~1 row                      │
-╰──────────────┬──────────────╯
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: gayazov_dual_inv_idx │
 │ Lookup: table               │
-│ Projections: rank, pid,     │
-│              name           │
-│ ~4 rows                     │
+│ Projections: pid, name      │
+│ Column Filter: rank = 10    │
+│ ~1 row                      │
 ╰─────────────────────────────╯
 
 onlyif serenedb
@@ -1102,7 +1094,7 @@ QUERY PLAN
 │ Table: vedernikoff_csv_crew │
 │ Type: Sequential Scan       │
 │ Projections: pid, nickname  │
-│ Filters: stocks = 30        │
+│ Column Filter: stocks = 30  │
 │ ~2 rows                     │
 ╰─────────────────────────────╯
 
@@ -1260,7 +1252,7 @@ QUERY PLAN
 │ Table: vedernikoff_pq_crew │
 │ Type: Sequential Scan      │
 │ Projections: pid, nickname │
-│ Filters: stocks = 30       │
+│ Column Filter: stocks = 30 │
 │ ~2 rows                    │
 ╰────────────────────────────╯
 
@@ -3371,7 +3363,8 @@ QUERY PLAN
 │ Table: mbkkt_or_suffix_in                                                                  │
 │ Type: Sequential Scan                                                                      │
 │ Projections: a, b, c, d, e, pid                                                            │
-│ Filters: (e = 50) OR (e IN (100, 500))                                                     │
+│ Column Filter:                                                                             │
+│ (e = 50) OR (e IN (100, 500))                                                              │
 │ ~2 rows                                                                                    │
 ╰────────────────────────────────────────────────────────────────────────────────────────────╯
 
@@ -3407,7 +3400,8 @@ QUERY PLAN
 │ Table: mbkkt_or_suffix_in                         │
 │ Type: Sequential Scan                             │
 │ Projections: a, b, pid                            │
-│ Filters: (a IN (10, 12)) OR (a = 14)              │
+│ Column Filter:                                    │
+│ (a IN (10, 12)) OR (a = 14)                       │
 │ ~2 rows                                           │
 ╰───────────────────────────────────────────────────╯
 

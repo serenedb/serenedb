@@ -25,7 +25,7 @@
 #include <type_traits>
 
 #include "basics/assert.h"
-#include "connector/key_concat.h"
+#include "basics/key_concat.h"
 
 namespace sdb::connector::primary_key {
 

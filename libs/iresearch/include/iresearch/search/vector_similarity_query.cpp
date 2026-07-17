@@ -58,7 +58,7 @@ class RawVectorReader {
 
   void SetQuery(std::span<const float> query, VectorMetric metric) {
     _query.assign(query.begin(), query.end());
-    _dist = ResolveVectorDistance(metric);
+    _dist = ResolveScoringDistance(metric);
   }
 
   void ComputeDistance(doc_id_t doc, score_t boost, score_t& out) {
@@ -295,7 +295,7 @@ class QVectorIterator : public VectorDistanceIterator {
   uint16_t _pos = 0;
 };
 
-template<bool IsNearestLargest, bool Inclusive>
+template<bool Inclusive>
 class VectorRangeIterator : public DocIterator {
  public:
   VectorRangeIterator(memory::managed_ptr<VectorDistanceIterator>&& inner,
@@ -340,12 +340,9 @@ class VectorRangeIterator : public DocIterator {
 
  private:
   bool Inside(score_t dist) const noexcept {
-    bool res = false;
-    if constexpr (IsNearestLargest) {
-      res = dist > _radius;
-    } else {
-      res = dist < _radius;
-    }
+    // The scoring distance is "larger = nearer" for every metric, so a doc is
+    // within the (scoring-space) radius iff its score clears the threshold.
+    bool res = dist > _radius;
     if constexpr (Inclusive) {
       res |= dist == _radius;
     }
@@ -632,15 +629,15 @@ DocIterator::ptr RangeVectorQuery::Execute(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
   DocIterator::ptr res;
-  irs::ResolveBool(VectorMetricNearestIsLargest(_metric),
-                   [&]<bool IsNearestLargest>() {
-                     irs::ResolveBool(_inclusive, [&]<bool Inclusive>() {
-                       auto v_it = memory::make_managed<
-                         VectorRangeIterator<IsNearestLargest, Inclusive>>(
-                         std::move(it), _radius);
-                       res = std::move(v_it);
-                     });
-                   });
+  // RawVectorReader now yields "larger = nearer" scores, so map the radius into
+  // that scoring space: distance metrics (nearest = smallest) get negated.
+  const float threshold =
+    VectorMetricNearestIsLargest(_metric) ? _radius : -_radius;
+  irs::ResolveBool(_inclusive, [&]<bool Inclusive>() {
+    auto v_it = memory::make_managed<VectorRangeIterator<Inclusive>>(
+      std::move(it), threshold);
+    res = std::move(v_it);
+  });
   return res;
 }
 

@@ -26,14 +26,14 @@ QUERY PLAN
 │ Conditions: id = id   │
 │ ~3 rows               │
 ╰───────────┬───────────╯
-            ├──────────────────────────╮
-╭─ SEQ_SCAN ┴───────────╮  ╭─ SEQ_SCAN ┴───────────╮
-│ Table: t1             │  │ Table: t2             │
-│ Type: Sequential Scan │  │ Type: Sequential Scan │
-│ Projections: id, v1   │  │ Projections: id, v2   │
-│ ~3 rows               │  │ Filters: id <= 3      │
-╰───────────────────────╯  │ ~3 rows               │
-                           ╰───────────────────────╯
+            ├───────────────────────────╮
+╭─ SEQ_SCAN ┴───────────╮  ╭─ SEQ_SCAN ─┴───────────╮
+│ Table: t1             │  │ Table: t2              │
+│ Type: Sequential Scan │  │ Type: Sequential Scan  │
+│ Projections: id, v1   │  │ Projections: id, v2    │
+│ ~3 rows               │  │ Column Filter: id <= 3 │
+╰───────────────────────╯  │ ~3 rows                │
+                           ╰────────────────────────╯
 
 
 query ??? rowsort

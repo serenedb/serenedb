@@ -42,6 +42,14 @@ float CosineSimilarity(const byte_type* l, const byte_type* r, uint16_t d) {
   return denom == 0.f ? 0.f : lr / denom;
 }
 
+float NegL2SqrDistance(const byte_type* l, const byte_type* r, uint16_t d) {
+  return -vector::L2Space<float, float, float>::Dist(l, r, d);
+}
+
+float NegL1Distance(const byte_type* l, const byte_type* r, uint16_t d) {
+  return -vector::L1Space<float, float, float>::Dist(l, r, d);
+}
+
 }  // namespace
 
 VectorDistanceFn ResolveVectorDistance(VectorMetric metric) {
@@ -50,6 +58,20 @@ VectorDistanceFn ResolveVectorDistance(VectorMetric metric) {
       return &vector::L2Space<float, float, float>::Dist;
     case VectorMetric::L1:
       return &vector::L1Space<float, float, float>::Dist;
+    case VectorMetric::InnerProduct:
+      return &vector::DotProductImpl<float, float>::Compute;
+    case VectorMetric::Cosine:
+      return &CosineSimilarity;
+  }
+  THROW_SQL_ERROR(ERR_MSG("unsupported IVF vector metric"));
+}
+
+VectorDistanceFn ResolveScoringDistance(VectorMetric metric) {
+  switch (metric) {
+    case VectorMetric::L2Sqr:
+      return &NegL2SqrDistance;
+    case VectorMetric::L1:
+      return &NegL1Distance;
     case VectorMetric::InnerProduct:
       return &vector::DotProductImpl<float, float>::Compute;
     case VectorMetric::Cosine:

@@ -64,7 +64,7 @@ ConnectionContext::ConnectionContext(
   std::string_view dbname, ObjectId database_id,
   std::shared_ptr<catalog::Database> database, message::Buffer* send_buffer,
   pg::CopyMessagesQueue* copy_queue, int32_t backend_pid,
-  network::pg::CancelRegistry* cancel_registry)
+  network::CancelRegistry* cancel_registry)
   : Transaction{duckdb_ctx},
     _user{user},
     _database_name{dbname},

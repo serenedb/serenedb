@@ -48,6 +48,11 @@ using VectorDistanceFn = float (*)(const byte_type*, const byte_type*,
 
 VectorDistanceFn ResolveVectorDistance(VectorMetric metric);
 
+// Like ResolveVectorDistance, but distance metrics (L1/L2Sqr) are negated so
+// every metric scores "larger = nearer". Used on the collector-facing scoring
+// path; ResolveVectorDistance stays natural for IVF geometry and radius.
+VectorDistanceFn ResolveScoringDistance(VectorMetric metric);
+
 bool VectorMetricNearestIsLargest(VectorMetric metric) noexcept;
 
 bool VectorMetricIsAngular(VectorMetric metric) noexcept;

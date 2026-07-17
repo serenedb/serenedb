@@ -21,7 +21,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: fo_rng_idx    │
 │ Lookup: table        │
-│ Filter:              │
+│ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: s(string) │ │
 │ │ Value: alpha     │ │
@@ -37,7 +37,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──╮
 │ Index: fo_rng_idx │
 │ Lookup: table     │
-│ Filter:           │
+│ Index Filter:     │
 │ ╭─ Empty ─╮       │
 │ ╰─────────╯       │
 │ Projections: id   │
@@ -51,7 +51,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: fo_rng_idx           │
 │ Lookup: table               │
-│ Filter:                     │
+│ Index Filter:               │
 │ ╭─ Range ─────────────────╮ │
 │ │ Field: s(string)        │ │
 │ │ Range: >=alpha, <=gamma │ │
@@ -67,7 +67,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────╮
 │ Index: fo_rng_idx     │
 │ Lookup: table         │
-│ Filter:               │
+│ Index Filter:         │
 │ ╭─ Term ────────────╮ │
 │ │ Field: n(numeric) │ │
 │ │ Value: 2          │ │
@@ -83,7 +83,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──╮
 │ Index: fo_rng_idx │
 │ Lookup: table     │
-│ Filter:           │
+│ Index Filter:     │
 │ ╭─ Empty ─╮       │
 │ ╰─────────╯       │
 │ Projections: id   │
@@ -97,7 +97,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────╮
 │ Index: fo_rng_idx     │
 │ Lookup: table         │
-│ Filter:               │
+│ Index Filter:         │
 │ ╭─ Granular Range ──╮ │
 │ │ Field: n(numeric) │ │
 │ │ Range: >=2, <=4   │ │
@@ -113,7 +113,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: fo_rng_idx    │
 │ Lookup: table        │
-│ Filter:              │
+│ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: s(string) │ │
 │ │ Value: alpha     │ │
@@ -129,7 +129,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: fo_rng_idx           │
 │ Lookup: table               │
-│ Filter:                     │
+│ Index Filter:               │
 │ ╭─ Terms ─────────────────╮ │
 │ │ Field: s(string)        │ │
 │ │ Values: 'alpha', 'beta' │ │
@@ -146,7 +146,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────╮
 │ Index: fo_rng_idx         │
 │ Lookup: table             │
-│ Filter:                   │
+│ Index Filter:             │
 │ ╭─ Range ───────────────╮ │
 │ │ Field: s(string)      │ │
 │ │ Range: >alpha, <gamma │ │
@@ -163,7 +163,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────╮
 │ Index: fo_rng_idx     │
 │ Lookup: table         │
-│ Filter:               │
+│ Index Filter:         │
 │ ╭─ Granular Range ──╮ │
 │ │ Field: n(numeric) │ │
 │ │ Range: >1, <4     │ │
@@ -180,7 +180,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: fo_rng_idx    │
 │ Lookup: table        │
-│ Filter:              │
+│ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: s(string) │ │
 │ │ Value: beta      │ │
@@ -197,7 +197,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──╮
 │ Index: fo_rng_idx │
 │ Lookup: table     │
-│ Filter:           │
+│ Index Filter:     │
 │ ╭─ Empty ─╮       │
 │ ╰─────────╯       │
 │ Projections: id   │
@@ -211,7 +211,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────╮
 │ Index: fo_rng_idx     │
 │ Lookup: table         │
-│ Filter:               │
+│ Index Filter:         │
 │ ╭─ Term ────────────╮ │
 │ │ Field: n(numeric) │ │
 │ │ Value: 3          │ │
@@ -228,7 +228,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────╮
 │ Index: fo_rng_idx                           │
 │ Lookup: table                               │
-│ Filter:                                     │
+│ Index Filter:                               │
 │ ╭─ And ────────────╮                        │
 │ ╰─────────┬────────╯                        │
 │           ├─────────────────────╮           │
@@ -247,7 +247,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────╮
 │ Index: fo_rng_idx                           │
 │ Lookup: table                               │
-│ Filter:                                     │
+│ Index Filter:                               │
 │ ╭─ And ─────────────╮                       │
 │ ╰─────────┬─────────╯                       │
 │           ├──────────────────────╮          │
@@ -291,7 +291,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────╮
 │ Index: fo_rng_mt_idx                       │
 │ Lookup: table                              │
-│ Filter:                                    │
+│ Index Filter:                              │
 │ ╭─ And ────────────╮                       │
 │ ╰─────────┬────────╯                       │
 │           ├─────────────────────╮          │
@@ -343,7 +343,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────╮
 │ Index: fo_rng_mix_idx                                                 │
 │ Lookup: table                                                         │
-│ Filter:                                                               │
+│ Index Filter:                                                         │
 │ ╭─ And ─────────────────╮                                             │
 │ ╰───────────┬───────────╯                                             │
 │             ├────────────────────────┬─────────────────────╮          │

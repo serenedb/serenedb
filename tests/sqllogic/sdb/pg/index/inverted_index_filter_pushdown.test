@@ -1,0 +1,240 @@
+hash-threshold 100
+
+# Pushed-filter enforcement across scan modes. Data is a poison
+# construction: the best-scoring docs deliberately fail the filters, so a
+# scan that drops or reorders a filter returns exactly the wrong rows.
+# Cross-checked against the sdb_disable_top_k_optimization oracle (forces
+# streaming).
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en_fp(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+)
+
+
+statement ok
+CREATE TABLE fpdocs (id INTEGER PRIMARY KEY, body VARCHAR, val INTEGER, ext INTEGER)
+
+
+statement ok
+CREATE INDEX fpdocs_idx ON fpdocs USING inverted(body en_fp) INCLUDE (id, val)
+
+
+# BM25 order for 'fox': 1 > 2 > 3. The two best docs fail ext = 1 and
+# val >= 30; doc 4 does not match the text query at all.
+statement ok
+INSERT INTO fpdocs VALUES
+  (1, 'fox fox fox pad', 11, 0),
+  (2, 'fox fox pad pad', 22, 0),
+  (3, 'fox pad pad pad', 33, 1),
+  (4, 'dog pad pad pad', 44, 1)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) fpdocs
+
+
+# Unfiltered top-k sanity.
+query
+SELECT id FROM fpdocs_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(fpdocs_idx.tableoid) DESC LIMIT 2;
+----
+id
+1
+2
+
+
+# Non-INCLUDE column filter under top-k: enforced by row fetch pre-heap.
+# A dropped filter would return 1, 2.
+query
+SELECT id FROM fpdocs_idx WHERE body @@ ts_phrase('fox') AND ext = 1 ORDER BY BM25(fpdocs_idx.tableoid) DESC LIMIT 2;
+----
+id
+3
+
+
+# INCLUDE column filter under top-k: enforced by the columnstore.
+query
+SELECT id FROM fpdocs_idx WHERE body @@ ts_phrase('fox') AND val >= 30 ORDER BY BM25(fpdocs_idx.tableoid) DESC LIMIT 2;
+----
+id
+3
+
+
+# Score filter: only evaluable post-materialization -> demotes to streaming,
+# enforced by the residual row filter.
+query
+SELECT id FROM fpdocs_idx WHERE body @@ ts_phrase('fox') AND BM25(fpdocs_idx.tableoid) > 1000 ORDER BY BM25(fpdocs_idx.tableoid) DESC LIMIT 2;
+----
+id
+
+
+# Streaming shape (no LIMIT): filter-first, materialize survivors only.
+query
+SELECT id FROM fpdocs_idx WHERE body @@ ts_phrase('fox') AND ext = 1 ORDER BY id;
+----
+id
+3
+
+
+query
+SELECT id, val FROM fpdocs_idx WHERE body @@ ts_phrase('fox') AND val <= 22 AND ext = 0 ORDER BY id;
+----
+id	val
+1	11
+2	22
+
+
+# Oracle arm: force streaming.
+statement ok
+SET sdb_disable_top_k_optimization = true
+
+
+query
+SELECT id FROM fpdocs_idx WHERE body @@ ts_phrase('fox') AND ext = 1 ORDER BY BM25(fpdocs_idx.tableoid) DESC LIMIT 2;
+----
+id
+3
+
+
+query
+SELECT id FROM fpdocs_idx WHERE body @@ ts_phrase('fox') AND val >= 30 ORDER BY BM25(fpdocs_idx.tableoid) DESC LIMIT 2;
+----
+id
+3
+
+
+statement ok
+RESET sdb_disable_top_k_optimization
+
+
+query
+SELECT id FROM fpdocs_idx WHERE body @@ ts_phrase('fox') AND val >= 30 AND ext = 1 ORDER BY id;
+----
+id
+3
+
+
+# All-NULL segment: a second segment where val is entirely NULL. A stored
+# column with no data resolves by NULL semantics: `val IS NULL` keeps the
+# segment, `val = 33` rules out the whole segment.
+statement ok
+INSERT INTO fpdocs VALUES
+  (11, 'fox pad pad pad', NULL, 1),
+  (12, 'fox fox pad pad', NULL, 0)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) fpdocs
+
+
+query
+SELECT id FROM fpdocs_idx WHERE body @@ ts_phrase('fox') AND val IS NULL ORDER BY id;
+----
+id
+11
+12
+
+
+query
+SELECT id FROM fpdocs_idx WHERE body @@ ts_phrase('fox') AND val = 33 ORDER BY id;
+----
+id
+3
+
+
+query
+SELECT id FROM fpdocs_idx WHERE body @@ ts_phrase('fox') AND val IS NULL AND ext = 1 ORDER BY BM25(fpdocs_idx.tableoid) DESC LIMIT 2;
+----
+id
+11
+
+
+# BM25 stays index-wide regardless of pruning: the same doc's score must not
+# depend on the column filter (segment skips never touch stats collection).
+query
+SELECT count(*) FROM (
+    SELECT id, BM25(fpdocs_idx.tableoid) AS s FROM fpdocs_idx
+    WHERE body @@ ts_phrase('fox') AND ext = 1
+    EXCEPT
+    SELECT id, BM25(fpdocs_idx.tableoid) AS s FROM fpdocs_idx
+    WHERE body @@ ts_phrase('fox')
+) t;
+----
+count
+0
+
+
+# Eventual consistency: a row deleted after the refresh can no longer be
+# looked up, so it reads as a filtered-out row (not NULL) -- both ext = 1 and
+# ext IS NULL exclude it.
+statement ok
+DELETE FROM fpdocs WHERE id = 3
+
+
+query
+SELECT id FROM fpdocs_idx WHERE body @@ ts_phrase('fox') AND ext = 1 AND id < 10 ORDER BY BM25(fpdocs_idx.tableoid) DESC LIMIT 2;
+----
+id
+
+
+query
+SELECT id FROM fpdocs_idx WHERE body @@ ts_phrase('fox') AND ext IS NULL ORDER BY id;
+----
+id
+
+
+statement ok
+DROP TABLE fpdocs
+
+
+# ANN mirror: any pushed filter demotes IVF top-k to the range shape,
+# enforced on the materialized chunk.
+statement ok
+CREATE TABLE fpvecs (id INTEGER PRIMARY KEY, emb FLOAT[3], val INTEGER, ext INTEGER)
+
+
+statement ok
+CREATE INDEX fpvecs_idx ON fpvecs USING inverted(id, emb ivf (metric = 'l2')) INCLUDE (val)
+
+
+statement ok
+INSERT INTO fpvecs VALUES
+  (1, [0, 0, 0]::FLOAT[3], 11, 0),
+  (2, [1, 1, 1]::FLOAT[3], 22, 0),
+  (3, [2, 2, 2]::FLOAT[3], 33, 1),
+  (4, [3, 3, 3]::FLOAT[3], 44, 1)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) fpvecs
+
+
+query
+SELECT id FROM fpvecs_idx WHERE val >= 30 ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+3
+4
+
+
+query
+SELECT id FROM fpvecs_idx WHERE ext = 1 ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+3
+4
+
+
+statement ok
+DROP TABLE fpvecs
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY en_fp

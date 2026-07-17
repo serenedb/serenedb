@@ -1,0 +1,143 @@
+hash-threshold 100
+
+# Top-k scan paths (WAND text / IVF vector) enforce table filters through
+# the columnstore predicate, which can only answer filters on INCLUDE'd
+# columns. Filters it cannot answer (non-INCLUDE columns, the score column)
+# must fall back to the streaming scan, which re-checks every row after
+# materialization -- the top-k paths have no post-filter, so without the
+# fallback the conjunct would be silently dropped.
+
+statement ok
+CREATE TABLE docs (id INTEGER PRIMARY KEY, body VARCHAR, val INTEGER, ext INTEGER);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+statement ok
+CREATE INDEX docs_idx ON docs USING inverted(body en) INCLUDE (id, val);
+
+# Equal doc lengths, distinct term frequencies: BM25 order is 1 > 2 > 3.
+# The two best-scoring docs fail `ext = 1`, so a top-k that drops the
+# filter returns exactly the wrong rows.
+statement ok
+INSERT INTO docs VALUES
+  (1, 'fox fox fox pad', 11, 0),
+  (2, 'fox fox pad pad', 22, 0),
+  (3, 'fox pad pad pad', 33, 1),
+  (4, 'dog pad pad pad', 44, 1);
+
+statement ok
+VACUUM (REFRESH_TABLE) docs;
+
+# Sanity: unfiltered top-k.
+query
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 2;
+----
+id
+1
+2
+
+# Filter on a non-INCLUDE column: not answerable from the columnstore.
+query
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') AND ext = 1 ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 2;
+----
+id
+3
+
+# Filter on the score column: not answerable before scoring.
+query
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') AND BM25(docs_idx.tableoid) > 1000 ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 2;
+----
+id
+
+query
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') AND BM25(docs_idx.tableoid) > -1 ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 2;
+----
+id
+1
+2
+
+# Filter on an INCLUDE'd column keeps the fast top-k path and must still
+# exclude non-matching rows.
+query
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') AND val >= 22 ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 2;
+----
+id
+2
+3
+
+# NULL semantics: a second segment whose filter-column values are all NULL.
+statement ok
+INSERT INTO docs VALUES (5, 'fox pad pad pad', NULL, 1);
+
+statement ok
+VACUUM (REFRESH_TABLE) docs;
+
+query
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') AND val IS NULL ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 2;
+----
+id
+5
+
+query
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') AND val = 33 ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 2;
+----
+id
+3
+
+statement ok
+DROP TABLE docs;
+
+# Same fallback contract for the IVF vector top-k path.
+
+statement ok
+CREATE TABLE vecs (id INTEGER PRIMARY KEY, emb FLOAT[3], ext INTEGER);
+
+statement ok
+CREATE INDEX vecs_idx ON vecs USING inverted(emb ivf (metric = 'l2')) INCLUDE (id);
+
+statement ok
+INSERT INTO vecs VALUES
+  (1, [1, 0, 0]::FLOAT[3], 0),
+  (2, [2, 0, 0]::FLOAT[3], 0),
+  (3, [3, 0, 0]::FLOAT[3], 1),
+  (4, [4, 0, 0]::FLOAT[3], 1);
+
+statement ok
+VACUUM (REFRESH_TABLE) vecs;
+
+# Sanity: unfiltered ANN top-k.
+query
+SELECT id FROM vecs_idx ORDER BY emb <-> [0.0, 0.0, 0.0]::FLOAT[3] LIMIT 2;
+----
+id
+1
+2
+
+# Filter on a non-INCLUDE column: the two nearest vectors fail it.
+query
+SELECT id FROM vecs_idx WHERE ext = 1 ORDER BY emb <-> [0.0, 0.0, 0.0]::FLOAT[3] LIMIT 2;
+----
+id
+3
+4
+
+# Filter on an INCLUDE'd column keeps the IVF top-k path.
+query
+SELECT id FROM vecs_idx WHERE id >= 2 ORDER BY emb <-> [0.0, 0.0, 0.0]::FLOAT[3] LIMIT 2;
+----
+id
+2
+3
+
+statement ok
+DROP TABLE vecs;

@@ -94,10 +94,8 @@ int RunServer(int argc, char** argv) {
           SDB_ERROR(GENERAL, "unknown exception stopping ", what);
         }
       };
+      // Signals first, all cheap: every actor starts stopping at once.
       if (up_search) {
-        // Signal the search loops to stop BEFORE the IoPool is torn down, so
-        // their Delay()s (which complete instantly once the pool is gone) break
-        // immediately instead of spinning until search.stop() below.
         search.RequestStop();
       }
       if (up_background) {
@@ -107,9 +105,15 @@ int RunServer(int argc, char** argv) {
         background.CancelDelays();
       }
       if (up_network) {
-        // Stop taking new connections early, but keep the io pool alive: the
-        // search/background loops below still drain their timers on it.
-        stop("accept", [&] { network.StopAccepting(); });
+        // Listeners close and every session is terminated: its in-flight query
+        // interrupted, its socket closed by its own writer.
+        stop("network signal", [&] { network.RequestStop(); });
+      }
+      // Joins, in dependency order.
+      if (up_network) {
+        // Sessions complete against the fully-live engine, then the io pool
+        // goes down. The search loops' Delay()s complete instantly without it.
+        stop("network", [&] { network.stop(); });
       }
       if (up_search) {
         stop("search", [&] { search.stop(); });
@@ -122,13 +126,6 @@ int RunServer(int argc, char** argv) {
       }
       if (up_catalog) {
         stop("catalog", [&] { catalog::ShutdownCatalog(); });
-      }
-      if (up_network) {
-        // Last: every DuckDB-work submitter above is now down, so join the
-        // DuckDB workers and tear the io pool down. A session query pipeline
-        // runs on a DuckDB worker and pushes results up into the io pool, so
-        // the pool can only be freed once no worker is left to touch it.
-        stop("network", [&] { network.stop(); });
       }
     };
 

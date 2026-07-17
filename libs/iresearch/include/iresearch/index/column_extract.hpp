@@ -28,7 +28,6 @@
 #include <string_view>
 #include <vector>
 
-#include "catalog/table_options.h"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/types.hpp"
@@ -51,7 +50,7 @@ struct DocRows {
 
 struct ColumnstoreProjection {
   duckdb::idx_t output_slot;
-  catalog::Column::Id column_id;
+  irs::field_id column_id;
   std::vector<std::string_view> extract_path;
   duckdb::LogicalType extract_scan_type = duckdb::LogicalType::INVALID;
 

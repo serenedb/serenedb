@@ -118,7 +118,6 @@ ORDER BY id NULLS LAST;
 ----
 id	body	score
 1	alpha cat runs	10
-NULL	NULL	NULL
 
 
 statement ok
@@ -168,7 +167,6 @@ ORDER BY id NULLS LAST;
 ----
 id	body	score
 1	alpha cat runs	10
-NULL	NULL	NULL
 
 
 # DETACH: count-only queries are served by the index alone; materializing
@@ -200,7 +198,6 @@ ORDER BY id NULLS LAST;
 ----
 id	body	score
 1	alpha cat runs	10
-NULL	NULL	NULL
 
 
 statement ok

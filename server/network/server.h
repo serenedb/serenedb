@@ -27,9 +27,11 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <yaclib/algo/wait_group.hpp>
 
 #include "basics/asio_ns.h"
 #include "network/acceptor.h"
+#include "network/cancel_registry.h"
 #include "network/http/router.h"
 #include "network/http/session.h"
 #include "network/io_context.h"
@@ -54,14 +56,13 @@ class Server final {
   // busy-spinning on an instant Delay() during startup.
   void StartIoPool();
   void StartListeners();
-  // Two-phase stop, mirroring start. StopAccepting() closes the listeners so no
-  // new connection is taken; it runs EARLY, before the rest of the engine comes
-  // down. stop() joins the DuckDB workers and then tears the io pool down; it
-  // must run LAST -- after every subsystem that submits DuckDB work (search,
-  // background, store, catalog) is down -- because a session query pipeline
-  // runs on a DuckDB worker and pushes results up into the io pool, so the pool
-  // can only be freed once no worker is left to touch it.
-  void StopAccepting() noexcept;
+  // Two-phase stop, mirroring SearchEngine. RequestStop() is the signal:
+  // listeners close (synchronously) and every session is terminated -- its
+  // in-flight query interrupted, its socket closed by its own writer. stop()
+  // is the join: waits until every session has fully completed (queries and
+  // teardown run against the still-live engine, so it must precede store and
+  // catalog shutdown), then tears the io pool down.
+  void RequestStop() noexcept;
   void stop();
 
   // The io worker pool (sockets + reused for background timers); null until
@@ -95,8 +96,11 @@ class Server final {
 
   // Declared before the per-listener deps + pool/acceptors so they outlive the
   // sessions that point at them via the per-listener contexts.
-  network::pg::CancelRegistry _cancel;
+  network::CancelRegistry _cancel;
   std::atomic<std::uint32_t> _active{0};
+  // Every accepted session's Run() future; the slot is taken by the acceptor
+  // at spawn and the initial hold is released by stop().
+  yaclib::WaitGroup<> _sessions{1};
   // Shared (cross-listener) auth sources; a future RBAC layer replaces them.
   std::unique_ptr<network::CredentialProvider> _credentials;
   std::unique_ptr<network::http::ApiKeyValidator> _api_key_validator;

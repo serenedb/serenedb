@@ -47,7 +47,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────╮
 │ Index: wal_geo_idx     │
 │ Lookup: table          │
-│ Filter:                │
+│ Index Filter:          │
 │ ╭─ Geo Distance ─────╮ │
 │ │ Field: geo(string) │ │
 │ │ Range: *, <1000    │ │

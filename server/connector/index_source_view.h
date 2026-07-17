@@ -25,12 +25,13 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/expression_executor.hpp>
+#include <duckdb/planner/table_filter_set.hpp>
+#include <iresearch/index/index_source.hpp>
 #include <span>
 #include <string_view>
 #include <vector>
 
 #include "catalog/table_options.h"
-#include "connector/index_source.h"
 #include "connector/view_fast_path.h"
 
 namespace sdb::connector {
@@ -55,6 +56,12 @@ class ViewIndexSourceBase : public IndexSource {
 
   void AliasOutput(duckdb::DataChunk& output);
   void RunCastPass(duckdb::DataChunk& output, duckdb::idx_t row_count);
+  // Reorder the doc-id-keyed output columns (every slot the lookup did not
+  // write) into survivor order, matching the compact lookup emit.
+  // `survivor_idx` maps each output row to the requested-pk index it came from
+  // (always set).
+  void GatherNonLookupColumns(duckdb::DataChunk& output, duckdb::idx_t count,
+                              const duckdb::idx_t* survivor_idx);
 
   ViewFastPath _fast_path;
   std::vector<duckdb::idx_t> _real_proj_slots;
@@ -68,7 +75,14 @@ class ViewIndexSourceBase : public IndexSource {
   std::vector<duckdb::idx_t> _sort_perm;
   std::vector<int64_t> _sorted_rows;
   std::vector<int64_t> _sorted_files;
-  std::vector<duckdb::idx_t> _output_positions;
+  // Doc-id-keyed (non-lookup) output slots + a reusable selection, computed
+  // once at init: GatherNonLookupColumns reorders exactly these slots each
+  // batch, so neither is rebuilt per batch.
+  std::vector<duckdb::idx_t> _non_lookup_slots;
+  duckdb::SelectionVector _gather_sel;
+  // Filled by a filtered/compacted lookup: dense survivor row -> sorted-pk
+  // index (feeds GatherNonLookupColumns). Empty when the lookup kept every pk.
+  std::vector<duckdb::idx_t> _survivor_idx;
 };
 
 }  // namespace sdb::connector

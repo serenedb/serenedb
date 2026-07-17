@@ -62,7 +62,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: n1_idx        │
 │ Lookup: table        │
-│ Filter:              │
+│ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
 │ │ Value: one       │ │
@@ -126,7 +126,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: n2_idx        │
 │ Lookup: table        │
-│ Filter:              │
+│ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
 │ │ Value: one       │ │
@@ -198,7 +198,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: n3_idx        │
 │ Lookup: table        │
-│ Filter:              │
+│ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
 │ │ Value: one       │ │
@@ -272,7 +272,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: n4_idx        │
 │ Lookup: table        │
-│ Filter:              │
+│ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
 │ │ Value: one       │ │
@@ -354,7 +354,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: n5_idx        │
 │ Lookup: table        │
-│ Filter:              │
+│ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
 │ │ Value: one       │ │
@@ -441,7 +441,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: n6_idx        │
 │ Lookup: table        │
-│ Filter:              │
+│ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
 │ │ Value: one       │ │

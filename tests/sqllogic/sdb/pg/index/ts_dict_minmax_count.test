@@ -72,17 +72,9 @@ QUERY PLAN
 │ Aggregates: count(#0)                    │
 │ ~1 row                                   │
 ╰─────────────────────┬────────────────────╯
-╭─ PROJECTION ────────┴────────────────────╮
-│ Projections: sdb_inverted_index_term$opt │
-│ ~2 rows                                  │
-╰─────────────────────┬────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴────────────────────╮
 │ Groups: #0                               │
 │ ~2 rows                                  │
-╰─────────────────────┬────────────────────╯
-╭─ PROJECTION ────────┴────────────────────╮
-│ Projections: #0                          │
-│ ~5 rows                                  │
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: mc_idx                            │
@@ -99,10 +91,6 @@ QUERY PLAN
 │ Aggregates: min(#0)                      │
 │ ~1 row                                   │
 ╰─────────────────────┬────────────────────╯
-╭─ PROJECTION ────────┴────────────────────╮
-│ Projections: sdb_inverted_index_term$cat │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: mc_idx                            │
 │ TsDict: cat                              │
@@ -116,10 +104,6 @@ EXPLAIN SELECT max(cat) FROM mc_idx
 QUERY PLAN
 ╭─ UNGROUPED_AGGREGATE ────────────────────╮
 │ Aggregates: max(#0)                      │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
-╭─ PROJECTION ────────┴────────────────────╮
-│ Projections: sdb_inverted_index_term$cat │
 │ ~1 row                                   │
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
@@ -154,10 +138,6 @@ QUERY PLAN
 ╭─ HASH_GROUP_BY ─────┴────────────────────╮
 │ Groups: #0                               │
 │ ~2 rows                                  │
-╰─────────────────────┬────────────────────╯
-╭─ PROJECTION ────────┴────────────────────╮
-│ Projections: #0                          │
-│ ~5 rows                                  │
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: mc_idx                            │
@@ -200,21 +180,13 @@ QUERY PLAN
 │ Aggregates: min(#0), count(#0)           │
 │ ~1 row                                   │
 ╰─────────────────────┬────────────────────╯
-╭─ PROJECTION ────────┴────────────────────╮
-│ Projections: sdb_inverted_index_term$cat │
-│ ~0 rows                                  │
-╰─────────────────────┬────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴────────────────────╮
 │ Groups: #0                               │
 │ ~0 rows                                  │
 ╰─────────────────────┬────────────────────╯
-╭─ PROJECTION ────────┴────────────────────╮
-│ Projections: #0                          │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: mc_idx                            │
-│ Filter:                                  │
+│ Index Filter:                            │
 │ ╭─ Starts With ──────╮                   │
 │ │ Field: cat(string) │                   │
 │ │ Prefix: r          │                   │
@@ -239,23 +211,12 @@ QUERY PLAN
 │ Aggregates: min(#0)   │
 │ ~1 row                │
 ╰───────────┬───────────╯
-╭─ PROJECTION ──────────╮
-│ Projections: cat      │
-│ ~1 row                │
-╰───────────┬───────────╯
-╭─ PROJECTION ──────────╮
-│ Projections: #1       │
-│ ~1 row                │
-╰───────────┬───────────╯
-╭─ FILTER ──┴───────────╮
-│ Expression: id > 2    │
-│ ~1 row                │
-╰───────────┬───────────╯
 ╭─ IRESEARCH_SCAN ──────╮
 │ Index: mc_idx         │
 │ Lookup: table         │
-│ Projections: id, cat  │
-│ ~5 rows               │
+│ Projections: cat      │
+│ Column Filter: id > 2 │
+│ ~1 row                │
 ╰───────────────────────╯
 
 # Explicit ts_dict_* aggregates split away from sibling document-row

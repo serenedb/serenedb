@@ -68,7 +68,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────╮
 │ Index: map_t_idx                   │
 │ Lookup: table                      │
-│ Filter:                            │
+│ Index Filter:                      │
 │ ╭─ Term ─────────────────────────╮ │
 │ │ Field: text_for_search(string) │ │
 │ │ Value: first                   │ │

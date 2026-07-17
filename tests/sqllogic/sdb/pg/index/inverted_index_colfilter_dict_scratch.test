@@ -1,0 +1,98 @@
+# Regression for the filter-only dict-compressed VARCHAR scratch: HitBatcher /
+# FullScanner reuse one scratch Vector across emit windows. A full 2048-doc
+# window takes DictFSSTFilter's dictionary path, which turns the scratch into a
+# DICTIONARY vector over the codec's cached buffers; the following partial
+# window (block/segment tail) takes the fallback StringScan, whose FlatVector
+# writes then land in the dictionary's selection buffer (D_ASSERT on a dev
+# build, silent heap smash in release). TableFilterDocIterator resets its
+# scratch from a VectorCache per block and is not affected.
+#
+# tag is INCLUDE-only, low-cardinality (dictionary-compressed), FILTERED but
+# NOT projected; the text term matches every row, so the streaming windows are
+# dense: two full 2048 windows, then a 904-row tail.
+
+hash-threshold 100
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY dsc_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE TABLE dsc (id INT PRIMARY KEY, body VARCHAR, g INT, tag VARCHAR);
+
+
+statement ok
+INSERT INTO dsc
+SELECT i,
+       'fox',
+       i,
+       CASE i % 4 WHEN 0 THEN 'blue' WHEN 1 THEN 'green' WHEN 2 THEN 'red' ELSE 'gold' END
+FROM generate_series(1, 5000) t(i);
+
+
+statement ok
+CREATE INDEX dsc_idx ON dsc USING inverted(id, body dsc_en) INCLUDE (g, tag);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dsc;
+
+
+# Streaming: filter-only tag through the HitBatcher windows.
+# i % 4 = 0 -> 1250 rows, sum(g) = 4 * (1 + ... + 1250) = 3127500.
+query
+SELECT count(*) AS n, sum(g) AS s FROM (
+  SELECT g FROM dsc_idx WHERE body @@ 'fox' AND tag = 'blue'
+) t;
+----
+n	s
+1250	3127500
+
+
+# Survivors from the partial tail window (rows 4097..5000).
+query
+SELECT g FROM dsc_idx WHERE body @@ 'fox' AND tag = 'green' AND g >= 4993 ORDER BY g;
+----
+g
+4993
+4997
+
+
+# Bulk match-all: the FullScanner copy of the same scratch reuse.
+# i % 4 = 1 -> 1250 rows, sum = 1250 * (1 + 4997) / 2 = 3123750.
+query
+SELECT count(*) AS n, sum(g) AS s FROM (
+  SELECT g FROM dsc_idx WHERE tag = 'green'
+) t;
+----
+n	s
+1250	3123750
+
+
+# Bulk with the filter column also projected (decode-into-output path, safe;
+# guards the Slice bookkeeping next to the scratch fix).
+query
+SELECT count(*) AS n FROM (
+  SELECT tag, g FROM dsc_idx WHERE tag = 'red' AND g > 4000
+) t;
+----
+n
+250
+
+
+statement ok
+DROP INDEX dsc_idx;
+
+statement ok
+DROP TABLE dsc;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY dsc_en;

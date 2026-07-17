@@ -193,7 +193,6 @@ irs::field_id ResolveAnnTargetFieldId(
 struct FoundScan {
   duckdb::LogicalGet* get;
   connector::SereneDBScanBindData* bind_data;
-  connector::SearchScan* scan;
 };
 
 std::optional<FoundScan> AsSearchScan(duckdb::LogicalOperator& op) {
@@ -205,10 +204,7 @@ std::optional<FoundScan> AsSearchScan(duckdb::LogicalOperator& op) {
     return std::nullopt;
   }
   auto& bd = get.bind_data->Cast<connector::SereneDBScanBindData>();
-  if (bd.scan_source->Kind() != connector::ScanSourceKind::Search) {
-    return std::nullopt;
-  }
-  return FoundScan{&get, &bd, &bd.scan_source->Cast<connector::SearchScan>()};
+  return FoundScan{&get, &bd};
 }
 
 std::optional<FoundScan> FindIResearchScan(duckdb::LogicalOperator& op,
@@ -423,7 +419,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownScorerCall(
   if (!found) {
     return nullptr;
   }
-  auto& ss = *found->scan;
+  auto& ss = *found->bind_data;
   if (ss.vector_scorer) {
     return nullptr;
   }
@@ -479,7 +475,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   if (!found) {
     return nullptr;
   }
-  auto& ss = *found->scan;
+  auto& ss = *found->bind_data;
   if (ss.text_scorer || ss.EmitOffsets()) {
     return nullptr;
   }
@@ -514,9 +510,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
       .quant = ann_info->quant.kind,
       .nprobe = ReadNprobe(context),
     };
-    ss.score_order = irs::VectorMetricNearestIsLargest(info.metric)
-                       ? duckdb::OrderType::DESCENDING
-                       : duckdb::OrderType::ASCENDING;
+    ss.score_order = info.order;
   } else {
     const auto& vs = *ss.vector_scorer;
     if (vs.field_id != call_field_id || vs.metric != info.metric ||
@@ -582,7 +576,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
               ") requires an inverted index scan in the same sub-query"));
   }
   auto& found = resolved->found;
-  auto& search_scan = *found.scan;
+  auto& search_scan = *found.bind_data;
 
   const auto col_name = [&] -> std::string_view {
     if (const auto& cids = found.get->GetColumnIds();
@@ -664,7 +658,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
 
 enum class TsDictColKind { Term, TermRaw, Count, Freq, Score };
 
-using TsDictReq = connector::SearchScan::TsDictRequest;
+using TsDictReq = connector::SereneDBScanBindData::TsDictRequest;
 
 constexpr auto TsDictColFor(TsDictColKind kind)
   -> std::tuple<catalog::Column::Id, duckdb::LogicalTypeId,
@@ -802,7 +796,7 @@ duckdb::unique_ptr<duckdb::Expression> MakeTsDictAggregate(
   FoundScan& found, irs::field_id field_id, TsDictColKind kind,
   std::string_view agg_name, duckdb::TableIndex table_index,
   const duckdb::Identifier& alias) {
-  auto& req = found.scan->TsDictFor(field_id);
+  auto& req = found.bind_data->TsDictFor(field_id);
   const auto [virtual_id, type, member] = TsDictColFor(kind);
   const duckdb::LogicalType col_type{type};
   const auto col_idx = EnsureTsDictCol(*found.bind_data, *found.get, req, kind);
@@ -883,7 +877,7 @@ struct TsDictColRef {
 };
 
 std::optional<TsDictColRef> ClassifyTsDictGetCol(
-  const connector::SearchScan& ss, duckdb::idx_t get_col_idx) {
+  const connector::SereneDBScanBindData& ss, duckdb::idx_t get_col_idx) {
   for (size_t r = 0; r < ss.ts_dicts.size(); ++r) {
     for (const auto kind :
          {TsDictColKind::Term, TsDictColKind::TermRaw, TsDictColKind::Count,
@@ -899,7 +893,7 @@ std::optional<TsDictColRef> ClassifyTsDictGetCol(
 
 std::optional<FoundScan> FindTsDictFoundScan(duckdb::LogicalOperator& op) {
   if (op.type == duckdb::LogicalOperatorType::LOGICAL_GET) {
-    if (auto f = AsSearchScan(op); f && f->scan->TsDictMode()) {
+    if (auto f = AsSearchScan(op); f && f->bind_data->TsDictMode()) {
       return f;
     }
     return std::nullopt;
@@ -912,9 +906,9 @@ std::optional<FoundScan> FindTsDictFoundScan(duckdb::LogicalOperator& op) {
   return std::nullopt;
 }
 
-connector::SearchScan* FindTsDictScan(duckdb::LogicalOperator& op) {
+connector::SereneDBScanBindData* FindTsDictScan(duckdb::LogicalOperator& op) {
   const auto f = FindTsDictFoundScan(op);
-  return f ? f->scan : nullptr;
+  return f ? f->bind_data : nullptr;
 }
 
 template<typename F>
@@ -945,7 +939,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> InjectTsDictGroupBy(
   auto found = FindTsDictFoundScan(*child);
   SDB_ASSERT(found.has_value());
   const auto get_ti = found->get->table_index;
-  auto& ss = *found->scan;
+  auto& ss = *found->bind_data;
 
   std::vector<TsDictGroupEntry> entries;
   const auto find_entry =
@@ -1404,7 +1398,7 @@ bool TryPushdownTsDictFacet(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     }
   }
 
-  auto& req = found->scan->TsDictFor(field_id);
+  auto& req = found->bind_data->TsDictFor(field_id);
   EnsureTsDictCol(*found->bind_data, *found->get, req, TsDictColKind::Term);
   EnsureTsDictCol(*found->bind_data, *found->get, req, TsDictColKind::Count);
   req.term_uses |= connector::TsDictTermUses::kFull;
@@ -1930,7 +1924,7 @@ bool TryClaimAnnRange(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
   duckdb::LogicalGet& get, connector::SereneDBScanBindData& bind_data,
   duckdb::ClientContext& context) {
-  auto& scan = bind_data.scan_source->Cast<connector::SearchScan>();
+  auto& scan = bind_data;
   if (!scan.vector_scorer ||
       scan.vector_scorer->natural_order != duckdb::OrderType::ASCENDING) {
     return false;
@@ -2076,7 +2070,7 @@ bool TryClaimSearchFilter(
     [&](const connector::ColumnGetter& getter,
         const connector::ExpressionGetter& expr_getter,
         containers::FlatHashSet<irs::field_id>& analyzed_fields) {
-      auto& scan = bind_data.scan_source->Cast<connector::SearchScan>();
+      auto& scan = bind_data;
 
       auto root_and = std::make_unique<irs::And>();
       bool any_claimed = false;
@@ -2258,7 +2252,7 @@ bool IsAcceptorTreeOn(irs::Filter& filter, irs::field_id field) {
 void ClaimTsDictFilter(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
   duckdb::LogicalGet& get, connector::SereneDBScanBindData& bind_data,
-  connector::SearchScan& ss, const catalog::InvertedIndex& index,
+  connector::SereneDBScanBindData& ss, const catalog::InvertedIndex& index,
   std::shared_ptr<const catalog::Snapshot> snapshot,
   duckdb::ClientContext& context) {
   WithSearchGetters(
@@ -2541,10 +2535,12 @@ void IResearchPushdownComplexFilter(
   }
   auto& conn_ctx = connector::GetSereneDBContext(context);
   auto& bind_data = bind_data_ptr->Cast<connector::SereneDBScanBindData>();
-  if (bind_data.scan_source->Kind() != connector::ScanSourceKind::Search) {
+  auto& ss = bind_data;
+  // A search table's iresearch store IS the table: there is no index-side
+  // predicate, so leave every filter for the standard column-filter pushdown.
+  if (!bind_data.inverted_index) {
     return;
   }
-  auto& ss = bind_data.scan_source->Cast<connector::SearchScan>();
   if (ss.TsDictMode()) {
     auto index = bind_data.inverted_index;
     auto snapshot = conn_ctx.AcquireCatalogSnapshot();

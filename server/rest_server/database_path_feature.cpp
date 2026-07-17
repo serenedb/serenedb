@@ -49,21 +49,9 @@ using namespace sdb::basics;
 namespace sdb {
 
 DatabasePathFeature::DatabasePathFeature()
-  : _directory(absl::GetFlag(FLAGS_server_directory)) {
-  // Positional arg wins over the flag if given (size-check ran in
-  // AppServer::parseOptions).
-  if (auto p = lifecycle::DataDirArg(); !p.empty()) {
-    _directory = std::string(p);
-  }
-
-  // strip trailing separators and make the path absolute so log lines and
-  // error messages aren't ambiguous about which directory we're touching.
-  _directory.erase(_directory.find_last_not_of(SERENEDB_DIR_SEPARATOR_STR) + 1);
+  : _directory(
+      lifecycle::ResolveDataDir(absl::GetFlag(FLAGS_server_directory))) {
   std::error_code ec;
-  if (auto abs = std::filesystem::absolute(_directory, ec); !ec) {
-    _directory = abs.string();
-  }
-
   // Resolve the HBA config path against the (now absolute) data directory.
   if (const std::string hba = absl::GetFlag(FLAGS_hba_config); hba.empty()) {
     _hba_config_file =

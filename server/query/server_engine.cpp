@@ -28,6 +28,8 @@
 #include <duckdb/catalog/default/default_types.hpp>
 #include <duckdb/catalog/default/default_views.hpp>
 
+#include "basics/file_utils.h"
+#include "basics/lifecycle.h"
 #include "basics/number_of_cores.h"
 #include "catalog/store/store.h"
 #include "connector/duckdb_copy_filesystem.h"
@@ -219,11 +221,27 @@ ABSL_FLAG(uint64_t, cpu_threads, 0,
           "auto-detect from cpu_count. The SQL-level `SET threads = N` "
           "continues to win at runtime.");
 
+ABSL_DECLARE_FLAG(std::string, server_directory);
+
 namespace sdb::server::query {
 
 void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   connector::RegisterSereneDBStorage(config);
   connector::RegisterConfigVariables(config);
+  // Server-mode DuckDB state lives under the datadir, never in cwd-relative
+  // temp files or ~/.duckdb fallbacks (shell/psql subcommands return before
+  // this mutator runs and keep DuckDB defaults).
+  const auto datadir =
+    lifecycle::ResolveDataDir(absl::GetFlag(FLAGS_server_directory));
+  config.SetOptionByName(
+    "temp_directory",
+    duckdb::Value{basics::file_utils::BuildFilename(datadir, "tmp")});
+  config.SetOptionByName(
+    "secret_directory",
+    duckdb::Value{basics::file_utils::BuildFilename(datadir, "secrets")});
+  config.SetOptionByName(
+    "extension_directory",
+    duckdb::Value{basics::file_utils::BuildFilename(datadir, "extensions")});
   // DuckDB's own auto-detect uses std::thread::hardware_concurrency(), which
   // ignores cgroup CPU limits and would over-thread in a container. Pin it to
   // our cgroup-aware logical core count when unset (SET threads=N still wins at

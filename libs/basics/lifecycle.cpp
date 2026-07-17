@@ -25,9 +25,12 @@
 
 #include <atomic>
 #include <cerrno>
+#include <filesystem>
 #include <string>
+#include <utility>
 
 #include "basics/log.h"
+#include "basics/operating-system.h"
 
 namespace sdb::lifecycle {
 namespace {
@@ -98,5 +101,18 @@ void WaitForShutdown() noexcept {
 void SetDataDirArg(std::string_view arg) { gDataDirArg = arg; }
 
 std::string_view DataDirArg() noexcept { return gDataDirArg; }
+
+std::string ResolveDataDir(std::string flag_value) {
+  std::string dir = std::move(flag_value);
+  if (auto p = DataDirArg(); !p.empty()) {
+    dir = std::string{p};
+  }
+  dir.erase(dir.find_last_not_of(SERENEDB_DIR_SEPARATOR_STR) + 1);
+  std::error_code ec;
+  if (auto abs = std::filesystem::absolute(dir, ec); !ec) {
+    dir = abs.string();
+  }
+  return dir;
+}
 
 }  // namespace sdb::lifecycle

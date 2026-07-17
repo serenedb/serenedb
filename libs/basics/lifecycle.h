@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <string>
 #include <string_view>
 
 namespace sdb::lifecycle {
@@ -47,5 +48,9 @@ void WaitForShutdown() noexcept;
 // positional was supplied.
 void SetDataDirArg(std::string_view arg);
 std::string_view DataDirArg() noexcept;
+
+// The effective data directory: the positional argument when given, else
+// `flag_value`, with trailing separators stripped and made absolute.
+std::string ResolveDataDir(std::string flag_value);
 
 }  // namespace sdb::lifecycle

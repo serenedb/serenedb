@@ -106,7 +106,8 @@ class Serened:
     def start(self):
         self.proc = subprocess.Popen(
             [self.binary, self.datadir,
-             f"--listen=postgres://0.0.0.0:{self.port}"],
+             f"--listen=postgres://0.0.0.0:{self.port}",
+             "--auth_timeout=600s"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         deadline = time.time() + 30
         while time.time() < deadline:

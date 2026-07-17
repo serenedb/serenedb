@@ -83,7 +83,6 @@
 #include "catalog/table_options.h"
 #include "catalog/tokenizer.h"
 #include "catalog/types.h"
-#include "catalog/user_mapping.h"
 #include "catalog/user_type.h"
 #include "catalog/view.h"
 #include "connector/duckdb_client_state.h"
@@ -140,9 +139,6 @@ template<ResolveType Type>
   } else if constexpr (Type == ResolveType::ForeignServer) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
                     ERR_MSG("server \"", name, "\" already exists"));
-  } else if constexpr (Type == ResolveType::UserMapping) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-                    ERR_MSG("user mapping \"", name, "\" already exists"));
   } else {
     static_assert(Type == ResolveType::Role);
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
@@ -412,10 +408,6 @@ void Snapshot::RegisterObject(std::shared_ptr<T> object, ObjectId parent_id,
     AddToResolution<ResolveType::ForeignServer>(parent_id, object->GetId(),
                                                 object->GetName(), replace);
     AddObjectDefinition<ForeignServerDependency>(parent_id, object);
-  } else if constexpr (std::is_same_v<T, UserMapping>) {
-    AddToResolution<ResolveType::UserMapping>(parent_id, object->GetId(),
-                                              object->GetName(), replace);
-    AddObjectDefinition<UserMappingDependency>(parent_id, object);
   } else if constexpr (std::is_same_v<T, PgSqlType>) {
     AddToResolution<ResolveType::Type>(parent_id, object->GetId(),
                                        object->GetName(), replace);
@@ -464,9 +456,6 @@ void Snapshot::UnregisterObject(std::shared_ptr<T> object, ObjectId parent_id,
   } else if constexpr (std::is_same_v<T, ForeignServer>) {
     RemoveFromResolution<ResolveType::ForeignServer>(
       parent_id, object->GetName(), maybe_not_found);
-  } else if constexpr (std::is_same_v<T, UserMapping>) {
-    RemoveFromResolution<ResolveType::UserMapping>(parent_id, object->GetName(),
-                                                   maybe_not_found);
   } else if constexpr (std::is_same_v<T, PgSqlType>) {
     RemoveFromResolution<ResolveType::Type>(parent_id, object->GetName(),
                                             maybe_not_found);
@@ -759,10 +748,6 @@ void Snapshot::ModifyRoleDependencies(const Object& obj, EdgeAction action) {
     for (const auto& col : basics::downCast<const Table>(obj).Columns()) {
       touch_acl(col.GetAcl());
     }
-  } else if (obj.GetType() == ObjectType::UserMapping) {
-    // A USER MAPPING FOR <role> references that role, so DROP ROLE is refused
-    // while the mapping exists (PG-style). PUBLIC mappings have no role id.
-    touch(basics::downCast<const UserMapping>(obj).GetRoleId());
   } else if (obj.GetType() == ObjectType::Role) {
     const auto& defaults = basics::downCast<const Role>(obj).DefaultAcls();
     if (!defaults.empty()) {
@@ -805,9 +790,6 @@ void Snapshot::AddDependencies(ObjectId parent_id, const Object& obj) {
         ->foreign_servers.insert(id);
       break;
     case ObjectType::UserMapping:
-      // parent = the owning server, so DROP SERVER cascades / RESTRICT-blocks.
-      GetDependencyForWrite<ForeignServerDependency>(parent_id)
-        ->user_mappings.insert(id);
       break;
     case ObjectType::Table: {
       GetDependencyForWrite<SchemaDependency>(parent_id)->tables.insert(id);
@@ -1109,16 +1091,6 @@ std::vector<std::shared_ptr<ForeignServer>> Snapshot::GetForeignServers(
          std::ranges::to<std::vector>();
 }
 
-std::vector<std::shared_ptr<UserMapping>> Snapshot::GetUserMappings(
-  ObjectId server_id) const {
-  return _resolution_table.GetUserMappingIds(server_id) |
-         std::views::transform(
-           [&](ObjectId mapping_id) -> std::shared_ptr<UserMapping> {
-             return GetObject<UserMapping>(mapping_id);
-           }) |
-         std::ranges::to<std::vector>();
-}
-
 std::vector<std::shared_ptr<PgSqlType>> Snapshot::GetTypes(
   ObjectId db_id, std::string_view schema) const {
   return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
@@ -1282,17 +1254,6 @@ std::shared_ptr<ForeignServer> Snapshot::GetForeignServer(
     return nullptr;
   }
   return GetObject<ForeignServer>(*id);
-}
-
-// `role` is the mapped role's name; "public" selects the PUBLIC mapping.
-std::shared_ptr<UserMapping> Snapshot::GetUserMapping(
-  ObjectId server_id, std::string_view role) const {
-  auto id =
-    _resolution_table.ResolveObject<ResolveType::UserMapping>(server_id, role);
-  if (!id) {
-    return nullptr;
-  }
-  return GetObject<UserMapping>(*id);
 }
 
 std::shared_ptr<Table> Snapshot::GetTable(const AccessContext& ax,
@@ -1692,12 +1653,6 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
           ->foreign_servers.erase(id);
         break;
       case ObjectType::UserMapping:
-        // parent = the owning server; its dependency record may already be
-        // gone when the server itself is being dropped in the same batch.
-        if (_deps.TryGetDependency(parent_id)) {
-          GetDependencyForWrite<ForeignServerDependency>(parent_id)
-            ->user_mappings.erase(id);
-        }
         break;
       case ObjectType::Table: {
         GetDependencyForWrite<SchemaDependency>(parent_id)->tables.erase(id);
@@ -1794,10 +1749,7 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
     case ObjectType::SecondaryIndex:
     case ObjectType::InvertedIndex:
       break;
-    case ObjectType::ForeignServer: {
-      auto server_deps = GetDependency<ForeignServerDependency>(id);
-      drop_childs(server_deps->user_mappings);
-    } break;
+    case ObjectType::ForeignServer:
     case ObjectType::PgSqlFunction:
     case ObjectType::PgSqlType:
     case ObjectType::Tokenizer:
@@ -1915,14 +1867,6 @@ void Catalog::RegisterForeignServer(
   absl::MutexLock lock{&_mutex};
   Apply(_snapshot, [&](auto& clone) {
     clone->RegisterObject(std::move(foreign_server), database_id, false);
-  });
-}
-
-void Catalog::RegisterUserMapping(std::shared_ptr<UserMapping> user_mapping) {
-  absl::MutexLock lock{&_mutex};
-  const auto server_id = user_mapping->GetServerId();
-  Apply(_snapshot, [&](auto& clone) {
-    clone->RegisterObject(std::move(user_mapping), server_id, false);
   });
 }
 
@@ -2186,29 +2130,6 @@ void RequireObjectOwner(const Snapshot& snapshot, ObjectId role,
   if (auto obj = snapshot.GetObject(object_id)) {
     RequireObjectOwner(snapshot, role, object_id, *obj);
   }
-}
-
-// Authority over a USER MAPPING follows its FOREIGN SERVER (PG semantics):
-// the server's owner (or a superuser) manages mappings for anyone; a role may
-// manage its OWN mapping if it holds USAGE on the server.
-// A per-role mapping's own role may self-manage with USAGE; a
-// PUBLIC mapping has an unset role, which never equals the acting role.
-void RequireUserMappingAuthority(const Snapshot& snapshot, ObjectId role,
-                                 ObjectId server_id, ObjectId mapping_role) {
-  auto server = snapshot.GetObject(server_id);
-  if (!server) {
-    return;
-  }
-  const auto& closure = snapshot.ClosureFor(role);
-  if (closure.Owns(*server)) {
-    return;
-  }
-  if (mapping_role == role && closure.Can(*server, AclMode::Usage)) {
-    return;
-  }
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-    ERR_MSG("must be owner of foreign server ", server->GetName()));
 }
 
 void RequireRoleMembership(const Snapshot& snapshot, ObjectId actor_id,
@@ -2924,53 +2845,6 @@ bool Catalog::CreateForeignServer(const AccessContext& ax, ObjectId database_id,
   return true;
 }
 
-bool Catalog::CreateUserMapping(const AccessContext& ax, ObjectId database_id,
-                                std::shared_ptr<UserMapping> user_mapping,
-                                bool if_not_exists) {
-  absl::MutexLock lock{&_mutex};
-  const auto server_id = user_mapping->GetServerId();
-  if (!_snapshot->GetObject<ForeignServer>(server_id)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-      ERR_MSG("server \"", user_mapping->GetServerName(), "\" does not exist"));
-  }
-  RequireUserMappingAuthority(*_snapshot, ax.role, server_id,
-                              user_mapping->GetRoleId());
-  // parent = the server; the mapping's name is the mapped role.
-  if (if_not_exists && _snapshot->GetObjectId<ResolveType::UserMapping>(
-                         server_id, user_mapping->GetName())) {
-    return false;
-  }
-  // Re-check the mapped role under the lock: the command layer resolved it on
-  // an earlier snapshot, and the DROP-ROLE-blocking dependency edge is only
-  // added by the registration below -- a concurrent DROP ROLE in that window
-  // would otherwise leave an orphan mapping for a dead role. PUBLIC mappings
-  // carry no role id.
-  if (user_mapping->GetRoleId().isSet() &&
-      !_snapshot->GetObject<Role>(user_mapping->GetRoleId())) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-      ERR_MSG("role \"", user_mapping->GetName(), "\" does not exist"));
-  }
-  user_mapping->SetParentId(server_id);
-
-  Apply(
-    _snapshot,
-    [&](std::shared_ptr<Snapshot>& clone) {
-      clone->RegisterObject(user_mapping, server_id, false);
-      duckdb::MemoryStream stream;
-      auto bytes = catalog::SerializeObject(*user_mapping, stream);
-      // Store rows stay flat under the database (one range-delete sweeps them
-      // on DROP DATABASE); the in-memory parent is the server.
-      _engine->CreateDefinition(database_id, ObjectType::UserMapping,
-                                user_mapping->GetId(), bytes);
-    },
-    [&](auto& clone) {
-      clone->UnregisterObject(user_mapping, server_id, true);
-    });
-  return true;
-}
-
 bool Catalog::CreateType(const AccessContext& ax, ObjectId database_id,
                          std::string_view schema,
                          std::shared_ptr<PgSqlType> type, bool if_not_exists) {
@@ -3215,36 +3089,6 @@ void Catalog::ChangeRoleImpl(
   callback(*role, new_role_ptr);
   if (!new_role_ptr) {
     return;
-  }
-  // User mappings resolve by the mapped role's NAME under their server (PG
-  // keys them by oid); a rename would strand every mapping for this role --
-  // undroppable by either name, yet still shown by pg_user_mappings. Block
-  // the rename like DROP ROLE is blocked, until mappings are re-keyed.
-  if (new_role_ptr->GetName() != role->GetName()) {
-    if (auto dep = _snapshot->_deps.TryGetDependency(role->GetId())) {
-      // The role's referencing objects also hold owner/ACL referencers; only a
-      // mapping FOR this role blocks the rename.
-      for (auto id :
-           basics::downCast<const RoleDependency>(*dep).referencing_objects) {
-        auto obj = _snapshot->GetObject(id);
-        if (!obj || obj->GetType() != ObjectType::UserMapping) {
-          continue;
-        }
-        const auto& mapping = basics::downCast<const UserMapping>(*obj);
-        if (mapping.GetRoleId() != role->GetId()) {
-          continue;
-        }
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-          ERR_MSG("role \"", name,
-                  "\" cannot be renamed because user mappings depend on "
-                  "it"),
-          ERR_DETAIL("user mapping for \"", name, "\" on server \"",
-                     mapping.GetServerName(), "\" depends on role \"", name,
-                     "\""),
-          ERR_HINT("Drop the user mapping(s) first."));
-      }
-    }
   }
   // A change may only add privileged attributes the actor holds itself.
   RequireAttributesGrantable(*_snapshot, actor_id,
@@ -3543,6 +3387,16 @@ void Catalog::ChangeAcl(ObjectId database_id, std::string_view schema,
   ObjectId parent;
   if (type == ObjectType::Database) {
     obj = _snapshot->GetObject(database_id);
+  } else if (type == ObjectType::ForeignServer) {
+    // A foreign server is a database child with no schema; `name` is its name.
+    auto server_id =
+      _snapshot->GetObjectId<ResolveType::ForeignServer>(database_id, name);
+    if (!server_id) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                      ERR_MSG("server \"", name, "\" does not exist"));
+    }
+    obj = _snapshot->GetObject(*server_id);
+    parent = database_id;
   } else if (type == ObjectType::Schema) {
     // For a schema target the schema's own name arrives in `name`; `schema` is
     // empty (it has no containing schema).
@@ -3613,6 +3467,13 @@ void Catalog::ChangeAcl(ObjectId database_id, std::string_view schema,
                                                 cloned);
       _engine->CreateDefinition(parent, ObjectType::Schema, cloned->GetId(),
                                 bytes);
+      return;
+    }
+    if (type == ObjectType::ForeignServer) {
+      clone->ReplaceObject<ResolveType::ForeignServer>(parent,
+                                                       cloned->GetName(), cloned);
+      _engine->CreateDefinition(parent, ObjectType::ForeignServer,
+                                cloned->GetId(), bytes);
       return;
     }
     if (type == ObjectType::PgSqlFunction) {
@@ -4722,22 +4583,6 @@ bool Catalog::DropForeignServer(const AccessContext& ax,
   // PG semantics: only the server's owner (or a superuser) may drop it.
   RequireObjectOwner(*_snapshot, ax.role, *foreign_server_id);
 
-  // The server's dependent user mappings (see ForeignServerDependency).
-  // PG-style RESTRICT (the default) refuses the drop while any exist; CASCADE
-  // removes them together with the server, in one transaction.
-  const auto server_dep =
-    _snapshot->GetDependency<ForeignServerDependency>(*foreign_server_id);
-  std::vector<ObjectId> mapping_ids{server_dep->user_mappings.begin(),
-                                    server_dep->user_mappings.end()};
-  if (!cascade && !mapping_ids.empty()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-      ERR_MSG("cannot drop server \"", name,
-              "\" because other objects depend on it"),
-      ERR_HINT("Use DROP SERVER ... CASCADE to drop the dependent objects "
-               "too."));
-  }
-
   auto plan = _snapshot->ComputeDropPlan(*foreign_server_id);
 
   Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
@@ -4745,74 +4590,13 @@ bool Catalog::DropForeignServer(const AccessContext& ax,
     auto foreign_server = clone->GetObject<ForeignServer>(*foreign_server_id);
     SDB_ASSERT(foreign_server);
 
-    std::vector<std::shared_ptr<UserMapping>> mappings;
-    mappings.reserve(mapping_ids.size());
-    for (auto mid : mapping_ids) {
-      if (auto m = clone->GetObject<UserMapping>(mid)) {
-        mappings.push_back(std::move(m));
-      }
-    }
-
     _engine->Write([&](auto& ctx) {
-      // Store rows for both live flat under the database.
-      for (const auto& m : mappings) {
-        ctx.DropDefinition(*database_id, ObjectType::UserMapping, m->GetId());
-      }
       ctx.DropDefinition(*database_id, ObjectType::ForeignServer,
                          *foreign_server_id);
       clone->CommitDropPlan(ctx, plan);
     });
 
-    for (const auto& m : mappings) {
-      clone->UnregisterObject(m, m->GetParentId());
-    }
     clone->UnregisterObject(std::move(foreign_server), *database_id);
-    clone->ApplyDropPlan(_pending_drops, *database_id, plan);
-  });
-  return true;
-}
-
-bool Catalog::DropUserMapping(const AccessContext& ax,
-                              std::string_view database,
-                              std::string_view server, std::string_view role) {
-  absl::MutexLock lock{&_mutex};
-
-  // The absent cases return false (never throw): the command layer alone can
-  // phrase the PG error, which names the mapping's role and server separately.
-  const auto database_id =
-    _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, database);
-  if (!database_id) {
-    return false;
-  }
-  const auto server_id =
-    _snapshot->GetObjectId<ResolveType::ForeignServer>(*database_id, server);
-  if (!server_id) {
-    return false;
-  }
-  const auto user_mapping_id =
-    _snapshot->GetObjectId<ResolveType::UserMapping>(*server_id, role);
-  if (!user_mapping_id) {
-    return false;
-  }
-  if (auto mapping = _snapshot->GetObject<UserMapping>(*user_mapping_id)) {
-    RequireUserMappingAuthority(*_snapshot, ax.role, *server_id,
-                                mapping->GetRoleId());
-  }
-
-  auto plan = _snapshot->ComputeDropPlan(*user_mapping_id);
-
-  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
-    SDB_ASSERT(clone);
-    auto user_mapping = clone->GetObject<UserMapping>(*user_mapping_id);
-    SDB_ASSERT(user_mapping);
-
-    _engine->Write([&](auto& ctx) {
-      ctx.DropDefinition(*database_id, ObjectType::UserMapping,
-                         *user_mapping_id);
-      clone->CommitDropPlan(ctx, plan);
-    });
-
-    clone->UnregisterObject(std::move(user_mapping), *server_id);
     clone->ApplyDropPlan(_pending_drops, *database_id, plan);
   });
   return true;
@@ -4947,7 +4731,6 @@ class OpenDatabase {
   void RegisterFunctions(ObjectId database_id, ObjectId schema_id);
   void RegisterTokenizers(ObjectId database_id, ObjectId schema_id);
   void RegisterForeignServers(ObjectId database_id);
-  void RegisterUserMappings(ObjectId database_id);
   void RegisterViews(ObjectId database_id, ObjectId schema_id);
   // Sequences load in two passes: standalone before tables/views (so refs
   // to them resolve at the referrer's own registration), owned after
@@ -5029,7 +4812,6 @@ void OpenDatabase::AddDatabase(ObjectId database_id, std::string_view bytes) {
   };
   RegisterSchemas(database_id);
   RegisterForeignServers(database_id);
-  RegisterUserMappings(database_id);
 }
 
 void OpenDatabase::RegisterDatabases() {
@@ -5099,8 +4881,7 @@ void OpenDatabase::RegisterTokenizers(ObjectId db_id, ObjectId schema_id) {
     });
 }
 
-// Both live flat under the database in the store; servers are registered
-// first so each mapping's server-parent namespace exists.
+// Foreign servers live flat under the database in the store (PG shape).
 void OpenDatabase::RegisterForeignServers(ObjectId db_id) {
   GetCatalogStore().VisitBoot(
     db_id, ObjectType::ForeignServer,
@@ -5114,23 +4895,6 @@ void OpenDatabase::RegisterForeignServers(ObjectId db_id) {
         THROW_SQL_ERROR(ERR_MSG("Failed to read foreign server definition"));
       }
       _catalog.RegisterForeignServer(db_id, std::move(foreign_server));
-      return true;
-    });
-}
-
-void OpenDatabase::RegisterUserMappings(ObjectId db_id) {
-  GetCatalogStore().VisitBoot(
-    db_id, ObjectType::UserMapping,
-    [&](CatalogStore::Key key, std::string_view bytes) {
-      auto user_mapping =
-        catalog::DeserializeObject<UserMapping>(bytes, {
-                                                         .id = key.id,
-                                                         .database_id = db_id,
-                                                       });
-      if (!user_mapping) {
-        THROW_SQL_ERROR(ERR_MSG("Failed to read user mapping definition"));
-      }
-      _catalog.RegisterUserMapping(std::move(user_mapping));
       return true;
     });
 }
@@ -5418,8 +5182,7 @@ void InitCatalog() {
     auto conn = sdb::DuckDBEngine::Instance().CreateConnection();
     for (auto& db : snapshot->GetDatabases()) {
       for (auto& server : snapshot->GetForeignServers(db->GetId())) {
-        auto pub = snapshot->GetUserMapping(server->GetId(), "public");
-        auto err = RunForeignServerAttach(*conn, *server, pub.get());
+        auto err = RunForeignServerAttach(*conn, *server);
         if (err && !err->empty()) {
           SDB_WARN(GENERAL, "Failed to re-attach foreign server ",
                    server->GetName(), ": ", *err);

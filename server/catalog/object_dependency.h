@@ -422,25 +422,8 @@ struct RoleDependency : ObjectDependencyBase {
 };
 
 struct ForeignServerDependency : ObjectDependencyBase {
-  // The server's user mappings -- its catalog CHILDREN (a mapping's parent is
-  // its server; the name is the mapped role). DROP SERVER cascades to them
-  // (Catalog::DropForeignServer drops them in the same transaction) and DROP
-  // SERVER RESTRICT is refused while any remain -- PG server<-mapping
-  // semantics.
-  containers::FlatHashSet<ObjectId> user_mappings;
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<ForeignServerDependency>(*this);
-  }
-  void Emit(DropEmitter& e, ObjectId self) const final {
-    for (auto id : user_mappings) {
-      e.EmitAutoDrop(id);
-    }
-  }
-};
-
-struct UserMappingDependency : ObjectDependencyBase {
-  std::shared_ptr<ObjectDependencyBase> Clone() const final {
-    return std::make_shared<UserMappingDependency>(*this);
   }
   void Emit(DropEmitter& e, ObjectId self) const final {}
 };

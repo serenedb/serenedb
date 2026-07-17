@@ -35,9 +35,9 @@
 
 namespace sdb::catalog {
 
-// An FDW OPTIONS (...) list (CREATE SERVER / CREATE USER MAPPING): ordered as
-// written, keys stored as ingested (the DDL layer lower-cases them). Owned by
-// ForeignServer and UserMapping; persisted as the two parallel vectors.
+// An FDW OPTIONS (...) list (CREATE SERVER): ordered as written, keys stored
+// as ingested (the DDL layer lower-cases them). Owned by ForeignServer;
+// persisted as the two parallel vectors.
 class Options {
  public:
   Options() = default;
@@ -83,9 +83,9 @@ class Options {
     }
   }
 
-  // "key=value" strings in insertion order (the pg_foreign_server /
-  // pg_user_mapping text[] shape). With `redact_secrets`, a secret key's
-  // value is omitted -- rendered as `password=` -- keeping the key visible.
+  // "key=value" strings in insertion order (the pg_foreign_server text[]
+  // shape). With `redact_secrets`, a secret key's value is omitted --
+  // rendered as `password=` -- keeping the key visible.
   std::vector<std::string> ToStrings(bool redact_secrets) const {
     std::vector<std::string> out;
     out.reserve(_keys.size());
@@ -97,8 +97,8 @@ class Options {
     return out;
   }
 
-  // Persistence accessors (ForeignServerData/UserMappingData keep the two
-  // parallel vectors as their serialized shape).
+  // Persistence accessors (ForeignServerData keeps the two parallel vectors
+  // as its serialized shape).
   std::span<const std::string> Keys() const noexcept { return _keys; }
   std::span<const std::string> Values() const noexcept { return _values; }
 

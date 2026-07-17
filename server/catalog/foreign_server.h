@@ -58,18 +58,16 @@ class ForeignServer : public Object {
   Options _options;
 };
 
-class UserMapping;
-
 // True when the FDW name maps to a connector storage type (clickhouse_fdw,
 // postgres_fdw and their bare aliases).
 bool IsSupportedFdw(std::string_view fdw_name);
 
 // Registers the transient secret, runs the ATTACH on `conn`, drops the secret.
 // nullopt = unsupported FDW (nothing run); "" = success; else the REDACTED
-// error.
+// error. Credentials come from the server's OPTIONS.
 std::optional<std::string> RunForeignServerAttach(
   duckdb::Connection& conn, const ForeignServer& server,
-  const UserMapping* public_mapping = nullptr, std::string_view alias = {});
+  std::string_view alias = {});
 
 // Best-effort DETACH of a server's live (instance-global) DuckDB attachment,
 // on a fresh engine connection. Used by DROP SERVER and by the DROP SCHEMA /

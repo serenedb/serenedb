@@ -107,7 +107,6 @@
 #include "pg/pg_catalog/pg_ts_parser.h"
 #include "pg/pg_catalog/pg_ts_template.h"
 #include "pg/pg_catalog/pg_type.h"
-#include "pg/pg_catalog/pg_user_mapping.h"
 #include "pg/pg_catalog/sdb_progress.h"
 #include "pg/sdb_catalog/sdb_metrics.h"
 #include "pg/sdb_catalog/sdb_settings.h"
@@ -214,7 +213,6 @@ const PgSystemSchema kPgCatalog{
   MakeTable<SystemTable<PgTsParser>>(),
   MakeTable<SystemTable<PgTsTemplate>>(),
   MakeTable<SystemTable<PgType>>(),
-  MakeTable<SystemTable<PgUserMapping>>(),
   MakeTable<SystemTable<SdbMetrics>>(),
   MakeTable<SystemTable<SdbSettings>>(),
 };

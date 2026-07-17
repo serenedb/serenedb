@@ -59,31 +59,6 @@ void DropForeignServerPragma(duckdb::ClientContext& context,
   pg::DropForeignServer(conn_ctx, name, missing_ok, cascade);
 }
 
-// PRAGMA create_user_mapping('user', 'server', if_not_exists, user := ..., ...)
-void CreateUserMappingPragma(duckdb::ClientContext& context,
-                             const duckdb::FunctionParameters& params) {
-  auto& args = params.values;
-  const auto user = args[0].GetValue<std::string>();
-  const auto server = args[1].GetValue<std::string>();
-  const auto if_not_exists = args[2].GetValue<bool>();
-
-  auto& conn_ctx = GetSereneDBContext(context);
-  pg::CreateUserMapping(conn_ctx, user, server, if_not_exists,
-                        params.named_parameters);
-}
-
-// PRAGMA drop_user_mapping('user', 'server', missing_ok)
-void DropUserMappingPragma(duckdb::ClientContext& context,
-                           const duckdb::FunctionParameters& params) {
-  auto& args = params.values;
-  const auto user = args[0].GetValue<std::string>();
-  const auto server = args[1].GetValue<std::string>();
-  const auto missing_ok = args[2].GetValue<bool>();
-
-  auto& conn_ctx = GetSereneDBContext(context);
-  pg::DropUserMapping(conn_ctx, user, server, missing_ok);
-}
-
 }  // namespace
 
 void RegisterForeignServerPragma(duckdb::DatabaseInstance& db) {
@@ -106,14 +81,6 @@ void RegisterForeignServerPragma(duckdb::DatabaseInstance& db) {
     {"drop_foreign_server",
      DropForeignServerPragma,
      {kVarchar, kBoolean, kBoolean},
-     false},
-    {"create_user_mapping",
-     CreateUserMappingPragma,
-     {kVarchar, kVarchar, kBoolean},
-     true},
-    {"drop_user_mapping",
-     DropUserMappingPragma,
-     {kVarchar, kVarchar, kBoolean},
      false},
   };
   for (auto& pragma : pragmas) {

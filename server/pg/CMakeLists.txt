@@ -26,7 +26,6 @@ target_sources(
         pg_catalog/pg_ts_dict.cpp
         pg_catalog/sdb_progress.cpp
         pg_catalog/pg_type.cpp
-        pg_catalog/pg_user_mapping.cpp
         information_schema/sql_implementation_info.cpp
         information_schema/sql_parts.cpp
         information_schema/sql_sizing.cpp

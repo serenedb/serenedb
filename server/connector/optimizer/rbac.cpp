@@ -35,6 +35,7 @@
 #include "basics/down_cast.h"
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
+#include "catalog/foreign_server.h"
 #include "catalog/object.h"
 #include "catalog/store/store.h"
 #include "catalog/table.h"
@@ -149,6 +150,30 @@ void CollectAndEnforce(duckdb::ClientContext& context, duckdb::Binder& binder) {
 
   const auto& properties = binder.GetStatementProperties();
   const auto& reqs = properties.access_requirements;
+
+  // Foreign-server USAGE: a foreign-catalog relation's parent catalog is the
+  // attach alias, i.e. the foreign server's name. The querying role needs
+  // USAGE (or ownership) on that server (PG-style); the remote enforces the
+  // rest. Checked once per distinct server, on the caller's own role.
+  containers::FlatHashSet<uint64_t> checked_servers;
+  for (const auto& req : reqs) {
+    if (!req.table) {
+      continue;
+    }
+    const auto catalog_name =
+      req.table->ParentCatalog().GetName().GetIdentifierName();
+    auto server = snapshot->GetForeignServer(ctx.GetDatabaseId(), catalog_name);
+    if (!server || !checked_servers.insert(server->GetId().id()).second) {
+      continue;
+    }
+    const auto& closure = snapshot->ClosureFor(caller);
+    if (!closure.Owns(*server) &&
+        !closure.Can(*server, catalog::AclMode::Usage)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+        ERR_MSG("permission denied for foreign server ", server->GetName()));
+    }
+  }
 
   std::vector<const catalog::Object*> objects;
   objects.reserve(reqs.size());

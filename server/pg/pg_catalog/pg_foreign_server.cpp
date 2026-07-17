@@ -56,7 +56,7 @@ catalog::MaterializedData SystemTableSnapshot<PgForeignServer>::GetTableData() {
       .srvfdw = 0,
       .srvtype = {},
       .srvversion = {},
-      .srvacl = {},
+      .srvacl = {server->GetAcl()},
       // Redacted: this table is world-readable like PG's, but unlike PG our
       // server options may carry credentials (the eager attach takes them),
       // so a secret VALUE never renders here.

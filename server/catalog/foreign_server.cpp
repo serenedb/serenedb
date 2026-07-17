@@ -45,7 +45,6 @@
 #include "basics/duckdb_engine.h"
 #include "basics/serializer.h"
 #include "catalog/persistence/foreign_server.h"
-#include "catalog/user_mapping.h"
 
 namespace sdb::catalog {
 namespace {
@@ -89,12 +88,10 @@ std::string CanonicalOptionKey(std::string_view storage, std::string key) {
   return key;
 }
 
-// Server options merged with a PUBLIC user mapping's (the mapping wins per
-// key), keys lower-cased and canonicalised to the connector's secret
-// parameters.
-std::vector<std::pair<std::string, std::string>> MergeConnectionOptions(
-  std::string_view storage, const ForeignServer& server,
-  const UserMapping* public_mapping) {
+// The server's connection options, keys lower-cased and canonicalised to the
+// connector's secret parameters.
+std::vector<std::pair<std::string, std::string>> ConnectionOptions(
+  std::string_view storage, const ForeignServer& server) {
   std::vector<std::pair<std::string, std::string>> merged;
   auto set_opt = [&](std::string_view raw_key, std::string_view value) {
     auto key = CanonicalOptionKey(storage, absl::AsciiStrToLower(raw_key));
@@ -107,9 +104,6 @@ std::vector<std::pair<std::string, std::string>> MergeConnectionOptions(
     merged.emplace_back(std::move(key), std::string{value});
   };
   server.GetOptions().Visit(set_opt);
-  if (public_mapping != nullptr) {
-    public_mapping->GetOptions().Visit(set_opt);
-  }
   return merged;
 }
 
@@ -251,30 +245,27 @@ std::shared_ptr<Object> ForeignServer::Clone() const {
 }
 
 // Registers a TEMPORARY DuckDB secret named `secret_name` carrying the server's
-// connection options merged with a PUBLIC user mapping's (its user/password
-// win), and returns the `ATTACH '' AS "<alias>" (TYPE <storage>, SECRET
-// <secret_name>)` statement that consumes it. Option values are stored as
-// duckdb Values (no connstr quoting), so a password may contain spaces/quotes
-// freely and never appears in SQL text. Returns "" (registering nothing) for
-// an unsupported FDW. The connector captures the resolved params at ATTACH
-// time, so the secret may be dropped right after the statement runs.
+// connection options, and returns the `ATTACH '' AS "<alias>" (TYPE <storage>,
+// SECRET <secret_name>)` statement that consumes it. Option values are stored
+// as duckdb Values (no connstr quoting), so a password may contain
+// spaces/quotes freely and never appears in SQL text. Returns "" (registering
+// nothing) for an unsupported FDW. The connector captures the resolved params
+// at ATTACH time, so the secret may be dropped right after the statement runs.
 static std::string PrepareForeignServerAttach(duckdb::ClientContext& context,
                                               std::string_view secret_name,
                                               const ForeignServer& server,
-                                              const UserMapping* public_mapping,
                                               std::string_view alias) {
   const auto storage = StorageTypeForFdw(server.GetFdwName());
   if (storage.empty()) {
     return {};
   }
 
-  // Carry the merged options in a TEMPORARY secret: values are duckdb Values,
-  // so nothing needs connstr quoting and no password ever enters the SQL text.
+  // Carry the options in a TEMPORARY secret: values are duckdb Values, so
+  // nothing needs connstr quoting and no password ever enters the SQL text.
   auto secret = duckdb::make_uniq<duckdb::KeyValueSecret>(
     std::vector<std::string>{}, duckdb::Identifier{storage}, "config",
     duckdb::Identifier{secret_name});
-  for (const auto& [key, value] :
-       MergeConnectionOptions(storage, server, public_mapping)) {
+  for (const auto& [key, value] : ConnectionOptions(storage, server)) {
     secret->secret_map[duckdb::Identifier{key}] = duckdb::Value(value);
     // Fail-closed: everything not on the plain allow-list stays hidden from
     // duckdb_secrets() for the attach window's duration.
@@ -299,13 +290,13 @@ static std::string PrepareForeignServerAttach(duckdb::ClientContext& context,
                       " (TYPE ", storage, ", SECRET ", secret_name, ")");
 }
 
-std::optional<std::string> RunForeignServerAttach(
-  duckdb::Connection& conn, const ForeignServer& server,
-  const UserMapping* public_mapping, std::string_view alias) {
+std::optional<std::string> RunForeignServerAttach(duckdb::Connection& conn,
+                                                  const ForeignServer& server,
+                                                  std::string_view alias) {
   const auto secret =
     MakeForeignServerSecretName(alias.empty() ? server.GetName() : alias);
-  auto sql = PrepareForeignServerAttach(*conn.context, secret, server,
-                                        public_mapping, alias);
+  auto sql =
+    PrepareForeignServerAttach(*conn.context, secret, server, alias);
   if (sql.empty()) {
     return std::nullopt;
   }

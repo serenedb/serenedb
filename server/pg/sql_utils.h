@@ -97,6 +97,9 @@ constexpr catalog::ObjectType FromPgObjectTypeName(
   if (word == "TYPE") {
     return PgSqlType;
   }
+  if (word == "FOREIGN SERVER") {
+    return ForeignServer;
+  }
   return Invalid;
 }
 

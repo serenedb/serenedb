@@ -40,7 +40,6 @@ enum class ResolveType {
   Relation,
   Tokenizer,
   ForeignServer,
-  UserMapping,
   Type,
 };
 
@@ -54,7 +53,6 @@ class ResolutionTable {
     _functions = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
     _tokenizers = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
     _foreign_servers = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
-    _user_mappings = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
     _types = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
   }
   template<ResolveType Type>
@@ -90,8 +88,6 @@ class ResolutionTable {
         return resolve(_tokenizers, parent_id, object_name);
       } else if constexpr (Type == ResolveType::ForeignServer) {
         return resolve(_foreign_servers, parent_id, object_name);
-      } else if constexpr (Type == ResolveType::UserMapping) {
-        return resolve(_user_mappings, parent_id, object_name);
       } else if constexpr (Type == ResolveType::Type) {
         return resolve(_types, parent_id, object_name);
       } else {
@@ -180,23 +176,8 @@ class ResolutionTable {
       } else if constexpr (Type == ResolveType::Tokenizer) {
         return insert(_tokenizers, parent_id, object_name, object_id);
       } else if constexpr (Type == ResolveType::ForeignServer) {
-        // parent = the database. The server itself becomes the parent of its
-        // user mappings (PG: pg_user_mapping identity is (umuser, umserver)),
-        // so open its mapping namespace here.
-        if (!insert(_foreign_servers, parent_id, object_name, object_id)) {
-          return false;
-        }
-        if (!replace) {
-          auto [_, inserted] =
-            CloneData(_user_mappings)
-              .try_emplace(object_id, std::make_shared<MapByName<ObjectId>>());
-          SDB_ASSERT(inserted);
-        }
-        return true;
-      } else if constexpr (Type == ResolveType::UserMapping) {
-        // parent = the owning foreign server; the name is the mapped role
-        // ("public" for PUBLIC), unique per server by construction.
-        return insert(_user_mappings, parent_id, object_name, object_id);
+        // parent = the database.
+        return insert(_foreign_servers, parent_id, object_name, object_id);
       } else if constexpr (Type == ResolveType::Type) {
         return insert(_types, parent_id, object_name, object_id);
       } else {
@@ -225,9 +206,6 @@ class ResolutionTable {
       }
       auto servers = CloneData(_foreign_servers).extract(id);
       SDB_ASSERT(!servers.empty());
-      for (auto [_, server_id] : *servers.mapped()) {
-        CloneData(_user_mappings).erase(server_id);
-      }
       return {id};
     } else if constexpr (Type == ResolveType::Role) {
       auto object = CloneData(_roles).extract(object_name);
@@ -268,13 +246,7 @@ class ResolutionTable {
       } else if constexpr (Type == ResolveType::Tokenizer) {
         return remove(_tokenizers, parent_id, object_name);
       } else if constexpr (Type == ResolveType::ForeignServer) {
-        auto result = remove(_foreign_servers, parent_id, object_name);
-        if (result) {
-          CloneData(_user_mappings).erase(*result);
-        }
-        return result;
-      } else if constexpr (Type == ResolveType::UserMapping) {
-        return remove(_user_mappings, parent_id, object_name);
+        return remove(_foreign_servers, parent_id, object_name);
       } else if constexpr (Type == ResolveType::Type) {
         return remove(_types, parent_id, object_name);
       } else {
@@ -302,12 +274,6 @@ class ResolutionTable {
   auto GetForeignServerIds(ObjectId database_id) const {
     auto it = _foreign_servers->find(database_id);
     SDB_ASSERT(it != _foreign_servers->end());
-    return *it->second | std::views::values;
-  }
-
-  auto GetUserMappingIds(ObjectId server_id) const {
-    auto it = _user_mappings->find(server_id);
-    SDB_ASSERT(it != _user_mappings->end());
     return *it->second | std::views::values;
   }
 
@@ -356,8 +322,6 @@ class ResolutionTable {
   MapByIdPtr<MapByNamePtr<ObjectId>> _tokenizers;
   // schema_id -> (foreign_server_name -> object_id)
   MapByIdPtr<MapByNamePtr<ObjectId>> _foreign_servers;
-  // schema_id -> (user_mapping_name -> object_id)
-  MapByIdPtr<MapByNamePtr<ObjectId>> _user_mappings;
   // schema_id -> (type_name -> object_id)
   MapByIdPtr<MapByNamePtr<ObjectId>> _types;
 };

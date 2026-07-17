@@ -35,20 +35,7 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
                          const duckdb::named_parameter_map_t& options);
 
 // DROP SERVER: remove the persisted server and DETACH its live attachment.
-// `cascade` also drops the server's user mappings (RESTRICT, the default,
-// refuses while any exist).
 void DropForeignServer(ConnectionContext& conn_ctx, std::string_view name,
                        bool missing_ok, bool cascade);
-
-// CREATE USER MAPPING FOR <user> SERVER <server>: persist credentials for a
-// (server, local-user) pair. A PUBLIC mapping re-attaches the server with the
-// merged credentials; per-user mappings are stored/visible only (Phase 2a).
-void CreateUserMapping(ConnectionContext& conn_ctx, std::string_view user,
-                       std::string_view server, bool if_not_exists,
-                       const duckdb::named_parameter_map_t& options);
-
-// DROP USER MAPPING FOR <user> SERVER <server>.
-void DropUserMapping(ConnectionContext& conn_ctx, std::string_view user,
-                     std::string_view server, bool missing_ok);
 
 }  // namespace sdb::pg

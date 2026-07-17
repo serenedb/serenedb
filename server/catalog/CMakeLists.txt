@@ -23,5 +23,4 @@ target_sources(
         store/store.cpp
         tokenizer.cpp
         foreign_server.cpp
-        user_mapping.cpp
 )

@@ -533,6 +533,11 @@ std::shared_ptr<catalog::Object> ResolveGrantTarget(
     out_name = std::string{raw_name};
     return snap.GetSchema(ctx.GetDatabaseId(), raw_name);
   }
+  if (type == catalog::ObjectType::ForeignServer) {
+    // A foreign server is a database child with no schema (PG-shape).
+    out_name = std::string{raw_name};
+    return snap.GetForeignServer(ctx.GetDatabaseId(), raw_name);
+  }
   const std::string current_schema = ctx.GetCurrentSchema();
   const auto parsed = ParseObjectName(raw_name, current_schema);
   out_schema = parsed.schema;

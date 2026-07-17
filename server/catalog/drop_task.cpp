@@ -210,10 +210,9 @@ void DatabaseDrop::Finalize() {
   // Range-delete schema Definitions under db. Per-schema standalone-seq
   // counter wipes already ran inside each SchemaDrop::Finalize above.
   server.DropEntry(_id, catalog::ObjectType::Schema);
-  // Foreign servers and their user mappings are database children (PG shape);
-  // both store their definition rows flat under the database id.
+  // Foreign servers are database children (PG shape); their definition rows
+  // are stored flat under the database id.
   server.DropEntry(_id, catalog::ObjectType::ForeignServer);
-  server.DropEntry(_id, catalog::ObjectType::UserMapping);
   server.DropDefinition(id::kInstance, catalog::ObjectType::Database, _id);
   server.DropDefinition(id::kInstance, catalog::ObjectType::Tombstone, _id);
 }

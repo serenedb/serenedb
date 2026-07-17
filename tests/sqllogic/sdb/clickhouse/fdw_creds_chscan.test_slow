@@ -1,31 +1,51 @@
 control substitution on
 
-# FDW credential-handling regression tests for the review fixes:
+# FDW credential-handling regression tests for the ClickHouse-style model:
+# foreign-server credentials live ONLY in `CREATE SERVER ... OPTIONS` (there is
+# no USER MAPPING). This covers:
 #  A) a connection-option VALUE containing a space (a password) round-trips
-#     through the connstr instead of corrupting it;
-#  B) PG-parity credential exposure: pg_user_mapping is superuser-only and its
-#     umoptions carry the password in CLEARTEXT (the read gate is the guard,
-#     like PG's base catalog); the world-readable pg_foreign_server redacts
-#     secret VALUES case-insensitively (quoted "PASSWORD") and for the
-#     clickhouse `passwd` alias, because unlike PG our srvoptions may carry
-#     creds; a non-superuser is denied pg_user_mapping outright;
-#  C) a PUBLIC mapping with bad credentials is rejected AND does not detach a
-#     currently-working server (atomic re-attach);
-#  D) DROP SERVER cascades to its USER MAPPINGs (no orphan a future same-named
-#     server would silently inherit).
+#     through the connstr instead of corrupting it -- the eager attach connects;
+#  B) the world-readable pg_foreign_server REDACTS secret VALUES in srvoptions
+#     (the plain `password` key, a quoted mixed-case "PASSWORD", the clickhouse
+#     `passwd` alias) while leaving the plain keys (host/port/user/database)
+#     visible; the eager attach still resolves the real stored value;
+#  E) fail-closed redaction -- an unrecognized credential key (sslpassword) is
+#     redacted too (redaction is an allow-list of plain addressing keys);
+#  R) server USAGE RBAC -- a non-owner LOGIN role without USAGE is denied at
+#     query time, GRANT USAGE lets it query, REVOKE denies it again.
 #
 # Uses the fixture user `scanner` (password 'pass word'); the default user
 # (opened password-less by CLICKHOUSE_SKIP_USER_SETUP) rejects a non-empty
 # password, so it cannot exercise the password paths. Unique server names
 # (fc_*): tests run in parallel against one serened.
 
+# Rerun hygiene: a previously aborted run on a long-lived instance may have
+# left these behind (servers/roles are instance-global).
+statement ok
+DROP SERVER IF EXISTS fc_space;
+
+statement ok
+DROP SERVER IF EXISTS fc_pwkey;
+
+statement ok
+DROP SERVER IF EXISTS fc_passwd;
+
+statement ok
+DROP SERVER IF EXISTS fc_failclosed;
+
+statement ok
+DROP SERVER IF EXISTS fc_rbac;
+
+statement ok
+DROP ROLE IF EXISTS fc_snoop;
+
+statement ok
+DROP ROLE IF EXISTS fc_user;
+
 # ===== A: a space in an option value round-trips through the connstr =====
 statement ok
 CREATE SERVER fc_space FOREIGN DATA WRAPPER clickhouse_fdw
-  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
-
-statement ok
-CREATE USER MAPPING FOR PUBLIC SERVER fc_space OPTIONS (user 'scanner', password 'pass word');
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner', password 'pass word');
 
 query
 SELECT count(*) FROM fc_space.chtest.vedernikoff;
@@ -33,28 +53,22 @@ SELECT count(*) FROM fc_space.chtest.vedernikoff;
 count
 6
 
-# ===== B: PG-parity exposure -- superuser sees umoptions cleartext =====
-# The runner connects as a superuser; the mapping's password is visible
-# verbatim (PG shows privileged viewers the cleartext too; ours differs only
-# in WHO passes the gate: the whole table is superuser-only).
+# ===== B: secret VALUES are redacted in the world-readable srvoptions =====
+# The plain `password` key: value gone from the catalog view, plain keys visible,
+# and the eager attach resolved the real value (the count proves it connected).
 query
-SELECT array_to_string(umoptions, ' ') LIKE '%pass word%' AS visible
-FROM pg_user_mapping um JOIN pg_foreign_server fs ON um.umserver = fs.oid
-WHERE fs.srvname = 'fc_space';
+SELECT array_to_string(srvoptions, ' ') NOT LIKE '%pass word%' AS redacted,
+       array_to_string(srvoptions, ' ') LIKE '%database=chtest%' AS plain_visible
+FROM pg_foreign_server WHERE srvname = 'fc_space';
 ----
-visible
-t
+redacted	plain_visible
+t	t
 
-# A quoted "PASSWORD" key (mixed case) in SERVER options is redacted in the
-# world-readable srvoptions (normalised + matched case-insensitively), and the
-# eager attach still resolves it; the mapping's copy stays cleartext for the
-# superuser.
+# A quoted "PASSWORD" key (mixed case) is normalised and matched
+# case-insensitively, so its value is redacted too; the attach still resolves it.
 statement ok
 CREATE SERVER fc_pwkey FOREIGN DATA WRAPPER clickhouse_fdw
   OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner', "PASSWORD" 'pass word');
-
-statement ok
-CREATE USER MAPPING FOR PUBLIC SERVER fc_pwkey OPTIONS (user 'scanner', "PASSWORD" 'pass word');
 
 query
 SELECT array_to_string(srvoptions, ' ') NOT LIKE '%pass word%' AS redacted
@@ -64,27 +78,16 @@ redacted
 t
 
 query
-SELECT array_to_string(umoptions, ' ') LIKE '%pass word%' AS visible
-FROM pg_user_mapping um JOIN pg_foreign_server fs ON um.umserver = fs.oid
-WHERE fs.srvname = 'fc_pwkey';
-----
-visible
-t
-
-query
 SELECT count(*) FROM fc_pwkey.chtest.vedernikoff;
 ----
 count
 6
 
-# The `passwd` alias (a valid clickhouse password key) is also redacted in
-# srvoptions and connects.
+# The `passwd` alias (a valid clickhouse password key) is also redacted and
+# connects.
 statement ok
 CREATE SERVER fc_passwd FOREIGN DATA WRAPPER clickhouse_fdw
   OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner', passwd 'pass word');
-
-statement ok
-CREATE USER MAPPING FOR PUBLIC SERVER fc_passwd OPTIONS (user 'scanner', passwd 'pass word');
 
 query
 SELECT array_to_string(srvoptions, ' ') NOT LIKE '%pass word%' AS redacted
@@ -94,31 +97,19 @@ redacted
 t
 
 query
-SELECT array_to_string(umoptions, ' ') LIKE '%pass word%' AS visible
-FROM pg_user_mapping um JOIN pg_foreign_server fs ON um.umserver = fs.oid
-WHERE fs.srvname = 'fc_passwd';
+SELECT count(*) FROM fc_passwd.chtest.vedernikoff;
 ----
-visible
-t
+count
+6
 
-# A non-superuser is denied the base catalog outright (PG parity: raw
-# pg_user_mapping has no PUBLIC grant) but reads the world-readable
-# pg_foreign_server -- with the secret value redacted.
-statement ok
-DROP ROLE IF EXISTS fc_snoop;
-
+# pg_foreign_server is world-readable: a plain non-superuser sees the row too,
+# still with the secret value redacted (the redaction is in the stored catalog,
+# not the read gate).
 statement ok
 CREATE ROLE fc_snoop LOGIN PASSWORD 'fc_snoop_pw';
 
 # NB: a `connection` record binds the NEXT record only (later records revert
 # to the default superuser connection), so it is repeated per record.
-connection c_snoop user=fc_snoop password=fc_snoop_pw
-statement error
-SELECT count(*) FROM pg_user_mapping;
-----
-db error: ERROR: permission denied for table pg_user_mapping<slt:ignore>
-
-
 connection c_snoop user=fc_snoop password=fc_snoop_pw
 query
 SELECT array_to_string(srvoptions, ' ') NOT LIKE '%pass word%' AS redacted
@@ -127,115 +118,9 @@ FROM pg_foreign_server WHERE srvname = 'fc_pwkey';
 redacted
 t
 
-# The pg_user_mappings VIEW stays reachable (it runs with owner privileges
-# over the superuser-only base table), but its per-viewer CASE NULLs umoptions
-# for a role with no stake in the server -- PG parity: row visible, options not.
-connection c_snoop user=fc_snoop password=fc_snoop_pw
-query
-SELECT count(*) AS rows_visible, count(umoptions) AS options_visible
-FROM pg_user_mappings um JOIN pg_foreign_server fs ON um.srvid = fs.oid
-WHERE fs.srvname = 'fc_pwkey';
-----
-rows_visible	options_visible
-1	0
-
 connection default
 statement ok
 DROP ROLE fc_snoop;
-
-query
-SELECT count(*) FROM fc_passwd.chtest.vedernikoff;
-----
-count
-6
-
-# ===== C: a bad PUBLIC mapping is rejected and does NOT detach the server =====
-statement ok
-CREATE SERVER fc_atomic FOREIGN DATA WRAPPER clickhouse_fdw
-  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner', password 'pass word');
-
-query
-SELECT count(*) FROM fc_atomic.chtest.vedernikoff;
-----
-count
-6
-
-statement error
-CREATE USER MAPPING FOR PUBLIC SERVER fc_atomic OPTIONS (user 'nosuchuser', password 'bad');
-
-# The working attachment survived the failed re-attach.
-query
-SELECT count(*) FROM fc_atomic.chtest.vedernikoff;
-----
-count
-6
-
-# ===== D: DROP SERVER cascades to its USER MAPPINGs (no orphan) =====
-statement ok
-CREATE SERVER fc_drop FOREIGN DATA WRAPPER clickhouse_fdw
-  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner', password 'pass word');
-
-statement ok
-CREATE USER MAPPING FOR PUBLIC SERVER fc_drop OPTIONS (user 'scanner', password 'pass word');
-
-query
-SELECT count(*) FROM pg_user_mapping um JOIN pg_foreign_server fs ON um.umserver = fs.oid WHERE fs.srvname = 'fc_drop';
-----
-count
-1
-
-# RESTRICT (default) refuses while the mapping depends on the server...
-statement error
-DROP SERVER fc_drop;
-
-# ...CASCADE drops the server and its mapping atomically.
-statement ok
-DROP SERVER fc_drop CASCADE;
-
-# Re-create the server + a fresh PUBLIC mapping. This succeeds only if the DROP
-# cascaded; an orphaned public@fc_drop mapping would make this "already exists".
-statement ok
-CREATE SERVER fc_drop FOREIGN DATA WRAPPER clickhouse_fdw
-  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner', password 'pass word');
-
-statement ok
-CREATE USER MAPPING FOR PUBLIC SERVER fc_drop OPTIONS (user 'scanner', password 'pass word');
-
-# ===== cleanup (CASCADE also drops each server's PUBLIC mapping) =====
-statement ok
-DROP SERVER fc_space CASCADE;
-
-statement ok
-DROP SERVER fc_pwkey CASCADE;
-
-statement ok
-DROP SERVER fc_passwd CASCADE;
-
-statement ok
-DROP SERVER fc_atomic CASCADE;
-
-statement ok
-DROP SERVER fc_drop CASCADE;
-
-# Rerun hygiene: a previously aborted run on a long-lived instance may have
-# left these behind (databases/servers/roles are instance-global).
-statement ok
-DROP SERVER IF EXISTS fc_failclosed CASCADE;
-
-statement ok
-DROP SERVER IF EXISTS fc_xsrv CASCADE;
-
-statement ok
-DROP DATABASE IF EXISTS fc_xdb;
-
-statement ok
-DROP SERVER IF EXISTS fc_rensrv CASCADE;
-
-statement ok
-DROP ROLE IF EXISTS fc_ren;
-
-statement ok
-DROP ROLE IF EXISTS fc_ren2;
 
 # ===== E: fail-closed redaction -- unrecognized option keys are secrets =====
 # The connectors keep growing credential-bearing keys (sslpassword, uri,
@@ -255,63 +140,67 @@ FROM pg_foreign_server WHERE srvname = 'fc_failclosed';
 redacted	plain_visible
 t	t
 
+# ===== R: server USAGE RBAC is enforced at query time =====
+# A foreign server carries USAGE (PG-style). A role that is neither the owner
+# (the superuser `postgres` created these) nor a superuser, and lacks USAGE, is
+# denied at query time; GRANT USAGE lets it through; REVOKE denies it again.
+# fc_rbac connects via the scanner credentials in its OPTIONS.
 statement ok
-DROP SERVER fc_failclosed CASCADE;
+CREATE ROLE fc_user LOGIN PASSWORD 'fc_user_pw';
 
-# ===== F: server names are instance-global (the attach alias is) =====
-# Catalog rows are per-database, but the live attachment alias is shared by
-# the whole instance: a same-named server in another database is rejected up
-# front, naming the owner -- otherwise DROP DATABASE would detach the other
-# database's live attachment and boot replay would pick a random winner.
 statement ok
-CREATE SERVER fc_xsrv FOREIGN DATA WRAPPER clickhouse_fdw
+CREATE SERVER fc_rbac FOREIGN DATA WRAPPER clickhouse_fdw
   OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner', password 'pass word');
 
-statement ok
-CREATE DATABASE fc_xdb;
-
-connection c_xdb database=fc_xdb
+# Without USAGE, fc_user is denied.
+connection c_user user=fc_user password=fc_user_pw
 statement error
-CREATE SERVER fc_xsrv FOREIGN DATA WRAPPER clickhouse_fdw
-  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+SELECT count(*) FROM fc_rbac.chtest.vedernikoff;
 ----
-db error: ERROR: server "fc_xsrv" already exists in database<slt:ignore>
+db error: ERROR: permission denied for foreign server fc_rbac<slt:ignore>
 
 
+# The superuser grants USAGE on the server.
 connection default
 statement ok
-DROP DATABASE fc_xdb;
+GRANT USAGE ON FOREIGN SERVER fc_rbac TO fc_user;
 
-statement ok
-DROP SERVER fc_xsrv CASCADE;
-
-# ===== G: ALTER ROLE RENAME is blocked while a mapping references the role =====
-# Mappings resolve by the mapped role's NAME under their server (PG keys them
-# by oid); renaming would strand the mapping -- undroppable under either name.
-statement ok
-CREATE ROLE fc_ren LOGIN PASSWORD 'fc_ren_pw';
-
-statement ok
-CREATE SERVER fc_rensrv FOREIGN DATA WRAPPER clickhouse_fdw
-  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner', password 'pass word');
-
-statement ok
-CREATE USER MAPPING FOR fc_ren SERVER fc_rensrv OPTIONS (user 'scanner');
-
-statement error
-ALTER ROLE fc_ren RENAME TO fc_ren2;
+# Now fc_user can query through it.
+connection c_user user=fc_user password=fc_user_pw
+query
+SELECT count(*) FROM fc_rbac.chtest.vedernikoff;
 ----
-db error: ERROR: role "fc_ren" cannot be renamed because user mappings depend on it<slt:ignore>
+count
+6
 
+# REVOKE takes the privilege away again.
+connection default
+statement ok
+REVOKE USAGE ON FOREIGN SERVER fc_rbac FROM fc_user;
+
+connection c_user user=fc_user password=fc_user_pw
+statement error
+SELECT count(*) FROM fc_rbac.chtest.vedernikoff;
+----
+db error: ERROR: permission denied for foreign server fc_rbac<slt:ignore>
+
+
+# ===== cleanup =====
+connection default
+statement ok
+DROP SERVER fc_space;
 
 statement ok
-DROP USER MAPPING FOR fc_ren SERVER fc_rensrv;
+DROP SERVER fc_pwkey;
 
 statement ok
-ALTER ROLE fc_ren RENAME TO fc_ren2;
+DROP SERVER fc_passwd;
 
 statement ok
-DROP SERVER fc_rensrv CASCADE;
+DROP SERVER fc_failclosed;
 
 statement ok
-DROP ROLE fc_ren2;
+DROP SERVER fc_rbac;
+
+statement ok
+DROP ROLE fc_user;

@@ -4,6 +4,8 @@ control substitution on
 # mirror of catalog_attach.test: a plain ATTACH is ephemeral and vanishes on
 # restart (catalog_attach.test asserts that); a CREATE SERVER is persisted
 # catalog DDL, so it MUST survive a serened crash and auto re-attach on boot.
+# ClickHouse-style model: the server's credentials live in its OPTIONS (the
+# default user needs no auth) and there are no USER MAPPINGs.
 #
 # This is the first recovery test that needs an external service. It works by
 # reusing run.sh's existing launch_clickhouse(): the `_chscan.` filename makes
@@ -14,9 +16,6 @@ control substitution on
 statement ok
 CREATE SERVER chrec FOREIGN DATA WRAPPER clickhouse_fdw
   OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
-
-statement ok
-CREATE USER MAPPING FOR PUBLIC SERVER chrec OPTIONS (user 'default');
 
 # Pre-crash: the server is in the catalog and queryable through the connector.
 query
@@ -53,14 +52,6 @@ SELECT srvname FROM pg_foreign_server WHERE srvname = 'chrec';
 ----
 srvname
 chrec
-
-# ...and the user mapping persisted too.
-connection after_crash
-query
-SELECT count(*) FROM pg_user_mapping um JOIN pg_foreign_server fs ON um.umserver = fs.oid WHERE fs.srvname = 'chrec';
-----
-count
-1
 
 # ...and boot replay re-ATTACHed to ClickHouse, so queries through it still work.
 connection after_crash

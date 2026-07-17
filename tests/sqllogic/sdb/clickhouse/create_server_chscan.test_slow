@@ -1,24 +1,24 @@
 control substitution on
 
-# Foreign Data Wrapper DDL over the ClickHouse connector: CREATE SERVER +
-# CREATE USER MAPPING. Unlike ATTACH (in-memory, lost on restart), a SERVER is
-# persisted catalog DDL that survives restart and auto-attaches on boot.
-# Restart-survival is covered by recovery/catalog_foreign_server_chscan.test_slow
-# (it crashes serened and asserts the server + mapping persist and boot replay
-# re-attaches to the same ClickHouse container). A PUBLIC user mapping's options
-# override the server's for the live (instance-global) attach; per-user mappings
-# are stored and visible but not enforced at runtime (Phase 2a). No WITH/ATTACH
-# credentials in SQL -- it's all metadata.
+# Foreign Data Wrapper DDL over the ClickHouse connector: CREATE SERVER. Unlike
+# ATTACH (in-memory, lost on restart), a SERVER is persisted catalog DDL that
+# survives restart and auto-attaches on boot. Restart-survival is covered by
+# recovery/catalog_foreign_server_chscan.test_slow. In the ClickHouse-style
+# model there are no USER MAPPINGs: credentials live in the server's OPTIONS and
+# CREATE USER MAPPING / DROP USER MAPPING are syntax errors. The ClickHouse
+# `default` user needs no auth, so a no-credentials CREATE SERVER attaches and
+# serves.
 #
 # Unique server name (chsrv): tests run in parallel against one serened and the
 # ATTACH alias is global, so a shared name would collide with other tests.
 
+# Rerun hygiene: created plain below, so clear a prior aborted run's leftover.
+statement ok
+DROP SERVER IF EXISTS chsrv;
+
 statement ok
 CREATE SERVER chsrv FOREIGN DATA WRAPPER clickhouse_fdw
   OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
-
-statement ok
-CREATE USER MAPPING FOR PUBLIC SERVER chsrv OPTIONS (user 'default');
 
 # Query the remote table through the named server.
 query
@@ -39,73 +39,15 @@ SELECT srvname FROM pg_foreign_server WHERE srvname = 'chsrv';
 srvname
 chsrv
 
-# CREATE USER MAPPING FOR <role> requires the role to exist (PG-style, RBAC).
-statement error
-CREATE USER MAPPING FOR nobody_role SERVER chsrv OPTIONS (user 'x');
-----
-db error: ERROR: role "nobody_role" does not exist<slt:ignore>
-
-
-statement ok
-CREATE ROLE alice;
-
-# A per-user mapping is stored (visible, not enforced at runtime in 2a). The
-# join confirms pg_user_mapping.umserver resolves to the server's oid.
-statement ok
-CREATE USER MAPPING FOR alice SERVER chsrv OPTIONS (user 'alice_ch', password 'secret');
-
-# The mapping references role alice, so DROP ROLE is refused while it exists.
-statement error
-DROP ROLE alice;
-----
-db error: ERROR: role "alice" cannot be dropped because some objects depend on it<slt:ignore>
-
-
-query
-SELECT count(*) FROM pg_user_mapping um
-JOIN pg_foreign_server s ON um.umserver = s.oid
-WHERE s.srvname = 'chsrv';
-----
-count
-2
-
-# The explicit release path (as opposed to DROP SERVER CASCADE below): a fresh
-# role bob whose mapping is dropped first becomes droppable on its own.
-statement ok
-CREATE ROLE bob;
-
-statement ok
-CREATE USER MAPPING FOR bob SERVER chsrv OPTIONS (user 'bob_ch');
-
-statement error
-DROP ROLE bob;
-----
-db error: ERROR: role "bob" cannot be dropped because some objects depend on it<slt:ignore>
-
-
-statement ok
-DROP USER MAPPING FOR bob SERVER chsrv;
-
-# With its mapping gone, bob drops without CASCADE.
-statement ok
-DROP ROLE bob;
-
 # IF NOT EXISTS is a no-op on an existing server.
 statement ok
 CREATE SERVER IF NOT EXISTS chsrv FOREIGN DATA WRAPPER clickhouse_fdw
   OPTIONS (host '${CHHOST}', port '${CHPORT}');
 
-# DROP SERVER (RESTRICT, the default) is refused while user mappings depend on
-# it -- PG server<-mapping semantics.
-statement error
-DROP SERVER chsrv;
-----
-db error: ERROR: cannot drop server "chsrv" because other objects depend on it<slt:ignore>
-
-
-# DROP SERVER CASCADE drops the server AND its user mappings in one transaction.
+# DROP SERVER (RESTRICT, the default) succeeds: with no user mappings there is
+# nothing left to depend on it.
 statement ok
-DROP SERVER chsrv CASCADE;
+DROP SERVER chsrv;
 
 # Gone from the catalog after drop.
 query
@@ -113,19 +55,6 @@ SELECT count(*) FROM pg_foreign_server WHERE srvname = 'chsrv';
 ----
 count
 0
-
-# The dependent user mappings went with it (cascade), so none remain.
-query
-SELECT count(*) FROM pg_user_mapping um
-JOIN pg_foreign_server s ON um.umserver = s.oid
-WHERE s.srvname = 'chsrv';
-----
-count
-0
-
-# With its mapping cascade-dropped, role alice is now droppable.
-statement ok
-DROP ROLE alice;
 
 # And the attachment is detached (querying the dropped server errors).
 statement error
@@ -135,57 +64,35 @@ SELECT id FROM chsrv.chtest.vedernikoff LIMIT 1;
 statement ok
 DROP SERVER IF EXISTS chsrv;
 
-# PG parity: a server name is a BARE identifier (PG's CREATE SERVER takes
-# ColId, servers are not schema-qualified) -- qualification is a syntax error,
-# not a server named "a.b".
+# ===== syntax-error battery =====
+
+# PG parity: a server name is a BARE identifier (PG's CREATE SERVER takes ColId,
+# servers are not schema-qualified) -- qualification is a syntax error, not a
+# server named "a.b".
 statement error
 CREATE SERVER a.b FOREIGN DATA WRAPPER clickhouse_fdw OPTIONS (host 'x');
 
 statement error
 DROP SERVER a.b;
 
-statement error
-CREATE USER MAPPING FOR PUBLIC SERVER a.b OPTIONS (user 'x');
-
 # PG parity: DATA is required -- FOREIGN WRAPPER is a syntax error, like PG.
 statement error
 CREATE SERVER cs_nodata FOREIGN WRAPPER clickhouse_fdw OPTIONS (host 'x');
 
-# PG parity: the mapped role is a ColId -- a reserved keyword is a syntax
-# error, not a role literally named "select".
+# PG parity: the server name is a ColId -- a bare reserved keyword is a syntax
+# error, not a server literally named "select".
 statement error
-CREATE USER MAPPING FOR select SERVER cs_x OPTIONS (user 'x');
+CREATE SERVER select FOREIGN DATA WRAPPER clickhouse_fdw OPTIONS (host 'x');
 
-# PG parity: CURRENT_ROLE and SESSION_USER are accepted role specs (PG's
-# auth_ident); both resolve to the connected superuser here.
-statement ok
-CREATE SERVER cs_roles FOREIGN DATA WRAPPER clickhouse_fdw
-  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
-
-statement ok
-CREATE USER MAPPING FOR CURRENT_ROLE SERVER cs_roles OPTIONS (user 'default');
-
-query
-SELECT usename FROM pg_user_mappings WHERE srvname = 'cs_roles';
-----
-usename
-postgres
-
-statement ok
-DROP USER MAPPING FOR CURRENT_ROLE SERVER cs_roles;
-
-statement ok
-CREATE USER MAPPING FOR SESSION_USER SERVER cs_roles OPTIONS (user 'default');
-
-statement ok
-DROP USER MAPPING FOR SESSION_USER SERVER cs_roles;
-
-statement ok
-DROP SERVER cs_roles;
-
-# PG parity: DROP USER MAPPING with a missing SERVER blames the server, not
-# the mapping.
+# There is no USER MAPPING in the ClickHouse-style model: the whole
+# CREATE / DROP USER MAPPING grammar is gone (a syntax error).
 statement error
-DROP USER MAPPING FOR postgres SERVER cs_missing_srv;
+CREATE USER MAPPING FOR PUBLIC SERVER chsrv OPTIONS (user 'x');
 ----
-db error: ERROR: server "cs_missing_srv" does not exist<slt:ignore>
+db error: ERROR: syntax error at or near "FOR"<slt:ignore>
+
+
+statement error
+DROP USER MAPPING FOR PUBLIC SERVER chsrv;
+----
+db error: ERROR: syntax error at or near "FOR"<slt:ignore>

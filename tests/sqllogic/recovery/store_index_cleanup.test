@@ -18,7 +18,7 @@ CREATE INDEX sic_sec_idx ON sic_sec (a);
 
 
 query
-SELECT count(*) AS n FROM duckdb_indexes() WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_sec';
+SELECT count(*) AS n FROM duckdb_indexes(include_hidden := true) WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_sec';
 ----
 n
 1
@@ -29,7 +29,7 @@ DROP INDEX sic_sec_idx;
 
 
 query
-SELECT count(*) AS n FROM duckdb_indexes() WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_sec';
+SELECT count(*) AS n FROM duckdb_indexes(include_hidden := true) WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_sec';
 ----
 n
 0
@@ -53,7 +53,7 @@ CREATE INDEX sic_inv_idx ON sic_inv USING inverted (txt sic_kw);
 
 
 query
-SELECT count(*) AS n FROM duckdb_indexes() WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_inv';
+SELECT count(*) AS n FROM duckdb_indexes(include_hidden := true) WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_inv';
 ----
 n
 1
@@ -64,7 +64,7 @@ DROP INDEX sic_inv_idx;
 
 
 query
-SELECT count(*) AS n FROM duckdb_indexes() WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_inv';
+SELECT count(*) AS n FROM duckdb_indexes(include_hidden := true) WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_inv';
 ----
 n
 0
@@ -84,7 +84,7 @@ CREATE UNIQUE INDEX sic_dup_idx ON sic_dup (a);
 
 
 query
-SELECT count(*) AS n FROM duckdb_indexes() WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_dup';
+SELECT count(*) AS n FROM duckdb_indexes(include_hidden := true) WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_dup';
 ----
 n
 0
@@ -100,14 +100,14 @@ DROP TABLE sic_inv;
 
 
 query
-SELECT count(*) AS n FROM duckdb_tables() WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_inv';
+SELECT count(*) AS n FROM duckdb_tables(include_hidden := true) WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_inv';
 ----
 n
 0
 
 
 query
-SELECT count(*) AS n FROM duckdb_indexes() WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_inv';
+SELECT count(*) AS n FROM duckdb_indexes(include_hidden := true) WHERE database_name = '__sdb_store' AND table_name LIKE '%.sic_inv';
 ----
 n
 0

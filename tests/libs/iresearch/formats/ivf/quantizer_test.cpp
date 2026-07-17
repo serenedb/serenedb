@@ -134,8 +134,8 @@ TEST_P(rabitq_quantizer_test, roundtrip_ranking_across_dims) {
   std::array<score_t, n> scores{};
   reader->ComputeBlock(0, n, scores.data());
 
-  EXPECT_LT(scores[0], scores[1]);
-  EXPECT_LT(scores[1], scores[2]);
+  EXPECT_GT(scores[0], scores[1]);
+  EXPECT_GT(scores[1], scores[2]);
 }
 
 INSTANTIATE_TEST_SUITE_P(dims, rabitq_quantizer_test,
@@ -184,9 +184,9 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_l2) {
   std::array<score_t, n> scores{};
   reader->ComputeBlock(0, n, scores.data());
 
-  // L2: lower score means closer. Exact order is p0 < p1 < p2.
-  EXPECT_LT(scores[0], scores[1]);
-  EXPECT_LT(scores[1], scores[2]);
+  // L2 scores are negated distances (larger = nearer), so p0 > p1 > p2.
+  EXPECT_GT(scores[0], scores[1]);
+  EXPECT_GT(scores[1], scores[2]);
 }
 
 TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_inner_product) {
@@ -274,9 +274,9 @@ TEST(pq_quantizer_test, roundtrip_ranking_matches_exact_l2) {
 
   const auto scores = PqRoundtrip(d, pq_m, metric, centroid, points, query);
 
-  // L2: lower score means closer. Exact order is p0 < p1 < p2.
-  EXPECT_LT(scores[0], scores[1]);
-  EXPECT_LT(scores[1], scores[2]);
+  // L2 scores are negated distances (larger = nearer), so p0 > p1 > p2.
+  EXPECT_GT(scores[0], scores[1]);
+  EXPECT_GT(scores[1], scores[2]);
 }
 
 TEST(pq_quantizer_test, roundtrip_ranking_matches_exact_inner_product) {
@@ -372,17 +372,18 @@ TEST(pq_quantizer_test, cluster_spans_multiple_fastscan_blocks_with_odd_m) {
   std::vector<score_t> scores(n);
   reader->ComputeBlock(0, n, scores.data());
 
-  score_t max_near = -std::numeric_limits<score_t>::infinity();
-  score_t min_far = std::numeric_limits<score_t>::infinity();
+  score_t min_near = std::numeric_limits<score_t>::infinity();
+  score_t max_far = -std::numeric_limits<score_t>::infinity();
   for (size_t i = 0; i < n; ++i) {
     if (is_near[i]) {
-      max_near = std::max(max_near, scores[i]);
+      min_near = std::min(min_near, scores[i]);
     } else {
-      min_far = std::min(min_far, scores[i]);
+      max_far = std::max(max_far, scores[i]);
     }
   }
-  // L2: lower score means closer. Near/far are separated by two orders of
-  // magnitude, so quantization noise shouldn't be able to flip the group
-  // ordering even though it can perturb individual scores within a group.
-  EXPECT_LT(max_near, min_far);
+  // L2 scores are negated distances (larger = nearer). Near/far are separated
+  // by two orders of magnitude, so quantization noise shouldn't be able to
+  // flip the group ordering even though it can perturb individual scores
+  // within a group.
+  EXPECT_GT(min_near, max_far);
 }

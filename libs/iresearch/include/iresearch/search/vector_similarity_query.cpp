@@ -494,7 +494,7 @@ class DisjointClusterUnion : public DocIterator {
   doc_id_t advance() final { SDB_UNREACHABLE(); }
   doc_id_t seek(doc_id_t) final { SDB_UNREACHABLE(); }
   uint32_t count() final { SDB_UNREACHABLE(); }
-  uint32_t EmitDocs(doc_id_t*, doc_id_t) final { SDB_UNREACHABLE(); }
+  uint32_t EmitDocs(doc_id_t*, doc_id_t, doc_id_t) final { SDB_UNREACHABLE(); }
   uint32_t EmitScoredDocs(doc_id_t*, score_t*, doc_id_t, const ScoreFunction&,
                           ColumnArgsFetcher*, doc_id_t) final {
     SDB_UNREACHABLE();

@@ -21,5 +21,6 @@ target_sources(
         inverted_index.cpp
         scorer_options.cpp
         store/store.cpp
+        store/wal.cpp
         tokenizer.cpp
 )

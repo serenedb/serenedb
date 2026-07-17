@@ -120,8 +120,7 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
     c.is_pk = true;
     bind(c, *pk);
     if (!_pk_out) {
-      _pk_out = std::make_unique<duckdb::Vector>(
-        pk->Type(), static_cast<duckdb::idx_t>(STANDARD_VECTOR_SIZE));
+      _pk_out = std::make_unique<irs::ColumnReader::VectorScratch>(pk->Type());
     }
   }
   for (const auto& p : _projections) {
@@ -287,7 +286,7 @@ void HitBatcher::ScatterGroup() {
     _sel.set_index(i, Row(_group + i) - anchor);
   }
   for (auto& c : _columns) {
-    auto& out = c.is_pk ? *_pk_out : Scratch(c);
+    auto& out = c.is_pk ? PkOut() : Scratch(c);
     MaterializeColumn(c, anchor, span, hits, _group, out, _group,
                       /*dense=*/false);
   }
@@ -299,6 +298,10 @@ duckdb::Vector& HitBatcher::Scratch(Column& c) {
       c.out_type, static_cast<duckdb::idx_t>(STANDARD_VECTOR_SIZE));
   }
   return *c.scratch;
+}
+
+duckdb::Vector& HitBatcher::PkOut() {
+  return _group == 0 ? _pk_out->Reset() : _pk_out->vector;
 }
 
 void HitBatcher::MaterializeColumn(Column& c, uint64_t anchor,
@@ -422,12 +425,12 @@ HitBatcher::Batch HitBatcher::EmitFiltered(duckdb::DataChunk& output) {
   // Materialize the survivors of the non-filter projected columns (and PK),
   // keyed off the same anchor/span the `_sel` offsets were built against.
   for (auto& c : _columns) {
-    auto& out = c.is_pk ? *_pk_out : output.data[c.slot];
+    auto& out = c.is_pk ? _pk_out->Reset() : output.data[c.slot];
     if (survivors != 0) {
       MaterializeColumn(c, anchor, span, survivors, 0, out, 0, /*dense=*/true);
     }
     if (c.is_pk) {
-      batch.pk = _pk_out.get();
+      batch.pk = &out;
     }
   }
 
@@ -455,16 +458,16 @@ HitBatcher::Batch HitBatcher::Emit(duckdb::DataChunk& output) {
       _sel.set_index(i, Row(i) - anchor);
     }
     for (auto& c : _columns) {
-      auto& out = c.is_pk ? *_pk_out : output.data[c.slot];
+      auto& out = c.is_pk ? _pk_out->Reset() : output.data[c.slot];
       MaterializeColumn(c, anchor, span, _batch, 0, out, 0, /*dense=*/true);
       if (c.is_pk) {
-        batch.pk = _pk_out.get();
+        batch.pk = &out;
       }
     }
   } else {
     for (auto& c : _columns) {
       if (c.is_pk) {
-        batch.pk = _pk_out.get();
+        batch.pk = &_pk_out->vector;
       } else if (c.scratch) {
         output.data[c.slot].Reference(*c.scratch);
       }

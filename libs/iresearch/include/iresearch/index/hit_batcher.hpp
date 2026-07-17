@@ -127,6 +127,7 @@ class HitBatcher {
                          duckdb::idx_t hits, duckdb::idx_t first,
                          duckdb::Vector& out, duckdb::idx_t at, bool dense);
   duckdb::Vector& Scratch(Column& c);
+  duckdb::Vector& PkOut();
   uint64_t Row(duckdb::idx_t i) const noexcept {
     return _docs[i] - irs::doc_limits::min();
   }
@@ -150,7 +151,10 @@ class HitBatcher {
   duckdb::idx_t _batch = 0;
   uint64_t _group_rg_end = 0;
 
-  std::unique_ptr<duckdb::Vector> _pk_out;
+  // Codec scans may zero-copy the output (e.g. FixedSizeScan SetData's the
+  // vector straight at the pinned block), so every batch goes through
+  // VectorScratch::Reset() -- a stale pointer outlives the segment's pins.
+  std::unique_ptr<irs::ColumnReader::VectorScratch> _pk_out;
 
   // Pushed table filters. `_filter_specs` is the query-level description
   // (copied at construction); `_filters` are the per-segment readers/scan

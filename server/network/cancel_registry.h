@@ -107,7 +107,8 @@ class CancelRegistry {
         if (pid == 0) {
           pid = 1;
         }
-        key = (static_cast<uint64_t>(pid) << 32) | static_cast<uint32_t>(entropy);
+        key =
+          (static_cast<uint64_t>(pid) << 32) | static_cast<uint32_t>(entropy);
         if (_tokens.try_emplace(key, token).second) {
           break;
         }

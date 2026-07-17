@@ -217,10 +217,17 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   // below-threshold blocks (its ScoreThresholdAttr is seeded from the boundary
   // before each emit); the HitBatcher score filter still enforces the exact
   // boundary. Only a lower bound (score DESC TOP_N) can seed WAND: an ASC
-  // boundary is an upper bound, which block-max skipping cannot use.
+  // boundary is an upper bound, which block-max skipping cannot use. Honors
+  // the same kill switch as the in-scan top-k rule (IResearchSetScanOrder):
+  // with it set, WAND must not engage anywhere.
+  duckdb::Value disable_topk;
+  const bool topk_disabled =
+    context.TryGetCurrentSetting("sdb_disable_top_k_optimization",
+                                 disable_topk) &&
+    !disable_topk.IsNull() && disable_topk.GetValue<bool>();
   state->wand_streaming =
-    !state->parallel_topk && ss.text_scorer && state->scan_score &&
-    state->score_dynamic_filter &&
+    !topk_disabled && !state->parallel_topk && ss.text_scorer &&
+    state->scan_score && state->score_dynamic_filter &&
     (state->score_dynamic_filter->comparison_type ==
        duckdb::ExpressionType::COMPARE_GREATERTHAN ||
      state->score_dynamic_filter->comparison_type ==

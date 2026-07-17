@@ -163,8 +163,8 @@ void PgBackendPidFunction(duckdb::DataChunk& args,
 // (single superuser), so it matches on the pid half of the cancel key alone,
 // no secret.
 void CancelBackendsByPid(duckdb::DataChunk& args,
-                         duckdb::ExpressionState& state,
-                         duckdb::Vector& result, bool terminate) {
+                         duckdb::ExpressionState& state, duckdb::Vector& result,
+                         bool terminate) {
   auto& conn_ctx = GetSereneDBContext(state.GetContext());
   auto* registry = conn_ctx.GetCancelRegistry();
   duckdb::UnifiedVectorFormat pids;

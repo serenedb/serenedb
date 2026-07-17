@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <yaclib/algo/wait_group.hpp>
-
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -29,6 +27,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <yaclib/algo/wait_group.hpp>
 
 #include "basics/asio_ns.h"
 #include "network/acceptor.h"

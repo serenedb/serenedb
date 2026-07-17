@@ -503,8 +503,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   // and the columns are already bound, so no rebind is needed.
   table_info.SetCatalog(duckdb::Identifier{catalog::kStoreDatabaseName});
   table_info.SetSchema(duckdb::Identifier{"main"});
-  table_info.SetTableName(
-    duckdb::Identifier{catalog::DroppedStoreTableName(table_id)});
+  table_info.SetTableName(duckdb::Identifier{catalog::StoreTableName(table_id)});
   table_info.on_conflict = duckdb::OnCreateConflict::ERROR_ON_CONFLICT;
   table_info.query.reset();
 

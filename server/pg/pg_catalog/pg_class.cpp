@@ -135,8 +135,7 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
         table.Tombstoned()) {
       return 0.0F;
     }
-    auto store_name =
-      catalog::StoreTableName(db_name, schema_name, table.GetName());
+    auto store_name = catalog::StoreTableName(table.GetId());
     duckdb::EntryLookupInfo lookup(
       duckdb::CatalogType::TABLE_ENTRY,
       duckdb::QualifiedName(duckdb::Identifier{catalog::kStoreDatabaseName},

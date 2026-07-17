@@ -99,9 +99,7 @@ duckdb::unique_ptr<duckdb::BaseStatistics> SereneDBTableEntry::GetStatistics(
 
 duckdb::TableCatalogEntry& SereneDBTableEntry::ResolveStoreEntry(
   duckdb::ClientContext& context) const {
-  auto store_name = catalog::StoreTableName(
-    ParentCatalog().GetName().GetIdentifierName(),
-    ParentSchema().name.GetIdentifierName(), name.GetIdentifierName());
+  auto store_name = catalog::StoreTableName(_sdb_table->GetId());
   return duckdb::Catalog::GetEntry(
            context, duckdb::CatalogType::TABLE_ENTRY,
            duckdb::QualifiedName(

@@ -239,7 +239,7 @@ struct TableDrop final : public TableDropBase {
 
  private:
   void FinalizeStore(CatalogStore::WriteContext& ctx) const override {
-    ctx.DropStoreTable(catalog::DroppedStoreTableName(_id));
+    ctx.DropStoreTable(catalog::StoreTableName(_id));
   }
 
   std::string _store_name;

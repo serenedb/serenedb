@@ -57,12 +57,8 @@ namespace {
 // post-checkpoint delta into the iresearch storage. The storages must already
 // be loaded (this runs after InitCatalog) so the index's replay path can
 // resolve them.
-void BindStoreTableIndexes(duckdb::ClientContext& context,
-                           std::string_view database_name,
-                           std::string_view schema_name,
-                           std::string_view table_name) {
-  const auto store_name =
-    catalog::StoreTableName(database_name, schema_name, table_name);
+void BindStoreTableIndexes(duckdb::ClientContext& context, ObjectId table_id) {
+  const auto store_name = catalog::StoreTableName(table_id);
   auto& entry = duckdb::Catalog::GetEntry(
                   context, duckdb::CatalogType::TABLE_ENTRY,
                   duckdb::QualifiedName(
@@ -85,12 +81,7 @@ void InitInvertedIndexes() {
   // insert/delete since the last checkpoint against the (unbound) inverted
   // index; binding the index now replays exactly that delta into the storage.
   // No table rebuild -- recovery cost is O(WAL), not O(table).
-  struct TableCoord {
-    std::string database_name;
-    std::string schema_name;
-    std::string table_name;
-  };
-  std::vector<TableCoord> tables_to_bind;
+  std::vector<ObjectId> tables_to_bind;
   containers::FlatHashSet<ObjectId> seen_tables;
   std::vector<std::shared_ptr<InvertedIndexStorage>> recovering_storages;
   std::vector<std::shared_ptr<InvertedIndexStorage>> static_storages;
@@ -123,9 +114,7 @@ void InitInvertedIndexes() {
         recovering_storages.push_back(std::move(inv_storage));
         const auto table_id = relation->GetId();
         if (seen_tables.insert(table_id).second) {
-          tables_to_bind.push_back(TableCoord{
-            std::string{database->GetName()}, std::string{schema->GetName()},
-            std::string{relation->GetName()}});
+          tables_to_bind.push_back(table_id);
         }
       }
     }
@@ -156,9 +145,8 @@ void InitInvertedIndexes() {
     } catch (...) {  // NOLINT(bugprone-empty-catch)
     }
   };
-  for (const auto& coord : tables_to_bind) {
-    BindStoreTableIndexes(*conn->context, coord.database_name,
-                          coord.schema_name, coord.table_name);
+  for (const auto table_id : tables_to_bind) {
+    BindStoreTableIndexes(*conn->context, table_id);
   }
 
   // The replay committed the delta into each storage's writer, but the

@@ -20,8 +20,10 @@
 
 #include "catalog/store/store.h"
 
+#include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_replace.h>
+#include <fast_float/fast_float.h>
 
 #include <algorithm>
 #include <duckdb/catalog/catalog.hpp>
@@ -41,7 +43,9 @@
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
+#include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
+#include <duckdb/parser/parser.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
@@ -71,9 +75,9 @@ namespace sdb::catalog {
 namespace {
 
 constexpr std::string_view kStoreAlias = kStoreDatabaseName;
-constexpr std::string_view kStoreFile = "store.db";
-constexpr std::string_view kCatalogTable = R"("__sdb_store".main.sdb_catalog)";
-constexpr std::string_view kSequenceTable = R"("__sdb_store".main.sdb_seq)";
+constexpr std::string_view kStoreFile = "data.db";
+constexpr std::string_view kCatalogTable = R"("__sdb_data".main.sdb_catalog)";
+constexpr std::string_view kSequenceTable = R"("__sdb_data".main.sdb_seq)";
 
 void ExecOrFatal(duckdb::Connection& conn, const std::string& sql) {
   auto res = conn.Query(sql);
@@ -140,18 +144,96 @@ absl::Status RunInTransaction(duckdb::Connection& conn, Fn&& fn) {
 
 }  // namespace
 
-std::string StoreTableName(std::string_view database, std::string_view schema,
-                           std::string_view table) {
-  return absl::StrCat(database, ".", schema, ".", table);
+std::string StoreTableName(ObjectId table_id) {
+  return absl::StrCat("t", table_id.id());
 }
 
-std::string DroppedStoreTableName(ObjectId table_id) {
-  return absl::StrCat("sdb_dropped$", table_id.id());
+std::string StoreColumnName(ObjectId column_id) {
+  return absl::StrCat("c", column_id.id());
 }
 
-std::optional<StoreIndexDef> MakeStoreIndexDef(std::string_view database,
-                                               std::string_view schema,
-                                               const Table& table,
+std::string StoreIndexName(ObjectId index_id) {
+  return absl::StrCat("i", index_id.id());
+}
+
+std::optional<ObjectId> ParseStoreId(char prefix, std::string_view name) {
+  if (name.size() < 2 || name[0] != prefix) {
+    return std::nullopt;
+  }
+  uint64_t value = 0;
+  const auto* begin = name.data() + 1;
+  const auto* end = name.data() + name.size();
+  const auto [ptr, ec] = fast_float::from_chars(begin, end, value);
+  if (ec != std::errc{} || ptr != end) {
+    return std::nullopt;
+  }
+  return ObjectId{value};
+}
+
+namespace {
+
+// Store-side SQL (CHECKs, index expression keys, USING casts) is rendered
+// from facade expressions; column references must resolve against the
+// store table's c<id> columns. `ToStore` false maps the other way, for
+// store-side error texts shown to users.
+template<bool ToStore>
+void RewriteRefs(duckdb::unique_ptr<duckdb::ParsedExpression>& expr,
+                 const Table& table) {
+  if (expr->GetExpressionClass() == duckdb::ExpressionClass::COLUMN_REF) {
+    auto& ref = expr->Cast<duckdb::ColumnRefExpression>();
+    const auto& name = ref.GetColumnName().GetIdentifierName();
+    if constexpr (ToStore) {
+      for (const auto& col : table.Columns()) {
+        if (absl::EqualsIgnoreCase(col.GetName(), name)) {
+          auto& names = ref.ColumnNamesMutable();
+          names.clear();
+          names.emplace_back(StoreColumnName(col.GetId()));
+          break;
+        }
+      }
+    } else {
+      if (auto id = ParseStoreId('c', name)) {
+        if (const auto* col = table.ColumnById(*id)) {
+          auto& names = ref.ColumnNamesMutable();
+          names.clear();
+          names.emplace_back(std::string{col->GetName()});
+        }
+      }
+    }
+    return;
+  }
+  duckdb::ParsedExpressionIterator::EnumerateChildren(
+    *expr, [&](duckdb::unique_ptr<duckdb::ParsedExpression>& child) {
+      RewriteRefs<ToStore>(child, table);
+    });
+}
+
+template<bool ToStore>
+std::optional<std::string> RewriteExpr(std::string_view sql_expr,
+                                       const Table& table) try {
+  auto parsed = duckdb::Parser::ParseExpressionList(std::string{sql_expr});
+  if (parsed.size() != 1) {
+    return std::nullopt;
+  }
+  RewriteRefs<ToStore>(parsed[0], table);
+  return parsed[0]->ToString();
+} catch (const std::exception&) {
+  return std::nullopt;
+}
+
+}  // namespace
+
+std::optional<std::string> RewriteExprToStoreNames(std::string_view sql_expr,
+                                                   const Table& table) {
+  return RewriteExpr<true>(sql_expr, table);
+}
+
+std::optional<std::string> RewriteExprToFacadeNames(std::string_view sql_expr,
+                                                    const Table& table) {
+  return RewriteExpr<false>(sql_expr, table);
+}
+
+std::optional<StoreIndexDef> MakeStoreIndexDef(const Table& table,
                                                const Index& index) {
   if (index.GetType() != ObjectType::InvertedIndex &&
       index.GetType() != ObjectType::SecondaryIndex) {
@@ -190,38 +272,41 @@ std::optional<StoreIndexDef> MakeStoreIndexDef(std::string_view database,
     for (auto column : secondary.Columns()) {
       if (column == Column::kInvalidId) {  // expression-key slot
         // duckdb's ART builds and maintains expression keys natively; render
-        // the parsed expression back to SQL for the store CREATE INDEX. The
-        // store table mirrors facade column names, so the text re-binds as-is.
+        // the parsed expression back to SQL for the store CREATE INDEX, with
+        // column references mapped to the store table's c<id> columns.
         const auto& expr = key_expressions[expr_idx++];
         if (!art_indexable(expr.return_type)) {
           return std::nullopt;
         }
-        push_key(absl::StrCat("(", expr.pretty_printed, ")"));
+        auto rewritten = RewriteExprToStoreNames(expr.pretty_printed, table);
+        if (!rewritten) {
+          return std::nullopt;
+        }
+        push_key(absl::StrCat("(", *rewritten, ")"));
         continue;
       }
       const auto* col = table.ColumnById(column);
       if (!col || !art_indexable(col->type)) {
         return std::nullopt;
       }
-      push_key(QuotedIdent(col->GetName()));
+      push_key(StoreColumnName(column));
     }
     if (def.keys.empty()) {
       return std::nullopt;
     }
-    def.table = StoreTableName(database, schema, table.GetName());
+    def.table = StoreTableName(table.GetId());
     return def;
   }
 
-  // Inverted index: the store-side BoundIndex feeds iresearch, so it only needs
-  // the raw column names (catalog-named types are fine there).
+  // Inverted index: the store-side BoundIndex feeds iresearch, so it only
+  // needs the store column names (catalog-named types are fine there).
   auto add_column = [&](Column::Id col_id) -> bool {
-    const auto* col = table.ColumnById(col_id);
-    if (!col) {
+    if (!table.ColumnById(col_id)) {
       return false;
     }
     // GetReferencedColumns() is already de-duped, so each name is appended at
     // most once -- no name-level dedup needed (that would be O(#cols^2)).
-    def.columns.emplace_back(col->GetName());
+    def.columns.push_back(StoreColumnName(col_id));
     return true;
   };
   // Indexed columns plus indexed-expression dependencies must all be in the
@@ -235,18 +320,13 @@ std::optional<StoreIndexDef> MakeStoreIndexDef(std::string_view database,
   if (def.columns.empty()) {
     return std::nullopt;
   }
-  def.table = StoreTableName(database, schema, table.GetName());
+  def.table = StoreTableName(table.GetId());
   return def;
 }
 
-std::string StoreIndexName(ObjectId index_id) {
-  return absl::StrCat("sdb_idx_", index_id.id());
-}
-
-StoreTableDef MakeStoreTableDef(std::string_view database,
-                                std::string_view schema, const Table& table) {
+StoreTableDef MakeStoreTableDef(const Table& table) {
   StoreTableDef def;
-  def.name = StoreTableName(database, schema, table.GetName());
+  def.name = StoreTableName(table.GetId());
   const auto& cols = table.Columns();
   std::vector<size_t> mirror_pos(cols.size(), SIZE_MAX);
   def.columns.reserve(cols.size());
@@ -256,7 +336,7 @@ StoreTableDef MakeStoreTableDef(std::string_view database,
       continue;
     }
     mirror_pos[i] = def.columns.size();
-    def.columns.push_back({std::string{col.GetName()}, col.type});
+    def.columns.push_back({StoreColumnName(col.GetId()), col.type});
   }
   for (const auto& constraint : table.CheckConstraints()) {
     if (auto idx = constraint.IsNotNull(cols)) {
@@ -280,7 +360,9 @@ StoreTableDef MakeStoreTableDef(std::string_view database,
       };
       scan(constraint.expr->GetExpr());
       if (!has_function) {
-        def.checks.push_back(constraint.expr->GetExpr().Copy());
+        auto copy = constraint.expr->GetExpr().Copy();
+        RewriteRefs<true>(copy, table);
+        def.checks.push_back(std::move(copy));
       }
     }
   }
@@ -295,7 +377,7 @@ StoreTableDef MakeStoreTableDef(std::string_view database,
         out.clear();
         return;
       }
-      out.emplace_back(col->GetName());
+      out.push_back(StoreColumnName(col_id));
     }
   };
   names_for(table.PKColumns(), def.pk_columns);
@@ -373,32 +455,6 @@ void CatalogStore::WriteContext::DropStoreTable(std::string name) {
       {
         .name = std::move(name),
       },
-  });
-}
-
-void CatalogStore::WriteContext::RenameStoreTable(std::string name,
-                                                  std::string new_name) {
-  _entries.push_back({
-    .op = Op::RenameStoreTable,
-    .store_table =
-      {
-        .name = std::move(name),
-      },
-    .name_a = std::move(new_name),
-  });
-}
-
-void CatalogStore::WriteContext::RenameStoreColumn(std::string table,
-                                                   std::string name,
-                                                   std::string new_name) {
-  _entries.push_back({
-    .op = Op::RenameStoreColumn,
-    .store_table =
-      {
-        .name = std::move(table),
-      },
-    .name_a = std::move(name),
-    .name_b = std::move(new_name),
   });
 }
 
@@ -713,26 +769,6 @@ absl::Status CatalogStore::ExecuteEntries(
           auto res = _conn->Query(
             absl::StrCat("DROP TABLE IF EXISTS \"", kStoreAlias, "\".main.",
                          QuotedIdent(entry.store_table.name)));
-          if (res->HasError()) {
-            return absl::InternalError(res->GetError());
-          }
-          break;
-        }
-        case WriteContext::Op::RenameStoreTable: {
-          auto res = _conn->Query(
-            absl::StrCat("ALTER TABLE \"", kStoreAlias, "\".main.",
-                         QuotedIdent(entry.store_table.name), " RENAME TO ",
-                         QuotedIdent(entry.name_a)));
-          if (res->HasError()) {
-            return absl::InternalError(res->GetError());
-          }
-          break;
-        }
-        case WriteContext::Op::RenameStoreColumn: {
-          auto res = _conn->Query(absl::StrCat(
-            "ALTER TABLE \"", kStoreAlias, "\".main.",
-            QuotedIdent(entry.store_table.name), " RENAME COLUMN ",
-            QuotedIdent(entry.name_a), " TO ", QuotedIdent(entry.name_b)));
           if (res->HasError()) {
             return absl::InternalError(res->GetError());
           }

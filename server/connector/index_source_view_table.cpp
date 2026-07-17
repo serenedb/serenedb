@@ -60,11 +60,7 @@ duckdb::TableCatalogEntry& ResolveTableEntry(duckdb::ClientContext& context,
 duckdb::TableCatalogEntry& ResolveStoreTableEntry(
   duckdb::ClientContext& context, const duckdb::TableCatalogEntry& scan_entry,
   const catalog::Table& table) {
-  // The scan entry is the facade table or one of its index entries; either
-  // way it shares the table's database and schema.
-  auto store_name = catalog::StoreTableName(
-    scan_entry.ParentCatalog().GetName().GetIdentifierName(),
-    scan_entry.ParentSchema().name.GetIdentifierName(), table.GetName());
+  auto store_name = catalog::StoreTableName(table.GetId());
   return duckdb::Catalog::GetEntry(
            context, duckdb::CatalogType::TABLE_ENTRY,
            duckdb::QualifiedName(

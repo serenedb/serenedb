@@ -534,13 +534,19 @@ void DispatchRecomputeStats(duckdb::ClientContext& context,
       pg::ProgressMetrics::Set(progress->current_relid,
                                static_cast<int64_t>(t.table->GetId().id()));
     }
-    auto store_name =
-      catalog::StoreTableName(t.database, t.schema, t.table->GetName());
+    auto store_name = catalog::StoreTableName(t.table->GetId());
     auto quoted = absl::StrReplaceAll(store_name, {{"\"", "\"\""}});
     std::string column_clause;
     if (!t.column.empty()) {
+      std::string store_column{t.column};
+      for (const auto& col : t.table->Columns()) {
+        if (absl::EqualsIgnoreCase(col.GetName(), t.column)) {
+          store_column = catalog::StoreColumnName(col.GetId());
+          break;
+        }
+      }
       column_clause = absl::StrCat(
-        " (\"", absl::StrReplaceAll(t.column, {{"\"", "\"\""}}), "\")");
+        " (\"", absl::StrReplaceAll(store_column, {{"\"", "\"\""}}), "\")");
     }
     auto result =
       conn.Query(absl::StrCat("VACUUM ANALYZE \"", catalog::kStoreDatabaseName,

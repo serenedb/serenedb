@@ -43,9 +43,9 @@
 namespace sdb::catalog {
 
 // One serenedb table as a real table in the store database holding the row
-// data. `name` is the full pg path as one identifier
-// ("<database>.<schema>.<table>"); it is write-only -- identity stays
-// ObjectId, nothing ever parses it back.
+// data. Every store-side name is derived from the catalog id (t<table_id>,
+// c<column_id>, i<index_id>): ids are immutable, so facade renames never
+// touch the store and recovery keys are rename-proof.
 struct StoreTableColumn {
   std::string name;
   duckdb::LogicalType type;
@@ -68,20 +68,17 @@ struct StoreTableDef {
   std::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> checks;
 };
 
-inline constexpr std::string_view kStoreDatabaseName = "__sdb_store";
+inline constexpr std::string_view kStoreDatabaseName = "__sdb_data";
 
-std::string StoreTableName(std::string_view database, std::string_view schema,
-                           std::string_view table);
+std::string StoreTableName(ObjectId table_id);
 
-// Store-table name of a tombstoned (pending-drop / not-yet-committed CTAS)
-// table. Composable from the ObjectId alone so drop recovery never needs the
-// original names; cannot collide with StoreTableName output (no dots).
-std::string DroppedStoreTableName(ObjectId table_id);
+std::string StoreColumnName(ObjectId column_id);
 
-// Store-side name of an index: id-based ("sdb_idx_<id>"), so drops and
-// recovery never need the user-facing name and facade renames are
-// metadata-only.
 std::string StoreIndexName(ObjectId index_id);
+
+// Id of a store-side name ("t<id>" / "c<id>" / "i<id>") for the given
+// prefix, or nullopt when `name` is not of that shape.
+std::optional<ObjectId> ParseStoreId(char prefix, std::string_view name);
 
 struct StoreIndexDef {
   enum class Kind : uint8_t {
@@ -107,15 +104,23 @@ struct StoreIndexDef {
 class Table;
 class Index;
 
-StoreTableDef MakeStoreTableDef(std::string_view database,
-                                std::string_view schema, const Table& table);
+StoreTableDef MakeStoreTableDef(const Table& table);
+
+// Renders one scalar SQL expression with facade column references mapped to
+// the store table's c<id> columns; nullopt when the text does not parse as
+// exactly one expression.
+std::optional<std::string> RewriteExprToStoreNames(std::string_view sql_expr,
+                                                   const Table& table);
+
+// The inverse: maps c<id> references back to facade column names (used when
+// rendering store-side error texts for users).
+std::optional<std::string> RewriteExprToFacadeNames(std::string_view sql_expr,
+                                                    const Table& table);
 
 // Store mirror of an index, or nullopt when the index is not mirrored
 // (non-Transactional table, expression/INCLUDE columns, or ART-unfriendly
 // key types).
-std::optional<StoreIndexDef> MakeStoreIndexDef(std::string_view database,
-                                               std::string_view schema,
-                                               const Table& table,
+std::optional<StoreIndexDef> MakeStoreIndexDef(const Table& table,
                                                const Index& index);
 
 // Catalog persistence: definitions and sequence counters stored as rows in
@@ -149,9 +154,6 @@ class CatalogStore {
 
     void CreateStoreTable(StoreTableDef def);
     void DropStoreTable(std::string name);
-    void RenameStoreTable(std::string name, std::string new_name);
-    void RenameStoreColumn(std::string table, std::string name,
-                           std::string new_name);
     void DropStoreColumn(std::string table, std::string name);
     // Adds a column. `type_sql` is the SQL type text; `default_sql` is the
     // DEFAULT expression text (empty for none) used to backfill existing rows.
@@ -192,8 +194,6 @@ class CatalogStore {
       DropSequence,
       CreateStoreTable,
       DropStoreTable,
-      RenameStoreTable,
-      RenameStoreColumn,
       DropStoreColumn,
       AddStoreColumn,
       ChangeStoreColumnType,
@@ -214,7 +214,7 @@ class CatalogStore {
       uint64_t sequence_value = 0;
       std::string def;
       // CreateStoreTable: the full definition; other store-table ops use
-      // only `store_table.name` (+ `name_a`/`name_b` rename arguments).
+      // only `store_table.name` (+ `name_a`/`name_b` arguments).
       StoreTableDef store_table;
       StoreIndexDef store_index;
       std::string name_a;

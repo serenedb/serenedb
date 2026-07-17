@@ -216,10 +216,15 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   // WAND-enabled text scorer lets the streaming DocIterator skip
   // below-threshold blocks (its ScoreThresholdAttr is seeded from the boundary
   // before each emit); the HitBatcher score filter still enforces the exact
-  // boundary.
+  // boundary. Only a lower bound (score DESC TOP_N) can seed WAND: an ASC
+  // boundary is an upper bound, which block-max skipping cannot use.
   state->wand_streaming =
     !state->parallel_topk && ss.text_scorer && state->scan_score &&
     state->score_dynamic_filter &&
+    (state->score_dynamic_filter->comparison_type ==
+       duckdb::ExpressionType::COMPARE_GREATERTHAN ||
+     state->score_dynamic_filter->comparison_type ==
+       duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO) &&
     WandEnabled(bind_data.inverted_index.get(), ss.text_scorer);
   ClassifyColumnstoreProjections(*state, bind_data);
 

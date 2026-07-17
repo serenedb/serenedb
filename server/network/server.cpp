@@ -280,6 +280,7 @@ void Server::AddUnixListener(const network::ListenSpec& spec) {
     deps.cancel = &_cancel;
     deps.max_message_bytes = _max_message;
     deps.active = &_active;
+    deps.sessions = &_sessions;
     deps.max_connections = spec.max_connections.value_or(_max_connections);
     deps.auth_timeout = _auth_timeout;
     deps.proxy = spec.proxy;
@@ -294,6 +295,8 @@ void Server::AddUnixListener(const network::ListenSpec& spec) {
     deps.api_keys = _api_key_validator.get();
     deps.bearer = _bearer_validator.get();
     deps.active = &_active;
+    deps.cancel = &_cancel;
+    deps.sessions = &_sessions;
     deps.max_connections = spec.max_connections.value_or(_max_connections);
     deps.cors_origins = _cors_origins;
     deps.proxy = spec.proxy;
@@ -336,6 +339,7 @@ void Server::AddListener(const network::ListenSpec& spec) {
     deps.cancel = &_cancel;
     deps.max_message_bytes = _max_message;
     deps.active = &_active;
+    deps.sessions = &_sessions;
     deps.max_connections = spec.max_connections.value_or(_max_connections);
     deps.auth_timeout = _auth_timeout;
     deps.proxy = spec.proxy;
@@ -357,6 +361,8 @@ void Server::AddListener(const network::ListenSpec& spec) {
     deps.api_keys = _api_key_validator.get();
     deps.bearer = _bearer_validator.get();
     deps.active = &_active;
+    deps.cancel = &_cancel;
+    deps.sessions = &_sessions;
     deps.max_connections = spec.max_connections.value_or(_max_connections);
     deps.cors_origins = _cors_origins;
     deps.proxy = spec.proxy;
@@ -407,24 +413,20 @@ void Server::StartListeners() {
   }
 }
 
-void Server::StopAccepting() noexcept {
+void Server::RequestStop() noexcept {
   for (auto& acceptor : _acceptors) {
     acceptor->Stop();
   }
+  _cancel.TerminateAll();
 }
 
 void Server::stop() {
-  // Join every DuckDB worker BEFORE freeing the io pool. A session's query
-  // pipeline runs on a DuckDB worker and, on completion, pushes result bytes up
-  // into this connection's io-side state (CpuResumer -> IoExecutor, the send
-  // gates). Freeing the io pool while such a worker is mid-push is a
-  // use-after-free. SetThreads cannot help: the regular pool clamps to one
-  // worker unless it is being destroyed, and the DatabaseInstance stays pinned
-  // alive by every session's Connection, so _db.reset() never joins the workers
-  // while sessions exist. Join() reaches zero workers on the live scheduler.
+  // Every session completes here: terminated by RequestStop(), it unwinds on
+  // the live io pool and DuckDB workers against the still-live engine. Only
+  // then can the pool go down -- nothing is parked on it anymore.
+  _sessions.Done();
+  _sessions.Wait();
   if (_pool) {
-    duckdb::TaskScheduler::GetScheduler(DuckDBEngine::Instance().instance())
-      .Join();
     _pool->Stop();
     _pool.reset();
   }

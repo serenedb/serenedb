@@ -56,7 +56,7 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_system_table_entry.h"
 #include "connector/pg_logical_types.h"
-#include "network/pg/cancel_registry.h"
+#include "network/cancel_registry.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/pg_types.h"
@@ -157,13 +157,14 @@ void PgBackendPidFunction(duckdb::DataChunk& args,
                    duckdb::count_t(args.size()));
 }
 
-// Cancel each requested backend's running query by pid -> BOOLEAN per row (true
-// if the pid matched a live backend). Shared by pg_cancel_backend and
-// pg_terminate_backend. Authorised by being a session (single superuser), so it
-// matches on the pid half of the cancel key alone, no secret.
+// Cancel (or, with `terminate`, terminate) each requested backend by pid ->
+// BOOLEAN per row (true if the pid matched a live backend). Shared by
+// pg_cancel_backend and pg_terminate_backend. Authorised by being a session
+// (single superuser), so it matches on the pid half of the cancel key alone,
+// no secret.
 void CancelBackendsByPid(duckdb::DataChunk& args,
                          duckdb::ExpressionState& state,
-                         duckdb::Vector& result) {
+                         duckdb::Vector& result, bool terminate) {
   auto& conn_ctx = GetSereneDBContext(state.GetContext());
   auto* registry = conn_ctx.GetCancelRegistry();
   duckdb::UnifiedVectorFormat pids;
@@ -171,7 +172,7 @@ void CancelBackendsByPid(duckdb::DataChunk& args,
   const auto* pid = duckdb::UnifiedVectorFormat::GetData<int32_t>(pids);
   auto* out = duckdb::FlatVector::GetDataMutable<bool>(result);
   auto& validity = duckdb::FlatVector::ValidityMutable(result);
-  using CancelResult = network::pg::CancelRegistry::CancelResult;
+  using CancelResult = network::CancelRegistry::CancelResult;
   for (duckdb::idx_t i = 0; i < args.size(); ++i) {
     const auto idx = pids.sel->get_index(i);
     if (!pids.validity.RowIsValid(idx)) {
@@ -179,8 +180,8 @@ void CancelBackendsByPid(duckdb::DataChunk& args,
       continue;
     }
     const auto target = static_cast<uint32_t>(pid[idx]);
-    const auto outcome =
-      registry ? registry->CancelByPid(target) : CancelResult::NotFound;
+    const auto outcome = registry ? registry->CancelByPid(target, terminate)
+                                  : CancelResult::NotFound;
     out[i] = outcome == CancelResult::Cancelled;
     if (outcome == CancelResult::Ambiguous) {
       // The pid is the high half of a random key, not a unique OS pid; two
@@ -201,22 +202,15 @@ void CancelBackendsByPid(duckdb::DataChunk& args,
 void PgCancelBackendFunction(duckdb::DataChunk& args,
                              duckdb::ExpressionState& state,
                              duckdb::Vector& result) {
-  CancelBackendsByPid(args, state, result);
+  CancelBackendsByPid(args, state, result, /*terminate=*/false);
 }
 
-// pg_terminate_backend(pid) -> bool: SereneDB cannot drop another session's
-// connection, only interrupt its current query, so this degrades to a cancel
-// and warns. Returns whether the backend was found (its query signalled).
+// pg_terminate_backend(pid) -> bool: interrupt the target backend's current
+// query and stop its session (the connection closes).
 void PgTerminateBackendFunction(duckdb::DataChunk& args,
                                 duckdb::ExpressionState& state,
                                 duckdb::Vector& result) {
-  GetSereneDBContext(state.GetContext())
-    .AddNotice(sdb::pg::SqlErrorData{
-      .errcode = ERRCODE_WARNING,
-      .errmsg = "terminating connections is not supported; "
-                "pg_terminate_backend only cancels the backend's current "
-                "query"});
-  CancelBackendsByPid(args, state, result);
+  CancelBackendsByPid(args, state, result, /*terminate=*/true);
 }
 
 // set_config(name, value, is_local) -> text

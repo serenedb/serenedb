@@ -58,6 +58,7 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+#include <yaclib/algo/wait_group.hpp>
 #include <yaclib/async/future.hpp>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/coro.hpp>
@@ -80,7 +81,7 @@
 #include "network/credentials.h"
 #include "network/gate.h"
 #include "network/io_executor.h"
-#include "network/pg/cancel_registry.h"
+#include "network/cancel_registry.h"
 #include "network/pg/frame_reader.h"
 #include "network/pg/pg_frame_codec.h"
 #include "network/pg/protocol_state.h"
@@ -120,6 +121,9 @@ struct PgServerContext {
   // unlimited). Over-cap connections get 53300 then close.
   std::atomic<uint32_t>* active = nullptr;
   uint32_t max_connections = 0;
+  // Session Run() futures land here (slot taken by the acceptor at spawn) so
+  // Server::stop() can wait for every session to complete.
+  yaclib::WaitGroup<>* sessions = nullptr;
   // Deadline for TLS handshake + startup + auth (0 = off); slowloris guard.
   std::chrono::milliseconds auth_timeout{0};
   // HAProxy PROXY-protocol preface policy (off / optional / require).
@@ -135,7 +139,7 @@ enum class CopyFormat : uint8_t { Other, Text, Binary, Parquet };
 // that own them).
 
 template<SocketKind Kind>
-class PgWireSession
+class PgWireSession final
   : public Transport<Kind, PgWireSession<Kind>>,
     public duckdb::enable_shared_from_this<PgWireSession<Kind>> {
  public:
@@ -154,6 +158,7 @@ class PgWireSession
       _cancel{ctx.cancel},
       _max_message{ctx.max_message_bytes},
       _active{ctx.active},
+      _sessions{ctx.sessions},
       _max_conn{ctx.max_connections},
       _auth_timeout{ctx.auth_timeout},
       _proxy{ctx.proxy},
@@ -171,6 +176,7 @@ class PgWireSession
       _cancel{ctx.cancel},
       _max_message{ctx.max_message_bytes},
       _active{ctx.active},
+      _sessions{ctx.sessions},
       _max_conn{ctx.max_connections},
       _auth_timeout{ctx.auth_timeout},
       _proxy{ctx.proxy},
@@ -188,6 +194,7 @@ class PgWireSession
       _cancel{ctx.cancel},
       _max_message{ctx.max_message_bytes},
       _active{ctx.active},
+      _sessions{ctx.sessions},
       _max_conn{ctx.max_connections},
       _auth_timeout{ctx.auth_timeout},
       _proxy{ctx.proxy},
@@ -195,7 +202,14 @@ class PgWireSession
 
   // Run is the session's sole owner: it grabs the one shared_from_this, starts
   // the writer + cpu futures on a raw `this`, and joins both before it returns.
-  void Start() { Run().Detach(); }
+  void Start() {
+    _cancel_token = std::make_shared<CancelToken>();
+    _cancel_token->session = this->shared_from_this();
+    if (_cancel) {
+      _cancel_key = _cancel->Register(_cancel_token);
+    }
+    _sessions->Consume<false>(Run().ToFuture());
+  }
 
   // Stop hook: wake the COPY feeder and interrupt any running query.
   void OnStop() {
@@ -373,6 +387,7 @@ class PgWireSession
   uint64_t _cancel_key = 0;
   uint32_t _max_message = kDefaultMaxMessageBytes;
   std::atomic<uint32_t>* _active = nullptr;
+  yaclib::WaitGroup<>* _sessions = nullptr;
   uint32_t _max_conn = 0;
   std::chrono::milliseconds _auth_timeout{0};
   ProxyMode _proxy = ProxyMode::Off;

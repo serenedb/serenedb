@@ -35,6 +35,7 @@ Sequence::Sequence(ObjectId schema_id, ObjectId id, SequenceOptions opts)
     _options{std::move(opts)} {
   auto seed = _options.Seed();
   _cnt.store(seed, std::memory_order_release);
+  _horizon = seed;
   _cache_begin.store(seed + 1, std::memory_order_release);
   _cache_end.store(seed, std::memory_order_release);
 }
@@ -52,6 +53,10 @@ std::shared_ptr<Sequence> Sequence::Deserialize(duckdb::Deserializer& src,
   auto seq = std::make_shared<Sequence>(ctx.schema_id, ctx.id, std::move(opts));
   auto persisted = seq->LoadFromDb();
   seq->_cnt.store(persisted, std::memory_order_release);
+  {
+    absl::MutexLock lock{&seq->_cnt_mtx};
+    seq->_horizon = persisted;
+  }
   seq->_cache_begin.store(persisted + 1, std::memory_order_release);
   seq->_cache_end.store(persisted, std::memory_order_release);
   return seq;
@@ -73,8 +78,13 @@ uint64_t Sequence::LoadFromDb() const {
   return value;
 }
 
-void Sequence::Persist(uint64_t value) {
-  GetCatalogStore().PutSequenceValue(GetId(), value);
+void Sequence::PersistHorizon(uint64_t next_end) {
+  if (next_end <= _horizon) {
+    return;
+  }
+  const auto horizon = next_end + kLogAhead;
+  GetCatalogStore().PutSequenceValue(GetId(), horizon);
+  _horizon = horizon;
 }
 
 uint64_t Sequence::ReserveCached(uint64_t count) {
@@ -90,7 +100,7 @@ uint64_t Sequence::ReserveCached(uint64_t count) {
 uint64_t Sequence::AdvanceCounter(uint64_t count) {
   absl::MutexLock lock{&_cnt_mtx};
   const auto cur = _cnt.load(std::memory_order_acquire);
-  Persist(cur + count);
+  PersistHorizon(cur + count);
   return _cnt.fetch_add(count, std::memory_order_acq_rel) + 1;
 }
 
@@ -122,7 +132,7 @@ uint64_t Sequence::RefillCache(uint64_t count) {
 
   uint64_t refill = std::max(count, _options.cache);
   const auto cur = _cnt.load(std::memory_order_acquire);
-  Persist(cur + refill);
+  PersistHorizon(cur + refill);
   auto old_cnt = _cnt.fetch_add(refill, std::memory_order_acq_rel);
   uint64_t new_base = old_cnt + 1;
   _cache_end.store(old_cnt + refill, std::memory_order_release);
@@ -134,7 +144,10 @@ uint64_t Sequence::Read() const { return _cnt.load(std::memory_order_acquire); }
 
 void Sequence::Write(uint64_t value) {
   absl::MutexLock lock{&_cnt_mtx};
-  Persist(value);
+  // setval is exact: the persisted value is what a restart must report, so
+  // no log-ahead here and the horizon collapses back to it.
+  GetCatalogStore().PutSequenceValue(GetId(), value);
+  _horizon = value;
   _cnt.store(value, std::memory_order_release);
   _cache_end.store(value, std::memory_order_release);
   _cache_begin.store(value + 1, std::memory_order_release);

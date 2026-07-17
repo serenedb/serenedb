@@ -22,51 +22,29 @@
 
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
-#include <absl/strings/str_replace.h>
 #include <fast_float/fast_float.h>
 
 #include <algorithm>
-#include <duckdb/catalog/catalog.hpp>
-#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
-#include <duckdb/common/enums/database_modification_type.hpp>
-#include <duckdb/common/exception/binder_exception.hpp>
+#include <cstring>
 #include <duckdb/common/serializer/memory_stream.hpp>
-#include <duckdb/common/types/data_chunk.hpp>
-#include <duckdb/common/types/string_type.hpp>
-#include <duckdb/common/types/value.hpp>
-#include <duckdb/common/types/vector.hpp>
-#include <duckdb/common/vector/unified_vector_format.hpp>
-#include <duckdb/function/table_function.hpp>
-#include <duckdb/main/extension/extension_loader.hpp>
-#include <duckdb/parser/column_definition.hpp>
-#include <duckdb/parser/constraints/check_constraint.hpp>
-#include <duckdb/parser/constraints/foreign_key_constraint.hpp>
-#include <duckdb/parser/constraints/not_null_constraint.hpp>
-#include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
-#include <duckdb/parser/keyword_helper.hpp>
-#include <duckdb/parser/parser.hpp>
-#include <duckdb/parser/parsed_data/alter_table_info.hpp>
-#include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
-#include <duckdb/transaction/meta_transaction.hpp>
+#include <duckdb/parser/parser.hpp>
 #include <exception>
-#include <filesystem>
-#include <initializer_list>
 #include <utility>
 
 #include "basics/assert.h"
 #include "basics/debugging.h"
 #include "basics/down_cast.h"
-#include "basics/duckdb_engine.h"
+#include "basics/file_utils.h"
 #include "basics/log.h"
 #include "basics/static_strings.h"
 #include "catalog/database.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/index.h"
-#include "catalog/inverted_index.h"
 #include "catalog/schema.h"
 #include "catalog/secondary_index.h"
+#include "catalog/store/data_store.h"
 #include "catalog/table.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
@@ -74,73 +52,14 @@
 namespace sdb::catalog {
 namespace {
 
-constexpr std::string_view kStoreAlias = kStoreDatabaseName;
-constexpr std::string_view kStoreFile = "data.db";
-constexpr std::string_view kCatalogTable = R"("__sdb_data".main.sdb_catalog)";
-constexpr std::string_view kSequenceTable = R"("__sdb_data".main.sdb_seq)";
+constexpr uint8_t kRecordVersion = 1;
 
-void ExecOrFatal(duckdb::Connection& conn, const std::string& sql) {
-  auto res = conn.Query(sql);
-  if (res->HasError()) {
-    SDB_FATAL(STARTUP, "catalog store: '", sql, "' failed: ", res->GetError());
-  }
-}
+// Compact once dead records dominate and the file is worth rewriting.
+constexpr uint64_t kCompactMinBytes = 1U << 20U;
 
-duckdb::unique_ptr<duckdb::PreparedStatement> PrepareOrFatal(
-  duckdb::Connection& conn, std::string_view sql) {
-  auto stmt = conn.Prepare(std::string{sql});
-  if (stmt->HasError()) {
-    SDB_FATAL(STARTUP, "catalog store: preparing '", sql,
-              "' failed: ", stmt->GetError());
-  }
-  return stmt;
-}
-
-absl::Status Exec(duckdb::PreparedStatement& stmt,
-                  duckdb::vector<duckdb::Value> values) {
-  auto res = stmt.Execute(values, /*allow_stream_result=*/false);
-  if (res->HasError()) {
-    return absl::InternalError(res->GetError());
-  }
-  return absl::OkStatus();
-}
-
-duckdb::Value IdValue(ObjectId id) { return duckdb::Value::UBIGINT(id.id()); }
-
-duckdb::Value TypeValue(ObjectType type) {
-  return duckdb::Value::UTINYINT(static_cast<uint8_t>(type));
-}
-
-duckdb::Value DefValue(std::string_view def) {
-  return duckdb::Value::BLOB(duckdb::const_data_ptr_cast(def.data()),
-                             def.size());
-}
-
-std::string QuotedIdent(const std::string& name) {
-  return duckdb::KeywordHelper::WriteQuoted(name, '"');
-}
-
-template<typename Fn>
-absl::Status RunInTransaction(duckdb::Connection& conn, Fn&& fn) {
-  try {
-    conn.BeginTransaction();
-  } catch (const std::exception& e) {
-    return absl::InternalError(e.what());
-  }
-  auto r = [&]() noexcept { return fn(); }();
-  try {
-    if (r.ok()) {
-      conn.Commit();
-    } else {
-      conn.Rollback();
-    }
-  } catch (const std::exception& e) {
-    if (r.ok()) {
-      return absl::InternalError(e.what());
-    }
-  }
-  return r;
-}
+const CatalogStore::Key kPendingAlterKey{id::kInstance,
+                                         ObjectType::PendingAlter,
+                                         id::kInstance};
 
 }  // namespace
 
@@ -611,6 +530,158 @@ void CatalogStore::WriteContext::WriteTombstone(ObjectId parent_id,
   PutDefinition(parent_id, ObjectType::Tombstone, id, {});
 }
 
+namespace {
+
+bool IsCatalogRecord(CatalogStore::Op op) {
+  switch (op) {
+    case CatalogStore::Op::PutDefinition:
+    case CatalogStore::Op::DropDefinition:
+    case CatalogStore::Op::PutSequence:
+    case CatalogStore::Op::DropSequence:
+    case CatalogStore::Op::DropByParentType:
+    case CatalogStore::Op::DropByParent:
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool IsConstructiveStoreOp(CatalogStore::Op op) {
+  switch (op) {
+    case CatalogStore::Op::CreateStoreTable:
+    case CatalogStore::Op::AddStoreColumn:
+    case CatalogStore::Op::AddStoreNotNull:
+    case CatalogStore::Op::AddStoreCheck:
+    case CatalogStore::Op::AddStorePrimaryKey:
+    case CatalogStore::Op::AddStoreUnique:
+    case CatalogStore::Op::CreateStoreIndex:
+      return true;
+    default:
+      return false;
+  }
+}
+
+void SerializeRecords(std::span<const CatalogStore::Entry> records,
+                      duckdb::MemoryStream& stream) {
+  stream.Write<uint8_t>(kRecordVersion);
+  stream.Write<uint32_t>(static_cast<uint32_t>(records.size()));
+  for (const auto& record : records) {
+    stream.Write<uint8_t>(static_cast<uint8_t>(record.op));
+    switch (record.op) {
+      case CatalogStore::Op::PutDefinition:
+        stream.Write<uint64_t>(record.key.parent_id.id());
+        stream.Write<uint8_t>(static_cast<uint8_t>(record.key.type));
+        stream.Write<uint64_t>(record.key.id.id());
+        stream.Write<uint32_t>(static_cast<uint32_t>(record.def.size()));
+        stream.WriteData(
+          reinterpret_cast<const duckdb::data_t*>(record.def.data()),
+          record.def.size());
+        break;
+      case CatalogStore::Op::DropDefinition:
+        stream.Write<uint64_t>(record.key.parent_id.id());
+        stream.Write<uint8_t>(static_cast<uint8_t>(record.key.type));
+        stream.Write<uint64_t>(record.key.id.id());
+        break;
+      case CatalogStore::Op::PutSequence:
+        stream.Write<uint64_t>(record.key.id.id());
+        stream.Write<uint64_t>(record.sequence_value);
+        break;
+      case CatalogStore::Op::DropSequence:
+        stream.Write<uint64_t>(record.key.id.id());
+        break;
+      case CatalogStore::Op::DropByParentType:
+        stream.Write<uint64_t>(record.key.parent_id.id());
+        stream.Write<uint8_t>(static_cast<uint8_t>(record.key.type));
+        break;
+      case CatalogStore::Op::DropByParent:
+        stream.Write<uint64_t>(record.key.parent_id.id());
+        break;
+      default:
+        SDB_ASSERT(false, "store op in a catalog frame");
+        break;
+    }
+  }
+}
+
+// Forward cursor over a checksummed record payload; bounds enforced with
+// SDB_ENSURE because a corrupted-but-checksum-valid frame is a fatal
+// invariant break, not a truncation.
+struct RecordCursor {
+  const uint8_t* p;
+  const uint8_t* end;
+
+  explicit RecordCursor(std::span<const uint8_t> buf)
+    : p{buf.data()}, end{buf.data() + buf.size()} {}
+
+  template<typename T>
+  T Read() {
+    SDB_ENSURE(p + sizeof(T) <= end, "catalog wal: truncated record");
+    T v;
+    std::memcpy(&v, p, sizeof(T));
+    p += sizeof(T);
+    return v;
+  }
+
+  std::string_view ReadBytes(size_t n) {
+    SDB_ENSURE(p + n <= end, "catalog wal: truncated record payload");
+    std::string_view v{reinterpret_cast<const char*>(p), n};
+    p += n;
+    return v;
+  }
+};
+
+std::vector<CatalogStore::Entry> ParseRecords(std::span<const uint8_t> frame) {
+  RecordCursor cursor{frame};
+  const auto version = cursor.Read<uint8_t>();
+  SDB_ENSURE(version == kRecordVersion, "catalog wal: unknown record version ",
+             version);
+  const auto count = cursor.Read<uint32_t>();
+  std::vector<CatalogStore::Entry> records;
+  records.reserve(count);
+  for (uint32_t i = 0; i < count; ++i) {
+    CatalogStore::Entry record;
+    record.op = static_cast<CatalogStore::Op>(cursor.Read<uint8_t>());
+    switch (record.op) {
+      case CatalogStore::Op::PutDefinition: {
+        record.key.parent_id = ObjectId{cursor.Read<uint64_t>()};
+        record.key.type = static_cast<ObjectType>(cursor.Read<uint8_t>());
+        record.key.id = ObjectId{cursor.Read<uint64_t>()};
+        const auto len = cursor.Read<uint32_t>();
+        record.def = std::string{cursor.ReadBytes(len)};
+        break;
+      }
+      case CatalogStore::Op::DropDefinition:
+        record.key.parent_id = ObjectId{cursor.Read<uint64_t>()};
+        record.key.type = static_cast<ObjectType>(cursor.Read<uint8_t>());
+        record.key.id = ObjectId{cursor.Read<uint64_t>()};
+        break;
+      case CatalogStore::Op::PutSequence:
+        record.key.id = ObjectId{cursor.Read<uint64_t>()};
+        record.sequence_value = cursor.Read<uint64_t>();
+        break;
+      case CatalogStore::Op::DropSequence:
+        record.key.id = ObjectId{cursor.Read<uint64_t>()};
+        break;
+      case CatalogStore::Op::DropByParentType:
+        record.key.parent_id = ObjectId{cursor.Read<uint64_t>()};
+        record.key.type = static_cast<ObjectType>(cursor.Read<uint8_t>());
+        break;
+      case CatalogStore::Op::DropByParent:
+        record.key.parent_id = ObjectId{cursor.Read<uint64_t>()};
+        break;
+      default:
+        SDB_FATAL(STARTUP, "catalog wal: unknown record kind ",
+                  static_cast<int>(record.op));
+        break;
+    }
+    records.push_back(std::move(record));
+  }
+  SDB_ENSURE(cursor.p == cursor.end, "catalog wal: trailing record bytes");
+  return records;
+}
+
+}  // namespace
+
 CatalogStore::CatalogStore() {
   SDB_ASSERT(gInstance == nullptr);
   gInstance = this;
@@ -619,679 +690,305 @@ CatalogStore::CatalogStore() {
 CatalogStore::~CatalogStore() { gInstance = nullptr; }
 
 void CatalogStore::Initialize(std::string_view database_directory) {
-  namespace fs = std::filesystem;
-  const auto dir =
-    fs::path{database_directory} / StaticStrings::kCatalogStoreRoot;
-  std::error_code ec;
-  fs::create_directories(dir, ec);
-  if (ec) {
-    SDB_FATAL(STARTUP, "catalog store: cannot create directory '", dir.string(),
-              "': ", ec.message());
-  }
-  const auto file = (dir / kStoreFile).string();
-
+  const auto dir = basics::file_utils::BuildFilename(
+    std::string{database_directory}, std::string{StaticStrings::kCatalogRoot});
   {
     absl::MutexLock lock{&_mutex};
-    absl::MutexLock seq_lock{&_seq_mutex};
-    _conn = DuckDBEngine::Instance().CreateConnection();
-    _seq_conn = DuckDBEngine::Instance().CreateConnection();
-
-    // HIDDEN keeps the store out of catalog enumeration (SHOW TABLES,
-    // duckdb_tables/databases, GetAllSchemas); qualified name lookups
-    // ("__sdb_store".main.x) still resolve.
-    ExecOrFatal(
-      *_conn, absl::StrCat("ATTACH '", absl::StrReplaceAll(file, {{"'", "''"}}),
-                           "' AS \"", kStoreAlias, "\" (HIDDEN true)"));
-    ExecOrFatal(*_conn,
-                absl::StrCat("CREATE TABLE IF NOT EXISTS ", kCatalogTable,
-                             " (parent_id UBIGINT, type UTINYINT, id UBIGINT, "
-                             "def BLOB)"));
-    ExecOrFatal(*_conn,
-                absl::StrCat("CREATE TABLE IF NOT EXISTS ", kSequenceTable,
-                             " (id UBIGINT, counter UBIGINT)"));
-
-    _delete_definition = PrepareOrFatal(
-      *_conn, absl::StrCat("DELETE FROM ", kCatalogTable,
-                           " WHERE parent_id = $1 AND type = $2 AND id = $3"));
-    _insert_definition = PrepareOrFatal(
-      *_conn,
-      absl::StrCat("INSERT INTO ", kCatalogTable, " VALUES ($1, $2, $3, $4)"));
-    _delete_by_parent_type = PrepareOrFatal(
-      *_conn, absl::StrCat("DELETE FROM ", kCatalogTable,
-                           " WHERE parent_id = $1 AND type = $2"));
-    _delete_by_parent = PrepareOrFatal(
-      *_conn,
-      absl::StrCat("DELETE FROM ", kCatalogTable, " WHERE parent_id = $1"));
-    _select_definitions = PrepareOrFatal(
-      *_conn, absl::StrCat("SELECT id, def FROM ", kCatalogTable,
-                           " WHERE parent_id = $1 AND type = $2 ORDER BY id"));
-    _delete_sequence_batch = PrepareOrFatal(
-      *_conn, absl::StrCat("DELETE FROM ", kSequenceTable, " WHERE id = $1"));
-    _insert_sequence_batch = PrepareOrFatal(
-      *_conn, absl::StrCat("INSERT INTO ", kSequenceTable, " VALUES ($1, $2)"));
-
-    _select_sequence = PrepareOrFatal(
-      *_seq_conn,
-      absl::StrCat("SELECT counter FROM ", kSequenceTable, " WHERE id = $1"));
-    _delete_sequence = PrepareOrFatal(
-      *_seq_conn,
-      absl::StrCat("DELETE FROM ", kSequenceTable, " WHERE id = $1"));
-    _insert_sequence = PrepareOrFatal(
-      *_seq_conn,
-      absl::StrCat("INSERT INTO ", kSequenceTable, " VALUES ($1, $2)"));
+    _wal.Open(dir, [&](std::span<const uint8_t> frame) {
+      _mutex.AssertHeld();
+      ApplyRecords(ParseRecords(frame));
+    });
   }
-
   EnsureSystemDatabase();
 }
 
-void CatalogStore::Shutdown() {
-  {
-    absl::MutexLock lock{&_mutex};
-    absl::MutexLock seq_lock{&_seq_mutex};
-    _delete_definition.reset();
-    _insert_definition.reset();
-    _delete_by_parent_type.reset();
-    _delete_by_parent.reset();
-    _select_definitions.reset();
-    _delete_sequence_batch.reset();
-    _insert_sequence_batch.reset();
-    _select_sequence.reset();
-    _delete_sequence.reset();
-    _insert_sequence.reset();
-    _conn.reset();
-    _seq_conn.reset();
-  }
-  auto conn = DuckDBEngine::Instance().CreateConnection();
-  auto res = conn->Query(absl::StrCat("DETACH \"", kStoreAlias, "\""));
-  if (res->HasError()) {
-    SDB_WARN(STARTUP, "catalog store: detach failed: ", res->GetError());
-  }
-}
+void CatalogStore::Shutdown() { _wal.Close(); }
 
-absl::Status CatalogStore::ExecuteEntries(
-  std::vector<WriteContext::Entry>& entries) {
-  absl::MutexLock lock{&_mutex};
-  return RunInTransaction(*_conn, [&]() -> absl::Status {
-    for (const auto& entry : entries) {
-      switch (entry.op) {
-        case WriteContext::Op::PutDefinition: {
-          if (auto r = Exec(*_delete_definition,
-                            {IdValue(entry.key.parent_id),
-                             TypeValue(entry.key.type), IdValue(entry.key.id)});
-              !r.ok()) {
-            return r;
-          }
-          if (auto r =
-                Exec(*_insert_definition,
-                     {IdValue(entry.key.parent_id), TypeValue(entry.key.type),
-                      IdValue(entry.key.id), DefValue(entry.def)});
-              !r.ok()) {
-            return r;
-          }
-          break;
+void CatalogStore::ApplyRecords(std::span<const Entry> records) {
+  for (const auto& record : records) {
+    switch (record.op) {
+      case Op::PutDefinition: {
+        auto& defs =
+          _defs[{record.key.parent_id.id(),
+                 static_cast<uint8_t>(record.key.type)}];
+        auto it = std::lower_bound(defs.begin(), defs.end(), record.key.id,
+                                   [](const BootDef& lhs, ObjectId id) {
+                                     return lhs.id.id() < id.id();
+                                   });
+        if (it != defs.end() && it->id == record.key.id) {
+          it->def = record.def;
+          ++_dead_records;
+        } else {
+          defs.insert(it, BootDef{record.key.id, record.def});
+          ++_live_records;
         }
-        case WriteContext::Op::DropDefinition: {
-          if (auto r = Exec(*_delete_definition,
-                            {IdValue(entry.key.parent_id),
-                             TypeValue(entry.key.type), IdValue(entry.key.id)});
-              !r.ok()) {
-            return r;
-          }
-          break;
-        }
-        case WriteContext::Op::PutSequence: {
-          if (auto r = Exec(*_delete_sequence_batch, {IdValue(entry.key.id)});
-              !r.ok()) {
-            return r;
-          }
-          if (auto r = Exec(*_insert_sequence_batch,
-                            {IdValue(entry.key.id),
-                             duckdb::Value::UBIGINT(entry.sequence_value)});
-              !r.ok()) {
-            return r;
-          }
-          break;
-        }
-        case WriteContext::Op::DropSequence: {
-          if (auto r = Exec(*_delete_sequence_batch, {IdValue(entry.key.id)});
-              !r.ok()) {
-            return r;
-          }
-          break;
-        }
-        case WriteContext::Op::CreateStoreTable: {
-          if (auto r = ExecuteCreateStoreTable(entry.store_table); !r.ok()) {
-            return r;
-          }
-          break;
-        }
-        case WriteContext::Op::DropStoreTable: {
-          auto res = _conn->Query(
-            absl::StrCat("DROP TABLE IF EXISTS \"", kStoreAlias, "\".main.",
-                         QuotedIdent(entry.store_table.name)));
-          if (res->HasError()) {
-            return absl::InternalError(res->GetError());
-          }
-          break;
-        }
-        case WriteContext::Op::DropStoreCheck: {
-          try {
-            auto& context = *_conn->context;
-            duckdb::AlterEntryData data{
-              duckdb::QualifiedName{duckdb::Identifier{kStoreAlias},
-                                    duckdb::Identifier{"main"},
-                                    duckdb::Identifier{entry.store_table.name}},
-              duckdb::OnEntryNotFound::RETURN_NULL};
-            duckdb::DropConstraintInfo info{std::move(data), entry.name_a, true,
-                                            false};
-            auto& catalog = duckdb::Catalog::GetCatalog(
-              context, duckdb::Identifier{kStoreAlias});
-            catalog.Alter(context, info);
-          } catch (const std::exception& e) {
-            return absl::InternalError(e.what());
-          }
-          break;
-        }
-        case WriteContext::Op::DropStoreNotNull: {
-          auto res = _conn->Query(
-            absl::StrCat("ALTER TABLE \"", kStoreAlias, "\".main.",
-                         QuotedIdent(entry.store_table.name), " ALTER COLUMN ",
-                         QuotedIdent(entry.name_a), " DROP NOT NULL"));
-          if (res->HasError()) {
-            return absl::InternalError(res->GetError());
-          }
-          break;
-        }
-        case WriteContext::Op::AddStoreNotNull: {
-          auto res = _conn->Query(
-            absl::StrCat("ALTER TABLE \"", kStoreAlias, "\".main.",
-                         QuotedIdent(entry.store_table.name), " ALTER COLUMN ",
-                         QuotedIdent(entry.name_a), " SET NOT NULL"));
-          if (res->HasError()) {
-            return absl::InternalError(res->GetError());
-          }
-          break;
-        }
-        case WriteContext::Op::AddStoreCheck: {
-          auto res =
-            _conn->Query(absl::StrCat("ALTER TABLE \"", kStoreAlias, "\".main.",
-                                      QuotedIdent(entry.store_table.name),
-                                      " ADD CHECK (", entry.name_a, ")"));
-          if (res->HasError()) {
-            return absl::InternalError(res->GetError());
-          }
-          break;
-        }
-        case WriteContext::Op::AddStorePrimaryKey: {
-          std::string cols;
-          for (const auto& c : entry.store_table.pk_columns) {
-            if (!cols.empty()) {
-              cols += ", ";
-            }
-            cols += QuotedIdent(c);
-          }
-          auto res =
-            _conn->Query(absl::StrCat("ALTER TABLE \"", kStoreAlias, "\".main.",
-                                      QuotedIdent(entry.store_table.name),
-                                      " ADD PRIMARY KEY (", cols, ")"));
-          if (res->HasError()) {
-            return absl::InternalError(res->GetError());
-          }
-          break;
-        }
-        case WriteContext::Op::AddStoreUnique: {
-          std::string cols;
-          for (const auto& c : entry.store_table.unique_constraints.front()) {
-            if (!cols.empty()) {
-              cols += ", ";
-            }
-            cols += QuotedIdent(c);
-          }
-          auto res = _conn->Query(absl::StrCat(
-            "ALTER TABLE \"", kStoreAlias, "\".main.",
-            QuotedIdent(entry.store_table.name), " ADD UNIQUE (", cols, ")"));
-          if (res->HasError()) {
-            return absl::InternalError(res->GetError());
-          }
-          break;
-        }
-        case WriteContext::Op::CreateStoreIndex: {
-          const auto& def = entry.store_index;
-          std::string sql;
-          if (def.kind == StoreIndexDef::Kind::Inverted) {
-            std::string cols;
-            for (const auto& name : def.columns) {
-              if (!cols.empty()) {
-                cols += ", ";
-              }
-              cols += QuotedIdent(name);
-            }
-            sql = absl::StrCat("CREATE INDEX ",
-                               QuotedIdent(StoreIndexName(def.index_id)),
-                               " ON \"", kStoreAlias, "\".main.",
-                               QuotedIdent(def.table), " USING inverted(", cols,
-                               ") WITH (sdb_table_id=", def.table_id.id(),
-                               ", sdb_index_id=", def.index_id.id(), ")");
-          } else {
-            // def.keys already holds per-key SQL in order (quoted column
-            // identifiers or parenthesized expressions); join verbatim.
-            std::string cols;
-            for (const auto& key : def.keys) {
-              if (!cols.empty()) {
-                cols += ", ";
-              }
-              cols += key;
-            }
-            sql = absl::StrCat("CREATE ", def.unique ? "UNIQUE " : "", "INDEX ",
-                               QuotedIdent(StoreIndexName(def.index_id)),
-                               " ON \"", kStoreAlias, "\".main.",
-                               QuotedIdent(def.table), " (", cols, ")");
-          }
-          auto res = _conn->Query(sql);
-          if (res->HasError()) {
-            return absl::InternalError(res->GetError());
-          }
-          break;
-        }
-        case WriteContext::Op::DropStoreIndex: {
-          auto res = _conn->Query(absl::StrCat(
-            "DROP INDEX IF EXISTS \"", kStoreAlias, "\".main.",
-            QuotedIdent(StoreIndexName(entry.store_index.index_id))));
-          if (res->HasError()) {
-            return absl::InternalError(res->GetError());
-          }
-          break;
-        }
-        case WriteContext::Op::DropStoreForeignKey: {
-          try {
-            auto& context = *_conn->context;
-            duckdb::AlterEntryData data{
-              duckdb::QualifiedName{duckdb::Identifier{kStoreAlias},
-                                    duckdb::Identifier{"main"},
-                                    duckdb::Identifier{entry.store_table.name}},
-              duckdb::OnEntryNotFound::RETURN_NULL};
-            duckdb::AlterForeignKeyInfo info{
-              std::move(data),
-              duckdb::Identifier{entry.name_a},
-              {},
-              {},
-              {},
-              {},
-              duckdb::AlterForeignKeyType::AFT_DELETE};
-            auto& catalog = duckdb::Catalog::GetCatalog(
-              context, duckdb::Identifier{kStoreAlias});
-            catalog.Alter(context, info);
-          } catch (const std::exception& e) {
-            return absl::InternalError(e.what());
-          }
-          break;
-        }
-        case WriteContext::Op::DropStoreColumn: {
-          auto res = _conn->Query(
-            absl::StrCat("ALTER TABLE \"", kStoreAlias, "\".main.",
-                         QuotedIdent(entry.store_table.name), " DROP COLUMN ",
-                         QuotedIdent(entry.name_a)));
-          if (res->HasError()) {
-            return absl::InternalError(res->GetError());
-          }
-          break;
-        }
-        case WriteContext::Op::AddStoreColumn: {
-          std::string base =
-            absl::StrCat("ALTER TABLE \"", kStoreAlias, "\".main.",
-                         QuotedIdent(entry.store_table.name), " ADD COLUMN ",
-                         QuotedIdent(entry.name_a), " ", entry.name_b);
-          std::string sql = base;
-          if (!entry.def.empty()) {
-            absl::StrAppend(&sql, " DEFAULT ", entry.def);
-          }
-          auto res = _conn->Query(sql);
-          if (res->HasError() && !entry.def.empty()) {
-            // The DEFAULT may call a function the store connection can't
-            // resolve (sequences, user macros bind facade-side). Add the
-            // column without it; existing rows get NULL and the facade fills
-            // the default for future inserts.
-            SDB_WARN(GENERAL, "store table \"", entry.store_table.name,
-                     "\": ADD COLUMN \"", entry.name_a,
-                     "\" DEFAULT not mirrored: ", res->GetError());
-            res = _conn->Query(base);
-          }
-          if (res->HasError()) {
-            return absl::InternalError(res->GetError());
-          }
-          break;
-        }
-        case WriteContext::Op::ChangeStoreColumnType: {
-          std::string sql =
-            absl::StrCat("ALTER TABLE \"", kStoreAlias, "\".main.",
-                         QuotedIdent(entry.store_table.name), " ALTER COLUMN ",
-                         QuotedIdent(entry.name_a), " TYPE ", entry.name_b);
-          if (!entry.def.empty()) {
-            absl::StrAppend(&sql, " USING ", entry.def);
-          }
-          auto res = _conn->Query(sql);
-          if (res->HasError()) {
-            return absl::InternalError(res->GetError());
-          }
-          break;
-        }
+        break;
       }
+      case Op::DropDefinition: {
+        auto it = _defs.find(
+          {record.key.parent_id.id(), static_cast<uint8_t>(record.key.type)});
+        if (it == _defs.end()) {
+          ++_dead_records;
+          break;
+        }
+        auto& defs = it->second;
+        auto pos = std::lower_bound(defs.begin(), defs.end(), record.key.id,
+                                    [](const BootDef& lhs, ObjectId id) {
+                                      return lhs.id.id() < id.id();
+                                    });
+        if (pos != defs.end() && pos->id == record.key.id) {
+          defs.erase(pos);
+          --_live_records;
+          _dead_records += 2;
+        } else {
+          ++_dead_records;
+        }
+        break;
+      }
+      case Op::PutSequence: {
+        absl::MutexLock seq_lock{&_seq_mutex};
+        auto [it, inserted] =
+          _sequences.insert_or_assign(record.key.id.id(),
+                                      record.sequence_value);
+        if (inserted) {
+          ++_live_records;
+        } else {
+          ++_dead_records;
+        }
+        break;
+      }
+      case Op::DropSequence: {
+        absl::MutexLock seq_lock{&_seq_mutex};
+        if (_sequences.erase(record.key.id.id()) > 0) {
+          --_live_records;
+          _dead_records += 2;
+        } else {
+          ++_dead_records;
+        }
+        break;
+      }
+      case Op::DropByParentType: {
+        auto it = _defs.find(
+          {record.key.parent_id.id(), static_cast<uint8_t>(record.key.type)});
+        if (it != _defs.end()) {
+          _live_records -= it->second.size();
+          _dead_records += it->second.size() + 1;
+          _defs.erase(it);
+        } else {
+          ++_dead_records;
+        }
+        break;
+      }
+      case Op::DropByParent: {
+        ++_dead_records;
+        for (auto it = _defs.begin(); it != _defs.end();) {
+          if (it->first.first == record.key.parent_id.id()) {
+            _live_records -= it->second.size();
+            _dead_records += it->second.size();
+            _defs.erase(it++);
+          } else {
+            ++it;
+          }
+        }
+        break;
+      }
+      default:
+        SDB_ASSERT(false, "store op applied to catalog maps");
+        break;
     }
-    return absl::OkStatus();
-  });
+  }
 }
 
-absl::Status CatalogStore::ExecuteCreateStoreTable(const StoreTableDef& def) {
-  auto r = ExecuteCreateStoreTableImpl(def, /*with_checks=*/true);
-  if (!r.ok() && !def.checks.empty()) {
-    // CHECK expressions may reference facade-only types or functions the store
-    // catalog cannot bind. The store table omits them; the facade-bound CHECK
-    // is carried into every write plan instead (RetargetStoreConstraints), so
-    // it is still enforced on INSERT/UPDATE/upsert.
-    auto retry = ExecuteCreateStoreTableImpl(def, /*with_checks=*/false);
-    if (retry.ok()) {
-      SDB_TRACE(GENERAL, "store table \"", def.name,
-                "\": CHECK constraints kept facade-side: ", r.message());
-      return retry;
-    }
-  }
-  return r;
+void CatalogStore::AppendBatch(std::span<const Entry> records) {
+  SDB_ASSERT(!records.empty());
+  duckdb::MemoryStream stream;
+  SerializeRecords(records, stream);
+  _wal.Append({stream.GetData(), stream.GetPosition()});
+  ApplyRecords(records);
 }
 
-absl::Status CatalogStore::ExecuteCreateStoreTableImpl(const StoreTableDef& def,
-                                                       bool with_checks) try {
-  auto info = duckdb::make_uniq<duckdb::CreateTableInfo>(duckdb::QualifiedName{
-    duckdb::Identifier{kStoreAlias}, duckdb::Identifier{"main"},
-    duckdb::Identifier{def.name}});
-  for (const auto& col : def.columns) {
-    info->columns.AddColumn(
-      duckdb::ColumnDefinition{duckdb::Identifier{col.name}, col.type});
-  }
-  for (auto idx : def.not_null) {
-    info->constraints.push_back(
-      duckdb::make_uniq<duckdb::NotNullConstraint>(duckdb::LogicalIndex{idx}));
-  }
-  if (!def.pk_columns.empty()) {
-    duckdb::vector<duckdb::Identifier> pk;
-    pk.reserve(def.pk_columns.size());
-    for (const auto& name : def.pk_columns) {
-      pk.emplace_back(name);
-    }
-    info->constraints.push_back(
-      duckdb::make_uniq<duckdb::UniqueConstraint>(std::move(pk), true));
-  }
-  for (const auto& unique : def.unique_constraints) {
-    duckdb::vector<duckdb::Identifier> names;
-    names.reserve(unique.size());
-    for (const auto& name : unique) {
-      names.emplace_back(name);
-    }
-    info->constraints.push_back(
-      duckdb::make_uniq<duckdb::UniqueConstraint>(std::move(names), false));
-  }
-  for (const auto& fk : def.foreign_keys) {
-    duckdb::vector<duckdb::Identifier> fk_cols;
-    duckdb::vector<duckdb::Identifier> pk_cols;
-    for (const auto& name : fk.columns) {
-      fk_cols.emplace_back(name);
-    }
-    for (const auto& name : fk.referenced_columns) {
-      pk_cols.emplace_back(name);
-    }
-    duckdb::ForeignKeyInfo fk_info;
-    fk_info.type = duckdb::ForeignKeyType::FK_TYPE_FOREIGN_KEY_TABLE;
-    fk_info.table = duckdb::Identifier{fk.referenced_table};
-    info->constraints.push_back(duckdb::make_uniq<duckdb::ForeignKeyConstraint>(
-      std::move(pk_cols), std::move(fk_cols), std::move(fk_info)));
-  }
-  if (with_checks) {
-    for (const auto& check : def.checks) {
-      info->constraints.push_back(
-        duckdb::make_uniq<duckdb::CheckConstraint>(check->Copy()));
-    }
-  }
-  auto& context = *_conn->context;
-  auto& catalog =
-    duckdb::Catalog::GetCatalog(context, duckdb::Identifier{kStoreAlias});
-  // Acquire the store's (shared) checkpoint lock before creating the table.
-  // The direct catalog.CreateTable() call bypasses the statement-execution
-  // path that normally registers the modification and takes this lock (which
-  // serenedb's DROP/ALTER do go through, via _conn->Query). Without it, a
-  // store table can be created concurrently with a store checkpoint; the new
-  // table is then not in the checkpoint's snapshot, so MergeCheckpointDeltas
-  // never merges its index's added_data delta -> the entry is stranded -> a
-  // later delete fails "0 out of 1" -> "Failed to rollback transaction".
-  duckdb::MetaTransaction::Get(context).ModifyDatabase(
-    catalog.GetAttached(),
-    duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY);
-  SDB_WAIT_ON_FAILURE("pause_store_create_table");
-  catalog.CreateTable(context, std::move(info));
-  return absl::OkStatus();
-} catch (const std::exception& e) {
-  return absl::InternalError(e.what());
-}
-
-void CatalogStore::ValidateStoreTable(const StoreTableDef& def) {
-#ifdef SDB_DEV
-  absl::MutexLock lock{&_mutex};
-  try {
-    _conn->BeginTransaction();
-  } catch (const std::exception& e) {
-    SDB_ASSERT(false, "store table validation: ", e.what());
+void CatalogStore::MaybeCompact() {
+  if (_dead_records <= _live_records ||
+      _wal.GetStats().size_on_disk < kCompactMinBytes) {
     return;
   }
-  try {
-    auto& context = *_conn->context;
-    duckdb::EntryLookupInfo lookup{
-      duckdb::CatalogType::TABLE_ENTRY,
-      duckdb::QualifiedName{duckdb::Identifier{kStoreAlias},
-                            duckdb::Identifier{"main"},
-                            duckdb::Identifier{def.name}}};
-    auto entry = duckdb::Catalog::GetEntry(
-      context, lookup, duckdb::OnEntryNotFound::RETURN_NULL);
-    SDB_ASSERT(entry, "store table missing for ", def.name);
-    if (entry) {
-      const auto& columns =
-        entry->Cast<duckdb::TableCatalogEntry>().GetColumns();
-      SDB_ASSERT(columns.LogicalColumnCount() == def.columns.size(),
-                 "store table column count mismatch for ", def.name);
-      duckdb::idx_t i = 0;
-      for (const auto& col : columns.Logical()) {
-        if (i >= def.columns.size()) {
-          break;
-        }
-        SDB_ASSERT(col.Name().GetIdentifierName() == def.columns[i].name,
-                   "store table column name mismatch for ", def.name, ": ",
-                   col.Name().GetIdentifierName(), " vs ", def.columns[i].name);
-        SDB_ASSERT(col.Type() == def.columns[i].type,
-                   "store table column type mismatch for ", def.name, ".",
-                   def.columns[i].name);
-        ++i;
+  absl::MutexLock seq_lock{&_seq_mutex};
+  std::vector<std::pair<uint64_t, uint8_t>> keys;
+  keys.reserve(_defs.size());
+  for (const auto& [key, defs] : _defs) {
+    keys.push_back(key);
+  }
+  std::sort(keys.begin(), keys.end());
+  std::vector<uint64_t> seq_ids;
+  seq_ids.reserve(_sequences.size());
+  for (const auto& [id, value] : _sequences) {
+    seq_ids.push_back(id);
+  }
+  std::sort(seq_ids.begin(), seq_ids.end());
+
+  _wal.Compact([&](CatalogWal::FrameSink sink) {
+    _mutex.AssertHeld();
+    _seq_mutex.AssertHeld();
+    duckdb::MemoryStream stream;
+    std::vector<Entry> records;
+    for (const auto& key : keys) {
+      for (const auto& def : _defs[key]) {
+        Entry record;
+        record.op = Op::PutDefinition;
+        record.key = {ObjectId{key.first}, static_cast<ObjectType>(key.second),
+                      def.id};
+        record.def = def.def;
+        records.push_back(std::move(record));
       }
     }
-  } catch (const std::exception& e) {
-    SDB_ASSERT(false, "store table validation: ", e.what());
-  }
-  try {
-    _conn->Rollback();
-  } catch (const std::exception&) {
-  }
-#endif
-}
-
-void CatalogStore::CreateDefinition(ObjectId parent_id, ObjectType type,
-                                    ObjectId id, std::string_view def) {
-  WriteContext ctx;
-  ctx.PutDefinition(parent_id, type, id, def);
-  if (auto r = ExecuteEntries(ctx._entries); !r.ok()) {
-    THROW_SQL_ERROR(ERR_MSG(r.message()));
-  }
+    for (const auto id : seq_ids) {
+      Entry record;
+      record.op = Op::PutSequence;
+      record.key = {.id = ObjectId{id}};
+      record.sequence_value = _sequences[id];
+      records.push_back(std::move(record));
+    }
+    if (records.empty()) {
+      return;
+    }
+    SerializeRecords(records, stream);
+    sink({stream.GetData(), stream.GetPosition()});
+  });
+  _dead_records = 0;
 }
 
 void CatalogStore::Write(absl::FunctionRef<void(WriteContext&)> fill) {
   WriteContext ctx;
   fill(ctx);
-  if (auto r = ExecuteEntries(ctx._entries); !r.ok()) {
-    THROW_SQL_ERROR(ERR_MSG(r.message()));
+  if (ctx._entries.empty()) {
+    return;
   }
+
+  std::vector<Entry> records;
+  std::vector<Entry> store_ops;
+  bool has_retype = false;
+  bool has_destructive = false;
+  for (auto& entry : ctx._entries) {
+    if (IsCatalogRecord(entry.op)) {
+      records.push_back(std::move(entry));
+      continue;
+    }
+    has_retype |= entry.op == Op::ChangeStoreColumnType;
+    has_destructive |= !IsConstructiveStoreOp(entry.op) &&
+                       entry.op != Op::ChangeStoreColumnType;
+    store_ops.push_back(std::move(entry));
+  }
+
+  absl::MutexLock lock{&_mutex};
+  if (store_ops.empty()) {
+    AppendBatch(records);
+    MaybeCompact();
+    return;
+  }
+
+  auto& data = GetDataStore();
+  if (has_retype) {
+    // Order-sensitive bracket: flag first, data commit, then the batch. The
+    // reconciler resolves the flag by comparing store shapes against its
+    // payload if we crash in between.
+    duckdb::MemoryStream payload;
+    SerializeRecords(records, payload);
+    Entry flag;
+    flag.op = Op::PutDefinition;
+    flag.key = kPendingAlterKey;
+    flag.def = std::string{reinterpret_cast<const char*>(payload.GetData()),
+                           payload.GetPosition()};
+    AppendBatch({&flag, 1});
+    if (auto r = data.ApplyStoreOps(store_ops); !r.ok()) {
+      Entry drop;
+      drop.op = Op::DropDefinition;
+      drop.key = kPendingAlterKey;
+      AppendBatch({&drop, 1});
+      THROW_SQL_ERROR(ERR_MSG(r.message()));
+    }
+    Entry drop;
+    drop.op = Op::DropDefinition;
+    drop.key = kPendingAlterKey;
+    records.push_back(std::move(drop));
+    AppendBatch(records);
+  } else if (!has_destructive) {
+    // Constructive: validate + commit on the data DB first; a crash before
+    // the append leaves orphans the reconciler drops.
+    if (auto r = data.ApplyStoreOps(store_ops); !r.ok()) {
+      THROW_SQL_ERROR(ERR_MSG(r.message()));
+    }
+    if (!records.empty()) {
+      AppendBatch(records);
+    }
+  } else {
+    // Destructive (or mixed, all derivable from defs): the append is the ack
+    // point; a crash before the data commit leaves leftovers the reconciler
+    // finishes.
+    if (!records.empty()) {
+      AppendBatch(records);
+    }
+    if (auto r = data.ApplyStoreOps(store_ops); !r.ok()) {
+      THROW_SQL_ERROR(ERR_MSG(r.message()));
+    }
+  }
+  MaybeCompact();
+}
+
+void CatalogStore::CreateDefinition(ObjectId parent_id, ObjectType type,
+                                    ObjectId id, std::string_view def) {
+  Write([&](WriteContext& ctx) { ctx.PutDefinition(parent_id, type, id, def); });
 }
 
 void CatalogStore::DropDefinition(ObjectId parent_id, ObjectType type,
                                   ObjectId id) {
-  WriteContext ctx;
-  ctx.DropDefinition(parent_id, type, id);
-  if (auto r = ExecuteEntries(ctx._entries); !r.ok()) {
-    THROW_SQL_ERROR(ERR_MSG(r.message()));
-  }
+  Write([&](WriteContext& ctx) { ctx.DropDefinition(parent_id, type, id); });
 }
 
 void CatalogStore::DropSequence(ObjectId sequence_id) {
-  WriteContext ctx;
-  ctx.DropSequence(sequence_id);
-  if (auto r = ExecuteEntries(ctx._entries); !r.ok()) {
-    THROW_SQL_ERROR(ERR_MSG(r.message()));
-  }
+  Write([&](WriteContext& ctx) { ctx.DropSequence(sequence_id); });
 }
 
 void CatalogStore::DropEntry(ObjectId parent_id, ObjectType type) {
+  Entry record;
+  record.op = Op::DropByParentType;
+  record.key = {.parent_id = parent_id, .type = type};
   absl::MutexLock lock{&_mutex};
-  auto r = RunInTransaction(*_conn, [&]() -> absl::Status {
-    return Exec(*_delete_by_parent_type, {IdValue(parent_id), TypeValue(type)});
-  });
-  if (!r.ok()) {
-    THROW_SQL_ERROR(ERR_MSG(r.message()));
-  }
+  AppendBatch({&record, 1});
+  MaybeCompact();
 }
 
 void CatalogStore::DropEntry(ObjectId parent_id) {
+  Entry record;
+  record.op = Op::DropByParent;
+  record.key = {.parent_id = parent_id};
   absl::MutexLock lock{&_mutex};
-  auto r = RunInTransaction(*_conn, [&]() -> absl::Status {
-    return Exec(*_delete_by_parent, {IdValue(parent_id)});
-  });
-  if (!r.ok()) {
-    THROW_SQL_ERROR(ERR_MSG(r.message()));
-  }
+  AppendBatch({&record, 1});
+  MaybeCompact();
 }
 
 void CatalogStore::WriteTombstone(ObjectId parent_id, ObjectId id) {
-  CreateDefinition(parent_id, ObjectType::Tombstone, id, {});
+  Write([&](WriteContext& ctx) { ctx.WriteTombstone(parent_id, id); });
 }
 
 void CatalogStore::VisitDefinitions(
   ObjectId parent_id, ObjectType type,
   absl::FunctionRef<bool(Key, std::string_view)> visitor) {
-  duckdb::unique_ptr<duckdb::QueryResult> res;
-  {
-    absl::MutexLock lock{&_mutex};
-    duckdb::vector<duckdb::Value> params{IdValue(parent_id), TypeValue(type)};
-    res = _select_definitions->Execute(params, /*allow_stream_result=*/false);
-  }
-  if (res->HasError()) {
-    THROW_SQL_ERROR(ERR_MSG(res->GetError()));
-  }
-  while (auto chunk = res->Fetch()) {
-    chunk->Flatten();
-    const auto count = chunk->size();
-    const auto* ids = duckdb::FlatVector::GetData<uint64_t>(chunk->data[0]);
-    const auto* defs =
-      duckdb::FlatVector::GetData<duckdb::string_t>(chunk->data[1]);
-    for (duckdb::idx_t i = 0; i < count; ++i) {
-      if (!visitor(Key{parent_id, type, ObjectId{ids[i]}},
-                   std::string_view{defs[i].GetData(), defs[i].GetSize()})) {
-        return;
-      }
-    }
-  }
-}
-
-void CatalogStore::BootConsumeCatalog(duckdb::DataChunk& input) {
-  SDB_ENSURE(_boot_loading.load(std::memory_order_acquire),
-             "sdb_init_catalog is internal to server startup");
-  duckdb::UnifiedVectorFormat parents;
-  duckdb::UnifiedVectorFormat types;
-  duckdb::UnifiedVectorFormat ids;
-  duckdb::UnifiedVectorFormat defs;
-  input.data[0].ToUnifiedFormat(parents);
-  input.data[1].ToUnifiedFormat(types);
-  input.data[2].ToUnifiedFormat(ids);
-  input.data[3].ToUnifiedFormat(defs);
-  const auto* parent_data =
-    duckdb::UnifiedVectorFormat::GetData<uint64_t>(parents);
-  const auto* type_data = duckdb::UnifiedVectorFormat::GetData<uint8_t>(types);
-  const auto* id_data = duckdb::UnifiedVectorFormat::GetData<uint64_t>(ids);
-  const auto* def_data =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(defs);
-  const auto count = input.size();
-  for (duckdb::idx_t i = 0; i < count; ++i) {
-    const auto parent = parent_data[parents.sel->get_index(i)];
-    const auto type = type_data[types.sel->get_index(i)];
-    const auto id = id_data[ids.sel->get_index(i)];
-    const auto& def = def_data[defs.sel->get_index(i)];
-    _boot_defs[{parent, type}].push_back(
-      {.id = ObjectId{id}, .def = std::string{def.GetData(), def.GetSize()}});
-  }
-}
-
-void CatalogStore::BootConsumeSequences(duckdb::DataChunk& input) {
-  SDB_ENSURE(_boot_loading.load(std::memory_order_acquire),
-             "sdb_init_sequences is internal to server startup");
-  duckdb::UnifiedVectorFormat ids;
-  duckdb::UnifiedVectorFormat counters;
-  input.data[0].ToUnifiedFormat(ids);
-  input.data[1].ToUnifiedFormat(counters);
-  const auto* id_data = duckdb::UnifiedVectorFormat::GetData<uint64_t>(ids);
-  const auto* counter_data =
-    duckdb::UnifiedVectorFormat::GetData<uint64_t>(counters);
-  const auto count = input.size();
-  for (duckdb::idx_t i = 0; i < count; ++i) {
-    _boot_sequences[id_data[ids.sel->get_index(i)]] =
-      counter_data[counters.sel->get_index(i)];
-  }
-}
-
-void CatalogStore::LoadBootState() {
-  _boot_defs.clear();
-  _boot_sequences.clear();
-  _boot_loading.store(true, std::memory_order_release);
-  auto status = absl::OkStatus();
-  {
-    absl::MutexLock lock{&_mutex};
-    auto res = _conn->Query(
-      absl::StrCat("SELECT * FROM sdb_init_catalog((SELECT parent_id, type, "
-                   "id, def FROM ",
-                   kCatalogTable, "))"));
-    if (res->HasError()) {
-      status = absl::InternalError(res->GetError());
-    } else {
-      res = _conn->Query(absl::StrCat(
-        "SELECT * FROM sdb_init_sequences((SELECT id, counter FROM ",
-        kSequenceTable, "))"));
-      if (res->HasError()) {
-        status = absl::InternalError(res->GetError());
-      }
-    }
-  }
-  _boot_loading.store(false, std::memory_order_release);
-  if (!status.ok()) {
-    ReleaseBootState();
-    THROW_SQL_ERROR(ERR_MSG(status.message()));
-  }
-  for (auto& [key, defs] : _boot_defs) {
-    std::sort(defs.begin(), defs.end(),
-              [](const BootDef& lhs, const BootDef& rhs) {
-                return lhs.id.id() < rhs.id.id();
-              });
-  }
+  VisitBoot(parent_id, type, visitor);
 }
 
 void CatalogStore::VisitBoot(
   ObjectId parent_id, ObjectType type,
   absl::FunctionRef<bool(Key, std::string_view)> visitor) const {
-  const auto it = _boot_defs.find({parent_id.id(), static_cast<uint8_t>(type)});
-  if (it == _boot_defs.end()) {
-    return;
+  std::vector<BootDef> defs;
+  {
+    absl::MutexLock lock{&_mutex};
+    const auto it = _defs.find({parent_id.id(), static_cast<uint8_t>(type)});
+    if (it == _defs.end()) {
+      return;
+    }
+    defs = it->second;
   }
-  for (const auto& def : it->second) {
+  for (const auto& def : defs) {
     if (!visitor(Key{parent_id, type, def.id}, def.def)) {
       return;
     }
@@ -1300,61 +997,110 @@ void CatalogStore::VisitBoot(
 
 bool CatalogStore::TryGetBootSequenceValue(ObjectId sequence_id,
                                            uint64_t& value) const {
-  const auto it = _boot_sequences.find(sequence_id.id());
-  if (it == _boot_sequences.end()) {
+  absl::MutexLock lock{&_seq_mutex};
+  const auto it = _sequences.find(sequence_id.id());
+  if (it == _sequences.end()) {
     return false;
   }
   value = it->second;
   return true;
 }
 
-void CatalogStore::ReleaseBootState() {
-  _boot_defs.clear();
-  _boot_sequences.clear();
-}
-
-uint64_t CatalogStore::BootDefsLoaded() const {
-  uint64_t total = 0;
-  for (const auto& [key, defs] : _boot_defs) {
-    total += defs.size();
-  }
-  return total;
-}
-
-uint64_t CatalogStore::BootSequencesLoaded() const {
-  return _boot_sequences.size();
-}
-
 void CatalogStore::PutSequenceValue(ObjectId sequence_id, uint64_t value) {
-  absl::MutexLock lock{&_seq_mutex};
-  auto r = RunInTransaction(*_seq_conn, [&]() -> absl::Status {
-    if (auto r = Exec(*_delete_sequence, {IdValue(sequence_id)}); !r.ok()) {
-      return r;
-    }
-    return Exec(*_insert_sequence,
-                {IdValue(sequence_id), duckdb::Value::UBIGINT(value)});
-  });
-  if (!r.ok()) {
-    THROW_SQL_ERROR(ERR_MSG(r.message()));
+  // Off the DDL mutex so concurrent sequence persists group-commit in the
+  // WAL. Map before append: a compaction snapshotting concurrently then
+  // already contains the value, and the caller only hands values out after
+  // the append returns durable.
+  {
+    absl::MutexLock seq_lock{&_seq_mutex};
+    _sequences.insert_or_assign(sequence_id.id(), value);
   }
+  Entry record;
+  record.op = Op::PutSequence;
+  record.key = {.id = sequence_id};
+  record.sequence_value = value;
+  duckdb::MemoryStream stream;
+  SerializeRecords({&record, 1}, stream);
+  _wal.Append({stream.GetData(), stream.GetPosition()});
 }
 
 void CatalogStore::GetSequenceValue(ObjectId sequence_id, uint64_t& value) {
-  value = 0;
-  duckdb::unique_ptr<duckdb::QueryResult> res;
+  if (!TryGetBootSequenceValue(sequence_id, value)) {
+    value = 0;
+  }
+}
+
+std::optional<std::vector<CatalogStore::Entry>>
+CatalogStore::TakePendingAlter() {
+  std::string payload;
   {
-    absl::MutexLock lock{&_seq_mutex};
-    duckdb::vector<duckdb::Value> params{IdValue(sequence_id)};
-    res = _select_sequence->Execute(params, /*allow_stream_result=*/false);
+    absl::MutexLock lock{&_mutex};
+    const auto it =
+      _defs.find({kPendingAlterKey.parent_id.id(),
+                  static_cast<uint8_t>(kPendingAlterKey.type)});
+    if (it == _defs.end() || it->second.empty()) {
+      return std::nullopt;
+    }
+    SDB_ASSERT(it->second.size() == 1);
+    payload = it->second.front().def;
   }
-  if (res->HasError()) {
-    THROW_SQL_ERROR(ERR_MSG(res->GetError()));
+  return ParseRecords(
+    {reinterpret_cast<const uint8_t*>(payload.data()), payload.size()});
+}
+
+void CatalogStore::CommitPendingAlter(std::vector<Entry> records) {
+  Entry drop;
+  drop.op = Op::DropDefinition;
+  drop.key = kPendingAlterKey;
+  records.push_back(std::move(drop));
+  absl::MutexLock lock{&_mutex};
+  AppendBatch(records);
+  MaybeCompact();
+}
+
+void CatalogStore::AbortPendingAlter() {
+  Entry drop;
+  drop.op = Op::DropDefinition;
+  drop.key = kPendingAlterKey;
+  absl::MutexLock lock{&_mutex};
+  AppendBatch({&drop, 1});
+}
+
+void CatalogStore::VisitSnapshot(
+  absl::FunctionRef<void(Key, std::string_view)> def_visitor,
+  absl::FunctionRef<void(ObjectId, uint64_t)> sequence_visitor) {
+  absl::MutexLock lock{&_mutex};
+  std::vector<std::pair<uint64_t, uint8_t>> keys;
+  keys.reserve(_defs.size());
+  for (const auto& [key, defs] : _defs) {
+    keys.push_back(key);
   }
-  if (auto chunk = res->Fetch(); chunk && chunk->size() > 0) {
-    SDB_ASSERT(chunk->size() == 1);
-    chunk->Flatten();
-    value = duckdb::FlatVector::GetData<uint64_t>(chunk->data[0])[0];
+  std::sort(keys.begin(), keys.end());
+  for (const auto& key : keys) {
+    for (const auto& def : _defs[key]) {
+      def_visitor(
+        Key{ObjectId{key.first}, static_cast<ObjectType>(key.second), def.id},
+        def.def);
+    }
   }
+  absl::MutexLock seq_lock{&_seq_mutex};
+  std::vector<uint64_t> seq_ids;
+  seq_ids.reserve(_sequences.size());
+  for (const auto& [id, value] : _sequences) {
+    seq_ids.push_back(id);
+  }
+  std::sort(seq_ids.begin(), seq_ids.end());
+  for (const auto id : seq_ids) {
+    sequence_visitor(ObjectId{id}, _sequences[id]);
+  }
+}
+
+void CatalogStore::ValidateStoreTable(const StoreTableDef& def) {
+#ifdef SDB_DEV
+  if (DataStore::IsReady()) {
+    GetDataStore().ValidateStoreTable(def);
+  }
+#endif
 }
 
 void CatalogStore::EnsureSystemDatabase() {
@@ -1388,117 +1134,5 @@ void CatalogStore::EnsureSystemDatabase() {
 }
 
 CatalogStore& GetCatalogStore() { return CatalogStore::instance(); }
-
-namespace {
-
-void CheckInitInput(const duckdb::vector<duckdb::LogicalType>& types,
-                    std::initializer_list<duckdb::LogicalTypeId> expected,
-                    std::string_view fn) {
-  if (types.size() != expected.size() ||
-      !std::equal(expected.begin(), expected.end(), types.begin(),
-                  [](duckdb::LogicalTypeId id, const duckdb::LogicalType& t) {
-                    return t.id() == id;
-                  })) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG(fn, ": unexpected input table shape"));
-  }
-}
-
-duckdb::unique_ptr<duckdb::FunctionData> BindInitCatalog(
-  duckdb::ClientContext&, duckdb::TableFunctionBindInput& input,
-  duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::string>& names) {
-  CheckInitInput(
-    input.input_table_types,
-    {duckdb::LogicalTypeId::UBIGINT, duckdb::LogicalTypeId::UTINYINT,
-     duckdb::LogicalTypeId::UBIGINT, duckdb::LogicalTypeId::BLOB},
-    "sdb_init_catalog");
-  return_types.emplace_back(duckdb::LogicalType::UBIGINT);
-  names.emplace_back("loaded");
-  return duckdb::make_uniq<duckdb::TableFunctionData>();
-}
-
-duckdb::unique_ptr<duckdb::FunctionData> BindInitSequences(
-  duckdb::ClientContext&, duckdb::TableFunctionBindInput& input,
-  duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::string>& names) {
-  CheckInitInput(
-    input.input_table_types,
-    {duckdb::LogicalTypeId::UBIGINT, duckdb::LogicalTypeId::UBIGINT},
-    "sdb_init_sequences");
-  return_types.emplace_back(duckdb::LogicalType::UBIGINT);
-  names.emplace_back("loaded");
-  return duckdb::make_uniq<duckdb::TableFunctionData>();
-}
-
-duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitBootGlobal(
-  duckdb::ClientContext&, duckdb::TableFunctionInitInput&) {
-  // Default MaxThreads() == 1 caps the pipeline at one thread: the boot
-  // maps are built lock-free.
-  return duckdb::make_uniq<duckdb::GlobalTableFunctionState>();
-}
-
-duckdb::OperatorResultType InitCatalogExec(duckdb::ExecutionContext&,
-                                           duckdb::TableFunctionInput&,
-                                           duckdb::DataChunk& input,
-                                           duckdb::DataChunk& output) {
-  CatalogStore::instance().BootConsumeCatalog(input);
-  output.SetCardinality(0);
-  return duckdb::OperatorResultType::NEED_MORE_INPUT;
-}
-
-duckdb::OperatorResultType InitSequencesExec(duckdb::ExecutionContext&,
-                                             duckdb::TableFunctionInput&,
-                                             duckdb::DataChunk& input,
-                                             duckdb::DataChunk& output) {
-  CatalogStore::instance().BootConsumeSequences(input);
-  output.SetCardinality(0);
-  return duckdb::OperatorResultType::NEED_MORE_INPUT;
-}
-
-duckdb::OperatorFinalizeResultType InitCatalogFinal(duckdb::ExecutionContext&,
-                                                    duckdb::TableFunctionInput&,
-                                                    duckdb::DataChunk& output) {
-  output.SetCardinality(1);
-  output.SetValue(
-    0, 0, duckdb::Value::UBIGINT(CatalogStore::instance().BootDefsLoaded()));
-  return duckdb::OperatorFinalizeResultType::FINISHED;
-}
-
-duckdb::OperatorFinalizeResultType InitSequencesFinal(
-  duckdb::ExecutionContext&, duckdb::TableFunctionInput&,
-  duckdb::DataChunk& output) {
-  output.SetCardinality(1);
-  output.SetValue(
-    0, 0,
-    duckdb::Value::UBIGINT(CatalogStore::instance().BootSequencesLoaded()));
-  return duckdb::OperatorFinalizeResultType::FINISHED;
-}
-
-}  // namespace
-
-void RegisterCatalogStoreFunctions(duckdb::DatabaseInstance& db) {
-  duckdb::ExtensionLoader loader{db, "serenedb"};
-  {
-    duckdb::TableFunction fn{"sdb_init_catalog",
-                             {duckdb::LogicalType::TABLE},
-                             nullptr,
-                             BindInitCatalog};
-    fn.init_global = InitBootGlobal;
-    fn.in_out_function = InitCatalogExec;
-    fn.in_out_function_final = InitCatalogFinal;
-    loader.RegisterFunction(fn);
-  }
-  {
-    duckdb::TableFunction fn{"sdb_init_sequences",
-                             {duckdb::LogicalType::TABLE},
-                             nullptr,
-                             BindInitSequences};
-    fn.init_global = InitBootGlobal;
-    fn.in_out_function = InitSequencesExec;
-    fn.in_out_function_final = InitSequencesFinal;
-    loader.RegisterFunction(fn);
-  }
-}
 
 }  // namespace sdb::catalog

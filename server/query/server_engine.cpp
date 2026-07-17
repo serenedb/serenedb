@@ -261,8 +261,6 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
 }
 
 void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
-  catalog::RegisterCatalogStoreFunctions(db);
-
   connector::RegisterTokenizerPragma(db);
 
   connector::RegisterPgMathFunctions(db);

@@ -41,6 +41,7 @@
 #include "basics/lifecycle.h"
 #include "basics/log.h"
 #include "basics/number_of_cores.h"
+#include "basics/static_strings.h"
 #include "catalog/catalog.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
@@ -58,7 +59,7 @@ ABSL_DECLARE_FLAG(uint64_t, background_threads);
 namespace sdb::search {
 namespace {
 
-constexpr std::string_view kEngineDirRoot = "engine_search";
+constexpr std::string_view kEngineDirRoot = sdb::StaticStrings::kSearchRoot;
 
 }  // namespace
 

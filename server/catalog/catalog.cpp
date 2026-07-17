@@ -821,6 +821,7 @@ void Snapshot::AddDependencies(ObjectId parent_id, const Object& obj) {
       break;
     case ObjectType::Invalid:
     case ObjectType::Tombstone:
+    case ObjectType::PendingAlter:
       SDB_UNREACHABLE();
   }
 }
@@ -1625,6 +1626,7 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
       } break;
       case ObjectType::Invalid:
       case ObjectType::Tombstone:
+      case ObjectType::PendingAlter:
       case ObjectType::Column:
       case ObjectType::CheckConstraint:
       case ObjectType::Virtual:
@@ -1689,6 +1691,7 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
       break;
     case ObjectType::Invalid:
     case ObjectType::Tombstone:
+    case ObjectType::PendingAlter:
     case ObjectType::Column:
     case ObjectType::CheckConstraint:
     case ObjectType::Virtual:
@@ -1917,6 +1920,16 @@ void Catalog::RegisterIndex(ObjectId database_id, ObjectId schema_id,
   absl::MutexLock lock{&_mutex};
   Apply(_snapshot, [&](auto& clone) {
     clone->RegisterObject(index, index->GetRelationId(), false);
+  });
+}
+
+void Catalog::ReplaceRelationForRecovery(ObjectId schema_id,
+                                         std::shared_ptr<Table> table) {
+  absl::MutexLock lock{&_mutex};
+  const auto name = std::string{table->GetName()};
+  Apply(_snapshot, [&](auto& clone) {
+    clone->template ReplaceObject<ResolveType::Relation>(schema_id, name,
+                                                         std::move(table));
   });
 }
 
@@ -4969,11 +4982,6 @@ void InstallErrorNameMappers() {
 
 void InitCatalog() {
   g_catalog = std::make_shared<Catalog>();
-
-  GetCatalogStore().LoadBootState();
-  irs::Finally release_boot = [] noexcept {
-    GetCatalogStore().ReleaseBootState();
-  };
 
   OpenDatabase open_db{GetCatalog()};
   open_db.AddRoles();

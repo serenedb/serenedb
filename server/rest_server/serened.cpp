@@ -34,6 +34,7 @@
 #include "basics/duckdb_engine.h"
 #include "basics/log.h"
 #include "catalog/catalog.h"
+#include "catalog/store/data_store.h"
 #include "catalog/store/store.h"
 #include "duckdb_shell.hpp"
 #include "network/pg/hba.h"
@@ -65,6 +66,7 @@ int RunServer(int argc, char** argv) {
     //    pointer; Feature::instance() works from here on.
     DatabasePathFeature db_path;
     catalog::CatalogStore store;
+    catalog::DataStore data_store;
     BackgroundScheduler background;
     search::SearchEngine search;
     Server network;
@@ -80,8 +82,8 @@ int RunServer(int argc, char** argv) {
     // afterwards still see a live SearchEngine. DuckDBEngine brackets all of
     // this from main(). The up_* flags let DOWN skip whatever never came UP
     // (start() threw).
-    bool up_store = false, up_background = false, up_catalog = false,
-         up_search = false, up_network = false;
+    bool up_store = false, up_data = false, up_background = false,
+         up_catalog = false, up_search = false, up_network = false;
 
     absl::Cleanup down = [&]() noexcept {
       CrashHandler::SetState("stopping");
@@ -121,6 +123,9 @@ int RunServer(int argc, char** argv) {
       if (up_background) {
         stop("background", [&] { background.stop(); });
       }
+      if (up_data) {
+        stop("data", [&] { data_store.Shutdown(); });
+      }
       if (up_store) {
         stop("store", [&] { store.Shutdown(); });
       }
@@ -137,6 +142,11 @@ int RunServer(int argc, char** argv) {
     up_background = true;
     catalog::InitCatalog();
     up_catalog = true;
+    // Attach the data DB only now: its WAL replays with the catalog live
+    // (catalog first, then data), and the reconciler runs against the loaded
+    // catalog before anything else can touch store tables.
+    data_store.Initialize(db_path.directory());
+    up_data = true;
     // The io pool must be up before search.start(): the per-index refresh /
     // compaction loops co_await BackgroundScheduler::Delay(), which hosts its
     // timers on the io pool. Without it Delay() returns instantly and the loops

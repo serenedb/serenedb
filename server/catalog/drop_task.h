@@ -40,6 +40,7 @@
 #include "catalog/index.h"
 #include "catalog/object_dependency.h"
 #include "catalog/schema.h"
+#include "catalog/store/data_store.h"
 #include "catalog/store/store.h"
 #include "catalog/table.h"
 #include "search/inverted_index_storage.h"
@@ -69,6 +70,11 @@ class DropTask {
 
   static AsyncResult ExecuteTask(std::shared_ptr<DropTask> task) {
     SDB_ASSERT(task);
+    // Drops touch the data DB; boot schedules them (from tombstones) before
+    // it is attached and reconciled.
+    if (!DataStore::IsReady()) {
+      return yaclib::MakeFuture<DropOutcome>(DropOutcome::Retry);
+    }
     if (!task->AllowToDrop()) {
       SDB_TRACE(STORAGE, "Waiting till the snapshots will free the object ",
                 task->GetContext());

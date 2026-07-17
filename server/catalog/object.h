@@ -48,6 +48,10 @@ enum class ObjectType : uint8_t {
   // Tombstone must be scanned first so deleted objects are known
   // before live objects are loaded.
   Tombstone = 1,
+  // Crash bracket of an order-sensitive store-DDL batch (column retype):
+  // present only between the batch's flag append and its final append; the
+  // boot reconciler rolls it forward or back.
+  PendingAlter = 2,
   // Catalog objects start at 128.
   // Order matters: within the same parent, objects are scanned in enum order.
   // Indexes must come after their table so the table exists when the index

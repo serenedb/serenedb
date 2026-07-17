@@ -286,6 +286,11 @@ class CatalogStore {
     absl::FunctionRef<void(Key, std::string_view)> def_visitor,
     absl::FunctionRef<void(ObjectId, uint64_t)> sequence_visitor);
 
+  // Decodes one wal frame's records (sdb_catalog_wal).
+  static std::vector<Entry> ParseFrame(std::span<const uint8_t> frame);
+
+  std::string_view WalDirectory() const noexcept { return _directory; }
+
  private:
   struct BootDef {
     ObjectId id;
@@ -303,6 +308,7 @@ class CatalogStore {
   void EnsureSystemDatabase();
 
   CatalogWal _wal;
+  std::string _directory;
 
   mutable absl::Mutex _mutex;
   DefMap _defs ABSL_GUARDED_BY(_mutex);

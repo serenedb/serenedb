@@ -690,8 +690,9 @@ CatalogStore::CatalogStore() {
 CatalogStore::~CatalogStore() { gInstance = nullptr; }
 
 void CatalogStore::Initialize(std::string_view database_directory) {
-  const auto dir = basics::file_utils::BuildFilename(
+  _directory = basics::file_utils::BuildFilename(
     std::string{database_directory}, std::string{StaticStrings::kCatalogRoot});
+  const auto& dir = _directory;
   {
     absl::MutexLock lock{&_mutex};
     _wal.Open(dir, [&](std::span<const uint8_t> frame) {
@@ -1064,6 +1065,11 @@ void CatalogStore::AbortPendingAlter() {
   drop.key = kPendingAlterKey;
   absl::MutexLock lock{&_mutex};
   AppendBatch({&drop, 1});
+}
+
+std::vector<CatalogStore::Entry> CatalogStore::ParseFrame(
+  std::span<const uint8_t> frame) {
+  return ParseRecords(frame);
 }
 
 void CatalogStore::VisitSnapshot(

@@ -223,4 +223,17 @@ CatalogWal::Stats CatalogWal::GetStats() const {
   };
 }
 
+void CatalogWal::Scan(std::string_view directory, FrameVisitor visitor) {
+  auto fs = duckdb::FileSystem::CreateLocal();
+  auto path = (std::filesystem::path{directory} / kWalFile).string();
+  if (!fs->FileExists(path)) {
+    return;
+  }
+  duckdb::BufferedFileReader reader{*fs, path.c_str()};
+  std::vector<uint8_t> payload;
+  while (ReadFrame(reader, payload)) {
+    visitor({payload.data(), payload.size()});
+  }
+}
+
 }  // namespace sdb::catalog

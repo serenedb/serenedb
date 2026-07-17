@@ -77,6 +77,11 @@ class CatalogWal {
 
   Stats GetStats() const;
 
+  // Read-only walk for introspection: visits every complete frame of the wal
+  // in `directory` and stops at a torn tail without truncating. Safe against
+  // a live appender (the file is append-only, compaction swaps atomically).
+  static void Scan(std::string_view directory, FrameVisitor visitor);
+
  private:
   uint64_t ReplayAndTruncate(FrameVisitor replay);
   // Runs under _mutex; drops it around the fsync (leader/follower group

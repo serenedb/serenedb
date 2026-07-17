@@ -41,6 +41,7 @@
 #include "connector/duckdb_tokenizer_function.h"
 #include "connector/duckdb_vacuum_function.h"
 #include "connector/functions/array.h"
+#include "connector/functions/catalog_introspect.h"
 #include "connector/functions/embedding/embedding.h"
 #include "connector/functions/encode_key.h"
 #include "connector/functions/es.h"
@@ -282,6 +283,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterPgJsonFunctions(db);
 
   connector::RegisterEsFunctions(db);
+
+  connector::RegisterCatalogIntrospectFunctions(db);
 
   connector::RegisterVacuumFunction(db);
 

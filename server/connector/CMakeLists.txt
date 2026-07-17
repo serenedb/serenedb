@@ -60,12 +60,14 @@ target_link_libraries(
 target_include_directories(serene_connector PUBLIC "${CMAKE_SOURCE_DIR}/server")
 
 # view_fast_path.cpp reads iceberg-bound snapshot ids; iceberg's REST
-# headers include yyjson unprefixed.
+# headers include yyjson unprefixed. catalog_introspect.cpp renders catalog
+# definitions through the json extension's JsonSerializer.
 target_include_directories(
     serene_connector
     PRIVATE
         "${CMAKE_SOURCE_DIR}/third_party/duckdb_iceberg/src/include"
         "${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/yyjson/include"
+        "${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/json/include"
 )
 
 add_subdirectory(functions)

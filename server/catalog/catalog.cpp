@@ -1256,7 +1256,7 @@ std::shared_ptr<ForeignServer> Snapshot::GetForeignServer(
   return GetObject<ForeignServer>(*id);
 }
 
-std::shared_ptr<ForeignServer> Snapshot::GetForeignServerGlobal(
+std::shared_ptr<ForeignServer> Snapshot::GetForeignServer(
   std::string_view name) const {
   // Server names are unique instance-wide (CreateForeignServer rejects a
   // same-named server in any database), so the first match is the only match.

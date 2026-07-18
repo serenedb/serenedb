@@ -172,7 +172,7 @@ void CollectAndEnforce(duckdb::ClientContext& context, duckdb::Binder& binder) {
     if (!checked_catalogs.insert(catalog_name).second) {
       continue;
     }
-    auto server = snapshot->GetForeignServerGlobal(catalog_name);
+    auto server = snapshot->GetForeignServer(catalog_name);
     if (!server) {
       continue;
     }

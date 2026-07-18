@@ -88,7 +88,14 @@ void ThrowOnDuplicateExternalKeys(duckdb::ClientContext& context,
   const auto table = absl::StrCat(catalog::QuoteSqlIdentifier(ref.catalog), ".",
                                   catalog::QuoteSqlIdentifier(ref.schema), ".",
                                   catalog::QuoteSqlIdentifier(ref.table));
-  const auto key = catalog::QuoteSqlIdentifier(fast_path.pk_column_name);
+  // The key is one column, or `k1, k2` for a two-column composite key -- the
+  // GROUP BY / projection list is the same either way.
+  const auto key = fast_path.pk_is_composite
+                     ? absl::StrCat(
+                         catalog::QuoteSqlIdentifier(fast_path.pk_column_name),
+                         ", ",
+                         catalog::QuoteSqlIdentifier(fast_path.pk_column_name_2))
+                     : catalog::QuoteSqlIdentifier(fast_path.pk_column_name);
   const auto sql =
     absl::StrCat("SELECT ", key, ", count(*) AS n FROM ", table, " GROUP BY ",
                  key, " HAVING count(*) > 1 LIMIT 1");
@@ -101,11 +108,12 @@ void ThrowOnDuplicateExternalKeys(duckdb::ClientContext& context,
   }
   auto chunk = result->Fetch();
   if (chunk && chunk->size() > 0) {
+    const auto n_col = fast_path.pk_is_composite ? 2 : 1;
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
-      ERR_MSG("cannot index ", table, ": lookup key ", key,
-              " is not unique (value ", chunk->GetValue(0, 0).ToString(),
-              " occurs ", chunk->GetValue(1, 0).ToString(),
+      ERR_MSG("cannot index ", table, ": lookup key (", key,
+              ") is not unique (value ", chunk->GetValue(0, 0).ToString(),
+              " occurs ", chunk->GetValue(n_col, 0).ToString(),
               " times), so matched rows cannot be re-fetched by key; "
               "deduplicate the table or use WITH (on_conflict = 'nothing') "
               "to index one row per key"));
@@ -322,7 +330,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   // CREATE INDEX requires ownership of the target relation; the mutation
   // enforces it and throws "must be owner of table <name>" on a non-owner.
 
-  if (auto it = _info->options.find("_sdb_external_on_conflict");
+  if (auto it = _info->options.find("on_conflict");
       it != _info->options.end()) {
     if (it->second.GetValue<std::string>() == "nothing") {
       state->collapse_dup_keys = true;

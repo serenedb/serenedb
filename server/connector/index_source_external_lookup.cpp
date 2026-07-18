@@ -31,6 +31,7 @@
 #include <duckdb/parser/keyword_helper.hpp>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "basics/assert.h"
@@ -87,23 +88,37 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
       return types[source_col];
     });
 
-  // The key expression: a quoted PK column, or the bare `rowid` keyword for the
-  // postgres ctid path (a `rowid IN (...)` predicate the connector pushes down
-  // as a `ctid IN (...)` TID scan; `rowid` is a pseudo-column, never quoted).
-  const std::string key_expr =
-    _fast_path.pk_is_rowid ? std::string{"rowid"} : Quote(_fast_path.pk_column_name);
+  // The key expression(s). A single key is a quoted PK column, or the bare
+  // `rowid` keyword for the postgres ctid path (a `rowid IN (...)` predicate the
+  // connector pushes down as a `ctid IN (...)` TID scan; `rowid` is a
+  // pseudo-column, never quoted). A composite key is two quoted BIGINT columns
+  // stored as a STRUCT{hi,lo} (I64I64), matched by an OR of per-row equalities.
+  std::string select_key_expr;
+  if (_fast_path.pk_is_rowid) {
+    _key1 = "rowid";
+    select_key_expr = _key1;
+    _pk_kind = PrimaryKeyBatch::Kind::I64;
+  } else if (_fast_path.pk_is_composite) {
+    _key1 = Quote(_fast_path.pk_column_name);
+    _key2 = Quote(_fast_path.pk_column_name_2);
+    select_key_expr = absl::StrCat(_key1, ", ", _key2);
+    _pk_kind = PrimaryKeyBatch::Kind::I64I64;
+  } else {
+    _key1 = Quote(_fast_path.pk_column_name);
+    select_key_expr = _key1;
+    _pk_kind = PrimaryKeyBatch::Kind::I64;
+  }
 
-  // The key is always column 0 of the result; the projected real columns
-  // follow at 1..N. A fixed leading key keeps the layout valid even when no
-  // real column is projected.
-  std::string select_list = key_expr;
+  // The key column(s) always lead the result; the projected real columns
+  // follow at <num_keys>..N. A fixed leading key keeps the layout valid even
+  // when no real column is projected.
+  std::string select_list = select_key_expr;
   for (const auto& name : select_names) {
     absl::StrAppend(&select_list, ", ", Quote(name));
   }
   _sql_prefix =
     absl::StrCat("SELECT ", select_list, " FROM ", Quote(ref.catalog), ".",
-                 Quote(ref.schema), ".", Quote(ref.table), " WHERE ", key_expr,
-                 " IN (");
+                 Quote(ref.schema), ".", Quote(ref.table), " WHERE ");
   _num_proj_cols = select_names.size();
 }
 
@@ -114,29 +129,50 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
     return 0;
   }
   auto& pk = batch;
-  SDB_ASSERT(pk.kind == PrimaryKeyBatch::Kind::I64);
+  SDB_ASSERT(pk.kind == _pk_kind);
   SDB_ASSERT(start + count <= pk.rows.size());
+
+  const bool composite = _pk_kind == PrimaryKeyBatch::Kind::I64I64;
+  const duckdb::idx_t num_key_cols = composite ? 2 : 1;
 
   // Key -> output slots still waiting for their row. One slot per key in the
   // ordinary case (the build kept one document per key); if a key somehow
-  // reaches the batch twice, all its slots receive the same source row.
-  containers::FlatHashMap<int64_t, std::vector<duckdb::idx_t>> pending;
+  // reaches the batch twice, all its slots receive the same source row. A
+  // single key uses {0, value}; a composite key uses {hi, lo}.
+  containers::FlatHashMap<std::pair<int64_t, int64_t>, std::vector<duckdb::idx_t>>
+    pending;
   pending.reserve(count);
-  std::string key_list;
+  // The key predicate: `k IN (v1,v2,...)` for a single key, or an OR of
+  // per-row equalities `(k1 = hi AND k2 = lo) OR ...` for a composite key --
+  // both push down through the connector's IN / AND-OR filter pushdown.
+  std::string predicate;
   for (duckdb::idx_t i = 0; i < count; ++i) {
-    const int64_t key = pk.rows[start + i];
-    auto [it, inserted] = pending.try_emplace(key);
+    const int64_t lo = pk.rows[start + i];
+    const int64_t hi = composite ? pk.files[start + i] : 0;
+    auto [it, inserted] =
+      pending.try_emplace(std::pair<int64_t, int64_t>{hi, lo});
     if (inserted) {
-      if (!key_list.empty()) {
-        key_list += ',';
+      if (composite) {
+        if (!predicate.empty()) {
+          absl::StrAppend(&predicate, " OR ");
+        }
+        absl::StrAppend(&predicate, "(", _key1, " = ", hi, " AND ", _key2, " = ",
+                        lo, ")");
+      } else {
+        if (!predicate.empty()) {
+          predicate += ',';
+        }
+        absl::StrAppend(&predicate, lo);
       }
-      absl::StrAppend(&key_list, key);
     }
     it->second.push_back(i);
   }
+  const std::string where = composite
+                              ? absl::StrCat("(", predicate, ")")
+                              : absl::StrCat(_key1, " IN (", predicate, ")");
 
   duckdb::Connection con(*context.db);
-  auto result = con.Query(absl::StrCat(_sql_prefix, key_list, ")"));
+  auto result = con.Query(absl::StrCat(_sql_prefix, where));
   if (result->HasError()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
                     ERR_MSG("external lookup failed: ", result->GetError()));
@@ -155,14 +191,18 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
 
   const auto rows = result->RowCount();
   for (duckdb::idx_t row = 0; row < rows && !pending.empty(); ++row) {
-    const auto key = result->GetValue(0, row).GetValue<int64_t>();
-    auto it = pending.find(key);
+    const int64_t lo =
+      result->GetValue(composite ? 1 : 0, row).GetValue<int64_t>();
+    const int64_t hi =
+      composite ? result->GetValue(0, row).GetValue<int64_t>() : 0;
+    auto it = pending.find(std::pair<int64_t, int64_t>{hi, lo});
     if (it == pending.end()) {
       continue;
     }
     for (const auto slot : it->second) {
       for (duckdb::idx_t c = 0; c < _num_proj_cols; ++c) {
-        _tf_target.data[c].SetValue(slot, result->GetValue(c + 1, row));
+        _tf_target.data[c].SetValue(slot,
+                                    result->GetValue(c + num_key_cols, row));
       }
     }
     pending.erase(it);

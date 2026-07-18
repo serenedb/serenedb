@@ -53,9 +53,7 @@ class ExternalLookupIndexSource final : public ViewIndexSourceBase {
     std::span<const duckdb::LogicalType> projected_types,
     std::span<const catalog::Column::Id> bind_column_ids);
 
-  PrimaryKeyBatch::Kind PkKind() const final {
-    return PrimaryKeyBatch::Kind::I64;
-  }
+  PrimaryKeyBatch::Kind PkKind() const final { return _pk_kind; }
 
   duckdb::idx_t Materialize(duckdb::ClientContext& context,
                             PrimaryKeyBatch& batch, duckdb::idx_t start,
@@ -63,10 +61,20 @@ class ExternalLookupIndexSource final : public ViewIndexSourceBase {
                             duckdb::DataChunk& output) final;
 
  private:
-  // "SELECT <pk>, <cols> FROM <table> WHERE <pk> IN (" -- constant across
-  // Materialize() calls; only the key list varies.
+  // "SELECT <keys>, <cols> FROM <table> WHERE " -- constant across
+  // Materialize() calls; the key predicate (built per call from the batch)
+  // follows. <keys> is one column for a single key or `k1, k2` for a composite.
   std::string _sql_prefix;
   duckdb::idx_t _num_proj_cols = 0;
+  // Quoted key column expressions used to build the per-call WHERE predicate.
+  // _key1 is the single key / composite hi key (or the bare `rowid` keyword for
+  // the postgres ctid path); _key2 is the composite lo key (empty otherwise).
+  std::string _key1;
+  std::string _key2;
+  // I64 (single key: `WHERE k IN (v,...)`, keyed by pk.rows) or I64I64
+  // (composite key: `WHERE (k1=hi AND k2=lo) OR ...`, keyed by
+  // pk.files (hi) + pk.rows (lo)).
+  PrimaryKeyBatch::Kind _pk_kind = PrimaryKeyBatch::Kind::I64;
 };
 
 }  // namespace sdb::connector

@@ -1,0 +1,99 @@
+control substitution on
+
+# Composite (multi-column) user lookup key over an ATTACHed ClickHouse table.
+#
+# WITH (key_columns = 'shard, id') names two BIGINT columns as the lookup key.
+# They are stored together as a struct (the I64I64 shape, STRUCT{hi,lo}); matched
+# rows re-fetch via `WHERE (shard = .. AND id = ..) OR ...`, which the connector
+# pushes down (as PREWHERE on the MergeTree) -- the same ExternalLookupIndexSource
+# the postgres composite path uses (inverted_index_pgscan.test_slow), engine
+# agnostic. The single-BIGINT key path is pinned in lookup_edge_chscan.test_slow.
+#
+# Unique attach name (chcmp) + table prefix (cmp_) so parallel _chscan files
+# sharing one ClickHouse do not collide.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chcmp (TYPE clickhouse);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY chcmp_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+# Idempotent: the runner replays this file once per wire engine against the same
+# ClickHouse, so drop any table a prior pass left behind before recreating it.
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}', 'DROP TABLE IF EXISTS default.cmp_shards');
+----
+n
+1
+
+
+statement ok
+CREATE TABLE chcmp.default.cmp_shards (
+  shard BIGINT,
+  id    BIGINT,
+  body  VARCHAR,
+  views INTEGER,
+  PRIMARY KEY (shard, id)
+);
+
+
+statement ok
+INSERT INTO chcmp.default.cmp_shards VALUES
+  (0, 1, 'pudge goes mid and dominates the lane', 1200),
+  (0, 2, 'anchin reads manga every weekend',      340),
+  (1, 1, 'pudge plays again in a ranked match',   870),
+  (1, 2, 'krivda writes sql for the new feature', 55),
+  (2, 1, 'mom reviews pudge highlight reel',      12);
+
+
+statement ok
+CREATE VIEW cmp_shards_v AS SELECT shard, id, body, views FROM chcmp.default.cmp_shards;
+
+
+statement ok
+CREATE INDEX cmp_shards_idx ON cmp_shards_v
+  USING inverted(body chcmp_en)
+  WITH (key_columns = 'shard, id');
+
+
+# count(*) flows from iresearch alone -- no source materialisation.
+query
+SELECT count(*) FROM cmp_shards_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+3
+
+
+# Real columns (body -- indexed, not stored -- and views) are materialised by
+# the composite key lookup: `WHERE (shard = .. AND id = ..) OR ...`.
+query
+SELECT body, views FROM cmp_shards_idx
+WHERE body @@ ts_phrase('pudge') ORDER BY views DESC;
+----
+body	views
+pudge goes mid and dominates the lane	1200
+pudge plays again in a ranked match	870
+mom reviews pudge highlight reel	12
+
+
+statement ok
+DROP INDEX cmp_shards_idx;
+
+statement ok
+DROP VIEW cmp_shards_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY chcmp_en;
+
+statement ok
+DETACH chcmp;

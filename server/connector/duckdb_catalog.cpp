@@ -876,9 +876,24 @@ void ApplyExternalKeyOnConflict(duckdb::CreateIndexInfo& info,
                               "\": expected 'throw' or 'nothing'"));
     }
   }
+  if (external_key && fast_path->pk_is_composite && action == "nothing") {
+    // The 'nothing' collapse keeps the first row per key using a single-int64
+    // seen-set (the I64 shape); a composite key would need pair dedup, which
+    // isn't implemented. 'throw' (the default) probes both columns and is fine.
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("on_conflict = 'nothing' is not supported for a composite "
+              "(multi-column) lookup key; deduplicate the source or index on "
+              "a single unique key"));
+  }
   if (external_key && fast_path->pk_uniqueness == PkUniqueness::Unverified) {
-    info.options["_sdb_external_on_conflict"] =
-      duckdb::Value(std::move(action));
+    // The policy applies: carry the validated (lowercased) action forward on
+    // the same `on_conflict` option the execute phase reads.
+    info.options["on_conflict"] = duckdb::Value(std::move(action));
+  } else {
+    // Not applicable (engine-enforced uniqueness, or not an external key): drop
+    // the option so SereneDBPhysicalCreateIndex neither probes nor collapses.
+    info.options.erase("on_conflict");
   }
 }
 

@@ -143,11 +143,15 @@ bench_one() {
 	fi
 
 	local total=$((TABLE_ROWS + DELTA_ROWS))
-	local hits
-	hits="$("${PSQL[@]}" -c "SELECT count(*) FROM rec_txt_idx WHERE body @@ ts_phrase('token7');")"
+	# token7 matches every 50th row by construction. The pre-crash count can
+	# lag behind (NRT visibility, especially with REFRESH_DELTA=0), so the
+	# recovery target is computed, not measured.
+	local hits=$((total / 50))
+	local visible
+	visible="$("${PSQL[@]}" -c "SELECT count(*) FROM rec_txt_idx WHERE body @@ ts_phrase('token7');")"
 	local wal
 	wal="$(wal_bytes "${datadir}")"
-	echo "   rows=${total} token7_hits=${hits} datadir_bytes=${wal}"
+	echo "   rows=${total} token7_hits=${hits} visible_pre_crash=${visible} datadir_bytes=${wal}"
 
 	local times=() rss_list=() r s e
 	for ((r = 0; r < REPS; r++)); do

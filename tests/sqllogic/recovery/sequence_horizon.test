@@ -1,0 +1,53 @@
+control substitution on
+
+statement ok
+CREATE SEQUENCE gap_seq;
+
+query ok
+SELECT nextval('gap_seq');
+----
+nextval
+1
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+# The persisted horizon runs 32 past the last handout; a restart resumes
+# after it, burning the gap but never reusing a value.
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT nextval('gap_seq');
+----
+nextval
+34
+
+# setval is exact: it collapses the horizon to the written value, so a
+# restart resumes right after it with no gap.
+connection after_crash
+query ok
+SELECT setval('gap_seq', 100);
+----
+setval
+100
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+connection after_setval
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT nextval('gap_seq');
+----
+nextval
+101
+
+connection after_setval
+statement ok
+DROP SEQUENCE gap_seq;

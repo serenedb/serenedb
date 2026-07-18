@@ -1,0 +1,113 @@
+control substitution on
+
+# Constructive window: the store table commits before the catalog append; a
+# crash in between leaves an orphan store table the boot reconciler sweeps,
+# and the name stays free.
+statement ok
+SET sdb_faults = 'crash_catalog_after_store_create';
+
+statement error connection closed
+CREATE TABLE cw (a INTEGER PRIMARY KEY, b TEXT);
+
+connection after_create
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM pg_class WHERE relname = 'cw';
+----
+count
+0
+
+connection after_create
+statement ok
+CREATE TABLE cw (a INTEGER PRIMARY KEY, b TEXT);
+
+connection after_create
+statement ok
+INSERT INTO cw VALUES (1, 'one'), (2, 'two');
+
+
+# Destructive window: the catalog append is the ack point; a crash before the
+# store transaction leaves store leftovers the reconciler finishes dropping.
+connection after_create
+statement ok
+SET sdb_faults = 'crash_catalog_before_store_drop';
+
+connection after_create
+statement error connection closed
+DROP TABLE cw;
+
+connection after_drop
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM pg_class WHERE relname = 'cw';
+----
+count
+0
+
+
+# Retype bracket, crash after the PendingAlter flag append: the data
+# transaction never ran, so boot rolls the batch back and the column keeps
+# its old type.
+connection after_drop
+statement ok
+CREATE TABLE rw (x INTEGER, y TEXT);
+
+connection after_drop
+statement ok
+INSERT INTO rw VALUES (1, 'one'), (2, 'two');
+
+connection after_drop
+statement ok
+SET sdb_faults = 'crash_catalog_after_flag';
+
+connection after_drop
+statement error connection closed
+ALTER TABLE rw ALTER COLUMN x TYPE BIGINT;
+
+connection after_flag
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT data_type FROM information_schema.columns WHERE table_name = 'rw' AND column_name = 'x';
+----
+data_type
+integer
+
+connection after_flag
+query ok
+SELECT x, y FROM rw ORDER BY x;
+----
+x	y
+1	one
+2	two
+
+
+# Retype bracket, crash after the data transaction committed: boot compares
+# the store shape against the flag payload and rolls the batch forward.
+connection after_flag
+statement ok
+SET sdb_faults = 'crash_catalog_after_retype_data';
+
+connection after_flag
+statement error connection closed
+ALTER TABLE rw ALTER COLUMN x TYPE BIGINT;
+
+connection after_retype
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT data_type FROM information_schema.columns WHERE table_name = 'rw' AND column_name = 'x';
+----
+data_type
+bigint
+
+connection after_retype
+statement ok
+INSERT INTO rw VALUES (3000000000, 'big');
+
+connection after_retype
+query ok
+SELECT x, y FROM rw ORDER BY x;
+----
+x	y
+1	one
+2	two
+3000000000	big
+
+connection after_retype
+statement ok
+DROP TABLE rw;

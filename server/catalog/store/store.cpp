@@ -39,6 +39,7 @@
 #include "basics/file_utils.h"
 #include "basics/log.h"
 #include "basics/static_strings.h"
+#include "basics/system-compiler.h"
 #include "catalog/database.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/index.h"
@@ -900,12 +901,16 @@ void CatalogStore::Write(absl::FunctionRef<void(WriteContext&)> fill) {
     flag.def = std::string{reinterpret_cast<const char*>(payload.GetData()),
                            payload.GetPosition()};
     AppendBatch({&flag, 1});
+    SDB_IF_FAILURE("crash_catalog_after_flag") { SDB_IMMEDIATE_ABORT(); }
     if (auto r = data.ApplyStoreOps(store_ops); !r.ok()) {
       Entry drop;
       drop.op = Op::DropDefinition;
       drop.key = kPendingAlterKey;
       AppendBatch({&drop, 1});
       THROW_SQL_ERROR(ERR_MSG(r.message()));
+    }
+    SDB_IF_FAILURE("crash_catalog_after_retype_data") {
+      SDB_IMMEDIATE_ABORT();
     }
     Entry drop;
     drop.op = Op::DropDefinition;
@@ -918,6 +923,9 @@ void CatalogStore::Write(absl::FunctionRef<void(WriteContext&)> fill) {
     if (auto r = data.ApplyStoreOps(store_ops); !r.ok()) {
       THROW_SQL_ERROR(ERR_MSG(r.message()));
     }
+    SDB_IF_FAILURE("crash_catalog_after_store_create") {
+      SDB_IMMEDIATE_ABORT();
+    }
     if (!records.empty()) {
       AppendBatch(records);
     }
@@ -927,6 +935,9 @@ void CatalogStore::Write(absl::FunctionRef<void(WriteContext&)> fill) {
     // finishes.
     if (!records.empty()) {
       AppendBatch(records);
+    }
+    SDB_IF_FAILURE("crash_catalog_before_store_drop") {
+      SDB_IMMEDIATE_ABORT();
     }
     if (auto r = data.ApplyStoreOps(store_ops); !r.ok()) {
       THROW_SQL_ERROR(ERR_MSG(r.message()));

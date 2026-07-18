@@ -24,12 +24,11 @@
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
-#include <duckdb/common/types/value.hpp>
+#include <duckdb/common/vector.hpp>
 #include <duckdb/storage/arena_allocator.hpp>
 #include <limits>
 #include <memory>
 #include <string_view>
-#include <utility>
 #include <vector>
 
 namespace duckdb {
@@ -44,33 +43,35 @@ struct PrimaryKeyBatch {
     None,
     I64,
     I64I64,
-    // A user-specified external lookup key stored as one STRUCT column of
-    // arbitrary field types/count; the per-doc key values live in `structs`.
+    // A user-specified external lookup key: one STRUCT column of arbitrary
+    // field types/count. The batch does NOT copy it -- `column` borrows the
+    // already-read key vector for the current batch (see below).
     Struct,
   };
 
   Kind kind = Kind::None;
-  std::vector<int64_t> files;
-  std::vector<int64_t> rows;
-  // One struct Value per doc when kind == Struct (each holds the key columns'
-  // values in key order). Empty otherwise.
-  std::vector<duckdb::Value> structs;
+  duckdb::vector<int64_t> files;
+  duckdb::vector<int64_t> rows;
+  // Kind::Struct only: a BORROWED pointer to the current batch's key column (a
+  // flattened STRUCT vector, `column_count` rows). Not owned, no per-row copy,
+  // no duckdb::Value -- valid only until the immediately-following Materialize
+  // consumes it. One batch is read per Materialize, so no accumulation.
+  duckdb::Vector* column = nullptr;
+  duckdb::idx_t column_count = 0;
 
   size_t Size() const noexcept {
-    return kind == Kind::Struct ? structs.size() : rows.size();
+    return kind == Kind::Struct ? column_count : rows.size();
   }
   void Reset() {
     files.clear();
     rows.clear();
-    structs.clear();
+    column = nullptr;
+    column_count = 0;
   }
   void Append(int64_t row) { rows.push_back(row); }
   void Append(int64_t file, int64_t row) {
     files.push_back(file);
     rows.push_back(row);
-  }
-  void Append(duckdb::Value struct_key) {
-    structs.push_back(std::move(struct_key));
   }
 };
 

@@ -25,15 +25,16 @@
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
-#include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
+#include <duckdb/common/vector.hpp>
+#include <duckdb/common/vector/struct_vector.hpp>
+#include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
 #include <string>
 #include <string_view>
-#include <vector>
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
@@ -45,6 +46,68 @@ namespace {
 
 std::string Quote(const std::string& id) {
   return duckdb::KeywordHelper::WriteQuoted(id, '"');
+}
+
+// True for types whose VARCHAR cast is already a valid bare SQL literal
+// (numbers, booleans); everything else (strings, dates, timestamps, ...) is
+// single-quoted so DuckDB re-parses it via the target column's implicit cast.
+bool IsBareLiteralType(const duckdb::LogicalType& type) {
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::TINYINT:
+    case duckdb::LogicalTypeId::SMALLINT:
+    case duckdb::LogicalTypeId::INTEGER:
+    case duckdb::LogicalTypeId::BIGINT:
+    case duckdb::LogicalTypeId::HUGEINT:
+    case duckdb::LogicalTypeId::UTINYINT:
+    case duckdb::LogicalTypeId::USMALLINT:
+    case duckdb::LogicalTypeId::UINTEGER:
+    case duckdb::LogicalTypeId::UBIGINT:
+    case duckdb::LogicalTypeId::UHUGEINT:
+    case duckdb::LogicalTypeId::FLOAT:
+    case duckdb::LogicalTypeId::DOUBLE:
+    case duckdb::LogicalTypeId::DECIMAL:
+    case duckdb::LogicalTypeId::BOOLEAN:
+      return true;
+    default:
+      return false;
+  }
+}
+
+void AppendSqlQuoted(std::string& out, std::string_view value) {
+  out += '\'';
+  for (const char c : value) {
+    if (c == '\'') {
+      out += '\'';
+    }
+    out += c;
+  }
+  out += '\'';
+}
+
+// Render `count` rows of `src` as SQL literals into `out[i]`, casting the whole
+// column to VARCHAR in one vectorized pass -- no per-element duckdb::Value.
+void RenderColumnLiterals(duckdb::ClientContext& context, duckdb::Vector& src,
+                          duckdb::idx_t count,
+                          duckdb::vector<std::string>& out) {
+  const bool bare = IsBareLiteralType(src.GetType());
+  duckdb::Vector strs(duckdb::LogicalType::VARCHAR);
+  duckdb::VectorOperations::Cast(context, src, strs, count);
+  strs.Flatten(count);
+  const auto* data = duckdb::FlatVector::GetData<duckdb::string_t>(strs);
+  const auto& validity = duckdb::FlatVector::Validity(strs);
+  out.clear();
+  out.reserve(count);
+  for (duckdb::idx_t i = 0; i < count; ++i) {
+    if (!validity.RowIsValid(i)) {
+      out.emplace_back("NULL");
+    } else if (bare) {
+      out.emplace_back(data[i].GetData(), data[i].GetSize());
+    } else {
+      std::string lit;
+      AppendSqlQuoted(lit, {data[i].GetData(), data[i].GetSize()});
+      out.push_back(std::move(lit));
+    }
+  }
 }
 
 }  // namespace
@@ -74,7 +137,7 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
       name_to_col.emplace(names[i], i);
     }
   }
-  std::vector<std::string> select_names;
+  duckdb::vector<std::string> select_names;
   select_names.reserve(projected_columns.size());
   InitProjection(
     context, projected_columns, projected_types, bind_column_ids,
@@ -130,57 +193,68 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
   auto& pk = batch;
   SDB_ASSERT(pk.kind == _pk_kind);
   const bool is_struct = _pk_kind == PrimaryKeyBatch::Kind::Struct;
-  SDB_ASSERT(start + count <= (is_struct ? pk.structs.size() : pk.rows.size()));
 
   const duckdb::idx_t num_key_cols = _key_cols.size();
   const bool single = num_key_cols == 1;
 
-  // Per-doc key values, rendered as SQL literals via duckdb::Value::ToSQLString
-  // (correct for any type; DuckDB re-parses them and the connector pushes them
-  // down in its own dialect). `canonical` (the tab-joined literals) keys the
-  // pending map and matches re-fetched rows back to their waiting output slots.
-  const auto key_values = [&](duckdb::idx_t i) -> std::vector<duckdb::Value> {
-    if (is_struct) {
-      return duckdb::StructValue::GetChildren(pk.structs[start + i]);
+  // Per key column, the per-row SQL literals (no duckdb::Value). A Struct key
+  // renders its borrowed key column's fields (one vectorized VARCHAR cast per
+  // field); a single I64 key renders its int64 rows directly.
+  duckdb::vector<duckdb::vector<std::string>> key_lits(num_key_cols);
+  if (is_struct) {
+    // The key column is borrowed whole (one batch per Materialize), so start is
+    // always 0 and the borrowed vector holds exactly `count` rows.
+    SDB_ASSERT(pk.column != nullptr && start == 0 && count <= pk.column_count);
+    auto& fields = duckdb::StructVector::GetEntries(*pk.column);
+    SDB_ASSERT(fields.size() == num_key_cols);
+    for (duckdb::idx_t k = 0; k < num_key_cols; ++k) {
+      RenderColumnLiterals(context, fields[k], count, key_lits[k]);
     }
-    return {duckdb::Value::BIGINT(pk.rows[start + i])};
-  };
+  } else {
+    SDB_ASSERT(start + count <= pk.rows.size());
+    key_lits[0].reserve(count);
+    for (duckdb::idx_t i = 0; i < count; ++i) {
+      key_lits[0].push_back(std::to_string(pk.rows[start + i]));
+    }
+  }
 
   // Key -> output slots still waiting for their row. One slot per key in the
   // ordinary case (the build kept one document per key); if a key reaches the
-  // batch twice, all its slots receive the same source row.
-  containers::FlatHashMap<std::string, std::vector<duckdb::idx_t>> pending;
+  // batch twice, all its slots receive the same source row. The map is keyed by
+  // the tab-joined literals, matched against the same rendering of re-fetched
+  // rows below.
+  containers::FlatHashMap<std::string, duckdb::vector<duckdb::idx_t>> pending;
   pending.reserve(count);
   // The key predicate: `key IN (v1,v2,...)` for a single key column, or an OR
   // of per-row equalities `(a=.. AND b=..) OR ...` for multiple -- both push
   // down through the connector's IN / AND-OR filter pushdown.
   std::string predicate;
-  std::vector<std::string> lits;
+  std::string canonical;
   for (duckdb::idx_t i = 0; i < count; ++i) {
-    const auto vals = key_values(i);
-    SDB_ASSERT(vals.size() == num_key_cols);
-    lits.clear();
-    lits.reserve(num_key_cols);
-    for (const auto& v : vals) {
-      lits.push_back(v.ToSQLString());
+    canonical.clear();
+    for (duckdb::idx_t k = 0; k < num_key_cols; ++k) {
+      if (k != 0) {
+        canonical += '\t';
+      }
+      canonical += key_lits[k][i];
     }
-    auto [it, inserted] = pending.try_emplace(absl::StrJoin(lits, "\t"));
+    auto [it, inserted] = pending.try_emplace(canonical);
     if (inserted) {
       if (single) {
         if (!predicate.empty()) {
           predicate += ',';
         }
-        absl::StrAppend(&predicate, lits[0]);
+        predicate += key_lits[0][i];
       } else {
         if (!predicate.empty()) {
-          absl::StrAppend(&predicate, " OR ");
+          predicate += " OR ";
         }
         predicate += '(';
         for (duckdb::idx_t k = 0; k < num_key_cols; ++k) {
           if (k != 0) {
-            absl::StrAppend(&predicate, " AND ");
+            predicate += " AND ";
           }
-          absl::StrAppend(&predicate, _key_cols[k], " = ", lits[k]);
+          absl::StrAppend(&predicate, _key_cols[k], " = ", key_lits[k][i]);
         }
         predicate += ')';
       }
@@ -209,23 +283,39 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
     }
   }
 
-  const auto rows = result->RowCount();
-  for (duckdb::idx_t row = 0; row < rows && !pending.empty(); ++row) {
-    lits.clear();
+  // Scan the re-fetched rows chunk by chunk: render each row's key columns the
+  // same way (one VARCHAR cast per key column per chunk) and match by the
+  // canonical key, then copy the projected columns into the waiting slots.
+  duckdb::vector<duckdb::vector<std::string>> res_lits(num_key_cols);
+  while (!pending.empty()) {
+    auto chunk = result->Fetch();
+    if (!chunk || chunk->size() == 0) {
+      break;
+    }
+    const auto n = chunk->size();
     for (duckdb::idx_t k = 0; k < num_key_cols; ++k) {
-      lits.push_back(result->GetValue(k, row).ToSQLString());
+      RenderColumnLiterals(context, chunk->data[k], n, res_lits[k]);
     }
-    auto it = pending.find(absl::StrJoin(lits, "\t"));
-    if (it == pending.end()) {
-      continue;
-    }
-    for (const auto slot : it->second) {
-      for (duckdb::idx_t c = 0; c < _num_proj_cols; ++c) {
-        _tf_target.data[c].SetValue(slot,
-                                    result->GetValue(c + num_key_cols, row));
+    for (duckdb::idx_t row = 0; row < n && !pending.empty(); ++row) {
+      canonical.clear();
+      for (duckdb::idx_t k = 0; k < num_key_cols; ++k) {
+        if (k != 0) {
+          canonical += '\t';
+        }
+        canonical += res_lits[k][row];
       }
+      auto it = pending.find(canonical);
+      if (it == pending.end()) {
+        continue;
+      }
+      for (const auto slot : it->second) {
+        for (duckdb::idx_t c = 0; c < _num_proj_cols; ++c) {
+          _tf_target.data[c].SetValue(slot,
+                                      chunk->data[c + num_key_cols].GetValue(row));
+        }
+      }
+      pending.erase(it);
     }
-    pending.erase(it);
   }
 
   RunCastPass(output, count);

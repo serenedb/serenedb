@@ -70,9 +70,9 @@ class ExternalLookupIndexSource final : public ViewIndexSourceBase {
   // bare `rowid` keyword for the postgres ctid path). One entry for an I64 key
   // (rowid / clickhouse PK), N for a user Struct key. A single key renders
   // `key IN (v,...)`; multiple render `(a=.. AND b=..) OR ...`.
-  std::vector<std::string> _key_cols;
-  // I64 (int64 key from pk.rows) or Struct (arbitrary-typed key columns from
-  // pk.structs). Drives how the per-doc key values are read from the batch.
+  duckdb::vector<std::string> _key_cols;
+  // I64 (single int64 key from pk.rows) or Struct (arbitrary-typed key columns
+  // borrowed from pk.column). Drives how the per-doc keys are read.
   PrimaryKeyBatch::Kind _pk_kind = PrimaryKeyBatch::Kind::I64;
 };
 

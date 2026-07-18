@@ -1,0 +1,104 @@
+hash-threshold 100
+
+# Quantized IVF top-k under table filters -- exercises both collection paths of
+# the DisjointClusterUnion iterator:
+#
+#   * Collect        -- unfiltered top-k (and non-INCLUDE'd/lookup filters,
+#                       enforced outside the scan): clusters are block-dumped
+#                       unsorted into the top-k collector.
+#   * EmitScoredDocs -- an INCLUDE'd `.col` filter is pushed into the scan and
+#                       the union is wrapped in a TableFilterDocIterator, which
+#                       drains it in ascending doc-id windows (k-way merge over
+#                       clusters) and applies the filter per block.
+#
+# Poison construction: the two docs nearest the query (pk 1, 2) have val < 30,
+# so a filter path that leaked them would return the wrong rows. Every arm is
+# cross-checked against the streaming oracle (sdb_disable_top_k_optimization),
+# which must agree. sq8 is lossy, so vectors are well separated and nprobe is
+# exhaustive; assertions check row identity/order only.
+
+statement ok
+SET sdb_nprobe = 1000
+
+statement ok
+CREATE TABLE ivf_f (pk INTEGER PRIMARY KEY, emb FLOAT[3], val INTEGER, ext INTEGER)
+
+statement ok
+CREATE INDEX ivf_f_idx ON ivf_f
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8', nlist = 4))
+  INCLUDE (val)
+
+statement count 6
+INSERT INTO ivf_f VALUES
+  (1, [10, 0, 0]::FLOAT[3], 10, 0),
+  (2, [13, 0, 0]::FLOAT[3], 20, 1),
+  (3, [15, 0, 0]::FLOAT[3], 30, 0),
+  (4, [20, 0, 0]::FLOAT[3], 40, 1),
+  (5, [0, 10, 0]::FLOAT[3], 50, 0),
+  (6, [0, 0, 30]::FLOAT[3], 35, 1)
+
+statement ok
+VACUUM (REFRESH_TABLE) ivf_f
+
+# Collect: unfiltered top-k -> the three nearest overall.
+query
+SELECT pk FROM ivf_f_idx ORDER BY emb <-> [11, 0, 0]::FLOAT[3] LIMIT 3;
+----
+pk
+1
+2
+3
+
+# EmitScoredDocs: INCLUDE'd `.col` filter pushed into the scan. The two nearest
+# docs (val 10, 20) are dropped; the top-3 among val >= 30 come back.
+query
+SELECT pk FROM ivf_f_idx WHERE val >= 30 ORDER BY emb <-> [11, 0, 0]::FLOAT[3] LIMIT 3;
+----
+pk
+3
+4
+5
+
+# Collect: a non-INCLUDE'd column can't be a `.col` filter, so it is enforced
+# outside the scan while the union still block-dumps via Collect.
+query
+SELECT pk FROM ivf_f_idx WHERE ext = 1 ORDER BY emb <-> [11, 0, 0]::FLOAT[3] LIMIT 3;
+----
+pk
+2
+4
+6
+
+# Oracle: force streaming; every arm must match the top-k path above.
+statement ok
+SET sdb_disable_top_k_optimization = true
+
+query
+SELECT pk FROM ivf_f_idx ORDER BY emb <-> [11, 0, 0]::FLOAT[3] LIMIT 3;
+----
+pk
+1
+2
+3
+
+query
+SELECT pk FROM ivf_f_idx WHERE val >= 30 ORDER BY emb <-> [11, 0, 0]::FLOAT[3] LIMIT 3;
+----
+pk
+3
+4
+5
+
+query
+SELECT pk FROM ivf_f_idx WHERE ext = 1 ORDER BY emb <-> [11, 0, 0]::FLOAT[3] LIMIT 3;
+----
+pk
+2
+4
+6
+
+statement ok
+RESET sdb_disable_top_k_optimization
+
+statement ok
+DROP TABLE ivf_f

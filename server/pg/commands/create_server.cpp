@@ -21,7 +21,6 @@
 #include "pg/commands/create_server.h"
 
 #include <absl/strings/ascii.h>
-#include <absl/strings/str_cat.h>
 
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
@@ -31,7 +30,6 @@
 #include <vector>
 
 #include "basics/duckdb_engine.h"
-#include "basics/log.h"
 #include "catalog/catalog.h"
 #include "catalog/foreign_server.h"
 #include "pg/errcodes.h"

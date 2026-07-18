@@ -66,30 +66,18 @@ void RegisterForeignServerPragma(duckdb::DatabaseInstance& db) {
 
   const auto kVarchar = duckdb::LogicalType::VARCHAR;
   const auto kBoolean = duckdb::LogicalType::BOOLEAN;
-  struct Pragma {
-    const char* name;
-    duckdb::pragma_function_t function;
-    duckdb::vector<duckdb::LogicalType> arguments;
-    // The CREATE pragmas take connection options as arbitrary named parameters.
-    bool arbitrary_named_parameters;
-  };
-  Pragma pragmas[] = {
-    {"create_foreign_server",
-     CreateForeignServerPragma,
-     {kVarchar, kVarchar, kBoolean},
-     true},
-    {"drop_foreign_server",
-     DropForeignServerPragma,
-     {kVarchar, kBoolean, kBoolean},
-     false},
-  };
-  for (auto& pragma : pragmas) {
-    auto function = duckdb::PragmaFunction::PragmaCall(
-      pragma.name, pragma.function, std::move(pragma.arguments));
-    function.accept_arbitrary_named_parameters =
-      pragma.arbitrary_named_parameters;
-    loader.RegisterFunction(function);
-  }
+
+  auto create = duckdb::PragmaFunction::PragmaCall(
+    "create_foreign_server", CreateForeignServerPragma,
+    {kVarchar, kVarchar, kBoolean});
+  // CREATE takes the connection options as arbitrary named parameters.
+  create.accept_arbitrary_named_parameters = true;
+  loader.RegisterFunction(create);
+
+  auto drop = duckdb::PragmaFunction::PragmaCall(
+    "drop_foreign_server", DropForeignServerPragma,
+    {kVarchar, kBoolean, kBoolean});
+  loader.RegisterFunction(drop);
 }
 
 }  // namespace sdb::connector

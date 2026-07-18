@@ -88,29 +88,6 @@ std::string CanonicalOptionKey(std::string_view storage, std::string key) {
   return key;
 }
 
-// The server's connection options, keys lower-cased and canonicalised to the
-// connector's secret parameters.
-std::vector<std::pair<std::string, std::string>> ConnectionOptions(
-  std::string_view storage, const ForeignServer& server) {
-  std::vector<std::pair<std::string, std::string>> merged;
-  auto set_opt = [&](std::string_view raw_key, std::string_view value) {
-    auto key = CanonicalOptionKey(storage, absl::AsciiStrToLower(raw_key));
-    for (auto& kv : merged) {
-      if (kv.first == key) {
-        kv.second = std::string{value};
-        return;
-      }
-    }
-    merged.emplace_back(std::move(key), std::string{value});
-  };
-  const auto keys = server.OptionKeys();
-  const auto values = server.OptionValues();
-  for (size_t i = 0; i < keys.size(); ++i) {
-    set_opt(keys[i], values[i]);
-  }
-  return merged;
-}
-
 // The deterministic transient-secret name serenedb registers for a foreign
 // server's ATTACH `alias` (sanitised to an identifier).
 std::string MakeForeignServerSecretName(std::string_view alias) {
@@ -214,8 +191,7 @@ std::shared_ptr<Object> ForeignServer::Clone() const {
 // at ATTACH time, so the secret may be dropped right after the statement runs.
 static std::string PrepareForeignServerAttach(duckdb::ClientContext& context,
                                               std::string_view secret_name,
-                                              const ForeignServer& server,
-                                              std::string_view alias) {
+                                              const ForeignServer& server) {
   const auto storage = StorageTypeForFdw(server.GetFdwName());
   if (storage.empty()) {
     return {};
@@ -223,15 +199,21 @@ static std::string PrepareForeignServerAttach(duckdb::ClientContext& context,
 
   // Carry the options in a TEMPORARY secret: values are duckdb Values, so
   // nothing needs connstr quoting and no password ever enters the SQL text.
+  // Keys are canonicalised to the connector's secret params; a canonical-key
+  // collision keeps the last value (the map assignment's natural last-wins).
   auto secret = duckdb::make_uniq<duckdb::KeyValueSecret>(
     std::vector<std::string>{}, duckdb::Identifier{storage}, "config",
     duckdb::Identifier{secret_name});
-  for (const auto& [key, value] : ConnectionOptions(storage, server)) {
-    secret->secret_map[duckdb::Identifier{key}] = duckdb::Value(value);
+  const auto keys = server.OptionKeys();
+  const auto values = server.OptionValues();
+  for (size_t i = 0; i < keys.size(); ++i) {
+    const duckdb::Identifier key{
+      CanonicalOptionKey(storage, absl::AsciiStrToLower(keys[i]))};
+    secret->secret_map[key] = duckdb::Value(std::string{values[i]});
     // The secret's values are internal to the attach; hide every one from
     // duckdb_secrets() for the attach window (the connector reads secret_map
     // directly, so redact_keys only affects the display).
-    secret->redact_keys.insert(duckdb::Identifier{key});
+    secret->redact_keys.insert(key);
   }
 
   auto& secret_manager = duckdb::SecretManager::Get(context);
@@ -245,18 +227,14 @@ static std::string PrepareForeignServerAttach(duckdb::ClientContext& context,
                                   duckdb::SecretPersistType::TEMPORARY);
   });
 
-  const std::string_view attach_name = alias.empty() ? server.GetName() : alias;
-  return absl::StrCat("ATTACH '' AS ", QuoteSqlIdentifier(attach_name),
+  return absl::StrCat("ATTACH '' AS ", QuoteSqlIdentifier(server.GetName()),
                       " (TYPE ", storage, ", SECRET ", secret_name, ")");
 }
 
 std::optional<std::string> RunForeignServerAttach(duckdb::Connection& conn,
-                                                  const ForeignServer& server,
-                                                  std::string_view alias) {
-  const auto secret =
-    MakeForeignServerSecretName(alias.empty() ? server.GetName() : alias);
-  auto sql =
-    PrepareForeignServerAttach(*conn.context, secret, server, alias);
+                                                  const ForeignServer& server) {
+  const auto secret = MakeForeignServerSecretName(server.GetName());
+  auto sql = PrepareForeignServerAttach(*conn.context, secret, server);
   if (sql.empty()) {
     return std::nullopt;
   }

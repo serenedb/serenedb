@@ -76,10 +76,10 @@ bool IsSupportedFdw(std::string_view fdw_name);
 
 // Registers the transient secret, runs the ATTACH on `conn`, drops the secret.
 // nullopt = unsupported FDW (nothing run); "" = success; else the connector
-// error. Credentials come from the server's OPTIONS.
-std::optional<std::string> RunForeignServerAttach(
-  duckdb::Connection& conn, const ForeignServer& server,
-  std::string_view alias = {});
+// error. Credentials come from the server's OPTIONS. The attach alias is the
+// server name.
+std::optional<std::string> RunForeignServerAttach(duckdb::Connection& conn,
+                                                  const ForeignServer& server);
 
 // Best-effort DETACH of a server's live (instance-global) DuckDB attachment,
 // on a fresh engine connection. Used by DROP SERVER and by the DROP SCHEMA /

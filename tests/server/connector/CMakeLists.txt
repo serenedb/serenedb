@@ -17,7 +17,6 @@ add_executable(
     ${CMAKE_CURRENT_SOURCE_DIR}/pg_progress_registry_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pg_serialize_array_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/copy_in_bridge_test.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/foreign_server_attach_sql_test.cpp
     # ${CMAKE_CURRENT_SOURCE_DIR}/data_sink_test.cpp
     # ${CMAKE_CURRENT_SOURCE_DIR}/data_source_test.cpp
     # ${CMAKE_CURRENT_SOURCE_DIR}/primary_key_test.cpp

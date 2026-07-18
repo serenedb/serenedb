@@ -56,9 +56,9 @@ catalog::MaterializedData SystemTableSnapshot<PgForeignServer>::GetTableData() {
       .srvtype = {},
       .srvversion = {},
       .srvacl = {server->GetAcl()},
-      // Redacted: this table is world-readable like PG's, but unlike PG our
-      // server options may carry credentials (the eager attach takes them),
-      // so a secret VALUE never renders here.
+      // Rendered verbatim (unlike PG's world-readable pg_foreign_server): our
+      // server options may carry credentials, so this whole catalog is
+      // superuser-only instead of redacting values.
       .srvoptions = server->GetStringOptions(),
     };
     values.push_back(std::move(row));

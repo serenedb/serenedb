@@ -1,0 +1,82 @@
+control substitution on
+
+statement ok
+SET TIME ZONE 'UTC';
+
+
+statement ok
+CREATE TABLE tstzns_src
+(
+  id INTEGER PRIMARY KEY,
+  ts TIMESTAMPTZ_NS
+);
+
+
+statement ok
+CREATE TABLE tstzns_dst
+(
+  id INTEGER PRIMARY KEY,
+  ts TIMESTAMPTZ_NS
+);
+
+
+statement count 4
+INSERT INTO tstzns_src VALUES
+    (1, TIMESTAMPTZ_NS '2024-03-09 15:20:00.123456+00'),
+    (2, TIMESTAMPTZ_NS '1969-07-20 20:17:40.5+00'),
+    (3, TIMESTAMPTZ_NS '2000-01-01 00:00:00+00'),
+    (4, NULL);
+
+
+statement count 4
+COPY tstzns_src TO '${__TEST_DIR__}/copy_binary_tstzns.bin' (FORMAT binary);
+
+
+statement count 4
+COPY tstzns_dst FROM '${__TEST_DIR__}/copy_binary_tstzns.bin' (FORMAT binary);
+
+
+query
+SELECT id, ts::VARCHAR AS ts FROM tstzns_dst ORDER BY id;
+----
+id	ts
+1	2024-03-09 15:20:00.123456+00
+2	1969-07-20 20:17:40.5+00
+3	2000-01-01 00:00:00+00
+4	NULL
+
+
+query
+SELECT
+  (SELECT count(*) FROM (SELECT * FROM tstzns_src EXCEPT SELECT * FROM tstzns_dst) a)
+  + (SELECT count(*) FROM (SELECT * FROM tstzns_dst EXCEPT SELECT * FROM tstzns_src) b)
+  AS diff;
+----
+diff
+0
+
+
+# The PGCOPY binary format carries PG microseconds: sub-microsecond digits are
+# truncated on the way out, so the round-tripped value loses them.
+
+statement count 1
+INSERT INTO tstzns_src VALUES (5, TIMESTAMPTZ_NS '2024-03-09 15:20:00.123456789+00');
+
+
+statement count 5
+COPY tstzns_src TO '${__TEST_DIR__}/copy_binary_tstzns.bin' (FORMAT binary);
+
+
+statement count 4
+DELETE FROM tstzns_dst;
+
+
+statement count 5
+COPY tstzns_dst FROM '${__TEST_DIR__}/copy_binary_tstzns.bin' (FORMAT binary);
+
+
+query
+SELECT ts::VARCHAR AS ts FROM tstzns_dst WHERE id = 5;
+----
+ts
+2024-03-09 15:20:00.123456+00

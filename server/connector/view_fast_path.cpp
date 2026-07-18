@@ -71,6 +71,11 @@ struct RegistryEntry {
   catalog::PkSpec single_pk_spec;
   catalog::PkSpec glob_pk_spec;
   duckdb::TableFunction (*make_lookup)();
+  // Whether the reader's lookup applies pushed table filters. csv/json/text
+  // only fetch rows by offset and ignore filters, so filters on their lookup
+  // columns must NOT be pushed (they'd be silently dropped) -- see
+  // supports_pushdown.
+  bool supports_filters = false;
 };
 
 const RegistryEntry kRegistry[] = {
@@ -79,6 +84,7 @@ const RegistryEntry kRegistry[] = {
     .single_pk_spec = catalog::PkSpec::FileRowNumber,
     .glob_pk_spec = catalog::PkSpec::FileIndexPlusRowNumber,
     .make_lookup = duckdb::MakeParquetLookupTableFunction,
+    .supports_filters = true,
   },
   {
     .function_name = "read_csv",
@@ -116,6 +122,7 @@ const RegistryEntry kRegistry[] = {
     .single_pk_spec = catalog::PkSpec::FileIndexPlusRowNumber,
     .glob_pk_spec = catalog::PkSpec::FileIndexPlusRowNumber,
     .make_lookup = duckdb::MakeParquetLookupTableFunction,
+    .supports_filters = true,
   },
   // read_text emits one row per file; PK is (file_index, 0) in glob mode.
   {
@@ -129,6 +136,7 @@ const RegistryEntry kRegistry[] = {
     .single_pk_spec = catalog::PkSpec::DuckDBRowId,
     .glob_pk_spec = catalog::PkSpec::FileIndexPlusDuckDBRowId,
     .make_lookup = duckdb::MakeDuckDBLookupTableFunction,
+    .supports_filters = true,
   },
   // TODO: read_avro, postgres_scan / postgres_query.
 };
@@ -277,6 +285,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       out.is_glob = true;
       out.projection_columns = std::move(projection_columns);
       out.pk_spec = registry_entry->glob_pk_spec;
+      out.supports_filters = registry_entry->supports_filters;
       return out;
     }
     if (cat_type == "duckdb") {
@@ -293,6 +302,9 @@ std::optional<ViewFastPath> ResolveViewFastPath(
                         .table = entry.name.GetIdentifierName()};
       out.projection_columns = std::move(projection_columns);
       out.pk_spec = catalog::PkSpec::DuckDBRowId;
+      // Attached duckdb table: materialized via DataTable::LookupScan, which
+      // applies pushed filters in-scan.
+      out.supports_filters = true;
       return out;
     }
     if (cat_type == "serenedb") {
@@ -315,6 +327,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
                           entry.ParentSchema().name.GetIdentifierName(),
                           entry.name.GetIdentifierName())};
       out.pk_spec = catalog::PkSpec::DuckDBRowId;
+      out.supports_filters = true;
       out.projection_columns = std::move(projection_columns);
       return out;
     }
@@ -503,6 +516,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
   out.is_glob = LooksLikeGlob(out.args[0].GetValue<std::string>());
   out.projection_columns = std::move(projection_columns);
   out.pk_spec = out.is_glob ? entry->glob_pk_spec : entry->single_pk_spec;
+  out.supports_filters = entry->supports_filters;
   return out;
 }
 

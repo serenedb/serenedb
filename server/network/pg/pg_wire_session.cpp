@@ -2075,6 +2075,7 @@ BindInfo PgWireSession<Kind>::ParseBindVars(std::string_view cursor,
   values.reserve(params);
   const auto snapshot = _connection_ctx->AcquireCatalogSnapshot();
   sdb::pg::DeserializeContext dctx{snapshot.get()};
+  sdb::pg::FillDeserializeContext(_connection_ctx->GetClientContext(), dctx);
   for (uint16_t i = 0; i < params; ++i) {
     if (cursor.size() < sizeof(int32_t)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROTOCOL_VIOLATION),
@@ -2519,6 +2520,14 @@ yaclib::Task<> PgWireSession<Kind>::Run() {
     }
     metrics::Sub(metrics::Gauge::PgConnections);
   };
+  // Detach-then-Unregister on every exit path, while _conn is still alive, so
+  // a racing Cancel/Terminate can never touch a torn-down context or session.
+  absl::Cleanup cancel_guard = [this] {
+    _cancel_token->Detach();
+    if (_cancel && _cancel_key) {
+      _cancel->Unregister(_cancel_key);
+    }
+  };
   // The writer drains committed bytes (incl. startup/auth replies) on a raw
   // `this`, concurrently with everything below; joined before this frame ends.
   auto writer = this->SendWriter();
@@ -2762,13 +2771,6 @@ auto PgWireSession<Kind>::NegotiateStartup(StartupRequest& startup)
 
 template<SocketKind Kind>
 yaclib::Future<> PgWireSession<Kind>::SpawnSession() {
-  // The cancel token is registered before the spawn so BackendKeyData can be
-  // sent in the startup burst; the ClientContext is attached to it duck-side
-  // after SetupConnection.
-  _cancel_token = std::make_shared<CancelToken>();
-  if (_cancel) {
-    _cancel_key = _cancel->Register(_cancel_token);
-  }
   this->_task = duckdb::make_shared_ptr<CpuResumer>(
     duckdb::TaskScheduler::GetScheduler(DuckDBEngine::Instance().instance()),
     *this->_ioexec);
@@ -2805,14 +2807,6 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
   // From here every resume is a fresh Execute() frame on a duck worker.
   absl::Cleanup finish_guard = [this] { this->_task->Finish(); };
   {
-    // Detach-then-Unregister on every exit path, while _conn is still alive,
-    // so a racing CancelRequest can never touch a torn-down context.
-    absl::Cleanup cancel_guard = [this] {
-      _cancel_token->Detach();
-      if (_cancel && _cancel_key) {
-        _cancel->Unregister(_cancel_key);
-      }
-    };
     if (SetupConnection()) {
       {
         absl::MutexLock lock{&_cancel_token->mu};

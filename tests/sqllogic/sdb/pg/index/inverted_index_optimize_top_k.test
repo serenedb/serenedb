@@ -208,7 +208,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_wand_idx                   │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
 │ │ Value: fox          │                │
@@ -227,26 +227,26 @@ query
 EXPLAIN SELECT id FROM docs_wand_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_wand_idx.tableoid) DESC, id LIMIT 3 OFFSET 1;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 3                                 │
-│ Offset: 1                              │
-│ Order By: #1 DESC,                     │
-│           docs_wand_idx.id ASC         │
-│ ~1 row                                 │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: docs_wand_idx                   │
-│ Lookup: table                          │
-│ Filter:                                │
-│ ╭─ Term ──────────────╮                │
-│ │ Field: body(string) │                │
-│ │ Value: fox          │                │
-│ ╰─────────────────────╯                │
-│ Score: bm25(k1=1.2, b=0.75)            │
-│ Projections: id,                       │
-│              sdb_inverted_index_score  │
-│ ~1 row                                 │
-╰────────────────────────────────────────╯
+╭─ TOP_N ──────────────────────────────────────────────────╮
+│ Top: 3                                                   │
+│ Offset: 1                                                │
+│ Order By: #1 DESC, docs_wand_idx.id ASC                  │
+│ ~1 row                                                   │
+╰─────────────────────────────┬────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────┴────────────────────────────╮
+│ Index: docs_wand_idx                                     │
+│ Lookup: table                                            │
+│ Index Filter:                                            │
+│ ╭─ Term ──────────────╮                                  │
+│ │ Field: body(string) │                                  │
+│ │ Value: fox          │                                  │
+│ ╰─────────────────────╯                                  │
+│ Column Filter:                                           │
+│ optional: Dynamic Filter (sdb_inverted_index_score >= ?) │
+│ Score: bm25(k1=1.2, b=0.75)                              │
+│ Projections: id, sdb_inverted_index_score                │
+│ ~1 row                                                   │
+╰──────────────────────────────────────────────────────────╯
 
 
 # EXPLAIN: WAND-enabled scan reports `TopK: <k>, optimized`; plain scan
@@ -265,7 +265,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_wand_idx                   │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
 │ │ Value: fox          │                │
@@ -290,7 +290,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_plain_idx                  │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
 │ │ Value: fox          │                │
@@ -501,7 +501,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_wand_idx                   │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
 │ │ Value: fox          │                │
@@ -520,24 +520,25 @@ query
 EXPLAIN SELECT id FROM docs_wand_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_wand_idx.tableoid) ASC LIMIT 3;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 3                                 │
-│ Order By: #1 ASC                       │
-│ ~1 row                                 │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: docs_wand_idx                   │
-│ Lookup: table                          │
-│ Filter:                                │
-│ ╭─ Term ──────────────╮                │
-│ │ Field: body(string) │                │
-│ │ Value: fox          │                │
-│ ╰─────────────────────╯                │
-│ Score: bm25(k1=1.2, b=0.75)            │
-│ Projections: id,                       │
-│              sdb_inverted_index_score  │
-│ ~1 row                                 │
-╰────────────────────────────────────────╯
+╭─ TOP_N ─────────────────────────────────────────────────╮
+│ Top: 3                                                  │
+│ Order By: #1 ASC                                        │
+│ ~1 row                                                  │
+╰────────────────────────────┬────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮
+│ Index: docs_wand_idx                                    │
+│ Lookup: table                                           │
+│ Index Filter:                                           │
+│ ╭─ Term ──────────────╮                                 │
+│ │ Field: body(string) │                                 │
+│ │ Value: fox          │                                 │
+│ ╰─────────────────────╯                                 │
+│ Column Filter:                                          │
+│ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
+│ Score: bm25(k1=1.2, b=0.75)                             │
+│ Projections: id, sdb_inverted_index_score               │
+│ ~1 row                                                  │
+╰─────────────────────────────────────────────────────────╯
 
 
 # ---------------------------------------------------------------------------
@@ -582,7 +583,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_tfidf_idx                  │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
 │ │ Value: fox          │                │
@@ -632,7 +633,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_bm25_args_idx              │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
 │ │ Value: fox          │                │
@@ -660,7 +661,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_bm25_args_idx              │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
 │ │ Value: fox          │                │

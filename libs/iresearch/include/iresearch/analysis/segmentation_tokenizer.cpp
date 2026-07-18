@@ -24,6 +24,7 @@
 #include "segmentation_tokenizer.hpp"
 
 #include <absl/strings/ascii.h>
+#include <simdutf.h>
 
 #include <boost/text/case_mapping.hpp>
 #include <boost/text/word_break.hpp>
@@ -67,7 +68,7 @@ struct DataState {
     if (data_encoding != DataEncoding::Unknown) [[likely]] {
       return data_encoding == DataEncoding::Ascii;
     }
-    const bool is_ascii = absl::c_all_of(Bytes(), absl::ascii_isascii);
+    const bool is_ascii = simdutf::validate_ascii(Bytes());
     data_encoding = is_ascii ? DataEncoding::Ascii : DataEncoding::UTF32;
     return is_ascii;
   }

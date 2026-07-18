@@ -79,7 +79,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: prim_n_idx        │
 │ Lookup: table            │
-│ Filter:                  │
+│ Index Filter:            │
 │ ╭─ Term ───────────╮     │
 │ │ Field: t(string) │     │
 │ │ Value: one       │     │

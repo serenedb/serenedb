@@ -21,6 +21,7 @@
 #include "connector/index_source_view.h"
 
 #include <algorithm>
+#include <duckdb/common/types/vector.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <numeric>
@@ -73,21 +74,43 @@ void ViewIndexSourceBase::InitProjection(
     _cast_executors[c] = std::move(exec);
   }
   _tf_target.Initialize(context, _scratch_types);
+
+  // The doc-id-keyed columns GatherNonLookupColumns reorders are every output
+  // slot the lookup does not write; this set is fixed for the query, so compute
+  // it once here (plus a reusable selection) instead of per batch.
+  std::vector<bool> is_lookup(projected_columns.size(), false);
+  for (const auto slot : _real_proj_slots) {
+    is_lookup[slot] = true;
+  }
+  for (duckdb::idx_t c = 0; c < projected_columns.size(); ++c) {
+    if (!is_lookup[c]) {
+      _non_lookup_slots.push_back(c);
+    }
+  }
+  _gather_sel.Initialize(STANDARD_VECTOR_SIZE);
 }
 
 void ViewIndexSourceBase::SortRows(const PrimaryKeyBatch& pk,
                                    duckdb::idx_t start, duckdb::idx_t count) {
   _sort_perm.resize(count);
-  std::iota(_sort_perm.begin(), _sort_perm.end(), duckdb::idx_t{0});
-  std::sort(_sort_perm.begin(), _sort_perm.end(),
-            [&](duckdb::idx_t a, duckdb::idx_t b) {
-              return pk.rows[start + a] < pk.rows[start + b];
-            });
+  absl::c_iota(_sort_perm, duckdb::idx_t{0});
+  // Doc-id order already ascends in pk for contiguous-insert base tables and
+  // single-file views: an O(n) sortedness check skips the O(n log n) sort.
+  bool sorted = true;
+  for (duckdb::idx_t k = 1; k < count; ++k) {
+    if (pk.rows[start + k] < pk.rows[start + k - 1]) {
+      sorted = false;
+      break;
+    }
+  }
+  if (!sorted) {
+    absl::c_sort(_sort_perm, [&](duckdb::idx_t a, duckdb::idx_t b) {
+      return pk.rows[start + a] < pk.rows[start + b];
+    });
+  }
   _sorted_rows.resize(count);
-  _output_positions.resize(count);
   for (duckdb::idx_t k = 0; k < count; ++k) {
     _sorted_rows[k] = pk.rows[start + _sort_perm[k]];
-    _output_positions[k] = _sort_perm[k];
   }
 }
 
@@ -95,21 +118,29 @@ void ViewIndexSourceBase::SortFilesRows(const PrimaryKeyBatch& pk,
                                         duckdb::idx_t start,
                                         duckdb::idx_t count) {
   _sort_perm.resize(count);
-  std::iota(_sort_perm.begin(), _sort_perm.end(), duckdb::idx_t{0});
-  std::sort(_sort_perm.begin(), _sort_perm.end(),
-            [&](duckdb::idx_t a, duckdb::idx_t b) {
-              if (pk.files[start + a] != pk.files[start + b]) {
-                return pk.files[start + a] < pk.files[start + b];
-              }
-              return pk.rows[start + a] < pk.rows[start + b];
-            });
+  absl::c_iota(_sort_perm, duckdb::idx_t{0});
+  // Skip the sort when (file, row) already ascends -- see SortRows.
+  bool sorted = true;
+  for (duckdb::idx_t k = 1; k < count; ++k) {
+    const auto pf = pk.files[start + k - 1], cf = pk.files[start + k];
+    if (cf < pf || (cf == pf && pk.rows[start + k] < pk.rows[start + k - 1])) {
+      sorted = false;
+      break;
+    }
+  }
+  if (!sorted) {
+    absl::c_sort(_sort_perm, [&](duckdb::idx_t a, duckdb::idx_t b) {
+      if (pk.files[start + a] != pk.files[start + b]) {
+        return pk.files[start + a] < pk.files[start + b];
+      }
+      return pk.rows[start + a] < pk.rows[start + b];
+    });
+  }
   _sorted_files.resize(count);
   _sorted_rows.resize(count);
-  _output_positions.resize(count);
   for (duckdb::idx_t k = 0; k < count; ++k) {
     _sorted_files[k] = pk.files[start + _sort_perm[k]];
     _sorted_rows[k] = pk.rows[start + _sort_perm[k]];
-    _output_positions[k] = _sort_perm[k];
   }
 }
 
@@ -144,6 +175,26 @@ void ViewIndexSourceBase::RunCastPass(duckdb::DataChunk& output,
       _cast_executors[c]->ExecuteExpression(cast_input,
                                             output.data[_real_proj_slots[c]]);
     }
+  }
+}
+
+void ViewIndexSourceBase::GatherNonLookupColumns(
+  duckdb::DataChunk& output, duckdb::idx_t count,
+  const duckdb::idx_t* survivor_idx) {
+  if (count == 0) {
+    return;
+  }
+  // Materialize wrote the lookup columns in survivor order: output row w came
+  // from the survivor_idx[w]-th requested pk. The doc-id-keyed columns were
+  // filled earlier (AccountAndWriteVirtualColumns) in doc-id order, so reorder
+  // them to match -- only these small columns move, and nothing writes them
+  // afterwards, so a dictionary Slice suffices (no flatten/copy). The selection
+  // and slot list are reused across batches (built once in InitProjection).
+  for (duckdb::idx_t k = 0; k < count; ++k) {
+    _gather_sel.set_index(k, _sort_perm[survivor_idx[k]]);
+  }
+  for (const auto c : _non_lookup_slots) {
+    output.data[c].Slice(_gather_sel, count);
   }
 }
 

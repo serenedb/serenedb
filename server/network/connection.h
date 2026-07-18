@@ -39,6 +39,7 @@
 
 #include "basics/asio_ns.h"
 #include "basics/message_buffer.h"
+#include "network/cancel_registry.h"
 #include "network/cpu_resumer.h"
 #include "network/gate.h"
 #include "network/io_context.h"
@@ -113,7 +114,7 @@ inline std::chrono::steady_clock::duration gHttpBodyTimeout =
 // seq_cst-fenced against ArmSendWaiter). Touch these only with both invariants
 // in mind.
 template<SocketKind Kind, typename Session>
-class Transport {
+class Transport : public TransportBase {
  public:
   explicit Transport(IoExecutor& exec)
     requires(Kind == SocketKind::Tcp || Kind == SocketKind::Unix)
@@ -125,6 +126,24 @@ class Transport {
 
   void Close() noexcept { _socket.Close(); }
   auto& Lowest() noexcept { return _socket.Lowest(); }
+
+  // Begin teardown. Any of the three coroutines calls this on its terminal
+  // condition (recv EOF/error, send error, cpu side finished), and
+  // CancelToken::Terminate at pg_terminate_backend / server shutdown;
+  // idempotent and cross-thread safe. Marks stopping once and wakes all three
+  // so they unwind. The socket is closed by SendWriter on the io worker when
+  // it sees the stop -- never cross-thread, never via a side-channel post.
+  void Stop() final {
+    if (_stopping.exchange(true, std::memory_order_acq_rel)) {
+      return;
+    }
+    _write_gate.Kick();
+    _producer_gate.Kick();
+    if (_task) {
+      _task->RequestRun();
+    }
+    static_cast<Session*>(this)->OnStop();
+  }
 
  protected:
   // Kicks the send writer without waiting -- the hot path. Response bytes drain
@@ -140,22 +159,6 @@ class Transport {
   }
   bool SendBroken() const { return _stopping.load(std::memory_order_acquire); }
 
-  // Begin teardown. Any of the three coroutines calls this on its terminal
-  // condition (recv EOF/error, send error, cpu side finished); idempotent.
-  // Marks stopping once and wakes all three so they unwind. The socket is
-  // closed by SendWriter on the io worker when it sees the stop -- never
-  // cross-thread, never via a side-channel post.
-  void Stop() {
-    if (_stopping.exchange(true, std::memory_order_acq_rel)) {
-      return;
-    }
-    _write_gate.Kick();
-    _producer_gate.Kick();
-    if (_task) {
-      _task->RequestRun();
-    }
-    static_cast<Session*>(this)->OnStop();
-  }
   // Session-side producer fullness check; only valid while the session owns the
   // _send producer role (a direct-mode wire drive publishes its own counter).
   bool OverSendHighWater() const {

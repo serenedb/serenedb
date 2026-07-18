@@ -89,6 +89,13 @@ ByteaOutput Config::GetByteaOutput() const {
   return GetEnumValue<ByteaOutput>(*value);
 }
 
+std::string Config::GetTimeZone() const {
+  duckdb::Value value;
+  auto ok = _client_ctx.TryGetCurrentSetting("TimeZone", value);
+  SDB_ASSERT(ok && !value.IsNull());
+  return value.ToString();
+}
+
 IsolationLevel Config::GetIsolationLevel() const {
   return _client_ctx.transaction.GetIsolationLevel();
 }

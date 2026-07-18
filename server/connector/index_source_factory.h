@@ -21,11 +21,12 @@
 #pragma once
 
 #include <duckdb/common/types.hpp>
+#include <duckdb/planner/table_filter_set.hpp>
+#include <iresearch/index/index_source.hpp>
 #include <memory>
 #include <span>
 
 #include "catalog/table_options.h"
-#include "connector/index_source.h"
 
 namespace duckdb {
 
@@ -40,6 +41,7 @@ std::unique_ptr<IndexSource> MakeIndexSource(
   duckdb::ClientContext& context, const SereneDBScanBindData& bind_data,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::Column::Id> bind_column_ids);
+  std::span<const catalog::Column::Id> bind_column_ids,
+  duckdb::TableFilterSet* pushed_filters = nullptr);
 
 }  // namespace sdb::connector

@@ -41,7 +41,8 @@ std::unique_ptr<IndexSource> MakeIndexSource(
   duckdb::ClientContext& context, const SereneDBScanBindData& bind_data,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::Column::Id> bind_column_ids) {
+  std::span<const catalog::Column::Id> bind_column_ids,
+  duckdb::TableFilterSet* pushed_filters) {
   if (bind_data.IsViewBacked()) {
     const auto& vbd = bind_data.As<ViewScanBindData>();
     auto fp = ResolveViewFastPath(context, *vbd.view);
@@ -62,7 +63,7 @@ std::unique_ptr<IndexSource> MakeIndexSource(
     if (fp->catalog_ref && fp->pk_spec == catalog::PkSpec::DuckDBRowId) {
       return std::make_unique<ViewTableIndexSource>(
         context, std::move(*fp), projected_columns, projected_types,
-        bind_column_ids);
+        bind_column_ids, pushed_filters);
     }
     if (fp->catalog_ref && fp->pk_spec == catalog::PkSpec::ExternalDBKey) {
       return std::make_unique<ExternalLookupIndexSource>(
@@ -72,18 +73,18 @@ std::unique_ptr<IndexSource> MakeIndexSource(
     if (catalog::IsGlobPK(fp->pk_spec)) {
       return std::make_unique<ViewFileGlobIndexSource>(
         context, std::move(*fp), projected_columns, projected_types,
-        bind_column_ids);
+        bind_column_ids, pushed_filters);
     }
     return std::make_unique<ViewFileSingleFileIndexSource>(
       context, std::move(*fp), projected_columns, projected_types,
-      bind_column_ids);
+      bind_column_ids, pushed_filters);
   }
   const auto& tbd = bind_data.As<TableScanBindData>();
   SDB_ASSERT(tbd.table);
   SDB_ASSERT(tbd.table_entry);
   return std::make_unique<TableRowIdIndexSource>(
     context, *tbd.table_entry, *tbd.table, projected_columns, projected_types,
-    bind_column_ids);
+    bind_column_ids, pushed_filters);
 }
 
 }  // namespace sdb::connector

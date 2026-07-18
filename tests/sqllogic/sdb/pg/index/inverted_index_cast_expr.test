@@ -1,0 +1,77 @@
+# Casts meeting the inverted index: expression indexes over casted temporal
+# columns (terms carry the cast target's unit), and range bounds whose type
+# differs from the column -- ts_between casts the bound to the stored type
+# before tokenizing.
+
+statement ok
+SET TIME ZONE 'UTC';
+
+statement ok
+CREATE TABLE cx(pk INTEGER PRIMARY KEY, d DATE, ts TIMESTAMP, ns TIMESTAMP_NS);
+
+statement ok
+CREATE INDEX cx_ms_expr ON cx USING inverted(pk, (ts::TIMESTAMP_MS));
+
+statement ok
+CREATE INDEX cx_d_ts_expr ON cx USING inverted(pk, (d::TIMESTAMP));
+
+statement ok
+CREATE INDEX cx_d ON cx USING inverted(pk, d);
+
+statement ok
+CREATE INDEX cx_ns ON cx USING inverted(pk, ns);
+
+statement count 2
+INSERT INTO cx VALUES
+    (1, DATE '2024-01-01', TIMESTAMP '2024-01-01 00:00:00.123456',
+        TIMESTAMP_NS '2024-01-01 00:00:00.000000001'),
+    (2, DATE '2024-06-15', TIMESTAMP '2024-06-15 12:00:00.654321',
+        TIMESTAMP_NS '2024-06-15 12:00:00.999999999');
+
+statement ok
+VACUUM (REFRESH_TABLE) cx;
+
+# Casted-expression index, same-type bounds.
+query
+SELECT pk FROM cx_ms_expr WHERE ts::TIMESTAMP_MS @@ ts_between(TIMESTAMP_MS '2024-03-01 00:00:00', TIMESTAMP_MS '2024-12-31 00:00:00', true, true);
+----
+pk
+2
+
+# Same index, micros bounds cast to the expression's millis unit.
+query
+SELECT pk FROM cx_ms_expr WHERE ts::TIMESTAMP_MS @@ ts_between(TIMESTAMP '2024-03-01 00:00:00', TIMESTAMP '2024-12-31 00:00:00', true, true);
+----
+pk
+2
+
+# DATE column widened to TIMESTAMP in the indexed expression.
+query
+SELECT pk FROM cx_d_ts_expr WHERE d::TIMESTAMP @@ ts_between(TIMESTAMP '2024-03-01 00:00:00', TIMESTAMP '2024-12-31 00:00:00', true, true);
+----
+pk
+2
+
+# Plain DATE column, TIMESTAMP bounds narrowed to days.
+query
+SELECT pk FROM cx_d WHERE d @@ ts_between(TIMESTAMP '2024-03-01 00:00:00', TIMESTAMP '2024-12-31 23:59:59', true, true);
+----
+pk
+2
+
+# TIMESTAMP_NS column: DATE bounds widened to nanos.
+query
+SELECT pk FROM cx_ns WHERE ns @@ ts_between(DATE '2024-06-01', DATE '2024-12-31', true, true);
+----
+pk
+2
+
+# TIMESTAMP_NS column: millis bounds bracketing the stored .999999999.
+query
+SELECT pk FROM cx_ns WHERE ns @@ ts_between(TIMESTAMP_MS '2024-06-15 12:00:00.999', TIMESTAMP_MS '2024-06-15 12:00:01.000', true, true);
+----
+pk
+2
+
+statement ok
+DROP TABLE cx;

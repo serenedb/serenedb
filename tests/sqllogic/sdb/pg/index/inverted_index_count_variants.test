@@ -104,10 +104,6 @@ QUERY PLAN
 │ Aggregates: count(#0) │
 │ ~1 row                │
 ╰───────────┬───────────╯
-╭─ PROJECTION ──────────╮
-│ Projections: x        │
-│ ~5 rows               │
-╰───────────┬───────────╯
 ╭─ IRESEARCH_SCAN ──────╮
 │ Index: ct_idx         │
 │ Lookup: table         │

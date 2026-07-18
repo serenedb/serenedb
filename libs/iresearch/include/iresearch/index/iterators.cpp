@@ -59,7 +59,9 @@ struct EmptyDocIterator : ResettableDocIterator {
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
                ScoreCollector& collector) final {}
 
-  uint32_t EmitDocs(doc_id_t* out, doc_id_t max) final { return 0; }
+  uint32_t EmitDocs(doc_id_t* out, doc_id_t min, doc_id_t max) final {
+    return 0;
+  }
 
   uint32_t EmitScoredDocs(doc_id_t* out, score_t* scores, doc_id_t max,
                           const ScoreFunction& scorer,

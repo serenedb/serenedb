@@ -85,13 +85,11 @@ count
 1
 
 
-# Same matched document, projected: old rowid is gone, so pk AND status are
-# both read live as NULL.
+# Same matched document, projected: old rowid is gone, so empty result
 query
 SELECT pk, status FROM doc_idx WHERE body @@ ts_phrase('lazy');
 ----
 pk	status
-NULL	NULL
 
 
 query
@@ -151,7 +149,7 @@ SELECT count(*) FILTER (WHERE status IS NULL)     AS gone,
 FROM doc_idx WHERE body @@ ts_phrase('brown');
 ----
 gone	live
-1	1
+0	1
 
 
 query

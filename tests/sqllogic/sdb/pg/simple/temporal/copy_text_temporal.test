@@ -1,0 +1,332 @@
+control substitution on
+
+# Text COPY round-trip (write to a file, read it back through the VarFormat::Text
+# serializers + deserializers) for every temporal type, with corner cases:
+# infinity, epoch, leap day, min/max years, max fractional precision, extreme UTC
+# offsets, and NULL. `diff = 0` asserts encode and decode agree exactly. The
+# final section covers the session-zone decode of zone-less input.
+
+statement ok
+SET TIME ZONE 'UTC';
+
+
+# ---- DATE ----
+statement ok
+CREATE TABLE s_date (id INTEGER, v DATE);
+
+statement count 6
+INSERT INTO s_date VALUES
+ (1,'2024-02-29'),(2,'0001-01-01'),(3,'infinity'),(4,'-infinity'),(5,'1970-01-01'),(6,NULL);
+
+statement count 6
+COPY s_date TO '${__TEST_DIR__}/date.txt' (FORMAT text);
+
+statement ok
+CREATE TABLE d_date (id INTEGER, v DATE);
+
+statement count 6
+COPY d_date FROM '${__TEST_DIR__}/date.txt' (FORMAT text);
+
+query
+SELECT (SELECT count(*) FROM (SELECT * FROM s_date EXCEPT SELECT * FROM d_date) a)
+     + (SELECT count(*) FROM (SELECT * FROM d_date EXCEPT SELECT * FROM s_date) b) AS diff;
+----
+diff
+0
+
+
+# ---- TIME ----
+statement ok
+CREATE TABLE s_time (id INTEGER, v TIME);
+
+statement count 4
+INSERT INTO s_time VALUES
+ (1,'00:00:00'),(2,'23:59:59.999999'),(3,'12:34:56.789012'),(4,NULL);
+
+statement count 4
+COPY s_time TO '${__TEST_DIR__}/time.txt' (FORMAT text);
+
+statement ok
+CREATE TABLE d_time (id INTEGER, v TIME);
+
+statement count 4
+COPY d_time FROM '${__TEST_DIR__}/time.txt' (FORMAT text);
+
+query
+SELECT (SELECT count(*) FROM (SELECT * FROM s_time EXCEPT SELECT * FROM d_time) a)
+     + (SELECT count(*) FROM (SELECT * FROM d_time EXCEPT SELECT * FROM s_time) b) AS diff;
+----
+diff
+0
+
+
+# ---- TIME_NS ----
+statement ok
+CREATE TABLE s_timens (id INTEGER, v TIME_NS);
+
+statement count 5
+INSERT INTO s_timens VALUES
+ (1,'00:00:00'),(2,'23:59:59.999999999'),(3,'12:34:56.789012345'),(4,'01:02:03.000000001'),(5,NULL);
+
+statement count 5
+COPY s_timens TO '${__TEST_DIR__}/timens.txt' (FORMAT text);
+
+statement ok
+CREATE TABLE d_timens (id INTEGER, v TIME_NS);
+
+statement count 5
+COPY d_timens FROM '${__TEST_DIR__}/timens.txt' (FORMAT text);
+
+query
+SELECT (SELECT count(*) FROM (SELECT * FROM s_timens EXCEPT SELECT * FROM d_timens) a)
+     + (SELECT count(*) FROM (SELECT * FROM d_timens EXCEPT SELECT * FROM s_timens) b) AS diff;
+----
+diff
+0
+
+
+# ---- TIMETZ (extreme offsets) ----
+statement ok
+CREATE TABLE s_ttz (id INTEGER, v TIMETZ);
+
+statement count 6
+INSERT INTO s_ttz VALUES
+ (1,'00:00:00+00'),(2,'23:59:59.999999+02'),(3,'12:00:00-08'),
+ (4,'12:00:00+15:59:59'),(5,'12:00:00-15:59:59'),(6,NULL);
+
+statement count 6
+COPY s_ttz TO '${__TEST_DIR__}/ttz.txt' (FORMAT text);
+
+statement ok
+CREATE TABLE d_ttz (id INTEGER, v TIMETZ);
+
+statement count 6
+COPY d_ttz FROM '${__TEST_DIR__}/ttz.txt' (FORMAT text);
+
+query
+SELECT (SELECT count(*) FROM (SELECT * FROM s_ttz EXCEPT SELECT * FROM d_ttz) a)
+     + (SELECT count(*) FROM (SELECT * FROM d_ttz EXCEPT SELECT * FROM s_ttz) b) AS diff;
+----
+diff
+0
+
+
+# ---- TIMESTAMP (infinity, era + year bounds, leap day) ----
+statement ok
+CREATE TABLE s_ts (id INTEGER, v TIMESTAMP);
+
+statement count 7
+INSERT INTO s_ts VALUES
+ (1,'2024-02-29 12:34:56.789012'),(2,'0001-01-01 00:00:00'),(3,'infinity'),(4,'-infinity'),
+ (5,'1970-01-01 00:00:00'),(6,'9999-12-31 23:59:59.999999'),(7,NULL);
+
+statement count 7
+COPY s_ts TO '${__TEST_DIR__}/ts.txt' (FORMAT text);
+
+statement ok
+CREATE TABLE d_ts (id INTEGER, v TIMESTAMP);
+
+statement count 7
+COPY d_ts FROM '${__TEST_DIR__}/ts.txt' (FORMAT text);
+
+query
+SELECT (SELECT count(*) FROM (SELECT * FROM s_ts EXCEPT SELECT * FROM d_ts) a)
+     + (SELECT count(*) FROM (SELECT * FROM d_ts EXCEPT SELECT * FROM s_ts) b) AS diff;
+----
+diff
+0
+
+
+# ---- TIMESTAMP_S (infinity round-trips: regression for the serialize IsFinite guard) ----
+statement ok
+CREATE TABLE s_tss (id INTEGER, v TIMESTAMP_S);
+
+statement count 5
+INSERT INTO s_tss VALUES
+ (1,'2024-02-29 12:34:56'),(2,'infinity'),(3,'-infinity'),(4,'1970-01-01 00:00:00'),(5,NULL);
+
+statement count 5
+COPY s_tss TO '${__TEST_DIR__}/tss.txt' (FORMAT text);
+
+statement ok
+CREATE TABLE d_tss (id INTEGER, v TIMESTAMP_S);
+
+statement count 5
+COPY d_tss FROM '${__TEST_DIR__}/tss.txt' (FORMAT text);
+
+query
+SELECT (SELECT count(*) FROM (SELECT * FROM s_tss EXCEPT SELECT * FROM d_tss) a)
+     + (SELECT count(*) FROM (SELECT * FROM d_tss EXCEPT SELECT * FROM s_tss) b) AS diff;
+----
+diff
+0
+
+
+# ---- TIMESTAMP_MS (infinity) ----
+statement ok
+CREATE TABLE s_tsms (id INTEGER, v TIMESTAMP_MS);
+
+statement count 5
+INSERT INTO s_tsms VALUES
+ (1,'2024-02-29 12:34:56.789'),(2,'infinity'),(3,'-infinity'),(4,'1970-01-01 00:00:00'),(5,NULL);
+
+statement count 5
+COPY s_tsms TO '${__TEST_DIR__}/tsms.txt' (FORMAT text);
+
+statement ok
+CREATE TABLE d_tsms (id INTEGER, v TIMESTAMP_MS);
+
+statement count 5
+COPY d_tsms FROM '${__TEST_DIR__}/tsms.txt' (FORMAT text);
+
+query
+SELECT (SELECT count(*) FROM (SELECT * FROM s_tsms EXCEPT SELECT * FROM d_tsms) a)
+     + (SELECT count(*) FROM (SELECT * FROM d_tsms EXCEPT SELECT * FROM s_tsms) b) AS diff;
+----
+diff
+0
+
+
+# ---- TIMESTAMP_NS (representable-range edges, epoch +/-1ns, full ns, infinity) ----
+# Rows 2/3 are the representable extremes: the earliest renderable day and the
+# largest finite value. INT64_MAX ns is the infinity sentinel, so the max finite
+# value is one ns below it (...806); the exact ...807 and the 1677-09-21 minimum
+# day are unreachable (int64 overflow in the ns<->components conversion).
+statement ok
+CREATE TABLE s_tsns (id INTEGER, v TIMESTAMP_NS);
+
+statement count 8
+INSERT INTO s_tsns VALUES
+ (1,'2024-02-29 12:34:56.789012345'),(2,'1677-09-22 00:00:00'),(3,'2262-04-11 23:47:16.854775806'),
+ (4,'1970-01-01 00:00:00.000000001'),(5,'1969-12-31 23:59:59.999999999'),
+ (6,'infinity'),(7,'-infinity'),(8,NULL);
+
+statement count 8
+COPY s_tsns TO '${__TEST_DIR__}/tsns.txt' (FORMAT text);
+
+statement ok
+CREATE TABLE d_tsns (id INTEGER, v TIMESTAMP_NS);
+
+statement count 8
+COPY d_tsns FROM '${__TEST_DIR__}/tsns.txt' (FORMAT text);
+
+query
+SELECT (SELECT count(*) FROM (SELECT * FROM s_tsns EXCEPT SELECT * FROM d_tsns) a)
+     + (SELECT count(*) FROM (SELECT * FROM d_tsns EXCEPT SELECT * FROM s_tsns) b) AS diff;
+----
+diff
+0
+
+
+# ---- TIMESTAMPTZ (infinity, pre-1970, year 1) ----
+statement ok
+CREATE TABLE s_tstz (id INTEGER, v TIMESTAMPTZ);
+
+statement count 6
+INSERT INTO s_tstz VALUES
+ (1,'2024-02-29 12:34:56.789012+00'),(2,'infinity'),(3,'-infinity'),
+ (4,'1969-07-20 20:17:40+00'),(5,'0001-01-01 00:00:00+00'),(6,NULL);
+
+statement count 6
+COPY s_tstz TO '${__TEST_DIR__}/tstz.txt' (FORMAT text);
+
+statement ok
+CREATE TABLE d_tstz (id INTEGER, v TIMESTAMPTZ);
+
+statement count 6
+COPY d_tstz FROM '${__TEST_DIR__}/tstz.txt' (FORMAT text);
+
+query
+SELECT (SELECT count(*) FROM (SELECT * FROM s_tstz EXCEPT SELECT * FROM d_tstz) a)
+     + (SELECT count(*) FROM (SELECT * FROM d_tstz EXCEPT SELECT * FROM s_tstz) b) AS diff;
+----
+diff
+0
+
+
+# ---- TIMESTAMPTZ_NS (full ns, late year, pre-1970 incl. sub-us, infinity) ----
+# Row 4 is a pre-epoch value with a full-nanosecond fraction: the ns->us split in
+# the ICU render used truncating division, which gave a negative sub-us remainder
+# (rendered as garbage) for negative instants.
+statement ok
+CREATE TABLE s_tstzns (id INTEGER, v TIMESTAMPTZ_NS);
+
+statement count 7
+INSERT INTO s_tstzns VALUES
+ (1,'2024-02-29 12:34:56.789012345+00'),(2,'2262-04-11 23:47:16.854775806+00'),
+ (3,'1969-06-01 12:00:00.123456789+00'),(4,'1969-12-31 23:59:59.999999999+00'),
+ (5,'infinity'),(6,'-infinity'),(7,NULL);
+
+statement count 7
+COPY s_tstzns TO '${__TEST_DIR__}/tstzns.txt' (FORMAT text);
+
+statement ok
+CREATE TABLE d_tstzns (id INTEGER, v TIMESTAMPTZ_NS);
+
+statement count 7
+COPY d_tstzns FROM '${__TEST_DIR__}/tstzns.txt' (FORMAT text);
+
+query
+SELECT (SELECT count(*) FROM (SELECT * FROM s_tstzns EXCEPT SELECT * FROM d_tstzns) a)
+     + (SELECT count(*) FROM (SELECT * FROM d_tstzns EXCEPT SELECT * FROM s_tstzns) b) AS diff;
+----
+diff
+0
+
+
+# ---- INTERVAL (mixed, negative, large) ----
+statement ok
+CREATE TABLE s_iv (id INTEGER, v INTERVAL);
+
+statement count 7
+INSERT INTO s_iv VALUES
+ (1,'1 year 2 months 3 days 04:05:06.789'),(2,'-1 year -2 months'),(3,'90 days'),
+ (4,'04:05:06.123456'),(5,'-04:05:06.123456'),(6,'1000 years'),(7,NULL);
+
+statement count 7
+COPY s_iv TO '${__TEST_DIR__}/iv.txt' (FORMAT text);
+
+statement ok
+CREATE TABLE d_iv (id INTEGER, v INTERVAL);
+
+statement count 7
+COPY d_iv FROM '${__TEST_DIR__}/iv.txt' (FORMAT text);
+
+query
+SELECT (SELECT count(*) FROM (SELECT * FROM s_iv EXCEPT SELECT * FROM d_iv) a)
+     + (SELECT count(*) FROM (SELECT * FROM d_iv EXCEPT SELECT * FROM s_iv) b) AS diff;
+----
+diff
+0
+
+
+# ---- Session-zone decode: a zone-less value is read in the session TimeZone ----
+# COPY always writes an explicit offset, so the source is a naive type whose text
+# has no offset. TIMESTAMPTZ / TIMESTAMPTZ_NS localize to New York; TIMETZ has no
+# date to localize against and stays UTC (+00).
+statement ok
+SET TIME ZONE 'America/New_York';
+
+statement ok
+CREATE TABLE naive_src (id INTEGER, ts TIMESTAMP, tsn TIMESTAMP_NS, tt TIME);
+
+statement count 1
+INSERT INTO naive_src VALUES
+ (1, TIMESTAMP '2024-01-02 12:00:00', TIMESTAMP_NS '2024-01-02 12:00:00.123456789', TIME '12:00:00');
+
+statement count 1
+COPY naive_src TO '${__TEST_DIR__}/naive.txt' (FORMAT text);
+
+statement ok
+CREATE TABLE zoneless_dst (id INTEGER, ts TIMESTAMPTZ, tsn TIMESTAMPTZ_NS, tt TIMETZ);
+
+statement count 1
+COPY zoneless_dst FROM '${__TEST_DIR__}/naive.txt' (FORMAT text);
+
+query
+SELECT id, ts::VARCHAR AS ts, tsn::VARCHAR AS tsn, tt::VARCHAR AS tt
+FROM zoneless_dst
+ORDER BY id;
+----
+id	ts	tsn	tt
+1	2024-01-02 12:00:00-05	2024-01-02 12:00:00.123456789-05	12:00:00+00

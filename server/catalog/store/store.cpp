@@ -580,9 +580,12 @@ void CatalogStore::Initialize(std::string_view database_directory) {
     _conn = DuckDBEngine::Instance().CreateConnection();
     _seq_conn = DuckDBEngine::Instance().CreateConnection();
 
+    // HIDDEN keeps the store out of catalog enumeration (SHOW TABLES,
+    // duckdb_tables/databases, GetAllSchemas); qualified name lookups
+    // ("__sdb_store".main.x) still resolve.
     ExecOrFatal(
       *_conn, absl::StrCat("ATTACH '", absl::StrReplaceAll(file, {{"'", "''"}}),
-                           "' AS \"", kStoreAlias, "\""));
+                           "' AS \"", kStoreAlias, "\" (HIDDEN true)"));
     ExecOrFatal(*_conn,
                 absl::StrCat("CREATE TABLE IF NOT EXISTS ", kCatalogTable,
                              " (parent_id UBIGINT, type UTINYINT, id UBIGINT, "

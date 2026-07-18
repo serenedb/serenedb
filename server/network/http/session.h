@@ -35,6 +35,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <yaclib/algo/wait_group.hpp>
 #include <yaclib/async/future.hpp>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/coro.hpp>
@@ -48,6 +49,7 @@
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
 #include "connector/duckdb_client_state.h"
+#include "network/cancel_registry.h"
 #include "network/connection.h"
 #include "network/cpu_resumer.h"
 #include "network/gate.h"
@@ -75,6 +77,12 @@ struct HttpServerContext {
   // unlimited). Over-cap connections get a 503 then close.
   std::atomic<uint32_t>* active = nullptr;
   uint32_t max_connections = 0;
+  // Same cancel registry as the pg endpoint: http sessions register the same
+  // tokens, so SQL pg_cancel/terminate_backend and server shutdown reach them.
+  CancelRegistry* cancel = nullptr;
+  // Session Run() futures land here (slot taken by the acceptor at spawn) so
+  // Server::stop() can wait for every session to complete.
+  yaclib::WaitGroup<>* sessions = nullptr;
   // CORS allow-origin list (comma-separated, or "*"); empty disables CORS.
   std::string_view cors_origins;
   // HAProxy PROXY-protocol preface policy (off / optional / require); never
@@ -106,6 +114,8 @@ class HttpSession final
       _router{ctx.router},
       _auth{ctx.credentials, ctx.api_keys, ctx.bearer},
       _active{ctx.active},
+      _cancel{ctx.cancel},
+      _sessions{ctx.sessions},
       _max_conn{ctx.max_connections},
       _cors_origins{ctx.cors_origins},
       _proxy{ctx.proxy} {}
@@ -118,13 +128,22 @@ class HttpSession final
       _router{ctx.router},
       _auth{ctx.credentials, ctx.api_keys, ctx.bearer},
       _active{ctx.active},
+      _cancel{ctx.cancel},
+      _sessions{ctx.sessions},
       _max_conn{ctx.max_connections},
       _cors_origins{ctx.cors_origins},
       _proxy{ctx.proxy} {}
 
   // Run is the session's sole owner: it grabs the one shared_from_this, starts
   // the writer + cpu futures on a raw `this`, and joins both before it returns.
-  void Start() { Run().Detach(); }
+  void Start() {
+    _cancel_token = std::make_shared<CancelToken>();
+    _cancel_token->session = this->shared_from_this();
+    if (_cancel) {
+      _cancel_key = _cancel->Register(_cancel_token);
+    }
+    _sessions->Consume<false>(Run().ToFuture());
+  }
 
   void OnStop() {}
 
@@ -155,8 +174,12 @@ class HttpSession final
       _conn = DuckDBEngine::Instance().CreateConnection();
       _connection_ctx = std::make_shared<ConnectionContext>(
         *_conn->context, user, role->GetId(), dbname, database_id,
-        std::move(database), nullptr, nullptr, /*backend_pid=*/0,
-        /*cancel_registry=*/nullptr);
+        std::move(database), nullptr, nullptr,
+        static_cast<int32_t>(_cancel_key >> 32), _cancel);
+      {
+        absl::MutexLock lock{&_cancel_token->mu};
+        _cancel_token->ctx = _conn->context.get();
+      }
       connector::SereneDBClientState::Register(*_conn->context,
                                                _connection_ctx);
       _conn->context->session_user = std::string{user};
@@ -251,7 +274,6 @@ class HttpSession final
   using Transport<Kind, HttpSession<Kind>>::_stopping;
   using Transport<Kind, HttpSession<Kind>>::_producer_gate;
   using Transport<Kind, HttpSession<Kind>>::_task;
-  using Transport<Kind, HttpSession<Kind>>::Stop;
   using Transport<Kind, HttpSession<Kind>>::KickSend;
   using Transport<Kind, HttpSession<Kind>>::HasUnsentBytes;
   using Transport<Kind, HttpSession<Kind>>::SendBroken;
@@ -284,6 +306,10 @@ class HttpSession final
   HttpRouter& _router;
   http::HttpAuthenticator _auth;
   std::atomic<uint32_t>* _active = nullptr;
+  CancelRegistry* _cancel = nullptr;
+  std::shared_ptr<CancelToken> _cancel_token;
+  uint64_t _cancel_key = 0;
+  yaclib::WaitGroup<>* _sessions = nullptr;
   uint32_t _max_conn = 0;
   std::string_view _cors_origins;
   ProxyMode _proxy = ProxyMode::Off;
@@ -336,6 +362,14 @@ yaclib::Task<> HttpSession<Kind>::Run() {
       _active->fetch_sub(1, std::memory_order_relaxed);
     }
     metrics::Sub(metrics::Gauge::HttpConnections);
+  };
+  // Detach-then-Unregister on every exit path, while _conn is still alive, so
+  // a racing Cancel/Terminate can never touch a torn-down context or session.
+  absl::Cleanup cancel_guard = [this] {
+    _cancel_token->Detach();
+    if (_cancel && _cancel_key) {
+      _cancel->Unregister(_cancel_key);
+    }
   };
   // The writer drains committed bytes on a raw `this`, concurrently with the
   // recv loop below; joined before this frame ends.
@@ -563,7 +597,7 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
           // The head promised a body that never fully materialized; a clean
           // HTTP error is no longer possible -- drop the connection so the
           // client sees truncation, not a corrupt next response.
-          Stop();
+          this->Stop();
           break;
         }
         if (!writer.HeadWritten()) {
@@ -591,7 +625,7 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
   } catch (const std::exception&) {
   }
   co_await DrainSendOnTask();
-  Stop();
+  this->Stop();
   co_return {};
 }
 

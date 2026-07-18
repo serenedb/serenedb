@@ -956,7 +956,7 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
 
 // ts_offsets(col [, limit]) -> INTEGER[] of interleaved start/end pairs.
 // Inline form: stub body; iresearch_plan rewrites it into either a
-// virtual SearchScan column (stored offsets) or a real OffsetsScalarFn
+// virtual search-scan column (stored offsets) or a real OffsetsScalarFn
 // call (derived offsets). Standalone form: ts_offsets(dict, body, filter
 // [, limit]) -- always runs OffsetsScalarFn against an in-memory
 // mini-segment built per chunk.

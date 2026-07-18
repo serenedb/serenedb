@@ -25,14 +25,14 @@ statement error
 SELECT ts_dict_agg(n) FROM numt_idx
 ----
 db error: ERROR: ts_dict_agg(): column has no text term dictionary
-HINT: ts_dict_agg requires a text-tokenized or keyword VARCHAR column
+HINT: ts_dict_agg requires a text-tokenized or keyword VARCHAR column, or an array of such
 
 
 statement error
 SELECT ts_dict_min(n) FROM numt_idx
 ----
 db error: ERROR: ts_dict_min(): column has no text term dictionary
-HINT: ts_dict_agg requires a text-tokenized or keyword VARCHAR column
+HINT: ts_dict_agg requires a text-tokenized or keyword VARCHAR column, or an array of such
 
 
 query I

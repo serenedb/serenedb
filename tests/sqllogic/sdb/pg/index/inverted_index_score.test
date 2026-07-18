@@ -1,5 +1,10 @@
 hash-threshold 100
 
+# Exact BM25/TFIDF values are asserted throughout: every index is created with
+# compaction_interval = 0, or background consolidation (which lands mid-test on
+# slow sanitizer builds) merges segments and shifts the per-segment stats the
+# scores are computed from.
+
 statement ok
 SET disabled_optimizers = 'compressed_materialization';
 
@@ -34,7 +39,8 @@ CREATE TEXT SEARCH DICTIONARY en(
 
 
 statement ok
-CREATE INDEX docs_idx ON docs USING inverted(id, body en);
+CREATE INDEX docs_idx ON docs USING inverted(id, body en)
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -362,22 +368,24 @@ query
 EXPLAIN SELECT BM25(docs_idx.tableoid) as score FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_idx.tableoid) ASC LIMIT 5;
 ----
 QUERY PLAN
-╭─ TOP_N ───────────────────────────────╮
-│ Top: 5                                │
-│ Order By: #0 ASC                      │
-│ ~5 rows                               │
-╰───────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ──┴───────────────────╮
-│ Index: docs_idx                       │
-│ Filter:                               │
-│ ╭─ Term ──────────────╮               │
-│ │ Field: body(string) │               │
-│ │ Value: fox          │               │
-│ ╰─────────────────────╯               │
-│ Score: bm25(k1=1.2, b=0.75)           │
-│ Projections: sdb_inverted_index_score │
-│ ~7 rows                               │
-╰───────────────────────────────────────╯
+╭─ TOP_N ─────────────────────────────────────────────────╮
+│ Top: 5                                                  │
+│ Order By: #0 ASC                                        │
+│ ~5 rows                                                 │
+╰────────────────────────────┬────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮
+│ Index: docs_idx                                         │
+│ Index Filter:                                           │
+│ ╭─ Term ──────────────╮                                 │
+│ │ Field: body(string) │                                 │
+│ │ Value: fox          │                                 │
+│ ╰─────────────────────╯                                 │
+│ Column Filter:                                          │
+│ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
+│ Score: bm25(k1=1.2, b=0.75)                             │
+│ Projections: sdb_inverted_index_score                   │
+│ ~7 rows                                                 │
+╰─────────────────────────────────────────────────────────╯
 
 
 
@@ -392,7 +400,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
 │ │ Value: fox          │                │
@@ -419,7 +427,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
 │ │ Value: fox          │                │
@@ -505,7 +513,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
 │ │ Value: fox          │                │
@@ -666,11 +674,13 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
 │ │ Value: fox          │                │
 │ ╰─────────────────────╯                │
+│ Column Filter:                         │
+│ optional: Dynamic Filter (id < ?)      │
 │ Score: bm25(k1=1.2, b=0.75)            │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
@@ -709,7 +719,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │  │ Index: docs_idx                        │
 │ Lookup: table                          │  │ Lookup: table                          │
-│ Filter:                                │  │ Filter:                                │
+│ Index Filter:                          │  │ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │  │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │  │ │ Field: body(string) │                │
 │ │ Value: fox          │                │  │ │ Value: lazy         │                │
@@ -750,23 +760,25 @@ EXPLAIN WITH scored AS (
 SELECT id, score > 0 AS has_score FROM scored ORDER BY id LIMIT 3;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 3                                 │
-│ Order By: scored.id ASC                │
-│ ~3 rows                                │
-╰────────────────────┬───────────────────╯
-╭─ PROJECTION ───────┴───────────────────╮
+╭─ PROJECTION ───────────────────────────╮
 │ Projections: id, has_score             │
 │ ~7 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ TOP_N ────────────┴───────────────────╮
+│ Top: 3                                 │
+│ Order By: id ASC                       │
+│ ~3 rows                                │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
 │ │ Value: fox          │                │
 │ ╰─────────────────────╯                │
+│ Column Filter:                         │
+│ optional: Dynamic Filter (id < ?)      │
 │ Score: bm25(k1=1.2, b=0.75)            │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
@@ -781,23 +793,25 @@ EXPLAIN SELECT id, score > 0 AS has_score FROM (
 ) sub ORDER BY id LIMIT 3;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 3                                 │
-│ Order By: sub.id ASC                   │
-│ ~3 rows                                │
-╰────────────────────┬───────────────────╯
-╭─ PROJECTION ───────┴───────────────────╮
+╭─ PROJECTION ───────────────────────────╮
 │ Projections: id, has_score             │
 │ ~7 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ TOP_N ────────────┴───────────────────╮
+│ Top: 3                                 │
+│ Order By: id ASC                       │
+│ ~3 rows                                │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
 │ │ Value: fox          │                │
 │ ╰─────────────────────╯                │
+│ Column Filter:                         │
+│ optional: Dynamic Filter (id < ?)      │
 │ Score: bm25(k1=1.2, b=0.75)            │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
@@ -840,7 +854,8 @@ INSERT INTO docs2 VALUES (2, 'the swift fox'), (4, 'a clever fox'), (6, 'the laz
 
 
 statement ok
-CREATE INDEX docs2_idx ON docs2 USING inverted(id, body en);
+CREATE INDEX docs2_idx ON docs2 USING inverted(id, body en)
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -935,7 +950,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ────────╮
 │ Index: docs_idx                        │  │ Index: docs2_idx        │
 │ Lookup: table                          │  │ Lookup: table           │
-│ Filter:                                │  │ Filter:                 │
+│ Index Filter:                          │  │ Index Filter:           │
 │ ╭─ Term ──────────────╮                │  │ ╭─ Term ──────────────╮ │
 │ │ Field: body(string) │                │  │ │ Field: body(string) │ │
 │ │ Value: fox          │                │  │ │ Value: fox          │ │
@@ -985,7 +1000,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ SEQ_SCAN ┴───────────╮
 │ Index: docs_idx                        │  │ Table: meta           │
 │ Lookup: table                          │  │ Type: Sequential Scan │
-│ Filter:                                │  │ Projections: id, tag  │
+│ Index Filter:                          │  │ Projections: id, tag  │
 │ ╭─ Term ──────────────╮                │  │ ~3 rows               │
 │ │ Field: body(string) │                │  ╰───────────────────────╯
 │ │ Value: fox          │                │
@@ -1075,10 +1090,10 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ───┴───────────────────╮  │ Limit: 2                               │  │ Limit: 2                               │
 │ Index: docs_idx                        │  │ Index: docs_idx                        │  │ ~2 rows                                │  │ ~2 rows                                │
 │ Lookup: table                          │  │ Lookup: table                          │  ╰────────────────────┬───────────────────╯  ╰────────────────────┬───────────────────╯
-│ Filter:                                │  │ Filter:                                │  ╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index Filter:                          │  │ Index Filter:                          │  ╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ ╭─ Term ──────────────╮                │  │ ╭─ Term ──────────────╮                │  │ Index: docs_idx                        │  │ Index: docs_idx                        │
 │ │ Field: body(string) │                │  │ │ Field: body(string) │                │  │ Lookup: table                          │  │ Lookup: table                          │
-│ │ Value: fox          │                │  │ │ Value: lazy         │                │  │ Filter:                                │  │ Filter:                                │
+│ │ Value: fox          │                │  │ │ Value: lazy         │                │  │ Index Filter:                          │  │ Index Filter:                          │
 │ ╰─────────────────────╯                │  │ ╰─────────────────────╯                │  │ ╭─ Term ──────────────╮                │  │ ╭─ Term ──────────────╮                │
 │ Score: bm25(k1=1.2, b=0.75)            │  │ Score: bm25(k1=1.2, b=0.75)            │  │ │ Field: body(string) │                │  │ │ Field: body(string) │                │
 │ Projections: id,                       │  │ Projections: id,                       │  │ │ Value: fox          │                │  │ │ Value: lazy         │                │
@@ -1130,10 +1145,10 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ───┴───────────────────╮  │ Limit: 2                               │  │ Limit: 2                               │
 │ Index: docs_idx                        │  │ Index: docs_idx                        │  │ ~2 rows                                │  │ ~2 rows                                │
 │ Lookup: table                          │  │ Lookup: table                          │  ╰────────────────────┬───────────────────╯  ╰────────────────────┬───────────────────╯
-│ Filter:                                │  │ Filter:                                │  ╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index Filter:                          │  │ Index Filter:                          │  ╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ ╭─ Term ──────────────╮                │  │ ╭─ Term ──────────────╮                │  │ Index: docs_idx                        │  │ Index: docs_idx                        │
 │ │ Field: body(string) │                │  │ │ Field: body(string) │                │  │ Lookup: table                          │  │ Lookup: table                          │
-│ │ Value: fox          │                │  │ │ Value: lazy         │                │  │ Filter:                                │  │ Filter:                                │
+│ │ Value: fox          │                │  │ │ Value: lazy         │                │  │ Index Filter:                          │  │ Index Filter:                          │
 │ ╰─────────────────────╯                │  │ ╰─────────────────────╯                │  │ ╭─ Term ──────────────╮                │  │ ╭─ Term ──────────────╮                │
 │ Score: bm25(k1=1.2, b=0.75)            │  │ Score: bm25(k1=1.2, b=0.75)            │  │ │ Field: body(string) │                │  │ │ Field: body(string) │                │
 │ Projections: id,                       │  │ Projections: id,                       │  │ │ Value: fox          │                │  │ │ Value: lazy         │                │
@@ -1174,7 +1189,8 @@ CREATE TABLE bigdocs (id INTEGER PRIMARY KEY, body VARCHAR);
 
 
 statement ok
-CREATE INDEX bigdocs_idx ON bigdocs USING inverted(id, body en);
+CREATE INDEX bigdocs_idx ON bigdocs USING inverted(id, body en)
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -1242,7 +1258,8 @@ CREATE TEXT SEARCH DICTIONARY boost_en(
 
 
 statement ok
-CREATE INDEX boost_docs_idx ON boost_docs USING inverted(id, body boost_en);
+CREATE INDEX boost_docs_idx ON boost_docs USING inverted(id, body boost_en)
+  WITH (compaction_interval = 0);
 
 
 statement count 1
@@ -1306,7 +1323,8 @@ CREATE TEXT SEARCH DICTIONARY sql_boost_en(
 
 
 statement ok
-CREATE INDEX sql_boost_idx ON sql_boost_docs USING inverted(id, body sql_boost_en);
+CREATE INDEX sql_boost_idx ON sql_boost_docs USING inverted(id, body sql_boost_en)
+  WITH (compaction_interval = 0);
 
 
 statement count 1
@@ -1421,7 +1439,8 @@ CREATE TABLE prefix_docs (id INTEGER PRIMARY KEY, sku VARCHAR);
 # verify row inclusion for this section; SQL-boost rank semantics
 # are covered separately below using the analyzed-body setup.
 statement ok
-CREATE INDEX prefix_idx ON prefix_docs USING inverted(id, sku);
+CREATE INDEX prefix_idx ON prefix_docs USING inverted(id, sku)
+  WITH (compaction_interval = 0);
 
 
 statement count 1

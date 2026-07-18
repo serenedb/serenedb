@@ -156,7 +156,7 @@ QUERY PLAN
 │ Table: variant_pk             │
 │ Type: Sequential Scan         │
 │ Projections: x                │
-│ Filters: id = 2               │
+│ Column Filter: id = 2         │
 │ ~1 row                        │
 ╰───────────────────────────────╯
 
@@ -181,7 +181,7 @@ QUERY PLAN
 │ Table: variant_pk              │
 │ Type: Sequential Scan          │
 │ Projections: id, x             │
-│ Filters: id = 3                │
+│ Column Filter: id = 3          │
 │ ~1 row                         │
 ╰────────────────────────────────╯
 
@@ -201,7 +201,7 @@ QUERY PLAN
 │ Table: variant_pk     │
 │ Type: Sequential Scan │
 │ Projections: id       │
-│ Filters: id = 1       │
+│ Column Filter: id = 1 │
 │ ~1 row                │
 ╰───────────────────────╯
 

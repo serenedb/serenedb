@@ -23,20 +23,28 @@
 #include <array>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
+#include <duckdb/planner/table_filter.hpp>
+#include <duckdb/planner/table_filter_state.hpp>
 #include <memory>
 #include <span>
 #include <vector>
 
-#include "connector/column_extract.h"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/index/column_extract.hpp"
+#include "iresearch/index/table_filter_iterator.hpp"
 
 namespace sdb::connector {
 
 class HitBatcher {
  public:
-  HitBatcher(std::span<const ColumnstoreProjection> projections, bool fetch_pk,
-             bool track_scores);
+  // `filters` are the pushed `.col`/score table filters applied in-scan
+  // (RowGroup::Scan-style: codec Filter narrows survivors, decoded once into
+  // the projected output slot then Sliced). Empty on the count/top-k paths,
+  // where filtering happens in the DocIterator instead.
+  HitBatcher(std::span<const ColumnstoreProjection> projections,
+             irs::field_id pk_field_id, bool track_scores,
+             std::span<const TableFilterDocIterator::FilterSpec> filters = {});
 
   HitBatcher(const HitBatcher&) = delete;
   HitBatcher& operator=(const HitBatcher&) = delete;
@@ -44,8 +52,6 @@ class HitBatcher {
 
   void BeginSegment(uint32_t seg_idx, const irs::ColReader* col_reader,
                     duckdb::ClientContext* context);
-
-  bool Push(irs::doc_id_t doc);
 
   duckdb::idx_t OpenWindow(uint64_t row);
   // Batched fill: the current window's ids/scores go to [WindowHead(), ...) /
@@ -55,11 +61,6 @@ class HitBatcher {
   void CommitWindow(duckdb::idx_t n) noexcept {
     _len += n;
     SDB_ASSERT(_len <= STANDARD_VECTOR_SIZE);
-  }
-
-  std::span<float> ScoreSlots(duckdb::idx_t n) noexcept {
-    SDB_ASSERT(n <= _len);
-    return {&_scores[_len - n], n};
   }
 
   void Finalize();
@@ -94,15 +95,39 @@ class HitBatcher {
     std::unique_ptr<duckdb::Vector> scratch;
   };
 
+  // A pushed `.col` filter for this segment. `output_slots` are the projected
+  // slots the filter column also outputs to (a column can be projected more
+  // than once): the codec decode doubles as the materialization of the first
+  // slot (Sliced), and the rest Reference it zero-copy. Empty => filter-only:
+  // the column decodes into `scratch` purely to evaluate the predicate.
+  struct FilterCol {
+    const irs::ColumnReader* reader = nullptr;
+    irs::field_id field = 0;
+    const duckdb::TableFilter* filter = nullptr;
+    std::vector<duckdb::idx_t> output_slots;
+    std::unique_ptr<duckdb::TableFilterState> state;
+    std::unique_ptr<irs::ColumnReader::ScanState> scan;
+    // Codec Scan/Filter may morph the vector (e.g. dict_fsst emits a
+    // DICTIONARY view over codec-owned buffers), so every use goes through
+    // VectorScratch::Reset() -- never reuse it dirty.
+    std::unique_ptr<irs::ColumnReader::VectorScratch> scratch;
+  };
+
   enum class Pending : uint8_t { None, Dense, Scratch };
+
+  bool HasFilters() const noexcept {
+    return !_filters.empty() || _score_filter != nullptr;
+  }
 
   void CloseGroup();
   void ScatterGroup();
+  Batch EmitFiltered(duckdb::DataChunk& output);
   void Compact();
   void MaterializeColumn(Column& c, uint64_t anchor, duckdb::idx_t span,
                          duckdb::idx_t hits, duckdb::idx_t first,
                          duckdb::Vector& out, duckdb::idx_t at, bool dense);
   duckdb::Vector& Scratch(Column& c);
+  duckdb::Vector& PkOut();
   uint64_t Row(duckdb::idx_t i) const noexcept {
     return _docs[i] - irs::doc_limits::min();
   }
@@ -111,7 +136,7 @@ class HitBatcher {
   uint64_t RgEndFor(uint64_t row) const noexcept;
 
   std::span<const ColumnstoreProjection> _projections;
-  const bool _fetch_pk;
+  const irs::field_id _pk_field_id;
   const bool _track_scores;
 
   std::unique_ptr<irs::ReadContext> _ctx;
@@ -119,15 +144,28 @@ class HitBatcher {
   uint32_t _seg_idx = 0;
   const irs::ColumnReader* _rg_col = nullptr;
 
-  std::array<irs::doc_id_t, STANDARD_VECTOR_SIZE + 1> _docs;
-  std::array<irs::score_t, STANDARD_VECTOR_SIZE + 1> _scores;
+  std::array<irs::doc_id_t, STANDARD_VECTOR_SIZE> _docs;
+  std::array<irs::score_t, STANDARD_VECTOR_SIZE> _scores;
   duckdb::idx_t _len = 0;
   duckdb::idx_t _group = 0;
   duckdb::idx_t _batch = 0;
   uint64_t _group_rg_end = 0;
 
-  std::unique_ptr<duckdb::Vector> _pk_out;
+  // Codec scans may zero-copy the output (e.g. FixedSizeScan SetData's the
+  // vector straight at the pinned block), so every batch goes through
+  // VectorScratch::Reset() -- a stale pointer outlives the segment's pins.
+  std::unique_ptr<irs::ColumnReader::VectorScratch> _pk_out;
 
+  // Pushed table filters. `_filter_specs` is the query-level description
+  // (copied at construction); `_filters` are the per-segment readers/scan
+  // states rebuilt by BeginSegment. `_score_filter` is the (computed)
+  // score-column filter, applied on `_scores` before the `.col` pass.
+  std::vector<TableFilterDocIterator::FilterSpec> _filter_specs;
+  std::vector<FilterCol> _filters;
+  const duckdb::TableFilter* _score_filter = nullptr;
+  std::unique_ptr<duckdb::TableFilterState> _score_state;
+
+  duckdb::buffer_ptr<duckdb::SelectionData> _sel_data;
   duckdb::SelectionVector _sel;
 
   Pending _ready = Pending::None;

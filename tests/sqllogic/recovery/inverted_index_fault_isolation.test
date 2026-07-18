@@ -8,9 +8,9 @@ hash-threshold 100
 #
 # iresearch scans are eventually consistent (last-refresh), never
 # visibility-filtered: a covered projection is served entirely from the
-# index columnstore, the matched-row count is preserved across post-refresh
-# deletes, and non-INCLUDE columns of a deleted row surface as NULL while
-# the row is still emitted.
+# index columnstore and the matched-row count is preserved across
+# post-refresh deletes. A non-covered projection fetches by rowid at the
+# current snapshot, and a lookup miss drops the row (same as filtered-out).
 #
 # Each fault site `SDB_THROW(sdb::ERROR_DEBUG)` when armed -- queries that
 # don't exercise that path complete normally; queries that do trip surface
@@ -289,11 +289,11 @@ statement ok
 SET sdb_faults = '-SearchLookupFault'
 
 
-# --- null-on-miss: NON-covered projection over a deleted row ----------
+# --- drop-on-miss: NON-covered projection over a deleted row ----------
 # ext_only is not INCLUDE'd, so it is fetched by rowid at the current
-# snapshot. pk=2 was deleted after the last refresh: its row is STILL
-# returned (count preserved), ext_only reads NULL, and the INCLUDE column
-# (label) from the columnstore is still correct.
+# snapshot. pk=2 was deleted after the last refresh: the lookup misses and
+# the row is dropped from this projection (misses behave like filtered-out
+# rows), while covered projections and count(*) above still report it.
 
 query
 SELECT label, ext_only FROM doc_idx
@@ -302,7 +302,6 @@ SELECT label, ext_only FROM doc_idx
 ----
 label	ext_only
 a	x-one
-b	NULL
 
 
 statement ok

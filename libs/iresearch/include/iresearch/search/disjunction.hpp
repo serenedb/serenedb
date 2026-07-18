@@ -99,8 +99,8 @@ class UnaryDisjunction : public CompoundDocIterator<Adapter> {
 
   // Single-iterator passthrough: emit straight from the wrapped iterator's
   // (possibly specialized) EmitDocs instead of a per-doc virtual advance loop.
-  uint32_t EmitDocs(doc_id_t* out, doc_id_t max) final {
-    const auto n = _it.EmitDocs(out, max);
+  uint32_t EmitDocs(doc_id_t* out, doc_id_t min, doc_id_t max) final {
+    const auto n = _it.EmitDocs(out, min, max);
     this->_doc = _it.value();
     return n;
   }

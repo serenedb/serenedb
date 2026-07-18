@@ -136,14 +136,21 @@ class SingleWandIterator : public DocIterator {
   uint32_t EmitScoredDocs(doc_id_t* out, score_t* scores, doc_id_t max,
                           const ScoreFunction& scorer,
                           ColumnArgsFetcher* fetcher, doc_id_t min) final {
+    // Single-term entry only (multi-term drives the children's CollectRange
+    // directly, so this never runs for them). Position to the window exactly
+    // as max_score does for its essentials before CollectRange; fires once,
+    // on the first (fresh) window where value() is still unpositioned.
+    if (value() < min) {
+      seek(min);
+    }
     RawSpanSink<doc_id_t> docs{out};
     RawSpanSink<score_t> scs{scores};
     CollectRange(docs, scs, scorer, fetcher, min, max);
     return static_cast<uint32_t>(docs.count);
   }
 
-  uint32_t EmitDocs(doc_id_t* out, doc_id_t max) final {
-    return EmitDocsImpl(*this, out, max);
+  uint32_t EmitDocs(doc_id_t* out, doc_id_t min, doc_id_t max) final {
+    return EmitDocsImpl(*this, out, min, max);
   }
 
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,

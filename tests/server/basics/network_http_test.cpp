@@ -26,6 +26,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <yaclib/algo/wait_group.hpp>
 #include <yaclib/async/future.hpp>
 #include <yaclib/async/make.hpp>
 #include <yaclib/coro/task.hpp>
@@ -33,6 +34,7 @@
 
 #include "basics/asio_ns.h"
 #include "network/acceptor.h"
+#include "network/cancel_registry.h"
 #include "network/http/handler.h"
 #include "network/http/router.h"
 #include "network/http/session.h"
@@ -114,17 +116,46 @@ asio_ns::ip::tcp::endpoint Loopback(std::uint16_t port) {
   return {asio_ns::ip::make_address("127.0.0.1"), port};
 }
 
+// Wires the deps the acceptor requires the same way Server does (cancel
+// registry + session WaitGroup) and tears down in the server's order:
+// stop accepting, terminate live sessions, wait for their futures, then
+// stop the pool.
+class HttpServerHarness {
+ public:
+  explicit HttpServerHarness(network::HttpRouter& router) : _context{router} {
+    _context.cancel = &_cancel;
+    _context.sessions = &_sessions;
+    _pool.Start();
+    _acceptor = std::make_shared<HttpAcceptor>(_pool, Loopback(0), _context);
+    server = Loopback(_acceptor->LocalEndpoint().port());
+    _acceptor->Start();
+  }
+
+  ~HttpServerHarness() {
+    _acceptor->Stop();
+    _cancel.TerminateAll();
+    _sessions.Done();
+    _sessions.Wait();
+    _pool.Stop();
+  }
+
+  asio_ns::ip::tcp::endpoint server;
+
+ private:
+  network::IoThreadPool _pool{1};
+  network::CancelRegistry _cancel;
+  yaclib::WaitGroup<> _sessions{1};
+  network::HttpServerContext _context;
+  std::shared_ptr<HttpAcceptor> _acceptor;
+};
+
 }  // namespace
 
 TEST(NetworkHttp, RootHealthAndPing) {
-  network::IoThreadPool pool{1};
-  pool.Start();
   network::HttpRouter router;
   RegisterFixtures(router);
-  network::HttpServerContext context{router};
-  auto acceptor = std::make_shared<HttpAcceptor>(pool, Loopback(0), context);
-  const auto server = Loopback(acceptor->LocalEndpoint().port());
-  acceptor->Start();
+  HttpServerHarness harness{router};
+  const auto server = harness.server;
 
   const std::string root =
     Roundtrip(server, "GET / HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n");
@@ -145,20 +176,13 @@ TEST(NetworkHttp, RootHealthAndPing) {
   const std::string missing = Roundtrip(
     server, "GET /nope HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n");
   EXPECT_NE(missing.find("HTTP/1.1 404"), std::string::npos);
-
-  acceptor->Stop();
-  pool.Stop();
 }
 
 TEST(NetworkHttp, KeepAlivePipelining) {
-  network::IoThreadPool pool{1};
-  pool.Start();
   network::HttpRouter router;
   RegisterFixtures(router);
-  network::HttpServerContext context{router};
-  auto acceptor = std::make_shared<HttpAcceptor>(pool, Loopback(0), context);
-  const auto server = Loopback(acceptor->LocalEndpoint().port());
-  acceptor->Start();
+  HttpServerHarness harness{router};
+  const auto server = harness.server;
 
   asio_ns::io_context io;
   asio_ns::ip::tcp::socket socket{io};
@@ -185,41 +209,26 @@ TEST(NetworkHttp, KeepAlivePipelining) {
     pos += 1;
   }
   EXPECT_EQ(responses, 2u);
-
-  acceptor->Stop();
-  pool.Stop();
 }
 
 TEST(NetworkHttp, HeadHasNoBody) {
-  network::IoThreadPool pool{1};
-  pool.Start();
   network::HttpRouter router;
   RegisterFixtures(router);
-  network::HttpServerContext context{router};
-  auto acceptor = std::make_shared<HttpAcceptor>(pool, Loopback(0), context);
-  const auto server = Loopback(acceptor->LocalEndpoint().port());
-  acceptor->Start();
+  HttpServerHarness harness{router};
 
   const std::string head = Roundtrip(
-    server, "HEAD / HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n");
+    harness.server, "HEAD / HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n");
   const auto separator = head.find("\r\n\r\n");
   ASSERT_NE(separator, std::string::npos);
   EXPECT_EQ(head.substr(separator + 4), "");
-
-  acceptor->Stop();
-  pool.Stop();
 }
 
 TEST(NetworkHttp, BodyEcho) {
-  network::IoThreadPool pool{1};
-  pool.Start();
   network::HttpRouter router;
   router.Add(network::HttpMethod::Post, "/echo",
              std::make_unique<EchoHandler>());
-  network::HttpServerContext context{router};
-  auto acceptor = std::make_shared<HttpAcceptor>(pool, Loopback(0), context);
-  const auto server = Loopback(acceptor->LocalEndpoint().port());
-  acceptor->Start();
+  HttpServerHarness harness{router};
+  const auto server = harness.server;
 
   const std::string content_length =
     Roundtrip(server,
@@ -232,31 +241,21 @@ TEST(NetworkHttp, BodyEcho) {
     "POST /echo HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\n"
     "Connection: close\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n");
   EXPECT_NE(chunked.find("\r\n\r\nhello world"), std::string::npos);
-
-  acceptor->Stop();
-  pool.Stop();
 }
 
 TEST(NetworkHttp, ShutdownWithOpenKeepAliveConnection) {
-  network::IoThreadPool pool{1};
-  pool.Start();
   network::HttpRouter router;
   RegisterFixtures(router);
-  network::HttpServerContext context{router};
-  auto acceptor = std::make_shared<HttpAcceptor>(pool, Loopback(0), context);
-  const auto server = Loopback(acceptor->LocalEndpoint().port());
-  acceptor->Start();
+  HttpServerHarness harness{router};
 
   asio_ns::io_context io;
   asio_ns::ip::tcp::socket socket{io};
-  socket.connect(server);
+  socket.connect(harness.server);
   const std::string_view request = "GET /ping HTTP/1.1\r\nHost: t\r\n\r\n";
   asio_ns::write(socket, asio_ns::buffer(request.data(), request.size()));
   std::array<char, 256> chunk;
   asio_ns::error_code ec;
   socket.read_some(asio_ns::buffer(chunk), ec);
 
-  acceptor->Stop();
-  pool.Stop();
   SUCCEED();
 }

@@ -325,7 +325,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: mix_idx              │
 │ Lookup: table               │
-│ Filter:                     │
+│ Index Filter:               │
 │ ╭─ Term ──────────────────╮ │
 │ │ Field: (a || b)(string) │ │
 │ │ Value: foobar           │ │
@@ -353,7 +353,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────╮
 │ Index: mix_idx                                    │
 │ Lookup: table                                     │
-│ Filter:                                           │
+│ Index Filter:                                     │
 │ ╭─ And ────────────╮                              │
 │ ╰─────────┬────────╯                              │
 │           ├────────────────────────╮              │
@@ -982,7 +982,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: tx_n_idx             │
 │ Lookup: table               │
-│ Filter:                     │
+│ Index Filter:               │
 │ ╭─ Term ──────────────────╮ │
 │ │ Field: (a + b)(numeric) │ │
 │ │ Value: 30               │ │
@@ -998,7 +998,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────╮
 │ Index: tx_v_idx               │
 │ Lookup: table                 │
-│ Filter:                       │
+│ Index Filter:                 │
 │ ╭─ Term ────────────────────╮ │
 │ │ Field: (s1 || s2)(string) │ │
 │ │ Value: foobar             │ │
@@ -1014,7 +1014,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: tx_b_idx          │
 │ Lookup: table            │
-│ Filter:                  │
+│ Index Filter:            │
 │ ╭─ Term ───────────────╮ │
 │ │ Field: (a > b)(bool) │ │
 │ │ Value: true          │ │
@@ -1282,7 +1282,7 @@ CREATE TABLE inc_e_rgs(id INT PRIMARY KEY, a INT);
 
 statement ok
 CREATE INDEX inc_e_rgs_idx ON inc_e_rgs USING inverted(
-    id, (a * 2) included (compression='bitpacking', row_group_size='8'));
+    id, (a * 2) included (compression='bitpacking')) WITH (row_group_size = 8);
 
 statement ok
 INSERT INTO inc_e_rgs VALUES (1, 1), (2, 5), (3, 12);
@@ -1303,7 +1303,7 @@ statement error
 CREATE INDEX inc_e_bad ON inc_e_num USING inverted(
     id, (a + b) included (bogus='value'));
 ----
-db error: ERROR: Column '(a + b)': unknown included option 'bogus'. Accepted options: compression (string, default 'auto'), row_group_size (int >= 1), hyperloglog (bool, default false)
+db error: ERROR: Column '(a + b)': unknown included option 'bogus'. Accepted options: compression (string, default 'auto'), hyperloglog (bool, default false)
 
 
 statement error
@@ -1352,7 +1352,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: ivf_e_idx                       │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Vector KNN ────────────────╮        │
 │ │ Field: array_value(x, y, z) │        │
 │ │ Metric: l2                  │        │

@@ -68,7 +68,6 @@ class ScoreCollector {
  public:
   enum class Tag {
     NthPartition,
-    NthPartitionAsc,
     Generic,
   };
 
@@ -99,17 +98,13 @@ struct ScoreDoc {
   bool operator==(const ScoreDoc& other) const = default;
 };
 
-enum class Order { ASC, DESC };
-
 // TODO(mbkkt) Try to make it autovectorized,
 // otherwise try to use xsimd/neon specific intrinsics
-template<Order O>
 class NthPartitionScoreCollector final : public ScoreCollector {
  public:
   explicit NthPartitionScoreCollector(score_t& score_threshold, size_t k,
                                       std::span<ScoreDoc> hits) noexcept
-    : ScoreCollector{O == Order::ASC ? Tag::NthPartitionAsc
-                                     : Tag::NthPartition},
+    : ScoreCollector{Tag::NthPartition},
       _score_threshold{&score_threshold},
       _hits_it{hits.data()},
       _hits_begin{hits.data()},
@@ -119,11 +114,7 @@ class NthPartitionScoreCollector final : public ScoreCollector {
   }
 
   void SetScoreThreshold(score_t& score_threshold) noexcept {
-    if constexpr (O == Order::ASC) {
-      SDB_ASSERT(score_threshold >= *_score_threshold);
-    } else {
-      SDB_ASSERT(score_threshold <= *_score_threshold);
-    }
+    SDB_ASSERT(score_threshold <= *_score_threshold);
     score_threshold = *_score_threshold;
     _score_threshold = &score_threshold;
   }
@@ -213,11 +204,7 @@ class NthPartitionScoreCollector final : public ScoreCollector {
 
  private:
   IRS_FORCE_INLINE bool Accept(score_t score) const noexcept {
-    if constexpr (O == Order::ASC) {
-      return score < *_score_threshold;
-    } else {
-      return score > *_score_threshold;
-    }
+    return score > *_score_threshold;
   }
 
   IRS_FORCE_INLINE void TryPush(score_t score, doc_id_t doc) noexcept {
@@ -234,20 +221,15 @@ class NthPartitionScoreCollector final : public ScoreCollector {
       return false;
     }
     _hits_it = _hits_pivot;
-    std::nth_element(_hits_begin, _hits_pivot, _hits_end,
-                     [](const ScoreDoc& l, const ScoreDoc& r) {
-                       if constexpr (O == Order::ASC) {
-                         return l.score < r.score;
-                       } else {
-                         return l.score > r.score;
-                       }
-                     });
+    std::nth_element(
+      _hits_begin, _hits_pivot, _hits_end,
+      [](const ScoreDoc& l, const ScoreDoc& r) { return l.score > r.score; });
     *_score_threshold = _hits_pivot->score;
     return true;
   }
 
 #ifdef __AVX2__
-  static constexpr int kCmpPred = O == Order::ASC ? _CMP_LT_OQ : _CMP_GT_OQ;
+  static constexpr int kCmpPred = _CMP_GT_OQ;
 
   IRS_FORCE_INLINE uint64_t GetScoreMask(const score_t* IRS_RESTRICT scores,
                                          __m256 threshold) const noexcept {
@@ -275,12 +257,7 @@ IRS_FORCE_INLINE auto ResolveScoreCollector(ScoreCollector& collector, F&& f) {
   switch (collector.GetTag()) {
     case ScoreCollector::Tag::NthPartition:
       return std::forward<F>(f)(
-        sdb::basics::downCast<NthPartitionScoreCollector<Order::DESC>>(
-          collector));
-    case ScoreCollector::Tag::NthPartitionAsc:
-      return std::forward<F>(f)(
-        sdb::basics::downCast<NthPartitionScoreCollector<Order::ASC>>(
-          collector));
+        sdb::basics::downCast<NthPartitionScoreCollector>(collector));
     case ScoreCollector::Tag::Generic:
       return std::forward<F>(f)(collector);
     default:
@@ -328,12 +305,13 @@ struct DocIterator : AttributeProvider {
 
   virtual uint32_t count() = 0;
 
-  // Emit ascending matched doc-ids in [value(), max) into `out`, return the
-  // count. Bitset-free counterpart of FillBlock for unscored scans.
-  // Preconditions: value() < max and value() is positioned (as for FillBlock);
-  //   `out` has room for max - value() ids.
+  // Emit ascending matched doc-ids in [min, max) into `out`, return the count.
+  // Bitset-free counterpart of FillBlock for unscored scans. Self-positioning
+  // like EmitScoredDocs: value() may sit before the window (or be
+  // unpositioned), so docs < min are skipped -- the caller does NOT prime the
+  // iterator. Preconditions: min < max; `out` has room for max - min ids.
   // Postcondition: value() == first doc >= max (or eof()), as for FillBlock.
-  virtual uint32_t EmitDocs(doc_id_t* out, doc_id_t max) = 0;
+  virtual uint32_t EmitDocs(doc_id_t* out, doc_id_t min, doc_id_t max) = 0;
 
   // Scored counterpart of EmitDocs: also emit each match's score into `scores`
   // (parallel to `out`) via the block-scoring path (mirrors Collect), no
@@ -383,9 +361,13 @@ struct DocIterator : AttributeProvider {
   // of dispatching -- the whole point of the *Impl(*this) devirtualisation.
   template<typename S>
   IRS_FORCE_INLINE static uint32_t EmitDocsImpl(S& self, doc_id_t* out,
-                                                doc_id_t max) {
+                                                doc_id_t min, doc_id_t max) {
     uint32_t n = 0;
-    for (auto doc = self.value(); doc < max; doc = self.S::advance()) {
+    auto doc = self.value();
+    while (doc < min) {  // value() may be behind the window (or unpositioned)
+      doc = self.S::advance();
+    }
+    for (; doc < max; doc = self.S::advance()) {
       out[n++] = doc;
     }
     return n;
@@ -540,8 +522,9 @@ struct DocIterator : AttributeProvider {
     irs::DocIterator::CollectImpl(*this, scorer, fetcher, collector);          \
   }                                                                            \
                                                                                \
-  uint32_t EmitDocs(irs::doc_id_t* out, irs::doc_id_t max) final {             \
-    return irs::DocIterator::EmitDocsImpl(*this, out, max);                    \
+  uint32_t EmitDocs(irs::doc_id_t* out, irs::doc_id_t min, irs::doc_id_t max)  \
+    final {                                                                    \
+    return irs::DocIterator::EmitDocsImpl(*this, out, min, max);               \
   }                                                                            \
                                                                                \
   uint32_t EmitScoredDocs(irs::doc_id_t* out, irs::score_t* scores,            \
@@ -563,8 +546,9 @@ struct DocIterator : AttributeProvider {
 // EmitDocs/EmitScoredDocs only, for subclasses that already define bespoke
 // count/Collect/FillBlock.
 #define IRS_DOC_ITERATOR_EMIT_DEFAULTS                                         \
-  uint32_t EmitDocs(irs::doc_id_t* out, irs::doc_id_t max) final {             \
-    return irs::DocIterator::EmitDocsImpl(*this, out, max);                    \
+  uint32_t EmitDocs(irs::doc_id_t* out, irs::doc_id_t min, irs::doc_id_t max)  \
+    final {                                                                    \
+    return irs::DocIterator::EmitDocsImpl(*this, out, min, max);               \
   }                                                                            \
   uint32_t EmitScoredDocs(irs::doc_id_t* out, irs::score_t* scores,            \
                           irs::doc_id_t max, const irs::ScoreFunction& scorer, \
@@ -583,8 +567,9 @@ struct DocIterator : AttributeProvider {
     irs::DocIterator::CollectImpl(*this, scorer, fetcher, collector);          \
   }                                                                            \
                                                                                \
-  uint32_t EmitDocs(irs::doc_id_t* out, irs::doc_id_t max) final {             \
-    return irs::DocIterator::EmitDocsImpl(*this, out, max);                    \
+  uint32_t EmitDocs(irs::doc_id_t* out, irs::doc_id_t min, irs::doc_id_t max)  \
+    final {                                                                    \
+    return irs::DocIterator::EmitDocsImpl(*this, out, min, max);               \
   }                                                                            \
                                                                                \
   uint32_t EmitScoredDocs(irs::doc_id_t* out, irs::score_t* scores,            \

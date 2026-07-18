@@ -52,7 +52,7 @@ QUERY PLAN
 ╭─ SEQ_SCAN ┴───────────╮
 │ Table: single_pk      │
 │ Type: Sequential Scan │
-│ Filters: a = 2        │
+│ Column Filter: a = 2  │
 │ ~1 row                │
 ╰───────────────────────╯
 

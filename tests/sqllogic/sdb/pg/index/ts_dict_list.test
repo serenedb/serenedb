@@ -1,0 +1,176 @@
+hash-threshold 100
+
+# ts_dict_* aggregates over array columns. A VARCHAR[] (LIST) or VARCHAR[N]
+# (ARRAY) key column indexes element-wise into the same field shape as a
+# scalar keyword column, so the term dictionary serves the same aggregates:
+# terms are the distinct elements, ts_dict_count is live documents per term
+# (an element listed twice in one row still counts that document once),
+# ts_dict_freq is total postings. The Key=Value facet-tag pattern is the
+# motivating shape. Background maintenance is disabled; visibility is driven
+# by VACUUM (REFRESH_TABLE).
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ldl_kw(template = 'keyword', frequency = true)
+
+
+statement ok
+CREATE TABLE ldl(id INTEGER PRIMARY KEY, tags VARCHAR[], pair VARCHAR[2], plain VARCHAR)
+
+
+statement ok
+CREATE INDEX ldl_idx ON ldl USING inverted(id, tags ldl_kw, pair, plain)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+
+statement ok
+INSERT INTO ldl VALUES
+  (1, ['Brand=FENDT', 'Status=Open'],  ['a', 'b'], 'x'),
+  (2, ['Brand=CLAAS'],                 ['a', 'c'], 'y'),
+  (3, ['Brand=FENDT', 'Status=Done'],  ['b', 'b'], 'x'),
+  (4, NULL,                            ['a', 'b'], 'z'),
+  (5, [],                              ['c', 'a'], 'x'),
+  (6, ['Brand=FENDT', 'Brand=FENDT'],  ['b', 'a'], 'y')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ldl;
+
+
+# Terms are the distinct elements across all rows.
+query T
+SELECT unnest(ts_dict_agg(tags)) AS term FROM ldl_idx ORDER BY term
+----
+term
+Brand=CLAAS
+Brand=FENDT
+Status=Done
+Status=Open
+
+
+# Per-term live document counts: row 6 lists Brand=FENDT twice but is one
+# document.
+query TI
+SELECT t AS term, c AS docs
+FROM (SELECT unnest(ts_dict_agg(tags)) AS t, unnest(ts_dict_count(tags)) AS c
+      FROM ldl_idx) sub
+ORDER BY t
+----
+term	docs
+Brand=CLAAS	1
+Brand=FENDT	3
+Status=Done	1
+Status=Open	1
+
+
+# Postings frequency counts every element occurrence: Brand=FENDT appears
+# 4 times across rows 1, 3 and 6.
+query TI
+SELECT t AS term, f AS freq
+FROM (SELECT unnest(ts_dict_agg(tags)) AS t, unnest(ts_dict_freq(tags)) AS f
+      FROM ldl_idx) sub
+ORDER BY t
+----
+term	freq
+Brand=CLAAS	1
+Brand=FENDT	4
+Status=Done	1
+Status=Open	1
+
+
+# Document-level WHERE on another indexed column restricts the counts.
+query TI
+SELECT t AS term, c AS docs
+FROM (SELECT unnest(ts_dict_agg(tags)) AS t, unnest(ts_dict_count(tags)) AS c
+      FROM ldl_idx WHERE plain @@ 'x') sub
+ORDER BY t
+----
+term	docs
+Brand=FENDT	2
+Status=Done	1
+Status=Open	1
+
+
+# Same-field @@ membership WHERE composes with the aggregate.
+query TI
+SELECT t AS term, c AS docs
+FROM (SELECT unnest(ts_dict_agg(tags)) AS t, unnest(ts_dict_count(tags)) AS c
+      FROM ldl_idx WHERE tags @@ 'Status=Open') sub
+ORDER BY t
+----
+term	docs
+Brand=FENDT	1
+Status=Open	1
+
+
+# Term-level completion over array elements: outer filter over emitted terms.
+query T
+SELECT t AS term
+FROM (SELECT unnest(ts_dict_agg(tags)) AS t FROM ldl_idx) sub
+WHERE t LIKE 'Brand=%' ORDER BY t
+----
+term
+Brand=CLAAS
+Brand=FENDT
+
+
+# Dict-less (verbatim) LIST columns work the same; min/max come straight
+# from the dictionary.
+query TT
+SELECT ts_dict_min(pair) AS lo, ts_dict_max(pair) AS hi FROM ldl_idx
+----
+lo	hi
+a	c
+
+
+query TI
+SELECT t AS term, c AS docs
+FROM (SELECT unnest(ts_dict_agg(pair)) AS t, unnest(ts_dict_count(pair)) AS c
+      FROM ldl_idx) sub
+ORDER BY t
+----
+term	docs
+a	5
+b	4
+c	2
+
+
+# Deletions mask element postings like scalar terms.
+statement ok
+DELETE FROM ldl WHERE id IN (3, 6)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ldl;
+
+
+query TI
+SELECT t AS term, c AS docs
+FROM (SELECT unnest(ts_dict_agg(tags)) AS t, unnest(ts_dict_count(tags)) AS c
+      FROM ldl_idx) sub
+ORDER BY t
+----
+term	docs
+Brand=CLAAS	1
+Brand=FENDT	1
+Status=Open	1
+
+
+# A fresh segment sums per term with the dirty one.
+statement ok
+INSERT INTO ldl VALUES (7, ['Brand=FENDT', 'Status=Open'], ['c', 'c'], 'w')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ldl;
+
+
+query TI
+SELECT t AS term, c AS docs
+FROM (SELECT unnest(ts_dict_agg(tags)) AS t, unnest(ts_dict_count(tags)) AS c
+      FROM ldl_idx) sub
+ORDER BY t
+----
+term	docs
+Brand=CLAAS	1
+Brand=FENDT	2
+Status=Open	2

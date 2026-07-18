@@ -1,0 +1,126 @@
+control substitution on
+
+# COPY (FORMAT text) round-trip of temporal values under a non-UTC session:
+# TIMESTAMPTZ (file carries session-local renderings), TIMETZ, and a
+# TIMESTAMPTZ[] column whose rendered form nests quoting inside the COPY
+# framing. Followed by TIMESTAMPTZ text-input parsing through COPY FROM.
+#
+# Deliberately NOT covered here: custom DELIMITER collisions with temporal
+# text (e.g. DELIMITER ':' vs '07:00:00'). PG escapes data bytes matching the
+# delimiter for every field type; serenedb currently escapes them only in
+# string fields, so its writer emits unparseable files for such delimiters.
+# Add that coverage once the writer escapes non-string fields too.
+
+statement ok
+SET TIME ZONE 'America/New_York';
+
+statement ok
+CREATE TABLE ctsrc
+(
+  id  INTEGER PRIMARY KEY,
+  ts  TIMESTAMPTZ,
+  ttz TIMETZ,
+  tss TIMESTAMPTZ[]
+);
+
+statement ok
+CREATE TABLE ctdst
+(
+  id  INTEGER PRIMARY KEY,
+  ts  TIMESTAMPTZ,
+  ttz TIMETZ,
+  tss TIMESTAMPTZ[]
+);
+
+statement count 3
+INSERT INTO ctsrc VALUES
+    (1, TIMESTAMPTZ '2024-01-15 12:00:00+00', TIMETZ '12:00:00+05:30',
+        ARRAY[TIMESTAMPTZ '2024-01-15 12:00:00+00', TIMESTAMPTZ '2024-07-15 12:00:00+00']::TIMESTAMPTZ[]),
+    (2, TIMESTAMPTZ '2024-07-15 08:00:00-04', TIMETZ '23:59:59-03:30', NULL),
+    (3, NULL, NULL, NULL);
+
+statement count 3
+COPY ctsrc TO '${__TEST_DIR__}/copy_text_tz.txt' (FORMAT text);
+
+statement count 3
+COPY ctdst FROM '${__TEST_DIR__}/copy_text_tz.txt' (FORMAT text);
+
+query
+SELECT
+  (SELECT count(*) FROM (SELECT * FROM ctsrc EXCEPT SELECT * FROM ctdst) a)
+  + (SELECT count(*) FROM (SELECT * FROM ctdst EXCEPT SELECT * FROM ctsrc) b)
+  AS diff;
+----
+diff
+0
+
+query
+SELECT count(*) AS null_ts FROM ctdst WHERE ts IS NULL;
+----
+null_ts
+1
+
+query
+SELECT extract(epoch FROM ts)::BIGINT AS ep, ttz FROM ctdst WHERE id = 2;
+----
+ep	ttz
+1721044800	23:59:59-03:30
+
+query
+SELECT CASE WHEN tss[1] = TIMESTAMPTZ '2024-01-15 12:00:00+00'
+             AND tss[2] = TIMESTAMPTZ '2024-07-15 12:00:00+00'
+       THEN 1 ELSE 0 END AS arr_ok
+FROM ctdst WHERE id = 1;
+----
+arr_ok
+1
+
+# ---------------------------------------------------------------------------
+# TIMESTAMPTZ text input through COPY: offset-less strings parse in the
+# session zone (NY winter -05), named zones resolve with DST (summer -04),
+# explicit offsets apply, and the ambiguous fall-back local time takes the
+# first occurrence.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE rawsrc(s TEXT);
+
+statement count 4
+INSERT INTO rawsrc VALUES
+    ('2024-01-15 07:00:00'),
+    ('2024-07-15 08:00:00 America/New_York'),
+    ('2024-01-15 12:00:00+00'),
+    ('2024-11-03 01:30:00');
+
+statement count 4
+COPY rawsrc TO '${__TEST_DIR__}/copy_text_tz_in.txt' (FORMAT text);
+
+statement ok
+CREATE TABLE tzin(ts TIMESTAMPTZ);
+
+statement count 4
+COPY tzin FROM '${__TEST_DIR__}/copy_text_tz_in.txt' (FORMAT text);
+
+query
+SELECT extract(epoch FROM ts)::BIGINT AS ep FROM tzin ORDER BY ep;
+----
+ep
+1705320000
+1705320000
+1721044800
+1730615400
+
+statement ok
+DROP TABLE rawsrc;
+
+statement ok
+DROP TABLE tzin;
+
+statement ok
+SET TIME ZONE 'UTC';
+
+statement ok
+DROP TABLE ctsrc;
+
+statement ok
+DROP TABLE ctdst;

@@ -325,9 +325,10 @@ class AllDocsExistenceIterator : public DocIterator {
                                            fetcher, min);
   }
 
-  // All docs in [_doc, _max_doc] have the column; fill in one iota pass.
-  uint32_t EmitDocs(doc_id_t* out, doc_id_t max) noexcept final {
-    auto doc = _doc;
+  // All docs in [_doc, _max_doc] have the column; skip below the window, then
+  // fill [min, max) in one iota pass.
+  uint32_t EmitDocs(doc_id_t* out, doc_id_t min, doc_id_t max) noexcept final {
+    auto doc = _doc < min ? min : _doc;
     const auto end = max <= _max_doc ? max : _max_doc + 1;
     uint32_t n = 0;
     while (doc < end) {

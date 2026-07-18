@@ -176,10 +176,6 @@ QUERY PLAN
 │ Groups: #0                     │
 │ ~2 rows                        │
 ╰────────────────┬───────────────╯
-╭─ PROJECTION ───┴───────────────╮
-│ Projections: #0                │
-│ ~5 rows                        │
-╰────────────────┬───────────────╯
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: td_idx                  │
 │ TsDict: body                   │
@@ -204,10 +200,6 @@ QUERY PLAN
 │ Groups: #0                          │
 │ Aggregates: max(#1)                 │
 │ ~2 rows                             │
-╰──────────────────┬──────────────────╯
-╭─ PROJECTION ─────┴──────────────────╮
-│ Projections: #0, #1                 │
-│ ~5 rows                             │
 ╰──────────────────┬──────────────────╯
 ╭─ IRESEARCH_SCAN ─┴──────────────────╮
 │ Index: td_idx                       │

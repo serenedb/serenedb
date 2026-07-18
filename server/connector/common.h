@@ -21,6 +21,7 @@
 #pragma once
 
 #include <cstdint>
+#include <duckdb/common/types/datetime.hpp>
 #include <duckdb/common/types/string_type.hpp>
 #include <span>
 #include <string_view>
@@ -32,6 +33,11 @@ namespace sdb::connector {
 
 inline std::string_view AsView(const duckdb::string_t& s) noexcept {
   return {s.GetData(), s.GetSize()};
+}
+
+inline int64_t TimeTzIndexTerm(int64_t raw_bits) noexcept {
+  return static_cast<int64_t>(
+    duckdb::dtime_tz_t{static_cast<uint64_t>(raw_bits)}.sort_key());
 }
 
 // TODO(Dronplane) unify with key?

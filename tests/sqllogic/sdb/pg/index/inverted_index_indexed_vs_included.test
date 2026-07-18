@@ -83,7 +83,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: m_idx            │
 │ Lookup: table           │
-│ Filter:                 │
+│ Index Filter:           │
 │ ╭─ Term ──────────────╮ │
 │ │ Field: body(string) │ │
 │ │ Value: alpha        │ │
@@ -112,7 +112,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: m_idx            │
 │ Lookup: table           │
-│ Filter:                 │
+│ Index Filter:           │
 │ ╭─ Term ──────────────╮ │
 │ │ Field: tag(numeric) │ │
 │ │ Value: 100          │ │
@@ -136,7 +136,7 @@ EXPLAIN SELECT note, extra FROM m_idx WHERE body @@ ts_phrase('alpha');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: m_idx            │
-│ Filter:                 │
+│ Index Filter:           │
 │ ╭─ Term ──────────────╮ │
 │ │ Field: body(string) │ │
 │ │ Value: alpha        │ │
@@ -173,7 +173,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: m_idx             │
 │ Lookup: table            │
-│ Filter:                  │
+│ Index Filter:            │
 │ ╭─ Term ──────────────╮  │
 │ │ Field: body(string) │  │
 │ │ Value: cat          │  │
@@ -212,7 +212,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: m_idx            │
 │ Lookup: table           │
-│ Filter:                 │
+│ Index Filter:           │
 │ ╭─ Term ──────────────╮ │
 │ │ Field: body(string) │ │
 │ │ Value: alpha        │ │
@@ -250,7 +250,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: m_idx            │
 │ Lookup: table           │
-│ Filter:                 │
+│ Index Filter:           │
 │ ╭─ Term ──────────────╮ │
 │ │ Field: dual(string) │ │
 │ │ Value: red          │ │
@@ -284,7 +284,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────╮
 │ Index: m_idx           │
 │ Lookup: table          │
-│ Filter:                │
+│ Index Filter:          │
 │ ╭─ Term ────────────╮  │
 │ │ Field: dual(null) │  │
 │ │ Value:            │  │

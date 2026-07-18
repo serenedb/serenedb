@@ -65,7 +65,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────╮
 │ Index: t_geo_inc_idx   │
 │ Lookup: table          │
-│ Filter:                │
+│ Index Filter:          │
 │ ╭─ Geo Distance ─────╮ │
 │ │ Field: geo(string) │ │
 │ │ Range: *, <1000    │ │
@@ -108,7 +108,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────╮
 │ Index: t_geo_noi_idx   │
 │ Lookup: table          │
-│ Filter:                │
+│ Index Filter:          │
 │ ╭─ Geo Distance ─────╮ │
 │ │ Field: geo(string) │ │
 │ │ Range: *, <1000    │ │
@@ -153,7 +153,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: t_geo_src_noi_idx │
 │ Lookup: table            │
-│ Filter:                  │
+│ Index Filter:            │
 │ ╭─ Geo Distance ─────╮   │
 │ │ Field: geo(string) │   │
 │ │ Range: *, <1000    │   │
@@ -202,7 +202,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────╮
 │ Index: t_geo_src_zstd_idx │
 │ Lookup: table             │
-│ Filter:                   │
+│ Index Filter:             │
 │ ╭─ Geo Distance ─────╮    │
 │ │ Field: geo(string) │    │
 │ │ Range: *, <1000    │    │
@@ -253,7 +253,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Index: t_wild_inc_idx                                                                                                                                                                                  │
 │ Lookup: table                                                                                                                                                                                          │
-│ Filter:                                                                                                                                                                                                │
+│ Index Filter:                                                                                                                                                                                          │
 │ ╭─ Wildcard Ngram ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
 │ │ Field: b(string)                                                                                                                                                                                   │ │
 │ │ Token:                                                                                                                                                                                             │ │
@@ -297,7 +297,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Index: t_wild_noi_idx                                                                                                                                                                                  │
 │ Lookup: table                                                                                                                                                                                          │
-│ Filter:                                                                                                                                                                                                │
+│ Index Filter:                                                                                                                                                                                          │
 │ ╭─ Wildcard Ngram ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
 │ │ Field: b(string)                                                                                                                                                                                   │ │
 │ │ Token:                                                                                                                                                                                             │ │

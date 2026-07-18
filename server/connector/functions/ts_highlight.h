@@ -20,9 +20,20 @@
 
 #pragma once
 
+#include <duckdb/function/function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 
+#include "connector/highlight/highlight_options.h"
+
 namespace sdb::connector {
+
+struct TsHighlightsBindData final : public duckdb::FunctionData {
+  highlight::HighlightOptions options;
+  std::vector<std::string> field_names;
+
+  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final;
+  bool Equals(const duckdb::FunctionData& other) const final;
+};
 
 void RegisterTsHighlight(duckdb::ExtensionLoader& loader);
 

@@ -214,6 +214,16 @@ std::vector<std::string> ParseKeyColumns(std::string_view text) {
   return cols;
 }
 
+std::vector<std::string> KeyColumnsFromOptions(
+  const duckdb::case_insensitive_map_t<duckdb::Value>& options) {
+  auto it = options.find("key_columns");
+  if (it == options.end()) {
+    return {};
+  }
+  return ParseKeyColumns(
+    it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR).GetValue<std::string>());
+}
+
 std::optional<ViewFastPath> ResolveViewFastPath(
   duckdb::ClientContext& context, const catalog::PgSqlView& view,
   std::span<const std::string> key_columns) {
@@ -344,6 +354,12 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       out.projection_columns = std::move(projection_columns);
       return out;
     }
+    // The attached-external-DB branches below (user key_columns, postgres ctid,
+    // clickhouse metadata PK) all key on the same source table.
+    const CatalogTableRef ext_ref{
+      .catalog = entry.ParentCatalog().GetName().GetIdentifierName(),
+      .schema = entry.ParentSchema().name.GetIdentifierName(),
+      .table = entry.name.GetIdentifierName()};
     if ((cat_type == "clickhouse" || cat_type == "postgres") &&
         !key_columns.empty()) {
       // User-specified lookup key via CREATE INDEX WITH (key_columns = '...'):
@@ -373,10 +389,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
         }
       }
       ViewFastPath out;
-      out.catalog_ref = CatalogTableRef{
-        .catalog = entry.ParentCatalog().GetName().GetIdentifierName(),
-        .schema = entry.ParentSchema().name.GetIdentifierName(),
-        .table = entry.name.GetIdentifierName()};
+      out.catalog_ref = ext_ref;
       out.pk_spec = catalog::PkSpec::ExternalDBKey;
       out.pk_is_struct = true;
       out.pk_struct_indices = std::move(idxs);
@@ -394,13 +407,9 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       // rowid; the lookup renders `rowid IN (...)`, which postgres_filter_pushdown
       // turns into a `ctid IN (...)` TID scan on the remote.
       ViewFastPath out;
-      out.catalog_ref = CatalogTableRef{
-        .catalog = entry.ParentCatalog().GetName().GetIdentifierName(),
-        .schema = entry.ParentSchema().name.GetIdentifierName(),
-        .table = entry.name.GetIdentifierName()};
+      out.catalog_ref = ext_ref;
       out.pk_spec = catalog::PkSpec::ExternalDBKey;
       out.pk_is_rowid = true;
-      out.pk_column_name = "ctid";
       out.pk_uniqueness = PkUniqueness::Enforced;
       out.projection_columns = std::move(projection_columns);
       return out;
@@ -449,10 +458,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
         return std::nullopt;
       }
       ViewFastPath out;
-      out.catalog_ref = CatalogTableRef{
-        .catalog = entry.ParentCatalog().GetName().GetIdentifierName(),
-        .schema = entry.ParentSchema().name.GetIdentifierName(),
-        .table = entry.name.GetIdentifierName()};
+      out.catalog_ref = ext_ref;
       out.pk_spec = catalog::PkSpec::ExternalDBKey;
       out.pk_column_index = *pk_index;
       out.pk_column_name = std::move(*pk_name);

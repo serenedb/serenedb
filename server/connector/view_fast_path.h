@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <memory>
@@ -111,6 +112,11 @@ std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp);
 // Split a `key_columns` CREATE INDEX option value ("a, b, c") into trimmed
 // column names. Empty/absent -> {}.
 std::vector<std::string> ParseKeyColumns(std::string_view text);
+
+// The parsed `key_columns` CREATE INDEX option from an options map, or {} when
+// absent.
+std::vector<std::string> KeyColumnsFromOptions(
+  const duckdb::case_insensitive_map_t<duckdb::Value>& options);
 
 duckdb::TableFunction MakeFastPathLookupFunction(const ViewFastPath& fp);
 

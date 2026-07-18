@@ -349,13 +349,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       // here would be UB in release (asserts compiled out).
       std::optional<ViewFastPath> fast_path;
       if (_relation && _relation->GetType() == catalog::ObjectType::PgSqlView) {
-        std::vector<std::string> key_cols;
-        if (auto it = _info->options.find("key_columns");
-            it != _info->options.end()) {
-          key_cols = ParseKeyColumns(
-            it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR)
-              .GetValue<std::string>());
-        }
+        auto key_cols = KeyColumnsFromOptions(_info->options);
         fast_path = ResolveViewFastPath(
           context, static_cast<const catalog::PgSqlView&>(*_relation), key_cols);
       }
@@ -392,10 +386,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         v->DefaultCastAs(duckdb::LogicalType::VARCHAR).GetValue<std::string>();
       options.topk_scorer = catalog::ParseScorerExpression(context, value);
     }
-    if (auto* v = find_with("key_columns")) {
-      options.key_columns = ParseKeyColumns(
-        v->DefaultCastAs(duckdb::LogicalType::VARCHAR).GetValue<std::string>());
-    }
+    options.key_columns = KeyColumnsFromOptions(_info->options);
     std::string store_pk = "auto";
     if (auto* v = find_with("store_pk")) {
       store_pk = duckdb::StringUtil::Lower(

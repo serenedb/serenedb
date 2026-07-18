@@ -136,7 +136,6 @@ inline duckdb::LogicalType PkColumnType(catalog::PkColumnKind kind) {
     case catalog::PkColumnKind::Unable:
       return duckdb::LogicalType::SQLNULL;
   }
-  return duckdb::LogicalType::SQLNULL;
 }
 
 class SearchSinkInsertBaseImpl {

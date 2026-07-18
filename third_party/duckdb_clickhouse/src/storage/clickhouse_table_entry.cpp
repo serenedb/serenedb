@@ -94,19 +94,24 @@ TableFunction ClickHouseTableEntry::GetScanFunction(ClientContext &context, uniq
 		ClickHousePoolConnection conn;
 		try {
 			conn = ch_catalog.GetConnectionPool().GetConnection();
-			string sql = "SELECT ifNull(total_rows, 0) AS n, total_rows IS NOT NULL AS known "
+			string sql = "SELECT ifNull(total_rows, 0) AS n, total_rows IS NOT NULL AS known, "
+			             "engine LIKE '%MergeTree%' AS is_mt "
 			             "FROM system.tables WHERE database = " + ClickHouseStringLiteral(database) +
 			             " AND name = " + ClickHouseStringLiteral(table);
 			ClickHouseConnection::LogQuery(sql);
 			conn->GetClient().Select(sql, [&](const clickhouse::Block &block) {
-				if (block.GetColumnCount() < 2 || block.GetRowCount() == 0) {
+				if (block.GetColumnCount() < 3 || block.GetRowCount() == 0) {
 					return;
 				}
 				auto n = block[0]->As<clickhouse::ColumnUInt64>();
 				auto known = block[1]->As<clickhouse::ColumnUInt8>();
+				auto is_mt = block[2]->As<clickhouse::ColumnUInt8>();
 				if (n && known && known->At(0) != 0) {
 					cached_row_count = static_cast<idx_t>(n->At(0));
 					cached_row_count_known = true;
+				}
+				if (is_mt) {
+					cached_is_merge_tree = is_mt->At(0) != 0;
 				}
 			});
 		} catch (...) {
@@ -117,6 +122,7 @@ TableFunction ClickHouseTableEntry::GetScanFunction(ClientContext &context, uniq
 	}
 	bd->has_cardinality = cached_row_count_known;
 	bd->approx_row_count = cached_row_count;
+	bd->is_merge_tree = cached_is_merge_tree;
 
 	bind_data = std::move(bd);
 	auto function = ClickHouseScanFunctionFilterPushdown();

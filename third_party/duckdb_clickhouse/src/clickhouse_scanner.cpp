@@ -239,7 +239,12 @@ static std::string BuildScanSQL(const ClickHouseBindData &bind_data, const vecto
 	if (filter_pushdown && filters) {
 		auto filter_string = ClickHouseFilterPushdown::TransformFilters(column_ids, filters, bind_data, inexact_filters);
 		if (!filter_string.empty()) {
-			query += " WHERE " + filter_string;
+			// PREWHERE reads the filter columns first and skips the wide columns for
+			// non-matching rows -- a win for selective filters (e.g. a point lookup
+			// `WHERE pk IN (...)`). It is legal only on MergeTree-family engines;
+			// elsewhere it errors, so fall back to WHERE. ClickHouse would auto-move
+			// via optimize_move_to_prewhere anyway; this just makes it explicit.
+			query += (bind_data.is_merge_tree ? " PREWHERE " : " WHERE ") + filter_string;
 		}
 	}
 	// ORDER BY / LIMIT clauses the optimizer proved safe to push (see

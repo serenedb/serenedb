@@ -51,6 +51,8 @@ private:
 	idx_t cached_row_count = 0;
 	bool cached_row_count_known = false;
 	bool row_count_fetched = false;
+	//! MergeTree-family engine (from system.tables.engine): PREWHERE is legal.
+	bool cached_is_merge_tree = false;
 };
 
 //! Refuse an UPDATE/DELETE whose key values are not unique in the table. A ClickHouse

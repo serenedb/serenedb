@@ -648,7 +648,7 @@ query error
 SELECT c_uint8 FROM chexp.chtest.types_all WHERE c_fixedstr IN ('abcd'::BLOB, 'wxyz'::BLOB) ORDER BY c_uint8;
 ----
 db error: ERROR: ClickHouse error during scan: DB::Exception: Too large string for FixedString column
-SQL: SELECT `c_fixedstr`, `c_uint8` FROM `chtest`.`types_all` WHERE `c_fixedstr` IN ('\\x61626364', '\\x7778797a')
+SQL: SELECT `c_fixedstr`, `c_uint8` FROM `chtest`.`types_all` PREWHERE `c_fixedstr` IN ('\\x61626364', '\\x7778797a')
 
 
 # A non-matching BLOB predicate returns the empty result.

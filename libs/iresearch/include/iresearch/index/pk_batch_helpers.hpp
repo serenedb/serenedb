@@ -36,6 +36,15 @@ inline void AppendPrimaryKeysFromVector(PrimaryKeyBatch& pk,
                                         const duckdb::Vector& vec,
                                         size_t count) {
   const auto type_id = vec.GetType().id();
+  if (pk.kind == PrimaryKeyBatch::Kind::Struct &&
+      type_id == duckdb::LogicalTypeId::STRUCT) {
+    // Store one struct Value per doc; the vector self-describes its (arbitrary)
+    // field types, so the lookup reads the key columns back generically.
+    for (size_t k = 0; k < count; ++k) {
+      pk.Append(vec.GetValue(k));
+    }
+    return;
+  }
   if (pk.kind == PrimaryKeyBatch::Kind::I64 &&
       type_id == duckdb::LogicalTypeId::BIGINT) {
     const auto* data = duckdb::FlatVector::GetData<int64_t>(vec);

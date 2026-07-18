@@ -63,17 +63,16 @@ class ExternalLookupIndexSource final : public ViewIndexSourceBase {
  private:
   // "SELECT <keys>, <cols> FROM <table> WHERE " -- constant across
   // Materialize() calls; the key predicate (built per call from the batch)
-  // follows. <keys> is one column for a single key or `k1, k2` for a composite.
+  // follows. <keys> is the key column(s) in order.
   std::string _sql_prefix;
   duckdb::idx_t _num_proj_cols = 0;
-  // Quoted key column expressions used to build the per-call WHERE predicate.
-  // _key1 is the single key / composite hi key (or the bare `rowid` keyword for
-  // the postgres ctid path); _key2 is the composite lo key (empty otherwise).
-  std::string _key1;
-  std::string _key2;
-  // I64 (single key: `WHERE k IN (v,...)`, keyed by pk.rows) or I64I64
-  // (composite key: `WHERE (k1=hi AND k2=lo) OR ...`, keyed by
-  // pk.files (hi) + pk.rows (lo)).
+  // The key column expressions, in order (quoted PK/key column names, or the
+  // bare `rowid` keyword for the postgres ctid path). One entry for an I64 key
+  // (rowid / clickhouse PK), N for a user Struct key. A single key renders
+  // `key IN (v,...)`; multiple render `(a=.. AND b=..) OR ...`.
+  std::vector<std::string> _key_cols;
+  // I64 (int64 key from pk.rows) or Struct (arbitrary-typed key columns from
+  // pk.structs). Drives how the per-doc key values are read from the batch.
   PrimaryKeyBatch::Kind _pk_kind = PrimaryKeyBatch::Kind::I64;
 };
 

@@ -205,9 +205,9 @@ DROP VIEW pg_artk_v_${__DATABASE__};
 
 
 # ===== composite (multi-column) user key: WITH (key_columns = 'shard, id') =====
-# Two BIGINT columns form the lookup key. They are stored together as a struct
-# (the I64I64 shape, STRUCT{hi,lo}) and matched rows re-fetch via
-# `WHERE (shard = .. AND id = ..) OR ...` -- generic over any two-column key,
+# Two columns form the lookup key. They are stored together as ONE struct column
+# (PkColumnKind::Struct) of their own types and matched rows re-fetch via
+# `WHERE (shard = .. AND id = ..) OR ...` -- generic over any multi-column key,
 # pushed down through the connector's AND/OR filter pushdown. The real columns
 # (body -- indexed, not stored -- and views) are materialised by the composite
 # lookup; neither is served from the columnstore.
@@ -258,6 +258,88 @@ DROP VIEW pg_shards_v_${__DATABASE__};
 
 statement ok
 DROP TABLE pg_${__DATABASE__}.iipgscan_docs.shards;
+
+
+# ===== arbitrary-type user keys: VARCHAR single, and a mixed 3-column key =====
+# The key columns can be ANY types (not just BIGINT): they are stored as one
+# struct column of their own types and re-fetched with literals rendered per
+# type. Here: a single VARCHAR key, and a 3-column (VARCHAR, DATE, BIGINT) key.
+statement ok
+CREATE TABLE pg_${__DATABASE__}.iipgscan_docs.typed (
+  code   TEXT,
+  region TEXT,
+  day    DATE,
+  seq    BIGINT,
+  body   TEXT
+);
+
+
+statement count 5
+INSERT INTO pg_${__DATABASE__}.iipgscan_docs.typed VALUES
+  ('a1', 'eu', DATE '2020-01-01', 1, 'pudge goes mid and dominates the lane'),
+  ('a2', 'eu', DATE '2020-01-02', 2, 'anchin reads manga every weekend'),
+  ('a3', 'us', DATE '2020-01-01', 1, 'pudge plays again in a ranked match'),
+  ('a4', 'us', DATE '2020-01-03', 5, 'krivda writes sql for the new feature'),
+  ('a5', 'as', DATE '2020-02-01', 9, 'mom reviews pudge highlight reel');
+
+
+# --- single VARCHAR key: `WHERE code IN ('a1','a3','a5')` ---
+statement ok
+CREATE VIEW pg_typedc_v_${__DATABASE__} AS
+  SELECT code, region, day, seq, body FROM pg_${__DATABASE__}.iipgscan_docs.typed;
+
+
+statement ok
+CREATE INDEX pg_typedc_v_idx_${__DATABASE__}
+  ON pg_typedc_v_${__DATABASE__}
+  USING inverted(body pg_en_${__DATABASE__})
+  WITH (key_columns = 'code');
+
+
+query
+SELECT body FROM pg_typedc_v_idx_${__DATABASE__}
+WHERE body @@ ts_phrase('pudge') ORDER BY body;
+----
+body
+mom reviews pudge highlight reel
+pudge goes mid and dominates the lane
+pudge plays again in a ranked match
+
+
+statement ok
+DROP VIEW pg_typedc_v_${__DATABASE__};
+
+
+# --- mixed 3-column key (VARCHAR, DATE, BIGINT):
+#     `WHERE (region=.. AND day=.. AND seq=..) OR ...` ---
+statement ok
+CREATE VIEW pg_typedk_v_${__DATABASE__} AS
+  SELECT region, day, seq, body FROM pg_${__DATABASE__}.iipgscan_docs.typed;
+
+
+statement ok
+CREATE INDEX pg_typedk_v_idx_${__DATABASE__}
+  ON pg_typedk_v_${__DATABASE__}
+  USING inverted(body pg_en_${__DATABASE__})
+  WITH (key_columns = 'region, day, seq');
+
+
+query
+SELECT body FROM pg_typedk_v_idx_${__DATABASE__}
+WHERE body @@ ts_phrase('pudge') ORDER BY body;
+----
+body
+mom reviews pudge highlight reel
+pudge goes mid and dominates the lane
+pudge plays again in a ranked match
+
+
+statement ok
+DROP VIEW pg_typedk_v_${__DATABASE__};
+
+
+statement ok
+DROP TABLE pg_${__DATABASE__}.iipgscan_docs.typed;
 
 
 statement ok

@@ -36,6 +36,11 @@ enum class PkColumnKind : uint8_t {
   I64,
   I64I64,
   Unable,
+  // A user-specified external lookup key (CREATE INDEX WITH key_columns): the
+  // key columns are stored together as one STRUCT column of their own types
+  // (any types, any count >= 1), read back as one struct column. Appended last
+  // to keep the persisted uint8 ordinals of the values above stable.
+  Struct,
 };
 
 struct InvertedIndexOptions {

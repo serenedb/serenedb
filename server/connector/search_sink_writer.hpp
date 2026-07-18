@@ -129,10 +129,14 @@ inline duckdb::LogicalType PkColumnType(catalog::PkColumnKind kind) {
         duckdb::LogicalType::STRUCT({{"hi", duckdb::LogicalType::BIGINT},
                                      {"lo", duckdb::LogicalType::BIGINT}});
       return kType;
+    // Struct's type is not fixed (it depends on the user key columns); it is
+    // taken from the actual pk vector at write time, never from here.
+    case catalog::PkColumnKind::Struct:
     case catalog::PkColumnKind::None:
     case catalog::PkColumnKind::Unable:
       return duckdb::LogicalType::SQLNULL;
   }
+  return duckdb::LogicalType::SQLNULL;
 }
 
 class SearchSinkInsertBaseImpl {

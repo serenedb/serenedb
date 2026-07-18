@@ -349,23 +349,19 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       // User-specified lookup key via CREATE INDEX WITH (key_columns = '...'):
       // the user asserts which column(s) are the key (their PK or a secondary
       // key), overriding the auto-detected default (postgres ctid / clickhouse
-      // PK). One BIGINT column renders `WHERE col IN (...)`; two BIGINT columns
-      // are stored together as a struct and re-fetched via an OR of per-row
-      // equalities `WHERE (a=.. AND b=..) OR ...` (the I64I64 shape). More than
-      // two, or a non-BIGINT column, falls back to no fast path.
-      if (key_columns.size() != 1 && key_columns.size() != 2) {
-        return std::nullopt;
-      }
+      // PK). Any number of columns (>= 1) of any types are stored together as
+      // ONE struct column and re-fetched via `col IN (...)` (single column) or
+      // an OR of per-row equalities `(a=.. AND b=..) OR ...` (multiple). An
+      // unknown column name falls back to no fast path.
       std::vector<duckdb::column_t> idxs(key_columns.size());
+      std::vector<duckdb::LogicalType> types(key_columns.size());
       std::vector<bool> found(key_columns.size(), false);
       duckdb::idx_t pos = 0;
       for (const auto& col : entry.GetColumns().Logical()) {
         for (size_t k = 0; k < key_columns.size(); ++k) {
           if (!found[k] && col.Name() == key_columns[k]) {
-            if (col.GetType().id() != duckdb::LogicalTypeId::BIGINT) {
-              return std::nullopt;
-            }
             idxs[k] = static_cast<duckdb::column_t>(pos);
+            types[k] = col.GetType();
             found[k] = true;
           }
         }
@@ -382,13 +378,10 @@ std::optional<ViewFastPath> ResolveViewFastPath(
         .schema = entry.ParentSchema().name.GetIdentifierName(),
         .table = entry.name.GetIdentifierName()};
       out.pk_spec = catalog::PkSpec::ExternalDBKey;
-      out.pk_column_index = idxs[0];
-      out.pk_column_name = key_columns[0];
-      if (key_columns.size() == 2) {
-        out.pk_is_composite = true;
-        out.pk_column_index_2 = idxs[1];
-        out.pk_column_name_2 = key_columns[1];
-      }
+      out.pk_is_struct = true;
+      out.pk_struct_indices = std::move(idxs);
+      out.pk_struct_types = std::move(types);
+      out.pk_struct_names.assign(key_columns.begin(), key_columns.end());
       out.pk_uniqueness = PkUniqueness::Unverified;
       out.projection_columns = std::move(projection_columns);
       return out;
@@ -605,10 +598,10 @@ std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp) {
       // Postgres ctid: the key is the virtual rowid, not a real column.
       return {duckdb::COLUMN_IDENTIFIER_ROW_ID};
     }
-    if (fp.pk_is_composite) {
-      // Two real source columns projected as (hi, lo); the sink stores them as
-      // a STRUCT{hi,lo} (I64I64), which two projected columns also route to.
-      return {fp.pk_column_index, fp.pk_column_index_2};
+    if (fp.pk_is_struct) {
+      // The key columns are projected in order and packed into ONE struct
+      // column (PkColumnKind::Struct) by the index sink.
+      return fp.pk_struct_indices;
     }
     // The PK is a real source column (not a virtual one); project it so the
     // index sink can key postings by its value.

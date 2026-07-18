@@ -589,9 +589,15 @@ void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size, const PkChunk& pk) {
       _pk_policy.column == catalog::PkColumnKind::I64I64) {
     _pk_column_writer = EnsurePerRowColumnWriter(
       catalog::term_dict::kPKFieldId, PkColumnType(_pk_policy.column));
+  } else if (_pk_policy.column == catalog::PkColumnKind::Struct && pk.column) {
+    // The user key struct's type is whatever the sink packed; store as-is so
+    // the columnstore self-describes it for the reader.
+    _pk_column_writer = EnsurePerRowColumnWriter(catalog::term_dict::kPKFieldId,
+                                                 pk.column->GetType());
   }
   if (_pk_column_writer && pk.column) {
-    SDB_ASSERT(pk.column->GetType() == PkColumnType(_pk_policy.column));
+    SDB_ASSERT(_pk_policy.column == catalog::PkColumnKind::Struct ||
+               pk.column->GetType() == PkColumnType(_pk_policy.column));
     AppendPkColumn(*pk.column, batch_size);
   }
   if (_pk_policy.index_term && !pk.keys.empty()) {

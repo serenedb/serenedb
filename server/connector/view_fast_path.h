@@ -74,15 +74,17 @@ struct ViewFastPath {
   // column's position in the source table (for BackfillPkVirtualColumns).
   duckdb::column_t pk_column_index = 0;
   std::string pk_column_name;
-  // For a user-specified two-column composite key (WITH key_columns = 'a,b'):
-  // the second key column. Both columns must be BIGINT; they are stored
-  // together as a STRUCT{hi,lo} (the I64I64 shape) and re-fetched via an OR of
-  // per-row equalities `WHERE (a=.. AND b=..) OR ...`. pk_is_composite gates the
-  // two-column path; pk_column_index/pk_column_name hold the first (hi) key, the
-  // fields below the second (lo) key.
-  bool pk_is_composite = false;
-  duckdb::column_t pk_column_index_2 = 0;
-  std::string pk_column_name_2;
+  // For a user-specified key (CREATE INDEX WITH key_columns = 'a, b, ...'): the
+  // key columns, in order, of ANY types and ANY count >= 1. They are stored
+  // together as ONE struct column (PkColumnKind::Struct) and re-fetched via
+  // `WHERE col IN (...)` (one column) or an OR of per-row equalities
+  // `WHERE (a=.. AND b=..) OR ...` (more than one). pk_is_struct gates this
+  // path; pk_column_index/pk_column_name above are for the auto single-column
+  // key (clickhouse metadata PK) and are unused when pk_is_struct.
+  bool pk_is_struct = false;
+  std::vector<duckdb::column_t> pk_struct_indices;
+  std::vector<std::string> pk_struct_names;
+  std::vector<duckdb::LogicalType> pk_struct_types;
   PkUniqueness pk_uniqueness = PkUniqueness::Unverified;
   // For PkSpec::ExternalDBKey over postgres: key on the row's physical locator
   // (ctid, surfaced as the duckdb rowid) instead of a PK column -- universal (no

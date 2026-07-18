@@ -876,15 +876,16 @@ void ApplyExternalKeyOnConflict(duckdb::CreateIndexInfo& info,
                               "\": expected 'throw' or 'nothing'"));
     }
   }
-  if (external_key && fast_path->pk_is_composite && action == "nothing") {
+  if (external_key && fast_path->pk_is_struct && action == "nothing") {
     // The 'nothing' collapse keeps the first row per key using a single-int64
-    // seen-set (the I64 shape); a composite key would need pair dedup, which
-    // isn't implemented. 'throw' (the default) probes both columns and is fine.
+    // seen-set (the I64 shape); a user struct key holds arbitrary-typed values,
+    // which that set can't dedup. 'throw' (the default) probes the key columns
+    // and is fine.
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("on_conflict = 'nothing' is not supported for a composite "
-              "(multi-column) lookup key; deduplicate the source or index on "
-              "a single unique key"));
+      ERR_MSG("on_conflict = 'nothing' is not supported for a user-specified "
+              "(key_columns) lookup key; deduplicate the source or index on a "
+              "single unique auto-detected key"));
   }
   if (external_key && fast_path->pk_uniqueness == PkUniqueness::Unverified) {
     // The policy applies: carry the validated (lowercased) action forward on
@@ -975,9 +976,14 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       const auto leaf_orig_size = leaf_get->GetColumnIds().size();
       duckdb::vector<duckdb::LogicalType> pk_types;
       pk_types.reserve(vcols.size());
-      for (auto vcol : vcols) {
+      for (size_t i = 0; i < vcols.size(); ++i) {
+        const auto vcol = vcols[i];
         if (vcol == duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX) {
           pk_types.push_back(duckdb::LogicalType::UBIGINT);
+        } else if (view_fast_path->pk_is_struct) {
+          // Real key columns of arbitrary types -- project their own types, not
+          // a hardcoded BIGINT (which only fits the file/rowid int64 keys).
+          pk_types.push_back(view_fast_path->pk_struct_types[i]);
         } else {
           pk_types.push_back(duckdb::LogicalType::BIGINT);
         }
@@ -1219,7 +1225,13 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
         [](const std::string& n) { return duckdb::Identifier{n}; }));
     create_index_info->SetSchema(target.ParentSchema().name);
     create_index_info->SetCatalog(target.ParentCatalog().GetName());
-    if (view_fast_path) {
+    if (view_fast_path && view_fast_path->pk_is_struct) {
+      // A user-specified key (WITH key_columns): the projected key columns are
+      // packed into one struct column (PkColumnKind::Struct), independent of
+      // their count/types.
+      create_index_info->options["_sdb_view_fast_path_pk"] =
+        duckdb::Value("external_struct_key");
+    } else if (view_fast_path) {
       switch (view_fast_path->pk_spec) {
         case catalog::PkSpec::DuckDBRowId:
           create_index_info->options["_sdb_view_fast_path_pk"] =

@@ -88,14 +88,21 @@ void ThrowOnDuplicateExternalKeys(duckdb::ClientContext& context,
   const auto table = absl::StrCat(catalog::QuoteSqlIdentifier(ref.catalog), ".",
                                   catalog::QuoteSqlIdentifier(ref.schema), ".",
                                   catalog::QuoteSqlIdentifier(ref.table));
-  // The key is one column, or `k1, k2` for a two-column composite key -- the
-  // GROUP BY / projection list is the same either way.
-  const auto key = fast_path.pk_is_composite
-                     ? absl::StrCat(
-                         catalog::QuoteSqlIdentifier(fast_path.pk_column_name),
-                         ", ",
-                         catalog::QuoteSqlIdentifier(fast_path.pk_column_name_2))
-                     : catalog::QuoteSqlIdentifier(fast_path.pk_column_name);
+  // The key is the auto single column, or the user's key_columns list (any
+  // count) -- the GROUP BY / projection list is the same either way.
+  std::string key;
+  duckdb::idx_t n_key_cols = 1;
+  if (fast_path.pk_is_struct) {
+    n_key_cols = fast_path.pk_struct_names.size();
+    for (const auto& name : fast_path.pk_struct_names) {
+      if (!key.empty()) {
+        absl::StrAppend(&key, ", ");
+      }
+      absl::StrAppend(&key, catalog::QuoteSqlIdentifier(name));
+    }
+  } else {
+    key = catalog::QuoteSqlIdentifier(fast_path.pk_column_name);
+  }
   const auto sql =
     absl::StrCat("SELECT ", key, ", count(*) AS n FROM ", table, " GROUP BY ",
                  key, " HAVING count(*) > 1 LIMIT 1");
@@ -108,12 +115,11 @@ void ThrowOnDuplicateExternalKeys(duckdb::ClientContext& context,
   }
   auto chunk = result->Fetch();
   if (chunk && chunk->size() > 0) {
-    const auto n_col = fast_path.pk_is_composite ? 2 : 1;
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
       ERR_MSG("cannot index ", table, ": lookup key (", key,
               ") is not unique (value ", chunk->GetValue(0, 0).ToString(),
-              " occurs ", chunk->GetValue(n_col, 0).ToString(),
+              " occurs ", chunk->GetValue(n_key_cols, 0).ToString(),
               " times), so matched rows cannot be re-fetched by key; "
               "deduplicate the table or use WITH (on_conflict = 'nothing') "
               "to index one row per key"));
@@ -401,15 +407,16 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       }
     }
     const bool table_backed = TableOrNull() != nullptr;
-    enum class KeyShape { Single, Two, Synth };
+    enum class KeyShape { Single, Two, Struct, Synth };
     auto shape = KeyShape::Synth;
     if (table_backed) {
       shape = KeyShape::Single;
     } else if (auto it = _info->options.find("_sdb_view_fast_path_pk");
                it != _info->options.end()) {
       const auto kind = it->second.GetValue<std::string>();
-      shape = (kind == "file_index_plus_row_number" ||
-               kind == "file_index_plus_duckdb_rowid")
+      shape = kind == "external_struct_key" ? KeyShape::Struct
+              : (kind == "file_index_plus_row_number" ||
+                 kind == "file_index_plus_duckdb_rowid")
                 ? KeyShape::Two
                 : KeyShape::Single;
     }
@@ -421,6 +428,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       options.pk_column = shape == KeyShape::Single ? catalog::PkColumnKind::I64
                           : shape == KeyShape::Two
                             ? catalog::PkColumnKind::I64I64
+                          : shape == KeyShape::Struct
+                            ? catalog::PkColumnKind::Struct
                             : catalog::PkColumnKind::Unable;
     } else if (store_pk == "i64") {
       if (shape != KeyShape::Single) {
@@ -428,7 +437,9 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
           ERR_MSG("store_pk = 'i64' requires a single-part row key; this "
                   "index's key is ",
-                  shape == KeyShape::Two ? "(file_index, row)" : "synthetic"));
+                  shape == KeyShape::Two      ? "(file_index, row)"
+                  : shape == KeyShape::Struct ? "a user key_columns struct"
+                                              : "synthetic"));
       }
       options.pk_column = catalog::PkColumnKind::I64;
     } else if (store_pk == "i64i64") {
@@ -659,6 +670,27 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
       auto& entries = duckdb::StructVector::GetEntries(*pk_scratch);
       entries[0].Reinterpret(chunk.data[gstate.pk_hi_col_idx]);
       entries[1].Reference(chunk.data[gstate.pk_lo_col_idx]);
+      pk.column = pk_scratch.get();
+      break;
+    }
+    case catalog::PkColumnKind::Struct: {
+      // The user key columns are the trailing projected columns [base, count).
+      // Pack them into ONE struct vector of their own types; the columnstore
+      // stores (and self-describes) that type, so the lookup reads it back
+      // generically. Field names are positional -- the lookup uses field order.
+      const auto base = gstate.pk_hi_col_idx;
+      SDB_ASSERT(base < chunk.ColumnCount());
+      duckdb::child_list_t<duckdb::LogicalType> field_types;
+      for (duckdb::idx_t i = base; i < chunk.ColumnCount(); ++i) {
+        field_types.emplace_back(absl::StrCat("c", i - base),
+                                 chunk.data[i].GetType());
+      }
+      pk_scratch =
+        std::make_unique<duckdb::Vector>(duckdb::LogicalType::STRUCT(field_types));
+      auto& entries = duckdb::StructVector::GetEntries(*pk_scratch);
+      for (duckdb::idx_t i = 0; i < entries.size(); ++i) {
+        entries[i].Reference(chunk.data[base + i]);
+      }
       pk.column = pk_scratch.get();
       break;
     }

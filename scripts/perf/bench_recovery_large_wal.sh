@@ -34,6 +34,11 @@ PORT="${PERF_REC_PORT:-6491}"
 TABLE_ROWS="${PERF_REC_TABLE_ROWS:-2000000}"
 DELTA_ROWS="${PERF_REC_DELTA_ROWS:-300000}"
 REPS="${PERF_REC_REPS:-3}"
+# 1 (default): refresh the index after the delta, so recovery replays the
+# delta into the TABLE only (the iresearch side is already durable). 0: leave
+# the delta un-refreshed, so recovery must tokenize + invert it -- the heavy
+# index-replay path.
+REFRESH_DELTA="${PERF_REC_REFRESH:-1}"
 IO_THREADS="${PERF_REC_IO_THREADS:-4}"
 CPU_THREADS="${PERF_REC_CPU_THREADS:-8}"
 SERVER_CORES="${PERF_REC_SERVER_CORES:-8-15}"
@@ -132,8 +137,10 @@ bench_one() {
 		-c "SET GLOBAL wal_autocheckpoint='1TB';" \
 		-c "SET GLOBAL checkpoint_threshold='1TB';" 2>/dev/null || true
 	"${PSQL[@]}" \
-		-c "INSERT INTO rec_txt SELECT x, 'lorem ipsum dolor sit amet word' || (x % 1000) || ' token' || (x % 50) FROM generate_series(${TABLE_ROWS} + 1, ${TABLE_ROWS} + ${DELTA_ROWS}) t(x);" \
-		-c "VACUUM (REFRESH_TABLE) rec_txt;" >/dev/null
+		-c "INSERT INTO rec_txt SELECT x, 'lorem ipsum dolor sit amet word' || (x % 1000) || ' token' || (x % 50) FROM generate_series(${TABLE_ROWS} + 1, ${TABLE_ROWS} + ${DELTA_ROWS}) t(x);" >/dev/null
+	if [[ "${REFRESH_DELTA}" == "1" ]]; then
+		"${PSQL[@]}" -c "VACUUM (REFRESH_TABLE) rec_txt;" >/dev/null
+	fi
 
 	local total=$((TABLE_ROWS + DELTA_ROWS))
 	local hits

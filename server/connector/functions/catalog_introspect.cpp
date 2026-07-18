@@ -56,7 +56,11 @@
 #include "catalog/persistence/tokenizer.h"
 #include "catalog/store/store.h"
 #include "catalog/store/wal.h"
+#include "connector/duckdb_client_state.h"
 #include "json_serializer.hpp"
+#include "pg/connection_context.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {
@@ -439,18 +443,30 @@ void PushColumns(duckdb::vector<duckdb::LogicalType>& return_types,
   names.push_back("def");
 }
 
+// The dump spans every database and includes definitions a role could never
+// SELECT (role rows carry password verifiers), so it is superuser-only.
+void RequireSuperuser(duckdb::ClientContext& context, std::string_view what) {
+  auto& conn = GetSereneDBContext(context);
+  if (!conn.CatalogSnapshot()->ClosureFor(conn.GetRoleId()).is_superuser) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    ERR_MSG("must be superuser to use ", what));
+  }
+}
+
 duckdb::unique_ptr<duckdb::FunctionData> CatalogWalBind(
-  duckdb::ClientContext&, duckdb::TableFunctionBindInput&,
+  duckdb::ClientContext& context, duckdb::TableFunctionBindInput&,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::string>& names) {
+  RequireSuperuser(context, "sdb_catalog_wal()");
   PushColumns(return_types, names, true);
   return duckdb::make_uniq<duckdb::TableFunctionData>();
 }
 
 duckdb::unique_ptr<duckdb::FunctionData> CatalogSnapshotBind(
-  duckdb::ClientContext&, duckdb::TableFunctionBindInput&,
+  duckdb::ClientContext& context, duckdb::TableFunctionBindInput&,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::string>& names) {
+  RequireSuperuser(context, "sdb_catalog_snapshot()");
   PushColumns(return_types, names, false);
   return duckdb::make_uniq<duckdb::TableFunctionData>();
 }

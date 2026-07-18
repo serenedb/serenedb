@@ -135,10 +135,14 @@ void DataStore::Initialize(std::string_view database_directory) {
   // The attach replays the data WAL; the catalog is already initialized, so
   // this is the "catalog first, then data" boot point. HIDDEN keeps the
   // store out of catalog enumeration; qualified lookups still resolve.
+  const auto attach_begin = std::chrono::steady_clock::now();
   ExecOrFatal(*_conn, absl::StrCat("ATTACH '",
                                    absl::StrReplaceAll(file, {{"'", "''"}}),
                                    "' AS \"", kStoreAlias,
                                    "\" (HIDDEN true)"));
+  SDB_INFO(STARTUP, "data store attached in ",
+           absl::FormatDuration(absl::FromChrono(
+             std::chrono::steady_clock::now() - attach_begin)));
 
   ResolvePendingAlter();
   Reconcile();

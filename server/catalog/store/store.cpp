@@ -955,22 +955,27 @@ void CatalogStore::DropSequence(ObjectId sequence_id) {
   Write([&](WriteContext& ctx) { ctx.DropSequence(sequence_id); });
 }
 
+void CatalogStore::WriteContext::DropEntry(ObjectId parent_id,
+                                           ObjectType type) {
+  _entries.push_back({
+    .op = Op::DropByParentType,
+    .key = {.parent_id = parent_id, .type = type},
+  });
+}
+
+void CatalogStore::WriteContext::DropEntry(ObjectId parent_id) {
+  _entries.push_back({
+    .op = Op::DropByParent,
+    .key = {.parent_id = parent_id},
+  });
+}
+
 void CatalogStore::DropEntry(ObjectId parent_id, ObjectType type) {
-  Entry record;
-  record.op = Op::DropByParentType;
-  record.key = {.parent_id = parent_id, .type = type};
-  absl::MutexLock lock{&_mutex};
-  AppendBatch({&record, 1});
-  MaybeCompact();
+  Write([&](WriteContext& ctx) { ctx.DropEntry(parent_id, type); });
 }
 
 void CatalogStore::DropEntry(ObjectId parent_id) {
-  Entry record;
-  record.op = Op::DropByParent;
-  record.key = {.parent_id = parent_id};
-  absl::MutexLock lock{&_mutex};
-  AppendBatch({&record, 1});
-  MaybeCompact();
+  Write([&](WriteContext& ctx) { ctx.DropEntry(parent_id); });
 }
 
 void CatalogStore::WriteTombstone(ObjectId parent_id, ObjectId id) {

@@ -190,6 +190,8 @@ class CatalogStore {
     void PutSequence(ObjectId sequence_id, uint64_t value);
     void DropDefinition(ObjectId parent_id, ObjectType type, ObjectId id);
     void DropSequence(ObjectId sequence_id);
+    void DropEntry(ObjectId parent_id, ObjectType type);
+    void DropEntry(ObjectId parent_id);
     void WriteTombstone(ObjectId parent_id, ObjectId id);
 
     void CreateStoreTable(StoreTableDef def);

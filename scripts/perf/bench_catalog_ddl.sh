@@ -50,6 +50,10 @@ stop_server() {
 trap stop_server EXIT
 
 start_server() { # $1 = binary
+	if lsof -t -i:"${PORT}" >/dev/null 2>&1; then
+		echo "port ${PORT} is already in use" >&2
+		exit 1
+	fi
 	DATA_DIR="$(mktemp -d "/tmp/${USER}-catddl-XXXXXX")"
 	"$1" "${DATA_DIR}" --listen "postgres://0.0.0.0:${PORT}" \
 		>"${DATA_DIR}/serened.log" 2>&1 &

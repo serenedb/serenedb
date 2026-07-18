@@ -103,7 +103,11 @@ std::vector<std::pair<std::string, std::string>> ConnectionOptions(
     }
     merged.emplace_back(std::move(key), std::string{value});
   };
-  server.GetOptions().Visit(set_opt);
+  const auto keys = server.OptionKeys();
+  const auto values = server.OptionValues();
+  for (size_t i = 0; i < keys.size(); ++i) {
+    set_opt(keys[i], values[i]);
+  }
   return merged;
 }
 
@@ -155,10 +159,21 @@ std::string QuoteSqlIdentifier(std::string_view name) {
 
 ForeignServer::ForeignServer(Permissions perm, ObjectId schema_id, ObjectId id,
                              std::string_view name, std::string fdw_name,
-                             Options options)
+                             std::vector<std::string> option_keys,
+                             std::vector<std::string> option_values)
   : Object{std::move(perm), schema_id, id, name, ObjectType::ForeignServer},
     _fdw_name{std::move(fdw_name)},
-    _options{std::move(options)} {}
+    _option_keys{std::move(option_keys)},
+    _option_values{std::move(option_values)} {}
+
+std::vector<std::string> ForeignServer::GetStringOptions() const {
+  std::vector<std::string> out;
+  out.reserve(_option_keys.size());
+  for (size_t i = 0; i < _option_keys.size(); ++i) {
+    out.push_back(absl::StrCat(_option_keys[i], "=", _option_values[i]));
+  }
+  return out;
+}
 
 std::shared_ptr<ForeignServer> ForeignServer::Deserialize(
   duckdb::Deserializer& src, ReadContext ctx) {
@@ -168,8 +183,8 @@ std::shared_ptr<ForeignServer> ForeignServer::Deserialize(
   // parent = the database (servers are database children, like PG).
   return std::make_shared<ForeignServer>(
     std::move(data.perm), ctx.database_id, ctx.id, data.name,
-    std::move(data.fdw_name),
-    Options{std::move(data.option_keys), std::move(data.option_values)});
+    std::move(data.fdw_name), std::move(data.option_keys),
+    std::move(data.option_values));
 }
 
 void ForeignServer::Serialize(duckdb::Serializer& sink) const {
@@ -177,8 +192,8 @@ void ForeignServer::Serialize(duckdb::Serializer& sink) const {
     .perm = GetPermissions(),
     .name = std::string{GetName()},
     .fdw_name = _fdw_name,
-    .option_keys = {_options.Keys().begin(), _options.Keys().end()},
-    .option_values = {_options.Values().begin(), _options.Values().end()},
+    .option_keys = _option_keys,
+    .option_values = _option_values,
   };
   basics::WriteTuple(sink, data);
 }
@@ -213,11 +228,10 @@ static std::string PrepareForeignServerAttach(duckdb::ClientContext& context,
     duckdb::Identifier{secret_name});
   for (const auto& [key, value] : ConnectionOptions(storage, server)) {
     secret->secret_map[duckdb::Identifier{key}] = duckdb::Value(value);
-    // Fail-closed: everything not on the plain allow-list stays hidden from
-    // duckdb_secrets() for the attach window's duration.
-    if (Options::IsSecretKey(key)) {
-      secret->redact_keys.insert(duckdb::Identifier{key});
-    }
+    // The secret's values are internal to the attach; hide every one from
+    // duckdb_secrets() for the attach window (the connector reads secret_map
+    // directly, so redact_keys only affects the display).
+    secret->redact_keys.insert(duckdb::Identifier{key});
   }
 
   auto& secret_manager = duckdb::SecretManager::Get(context);

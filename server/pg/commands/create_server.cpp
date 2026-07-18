@@ -40,9 +40,9 @@
 namespace sdb::pg {
 namespace {
 
-// Lower-case the option keys and stringify the values into the Options
-// storage owned by ForeignServer.
-catalog::Options MakeCatalogOptions(
+// Lower-case the option keys and stringify the values into the parallel
+// key/value vectors ForeignServer stores.
+std::pair<std::vector<std::string>, std::vector<std::string>> MakeServerOptions(
   const duckdb::named_parameter_map_t& options) {
   std::vector<std::string> keys;
   std::vector<std::string> values;
@@ -52,7 +52,7 @@ catalog::Options MakeCatalogOptions(
     keys.push_back(absl::AsciiStrToLower(key.GetIdentifierName()));
     values.push_back(value.ToString());
   }
-  return catalog::Options{std::move(keys), std::move(values)};
+  return {std::move(keys), std::move(values)};
 }
 
 // Establish the live attachment for a server (validates connectivity too).
@@ -81,9 +81,10 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
 
   // Owner = the creating role; the default ACL then gives the owner USAGE and
   // the public nothing (auth::ClassPrivs/PublicDefaultPrivs).
+  auto [option_keys, option_values] = MakeServerOptions(options);
   auto server = std::make_shared<catalog::ForeignServer>(
     catalog::Permissions{conn_ctx.GetRoleId()}, ObjectId{}, ObjectId{}, name,
-    std::string{fdw_name}, MakeCatalogOptions(options));
+    std::string{fdw_name}, std::move(option_keys), std::move(option_values));
 
   // The catalog validates everything under its mutex (privilege, supported
   // FDW, name collisions) and persists -- a denied or invalid CREATE never

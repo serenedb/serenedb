@@ -22,11 +22,12 @@
 
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "catalog/object.h"
-#include "catalog/options.h"
 
 namespace duckdb {
 
@@ -47,15 +48,26 @@ class ForeignServer : public Object {
   std::shared_ptr<Object> Clone() const final;
 
   ForeignServer(Permissions perm, ObjectId schema_id, ObjectId id,
-                std::string_view name, std::string fdw_name, Options options);
+                std::string_view name, std::string fdw_name,
+                std::vector<std::string> option_keys,
+                std::vector<std::string> option_values);
 
   std::string_view GetFdwName() const noexcept { return _fdw_name; }
 
-  const Options& GetOptions() const noexcept { return _options; }
+  std::span<const std::string> OptionKeys() const noexcept {
+    return _option_keys;
+  }
+  std::span<const std::string> OptionValues() const noexcept {
+    return _option_values;
+  }
+  // "key=value" strings in insertion order (the pg_foreign_server text[]
+  // shape), unredacted -- pg_foreign_server is superuser-only.
+  std::vector<std::string> GetStringOptions() const;
 
  private:
   std::string _fdw_name;
-  Options _options;
+  std::vector<std::string> _option_keys;
+  std::vector<std::string> _option_values;
 };
 
 // True when the FDW name maps to a connector storage type (clickhouse_fdw,
@@ -63,7 +75,7 @@ class ForeignServer : public Object {
 bool IsSupportedFdw(std::string_view fdw_name);
 
 // Registers the transient secret, runs the ATTACH on `conn`, drops the secret.
-// nullopt = unsupported FDW (nothing run); "" = success; else the REDACTED
+// nullopt = unsupported FDW (nothing run); "" = success; else the connector
 // error. Credentials come from the server's OPTIONS.
 std::optional<std::string> RunForeignServerAttach(
   duckdb::Connection& conn, const ForeignServer& server,

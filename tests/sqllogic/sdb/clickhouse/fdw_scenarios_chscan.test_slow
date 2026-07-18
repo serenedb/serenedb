@@ -4,8 +4,9 @@ control substitution on
 # (credentials in OPTIONS, no USER MAPPINGs) that the create_server / fdw_creds /
 # fdw_permissions tests don't reach: the transient attach secret never lingering
 # in duckdb_secrets(), several servers coexisting with independent OPTIONS
-# credentials and attachments, redaction of the plain `password` server-OPTIONS
-# key, and that a DROP SERVER takes its USAGE grants with it (a re-created
+# credentials and attachments, the superuser-only pg_foreign_server showing the
+# `password` server-OPTIONS key verbatim, and that a DROP SERVER takes its USAGE
+# grants with it (a re-created
 # same-named server does not inherit a stale grant). Superuser (default
 # connection) except where a login role is needed. Needs a live ClickHouse
 # (_chscan). Unique names (fs_*).
@@ -58,14 +59,14 @@ SELECT count(*) AS n FROM fs_b.chtest.vedernikoff;
 n
 6
 
-# ===== password in SERVER OPTIONS is redacted in srvoptions =====
-# The plain `password` value is gone from the catalog view for everyone, but the
-# server still connects with the real (unredacted) stored credentials (above).
+# ===== password in SERVER OPTIONS is shown verbatim in srvoptions =====
+# pg_foreign_server is superuser-only (OPTIONS carry credentials), so there is no
+# per-value redaction: the superuser default connection sees the full password.
 query
-SELECT array_to_string(srvoptions, ' ') NOT LIKE '%pass word%' AS redacted
+SELECT array_to_string(srvoptions, ' ') LIKE '%password=pass word%' AS pw_visible
 FROM pg_foreign_server WHERE srvname = 'fs_b';
 ----
-redacted
+pw_visible
 t
 
 # Dropping one server leaves the other's attachment untouched.

@@ -2,15 +2,17 @@ control substitution on
 
 # FDW credential-handling regression tests for the ClickHouse-style model:
 # foreign-server credentials live ONLY in `CREATE SERVER ... OPTIONS` (there is
-# no USER MAPPING). This covers:
+# no USER MAPPING). Because server OPTIONS now carry credentials, the whole
+# pg_foreign_server catalog is SUPERUSER-ONLY (like pg_user_mapping) and its
+# option values are shown verbatim -- there is no per-value redaction. This
+# covers:
 #  A) a connection-option VALUE containing a space (a password) round-trips
-#     through the connstr instead of corrupting it -- the eager attach connects;
-#  B) the world-readable pg_foreign_server REDACTS secret VALUES in srvoptions
-#     (the plain `password` key, a quoted mixed-case "PASSWORD", the clickhouse
-#     `passwd` alias) while leaving the plain keys (host/port/user/database)
-#     visible; the eager attach still resolves the real stored value;
-#  E) fail-closed redaction -- an unrecognized credential key (sslpassword) is
-#     redacted too (redaction is an allow-list of plain addressing keys);
+#     through the secret instead of corrupting it -- the eager attach connects;
+#  B) the superuser-only pg_foreign_server shows the FULL stored OPTIONS
+#     unredacted (the space password, the quoted mixed-case "PASSWORD", the
+#     clickhouse `passwd` alias, and an arbitrary `sslpassword` all resolve and
+#     appear verbatim);
+#  S) a plain non-superuser cannot read pg_foreign_server at all;
 #  R) server USAGE RBAC -- a non-owner LOGIN role without USAGE is denied at
 #     query time, GRANT USAGE lets it query, REVOKE denies it again.
 #
@@ -42,7 +44,7 @@ DROP ROLE IF EXISTS fc_snoop;
 statement ok
 DROP ROLE IF EXISTS fc_user;
 
-# ===== A: a space in an option value round-trips through the connstr =====
+# ===== A: a space in an option value round-trips through the secret =====
 statement ok
 CREATE SERVER fc_space FOREIGN DATA WRAPPER clickhouse_fdw
   OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner', password 'pass word');
@@ -53,28 +55,28 @@ SELECT count(*) FROM fc_space.chtest.vedernikoff;
 count
 6
 
-# ===== B: secret VALUES are redacted in the world-readable srvoptions =====
-# The plain `password` key: value gone from the catalog view, plain keys visible,
-# and the eager attach resolved the real value (the count proves it connected).
+# ===== B: pg_foreign_server shows the FULL stored OPTIONS unredacted =====
+# The space-containing password is stored verbatim and the plain keys are there
+# too (the whole catalog is superuser-only, so nothing is hidden from root).
 query
-SELECT array_to_string(srvoptions, ' ') NOT LIKE '%pass word%' AS redacted,
+SELECT array_to_string(srvoptions, ' ') LIKE '%password=pass word%' AS pw_visible,
        array_to_string(srvoptions, ' ') LIKE '%database=chtest%' AS plain_visible
 FROM pg_foreign_server WHERE srvname = 'fc_space';
 ----
-redacted	plain_visible
+pw_visible	plain_visible
 t	t
 
-# A quoted "PASSWORD" key (mixed case) is normalised and matched
-# case-insensitively, so its value is redacted too; the attach still resolves it.
+# A quoted "PASSWORD" key (mixed case) is normalised to lower-case and the
+# eager attach resolves it (the count proves it connected).
 statement ok
 CREATE SERVER fc_pwkey FOREIGN DATA WRAPPER clickhouse_fdw
   OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner', "PASSWORD" 'pass word');
 
 query
-SELECT array_to_string(srvoptions, ' ') NOT LIKE '%pass word%' AS redacted
+SELECT array_to_string(srvoptions, ' ') LIKE '%password=pass word%' AS pw_visible
 FROM pg_foreign_server WHERE srvname = 'fc_pwkey';
 ----
-redacted
+pw_visible
 t
 
 query
@@ -83,17 +85,16 @@ SELECT count(*) FROM fc_pwkey.chtest.vedernikoff;
 count
 6
 
-# The `passwd` alias (a valid clickhouse password key) is also redacted and
-# connects.
+# The `passwd` alias (a valid clickhouse password key) also resolves and connects.
 statement ok
 CREATE SERVER fc_passwd FOREIGN DATA WRAPPER clickhouse_fdw
   OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner', passwd 'pass word');
 
 query
-SELECT array_to_string(srvoptions, ' ') NOT LIKE '%pass word%' AS redacted
+SELECT array_to_string(srvoptions, ' ') LIKE '%passwd=pass word%' AS pw_visible
 FROM pg_foreign_server WHERE srvname = 'fc_passwd';
 ----
-redacted
+pw_visible
 t
 
 query
@@ -102,43 +103,37 @@ SELECT count(*) FROM fc_passwd.chtest.vedernikoff;
 count
 6
 
-# pg_foreign_server is world-readable: a plain non-superuser sees the row too,
-# still with the secret value redacted (the redaction is in the stored catalog,
-# not the read gate).
-statement ok
-CREATE ROLE fc_snoop LOGIN PASSWORD 'fc_snoop_pw';
-
-# NB: a `connection` record binds the NEXT record only (later records revert
-# to the default superuser connection), so it is repeated per record.
-connection c_snoop user=fc_snoop password=fc_snoop_pw
-query
-SELECT array_to_string(srvoptions, ' ') NOT LIKE '%pass word%' AS redacted
-FROM pg_foreign_server WHERE srvname = 'fc_pwkey';
-----
-redacted
-t
-
-connection default
-statement ok
-DROP ROLE fc_snoop;
-
-# ===== E: fail-closed redaction -- unrecognized option keys are secrets =====
-# The connectors keep growing credential-bearing keys (sslpassword, uri,
-# oauth_client_secret, ...); serenedb cannot enumerate them all, so redaction
-# is an allow-list: any key that is not plain connection addressing is redacted
-# in the world-readable srvoptions. Plain keys stay visible.
+# An arbitrary credential-bearing key (sslpassword) is stored and shown verbatim
+# too -- there is no plain/secret allow-list anymore, the catalog is root-only.
 statement ok
 CREATE SERVER fc_failclosed FOREIGN DATA WRAPPER clickhouse_fdw
   OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner',
            password 'pass word', sslpassword 'sup3r secret');
 
 query
-SELECT array_to_string(srvoptions, ' ') NOT LIKE '%sup3r secret%' AS redacted,
+SELECT array_to_string(srvoptions, ' ') LIKE '%sslpassword=sup3r secret%' AS visible,
        array_to_string(srvoptions, ' ') LIKE '%database=chtest%' AS plain_visible
 FROM pg_foreign_server WHERE srvname = 'fc_failclosed';
 ----
-redacted	plain_visible
+visible	plain_visible
 t	t
+
+# ===== S: pg_foreign_server is superuser-only =====
+# Server OPTIONS carry credentials, so a plain non-superuser is refused, like
+# pg_user_mapping. (NB: a `connection` record binds the NEXT record only.)
+statement ok
+CREATE ROLE fc_snoop LOGIN PASSWORD 'fc_snoop_pw';
+
+connection c_snoop user=fc_snoop password=fc_snoop_pw
+statement error
+SELECT srvname FROM pg_foreign_server WHERE srvname = 'fc_space';
+----
+db error: ERROR: permission denied for table pg_foreign_server<slt:ignore>
+
+
+connection default
+statement ok
+DROP ROLE fc_snoop;
 
 # ===== R: server USAGE RBAC is enforced at query time =====
 # A foreign server carries USAGE (PG-style). A role that is neither the owner

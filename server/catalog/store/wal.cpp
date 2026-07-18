@@ -26,6 +26,7 @@
 #include <duckdb/common/checksum.hpp>
 #include <duckdb/common/serializer/buffered_file_reader.hpp>
 #include <duckdb/common/serializer/buffered_file_writer.hpp>
+#include <chrono>
 #include <filesystem>
 #include <vector>
 
@@ -129,7 +130,10 @@ void CatalogWal::Open(std::string_view directory, FrameVisitor replay) {
   // A leftover temp is an aborted compaction; the live file is intact.
   _fs->TryRemoveFile(_tmp_path);
 
+  const auto start = std::chrono::steady_clock::now();
   const auto replayed = ReplayAndTruncate(replay);
+  const auto elapsed = std::chrono::duration<double, std::milli>(
+    std::chrono::steady_clock::now() - start);
 
   absl::MutexLock lock{&_mutex};
   _writer =
@@ -137,7 +141,7 @@ void CatalogWal::Open(std::string_view directory, FrameVisitor replay) {
   _size_on_disk.store(_writer->GetFileSize(), std::memory_order_relaxed);
   SDB_INFO(STARTUP, "catalog wal: opened '", _path, "', replayed ", replayed,
            " frame(s), ", _size_on_disk.load(std::memory_order_relaxed),
-           " bytes");
+           " bytes in ", elapsed.count(), "ms");
 }
 
 void CatalogWal::SyncLocked(uint64_t my_seq) {
@@ -174,8 +178,9 @@ void CatalogWal::Append(std::span<const uint8_t> payload) {
   const auto my_seq = ++_written_seq;
   _frames.fetch_add(1, std::memory_order_relaxed);
   _appended_bytes.fetch_add(payload.size(), std::memory_order_relaxed);
+  _size_on_disk.fetch_add(2 * sizeof(uint64_t) + payload.size(),
+                          std::memory_order_relaxed);
   SyncLocked(my_seq);
-  _size_on_disk.store(_writer->GetTotalWritten(), std::memory_order_relaxed);
 }
 
 void CatalogWal::Compact(absl::FunctionRef<void(FrameSink)> fill) {

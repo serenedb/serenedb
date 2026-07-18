@@ -1338,6 +1338,30 @@ inline constexpr SystemView kExternalViews[] = {
           S.tuples_total AS tuples_total
       FROM sdb_progress S WHERE S.command = 'CREATE TABLE AS')"},
 
+  {"pg_catalog", "pg_user_mappings",
+   R"(SELECT
+          U.oid       AS umid,
+          S.oid       AS srvid,
+          S.srvname   AS srvname,
+          U.umuser    AS umuser,
+          CASE WHEN U.umuser = 0 THEN
+              'public'
+          ELSE
+              A.rolname
+          END AS usename,
+          CASE WHEN (U.umuser <> 0 AND A.rolname = current_user
+                       AND (pg_has_role(S.srvowner, 'USAGE')
+                            OR has_server_privilege(S.oid, 'USAGE')))
+                      OR (U.umuser = 0 AND pg_has_role(S.srvowner, 'USAGE'))
+                      OR (SELECT rolsuper FROM pg_authid WHERE rolname = current_user)
+                      THEN U.umoptions
+                   ELSE NULL END AS umoptions
+      FROM pg_user_mapping U
+          JOIN pg_foreign_server S ON (U.umserver = S.oid)
+          LEFT JOIN pg_authid A ON (A.oid = U.umuser))"},
+
+  // R"(REVOKE ALL ON pg_user_mapping FROM public;)",
+
   {"pg_catalog", "pg_replication_origin_status",
    R"(SELECT *
       FROM pg_show_replication_origin_status())"},
@@ -3901,6 +3925,49 @@ inline constexpr SystemView kExternalViews[] = {
       FROM information_schema._pg_foreign_tables)"},
 
   // R"(GRANT SELECT ON foreign_tables TO PUBLIC;)",
+
+  // Base view for user mappings
+
+  {"information_schema", "_pg_user_mappings",
+   R"(SELECT um.oid,
+             um.umoptions,
+             um.umuser,
+             CAST(COALESCE(u.rolname,'PUBLIC') AS sql_identifier ) AS authorization_identifier,
+             s.foreign_server_catalog,
+             s.foreign_server_name,
+             s.authorization_identifier AS srvowner
+      FROM pg_user_mapping um LEFT JOIN pg_authid u ON (u.oid = um.umuser),
+           information_schema._pg_foreign_servers s
+      WHERE s.oid = um.umserver)"},
+
+  // 24.13
+  // USER_MAPPING_OPTIONS view
+
+  {"information_schema", "user_mapping_options",
+   R"(SELECT authorization_identifier,
+             foreign_server_catalog,
+             foreign_server_name,
+             CAST(opts.option_name AS sql_identifier) AS option_name,
+             CAST(CASE WHEN (umuser <> 0 AND authorization_identifier = current_user)
+                         OR (umuser = 0 AND pg_has_role(srvowner, 'USAGE'))
+                         OR (SELECT rolsuper FROM pg_authid WHERE rolname = current_user)
+                       THEN opts.option_value
+                       ELSE NULL END AS character_data) AS option_value
+      FROM information_schema._pg_user_mappings um,
+           pg_options_to_table(um.umoptions) opts)"},
+
+  // R"(GRANT SELECT ON user_mapping_options TO PUBLIC;)",
+
+  // 24.14
+  // USER_MAPPINGS view
+
+  {"information_schema", "user_mappings",
+   R"(SELECT authorization_identifier,
+             foreign_server_catalog,
+             foreign_server_name
+      FROM information_schema._pg_user_mappings)"},
+
+  // R"(GRANT SELECT ON user_mappings TO PUBLIC;)",
   // clang-format on
 };
 

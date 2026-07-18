@@ -154,16 +154,26 @@ void CollectAndEnforce(duckdb::ClientContext& context, duckdb::Binder& binder) {
   // Foreign-server USAGE: a foreign-catalog relation's parent catalog is the
   // attach alias, i.e. the foreign server's name. The querying role needs
   // USAGE (or ownership) on that server (PG-style); the remote enforces the
-  // rest. Checked once per distinct server, on the caller's own role.
-  containers::FlatHashSet<uint64_t> checked_servers;
+  // rest. The attachment is instance-global, so resolve the server across ALL
+  // databases (names are globally unique), never scoped to the caller's own
+  // database -- a server created in one database must still be gated when
+  // referenced from a session in another (else the check silently skips ->
+  // cross-database bypass). Checked once per distinct catalog alias, on the
+  // caller's own role. A null resolve means the catalog is a regular database,
+  // a system/temp catalog, or a raw ATTACH foreign catalog with no CREATE
+  // SERVER object -- none are governed by foreign-server USAGE.
+  containers::FlatHashSet<std::string> checked_catalogs;
   for (const auto& req : reqs) {
     if (!req.table) {
       continue;
     }
     const auto catalog_name =
       req.table->ParentCatalog().GetName().GetIdentifierName();
-    auto server = snapshot->GetForeignServer(ctx.GetDatabaseId(), catalog_name);
-    if (!server || !checked_servers.insert(server->GetId().id()).second) {
+    if (!checked_catalogs.insert(catalog_name).second) {
+      continue;
+    }
+    auto server = snapshot->GetForeignServerGlobal(catalog_name);
+    if (!server) {
       continue;
     }
     const auto& closure = snapshot->ClosureFor(caller);

@@ -1256,6 +1256,18 @@ std::shared_ptr<ForeignServer> Snapshot::GetForeignServer(
   return GetObject<ForeignServer>(*id);
 }
 
+std::shared_ptr<ForeignServer> Snapshot::GetForeignServerGlobal(
+  std::string_view name) const {
+  // Server names are unique instance-wide (CreateForeignServer rejects a
+  // same-named server in any database), so the first match is the only match.
+  for (const auto& db : GetDatabases()) {
+    if (auto server = GetForeignServer(db->GetId(), name)) {
+      return server;
+    }
+  }
+  return nullptr;
+}
+
 std::shared_ptr<Table> Snapshot::GetTable(const AccessContext& ax,
                                           ObjectId db_id,
                                           std::string_view schema,

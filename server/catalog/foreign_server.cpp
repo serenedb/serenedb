@@ -153,60 +153,6 @@ std::string QuoteSqlIdentifier(std::string_view name) {
   return duckdb::KeywordHelper::WriteQuoted(std::string{name}, '"');
 }
 
-std::string RedactConnstrSecrets(std::string_view text) {
-  auto is_ident = [](char c) {
-    return (std::isalnum(static_cast<unsigned char>(c)) != 0) || c == '_';
-  };
-  std::string out;
-  out.reserve(text.size());
-  size_t i = 0;
-  while (i < text.size()) {
-    // Match `<key>=` where <key> is a whole word (not a suffix of a longer
-    // identifier). Fail-closed like Options::IsSecretKey: any key not on the
-    // plain allow-list gets its value redacted -- over-redacting free text in
-    // an error message is the safe direction.
-    if (is_ident(text[i]) && (i == 0 || !is_ident(text[i - 1]))) {
-      size_t key_end = i;
-      while (key_end < text.size() && is_ident(text[key_end])) {
-        ++key_end;
-      }
-      const auto key = text.substr(i, key_end - i);
-      if (key_end < text.size() && text[key_end] == '=' &&
-          Options::IsSecretKey(key)) {
-        out.append(key);
-        out += "=<redacted>";
-        size_t j = key_end + 1;  // first char of the value
-        if (j < text.size() && text[j] == '\'') {
-          // DSN-quoted value: skip to the closing unescaped quote (\' and \\
-          // are escapes, as libpq DSN quoting emits).
-          for (++j; j < text.size(); ++j) {
-            if (text[j] == '\\' && j + 1 < text.size()) {
-              ++j;
-            } else if (text[j] == '\'') {
-              ++j;
-              break;
-            }
-          }
-        } else {
-          // Bare value: runs to the next whitespace.
-          while (j < text.size() && text[j] != ' ' && text[j] != '\t' &&
-                 text[j] != '\n') {
-            ++j;
-          }
-        }
-        i = j;
-        continue;
-      }
-      out.append(text.substr(i, key_end - i));
-      i = key_end;
-      continue;
-    }
-    out += text[i];
-    ++i;
-  }
-  return out;
-}
-
 ForeignServer::ForeignServer(Permissions perm, ObjectId schema_id, ObjectId id,
                              std::string_view name, std::string fdw_name,
                              Options options)
@@ -303,9 +249,11 @@ std::optional<std::string> RunForeignServerAttach(duckdb::Connection& conn,
   auto result = conn.Query(sql);
   DropForeignServerSecret(*conn.context, secret);
   if (result->HasError()) {
-    // Redact before the error is surfaced anywhere (client or log) -- the
-    // postgres connector echoes the full DSN, password included.
-    return RedactConnstrSecrets(result->GetError());
+    // The attach carries credentials in a TEMPORARY secret, not the SQL text,
+    // and neither connector echoes them on connect failure (the postgres error
+    // renders an empty attach path; PQerrorMessage never prints the password),
+    // so the connector error is safe to surface verbatim.
+    return std::string{result->GetError()};
   }
   return "";
 }

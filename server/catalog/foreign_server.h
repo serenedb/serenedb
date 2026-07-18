@@ -79,12 +79,4 @@ void DetachForeignServerAttachment(std::string_view server_name);
 // Quote an SQL identifier with double quotes, doubling any embedded quote.
 std::string QuoteSqlIdentifier(std::string_view name);
 
-// Redact the value of any `password=`/`passwd=` option occurring in a
-// connection string (or an error message that echoes one, as the postgres
-// connector does). Handles both the bare `password=secret` and the DSN-quoted
-// `password='se\'cret'` forms. Used before a connector's connect error is
-// surfaced to the client or the log, so credentials in a failed ATTACH never
-// leak.
-std::string RedactConnstrSecrets(std::string_view text);
-
 }  // namespace sdb::catalog

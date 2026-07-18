@@ -64,7 +64,7 @@ struct ViewFastPath {
   duckdb::named_parameter_map_t named_params;
   std::optional<CatalogTableRef> catalog_ref;
   // Source-side names post CAST-peel. Empty for `SELECT *`.
-  std::vector<std::string> projection_columns;
+  duckdb::vector<std::string> projection_columns;
   std::string function_name;
   bool is_glob = false;
   // 0 = not pinned. Set at query time from the index's commit payload.
@@ -83,9 +83,9 @@ struct ViewFastPath {
   // path; pk_column_index/pk_column_name above are for the auto single-column
   // key (clickhouse metadata PK) and are unused when pk_is_struct.
   bool pk_is_struct = false;
-  std::vector<duckdb::column_t> pk_struct_indices;
-  std::vector<std::string> pk_struct_names;
-  std::vector<duckdb::LogicalType> pk_struct_types;
+  duckdb::vector<duckdb::column_t> pk_struct_indices;
+  duckdb::vector<std::string> pk_struct_names;
+  duckdb::vector<duckdb::LogicalType> pk_struct_types;
   PkUniqueness pk_uniqueness = PkUniqueness::Unverified;
   // For PkSpec::ExternalDBKey over postgres: key on the row's physical locator
   // (ctid, surfaced as the duckdb rowid) instead of a PK column -- universal

@@ -351,7 +351,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       if (_relation && _relation->GetType() == catalog::ObjectType::PgSqlView) {
         auto key_cols = KeyColumnsFromOptions(_info->options);
         fast_path = ResolveViewFastPath(
-          context, static_cast<const catalog::PgSqlView&>(*_relation), key_cols);
+          context, static_cast<const catalog::PgSqlView&>(*_relation),
+          key_cols);
       }
       if (!fast_path || !fast_path->catalog_ref) {
         THROW_SQL_ERROR(
@@ -416,12 +417,11 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       options.pk_term = false;
       options.pk_column = catalog::PkColumnKind::None;
     } else if (store_pk == "auto") {
-      options.pk_column = shape == KeyShape::Single ? catalog::PkColumnKind::I64
-                          : shape == KeyShape::Two
-                            ? catalog::PkColumnKind::I64I64
-                          : shape == KeyShape::Struct
-                            ? catalog::PkColumnKind::Struct
-                            : catalog::PkColumnKind::Unable;
+      options.pk_column =
+        shape == KeyShape::Single   ? catalog::PkColumnKind::I64
+        : shape == KeyShape::Two    ? catalog::PkColumnKind::I64I64
+        : shape == KeyShape::Struct ? catalog::PkColumnKind::Struct
+                                    : catalog::PkColumnKind::Unable;
     } else if (store_pk == "i64") {
       if (shape != KeyShape::Single) {
         THROW_SQL_ERROR(
@@ -676,8 +676,8 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
         field_types.emplace_back(absl::StrCat("c", i - base),
                                  chunk.data[i].GetType());
       }
-      pk_scratch =
-        std::make_unique<duckdb::Vector>(duckdb::LogicalType::STRUCT(field_types));
+      pk_scratch = std::make_unique<duckdb::Vector>(
+        duckdb::LogicalType::STRUCT(field_types));
       auto& entries = duckdb::StructVector::GetEntries(*pk_scratch);
       for (duckdb::idx_t i = 0; i < entries.size(); ++i) {
         entries[i].Reference(chunk.data[base + i]);

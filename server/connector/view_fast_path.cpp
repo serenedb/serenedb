@@ -220,8 +220,8 @@ std::vector<std::string> KeyColumnsFromOptions(
   if (it == options.end()) {
     return {};
   }
-  return ParseKeyColumns(
-    it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR).GetValue<std::string>());
+  return ParseKeyColumns(it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR)
+                           .GetValue<std::string>());
 }
 
 std::optional<ViewFastPath> ResolveViewFastPath(
@@ -404,8 +404,9 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       // by the connector as the duckdb rowid), NOT a PK column. This is
       // universal -- no PRIMARY KEY required, works for any table -- and a ctid
       // is unique within the (static) index's snapshot. The build projects the
-      // rowid; the lookup renders `rowid IN (...)`, which postgres_filter_pushdown
-      // turns into a `ctid IN (...)` TID scan on the remote.
+      // rowid; the lookup renders `rowid IN (...)`, which
+      // postgres_filter_pushdown turns into a `ctid IN (...)` TID scan on the
+      // remote.
       ViewFastPath out;
       out.catalog_ref = ext_ref;
       out.pk_spec = catalog::PkSpec::ExternalDBKey;
@@ -421,7 +422,8 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       // via the engine-agnostic catalog API). v1: a single 64-bit integer
       // column; anything else -> no fast path -> materialisation unsupported.
       // NB: the ClickHouse "primary key" is only a sorting prefix, not a
-      // uniqueness constraint (correctness assumes uniqueness -- see on_conflict).
+      // uniqueness constraint (correctness assumes uniqueness -- see
+      // on_conflict).
       std::optional<std::string> pk_name;
       for (const auto& constraint : entry.GetConstraints()) {
         if (constraint->type != duckdb::ConstraintType::UNIQUE) {

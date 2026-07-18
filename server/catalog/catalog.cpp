@@ -3482,8 +3482,8 @@ void Catalog::ChangeAcl(ObjectId database_id, std::string_view schema,
       return;
     }
     if (type == ObjectType::ForeignServer) {
-      clone->ReplaceObject<ResolveType::ForeignServer>(parent,
-                                                       cloned->GetName(), cloned);
+      clone->ReplaceObject<ResolveType::ForeignServer>(
+        parent, cloned->GetName(), cloned);
       _engine->CreateDefinition(parent, ObjectType::ForeignServer,
                                 cloned->GetId(), bytes);
       return;

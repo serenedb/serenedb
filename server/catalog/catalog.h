@@ -221,9 +221,9 @@ struct Snapshot {
                                                   std::string_view name) const;
   // Resolve a foreign server by name alone: its attach alias is instance-wide
   // and names are globally unique, so this searches every database (mirrors the
-  // instance-wide GetRole/GetDatabase by-name lookups). Used by query-time USAGE
-  // enforcement, where the referencing session may be in a different database
-  // than the one the server was created in.
+  // instance-wide GetRole/GetDatabase by-name lookups). Used by query-time
+  // USAGE enforcement, where the referencing session may be in a different
+  // database than the one the server was created in.
   std::shared_ptr<ForeignServer> GetForeignServer(std::string_view name) const;
   std::shared_ptr<PgSqlType> GetType(const AccessContext& ax, ObjectId database,
                                      std::string_view schema,

@@ -310,8 +310,8 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
       }
       for (const auto slot : it->second) {
         for (duckdb::idx_t c = 0; c < _num_proj_cols; ++c) {
-          _tf_target.data[c].SetValue(slot,
-                                      chunk->data[c + num_key_cols].GetValue(row));
+          _tf_target.data[c].SetValue(
+            slot, chunk->data[c + num_key_cols].GetValue(row));
         }
       }
       pending.erase(it);

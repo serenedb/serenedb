@@ -679,11 +679,10 @@ void CollectSegmentTopK(SearchFullScanTopKLocalState& s,
 
   const bool wand_enabled =
     WandEnabled(s.bind_data->inverted_index.get(), search.text_scorer);
-  irs::DocIterator::ptr it = seg.mask(seg_query.Execute(
-    {.wand = {.wand_enabled = wand_enabled},
-     .top_k_collect =
-       search.vector_scorer.has_value() && g.col_filters.empty()},
-    stats));
+  irs::DocIterator::ptr it = seg.mask(
+    seg_query.Execute({.wand = {.wand_enabled = wand_enabled},
+                       .top_k_collect = search.vector_scorer.has_value()},
+                      stats));
   if (!g.col_filters.empty()) {
     // Filter the collected docs by the covered `.col` values, so top-k is
     // selected over survivors (codec Filter + zonemap in the wrapper).

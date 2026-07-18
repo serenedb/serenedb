@@ -22,6 +22,7 @@
 
 #include <absl/cleanup/cleanup.h>
 
+#include <algorithm>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
@@ -361,24 +362,60 @@ void InvertedStoreIndex::Delete(duckdb::IndexLock&, duckdb::DataChunk& chunk,
     ReplayDelete(chunk, row_ids);
     return;
   }
-  auto writer = CreateInvertedIndexWriter<DuckDBWriteKind::Delete>(
-    _table_id, _index_id, *conn);
-  if (!writer) {
+  if (!_storage) {
+    auto snapshot = conn->CatalogSnapshot();
+    auto inverted = snapshot->GetObject<catalog::InvertedIndex>(_index_id);
+    if (inverted) {
+      _storage = inverted->GetData();
+    }
+  }
+  duckdb::UnifiedVectorFormat fmt;
+  row_ids.ToUnifiedFormat(count, fmt);
+  const auto* data = duckdb::UnifiedVectorFormat::GetData<duckdb::row_t>(fmt);
+  auto write_rows = [&](size_t n, auto&& row_at) {
+    auto writer = CreateInvertedIndexWriter<DuckDBWriteKind::Delete>(
+      _table_id, _index_id, *conn);
+    if (!writer) {
+      return;
+    }
+    writer->Init(n, {});
+    std::string key;
+    for (size_t i = 0; i < n; ++i) {
+      key.clear();
+      primary_key::AppendSigned(key, row_at(i));
+      writer->DeleteRow(key);
+    }
+    writer->Finish();
+    conn->RegisterSearchFlush();
+  };
+  if (_storage && _storage->IsDeleteLogOpen()) {
+    // Build in progress (rare path, so the copy is fine): the delete log
+    // covers the rowid window [begin, end). Below begin the backfill copy is
+    // already committed and above end the row was inserted during the build
+    // through the live writer -- in both cases the native remove masks the
+    // doc, so only the window in between (rows the scan may still copy
+    // uncommitted) defers to the log.
+    std::vector<int64_t> rows(count);
+    for (duckdb::idx_t i = 0; i < count; ++i) {
+      rows[i] = data[fmt.sel->get_index(i)];
+    }
+    const auto log_begin = _storage->DeleteLogRowidBegin();
+    const auto log_end = _storage->DeleteLogRowidEnd();
+    const auto native_end = std::partition(
+      rows.begin(), rows.end(),
+      [&](int64_t row) { return row < log_begin || row >= log_end; });
+    std::vector<int64_t> logged(native_end, rows.end());
+    if (!logged.empty() && _storage->AppendDeleteLog(std::move(logged))) {
+      rows.erase(native_end, rows.end());
+    }
+    // else: lost the race with publish -- the log is latched and `rows`
+    // still holds everything, all normal post-publish removes now.
+    if (!rows.empty()) {
+      write_rows(rows.size(), [&](size_t i) { return rows[i]; });
+    }
     return;
   }
-  duckdb::UnifiedVectorFormat row_fmt;
-  row_ids.ToUnifiedFormat(count, row_fmt);
-  writer->Init(count, {});
-  std::string key;
-  for (duckdb::idx_t i = 0; i < count; ++i) {
-    auto row = duckdb::UnifiedVectorFormat::GetData<duckdb::row_t>(
-      row_fmt)[row_fmt.sel->get_index(i)];
-    key.clear();
-    primary_key::AppendSigned(key, static_cast<int64_t>(row));
-    writer->DeleteRow(key);
-  }
-  writer->Finish();
-  conn->RegisterSearchFlush();
+  write_rows(count, [&](size_t i) { return data[fmt.sel->get_index(i)]; });
 }
 
 idx_t InvertedStoreIndex::TryDelete(

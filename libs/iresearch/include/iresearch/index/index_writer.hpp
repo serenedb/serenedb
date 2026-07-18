@@ -385,11 +385,16 @@ class IndexWriter : private util::Noncopyable {
     // for insertion into the index index
     // applied upon return value deallocation
     // `disable_flush` don't trigger segment flush
+    // `flushed` (nullable) is set to true when this insert flushed the
+    // segment (everything inserted before this batch); under
+    // SetCommitOnFlush the flush is immediately committed -- a failure
+    // throws -- so there flushed also means committed
     //
     // The changes are not visible until commit()
     // Transaction should be valid
-    Document Insert(bool disable_flush = false, doc_id_t batch_size = 1) {
-      UpdateSegment(disable_flush);
+    Document Insert(bool disable_flush = false, doc_id_t batch_size = 1,
+                    bool* flushed = nullptr) {
+      UpdateSegment(disable_flush, flushed);
       return {*_active.Segment(), SegmentWriter::DocContext{_queries},
               batch_size};
     }
@@ -404,7 +409,7 @@ class IndexWriter : private util::Noncopyable {
     // Transaction should be valid
     template<bool TickBound = true, typename Filter>
     void Remove(Filter&& filter) {
-      UpdateSegment(/*disable_flush=*/true);
+      UpdateSegment(/*disable_flush=*/true, /*flushed=*/nullptr);
       _active.Segment()->queries.emplace_back(std::forward<Filter>(filter),
                                               _queries, QueryContext::kDone);
       if constexpr (TickBound) {
@@ -422,7 +427,7 @@ class IndexWriter : private util::Noncopyable {
     // Transaction should be valid
     template<typename Filter>
     Document Replace(Filter&& filter, bool disable_flush = false) {
-      UpdateSegment(disable_flush);
+      UpdateSegment(disable_flush, /*flushed=*/nullptr);
       auto& segment = *_active.Segment();
       auto& query = segment.queries.emplace_back(
         std::forward<Filter>(filter), _queries, QueryContext::kReplace);
@@ -460,6 +465,8 @@ class IndexWriter : private util::Noncopyable {
       return CommitImpl(last_tick);
     }
 
+    void SetCommitOnFlush() noexcept { _commit_on_flush = true; }
+
     // Reset all accumulated modifications and release resources
     void Abort() noexcept;
 
@@ -494,7 +501,7 @@ class IndexWriter : private util::Noncopyable {
     // refresh segment if required (guarded by FlushContext::context_mutex_)
     // is is thread-safe to use ctx_/segment_ while holding 'flush_context_ptr'
     // since active 'flush_context' will not change and hence no reload required
-    void UpdateSegment(bool disable_flush);
+    void UpdateSegment(bool disable_flush, bool* flushed);
 
     IndexWriter* _writer{nullptr};
     // the segment_context used for storing changes (lazy-initialized)
@@ -502,6 +509,7 @@ class IndexWriter : private util::Noncopyable {
     // We can use active_.Segment()->queries_.size() for same purpose
     uint64_t _queries{0};
     std::shared_ptr<const IndexFieldOptions> _field_options;
+    bool _commit_on_flush{false};
   };
   static_assert(std::is_nothrow_move_constructible_v<Transaction>);
   static_assert(std::is_nothrow_move_assignable_v<Transaction>);
@@ -961,6 +969,10 @@ class IndexWriter : private util::Noncopyable {
   // Return a usable segment or a nullptr segment if retry is required
   // (e.g. no free segments available)
   ActiveSegmentContext GetSegmentContext();
+  // Fresh pool segment WITHOUT consulting the pending_freelist: never adopts
+  // another operation's context (no foreign buffered docs, no flush-context
+  // pin). Used by commit-on-flush (bulk) transactions for every acquisition.
+  ActiveSegmentContext CreateSegmentContext();
 
   // Return options for SegmentWriter. `field_options` (nullable, merge path)
   // overrides the construction-time fallback for a single compaction.

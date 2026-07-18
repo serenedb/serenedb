@@ -29,5 +29,14 @@ inline constexpr std::string_view kCompactionIntervalSetting =
   "compaction_interval";
 inline constexpr std::string_view kCleanupIntervalStepSetting =
   "cleanup_interval_step";
+inline constexpr std::string_view kSegmentMemoryMaxSetting =
+  "segment_memory_max";
+inline constexpr std::string_view kSegmentDocsMaxSetting = "segment_docs_max";
+inline constexpr std::string_view kCompactionMaxSegmentsSetting =
+  "compaction_max_segments";
+inline constexpr std::string_view kCompactionMaxSegmentsBytesSetting =
+  "compaction_max_segments_bytes";
+inline constexpr std::string_view kCompactionFloorSegmentBytesSetting =
+  "compaction_floor_segment_bytes";
 
 }  // namespace sdb

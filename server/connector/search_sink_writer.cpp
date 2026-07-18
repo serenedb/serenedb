@@ -578,12 +578,13 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
   DispatchScalarBatch(kind, count, tokenizer_column);
 }
 
-void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size, const PkChunk& pk) {
+void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size, const PkChunk& pk,
+                                        bool* flushed) {
   SDB_ASSERT(batch_size > 0);
   if (_document) {
     _document.reset();
   }
-  _document.emplace(_trx.Insert(false, batch_size));
+  _document.emplace(_trx.Insert(false, batch_size, flushed));
   _pk_column_writer = nullptr;
   if (_pk_policy.column == catalog::PkColumnKind::I64 ||
       _pk_policy.column == catalog::PkColumnKind::I64I64) {

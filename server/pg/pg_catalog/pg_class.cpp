@@ -20,6 +20,8 @@
 
 #include "pg/pg_catalog/pg_class.h"
 
+#include <absl/strings/str_cat.h>
+
 #include <deque>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
@@ -30,8 +32,10 @@
 
 #include "app/app_server.h"
 #include "basics/assert.h"
+#include "basics/down_cast.h"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
+#include "catalog/inverted_index.h"
 #include "catalog/role.h"
 #include "catalog/sequence.h"
 #include "catalog/store/store.h"
@@ -39,6 +43,7 @@
 #include "catalog/view.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/system_catalog.h"
+#include "query/config_variable_names.h"
 
 namespace sdb::pg {
 namespace {
@@ -120,9 +125,36 @@ PgClass MakeBaseRow(ObjectId schema_id, const catalog::Object& object,
   };
 }
 
+// reloptions: the persisted storage parameters as a text[] of k=v. Options
+// always hold concrete values (resolved from WITH / session settings when
+// they were set), so every option is rendered; segment_docs_max=0 means
+// unlimited.
+std::vector<std::string> RenderInvertedIndexOptions(
+  const catalog::InvertedIndexOptions& options) {
+  std::vector<std::string> rendered;
+  const auto add = [&](std::string_view name, uint64_t value) {
+    rendered.push_back(absl::StrCat(name, "=", value));
+  };
+  add("row_group_size", options.row_group_size);
+  add("norm_row_group_size", options.norm_row_group_size);
+  add(kRefreshIntervalSetting, options.refresh_interval_ms);
+  add(kCompactionIntervalSetting, options.compaction_interval_ms);
+  add(kCleanupIntervalStepSetting, options.cleanup_interval_step);
+  add(kSegmentMemoryMaxSetting, options.segment_memory_max);
+  add(kSegmentDocsMaxSetting, options.segment_docs_max);
+  add(kCompactionMaxSegmentsSetting, options.compaction_max_segments);
+  add(kCompactionMaxSegmentsBytesSetting,
+      options.compaction_max_segments_bytes);
+  add(kCompactionFloorSegmentBytesSetting,
+      options.compaction_floor_segment_bytes);
+  return rendered;
+}
+
 void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
                      std::deque<std::string>& pk_index_names,
                      std::deque<std::string>& uq_index_names,
+                     std::vector<std::vector<std::string>>& reloptions_storage,
+                     std::vector<std::vector<Text>>& reloptions_views,
                      const catalog::Snapshot& catalog,
                      duckdb::ClientContext& context) {
   // reltuples is read from the store table's row-group metadata
@@ -135,20 +167,13 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
         table.Tombstoned()) {
       return 0.0F;
     }
-    auto store_name =
-      catalog::StoreTableName(db_name, schema_name, table.GetName());
-    duckdb::EntryLookupInfo lookup(
-      duckdb::CatalogType::TABLE_ENTRY,
-      duckdb::QualifiedName(duckdb::Identifier{catalog::kStoreDatabaseName},
-                            duckdb::Identifier{"main"},
-                            duckdb::Identifier{store_name}));
-    auto entry = duckdb::Catalog::GetEntry(
-      context, lookup, duckdb::OnEntryNotFound::RETURN_NULL);
+    auto entry = catalog::GetStoreTableEntry(
+      context, db_name, schema_name, table.GetName(),
+      duckdb::OnEntryNotFound::RETURN_NULL);
     if (!entry) {
       return 0.0F;
     }
-    return static_cast<float>(
-      entry->Cast<duckdb::TableCatalogEntry>().GetStorage().GetTotalRows());
+    return static_cast<float>(entry->GetStorage().GetTotalRows());
   };
   auto database = catalog.GetDatabase(database_id);
   SDB_ASSERT(database);
@@ -183,6 +208,23 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
       auto row = MakeBaseRow(schema_id, *index, rel->GetOwner());
       row.relkind = PgClass::Relkind::Index;
       row.relnatts = static_cast<int16_t>(index->GetColumns().size());
+      if (index->GetType() == catalog::ObjectType::InvertedIndex) {
+        row.relam = id::kPgAmInverted.id();
+        auto rendered = RenderInvertedIndexOptions(
+          basics::downCast<const catalog::InvertedIndex>(*index).GetOptions());
+        if (!rendered.empty()) {
+          const auto& strings =
+            reloptions_storage.emplace_back(std::move(rendered));
+          auto& views = reloptions_views.emplace_back();
+          views.reserve(strings.size());
+          for (const auto& option : strings) {
+            views.emplace_back(option);
+          }
+          row.reloptions = views;
+        }
+      } else if (index->GetType() == catalog::ObjectType::SecondaryIndex) {
+        row.relam = id::kPgAmSecondary.id();
+      }
       values.push_back(std::move(row));
     }
 
@@ -313,9 +355,12 @@ catalog::MaterializedData SystemTableSnapshot<PgClass>::GetTableData() {
   std::vector<PgClass> values;
   std::deque<std::string> pk_index_names;
   std::deque<std::string> uq_index_names;
+  std::vector<std::vector<std::string>> reloptions_storage;
+  std::vector<std::vector<Text>> reloptions_views;
   auto catalog = _config.CatalogSnapshot();
   RetrieveObjects(GetDatabaseId(), values, pk_index_names, uq_index_names,
-                  *catalog, _config.GetClientContext());
+                  reloptions_storage, reloptions_views, *catalog,
+                  _config.GetClientContext());
 
   {
     VisitSystemTables([&](const catalog::VirtualTable& table, Oid schema_oid) {

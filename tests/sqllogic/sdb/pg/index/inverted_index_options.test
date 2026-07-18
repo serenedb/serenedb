@@ -1,0 +1,190 @@
+# Inverted-index WITH (...) options surfaced through the PG-native catalog
+# (pg_class.reloptions / relam -> pg_am / pg_index), and ALTER INDEX
+# SET/RESET of the maintenance/perf option subset. Options always hold
+# concrete values, resolved from WITH / session settings when they are set
+# (CREATE or ALTER; RESET re-resolves the session value), so reloptions
+# renders the full list. segment_docs_max=0 = unlimited (iresearch
+# semantics); every other option rejects 0.
+
+
+statement ok
+CREATE TABLE opt_t(x bigint, label text);
+
+
+statement ok
+INSERT INTO opt_t SELECT g, md5(g::text) FROM generate_series(1, 1000) g;
+
+
+statement ok
+CREATE INDEX opt_tuned ON opt_t USING inverted(label) WITH (segment_memory_max = 67108864, segment_docs_max = 5000, compaction_max_segments = 4, compaction_max_segments_bytes = 1073741824, compaction_floor_segment_bytes = 4194304);
+
+
+statement ok
+CREATE INDEX opt_default ON opt_t USING inverted(label);
+
+
+statement ok
+CREATE UNIQUE INDEX opt_sec ON opt_t(x);
+
+
+# The explicit WITH options are persisted into pg_class.reloptions; the
+# access method resolves through relam -> pg_am.
+query
+SELECT c.relname, a.amname, c.reloptions FROM pg_class c LEFT JOIN pg_am a ON a.oid = c.relam WHERE c.relname IN ('opt_tuned', 'opt_default', 'opt_sec') ORDER BY c.relname;
+----
+relname	amname	reloptions
+opt_default	inverted	{row_group_size=122880,norm_row_group_size=122880,refresh_interval=1000,compaction_interval=1000,cleanup_interval_step=1,segment_memory_max=268435456,segment_docs_max=0,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152}
+opt_sec	secondary	{}
+opt_tuned	inverted	{row_group_size=122880,norm_row_group_size=122880,refresh_interval=1000,compaction_interval=1000,cleanup_interval_step=1,segment_memory_max=67108864,segment_docs_max=5000,compaction_max_segments=4,compaction_max_segments_bytes=1073741824,compaction_floor_segment_bytes=4194304}
+
+
+query
+SELECT i.indisunique, i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE c.relname = 'opt_sec';
+----
+indisunique	indisvalid
+t	t
+
+
+# ALTER INDEX SET persists into reloptions.
+statement ok
+ALTER INDEX opt_default SET (segment_memory_max = 33554432, compaction_max_segments = 5);
+
+
+query
+SELECT reloptions FROM pg_class WHERE relname = 'opt_default';
+----
+reloptions
+{row_group_size=122880,norm_row_group_size=122880,refresh_interval=1000,compaction_interval=1000,cleanup_interval_step=1,segment_memory_max=33554432,segment_docs_max=0,compaction_max_segments=5,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152}
+
+
+# RESET re-resolves the session value (the default here), leaving the other
+# options untouched.
+statement ok
+ALTER INDEX opt_default RESET (segment_memory_max);
+
+
+query
+SELECT reloptions FROM pg_class WHERE relname = 'opt_default';
+----
+reloptions
+{row_group_size=122880,norm_row_group_size=122880,refresh_interval=1000,compaction_interval=1000,cleanup_interval_step=1,segment_memory_max=268435456,segment_docs_max=0,compaction_max_segments=5,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152}
+
+
+# Maintenance intervals are alterable too.
+statement ok
+ALTER INDEX opt_tuned SET (refresh_interval = 250, compaction_interval = 500, cleanup_interval_step = 2);
+
+
+query
+SELECT reloptions FROM pg_class WHERE relname = 'opt_tuned';
+----
+reloptions
+{row_group_size=122880,norm_row_group_size=122880,refresh_interval=250,compaction_interval=500,cleanup_interval_step=2,segment_memory_max=67108864,segment_docs_max=5000,compaction_max_segments=4,compaction_max_segments_bytes=1073741824,compaction_floor_segment_bytes=4194304}
+
+
+# segment_docs_max is the one option where 0 is a real value: unlimited.
+statement ok
+ALTER INDEX opt_tuned SET (segment_docs_max = 0);
+
+
+# Structural options shape the indexed data and stay create-time only.
+statement error
+ALTER INDEX opt_default SET (row_group_size = 4096);
+----
+db error: ERROR: option "row_group_size" cannot be changed with ALTER INDEX
+
+
+statement error
+ALTER INDEX opt_default SET (store_pk = 'none');
+----
+db error: ERROR: option "store_pk" cannot be changed with ALTER INDEX
+
+
+# Option values must be literals -- the grammar rejects expressions.
+statement error
+ALTER INDEX opt_default SET (segment_memory_max = 1 + 1);
+----
+db error: ERROR: syntax error at or near "+"
+
+
+# Unknown WITH options are rejected at CREATE, not silently ignored.
+statement error
+CREATE INDEX opt_typo ON opt_t USING inverted(label) WITH (segment_memory_maxx = 1);
+----
+db error: ERROR: unrecognized parameter "segment_memory_maxx"
+
+
+# Explicit 0 is rejected for every numeric option, CREATE and ALTER alike:
+# stored 0 is the internal "use the built-in default" sentinel, reachable
+# only by omitting the option or RESETting it. (row_group_size = 0 used to
+# abort the server: the WITH path bypassed the session-setting validators
+# straight into an assert.)
+statement error
+CREATE INDEX opt_rz ON opt_t USING inverted(label) WITH (row_group_size = 0);
+----
+db error: ERROR: invalid value for parameter "row_group_size": "0"
+
+
+statement error
+CREATE INDEX opt_rz2 ON opt_t USING inverted(label) WITH (norm_row_group_size = 0);
+----
+db error: ERROR: invalid value for parameter "norm_row_group_size": "0"
+
+
+statement error
+CREATE INDEX opt_z ON opt_t USING inverted(label) WITH (segment_memory_max = 0);
+----
+db error: ERROR: invalid value for parameter "segment_memory_max": "0"
+
+
+statement error
+ALTER INDEX opt_default SET (compaction_max_segments = 0);
+----
+db error: ERROR: invalid value for parameter "compaction_max_segments": "0"
+
+
+# The maintenance intervals (and segment_docs_max) DO accept 0: interval 0
+# disables the background task, docs_max 0 means unlimited.
+statement ok
+CREATE INDEX opt_z2 ON opt_t USING inverted(label) WITH (refresh_interval = 0, compaction_interval = 0, segment_docs_max = 0);
+
+
+statement ok
+DROP INDEX opt_z2;
+
+
+# uint32-typed options reject out-of-range values on both paths.
+statement error
+ALTER INDEX opt_default SET (refresh_interval = 5000000000);
+----
+db error: ERROR: value for option "refresh_interval" is out of range
+
+
+statement error
+CREATE INDEX opt_big ON opt_t USING inverted(label) WITH (segment_docs_max = 5000000000);
+----
+db error: ERROR: value for option "segment_docs_max" is out of range
+
+
+# IF EXISTS on a missing index is a no-op.
+statement ok
+ALTER INDEX IF EXISTS opt_missing SET (refresh_interval = 100);
+
+
+# ALTER on a secondary index is rejected: options apply to inverted only.
+statement error
+ALTER INDEX opt_sec SET (segment_memory_max = 33554432);
+----
+db error: ERROR: "opt_sec" is not an inverted index
+
+
+# The index still answers queries after the ALTERs.
+query
+SELECT count(*) FROM opt_tuned WHERE label = md5('42'::text);
+----
+count
+1
+
+
+statement ok
+DROP TABLE opt_t CASCADE;

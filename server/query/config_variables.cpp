@@ -72,6 +72,17 @@ void Readonly(duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {
 }
 
 template<basics::detail::FixedString Name>
+void RejectZero(duckdb::ClientContext&, duckdb::SetScope,
+                duckdb::Value& value) {
+  if (value.GetValue<uint64_t>() == 0) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("invalid value for parameter \"", std::string_view{Name},
+              "\": \"", value.ToString(), "\""));
+  }
+}
+
+template<basics::detail::FixedString Name>
 void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
                  duckdb::Value& value) {
   constexpr std::string_view kName{Name};
@@ -462,6 +473,75 @@ constexpr std::pair<std::string_view, VariableDescription>
         "Default: 1.",
         [] { return duckdb::Value::UINTEGER(1); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      kSegmentMemoryMaxSetting,
+      {
+        LogicalTypeId::UBIGINT,
+        "In-memory bytes an inverted-index segment writer fills before "
+        "rolling over to a new on-disk segment (also the CREATE INDEX "
+        "backfill commit cadence). Per-index WITH (segment_memory_max = ...) "
+        "overrides. Default 268435456 (256MB).",
+        [] {
+          return duckdb::Value::UBIGINT(
+            catalog::InvertedIndexOptions{}.segment_memory_max);
+        },
+        RejectZero<"segment_memory_max">,
+      },
+    },
+    {
+      kSegmentDocsMaxSetting,
+      {
+        LogicalTypeId::UINTEGER,
+        "Document count at which an inverted-index segment writer rolls over "
+        "to a new on-disk segment. Per-index WITH (segment_docs_max = ...) "
+        "overrides. 0 = unlimited (memory limit governs).",
+        [] { return duckdb::Value::UINTEGER(0); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      kCompactionMaxSegmentsSetting,
+      {
+        LogicalTypeId::UINTEGER,
+        "Maximum inverted-index segments merged by one background compaction. "
+        "Per-index WITH (compaction_max_segments = ...) overrides. "
+        "Default 10.",
+        [] {
+          return duckdb::Value::UINTEGER(
+            catalog::InvertedIndexOptions{}.compaction_max_segments);
+        },
+        RejectZero<"compaction_max_segments">,
+      },
+    },
+    {
+      kCompactionMaxSegmentsBytesSetting,
+      {
+        LogicalTypeId::UBIGINT,
+        "Byte budget of one background inverted-index compaction (the tier "
+        "target size). Per-index WITH (compaction_max_segments_bytes = ...) "
+        "overrides. Default 5368709120 (5GB).",
+        [] {
+          return duckdb::Value::UBIGINT(
+            catalog::InvertedIndexOptions{}.compaction_max_segments_bytes);
+        },
+        RejectZero<"compaction_max_segments_bytes">,
+      },
+    },
+    {
+      kCompactionFloorSegmentBytesSetting,
+      {
+        LogicalTypeId::UBIGINT,
+        "Inverted-index segments below this size count as equal-sized for "
+        "compaction candidate selection. Per-index WITH "
+        "(compaction_floor_segment_bytes = ...) overrides. Default 2097152 "
+        "(2MB).",
+        [] {
+          return duckdb::Value::UBIGINT(
+            catalog::InvertedIndexOptions{}.compaction_floor_segment_bytes);
+        },
+        RejectZero<"compaction_floor_segment_bytes">,
       },
     },
     {

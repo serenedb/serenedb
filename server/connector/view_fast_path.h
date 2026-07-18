@@ -24,6 +24,7 @@
 #include <duckdb/function/table_function.hpp>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -86,10 +87,19 @@ struct ViewFastPath {
   bool supports_filters = false;
 };
 
-std::optional<ViewFastPath> ResolveViewFastPath(duckdb::ClientContext& context,
-                                                const catalog::PgSqlView& view);
+// `key_columns`: user-specified external-DB lookup key columns (CREATE INDEX
+// WITH key_columns). Empty = auto-detect the default key (postgres ctid /
+// clickhouse PK). Build and lookup must pass the SAME value (from the CREATE
+// INDEX options and the persisted index options respectively).
+std::optional<ViewFastPath> ResolveViewFastPath(
+  duckdb::ClientContext& context, const catalog::PgSqlView& view,
+  std::span<const std::string> key_columns = {});
 
 std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp);
+
+// Split a `key_columns` CREATE INDEX option value ("a, b, c") into trimmed
+// column names. Empty/absent -> {}.
+std::vector<std::string> ParseKeyColumns(std::string_view text);
 
 duckdb::TableFunction MakeFastPathLookupFunction(const ViewFastPath& fp);
 

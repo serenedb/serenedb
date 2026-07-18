@@ -926,7 +926,15 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
         relation_obj->GetType() == catalog::ObjectType::PgSqlView) {
       auto view =
         std::static_pointer_cast<const catalog::PgSqlView>(relation_obj);
-      fp = ResolveViewFastPath(binder.context, *view);
+      std::vector<std::string> key_cols;
+      if (auto it = stmt.info->Cast<duckdb::CreateIndexInfo>().options.find(
+            "key_columns");
+          it != stmt.info->Cast<duckdb::CreateIndexInfo>().options.end()) {
+        key_cols = ParseKeyColumns(
+          it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR)
+            .GetValue<std::string>());
+      }
+      fp = ResolveViewFastPath(binder.context, *view, key_cols);
     }
     duckdb::LogicalOperator* leaf_parent_chain_root = plan.get();
     duckdb::LogicalGet* leaf_get = nullptr;

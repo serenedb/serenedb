@@ -175,6 +175,35 @@ statement ok
 DROP TABLE pg_${__DATABASE__}.iipgscan_docs.nopk;
 
 
+# ===== user-specified lookup key: WITH (key_columns = 'id') =====
+# The user names the key column (their PK, or any BIGINT column), overriding the
+# default ctid: matched rows re-fetch via `WHERE id IN (...)` instead of by ctid.
+statement ok
+CREATE VIEW pg_artk_v_${__DATABASE__} AS
+  SELECT id, body, tag, views FROM pg_${__DATABASE__}.iipgscan_docs.articles;
+
+
+statement ok
+CREATE INDEX pg_artk_v_idx_${__DATABASE__}
+  ON pg_artk_v_${__DATABASE__}
+  USING inverted(id, body pg_en_${__DATABASE__})
+  WITH (key_columns = 'id');
+
+
+query
+SELECT id, body FROM pg_artk_v_idx_${__DATABASE__}
+WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge goes mid and dominates the lane
+3	pudge plays again in a ranked match
+5	mom reviews pudge highlight reel
+
+
+statement ok
+DROP VIEW pg_artk_v_${__DATABASE__};
+
+
 statement ok
 DROP TABLE pg_${__DATABASE__}.iipgscan_docs.articles;
 

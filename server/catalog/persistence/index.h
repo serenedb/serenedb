@@ -47,6 +47,12 @@ struct InvertedIndexOptions {
   bool pk_term = true;
   PkColumnKind pk_column = PkColumnKind::I64;
   std::optional<ScorerOptions> topk_scorer;
+  // CREATE INDEX ... WITH (key_columns = 'a, b, ...'): the source columns whose
+  // values re-fetch a matched row from an attached external DB. Empty = the
+  // default key (postgres ctid / clickhouse PK). Persisted so build and lookup
+  // agree. v1 renders `WHERE (cols) IN (...)`; the columns are stored as the
+  // index's key (a struct when there is more than one).
+  std::vector<std::string> key_columns;
 };
 
 // Shared expression payload for a computed index key. Each index kind persists

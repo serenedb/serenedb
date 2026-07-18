@@ -22,6 +22,7 @@
 
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_split.h>
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
@@ -202,8 +203,20 @@ duckdb::TableFunction LookupSingleStringReader(duckdb::ClientContext& context,
 
 }  // namespace
 
+std::vector<std::string> ParseKeyColumns(std::string_view text) {
+  std::vector<std::string> cols;
+  for (auto part : absl::StrSplit(text, ',')) {
+    auto trimmed = absl::StripAsciiWhitespace(part);
+    if (!trimmed.empty()) {
+      cols.emplace_back(trimmed);
+    }
+  }
+  return cols;
+}
+
 std::optional<ViewFastPath> ResolveViewFastPath(
-  duckdb::ClientContext& context, const catalog::PgSqlView& view) {
+  duckdb::ClientContext& context, const catalog::PgSqlView& view,
+  std::span<const std::string> key_columns) {
   const auto& info = view.GetInfo();
   if (!info.query) {
     return std::nullopt;
@@ -328,6 +341,43 @@ std::optional<ViewFastPath> ResolveViewFastPath(
                           entry.name.GetIdentifierName())};
       out.pk_spec = catalog::PkSpec::DuckDBRowId;
       out.supports_filters = true;
+      out.projection_columns = std::move(projection_columns);
+      return out;
+    }
+    if ((cat_type == "clickhouse" || cat_type == "postgres") &&
+        !key_columns.empty()) {
+      // User-specified lookup key via CREATE INDEX WITH (key_columns = '...'):
+      // the user asserts which column is the key (their PK or a secondary key),
+      // overriding the auto-detected default (postgres ctid / clickhouse PK).
+      // v1: a single BIGINT column, rendered `WHERE col IN (...)`. Multi-column
+      // struct keys (`WHERE (a,b) IN (...)`) are the follow-up generalisation.
+      if (key_columns.size() != 1) {
+        return std::nullopt;
+      }
+      std::optional<duckdb::column_t> idx;
+      duckdb::idx_t pos = 0;
+      for (const auto& col : entry.GetColumns().Logical()) {
+        if (col.Name() == key_columns[0]) {
+          if (col.GetType().id() != duckdb::LogicalTypeId::BIGINT) {
+            return std::nullopt;
+          }
+          idx = static_cast<duckdb::column_t>(pos);
+          break;
+        }
+        ++pos;
+      }
+      if (!idx) {
+        return std::nullopt;
+      }
+      ViewFastPath out;
+      out.catalog_ref = CatalogTableRef{
+        .catalog = entry.ParentCatalog().GetName().GetIdentifierName(),
+        .schema = entry.ParentSchema().name.GetIdentifierName(),
+        .table = entry.name.GetIdentifierName()};
+      out.pk_spec = catalog::PkSpec::ExternalDBKey;
+      out.pk_column_index = *idx;
+      out.pk_column_name = key_columns[0];
+      out.pk_uniqueness = PkUniqueness::Unverified;
       out.projection_columns = std::move(projection_columns);
       return out;
     }

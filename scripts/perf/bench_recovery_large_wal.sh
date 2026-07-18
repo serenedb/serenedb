@@ -99,7 +99,7 @@ wait_search_ready() {
 	local want="$1"
 	for _ in $(seq 1 4000); do
 		local got
-		got="$("${PSQL[@]}" -c "SELECT count(*) FROM rec_txt WHERE body @@ ts_phrase('token7');" 2>/dev/null || echo -1)"
+		got="$("${PSQL[@]}" -c "SELECT count(*) FROM rec_txt_idx WHERE body @@ ts_phrase('token7');" 2>/dev/null || echo -1)"
 		[[ "${got}" == "${want}" ]] && return 0
 		sleep 0.05
 	done
@@ -137,12 +137,12 @@ bench_one() {
 
 	local total=$((TABLE_ROWS + DELTA_ROWS))
 	local hits
-	hits="$("${PSQL[@]}" -c "SELECT count(*) FROM rec_txt WHERE body @@ ts_phrase('token7');")"
+	hits="$("${PSQL[@]}" -c "SELECT count(*) FROM rec_txt_idx WHERE body @@ ts_phrase('token7');")"
 	local wal
 	wal="$(wal_bytes "${datadir}")"
 	echo "   rows=${total} token7_hits=${hits} datadir_bytes=${wal}"
 
-	local times=() r s e
+	local times=() rss_list=() r s e
 	for ((r = 0; r < REPS; r++)); do
 		wait_quiet
 		kill -9 "${CUR_PID}" 2>/dev/null || true
@@ -152,19 +152,24 @@ bench_one() {
 		wait_up
 		wait_search_ready "${hits}"
 		e=$(date +%s.%N)
-		local dt
+		local dt rss
 		dt="$(echo "${e} - ${s}" | bc)"
+		# Peak RSS of the freshly recovered process: what replay itself costs
+		# in memory before any query traffic.
+		rss="$(awk '/VmHWM/{print $2}' "/proc/${CUR_PID}/status" 2>/dev/null || echo 0)"
 		times+=("${dt}")
-		printf '   rep %d: %ss\n' "${r}" "${dt}"
+		rss_list+=("${rss}")
+		printf '   rep %d: %ss rss=%sKB\n' "${r}" "${dt}" "${rss}"
 	done
 	kill -9 "${CUR_PID}" 2>/dev/null || true
 	wait "${CUR_PID}" 2>/dev/null || true
 	CUR_PID=""
 
-	local med
+	local med med_rss
 	med=$(printf '%s\n' "${times[@]}" | sort -n | awk -v n="${REPS}" 'NR==int((n+1)/2){print}')
-	printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${srv}" "${total}" "${DELTA_ROWS}" "${hits}" "${wal}" "${med}" >>"${OUT_DIR}/results.tsv"
-	echo "   ${srv} recovery median=${med}s"
+	med_rss=$(printf '%s\n' "${rss_list[@]}" | sort -n | awk -v n="${REPS}" 'NR==int((n+1)/2){print}')
+	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${srv}" "${total}" "${DELTA_ROWS}" "${hits}" "${wal}" "${med}" "${med_rss}" >>"${OUT_DIR}/results.tsv"
+	echo "   ${srv} recovery median=${med}s rss=${med_rss}KB"
 	rm -rf "${datadir}"
 	CUR_DATA=""
 }
@@ -182,11 +187,11 @@ BENCH_BIN="${NEW_BIN}" bench_one new
 echo
 echo "============ RECOVERY (LARGE WAL) SUMMARY ============"
 awk -F'\t' '
-{ med[$1]=$6; rows[$1]=$2; delta[$1]=$3; wal[$1]=$5 }
+{ med[$1]=$6; rows[$1]=$2; delta[$1]=$3; wal[$1]=$5; rss[$1]=$7 }
 END {
-  printf "%-6s %12s %12s %14s %12s\n","side","rows","delta","datadir_bytes","recovery_s";
-  printf "%-6s %12s %12s %14s %12s\n","----","------------","------------","--------------","------------";
-  for (s in med) printf "%-6s %12s %12s %14s %12s\n", s, rows[s], delta[s], wal[s], med[s];
+  printf "%-6s %12s %12s %14s %12s %12s\n","side","rows","delta","datadir_bytes","recovery_s","peak_rss_kb";
+  printf "%-6s %12s %12s %14s %12s %12s\n","----","------------","------------","--------------","------------","------------";
+  for (s in med) printf "%-6s %12s %12s %14s %12s %12s\n", s, rows[s], delta[s], wal[s], med[s], rss[s];
   if ((med["old"]+0)>0 && (med["new"]+0)>0)
     printf "\nspeedup new vs old: %.1fx\n", med["old"]/med["new"];
 }' "${OUT_DIR}/results.tsv" | tee "${OUT_DIR}/summary.txt"

@@ -331,15 +331,33 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       out.projection_columns = std::move(projection_columns);
       return out;
     }
-    if (cat_type == "clickhouse" || cat_type == "postgres") {
-      // Attached external DB whose connector records its PK as a standard
-      // primary-key constraint on the table entry (postgres_scanner from
-      // pg_constraint; clickhouse from system.columns.is_in_primary_key). Take
-      // the PK from that metadata -- read via the engine-agnostic catalog API,
-      // so this body is identical for both. v1: a single 64-bit integer column;
-      // anything else -> no fast path -> materialisation stays unsupported.
-      // NB: a postgres PRIMARY KEY is a true uniqueness guarantee; clickhouse's
-      // is only the MergeTree sorting prefix (correctness assumes uniqueness).
+    if (cat_type == "postgres") {
+      // Postgres: key the lookup on the row's physical locator, ctid (surfaced
+      // by the connector as the duckdb rowid), NOT a PK column. This is
+      // universal -- no PRIMARY KEY required, works for any table -- and a ctid
+      // is unique within the (static) index's snapshot. The build projects the
+      // rowid; the lookup renders `rowid IN (...)`, which postgres_filter_pushdown
+      // turns into a `ctid IN (...)` TID scan on the remote.
+      ViewFastPath out;
+      out.catalog_ref = CatalogTableRef{
+        .catalog = entry.ParentCatalog().GetName().GetIdentifierName(),
+        .schema = entry.ParentSchema().name.GetIdentifierName(),
+        .table = entry.name.GetIdentifierName()};
+      out.pk_spec = catalog::PkSpec::ExternalDBKey;
+      out.pk_is_rowid = true;
+      out.pk_column_name = "ctid";
+      out.pk_uniqueness = PkUniqueness::Enforced;
+      out.projection_columns = std::move(projection_columns);
+      return out;
+    }
+    if (cat_type == "clickhouse") {
+      // ClickHouse can't use a physical locator: its part+offset row id is
+      // invalidated by background merges/compaction, so key on the MergeTree
+      // sorting-prefix PK column (from system.columns.is_in_primary_key, read
+      // via the engine-agnostic catalog API). v1: a single 64-bit integer
+      // column; anything else -> no fast path -> materialisation unsupported.
+      // NB: the ClickHouse "primary key" is only a sorting prefix, not a
+      // uniqueness constraint (correctness assumes uniqueness -- see on_conflict).
       std::optional<std::string> pk_name;
       for (const auto& constraint : entry.GetConstraints()) {
         if (constraint->type != duckdb::ConstraintType::UNIQUE) {
@@ -383,8 +401,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       out.pk_spec = catalog::PkSpec::ExternalDBKey;
       out.pk_column_index = *pk_index;
       out.pk_column_name = std::move(*pk_name);
-      out.pk_uniqueness = cat_type == "postgres" ? PkUniqueness::Enforced
-                                                 : PkUniqueness::Unverified;
+      out.pk_uniqueness = PkUniqueness::Unverified;
       out.projection_columns = std::move(projection_columns);
       return out;
     }
@@ -522,6 +539,10 @@ std::optional<ViewFastPath> ResolveViewFastPath(
 
 std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp) {
   if (fp.pk_spec == catalog::PkSpec::ExternalDBKey) {
+    if (fp.pk_is_rowid) {
+      // Postgres ctid: the key is the virtual rowid, not a real column.
+      return {duckdb::COLUMN_IDENTIFIER_ROW_ID};
+    }
     // The PK is a real source column (not a virtual one); project it so the
     // index sink can key postings by its value.
     return {fp.pk_column_index};

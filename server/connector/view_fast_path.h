@@ -74,6 +74,12 @@ struct ViewFastPath {
   duckdb::column_t pk_column_index = 0;
   std::string pk_column_name;
   PkUniqueness pk_uniqueness = PkUniqueness::Unverified;
+  // For PkSpec::ExternalDBKey over postgres: key on the row's physical locator
+  // (ctid, surfaced as the duckdb rowid) instead of a PK column -- universal (no
+  // PK needed) and unique within the static index's snapshot. The build projects
+  // the rowid; the lookup renders `rowid IN (...)`, pushed as a `ctid IN (...)`
+  // TID scan. pk_column_index/pk_column_name are unused in this mode.
+  bool pk_is_rowid = false;
   // Whether the backing reader's lookup applies pushed table filters (parquet /
   // duckdb yes; csv / json / text no). Drives filter pushdown -- see
   // IResearchSupportsPushdownType.

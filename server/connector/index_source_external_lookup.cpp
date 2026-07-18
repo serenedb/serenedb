@@ -87,17 +87,23 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
       return types[source_col];
     });
 
+  // The key expression: a quoted PK column, or the bare `rowid` keyword for the
+  // postgres ctid path (a `rowid IN (...)` predicate the connector pushes down
+  // as a `ctid IN (...)` TID scan; `rowid` is a pseudo-column, never quoted).
+  const std::string key_expr =
+    _fast_path.pk_is_rowid ? std::string{"rowid"} : Quote(_fast_path.pk_column_name);
+
   // The key is always column 0 of the result; the projected real columns
   // follow at 1..N. A fixed leading key keeps the layout valid even when no
   // real column is projected.
-  std::string select_list = Quote(_fast_path.pk_column_name);
+  std::string select_list = key_expr;
   for (const auto& name : select_names) {
     absl::StrAppend(&select_list, ", ", Quote(name));
   }
   _sql_prefix =
     absl::StrCat("SELECT ", select_list, " FROM ", Quote(ref.catalog), ".",
-                 Quote(ref.schema), ".", Quote(ref.table), " WHERE ",
-                 Quote(_fast_path.pk_column_name), " IN (");
+                 Quote(ref.schema), ".", Quote(ref.table), " WHERE ", key_expr,
+                 " IN (");
   _num_proj_cols = select_names.size();
 }
 

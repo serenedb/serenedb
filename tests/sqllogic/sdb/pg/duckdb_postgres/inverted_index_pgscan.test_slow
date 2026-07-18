@@ -114,9 +114,11 @@ sum
 
 
 # Selecting real (non-indexed, non-INCLUDE'd) source columns: the postgres table
-# is a fast-path source now (PkSpec::ExternalDBKey -- PK from pg_constraint
-# metadata), so matched rows are re-fetched from postgres via `WHERE id IN (...)`
-# and mapped back to output slots by key.
+# is a fast-path source (PkSpec::ExternalDBKey), keyed by ctid -- the row's
+# physical locator, surfaced as the duckdb rowid. Matched rows are re-fetched
+# via `WHERE rowid IN (...)`, which the connector pushes down as a `ctid IN (...)`
+# TID scan, and mapped back to output slots by key. (The BIGINT PK on this table
+# is irrelevant to the lookup -- ctid is used regardless; see the no-PK case.)
 query
 SELECT id, body FROM pg_articles_v_idx_${__DATABASE__} WHERE body @@ ts_phrase('pudge') ORDER BY id;
 ----
@@ -124,6 +126,53 @@ id	body
 1	pudge goes mid and dominates the lane
 3	pudge plays again in a ranked match
 5	mom reviews pudge highlight reel
+
+
+# ===== ctid needs NO primary key: the same lookup works on a keyless table =====
+# This is the universal-lookup win over a PK column: ctid is every row's physical
+# locator, so materialisation works even when the source table has no PK at all.
+statement ok
+CREATE TABLE pg_${__DATABASE__}.iipgscan_docs.nopk (
+  body TEXT,
+  tag  TEXT
+);
+
+
+statement count 3
+INSERT INTO pg_${__DATABASE__}.iipgscan_docs.nopk VALUES
+  ('pudge roams the map',  'gameplay'),
+  ('anchin naps at noon',  'reading'),
+  ('pudge ults the carry', 'gameplay');
+
+
+statement ok
+CREATE VIEW pg_nopk_v_${__DATABASE__} AS
+  SELECT body, tag FROM pg_${__DATABASE__}.iipgscan_docs.nopk;
+
+
+statement ok
+CREATE INDEX pg_nopk_v_idx_${__DATABASE__}
+  ON pg_nopk_v_${__DATABASE__}
+  USING inverted(body pg_en_${__DATABASE__});
+
+
+# Materialise real source columns (the indexed `body` -- its text is not stored
+# -- and the non-indexed `tag`) with NO PK on the table: both re-fetched by ctid.
+query
+SELECT body, tag FROM pg_nopk_v_idx_${__DATABASE__}
+WHERE body @@ ts_phrase('pudge') ORDER BY body;
+----
+body	tag
+pudge roams the map	gameplay
+pudge ults the carry	gameplay
+
+
+statement ok
+DROP VIEW pg_nopk_v_${__DATABASE__};
+
+
+statement ok
+DROP TABLE pg_${__DATABASE__}.iipgscan_docs.nopk;
 
 
 statement ok

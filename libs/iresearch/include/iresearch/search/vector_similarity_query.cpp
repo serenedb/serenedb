@@ -490,8 +490,8 @@ memory::managed_ptr<VectorDistanceIterator> MakeRawReranker(
 class DisjointClusterUnion : public DocIterator {
  public:
   DisjointClusterUnion(QVectorIterators&& itrs, doc_id_t docs_count,
-                       score_t boost)
-    : _itrs{std::move(itrs)}, _boost{boost}, _attrs{docs_count} {}
+                       score_t /*boost*/)
+    : _itrs{std::move(itrs)}, _attrs{docs_count} {}
 
   doc_id_t advance() final { SDB_UNREACHABLE(); }
   doc_id_t seek(doc_id_t) final { SDB_UNREACHABLE(); }
@@ -501,43 +501,7 @@ class DisjointClusterUnion : public DocIterator {
   uint32_t EmitScoredDocs(doc_id_t* out, score_t* scores, doc_id_t max,
                           const ScoreFunction& /*scorer*/,
                           ColumnArgsFetcher* /*fetcher*/, doc_id_t min) final {
-    const auto cmp = [](const QVectorIterator* lhs,
-                        const QVectorIterator* rhs) {
-      return lhs->value() > rhs->value();
-    };
-    if (!_primed) {
-      _primed = true;
-      _heap.reserve(_itrs.size());
-      for (auto& it : _itrs) {
-        if (!doc_limits::eof(it->advance())) {
-          _heap.push_back(it.get());
-        }
-      }
-      std::make_heap(_heap.begin(), _heap.end(), cmp);
-    }
-    const auto pop_front = [&] {
-      auto* top = _heap.front();
-      std::pop_heap(_heap.begin(), _heap.end(), cmp);
-      if (doc_limits::eof(top->advance())) {
-        _heap.pop_back();
-      } else {
-        std::push_heap(_heap.begin(), _heap.end(), cmp);
-      }
-    };
-    while (!_heap.empty() && _heap.front()->value() < min) {
-      pop_front();
-    }
-    uint32_t n = 0;
-    while (!_heap.empty() && _heap.front()->value() < max) {
-      const auto* top = _heap.front();
-      out[n] = top->value();
-      const score_t dist = top->Distance();
-      scores[n] = _boost == kNoBoost ? dist : dist * _boost;
-      ++n;
-      pop_front();
-    }
-    _doc = _heap.empty() ? doc_limits::eof() : _heap.front()->value();
-    return n;
+    SDB_UNREACHABLE();
   }
 
   std::pair<doc_id_t, bool> FillBlock(doc_id_t, doc_id_t, uint64_t*,
@@ -573,9 +537,6 @@ class DisjointClusterUnion : public DocIterator {
  private:
   QVectorIterators _itrs;
   std::vector<ScoreFunction> _scorers;
-  std::vector<QVectorIterator*> _heap;
-  score_t _boost;
-  bool _primed = false;
   CostAttr _attrs;
 };
 

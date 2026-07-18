@@ -1,15 +1,18 @@
 hash-threshold 100
 
-# Quantized IVF top-k under table filters -- exercises both collection paths of
-# the DisjointClusterUnion iterator:
+# Quantized IVF top-k under table filters -- exercises both ways the per-cluster
+# iterators get combined:
 #
-#   * Collect        -- unfiltered top-k (and non-INCLUDE'd/lookup filters,
-#                       enforced outside the scan): clusters are block-dumped
-#                       unsorted into the top-k collector.
-#   * EmitScoredDocs -- an INCLUDE'd `.col` filter is pushed into the scan and
-#                       the union is wrapped in a TableFilterDocIterator, which
-#                       drains it in ascending doc-id windows (k-way merge over
-#                       clusters) and applies the filter per block.
+#   * DisjointClusterUnion -- unfiltered top-k (and non-INCLUDE'd/lookup
+#                       filters, enforced outside the scan): clusters are
+#                       block-dumped unsorted into the top-k collector via
+#                       Collect(), with no cross-cluster ordering needed.
+#   * BlockDisjunction -- an INCLUDE'd `.col` filter is pushed into the scan,
+#                       so the per-cluster iterators are combined into an
+#                       ordered (bitmap-window) disjunction instead, wrapped in
+#                       a TableFilterDocIterator that drains it in ascending
+#                       doc-id windows via EmitScoredDocs and applies the
+#                       filter per block.
 #
 # Poison construction: the two docs nearest the query (pk 1, 2) have val < 30,
 # so a filter path that leaked them would return the wrong rows. Every arm is
@@ -102,3 +105,83 @@ RESET sdb_disable_top_k_optimization
 
 statement ok
 DROP TABLE ivf_f
+
+# ===========================================================================
+# Approximate lookup-filter shortfall (documents the contract). A lookup
+# (non-INCLUDE'd) filter is not enforced in-scan: the collector over-fetches
+# the sdb_rerank_factor * k nearest by distance, then the filter drops
+# non-matches during materialization. A filter whose matches lie beyond that
+# pool legitimately returns FEWER than k rows -- larger rerank_factor widens
+# the pool and recovers more, and the exact (streaming) path returns full k.
+# emb = [pk, 0, 0], query [0,0,0]: nearest = smallest pk. Only pk 5 is within
+# the nearest 6, and pk 5, 12 within the nearest 12, though 5 rows match.
+# ===========================================================================
+
+statement ok
+SET sdb_nprobe = 1000
+
+statement ok
+CREATE TABLE shortf (pk INTEGER PRIMARY KEY, emb FLOAT[3], ext INTEGER)
+
+statement ok
+CREATE INDEX shortf_idx ON shortf
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8', nlist = 4))
+
+statement count 30
+INSERT INTO shortf
+  SELECT g, [g, 0, 0]::FLOAT[3],
+         CASE WHEN g IN (5, 12, 13, 14, 15) THEN 1 ELSE 0 END
+  FROM generate_series(1, 30) g
+
+statement ok
+VACUUM (REFRESH_TABLE) shortf
+
+# Five rows match the filter.
+query
+SELECT count(*) FROM shortf WHERE ext = 1;
+----
+count
+5
+
+# pool = 2 * 3 = 6 (nearest pk 1..6): only pk 5 matches -> one row, not three.
+statement ok
+SET sdb_rerank_factor = 2
+
+query
+SELECT pk FROM shortf_idx WHERE ext = 1 ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 3;
+----
+pk
+5
+
+# pool = 4 * 3 = 12 (nearest pk 1..12): pk 5 and 12 match -> recall improves to
+# two rows, still short of three.
+statement ok
+SET sdb_rerank_factor = 4
+
+query
+SELECT pk FROM shortf_idx WHERE ext = 1 ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 3;
+----
+pk
+5
+12
+
+# Exact path (forced streaming): the true three nearest matches, no shortfall.
+statement ok
+SET sdb_disable_top_k_optimization = true
+
+query
+SELECT pk FROM shortf_idx WHERE ext = 1 ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 3;
+----
+pk
+5
+12
+13
+
+statement ok
+RESET sdb_disable_top_k_optimization
+
+statement ok
+RESET sdb_rerank_factor
+
+statement ok
+DROP TABLE shortf

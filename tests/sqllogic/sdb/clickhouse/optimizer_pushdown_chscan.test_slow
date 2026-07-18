@@ -21,7 +21,7 @@ ATTACH 'host=${CHHOST} port=${CHPORT} database=chtest' AS chl (TYPE clickhouse);
 ####################  FOLDED -- pushed into the remote scan  ####################
 
 # Plain LIMIT: no limit operator remains above the scan.
-query
+query ?
 EXPLAIN SELECT id FROM chl.chtest.vedernikoff LIMIT 3;
 ----
 QUERY PLAN
@@ -33,14 +33,14 @@ QUERY PLAN
 │ ~6 rows                            │
 ╰────────────────────────────────────╯
 
-query
+query ?
 SELECT count(*) AS n FROM (SELECT id FROM chl.chtest.vedernikoff LIMIT 3);
 ----
 n
 3
 
 # LIMIT larger than the table: still folded; capped at the table size.
-query
+query ?
 EXPLAIN SELECT id FROM chl.chtest.vedernikoff LIMIT 100;
 ----
 QUERY PLAN
@@ -52,14 +52,14 @@ QUERY PLAN
 │ ~6 rows                            │
 ╰────────────────────────────────────╯
 
-query
+query ?
 SELECT count(*) AS n FROM (SELECT id FROM chl.chtest.vedernikoff LIMIT 100);
 ----
 n
 6
 
 # LIMIT + OFFSET: both folded, no limit operator remains.
-query
+query ?
 EXPLAIN SELECT id FROM chl.chtest.vedernikoff LIMIT 10 OFFSET 4;
 ----
 QUERY PLAN
@@ -71,14 +71,14 @@ QUERY PLAN
 │ ~6 rows                            │
 ╰────────────────────────────────────╯
 
-query
+query ?
 SELECT count(*) AS n FROM (SELECT id FROM chl.chtest.vedernikoff LIMIT 10 OFFSET 4);
 ----
 n
 2
 
 # LIMIT above a (pushed) projection of several columns: still folded.
-query
+query ?
 EXPLAIN SELECT id, val FROM chl.chtest.vedernikoff LIMIT 2;
 ----
 QUERY PLAN
@@ -90,7 +90,7 @@ QUERY PLAN
 │ ~6 rows                            │
 ╰────────────────────────────────────╯
 
-query
+query ?
 SELECT count(*) AS n FROM (SELECT id, val FROM chl.chtest.vedernikoff LIMIT 2);
 ----
 n
@@ -102,22 +102,23 @@ n
 
 # ORDER BY + LIMIT: folded by the shared optimizer -> no TOP_N
 # remains, and the result is the three smallest ids.
-query
+query ?
 EXPLAIN SELECT id FROM chl.chtest.vedernikoff ORDER BY id LIMIT 3;
 ----
 QUERY PLAN
-╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────────╮
-│ Function: CLICKHOUSE_SCAN_PUSHDOWN     │
-│ Table: chtest.vedernikoff              │
-│ Pushed Order:                          │
-│ ORDER BY `id` IS NULL, `id` ASC        │
-│ Pushed Limit: LIMIT 3                  │
-│ Projections: id                        │
-│ Filters: optional: Dynamic Filter (id) │
-│ ~6 rows                                │
-╰────────────────────────────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.vedernikoff          │
+│ Pushed Order:                      │
+│ ORDER BY `id` IS NULL, `id` ASC    │
+│ Pushed Limit: LIMIT 3              │
+│ Projections: id                    │
+│ Column Filter:                     │
+│ optional: Dynamic Filter (id < ?)  │
+│ ~6 rows                            │
+╰────────────────────────────────────╯
 
-query
+query ?
 SELECT id FROM chl.chtest.vedernikoff ORDER BY id LIMIT 3;
 ----
 id
@@ -127,7 +128,7 @@ id
 
 # WHERE + LIMIT: the filter is pushed into the scan, so the scan carries a pushed
 # filter and the LIMIT is refused -> a limit operator remains above the scan.
-query
+query ?
 EXPLAIN SELECT id FROM chl.chtest.vedernikoff WHERE id > 3 LIMIT 2;
 ----
 QUERY PLAN
@@ -139,11 +140,11 @@ QUERY PLAN
 │ Function: CLICKHOUSE_SCAN_PUSHDOWN │
 │ Table: chtest.vedernikoff          │
 │ Projections: id                    │
-│ Filters: id > 3                    │
+│ Column Filter: id > 3              │
 │ ~1 row                             │
 ╰────────────────────────────────────╯
 
-query
+query ?
 SELECT count(*) AS n FROM (SELECT id FROM chl.chtest.vedernikoff WHERE id > 3 LIMIT 2);
 ----
 n

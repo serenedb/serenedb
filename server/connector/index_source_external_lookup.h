@@ -26,7 +26,6 @@
 #include <string>
 
 #include "catalog/table_options.h"
-#include "connector/index_source.h"
 #include "connector/index_source_view.h"
 #include "connector/view_fast_path.h"
 
@@ -58,9 +57,10 @@ class ExternalLookupIndexSource final : public ViewIndexSourceBase {
     return PrimaryKeyBatch::Kind::I64;
   }
 
-  void Materialize(duckdb::ClientContext& context, PrimaryKeyBatch& batch,
-                   duckdb::idx_t start, duckdb::idx_t count,
-                   duckdb::DataChunk& output) final;
+  duckdb::idx_t Materialize(duckdb::ClientContext& context,
+                            PrimaryKeyBatch& batch, duckdb::idx_t start,
+                            duckdb::idx_t count,
+                            duckdb::DataChunk& output) final;
 
  private:
   // "SELECT <pk>, <cols> FROM <table> WHERE <pk> IN (" -- constant across

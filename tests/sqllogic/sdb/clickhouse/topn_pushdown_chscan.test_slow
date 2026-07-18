@@ -23,22 +23,23 @@ ATTACH 'host=${CHHOST} port=${CHPORT} database=chtest' AS chtop (TYPE clickhouse
 
 # ORDER BY + LIMIT: the TOP_N node is folded away; the scan box shows the
 # pushed order and limit.
-query
+query ?
 EXPLAIN SELECT id FROM chtop.chtest.vedernikoff ORDER BY id LIMIT 3;
 ----
 QUERY PLAN
-╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────────╮
-│ Function: CLICKHOUSE_SCAN_PUSHDOWN     │
-│ Table: chtest.vedernikoff              │
-│ Pushed Order:                          │
-│ ORDER BY `id` IS NULL, `id` ASC        │
-│ Pushed Limit: LIMIT 3                  │
-│ Projections: id                        │
-│ Filters: optional: Dynamic Filter (id) │
-│ ~6 rows                                │
-╰────────────────────────────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.vedernikoff          │
+│ Pushed Order:                      │
+│ ORDER BY `id` IS NULL, `id` ASC    │
+│ Pushed Limit: LIMIT 3              │
+│ Projections: id                    │
+│ Column Filter:                     │
+│ optional: Dynamic Filter (id < ?)  │
+│ ~6 rows                            │
+╰────────────────────────────────────╯
 
-query
+query ?
 SELECT id FROM chtop.chtest.vedernikoff ORDER BY id LIMIT 3;
 ----
 id
@@ -47,22 +48,23 @@ id
 3
 
 # DESC with an OFFSET: folded as LIMIT n OFFSET m.
-query
+query ?
 EXPLAIN SELECT id FROM chtop.chtest.vedernikoff ORDER BY id DESC LIMIT 2 OFFSET 1;
 ----
 QUERY PLAN
-╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────────╮
-│ Function: CLICKHOUSE_SCAN_PUSHDOWN     │
-│ Table: chtest.vedernikoff              │
-│ Pushed Order:                          │
-│ ORDER BY `id` IS NULL, `id` DESC       │
-│ Pushed Limit: LIMIT 2 OFFSET 1         │
-│ Projections: id                        │
-│ Filters: optional: Dynamic Filter (id) │
-│ ~6 rows                                │
-╰────────────────────────────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN │
+│ Table: chtest.vedernikoff          │
+│ Pushed Order:                      │
+│ ORDER BY `id` IS NULL, `id` DESC   │
+│ Pushed Limit: LIMIT 2 OFFSET 1     │
+│ Projections: id                    │
+│ Column Filter:                     │
+│ optional: Dynamic Filter (id > ?)  │
+│ ~6 rows                            │
+╰────────────────────────────────────╯
 
-query
+query ?
 SELECT id FROM chtop.chtest.vedernikoff ORDER BY id DESC LIMIT 2 OFFSET 1;
 ----
 id
@@ -70,7 +72,7 @@ id
 4
 
 # Multi-key with explicit NULLS FIRST: the two NULL-note rows come first.
-query
+query ?
 SELECT id FROM chtop.chtest.widgets ORDER BY note NULLS FIRST, id LIMIT 2;
 ----
 id
@@ -82,7 +84,7 @@ id
 # threshold branch has no SQL form. Dropping just that branch (the upstream
 # blanket drop) pushes a hard `note IS NULL` and silently loses every non-NULL
 # row -- LIMIT 2 above cannot catch that, so these assert past the NULLs.
-query
+query ?
 SELECT id FROM chtop.chtest.widgets ORDER BY note NULLS FIRST, id LIMIT 3;
 ----
 id
@@ -90,14 +92,14 @@ id
 4
 5
 
-query
+query ?
 SELECT count(*) AS n FROM (SELECT id FROM chtop.chtest.widgets ORDER BY note NULLS FIRST LIMIT 5) s;
 ----
 n
 5
 
 # NULLS LAST puts them at the end.
-query
+query ?
 SELECT id FROM chtop.chtest.widgets ORDER BY note NULLS LAST, id LIMIT 3;
 ----
 id
@@ -107,25 +109,25 @@ id
 
 # Refusal: a required WHERE filter on the scan blocks the fold (no Pushed Order
 # in the scan box), and the result is still correct.
-query
+query ?
 EXPLAIN SELECT id FROM chtop.chtest.vedernikoff WHERE id > 1 ORDER BY id LIMIT 2;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────────╮
-│ Top: 2                                     │
-│ Order By: vedernikoff.id ASC               │
-│ ~1 row                                     │
-╰──────────────────────┬─────────────────────╯
-╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────────────╮
-│ Function: CLICKHOUSE_SCAN_PUSHDOWN         │
-│ Table: chtest.vedernikoff                  │
-│ Projections: id                            │
-│ Filters:                                   │
-│ (id > 1) AND optional: Dynamic Filter (id) │
-│ ~1 row                                     │
-╰────────────────────────────────────────────╯
+╭─ TOP_N ────────────────────────────────────────╮
+│ Top: 2                                         │
+│ Order By: vedernikoff.id ASC                   │
+│ ~1 row                                         │
+╰────────────────────────┬───────────────────────╯
+╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────────────────╮
+│ Function: CLICKHOUSE_SCAN_PUSHDOWN             │
+│ Table: chtest.vedernikoff                      │
+│ Projections: id                                │
+│ Column Filter:                                 │
+│ (id > 1) AND optional: Dynamic Filter (id < ?) │
+│ ~1 row                                         │
+╰────────────────────────────────────────────────╯
 
-query
+query ?
 SELECT id FROM chtop.chtest.vedernikoff WHERE id > 1 ORDER BY id LIMIT 2;
 ----
 id

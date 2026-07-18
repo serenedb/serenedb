@@ -101,13 +101,11 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
   _num_proj_cols = select_names.size();
 }
 
-void ExternalLookupIndexSource::Materialize(duckdb::ClientContext& context,
-                                            PrimaryKeyBatch& batch,
-                                            duckdb::idx_t start,
-                                            duckdb::idx_t count,
-                                            duckdb::DataChunk& output) {
+duckdb::idx_t ExternalLookupIndexSource::Materialize(
+  duckdb::ClientContext& context, PrimaryKeyBatch& batch, duckdb::idx_t start,
+  duckdb::idx_t count, duckdb::DataChunk& output) {
   if (count == 0) {
-    return;
+    return 0;
   }
   auto& pk = batch;
   SDB_ASSERT(pk.kind == PrimaryKeyBatch::Kind::I64);
@@ -165,6 +163,9 @@ void ExternalLookupIndexSource::Materialize(duckdb::ClientContext& context,
   }
 
   RunCastPass(output, count);
+  // No filter pushdown on the external-lookup path (supports_filters=false),
+  // so every requested key materialises a row.
+  return count;
 }
 
 }  // namespace sdb::connector

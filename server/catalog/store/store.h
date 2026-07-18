@@ -87,8 +87,6 @@ struct StoreIndexDef {
   std::string table;
   ObjectId table_id;
   ObjectId index_id;
-  // Inverted: raw column names for `USING inverted(...)`.
-  std::vector<std::string> columns;
   // Plain (ART): per-key SQL rendered in order, ready to drop into the index
   // key list -- a quoted column identifier, or a parenthesized expression such
   // as "(j + k)". Empty for inverted indexes.
@@ -172,6 +170,10 @@ class CatalogStore {
     // only `store_table.name` (+ `name_a`/`name_b` arguments).
     StoreTableDef store_table;
     StoreIndexDef store_index;
+    // CreateStoreIndex on an inverted index only: the executor builds the
+    // injected bound index from these. Never serialized.
+    std::shared_ptr<const Table> table_obj;
+    std::shared_ptr<const Index> index_obj;
     std::string name_a;
     std::string name_b;
   };
@@ -219,8 +221,11 @@ class CatalogStore {
     // Adds a UNIQUE constraint over `columns` (recreate + existing-row dup
     // validation).
     void AddStoreUnique(std::string table, std::vector<std::string> columns);
-    void CreateStoreIndex(StoreIndexDef def);
-    void DropStoreIndex(ObjectId index_id);
+    // Inverted defs carry the catalog objects so the executor can build the
+    // injected bound index; ART defs run as store-side SQL.
+    void CreateStoreIndex(StoreIndexDef def, std::shared_ptr<const Table> table,
+                          std::shared_ptr<const Index> index);
+    void DropStoreIndex(ObjectId index_id, ObjectId relation_id);
 
    private:
     friend class CatalogStore;

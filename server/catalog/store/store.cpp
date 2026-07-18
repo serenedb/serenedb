@@ -218,27 +218,16 @@ std::optional<StoreIndexDef> MakeStoreIndexDef(const Table& table,
     return def;
   }
 
-  // Inverted index: the store-side BoundIndex feeds iresearch, so it only
-  // needs the store column names (catalog-named types are fine there).
-  auto add_column = [&](Column::Id col_id) -> bool {
-    if (!table.ColumnById(col_id)) {
-      return false;
-    }
-    // GetReferencedColumns() is already de-duped, so each name is appended at
-    // most once -- no name-level dedup needed (that would be O(#cols^2)).
-    def.columns.push_back(StoreColumnName(col_id));
-    return true;
-  };
-  // Indexed columns plus indexed-expression dependencies must all be in the
-  // index's column set so duckdb initializes their chunk vectors for the
-  // BoundIndex appends.
+  // Inverted index: injected as a bound index built straight from the
+  // catalog objects, so the def only names the target; the referenced
+  // columns just have to exist.
+  if (index.GetReferencedColumns().empty()) {
+    return std::nullopt;
+  }
   for (auto col_id : index.GetReferencedColumns()) {
-    if (!add_column(col_id)) {
+    if (!table.ColumnById(col_id)) {
       return std::nullopt;
     }
-  }
-  if (def.columns.empty()) {
-    return std::nullopt;
   }
   def.table = StoreTableName(table.GetId());
   return def;
@@ -509,18 +498,24 @@ void CatalogStore::WriteContext::AddStoreUnique(
   });
 }
 
-void CatalogStore::WriteContext::CreateStoreIndex(StoreIndexDef def) {
+void CatalogStore::WriteContext::CreateStoreIndex(
+  StoreIndexDef def, std::shared_ptr<const Table> table,
+  std::shared_ptr<const Index> index) {
   _entries.push_back({
     .op = Op::CreateStoreIndex,
     .store_index = std::move(def),
+    .table_obj = std::move(table),
+    .index_obj = std::move(index),
   });
 }
 
-void CatalogStore::WriteContext::DropStoreIndex(ObjectId index_id) {
+void CatalogStore::WriteContext::DropStoreIndex(ObjectId index_id,
+                                                ObjectId relation_id) {
   _entries.push_back({
     .op = Op::DropStoreIndex,
     .store_index =
       {
+        .table = StoreTableName(relation_id),
         .index_id = index_id,
       },
   });

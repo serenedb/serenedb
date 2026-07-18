@@ -262,6 +262,11 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
 }
 
 void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
+  // On the live config: the pre-construct mutator's copy does not carry
+  // plain function-pointer members into the instance.
+  duckdb::DBConfig::GetConfig(db).external_index_provider =
+    connector::InjectExternalIndexes;
+
   connector::RegisterTokenizerPragma(db);
 
   connector::RegisterPgMathFunctions(db);
@@ -308,9 +313,6 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
     duckdb::IndexType type;
     type.name = name;
     type.create_plan = &connector::SereneDBCreateIndexPlan;
-    if (std::string_view{name} == "inverted") {
-      connector::AttachInvertedStoreIndexCallbacks(type);
-    }
     index_types.RegisterIndexType(type);
   }
 

@@ -51,13 +51,13 @@
 namespace sdb::search {
 namespace {
 
-// Trigger duckdb to bind the inverted indexes on one store table. Binding
-// applies the operations buffered during this boot's WAL replay
-// (InvertedStoreIndex::Append/Delete with no committing context), feeding the
-// post-checkpoint delta into the iresearch storage. The storages must already
-// be loaded (this runs after InitCatalog) so the index's replay path can
-// resolve them.
-void BindStoreTableIndexes(duckdb::ClientContext& context, ObjectId table_id) {
+// Commit the replay transaction of every injected inverted index on one
+// store table. The indexes were injected bound when the store DataTable came
+// alive during attach, so this boot's WAL replay streamed the post-checkpoint
+// delta straight into each index's replay session; FinishReplay commits it
+// into the iresearch storage in one shot.
+void FinishStoreTableReplay(duckdb::ClientContext& context,
+                            ObjectId table_id) {
   const auto store_name = catalog::StoreTableName(table_id);
   auto& entry = duckdb::Catalog::GetEntry(
                   context, duckdb::CatalogType::TABLE_ENTRY,
@@ -65,8 +65,13 @@ void BindStoreTableIndexes(duckdb::ClientContext& context, ObjectId table_id) {
                     duckdb::Identifier{catalog::kStoreDatabaseName},
                     duckdb::Identifier{"main"}, duckdb::Identifier{store_name}))
                   .Cast<duckdb::DuckTableEntry>();
-  entry.GetStorage().GetDataTableInfo()->BindIndexes(
-    context, connector::InvertedStoreIndex::kTypeName);
+  for (auto& index :
+       entry.GetStorage().GetDataTableInfo()->GetIndexes().Indexes()) {
+    if (index.IsBound() &&
+        index.GetIndexType() == connector::InvertedStoreIndex::kTypeName) {
+      index.Cast<duckdb::BoundIndex>().FinishReplay();
+    }
+  }
 }
 
 }  // namespace
@@ -133,10 +138,9 @@ void InitInvertedIndexes() {
     return;
   }
 
-  // One scratch connection drives the binds; BindIndexes applies the buffered
-  // replays synchronously (InvertedStoreIndex::FinishReplay commits the delta
-  // into the storage). The bind path resolves the catalog through the
-  // connection's transaction, so an explicit transaction must be active.
+  // One scratch connection resolves the store entries; FinishReplay commits
+  // each index's streamed delta into the storage. Entry resolution goes
+  // through the connection's transaction, so an explicit one must be active.
   auto conn = DuckDBEngine::Instance().CreateConnection();
   conn->BeginTransaction();
   irs::Finally end_txn = [&] noexcept {
@@ -146,7 +150,7 @@ void InitInvertedIndexes() {
     }
   };
   for (const auto table_id : tables_to_bind) {
-    BindStoreTableIndexes(*conn->context, table_id);
+    FinishStoreTableReplay(*conn->context, table_id);
   }
 
   // The replay committed the delta into each storage's writer, but the

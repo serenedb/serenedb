@@ -38,6 +38,7 @@
 #include <duckdb/parser/keyword_helper.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
+#include <duckdb/storage/data_table.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <exception>
 #include <filesystem>
@@ -45,14 +46,17 @@
 
 #include "basics/assert.h"
 #include "basics/debugging.h"
+#include "basics/down_cast.h"
 #include "basics/duckdb_engine.h"
 #include "basics/log.h"
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
 #include "catalog/database.h"
 #include "catalog/index.h"
+#include "catalog/inverted_index.h"
 #include "catalog/schema.h"
 #include "catalog/table.h"
+#include "connector/inverted_store_index.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 
@@ -61,6 +65,17 @@ namespace {
 
 constexpr std::string_view kStoreAlias = kStoreDatabaseName;
 constexpr std::string_view kStoreFile = "data.db";
+
+duckdb::optional_ptr<duckdb::CatalogEntry> LookupStoreTable(
+  duckdb::ClientContext& context, const std::string& name) {
+  duckdb::EntryLookupInfo lookup{
+    duckdb::CatalogType::TABLE_ENTRY,
+    duckdb::QualifiedName{duckdb::Identifier{kStoreAlias},
+                          duckdb::Identifier{"main"},
+                          duckdb::Identifier{name}}};
+  return duckdb::Catalog::GetEntry(context, lookup,
+                                   duckdb::OnEntryNotFound::RETURN_NULL);
+}
 
 void ExecOrFatal(duckdb::Connection& conn, const std::string& sql) {
   auto res = conn.Query(sql);
@@ -250,45 +265,65 @@ absl::Status DataStore::ExecuteEntry(const CatalogStore::Entry& entry) {
     }
     case Op::CreateStoreIndex: {
       const auto& def = entry.store_index;
-      std::string sql;
       if (def.kind == StoreIndexDef::Kind::Inverted) {
-        std::string cols;
-        for (const auto& name : def.columns) {
-          if (!cols.empty()) {
-            cols += ", ";
-          }
-          cols += QuotedIdent(name);
+        // Externally-stored index: build it bound from the catalog objects
+        // and inject it into the live index list -- same publication point
+        // as duckdb's own CREATE INDEX finalize (storage.AddIndex), so
+        // commit-time feeding starts exactly where it used to.
+        auto table_entry = LookupStoreTable(*_conn->context, def.table);
+        if (!table_entry) {
+          return absl::InternalError(
+            absl::StrCat("store table ", def.table, " missing"));
         }
-        sql = absl::StrCat(
-          "CREATE INDEX ", QuotedIdent(StoreIndexName(def.index_id)), " ON \"",
-          kStoreAlias, "\".main.", QuotedIdent(def.table), " USING inverted(",
-          cols, ") WITH (sdb_table_id=", def.table_id.id(),
-          ", sdb_index_id=", def.index_id.id(), ")");
-      } else {
-        // def.keys already holds per-key SQL in order (quoted column
-        // identifiers or parenthesized expressions); join verbatim.
-        std::string cols;
-        for (const auto& key : def.keys) {
-          if (!cols.empty()) {
-            cols += ", ";
-          }
-          cols += key;
-        }
-        sql = absl::StrCat("CREATE ", def.unique ? "UNIQUE " : "", "INDEX ",
-                           QuotedIdent(StoreIndexName(def.index_id)), " ON \"",
-                           kStoreAlias, "\".main.", QuotedIdent(def.table),
-                           " (", cols, ")");
+        SDB_ASSERT(entry.table_obj && entry.index_obj);
+        auto& storage = table_entry->Cast<duckdb::DuckTableEntry>().GetStorage();
+        storage.GetDataTableInfo()->GetIndexes().AddIndex(
+          connector::MakeInjectedInvertedIndex(
+            storage, *entry.table_obj,
+            basics::downCast<const InvertedIndex>(*entry.index_obj)));
+        break;
       }
-      auto res = _conn->Query(sql);
+      // def.keys already holds per-key SQL in order (quoted column
+      // identifiers or parenthesized expressions); join verbatim.
+      std::string cols;
+      for (const auto& key : def.keys) {
+        if (!cols.empty()) {
+          cols += ", ";
+        }
+        cols += key;
+      }
+      auto res = _conn->Query(
+        absl::StrCat("CREATE ", def.unique ? "UNIQUE " : "", "INDEX ",
+                     QuotedIdent(StoreIndexName(def.index_id)), " ON \"",
+                     kStoreAlias, "\".main.", QuotedIdent(def.table), " (",
+                     cols, ")"));
       if (res->HasError()) {
         return absl::InternalError(res->GetError());
       }
       break;
     }
     case Op::DropStoreIndex: {
+      const auto& def = entry.store_index;
+      // An injected inverted index has no duckdb entry -- unlink it from the
+      // live list; anything else keeps the SQL drop. The table itself may
+      // already be gone (index drops ride table/schema drops), then there is
+      // nothing to unlink.
+      if (auto table_entry = LookupStoreTable(*_conn->context, def.table)) {
+        auto& list = table_entry->Cast<duckdb::DuckTableEntry>()
+                       .GetStorage()
+                       .GetDataTableInfo()
+                       ->GetIndexes();
+        const duckdb::Identifier name{StoreIndexName(def.index_id)};
+        if (auto found = list.Find(name);
+            found && found->GetIndexType() ==
+                       connector::InvertedStoreIndex::kTypeName) {
+          list.RemoveIndex(name);
+          break;
+        }
+      }
       auto res = _conn->Query(
         absl::StrCat("DROP INDEX IF EXISTS \"", kStoreAlias, "\".main.",
-                     QuotedIdent(StoreIndexName(entry.store_index.index_id))));
+                     QuotedIdent(StoreIndexName(def.index_id))));
       if (res->HasError()) {
         return absl::InternalError(res->GetError());
       }
@@ -465,17 +500,6 @@ absl::Status DataStore::ExecuteCreateStoreTableImpl(const StoreTableDef& def,
 }
 
 namespace {
-
-duckdb::optional_ptr<duckdb::CatalogEntry> LookupStoreTable(
-  duckdb::ClientContext& context, const std::string& name) {
-  duckdb::EntryLookupInfo lookup{
-    duckdb::CatalogType::TABLE_ENTRY,
-    duckdb::QualifiedName{duckdb::Identifier{kStoreAlias},
-                          duckdb::Identifier{"main"},
-                          duckdb::Identifier{name}}};
-  return duckdb::Catalog::GetEntry(context, lookup,
-                                   duckdb::OnEntryNotFound::RETURN_NULL);
-}
 
 // Store shape of `table` matches its expected def exactly (columns by name
 // and type). Used to decide a PendingAlter's direction.
@@ -759,7 +783,8 @@ void DataStore::ReconcileTable(const Table& table) {
   }
 
   // Mirrored indexes: recreate missing ones (extra i<id> entries were swept
-  // as orphans above).
+  // as orphans above). Inverted indexes have no duckdb entry -- presence
+  // means the attach hook injected them into the live index list.
   auto snapshot = GetCatalog().GetCatalogSnapshot();
   for (const auto& index : snapshot->GetIndexesByRelation(table.GetId())) {
     auto index_def = MakeStoreIndexDef(table, *index);
@@ -769,14 +794,26 @@ void DataStore::ReconcileTable(const Table& table) {
     bool index_exists = false;
     _conn->BeginTransaction();
     try {
-      duckdb::EntryLookupInfo lookup{
-        duckdb::CatalogType::INDEX_ENTRY,
-        duckdb::QualifiedName{
-          duckdb::Identifier{kStoreAlias}, duckdb::Identifier{"main"},
-          duckdb::Identifier{StoreIndexName(index->GetId())}}};
-      index_exists = duckdb::Catalog::GetEntry(
-                       *_conn->context, lookup,
-                       duckdb::OnEntryNotFound::RETURN_NULL) != nullptr;
+      if (index_def->kind == StoreIndexDef::Kind::Inverted) {
+        if (auto table_entry =
+              LookupStoreTable(*_conn->context, index_def->table)) {
+          index_exists = table_entry->Cast<duckdb::DuckTableEntry>()
+                           .GetStorage()
+                           .GetDataTableInfo()
+                           ->GetIndexes()
+                           .Find(duckdb::Identifier{
+                             StoreIndexName(index->GetId())}) != nullptr;
+        }
+      } else {
+        duckdb::EntryLookupInfo lookup{
+          duckdb::CatalogType::INDEX_ENTRY,
+          duckdb::QualifiedName{
+            duckdb::Identifier{kStoreAlias}, duckdb::Identifier{"main"},
+            duckdb::Identifier{StoreIndexName(index->GetId())}}};
+        index_exists = duckdb::Catalog::GetEntry(
+                         *_conn->context, lookup,
+                         duckdb::OnEntryNotFound::RETURN_NULL) != nullptr;
+      }
     } catch (const std::exception&) {
     }
     _conn->Rollback();
@@ -788,6 +825,8 @@ void DataStore::ReconcileTable(const Table& table) {
     CatalogStore::Entry create;
     create.op = CatalogStore::Op::CreateStoreIndex;
     create.store_index = std::move(*index_def);
+    create.table_obj = snapshot->GetObject<Table>(table.GetId());
+    create.index_obj = index;
     if (auto r = ApplyStoreOps({&create, 1}); !r.ok()) {
       SDB_WARN(STARTUP, "data store: recreating index ",
                StoreIndexName(index->GetId()), " failed: ", r.message());

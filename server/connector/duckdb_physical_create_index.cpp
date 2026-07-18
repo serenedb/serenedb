@@ -672,11 +672,6 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
 
   auto* sdb_catalog = dynamic_cast<SereneDBCatalog*>(&op.table.ParentCatalog());
   if (!sdb_catalog) {
-    if (op.table.type == duckdb::CatalogType::TABLE_ENTRY &&
-        op.table.Cast<duckdb::TableCatalogEntry>().IsDuckTable() &&
-        op.info->options.contains(InvertedStoreIndex::kIndexIdOption)) {
-      return input.planner.CreateDefaultIndexPlan(op, input.table_scan);
-    }
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG("cannot CREATE INDEX on ",

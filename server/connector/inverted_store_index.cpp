@@ -23,13 +23,16 @@
 #include <absl/cleanup/cleanup.h>
 
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
+#include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/storage/block_manager.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/table/append_state.hpp>
 #include <duckdb/storage/table_io_manager.hpp>
+#include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <string>
 #include <vector>
 
@@ -39,6 +42,7 @@
 #include "basics/primary_key.hpp"
 #include "catalog/catalog.h"
 #include "catalog/inverted_index.h"
+#include "catalog/store/store.h"
 #include "catalog/table.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_utils.h"
@@ -48,23 +52,6 @@
 #include "search/tick_domain.h"
 
 namespace sdb::connector {
-namespace {
-
-ObjectId OptionId(const duckdb::case_insensitive_map_t<duckdb::Value>& options,
-                  const char* key) {
-  auto it = options.find(key);
-  SDB_ENSURE(it != options.end(), "store index is missing the ", key,
-             " option");
-  return ObjectId{it->second.GetValue<uint64_t>()};
-}
-
-struct InvertedStoreBuildGlobalState final : duckdb::IndexBuildGlobalState {
-  duckdb::unique_ptr<InvertedStoreIndex> index;
-};
-
-struct InvertedStoreBuildLocalState final : duckdb::IndexBuildLocalState {};
-
-}  // namespace
 namespace {
 
 std::string RowIdKey(duckdb::row_t row) {
@@ -144,8 +131,12 @@ InvertedStoreIndex::ReplaySession& InvertedStoreIndex::EnsureReplaySession() {
   return *_replay;
 }
 
-void InvertedStoreIndex::OnReplayRange(duckdb::idx_t commit_offset) {
-  _replay_commit_offset = commit_offset;
+// The store-WAL byte offset of the entry currently replaying (stamped by the
+// replayer per WAL entry). Operations strictly below the storage's durable
+// cursor are already in the segments and are skipped; the op exactly at the
+// cursor is the first un-durable one and is streamed. 0 = unknown, don't skip.
+duckdb::idx_t InvertedStoreIndex::ReplayCommitOffset() const {
+  return duckdb::DuckTransactionManager::Get(db).GetReplayCommitOffset();
 }
 
 void InvertedStoreIndex::ReplayAppend(duckdb::DataChunk& chunk,
@@ -155,8 +146,8 @@ void InvertedStoreIndex::ReplayAppend(duckdb::DataChunk& chunk,
     return;
   }
   auto& session = EnsureReplaySession();
-  if (_replay_commit_offset != 0 &&
-      _replay_commit_offset < session.durable_offset) {
+  const auto commit_offset = ReplayCommitOffset();
+  if (commit_offset != 0 && commit_offset < session.durable_offset) {
     return;
   }
   auto& inverted = *session.index;
@@ -217,8 +208,8 @@ void InvertedStoreIndex::ReplayDelete(duckdb::DataChunk& chunk,
     return;
   }
   auto& session = EnsureReplaySession();
-  if (_replay_commit_offset != 0 &&
-      _replay_commit_offset < session.durable_offset) {
+  const auto commit_offset = ReplayCommitOffset();
+  if (commit_offset != 0 && commit_offset < session.durable_offset) {
     return;
   }
   duckdb::UnifiedVectorFormat row_fmt;
@@ -398,15 +389,7 @@ std::string InvertedStoreIndex::ToString(duckdb::IndexLock&, bool) {
   return "inverted store index";
 }
 
-duckdb::IndexStorageInfo InvertedStoreIndex::MakeStorageInfo() const {
-  duckdb::IndexStorageInfo info{name};
-  info.allocator_infos.emplace_back();
-  info.options[kTableIdOption] = duckdb::Value::UBIGINT(_table_id.id());
-  info.options[kIndexIdOption] = duckdb::Value::UBIGINT(_index_id.id());
-  return info;
-}
-
-void InvertedStoreIndex::CheckpointBarrier() const {
+void InvertedStoreIndex::CheckpointBarrier() {
   auto* catalog = catalog::TryGetCatalog();
   if (!catalog) {
     THROW_SQL_ERROR(
@@ -430,57 +413,70 @@ void InvertedStoreIndex::CheckpointBarrier() const {
   storage->CheckpointRefresh();
 }
 
-duckdb::IndexStorageInfo InvertedStoreIndex::SerializeToDisk(
-  duckdb::QueryContext, const duckdb::case_insensitive_map_t<duckdb::Value>&) {
-  CheckpointBarrier();
-  return MakeStorageInfo();
-}
-
-duckdb::IndexStorageInfo InvertedStoreIndex::SerializeToWAL(
-  const duckdb::case_insensitive_map_t<duckdb::Value>&) {
-  return MakeStorageInfo();
-}
-
 std::string InvertedStoreIndex::GetConstraintViolationMessage(
   duckdb::VerifyExistenceType, idx_t, duckdb::DataChunk&) {
   return "inverted store index constraint violation";
 }
 
-void AttachInvertedStoreIndexCallbacks(duckdb::IndexType& type) {
-  type.defer_implicit_bind = true;
-  type.build_bind = [](duckdb::IndexBuildBindInput&)
-    -> duckdb::unique_ptr<duckdb::IndexBuildBindData> { return nullptr; };
-  type.build_global_init = [](duckdb::IndexBuildInitGlobalStateInput& input)
-    -> duckdb::unique_ptr<duckdb::IndexBuildGlobalState> {
-    auto state = duckdb::make_uniq<InvertedStoreBuildGlobalState>();
-    state->index = duckdb::make_uniq<InvertedStoreIndex>(
-      input.info.GetIndexName().GetIdentifierName(),
-      duckdb::TableIOManager::Get(input.table.GetStorage()), input.storage_ids,
-      input.expressions, input.table.GetStorage().db,
-      OptionId(input.info.options, InvertedStoreIndex::kTableIdOption),
-      OptionId(input.info.options, InvertedStoreIndex::kIndexIdOption));
-    return std::move(state);
-  };
-  type.build_local_init = [](duckdb::IndexBuildInitLocalStateInput&)
-    -> duckdb::unique_ptr<duckdb::IndexBuildLocalState> {
-    return duckdb::make_uniq<InvertedStoreBuildLocalState>();
-  };
-  type.build_sink = [](duckdb::IndexBuildSinkInput&, duckdb::DataChunk&,
-                       duckdb::DataChunk&) {};
-  type.build_combine = [](duckdb::IndexBuildCombineInput&) {};
-  type.build_finalize = [](duckdb::IndexBuildFinalizeInput& input)
-    -> duckdb::unique_ptr<duckdb::BoundIndex> {
-    auto& gstate = input.global_state.Cast<InvertedStoreBuildGlobalState>();
-    return std::move(gstate.index);
-  };
-  type.create_instance = [](duckdb::CreateIndexInput& input)
-    -> duckdb::unique_ptr<duckdb::BoundIndex> {
-    return duckdb::make_uniq<InvertedStoreIndex>(
-      input.name.GetIdentifierName(), input.table_io_manager, input.column_ids,
-      input.unbound_expressions, input.db,
-      OptionId(input.storage_info.options, InvertedStoreIndex::kTableIdOption),
-      OptionId(input.storage_info.options, InvertedStoreIndex::kIndexIdOption));
-  };
+duckdb::unique_ptr<InvertedStoreIndex> MakeInjectedInvertedIndex(
+  duckdb::DataTable& storage, const catalog::Table& table,
+  const catalog::InvertedIndex& inverted) {
+  duckdb::vector<duckdb::column_t> column_ids;
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> exprs;
+  const auto& defs = storage.Columns();
+  // Indexed columns plus indexed-expression dependencies, mirroring the
+  // referenced set so duckdb's column tracking (DROP COLUMN dependency
+  // checks) sees exactly what the index reads.
+  for (const auto col_id : inverted.GetReferencedColumns()) {
+    const auto name = catalog::StoreColumnName(col_id);
+    for (duckdb::idx_t i = 0; i < defs.size(); ++i) {
+      if (defs[i].Name().GetIdentifierName() == name) {
+        exprs.push_back(duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+          defs[i].Type(), i));
+        column_ids.push_back(i);
+        break;
+      }
+    }
+  }
+  return duckdb::make_uniq<InvertedStoreIndex>(
+    catalog::StoreIndexName(inverted.GetId()),
+    duckdb::TableIOManager::Get(storage), column_ids, exprs, storage.db,
+    table.GetId(), inverted.GetId());
+}
+
+void InjectExternalIndexes(duckdb::DataTable& storage) {
+  if (storage.db.GetName().GetIdentifierName() != catalog::kStoreDatabaseName) {
+    return;
+  }
+  auto* catalog = catalog::TryGetCatalog();
+  if (!catalog) {
+    return;
+  }
+  const auto table_id = catalog::ParseStoreId(
+    't', storage.GetDataTableInfo()->GetTableName().GetIdentifierName());
+  if (!table_id) {
+    return;
+  }
+  auto snapshot = catalog->GetCatalogSnapshot();
+  if (!snapshot) {
+    return;
+  }
+  auto table = snapshot->GetObject<catalog::Table>(*table_id);
+  if (!table) {
+    // Constructive DDL creates the physical table before the catalog append,
+    // so a fresh CREATE TABLE lands here with no definitions yet.
+    return;
+  }
+  auto& list = storage.GetDataTableInfo()->GetIndexes();
+  for (const auto& index : snapshot->GetIndexesByRelation(*table_id)) {
+    if (!index || index->GetType() != catalog::ObjectType::InvertedIndex ||
+        index->Tombstoned()) {
+      continue;
+    }
+    const auto& inverted =
+      basics::downCast<const catalog::InvertedIndex>(*index);
+    list.AddIndex(MakeInjectedInvertedIndex(storage, *table, inverted));
+  }
 }
 
 }  // namespace sdb::connector

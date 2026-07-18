@@ -100,7 +100,8 @@ AsyncResult DropTask::Schedule(std::shared_ptr<DropTask> task) noexcept {
 void IndexDrop::Finalize() {
   if (_type == catalog::ObjectType::InvertedIndex ||
       _type == catalog::ObjectType::SecondaryIndex) {
-    GetCatalogStore().Write([&](auto& ctx) { ctx.DropStoreIndex(_id); });
+    GetCatalogStore().Write(
+      [&](auto& ctx) { ctx.DropStoreIndex(_id, _parent_id); });
   }
   auto& server = GetCatalogStore();
   if (_is_root) {

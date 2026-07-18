@@ -1407,7 +1407,7 @@ void Snapshot::CommitDropPlan(CatalogStore::WriteContext& ctx,
   for (auto idx_id : plan.index_drops) {
     if (auto idx = GetObject<Index>(idx_id)) {
       ctx.WriteTombstone(idx->GetRelationId(), idx_id);
-      ctx.DropStoreIndex(idx_id);
+      ctx.DropStoreIndex(idx_id, idx->GetRelationId());
     }
   }
   for (const auto& [tid, rw] : plan.table_rewrites) {
@@ -1478,14 +1478,14 @@ void Snapshot::CommitDropPlan(CatalogStore::WriteContext& ctx,
       }
     }
     for (const auto& idx : surviving) {
-      ctx.DropStoreIndex(idx->GetId());
+      ctx.DropStoreIndex(idx->GetId(), idx->GetRelationId());
     }
     for (auto& name : dropped_columns) {
       ctx.DropStoreColumn(store_name, std::move(name));
     }
     for (const auto& idx : surviving) {
       if (auto def = MakeStoreIndexDef(*rw.table, *idx)) {
-        ctx.CreateStoreIndex(std::move(*def));
+        ctx.CreateStoreIndex(std::move(*def), rw.table, idx);
       }
     }
   }
@@ -1966,8 +1966,9 @@ void Catalog::CreateIndexImpl(std::string_view relation_schema,
         auto table = clone->template GetObject<Table>(index->GetRelationId());
         if (table) {
           if (auto def = MakeStoreIndexDef(*table, *index)) {
-            _engine->Write(
-              [&](auto& ctx) { ctx.CreateStoreIndex(std::move(*def)); });
+            _engine->Write([&](auto& ctx) {
+              ctx.CreateStoreIndex(std::move(*def), table, index);
+            });
           }
         }
       }
@@ -3918,7 +3919,8 @@ void Catalog::ChangeColumnType(const AccessContext& ax, ObjectId database_id,
         // table; drop the mirrored store indexes, change the type, then
         // recreate them (the data lives in the rows / iresearch, so the
         // rebuild carries no state of its own).
-        std::vector<StoreIndexDef> recreate;
+        std::vector<std::pair<StoreIndexDef, std::shared_ptr<const Index>>>
+          recreate;
         if (auto deps = _snapshot->GetDependency<TableDependency>(*table_id)) {
           for (auto idx_id : deps->indexes) {
             auto idx = _snapshot->GetObject<Index>(idx_id);
@@ -3926,15 +3928,15 @@ void Catalog::ChangeColumnType(const AccessContext& ax, ObjectId database_id,
               continue;
             }
             if (auto def = MakeStoreIndexDef(*updated, *idx)) {
-              ctx.DropStoreIndex(idx_id);
-              recreate.push_back(std::move(*def));
+              ctx.DropStoreIndex(idx_id, idx->GetRelationId());
+              recreate.emplace_back(std::move(*def), std::move(idx));
             }
           }
         }
         ctx.ChangeStoreColumnType(store_name, store_column, type_sql,
                                   using_sql);
-        for (auto& def : recreate) {
-          ctx.CreateStoreIndex(std::move(def));
+        for (auto& [def, idx] : recreate) {
+          ctx.CreateStoreIndex(std::move(def), updated, std::move(idx));
         }
       });
     }
@@ -4051,7 +4053,7 @@ void Catalog::DropIndexByIdLocked(ObjectId database_id, ObjectId index_id,
     // runs.
     _engine->Write([&](auto& ctx) {
       ctx.WriteTombstone(index->GetRelationId(), index_id);
-      ctx.DropStoreIndex(index_id);
+      ctx.DropStoreIndex(index_id, index->GetRelationId());
     });
 
     // Check that SereneDB won't open this index after reboot

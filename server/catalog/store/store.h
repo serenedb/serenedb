@@ -145,6 +145,11 @@ class CatalogStore {
     DropSequence,
     DropByParentType,
     DropByParent,
+    // Monotonic sequence-horizon bump: replays as max-merge, so appends may
+    // land out of order (they run outside the sequence lock and group-commit
+    // freely). PutSequence stays the ordered, authoritative assign (setval,
+    // creation seed, compaction snapshot).
+    AdvanceSequence,
     CreateStoreTable,
     DropStoreTable,
     DropStoreColumn,
@@ -270,6 +275,9 @@ class CatalogStore {
   bool TryGetBootSequenceValue(ObjectId sequence_id, uint64_t& value) const;
 
   void PutSequenceValue(ObjectId sequence_id, uint64_t value);
+  // Max-merge horizon bump (Op::AdvanceSequence); safe to call concurrently
+  // for one sequence, appends group-commit. Returns once durable.
+  void AdvanceSequenceValue(ObjectId sequence_id, uint64_t value);
   // Missing counter reads as 0.
   void GetSequenceValue(ObjectId sequence_id, uint64_t& value);
 

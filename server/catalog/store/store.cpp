@@ -533,6 +533,7 @@ bool IsCatalogRecord(CatalogStore::Op op) {
     case CatalogStore::Op::PutDefinition:
     case CatalogStore::Op::DropDefinition:
     case CatalogStore::Op::PutSequence:
+    case CatalogStore::Op::AdvanceSequence:
     case CatalogStore::Op::DropSequence:
     case CatalogStore::Op::DropByParentType:
     case CatalogStore::Op::DropByParent:
@@ -579,6 +580,7 @@ void SerializeRecords(std::span<const CatalogStore::Entry> records,
         stream.Write<uint64_t>(record.key.id.id());
         break;
       case CatalogStore::Op::PutSequence:
+      case CatalogStore::Op::AdvanceSequence:
         stream.Write<uint64_t>(record.key.id.id());
         stream.Write<uint64_t>(record.sequence_value);
         break;
@@ -652,6 +654,7 @@ std::vector<CatalogStore::Entry> ParseRecords(std::span<const uint8_t> frame) {
         record.key.id = ObjectId{cursor.Read<uint64_t>()};
         break;
       case CatalogStore::Op::PutSequence:
+      case CatalogStore::Op::AdvanceSequence:
         record.key.id = ObjectId{cursor.Read<uint64_t>()};
         record.sequence_value = cursor.Read<uint64_t>();
         break;
@@ -750,6 +753,23 @@ void CatalogStore::ApplyRecords(std::span<const Entry> records) {
         if (inserted) {
           ++_live_records;
         } else {
+          ++_dead_records;
+        }
+        break;
+      }
+      case Op::AdvanceSequence: {
+        // Horizon bumps append outside the sequence lock, so records of one
+        // sequence can land out of order; max-merge makes any order replay
+        // to the highest covered horizon. setval stays an ordered assign
+        // (PutSequence) -- a concurrent advance racing a setval is PG's
+        // "unspecified interleaving".
+        absl::MutexLock seq_lock{&_seq_mutex};
+        auto [it, inserted] =
+          _sequences.try_emplace(record.key.id.id(), record.sequence_value);
+        if (inserted) {
+          ++_live_records;
+        } else {
+          it->second = std::max(it->second, record.sequence_value);
           ++_dead_records;
         }
         break;
@@ -1018,6 +1038,31 @@ bool CatalogStore::TryGetBootSequenceValue(ObjectId sequence_id,
   return true;
 }
 
+namespace {
+
+// The hottest appends (every horizon bump): a fixed-shape single sequence
+// record, serialized into a stack buffer.
+struct SequenceFrame {
+  uint8_t bytes[sizeof(uint8_t) + sizeof(uint32_t) + sizeof(uint8_t) +
+                sizeof(uint64_t) + sizeof(uint64_t)];
+
+  SequenceFrame(CatalogStore::Op op, ObjectId sequence_id, uint64_t value) {
+    uint8_t* p = bytes;
+    const auto put = [&p](const auto v) {
+      std::memcpy(p, &v, sizeof(v));
+      p += sizeof(v);
+    };
+    put(kRecordVersion);
+    put(uint32_t{1});
+    put(static_cast<uint8_t>(op));
+    put(sequence_id.id());
+    put(value);
+    SDB_ASSERT(p == bytes + sizeof(bytes));
+  }
+};
+
+}  // namespace
+
 void CatalogStore::PutSequenceValue(ObjectId sequence_id, uint64_t value) {
   // Off the DDL mutex so concurrent sequence persists group-commit in the
   // WAL. Map before append: a compaction snapshotting concurrently then
@@ -1027,13 +1072,20 @@ void CatalogStore::PutSequenceValue(ObjectId sequence_id, uint64_t value) {
     absl::MutexLock seq_lock{&_seq_mutex};
     _sequences.insert_or_assign(sequence_id.id(), value);
   }
-  Entry record;
-  record.op = Op::PutSequence;
-  record.key = {.id = sequence_id};
-  record.sequence_value = value;
-  duckdb::MemoryStream stream;
-  SerializeRecords({&record, 1}, stream);
-  _wal.Append({stream.GetData(), stream.GetPosition()});
+  const SequenceFrame frame{Op::PutSequence, sequence_id, value};
+  _wal.Append({frame.bytes, sizeof(frame.bytes)});
+}
+
+void CatalogStore::AdvanceSequenceValue(ObjectId sequence_id, uint64_t value) {
+  {
+    absl::MutexLock seq_lock{&_seq_mutex};
+    auto [it, inserted] = _sequences.try_emplace(sequence_id.id(), value);
+    if (!inserted) {
+      it->second = std::max(it->second, value);
+    }
+  }
+  const SequenceFrame frame{Op::AdvanceSequence, sequence_id, value};
+  _wal.Append({frame.bytes, sizeof(frame.bytes)});
 }
 
 void CatalogStore::GetSequenceValue(ObjectId sequence_id, uint64_t& value) {

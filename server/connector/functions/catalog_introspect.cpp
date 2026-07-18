@@ -404,6 +404,7 @@ RecordRow MakeRecordRow(const CatalogStore::Entry& record) {
       row.id = record.key.id.id();
       break;
     case PutSequence:
+    case AdvanceSequence:
       row.id = record.key.id.id();
       row.def = absl::StrCat("{\"value\":", record.sequence_value, "}");
       break;

@@ -946,6 +946,22 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       table_info.alter_table_type ==
         duckdb::AlterTableType::RESET_TABLE_OPTIONS) {
     auto& context = transaction.GetContext();
+    // ALTER TABLE <name> SET/RESET (...) (PG storage params) parses into the
+    // same info as ALTER INDEX: resolve the target first, only inverted
+    // indexes have alterable options. A missing name falls through to
+    // AlterInvertedIndexOptions (IF EXISTS / does-not-exist handling).
+    if (auto relation = catalog_impl.GetCatalogSnapshot()->GetRelation(
+          catalog::NoAccessCheck(), db, name.GetIdentifierName(), table_name)) {
+      if (relation->GetType() == catalog::ObjectType::SecondaryIndex) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+          ERR_MSG("\"", table_name, "\" is not an inverted index"));
+      }
+      if (relation->GetType() != catalog::ObjectType::InvertedIndex) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                        ERR_MSG("this ALTER TABLE operation is not supported"));
+      }
+    }
     const auto require_alterable = [](std::string_view option) {
       if (!absl::c_contains(kAlterableInvertedOptions, option)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

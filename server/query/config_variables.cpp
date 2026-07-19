@@ -400,7 +400,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      "row_group_size",
+      kRowGroupSizeSetting,
       {
         LogicalTypeId::UINTEGER,
         "Default column row-group size for INCLUDEd in newly created inverted "
@@ -421,7 +421,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      "norm_row_group_size",
+      kNormRowGroupSizeSetting,
       {
         LogicalTypeId::UINTEGER,
         "Default column row-group size for norm columns of text-indexed fields "

@@ -311,21 +311,9 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       return ResolveUbigintWithOption(context, name, nullptr);
     };
 
-    // Reject typos instead of silently ignoring them (CREATE TABLE already
-    // does); `_sdb_`-prefixed options are internal plumbing.
-    for (const auto& [option, value] : _info->options) {
-      const auto lower = duckdb::StringUtil::Lower(option);
-      if (lower.starts_with("_sdb_") ||
-          absl::c_contains(kCreateInvertedOptions, lower)) {
-        continue;
-      }
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("unrecognized parameter \"", option, "\""));
-    }
-
     catalog::InvertedIndexOptions options{
-      .row_group_size = resolve_uint("row_group_size"),
-      .norm_row_group_size = resolve_uint("norm_row_group_size"),
+      .row_group_size = resolve_uint(kRowGroupSizeSetting),
+      .norm_row_group_size = resolve_uint(kNormRowGroupSizeSetting),
       .refresh_interval_ms = resolve_uint(kRefreshIntervalSetting),
       .compaction_interval_ms = resolve_uint(kCompactionIntervalSetting),
       .cleanup_interval_step = resolve_uint(kCleanupIntervalStepSetting),
@@ -562,7 +550,6 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
     inverted_storage.GetTransaction());
   lstate->search_trx->SetFieldOptions(
     basics::downCast<const catalog::InvertedIndex>(gstate.index_for_providers));
-  lstate->search_trx->SetCommitOnFlush();
 
   auto tokenizer_provider =
     MakeTokenizerProvider(gstate.snapshot_for_providers, inverted_index);
@@ -646,8 +633,8 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     pk.keys = key_views;
   }
 
-  bool flushed = false;
-  writer->InitImpl(num_rows, pk, &flushed);
+  bool committed = false;
+  writer->InitImpl(num_rows, pk, &committed);
 
   for (const auto& col : gstate.columns) {
     if (col.input_col_idx >= chunk.ColumnCount()) {
@@ -670,7 +657,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
 
   writer->Finish();
 
-  if (flushed &&
+  if (committed &&
       lstate->uncommitted_min_slot != std::numeric_limits<size_t>::max()) {
     duckdb::UnifiedVectorFormat fmt;
     chunk.data[gstate.pk_hi_col_idx].ToUnifiedFormat(num_rows, fmt);

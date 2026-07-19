@@ -607,8 +607,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
       return ResolveUintWithOption(context, key, find_with(key));
     };
     catalog::InvertedIndexOptions options{
-      .row_group_size = resolve_uint("row_group_size"),
-      .norm_row_group_size = resolve_uint("norm_row_group_size"),
+      .row_group_size = resolve_uint(kRowGroupSizeSetting),
+      .norm_row_group_size = resolve_uint(kNormRowGroupSizeSetting),
       .refresh_interval_ms = resolve_uint(kRefreshIntervalSetting),
       .compaction_interval_ms = resolve_uint(kCompactionIntervalSetting),
       .cleanup_interval_step = resolve_uint(kCleanupIntervalStepSetting),

@@ -51,8 +51,8 @@ inline constexpr std::array<std::string_view, 8> kAlterableInvertedOptions = {
 };
 
 inline constexpr std::array<std::string_view, 10> kNumericInvertedOptions = {
-  "row_group_size",
-  "norm_row_group_size",
+  kRowGroupSizeSetting,
+  kNormRowGroupSizeSetting,
   kRefreshIntervalSetting,
   kCompactionIntervalSetting,
   kCleanupIntervalStepSetting,
@@ -77,12 +77,9 @@ inline constexpr auto kCreateInvertedOptions = [] {
 
 inline bool IsUint32InvertedOption(std::string_view name) {
   constexpr std::array<std::string_view, 7> kUint32Options = {
-    "row_group_size",
-    "norm_row_group_size",
-    kRefreshIntervalSetting,
-    kCompactionIntervalSetting,
-    kCleanupIntervalStepSetting,
-    kSegmentDocsMaxSetting,
+    kRowGroupSizeSetting,          kNormRowGroupSizeSetting,
+    kRefreshIntervalSetting,       kCompactionIntervalSetting,
+    kCleanupIntervalStepSetting,   kSegmentDocsMaxSetting,
     kCompactionMaxSegmentsSetting,
   };
   return absl::c_contains(kUint32Options, name);
